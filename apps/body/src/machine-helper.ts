@@ -5,7 +5,7 @@ import { MachineControl, machineControlPath } from './machine-control.js';
 import { withKernelLock } from './kernel-lock.js';
 import { DaemonApiError, isAgentRemovedError } from './daemon-api-client.js';
 import { retireRemovedAgent } from './agent-retirement.js';
-import { watch, type FSWatcher } from 'node:fs';
+import { existsSync, watch, type FSWatcher } from 'node:fs';
 import type { EventEmitter } from 'node:events';
 import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -52,7 +52,9 @@ import {
   startLocalWatchdog,
   SystemdNotifier,
 } from './systemd.js';
-import { squireBrokerMeetsComputerUseMinimum } from './squire-host.js';
+import { squireBrokerMeetsComputerUseMinimum, squireBrokerInstallEntry, squireHostPaths } from './squire-host.js';
+import { readVault } from './connector-squire.js';
+import { StdioSquireMcpClient } from './squire-mcp-client.js';
 import { pruneDeletedRuntimes, pruneRepositoryCaches, pruneMachineStorage } from './host-disk-retention.js';
 import { SessionScheduler } from './session-scheduler.js';
 import { refreshSystemdHelperUnit } from './native-helper.js';
@@ -398,8 +400,18 @@ async function serveMachineHelper(
     machineLink: (baseUrl) => {
       let link = links.get(baseUrl);
       if (!link) {
+        let vaultClient: StdioSquireMcpClient | undefined;
+        controller.signal.addEventListener('abort', () => vaultClient?.close(), { once: true });
+        const home = env.HOME?.trim() || homedir();
         link = new MachineLink({
           baseUrl,
+          readVault: async agentId => {
+            if (!existsSync(squireBrokerInstallEntry(home)) && !existsSync(squireHostPaths(home).mcpSocket))
+              return { connections: [], notAdded: true };
+            vaultClient ??= new StdioSquireMcpClient({ home, scope: { agentId, roomId: 'machine-vault' } });
+            return { connections: await readVault(vaultClient) };
+          },
+          log: message => console.warn(`[helper] ${message}`),
           onRegistered: () => {
             update?.notify();
           },

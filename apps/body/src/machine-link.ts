@@ -4,7 +4,7 @@ import { HelperOverlayChannel } from './helper-overlay-channel.js';
 import { HelperTurnChannel } from './helper-turn-channel.js';
 import WebSocket from 'ws';
 import { randomUUID } from 'node:crypto';
-import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
+import type { DaemonOperationMap, PostConnectorVaultInput } from '@beeline/api-contract/daemon';
 import { helperVersion } from './helper-version.js';
 import { unknownServerEventLogger } from './unknown-server-event.js';
 import { LIVE_LINK_TIMING, LiveLink, type LiveLinkTiming, type LiveSocketFactory } from './live-link.js';
@@ -23,6 +23,8 @@ export interface AgentChannelHandlers {
   /** The server refused this agent; `agent_removed` is a settled removal. */
   onRefused?: (code: string) => void;
   onUpdateRequired: (minVersion: string) => void;
+  /** Machine-owned metadata uses this registration's existing operation owner. */
+  reportVault?: (report: Omit<PostConnectorVaultInput, 'agentId'>) => Promise<unknown>;
 }
 
 /**
@@ -168,6 +170,11 @@ export class AgentChannel {
   send(frame: Record<string, unknown>): boolean {
     if (!this.isOpen()) return false;
     return this.machine.link.send(JSON.stringify({ ...frame, agentId: this.agentId }));
+  }
+
+  /** @internal The machine selects one authenticated route for its vault. */
+  reportVault(report: Omit<PostConnectorVaultInput, 'agentId'>): Promise<unknown> | undefined {
+    return this.handlers.reportVault?.(report);
   }
 
   suspect(): void {
@@ -377,6 +384,9 @@ export class MachineLink {
   #identity: { releaseVersion: string; sourceSha?: string } = { releaseVersion: 'v0.0.0' };
   #reconciledOnSocket = false;
   #pendingRelease: Record<string, unknown> | undefined;
+  #lastVaultContent: string | undefined;
+  #vaultRefresh: Promise<void> | undefined;
+  #vaultRefreshRequested = false;
   readonly random: () => number;
   readonly intakeTimeoutMs: number;
 
@@ -387,6 +397,8 @@ export class MachineLink {
       timing?: Partial<LiveLinkTiming>;
       random?: () => number;
       onRegistered?: () => void;
+      readVault?: (agentId: string) => Promise<Omit<PostConnectorVaultInput, 'agentId'>>;
+      log?: (message: string) => void;
     },
   ) {
     this.random = options.random ?? Math.random;
@@ -428,11 +440,52 @@ export class MachineLink {
   registered(): void {
     if (this.#reconciledOnSocket) return;
     this.#reconciledOnSocket = true;
+    void this.refreshVault();
     this.options.onRegistered?.();
     if (this.#pendingRelease) {
       const release = this.#pendingRelease;
       this.#pendingRelease = undefined;
       this.#broadcast(release);
+    }
+  }
+
+  /** One observation at a time for the whole machine, including reconnects. */
+  refreshVault(): Promise<void> {
+    if (!this.options.readVault) return Promise.resolve();
+    this.#vaultRefreshRequested = true;
+    this.#vaultRefresh ??= this.#drainVaultRefreshes().finally(() => { this.#vaultRefresh = undefined; });
+    return this.#vaultRefresh;
+  }
+
+  async #drainVaultRefreshes(): Promise<void> {
+    // A real vault event during a slow read/write must not be lost. Only
+    // callers request another observation; a failure never requests one.
+    while (this.#vaultRefreshRequested) {
+      this.#vaultRefreshRequested = false;
+      await this.#reportVault();
+    }
+  }
+
+  async #reportVault(): Promise<void> {
+    const channel = [...this.#channels.values()].find(channel => channel.isOpen());
+    if (!channel) return;
+    try {
+      const report = await this.options.readVault!(channel.agentId);
+      // The list and host/field sets have no ordering semantics.
+      const content = JSON.stringify({ ...report, connections: report.connections.map(item => ({
+        ...item, fieldNames: [...item.fieldNames].sort(), allowedHosts: [...item.allowedHosts].sort(),
+        ...(item.loginHosts ? { loginHosts: [...item.loginHosts].sort() } : {}),
+      })).sort((a, b) => a.reference.localeCompare(b.reference)) });
+      if (content === this.#lastVaultContent) return;
+      const current = [...this.#channels.values()].find(channel => channel.isOpen());
+      if (!current) return;
+      const sent = current.reportVault(report);
+      if (!sent) return;
+      await sent;
+      this.#lastVaultContent = content;
+    } catch (error) {
+      // A failed observation/delivery preserves the last broker verdict.
+      this.options.log?.(`Squire machine report unavailable: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 

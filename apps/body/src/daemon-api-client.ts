@@ -256,9 +256,13 @@ export class DaemonApiClient {
         else this.channelStateListener?.(false, code);
       },
       onUpdateRequired: (minVersion) => this.forceUpdateListener?.(minVersion),
+      reportVault: report => this.execute('postConnectorVault', { ...report, agentId: this.agentId }),
     });
     this.channel = this.#channel;
   }
+
+  /** Refresh the shared machine observation after an explicit local vault event. */
+  refreshMachineVault(): Promise<void> { return this.machine.refreshVault(); }
 
   /** The machine socket under this agent's registration. */
   get link(): LiveLink {

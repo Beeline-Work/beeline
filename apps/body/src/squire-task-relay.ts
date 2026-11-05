@@ -163,6 +163,8 @@ export class SquireTaskRelay {
     private readonly onSignedOut: (url: string, siteUrl?: string) => void = () => {},
     /** Resolve from the same server Workbench projection that connect status reads. */
     private readonly connectedCredential?: (service: string) => Promise<string | undefined>,
+    /** Local vault activity refreshes the machine's shared observation. */
+    private readonly onVaultActivity: () => Promise<void> = async () => {},
   ) {
     this.shareRenewals = new SquireShareRenewals(
       (id, client) => !this.closed && squireSessionOwner(id)?.client === client,
@@ -602,6 +604,10 @@ export class SquireTaskRelay {
       }
       this.log('call-end', task, { method: input.method, tool: safeToolName ?? null,
         sessionId: redactedSessionId(requestedIds[0] ?? sessionIds(result)[0] ?? task.sessions.values().next().value) });
+      if (input.method === 'tools/call' && safeToolName &&
+          ['list_credentials', 'store_credential', 'edit_credential', 'delete_credential', 'edit_payment_card'].includes(safeToolName) &&
+          !(result && typeof result === 'object' && (result as { isError?: unknown }).isError === true))
+        await this.onVaultActivity();
       return result;
     } catch (error) {
       if (error instanceof Error && /timed out/.test(error.message)) {

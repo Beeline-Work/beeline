@@ -136,7 +136,7 @@ vi.mock('@/components/buzz/ChevronGlyph', () => ({
   ChevronGlyph: () => null,
 }));
 vi.mock('@/components/buzz/CommunityRail', () =>
-  hostModule('BuzzCommunityShell', 'CommunityDrawerTrigger'),
+  hostModule('BuzzCommunityShell', 'CommunityDrawerTrigger', 'CommunitySwitcherTrigger'),
 );
 vi.mock('@/components/buzz/CornerGlyph', () => ({ CORNER_META_SIZE: 12, CornerGlyph: () => null }));
 vi.mock('@/components/buzz/CornerWorkingPulse', () => hostModule('CornerWorkingPulse'));
@@ -624,6 +624,10 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
     );
     const reconnect = renderer.root.findByProps({ testID: 'room-deck-error-retry' });
     expect(reconnect.props.action).toBe('Retry');
+    expect(reconnect.props.inset).toBe('flush');
+    const identity = renderer.root.findByType('CommunitySwitcherTrigger');
+    expect(identity.props.expanded).toBe(false);
+    expect(identity.props.onPress).toBeUndefined();
     await act(async () => {
       reconnect.props.onPress();
     });

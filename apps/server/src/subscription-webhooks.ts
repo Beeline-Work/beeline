@@ -65,6 +65,21 @@ function secret(): string {
   return value;
 }
 
+/** Scheduled Work reads follow active Room membership; mutations use the manager check below. */
+export async function requireScheduledWorkReader(db: SqlDatabase, roomId: string, viewerId: string): Promise<void> {
+  const allowed = await db.query(
+    `SELECT 1 FROM rooms room
+     JOIN identities person ON person.id=$2 AND person.kind='human' AND NOT person.hidden_from_roster
+     JOIN memberships member ON member.room_id=room.id AND member.identity_id=$2 AND member.removed_at IS NULL
+     WHERE room.id=$1 AND room.parent_id IS NULL AND room.archived_at IS NULL AND (
+       room.direct_participants IS NOT NULL AND room.direct_participants ? $2
+       OR room.direct_participants IS NULL AND EXISTS (
+         SELECT 1 FROM memberships workspace_member WHERE workspace_member.workspace_id=room.workspace_id
+           AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2 AND workspace_member.removed_at IS NULL))`,
+    [roomId, viewerId]);
+  if (!allowed.rowCount) throw new Error('room membership required');
+}
+
 /** Humans manage their own DMs; Rooms retain Workspace admin authority. */
 export async function requireScheduledWorkManager(db: SqlDatabase, roomId: string, viewerId: string, allowCorner = false, denialMessage = 'workspace admins only'): Promise<void> {
   const room = (await db.query<{ parent_id: string | null; archived_at: Date | null }>(
@@ -116,10 +131,10 @@ function callView(row: CallRow): WebhookCallView {
     ...(row.repeat_at ? { repeatAt: row.repeat_at.getTime() / 1000 } : {}) };
 }
 
-/** No secret enters a cached projection. Only authorized human managers receive link metadata. */
+/** Room members receive public link metadata; token reveal/rotation retain management authority. */
 export async function webhookDetails(db: SqlDatabase, roomId: string, id: string, viewerId: string,
   origin: string): Promise<Pick<RoomSubscriptionView, 'webhook' | 'recentCalls'>> {
-  await requireWebhookAdmin(db, roomId, viewerId);
+  await requireScheduledWorkReader(db, roomId, viewerId);
   const row = (await db.query<{ webhook_suffix: string; webhook_token_created_at: Date }>(
     `SELECT webhook_suffix,webhook_token_created_at FROM agent_subscriptions subscription
      JOIN rooms room ON room.id=subscription.room_id

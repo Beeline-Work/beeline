@@ -64,9 +64,6 @@ export function questionLeavesAtSql(m = 'm', mark = 'mark'): string {
   return `LEAST(${m}.created_at+${NEEDS_YOU_LOOKBACK},
     ${mark}.first_seen_at+interval '${NEEDS_YOU_EXPIRY_HOURS} hours')`;
 }
-/** A safety cap on qualifying rows only: `askSql` runs before it, so no near-miss can crowd out an ask. */
-const CANDIDATE_LIMIT = 500;
-
 const TRIGGER_WORD = new RegExp(
   `(^|[^\\p{L}\\p{N}_])(${NEEDS_YOU_TRIGGER_WORDS.join('|')})(?=$|[^\\p{L}\\p{N}_])`,
   'iu',
@@ -425,7 +422,7 @@ export function grantDecidedBySql(grant: string, identityExpr: string): string {
     END`;
 }
 
-const questionBranch=(projection:CandidateProjection, questionLimit=CANDIDATE_LIMIT)=>`
+const questionBranch=(projection:CandidateProjection)=>`
   SELECT ${candidateColumns(projection)},NULL::text approval_kind,NULL::timestamptz approval_expires_at,
     NULL::text[] pending_grant_ids,NULL::text actor_name
   FROM viewer_rooms room
@@ -435,11 +432,10 @@ const questionBranch=(projection:CandidateProjection, questionLimit=CANDIDATE_LI
   ${projection==='cells'?'LEFT JOIN identities author ON author.id=m.author_id':''}
   LEFT JOIN needs_you_marks mark ON mark.identity_id=$2 AND mark.message_id=m.id
   WHERE ${(QUESTION_WHERE)}
-  ORDER BY m.created_at DESC,m.id DESC
-  LIMIT ${questionLimit}`;
+  ORDER BY m.created_at DESC,m.id DESC`;
 
 /** The same authorized candidates drive the tray and its badge. */
-const needsYouCandidates=(projection:CandidateProjection, questionLimit=CANDIDATE_LIMIT, scoped=false)=>`WITH ${viewerRoomsSql(projection==='cells'?'room.*':'room.id',scoped)},
+const needsYouCandidates=(projection:CandidateProjection, scoped=false)=>`WITH ${viewerRoomsSql(projection==='cells'?'room.*':'room.id',scoped)},
   recent_asks AS MATERIALIZED (
     SELECT m.id,m.room_id FROM messages m
     WHERE ${askingMessageSql('m')} AND m.created_at>now()-${NEEDS_YOU_LOOKBACK}
@@ -450,13 +446,12 @@ const needsYouCandidates=(projection:CandidateProjection, questionLimit=CANDIDAT
       AND ${grantDecidedBySql('grant_row', '$2')}
   ),
   candidates AS (
-    SELECT * FROM (${questionBranch(projection, questionLimit)}) questions
+    SELECT * FROM (${questionBranch(projection)}) questions
     UNION ALL
     ${approvalBranches(projection).join('\n    UNION ALL\n')}
   )`;
 const NEEDS_YOU_CANDIDATES=needsYouCandidates('cells');
 const NEEDS_YOU_COUNT_CANDIDATES=needsYouCandidates('count');
-const NEEDS_YOU_PROJECTION_COUNT_CANDIDATES=needsYouCandidates('count',CANDIDATE_LIMIT+1);
 
 /** Match approvalView's subject and tray dismissal rules before counting or painting. */
 const VISIBLE_CANDIDATE = `(approval_kind IS NULL OR cleared_at IS NULL) AND CASE approval_kind
@@ -481,7 +476,7 @@ const VISIBLE_CANDIDATE = `(approval_kind IS NULL OR cleared_at IS NULL) AND CAS
   WHEN 'squire' THEN NULLIF(btrim(card->>'title'),'') IS NOT NULL
   ELSE true END`;
 
-/** Count without fetching cards or building cell DTOs. The question cap is unchanged. */
+/** Count without fetching cards or building cell DTOs. Every currently visible candidate is counted. */
 export async function countNeedsYouItems(
   database: SqlDatabase,
   workspaceId: string,
@@ -501,7 +496,7 @@ export async function countNeedsYouItems(
  * order, never unaffected Room cell bodies. Cells are read by exact scope. */
 export async function readNeedsYouOrder(database:SqlDatabase, workspaceId:string, viewerId:string){
   const result=await database.query<{ids:string[];questions:number;authorized:boolean}>(
-    `${needsYouCandidates('order', CANDIDATE_LIMIT+((0)))}
+    `${needsYouCandidates('order')}
      SELECT COALESCE(array_agg(message_id ORDER BY (approval_kind IS NULL),
        floor(extract(epoch FROM CASE WHEN approval_kind IS NULL THEN first_seen_at+interval '${NEEDS_YOU_EXPIRY_HOURS} hours' ELSE approval_expires_at END)) NULLS LAST,
        floor(extract(epoch FROM created_at)*1000),message_id COLLATE "C"),'{}'::text[]) ids,count(*) FILTER(WHERE approval_kind IS NULL)::int questions,
@@ -527,7 +522,7 @@ export async function needsYouItems(database: SqlDatabase, workspaceId: string, 
     viewer_handle: string | null;
     authorized: boolean;
   }>(
-    `${roomIds?needsYouCandidates('cells', CANDIDATE_LIMIT, true):(NEEDS_YOU_CANDIDATES)},
+    `${roomIds?needsYouCandidates('cells', true):(NEEDS_YOU_CANDIDATES)},
      visible AS MATERIALIZED (SELECT * FROM candidates WHERE ${VISIBLE_CANDIDATE}),
      started AS (
        ${markSeen ? `INSERT INTO needs_you_marks(identity_id,message_id,workspace_id)
@@ -771,9 +766,9 @@ export function signInService(name: string | undefined): string | undefined {
 /** First visible paint, restricted to the viewer's currently available questions. */
 export async function markNeedsYouSeen(database: SqlDatabase, workspaceId: string,
   viewerId: string, messageIds: readonly string[]): Promise<{ seen: { messageId: string; expiresAt: number }[] }> {
-  if (!Array.isArray(messageIds) || messageIds.length > CANDIDATE_LIMIT ||
+  if (!Array.isArray(messageIds) ||
     messageIds.some(id => typeof id !== 'string' || !id || id.length > 256))
-    throw new Error('messageIds must contain at most 500 question ids');
+    throw new Error('messageIds must contain question ids');
   const result = await database.query<{ message_id: string | null; first_seen_at: Date | null; authorized: boolean }>(
     `${NEEDS_YOU_CANDIDATES},
      started AS (

@@ -1,3 +1,5 @@
+import { RoomDeckLoadingView } from '@/components/buzz/RoomDeckLoadingView';
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { Button } from '@/components/buzz/Button';
 import { Text, View } from 'react-native';
@@ -128,18 +130,18 @@ export default function Home() {
     personNameOnboardingPending,
   ]);
 
-  // Wait for the async identity check before rendering.
+  // This route can remain mounted underneath a deep-linked destination.
+  if (pathname !== '/') return null;
+
   if (!buzzCheckDone) {
-    return null;
+    return <RoomDeckLoadingView />;
   }
 
   if (buzzStorageError) {
     return (
       <View style={styles.portraitContainer}>
         <Text style={styles.title}>Secure storage unavailable</Text>
-        <Text accessibilityRole="alert" style={styles.subtitle}>
-          Beeline could not read your saved key: {buzzStorageError}
-        </Text>
+        <ErrorBanner inline title={"Beeline could not read your saved key:" + " " + (buzzStorageError)}  />
         <View style={styles.buttonContainer}>
           <Button
             label="Open Beeline setup"
@@ -152,7 +154,7 @@ export default function Home() {
 
   // Beeline owns the app root. The replace keeps back navigation from revealing
   // The app entry always resolves through Beeline identity state.
-  if (!landingStalled) return null;
+  if (!landingStalled) return <RoomDeckLoadingView />;
   return (
     <View style={styles.portraitContainer}>
       <Text style={styles.title}>Opening Beeline…</Text>

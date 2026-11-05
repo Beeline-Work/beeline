@@ -415,7 +415,7 @@ describe('PhoneService Needs-you tray', () => {
     expect(await count()).toBe(0);
   });
 
-  it('CLEAR removes questions beyond the 500-row read limit in one operation', async () => {
+  it('CLEAR removes every question after reading more than 500 in one operation', async () => {
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)
        SELECT lpad(to_hex(1000000 + series),64,'0'),$1,$2,'@ada please review this',
@@ -423,8 +423,8 @@ describe('PhoneService Needs-you tray', () => {
        FROM generate_series(1, 505) series`,
       [ROOM, PEER],
     );
-    expect((await read()).items).toHaveLength(500);
-    expect(await count()).toBe(500);
+    expect((await read()).items).toHaveLength(505);
+    expect(await count()).toBe(505);
 
     await phone.execute('clearNeedsYouSection', { workspaceId: WORKSPACE }, VIEWER);
 

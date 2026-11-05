@@ -82,6 +82,7 @@
       "BuzzCommunityShell",
       "CommunityDrawerContext",
       "CommunityDrawerTrigger",
+      "CommunityHeaderIdentity",
       "CommunityRail",
       "CommunitySwitcherTrigger",
       "HEADER_PLATE",
@@ -226,8 +227,7 @@
     "components/buzz/MessageReactionStrip.tsx": ["MessageReactionStrip"],
     "components/buzz/MessageSearchResults.tsx": [
       "MessageSearchResults",
-      "MessageSearchRow",
-      "Retry"
+      "MessageSearchRow"
     ],
     "components/buzz/MicGlyph.tsx": [
       "ArrowUpGlyph",
@@ -254,15 +254,12 @@
     ],
     "components/buzz/MonoMarkdown.tsx": ["InlineMarkdown", "MarkdownTable", "MonoMarkdown"],
     "components/buzz/NeedsYouCell.tsx": ["NeedsYouCell", "cell", "source"],
-    "components/buzz/NetworkUnavailableState.tsx": ["NetworkUnavailableState"],
     "components/buzz/NewCornerDialog.tsx": ["NewCornerDialog"],
     "components/buzz/NewRoomDialog.tsx": ["NewRoomDialog"],
-    "components/buzz/NoMatchingConversationsEmpty.tsx": ["NoMatchingConversationsEmpty"],
     "components/buzz/OverflowGlyph.tsx": ["OverflowGlyph"],
     "components/buzz/OwnerGrantNeededCard.tsx": ["OwnerGrantNeededCard"],
     "components/buzz/PageHeader.tsx": ["PageHeader", "PageHeaderTitle"],
     "components/buzz/PinGlyph.tsx": ["PinGlyph"],
-    "components/buzz/PinnedConversationsEmpty.tsx": ["PinnedConversationsEmpty"],
     "components/buzz/PrLifecycleCard.tsx": [
       "NotificationLifecycleCard",
       "RepositoryLifecycleRow",
@@ -300,7 +297,6 @@
     "components/buzz/RoomCornerSummary.tsx": ["RoomCornerSummary"],
     "components/buzz/RoomDeckComposeMenu.tsx": ["ComposeGlyph", "RoomDeckComposeMenu"],
     "components/buzz/RoomDeckLoadingView.tsx": ["RoomDeckLoadingView"],
-    "components/buzz/RoomDeckUnavailableView.tsx": ["RoomDeckUnavailableView"],
     "components/buzz/RoomGlyph.tsx": ["RoomGlyph"],
     "components/buzz/RoomListSectionHeader.tsx": ["LABEL_LINE", "RoomListSectionHeader", "SectionAddButton", "SectionAddGlyph"],
     "components/buzz/RoomListToolbar.tsx": ["RoomListToolbar", "actions", "filters", "search"],

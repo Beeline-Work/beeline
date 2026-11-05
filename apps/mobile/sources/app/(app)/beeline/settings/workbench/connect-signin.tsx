@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
@@ -188,7 +189,7 @@ function ConnectorSignInOverlay() {
           ) : failure ? (
             <View style={styles.center} accessibilityLiveRegion="polite" testID="signin-error">
               <Text style={styles.centerTitle}>{squire ? 'Google sign-in didn’t load' : `${connectorName} sign-in didn’t load`}</Text>
-              <Text style={styles.centerLine}>{errorLine}</Text>
+              <ErrorBanner inline title={errorLine ?? ''}  />
             </View>
           ) : fallback ? (
             <View style={[styles.center, styles.centerBare]} testID="signin-finishing">

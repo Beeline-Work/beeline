@@ -35,8 +35,8 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.event_name == 'push' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 env:
   CI_TEST_WORKERS: "2"
   UV_THREADPOOL_SIZE: "1"
@@ -420,6 +420,7 @@ jobs:
           npm test -w @beeline/server -- src/router-group-c-completion.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/router-group-c-oauth.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/router-command.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/read-surface-growth.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/slow-query-workload.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/rooms-mcp-stream.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/helper-overlay.postgres.test.ts --maxWorkers=2 --minWorkers=1

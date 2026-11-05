@@ -10,7 +10,7 @@
  * sweepArchivedCornerWorktrees, ahead of startRoom in reconcile.
  *
  * Replays those operations with real Git/worktree recovery, scratch sweeps,
- * home provisioning and the production six-slot/50ms HostReadBudget. Only
+ * home provisioning and the production six-slot HostReadBudget. Only
  * the remote API (20ms local response) and provider answer are fixtures.
  */
 import { execFile } from 'node:child_process';
@@ -119,7 +119,7 @@ try {
   }
   const agents = Array.from({ length: 20 }, (_, i) => identityFromKey((i + 1).toString(16).padStart(64, '0'), `Fixture ${i}`));
   const origin = 'http://127.0.0.1:1'; // No request is sent; budget identity only.
-  const budget = new HostReadBudget(origin, root);
+  const budget = new HostReadBudget();
   Reflect.set(MonolithRoomTurnLoop.prototype, 'startPrompt', function(this: {
     options: { config: { agentHomeRoot: string }; roomId: string }; busy: boolean; activeTurn?: { promise: Promise<void> };
   }) {

@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { appErrorCopy, connectionErrorDescription } from '@/buzz/app-error-copy';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { useDesktopLayout } from '@/buzz/desktop-layout-state';
@@ -626,7 +627,7 @@ function CornerCockpit({
             <SurfaceGlyphLoader />
           </View>
         ) : (
-          <Text style={styles.empty}>Corner details unavailable</Text>
+          <ErrorBanner inline title={"Corner details unavailable"} />
         )
       ) : (
         <FlatList
@@ -650,7 +651,7 @@ function CornerCockpit({
       )}
       {detail && detail.room.archived === false ? (
         <View style={styles.cockpitComposer}>
-          {sendError ? <Text style={styles.error}>{sendError}</Text> : null}
+          {sendError ? <ErrorBanner inline title={sendError} /> : null}
           <View style={styles.cockpitStatusSlot} testID="desktop-work-corner-status-slot">
             {ack && (
               <TurnProgressLine
@@ -754,10 +755,4 @@ const styles = StyleSheet.create((theme) => ({
   cockpitStatusSlot: { minHeight: TURN_LINE_BOX_HEIGHT, justifyContent: 'center' },
   empty: { ...theme.buzz.type.meta, color: theme.colors.textSecondary, padding: 16 },
   loadingBlock: { alignItems: 'center', justifyContent: 'center', padding: 16 },
-  error: {
-    ...theme.buzz.type.meta,
-    color: theme.buzz.danger,
-    paddingHorizontal: 8,
-    paddingVertical: 8,
-  },
 }));

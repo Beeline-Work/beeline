@@ -27,7 +27,7 @@ describe('release-owned migration steps', () => {
     await runMigrationStep('contended', run);
     expect(run).toHaveBeenCalledTimes(2);
     expect(prior).toHaveBeenCalledOnce();
-    expect(MIGRATION_LOCK_TIMEOUT_MS).toBe(1_000);
+    expect(MIGRATION_LOCK_TIMEOUT_MS).toBe(15_000);
   });
 
   it.skipIf(!postgresUrl)('a real contended DDL step resumes only on an explicit invocation after lock release', async () => {

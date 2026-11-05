@@ -59,6 +59,8 @@ OTA targets.
 
 ## Routine release
 
+Desktop installer builds run during release or explicit tester dispatch, while PRs retain the light desktop icon checks. Intel Mac helper storage, launchd and Room acceptance run in the release’s `helper_macos` leg before its archive can be promoted; the pairing acceptance uses an installation of that exact candidate archive.
+
 Firstmate calls the first-party `dispatch_release` agent tool with `{}`, without
 creating a release worker or requesting a command grant. This path creates no
 command-approval card.

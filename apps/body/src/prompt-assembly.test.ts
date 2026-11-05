@@ -892,11 +892,13 @@ describe('corner role prompts (PR #2224: a reviewer that opened its corner pushe
     },
   );
 
-  it('requires the reviewer to reject redundant or weakened tests and demand deletion proof', () => {
+  it('assesses coverage when deleting tests without requiring mutation proof', () => {
     const text = prompt('code-corner-reviewer').split('Reviewer rules:')[1]!;
-    expect(text).toContain('Reject this PR’s redundant tests or assertions weakened or deleted without proof.');
-    expect(text).toContain('Remove a test only with a named surviving test catching the same failure under a seeded bug or mutation check.');
-    expect(text).toContain('Coverage overlap or "never failed" is not proof.');
+    expect(text).toContain('Assess actual coverage loss');
+    expect(text).toContain('Redundant or obsolete tests may be removed');
+    expect(text).toContain('surviving coverage or other adequate evidence');
+    expect(text).toContain('a seeded bug or mutation check is optional');
+    expect(text).not.toContain('Remove a test only with');
   });
 
   it('stops after four pushes without PASS and names the three escalation causes', () => {
@@ -1158,4 +1160,83 @@ it('releases delegated turns on every surface so reports can wake a new turn', (
     expect(text).toContain('its report wakes a new turn');
     expect(text).toContain('do not sleep or poll');
   }
+});
+
+import { afterEach as m23_afterEach, describe as m23_describe, expect as m23_expect, it as m23_it, vi as m23_vi } from 'vitest';
+
+import { assembleTurnPrompt as m23_assembleTurnPrompt } from "./prompt-assembly.js";
+
+import { callTool as m23_callTool } from "./session-join/beeline-api.js";
+
+import { callAgentTool as m23_callAgentTool, withToolOwedContext as m23_withToolOwedContext } from "./read-only-mcp.js";
+
+import { renderMention as m23_renderMention } from "./session-join/bridge.js";
+import { describe as mergedDescribe23 } from 'vitest';
+mergedDescribe23("owed-tag-prompt.test.ts", () => {
+
+
+m23_describe('owed tag delivery', () => {
+  const routing = { roomId: 'room-id', messageId: 'message-id', memberId: 'member-id', roomName: 'Design', fromName: 'Ruby' };
+  m23_it.each(['claude-code', 'codex'] as const)('C3 %s helper injection prefixes header, IDs and rule before long text', agent => {
+    const text = m23_renderMention({ id: routing.messageId, room_id: routing.roomId, memberId: routing.memberId,
+      room_name: routing.roomName, author_name: routing.fromName, text: 'x'.repeat(30000) },
+    { key: 'joined', agent, cwd: '/', name: 'Helper', server: '', clientId: '', refreshToken: '', cursor: '0', deliveredWakes: [], joinedAt: '' },
+    { node: '/node', bundle: '/bundle' });
+    m23_expect(text.startsWith('[Beeline · Room Design · message message-id · from Ruby]')).toBe(true);
+    for (const value of [routing.roomId, routing.messageId, routing.memberId, 'answer in this Room with replyTo message-id']) m23_expect(text.slice(0,400)).toContain(value);
+  });
+  m23_it('C2 managed helper prompt routing survives a truncated long instruction', () => {
+    const result = m23_assembleTurnPrompt({ surface: 'room', routing, sessionPrefix: 'x'.repeat(10000), task: { body: 'long task' } });
+    for (const value of [routing.roomId, routing.messageId, routing.memberId, 'answer in this Room with replyTo message-id']) m23_expect(result.text.slice(0,400)).toContain(value);
+  });
+});
+
+
+m23_describe('helper owed context', () => {
+  m23_afterEach(() => { m23_vi.unstubAllGlobals(); m23_vi.unstubAllEnvs(); });
+  m23_it('C7 joined-session tools retain owed tags from connector results', async () => {
+    const owedMentions = [{ roomId: 'room', messageId: 'message', memberId: 'member' }];
+    m23_vi.stubGlobal('fetch', async () => Response.json({ result: { content: [{ text: JSON.stringify({ data: { ok: true }, owedMentions }) }] } }));
+    m23_expect(await m23_callTool({ server: 'http://localhost' }, 'fixture', 'list_rooms', {})).toEqual({ ok: true, owedMentions });
+    m23_vi.stubGlobal('fetch', async () => Response.json({ result: { isError: true, content: [{ text: 'Refused' }, { text: JSON.stringify({ owedMentions }) }] } }));
+    await m23_expect(m23_callTool({ server: 'http://localhost' }, 'fixture', 'post', {})).rejects.toThrow('owedMentions');
+  });
+  m23_it.each(['network', 'http'] as const)('C7 an unavailable %s error-context read preserves the original refusal', async failure => {
+    m23_vi.stubEnv('BEELINE_DAEMON_BASE_URL', 'http://localhost');
+    m23_vi.stubEnv('BEELINE_DAEMON_TOKEN', 'local-test');
+    m23_vi.stubGlobal('fetch', async () => { if (failure === 'http') return Response.json({ error: 'unavailable' }, { status: 503 }); throw new Error('context unavailable'); });
+    const result = await m23_withToolOwedContext(async () => { throw new Error('original refusal'); });
+    m23_expect(result).toEqual({ isError: true, content: [{ type: 'text', text: 'original refusal' }] });
+  });
+  m23_it('C7 helper MCP results carry owed tags from the existing operation without another request', async () => {
+    m23_vi.stubEnv('BEELINE_DAEMON_BASE_URL', 'http://localhost');
+    m23_vi.stubEnv('BEELINE_DAEMON_TOKEN', 'local-test');
+    m23_vi.stubEnv('BEELINE_DAEMON_ROOM_ID', 'room');
+    m23_vi.stubEnv('BEELINE_TURN_CONTEXT_FILE', '');
+    const owedMentions = [{ roomId: 'room', messageId: 'message', memberId: 'member', replyRule: 'answer in this Room with replyTo message' }];
+    const fetch = m23_vi.fn(async (url: URL, init: RequestInit) => {
+      m23_expect(url.pathname).toBe('/v1/daemon/operations/listRooms');
+      m23_expect(init.headers).toMatchObject({ 'x-beeline-tool-result': '1' });
+      return Response.json({ _beelineToolResult: { rooms: [] }, _beelineOwedMentions: owedMentions });
+    });
+    m23_vi.stubGlobal('fetch', fetch);
+    const result = await m23_withToolOwedContext(() => m23_callAgentTool('read', { facet: 'addresses' }, 'owed'));
+    m23_expect(result.content).toEqual([
+      { type: 'text', text: JSON.stringify({ rooms: [] }) },
+      { type: 'text', text: JSON.stringify({ owedMentions }) },
+    ]);
+    m23_expect(fetch).toHaveBeenCalledTimes(1);
+    // An older server, or one whose owed read failed, must keep the tool result.
+    fetch.mockImplementation(async () => Response.json({ rooms: [] }));
+    m23_expect((await m23_withToolOwedContext(() => m23_callAgentTool('read', { facet: 'addresses' }, 'fallback'))).content)
+      .toEqual([{ type: 'text', text: JSON.stringify({ rooms: [] }) }]);
+    m23_expect(fetch).toHaveBeenCalledTimes(2);
+    m23_vi.stubEnv('BEELINE_DAEMON_AGENT_ID', 'member');
+    fetch.mockImplementation(async () => Response.json({ _beelineToolResult: null, _beelineOwedMentions: owedMentions }));
+    const usage = await m23_withToolOwedContext(() => m23_callAgentTool('read', { facet: 'usage' }, 'nullable'));
+    m23_expect(JSON.parse(usage.content[0]!.text)).toEqual({ summary: 'Usage: unknown (harness reports none).' });
+    m23_expect(JSON.parse(usage.content[1]!.text)).toEqual({ owedMentions });
+    m23_expect(fetch).toHaveBeenCalledTimes(3);
+  });
+});
 });

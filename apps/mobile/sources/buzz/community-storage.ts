@@ -72,7 +72,7 @@ export async function loadPersonalCommunityId(pubkey: string): Promise<string | 
   return AsyncStorage.getItem(`${PERSONAL_COMMUNITY_PREFIX}${pubkey}`);
 }
 
-export async function savePersonalCommunityId(pubkey: string, communityId: string): Promise<void> {
+async function savePersonalCommunityId(pubkey: string, communityId: string): Promise<void> {
   await AsyncStorage.setItem(`${PERSONAL_COMMUNITY_PREFIX}${pubkey}`, communityId);
 }
 
@@ -92,7 +92,7 @@ export type WorkspaceSelectionStorage = {
  * a later channel-list cache commit; an absent marker is cleared first so a
  * stale value cannot be written back from an older in-memory context.
  */
-export async function reconcileStoredWorkspaceSelection(
+async function reconcileStoredWorkspaceSelection(
   pubkey: string,
   workspaces: readonly { communityId: string }[],
   activeWorkspaceId: string | null,
@@ -119,7 +119,7 @@ export async function reconcileStoredWorkspaceSelection(
   return nextPersonalWorkspaceId;
 }
 
-export async function loadLastViewedChannel(
+async function loadLastViewedChannel(
   pubkey: string,
   communityId: string | null,
 ): Promise<string | null> {

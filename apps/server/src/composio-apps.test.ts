@@ -16,14 +16,45 @@ describe('managed app provider boundary', () => {
       name: `Tool ${i}`, toolkit: { slug: 'github' }, description: 'A long description\n'.repeat(100),
       input_parameters: { type: 'object', description: 'schema'.repeat(1000) } }));
     const provider = new ComposioApps('fixture-only', vi.fn(async () => json({ items })) as typeof fetch);
-    const compact = await provider.listTools('github');
+    const first = await provider.listTools('github');
+    const compact = first.tools;
     expect(Buffer.byteLength(JSON.stringify(compact))).toBeLessThanOrEqual(24_000);
     expect(compact.length).toBeGreaterThan(0);
     expect(JSON.stringify(compact)).not.toContain('inputParameters');
     expect(compact[0]!.description).not.toContain('\n');
     const matched = await provider.listTools('github', 'GITHUB_TOOL_0');
-    expect(matched).toHaveLength(1);
-    expect(matched[0]!.inputParameters).toBeDefined();
+    expect(matched.tools).toHaveLength(1);
+    expect(matched.tools[0]!.inputParameters).toBeDefined();
+    const seen = [...compact.map(tool => tool.slug)];
+    let next = first.next;
+    while (next) {
+      const query = /query="([^"]+)"/.exec(next)![1]!;
+      const page = await provider.listTools('github', query);
+      expect(Buffer.byteLength(JSON.stringify(page.tools))).toBeLessThanOrEqual(24_000);
+      seen.push(...page.tools.map(tool => tool.slug));
+      next = page.next;
+    }
+    expect(seen.slice(0, items.length)).toEqual(items.map(tool => tool.slug));
+    expect(new Set(seen).size).toBe(seen.length);
+  });
+  it('continues through provider pages and preserves exact tool identifiers', async () => {
+    const longSlug = 'SLACK_' + 'A'.repeat(110);
+    const longName = 'A tool '.repeat(30);
+    const transport = vi.fn(async (url: URL | string) => {
+      const cursor = new URL(String(url)).searchParams.get('cursor');
+      return json(cursor === 'provider-page-two' ? { items: [
+        { slug: longSlug, name: longName, toolkit: { slug: 'slack' } },
+      ] } : { items: [
+        { slug: 'SLACK_FIRST', name: 'First', toolkit: { slug: 'slack' } },
+      ], next_cursor: 'provider-page-two' });
+    });
+    const provider = new ComposioApps('fixture-only', transport as typeof fetch);
+    const first = await provider.listTools('slack');
+    expect(first.next).toContain('More tools are available');
+    const second = await provider.listTools('slack', /query="([^"]+)"/.exec(first.next!)![1]);
+    expect(second.tools).toEqual([{ slug: longSlug, name: longName, description: '' }]);
+    expect(second.next).toBeUndefined();
+    expect(transport).toHaveBeenCalledTimes(2);
   });
   it('registers one receiver and only webhook trigger types on an existing connected account', async () => {
     const calls: { path: string; body?: Record<string, unknown> }[] = [];
@@ -627,15 +658,15 @@ describe('managed app provider boundary', () => {
         { slug: 'YOUTUBE_MULTIPART_UPLOAD_VIDEO', name: 'Multipart upload video',
           toolkit: { slug: 'youtube' } }] }));
       const provider = new ComposioApps('fixture-only', transport as typeof fetch);
-      expect((await provider.listTools('youtube')).map((tool) => tool.slug))
+      expect((await provider.listTools('youtube')).tools.map((tool) => tool.slug))
         .toEqual([YOUTUBE_ANALYTICS_TOOL, 'YOUTUBE_MULTIPART_UPLOAD_VIDEO']);
     });
 
     it('lists the report tool with the YouTube tools and nowhere else', async () => {
       const { provider } = fixture({ status: 200, data: {} });
-      expect((await provider.listTools('youtube')).map((tool) => tool.slug))
+      expect((await provider.listTools('youtube')).tools.map((tool) => tool.slug))
         .toEqual([YOUTUBE_ANALYTICS_TOOL, 'YOUTUBE_LIST_CHANNEL_VIDEOS']);
-      expect((await provider.listTools('slack')).map((tool) => tool.slug))
+      expect((await provider.listTools('slack')).tools.map((tool) => tool.slug))
         .toEqual(['SLACK_POST_MESSAGE']);
     });
 

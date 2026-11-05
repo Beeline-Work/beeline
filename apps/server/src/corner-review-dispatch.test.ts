@@ -104,7 +104,7 @@ beforeEach(async () => {
   await db.query(`DELETE FROM corner_brief_revisions WHERE corner_id=$1`, [C]);
   await db.query(`UPDATE agents SET access_policy='{"type":"everyone"}'::jsonb`);
   await db.query(`UPDATE memberships SET removed_at=NULL`);
-  await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb`);
+  await db.query(`DELETE FROM agent_subscriptions WHERE source='room'`);
   await db.query(`UPDATE rooms SET reviewer_agent_id=NULL`);
   await db.query(
     `UPDATE corner_github_cache SET lifecycle='{"checks":"unknown"}'::jsonb`,

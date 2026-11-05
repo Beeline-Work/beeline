@@ -37,7 +37,7 @@
   ],
   "scripts": {
     "build": "node ../../scripts/build-usebeeline-package.mjs",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit --incremental --tsBuildInfoFile .typecheck.tsbuildinfo"
   },
   "devDependencies": {
     "@beeline/body": "*",

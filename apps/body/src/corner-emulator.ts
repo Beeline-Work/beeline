@@ -691,14 +691,6 @@ export async function listenCornerEmulator(
   listeners.set(socketPath, { server, host });
 }
 
-export async function closeCornerEmulatorListeners(): Promise<void> {
-  await Promise.all([...listeners.entries()].map(async ([path, listener]) => {
-    listeners.delete(path);
-    await new Promise<void>((done) => listener.server.close(() => done()));
-    if (!path.startsWith('@')) await unlink(path).catch(() => undefined);
-  }));
-}
-
 /** What `beeline emulator` runs when this corner has a helper socket. */
 export async function requestKeptCornerEmulator(
   socketPath: string,

@@ -71,6 +71,6 @@ export function takeProvisionalDraft(key: string): string | undefined {
 }
 
 /** Test seam only. */
-export function resetProvisionalDrafts(): void {
+function resetProvisionalDrafts(): void {
   provisional.clear();
 }

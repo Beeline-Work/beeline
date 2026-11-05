@@ -20,6 +20,7 @@ import type {
   RepositoryBinding,
   Unsubscribe,
 } from './types.js';
+/** @public The isolated phone dependency tree consumes this client contract. */
 export interface BuzzClient {
   /** Close the WS if open. */
   disconnect(): void;

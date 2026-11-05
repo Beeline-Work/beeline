@@ -32,7 +32,7 @@ export interface ShortcutChord {
     shiftKey?: boolean;
 }
 
-export const SESSION_ACTION_SHORTCUTS: Readonly<Record<SessionActionShortcutId, ShortcutChord>> = {
+const SESSION_ACTION_SHORTCUTS: Readonly<Record<SessionActionShortcutId, ShortcutChord>> = {
     details: { key: 'o', code: 'KeyO', keyLabel: 'O', altKey: true },
     resume: { key: 'r', code: 'KeyR', keyLabel: 'R', altKey: true },
     fork: { key: 'f', code: 'KeyF', keyLabel: 'F', altKey: true },
@@ -42,7 +42,7 @@ export const SESSION_ACTION_SHORTCUTS: Readonly<Record<SessionActionShortcutId, 
     archive: { key: 'a', code: 'KeyA', keyLabel: 'A', shiftKey: true },
 };
 
-export const SIDEBAR_PICKER_SHORTCUTS: Readonly<Record<SidebarPickerShortcutId, ShortcutChord>> = {
+const SIDEBAR_PICKER_SHORTCUTS: Readonly<Record<SidebarPickerShortcutId, ShortcutChord>> = {
     changes: { key: 'c', code: 'KeyC', keyLabel: 'C', altKey: true },
     allFiles: { key: 'f', code: 'KeyF', keyLabel: 'F', altKey: true },
     newSideChat: { key: 's', code: 'KeyS', keyLabel: 'S', altKey: true },
@@ -128,7 +128,7 @@ export function formatShortcut(
     return `${modifierLabel}${browserSafe ? '+Alt' : ''}+${keyLabel}`;
 }
 
-export function formatShortcutChord(modifier: ShortcutModifier, chord: ShortcutChord): string {
+function formatShortcutChord(modifier: ShortcutModifier, chord: ShortcutChord): string {
     if (modifier === 'meta') {
         return `${chord.altKey ? '⌥' : ''}${chord.shiftKey ? '⇧' : ''}⌘${chord.keyLabel}`;
     }
@@ -141,7 +141,7 @@ export function formatShortcutChord(modifier: ShortcutModifier, chord: ShortcutC
     ].filter(Boolean).join('+');
 }
 
-export function matchesShortcutChord(
+function matchesShortcutChord(
     event: KeyboardShortcutEvent,
     modifier: ShortcutModifier,
     chord: ShortcutChord,

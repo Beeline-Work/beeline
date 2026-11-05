@@ -54,7 +54,7 @@ export function prepareInsights(contents, verdict, updatedAt) {
 }
 
 /** Transport stays with the first-party connection; conflicts always re-read and re-project. */
-export async function publishInsights(transport, verdict) {
+async function publishInsights(transport, verdict) {
   for (let attempt = 0; attempt < 3; attempt++) {
     const contents = await transport.read();
     const response = await transport.write(prepareInsights(contents, verdict));

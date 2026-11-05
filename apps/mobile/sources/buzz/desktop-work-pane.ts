@@ -12,7 +12,7 @@ let pendingSelection: DesktopWorkPaneSelection | null = null;
  * on the Room, the middle pane keeps talking, and the second pane shows the
  * corner. A selection for another Room waits until that Room is in view.
  */
-export function selectDesktopWorkCorner(selection: DesktopWorkPaneSelection): void {
+function selectDesktopWorkCorner(selection: DesktopWorkPaneSelection): void {
   pendingSelection = selection;
   for (const listener of listeners) {
     if (listener(selection)) pendingSelection = null;

@@ -130,7 +130,7 @@ export function getBuzzNotificationTargetFromData(data: unknown): BuzzNotificati
 }
 
 /** Backward-compatible channel-only projection for older call sites and payloads. */
-export function getBuzzChannelIdFromNotificationData(data: unknown): string | null {
+function getBuzzChannelIdFromNotificationData(data: unknown): string | null {
   return getBuzzNotificationTargetFromData(data)?.channelId ?? null;
 }
 
@@ -209,7 +209,7 @@ export async function resolveBuzzNotificationTarget(
  * Bring a notification's Room to the front without creating another copy.
  * The response id also invalidates the retained screen's transcript backfill.
  */
-export function navigateToBuzzChannelFromNotification(
+function navigateToBuzzChannelFromNotification(
   router: Pick<Router, 'navigate'>,
   channelId: string,
   notificationResponseId: string,
@@ -289,7 +289,7 @@ export function navigateToBuzzTargetFromNotification(
 }
 
 /** Parse an Expo response and navigate to its exact Buzz source when supported. */
-export function navigateToBuzzNotificationResponse(
+function navigateToBuzzNotificationResponse(
   navigator: NotificationNavigator,
   response: unknown,
 ): BuzzNotificationTarget | null {

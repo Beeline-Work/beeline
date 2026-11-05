@@ -140,6 +140,7 @@ export class CornerAttentionDeadlines {
   private release: () => void;
   private resync: () => void;
   private stopped = false;
+  private readonly refreshing = new Map<string, { again: boolean; done: Promise<void> }>();
   constructor(
     private db: SqlDatabase,
     private live: LiveHub,
@@ -163,9 +164,21 @@ export class CornerAttentionDeadlines {
   }
   async refresh(id: string): Promise<void> {
     if (this.stopped) return;
-    const next = await refreshCornerAttention(this.db, id);
-    if (!next || this.stopped) return;
-    this.live.publish({ type: 'invalidate', roomId: next.parentId, reason: 'corner-status' });
+    const running = this.refreshing.get(id);
+    if (running) { running.again = true; return running.done; }
+    // Presence and committed source events can arrive together. Share the
+    // snapshot in flight and re-read once for changes committed during it.
+    const state = { again: false, done: Promise.resolve() };
+    this.refreshing.set(id, state);
+    state.done = (async () => {
+      do {
+        state.again = false;
+        const next = await refreshCornerAttention(this.db, id);
+        if (next && !this.stopped)
+          this.live.publish({ type: 'invalidate', roomId: next.parentId, reason: 'corner-status' });
+      } while (state.again && !this.stopped);
+    })();
+    try { await state.done; } finally { this.refreshing.delete(id); }
   }
 
   stop(): void {

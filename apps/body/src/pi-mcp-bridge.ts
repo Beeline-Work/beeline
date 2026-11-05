@@ -112,21 +112,6 @@ function isPiAcpCommand(agentCommand: string | undefined): boolean {
 }
 
 /**
- * True when `session/new`'s `mcpServers` actually reaches the model's tools.
- * Fail-closed: an unknown or retired harness must not claim delivery it does
- * not perform. `cursor-agent-acp` is the unfinished stub; `cursor-acp-bridge`
- * writes the servers into the isolated cursor home before spawning.
- */
-export function harnessMountsSessionMcpServers(agentCommand: string | undefined): boolean {
-  if (!agentCommand) return false;
-  if (isPiAcpCommand(agentCommand)) return false;
-  if (/(^|[/\\])cursor-agent-acp(\.[a-z]+)?$/i.test(agentCommand)) return false;
-  return /(^|[/\\])(claude-(agent|code)-acp|codex-acp|grok|buzz-agent|cursor-acp-bridge)(\.[a-z]+)?$/i.test(
-    agentCommand,
-  );
-}
-
-/**
  * The extension source for one session's servers.
  *
  * Pure and exported so tests can run the bridge against real stdio processes.

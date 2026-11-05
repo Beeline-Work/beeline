@@ -254,10 +254,6 @@ function useStableFloatingPresentation(props: HullModalProps): HullModalProps {
   return presentation.current.value as HullModalProps;
 }
 
-const screenModalExit = FadeOut.duration(200)
-  .easing(Easing.in(Easing.quad))
-  .reduceMotion(ReduceMotion.System);
-
 /**
  * The only React Native Modal boundary owned by Beeline. Every app-rendered
  * floating surface gets the same scrim, keyboard behavior, platform-back
@@ -329,7 +325,10 @@ const StableHullModal = React.memo(function StableHullModal({
   );
   if (withinScreen && Platform.OS === 'android') {
     return visible ? (
-      <Animated.View exiting={screenModalExit} style={styles.screenModal}>
+      <Animated.View
+        exiting={FadeOut.duration(200).easing(Easing.quad).reduceMotion(ReduceMotion.System)}
+        style={styles.screenModal}
+      >
         {body}
       </Animated.View>
     ) : null;

@@ -1155,10 +1155,15 @@ export class RoomRuntimeCoordinator {
     // The turn loop refreshes checkout before activation. Idle Rooms can
     // subscribe to durable commands without fetching a token or running Git.
     const cwd = this.roomRoot(roomId);
+    // An agent can belong to Rooms outside its helper's pairing Workspace.
+    const { workspaceId } = await this.options.daemonApi.execute('getRoomAuthority', {
+      roomId,
+      principalId: this.agent.publicKey,
+    });
     const grantRunnerEndpoint = await this.grantRunnerEndpoint();
     const loop = new MonolithRoomTurnLoop({
       roomId,
-      workspaceId: this.runtime.communityId,
+      workspaceId,
       cwd,
       refreshCheckout: () => this.refreshRoomCheckout(roomId),
       grantRunner: this.grantRunner,

@@ -2,15 +2,15 @@
 
 This batch implements the captain's accepted recommendations. The code batch
 https://github.com/Beeline-Work/beeline/pull/3447 merged after green CI. L1 is
-complete. B1's original one-row pass has now exited: the SSH stream ended without
-an exit status or final counters. Independent read-back at 09:50Z found cleanup
-backend **1173283** and observer **1173284** absent, zero cleanup locks or blocked
-clients, and **160,182 cards + 151 fields** remaining. All 229 skill versions and
-both fixed telemetry cohorts remain intact. Cards fell by 6,129 from the pass's
-baseline; this net change is not an exact writer commit count. Last received
-counters acknowledge 1,971 cards and one timeout, with no final result. No second
-writer was started; continuation awaits firstmate. B8 is untouched. See
-`b1-one-row-transport-ended.json`.
+complete. After the previous SSH-attached pass exited, inbox 025 authorized a
+single detached continuation: one-row transactions, a 100 ms local statement cap,
+and a 20 ms normal pause. Prior cleanup and observer sessions were verified absent
+before launch. `nohup` now writes `/tmp/b1.log` on the server; SQL cleanup backend
+**1182311** and observer **1182312** are live. First progress: 457 committed cards,
+zero timeouts/client waits; independent count: 159,605 cards remain at 09:53Z.
+Cancellation proof passed in 3 ms. No duplicate writer was started. Progress will
+be checked from both the durable log and read-only counts; B8 is untouched. See
+`b1-detached-start.json` and the preceding `b1-one-row-transport-ended.json`.
 
 | Decision | Implementation |
 | --- | --- |

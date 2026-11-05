@@ -7,7 +7,6 @@ import { jsonCodec, type Codec } from './wire-codec.js';
 type OnWire<T> = T extends void ? null : T;
 export type WireOutput<K extends RouteId> = OnWire<RouteOutput<K>>;
 const MAX_INPUT_BYTES = 64 * 1024;
-const MAX_ENVELOPE_BYTES = 256 * 1024;
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
 
 const uploadFields = { bytes: true, mimeType: true, name: true } as const satisfies Record<keyof RouteInput<'phone.uploadMedia'>, true>;
@@ -43,6 +42,6 @@ export function routeCodecs<K extends RouteId>(id: K): {
     params: contract.input === 'file-bytes'
       ? fileBytesCodec as Codec<RouteInput<K>>
       : jsonCodec(wireShapes, contract.input, MAX_INPUT_BYTES),
-    result: jsonCodec(wireShapes, contract.output, MAX_ENVELOPE_BYTES),
+    result: jsonCodec(wireShapes, contract.output),
   };
 }

@@ -1,5 +1,5 @@
-/** Structural JSON codecs generated from contracts. Semantic authorization and
- * family-specific row/byte limits remain the negotiated server adapter's job. */
+/** Structural JSON codecs generated from contracts. Semantic authorization
+ * remains with server handlers. */
 export type WireShape =
   | { kind: 'json' | 'never' | 'undefined' | 'string' | 'number' | 'boolean' }
   | { kind: 'literal'; value: string | number | boolean | null }
@@ -10,8 +10,8 @@ export type WireShape =
   | { kind: 'object'; properties: Readonly<Record<string, { node: number; optional: boolean }>>; index?: number };
 export type Codec<T> = Readonly<{ parse(value: unknown): T }>;
 
-/** Bounded JSON preflight prevents getters, cycles, nonfinite values, exotic
- * prototypes and oversized payloads before any union backtracking can happen. */
+/** Descriptor-only JSON preflight rejects getters, cycles, nonfinite values
+ * and exotic prototypes. Explicit byte budgets also bound input validation work. */
 function walkJson(value: unknown, maxBytes: number, canonical = false): string | undefined {
   let bytes = 0;
   let nodes = 0;
@@ -25,7 +25,7 @@ function walkJson(value: unknown, maxBytes: number, canonical = false): string |
     if (bytes > maxBytes) throw new Error('network codec: byte limit');
   }
   function visit(item: unknown, depth: number): string | undefined {
-    if (++nodes > (canonical ? 4096 : 32768) || depth > (canonical ? 32 : 64)) throw new Error('network codec: complexity limit');
+    if ((Number.isFinite(maxBytes) && ++nodes > (canonical ? 4096 : 32768)) || depth > (canonical ? 32 : 64)) throw new Error('network codec: complexity limit');
     if (item === undefined && !canonical) return;
     if (item === null || typeof item === 'boolean' || typeof item === 'number' && Number.isFinite(item)) {
       const text = JSON.stringify(item); add(text); return canonical ? text : undefined;
@@ -81,12 +81,12 @@ export function canonicalJson(value: unknown): string {
   return walkJson(value, 64 * 1024, true)!;
 }
 
-export function jsonCodec<T>(shapes: readonly WireShape[], root: number, maxBytes: number): Codec<T> {
+export function jsonCodec<T>(shapes: readonly WireShape[], root: number, maxBytes = Infinity): Codec<T> {
   return Object.freeze({ parse(value: unknown): T {
     assertJsonBudget(value, maxBytes);
     let work = 0;
     function matches(id: number, item: unknown): boolean {
-      if (++work > 131072) throw new Error('network codec: validation work limit');
+      if (Number.isFinite(maxBytes) && ++work > 131072) throw new Error('network codec: validation work limit');
       const shape = shapes[id];
       if (!shape) throw new Error('network codec: invalid schema reference');
       switch (shape.kind) {

@@ -11,6 +11,9 @@ import { PHONE_OPERATION_NAMES } from './phone-service.js';
  * routable (404 unknown_phone_operation).
  */
 const ALL_PHONE_OPERATION_NAMES = {
+  readMediaMetadata: true,
+  readMediaLink: true,
+  readMediaPlayback: true,
   readWorkspaces: true,
   readWorkspace: true,
   readWorkspaceMembers: true,

@@ -206,7 +206,8 @@ export default function CommunityInviteJoin() {
           </>
         ) : failure === 'unreachable' ? (
           <View style={styles.failureBlock} testID="invite-unreachable">
-            {error && <SettingsRow title={error} action="Retry" onPress={retry} testID="invite-retry" />}
+            {error ? <SettingsRow title={error} action="Retry" onPress={retry} testID="invite-retry" /> :
+              <Button variant="quiet" label="Try invite again" onPress={retry} testID="invite-retry" />}
             <Button variant="quiet" label="Choose another way in" onPress={() => void otherWay()} testID="invite-other-way" />
           </View>
         ) : (

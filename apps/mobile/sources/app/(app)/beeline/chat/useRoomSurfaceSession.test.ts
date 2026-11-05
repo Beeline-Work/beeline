@@ -2580,10 +2580,9 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('fails a first-load timeout into the retry screen, and RETRY repaints', async () => {
-    // The 18:47Z captain report: a hung connection left the Room on LOADING
-    // forever. The bounded request now rejects, and an unpainted Room shows
-    // the retryable error screen instead of an endless loader.
+  it('leaves timeout copy to the global banner and a subsequent read repaints', async () => {
+    // The socket owner supplies recovery; the Room must not duplicate its
+    // connection failure copy or lose the ability to paint a later answer.
     controls.roomError = new RoomViewHttpError(0, 'timeout');
     let current!: UseRoomSurfaceSessionResult;
     let renderer!: ReactTestRenderer;
@@ -2600,9 +2599,7 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => controls.responses[0]!.error(controls.roomError));
     expect(current.roomSurface).toBeNull();
     expect(current.hydrationFailed).toBe(true);
-    expect(current.hydrationError).toBe(
-      'Couldn’t reach Beeline',
-    );
+    expect(current.hydrationError).toBe('');
 
     // RETRY re-runs the read; a responding server paints the Room normally.
     controls.roomError = null;
@@ -2618,7 +2615,7 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('keeps the cached page with the shared Retry error and clears private data on access loss', async () => {
+  it('keeps the cached page with an action error and clears private data on access loss', async () => {
     controls.cached = roomView('room-a');
     let current!: UseRoomSurfaceSessionResult;
     let renderer!: ReactTestRenderer;
@@ -2635,12 +2632,12 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => controls.responses[0]!.error(new TypeError('Network request failed')));
     expect(current.roomSurface?.room.id).toBe('room-a');
     expect(current.hydrationFailed).toBe(true);
-    expect(current.hydrationError).toBe('Couldn’t reach Beeline');
+    expect(current.hydrationError).toBe('Could not load this Room.');
 
     await act(async () => controls.responses[0]!.error(new RoomViewHttpError(403, 'forbidden')));
     expect(current.roomSurface).toBeNull();
     expect(current.hydrationFailed).toBe(true);
-    expect(current.hydrationError).toBe('Couldn’t reach Beeline');
+    expect(current.hydrationError).toBe('Could not load this Room.');
     await act(async () => renderer.unmount());
   });
 });

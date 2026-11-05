@@ -118,9 +118,12 @@ it('an unavailable image metadata read cannot disconnect an image send before it
   try {
     await started;
     // This was the production rejection that the phone turned into a socket
-    // close. It remains a terminal 404 when the media allowlist fix is present.
-    await expect(connection.request('readMediaMetadata', { objectId: '44444444-4444-4444-8444-444444444444' }))
-      .rejects.toMatchObject({ status: 404 });
+    // close. With the media allowlist fix present, the missing object is still
+    // refused. Neither refusal may tear down the send's transport.
+    const refused = await connection.request('readMediaMetadata', { objectId: '44444444-4444-4444-8444-444444444444' })
+      .catch((error: unknown) => error);
+    expect(refused).toMatchObject({ name: 'PhoneSocketError', retryable: false });
+    expect(['unknown_phone_operation', 'media_not_found']).toContain(refused.code);
     expect(sockets).toHaveLength(1);
     expect(sockets[0]!.readyState).toBe(WebSocket.OPEN);
   } finally { release(); }

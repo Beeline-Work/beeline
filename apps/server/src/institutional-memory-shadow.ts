@@ -1,3 +1,4 @@
+import { resourceReadAuthority, resourceRequester } from './resource-requester.js';
 import { cornerCommissionerSql } from './corner-opening.js';
 import { randomUUID } from 'node:crypto';
 import {
@@ -189,40 +190,20 @@ export async function getInstitutionalContext(
   command: CommandRow,
   embed: EmbedFn = createDefaultEmbedFn(),
 ): Promise<InstitutionalContextSnapshot> {
-  const requestText = (await database.query<{ request_text: string }>(
-    `SELECT root.text request_text FROM rooms room
-     JOIN messages root ON root.id=$2 AND root.deleted_at IS NULL
-     JOIN rooms root_room ON root_room.id=root.room_id AND root_room.workspace_id=room.workspace_id
-     WHERE room.id=$1`,
-    [command.room_id, command.root_source_message_id],
-  )).rows[0]?.request_text;
+  const read = await resourceReadAuthority(database, command);
+  const requestText = read?.source.text;
   if (requestText === undefined) throw new Error('institutional memory requester authority is unavailable');
   const queryEmbedding = await withDeadline(embed, INSTITUTIONAL_CONTEXT_EMBEDDING_TIMEOUT_MS)(
     requestText, 'query');
   return database.transaction(async (db) => {
-    // The root message's author is this turn's requester whether human or
-    // agent (a schedule, event, or agent-to-agent wake); only its Room needs
-    // to share the calling Room's Workspace. A root that no longer exists
-    // there is the one case left refused.
-    const authority = (
-      await db.query<{
-        workspace_id: string;
-        requester_identity_id: string;
-        repository_key: string | null;
-        repository_name: string | null;
-      }>(
-        `SELECT room.workspace_id,root.author_id requester_identity_id,
-                COALESCE(room.repository_key,parent.repository_key) repository_key,
-                COALESCE(room.repository_name,parent.repository_name) repository_name
-         FROM rooms room
-         LEFT JOIN rooms parent ON parent.id=room.parent_id
-         JOIN messages root ON root.id=$2 AND root.deleted_at IS NULL
-         JOIN rooms root_room ON root_room.id=root.room_id
-           AND root_room.workspace_id=room.workspace_id
-         WHERE room.id=$1`,
-        [command.room_id, command.root_source_message_id],
-      )
-    ).rows[0];
+    const readAuthority = await resourceReadAuthority(db, command);
+    const repository = (await db.query<{ repository_key: string | null; repository_name: string | null }>(
+      `SELECT COALESCE(room.repository_key,parent.repository_key) repository_key,
+              COALESCE(room.repository_name,parent.repository_name) repository_name
+       FROM rooms room LEFT JOIN rooms parent ON parent.id=room.parent_id WHERE room.id=$1`,
+      [command.room_id],
+    )).rows[0];
+    const authority = readAuthority && repository ? { ...readAuthority, ...repository } : undefined;
     if (!authority) throw new Error('institutional memory requester authority is unavailable');
     // Only facts whose saved keywords appear in the request load. Nothing
     // fills leftover fact space, so a request that matches no fact loads none.
@@ -438,24 +419,14 @@ export async function getInstitutionalContext(
 }
 
 /**
- * The requester whose memory a turn may read: the root message's author,
- * whether human or agent (a schedule, event, or agent-to-agent wake); only
- * its Room needs to share the calling Room's Workspace.
+ * Memory reads share resource requester provenance, including the owner of
+ * an agent-originated order. The root stays within the calling Workspace.
  */
 async function memoryReadAuthority(
   db: SqlDatabase,
   command: CommandRow,
 ): Promise<{ workspace_id: string; requester_identity_id: string }> {
-  const authority = (
-    await db.query<{ workspace_id: string; requester_identity_id: string }>(
-      `SELECT room.workspace_id,root.author_id requester_identity_id
-       FROM rooms room
-       JOIN messages root ON root.id=$2 AND root.deleted_at IS NULL
-       JOIN rooms root_room ON root_room.id=root.room_id AND root_room.workspace_id=room.workspace_id
-       WHERE room.id=$1`,
-      [command.room_id, command.root_source_message_id],
-    )
-  ).rows[0];
+  const authority = await resourceReadAuthority(db, command);
   if (!authority) throw new Error('institutional memory requester authority is unavailable');
   return authority;
 }
@@ -464,7 +435,7 @@ type MemoryWriteAuthority = {
   workspaceId: string;
   requesterIdentityId: string;
   directMessage: boolean;
-  /** The requester started this turn; only then may it touch their profile. */
+  /** The resolved human requester started this turn, directly or through an order. */
   requesterTurn: boolean;
 };
 
@@ -487,35 +458,28 @@ const CORNER_REQUESTER_SQL = (cornerId: string) => `COALESCE(
  * A turn woken by a corner event, a watched corner, or an agent message acts
  * for the corner's durable requester (this Room's corner, else the root
  * message's corner); it may write shared Workspace facts only, sourced from
- * current messages in this Room.
+ * current messages in this Room. Agent-originated orders use the issuing
+ * owner's identity, retaining the shared-fact and current-source constraints.
  */
 async function memoryWriteAuthority(
   db: SqlDatabase,
   command: CommandRow,
   input: { sourceMessageIds: readonly string[]; personAsked: boolean },
 ): Promise<MemoryWriteAuthority> {
-  const authority = (
-    await db.query<{
-      workspace_id: string;
-      direct_participants: unknown;
-      root_room_id: string;
-      person_id: string | null;
-      corner_requester_id: string | null;
-    }>(
-      `SELECT room.workspace_id,room.direct_participants,root.room_id root_room_id,
-              CASE WHEN author.kind='human' AND author.id<>'${SYSTEM_IDENTITY_ID}'
-                THEN author.id END person_id,
-              COALESCE(${CORNER_REQUESTER_SQL('room.id')},
-                ${CORNER_REQUESTER_SQL('root.room_id')}) corner_requester_id
-       FROM rooms room
-       JOIN messages root ON root.id=$2 AND root.deleted_at IS NULL
-       JOIN rooms root_room ON root_room.id=root.room_id
-         AND root_room.workspace_id=room.workspace_id
-       JOIN identities author ON author.id=root.author_id
-       WHERE room.id=$1`,
-      [command.room_id, command.root_source_message_id],
-    )
-  ).rows[0];
+  const resolved = await resourceRequester(db, command);
+  const authority = resolved && (resolved.source.message_backed || resolved.source.agent_order) ? (await db.query<{
+    workspace_id: string; direct_participants: unknown; root_room_id: string;
+    person_id: string | null; corner_requester_id: string | null;
+  }>(
+    `SELECT room.workspace_id,room.direct_participants,$2::uuid root_room_id,
+            CASE WHEN person.kind='human' AND person.id<>$4 THEN person.id END person_id,
+            COALESCE(${CORNER_REQUESTER_SQL('room.id')},
+              ${CORNER_REQUESTER_SQL('$2::uuid')}) corner_requester_id
+     FROM rooms room JOIN identities person ON person.id=$3
+     WHERE room.id=$1 AND room.workspace_id=$5`,
+    [command.room_id, resolved.source.room_id, resolved.requester.id, SYSTEM_IDENTITY_ID,
+      resolved.source.workspace_id],
+  )).rows[0] : undefined;
   if (!authority) {
     throw new Error(
       `institutional memory requester authority is unavailable: this turn's root message ${command.root_source_message_id} is not in this Workspace`,

@@ -33,6 +33,8 @@ Join my Beeline Room: join.usebeeline.app
 
 It prints a sign-in link. Open it on any device and sign in with GitHub or Google. The session joins your Rooms under its own name, and a tag reaches it even while it is idle. [How it works](https://github.com/Beeline-Work/beeline/blob/main/docs/session-join.md).
 
+Assistants connected through [Rooms MCP](docs/rooms-mcp-connector.md) receive tags through their registered webhook even while idle. Without a webhook, tags wait for the assistant’s next check-in.
+
 ## One message
 
 ```text

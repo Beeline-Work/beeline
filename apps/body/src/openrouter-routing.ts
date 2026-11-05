@@ -526,7 +526,7 @@ export async function probeOpenRouterProvider(input: {
         max_tokens: 32,
         tools: [PROBE_TOOL],
       }),
-      signal: AbortSignal.timeout(input.timeoutMs ?? OPENROUTER_PROBE_TIMEOUT_MS),
+      signal: undefined,
     });
     if (!response.ok) {
       return {
@@ -681,7 +681,7 @@ async function resolveUptimeRouting(
   try {
     const doFetch = input.fetchImpl ?? fetch;
     const response = await doFetch(`${OPENROUTER_ENDPOINTS_BASE_URL}/${input.model}/endpoints`, {
-      signal: AbortSignal.timeout(input.timeoutMs ?? OPENROUTER_ROUTING_FETCH_TIMEOUT_MS),
+      signal: undefined,
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const { endpoints, contextLength, inputModalities } = parseOpenRouterEndpoints(
@@ -798,7 +798,7 @@ function dailyDecision(row: DailyRouting, source: OpenRouterRoutingSource): Open
 async function buildDailyRouting(input: ResolveOpenRouterRoutingInput): Promise<DailyRouting> {
   const now = input.now ?? Date.now;
   const response = await (input.fetchImpl ?? fetch)(`${OPENROUTER_ENDPOINTS_BASE_URL}/${input.model}/endpoints`, {
-    signal: AbortSignal.timeout(input.timeoutMs ?? OPENROUTER_ROUTING_FETCH_TIMEOUT_MS),
+    signal: undefined,
   });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const { endpoints, contextLength, inputModalities } = parseOpenRouterEndpoints(await response.json());

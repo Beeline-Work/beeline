@@ -720,7 +720,7 @@ export class MonolithRoomTurnLoop {
     this.options = { ...options, api: this.commandContext.bind(options.api) };
     this.activationContext=new CommandActivationContext({
       scope:()=>options.api.channel?.activationScope?.(),
-      selected:()=>Boolean(options.api.channel),
+      selected:()=>Boolean(options.api.channel?.isOpen),
       ready:()=>options.api.waitForConnection(),
       read:input=>options.api.readCommandActivation(input),
     });
@@ -858,11 +858,10 @@ export class MonolithRoomTurnLoop {
   }
 
   private commandActivation(){
-    if(!this.options.api.channel)return Promise.resolve(undefined);
+    if(!this.options.api.channel?.isOpen)return Promise.resolve(undefined);
     const command=this.commandContext?.current;
     if(!command){
-      if(this.options.api.channel)return Promise.reject(new Error('Activation requires a claimed command'));
-      return Promise.resolve(undefined);
+      return Promise.reject(new Error('Activation requires a claimed command'));
     }
     return this.activationContext.read({agentId:this.agent.publicKey,workspaceId:this.options.workspaceId,
       roomId:this.options.roomId,commandId:command.id,generationId:this.commandContext.generationId});
@@ -1719,11 +1718,9 @@ export class MonolithRoomTurnLoop {
     // Best-effort read of this turn's search_memory call/miss counters before
     // the trace writes — bounded so a slow or unreachable server never delays
     // the turn's own completion over a diagnostic.
-    let statsStartedAt = 0;
     let statsPromise: Promise<{ searchCalls: number; searchMisses: number } | undefined> | undefined;
     const startTraceStats = (): void => {
       if (statsPromise) return;
-      statsStartedAt = Date.now();
       statsPromise = api.execute('getInstitutionalMemoryTurnStats', {
         roomId: this.options.roomId,
         agentId: this.agent.publicKey,
@@ -1735,14 +1732,7 @@ export class MonolithRoomTurnLoop {
       reason?: string,
     ): Promise<void> => {
       try {
-        const remaining = Math.max(0, 800 - (Date.now() - statsStartedAt));
-        let timer: NodeJS.Timeout | undefined;
-        const stats = statsPromise && remaining > 0
-          ? await Promise.race([
-              statsPromise,
-              new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), remaining); }),
-            ]).finally(() => { if (timer) clearTimeout(timer); })
-          : undefined;
+        const stats=await statsPromise;
         if (stats) trace.noteSearchMemoryStats(stats.searchCalls, stats.searchMisses);
       } catch {
         // Losing this measurement must never affect the turn.

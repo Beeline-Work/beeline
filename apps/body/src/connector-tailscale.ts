@@ -6,7 +6,7 @@
  * bounded wait. An unauthenticated client prints a browser URL; that URL is
  * returned to the Workbench ceremony and no auth key ever enters Beeline.
  */
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { tmpdir, userInfo } from 'node:os';
@@ -128,28 +128,21 @@ export function watchTailscaleSignIn(
   onConnected: () => void,
   options: { run?: TailscaleCommandRunner; intervalMs?: number } = {},
 ): () => void {
-  const run = options.run ?? runTailscaleCommand;
-  const intervalMs = options.intervalMs ?? 2_000;
-  let stopped = false;
-  let timer: NodeJS.Timeout | undefined;
-  const probe = async () => {
-    timer = undefined;
-    const status = await readStatus(run).catch(() => undefined);
-    if (stopped) return;
-    if (status?.BackendState === 'Running') {
-      stopped = true;
-      onConnected();
-      return;
-    }
-    timer = setTimeout(() => void probe(), intervalMs);
-    timer.unref?.();
+  const run=options.run??runTailscaleCommand;
+  const child=spawn('tailscale',['debug','watch-ipn','--initial'],{stdio:['ignore','pipe','ignore']});
+  let stopped=false,reading=false,dirty=false;
+  const stop=()=>{stopped=true;child.kill();};
+  const probe=async()=>{
+    dirty=true;if(stopped||reading)return;reading=true;
+    try{do{dirty=false;const status=await readStatus(run);
+      if(!stopped&&status?.BackendState==='Running'){stop();onConnected();return;}
+    }while(dirty&&!stopped);}catch{/* A new local bus notification can supply the next read. */}finally{reading=false;}
   };
-  timer = setTimeout(() => void probe(), intervalMs);
-  timer.unref?.();
-  return () => {
-    stopped = true;
-    if (timer) clearTimeout(timer);
-  };
+  child.stdout.on('data',()=>{void probe();});
+  child.once('error',()=>{stopped=true;});
+  void probe();
+  return stop;
+
 }
 
 async function ensureInstalled(

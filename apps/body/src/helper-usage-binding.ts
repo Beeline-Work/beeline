@@ -15,7 +15,7 @@ export function helperUsageBinding(api:DaemonApiClient){
     captureSource():()=>boolean{const captured=JSON.stringify(scope());return()=>JSON.stringify(scope())===captured;},
     async deliver(usage:AgentUsage):Promise<boolean>{
       let current=scope();
-      if(!current&&(selected||Boolean(api.channel))){
+      if(!current&&(selected||Boolean(api.channel?.isOpen))){
         await api.waitForConnection();current=scope();
         if(!current)throw new Error('Usage account capability unavailable');
       }
@@ -31,7 +31,7 @@ const contextWrites=new Map<string,{actor:string;sequence:number;digest?:string;
  * agent actor. Repeated context values join; uncertainty never starts retries. */
 export async function postChangedAgentUsage(api:DaemonApiClient,agentId:string,usage:AgentUsage):Promise<unknown>{
   let scope=api.channel?.usageAccountScope?.();
-  if(!scope&&(selectedWriters.has(api)||Boolean(api.channel))){
+  if(!scope&&(selectedWriters.has(api)||Boolean(api.channel?.isOpen))){
     await api.waitForConnection();scope=api.channel?.usageAccountScope?.();
     if(!scope)throw new Error('Usage source unavailable');
   }

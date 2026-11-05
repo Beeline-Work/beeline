@@ -126,7 +126,7 @@ async function main(): Promise<void> {
     const index = args.indexOf('--manifest-url');
     const url = index >= 0 ? args[index + 1]! : resolveManifestUrl();
     if (args.includes('--check')) {
-      const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+      const response = await fetch(url, { signal: undefined });
       if (!response.ok) throw new Error(`manifest fetch failed: HTTP ${response.status}`);
       const bundle = parseUpdateManifest(await response.text(), hostPlatformKey()).bundle;
       console.log(compareBundleIdentity(await readInstalledBundleIdentity(layout), bundle));

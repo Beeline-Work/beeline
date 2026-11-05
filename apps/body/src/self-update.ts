@@ -418,7 +418,7 @@ export function archiveUrlFor(manifestUrl: string, file: string): string {
 }
 
 async function fetchText(url: string, fetchImpl: typeof fetch): Promise<string> {
-  const response = await fetchImpl(url, { signal: AbortSignal.timeout(30_000) });
+  const response = await fetchImpl(url, { signal: undefined });
   if (!response.ok) throw new Error(`fetching ${url} failed: HTTP ${response.status}`);
   return response.text();
 }
@@ -505,10 +505,7 @@ export async function stageRelease(
   const fetchImpl: typeof fetch = (input, init) =>
     (opts.fetchImpl ?? fetch)(input, {
       ...init,
-      signal: AbortSignal.any([
-        ...(init?.signal ? [init.signal] : []),
-        AbortSignal.timeout(remaining()),
-      ]),
+
     });
   const log = opts.logger ?? ((line: string) => console.log(`[body] self-update: ${line}`));
   let releaseId = sanitizeReleaseId(
@@ -548,7 +545,7 @@ export async function stageRelease(
   try {
     log(`downloading ${published.file}`);
     const response = await fetchImpl(archiveUrlFor(manifestUrl, published.file), {
-      signal: AbortSignal.timeout(10 * 60_000),
+      signal: undefined,
     });
     if (!response.ok || !response.body) {
       throw new Error(`downloading ${published.file} failed: HTTP ${response.status}`);

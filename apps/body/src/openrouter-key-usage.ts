@@ -15,7 +15,6 @@ import type { AgentUsage, UsageSpend } from '@beeline/api-contract/daemon';
 
 export const OPENROUTER_KEY_URL = 'https://openrouter.ai/api/v1/key';
 export const OPENROUTER_KEY_MIN_INTERVAL_MS = 60_000;
-const OPENROUTER_KEY_TIMEOUT_MS = 10_000;
 
 const money = (n: unknown): number | undefined =>
   typeof n === 'number' && Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : undefined;
@@ -63,7 +62,7 @@ async function fetchKeySpend(apiKey: string, fetchImpl: typeof fetch): Promise<U
   try {
     const response = await fetchImpl(OPENROUTER_KEY_URL, {
       headers: { authorization: `Bearer ${apiKey}` },
-      signal: AbortSignal.timeout(OPENROUTER_KEY_TIMEOUT_MS),
+      signal: undefined,
     });
     return response.ok ? openRouterKeySpend(await response.json()) : undefined;
   } catch {

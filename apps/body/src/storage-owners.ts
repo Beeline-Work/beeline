@@ -266,7 +266,7 @@ export async function pruneStoppedAgentStorage(supervisorRoot: string, options: 
       const read = async () => {
         const response = await fetch(new URL('/v1/daemon/operations/getDaemonBootstrap', runtime.transport!.baseUrl), {
           method: 'POST', headers: { authorization: `Bearer ${runtime.transport!.daemonToken}`, 'content-type': 'application/json' },
-          body: JSON.stringify({ agentId }), signal: AbortSignal.timeout(10_000),
+          body: JSON.stringify({ agentId }), signal: undefined,
         });
         const result = await response.json() as { code?: string; error?: string; workspaceIds?: string[]; storageRooms?: StorageRoomState[] };
         if (response.status === 403 && [result.code, result.error].includes('agent_removed')) return { removed: true as const };

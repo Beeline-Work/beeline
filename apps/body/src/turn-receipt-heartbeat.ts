@@ -36,38 +36,10 @@ export async function withTurnReceiptHeartbeat<T>(
   api: Pick<DaemonApiClient, 'execute'> & Partial<Pick<DaemonApiClient, 'runWithTurnOwnership'>>,
   receipt: WorkingReceipt,
   task: () => Promise<T>,
-  onHeartbeatError: (error: unknown) => void,
+  _onHeartbeatError: (error: unknown) => void,
   onAuthorityLost?: () => void,
 ): Promise<T> {
   const owned = api.runWithTurnOwnership?.(receipt, task, onAuthorityLost);
   if (owned !== undefined) return owned;
-  let tail = Promise.resolve();
-  let refused = false;
-  const timer = setInterval(() => {
-    tail = tail
-      .catch(() => undefined)
-      .then(() =>
-        refused ? undefined : api.execute('postAgentTurnReceipt', {
-          ...receipt,
-          status: 'working',
-          heartbeat: true,
-        }),
-      )
-      .then(() => undefined)
-      .catch((error: unknown) => {
-        if (error instanceof DaemonApiError && !error.retryable && error.status >= 400 && error.status < 500) {
-          refused = true;
-          clearInterval(timer);
-        }
-        onHeartbeatError(error);
-        if (isTurnAuthorityLostError(error)) onAuthorityLost?.();
-      });
-  }, TURN_RECEIPT_HEARTBEAT_MS);
-  timer.unref?.();
-  try {
-    return await task();
-  } finally {
-    clearInterval(timer);
-    await tail;
-  }
+  return task();
 }

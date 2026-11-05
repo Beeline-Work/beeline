@@ -506,7 +506,6 @@ export class MonolithCornerTurnLoop {
     const finish = async () => {
       if (stopping) return;
       stopping = true;
-      clearTimeout(timer);
       client.off('session/update', check);
       client.off('exit', exited);
       this.options.signal?.removeEventListener('abort', exited);
@@ -515,8 +514,6 @@ export class MonolithCornerTurnLoop {
     };
     const check = () => { if (!client.hasBackgroundTools) void finish().catch(console.error); };
     const exited = () => { void finish().catch(console.error); };
-    const timer = setTimeout(() => { void finish().catch(console.error); }, 2 * 60 * 60 * 1000);
-    timer.unref();
     this.retiredClients.set(client, { done, check, stop: exited });
     client.on('session/update', check);
     client.once('exit', exited);
@@ -599,6 +596,7 @@ export class MonolithCornerTurnLoop {
   private cornerGitHubCli: CornerGitHubCli = 'host';
   private busy = false;
   private forcedStop = false;
+  private branchSyncController?:AbortController;
   private activityTail = Promise.resolve();
   /** The model selected for the live ACP session, independent of later settings edits. */
   private sessionModel: string | null = null;
@@ -677,7 +675,7 @@ export class MonolithCornerTurnLoop {
     this.options = { ...options, api: this.commandContext.bind(options.api) };
     this.activationContext=new CommandActivationContext({
       scope:()=>options.api.channel?.activationScope?.(),
-      selected:()=>Boolean(options.api.channel),
+      selected:()=>Boolean(options.api.channel?.isOpen),
       ready:()=>options.api.waitForConnection(),
       read:input=>options.api.readCommandActivation(input),
     });
@@ -728,6 +726,7 @@ export class MonolithCornerTurnLoop {
 
   async prepareForForcedUpdateRestart(): Promise<void> {
     this.forcedStop = true;
+    this.branchSyncController?.abort();
   }
 
   interruptedTurn(): InterruptedTurn | undefined {
@@ -738,6 +737,7 @@ export class MonolithCornerTurnLoop {
 
   interruptForServerMinimum(): InterruptedTurn | undefined {
     this.forcedStop = true;
+    this.branchSyncController?.abort();
     const current = this.currentTurn;
     if (!current) return undefined;
     // The idle lease starts after active work, including a handover interruption.
@@ -770,15 +770,15 @@ export class MonolithCornerTurnLoop {
     while (this.stoppedTurns.size > 500)
       this.stoppedTurns.delete(this.stoppedTurns.values().next().value!);
     if (this.currentTurn?.requestId !== requestId) return;
+    this.branchSyncController?.abort();
     if (this.client && this.sessionId) this.client.sessionCancel(this.sessionId);
   }
 
   private commandActivation(){
-    if(!this.options.api.channel)return Promise.resolve(undefined);
+    if(!this.options.api.channel?.isOpen)return Promise.resolve(undefined);
     const command=this.commandContext?.current;
     if(!command){
-      if(this.options.api.channel)return Promise.reject(new Error('Activation requires a claimed command'));
-      return Promise.resolve(undefined);
+      return Promise.reject(new Error('Activation requires a claimed command'));
     }
     return this.activationContext.read({agentId:this.agent.publicKey,workspaceId:this.options.workspaceId,
       roomId:this.options.cornerId,commandId:command.id,generationId:this.commandContext.generationId});
@@ -1758,11 +1758,9 @@ export class MonolithCornerTurnLoop {
     // Best-effort read of this turn's search_memory call/miss counters before
     // the trace writes — bounded so a slow or unreachable server never delays
     // the turn's own completion over a diagnostic.
-    let statsStartedAt = 0;
     let statsPromise: Promise<{ searchCalls: number; searchMisses: number } | undefined> | undefined;
     const startTraceStats = (): void => {
       if (statsPromise) return;
-      statsStartedAt = Date.now();
       statsPromise = api.execute('getInstitutionalMemoryTurnStats', {
         roomId: cornerId,
         agentId: this.agent.publicKey,
@@ -1774,14 +1772,7 @@ export class MonolithCornerTurnLoop {
       reason?: string,
     ): Promise<void> => {
       try {
-        const remaining = Math.max(0, 800 - (Date.now() - statsStartedAt));
-        let timer: NodeJS.Timeout | undefined;
-        const stats = statsPromise && remaining > 0
-          ? await Promise.race([
-              statsPromise,
-              new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), remaining); }),
-            ]).finally(() => { if (timer) clearTimeout(timer); })
-          : undefined;
+        const stats=await statsPromise;
         if (stats) trace.noteSearchMemoryStats(stats.searchCalls, stats.searchMisses);
       } catch {
         // Losing this measurement must never affect the turn.
@@ -2709,13 +2700,8 @@ export class MonolithCornerTurnLoop {
     const token=(await this.options.api.execute('getRoomGitHubToken',{roomId:this.options.parentRoomId})).token;
     if (!token) throw new Error('corner repository credential lookup returned no token');
     const stop = new AbortController();
-    let watchStop: NodeJS.Timeout | undefined;
-    const checkStop = () => {
-      if (this.forcedStop || (this.currentTurn && this.stoppedTurns.has(this.currentTurn.requestId)))
-        stop.abort();
-      else watchStop = setTimeout(checkStop, 25);
-    };
-    checkStop();
+    this.branchSyncController=stop;
+    if(this.forcedStop||(this.currentTurn&&this.stoppedTurns.has(this.currentTurn.requestId)))stop.abort();
     try {
       if (this.reviewerCheckout) {
         if ((await execFileAsync('git', ['-C', this.options.worktreePath, 'status', '--porcelain'])).stdout.trim())
@@ -2738,7 +2724,7 @@ export class MonolithCornerTurnLoop {
         this.branchSyncNotice = `${error.message}. Resolve this private checkout's local work against origin/${repository.featureBranch} before publishing.`;
       });
     } finally {
-      clearTimeout(watchStop);
+      if(this.branchSyncController===stop)this.branchSyncController=undefined;
     }
   }
 

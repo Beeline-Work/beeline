@@ -476,7 +476,7 @@ async function postSquireApproval(
       'x-beeline-helper-version': auth.helperVersion ?? 'v0.0.0',
     },
     body: JSON.stringify({ ...context, ...approval, ...(signInUrl ? { signInUrl } : {}) }),
-    signal: AbortSignal.timeout(20_000),
+    signal: undefined,
   });
 }
 
@@ -509,7 +509,7 @@ async function postSquireLoginWall(
       'x-beeline-helper-version': auth.helperVersion ?? 'v0.0.0',
     },
     body: JSON.stringify({ ...context, wall: wall.wall, message: wall.message }),
-    signal: AbortSignal.timeout(20_000),
+    signal: undefined,
   });
 }
 
@@ -563,7 +563,7 @@ export async function authorizeResourceMessage(
         ...(spendsGrant && !NON_CONSUMING.has(message.method) ? {} : { consume: false }),
         ...resourceCallFacts(message),
       }),
-      signal: AbortSignal.timeout(20_000),
+      signal: undefined,
     },
   );
   return response.ok && ((await response.json()) as { allowed?: boolean }).allowed === true;
@@ -690,7 +690,7 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
             ...(session ? { 'mcp-session-id': session } : {}),
           },
           body: line,
-          signal: AbortSignal.timeout(120_000),
+          signal: undefined,
         });
         if (!response.ok) throw new Error('resource transport refused the call');
         session = response.headers.get('mcp-session-id') ?? session;

@@ -83,7 +83,6 @@ type PendingApproval = {
   tool: string;
   title: string;
   detail: string;
-  expiry?: ReturnType<typeof setTimeout>;
 };
 
 type TaskConnection = {
@@ -115,7 +114,6 @@ export class SquireTaskRelay {
   /** The schedule a `schedule` command is a run of, if any. */
   private activeScheduleId?: string;
   private task?: TaskConnection;
-  private leaseTimer?: ReturnType<typeof setTimeout>;
   private approvalRequestId?: string;
   private closed = false;
   private callTail: Promise<void> = Promise.resolve();
@@ -226,8 +224,6 @@ export class SquireTaskRelay {
   activate(command: AgentCommand, generationId: string): void {
     if (command.agentId !== this.agentId || command.roomId !== this.roomId)
       throw new Error('Squire task scope does not match the server command');
-    if (this.leaseTimer) clearTimeout(this.leaseTimer);
-    this.leaseTimer = undefined;
     this.active = {
       roomId: command.roomId,
       requestId: command.turnRequestId,
@@ -248,20 +244,6 @@ export class SquireTaskRelay {
     this.approvalRequestId = approvalRequestId;
     // A human approval is an open continuation, however long the card waits.
     if (approvalRequestId) return;
-    this.scheduleIdle();
-  }
-
-  private scheduleIdle(): void {
-    if (this.leaseTimer) clearTimeout(this.leaseTimer);
-    this.leaseTimer = undefined;
-    if (!this.task || this.approvalRequestId || this.task.pendingApprovals.size) return;
-    const task = this.task;
-    this.leaseTimer = setTimeout(() => {
-      this.leaseTimer = undefined;
-      if (!this.active && !this.approvalRequestId && !task.pendingApprovals.size &&
-          this.task === task) this.retire('conversation-idle');
-    }, SQUIRE_TASK_IDLE_LEASE_MS);
-    this.leaseTimer.unref?.();
   }
 
   cancel(requestId: string): void {
@@ -273,7 +255,6 @@ export class SquireTaskRelay {
     if (this.approvalRequestId === requestId) this.approvalRequestId = undefined;
     for (const [id, approval] of this.task?.pendingApprovals ?? [])
       if (approval.requestId === requestId) this.task?.pendingApprovals.delete(id);
-    if (!this.active && !this.approvalRequestId) this.scheduleIdle();
   }
 
   close(): void {
@@ -338,7 +319,6 @@ export class SquireTaskRelay {
         forgetSquireSessions(task.sessions);
         this.ended(task.sessions);
         task.sessions.clear();
-        for (const approval of task.pendingApprovals.values()) clearTimeout(approval.expiry);
         task.pendingApprovals.clear();
         this.toolsChanged = true;
         this.flushToolChanges();
@@ -391,8 +371,6 @@ export class SquireTaskRelay {
   }
 
   private retire(reason: string): void {
-    if (this.leaseTimer) clearTimeout(this.leaseTimer);
-    this.leaseTimer = undefined;
     if (!this.task) return;
     this.log('relay-close', this.task, { reason,
       sessionId: redactedSessionId(this.task.sessions.values().next().value) });
@@ -400,7 +378,6 @@ export class SquireTaskRelay {
     forgetSquireSessions(this.task.sessions);
     this.ended(this.task.sessions);
     this.task.sessions.clear();
-    for (const approval of this.task.pendingApprovals.values()) clearTimeout(approval.expiry);
     this.task.pendingApprovals.clear();
     this.task = undefined;
   }
@@ -425,7 +402,6 @@ export class SquireTaskRelay {
       const task = this.connection(active?.taskId ?? 'inventory');
       this.log('call-start', task, { method: input.method });
       this.log('call-end', task, { method: input.method });
-      if (!active) this.scheduleIdle();
       return {
         protocolVersion: '2024-11-05', capabilities: { tools: { listChanged: true } },
         serverInfo: { name: 'beeline-squire-task-relay', version: '1.0.0' },
@@ -518,7 +494,6 @@ export class SquireTaskRelay {
           this.active?.requestId !== active.requestId)))
         throw new Error('Squire task ended while the call was running');
       if (input.method === 'tools/list') this.hasListedTools = true;
-      if (!active) this.scheduleIdle();
       if (staleLeaseResult(result)) {
         for (const id of requestedIds) task.sessions.delete(id);
         forgetSquireSessions(requestedIds);
@@ -566,7 +541,6 @@ export class SquireTaskRelay {
           (status === 'credential_fetch_refused' &&
             resultString(result, 'reason') !== 'approval_pending'))) {
         const key = createHash('sha256').update(resultApprovalId).digest('hex');
-        clearTimeout(task.pendingApprovals.get(key)?.expiry);
         task.pendingApprovals.delete(key);
         this.rememberDecision(task, key);
       }
@@ -582,23 +556,15 @@ export class SquireTaskRelay {
         // Vault approvals (fetch_credential, edit_credential, delete_credential,
         // edit_payment_card) have no browser session; they are tracked too.
         if (pending && !task.decidedApprovals.has(approvalKey) && (ids.length || approval.approvalId)) {
-          clearTimeout(task.pendingApprovals.get(approvalKey)?.expiry);
           const entry: PendingApproval = {
             requestId: task.pendingApprovals.get(approvalKey)?.requestId ?? active!.requestId,
             sessionIds: new Set(ids),
             tool: approval.tool, title: approval.title, detail: approval.detail,
           };
-          const expiresAt = Date.parse(resultString(result, 'expires_at') ?? '');
-          if (approval.approvalId && Number.isFinite(expiresAt)) {
-            entry.expiry = setTimeout(() => this.expireApproval(task, approvalKey, entry),
-              Math.min(Math.max(expiresAt - Date.now(), 0), 2 ** 31 - 1));
-            entry.expiry.unref?.();
-          }
           task.pendingApprovals.set(approvalKey, entry);
           this.log('approval-pending', task, { tool: safeToolName ?? null,
             sessionId: redactedSessionId(ids[0]) });
         } else if (!pending) {
-          clearTimeout(task.pendingApprovals.get(approvalKey)?.expiry);
           task.pendingApprovals.delete(approvalKey);
         }
       }
@@ -614,7 +580,6 @@ export class SquireTaskRelay {
         task.dead = true;
         this.ended(task.sessions);
         task.sessions.clear();
-        for (const approval of task.pendingApprovals.values()) clearTimeout(approval.expiry);
         task.pendingApprovals.clear();
         task.client.close();
       }
@@ -631,7 +596,6 @@ export class SquireTaskRelay {
       if (!approval.sessionIds.size) continue; // a vault approval belongs to no browser session
       for (const sessionId of sessionIdsToRelease) approval.sessionIds.delete(sessionId);
       if (!approval.sessionIds.size) {
-        clearTimeout(approval.expiry);
         task.pendingApprovals.delete(id);
       }
     }
@@ -645,14 +609,6 @@ export class SquireTaskRelay {
   }
 
   /** Expiry releases our lease; only Squire can say whether the person answered. */
-  private expireApproval(task: TaskConnection, approvalKey: string, entry: PendingApproval): void {
-    if (task.pendingApprovals.get(approvalKey) !== entry) return;
-    task.pendingApprovals.delete(approvalKey);
-    // A missing notification is not proof of no answer. In particular a vault
-    // consume can finish after the watcher has stopped at its own deadline.
-    if (!this.active && !this.approvalRequestId && !task.pendingApprovals.size) this.scheduleIdle();
-  }
-
   /**
    * Squire's own unsolicited decision on an approval this task is still
    * holding a connection open for. Matched back to the pending entry by the
@@ -674,14 +630,12 @@ export class SquireTaskRelay {
       return;
     }
     this.log('approval-decided', task, { status, tool: pending.tool });
-    clearTimeout(pending.expiry);
     task.pendingApprovals.delete(approvalKey);
     this.rememberDecision(task, approvalKey);
     this.onApprovalDecided({
       requestId: pending.requestId, approvalId, status,
       tool: pending.tool, title: pending.title, detail: pending.detail,
     });
-    if (!this.active && !this.approvalRequestId && !task.pendingApprovals.size) this.scheduleIdle();
   }
 }
 
@@ -733,7 +687,7 @@ export function runSquireTaskProxy(env: NodeJS.ProcessEnv = process.env): void {
           method: 'POST',
           headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
           body: JSON.stringify({ ...context, method: input.method, params: input.params ?? {} }),
-          signal: AbortSignal.timeout(120_000),
+          signal: undefined,
         });
         const body = await response.json() as { result?: unknown; error?: string };
         if (!response.ok) throw new Error(body.error ?? 'Squire task relay refused the call');

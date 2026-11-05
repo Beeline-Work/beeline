@@ -88,7 +88,7 @@ export async function requestMachine(
   stateRoot: string,
   request: MachineRequest,
   accept: (status: HelperStatusFile) => boolean,
-  timeoutMs = 600_000,
+  _timeoutMs = 600_000,
 ): Promise<HelperStatusFile> {
   const path = machineControlPath(stateRoot);
   await preparePrivateSocketDirectory(path);
@@ -97,7 +97,6 @@ export async function requestMachine(
     let connecting = false;
     let reconnectNeeded = false;
     let settled = false;
-    let lastStatus: HelperStatusFile | undefined;
     const watcher = watch(dirname(path), (_event, filename) => {
       if (filename === basename(path)) {
         reconnectNeeded = true;

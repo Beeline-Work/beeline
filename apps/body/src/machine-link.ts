@@ -1,6 +1,5 @@
 import { HelperOverlayChannel } from './helper-overlay-channel.js';
 import { HelperTurnChannel } from './helper-turn-channel.js';
-import WebSocket from 'ws';
 import { randomUUID } from 'node:crypto';
 import type { DaemonOperationMap, PostConnectorVaultInput } from '@beeline/api-contract/daemon';
 import { helperVersion } from './helper-version.js';
@@ -192,8 +191,7 @@ export class MachineLink {
     this.link = new LiveLink({
       url: () => this.#url(),
       protocols: () => [MACHINE_SOCKET_PROTOCOL],
-      factory: options.factory ?? ((url, protocols, socketOptions) =>
-        new WebSocket(url, protocols, socketOptions)),
+      ...(options.factory ? {factory:options.factory} : {}),
       onOpen: () => {
         this.#reconciledOnSocket = false;
         this.#pendingRelease = undefined;

@@ -533,7 +533,6 @@ export class RoomRuntimeCoordinator {
   /** Parent ownership retained so a failed corner listing never authorizes removal. */
   private readonly monolithCornerParents = new Map<string, string>();
   private readonly now: () => number;
-  private readonly drainDeadlineMs: number;
   private drainDeadlineAt: number | undefined;
   private workspaceRemovalConfirmations = 0;
   private readonly roomRemovalConfirmations = new Map<string, number>();
@@ -622,7 +621,6 @@ export class RoomRuntimeCoordinator {
         console.error('[body] config-change catalog refresh failed', error),
       );
     });
-    this.drainDeadlineMs = options.drainDeadlineMs ?? DEFAULT_DRAIN_DEADLINE_MS;
     const fixedWorkspaceCeiling = process.env.BEELINE_BODY_MAX_SESSIONS;
     this.scheduler = new SessionScheduler({
       ...(fixedWorkspaceCeiling ? { maxLiveSessions: Number(fixedWorkspaceCeiling) } : {}),
@@ -660,7 +658,7 @@ export class RoomRuntimeCoordinator {
   }
 
   private async yieldReconciliation(): Promise<void> {
-    await new Promise<void>(resolveYield => setImmediate(resolveYield));
+    await Promise.resolve();
   }
 
   setInteractiveIdleListener(listener: () => void): void {
@@ -2075,37 +2073,13 @@ export class RoomRuntimeCoordinator {
     // Refuse further pushes, then wait — to the deadline, never past it — for
     // the in-flight apply, so whatever it started is in the snapshot below.
     this.beginShutdown();
-    const deadlineAt = Math.min(
-      this.now() + this.drainDeadlineMs,
-      this.drainDeadlineAt ?? Number.POSITIVE_INFINITY,
-    );
-    // A checkout can clone for minutes or stall on a black-holed fetch, so the
-    // wait for it rides the same deadline the Room drain does — the managed
-    // update's absolute convergence contract owns this process. Past the
-    // deadline the apply is on its own: `startRoomOnce`/`startCorner` see
-    // `stopped` and abort what they built instead of joining `running`.
-    const untilDeadline = async <T>(work: Promise<T>): Promise<T | 'deadline'> => {
-      let timer: NodeJS.Timeout | undefined;
-      const deadline = new Promise<'deadline'>((resolveDeadline) => {
-        timer = setTimeout(() => resolveDeadline('deadline'), Math.max(0, deadlineAt - this.now()));
-      });
-      try {
-        return await Promise.race([work, deadline]);
-      } finally {
-        if (timer) clearTimeout(timer);
-      }
-    };
-    if (this.membershipDrain) await untilDeadline(this.membershipDrain);
-    if (this.maintenanceFlight) await untilDeadline(this.maintenanceFlight);
-    if (this.preservationFlight) await untilDeadline(this.preservationFlight.catch(() => undefined));
+    if (this.membershipDrain) await this.membershipDrain;
+    if (this.maintenanceFlight) await this.maintenanceFlight;
+    if (this.preservationFlight) await this.preservationFlight.catch(() => undefined);
     const rooms = [...this.running.values()];
     for (const room of rooms) room.controller.abort();
     const drained = Promise.all(rooms.map((room) => room.promise.catch(() => undefined)));
-    const result = await untilDeadline(drained.then(() => 'drained' as const));
-    if (result === 'deadline') {
-      await Promise.allSettled(rooms.map((room) => room.body.forceRecoverRoom()));
-      await drained;
-    }
+    await drained;
     await this.grantRunnerServer.close();
     await this.scheduler.dispose();
   }

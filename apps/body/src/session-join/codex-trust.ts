@@ -51,7 +51,6 @@ export async function trustCodexHook(context: SetupContext, bin: string, cwd: st
     pending.set(key, { resolve, reject: () => reject(new Error('Codex hook trust unavailable')) });
     child.stdin.write(JSON.stringify({ id: key, method, params }) + '\n');
   });
-  const timer = setTimeout(() => { fail(); child.kill(); }, 15_000);
   try {
     await request('initialize', { clientInfo: { name: 'beeline-session-join', version: '1' }, capabilities: { experimentalApi: true } });
     const list = await request('hooks/list', { cwds: [cwd] }) as { data?: { hooks?: Hook[] }[] };
@@ -61,5 +60,4 @@ export async function trustCodexHook(context: SetupContext, bin: string, cwd: st
     const result = await request('config/batchWrite', { edits, reloadUserConfig: true }) as { status?: string };
     return result.status === 'ok';
   } catch { return false; }
-  finally { clearTimeout(timer); child.kill(); }
 }

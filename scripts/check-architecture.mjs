@@ -9,9 +9,10 @@ import {
   INVARIANTS_PATH, invariantsAtRef, judgeTree, readInvariants, relaxations, strictRelaxations, validateRules,
 } from './architecture-invariants.mjs';
 import { judgeStorage, storageRelaxations } from './architecture-storage.mjs';
+import { checkMachineConnections } from './machine-connection-boundaries.mjs';
 
 /** CI executes the candidate guard; changes remain visible in the weekly review. */
-const RUNNER_FILES = ['scripts/check-architecture.mjs', 'scripts/architecture-invariants.mjs', 'scripts/architecture-storage.mjs'];
+const RUNNER_FILES = ['scripts/check-architecture.mjs', 'scripts/architecture-invariants.mjs', 'scripts/architecture-storage.mjs', 'scripts/machine-connection-boundaries.mjs', 'architecture/machine-connection-sinks.json'];
 
 function changedRunnerFiles(root, base) {
   return RUNNER_FILES.filter((file) => {
@@ -39,7 +40,7 @@ async function main() {
   const head = readInvariants(root);
   const errors = validateRules(head);
   if (base) errors.push(...strictRelaxations(root, invariantsAtRef(root, base), head).map(item => `Strict architecture boundary: ${item}`));
-  if (!errors.length) errors.push(...judgeTree(root, head), ...judgeStorage(root, head.storage));
+  if (!errors.length) errors.push(...judgeTree(root, head), ...judgeStorage(root, head.storage), ...checkMachineConnections(root,base));
   const relaxed = base ? [
     ...relaxations(root, invariantsAtRef(root, base), head),
     ...storageRelaxations(invariantsAtRef(root, base), head),

@@ -26,14 +26,7 @@ export async function ensurePrivateRecoveryReserve(
   await mkdir(resolve(target, '..'), { recursive: true, mode: 0o700 });
   if ((await stat(target).catch(() => undefined))?.size === bytes) return;
   const lock = `${target}.lock`;
-  for (let attempt = 0; attempt < 100; attempt++) {
-    try { await mkdir(lock, { mode: 0o700 }); break; }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      if (attempt === 99) throw new Error('timed out allocating private recovery reserve');
-      await new Promise((done) => setTimeout(done, 100));
-    }
-  }
+  await mkdir(lock,{mode:0o700});
   const stage = `${target}.${process.pid}.tmp`;
   try {
     if ((await stat(target).catch(() => undefined))?.size === bytes) return;
@@ -69,15 +62,6 @@ export async function checkPrivateRecoveryReserve(
   if (!reserve) return false;
   if ((await freeBytes()) >= BigInt(reserve.size + 256 * 1024 ** 2)) return false;
   return releasePrivateRecoveryReserve(supervisorRoot);
-}
-
-export function monitorPrivateRecoveryReserve(supervisorRoot: string): () => void {
-  const timer = setInterval(() => {
-    void checkPrivateRecoveryReserve(supervisorRoot).catch((error) =>
-      console.warn('[helper] private recovery reserve check failed:', error));
-  }, 500);
-  timer.unref();
-  return () => clearInterval(timer);
 }
 
 /** A best-effort floor blocks new shared writers and releases reserve under pressure. */

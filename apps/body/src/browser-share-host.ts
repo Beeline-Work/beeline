@@ -48,7 +48,7 @@ export class BrowserShareHost {
                 method: 'POST',
                 headers: { authorization: `Bearer ${request.daemonToken}`, 'content-type': 'application/json' },
                 body: JSON.stringify({ roomId: request.roomId, sessionId: request.page.id }),
-                signal: AbortSignal.timeout(10_000),
+                signal: undefined,
               }).catch(() => {});
             },
           });

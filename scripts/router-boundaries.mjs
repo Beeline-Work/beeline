@@ -138,7 +138,7 @@ function inspectHelperOperations(file, source, errors) {
         ts.isIdentifier(node.expression) && node.expression.text === 'require') && channelModule(node.arguments[0]))
       deny(node, 'channel constructors require their static owner binding');
     if ((name === 'requestOperation' || name === 'operationReady' && !owner(node, client, 'DaemonApiClient', 'waitForConnection')) &&
-        !owner(node, client, 'DaemonApiClient', 'execute'))
+        !owner(node, client, 'DaemonApiClient', 'execute') && !owner(node, client, 'DaemonApiClient', 'readCommandActivation'))
       deny(node, 'belongs to DaemonApiClient.execute');
     if (ts.isPrivateIdentifier(node) && node.text === '#requestHttp' && !ts.isMethodDeclaration(node.parent) &&
         !owner(node, client, 'DaemonApiClient', 'execute')) deny(node, 'HTTP adapter cannot escape its owner');
@@ -247,6 +247,9 @@ export function inspectSource(file, text) {
   const errors = [];
   const inCore = file.startsWith('packages/net/src/');
   let hits = scanSource(file, text, LIBRARIES).filter(hit => !hit.kind.startsWith('origin:'));
+  // The physical machine connection is now the one primary WebSocket owner.
+  // Its constructor/send/close sinks are pinned by machine-connection-boundaries.
+  if(file==='apps/body/src/live-link.ts')hits=hits.filter(hit=>!['import:ws','websocket'].includes(hit.kind));
   // Rust HTTP clients are native leaves too; imports remain explicit inventory.
   if (file.endsWith('.rs')) {
     for (const match of text.matchAll(/\b(?:reqwest|hyper|TcpStream|UdpSocket|tungstenite)\b/g))

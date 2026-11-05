@@ -695,7 +695,7 @@ async function jsonRequest<T>(url: string, body: unknown, fetchImpl: typeof fetc
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(30_000),
+    signal: undefined,
   });
   if (!response.ok) {
     const detail = (await response.json().catch(() => ({}))) as {
@@ -849,7 +849,7 @@ async function installCurrentRelease(
   const layout = defaultBeelineInstallLayout(process.env);
   if (process.env.BEELINE_RECOVERY_SELECTED_RELEASE) return { binary: resolve(layout.binDir, 'beeline'), version: process.env.BEELINE_RECOVERY_SELECTED_RELEASE };
   const manifestUrl = resolveManifestUrl(process.env);
-  const response = await fetchImpl(manifestUrl, { signal: AbortSignal.timeout(30_000) });
+  const response = await fetchImpl(manifestUrl, { signal: undefined });
   if (!response.ok)
     throw new Error(`fetching the Beeline release manifest failed: HTTP ${response.status}`);
   const published = parseUpdateManifest(await response.text(), hostPlatformKey()).bundle;

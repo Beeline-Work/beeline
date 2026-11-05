@@ -20,8 +20,7 @@ class Socket extends EventEmitter {
   send(raw: string) {
     const frame = JSON.parse(raw);
     this.frames.push(frame);
-    if (frame.type === 'register') this.receive({ type: 'registered', agentId: frame.agentId,
-      capabilities: { daemonOperationsV1: true } });
+    if(frame.type==='register-machine')for(const agent of frame.agents)this.receive({type:'registered',agentId:agent.agentId,capabilities:{daemonOperationsV1:true}});
     if (frame.type === 'daemon-operation' && !(this.holdVault && frame.operation === 'postConnectorVault')) this.receive({ type: 'daemon-operation-result',
       agentId: frame.agentId, requestId: frame.requestId,
       ...(this.refuseReport && frame.operation === 'postConnectorVault'
@@ -53,7 +52,7 @@ async function fixture(count: number, readVault = vi.fn<() => Promise<Report>>(a
   // A sent frame precedes the report promise settling and committing its verdict.
   await new Promise<void>(done => setImmediate(done));
   const reconnect = async () => {
-    machine.reconnectNow(); sockets.at(-1)!.open();
+    sockets.at(-1)!.close(); await Promise.resolve(); sockets.at(-1)!.open();
     await new Promise<void>(done => setImmediate(done));
   };
   return { machine, sockets, agents, fetcher, log, reports, reconnect, readVault };

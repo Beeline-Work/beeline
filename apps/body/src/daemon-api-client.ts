@@ -1,3 +1,4 @@
+import { renewSquireShareOnViewerActivity } from './squire-share-renewals.js';
 import { invalidateUsageAccountAttachment } from './helper-usage-publisher.js';
 import { postChangedAgentUsage } from './helper-usage-binding.js';
 import {
@@ -127,6 +128,7 @@ export type DaemonClientMetrics = {
 
 const REQUEST_DEADLINE_MS = 30_000;
 const DAEMON_LIVE_EVENT_TYPES = new Set<unknown>([
+  'share-viewer-activity',
   'vault-save',
   'helper-release',
   'rooms-changed',
@@ -390,7 +392,7 @@ export class DaemonApiClient {
     // operation/turn authority. Only whitelisted metadata leaves the helper.
     await this.fetchImpl(endpoint(this.baseUrl, '/v1/vault-save/answer'), {
       method: 'POST', headers: { authorization: `Bearer ${this.daemonToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ attemptId, answer }), signal: AbortSignal.timeout(10_000),
+      body: JSON.stringify({ attemptId, answer }), signal: undefined,
     });
   }
 
@@ -606,6 +608,7 @@ export class DaemonApiClient {
   }
 
   private liveMessage(event: Record<string, unknown>): void {
+    if(event.type==='share-viewer-activity'&&typeof event.sessionId==='string'){renewSquireShareOnViewerActivity(event.sessionId);return;}
     if (event.type === 'vault-save') {
       this.vaultSaveListener?.(event);
       return;

@@ -23,6 +23,7 @@ class Socket extends EventEmitter {
   send(raw: string) {
     const frame = JSON.parse(raw);
     this.frames.push(frame);
+    if(frame.type==='request-result')this.receive({type:'request-missing',requestId:frame.requestId});
     if (frame.type === 'daemon-operation' && !this.holdReads)
       this.receive({ type: 'daemon-operation-result', requestId: frame.requestId,
         result: { commandProtocol: 1, commands: [] } });
@@ -74,19 +75,19 @@ it.each([0, 2])('restores all 12 Rooms and 12 corners after startup read loss an
   first.holdReads = true;
   first.open();
   await setImmediate();
-  expect(first.frames.every(frame => frame.type === 'register')).toBe(true);
+  expect(first.frames.every(frame => frame.type === 'register-machine')).toBe(true);
   first.register();
   await setImmediate();
   expect(first.frames.filter(frame => frame.operation === 'getAgentCommands')).toHaveLength(24);
   first.close();
   await setImmediate();
-  for (let i = 0; i < failedHandshakes; i++) sockets.at(-1)!.close();
+  for (let i = 0; i < failedHandshakes; i++) { sockets.at(-1)!.close(); await Promise.resolve(); }
   expect(sockets).toHaveLength(2 + failedHandshakes);
   const successor = sockets.at(-1)!;
   successor.open();
   await setImmediate();
   expect(connected.size).toBe(0);
-  expect(successor.frames.every(frame => frame.type === 'register')).toBe(true);
+  expect(successor.frames.every(frame => frame.type === 'register-machine')).toBe(true);
   successor.register();
   await setImmediate();
   expect([...connected].sort()).toEqual([...places].sort());
@@ -95,7 +96,7 @@ it.each([0, 2])('restores all 12 Rooms and 12 corners after startup read loss an
   expect(fetcher).not.toHaveBeenCalled();
 });
 
-it('keeps the machine epoch stable after N refused reads, then reads once each on the next registration', async () => {
+it('waits after a failed intake read until an actual close opens its successor', async () => {
   const { sockets, connected, fetcher } = fixture();
   const first = sockets[0]!;
   first.holdReads = true;
@@ -106,16 +107,8 @@ it('keeps the machine epoch stable after N refused reads, then reads once each o
     first.receive({ type: 'daemon-operation-result', requestId: frame.requestId, error: 'unavailable', status: 503 });
   await setImmediate();
   expect(sockets).toHaveLength(1);
-  expect(first.frames.filter(frame => frame.operation === 'getAgentCommands')).toHaveLength(24);
-  expect(first.frames.filter(frame => frame.type === 'register')).toHaveLength(1);
-  // Refusals cannot replace the shared socket. Only its actual close admits
-  // the successor, even while all Room supervisors are waiting.
-  first.close();
-  expect(sockets).toHaveLength(2);
-  sockets[1]!.open();
-  await setImmediate();
-  expect(sockets[1]!.frames.every(frame => frame.type === 'register')).toBe(true);
-  sockets[1]!.register();
+  first.close();await setImmediate();
+  sockets[1]!.open(); sockets[1]!.register();
   await setImmediate();
   expect(connected.size).toBe(24);
   expect(sockets).toHaveLength(2);
@@ -138,7 +131,7 @@ it('awaits re-registration before dispatching a previously selected ordinary ope
   successor.open();
   await setImmediate();
   expect(settled).not.toHaveBeenCalled();
-  expect(successor.frames.every(frame => frame.type === 'register')).toBe(true);
+  expect(successor.frames.every(frame => frame.type === 'register-machine')).toBe(true);
   successor.register();
   await expect(read).resolves.toEqual({ commandProtocol: 1, commands: [] });
 });

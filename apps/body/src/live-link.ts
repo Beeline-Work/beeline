@@ -25,7 +25,7 @@ export class LiveLink {
   #state: LiveLinkState = 'disconnected';
   readonly #openListeners = new Set<() => void>();
   constructor(private readonly options: {
-    url: () => string; protocols: () => string[]; factory: LiveSocketFactory;
+    url: () => string; protocols: () => string[]; factory?: LiveSocketFactory;
     onOpen: () => void; onMessage: (data: string) => void; onClose: () => void;
     onUpdateRequired: (minVersion: string) => void; timing?: Partial<LiveLinkTiming>;
   }) {}
@@ -57,7 +57,7 @@ export class LiveLink {
     this.options.onUpdateRequired(minVersion);
   }
   #connect(): void {
-    const socket = this.options.factory(this.options.url(), this.options.protocols(), {});
+    const socket=(this.options.factory??((url,protocols,options)=>new WebSocket(url,protocols,options)))(this.options.url(),this.options.protocols(),{});
     this.#socket = socket;
     socket.on?.('upgrade', (response: IncomingMessage) => {
       response.socket?.setKeepAlive?.(true, this.options.timing?.keepAliveDelayMs ?? LIVE_LINK_TIMING.keepAliveDelayMs);

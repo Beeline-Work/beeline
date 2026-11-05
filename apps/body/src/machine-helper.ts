@@ -1,3 +1,4 @@
+import { waitForProcessExit } from './process-exit.js';
 import { captureHelperError } from './sentry.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
@@ -27,7 +28,6 @@ import {
 import { supervisor } from './helper-service.js';
 import { installLaunchdTrustySquireBrokerService } from './launchd.js';
 import { MachineLink } from './machine-link.js';
-import { FreeAgentIdle } from './free-agent-idle.js';
 import { ReleaseTransaction, withInstallLock } from './managed-update.js';
 import {
   clearHelperPidRecordIfPid,
@@ -59,11 +59,8 @@ import { SessionScheduler } from './session-scheduler.js';
 import { refreshSystemdHelperUnit } from './native-helper.js';
 import { reclaimArchivedMemberStorage, watchStorageFacts, pruneStoppedAgentStorage, pruneEndedOwnerStorage, pruneArchivedCheckoutStorage, pruneUnusedCheckoutStorage } from './storage-owners.js';
 import { monitorHelperUsage } from './helper-usage.js';
-import { monitorPrivateRecoveryReserve } from './shared-asset-capacity.js';
 
 /** How long an old per-agent daemon gets to drain before forced takeover. */
-const PREVIOUS_OWNER_STOP_MS = 15_000;
-const PREVIOUS_OWNER_KILL_MS = 2_000;
 
 interface AgentSlot {
   readonly configPath: string;
@@ -134,7 +131,6 @@ async function serveMachineHelper(
   });
   const signals = options.signals ?? process;
   const disposeSignals = lifecycle.installSignals(signals);
-  const stopReserveMonitor = monitorPrivateRecoveryReserve(supervisorRoot);
   const usage = !options.freeAgentIdle && managedBy !== 'lab' && process.platform === 'linux'
     ? monitorHelperUsage(supervisorRoot) : undefined;
   const notifier = new SystemdNotifier();
@@ -222,7 +218,6 @@ async function serveMachineHelper(
 
   const finish = async (reason: HelperExitReason) => {
     disposeSignals();
-    stopReserveMonitor();
     usage?.stop();
     await notifier.stopping(stoppingStatus).catch(() => undefined);
     if (!options.configPaths) await clearHelperPidRecordIfPid(supervisorRoot, process.pid);
@@ -367,6 +362,10 @@ async function serveMachineHelper(
     });
   const tickUpdate = async () => {
     await update?.idleChanged();
+    if(freeAgentRefresh&&options.freeAgentIdle&&![...hosted.values()].some(agent=>agent.core.activeTurnCount()>0)){
+      freeAgentRefresh=false;
+      await options.freeAgentIdle.requestSleep({refresh:true});
+    }
     void sweepHostDisk();
   };
   const requestForceUpdate = (minimum: string) => {
@@ -395,6 +394,9 @@ async function serveMachineHelper(
           log: message => console.warn(`[helper] ${message}`),
           onRegistered: () => {
             update?.notify();
+            if(env.BEELINE_HOSTED_SERVICES==='1')execFile('/bin/sh',['/opt/beeline/hosted-services.sh'],{env},error=>{
+              if(error){console.error('[helper] hosted services recovery failed:',error.message);restartHelper('failed');}
+            });
           },
         });
         link.setHelperIdentity({
@@ -503,6 +505,9 @@ async function serveMachineHelper(
           if (!migrationReleaseChecked) {
             migrationReleaseChecked = true;
             update?.notify();
+            if(env.BEELINE_HOSTED_SERVICES==='1')execFile('/bin/sh',['/opt/beeline/hosted-services.sh'],{env},error=>{
+              if(error){console.error('[helper] hosted services recovery failed:',error.message);restartHelper('failed');}
+            });
           }
           const signalOwner = async (signal: NodeJS.Signals) => {
             // Re-read identity immediately before each signal; records and PIDs can change.
@@ -513,21 +518,9 @@ async function serveMachineHelper(
               // Judge the handoff by verified liveness after the stop deadlines.
             }
           };
-          const waitForOwner = async (timeout: number) => {
-            const deadline = Date.now() + timeout;
-            while (!slot.controller.signal.aborted) {
-              previous = await runtimeDaemonPid(slot.configPath);
-              if (!previous || previous === process.pid || Date.now() >= deadline) return;
-              await sleep(Math.min(100, deadline - Date.now()), slot.controller.signal);
-            }
-          };
-          await signalOwner('SIGTERM');
-          await waitForOwner(PREVIOUS_OWNER_STOP_MS);
-          if (slot.controller.signal.aborted) break;
-          if (previous && previous !== process.pid) {
-            await signalOwner('SIGKILL');
-            await waitForOwner(PREVIOUS_OWNER_KILL_MS);
-          }
+          await signalOwner('SIGKILL');
+          if(previous&&previous!==process.pid)await waitForProcessExit(previous,slot.controller.signal);
+          previous=await runtimeDaemonPid(slot.configPath);
           if (slot.controller.signal.aborted) break;
           if (previous && previous !== process.pid) {
             reportError = reportedPreviousOwner !== previous;
@@ -706,29 +699,6 @@ async function serveMachineHelper(
   });
   await control.start();
   signals.on('SIGHUP', onHangup);
-  const freeAgentIdle = options.freeAgentIdle;
-  const idle = freeAgentIdle
-    ? new FreeAgentIdle({
-        idleMs: freeAgentIdle.idleMs,
-        requestSleep: () => freeAgentIdle.requestSleep({ refresh: freeAgentRefresh }),
-        activeTurns: () =>
-          [...hosted.values()].reduce((total, agent) => total + agent.core.activeTurnCount(), 0),
-        onResume: () => {
-          if (env.BEELINE_HOSTED_SERVICES !== '1') return;
-          // The image owns the manager and unit. Restore them before taking
-          // resumed connector work; only systemd starts the production broker.
-          execFile('/bin/sh', ['/opt/beeline/hosted-services.sh'], { env, timeout: 30_000 }, (error) => {
-            if (error) {
-              console.error('[helper] hosted services recovery failed:', error.message);
-              restartHelper('failed');
-              return;
-            }
-          });
-        },
-        log: (line) => console.log(`[helper] free agent ${line}`),
-      })
-    : undefined;
-  idle?.start();
 
   try {
     console.log(`[helper] hosting ${initial.length} agent(s) on one machine socket per server`);
@@ -753,7 +723,6 @@ async function serveMachineHelper(
     }
     await Promise.all([...slots.values()].map((slot) => slot.running));
   } finally {
-    idle?.stop();
     signals.off('SIGHUP', onHangup);
     update?.dispose();
     await control.stop();
@@ -800,16 +769,3 @@ export async function runMachineHelper(
   );
 }
 
-/** Resolves after `ms`, or as soon as `signal` aborts. */
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolveSleep) => {
-    if (signal?.aborted) return resolveSleep();
-    const done = () => {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', done);
-      resolveSleep();
-    };
-    const timer = setTimeout(done, ms);
-    signal?.addEventListener('abort', done, { once: true });
-  });
-}

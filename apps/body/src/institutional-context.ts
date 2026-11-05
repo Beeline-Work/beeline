@@ -53,7 +53,7 @@ export function startInstitutionalContextFetch(
   enabled = true,
   _now: () => number = () => performance.now(),
 ): InstitutionalContextFetch {
-  const startedAt = now();
+  const startedAt = _now();
   const promise = enabled
     ? api.execute('getInstitutionalContext', { roomId })
     : Promise.resolve(EMPTY_INSTITUTIONAL_CONTEXT);

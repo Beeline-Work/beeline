@@ -22,18 +22,6 @@ import { homedir } from 'node:os';
 import { squireConnectProcessEnv } from './connector-squire.js';
 import { squireFacadeLaunch, type SquireAgentScope } from './squire-host.js';
 
-/**
- * `@trusty-squire/mcp`'s own longest in-call wait is its captcha solver's
- * 180 s provider response timeout (`RES_TIMEOUT_MS`, `bot/captcha.ts`), which
- * can run inside an ordinary `operate_click`/`operate_drive` call when a
- * challenge appears. A 120 s client timeout once undercut that (and a slow
- * 120 s screenshot read): it killed the relay session mid-call and forced
- * `operate_start` instead of letting the call simply finish or fail on its
- * own. Stay above Squire's longest bound with margin rather than matching it.
- */
-const SQUIRE_LONGEST_CALL_MS = 180_000;
-const CALL_TIMEOUT_MARGIN_MS = 30_000;
-
 export type SquireMcpClientOptions = {
   readonly scope: SquireAgentScope;
   readonly home?: string;

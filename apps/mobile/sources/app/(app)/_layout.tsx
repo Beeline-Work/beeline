@@ -74,6 +74,9 @@ export default function RootLayout() {
         <Stack.Screen
           name="beeline/channels"
           options={{
+            // The launch landing replaces into this screen; an entrance fade
+            // can expose a blank frame before its loader or Room list appears.
+            animation: 'none',
             headerShown: false,
             contentStyle: { backgroundColor: theme.buzz.bgBase },
           }}

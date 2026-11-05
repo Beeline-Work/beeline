@@ -105,7 +105,7 @@ export function resolvePendingAgentDisplay(
  * what keeps it honest: the channel's own Workspace names its agents first, the
  * viewer's selection next, and any other Workspace only fills a gap.
  */
-export function agentRosterCommunityIds(
+function agentRosterCommunityIds(
   channelCommunityId: string | null | undefined,
   viewerActiveCommunityId: string | null | undefined,
   memberCommunityIds: readonly string[] = [],
@@ -155,7 +155,7 @@ function namesItsAgent(agent: NameableAgent): boolean {
  * carried onto the merged entry rather than lost with the rest of that
  * roster's (otherwise losing) object.
  */
-export function mergeAgentRosters<T extends NameableAgent>(
+function mergeAgentRosters<T extends NameableAgent>(
   rosters: readonly (readonly T[])[],
 ): Map<string, T> {
   const merged = new Map<string, T>();

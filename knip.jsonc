@@ -9,6 +9,8 @@
   // Explicit bundler boundaries: runtime loaders consume these exported interfaces.
   // Keep file reachability and production export enforcement enabled.
   "ignoreIssues": {
+    // GitHub github-script invokes these CommonJS exports; Knip cannot see inline workflow consumers.
+    "scripts/{acp-adapter-issue,release-preflight}.cjs": ["exports"],
     // esbuild exposes start/submit through demo.js, which the static homepage lazy-loads.
     "web/marketing/demo-source.mjs": ["exports"],
     // CONNECT-RING-1 selects router/transport aliases and the temporary Metro adapter.
@@ -33,6 +35,15 @@
       // Shell hooks and device harnesses invoke these by path, outside the
       // JavaScript module graph Knip can follow.
       "entry": [
+        // Runtime consumers in Expo and inline workflow scripts load these by convention/path.
+        "scripts/acp-adapter-issue.cjs",
+        "scripts/pages-channel.mjs",
+        "scripts/release-preflight.cjs",
+        "scripts/prompt-pr-replay.mjs",
+        "scripts/sync-play-metadata.mjs",
+        // Authenticated operator compatibility entry; docs/release-pipeline.md owns its command-grant rules.
+        "scripts/dispatch-production-release.mjs",
+        "tests/seams/**/*.test.ts",
         // The static homepage loads this module; its documented JS build bundles the demo.
         "web/marketing/boot.mjs",
         "web/marketing/demo-source.mjs",
@@ -121,6 +132,7 @@
         "scripts/transcript-speed/{capture-*,seed,serve,inspect-web,reset,report,symbolicate-room-profile,list-engine-report,list-visual-audit,prepare-list-engines}.mjs",
       ],
       "project": [
+        "tests/seams/**/*.ts",
         "scripts/**/*.{js,cjs,mjs,ts,tsx}",
         "!scripts/fixtures/dead-code-regression/**",
         // Ignored captures and ad hoc trace adapters are local benchmark artifacts.
@@ -154,6 +166,8 @@
       "entry": [
         // tsc executes negative read-owner capability assertions in this entry.
         "sources/buzz/read-authority.typecheck.ts",
+        "metro.config.js",
+        "fingerprint.config.js",
         "index.ts",
         // WEB-OUTBOX-3446 invokes the exported-bundle startup proof by path.
         "scripts/outbox-startup-bundle-proof.mjs",

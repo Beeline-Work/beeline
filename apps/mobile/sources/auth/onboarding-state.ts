@@ -181,7 +181,7 @@ export async function waitForAuthCallbackResult({
   }
 }
 
-export async function waitForAuthCallback(input: WaitForAuthCallbackInput): Promise<string> {
+async function waitForAuthCallback(input: WaitForAuthCallbackInput): Promise<string> {
   return (await waitForAuthCallbackResult(input)).url;
 }
 

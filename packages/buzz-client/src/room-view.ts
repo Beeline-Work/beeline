@@ -30,6 +30,7 @@ import type { Identity } from './types.js';
 
 const AGENT_PAIRING_ROOM_ROLLBACK_CAPABILITY = 'pairing-room-rollback';
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export type RoomViewClientOptions = {
   readonly baseUrl: string;
   readonly publicOrigin?: string;
@@ -41,6 +42,7 @@ export type RoomViewClientOptions = {
   }) => void;
 };
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export class RoomViewHttpError extends Error {
   constructor(
     readonly status: number,
@@ -51,7 +53,7 @@ export class RoomViewHttpError extends Error {
   }
 }
 
-export class RoomViewClient {
+class RoomViewClient {
   private readonly baseUrl: string;
   private readonly authorizationBaseUrl: string;
   private readonly fetchImpl: typeof fetch;

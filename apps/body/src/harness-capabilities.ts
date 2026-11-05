@@ -137,12 +137,6 @@ export function harnessEnforcement(agentCommand: string | undefined): HarnessPro
   };
 }
 
-/** Can the daemon's permission callback actually hold this harness to a boundary? */
-export function enforcesPermissionBoundary(agentCommand: string | undefined): boolean {
-  const { enforcement } = harnessEnforcement(agentCommand);
-  return enforcement === 'sandboxed' || enforcement === 'permission-callback';
-}
-
 /**
  * Does this harness honor ACP `session/new`'s top-level `systemPrompt` field?
  *
@@ -183,34 +177,6 @@ export function harnessSupportsNativeSessionResume(agentCommand: string | undefi
     (/(^|[/\\])codex-acp(\.[a-z]+)?$/i.test(agentCommand) ||
       /(^|[/\\])grok(\.[a-z]+)?$/i.test(agentCommand)),
   );
-}
-
-/**
- * Grok's cold ACP turn has a large fixed prefill, while a second prompt on the
- * same physical session reuses that prefix and streams in a few seconds. Keep
- * its process warm across an ordinary conversational pause. The scheduler's
- * hard Room/Workspace capacity still wins and may evict it immediately when a
- * slot is needed, so this changes idle cleanup rather than the memory bound.
- *
- * Measured with Grok CLI 1.0.5 on 2026-08-24: the same Beeline-shaped coding
- * prompt produced its first relay draft at 12.217s cold and 2.249s warm.
- */
-export const GROK_WARM_SESSION_IDLE_MS = 30 * 60_000;
-
-/** Per-harness override for the scheduler's ordinary idle retirement window. */
-export function harnessSessionIdleMs(agentCommand: string | undefined): number | undefined {
-  return agentCommand && /(^|[/\\])grok(\.[a-z]+)?$/i.test(agentCommand)
-    ? GROK_WARM_SESSION_IDLE_MS
-    : undefined;
-}
-
-/**
- * pi-acp is the one shipped harness that needs agent text for the target-branch
- * proposal command because it has no permission callback to carry that typed
- * command. Unknown/custom harnesses do not inherit this escape hatch.
- */
-export function usesTextTargetBranchFallback(agentCommand: string | undefined): boolean {
-  return Boolean(agentCommand && /(^|[/\\])pi-acp(\.[a-z]+)?$/i.test(agentCommand));
 }
 
 /**
@@ -322,50 +288,5 @@ export function roomShellCapability(
 export function roomNativeIoProven(command: string | undefined, options: { osSandbox?: boolean } = {}): boolean {
   return roomShellCapability(command, options) === 'runs' &&
     (harnessEnforcement(command).enforcement !== 'sandboxed' || options.osSandbox === true);
-}
-
-/**
- * One-line operator line about how a Room's read-only rule is actually held for
- * this harness, or `undefined` when nothing needs saying.
- *
- * Two independent layers can hold it, and the line must not conflate them. The
- * ACP permission callback (`session-sandbox.ts`) binds only a harness that
- * asks; the OS sandbox (`bwrap-sandbox.ts`) binds every harness, including one
- * that never asks, because the filesystem it is handed is read-only. So a
- * harness the callback cannot hold is only ADVISORY while it is also unwrapped —
- * once the daemon wraps it, the boundary is real and the line says so instead
- * of warning about a gap that has been closed.
- */
-export function roomSandboxWarning(
-  agentCommand: string | undefined,
-  options: { osSandbox?: boolean } = {},
-): string | undefined {
-  const { enforcement, note } = harnessEnforcement(agentCommand);
-  if (enforcement === 'sandboxed') {
-    // codex-acp: the layer holding the rule depends on the OS sandbox, because
-    // under bwrap the Room runs in agent-full-access (`roomModeCandidates`).
-    return options.osSandbox
-      ? `Room read-only enforcement for this harness is the OS sandbox (sandbox=ON): the ` +
-          `session runs in Codex agent-full-access so it has network and never asks; the ` +
-          `checkout is mounted read-only by bubblewrap, so a write is refused by the kernel.`
-      : `Room read-only enforcement for this harness is Codex's own read-only mode ` +
-          `(sandbox=OFF): the Room stays offline and read-only. Install bubblewrap so the ` +
-          `daemon holds the filesystem rule and the Room can run in agent-full-access with network.`;
-  }
-  if (enforcement === 'permission-callback') return undefined;
-  if (options.osSandbox) {
-    return (
-      `Room read-only enforcement for this harness is the OS sandbox (sandbox=ON): ${note}. ` +
-      `Its ACP child runs on a read-only filesystem, so a write is refused by the kernel ` +
-      `rather than by a permission request the harness never sends.`
-    );
-  }
-  return (
-    `Room read-only enforcement is ADVISORY for this harness (sandbox=OFF): ${note}. ` +
-    `The Room system prompt still forbids editing, but the daemon cannot block it. ` +
-    `Use claude for a Room that must be read-only (codex Rooms without bubblewrap stay ` +
-    `offline-and-read-only in Codex's own sandbox), or install bubblewrap so the daemon ` +
-    `can enforce it at the OS level.`
-  );
 }
 

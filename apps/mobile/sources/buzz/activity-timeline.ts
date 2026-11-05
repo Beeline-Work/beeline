@@ -377,7 +377,7 @@ function appendDistinctDetail(
  * re-reads the same file after an edit) folds into its first row instead of
  * printing a new one, so a long turn still reads like a summary, not a log.
  */
-export function buildActivityTimeline(
+function buildActivityTimeline(
   items: readonly AgentActivityItem[],
 ): ActivityTimelineEntry[] {
   const entries: ActivityTimelineEntry[] = [];
@@ -751,7 +751,7 @@ export function buildTurnActivity(items: readonly AgentActivityItem[]): TurnActi
  * (not `ChatDisplayMessage`) so this stays a pure function over activity data
  * with no dependency on the projection layer's message shape.
  */
-export function latestCornerPlan(
+function latestCornerPlan(
   messages: readonly { activity?: readonly AgentActivityItem[] }[],
 ): AgentActivityItem['plan'] | undefined {
   let plan: AgentActivityItem['plan'];

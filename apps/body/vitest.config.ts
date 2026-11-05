@@ -6,7 +6,7 @@ import { defineConfig } from 'vitest/config';
  */
 export default defineConfig({
   test: {
-    setupFiles: ['./test-isolation.ts'],
+    setupFiles: ['../../tests/helpers/helper.ts'],
     include: ['src/**/*.test.ts'],
     exclude: ['src/**/*.live.test.ts', 'node_modules/**', 'dist/**'],
     // Production Git work is intentionally asynchronous and process-group

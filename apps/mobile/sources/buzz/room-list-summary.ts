@@ -122,7 +122,7 @@ export function roomPreviewText(raw: string, limit = PREVIEW_MAX_CHARS): string 
  * than no label, and it is the one case where the index has nothing true to
  * say about who spoke.
  */
-export function previewAuthorLabel(name: string | undefined, maxChars = 12): string {
+function previewAuthorLabel(name: string | undefined, maxChars = 12): string {
   const upper = name?.trim().toUpperCase();
   if (!upper) return '';
   return upper.length > maxChars ? `${upper.slice(0, maxChars - 1)}…` : upper;

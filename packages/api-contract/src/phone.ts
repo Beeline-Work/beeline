@@ -47,3 +47,5 @@ export * from './router-command.js';
 export * from './media-metadata.js';
 
 export * from './external-agent-rules.js';
+
+export { isChatListView } from "./phone-guards.js";

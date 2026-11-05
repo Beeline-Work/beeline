@@ -7,7 +7,6 @@ import { readOwnedModelReceipt } from '@beeline/api-contract/helper-model-receip
 /** Private generation files only. No transport, provider registration, local
  * retry, runtime activation or current-authority assertion lives in this leaf. */
 export const OWNED_MODEL_FILE_MAX_BYTES = 32 * 1024;
-export const OWNED_MODEL_DENY_TOKEN = 'beeline-owned-model-unavailable';
 export interface OwnedModelFileBinding {
   readonly agentId: string;
   readonly commandId: string;

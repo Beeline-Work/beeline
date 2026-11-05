@@ -49,13 +49,6 @@ module.exports = function withAndroidBuildTooling(config) {
     await fs.writeFile(rulesPath, existing.includes(endMarker)
       ? existing.replace(pattern, block)
       : `${existing.trimEnd()}\n\n${block}\n`);
-    const profiles = path.join(app, 'src/main/baselineProfiles');
-    const baseline = await fs.readFile(path.join(__dirname, 'android-startup-prof.txt'), 'utf8');
-    const startup = baseline.split(/\r?\n/).filter((rule) =>
-      rule.startsWith('L') || rule.slice(0, rule.indexOf('L')).includes('S'));
-    await fs.mkdir(profiles, { recursive: true });
-    await fs.writeFile(path.join(profiles, 'baseline-prof.txt'), baseline);
-    await fs.writeFile(path.join(profiles, 'startup-prof.txt'), `${startup.join('\n')}\n`);
     const raw = path.join(app, 'src/main/res/raw');
     await fs.mkdir(raw, { recursive: true });
     await fs.writeFile(path.join(raw, 'beeline_keep.xml'),

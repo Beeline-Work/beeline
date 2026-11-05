@@ -111,11 +111,8 @@ export async function computeNativeFingerprints(projectDir) {
         // This patch contains Android Kotlin only; iOS needs no new binary.
         ...(platform === 'ios' ? ['node_modules/expo-navigation-bar/**', 'plugins/withAndroidBuildTooling.js', 'plugins/android-release.pro', 'patches/expo-updates+55.0.26.patch'] : []),
       ],
-      // Build inputs read with fs.readFile are not discovered as JS imports.
-      extraSources: platform === 'android' ? [
-        { type: 'file', filePath: 'plugins/android-release.pro', reasons: ['Android release shrinker rules'] },
-        { type: 'file', filePath: 'plugins/android-startup-prof.txt', reasons: ['Android app startup profile'] },
-      ] : [],
+      // Rules loaded with fs.readFile are not discovered as JS imports.
+      extraSources: platform === 'android' ? [{ type: 'file', filePath: 'plugins/android-release.pro', reasons: ['Android release shrinker rules'] }] : [],
       fileHookTransform(source, chunk, ...rest) {
         // A streaming hook intentionally returns null while buffering a file.
         // Preserve that signal rather than hashing the original chunk as well.

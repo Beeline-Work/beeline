@@ -24,21 +24,21 @@ describe('P7 dispatcher durable command adapter', () => {
   function server() {
     const live = new LiveHub(), phone = new PhoneService(db, 'https://test.invalid');
     const options = { database: db, phone, live } as ServerOptions;
-    return { dispatch: createPhoneOperationDispatcher(options,  phone.execute), live };
+    return { dispatch: createPhoneOperationDispatcher(options), live, phone };
   }
-  it('selects outcome-only Tray decisions through the real dispatcher and never invokes the legacy override or coverage builder',async()=>{
+  it('selects outcome-only Tray decisions through the real dispatcher and never reexecutes the generic executor on replay',async()=>{
     const agent='d'.repeat(64);
     await db.query("INSERT INTO identities(id,kind,name) VALUES($1,'agent','Helper')",[agent]);
     await db.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)',[agent,VIEWER]);
     await db.query("INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$3,'member'),($1,$2,$3,'member')",[WORKSPACE,ROOM,agent]);
     const choice=await db.transaction(tx=>postRoomChoice(tx,{roomId:ROOM,agentId:agent,mode:'question',prompt:'Synthetic?',
       options:[{label:'One',consequence:'Use one'},{label:'Two',consequence:'Use two'}],ttlSeconds:300}));
-    const first=server(),second=server(),legacy=vi.fn(async()=>{throw new Error('Legacy bypass');});
+    const first=server(),second=server(),legacy=vi.spyOn(second.phone,'execute');
     const input={choiceId:choice.choiceId},identity={v:1 as const,id:'tray-dispatch-skip'};
-    const receipt=await first.dispatch('skipChoice',input,VIEWER,undefined,legacy,undefined,identity);
+    const receipt=await first.dispatch('skipChoice', input, VIEWER, undefined, undefined, identity);
     expect(receipt).toMatchObject({state:'committed',operation:'skipChoice',result:null});expect(receipt).not.toHaveProperty('coverage');
     const publish=vi.spyOn(second.live,'publish');
-    expect(await second.dispatch('skipChoice',input,VIEWER,undefined,legacy,undefined,identity)).toEqual(receipt);
+    expect(await second.dispatch('skipChoice', input, VIEWER, undefined, undefined, identity)).toEqual(receipt);
     expect(publish).not.toHaveBeenCalled();expect(legacy).not.toHaveBeenCalled();
     expect((await db.query('SELECT status FROM room_choices WHERE id=$1',[choice.choiceId])).rows).toEqual([{status:'skipped'}]);
   });
@@ -47,12 +47,12 @@ describe('P7 dispatcher durable command adapter', () => {
     const publish = vi.spyOn(second.live, 'publish');
     const args = { roomId: ROOM, messageId: MESSAGE, emoji: '👍' };
     const identity = { v: 1 as const, id: 'reaction-once' };
-    const receipt = await first.dispatch('reactToMessage', args, VIEWER, undefined, undefined, undefined, identity);
-    const replay = await second.dispatch('reactToMessage', args, VIEWER, undefined, undefined, undefined, identity);
+    const receipt = await first.dispatch('reactToMessage', args, VIEWER, undefined, undefined, identity);
+    const replay = await second.dispatch('reactToMessage', args, VIEWER, undefined, undefined, identity);
     expect(replay).toEqual(receipt);
     expect((await db.query('SELECT reactions FROM messages WHERE id=$1', [MESSAGE])).rows[0]?.reactions).toEqual({ '👍': [VIEWER] });
     expect(publish).not.toHaveBeenCalled();
-    await expect(second.dispatch('reactToMessage', { ...args, emoji: '❤️' }, VIEWER, undefined, undefined, undefined, identity))
+    await expect(second.dispatch('reactToMessage', { ...args, emoji: '❤️' }, VIEWER, undefined, undefined, identity))
       .rejects.toMatchObject({ status: 409, payload: { error: 'command_identity_conflict' } });
   });
   it('legacy requests keep their original response and toggle semantics without opting in', async () => {
@@ -65,8 +65,8 @@ describe('P7 dispatcher durable command adapter', () => {
     expect((await db.query('SELECT * FROM router_commands')).rows).toEqual([]);
   });
   it('unsupported provider operations reject metadata before invoking the legacy effect', async () => {
-    const { dispatch } = server(), effect = vi.fn(async () => ({ paid: true }));
-    await expect(dispatch('voiceJoin', { roomId: ROOM }, VIEWER, undefined, effect, undefined, { v: 1, id: 'provider' }))
+    const { dispatch, phone } = server(), effect = vi.spyOn(phone, 'execute');
+    await expect(dispatch('voiceJoin', { roomId: ROOM }, VIEWER, undefined, undefined, { v: 1, id: 'provider' }))
       .rejects.toMatchObject({ status: 400, payload: { error: 'command_operation_not_supported' } });
     expect(effect).not.toHaveBeenCalled();
     expect((await db.query('SELECT * FROM router_commands')).rows).toEqual([]);
@@ -75,14 +75,14 @@ describe('P7 dispatcher durable command adapter', () => {
     const { dispatch } = server();
     const args = { roomId: ROOM, messageId: MESSAGE, emoji: '👍' };
     const identity = { v: 1 as const, id: 'authority-race' };
-    const original = await dispatch('reactToMessage', args, VIEWER, undefined, undefined, undefined, identity) as RouterCommandReceipt;
+    const original = await dispatch('reactToMessage', args, VIEWER, undefined, undefined, identity) as RouterCommandReceipt;
     expect(original).not.toHaveProperty('coverage');
     expect(original.result).toMatchObject({ id: MESSAGE });
     const accepted = vi.fn(() => undefined);
     await fenceCommandReceiptEnqueue(db, VIEWER, original, accepted);
     expect(accepted).toHaveBeenCalledWith({ v: 1, operation: 'reactToMessage', commandId: identity.id, state: 'committed' });
     await db.query('UPDATE memberships SET removed_at=now() WHERE identity_id=$1 AND room_id=$2', [VIEWER, ROOM]);
-    const replay = await dispatch('reactToMessage', args, VIEWER, undefined, undefined, undefined, identity) as RouterCommandReceipt;
+    const replay = await dispatch('reactToMessage', args, VIEWER, undefined, undefined, identity) as RouterCommandReceipt;
     const revoked = vi.fn(() => undefined);
     await fenceCommandReceiptEnqueue(db, VIEWER, replay, revoked);
     expect(revoked).toHaveBeenCalledWith({ v: 1, operation: 'reactToMessage', commandId: identity.id, state: 'committed' });
@@ -95,15 +95,13 @@ describe('P7 dispatcher durable command adapter', () => {
   it('cancel before dispatch creates no durable intent or effect', async () => {
     const { dispatch } = server(), controller = new AbortController();
     controller.abort(new Error('cancel before send'));
-    await expect(dispatch('reactToMessage', { roomId: ROOM, messageId: MESSAGE, emoji: '👍' }, VIEWER,
-      controller.signal, undefined, undefined, { v: 1, id: 'cancelled' })).rejects.toThrow('cancel before send');
+    await expect(dispatch('reactToMessage', { roomId: ROOM, messageId: MESSAGE, emoji: '👍' }, VIEWER, controller.signal, undefined, { v: 1, id: 'cancelled' })).rejects.toThrow('cancel before send');
     expect((await db.query('SELECT * FROM router_commands')).rows).toEqual([]);
     expect((await db.query('SELECT reactions FROM messages WHERE id=$1', [MESSAGE])).rows[0]?.reactions).toEqual({});
   });
   it('does not claim command completion when a DB-only operation is refused', async () => {
     const { dispatch } = server();
-    await expect(dispatch('deleteRoomMessage', { roomId: ROOM, messageId: 'd'.repeat(64) }, VIEWER,
-      undefined, undefined, undefined, { v: 1, id: 'missing' })).rejects.toThrow();
+    await expect(dispatch('deleteRoomMessage', { roomId: ROOM, messageId: 'd'.repeat(64) }, VIEWER, undefined, undefined, { v: 1, id: 'missing' })).rejects.toThrow();
     expect((await db.query('SELECT * FROM router_commands')).rows).toEqual([]);
   });
 });

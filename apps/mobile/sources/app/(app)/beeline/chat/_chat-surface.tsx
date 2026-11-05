@@ -1,7 +1,6 @@
 import { IndexRow } from '@/components/buzz/IndexRow';
 import { observeArtifactRows, setArtifactViewportActive } from '@/buzz/artifact-viewport';
 import { useSurfaceFocus } from '@/buzz/use-surface-focus';
-import { prepareRouterMessageGesture } from '@/buzz/command-message-gesture';
 import { trackDictatedMessage } from '@/buzz/dictation-timing';
 import { presentPersonInvite } from '@/components/buzz/PersonInviteSheet';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
@@ -3907,14 +3906,6 @@ export function BuzzChatSurface({
         isCorner ||
         Boolean(mentionedAgent) ||
         (roomAgents.length === 1 && roomParticipants.length <= 2);
-      // Prepare immutable final message bytes inside this existing gesture,
-      // before the paint yield. Upload-dependent legacy sends keep their path.
-      const routerPrepared = activePendingAttachments.length === 0 && !viewer?.screenshotBase64
-        ? prepareRouterMessageGesture({ roomId: decodedId, principal: userPubkey, text,
-            attachments: viewer?.artifact ? [viewer.artifact] : [],
-            mentions: [...new Set([...mentionedPubkeys, ...(mentionedAgent ? [mentionedAgent] : [])])],
-            ...(preparedReply?.reference ? { parentMessageId: preparedReply.reference.eventId } : {}),
-          }) : undefined;
       // Retain this Room's delivery handle across first paint and navigation.
       // Session cleanup may clear its ref while this send is still preparing.
       let activeOutbox = outbox.current();
@@ -3977,7 +3968,6 @@ export function BuzzChatSurface({
       }
       let preparedEvent: Awaited<ReturnType<BuzzRigTransport['composeMessage']>> | undefined;
       try {
-        if (routerPrepared) await routerPrepared.persisted;
         // A warm/partial snapshot can paint before the hydration effect has
         // published its transport state. Sending is still a valid operation:
         // construct the monolith transport on demand rather than
@@ -3992,7 +3982,6 @@ export function BuzzChatSurface({
         // ■ on a dictated message drops it at any step before it enters the Room.
         const dictationCancelled = () => {
           if (!dictated?.cancelled) return false;
-          if (routerPrepared) void routerPrepared.cancelBeforeSend().catch(() => undefined);
           setPendingAck(null);
           if (provisionalId) {
             sendPreview.remove(preparedEvent?.id ?? provisionalId);
@@ -4027,7 +4016,7 @@ export function BuzzChatSurface({
         if (dictationCancelled()) return;
         // Sign before append. The authoritative event id is the optimistic row
         // identity and the durable outbox key from its first frame onward.
-        preparedEvent = routerPrepared?.event ?? (preparedReply?.reference
+        preparedEvent = preparedReply?.reference
           ? await sendTransport.composeReplyMessage(
               text,
               preparedReply.reference,
@@ -4043,7 +4032,7 @@ export function BuzzChatSurface({
                     ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
                   }
                 : undefined,
-            ));
+            );
         if (addressesAgent) {
           setPendingAck((current) =>
             current ? { ...current, requestId: preparedEvent!.id } : current,

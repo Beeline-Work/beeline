@@ -20,7 +20,6 @@ const trayProtocol = vi.hoisted(() => ({
 vi.mock('@/buzz/router-chat-list', () => ({
   acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy(),
 }));
-vi.mock('@/buzz/command-owner',()=>({activeCommandOwner:()=>undefined,canonical:JSON.stringify}));
 
 const layout = vi.hoisted(() => ({ os: 'web', width: 1200 }));
 const appState = vi.hoisted(() => ({

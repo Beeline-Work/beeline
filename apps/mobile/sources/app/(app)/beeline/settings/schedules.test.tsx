@@ -1,4 +1,3 @@
-vi.mock('@/buzz/command-owner', () => ({ activeCommandOwner: () => undefined, canonical: JSON.stringify }));
 // This suite exercises an installed old-server path, with explicit legacy negotiation.
 
 

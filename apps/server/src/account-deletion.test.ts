@@ -1,3 +1,4 @@
+import { phoneFetch } from '../../../tests/helpers/phone-operation.js';
 import { cornerOwnerSql } from './corner-worker.js';
 import { cornerCommissionerSql, cornerKindSql, cornerOpenedFromSql, cornerRequestSql } from './corner-opening.js';
 import { createHash } from 'node:crypto';
@@ -215,7 +216,7 @@ describe('deleteAccount', () => {
     await startServer();
     ownerToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
     const workspaceId = '66666666-6666-4666-8666-666666666666';
-    const operation = (name: string, input: object) => fetch(`${origin}/v1/phone/operations/${name}`, {
+    const operation = (name: string, input: object) => phoneFetch(`${origin}/v1/phone/operations/${name}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${ownerToken}`, 'content-type': 'application/json' },
       body: JSON.stringify(input),
@@ -297,7 +298,7 @@ describe('deleteAccount', () => {
     )).rows;
     await startServer();
     ownerToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
-    const response = await fetch(`${origin}/v1/phone/operations/deleteAccount`, {
+    const response = await phoneFetch(`${origin}/v1/phone/operations/deleteAccount`, {
       method: 'POST',
       headers: { authorization: `Bearer ${ownerToken}`, 'content-type': 'application/json' },
       body: '{}',
@@ -317,7 +318,7 @@ describe('deleteAccount', () => {
     await startServer();
     ownerToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
 
-    const response = await fetch(`${origin}/v1/phone/operations/deleteAccount`, {
+    const response = await phoneFetch(`${origin}/v1/phone/operations/deleteAccount`, {
       method: 'POST',
       headers: { authorization: `Bearer ${ownerToken}`, 'content-type': 'application/json' },
       body: '{}',
@@ -501,7 +502,7 @@ describe('deleteAccount', () => {
     );
     await startServer();
     ownerToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
-    const response = await fetch(`${origin}/v1/phone/operations/deleteAccount`, {
+    const response = await phoneFetch(`${origin}/v1/phone/operations/deleteAccount`, {
       method: 'POST',
       headers: { authorization: `Bearer ${ownerToken}`, 'content-type': 'application/json' },
       body: '{}',
@@ -709,7 +710,7 @@ describe('deleteAccount', () => {
     phone = phoneWith(composio);
     await startServer();
     ownerToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
-    const response = await fetch(`${origin}/v1/phone/operations/deleteAccount`, {
+    const response = await phoneFetch(`${origin}/v1/phone/operations/deleteAccount`, {
       method: 'POST',
       headers: { authorization: `Bearer ${ownerToken}`, 'content-type': 'application/json' },
       body: '{}',
@@ -780,7 +781,7 @@ describe('deleteAccount', () => {
   it('deletes the review identity and restores it when the review link is redeemed again', async () => {
     await startServer();
     const redeem = async () => {
-      const response = await fetch(`${origin}/v1/auth/review/exchange`, {
+      const response = await phoneFetch(`${origin}/v1/auth/review/exchange`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ secret: REVIEW_SECRET }),
@@ -791,7 +792,7 @@ describe('deleteAccount', () => {
 
     const first = await redeem();
     expect(first.identityId).toBe(REVIEW_IDENTITY_ID);
-    const deleted = await fetch(`${origin}/v1/phone/operations/deleteAccount`, {
+    const deleted = await phoneFetch(`${origin}/v1/phone/operations/deleteAccount`, {
       method: 'POST',
       headers: { authorization: `Bearer ${first.accessToken}`, 'content-type': 'application/json' },
       body: '{}',

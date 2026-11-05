@@ -96,11 +96,6 @@ describe('the one phone socket',()=>{
     const socket=await open();socket.drop();expect(await write).toBeInstanceOf(PhoneSocketDisconnectedError);
     await vi.advanceTimersByTimeAsync(90_000);expect(Socket.instances).toHaveLength(1);expect(socket.requests()).toHaveLength(1);
   });
-  it('retains the immutable durable command envelope without transport replay',async()=>{
-    const {connection}=setup();await connection.register([],()=>{});const socket=await open();
-    const command={v:1 as const,id:'proof-command'};const answer=connection.requestCommand('reactToMessage',{roomId:'a',messageId:'m',emoji:'👍'},command);
-    expect(socket.requests()[0].command).toEqual(command);socket.reply({commandId:command.id,state:'committed'});await expect(answer).resolves.toMatchObject({state:'committed'});
-  });
   it('a healthy slow write keeps waiting for its result without replay',async()=>{
     const {connection}=setup();const write=connection.request('reactToMessage',{roomId:'a',messageId:'m',emoji:'👍'},{timeoutMs:100});
     const socket=await open();await vi.advanceTimersByTimeAsync(200);expect(Socket.instances).toHaveLength(1);expect(socket.requests()).toHaveLength(1);
@@ -162,7 +157,7 @@ describe('the one phone socket',()=>{
   it('Retry revives a socket already closed before its native close callback arrives',async()=>{
     const {connection}=setup();await connection.register([],()=>{});const first=await open();
     first.readyState=3;connection.reconnectNow();const second=await open();
-    expect(second).not.toBe(first);expect(connection.commandState().ready).toBe(true);
+    expect(second).not.toBe(first);expect(connection.diagnostics().state).toBe(1);
   });
   it('the heartbeat detects native closure even if its callback was lost',async()=>{
     const {connection}=setup();const listener=vi.fn();await connection.register([{'#h':['a']}],listener);

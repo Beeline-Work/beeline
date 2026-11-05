@@ -331,53 +331,50 @@ export async function applyVaultList(
   connector: { id?: string; owner_identity_id: string; machine_id?: string; workspace_id?: string },
   connections: readonly VaultConnectionMeta[],
 ): Promise<void> {
-  const seen = new Set<string>();
-  for (const entry of connections) {
-    seen.add(entry.reference);
-    await database.query(
-      `INSERT INTO workspace_connections(
-         id,connector_id,owner_identity_id,reference,service,label,hosts,state,
-         connection_metadata,last_synced_at,machine_id,workspace_id
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9::jsonb,now(),$10,$11)
-       ON CONFLICT ${connector.machine_id
-         ? '(owner_identity_id,machine_id,reference) WHERE machine_id IS NOT NULL'
-         : '(connector_id,reference)'} DO UPDATE SET
-         service=EXCLUDED.service,
-         label=EXCLUDED.label,
-         hosts=EXCLUDED.hosts,
-         state=EXCLUDED.state,
-         connection_metadata=EXCLUDED.connection_metadata,
-         last_synced_at=now(),
-         updated_at=now()`,
-      [
-        randomUUID(),
-        connector.id ?? null,
-        connector.owner_identity_id,
-        entry.reference,
-        entry.service,
-        entry.label,
-        JSON.stringify(entry.allowedHosts ?? []),
-        entry.state,
-        JSON.stringify({ fieldNames: entry.fieldNames, vaultCreatedAt: entry.createdAt,
-          loginHosts: entry.loginHosts, faviconDomain: entry.faviconDomain, keyName: entry.keyName,
-          credentialKind: entry.credentialKind, expiresAt: entry.expiresAt }),
-        connector.machine_id ?? null,
-        connector.workspace_id ?? null,
-      ],
-    );
-  }
+  // One statement for the whole report: a per-entry round trip held the
+  // caller's vault lock for seconds and starved the pool on reconnect.
+  const rows = [...new Map(connections.map(entry => [entry.reference, {
+    id: randomUUID(),
+    reference: entry.reference,
+    service: entry.service,
+    label: entry.label,
+    hosts: entry.allowedHosts ?? [],
+    state: entry.state,
+    metadata: { fieldNames: entry.fieldNames, vaultCreatedAt: entry.createdAt,
+      loginHosts: entry.loginHosts, faviconDomain: entry.faviconDomain, keyName: entry.keyName,
+      credentialKind: entry.credentialKind, expiresAt: entry.expiresAt },
+  }])).values()];
+  await database.query(
+    `INSERT INTO workspace_connections(
+       id,connector_id,owner_identity_id,reference,service,label,hosts,state,
+       connection_metadata,last_synced_at,machine_id,workspace_id
+     ) SELECT r.id,$2::uuid,$3::text,r.reference,r.service,r.label,r.hosts,r.state,r.metadata,now(),$4::text,$5::uuid
+       FROM jsonb_to_recordset($1::jsonb) AS r(id uuid,reference text,service text,label text,
+         hosts jsonb,state text,metadata jsonb)
+     ON CONFLICT ${connector.machine_id
+       ? '(owner_identity_id,machine_id,reference) WHERE machine_id IS NOT NULL'
+       : '(connector_id,reference)'} DO UPDATE SET
+       service=EXCLUDED.service,
+       label=EXCLUDED.label,
+       hosts=EXCLUDED.hosts,
+       state=EXCLUDED.state,
+       connection_metadata=EXCLUDED.connection_metadata,
+       last_synced_at=now(),
+       updated_at=now()`,
+    [JSON.stringify(rows), connector.id ?? null, connector.owner_identity_id,
+      connector.machine_id ?? null, connector.workspace_id ?? null],
+  );
   // A reference the vault no longer holds is gone; its ledger history goes
   // with it (the vault is the record of what exists, not what existed).
-  const existing = await database.query<{ id: string; reference: string }>(
+  const references = rows.map(row => row.reference);
+  await database.query(
     connector.machine_id
-      ? `SELECT id,reference FROM workspace_connections WHERE owner_identity_id=$1 AND machine_id=$2`
-      : `SELECT id,reference FROM workspace_connections WHERE connector_id=$1`,
-    connector.machine_id ? [connector.owner_identity_id, connector.machine_id] : [connector.id],
+      ? `DELETE FROM workspace_connections WHERE owner_identity_id=$1 AND machine_id=$2 AND NOT reference=ANY($3::text[])`
+      : `DELETE FROM workspace_connections WHERE connector_id=$1 AND NOT reference=ANY($2::text[])`,
+    connector.machine_id
+      ? [connector.owner_identity_id, connector.machine_id, references]
+      : [connector.id, references],
   );
-  for (const row of existing.rows) {
-    if (!seen.has(row.reference))
-      await database.query(`DELETE FROM workspace_connections WHERE id=$1`, [row.id]);
-  }
   if (connector.id) await database.query(`UPDATE workspace_connectors SET updated_at=now() WHERE id=$1`, [
     connector.id,
   ]);

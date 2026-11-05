@@ -6,6 +6,7 @@ export type SurfaceCacheStorage = {
   readonly remove: (key: string) => Promise<void>;
 };
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export type SurfaceCacheAddress = {
   readonly relayOrigin: string;
   readonly viewerPubkey: string;
@@ -13,6 +14,7 @@ export type SurfaceCacheAddress = {
   readonly params?: Readonly<Record<string, string | number | undefined>>;
 };
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function surfaceCacheKey(address: SurfaceCacheAddress): string {
   const origin = new URL(address.relayOrigin).origin;
   const params = Object.entries(address.params ?? {})
@@ -22,6 +24,7 @@ export function surfaceCacheKey(address: SurfaceCacheAddress): string {
 }
 
 /** Stores validated GET DTOs with an optional narrow response sanitizer; it has no relay-event merge API. */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export class SurfaceResponseCache {
   constructor(
     private readonly storage: SurfaceCacheStorage,

@@ -52,15 +52,7 @@ import { execFile, spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import { squireReachCause } from './squire-status.js';
 import { squireBrokerSocketReady, squireHostPaths, squireHostRewriteEnv } from './squire-host.js';
-import type {
-  ConnectionDetail,
-  ConnectionGrant,
-  ConnectionLedgerEntry,
-  ConnectorBrowserLocation,
-  ConnectorSignIn,
-  ConnectorStep,
-  VaultConnectionMeta,
-} from '@beeline/api-contract/daemon';
+import type {ConnectionGrant, ConnectorBrowserLocation, ConnectorSignIn, ConnectorStep, VaultConnectionMeta} from '@beeline/api-contract/daemon';
 
 /** The one Squire MCP contract this connector speaks. */
 export interface SquireMcpClient {
@@ -1021,32 +1013,6 @@ export async function readVault(mcp: SquireMcpClient): Promise<VaultConnectionMe
   return asArray(result.credentials ?? result.items ?? result).map(vaultConnectionMeta);
 }
 
-export function connectionLedgerEntry(raw: unknown): ConnectionLedgerEntry {
-  const record = asRecord(raw);
-  return {
-    id: String(record.id ?? record.event_id ?? ''),
-    timestamp: numberOrNull(record.timestamp ?? record.created_at) ?? 0,
-    action: String(record.action ?? record.event ?? record.kind ?? 'event'),
-    ...(typeof record.actor === 'string' ? { actor: record.actor } : {}),
-    ...(numberOrNull(record.status) !== null ? { status: numberOrNull(record.status)! } : {}),
-    ...(numberOrNull(record.bytes) !== null ? { bytes: numberOrNull(record.bytes)! } : {}),
-    ...(record.anomaly === true || record.anomaly === false
-      ? { anomaly: record.anomaly as boolean }
-      : {}),
-    ...(typeof record.anomaly_reason === 'string' ? { anomalyReason: record.anomaly_reason } : {}),
-  };
-}
-
-/** `audit_log` (default ledger view) for one credential, shaped to the contract. */
-export async function readConnectionLedger(
-  mcp: SquireMcpClient,
-  ref: string,
-): Promise<ConnectionLedgerEntry[]> {
-  const result = asRecord(await mcp.call('audit_log', { reference: ref, view: 'ledger' }));
-  const entries = asArray(result.entries ?? result.events ?? result.ledger ?? result);
-  return entries.map(connectionLedgerEntry);
-}
-
 export function connectionGrant(raw: unknown): ConnectionGrant {
   const record = asRecord(raw);
   return {
@@ -1091,23 +1057,4 @@ export async function revokeGrants(
     }
   }
   return { revoked, failed };
-}
-
-/** One connection's full detail: metadata, live grants, ledger. */
-export async function readConnectionDetail(
-  mcp: SquireMcpClient,
-  ref: string,
-): Promise<ConnectionDetail | { error: string }> {
-  try {
-    const vault = await readVault(mcp);
-    const metadata = vault.find((entry) => entry.reference === ref);
-    if (!metadata) return { error: `unknown connection: ${ref}` };
-    const [grants, ledger] = await Promise.all([
-      readGrants(mcp, ref),
-      readConnectionLedger(mcp, ref),
-    ]);
-    return { metadata, grants, ledger };
-  } catch (error) {
-    return { error: error instanceof Error ? error.message : String(error) };
-  }
 }

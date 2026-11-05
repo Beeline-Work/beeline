@@ -181,6 +181,7 @@ if (Platform.OS === 'android') {
 import type { ErrorBoundaryProps } from 'expo-router';
 import { RuntimeErrorView } from '@/components/buzz/RuntimeErrorBoundary';
 
+/** @public Expo Router consumes this named export through its filesystem convention. */
 export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
   React.useEffect(() => { launchSplash.release(); }, []);
   return <RuntimeErrorView error={error} retry={() => void retry()} scope="app" />;

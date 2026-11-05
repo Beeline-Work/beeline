@@ -13,21 +13,6 @@ export type CornerSessionState = 'working' | 'idle' | 'done';
 export type ChannelKind = 'room' | 'corner' | 'unknown';
 
 /**
- * Whether a locally cached channel entry already proves room-vs-corner.
- *
- * `parentChannelId` is written as `parentId ?? undefined`, so an absent value
- * means "room" only once the same patch has also written the resolved name;
- * before that it is indistinguishable from "never fetched".
- */
-export function cachedChannelKind(
-  cache: { parentChannelId?: string; roomName?: string } | undefined,
-): ChannelKind {
-  if (!cache) return 'unknown';
-  if (cache.parentChannelId) return 'corner';
-  return cache.roomName ? 'room' : 'unknown';
-}
-
-/**
  * The chat header's title under the captain's `#` channel-mark convention
  * (2026-08, extended to every surface): a Room renders `#<name>`, a Corner
  * renders `#<room>/<corner>` composed from stored names at render time.
@@ -115,7 +100,7 @@ export function resolveCornerViewAgentPubkey(
 }
 
 /** The edit session lifecycle is authoritative for the corner, never daemon presence. */
-export function cornerSessionState(messages: readonly ChatDisplayMessage[]): CornerSessionState {
+function cornerSessionState(messages: readonly ChatDisplayMessage[]): CornerSessionState {
   const latestTurn = [...messages]
     .filter((message) => message.agentTurn)
     .sort((left, right) => left.timestamp - right.timestamp || left.id.localeCompare(right.id))
@@ -124,7 +109,7 @@ export function cornerSessionState(messages: readonly ChatDisplayMessage[]): Cor
   if (latestTurn.status === 'working') return 'working';
   return latestTurn.status === 'complete' ? 'done' : 'idle';
 }
-export function cornerProcessState(
+function cornerProcessState(
   messages: readonly ChatDisplayMessage[],
 ): CornerProcessState | undefined {
   return [...messages]

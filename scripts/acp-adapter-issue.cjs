@@ -4,6 +4,7 @@ const PROGRAM_PACKAGES = {
   'pi-acp': '@earendil-works/pi-coding-agent',
 };
 
+/** @public The ACP workflow invokes this through github-script. */
 exports.reportAdapterFailures = async ({ github, context, report, programs }) => {
   const failures = report.results.filter(result => result.status === 'failed');
   if (!failures.length) return;

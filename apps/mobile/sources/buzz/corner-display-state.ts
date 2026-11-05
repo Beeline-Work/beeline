@@ -123,7 +123,7 @@ export function cornerHeaderAgent(input: CornerHeaderAgentInput): CornerHeaderAg
   };
 }
 
-export function cornerDisplayItems<T extends CornerDisplayItem>(
+function cornerDisplayItems<T extends CornerDisplayItem>(
   corners: readonly T[],
 ): Array<{ readonly item: T; readonly display: CornerDisplayState }> {
   return corners.map((item) => ({ item, display: cornerDisplayState(item) }));

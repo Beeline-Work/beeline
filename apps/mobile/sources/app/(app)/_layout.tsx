@@ -9,6 +9,7 @@ import { CornerOpenToast } from '@/components/buzz/CornerOpenToast';
 import { useIsDesktop } from '@/utils/responsive';
 import { startMessageOutbox } from '@/buzz/message-outbox-runtime';
 
+/** @public Expo Router consumes this named export through its filesystem convention. */
 export const unstable_settings = {
   initialRouteName: 'index',
 };

@@ -395,28 +395,6 @@ export class DisallowedModelConfigOptionError extends Error {
   }
 }
 
-/**
- * The set path's security gate. Takes the RAW advertised catalog (not
- * pre-filtered) and independently re-derives the allow-list check, so a
- * `mode`/`collaboration_mode` axis is refused here even if an
- * upstream filtering step were ever skipped or buggy.
- */
-export function assertModelConfigOptionAllowed(
-  configId: string,
-  value: string,
-  advertisedOptions: AgentModelConfigOption[],
-): void {
-  const axis = advertisedOptions.find((option) => option.id === configId);
-  if (!axis || !isAllowedAgentModelConfigCategory(axis.category, axis.id)) {
-    throw new DisallowedModelConfigOptionError(configId);
-  }
-  if (!axis.options.some((choice) => choice.id === value)) {
-    throw new Error(
-      `model config value "${value}" is not one of "${configId}"'s advertised options`,
-    );
-  }
-}
-
 export type ModelSelectionLabel = 'model' | 'effort';
 
 export function supportsFastMode(options: AgentModelConfigOption[]): boolean {
@@ -495,41 +473,6 @@ function modelSelectionTargets(selection: {
       value: selection.effort,
     },
   ];
-}
-
-/**
- * The one value-level authority for pair-time, daemon-start, and live-session
- * application. A selection is valid only when the selected harness advertises
- * its exact value in the current credential-filtered catalog. A harness that
- * advertises NO axis for a target runs its own default: the selection is
- * skipped, not refused, so a connect that could not enumerate an axis (cursor)
- * still starts.
- */
-export function assertModelSelectionAdvertised(
-  advertisedOptions: AgentModelConfigOption[],
-  selection: { model?: string; effort?: string },
-): void {
-  for (const target of modelSelectionTargets(selection)) {
-    if (!target.value) continue;
-    const axis = advertisedOptions.find((option) => target.categories.includes(option.category));
-    if (!axis) {
-      // A harness that advertises no axis runs its own default (a connect
-      // that could not enumerate an axis still starts):
-      // model nor effort at `session/new`) runs its own default; there is
-      // nothing to apply and nothing to refuse, so the selection is skipped
-      // rather than failed. A persisted value is still honored the moment the
-      // harness advertises the axis again.
-      continue;
-    }
-    assertModelConfigAxisAllowed(axis.id, advertisedOptions);
-    if (!axis.options.some((choice) => choice.id === target.value)) {
-      throw new ModelSelectionUnavailableError({
-        label: target.label as ModelSelectionLabel,
-        value: target.value,
-        reason: 'not-advertised',
-      });
-    }
-  }
 }
 
 /**

@@ -1,8 +1,5 @@
 import { AGENT_BEHAVIORS } from './agent-command.js';
 
-/** The hook runs inside the native harness, before its result reaches the model. */
-export const NATIVE_SHELL_OUTPUT_CAP = 16_384;
-
 // Standalone: native hooks cannot import the helper's dependency tree.
 export const NATIVE_SHELL_OUTPUT_SCRIPT = String.raw`
 const fs = require('node:fs');

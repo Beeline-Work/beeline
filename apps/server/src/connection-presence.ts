@@ -737,10 +737,11 @@ export async function announceAgentLifecycle(
   agentId: string,
   metadata: PresenceMetadata & { lifecycleId: string },
 ): Promise<void> {
-  const changed = await database.transaction((db) =>
+  const announcement = await database.transaction((db) =>
     writeAgentAnnouncement(db, roomId, agentId, metadata),
   );
-  if (changed) await broadcastAgentPresence(database, live, agentId);
+  await finishAgentAnnouncement(database, agentId, metadata, announcement);
+  if (announcement.changed) await broadcastAgentPresence(database, live, agentId);
 }
 
 /**
@@ -755,7 +756,7 @@ export async function claimAgentConnection(
   metadata: PresenceMetadata,
   connection: HeldConnection,
 ): Promise<number> {
-  const epoch = await database.transaction(async (db) => {
+  const claimedConnection = await database.transaction(async (db) => {
     await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`presence:${agentId}`]);
     await lockAgentMachine(db, agentId);
     const claimed = await db.query<{ epoch: string | number }>(
@@ -767,7 +768,7 @@ export async function claimAgentConnection(
        RETURNING epoch`,
       [agentId, connection.connectionId, connection.instanceId],
     );
-    await writeAgentAnnouncement(db, undefined, agentId, metadata, connection, true);
+    const announcement = await writeAgentAnnouncement(db, undefined, agentId, metadata, connection, true);
     // A free agent's Machine is serving again; the wake latency ends here.
     const freeAgent = await db.query<{ previous: string }>(
       `WITH old AS (SELECT agent_id,state FROM free_agents WHERE agent_id=$1 FOR UPDATE)
@@ -781,8 +782,10 @@ export async function claimAgentConnection(
         `INSERT INTO free_agent_events(agent_id,kind,detail) VALUES($1,'connected',$2::jsonb)`,
         [agentId, JSON.stringify({ previous: freeAgent.rows[0].previous })],
       );
-    return Number(claimed.rows[0]?.epoch ?? 0);
+    return { epoch: Number(claimed.rows[0]?.epoch ?? 0), announcement };
   });
+  const { epoch, announcement } = claimedConnection;
+  await finishAgentAnnouncement(database, agentId, metadata, announcement);
   await notifyAgentConnection(database,agentId,epoch);
   live.publish({ type: 'agent-connection', roomId: '', agentId, epoch });
   await renudgeStrandedPendingCommands(database,agentId);
@@ -908,6 +911,8 @@ export async function releaseStaleServerConnections(
  * connection claim marks the presence held by that connection; any other
  * announcement keeps whatever connection already holds it.
  */
+type Announcement = { changed: boolean; previous?: Record<string, unknown> };
+
 async function writeAgentAnnouncement(
   db: SqlDatabase,
   roomId: string | undefined,
@@ -915,7 +920,7 @@ async function writeAgentAnnouncement(
   metadata: PresenceMetadata,
   connection?: HeldConnection,
   locked = false,
-): Promise<boolean> {
+): Promise<Announcement> {
   const lifecycle = metadata.lifecycleId;
   if (!locked)
     await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`presence:${agentId}`]);
@@ -926,7 +931,6 @@ async function writeAgentAnnouncement(
       [agentId],
     )
   ).rows[0];
-  await recoverAdapterReviewsOnHelperChange(db, agentId, previous?.body, metadata);
   const targetRoomId =
     previous?.room_id ??
     roomId ??
@@ -938,7 +942,7 @@ async function writeAgentAnnouncement(
       )
     ).rows[0]?.room_id;
   // An agent in no Room has no reader to show presence to.
-  if (!targetRoomId) return false;
+  if (!targetRoomId) return { changed: false, previous: previous?.body };
   const observedAt = Math.max(
     Math.floor(Date.now() / 1000),
     Number(previous?.body.observedAt ?? 0) + 1,
@@ -976,40 +980,54 @@ async function writeAgentAnnouncement(
          body=EXCLUDED.body,updated_at=EXCLUDED.updated_at`,
       [targetRoomId, agentId, JSON.stringify(body)],
     );
-  if (!lifecycle) return true;
-  const restarts = await db.query<{
-    id: string;
-    room_id: string;
-    source_message_id: string;
-    handle: string | null;
-    name: string;
-  }>(
-    `UPDATE agent_commands command SET state='complete',completed_at=now(),restart_confirmed_at=now()
-     FROM identities identity
-     WHERE command.agent_id=$1 AND command.agent_id=identity.id
-       AND command.action='restart' AND command.state='claimed'
-       AND command.lifecycle_before IS DISTINCT FROM $2
-     RETURNING command.id,command.room_id,command.source_message_id,identity.handle,identity.name`,
-    [agentId, lifecycle],
-  );
-  for (const restart of restarts.rows)
-    await systemLine(db, {
-      id: createHash('sha256')
-        .update(`agent-restart-confirmed:${restart.id}:${lifecycle}`)
-        .digest('hex'),
-      roomId: restart.room_id,
-      authorId: agentId,
-      subject: {
-        kind: 'agent',
-        id: agentId,
-        name: restart.handle ? systemMessage("connection-presence.agent-mention", restart.handle) : restart.name,
-      },
-      verb: systemMessage("connection-presence.reconnected-after-restart"),
-      afterMessageId: restart.source_message_id,
-    });
-  // Presence is an agent fact. Change one durable row; the PostgreSQL
-  // listener expands its one notification across current Room memberships.
-  return true;
+  return { changed: true, previous: previous?.body };
+}
+
+/** Command repair and restart receipts can wait on the Workspace journal.
+ * Commit presence first so those waits hold neither its row nor its agent lock. */
+async function finishAgentAnnouncement(database: SqlDatabase, agentId: string,
+  metadata: PresenceMetadata, announcement: Announcement): Promise<void> {
+  const helperChanged = (['releaseVersion', 'sourceSha'] as const).some(key =>
+    typeof announcement.previous?.[key] === 'string' && typeof metadata[key] === 'string' &&
+    announcement.previous[key] !== metadata[key]);
+  if (!helperChanged && (!announcement.changed || !metadata.lifecycleId)) return;
+  await database.transaction(async db => {
+    await recoverAdapterReviewsOnHelperChange(db, agentId, announcement.previous, metadata);
+    const lifecycle = metadata.lifecycleId;
+    if (!announcement.changed || !lifecycle) return;
+    const restarts = await db.query<{
+      id: string;
+      room_id: string;
+      source_message_id: string;
+      handle: string | null;
+      name: string;
+    }>(
+      `UPDATE agent_commands command SET state='complete',completed_at=now(),restart_confirmed_at=now()
+       FROM identities identity
+       WHERE command.agent_id=$1 AND command.agent_id=identity.id
+         AND command.action='restart' AND command.state='claimed'
+         AND command.lifecycle_before IS DISTINCT FROM $2
+         AND EXISTS (SELECT 1 FROM live_outputs presence WHERE presence.agent_id=$1 AND presence.kind='presence'
+           AND presence.body->>'lifecycleId'=$2)
+       RETURNING command.id,command.room_id,command.source_message_id,identity.handle,identity.name`,
+      [agentId, lifecycle],
+    );
+    for (const restart of restarts.rows)
+      await systemLine(db, {
+        id: createHash('sha256')
+          .update(`agent-restart-confirmed:${restart.id}:${lifecycle}`)
+          .digest('hex'),
+        roomId: restart.room_id,
+        authorId: agentId,
+        subject: {
+          kind: 'agent',
+          id: agentId,
+          name: restart.handle ? systemMessage("connection-presence.agent-mention", restart.handle) : restart.name,
+        },
+        verb: systemMessage("connection-presence.reconnected-after-restart"),
+        afterMessageId: restart.source_message_id,
+      });
+  });
 }
 
 export async function recordAgentEvidence(

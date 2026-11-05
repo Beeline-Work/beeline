@@ -1,0 +1,448 @@
+{
+  "distributions": {
+    "after/cold": {
+      "activityFirstDrawMs": {
+        "n": 5,
+        "median": 4180,
+        "max": 4413
+      },
+      "fontLoadMs": {
+        "n": 5,
+        "median": 300.358,
+        "max": 363.127
+      },
+      "listCommitMs": {
+        "n": 5,
+        "median": 4961.195,
+        "max": 5534.637
+      },
+      "listNativeFrameProxyMs": {
+        "n": 5,
+        "median": 5453.604,
+        "max": 6106.871
+      },
+      "roomDataCommitMs": {
+        "n": 5,
+        "median": 399.04,
+        "max": 708.958
+      },
+      "roomNativeFrameProxyMs": {
+        "n": 5,
+        "median": 864.108,
+        "max": 1100.859
+      },
+      "rootModuleMs": {
+        "n": 5,
+        "median": 3628.142,
+        "max": 3892.403
+      },
+      "splashHideMs": {
+        "n": 5,
+        "median": 4226.208,
+        "max": 4472.767
+      }
+    },
+    "after/sheet": {
+      "contentCommitMs": {
+        "n": 5,
+        "median": 148.732,
+        "max": 181.791
+      },
+      "hiddenReconcileMs": {
+        "n": 5,
+        "median": 0.538,
+        "max": 0.904
+      },
+      "nativeFrameProxyMs": {
+        "n": 5,
+        "median": 295.479,
+        "max": 427.528
+      },
+      "rootRenderMs": {
+        "n": 5,
+        "median": 66.152,
+        "max": 128.067
+      },
+      "visibleReconcileMs": {
+        "n": 5,
+        "median": 0.328,
+        "max": 1.647
+      }
+    },
+    "before/cold": {
+      "activityFirstDrawMs": {
+        "n": 5,
+        "median": 3567,
+        "max": 6267
+      },
+      "fontLoadMs": {
+        "n": 5,
+        "median": 278.923,
+        "max": 450.984
+      },
+      "listCommitMs": {
+        "n": 5,
+        "median": 4469.07,
+        "max": 7843.788
+      },
+      "listNativeFrameProxyMs": {
+        "n": 5,
+        "median": 4756.171,
+        "max": 8203.111
+      },
+      "roomDataCommitMs": {
+        "n": 5,
+        "median": 347.648,
+        "max": 407.641
+      },
+      "roomNativeFrameProxyMs": {
+        "n": 5,
+        "median": 677.679,
+        "max": 824.927
+      },
+      "rootModuleMs": {
+        "n": 5,
+        "median": 3132.601,
+        "max": 5534.269
+      },
+      "splashHideMs": {
+        "n": 5,
+        "median": 3623.889,
+        "max": 6282.76
+      }
+    },
+    "before/sheet": {
+      "contentCommitMs": {
+        "n": 5,
+        "median": 112.551,
+        "max": 221.828
+      },
+      "hiddenReconcileMs": {
+        "n": 5,
+        "median": 2.814,
+        "max": 10.628
+      },
+      "nativeFrameProxyMs": {
+        "n": 5,
+        "median": 295.352,
+        "max": 438.067
+      },
+      "rootRenderMs": {
+        "n": 5,
+        "median": 57.834,
+        "max": 143.791
+      },
+      "visibleReconcileMs": {
+        "n": 5,
+        "median": 0.284,
+        "max": 5.362
+      }
+    },
+    "production/cold": {
+      "activityFirstDrawMs": {
+        "n": 5,
+        "median": 3794,
+        "max": 3825
+      }
+    },
+    "production/sheet": {
+      "nativeFrameProxyMs": {
+        "n": 5,
+        "median": 253.955,
+        "max": 342.619
+      }
+    }
+  },
+  "samples": [
+    {
+      "arm": "production",
+      "kind": "cold",
+      "sample": 0,
+      "activityFirstDrawMs": 3715
+    },
+    {
+      "arm": "production",
+      "kind": "cold",
+      "sample": 1,
+      "activityFirstDrawMs": 3803
+    },
+    {
+      "arm": "production",
+      "kind": "cold",
+      "sample": 2,
+      "activityFirstDrawMs": 3794
+    },
+    {
+      "arm": "production",
+      "kind": "cold",
+      "sample": 3,
+      "activityFirstDrawMs": 3825
+    },
+    {
+      "arm": "production",
+      "kind": "cold",
+      "sample": 4,
+      "activityFirstDrawMs": 3697
+    },
+    {
+      "arm": "production",
+      "kind": "sheet",
+      "sample": 0,
+      "nativeFrameProxyMs": 253.955
+    },
+    {
+      "arm": "production",
+      "kind": "sheet",
+      "sample": 1,
+      "nativeFrameProxyMs": 239.939
+    },
+    {
+      "arm": "production",
+      "kind": "sheet",
+      "sample": 2,
+      "nativeFrameProxyMs": 169.837
+    },
+    {
+      "arm": "production",
+      "kind": "sheet",
+      "sample": 3,
+      "nativeFrameProxyMs": 286.215
+    },
+    {
+      "arm": "production",
+      "kind": "sheet",
+      "sample": 4,
+      "nativeFrameProxyMs": 342.619
+    },
+    {
+      "arm": "before",
+      "kind": "cold",
+      "sample": 0,
+      "activityFirstDrawMs": 6267,
+      "rootModuleMs": 5534.269,
+      "splashHideMs": 6282.76,
+      "listCommitMs": 7843.788,
+      "fontLoadMs": 450.984,
+      "listNativeFrameProxyMs": 8203.111,
+      "roomDataCommitMs": 407.641,
+      "roomNativeFrameProxyMs": 824.927
+    },
+    {
+      "arm": "before",
+      "kind": "cold",
+      "sample": 1,
+      "activityFirstDrawMs": 4601,
+      "rootModuleMs": 3975.931,
+      "splashHideMs": 4677.176,
+      "listCommitMs": 5283.594,
+      "fontLoadMs": 373.366,
+      "listNativeFrameProxyMs": 5802.558,
+      "roomDataCommitMs": 316.274,
+      "roomNativeFrameProxyMs": 608.706
+    },
+    {
+      "arm": "before",
+      "kind": "cold",
+      "sample": 2,
+      "activityFirstDrawMs": 3461,
+      "rootModuleMs": 3050.394,
+      "splashHideMs": 3519.139,
+      "listCommitMs": 3962.641,
+      "fontLoadMs": 220.578,
+      "listNativeFrameProxyMs": 4308.555,
+      "roomDataCommitMs": 347.648,
+      "roomNativeFrameProxyMs": 660.938
+    },
+    {
+      "arm": "before",
+      "kind": "cold",
+      "sample": 3,
+      "activityFirstDrawMs": 3567,
+      "rootModuleMs": 3132.601,
+      "splashHideMs": 3623.889,
+      "listCommitMs": 4469.07,
+      "fontLoadMs": 204.517,
+      "listNativeFrameProxyMs": 4756.171,
+      "roomDataCommitMs": 328.187,
+      "roomNativeFrameProxyMs": 719.076
+    },
+    {
+      "arm": "before",
+      "kind": "cold",
+      "sample": 4,
+      "activityFirstDrawMs": 3455,
+      "rootModuleMs": 2970.505,
+      "splashHideMs": 3514.662,
+      "listCommitMs": 3950.432,
+      "fontLoadMs": 278.923,
+      "listNativeFrameProxyMs": 4340.521,
+      "roomDataCommitMs": 358.936,
+      "roomNativeFrameProxyMs": 677.679
+    },
+    {
+      "arm": "before",
+      "kind": "sheet",
+      "sample": 0,
+      "nativeFrameProxyMs": 295.352,
+      "contentCommitMs": 112.551,
+      "rootRenderMs": 57.834,
+      "hiddenReconcileMs": 2.203,
+      "visibleReconcileMs": 5.362
+    },
+    {
+      "arm": "before",
+      "kind": "sheet",
+      "sample": 1,
+      "nativeFrameProxyMs": 202.653,
+      "contentCommitMs": 98.655,
+      "rootRenderMs": 51.069,
+      "hiddenReconcileMs": 2.136,
+      "visibleReconcileMs": 0.23
+    },
+    {
+      "arm": "before",
+      "kind": "sheet",
+      "sample": 2,
+      "nativeFrameProxyMs": 207.767,
+      "contentCommitMs": 85.071,
+      "rootRenderMs": 47.156,
+      "hiddenReconcileMs": 2.814,
+      "visibleReconcileMs": 0.257
+    },
+    {
+      "arm": "before",
+      "kind": "sheet",
+      "sample": 3,
+      "nativeFrameProxyMs": 326.881,
+      "contentCommitMs": 152.506,
+      "rootRenderMs": 103.037,
+      "hiddenReconcileMs": 3.55,
+      "visibleReconcileMs": 0.284
+    },
+    {
+      "arm": "before",
+      "kind": "sheet",
+      "sample": 4,
+      "nativeFrameProxyMs": 438.067,
+      "contentCommitMs": 221.828,
+      "rootRenderMs": 143.791,
+      "hiddenReconcileMs": 10.628,
+      "visibleReconcileMs": 0.522
+    },
+    {
+      "arm": "after",
+      "kind": "cold",
+      "sample": 0,
+      "activityFirstDrawMs": 4413,
+      "rootModuleMs": 3871.001,
+      "splashHideMs": 4472.767,
+      "listCommitMs": 4961.195,
+      "fontLoadMs": 300.358,
+      "listNativeFrameProxyMs": 5453.604,
+      "roomDataCommitMs": 392.069,
+      "roomNativeFrameProxyMs": 711.751
+    },
+    {
+      "arm": "after",
+      "kind": "cold",
+      "sample": 1,
+      "activityFirstDrawMs": 3729,
+      "rootModuleMs": 3206.086,
+      "splashHideMs": 3776.983,
+      "listCommitMs": 4274.719,
+      "fontLoadMs": 276.236,
+      "listNativeFrameProxyMs": 4697.677,
+      "roomDataCommitMs": 447.339,
+      "roomNativeFrameProxyMs": 864.108
+    },
+    {
+      "arm": "after",
+      "kind": "cold",
+      "sample": 2,
+      "activityFirstDrawMs": 4180,
+      "rootModuleMs": 3628.142,
+      "splashHideMs": 4226.208,
+      "listCommitMs": 5433.111,
+      "fontLoadMs": 318.787,
+      "listNativeFrameProxyMs": 6106.871,
+      "roomDataCommitMs": 708.958,
+      "roomNativeFrameProxyMs": 1100.859
+    },
+    {
+      "arm": "after",
+      "kind": "cold",
+      "sample": 3,
+      "activityFirstDrawMs": 4392,
+      "rootModuleMs": 3892.403,
+      "splashHideMs": 4459.665,
+      "listCommitMs": 5534.637,
+      "fontLoadMs": 266.011,
+      "listNativeFrameProxyMs": 5950.642,
+      "roomDataCommitMs": 399.04,
+      "roomNativeFrameProxyMs": 865.05
+    },
+    {
+      "arm": "after",
+      "kind": "cold",
+      "sample": 4,
+      "activityFirstDrawMs": 4109,
+      "rootModuleMs": 3470.326,
+      "splashHideMs": 4155.907,
+      "listCommitMs": 4744.361,
+      "fontLoadMs": 363.127,
+      "listNativeFrameProxyMs": 5130.905,
+      "roomDataCommitMs": 336.717,
+      "roomNativeFrameProxyMs": 699.653
+    },
+    {
+      "arm": "after",
+      "kind": "sheet",
+      "sample": 0,
+      "nativeFrameProxyMs": 427.528,
+      "contentCommitMs": 181.791,
+      "rootRenderMs": 82.524,
+      "hiddenReconcileMs": 0.797,
+      "visibleReconcileMs": 1.647
+    },
+    {
+      "arm": "after",
+      "kind": "sheet",
+      "sample": 1,
+      "nativeFrameProxyMs": 295.479,
+      "contentCommitMs": 148.732,
+      "rootRenderMs": 66.152,
+      "hiddenReconcileMs": 0.429,
+      "visibleReconcileMs": 0.302
+    },
+    {
+      "arm": "after",
+      "kind": "sheet",
+      "sample": 2,
+      "nativeFrameProxyMs": 198.312,
+      "contentCommitMs": 82.399,
+      "rootRenderMs": 52.372,
+      "hiddenReconcileMs": 0.904,
+      "visibleReconcileMs": 0.317
+    },
+    {
+      "arm": "after",
+      "kind": "sheet",
+      "sample": 3,
+      "nativeFrameProxyMs": 276.092,
+      "contentCommitMs": 105.589,
+      "rootRenderMs": 61.53,
+      "hiddenReconcileMs": 0.532,
+      "visibleReconcileMs": 0.328
+    },
+    {
+      "arm": "after",
+      "kind": "sheet",
+      "sample": 4,
+      "nativeFrameProxyMs": 310.941,
+      "contentCommitMs": 170.896,
+      "rootRenderMs": 128.067,
+      "hiddenReconcileMs": 0.538,
+      "visibleReconcileMs": 0.701
+    }
+  ]
+}

@@ -60,6 +60,7 @@ describe('HullModal presentation ownership', () => {
       renderer.update(surface(false));
     });
     expect(readTitle).not.toHaveBeenCalled();
+    expect(modalRenders).toHaveBeenCalledTimes(1);
 
     readTitle.mockReturnValue('Updated Room actions');
     act(() => {

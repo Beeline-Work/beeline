@@ -1,0 +1,40 @@
+{
+  "native": {
+    "versionCode": 144,
+    "versionName": "0.2.24",
+    "runtime": 44,
+    "apkSha256": "db3ef9243602daf129b329ef1f97819b9dc8b473f5c8afb1e9bc3e37c4d64488"
+  },
+  "release": {
+    "version": "v0.1.159",
+    "commit": "a99f410cd91e7a17a63cd27a0340a9ad465137c9",
+    "updateId": "01a1aa88-f02c-7c2d-9e71-96ee8237ca90"
+  },
+  "device": {
+    "os": "Android 35",
+    "architecture": "x86_64",
+    "emulatorVersion": "37.3.6",
+    "cpuCores": 4,
+    "ramMb": 2048,
+    "resolution": "1080x2400",
+    "densityDpi": 420,
+    "gpu": "Android Emulator OpenGL ES Translator (Intel(R) Iris(TM) Plus Graphics OpenGL Engine)",
+    "gpuMode": "host",
+    "hostOs": "macOS 26.5.1"
+  },
+  "bundles": {
+    "before": {
+      "sha256": "e1207556e16606394d8a14cd3d34150edfb0468fd37d82c5f0261afb16aae0e5",
+      "bytes": 13097972
+    },
+    "after": {
+      "sha256": "fb4106d2fda58b5ce16e1934f236d0cf9867e38d18cbb92d05de0dfbf21f7cd3",
+      "bytes": 13097936
+    }
+  },
+  "differingSources": [
+    "/sources/components/buzz/HullDialog.tsx"
+  ],
+  "commonSourceModules": 3718,
+  "commonSourceSha256": "6af955792390c82a86f156e27716b10327cb48fe7f905ec4da9e6f56d66189de"
+}

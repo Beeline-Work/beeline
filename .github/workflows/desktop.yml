@@ -255,6 +255,7 @@ jobs:
         timeout-minutes: 25
         working-directory: apps/mobile
         env:
+          EXPO_PUBLIC_BEELINE_RELEASE_VERSION: ${{ inputs.release_version }}
           EXPO_PUBLIC_BEELINE_RELEASE_SHA: ${{ inputs.release_sha || github.event.pull_request.head.sha || github.sha }}
           EXPO_PUBLIC_BEELINE_DESKTOP_UPDATES: ${{ inputs.variant == 'production' && '1' || '0' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_UPDATER_PRIVATE_KEY }}

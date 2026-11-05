@@ -182,6 +182,16 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
     }, [applyUpdate, pathname, updateAvailable]);
 
     useEffect(() => {
+        // An open desktop can keep the same socket through a release. Check
+        // its signed channel even when no new connection wakes this provider.
+        if (!isTauri() || process.env.EXPO_PUBLIC_BEELINE_DESKTOP_UPDATES !== '1') return;
+        const interval = setInterval(() => {
+            if (!pendingDesktopUpdateRef.current) void checkForUpdates();
+        }, 60_000);
+        return () => clearInterval(interval);
+    }, [checkForUpdates]);
+
+    useEffect(() => {
         const stop = subscribeUpdateConnections(epoch => {
             if (epoch <= connectionEpochRef.current) return;
             connectionEpochRef.current = epoch;

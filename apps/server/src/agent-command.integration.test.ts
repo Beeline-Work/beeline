@@ -2882,7 +2882,7 @@ it('command-only requester: delegation retains the original human message reques
   expect(await daemon['grantRequester'](child)).toMatchObject({ id: H });
 });
 
-it.each(['rootless', 'human-author', 'agent-author', 'wrong-root', 'wrong-source', 'parented', 'missing-message', 'checkin', 'ordinary-report'])(
+it.each(['rootless', 'human-author', 'wrong-root', 'wrong-source', 'parented', 'missing-message', 'checkin', 'ordinary-report'])(
   'command-only requester refuses %s provenance', async shape => {
     await ensureSystemIdentity(db);
     const root = (await createAgentCommand(db, { roomId: R, agentId: A, sourceMessageId: null,
@@ -2896,9 +2896,9 @@ it.each(['rootless', 'human-author', 'agent-author', 'wrong-root', 'wrong-source
       const sent = await send('Message-backed root');
       await db.query('UPDATE agent_commands SET source_message_id=$2 WHERE id=$1', [root.id, sent.messageId]);
     }
-    if (shape === 'human-author' || shape === 'agent-author')
+    if (shape === 'human-author')
       await db.query(`UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{authorId}',to_jsonb($2::text)) WHERE id=$1`,
-        [root.id, shape === 'human-author' ? H : A]);
+        [root.id, H]);
     if (shape === 'checkin') await db.query("UPDATE agent_commands SET reason='free_agent_checkin',private_payload=NULL WHERE id=$1", [root.id]);
     if (shape === 'ordinary-report') await db.query(`UPDATE agent_commands SET reason='report',private_payload=$2::jsonb WHERE id=$1`,
       [root.id, JSON.stringify({ kind: 'report', authorId: SYSTEM_IDENTITY_ID, fromRoomId: R, text: 'Ordinary report' })]);

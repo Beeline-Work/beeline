@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createHash, randomBytes } from 'node:crypto';
+import { BACKGROUND_DUE_SOURCE_SCHEMA } from './background-due-source.js';
 import { ROOMS_MCP_SCHEMA } from './rooms-mcp-schema.js';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
@@ -11,7 +12,9 @@ import { RoomsMcp } from './rooms-mcp.js';
 import { RoomsMcpOAuth, type McpPrincipal } from './rooms-mcp-oauth.js';
 import { recordMcpMention, recordMcpMemberWebhook, deliverMcpMemberWebhooks } from './rooms-mcp-members.js';
 import { routeHumanMessage } from './agent-command.js';
-import { retryOwedMentions, owedMentions, clearOwedMention } from './owed-mentions.js';
+import { owedMentions, clearOwedMention } from './owed-mentions.js';
+import { runMaintenance } from './background.js';
+import { maintenanceDeadlineFamilies, backgroundSourceFamilies } from './background-deadlines.js';
 import { MCP_STARTER_ROUTINE } from '@beeline/api-contract/phone';
 
 const owner = '1'.repeat(64), member = '2'.repeat(64), other = '3'.repeat(64), helper = '4'.repeat(64);
@@ -190,39 +193,49 @@ describe('owed Room tags', () => {
     expect((await db.query('SELECT id FROM messages WHERE author_id=$1 AND reply_to_message_id=$2', [helper, source])).rows).toEqual([{ id: first.id }]);
     expect((await owedMentions(db, helper)).some(m => m.messageId === source)).toBe(false);
   });
-  it('C9 fake-clock re-wakes at 5/15/45 minutes then stops silently, skipping an in-flight turn', async () => {
-    await db.query('UPDATE rooms_mcp_mentions SET cleared_at=now()');
-    await db.query(`INSERT INTO rooms_mcp_connections(client_id,identity_id,scope) VALUES('test',$1,'rooms:read rooms:write') ON CONFLICT DO NOTHING`, [owner]);
-    await db.query(`INSERT INTO rooms_mcp_event_subscriptions(id,client_id,owner_id,member_id,url,secret,verified_at,expires_at)
-      VALUES('local-rewake','test',$1,$2,'https://example.com/events','local-fixture',now(),now()+interval '1 day')`, [owner, member]);
-    const message = await tag();
-    const start = new Date('2030-01-01T00:00:00Z');
-    await db.query('UPDATE rooms_mcp_mentions SET created_at=$1 WHERE message_id=$2', [start, message]);
-    const count = (await db.query('SELECT 1 FROM messages')).rowCount;
-    let legacyCursor = (await call('list_mentions')).nextCursor;
-    for (const minute of [4, 5, 14, 15, 44, 45, 60]) {
-      const wakes = await retryOwedMentions(db, new Date(start.getTime() + minute * 60_000));
-      expect(wakes).toBe([5,15,45].includes(minute) ? 1 : 0);
-      if (wakes) {
-        const page = await call('list_mentions', { cursor: legacyCursor });
-        expect(page.mentions.map((m: any) => m.id)).toContain(message);
-        legacyCursor = page.nextCursor;
-        const event = (await db.query<{ body: string }>('SELECT body FROM rooms_mcp_event_deliveries WHERE message_id=$1', [message])).rows[0]!;
-        expect(event.body.indexOf('replyRule')).toBeLessThan(event.body.indexOf('text'));
-        expect(JSON.parse(event.body).data).toMatchObject({ roomId: room, messageId: message, memberId: member, replyRule: `answer in this Room with replyTo ${message}` });
-        expect((await db.query('SELECT 1 FROM rooms_mcp_webhook_outbox WHERE message_id=$1 AND delivered_at IS NULL', [message])).rowCount).toBe(1);
-      }
-    }
-    expect((await db.query('SELECT 1 FROM messages')).rowCount).toBe(count);
+  it('COMPLETED-TAG: maintenance never reopens a completed tag even when its reply leaves the mention owed', async () => {
+    await db.query("UPDATE agent_commands SET state='complete' WHERE agent_id=$1 AND state='pending'", [helper]);
     const source = id();
-    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@helper slow job')`, [source, room, owner]);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@helper u there?')`, [source, room, owner]);
     await routeHumanMessage(db, source);
-    await db.query(`UPDATE agent_commands SET state='claimed',lease_expires_at=now()+interval '1 hour' WHERE source_message_id=$1`, [source]);
-    await db.query('UPDATE rooms_mcp_mentions SET created_at=$1 WHERE message_id=$2', [start, source]);
-    expect(await retryOwedMentions(db, new Date(start.getTime()+5*60_000))).toBe(0);
-    await db.query(`UPDATE agent_commands SET state='complete',lease_expires_at=NULL WHERE source_message_id=$1`, [source]);
-    expect(await retryOwedMentions(db, new Date(start.getTime()+15*60_000))).toBe(1);
-    expect((await db.query('SELECT state FROM agent_commands WHERE source_message_id=$1', [source])).rows).toEqual([{ state: 'pending' }]);
+    const command = (await daemon.execute('getAgentCommands', { roomId: room }, helper)).commands.find(c => c.sourceMessageId === source)!;
+    const authority = { roomId: room, requestId: command.turnRequestId, generationId: 'completed-tag' };
+    await daemon.execute('claimAgentCommand', { roomId: room, commandId: command.id, generationId: authority.generationId }, helper);
+    // A public answer without replyTo does not clear the private mention ledger.
+    await daemon.execute('postRoomMessage', { ...authority, text: 'Still here.' }, helper);
+    await daemon.execute('postAgentTurnReceipt', { ...authority, status: 'complete' }, helper);
+    expect((await owedMentions(db, helper)).some(m => m.messageId === source)).toBe(true);
+    const completed = (await db.query('SELECT * FROM agent_commands WHERE id=$1', [command.id])).rows[0]!;
+    expect(completed.state).toBe('complete');
+    const mention = (await db.query('SELECT seq,rewakes FROM rooms_mcp_mentions WHERE member_id=$1 AND message_id=$2', [helper, source])).rows;
+    const messages = (await db.query('SELECT id FROM messages ORDER BY id')).rows;
+    for (const minute of [5, 15, 45, 60]) {
+      await db.query("UPDATE rooms_mcp_mentions SET created_at=now()-$1*interval '1 minute' WHERE message_id=$2", [minute, source]);
+      // Exercise both the legacy maintenance entry and the live deadline composition.
+      await runMaintenance(db);
+      for (const family of maintenanceDeadlineFamilies(db)) await family.run();
+      expect((await db.query('SELECT * FROM agent_commands WHERE id=$1', [command.id])).rows).toEqual([completed]);
+      expect((await daemon.execute('getAgentCommands', { roomId: room }, helper)).commands.some(c => c.id === command.id)).toBe(false);
+      expect((await db.query('SELECT seq,rewakes FROM rooms_mcp_mentions WHERE member_id=$1 AND message_id=$2', [helper, source])).rows).toEqual(mention);
+      expect((await db.query('SELECT id FROM messages ORDER BY id')).rows).toEqual(messages);
+    }
+    expect(backgroundSourceFamilies()).not.toContain('owed-mentions');
+    expect(maintenanceDeadlineFamilies(db).map(family => family.name)).not.toContain('owed-mentions');
+    // A real new tag still admits exactly one new command.
+    const next = id();
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@helper another question')`, [next, room, owner]);
+    await routeHumanMessage(db, next);
+    expect((await daemon.execute('getAgentCommands', { roomId: room }, helper)).commands.map(c => c.sourceMessageId)).toEqual([next]);
+    await db.query("UPDATE agent_commands SET state='complete' WHERE source_message_id=$1", [next]);
+  });
+  it('COMPLETED-TAG: migration removes retired background source triggers on upgraded databases', async () => {
+    await db.query(`CREATE TRIGGER beeline_background_source_999 AFTER INSERT OR UPDATE OR DELETE ON rooms_mcp_mentions
+      FOR EACH ROW EXECUTE FUNCTION beeline_background_source('owed-mentions','created_at,cleared_at,rewakes')`);
+    await db.query(BACKGROUND_DUE_SOURCE_SCHEMA);
+    await db.query(BACKGROUND_DUE_SOURCE_SCHEMA);
+    expect((await db.query(`SELECT 1 FROM pg_trigger WHERE tgname='beeline_background_source_999'`)).rowCount).toBe(0);
+    expect((await db.query(`SELECT 1 FROM pg_trigger WHERE tgfoid='beeline_background_source()'::regprocedure
+      AND encode(tgargs,'escape') LIKE 'owed-mentions%'`)).rowCount).toBe(0);
   });
   it('C5 migration preserves successful historical replies and remains idempotent', async () => {
     const answered = await tag(), unanswered = await tag();

@@ -6,7 +6,6 @@ import { BackgroundWork } from './background-work.js';
 import { BACKGROUND_SOURCES, RETENTION_RULES, backgroundDueKey } from './background-due-source.js';
 import { subscribeCommandCompletion, subscribeCommandCompletionFamily } from './command-completion.js';
 import { cleanupUnfinishedAppSignIns } from './unfinished-app-sign-ins.js';
-import { retryOwedMentions } from './owed-mentions.js';
 import { retryMcpMemberRoutes } from './rooms-mcp-members.js';
 import type { LiveHub } from './live.js';
 import { backgroundDatabaseCut, backgroundDatabaseNow, backgroundNextDelay } from './background-deadline-clock.js';
@@ -69,9 +68,6 @@ export function maintenanceDeadlineFamilies(db: SqlDatabase): BackgroundDeadline
     { name: 'unfinished-app-sign-ins', run: async () => { await cleanupUnfinishedAppSignIns(db, true); }, next: cut => backgroundNextDelay(db,
       `SELECT LEAST(composio_link_expires_at,CASE WHEN composio_account_id IS NULL THEN created_at+interval '10 minutes' END) due_at
        FROM workspace_apps WHERE transport='composio' AND authorised_at IS NULL AND sign_in_error IS NULL`,cut) },
-    { name: 'owed-mentions', run: async () => { await retryOwedMentions(db); }, next: cut => backgroundNextDelay(db,
-      `SELECT created_at+(CASE rewakes WHEN 0 THEN 5 WHEN 1 THEN 15 ELSE 45 END)*interval '1 minute' due_at
-       FROM rooms_mcp_mentions WHERE cleared_at IS NULL AND rewakes<3`,cut) },
     // Routing failure does not manufacture another thirty-second deadline.
     { name: 'mcp-member-routes', run: async () => { await retryMcpMemberRoutes(db); }, next:cut=>backgroundNextDelay(db,
       `SELECT created_at+interval '30 seconds' due_at FROM rooms_mcp_pending_routes WHERE attempts=0`,cut) },

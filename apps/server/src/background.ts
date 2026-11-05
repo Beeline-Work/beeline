@@ -1,5 +1,4 @@
 import { ROOM_VIEW_TOOL_ROW_LIMIT } from '@beeline/api-contract/phone';
-import { retryOwedMentions } from './owed-mentions.js';
 import { cleanupUnfinishedAppSignIns } from './unfinished-app-sign-ins.js';
 import { captureServerError } from './sentry.js';
 import { retryMcpMemberRoutes } from './rooms-mcp-members.js';
@@ -1018,7 +1017,6 @@ export async function pruneArchivedToolActivity(database: SqlDatabase): Promise<
 export async function runMaintenance(database: SqlDatabase): Promise<void> {
   await pruneArchivedToolActivity(database);
   await cleanupUnfinishedAppSignIns(database, true);
-  await retryOwedMentions(database);
   // Legacy routing repair remains separate from committed delivery ownership.
   try { await retryMcpMemberRoutes(database); } catch (error) { captureServerError(error); }
   // Each autocommitted batch fits the jobs pool budget; later cycles finish backlogs.

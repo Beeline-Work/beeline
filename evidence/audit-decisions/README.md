@@ -12,7 +12,11 @@ one at a time under the same cap; individual timeouts roll back and skip. The
 observer **1192200** are live. Baseline: **124,190 cards +151 fields**. Initial
 read-back at 10:42Z: **120,941 cards**, all 229 versions and fixed telemetry
 cohorts preserved. Initial logs confirm several thousand committed cards with
-zero observed cleanup-client wait. A ten-minute throughput report is pending.
+zero observed cleanup-client wait. Ten-minute measurement: **44,049 committed cards in 636 seconds**
+(**69.3/second**, about **4,157/minute**),
+with one individual timeout skip and zero observed cleanup-client wait. Read-back
+leaves **81,066 cards**, all versions and telemetry cohorts preserved. See
+`b1-squire-batch-ten-minute.json`.
 B8 is untouched. See `b1-squire-batch-before.json` and
 `b1-squire-batch-start.json`; prior operation records remain historical.
 

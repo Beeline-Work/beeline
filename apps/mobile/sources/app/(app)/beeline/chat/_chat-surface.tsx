@@ -1,11 +1,11 @@
-import { artifactObjectIdsFromVisibleRows, observeArtifactRows, setArtifactViewportActive } from '@/buzz/artifact-viewport';
-import { routerOwnerArtifactViewport, routerOwnerUsageProfile } from '@/buzz/router-owner';
+import { IndexRow } from '@/components/buzz/IndexRow';
+import { observeArtifactRows, setArtifactViewportActive } from '@/buzz/artifact-viewport';
 import { useSurfaceFocus } from '@/buzz/use-surface-focus';
 import { prepareRouterMessageGesture } from '@/buzz/command-message-gesture';
 import { trackDictatedMessage } from '@/buzz/dictation-timing';
 import { presentPersonInvite } from '@/components/buzz/PersonInviteSheet';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
-import { appErrorCopy } from '@/buzz/app-error-copy';
+import { appErrorCopy, connectionErrorDescription, connectionErrorTitle } from '@/buzz/app-error-copy';
 import { useDesktopParentRoom } from '@/buzz/use-desktop-parent-room';
 import { DesktopRoomListToggle } from '@/components/buzz/DesktopRoomListToggle';
 import { ConnectionStatus } from '@/components/buzz/ConnectionStatus';
@@ -34,22 +34,7 @@ import React, {
 } from 'react';
 import { Buffer } from 'buffer';
 import { transcriptBylineOpeners } from '@/buzz/message-dates';
-import {
-  View,
-  Text,
-  FlatList,
-  Keyboard,
-  Pressable,
-  ScrollView,
-  Share,
-  TextInput,
-  TouchableOpacity,
-  Platform,
-  AppState,
-  AccessibilityInfo,
-  type ViewProps,
-  type ViewToken,
-} from 'react-native';
+import { View, Text, FlatList, Keyboard, Share, TextInput, TouchableOpacity, Platform, AppState, AccessibilityInfo, type ViewProps, type ViewToken } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
@@ -84,24 +69,8 @@ import {
   removeViewerConversation,
   type ViewerMessage,
 } from '@/buzz/viewer-conversation';
-import {
-  type ChannelRole,
-  type RoomRepository,
-  type RoomView,
-  type GitHubInstallationAccess,
-  type MessageReactionEmoji,
-  type ChatListItem,
-  AGENT_PRESENCE_STALE_MS,
-} from '@beeline/buzz-client';
-import {
-  cornerDisplayName,
-  cornerShortTitle,
-  directMessageTitle,
-  roomTitle,
-  type AgentComposerCommand,
-  type WorkflowRunSummaryView,
-  type WorkspaceView,
-} from '@beeline/api-contract/phone';
+import { type RoomRepository, type GitHubInstallationAccess, type MessageReactionEmoji, type ChatListItem } from '@beeline/buzz-client';
+import { directMessageTitle, roomTitle, type AgentComposerCommand, type WorkflowRunSummaryView } from '@beeline/api-contract/phone';
 import {
   createRoomMessageProjector,
   conversationIdentityByPubkey,
@@ -122,7 +91,7 @@ import {
 } from '@/buzz/channel-reference';
 import { pushOpenBuzzChannelId, releaseOpenBuzzChannelId } from '@/buzz/open-room-tracker';
 import { dismissPresentedNotificationsForChannel } from '@/push/presented-notifications';
-import { afterInteractions } from '@/buzz/defer-interaction';
+
 import { cancelScheduledAnimationFrame, scheduleAnimationFrame, yieldToNextPaint } from '@/buzz/host-scheduler';
 import {
   activeChannelAtCursor,
@@ -156,7 +125,7 @@ import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
 import { openExternalUrl } from '@/utils/open-external-url';
 import { openAppSignIn } from '@/buzz/app-sign-in';
 import { AgentSignInCard } from '@/components/buzz/AgentSignInCard';
-import { openArtifactInBrowserOrExplain } from '@/buzz/artifact-link';
+
 import { subscribeDesktopArtifact } from '@/buzz/desktop-artifact-pane';
 import { subscribeDesktopComputer } from '@/buzz/desktop-computer-pane';
 import { ComputerSessionCard } from '@/components/buzz/ComputerSession';
@@ -198,12 +167,7 @@ import {
   roomIsArchived,
   roomViewParentId,
 } from '@/buzz/corner-display-state';
-import {
-  directMessageHeaderIdentity,
-  fallbackMemberHandle,
-  fallbackMemberName,
-  personIdentityLabel,
-} from '@/buzz/member-display';
+import { directMessageHeaderIdentity, fallbackMemberHandle, fallbackMemberName } from '@/buzz/member-display';
 import {
   directMessageAgentHeaderMeta,
   directMessageHeaderPresence,
@@ -214,27 +178,11 @@ import {
 } from '@/buzz/community-invite';
 import { MemberPickerSheet, type MemberPickerCandidate } from '@/components/buzz/MemberPickerSheet';
 import { normalizedRoomRole } from '@/buzz/room-management';
-import {
-  looksLikeCornerOpenIntent,
-  GITHUB_REPOSITORY_SELECTION_INSTRUCTION,
-  githubFullNameFromInput,
-  githubRepositoryLinkagePlan,
-  roomRepoChipLabel,
-  type RepoCandidate,
-} from '@/buzz/room-repo-picker';
-import {
-  OwnerGrantNeededCard,
-  ownerGrantShareMessage,
-  type OwnerGrantNeeded,
-} from '@/components/buzz/OwnerGrantNeededCard';
+import { looksLikeCornerOpenIntent, GITHUB_REPOSITORY_SELECTION_INSTRUCTION, githubRepositoryLinkagePlan, roomRepoChipLabel, type RepoCandidate } from '@/buzz/room-repo-picker';
+import { ownerGrantShareMessage, type OwnerGrantNeeded } from '@/components/buzz/OwnerGrantNeededCard';
 import { StarPromptCard, useStarPrompt } from '@/components/buzz/StarPromptCard';
 import { selectWorkingAgents } from '@/buzz/room-indicators';
-import {
-  roomBottomChromeStyles,
-  TURN_LINE_BAR_MARGIN_BOTTOM,
-  TURN_LINE_BOX_HEIGHT,
-  TURN_LINE_ROW_MIN_HEIGHT,
-} from '@/buzz/room-bottom-chrome';
+import { roomBottomChromeStyles, TURN_LINE_BOX_HEIGHT } from '@/buzz/room-bottom-chrome';
 import {
   phoneTranscriptTailPadding,
   roomOpenLandsOnTail,
@@ -248,11 +196,7 @@ import {
   requestMessageJump,
   useTranscriptScrollController,
 } from '@/buzz/transcript-scroll-controller';
-import {
-  loadActiveCommunityId,
-  saveActiveCommunityId,
-  saveLastViewedChannel,
-} from '@/buzz/community-storage';
+
 import {
   createChatAttachmentUploader,
   formatAttachmentSize,
@@ -272,12 +216,7 @@ import {
   type BuiltInSlashVerbId,
   type FastModeCommandState,
 } from '@/buzz/slash-verbs';
-import {
-  cachedChannelKind,
-  channelHeaderTitle,
-  resolveCornerViewAgentPubkey,
-  type ChannelKind,
-} from '@/buzz/corner-session';
+import { channelHeaderTitle, resolveCornerViewAgentPubkey, type ChannelKind } from '@/buzz/corner-session';
 import {
   messageJumpHref,
   chatBackAction,
@@ -288,7 +227,7 @@ import {
   roomHref,
   type ChatStackRoute,
 } from '@/buzz/corner-navigation';
-import { isNearChatBottom } from '@/buzz/chat-scroll';
+
 import {
   agentActivityReplyExcerpt,
   beginReplyTarget,
@@ -322,12 +261,7 @@ import {
   useRoomMessageStore,
 } from '@/buzz/room-message-store';
 import { roomMessageRecord, useRoomMessageRecords, writeRoomBookmark } from '@/buzz/room-message-records';
-import {
-  markRoomOpen,
-  useRoomSurfaceSession,
-  type RoomSurfaceSessionBindings,
-  type UseRoomSurfaceSessionResult,
-} from './useRoomSurfaceSession';
+import { markRoomOpen, type RoomSurfaceSessionBindings, type UseRoomSurfaceSessionResult } from './useRoomSurfaceSession';
 import {
   GitHubEventCard,
   NotificationLifecycleCard,
@@ -347,7 +281,7 @@ import {
   monolithPhoneOperation,
   phoneOperationFailureReason,
 } from '@/sync/transport/monolith-operation';
-import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
+
 import {useRoomRoster} from '@/buzz/use-room-roster';
 import { promptAndReportMessageIssue, reportIssueToastCopy } from '@/buzz/report-message-issue';
 import { useCopiedToast } from '@/components/buzz/CopiedToast';
@@ -364,25 +298,14 @@ import {
   EMPTY_TRANSCRIPT_ARRIVAL_STATE,
   observeTranscriptArrivals,
 } from '@/buzz/transcript-motion';
-import {
-  boundaryRowIndex,
-  countsAsUnread,
-  messageBoundaryIds,
-  newestTranscriptRowId,
-} from '@/buzz/room-new-message-boundary';
+import { boundaryRowIndex, messageBoundaryIds, newestTranscriptRowId } from '@/buzz/room-new-message-boundary';
 import { pinnedTailReadReport } from '@/buzz/read-cursor-advance';
 import { useNewMessageControl, useUnreadLineControl } from '@/buzz/use-new-message-control';
 import { RoomUnreadControls } from '@/components/buzz/RoomUnreadControls';
 import { TranscriptScrubber } from '@/components/buzz/TranscriptScrubber';
 import { usePhoneUnderfillHistory } from '@/buzz/phone-underfill-history';
 import { createTranscriptCardMotionStore } from '@/components/buzz/transcript-card-motion-context';
-import {
-  isAgentTurnActive,
-  nextAgentPresenceTransitionAt,
-  nextAgentTurnExpiryAt,
-  activeMentionCandidates,
-  AGENT_PRESENCE_BACKGROUND_GRACE_MS,
-} from '@/buzz/agent-presence';
+import { isAgentTurnActive, nextAgentPresenceTransitionAt, nextAgentTurnExpiryAt, activeMentionCandidates } from '@/buzz/agent-presence';
 import {
   sameElementRefs,
   sameMessageRefMap,
@@ -444,12 +367,7 @@ import { useVoiceCall } from '@/buzz/use-voice-call';
 import { VoiceCallCard } from '@/components/buzz/VoiceCallCard';
 import { useIsDesktop } from '@/utils/responsive';
 import { isDesktopShell } from '@/utils/isDesktopShell';
-import {
-  LEDGER_MARGINALIA_WIDTH,
-  LedgerHistoryLine,
-  LedgerRoomUpdate,
-  LedgerSystemLine,
-} from '@/components/buzz/Ledger';
+import { LedgerHistoryLine, LedgerRoomUpdate, LedgerSystemLine } from '@/components/buzz/Ledger';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import {
   ChannelSuggestionMenu,
@@ -901,7 +819,7 @@ export function BuzzChatSurface({
     hydrationFailed: transcriptHydrationFailed,
     hydrationError: transcriptHydrationError,
     retryHydration,
-    refreshSignal,
+    readRoom,
     outbox,
   } = session;
   useEffect(() => {
@@ -1188,7 +1106,6 @@ export function BuzzChatSurface({
   const committedUsageProfileId = desktopExperience && profileKind === 'agent' && activeCommunityId ? profileAgentId : null;
   useEffect(() => {
     if (!usageProfileFocused) return;
-    routerOwnerUsageProfile(committedUsageProfileId);
   }, [committedUsageProfileId, usageProfileFocused]);
   // The DM header, the repository-change guard, mentions and forwarding read
   // the app-level Room list, which stays live while this Room is open.
@@ -2990,7 +2907,6 @@ export function BuzzChatSurface({
       const visibleRows = viewableItems
         .filter((token) => token.isViewable)
         .map((token) => token.item);
-      routerOwnerArtifactViewport(decodedId, artifactObjectIdsFromVisibleRows(visibleRows));
       observeArtifactRows(decodedId, visibleRows.flatMap(messageBoundaryIds));
       transcriptPositions.observeVisibleRows(visibleRows);
       // The list recomputes viewability on scroll AND on every committed
@@ -3533,7 +3449,7 @@ export function BuzzChatSurface({
         // A turn that settled while the press was in the air is the ordinary
         // race, not a failure worth a dialog: the line is already gone.
         if (err instanceof MonolithRequestTimeoutError) {
-          refreshSignal.force();
+          readRoom();
           Modal.alert('Stop result unknown', phoneOperationFailureReason(err));
         }
         console.warn('Stopping the turn failed:', err);
@@ -4542,7 +4458,7 @@ export function BuzzChatSurface({
         if (picked?.options.find(option => option.optionId === optionId)?.label === 'Something else') focusComposer();
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
-        refreshSignal.force();
+        readRoom();
         console.warn('Choice answer failed:', err);
         Modal.alert('Could not answer', phoneOperationFailureReason(err));
       } finally {
@@ -4833,7 +4749,7 @@ export function BuzzChatSurface({
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         returnToRoomList();
       } catch (err) {
-        refreshSignal.force();
+        readRoom();
         setMembershipError(
           appErrorCopy(err, `Could not ${deleting ? 'delete' : 'leave'} ${ROOM_LABEL}.`),
         );
@@ -5298,12 +5214,12 @@ export function BuzzChatSurface({
       await transport.closeCorner(decodedId);
       handleBack();
     } catch (error) {
-      refreshSignal.force();
+      readRoom();
       Modal.alert('Could not close corner', appErrorCopy(error));
     } finally {
       closeCornerPending.current = false;
     }
-  }, [decodedId, handleBack, transport, refreshSignal]);
+  }, [decodedId, handleBack, transport, readRoom]);
 
   const handleCommunitySelect = useCallback((communityId: string | null) => {
     if (!communityId) return;
@@ -5885,7 +5801,6 @@ export function BuzzChatSurface({
         );
       }
 
-
       if (item.walletTx || item.walletInsufficient || item.walletDelegation) {
         return <WalletCards message={item} stamp={ledgerStamp(item.timestamp)} />;
       }
@@ -5922,7 +5837,6 @@ export function BuzzChatSurface({
       if (item.corner) {
         return null;
       }
-
 
       if (item.githubEvent) {
         return <GitHubEventCard message={item} onOpenCorner={openCorner} onOpenUrl={handleOpenGitHubEvent} />;
@@ -6230,10 +6144,9 @@ export function BuzzChatSurface({
                 kind={headerTitleKind}
                 title={displayHeaderTitle ?? routeChannelTitle ?? ROOM_LABEL}
               />
-              <HeaderMetaCaps>HISTORY UNAVAILABLE</HeaderMetaCaps>
             </View>
           </View>
-          <SettingsRow title={transcriptHydrationError ?? 'Could not load this conversation.'} description="Check your connection and try again." action="Retry" onPress={retryHydration} />
+          <IndexRow title={connectionErrorTitle} description={connectionErrorDescription} action="Retry" onPress={retryHydration} testID="room-read-error" />
         </View>
       );
     }
@@ -6773,6 +6686,7 @@ export function BuzzChatSurface({
                 typing in. The Room's corners door in the header is the one way
                 in; the corner's own state is read there, in the corners list,
                 and on the Room-list row. */}
+                  {transcriptHydrationFailed && <IndexRow title={connectionErrorTitle} description={connectionErrorDescription} action="Retry" onPress={retryHydration} testID="room-read-error" />}
                 {isReadOnlyDirectMessage ? (
                   <View style={[styles.archivedInputBar, readOnlyFooterInset]}>
                     <Text style={styles.archivedInputText}>
@@ -7489,9 +7403,9 @@ export function BuzzChatSurface({
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
           handleBack();
         }}
-        onSaved={() => refreshSignal.force()}
+        onSaved={() => readRoom()}
         onError={(error) => {
-          refreshSignal.force();
+          readRoom();
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
           Modal.alert('Could not complete request', appErrorCopy(error));
         }}

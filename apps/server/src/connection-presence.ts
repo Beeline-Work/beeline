@@ -1037,10 +1037,12 @@ export async function recordAgentEvidence(
   agentId: string,
 ): Promise<void> {
   const changed = await database.query(
+    // Lock the presence row before INSERT's owner-projection lock, matching
+    // lifecycle UPDATE's row-then-projection order.
     `WITH previous AS MATERIALIZED (
        SELECT output.room_id,output.body FROM live_outputs output
        WHERE output.agent_id=$1 AND output.kind='presence'
-       ORDER BY output.updated_at DESC LIMIT 1
+       ORDER BY output.updated_at DESC LIMIT 1 FOR UPDATE
      ), target AS MATERIALIZED (
        SELECT membership.room_id,previous.room_id previous_room,previous.body
        FROM (SELECT 1) singleton LEFT JOIN previous ON true

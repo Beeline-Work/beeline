@@ -27,7 +27,7 @@ describe.skipIf(!url)('real PostgreSQL blocking leader ownership',()=>{
       await leaders[2]!.stop();expect(cycles[2]).toBe(0);
       await leaders[0]!.stop();await entered[1]!.promise;
       expect(cycles).toEqual([1,1,0]);
-      expect(statements[0]).toEqual(['SET statement_timeout=0; SET lock_timeout=0','SELECT pg_advisory_lock($1)']);
+      expect(statements[0]).toEqual(['SET statement_timeout=0; SET lock_timeout=60000','SELECT pg_advisory_lock($1)']);
       expect(statements[1]).toEqual(statements[0]);
       await leaders[1]!.stop();
     }finally{

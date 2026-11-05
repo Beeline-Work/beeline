@@ -1,4 +1,3 @@
-import {TRAY_CLOCK_READ_PREDICATE_SQL} from './tray-clock-readiness.js';
 import { squireApprovalAction } from '@beeline/api-contract/phone';
 import { approvalAsk } from './tray-approval-ask.js';
 import {
@@ -16,8 +15,6 @@ import {
 import { AGENT_GRANT_VERBS, grantPresentation, connectionInstallName, isCommandGrantScript, type AgentGrantKind, type CommandGrantScript } from '@beeline/api-contract/agent-grants';
 import type { SqlDatabase } from './database.js';
 import { tagsKnownIdentitySql } from './message-mentions.js';
-import {RouterProjectionUnavailable, routerAuthority, routerAtomicGroup} from './router-projections.js';
-import type { RouterSnapshot } from '@beeline/api-contract/router-protocol';
 
 /**
  * The "Needs you" tray, owned here and nowhere else.
@@ -260,12 +257,6 @@ export function questionForSql(viewerId: string): string {
 const QUESTION_WHERE = `${questionForSql('$2')}
   AND m.created_at>now()-${NEEDS_YOU_LOOKBACK}
   AND ${questionLeavesAtSql()}>now()`;
-export type NeedsClockMode='wall'|'committed';
-const committedQuestionWhere=`CASE WHEN ${questionForSql('$2')} THEN
-  beeline_tray_clock_is_open('question-age',m.id) AND
-  CASE WHEN mark.first_seen_at IS NULL THEN true ELSE beeline_tray_clock_is_open('question-seen',m.id,$2) END
-  ELSE false END`;
-
 /** Clear every current question, including ones past the tray read's display limit. */
 export async function clearNeedsYouQuestions(
   database: SqlDatabase,
@@ -297,7 +288,7 @@ const VIEWER_MANAGES_WORKSPACE = `EXISTS (
 type CandidateProjection='cells'|'count'|'order';
 const candidateColumns=(projection:CandidateProjection)=>projection==='cells'?ROW_COLUMNS:
   'm.id message_id,m.card,mark.cleared_at'+(projection==='order'?',m.created_at,mark.first_seen_at':'');
-function approvalBranches(projection:CandidateProjection,clock:NeedsClockMode='wall'):readonly string[]{
+function approvalBranches(projection:CandidateProjection):readonly string[]{
 const columns=candidateColumns(projection);
 const APPROVAL_FROM = (
   kind: NeedsYouApprovalKind,
@@ -354,7 +345,7 @@ return [
   // requester when it tags nobody (`addressedToPersonSql`'s reading).
   `${APPROVAL_FROM('choice', 'choice.closes_at')}
    JOIN room_choices choice ON choice.room_id=room.id AND choice.status='open'
-     AND choice.mode='question' ${clock==='wall'?"AND (choice.closes_at IS NULL OR choice.closes_at>now())":''}
+     AND choice.mode='question' ${("AND (choice.closes_at IS NULL OR choice.closes_at>now())")}
    JOIN messages m ON m.id=choice.message_id AND m.room_id=room.id AND m.card_type='${CHOICE_CARD_TYPE}'
    ${APPROVAL_JOINS}
    WHERE m.deleted_at IS NULL
@@ -384,7 +375,7 @@ return [
      AND CASE m.card_type
        WHEN 'agent-sign-in' THEN CASE WHEN ${expiringCardForSql('m', '$2')}
          AND m.card->>'status' IN ('starting','pending') THEN
-         (${cardExpiresAtSql('m.card')} IS NULL OR ${clock==='wall'?`${cardExpiresAtSql('m.card')}>${NOW_MS}`:"beeline_tray_clock_is_open('agent-sign-in',m.id)"}) ELSE false END
+         (${cardExpiresAtSql('m.card')} IS NULL OR ${(`${cardExpiresAtSql('m.card')}>${NOW_MS}`)}) ELSE false END
        ELSE m.card->>'status'='pending'
      END`,
   // A Trusty Squire approval in the owner's @System DM. Squire decides it;
@@ -394,9 +385,7 @@ return [
    ${APPROVAL_JOINS}
    WHERE ${expiringCardForSql('m', '$2')} AND m.card->>'approvalId' IS NOT NULL
      AND m.card->>'status' IS DISTINCT FROM 'expired'
-     AND ${clock==='wall'?`${cardExpiresAtSql('m.card')}>${NOW_MS}`:`CASE WHEN m.deleted_at IS NULL AND m.card->>'approvalId' IS NOT NULL
-       AND m.card->>'status' IS DISTINCT FROM 'expired' AND m.card->>'sourceRoomId' ~ '^[0-9a-f-]{36}$'
-       AND ${cardExpiresAtSql('m.card')} IS NOT NULL THEN beeline_tray_clock_is_open('squire-approval',m.id) ELSE false END`}
+     AND ${(`${cardExpiresAtSql('m.card')}>${NOW_MS}`)}
      AND m.card->>'sourceRoomId' ~ '^[0-9a-f-]{36}$'
      AND NOT EXISTS (
        SELECT 1 FROM messages decision
@@ -431,7 +420,7 @@ export function grantDecidedBySql(grant: string, identityExpr: string): string {
     END`;
 }
 
-const questionBranch=(projection:CandidateProjection,clock:NeedsClockMode='wall')=>`
+const questionBranch=(projection:CandidateProjection)=>`
   SELECT ${candidateColumns(projection)},NULL::text approval_kind,NULL::timestamptz approval_expires_at,
     NULL::text[] pending_grant_ids,NULL::text actor_name
   FROM viewer_rooms room
@@ -439,26 +428,23 @@ const questionBranch=(projection:CandidateProjection,clock:NeedsClockMode='wall'
   JOIN identities viewer ON viewer.id=$2
   ${projection==='cells'?'LEFT JOIN identities author ON author.id=m.author_id':''}
   LEFT JOIN needs_you_marks mark ON mark.identity_id=$2 AND mark.message_id=m.id
-  WHERE ${clock==='committed'?committedQuestionWhere:QUESTION_WHERE}
+  WHERE ${(QUESTION_WHERE)}
   ORDER BY m.created_at DESC,m.id DESC`;
 
 /** The same authorized candidates drive the tray and its badge. */
-const needsYouCandidates=(projection:CandidateProjection,clock:NeedsClockMode='wall',scoped=false)=>`WITH ${viewerRoomsSql(projection==='cells'?'room.*':'room.id',scoped)},
+const needsYouCandidates=(projection:CandidateProjection, scoped=false)=>`WITH ${viewerRoomsSql(projection==='cells'?'room.*':'room.id',scoped)},
   decidable AS (
     SELECT grant_row.id::text grant_id FROM agent_grants grant_row
     WHERE grant_row.workspace_id=$1 AND grant_row.status='pending' AND grant_row.superseded_at IS NULL
       AND ${grantDecidedBySql('grant_row', '$2')}
   ),
   candidates AS (
-    SELECT * FROM (${questionBranch(projection,clock)}) questions
+    SELECT * FROM (${questionBranch(projection)}) questions
     UNION ALL
-    ${approvalBranches(projection,clock).join('\n    UNION ALL\n')}
+    ${approvalBranches(projection).join('\n    UNION ALL\n')}
   )`;
 const NEEDS_YOU_CANDIDATES=needsYouCandidates('cells');
 const NEEDS_YOU_COUNT_CANDIDATES=needsYouCandidates('count');
-const NEEDS_YOU_PROJECTION_COUNT_CANDIDATES=needsYouCandidates('count');
-const COMMITTED_NEEDS_YOU_CANDIDATES=needsYouCandidates('cells','committed');
-const COMMITTED_NEEDS_YOU_COUNT_CANDIDATES=needsYouCandidates('count','committed');
 
 /** Match approvalView's subject and tray dismissal rules before counting or painting. */
 const VISIBLE_CANDIDATE = `(approval_kind IS NULL OR cleared_at IS NULL) AND CASE approval_kind
@@ -499,96 +485,37 @@ export async function countNeedsYouItems(
   return Number(result.rows[0]?.count ?? 0);
 }
 
-/** Count every authorized candidate without fetching cell bodies. */
-export async function countNeedsYouProjection(database:SqlDatabase,workspaceId:string,viewerId:string,clock:NeedsClockMode='wall'):Promise<number>{
-  const result=await database.query<{count:string;questions:number;authorized:boolean}>(`${clock==='committed'?COMMITTED_NEEDS_YOU_COUNT_CANDIDATES:NEEDS_YOU_PROJECTION_COUNT_CANDIDATES}
-    SELECT count(*)::text count,count(*) FILTER(WHERE approval_kind IS NULL)::int questions,
-      ${VIEWER_MEMBER} authorized FROM candidates WHERE ${VISIBLE_CANDIDATE}`,[workspaceId,viewerId]);
-  const row=result.rows[0];if(!row?.authorized)throw new Error('workspace membership required');
-  const count=Number(row.count);
-  if(!Number.isSafeInteger(count)||count<0)throw new RouterProjectionUnavailable('budget');
-  return count;
-}
-
 /** The existing aggregate count boundary returns only the complete server
  * order, never unaffected Room cell bodies. Cells are read by exact scope. */
-export async function readNeedsYouOrder(database:SqlDatabase,workspaceId:string,viewerId:string,clock:NeedsClockMode='wall',_strict=true){
+export async function readNeedsYouOrder(database:SqlDatabase, workspaceId:string, viewerId:string){
   const result=await database.query<{ids:string[];questions:number;authorized:boolean}>(
-    `${needsYouCandidates('order',clock)}
+    `${needsYouCandidates('order')}
      SELECT COALESCE(array_agg(message_id ORDER BY (approval_kind IS NULL),
        floor(extract(epoch FROM CASE WHEN approval_kind IS NULL THEN first_seen_at+interval '${NEEDS_YOU_EXPIRY_HOURS} hours' ELSE approval_expires_at END)) NULLS LAST,
        floor(extract(epoch FROM created_at)*1000),message_id COLLATE "C"),'{}'::text[]) ids,count(*) FILTER(WHERE approval_kind IS NULL)::int questions,
        ${VIEWER_MEMBER} authorized FROM candidates WHERE ${VISIBLE_CANDIDATE}`,[workspaceId,viewerId]);
   const row=result.rows[0];
   if(!row?.authorized)throw new Error('workspace membership required');
-  if(new Set(row.ids).size!==row.ids.length)throw new RouterProjectionUnavailable('budget');
   return {count:row.ids.length,order:row.ids};
 }
 
-/** The scalar badge, stream head and authority all come from one PostgreSQL
- * statement snapshot. A single pure SELECT needs no extra transaction/setup
- * or separate membership/head reads to establish its coherent cut. */
-export async function readNeedsYouCountSnapshot(database: SqlDatabase, workspaceId: string,
-  viewerId: string,clock:NeedsClockMode='wall'): Promise<RouterSnapshot<'needs-you-count'>> {
-  const input = { family: 'needs-you-count' as const, workspaceId };
-  const domains = [`reader:${viewerId}:workspace:${workspaceId}`, `reader:${viewerId}:workspace:${workspaceId}:visibility`];
-  const stream = `workspace:${workspaceId}`;
-  const result = await database.query<{ count: string; questions: number; authorized: boolean;
-    clock_generation?:string;clock_revision?:string;clock_ready?:boolean;
-    epoch: string | null; through: string | null; scopes: { authorityScope: string; epoch: string }[] | null }>(
-    `${clock==='committed'?COMMITTED_NEEDS_YOU_COUNT_CANDIDATES:NEEDS_YOU_PROJECTION_COUNT_CANDIDATES}, counted AS (
-      SELECT count(*)::text count,count(*) FILTER(WHERE approval_kind IS NULL)::int questions,
-        ${VIEWER_MEMBER} authorized FROM candidates WHERE ${VISIBLE_CANDIDATE}
-    ) SELECT counted.*,head.epoch,head.sequence::text through,authority.scopes
-      ${clock==='committed'?`,clock.generation clock_generation,clock.revision::text clock_revision,${TRAY_CLOCK_READ_PREDICATE_SQL} clock_ready`:''}
-      FROM counted LEFT JOIN live_streams head ON head.id=$4
-      ${clock==='committed'?'LEFT JOIN tray_clock_state clock ON clock.workspace_id=$1':''}
-      LEFT JOIN LATERAL (SELECT jsonb_agg(jsonb_build_object('authorityScope',scope,'epoch',epoch::text) ORDER BY scope) scopes
-        FROM router_authority WHERE scope=ANY($3::text[])) authority ON true`,
-    [workspaceId, viewerId, domains, stream]);
-  const row = result.rows[0];
-  if (!row?.authorized || row.scopes?.length !== 2 ||
-      row.scopes.some(scope => !domains.includes(scope.authorityScope) || !/^\d+$/.test(scope.epoch)))
-    throw new RouterProjectionUnavailable('authority');
-  if(clock==='committed'&&(row.clock_ready!==true||!row.clock_generation||!/^[a-f0-9]{32}$/.test(row.clock_generation)||
-    !row.clock_revision||!/^(0|[1-9][0-9]*)$/.test(row.clock_revision)))throw new RouterProjectionUnavailable('dependency');
-  const count = Number(row.count), through = Number(row.through);
-  if (!Number.isSafeInteger(count) || count < 0)
-    throw new RouterProjectionUnavailable('budget');
-  if (!row.epoch || row.through === null || !Number.isSafeInteger(through) || through < 0)
-    throw new RouterProjectionUnavailable('dependency');
-  const snapshot: RouterSnapshot<'needs-you-count'> = { kind: 'snapshot', family: input.family, scope: workspaceId,
-    value: { count }, cut: { stream, epoch: row.epoch, through, protocol: 1 },
-    ...(clock==='committed'?{clockVersion:`tray-clock-v1:${row.clock_generation}:${row.clock_revision}`} : {}),
-    atomicGroup: routerAtomicGroup(input, viewerId), authority: routerAuthority(row.scopes.map(scope => ({ authorityScope: scope.authorityScope, epoch: scope.epoch }))) };
-  if (Buffer.byteLength(JSON.stringify(snapshot)) > 1024) throw new RouterProjectionUnavailable('budget');
-  return snapshot;
-}
-
 /** Complete rows; legacy callers start clocks, while preview reads remain side-effect free. */
-export async function needsYouItems(
-  database: SqlDatabase,
-  workspaceId: string,
-  viewerId: string,
-  toIdentity: (row: {
+export async function needsYouItems(database: SqlDatabase, workspaceId: string, viewerId: string, toIdentity: (row: {
     id: string;
     kind: 'human' | 'agent';
     name: string;
     handle: string | null;
     avatar: string | null;
     face_id: string | null;
-  }) => RoomViewIdentity,
-  markSeen = true,
-  clock:NeedsClockMode='wall',
-  roomIds?:readonly string[],
+  }) => RoomViewIdentity, markSeen = true, roomIds?:readonly string[]
 ): Promise<{ items: NeedsYouItemView[] }> {
-  if(clock==='committed'&&markSeen)throw new Error('Committed Tray projection must be read-only');
+
   const result = await database.query<Row & {
     painted_first_seen_at: Date | null;
     viewer_handle: string | null;
     authorized: boolean;
   }>(
-    `${roomIds?needsYouCandidates('cells',clock,true):clock==='committed'?COMMITTED_NEEDS_YOU_CANDIDATES:NEEDS_YOU_CANDIDATES},
+    `${roomIds?needsYouCandidates('cells', true):(NEEDS_YOU_CANDIDATES)},
      visible AS MATERIALIZED (SELECT * FROM candidates WHERE ${VISIBLE_CANDIDATE}),
      started AS (
        ${markSeen ? `INSERT INTO needs_you_marks(identity_id,message_id,workspace_id)

@@ -1,20 +1,20 @@
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
-import { saveAgentUsage } from './agent-usage.js';
+import { agentUsageColumns, projectAgentUsage, saveAgentUsage } from './agent-usage.js';
 import { createHash } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { AgentUsage } from '@beeline/api-contract/daemon';
 import { canonicalUsageAccountSnapshot } from '@beeline/api-contract/helper-usage';
 import { migratedDatabase, type PgliteDatabase } from './test-support.js';
 import { COMMAND_COMPLETION_CHANNEL,notifyCommandCompletion } from './command-completion.js';
-import { HELPER_USAGE_SCHEMA, attachUsageAccount, fenceAgentUsageCellEnqueue, publishUsageAccount, readAgentUsageCell, subscribeAgentUsageCells } from './helper-usage.js';
+import { HELPER_USAGE_SCHEMA, attachUsageAccount, publishUsageAccount } from './helper-usage.js';
 const owner='a'.repeat(64),other='b'.repeat(64),first='c'.repeat(64),second='d'.repeat(64),outsider='e'.repeat(64);
 const report=(at:number):AgentUsage=>({updatedAt:at,windows:[{rateLimitType:'five_hour',status:'allowed',utilization:0.4,updatedAt:at}],
   account:{provider:'claude',key:'id:'+'f'.repeat(32)},read:{status:'fresh',at}});
 const source={connectionId:'fixture-source',epoch:1};
 const publication=(usage:AgentUsage,ownerId=owner)=>({ownerId,usage,source,revision:createHash('sha256').update(canonicalUsageAccountSnapshot(usage,ownerId)).digest('hex')});
-describe('owner-bound usage account publication and canonical cells',()=>{
+describe('owner-bound usage account publication',()=>{
   let db:PgliteDatabase,at:number,releaseHints:()=>Promise<void>;
   beforeAll(async()=>{
     db=await migratedDatabase();await db.query(HELPER_USAGE_SCHEMA);
@@ -28,22 +28,20 @@ describe('owner-bound usage account publication and canonical cells',()=>{
   it('stores an immutable source revision once, self-attaches, and attaches a sibling without reposting quota',async()=>{
     const input=publication(report(at));const result=await publishUsageAccount(db,first,input);
     const before=(await db.query('SELECT usage,source_revision,revision,updated_at FROM usage_accounts')).rows;
-    const cellBefore=await readAgentUsageCell(db,first,owner);
+    const cellBefore=await readUsage(db,first,owner);
     expect(await publishUsageAccount(db,first,input)).toEqual(result);
     expect((await db.query('SELECT usage,source_revision,revision,updated_at FROM usage_accounts')).rows).toEqual(before);
-    expect(await readAgentUsageCell(db,first,owner)).toEqual(cellBefore);
+    expect(await readUsage(db,first,owner)).toEqual(cellBefore);
     await attachUsageAccount(db,second,{source,account:input.usage.account!,revision:result.revision});
-    const sibling=await readAgentUsageCell(db,second,owner);expect(sibling.allowed).toBe(true);
+    const sibling=await readUsage(db,second,owner);expect(sibling.allowed).toBe(true);
     if(sibling.allowed)expect(sibling.usage?.windows[0]?.utilization).toBe(0.4);
-    const attached=await readAgentUsageCell(db,second,owner);
+    const attached=await readUsage(db,second,owner);
     await attachUsageAccount(db,second,{source,account:input.usage.account!,revision:result.revision});
-    expect(await readAgentUsageCell(db,second,owner)).toEqual(attached);
-    const withSibling=await readAgentUsageCell(db,first,owner);
-    expect(withSibling.revision).toBeGreaterThan(cellBefore.revision);
+    expect(await readUsage(db,second,owner)).toEqual(attached);
+    const withSibling=await readUsage(db,first,owner);
     if(withSibling.allowed)expect(withSibling.usage?.sharedWith).toEqual(['Second']);
     await db.query('UPDATE agents SET usage_account_id=NULL WHERE agent_id=$1',[second]);
-    const detached=await readAgentUsageCell(db,first,owner);
-    expect(detached.revision).toBeGreaterThan(withSibling.revision);
+    const detached=await readUsage(db,first,owner);
     if(detached.allowed)expect(detached.usage?.sharedWith).toBeUndefined();
     await attachUsageAccount(db,second,{source,account:input.usage.account!,revision:result.revision});
   });
@@ -68,39 +66,20 @@ describe('owner-bound usage account publication and canonical cells',()=>{
     const newest=await publishUsageAccount(db,first,publication(report(at+20)));
     const older=await publishUsageAccount(db,first,publication(report(at+10)));
     expect(older).toEqual({...newest,superseded:true});
-    const prepared=await readAgentUsageCell(db,second,owner);expect(prepared.allowed).toBe(true);
     await db.query('UPDATE agents SET owner_id=$2 WHERE agent_id=$1',[second,other]);
-    const delivered:unknown[]=[];await fenceAgentUsageCellEnqueue(db,owner,prepared,cell=>{delivered.push(cell);});
-    expect(delivered).toEqual([expect.objectContaining({allowed:false,ownerId:owner,agentId:second})]);
-    expect(delivered[0]).not.toHaveProperty('usage');
-    const newOwner=await readAgentUsageCell(db,second,other);expect(newOwner).toMatchObject({allowed:true,usage:null});
+    expect(await readUsage(db,second,other)).toMatchObject({allowed:true,usage:null});
     await expect(publishUsageAccount(db,second,publication(report(at+30)))).rejects.toThrow('owner changed');
   });
-  it('has no idle observations and delivers one complete small cell from a real committed account source',async()=>{
-    vi.useFakeTimers();
-    const delivered=vi.fn(),unavailable=vi.fn();let ready!:()=>void,done!:()=>void;
-    const started=new Promise<void>(resolve=>{ready=resolve;}),changed=new Promise<void>(resolve=>{done=resolve;});
-    const stop=subscribeAgentUsageCells(db,owner,cell=>{delivered(cell);done();},unavailable,ready);
-    try{
-      await started;expect(delivered).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(86_400_000);expect(delivered).not.toHaveBeenCalled();vi.useRealTimers();
-      await db.query('UPDATE agents SET updated_at=now() WHERE agent_id=$1',[first]);expect(delivered).not.toHaveBeenCalled();
-      await publishUsageAccount(db,first,publication(report(at+40)));await changed;
-      expect(delivered).toHaveBeenCalledOnce();expect(delivered.mock.calls[0]?.[0]).toMatchObject({v:1,ownerId:owner,agentId:first,allowed:true,usage:{windows:[{utilization:0.4}]}});
-      expect(unavailable).not.toHaveBeenCalled();
-    }finally{stop();vi.useRealTimers();await db.query('SELECT 1');}
-  });
-
   it('rejects stale/duplicate source counters and digest reuse without announcing accepted freshness',async()=>{
     const usage={updatedAt:Date.now()/1000,windows:[],context:{used:100,size:1000}};
     const usageSource={v:1 as const,ownerId:owner,source,revision:1};
     expect(await saveAgentUsage(db,first,usage,usageSource)).toBe(true);
-    const before=await readAgentUsageCell(db,first,owner);
-    expect(await saveAgentUsage(db,first,usage,usageSource)).toBe(false);expect(await readAgentUsageCell(db,first,owner)).toEqual(before);
+    const before=await readUsage(db,first,owner);
+    expect(await saveAgentUsage(db,first,usage,usageSource)).toBe(false);expect(await readUsage(db,first,owner)).toEqual(before);
     await expect(saveAgentUsage(db,first,{...usage,context:{used:999,size:1000}},usageSource)).rejects.toThrow('revision conflict');
     expect(await saveAgentUsage(db,first,{...usage,context:{used:300,size:1000}},{...usageSource,revision:3})).toBe(true);
     expect(await saveAgentUsage(db,first,{...usage,context:{used:200,size:1000}},{...usageSource,revision:2})).toBe(false);
-    const current=await readAgentUsageCell(db,first,owner);if(current.allowed)expect(current.usage?.context?.used).toBe(300);
+    const current=await readUsage(db,first,owner);if(current.allowed)expect(current.usage?.context?.used).toBe(300);
   });
 
   it('does not announce a fresh completion for a stale or duplicate source through the actual daemon operation',async()=>{
@@ -128,3 +107,8 @@ describe('owner-bound usage account publication and canonical cells',()=>{
   });
 
 });
+
+async function readUsage(db:PgliteDatabase,agentId:string,ownerId:string) {
+  const row=(await db.query(`SELECT owner_id,${agentUsageColumns('agent','$2',true)} FROM agents agent WHERE agent.agent_id=$1`,[agentId,ownerId])).rows[0];
+  return {allowed:row?.owner_id===ownerId,usage:row ? projectAgentUsage(row as any)??null : null};
+}

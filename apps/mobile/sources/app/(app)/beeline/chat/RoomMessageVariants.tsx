@@ -433,8 +433,8 @@ function choiceHandle(identity?: { handle?: string; name: string; pubkey: string
 
 /**
  * One choice family: lettered plates for a question or a poll. Skip is a footer
- * word on an open question. Closed polls carry a still brass wash; options are
- * never TranscriptCardRow.
+ * word on an open question. Settled questions show their decision without
+ * option plates. Closed polls retain their vote results in a still brass wash.
  */
 export const ChoiceCard = React.memo(function ChoiceCard({
   message,
@@ -465,12 +465,24 @@ export const ChoiceCard = React.memo(function ChoiceCard({
       ? onAnswer(card.choiceId, optionId, note.trim())
       : onAnswer(card.choiceId, optionId);
   const turnout = `${card.votedCount} of ${card.electorateCount} voted`;
-  const clock = card.closesAt ? `closes ${formatChoiceClock(card.closesAt)}` : undefined;
+  const clock = open && card.closesAt ? `closes ${formatChoiceClock(card.closesAt)}` : undefined;
   const subline =
     card.mode === 'poll'
       ? [clock, turnout].filter(Boolean).join(' · ')
-      : [card.constraint, clock].filter(Boolean).join(' · ') || undefined;
-  const choices: TranscriptCardChoice[] = card.options.map((option) => ({
+      : open
+        ? [card.constraint, clock].filter(Boolean).join(' · ') || undefined
+        : undefined;
+  const selectedOption = card.options.find((option) => option.optionId === card.selectedOptionId);
+  const decision = card.footer ||
+    (card.status === 'answered'
+      ? `picked ${card.selectedOptionId ?? ''} · @${choiceHandle(card.answeredBy)}`
+      : card.status === 'skipped'
+        ? 'Skipped'
+        : card.mode === 'question' ? 'Closed · no longer waiting for an answer' : undefined);
+  const footer = card.mode === 'question' && card.status === 'answered' && selectedOption
+    ? `${selectedOption.label} · ${decision}`
+    : decision;
+  const choices: TranscriptCardChoice[] = (!open && card.mode === 'question' ? [] : card.options).map((option) => ({
     id: option.optionId,
     letter: option.letter,
     label: option.label,
@@ -514,7 +526,7 @@ export const ChoiceCard = React.memo(function ChoiceCard({
       }
       title={card.prompt}
       wrapTitle
-      subline={subline || card.constraint}
+      subline={subline}
       sublineTestID={`choice-${card.choiceId}-subline`}
       stamp={ledgerStamp(message.timestamp)}
       body={card.videoPreview ? <ChoiceVideoPreview {...card.videoPreview} /> : undefined}
@@ -534,10 +546,7 @@ export const ChoiceCard = React.memo(function ChoiceCard({
       footerNote={
         open
           ? busy ? 'Sending decision…' : undefined
-          : card.footer ||
-            (card.status === 'answered'
-              ? `picked ${card.selectedOptionId ?? ''} · @${choiceHandle(card.answeredBy)}`
-              : undefined)
+          : footer
       }
       footerNoteTestID={`choice-${card.choiceId}-footer`}
       actions={actions}

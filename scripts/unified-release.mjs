@@ -14,15 +14,6 @@ export const RELEASE_NOTIFY_ENDPOINT = 'https://server.usebeeline.app/v1/release
 export const SERVER_CANARY_WINDOW_SECONDS = 90;
 export const SERVER_CANARY_SAMPLE_SECONDS = 15;
 export const SERVER_CANARY_SAMPLES = SERVER_CANARY_WINDOW_SECONDS / SERVER_CANARY_SAMPLE_SECONDS + 1;
-// The desktop app bundles the web export, so shared UI edits reach it only
-// when its installers rebuild. Those edits ship at once by OTA and the
-// website; desktop catches up once its bundled UI is a week behind.
-export const DESKTOP_UI_REFRESH_SECONDS = 7 * 24 * 60 * 60;
-const DESKTOP_UI_PREFIXES = [
-  'apps/mobile/sources/', 'apps/mobile/assets/',
-  'packages/api-contract/', 'packages/buzz-client/', 'packages/nostr/',
-];
-
 // Release-affecting paths belong in this inspectable table, beside drift tests,
 // rather than in scattered workflow conditionals.
 export const COMPONENT_PATH_RULES = [
@@ -30,13 +21,24 @@ export const COMPONENT_PATH_RULES = [
   { prefix: 'apps/auth/', components: ['server'] },
   { prefix: 'apps/body/', components: ['helper'] },
   { prefix: 'packages/usebeeline/', components: ['helper'] },
-  // Shared UI and protocol edits do not rebuild the desktop installers on
-  // their own; see DESKTOP_UI_REFRESH_SECONDS for when desktop catches up.
-  { prefix: 'packages/api-contract/', components: ['server', 'helper', 'mobile-ota'] },
-  { prefix: 'packages/buzz-client/', components: ['helper', 'mobile-ota'] },
-  { prefix: 'packages/nostr/', components: ['helper', 'mobile-ota'] },
-  { prefix: 'apps/mobile/sources/', components: ['mobile-ota', 'website'] },
-  { prefix: 'apps/mobile/assets/', components: ['mobile-ota', 'website'] },
+  // Desktop bundles the Expo web export and its shared packages. Every
+  // bundled change needs fresh installers; desktop does not receive OTA.
+  { prefix: 'packages/api-contract/', components: ['server', 'helper', 'mobile-ota', 'desktop'] },
+  { prefix: 'packages/buzz-client/', components: ['helper', 'mobile-ota', 'desktop'] },
+  { prefix: 'packages/nostr/', components: ['helper', 'mobile-ota', 'desktop'] },
+  { prefix: 'packages/net/', components: ['desktop'] },
+  { prefix: 'apps/mobile/sources/', components: ['mobile-ota', 'desktop', 'website'] },
+  { prefix: 'apps/mobile/assets/', components: ['mobile-ota', 'desktop', 'website'] },
+  { prefix: 'apps/mobile/public/', components: ['desktop'] },
+  { prefix: 'apps/mobile/patches/', components: ['desktop'] },
+  { exact: 'apps/mobile/index.ts', components: ['desktop'] },
+  { exact: 'apps/mobile/metro.config.js', components: ['desktop'] },
+  { exact: 'apps/mobile/babel.config.js', components: ['desktop'] },
+  { exact: 'apps/mobile/scripts/patch-livekit-abort.cjs', components: ['desktop'] },
+  { exact: 'apps/mobile/scripts/patch-livekit-owned.cjs', components: ['desktop'] },
+  { exact: 'package.json', components: ['desktop'] },
+  { exact: 'package-lock.json', components: ['desktop'] },
+  { exact: 'tsconfig.base.json', components: ['desktop'] },
   { prefix: 'apps/mobile/src-tauri/', components: ['desktop'] },
   { prefix: 'apps/mobile/android/', components: ['mobile-native'] },
   { prefix: 'apps/mobile/ios/', components: ['mobile-native'] },
@@ -281,7 +283,7 @@ export function selectReleaseComponents(paths, { selection = 'auto', storeTrack 
 
 export function selectReleaseComponentsFromPublishedInputs(
   pathsByComponent,
-  { selection = 'auto', storeTrack = 'none', desktopLagSeconds = 0 } = {},
+  { selection = 'auto', storeTrack = 'none' } = {},
 ) {
   if (selection !== 'auto' && selection !== '') {
     return selectReleaseComponents([], { selection, storeTrack });
@@ -292,22 +294,7 @@ export function selectReleaseComponentsFromPublishedInputs(
     if (!Array.isArray(paths)) fail(`missing changed paths for ${component}`);
     if (selectReleaseComponents(paths, { storeTrack }).includes(component)) selected.add(component);
   }
-  if (desktopLagSeconds >= DESKTOP_UI_REFRESH_SECONDS &&
-      pathsByComponent.desktop.some((path) => DESKTOP_UI_PREFIXES.some((prefix) => path.startsWith(prefix)))) {
-    selected.add('desktop');
-  }
   return RELEASE_COMPONENTS.filter((component) => selected.has(component));
-}
-
-/** Seconds between the commit desktop last shipped and the release commit. */
-export function desktopLagFromPublishedInputs(previous, releaseSha, {
-  commitTime = (sha) => Number(execFileSync('git', ['show', '-s', '--format=%ct', sha], {
-    encoding: 'utf8', timeout: 30_000,
-  }).trim()),
-} = {}) {
-  validateReleaseIdentity(previous?.version, previous?.sourceSha);
-  const publishedSha = previous.components?.desktop?.sourceSha ?? previous.sourceSha;
-  return Math.max(0, commitTime(releaseSha) - commitTime(publishedSha));
 }
 
 export function runtimePinChangeFromPublishedInputs(previous, releaseSha, {
@@ -795,8 +782,7 @@ async function main(argv) {
     const componentPaths = args['component-paths'] ? readJson(args['component-paths']) : undefined;
     const selection = args.selection ?? 'auto';
     const runtimePin = previous ? runtimePinChangeFromPublishedInputs(previous, args.sha) : undefined;
-    const desktopLagSeconds = previous && componentPaths ? desktopLagFromPublishedInputs(previous, args.sha) : 0;
-    const selectOptions = { selection, storeTrack: args['store-track'] ?? 'none', desktopLagSeconds };
+    const selectOptions = { selection, storeTrack: args['store-track'] ?? 'none' };
     const selectedComponents = componentPaths
       ? selectReleaseComponentsFromPublishedInputs(componentPaths, selectOptions)
       : selectReleaseComponents(paths, selectOptions);

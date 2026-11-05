@@ -191,13 +191,13 @@ cross-component gate serializes them.
 
 Two path rules keep releases small. Editing the release workflow or
 `scripts/unified-release.mjs` selects only the fast legs (server, mobile OTA,
-website), never the helper or desktop. Shared UI and protocol edits
-(`apps/mobile/sources/`, `apps/mobile/assets/`, `packages/api-contract/`,
-`packages/buzz-client/`, `packages/nostr/`) ship by OTA and the website at
-once. The desktop app bundles the web export, so it rebuilds for its own shell
-and package inputs, for an explicit `selection`, or once its bundled UI is a
-week behind (`DESKTOP_UI_REFRESH_SECONDS`, measured between the commit desktop
-last shipped and the release commit).
+website), never the helper or desktop. The desktop app bundles the Expo web
+export, so shared UI and protocol changes rebuild its installers in the same
+release. The path map includes the mobile sources/assets, exported shared
+packages, web export configuration and public files, dependency inputs and
+patches, and Tauri shell. Desktop reuses its published installers only when
+none of those inputs changed since its own last published source SHA; an
+explicit recovery `selection` still controls which legs run.
 
 Planning and the release record run on GitHub-hosted runners. Jobs that need
 production host tools run on the `beeline-prod-host` pool, which has two

@@ -59,7 +59,7 @@ export function renderWake(w: Wake, joined: JoinedSession, runner: Runner): stri
   if (w.kind === 'order') return [...header,
     `Report the outcome to whoever ordered you (a plain post does not report): ${command(runner, joined, `tool report '{"address":"${w.address}","commandId":"${w.id}","status":"done","text":"done: <result>"}'`)}`,
     `Pass commandId ${w.id} on other Beeline tool calls for this order.`,
-    'status is done, blocked, failed or needs_decision, and text starts with the matching done:, blocked:, failed: or needs-decision:.',
+    'status is done, blocked, failed or needs_decision; provide the report body as text and the server adds its status prefix.',
     `Other Beeline tools: ${command(runner, joined, `tool <name> '<json arguments>'`)}`].join('\n');
   return [...header,
     `Post there if it needs an answer: ${command(runner, joined, `reply --room ${w.address} "<text>"`)}`,

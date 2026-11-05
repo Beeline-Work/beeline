@@ -1,15 +1,13 @@
 import React from 'react';
 import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { Typography } from '@/constants/Typography';
 import { Button, type ButtonDestination, type ButtonVariant } from './Button';
 
 /**
- * The one error banner: what failed, one short line on what it means, and its
- * own Retry button. The banner itself is never the button.
+ * Shared contextual failure sentence and its existing actions. Whole-page
+ * and list failures use IndexRow; no framed error-banner variant remains.
  */
 export function ErrorBanner({
-  inline = false,
   icon,
   description,
   onRetry,
@@ -23,7 +21,7 @@ export function ErrorBanner({
   title,
   titleTestID,
 }: {
-  inline?: boolean;
+  inline?: true;
   icon?: React.ReactNode;
   description?: string;
   onRetry?: () => void;
@@ -50,23 +48,20 @@ export function ErrorBanner({
     <View
       accessibilityLiveRegion="polite"
       accessibilityRole="alert"
-      style={inline ? styles.inline : styles.banner}
+      style={styles.inline}
       testID={testID}
     >
       {icon}
-      <Text style={inline ? styles.inlineText : styles.title} testID={titleTestID}>
-        {inline && description ? `${title} ${description}` : title}
+      <Text style={styles.inlineText} testID={titleTestID}>
+        {description ? `${title} ${description}` : title}
       </Text>
-      {!inline && description ? (
-        <Text style={inline ? styles.inlineText : styles.description}>{description}</Text>
-      ) : null}
       {onRetry || secondaryAction ? (
         <View
-          style={inline ? styles.inlineActions : secondaryAction ? styles.actions : styles.retry}
+          style={styles.inlineActions}
         >
           {onRetry ? (
             <Button
-              size={inline ? 'inline' : 'default'}
+              size="inline"
               label={retryLabel}
               destination={retryDestination}
               loading={retrying}
@@ -77,7 +72,7 @@ export function ErrorBanner({
           ) : null}
           {secondaryAction ? (
             <Button
-              size={inline ? 'inline' : 'default'}
+              size="inline"
               label={secondaryAction.label}
               icon={secondaryAction.icon}
               iconOnly={secondaryAction.iconOnly}
@@ -110,24 +105,6 @@ const styles = StyleSheet.create((theme) => {
       flexWrap: 'wrap',
       alignItems: 'center',
       gap: hull.space.md,
-    },
-    banner: {
-      marginHorizontal: hull.space.md,
-      alignItems: 'flex-start',
-      padding: hull.space.md,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: hull.borderStrong,
-      borderRadius: hull.radius,
-      backgroundColor: hull.bgRaised,
-    },
-    title: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary },
-    description: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
-    retry: { marginTop: hull.space.sm },
-    actions: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: hull.space.sm,
-      marginTop: hull.space.sm,
     },
   };
 });

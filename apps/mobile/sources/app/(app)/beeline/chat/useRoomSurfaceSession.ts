@@ -38,8 +38,6 @@ import {
 import { offerRoomTurns, roomTurns, stampRoomMessageRows, useRoomTurnRecords, writeRoomMessage, writeRoomTurn } from '@/buzz/room-message-records';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
 import { ReadCursorAdvancer } from '@/buzz/read-cursor-advance';
-import { observeVisibleRoomRows, waitForRoomDraw, requireOpeningRoomResponse, openingRoomResponseReady, roomDrawGeneration } from '@/buzz/room-draw-barrier';
-import { messageBoundaryIds } from '@/buzz/room-new-message-boundary';
 import { liveDraftRowId } from '@/buzz/draft-settle';
 import {
   applyLiveOverlayStructure,
@@ -61,7 +59,7 @@ import {
 } from '@/buzz/agent-presence';
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 import { scheduleAnimationFrame } from '@/buzz/host-scheduler';
-import { hasPrefetchedRoomOpen, takePrefetchedPushRoom } from '@/push/push-room-prefetch';
+import { takePrefetchedPushRoom } from '@/push/push-room-prefetch';
 
 /** A socket that never answers must not hold the open's one Room read. */
 const LIVE_CACHE_WRITE_DELAY_MS = 1_000;
@@ -407,19 +405,6 @@ export function useRoomSurfaceSession({
   const readRoomRef = useRef<(() => Promise<void>) | null>(null);
   const reconciledViewRef = useRef<RoomView | null>(openingCache?.view ?? null);
   const sessionStartedRef = useRef(false);
-  const openingDrawRef = useRef<number | undefined>(undefined);
-  const drawingChannelRef = useRef<string | undefined>(undefined);
-  useLayoutEffect(() => {
-    if (!isFocused || drawingChannelRef.current === channelId) return;
-    drawingChannelRef.current = channelId;
-    // Direct corner navigation has no tap prefetch. A cached row can paint
-    // before setup finishes, but cannot release optional reads ahead of the
-    // single fresh opening response. Prefetched warm Rooms own their barrier.
-    if (!hasPrefetchedRoomOpen(channelId)) {
-      requireOpeningRoomResponse();
-      openingDrawRef.current = roomDrawGeneration();
-    }
-  }, [channelId, isFocused]);
   const agentPresencesRef = useRef(heartbeatPresences);
   const reconnectGraceRef = useRef(presenceReconnectGrace);
   const pendingPaintTracesRef = useRef<readonly ReceivedLiveTrace[]>([]);
@@ -486,21 +471,13 @@ export function useRoomSurfaceSession({
       readCursorRef.current?.resume();
       const viewport = readViewportRef.current;
       if (viewport?.roomId === channelId && viewport.viewer === readCursorViewerRef.current) {
-        observeVisibleRoomRows(channelId, viewport.visible.flatMap(messageBoundaryIds));
         if (!isCornerRef.current && AppState.currentState === 'active')
           readCursorRef.current?.observe(viewport.chronological, viewport.visible);
       }
       const view = reconciledViewRef.current;
       if (becameFocused && view?.room.id === channelId)
         queueNewestFrameMark(view.messages.at(-1)?.id, channelId);
-      const read = readRoomRef.current;
-      if (read) {
-        const draw = waitForRoomDraw();
-        if (draw) void draw.then(() => {
-          if (isFocusedRef.current && readRoomRef.current === read) void read();
-        });
-        else void read();
-      }
+      void readRoomRef.current?.();
       return;
     }
     readCursorRef.current?.flush();
@@ -515,8 +492,6 @@ export function useRoomSurfaceSession({
   const advanceReadCursor = useCallback(
     (chronological: readonly ChatDisplayMessage[], visible: readonly ChatDisplayMessage[]) => {
       readViewportRef.current = { roomId: channelIdRef.current, viewer: readCursorViewerRef.current, chronological, visible };
-      if (isFocusedRef.current)
-        observeVisibleRoomRows(channelIdRef.current, visible.flatMap(messageBoundaryIds));
       if (isCornerRef.current) return;
       if (!isFocusedRef.current) return;
       if (AppState.currentState === 'background' || AppState.currentState === 'inactive') return;
@@ -594,13 +569,6 @@ export function useRoomSurfaceSession({
     setFirstUnreadMessageId(null);
     liveDraftDrainStore.setActive(true);
 
-    let openingDraw = openingDrawRef.current;
-    openingDrawRef.current = undefined;
-    const releaseOpeningResponse = (view?: RoomView) => {
-      if (openingDraw === undefined) return;
-      openingRoomResponseReady(view?.messages.at(-1)?.id, openingDraw);
-      openingDraw = undefined;
-    };
     let cancelled = false;
     let stopOutbox: (() => void) | undefined;
     let unsubscribe: (() => void) | undefined;
@@ -1131,12 +1099,6 @@ export function useRoomSurfaceSession({
       try {
         if (openingFrame) {
           await yieldToPaint();
-          // A frame callback can precede Fabric's native mount. The tap owns
-          // the fresh read already, and its cached response can release the
-          // existing visible-row barrier. Keep outbox/transport setup from
-          // rendering over that first native frame. Direct links still start
-          // their own read here, so must not wait for its response first.
-          if (hasPrefetchedRoomOpen(channelId)) await waitForRoomDraw();
           if (cancelled) return;
         }
         markRoomOpen('session-effect', channelId);
@@ -1261,7 +1223,6 @@ export function useRoomSurfaceSession({
             // Keep painting cache publishes through identity/outbox setup until
             // the opening read is actually applied (cleanup also unsubscribes).
             stopOpeningResponse();
-            releaseOpeningResponse(view);
             if (!view.parent && !reopenedChat) {
               reopenedChat = true;
               // Only a Room the reader dismissed from the list needs reopening;
@@ -1280,7 +1241,6 @@ export function useRoomSurfaceSession({
             messageDeltasDuringRead = undefined;
 
             if (cancelled) return;
-            releaseOpeningResponse();
             setPresenceResolved(false);
             const terminal =
               error instanceof RoomViewHttpError &&

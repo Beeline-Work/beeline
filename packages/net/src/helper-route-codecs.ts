@@ -3,7 +3,7 @@ import type { WireOutput } from './route-codecs.js';
 import { helperShapes, helperOperations } from './generated-helper-shapes.js';
 import { jsonCodec, type Codec } from './wire-codec.js';
 
-/** Consumer-local schema projection; complete schemas; transport chunks bound individual wire frames. */
+/** Consumer-local schema projection; complete schemas. */
 export function helperRouteCodecs<K extends keyof typeof helperOperations>(id: K): {
   params: Codec<RouteInput<K>>; result: Codec<WireOutput<K>>;
 } {

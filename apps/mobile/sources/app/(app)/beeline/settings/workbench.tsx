@@ -1,3 +1,4 @@
+import { IndexRow } from '@/components/buzz/IndexRow';
 import { AiClientsSection } from '@/components/buzz/AiClientsSection';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import React, { useState } from 'react';
@@ -16,7 +17,6 @@ import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { ServiceMark } from '@/components/buzz/ServiceMark';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
-import { NetworkUnavailableState } from '@/components/buzz/NetworkUnavailableState';
 import { ConnectorsSearchSheet } from './workbench/connect-app';
 
 function first(value: string | string[] | undefined) { return Array.isArray(value) ? value[0] : value; }
@@ -38,7 +38,7 @@ export default function WorkbenchScreen() {
   const header = <PageHeader prominent backAccessibilityLabel="Back to Settings" eyebrow="Settings" title="Connectors" testID="workbench-header" onBack={() => router.back()} />;
   return <View style={[styles.container, { paddingTop: desktop ? 0 : insets.top }]}>
     {header}
-    {(!index && error) || (view && !index) ? <NetworkUnavailableState onRetry={() => void refresh()} testID="workbench-network-unavailable" /> : !index ?
+    {(!index && error) || (view && !index) ? <View style={styles.failureInset}><IndexRow inset="flush" title="Network is not available right now." action="Retry" onPress={() => void refresh()} testID="workbench-network-unavailable" /></View> : !index ?
       <View style={styles.centered}><SurfaceGlyphLoader testID="workbench-loader" /></View> :
       <ScrollView style={styles.content} contentContainerStyle={[styles.contentInner, desktop && styles.desktopColumn, { paddingBottom: insets.bottom + theme.buzz.space.xxl }]} testID="workbench-scroll">
         <HullDialogInput accessibilityLabel="Search apps, keys, and websites" placeholder="Search apps, keys, and websites"
@@ -76,11 +76,11 @@ export default function WorkbenchScreen() {
   </View>;
 }
 const styles = StyleSheet.create(theme => ({
+    failureInset: { paddingHorizontal: theme.buzz.roomList.edge },
   container: { flex: 1, backgroundColor: theme.buzz.appCanvas }, content: { flex: 1 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   desktopColumn: { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' },
     contentInner: {
  paddingHorizontal: theme.buzz.space.lg, paddingTop: theme.buzz.layout.screenTop, gap: theme.buzz.layout.sectionGap },
   note: { ...theme.buzz.type.meta, color: theme.buzz.appQuiet, marginBottom: theme.buzz.space.lg },
-  error: { ...theme.buzz.type.meta, color: theme.buzz.dialogDanger },
 }));

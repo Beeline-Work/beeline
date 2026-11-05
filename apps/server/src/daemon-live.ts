@@ -14,7 +14,7 @@ import type { WebSocket } from 'ws';
 import { isTransientDatabaseConnectionError } from './database.js';
 import type { TokenAuth } from './auth.js';
 import type { ConnectionPresence } from './connection-presence.js';
-import type { DaemonService, OwnedModelClaimCapability } from './daemon-service.js';
+import { DAEMON_OPERATION_NAMES, type DaemonService, type OwnedModelClaimCapability } from './daemon-service.js';
 import type { HelperVersionGate } from './helper-version-gate.js';
 import { helperVersionBelowMinimum } from './helper-version-gate.js';
 import type { LiveHub, LiveTrace } from './live.js';
@@ -49,6 +49,7 @@ export interface DaemonLiveDependencies {
   readonly errors: { database: number; invalid: number; internal: number; overload: number };
   readonly counters: { helperVersionRefusals: number; helperForceUpdates: number };
   readonly registry: DaemonConnectionRegistry;
+  readonly operationErrorStatus?: (error: unknown) => number;
   /** True while this server is shutting down: its connections stay held for the successor. */
   readonly shuttingDown: () => boolean;
 }
@@ -109,6 +110,8 @@ export interface DaemonSessionTransport {
   drop(code: number, reason: string): void;
   /** False after the socket refused a frame for its helper version. */
   admit(item: Record<string, unknown>): boolean;
+  /** Ordinary operations preserve HTTP's per-request token revocation check. */
+  authenticateOperation?: () => Promise<{error: string; status: number} | undefined>;
 }
 
 /**
@@ -153,6 +156,7 @@ export class DaemonAgentSession {
       activationContextV1?:boolean;
       turnOwnershipV1?:boolean;
       ownedModelV1?:boolean;
+      daemonOperationsV1?:boolean;
     } = {},
   ) {
     const { live, database } = deps;
@@ -301,6 +305,14 @@ export class DaemonAgentSession {
   /** Queue one frame behind this agent's earlier frames. */
   frame(raw: Record<string, unknown>, frameBytes: number): void {
     if (this.#closed) return;
+    if (raw.type === 'daemon-operation') {
+      // Provider work and waitForCornerWake must not hold the serial intake
+      // queue or its database semaphore: Stop/subscriptions still need service.
+      // This is the same authenticated service adapter as old HTTP ingress.
+      if (!this.presence.daemonOperationsV1 || !this.transport.admit(raw)) return;
+      void this.#operation(raw);
+      return;
+    }
     if (this.#queuedBytes + frameBytes > MAX_LIVE_SESSION_QUEUED_BYTES) {
       this.deps.errors.overload++;
       this.transport.drop(1013, 'live admission overloaded');
@@ -371,6 +383,38 @@ export class DaemonAgentSession {
     await this.deps.connectionPresence?.releaseConnection(this.agentId, this.connectionId, this.#forUpdate)
       .catch((error) => console.error('[presence] connection release failed',
         error instanceof Error ? error.message : String(error)));
+  }
+
+  async #operation(item: Record<string, unknown>): Promise<void> {
+    if (typeof item.requestId !== 'string' || !item.requestId) return;
+    const reply = (value: Record<string, unknown>) => {
+      if (!this.#closed && this.transport.isOpen())
+        this.transport.send({ type: 'daemon-operation-result', requestId: item.requestId, ...value });
+    };
+    try {
+      if (Object.keys(item).some(key => !['type', 'agentId', 'requestId', 'operation', 'input'].includes(key)) ||
+          typeof item.operation !== 'string' || !DAEMON_OPERATION_NAMES.has(item.operation as keyof DaemonOperationMap) ||
+          !item.input || typeof item.input !== 'object' || Array.isArray(item.input)) {
+        reply({ error: 'invalid_daemon_operation', status: 400 }); return;
+      }
+      const refusal = this.transport.authenticateOperation
+        ? await this.transport.authenticateOperation() : {error: 'daemon_token_required', status: 401};
+      if (refusal) { reply(refusal); return; }
+      const operation = item.operation as keyof DaemonOperationMap;
+      // Selected controls must retain their source-bound channel. Legacy turn
+      // receipts can still finish a generation claimed before negotiation;
+      // DaemonService checks the generation's durable ownership at the effect.
+      if (operation === 'readCommandActivation' ||
+          (this.turnOwnershipV1 && (operation === 'claimAgentCommand' || operation === 'acknowledgeAgentCommand')) ||
+          (this.usageAccountV1 && ['publishAgentUsageAccount', 'attachAgentUsageAccount', 'postAgentUsage'].includes(operation))) {
+        reply({ error: 'dedicated_machine_channel_required', status: 409 }); return;
+      }
+      const result = await this.deps.daemon.execute(operation, item.input as never, this.agentId);
+      reply({ result });
+    } catch (error) {
+      reply({ error: error instanceof Error ? error.message : 'daemon_operation_unconfirmed',
+        status: this.deps.operationErrorStatus?.(error) ?? 503 });
+    }
   }
 
   async #process(item: Record<string, unknown>): Promise<void> {
@@ -890,6 +934,11 @@ export function serveMachineSocket(
             unregistered(agentId, reason, code);
           },
           admit: () => guard.admit(),
+          authenticateOperation: async () => {
+            if (await deps.auth.authenticateDaemon(token) === agentId) return undefined;
+            return await deps.auth.retiredDaemonAgent(token)
+              ? {error: 'agent_removed', status: 403} : {error: 'daemon_token_required', status: 401};
+          },
         },
         {
           ...(typeof item.lifecycleId === 'string' && item.lifecycleId.length <= 128
@@ -902,6 +951,7 @@ export function serveMachineSocket(
           ...(item.activationContextV1===true?{activationContextV1:true}:{}),
           ...(item.turnOwnershipV1===true?{turnOwnershipV1:true}:{}),
           ...(item.ownedModelV1===true?{ownedModelV1:true}:{}),
+          ...(item.daemonOperationsV1===true?{daemonOperationsV1:true}:{}),
         },
       );
       sessions.set(agentId, session);
@@ -915,7 +965,8 @@ export function serveMachineSocket(
       send({
         type: 'registered',
         agentId,
-        capabilities: { initialSnapshotsV1: true, discoveryWake: true, pushIntake: true, intakeHeartbeat: item.intakeHeartbeat === true && !session.turnOwnershipV1,
+        capabilities: { initialSnapshotsV1: true, discoveryWake: true, pushIntake: true,
+          ...(item.daemonOperationsV1 === true ? {daemonOperationsV1:true} : {}), intakeHeartbeat: item.intakeHeartbeat === true && !session.turnOwnershipV1,
           ...(session.turnOwnershipV1 ? {turnOwnershipV1:true,turnConnectionId:session.connectionId,turnConnectionEpoch:session.epoch} : {}),
           ...(session.ownedModelV1 ? {ownedModelV1:true} : {}),
           ...(session.overlayV1?{overlayV1:true}:{}),

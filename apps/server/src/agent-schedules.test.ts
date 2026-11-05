@@ -252,13 +252,11 @@ describe('manager schedule phone operations', () => {
     }
   });
 
-  it('requires Workspace admin authority for every schedule operation', async () => {
+  it('allows Room members to read schedules and requires Workspace admin for mutations', async () => {
     const database = await fixture();
     try {
       const phone = new PhoneService(database, 'http://local.test');
-      await expect(phone.execute('listRoomSchedules', { roomId: ROOM }, MEMBER)).rejects.toThrow(
-        'workspace admins only',
-      );
+      await expect(phone.execute('listRoomSchedules', { roomId: ROOM }, MEMBER)).resolves.toEqual({schedules:[]});
       const daemon = new DaemonService(database, new LiveHub());
       const created = await daemon.execute(
         'createAgentSchedule',

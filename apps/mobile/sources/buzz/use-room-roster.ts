@@ -1,3 +1,4 @@
+import {yieldToNextPaint} from './host-scheduler';
 import {useCallback,useEffect,useMemo,useRef,useState,useSyncExternalStore} from 'react';
 import {isWorkspaceView,type WorkspaceView,type SurfaceCacheAddress} from '@beeline/buzz-client';
 import {getEffectiveRelayUrl} from '@/auth/buzz-identity-storage';
@@ -32,13 +33,15 @@ export function useRoomRoster(workspaceId:string|null|undefined,viewer:string|nu
     return()=>{cancelled=true;release?.();};
   },[workspaceId, viewer, generation]);
   useEffect(()=>{
-    if((!read)||!workspaceId||!address||!shouldReadWorkspaceRoster({activeWorkspaceId:workspaceId,cachedWorkspaceId:cached.current,rosterSurfaceVisible:visible}))return;
-    let cancelled=false;
-    void mobileSurfaceCache.fetch(address,isWorkspaceView,()=>read(workspaceId)).then(()=>{
-      if(!cancelled)cached.current=workspaceId;
-    }).catch(reason=>{if(!cancelled&&visible)error.current(appErrorCopy(reason,'Could not read the Workspace roster.'));});
-    return()=>{cancelled=true;};
-  },[workspaceId, visible, read, address]);
+    if(!read||!workspaceId||!address||!shouldReadWorkspaceRoster({activeWorkspaceId:workspaceId,cachedWorkspaceId:cached.current,rosterSurfaceVisible:visible}))return;
+    const cancel=new AbortController();
+    void yieldToNextPaint().then(async()=>{
+      if(cancel.signal.aborted)return;
+      await mobileSurfaceCache.fetch(address,isWorkspaceView,()=>read(workspaceId));
+      if(!cancel.signal.aborted)cached.current=workspaceId;
+    }).catch(reason=>{if(!cancel.signal.aborted&&visible)error.current(appErrorCopy(reason,'Could not read the Workspace roster.'));});
+    return()=>cancel.abort();
+  },[workspaceId,visible,read,address]);
   // The records version re-selects canonical rows after another surface writes.
   const cachedValue=useMemo(()=>held&&scoped?{...held,members:workspaceRows<WorkspaceView['members'][number]>(scoped,held.members.map(row=>row.identity.pubkey)),
     agents:workspaceRows<WorkspaceView['agents'][number]>(scoped,held.agents.map(row=>row.identity.pubkey))}:null,[held,scoped,records]);

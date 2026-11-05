@@ -292,7 +292,7 @@ export function AppSignInCard({ message, agentName, canConnect, onConnect, busy 
           <Text style={appSignInStyles.detail}>{INSTAGRAM_SIGN_IN_REQUIREMENT}</Text>
         ) : null}
         {app.status === 'failed' ? (
-          <Text accessibilityRole="alert" style={appSignInStyles.error}>{app.errorMessage ?? 'App sign-in failed. Try again.'}</Text>
+          <ErrorBanner inline title={(app.errorMessage ?? 'App sign-in failed. Try again.')} />
         ) : null}
         {canConnect ? (
           <Button disabled={busy} label={busy ? 'Connecting' : app.status === 'failed' ? `Retry ${app.name}` : `Connect ${app.name}`} onPress={onConnect} style={appSignInStyles.button} testID={`app-sign-in-${app.appKey}-connect`} />
@@ -319,7 +319,6 @@ const appSignInStyles = StyleSheet.create(theme => {
   heading: { flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.sm },
   title: { ...theme.buzz.type.bodyStrong, color: board.ink },
   detail: { ...theme.buzz.type.meta, color: board.secondary },
-  error: { ...theme.buzz.type.meta, color: theme.buzz.dialogDanger },
   // A single decision sits where a ButtonRow puts its confirm: at the trailing edge.
   button: { alignSelf: 'flex-end' },
   settled: { ...theme.buzz.type.sectionHead, color: board.quiet, marginVertical: 8, marginHorizontal: 8 },

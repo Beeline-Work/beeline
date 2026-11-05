@@ -1,3 +1,4 @@
+import { IndexRow } from '@/components/buzz/IndexRow';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import React, { useState } from 'react';
@@ -12,7 +13,6 @@ import { PageHeader } from '@/components/buzz/PageHeader';
 import { ServiceMark } from '@/components/buzz/ServiceMark';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { Button } from '@/components/buzz/Button';
-import { NetworkUnavailableState } from '@/components/buzz/NetworkUnavailableState';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { HullActionSheetModal, HullActionSheetRow, HullActionSheetCancel } from '@/components/buzz/HullActionSheet';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
@@ -121,7 +121,7 @@ export default function ConnectorServiceScreen() {
   };
   return <View style={[styles.screen, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top }]} testID="connector-service-screen">
     <PageHeader eyebrow="Connectors" prominent title={row?.name ?? 'Connectors'} backAccessibilityLabel="Back to Connectors" onBack={() => router.back()} />
-    {loadError && !row ? <NetworkUnavailableState onRetry={() => void refresh()} /> : !view ? <SurfaceGlyphLoader /> : !row ?
+    {loadError && !row ? <View style={styles.failureInset}><IndexRow inset="flush" title="Network is not available right now." action="Retry" onPress={() => void refresh()}  /></View> : !view ? <SurfaceGlyphLoader /> : !row ?
       <Text style={styles.note}>This company is no longer connected.</Text> :
       <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + theme.buzz.space.xl }]}>
         {row.kind === 'sign-in-service' ? <SettingsRow appBoard title={row.name} description={row.domain}
@@ -192,6 +192,7 @@ export default function ConnectorServiceScreen() {
   </View>;
 }
 const styles = StyleSheet.create(theme => ({
+    failureInset: { paddingHorizontal: theme.buzz.roomList.edge },
   screen: { flex: 1, backgroundColor: theme.buzz.appCanvas },
   content: { paddingHorizontal: theme.buzz.space.lg, paddingTop: theme.buzz.layout.screenTop, gap: theme.buzz.layout.sectionGap },
   note: { ...theme.buzz.type.meta, color: theme.buzz.appQuiet },
@@ -200,5 +201,5 @@ const styles = StyleSheet.create(theme => ({
   sectionLine: { gap: theme.buzz.squireConnect.dotGap },
   signedIn: { flexDirection: 'row', alignItems: 'center', gap: theme.buzz.squireConnect.dotGap },
   signedInDot: { width: 7, height: 7, borderRadius: 7 / 2, backgroundColor: theme.buzz.diffAdded },
-  signedInText: { ...theme.buzz.type.meta, color: theme.buzz.appQuiet, flexShrink: 1 }, error: { ...theme.buzz.type.meta, color: theme.buzz.dialogDanger },
+  signedInText: { ...theme.buzz.type.meta, color: theme.buzz.appQuiet, flexShrink: 1 },
 }));

@@ -90,6 +90,82 @@ function imports(file, text) {
 }
 
 const MOBILE = 'apps/mobile/sources/';
+
+
+// Helper execution is capability ownership, not a count of existing fetches.
+// There are no inventory allowances or warning-only branches for these sinks.
+function inspectHelperOperations(file, source, errors) {
+  const client = 'apps/body/src/daemon-api-client.ts';
+  const machine = 'apps/body/src/machine-link.ts';
+  const member = node => ts.isPropertyAccessExpression(node) ? node.name.text
+    : ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression) ? node.argumentExpression.text
+    : ts.isBindingElement(node) ? (node.propertyName ?? node.name).text : undefined;
+  function owner(node, expectedFile, klass, method) {
+    if (file !== expectedFile) return false;
+    let enclosing = node.parent;
+    while (enclosing && !ts.isMethodDeclaration(enclosing) && !ts.isFunctionDeclaration(enclosing)) enclosing = enclosing.parent;
+    return enclosing && ts.isMethodDeclaration(enclosing) && enclosing.name.getText(source) === method &&
+      ts.isClassDeclaration(enclosing.parent) && enclosing.parent.name?.text === klass;
+  }
+  const deny = (node, detail) => errors.push(`${file}:${source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1}: helper operation authority ${detail}`);
+  const channelModule = value => {
+    if (!value || !ts.isStringLiteralLike(value)) return false;
+    const target = value.text.startsWith('.')
+      ? path.posix.normalize(path.posix.join(path.posix.dirname(file), value.text)) : value.text;
+    return /apps\/body\/src\/helper-(turn|usage|activation)-channel(?:\.[cm]?[jt]s)?$/.test(target) ||
+      /apps\/body\/src\/machine-link(?:\.[cm]?[jt]s)?$/.test(target);
+  };
+  function visit(node) {
+    const name = member(node);
+    if (file.startsWith('apps/body/') && file !== client && name === 'channel') {
+      // Reading negotiated metadata is public. Capturing the channel itself
+      // would let a feature alias its request/send methods past the boundary.
+      const observation = member(node.parent);
+      const observers = new Set(['usageAccountScope', 'usageAccountSelected', 'activationScope', 'activationContextSelected', 'isOpen']);
+      if (!observers.has(observation) && !(observation === 'overlay' && file === 'apps/body/src/turn-stream.ts'))
+        deny(node, 'raw channel cannot escape the daemon owner');
+    }
+    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && channelModule(node.moduleSpecifier) &&
+        !node.isTypeOnly && !node.importClause?.isTypeOnly && file !== machine) {
+      const names = node.importClause?.namedBindings;
+      const module = node.moduleSpecifier.text.replace(/\.[cm]?[jt]s$/, '');
+      const allowed = name => module.endsWith('/machine-link') && [client, 'apps/body/src/machine-helper.ts'].includes(file) && name === 'MachineLink' ||
+        module.endsWith('/helper-usage-channel') && file === client && name === 'HELPER_USAGE_OPERATIONS';
+      if (!names || !ts.isNamedImports(names) || names.elements.some(item => !item.isTypeOnly && !allowed((item.propertyName ?? item.name).text)))
+        deny(node, 'channel constructors belong to the machine owner');
+    }
+    if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+        ts.isIdentifier(node.expression) && node.expression.text === 'require') && channelModule(node.arguments[0]))
+      deny(node, 'channel constructors require their static owner binding');
+    if (['requestOperation', 'operationReady'].includes(name) && !owner(node, client, 'DaemonApiClient', 'execute'))
+      deny(node, 'belongs to DaemonApiClient.execute');
+    if (ts.isPrivateIdentifier(node) && node.text === '#requestHttp' && !ts.isMethodDeclaration(node.parent) &&
+        !owner(node, client, 'DaemonApiClient', 'execute')) deny(node, 'HTTP adapter cannot escape its owner');
+    if ((ts.isStringLiteralLike(node) || ts.isTemplateHead(node)) && node.text.includes('/v1/daemon/operations/') &&
+        file === client && !owner(node, client, 'DaemonApiClient', '#requestHttp')) deny(node, 'HTTP sink must remain private');
+    if (name === 'request' && (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node))) {
+      const family = member(node.expression);
+      if (['turn', 'usage', 'activation'].includes(family) &&
+          !owner(node, client, 'DaemonApiClient', family === 'activation' ? 'readCommandActivation' : 'execute'))
+        deny(node, 'family dispatch belongs to the daemon channel owner');
+    }
+    // Check the actual frame construction even inside an otherwise trusted file.
+    if (ts.isPropertyAssignment(node) && node.name.getText(source).replace(/['"]/g, '') === 'type' &&
+        ts.isStringLiteralLike(node.initializer)) {
+      const sinks = {
+        'daemon-operation': [machine, 'AgentChannel', 'requestOperation'],
+        'turn-operation': ['apps/body/src/helper-turn-channel.ts', 'HelperTurnChannel', 'request'],
+        'usage-operation': ['apps/body/src/helper-usage-channel.ts', 'HelperUsageChannel', 'request'],
+        'activation-context': ['apps/body/src/helper-activation-channel.ts', 'HelperActivationChannel', 'request'],
+      };
+      const sink = sinks[node.initializer.text];
+      if (file.startsWith('apps/body/') && sink && !owner(node, ...sink)) deny(node, 'frame must be minted by its one channel method');
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+}
+
 // Server-authored list caches still have one writer. Screens may send ordinary
 // reads directly through the shared socket; no read capability is minted.
 export function inspectSurfaceReadAuthority(file, text) {
@@ -189,6 +265,7 @@ export function inspectSource(file, text) {
     }
     commandAccess(source);
     errors.push(...inspectSurfaceReadAuthority(file, text));
+    inspectHelperOperations(file, source, errors);
     for (const entry of imports(file, text)) {
       if (entry.dynamic && !entry.specifier) hits.push({ kind: 'computed-import', line: 1 });
       const target = entry.specifier?.startsWith('.')

@@ -103,10 +103,10 @@ export class RoomsMcp {
       ? new URL(this.oauth.resource)
       : mcpEndpoint(request, this.oauth.origin, this.oauth.joinHost);
     if (!endpoint) return false;
-    // A browser/agent can read the join page; every MCP-marked request keeps the
-    // existing bearer-only boundary, including unauthenticated SSE discovery.
+    // A browser/agent can read the join page; JSON and SSE discovery must see
+    // the OAuth challenge instead of a successful HTML response.
     if (endpoint.pathname !== '/mcp' && request.method === 'GET' &&
-        !request.headers.accept?.toLowerCase().includes('text/event-stream') &&
+        !/application\/json|text\/event-stream/i.test(request.headers.accept ?? '') &&
         request.headers.authorization === undefined && request.headers['mcp-protocol-version'] === undefined && request.headers['mcp-session-id'] === undefined) {
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store',
         'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer',

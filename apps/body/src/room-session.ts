@@ -1,6 +1,13 @@
-import { resolve } from 'node:path';
+import type { TurnTrace } from './turn-trace.js';
+import type { SessionLifecycle } from './session-scheduler.js';
+import { mkdir, writeFile } from 'node:fs/promises';
+import type { AgentModelConfigOption } from './model-types.js';
+import { claimGrantedHostRoutes } from './host-mcp-route.js';
+import { grantedSandboxDevices } from './bwrap-sandbox.js';
+import { isolatedSharedAssetCategories } from './workspace-assets.js';
+import { dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
-import { agentSkillDir } from './agent-home.js';
+import { agentSkillDir, hostImportedMcpDeclarations } from './agent-home.js';
 import type { McpServerWire } from './acp.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
@@ -135,5 +142,72 @@ export function readOnlyMcpServer(
         ? [{ name: 'BEELINE_READONLY_AGENT_MEMORY_ROOT', value: resolve(agentMemoryDir) }]
         : []),
     ],
+  };
+}
+
+/** Room and corner sessions use the same grants; callers retain their own address. */
+export async function sessionGrantedResources(
+  config: BodyConfig,
+  read: () => Promise<import('@beeline/api-contract/daemon').DaemonOperationMap['listAgentGrants']['output']>,
+) {
+  try {
+    const grants = await read();
+    const approved = await claimGrantedHostRoutes(grants);
+    // Discovery is safe to mount; the transport gate authorizes every use.
+    // This also lets an owner use a yolo resource without an activation prompt.
+    return {
+      hostRoutes: [
+        ...new Set([
+          ...approved,
+          ...Object.keys(
+            hostImportedMcpDeclarations({
+              operatorHome: config.operatorHome,
+              agentKind: config.agentKind,
+            }),
+          ),
+        ]),
+      ],
+      devices: grantedSandboxDevices(grants),
+      isolatedCategories: isolatedSharedAssetCategories(grants),
+    };
+  } catch {
+    return { hostRoutes: [], devices: [], isolatedCategories: [] };
+  }
+}
+
+/** The private resource facade receives the same connection and turn context on both surfaces. */
+export async function writeSessionResourceAuth(api: DaemonApiClient, turnContextPath: string): Promise<string> {
+  const resourceAuthFile = `${turnContextPath}.resource-auth.json`;
+  await mkdir(dirname(resourceAuthFile), { recursive: true, mode: 0o700 });
+  await writeFile(resourceAuthFile, JSON.stringify({ ...api.connection(), turnContextPath }), { mode: 0o600 });
+  return resourceAuthFile;
+}
+
+/** Persist a successful same-family correction without delaying its turn. */
+export function recordSessionModelFallback(
+  api: DaemonApiClient, agentId: string, workspaceId: string,
+  selection: { model?: string; effort?: string }, options: AgentModelConfigOption[], surface: string,
+): void {
+  api.execute('postAgentModelCatalog', {
+    agentId, workspaceId,
+    options: options as import('@beeline/api-contract/daemon').DaemonOperationMap['postAgentModelCatalog']['input']['options'],
+    selection,
+  }).catch(error => console.error(`[thin-core] failed to persist automatic model fallback for ${surface}:`, error));
+}
+
+/** Close capacity-wait timing at the actual activation/current-session check. */
+export function tracedSessionLifecycle(
+  activate: () => Promise<string>, isCurrent: () => Promise<boolean>, trace?: TurnTrace,
+): Pick<SessionLifecycle, 'activate' | 'isCurrent' | 'onStateChange'> {
+  return {
+    activate: async () => {
+      trace?.end('queue-wait');
+      return trace ? trace.measure('activation', activate) : activate();
+    },
+    isCurrent: () => {
+      trace?.end('queue-wait');
+      return trace ? trace.measure('activation', isCurrent) : isCurrent();
+    },
+    onStateChange: state => { if (state === 'waiting-for-slot') trace?.noteCapacityWait(); },
   };
 }

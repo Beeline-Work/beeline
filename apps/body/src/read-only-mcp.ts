@@ -712,6 +712,8 @@ export function isDaemonNetworkFailure(error: unknown): boolean {
 
 const toolOwedStorage = new AsyncLocalStorage<{ owedMentions?: unknown[] }>();
 
+// This sandboxed stdio process has no machine registration. Its HTTP ingress
+// keeps command authorization in DaemonService without replacing the parent socket.
 async function daemonExecute(name: string, input: JsonObject): Promise<JsonObject> {
   const baseUrl = requiredEnv('BEELINE_DAEMON_BASE_URL');
   const body = JSON.stringify({

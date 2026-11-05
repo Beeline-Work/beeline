@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import React, { useEffect, useRef, useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -149,9 +150,7 @@ export function AgentVoiceSection({
         testID="change-agent-voice"
       />
       {error && (
-        <Text style={styles.copy} accessibilityRole="alert" testID="voice-error">
-          {error}
-        </Text>
+        <ErrorBanner inline title={error} titleTestID="voice-error" />
       )}
       {open && catalog && changeable && (
         <>

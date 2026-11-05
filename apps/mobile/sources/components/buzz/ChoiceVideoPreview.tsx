@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import React from 'react';
 import { Image, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -15,7 +16,7 @@ export function ChoiceVideoPreview({ frameUrl, title, description, visibility }:
     return () => { live = false; };
   }, [frameUrl]);
   return <View>
-    {!ready ? <View style={styles.frame} /> : failed ? <Text style={styles.description}>Frame unavailable</Text> : <Image
+    {!ready ? <View style={styles.frame} /> : failed ? <ErrorBanner inline title={"Frame unavailable"}  /> : <Image
       source={{ uri: frameUrl, ...(authorization ? { headers: { Authorization: authorization } } : {}) }}
       accessibilityLabel={`Frame from ${title}`} resizeMode="contain" style={styles.frame} onError={() => setFailed(true)} />}
     <Text style={styles.description}>Visibility: {visibility}</Text>

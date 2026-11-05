@@ -587,7 +587,7 @@ describe('Bookmarks desktop second pane', () => {
       .join(' ');
     expect(paneText).toContain('Source unavailable');
     expect(paneText).toContain('This bookmark no longer exposes message content.');
-    expect(paneText).toContain('REMOVE');
+    expect(paneText).toContain('Remove');
     expect(paneText).not.toContain('The bookmarked line.');
     expect(paneText).not.toContain('Avery');
     expect(roomRead).not.toHaveBeenCalled();

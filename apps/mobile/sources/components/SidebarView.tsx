@@ -1,3 +1,4 @@
+import { EmptyState } from '@/components/buzz/EmptyState';
 import { connectionErrorDescription } from '@/buzz/app-error-copy';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { useDesktopLayout } from '@/buzz/desktop-layout-state';
@@ -7,7 +8,6 @@ import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { InlineRow } from '@/components/buzz/IndexRow';
 import { removeRoomSearchDrafts } from '@/buzz/room-search-drafts';
 import { useNeedsYouCount } from '@/buzz/needs-you-store';
-import { PinnedConversationsEmpty } from '@/components/buzz/PinnedConversationsEmpty';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { saveActiveCommunityId, subscribeActiveCommunityId } from '@/buzz/community-storage';
 import { cornerHref, navigateToRoom, roomCornersHref } from '@/buzz/corner-navigation';
@@ -557,7 +557,7 @@ export const SidebarView = React.memo(function SidebarView() {
             ) : !filteredChats.length && (!surface || query.trim() || filter !== 'all') ? (
               surface ? (
                 filter === 'pinned' && !query.trim() ? (
-                  <PinnedConversationsEmpty desktop onShowAll={() => setFilter('all')} />
+                  <EmptyState title="No pinned conversations yet" description="Long press a Room to pin it here." testID="desktop-pinned-empty" action={{label:'Show all conversations',onPress:() => setFilter('all'),testID:'desktop-show-all-conversations'}} />
                 ) : (
                   <Text style={styles.empty}>
                     {query.trim() || filter !== 'all'

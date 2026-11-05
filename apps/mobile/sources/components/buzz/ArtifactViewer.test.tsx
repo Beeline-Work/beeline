@@ -1,3 +1,4 @@
+import { IndexRow } from './IndexRow';
 vi.mock('@/buzz/use-artifact-recovery', () => ({ useArtifactRecoveryGeneration: () => 0 }));
 import { ViewerConversationDock } from './ViewerConversationDock';
 vi.mock('./Button', () => ({ Button: 'Button' }));
@@ -26,7 +27,7 @@ const mocks = vi.hoisted(() => ({
 // Shared between the StyleSheet.create factory and useUnistyles so the test
 // can assert against the same spacing the header reads.
 const theme = vi.hoisted(() => ({
-  buzz: {
+  buzz: { roomList: { edge: 20 },
     border: '#333',
     bgBase: '#111',
     textPrimary: '#eee',
@@ -746,7 +747,7 @@ describe('the full-screen artifact viewer (mock 1c)', () => {
     );
     await flush();
     const failed = renderer.root.findByProps({ testID: 'artifact-viewer-failed' });
-    const text = failed.findByType('Text' as any).props.children;
+    const text = failed.findByType(IndexRow).props.description;
     expect(text).toContain('no inline preview');
   });
 });

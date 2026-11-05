@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import * as React from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -46,8 +47,7 @@ export function VoiceBar({ voice, testIDPrefix = 'chat' }: {
         ? `${voice.agents.find(a => a.pubkey === voice.speaker)?.name ?? 'Agent'} speaking` : voice.muted ? 'Microphone muted' : 'Listening'} testID="voice-waveform">
         {voice.connecting ? <SurfaceGlyphLoader compact testID="voice-startup-loader" /> : warning ? <Text accessibilityLiveRegion="polite" numberOfLines={1}
           style={styles.warning} testID="conversation-tip">{warning}</Text>
-          : voice.error ? <Text accessibilityRole="alert" style={styles.error}
-            testID={voice.quotaExhausted ? 'voice-quota-error' : 'voice-connection-error'}>{voice.error}</Text>
+          : voice.error ? <ErrorBanner inline title={voice.error} titleTestID={voice.quotaExhausted ? 'voice-quota-error' : 'voice-connection-error'} />
           : <DictationWaveform level={voice.level} live={!voice.connecting} flat={voice.muted && voice.level === 0} />}
       </View>
       <Pressable onPress={() => void voice.toggleMute()} disabled={voice.connecting || voice.quotaExhausted}
@@ -83,5 +83,4 @@ const styles = StyleSheet.create(theme => ({
   controlSlot: { width: 26, height: 26, marginLeft: 8, alignItems: 'center', justifyContent: 'center' },
   waveform: { flex: 1, minWidth: 0, height: 26, justifyContent: 'center', overflow: 'hidden' },
   warning: { ...theme.buzz.type.body, fontFamily: theme.buzz.proseMedium, color: theme.buzz.accent },
-  error: { ...theme.buzz.type.meta, color: theme.buzz.textPrimary },
 }));

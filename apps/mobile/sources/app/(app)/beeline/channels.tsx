@@ -1,3 +1,4 @@
+import { EmptyState } from '@/components/buzz/EmptyState';
 import { appErrorCopy, connectionErrorDescription, connectionErrorTitle } from '@/buzz/app-error-copy';
 import { IndexRow } from '@/components/buzz/IndexRow';
 import { invalidatesWorkspaceList } from '@/buzz/workspace-list-invalidation';
@@ -10,7 +11,6 @@ import { useScopedCallbacks } from '@/buzz/use-stable';
 import {
   useNeedsYouCount,
 } from '@/buzz/needs-you-store';
-import { PinnedConversationsEmpty } from '@/components/buzz/PinnedConversationsEmpty';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
 import { useGitHubInstallationSession } from '@/auth/github-installation-host';
@@ -42,7 +42,7 @@ import { inviteOnlyForRepository, type RepoCandidate } from '@/buzz/room-repo-pi
 import { workspaceRailItem, type WorkspaceMemberDisplayItem } from '@/buzz/room-view-presentation';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { ROOM_LABEL } from '@/buzz/vocabulary';
-import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/CommunityRail';
+import { BuzzCommunityShell, CommunityDrawerTrigger, CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
 import { ConversationRow } from '@/components/buzz/ConversationRow';
 import { DesktopRoomCorners } from '@/components/buzz/DesktopRoomCorners';
 import { DirectMessagePickerSheet } from '@/components/buzz/DirectMessagePickerSheet';
@@ -53,7 +53,6 @@ import { ConnectionStatus } from '@/components/buzz/ConnectionStatus';
 import { reconnectNow } from '@/sync/transport/live-connection';
 import { clientResetGeneration } from '@/sync/client-reset';
 import { InlineRow } from '@/components/buzz/IndexRow';
-import { NoMatchingConversationsEmpty } from '@/components/buzz/NoMatchingConversationsEmpty';
 import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
 import {
   type RoomDeckComposeAction,
@@ -940,9 +939,14 @@ export default function BuzzChannels() {
 
   if (landing.kind === 'error') {
     return (
-      <View style={[styles.center, { paddingTop: insets.top }]} testID="room-deck-unavailable">
-        <IndexRow title={connectionErrorTitle} description={connectionErrorDescription} testID="room-deck-error-retry" action="Retry"
-          onPress={() => { reconnectNow(); setError(null); setRetryGeneration(value => value + 1); }} />
+      <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]} testID="room-deck-unavailable">
+        <InlineRow style={styles.header}>
+          {!isDesktop && <CommunitySwitcherTrigger community={activeCommunity} expanded={false} />}
+        </InlineRow>
+        <View style={styles.failureInset}>
+          <IndexRow inset="flush" title={connectionErrorTitle} description={connectionErrorDescription} testID="room-deck-error-retry" action="Retry"
+            onPress={() => { reconnectNow(); setError(null); setRetryGeneration(value => value + 1); }} />
+        </View>
       </View>
     );
   }
@@ -1149,12 +1153,21 @@ export default function BuzzChannels() {
               ListEmptyComponent={
                 messageSearch.status !== 'unavailable' ? null : filter === 'pinned' &&
                   !query.trim() ? (
-                  <PinnedConversationsEmpty onShowAll={() => setFilter('all')} />
+                  <EmptyState
+                    title="No pinned conversations yet"
+                    description="Long press a Room to pin it here."
+                    testID="pinned-empty"
+                    action={{ label: 'Show all conversations', onPress: () => setFilter('all'), testID: 'show-all-conversations' }}
+                  />
                 ) : query || filter !== 'all' ? (
-                  <NoMatchingConversationsEmpty
-                    onShowAll={() => {
-                      setQuery('');
-                      setFilter('all');
+                  <EmptyState
+                    title="No matching conversations"
+                    description="Try a different search or filter."
+                    testID="room-list-no-match"
+                    action={{
+                      label: 'Show all conversations',
+                      onPress: () => { setQuery(''); setFilter('all'); },
+                      testID: 'no-match-show-all-conversations',
                     }}
                   />
                 ) : (

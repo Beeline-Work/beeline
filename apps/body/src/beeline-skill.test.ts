@@ -720,18 +720,18 @@ describe('situational beeline-* skills', () => {
 });
 
 describe('frontend mock provenance', () => {
-  it('requires implementers to connect the exact mock and built screenshot to a brief approval', () => {
-    const skill = beelineCornersSkillMarkdown('test');
-    for (const rule of ['Mock provenance block per change', "human's reply to the mock message",
-      'same mock objectId', 'rendered screenshot', 'exact human command line']) expect(skill).toContain(rule);
-  });
-  it('fails an unapproved component and verifies a valid brief reply-chain', () => {
-    const skill = beelineReviewSkillMarkdown('test');
-    for (const rule of ['read(facet:brief)', 'explicit-human-answer', 'replyToMessageId',
-      'replyToAttachmentIds', 'approvedAt is after replyToCreatedAt', 'attachment manifest',
-      'read(facet:attachment, attachmentId)', 'compare it with the rendered screenshot',
-      'quoting the diff line', 'agent-only provenance', 'each exempt file has no visible change',
-      'Old briefs without reply evidence', 'quoted exact command']) expect(skill).toContain(rule);
-    expect(skill).not.toContain('read(facet:message)');
+  it('accepts delivered human approval across formats for authors and reviewers', () => {
+    for (const skill of [beelineCornersSkillMarkdown('test'), beelineReviewSkillMarkdown('test')]) {
+      for (const evidence of ['direct human command', 'human reply approving a mock',
+        'commander-delivered human approval', 'rendered screenshot']) expect(skill).toContain(evidence);
+      expect(skill).not.toContain('approvedAt is after replyToCreatedAt');
+      expect(skill).not.toContain('Old briefs without reply evidence need a revised brief');
+      expect(skill).not.toContain('approval kind is explicit-human-answer');
+    }
+    const review = beelineReviewSkillMarkdown('test');
+    expect(review).toContain('old briefs can use the human approval already delivered');
+    expect(review).toContain('without genuine human approval covering its scope');
+    expect(review).toContain('Do not read private messages');
+    expect(review).not.toContain('read(facet:message)');
   });
 });

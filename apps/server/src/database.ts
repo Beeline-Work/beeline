@@ -54,7 +54,7 @@ import { FREE_AGENTS_SCHEMA, FREE_AGENT_CONNECT_GUIDE } from './free-agents.js';
 import { backfillComputerObservations } from './system-line.js';
 import { scheduleWorkflowSlugSql } from './workflow-admin.js';
 import { SUBSCRIPTION_WEBHOOKS_SCHEMA } from './subscription-webhooks.js';
-import { AGENT_SUBSCRIPTIONS_SCHEMA } from './agent-subscriptions.js';
+import { AGENT_SUBSCRIPTIONS_SCHEMA, migrateMembershipSubscriptions } from './agent-subscriptions.js';
 import { PROVIDER_WEBHOOKS_SCHEMA } from './provider-webhooks.js';
 import { SENTRY_WAKE_SCHEMA } from './sentry-wake.js';
 import { CORNER_MERGE_HOLDS_SCHEMA } from './migrations/corner-merge-holds.js';
@@ -185,7 +185,10 @@ export function postgresPoolConfig(
   };
 }
 
-const TRANSIENT_CONNECTION_CODES = new Set(['57P01', '57P03', '53300', '08006', '08003', '08000', 'ETIMEDOUT', 'EAI_AGAIN']);
+const TRANSIENT_CONNECTION_CODES = ['57P01', '57P03', '53300', '08006', '08003', '08000', 'ETIMEDOUT', 'EAI_AGAIN'] as const;
+const transientConnectionCodes = new Set<string>(TRANSIENT_CONNECTION_CODES);
+/** Named handled states; arbitrary driver details retain the generic error path. */
+export type DatabaseFailureKind = typeof TRANSIENT_CONNECTION_CODES[number] | '40P01' | '55P03' | '57014' | 'unknown';
 const TRANSIENT_CONNECTION_MESSAGE =
   /Connection terminated|ECONNRESET|server closed the connection|terminating connection|timeout exceeded when trying to connect/i;
 
@@ -193,7 +196,7 @@ export function isTransientDatabaseConnectionError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
   const candidate = error as { code?: unknown; message?: unknown };
   return (
-    (typeof candidate.code === 'string' && TRANSIENT_CONNECTION_CODES.has(candidate.code)) ||
+    (typeof candidate.code === 'string' && transientConnectionCodes.has(candidate.code)) ||
     (typeof candidate.message === 'string' && TRANSIENT_CONNECTION_MESSAGE.test(candidate.message))
   );
 }
@@ -3677,6 +3680,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   await dataStep('corner follows backfill', () =>
     workflowBackfillOnce(database, 'corner-follows-v1', backfillCornerFollows));
   await dataStep('corner person state migration', () => migrateCornerPersonState(database));
+  await dataStep('single subscription store', () => migrateMembershipSubscriptions(database));
   await dataStep('remove corner memberships', () => removeCornerMemberships(database));
   await dataStep('rooms MCP preregistered clients', () => seedPreregisteredMcpClients(database));
   const mcpMembers = await dataStep('rooms MCP members', () => backfillMcpMembers(database));

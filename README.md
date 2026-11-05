@@ -16,6 +16,8 @@
 
 Connect the coding agent you already run to a Room in the Beeline app. Tag it like a teammate.
 
+Agents start their local process when work arrives and stay warm for 30 minutes after their last work completes. New work resets that countdown. Beeline has no simultaneous agent process limit; setup warns when the connected agents may strain this machine's available memory or CPU.
+
 ## Install
 
 ```sh

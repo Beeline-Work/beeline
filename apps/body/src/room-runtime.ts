@@ -51,12 +51,10 @@ import {
   fetchRepositoryCache,
 } from './repository-cache-repair.js';
 import {
-  resolveMaxWarmSessions,
-  resolvePerRoomLiveSessions,
   resolveSessionIdleMs,
-  SessionScheduler,
-  type SessionSchedulerSnapshot,
-} from './session-scheduler.js';
+  AgentProcesses,
+  type AgentProcessSnapshot,
+} from './agent-process.js';
 
 export type WorkspaceMembershipStatus = 'member' | 'not-member' | 'unknown';
 export const REMOVAL_CONFIRMATION_READS = 2;
@@ -507,7 +505,6 @@ export class RoomRuntimeCoordinator {
   private readonly storageMaintenanceRooms = new Set<string>();
   private readonly storageDeferredStarts = new Set<string>();
   private readonly stopStorageAvailable: () => void;
-  private knownStorageStates: readonly StorageRoomState[] = [];
   private readonly startingCorners = new Set<string>();
   /**
    * Rooms whose start is in flight. `running` is not set until the checkout
@@ -530,7 +527,7 @@ export class RoomRuntimeCoordinator {
   private readonly reportedCornerStartFailures = new Map<string, Set<string>>();
   /** Standing workspace-configuration faults: the config that failed, and how. */
   private readonly standingCornerStartFaults = new Map<string, { configKey: string; error: unknown }>();
-  private readonly scheduler: SessionScheduler;
+  private readonly scheduler: AgentProcesses;
   private readonly agent: ReturnType<typeof runtimeIdentity>;
   /** Parent ownership retained so a failed corner listing never authorizes removal. */
   private readonly monolithCornerParents = new Map<string, string>();
@@ -568,7 +565,6 @@ export class RoomRuntimeCoordinator {
       now?: () => number;
       drainDeadlineMs?: number;
       daemonApi: DaemonApiClient;
-      onRestartRequested?: () => void;
       onConfigChanged?: () => void | Promise<void>;
     },
   ) {
@@ -619,23 +615,15 @@ export class RoomRuntimeCoordinator {
       if (retryStarts) this.wakeDiscovery();
       for (const running of this.running.values()) running.body.configurationChanged?.();
       void this.scheduler
-        .suspendIdle()
+        .stopIdle()
         .catch((error) => console.error('[body] config-change session restart failed', error));
       void Promise.resolve(this.options.onConfigChanged?.()).catch((error) =>
         console.error('[body] config-change catalog refresh failed', error),
       );
     });
     this.drainDeadlineMs = options.drainDeadlineMs ?? DEFAULT_DRAIN_DEADLINE_MS;
-    const fixedWorkspaceCeiling = process.env.BEELINE_BODY_MAX_SESSIONS;
-    this.scheduler = new SessionScheduler({
-      ...(fixedWorkspaceCeiling ? { maxLiveSessions: Number(fixedWorkspaceCeiling) } : {}),
-      perRoomLiveSessions: resolvePerRoomLiveSessions(process.env),
-      activeRoomCount: () => this.activeRoomCount(),
-      idleMs: resolveSessionIdleMs(process.env),
-      maxWarmSessions: resolveMaxWarmSessions(process.env),
-      reserveInteractiveSlot: true,
-    });
-    this.stopStorageAvailable = SessionScheduler.onStorageAvailable(key => {
+    this.scheduler = new AgentProcesses({ idleMs: resolveSessionIdleMs(process.env) });
+    this.stopStorageAvailable = AgentProcesses.onStorageAvailable(key => {
       if (this.stopped) return;
       // Command intake stays subscribed while storage owns the session paths.
       // Wake it directly: the discovery sweep may still be reaping old checkouts.
@@ -699,13 +687,8 @@ export class RoomRuntimeCoordinator {
     return this.surfaceHealth.hasDegraded();
   }
 
-  /**
-   * The session scheduler's capacity, read-only, beside the turn traces
-   * (`turn-trace.ts` embeds the same snapshot in every record). A turn that
-   * sat in `queue-wait` while this was at its ceiling waited on capacity, not
-   * on a model.
-   */
-  schedulerSnapshot(): SessionSchedulerSnapshot {
+  /** Current running processes and ordered work, also recorded in turn traces. */
+  schedulerSnapshot(): AgentProcessSnapshot {
     return this.scheduler.snapshot();
   }
 
@@ -720,16 +703,15 @@ export class RoomRuntimeCoordinator {
     return count;
   }
 
-  private requestLifecycleRestart(): void {
-    if (this.restartRequested) return;
-    this.restartRequested = true;
-    this.options.onRestartRequested?.();
+  /** A restart command retires harnesses; subscriptions stay available for new work. */
+  private async stopAgentProcesses(): Promise<void> {
+    await this.scheduler.stopAll();
   }
 
   quiesceForUpdateIfIdle(): boolean {
     if (!this.isWorkspaceIdle()) return false;
     // A host restart may be staggered after this idle proof. Keep new
-    // commands from starting while the old process waits for its slot.
+    // commands from starting while the old runtime waits for its update.
     this.restartRequested = true;
     for (const room of this.running.values()) room.controller.abort();
     return true;
@@ -787,13 +769,11 @@ export class RoomRuntimeCoordinator {
   private async reconcileRooms(onServing?: () => void | Promise<void>): Promise<WorkspaceMembershipStatus> {
     if (this.stopped) return 'member';
     const existingRooms = new Set(this.running.keys());
-    this.knownStorageStates = [];
     this.noteReconciliationStage('bootstrap');
     const bootstrap = await this.options.daemonApi.execute('getDaemonBootstrap', {
       agentId: this.agent.publicKey,
     });
-    this.knownStorageStates = bootstrap.storageRooms ?? [];
-    publishStorageFacts(this.runtime.supervisorRoot, this.knownStorageStates);
+    publishStorageFacts(this.runtime.supervisorRoot, bootstrap.storageRooms ?? []);
     if (this.stopped) return 'member';
     if (!bootstrap.workspaceIds.includes(this.runtime.communityId)) {
       this.workspaceRemovalConfirmations += 1;
@@ -1172,9 +1152,9 @@ export class RoomRuntimeCoordinator {
       health: { poll: () => this.notePoll(roomId) },
       onSubscriptionState: (connected) => this.surfaceHealth.subscribed(roomId, connected),
       onIntakeError: () => this.surfaceHealth.degraded(roomId, 'Room command intake failed'),
-      onRestartRequested: () => this.requestLifecycleRestart(),
-      canStartTurn: () => !this.restartRequested && !SessionScheduler.hostStoragePaused &&
-        !SessionScheduler.roomStoragePaused(roomId) && !this.storageMaintenanceRooms.has(roomId),
+      onRestartRequested: () => this.stopAgentProcesses(),
+      canStartTurn: () => !this.restartRequested && !AgentProcesses.hostStoragePaused &&
+        !AgentProcesses.roomStoragePaused(roomId) && !this.storageMaintenanceRooms.has(roomId),
       supervisor: this.supervisor,
     });
     const promise = loop
@@ -1303,14 +1283,13 @@ export class RoomRuntimeCoordinator {
   private async startCorner(corner: DesiredCorner): Promise<void> {
     if (this.stopped) return;
     if (this.running.has(corner.cornerId) || this.startingCorners.has(corner.cornerId)) return;
-    if (SessionScheduler.hostStoragePaused || SessionScheduler.roomStoragePaused(corner.cornerId) || this.storageMaintenanceRooms.has(corner.cornerId)) {
+    if (AgentProcesses.hostStoragePaused || AgentProcesses.roomStoragePaused(corner.cornerId) || this.storageMaintenanceRooms.has(corner.cornerId)) {
       this.storageDeferredStarts.add(corner.cornerId);
       return;
     }
     if (this.cornerStartsDeferred() || this.standingRuntimeStartFaults.has(corner.cornerId)) return;
     this.surfaceHealth.discover(corner.cornerId, 'corner');
     this.startingCorners.add(corner.cornerId);
-    const releaseStart = await cornerStarts.acquire();
     let configKey: string | undefined;
     try {
       if (this.stopped || this.cornerStartsDeferred()) return;
@@ -1445,9 +1424,9 @@ export class RoomRuntimeCoordinator {
                 token: '',
               })
             : repositoryBacked ? this.cleanupArchivedCornerLocalState(corner.cornerId).then(() => undefined) : this.reapCornerScratch({ path: workspacePath, cornerId: corner.cornerId }),
-        onRestartRequested: () => this.requestLifecycleRestart(),
-        canStartTurn: () => !this.restartRequested && !SessionScheduler.hostStoragePaused &&
-          !SessionScheduler.roomStoragePaused(corner.cornerId) && !this.storageMaintenanceRooms.has(corner.cornerId),
+        onRestartRequested: () => this.stopAgentProcesses(),
+        canStartTurn: () => !this.restartRequested && !AgentProcesses.hostStoragePaused &&
+          !AgentProcesses.roomStoragePaused(corner.cornerId) && !this.storageMaintenanceRooms.has(corner.cornerId),
         supervisor: this.supervisor,
       });
       const promise = loop
@@ -1516,7 +1495,6 @@ export class RoomRuntimeCoordinator {
         this.standingCornerStartFaults.set(corner.cornerId, { configKey, error });
       }
     } finally {
-      releaseStart();
       this.startingCorners.delete(corner.cornerId);
     }
   }
@@ -1614,7 +1592,7 @@ export class RoomRuntimeCoordinator {
         if (corner.archived) continue;
         this.surfaceHealth.discover(corner.cornerId, 'corner');
         this.roomRemovalConfirmations.delete(corner.cornerId);
-        if (SessionScheduler.hostStoragePaused || SessionScheduler.roomStoragePaused(corner.cornerId) || this.running.has(corner.cornerId) || this.startingCorners.has(corner.cornerId)) continue;
+        if (AgentProcesses.hostStoragePaused || AgentProcesses.roomStoragePaused(corner.cornerId) || this.running.has(corner.cornerId) || this.startingCorners.has(corner.cornerId)) continue;
         await this.watchCorner({
           cornerId: corner.cornerId,
           parentRoomId: corner.parentRoomId,
@@ -2066,15 +2044,6 @@ export class RoomRuntimeCoordinator {
   private async collectDependencyStores(): Promise<void> {
     for (const store of new Set([warmNodeModulesStoreDir(this.runtime.supervisorRoot), mobileNodeModulesStoreDir(this.runtime.supervisorRoot), resolve(this.runtime.supervisorRoot, 'beeline/node-modules-mobile')])) {
       await collectDependencyStore(store);
-    }
-  }
-
-  /** Local maintenance consumes only facts delivered by successful discovery.
-   * Archive is terminal; uncertainty never synthesizes an archive fact. */
-  async reclaimKnownPrivateStorage(): Promise<void> {
-    if (!this.stopped) {
-      await this.sweepRoomPrivateStorage(this.knownStorageStates);
-      await this.collectDependencyStores();
     }
   }
 

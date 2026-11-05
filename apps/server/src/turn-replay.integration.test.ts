@@ -9,12 +9,12 @@ const { PhoneService } = await import(process.env.BEELINE_REPLAY_BUILT_PROOF ? '
 import { LiveHub } from './live.js';
 import { createAgentCommand } from './agent-command.js';
 import { runMaintenance } from './background.js';
-import { AcpClient, type ToolCallEntry } from '../../body/src/acp.js';
+import { AcpClient, AcpRuntimeExitedError, type ToolCallEntry } from '../../body/src/acp.js';
 import type { TurnReplay } from '@beeline/api-contract/daemon';
 const { MonolithRoomTurnLoop } = await import(process.env.BEELINE_REPLAY_BUILT_PROOF ? '../../body/dist/monolith-room-turn.js' : '../../body/src/monolith-room-turn.js');
 const { MonolithCornerTurnLoop } = await import(process.env.BEELINE_REPLAY_BUILT_PROOF ? '../../body/dist/monolith-corner-turn.js' : '../../body/src/monolith-corner-turn.js');
 import { identityFromKey, type AgentRuntimeRecord } from '../../body/src/runtime.js';
-import { SessionScheduler } from '../../body/src/session-scheduler.js';
+import { AgentProcesses } from '../../body/src/agent-process.js';
 import type { BodyConfig } from '../../body/src/config.js';
 import type { DaemonApiClient } from '../../body/src/daemon-api-client.js';
 vi.mock('../../body/src/corner-branch-sync.js', () => ({ syncCornerBranch: vi.fn(async () => 'unchanged') }));
@@ -36,9 +36,10 @@ beforeAll(async () => {
 afterAll(async () => db.close());
 
 it.each([
-  {scope: 'room', limited: false}, {scope: 'corner', limited: false},
-  {scope: 'room', limited: true}, {scope: 'corner', limited: true},
-] as const)('replays a production $scope turn from trigger through visible reply (time limit: $limited)', async ({scope, limited}) => {
+  {scope: 'room', limited: false, crash: false}, {scope: 'corner', limited: false, crash: false},
+  {scope: 'room', limited: true, crash: false}, {scope: 'corner', limited: true, crash: false},
+  {scope: 'room', limited: false, crash: true}, {scope: 'corner', limited: false, crash: true},
+] as const)('replays a production $scope turn from trigger through visible reply (time limit: $limited, crash: $crash)', async ({scope, limited, crash}) => {
   const roomId = scope === 'room' ? ROOM : randomUUID();
   if (scope === 'corner') {
     await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,created_by) VALUES($1,$2,$3,'Trace corner',$4)`, [roomId,WS,ROOM,HUMAN]);
@@ -49,8 +50,10 @@ it.each([
   await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Please run the trace proof')`, [trigger,roomId,HUMAN]);
   await createAgentCommand(db, {roomId,agentId:AGENT,sourceMessageId:trigger,reason:'human_tag'});
   const root = await mkdtemp(join(tmpdir(),'turn-replay-'));
-  const abort = new AbortController(), scheduler = new SessionScheduler({maxLiveSessions:1});
+  const abort = new AbortController(), scheduler = new AgentProcesses();
   let settled = false;
+  let interrupted = false;
+  let notifyCommands: ((commands: import('@beeline/api-contract/daemon').AgentCommand[]) => void) | undefined;
   let activeAuthority: Record<string,unknown> = {};
   const api = {
     execute: async (name: string, input: Record<string,unknown>) => {
@@ -66,17 +69,24 @@ it.each([
         await expect(daemon.execute(name, {...input, reason:'runtime failure'} as never, AGENT)).rejects.toThrow();
       }
       const result = await daemon.execute(name as never,input as never,AGENT);
-      if (name === 'postAgentTurnReceipt' && input.status !== 'working') settled = true;
+      if (name === 'postAgentTurnReceipt' && input.reasonKind === 'process-exited') interrupted = true;
+      else if (name === 'postAgentTurnReceipt' && input.status !== 'working') settled = true;
       return result;
     },
     connection:()=>({baseUrl:'http://fixture',daemonToken:'fixture',agentId:AGENT}),
   } as unknown as DaemonApiClient;
+  if (crash) api.liveSubscribe = ((_room: unknown, _reply: unknown, _changed: unknown, _state: unknown, _presence: unknown, commands: typeof notifyCommands) => {
+    notifyCommands = commands;
+    return () => undefined;
+  }) as DaemonApiClient['liveSubscribe'];
+  let prompts = 0;
   const acp = new AcpClient({agentBinary:'/fake',agentEnv:{}});
   vi.spyOn(acp,'isAlive','get').mockReturnValue(true);
-  vi.spyOn(acp,'start').mockResolvedValue(undefined);
+  vi.spyOn(acp,'startProcess').mockResolvedValue(undefined);
   vi.spyOn(acp,'sessionNew').mockResolvedValue({sessionId:'proof-session',raw:{}});
   vi.spyOn(acp,'canPromptWithImages').mockReturnValue(false);
-  vi.spyOn(acp,'sessionPrompt').mockImplementation(async (_id,_prompt,_timeout,onChunk,_activity,onTools)=>{
+  vi.spyOn(acp,'sessionPrompt').mockImplementation(async (_id,_prompt,onChunk,_activity,onTools)=>{
+    if (crash && prompts++ === 0) throw new AcpRuntimeExitedError('refresh token expired; fixture process died');
     const calls: ToolCallEntry[] = [{id:'read',title:'read',status:'in_progress'}];
     onTools?.(calls);
     await daemon.execute('getRoomConversation',{roomId,limit:10},AGENT);
@@ -102,7 +112,21 @@ it.each([
     onPoll:vi.fn(),onFailure:vi.fn(),onCloseRequested:vi.fn(async()=>undefined)});
   const running = loop.run();
   try {
+    if (crash) {
+      await vi.waitFor(() => expect(interrupted).toBe(true));
+      expect(acp.startProcess).toHaveBeenCalledTimes(1);
+      expect(prompts).toBe(1);
+      expect(settled).toBe(false);
+      const nudge = randomUUID();
+      await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Continue with the interrupted work')`, [nudge,roomId,HUMAN]);
+      await createAgentCommand(db, { roomId, agentId: AGENT, sourceMessageId: nudge, reason: 'human_tag' });
+      const page = await daemon.execute('getAgentCommands', { roomId }, AGENT);
+      expect(page.commands.length, `recovery snapshot ${JSON.stringify(page.commands.map(command => ({ id: command.id, reason: command.reason })))}`).toBeGreaterThan(1);
+      expect(notifyCommands).toBeTypeOf('function');
+      notifyCommands?.(page.commands);
+    }
     await vi.waitFor(()=>expect(settled).toBe(true),{timeout:15000});
+    if (crash) expect(acp.startProcess).toHaveBeenCalledTimes(2);
     const rows = await db.query<{trigger_message_id:string;reply_message_ids:string[];outcome:string;trace:TurnReplay}>(
       `SELECT * FROM agent_turn_traces WHERE room_id=$1 AND agent_id=$2 AND request_id=$3`,[roomId,AGENT,trigger]);
     expect(rows.rows).toHaveLength(1);

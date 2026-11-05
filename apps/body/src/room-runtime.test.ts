@@ -462,7 +462,7 @@ m36_describe('RoomRuntimeCoordinator config-change wake', () => {
       m36_expect(() => configChanged!()).not.toThrow();
       m36_expect(onConfigChanged).toHaveBeenCalledTimes(1);
       await m36_vi.waitFor(() =>
-        m36_expect(coordinator.schedulerSnapshot().live).toBe(0),
+        m36_expect(coordinator.schedulerSnapshot().running).toBe(0),
       );
     } finally {
       await coordinator.shutdown();
@@ -500,14 +500,10 @@ m37_afterEach(async () => {
 
 
 m37_describe('idle corner discovery', () => {
-  m37_it('WAKE-STORM: mass pushed starts are bounded and a reset parks queued and repeated starts', async () => {
+  m37_it('mass pushed starts have no capacity ceiling; a server reset parks repeated starts', async () => {
     const supervisorRoot = await m37_mkdtemp(m37_resolve(m37_tmpdir(), 'beeline-corner-storm-'));
     roots.push(supervisorRoot);
     m37_vi.useFakeTimers();
-    // One coordinator fails while the other's slower initial reads remain in flight.
-    m37_vi.spyOn(Math, 'random').mockReturnValue(0)
-      .mockReturnValueOnce(0).mockReturnValueOnce(0.99)
-      .mockReturnValueOnce(0).mockReturnValueOnce(0.99);
     m37_vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const reset = Date.now() + 600_000;
     let inFlight = 0;
@@ -537,10 +533,10 @@ m37_describe('idle corner discovery', () => {
     const jobs = Array.from({ length: 80 }, (_, i) => start(i));
     await m37_vi.advanceTimersByTimeAsync(20_000);
     await Promise.all(jobs);
-    m37_expect(peak).toBeLessThanOrEqual(4);
+    m37_expect(peak).toBe(80);
     const reads = execute.mock.calls.filter(([name]) => name === 'getCornerRestoreState').length;
     m37_expect(reads).toBeGreaterThan(0);
-    m37_expect(reads).toBeLessThanOrEqual(4);
+    m37_expect(reads).toBe(80);
     await Promise.all(Array.from({ length: 80 }, (_, i) => start(i)));
     m37_expect(execute.mock.calls.filter(([name]) => name === 'getCornerRestoreState')).toHaveLength(reads);
     // Failed startup leaves the authoritative pending commands untouched.
@@ -650,17 +646,14 @@ m37_describe('idle corner discovery', () => {
     const subject = runtime as unknown as {
       running: Map<string, unknown>;
       monolithCornerParents: Map<string, string>;
-      scheduler: { snapshot(): { maxLive: number } };
     };
     for (let i = 0; i < 10; i++) {
       subject.running.set(`corner-${i}`, {});
       subject.monolithCornerParents.set(`corner-${i}`, 'parent');
     }
     m37_expect(runtime.activeRoomCount()).toBe(1);
-    m37_expect(subject.scheduler.snapshot().maxLive).toBe(10);
     subject.monolithCornerParents.clear();
     m37_expect(runtime.activeRoomCount()).toBe(10);
-    m37_expect(subject.scheduler.snapshot().maxLive).toBe(100);
   });
 
   m37_it('subscribes before checkout and hydrates only after a pending command arrives', async () => {

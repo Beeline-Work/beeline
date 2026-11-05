@@ -44,7 +44,8 @@ import {
 } from './self-update.js';
 import { isCanonicalInstalledLauncher } from './systemd.js';
 import { parseUpdateManifest, resolveManifestUrl } from './self-update-manifest.js';
-import { defaultSupervisorRoot } from './runtime.js';
+import { defaultSupervisorRoot, findAgentRuntimeConfigPaths } from './runtime.js';
+import { agentComputeWarning } from './agent-compute-warning.js';
 
 export const CONNECT_HARNESSES = AUTO_DETECT_AGENT_KINDS;
 export const AGENT_NAME_MAX_LENGTH = 32;
@@ -1022,6 +1023,9 @@ async function runConnectWizard(
     eventSubscriptions,
     fetchImpl,
   );
+  const agentCount = (await findAgentRuntimeConfigPaths()).length + 1;
+  const computeWarning = agentComputeWarning(agentCount);
+  if (computeWarning) clack.log.warn(brass(computeWarning));
   const installedRelease = await brassSpinner(
     'Installing the Beeline daemon…',
     () => installCurrentRelease(fetchImpl),

@@ -1,3 +1,4 @@
+import { startAgentProcess, stopAgentProcess } from './agent-process.js';
 /**
  * Reads an ACP agent's own live model/effort catalog by briefly starting the
  * exact selected command and inspecting `session/new`'s advertised
@@ -129,11 +130,9 @@ async function withAgentModelCatalog<T>(
     inheritProcessEnv: true,
   });
   try {
-    await client.start(remaining() ?? 60_000);
-    const sessionTimeout = remaining();
+    await startAgentProcess(client);
     const { sessionId, raw: sessionRaw } = await client.sessionNew({
       cwd: scratchCwd,
-      ...(sessionTimeout === undefined ? {} : { timeoutMs: sessionTimeout }),
     });
     const raw = parseAdvertisedConfigOptions(
       sessionRaw,
@@ -154,7 +153,7 @@ async function withAgentModelCatalog<T>(
       ? await inspected
       : await withDeadline(inspected, inspectDeadline, 'model catalog probe');
   } finally {
-    await client.stop().catch(() => undefined);
+    await stopAgentProcess(client).catch(() => undefined);
     await rm(scratchCwd, { recursive: true, force: true }).catch(() => undefined);
   }
 }

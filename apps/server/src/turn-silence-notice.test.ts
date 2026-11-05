@@ -213,7 +213,7 @@ describe('first-silence notice', () => {
     });
   });
 
-  it.each(['human', 'agent'])('requeues an interrupted %s command without spending a hiccup attempt', async (author) => {
+  it.each([['human', 'update-interrupted'], ['agent', 'update-interrupted'], ['human', 'process-exited'], ['agent', 'process-exited']] as const)('requeues an interrupted %s command (%s) without spending a hiccup attempt', async (author, reasonKind) => {
     const requestId = 'e'.repeat(64);
     const command = await ask(database, requestId);
     if (author === 'agent') await database.query('UPDATE messages SET author_id=$1 WHERE id=$2', [AGENT, requestId]);
@@ -224,7 +224,7 @@ describe('first-silence notice', () => {
       generationId: 'g1',
       status: 'failed' as const,
       reason: 'helper updated while the turn was running',
-      reasonKind: 'update-interrupted' as const,
+      reasonKind,
     };
     const result = await daemon.execute('postAgentTurnReceipt', receipt, AGENT);
     expect(result).toMatchObject({ updateRequeued: true });
@@ -248,6 +248,20 @@ describe('first-silence notice', () => {
     ).toHaveLength(0);
     await claimAgentCommand(database, ROOM, AGENT, command.id, 'g2');
     expect((await commandState(database, command.id))?.state).toBe('claimed');
+  });
+
+  it('acknowledges a harness restart without requiring another helper announcement', async () => {
+    const command = await createAgentCommand(database, {
+      roomId: ROOM, agentId: AGENT, sourceMessageId: null,
+      action: 'restart', reason: 'tagged_lifecycle_restart',
+    });
+    await claimAgentCommand(database, ROOM, AGENT, command!.id, 'restart-generation');
+    const daemon = new DaemonService(database, new LiveHub());
+    const input = { roomId: ROOM, commandId: command!.id, generationId: 'restart-generation' };
+    await daemon.execute('acknowledgeAgentCommand', input, AGENT);
+    await daemon.execute('acknowledgeAgentCommand', input, AGENT);
+    expect((await commandState(database, command!.id))?.state).toBe('complete');
+    expect((await database.query('SELECT restart_confirmed_at FROM agent_commands WHERE id=$1', [command!.id])).rows[0]?.restart_confirmed_at).not.toBeNull();
   });
 
   it('silently preserves a requeued command when the updated helper replays a generation-free receipt', async () => {

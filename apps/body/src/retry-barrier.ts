@@ -17,8 +17,7 @@ export function isStandingRuntimeFault(error: unknown): boolean {
 }
 
 /** Shared by every agent coordinator in this helper, including pushed starts. */
-class CornerStartLimiter {
-  private active = 0;
+class CornerStartBarrier {
   private readonly cooldowns = new Map<string, number>();
 
   retryAt(scope: string): number {
@@ -30,17 +29,5 @@ class CornerStartLimiter {
   defer(scope: string, until: number): void {
     this.cooldowns.set(scope, Math.max(this.cooldowns.get(scope) ?? 0, until));
   }
-
-  private readonly pending: Array<() => void> = [];
-  async acquire(): Promise<() => void> {
-    if (this.active >= 4) await new Promise<void>(resolve => this.pending.push(resolve));
-    else this.active++;
-    await new Promise(resolve => setTimeout(resolve, 50 + Math.floor(Math.random() * 200)));
-    return () => {
-      const next = this.pending.shift();
-      if (next) next();
-      else this.active--;
-    };
-  }
 }
-export const cornerStarts = new CornerStartLimiter();
+export const cornerStarts = new CornerStartBarrier();

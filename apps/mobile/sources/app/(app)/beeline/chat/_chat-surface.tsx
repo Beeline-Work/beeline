@@ -6496,10 +6496,9 @@ export function BuzzChatSurface({
                   emptyContentContainerStyle={styles.messageListContentEmpty}
                   contentContainerStyle={[
                     styles.messageListContent,
-                    // Inverted list: paddingTop is the visual tail. Always the
-                    // ordinary speaker-change margin plus the fixed composer-top
-                    // gap — the thinking line is absolute and paints over that
-                    // invariant tail rather than changing it when mounted.
+                    // Inverted list: paddingTop is the visual tail, measured
+                    // from the whole newest row (including reaction chips).
+                    // The absolute turn canvas fits inside this fixed inset.
                     !isArchived && {
                       paddingTop: phoneTranscriptTailPadding({
                         turnChromeVisible: Boolean(composerAck || settledTurn),
@@ -6644,16 +6643,10 @@ export function BuzzChatSurface({
               </View>
             ) : (
               <View style={[styles.bottomChromeStack, desktopExperience && styles.desktopReadingColumn]} testID="room-bottom-chrome">
-                {/* Phone turn chrome paints over the transcript's own bottom
-                margin: `TurnBandSlot` is absolute (`room-bottom-chrome`),
-                anchored to this stack's top edge, so it takes no height from
-                the list whether or not an agent is working and cannot cover
-                the newest row — the line's box is exactly the speaker-change
-                margin plus the fixed composer-top gap the transcript always
-                leaves. The slot is mounted
-                whether or not a line is showing; `pointerEvents="box-none"`
-                lets the transcript keep every touch the line is not using.
-                Desktop keeps the slot inside inputBar. */}
+                {/* Phone turn chrome overlays the fixed transcript tail.
+                Its canvas fits below the whole newest row, including reactions;
+                the label balances against the composer's field border rather
+                than the stack edge. Desktop keeps its unchanged in-flow slot. */}
                 {!desktopExperience && (
                   <TurnBandSlot testID="hanging-turn-chrome" onTopInset={setTurnChromeTopInset}>
                     {composerAck ? (

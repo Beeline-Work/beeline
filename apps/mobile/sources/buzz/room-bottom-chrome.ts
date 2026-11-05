@@ -1,66 +1,34 @@
-/**
- * The Room's bottom chrome: the turn line, then the composer.
- *
- * The line paints into the margin the transcript already leaves below its
- * newest message. It is not a band and it holds no height: `hangingTurnChrome`
- * is an ordinary style object only in the sense that it is the line's box; the
- * box itself is `position: 'absolute'` and anchored to the composer's top
- * edge, so it takes nothing out of the list whether or not it is showing.
- *
- * Three earlier rounds are worth recording so the fourth is not attempted.
- * An absolute overlay of a taller box covered the bottom of the newest
- * message. An in-flow band took its height out of the list, so the transcript
- * shifted every time an agent started or stopped. A permanently reserved slot
- * stopped the shift and bought it with an empty strip above the composer in
- * every Room, plus a hidden duplicate of the line mounted only to measure it,
- * plus a reserve that could never shrink.
- *
- * All three were solving a shortage that did not exist. The gap between the
- * newest message and the composer is already the ordinary speaker-change
- * margin plus the fixed composer-top gap (24 + 18 = 42), and the line's box is exactly that
- * space. Painting into room that is already reserved costs nothing, so there
- * is no conditional height and no shift to compensate for.
- */
+import { space } from './groknight';
 
-/** The line's own row. It paints inside the transcript's existing 24px
- *  speaker-change portion; its lower margin occupies the separate fixed gap.
- *  The row must not exceed 24px or it covers the message above it, which is
- *  the overlay failure this design exists to avoid. The ink is 18px
- *  (`MARK_CELL` and the 12px mono label's line box), so 24 leaves 3px either
- *  side. */
-export const TURN_LINE_ROW_MIN_HEIGHT = 24;
-
-/** The thinking label's authored line box. Keep its style and the composer gap
- *  on this one measurement so the relationship cannot drift. */
+/** Shared row geometry also used by desktop; the phone slot alone repositions it. */
+export const TURN_LINE_ROW_MIN_HEIGHT = space.lg;
 export const TURN_LABEL_LINE_HEIGHT = 18;
-
-/** Fixed air above the composer, whether the thinking line is mounted or not.
- *  The whole gap under the newest message is the ordinary 24px speaker-change
- *  margin plus this, so 18 here makes it 42: one speaker-change margin plus
- *  exactly one label line box. That is the rule, and it is what puts equal air
- *  on both sides of the thinking label (`TURN_LINE_INK_AIR`). */
 export const COMPOSER_TOP_GAP = TURN_LABEL_LINE_HEIGHT;
-
-/** Air above and below the thinking label's ink, which must be EQUAL — the
- *  captain's rule (2026-09-22). The gap is the ink plus air on both sides, so
- *  this follows from the two constants above and is never authored directly.
- *  24 + 18 = 42 total, minus the 18px ink, halved: 12. */
-export const TURN_LINE_INK_AIR =
-  (TURN_LINE_ROW_MIN_HEIGHT + COMPOSER_TOP_GAP - TURN_LABEL_LINE_HEIGHT) / 2;
-
-/** The row centres its 18px ink in 24px, so 3px of the air below the ink is
- *  already inside the row; the bar's own margin owns the rest. Deliberately
- *  NOT the composer-top gap: tying the two together is what pinned the label
- *  to the composer and left 3px above it against 15px below. */
-export const TURN_LINE_BAR_MARGIN_BOTTOM =
-  TURN_LINE_INK_AIR - (TURN_LINE_ROW_MIN_HEIGHT - TURN_LABEL_LINE_HEIGHT) / 2;
-
-/** Complete thinking-line box, including the fixed air before the composer. */
+export const TURN_LINE_BAR_MARGIN_BOTTOM = COMPOSER_TOP_GAP / 2;
 export const TURN_LINE_BOX_HEIGHT = TURN_LINE_ROW_MIN_HEIGHT + TURN_LINE_BAR_MARGIN_BOTTOM;
 
-/** Paint into the composer's existing top padding so separately rounded native
- * surfaces overlap. This is paint coverage, not extra layout or label spacing. */
-export const TURN_CHROME_COMPOSER_OVERLAP = 8;
+/** Fixed inverted-list tail measured from the newest ROW, including reactions.
+ * Never subtract Ledger's padding: reactions are siblings of that entry. Keep
+ * this constant with and without a line so starting a turn cannot move the list. */
+export const PHONE_TRANSCRIPT_TAIL_PADDING = space.xl + space.xs;
+const COMPOSER_ROW_PADDING_TOP = space.sm;
+const COMPOSER_ROW_BORDER_TOP = 1;
+
+/** Equal visible air to the newest row and the composer's FIELD border,
+ * which is below the stack edge by its padding and border. */
+export const TURN_LINE_INK_AIR =
+  (PHONE_TRANSCRIPT_TAIL_PADDING + COMPOSER_ROW_PADDING_TOP + COMPOSER_ROW_BORDER_TOP
+    - TURN_LABEL_LINE_HEIGHT) / 2;
+
+/** Lower the shared row only in the phone overlay; preserve desktop spacing. */
+const TURN_CHROME_LABEL_OFFSET =
+  COMPOSER_ROW_PADDING_TOP + COMPOSER_ROW_BORDER_TOP
+  + TURN_LINE_BAR_MARGIN_BOTTOM + (TURN_LINE_ROW_MIN_HEIGHT - TURN_LABEL_LINE_HEIGHT) / 2
+  - TURN_LINE_INK_AIR;
+
+/** Overlap the opaque composer canvas to avoid independently rounded joins.
+ * The field paints after the slot, above this coverage. */
+export const TURN_CHROME_COMPOSER_OVERLAP = space.sm;
 
 export function roomBottomChromeStyles(hull: { bgTerminal: string; border: string }) {
   const overlapTransform = [{ translateY: TURN_CHROME_COMPOSER_OVERLAP }];
@@ -84,24 +52,22 @@ export function roomBottomChromeStyles(hull: { bgTerminal: string; border: strin
       right: 0,
       bottom: '100%',
     },
-    // The original 33px slot left 9px of the intended 42px band unpainted
-    // above the row. Scrolling text could occupy that air. Extend the canvas
-    // upward while any line shows, and downward into the composer to eliminate an
-    // independently rounded join. Padding + translation cancel below the
-    // row, preserving the ink's original position and the list's viewport.
+    // Paint exactly the fixed tail, including the air above the row. Move
+    // padding from below the shared bar to above it to lower the phone label;
+    // the 8px overlap still seals the rounded join without covering the newest row.
     turnChromeCoverage: {
       backgroundColor: hull.bgTerminal,
-      paddingTop: TURN_LINE_BAR_MARGIN_BOTTOM,
-      paddingBottom: TURN_CHROME_COMPOSER_OVERLAP,
+      paddingTop: PHONE_TRANSCRIPT_TAIL_PADDING - TURN_LINE_BOX_HEIGHT + TURN_CHROME_LABEL_OFFSET,
+      paddingBottom: TURN_CHROME_COMPOSER_OVERLAP - TURN_CHROME_LABEL_OFFSET,
       transform: overlapTransform,
     },
     composerRow: {
       paddingHorizontal: 16,
       position: 'relative',
-      paddingTop: 8,
+      paddingTop: COMPOSER_ROW_PADDING_TOP,
       // Keep the Room-open geometry's 1px edge, painted as part of the same
       // opaque canvas so it never separates the status line and composer.
-      borderTopWidth: 1,
+      borderTopWidth: COMPOSER_ROW_BORDER_TOP,
       borderTopColor: hull.bgTerminal,
       backgroundColor: hull.bgTerminal,
     },

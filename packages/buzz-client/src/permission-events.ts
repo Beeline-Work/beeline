@@ -121,6 +121,7 @@ function parseEnvelope(
     rate: { maxUses: rateMaxUses, windowSeconds },
   };
 }
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function defaultPermissionGrantEnvelope(
   scope: PermissionScope,
   decidedAt: number,
@@ -374,6 +375,7 @@ function baseEventValid(event: NostrEvent): boolean {
   );
 }
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function parsePermissionRequest(event: NostrEvent): ParsedPermissionRequest | undefined {
   if (!baseEventValid(event) || marker(event) !== PERMISSION_REQUEST_MARKER) return undefined;
   const value = parseRequestContent(parseJson(event.content));
@@ -400,6 +402,7 @@ export function parsePermissionRequest(event: NostrEvent): ParsedPermissionReque
   return { type: 'request', event, value };
 }
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function parsePermissionDecision(
   event: NostrEvent,
   request: ParsedPermissionRequest,
@@ -437,6 +440,7 @@ export function parsePermissionDecision(
   return { type: 'decision', event, value };
 }
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function parsePermissionRevocation(
   event: NostrEvent,
   request: ParsedPermissionRequest,
@@ -458,6 +462,7 @@ export function parsePermissionRevocation(
   return { type: 'revocation', event, value };
 }
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function parsePermissionExecution(
   event: NostrEvent,
   request: ParsedPermissionRequest,
@@ -500,6 +505,7 @@ function sign(
   );
 }
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function buildPermissionRequest(
   requester: Identity,
   input: PermissionRequestV1,
@@ -530,6 +536,7 @@ export function buildPermissionRequest(
   );
 }
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function buildPermissionDecision(
   signer: Identity,
   request: ParsedPermissionRequest,
@@ -568,7 +575,7 @@ export function buildPermissionDecision(
   );
 }
 
-export function buildPermissionRevocation(
+function buildPermissionRevocation(
   signer: Identity,
   request: ParsedPermissionRequest,
   input: PermissionRevocationV1,
@@ -592,6 +599,7 @@ export function buildPermissionRevocation(
   );
 }
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function buildPermissionExecution(
   executor: Identity,
   request: ParsedPermissionRequest,

@@ -1,6 +1,7 @@
 import { nip98AuthHeader } from '@beeline/nostr';
 import type { Identity } from './types.js';
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export class OidcBindError extends Error {
   constructor(
     readonly code: string,

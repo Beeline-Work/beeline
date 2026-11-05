@@ -151,7 +151,9 @@ export class DurableLiveReplay {
     const release = () => { stopped = true; unlisten(); unoverlay(); unresync(); };
     try {
       // Empty Rooms need a durable epoch before their first mutation.
-      await this.database.query(`INSERT INTO live_streams(id) VALUES($1) ON CONFLICT DO NOTHING`, [stream]);
+      await this.database.query(`INSERT INTO live_streams(id)
+        SELECT $1 WHERE NOT EXISTS (SELECT 1 FROM live_streams WHERE id=$1)
+        ON CONFLICT DO NOTHING`, [stream]);
       const initial = await this.read(stream, cursor);
       position = { epoch: initial.epoch, base: initial.sequence, seen: [] };
       return { ...initial, release, start: () => { active = true; void drain(); } };

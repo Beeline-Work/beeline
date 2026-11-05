@@ -240,7 +240,7 @@ export async function readRoomRepositoryConfig(
  * create event (the migration/compat path). Returns `null` for a chat-only
  * Room with no repository — corner-open is gated on this, never crashes.
  */
-export async function resolveRoomRepository(
+async function resolveRoomRepository(
   ctx: ChannelOpsContext,
   channelId: string,
   options?: RoomRepositoryAuthorResolution,

@@ -73,6 +73,7 @@ export type PermissionFoldState =
   | { status: 'unknown'; decision: ParsedPermissionDecision; usage: PermissionUsage }
   | { status: 'consumed'; decision: ParsedPermissionDecision; usage: PermissionUsage };
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function foldPermissionLedger(input: {
   request: ParsedPermissionRequest;
   decisions: readonly ParsedPermissionDecision[];
@@ -136,6 +137,7 @@ function stable(value: unknown): string {
 }
 
 /** Stable action identity; callers reserve ordinals before any side effect. */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function permissionActionId(
   scope: PermissionScope,
   requestEventId: string,

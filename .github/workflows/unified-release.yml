@@ -1,36 +1,5 @@
-# The one production release button. It plans from the newest published
-# GitHub Release, runs only affected components, and carries every other
-# component into one new release record. A merge to main never releases.
-#
-# MEMORY: the permanent GitHub Release is the pipeline's only memory. Each
-# published release carries one `release.json` (component commits, server
-# image, phone OTA branch, desktop updater counter, store builds). No Actions
-# artifact, cache or run lookup carries state between jobs or runs; jobs talk
-# through job outputs, and scripts/release-artifact-allowlist.mjs fails CI if a
-# release workflow uploads or downloads anything but build outputs.
-#
-# RERUNS: a rerun of the same commit reuses its draft identity, and each leg
-# asks its own system what already shipped (Fly Machine images, the EAS release
-# branch and channel pointers, the Pages manifest, npm, the GitHub Release).
-#
-# RELEASE POLICY (consent gates):
-# - The default release is OTA-ONLY. The OTA goes to every runtime live in the
-#   stores today. A runtime-pin change never fails a release and never adds a
-#   store submission; the new runtime waits for a store release.
-# - Native builds require an explicit store track or recovery selection.
-#   Every Android binary built publishes to
-#   Play production with a completed rollout and automatic review submission,
-#   unless the owner explicitly selects beta for that release.
-# - The emulator device proof (run_release_proof=true) is opt-in: it never runs
-#   by default. An OTA promoted without it is recorded as UNPROVEN in the
-#   release record.
-#
-# Jobs that need production host tools (flyctl, docker, Android SDK) run on the
-# beeline-prod-host pool, which has two runners, so server and mobile OTA run
-# side by side. Planning and the release record run on GitHub-hosted runners.
 name: Unified production release
-run-name: "Production release · @${{ fromJSON(inputs.dispatched_by || '{}').handle || 'unknown' }} · ${{ fromJSON(inputs.dispatched_by || '{}').auditMessageId }}"
-
+run-name: Production release · @${{ fromJSON(inputs.dispatched_by || '{}').handle || 'unknown' }} · ${{ fromJSON(inputs.dispatched_by || '{}').auditMessageId }}
 on:
   workflow_dispatch:
     inputs:
@@ -71,7 +40,7 @@ on:
         default: false
         required: false
       mobile_store_minimum:
-        description: 'Explicit store minimums as JSON, e.g. {"android":{"minVersion":"0.2.24","reason":"This version can no longer sign in."}}; empty leaves both unchanged'
+        description: Explicit store minimums as JSON, e.g. {"android":{"minVersion":"0.2.24","reason":"This version can no longer sign in."}}; empty leaves both unchanged
         type: string
         required: false
       publish_listing:
@@ -79,22 +48,17 @@ on:
         type: boolean
         default: false
         required: false
-
-# Public ingestion configuration; auth tokens stay in the Squire vault.
 env:
   BEELINE_HELPER_SENTRY_DSN: ${{ vars.BEELINE_HELPER_SENTRY_DSN }}
   EXPO_PUBLIC_SENTRY_DSN: ${{ vars.BEELINE_MOBILE_SENTRY_DSN }}
-
 permissions:
   actions: write
   contents: write
   issues: write
   packages: read
-
 concurrency:
   group: unified-production-release
   cancel-in-progress: false
-
 jobs:
   initialize:
     runs-on: ubuntu-latest
@@ -163,10 +127,6 @@ jobs:
               owner: context.repo.owner, repo: context.repo.repo, run_id: context.runId,
             });
             core.setOutput('trigger_epoch', String(Math.floor(Date.parse(run.data.created_at) / 1000)));
-      # GitHub Releases are the only memory: the newest published release's
-      # release.json is the previous release, and a draft at this commit is an
-      # earlier attempt of this same identity, reused so its legs can see what
-      # already shipped. Drafts at other commits never block a dispatch.
       - name: Read the previous release and assign this release's identity
         id: identity
         env:
@@ -227,14 +187,9 @@ jobs:
           if [ -f "$previous" ]; then args+=(--previous "$previous"); fi
           node scripts/unified-release.mjs "${args[@]}"
           tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/release-plan.json"
-      # A rerun of this release asks the stores what it already shipped. The
-      # Play release name, the iOS upload's file name and the TestFlight "What
-      # to Test" text carry the release marker, so a shipped platform skips its
-      # build and upload.
       - name: Mint a Play token to read this release's store builds
         id: play_read
-        if: >-
-          steps.plan.outputs.run_mobile_native == 'true' && steps.plan.outputs.native_android == 'true'
+        if: steps.plan.outputs.run_mobile_native == 'true' && steps.plan.outputs.native_android == 'true'
         env:
           GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
         run: node scripts/play-token.mjs
@@ -282,11 +237,12 @@ jobs:
             version=$(node -p 'require(process.argv[1]).version' "$RUNNER_TEMP/mobile-package.json")
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-
   server:
     needs: initialize
     if: needs.initialize.outputs.run_server == 'true'
-    runs-on: [self-hosted, beeline-prod-host]
+    runs-on:
+      - self-hosted
+      - beeline-prod-host
     timeout-minutes: 15
     concurrency:
       group: deploy-beeline-server
@@ -315,9 +271,6 @@ jobs:
         id: leg
         env:
           MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
-          # Unset = the Welcome Workspace is left alone. The release owner arms
-          # its one-shot retirement (docs/welcome-retirement.md) by setting
-          # this repository variable to the exact Greeter agent id.
           BEELINE_RETIRE_WELCOME_GREETER_ID: ${{ vars.BEELINE_RETIRE_WELCOME_GREETER_ID }}
           SERVER_CANARY_REVIEW_SECRET: ${{ secrets.SERVER_CANARY_REVIEW_SECRET }}
           SERVER_CANARY_PHONE_TOKEN: ${{ secrets.SERVER_CANARY_PHONE_TOKEN }}
@@ -327,13 +280,9 @@ jobs:
           release_version: ${{ needs.initialize.outputs.release_version }}
           previous_server_image_ref: ${{ needs.initialize.outputs.previous_server_image_ref }}
           rollback_server_image_ref: ${{ needs.initialize.outputs.rollback_server_image_ref }}
-
       - name: Record live server completion after both Machines passed
         id: complete
         run: echo "completed_at=$(date +%s)" >> "$GITHUB_OUTPUT"
-
-  # Standard hosted Linux overlaps both Macs without taking a production
-  # runner away from server/OTA. Only build outputs cross to publication.
   helper_linux:
     needs: initialize
     if: needs.initialize.outputs.run_helper == 'true'
@@ -415,7 +364,6 @@ jobs:
           path: ${{ runner.temp }}/helper-linux
           if-no-files-found: error
           retention-days: 1
-
   helper_macos:
     name: HELPER BUILD (${{ matrix.platform }})
     needs: initialize
@@ -424,9 +372,6 @@ jobs:
     permissions:
       contents: read
       packages: read
-    # An unchanged Mac bundle is carried from the published helper channel;
-    # every failed lookup, download or verification falls through to the cold
-    # build.
     timeout-minutes: 35
     outputs:
       shipped: ${{ steps.shipped.outputs.shipped }}
@@ -437,8 +382,6 @@ jobs:
           - platform: darwin-arm64
             machine_arch: arm64
             runs_on: macos-15
-          # GitHub-hosted Intel: never queues behind iOS store builds on the
-          # shared self-hosted Mac.
           - platform: darwin-x64
             machine_arch: x86_64
             runs_on: macos-15-intel
@@ -450,8 +393,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      # Pages is the helper's system of record: a rerun whose release already
-      # serves there builds nothing.
       - name: Ask Pages whether this helper already shipped
         id: shipped
         env:
@@ -503,38 +444,11 @@ jobs:
         env:
           BEELINE_BUNDLE_COMMIT: ${{ needs.initialize.outputs.release_sha }}
           BEELINE_BUNDLE_VERSION: ${{ needs.initialize.outputs.release_version }}
-      # Exercise the exact archive that is about to be uploaded and promoted.
-      # This verifier installs existing bytes; it does not build another helper.
       - name: Install the candidate Intel Mac archive for acceptance
         if: matrix.platform == 'darwin-x64' && steps.shipped.outputs.shipped != 'true'
         run: node scripts/verify-beeline-install.mjs --platform darwin-x64
         env:
           BEELINE_INSTALL_VERIFY_ROOT: ${{ runner.temp }}/beeline-install-${{ github.run_id }}-${{ github.run_attempt }}
-      - name: Prove storage expiry and rollback retention on macOS
-        if: matrix.platform == 'darwin-x64' && steps.shipped.outputs.shipped != 'true'
-        working-directory: apps/body
-        run: |
-          npx vitest run src/storage-bloat.regression.test.ts --maxWorkers=2 --minWorkers=1
-          npx vitest run src/helper-storage.darwin.test.ts --maxWorkers=2 --minWorkers=1
-      - name: Prove launchd crash, login-bootstrap, and terminal-exit behavior
-        if: matrix.platform == 'darwin-x64' && steps.shipped.outputs.shipped != 'true'
-        working-directory: apps/body
-        run: |
-          BEELINE_LAUNCHD_ACCEPTANCE=1 npx vitest run src/launchd.test.ts --maxWorkers=2 --minWorkers=1
-          BEELINE_LAUNCHD_ACCEPTANCE=1 npx vitest run src/launchd-acceptance.test.ts --maxWorkers=2 --minWorkers=1
-      - name: Prove pairing and a Room answer on macOS
-        if: matrix.platform == 'darwin-x64' && steps.shipped.outputs.shipped != 'true'
-        working-directory: apps/body
-        env:
-          BEELINE_LAUNCHD_USER: '0'
-          BEELINE_ACCEPTANCE_INSTALL_ROOT: ${{ runner.temp }}/beeline-install-${{ github.run_id }}-${{ github.run_attempt }}
-        run: npx vitest run src/daemon-api-client.integration.test.ts -t "takes an app grant through finish" --maxWorkers=2 --minWorkers=1
-      - name: Prove a Room answer and open_corner on macOS
-        if: matrix.platform == 'darwin-x64' && steps.shipped.outputs.shipped != 'true'
-        working-directory: apps/body
-        env:
-          BEELINE_LAUNCHD_USER: '0'
-        run: npx vitest run src/fresh-room-discovery.integration.test.ts --maxWorkers=2 --minWorkers=1
       - uses: actions/upload-artifact@v4
         if: steps.shipped.outputs.shipped != 'true'
         with:
@@ -548,13 +462,16 @@ jobs:
             web/dl/beeline-bootstrap.mjs.sha256
           if-no-files-found: error
           retention-days: 1
-
   helper:
-    needs: [initialize, helper_linux, helper_macos, delivery_result]
-    if: >-
-      !cancelled() && needs.initialize.outputs.run_helper == 'true' &&
-      needs.helper_linux.result == 'success' && needs.helper_macos.result == 'success'
-    runs-on: [self-hosted, beeline-prod-host]
+    needs:
+      - initialize
+      - helper_linux
+      - helper_macos
+      - delivery_result
+    if: "!cancelled() && needs.initialize.outputs.run_helper == 'true' && needs.helper_linux.result == 'success' && needs.helper_macos.result == 'success'"
+    runs-on:
+      - self-hosted
+      - beeline-prod-host
     timeout-minutes: 20
     permissions:
       actions: read
@@ -605,7 +522,6 @@ jobs:
           linux_bundle_dir: ${{ format('{0}/helper-linux/bundle', runner.temp) }}
           darwin_arm64_bundle_dir: ${{ format('{0}/daemon-darwin-arm64', runner.temp) }}
           darwin_x64_bundle_dir: ${{ format('{0}/daemon-darwin-x64', runner.temp) }}
-      # The update proof bundles source that resolves these workspace exports.
       - name: Prepare packages for the Pages update proof
         run: |
           set -euo pipefail
@@ -641,17 +557,12 @@ jobs:
           set -euo pipefail
           npm install --global npm@^11.15.0
           npm view "usebeeline@${RELEASE_VERSION#v}" version >/dev/null 2>&1 || npm publish --no-provenance "$HELPER_TARBALL"
-      # npm may process a successful publish for tens of minutes. The exact
-      # tarball was smoked above; Pages already serves the verified helper.
-      # Do not wait for registry visibility before recording release success.
-
   release_proof:
-    # Stage the candidate on beta, then exercise an existing native binary.
-    # Only OTA promotion waits for this opt-in lane; server/helper stay independent.
     needs: initialize
-    if: >-
-      needs.initialize.outputs.run_mobile_ota == 'true' && inputs.run_release_proof == true
-    runs-on: [self-hosted, beeline-android]
+    if: needs.initialize.outputs.run_mobile_ota == 'true' && inputs.run_release_proof == true
+    runs-on:
+      - self-hosted
+      - beeline-android
     timeout-minutes: 18
     env:
       GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
@@ -683,7 +594,7 @@ jobs:
       - name: Stage the candidate OTA without promoting production
         uses: ./.github/actions/mobile-ota-leg
         with:
-          promote: 'false'
+          promote: "false"
           sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
@@ -696,7 +607,6 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           BEELINE_REVIEW_SECRET: ${{ secrets.BEELINE_REVIEW_SECRET }}
           RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
-        # Includes lock wait, download, sign-in, fetch/reload and crash watch.
         timeout-minutes: 5
         run: |
           timeout --signal=TERM --kill-after=10s 280s node scripts/release-proof.mjs --ota --sha "$RELEASE_SHA" --targets "$RUNNER_TEMP/ota/targets.json"
@@ -708,22 +618,17 @@ jobs:
           path: apps/mobile/release-proof-out/
           if-no-files-found: error
           retention-days: 90
-
-
-  # The OTA never waits for a store binary: production moves by channel
-  # pointer, so rollback needs no embedded anchor. It waits only for an
-  # explicitly requested device proof (mobile_ota_after_proof below).
   mobile_ota:
     needs: initialize
-    if: >-
-      needs.initialize.outputs.run_mobile_ota == 'true' && inputs.run_release_proof != true
-    runs-on: [self-hosted, beeline-prod-host]
+    if: needs.initialize.outputs.run_mobile_ota == 'true' && inputs.run_release_proof != true
+    runs-on:
+      - self-hosted
+      - beeline-prod-host
     env:
       GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
       EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
       EXPO_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
       EXPO_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
-    # Export once per platform; every live runtime shares those exports.
     timeout-minutes: 18
     outputs:
       completed_at: ${{ steps.ota.outputs.completed_at }}
@@ -751,13 +656,14 @@ jobs:
           release_version: ${{ needs.initialize.outputs.release_version }}
           expo_token: ${{ secrets.EXPO_TOKEN }}
           ota_memory: ${{ needs.initialize.outputs.ota_memory }}
-
   mobile_ota_after_proof:
-    needs: [initialize, release_proof]
-    if: >-
-      always() && needs.initialize.result == 'success' &&
-      needs.initialize.outputs.run_mobile_ota == 'true' && inputs.run_release_proof == true
-    runs-on: [self-hosted, beeline-prod-host]
+    needs:
+      - initialize
+      - release_proof
+    if: always() && needs.initialize.result == 'success' && needs.initialize.outputs.run_mobile_ota == 'true' && inputs.run_release_proof == true
+    runs-on:
+      - self-hosted
+      - beeline-prod-host
     env:
       GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
       EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
@@ -778,7 +684,6 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: apps/mobile/package-lock.json
-      # Nothing is published unless the requested proof passed.
       - name: Refuse promotion unless the release proof succeeded
         if: needs.release_proof.result != 'success'
         run: |
@@ -799,7 +704,6 @@ jobs:
           release_version: ${{ needs.initialize.outputs.release_version }}
           expo_token: ${{ secrets.EXPO_TOKEN }}
           ota_memory: ${{ needs.initialize.outputs.ota_memory }}
-
   desktop_installers:
     needs: initialize
     if: needs.initialize.outputs.run_desktop == 'true'
@@ -810,7 +714,6 @@ jobs:
       release_version: ${{ needs.initialize.outputs.release_version }}
       desktop_version: ${{ needs.initialize.outputs.desktop_version }}
     secrets: inherit
-
   website:
     needs: initialize
     if: needs.initialize.outputs.run_website == 'true'
@@ -844,9 +747,6 @@ jobs:
           bash scripts/npm-ci-timed.sh
           npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/net
       - uses: ./.github/actions/eas-cli
-      # Pages keeps one deployment per commit, so a second deploy of the same
-      # release SHA is ignored. When the helper ships, its Pages deploy carries
-      # the website too; deploying here first would pin the old helper channel.
       - uses: ./.github/actions/pages-leg
         if: needs.initialize.outputs.run_helper != 'true'
         with:
@@ -857,27 +757,20 @@ jobs:
           expo_token: ${{ secrets.EXPO_TOKEN }}
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
-
       - name: Record live website completion after both origins passed
         id: complete
         run: echo "completed_at=$(date +%s)" >> "$GITHUB_OUTPUT"
-
   mobile_native_android:
-    # Reserve the two production runners for server and OTA first.
-    needs: [initialize, delivery_result]
-    if: >-
-      !cancelled() && needs.initialize.result == 'success' &&
-      needs.initialize.outputs.run_mobile_native == 'true' &&
-      ((inputs.store_track != '' && inputs.store_track != 'none') ||
+    needs:
+      - initialize
+      - delivery_result
+    if: |-
+      !cancelled() && needs.initialize.result == 'success' && needs.initialize.outputs.run_mobile_native == 'true' && ((inputs.store_track != '' && inputs.store_track != 'none') ||
        (inputs.selection != '' && inputs.selection != 'auto')) &&
       needs.initialize.outputs.native_android == 'true'
-    # Local EAS build on a self-hosted Linux runner (Android SDK + JDK 17 live
-    # there): Expo's cloud build needs credits the free plan ran out of. The
-    # keystore still comes from Expo's credential store via EXPO_TOKEN.
-    # `beeline-android` is a POOL label: the production host and the Chad box both
-    # carry it, so the job lands on whichever is online and free, and falls back
-    # to the production host on its own when Chad is offline.
-    runs-on: [self-hosted, beeline-android]
+    runs-on:
+      - self-hosted
+      - beeline-android
     timeout-minutes: 60
     outputs:
       version_code: ${{ steps.play-upload.outputs.version_code || needs.initialize.outputs.android_version_code }}
@@ -916,7 +809,7 @@ jobs:
         working-directory: apps/mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-          EAS_SKIP_AUTO_FINGERPRINT: '1'
+          EAS_SKIP_AUTO_FINGERPRINT: "1"
           EXPO_PUBLIC_BUZZY_MONOLITH_URL: https://server.usebeeline.app
         run: |
           set -euo pipefail
@@ -955,8 +848,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mobile-native-android-build-${{ needs.initialize.outputs.release_id }}
-          # The release-proof lane installs the exact store binary (bundletool
-          # re-signs it with the sideload key) instead of rebuilding an APK.
           path: |
             ${{ runner.temp }}/android-build.json
             ${{ runner.temp }}/beeline.aab
@@ -976,13 +867,9 @@ jobs:
           MAPPING_PATH: ${{ runner.temp }}/mapping.txt
           ACCESS_TOKEN: ${{ steps.play-auth.outputs.access_token }}
           PUBLISH_LISTING: ${{ inputs.publish_listing && 'true' || 'false' }}
-          PLAY_DEFER_COMMIT: '1'
+          PLAY_DEFER_COMMIT: "1"
           PLAY_LISTING_BASELINE: ${{ runner.temp }}/play-listing-before-build.json
           TRACK: ${{ inputs.store_track == 'beta' && 'beta' || 'production' }}
-          # scripts/play-api.sh refuses to run without the Play package name (release
-          # run 34800657127 failed here after the first local Android build; the line
-          # was then lost in #1241's conflict resolution and run 34873052609 failed the
-          # same way). Same value as androidPackage in apps/mobile/app.config.js.
           PACKAGE_NAME: app.usebeeline
         run: |
           set -euo pipefail
@@ -1014,7 +901,7 @@ jobs:
           PACKAGE_NAME: app.usebeeline
           METADATA_DIR: apps/mobile/fastlane/metadata/android
           LANGUAGE: en-US
-          PLAY_LISTING_CHECK_ONLY: '1'
+          PLAY_LISTING_CHECK_ONLY: "1"
         run: |
           status=0
           bash scripts/play-publish-listing.sh || status=$?
@@ -1032,15 +919,17 @@ jobs:
       - name: Remove Android build output
         if: always()
         run: rm -rf "$RUNNER_TEMP/beeline.aab" apps/mobile/android/app/build apps/mobile/android/build 2>/dev/null || true
-
   mobile_native_ios:
     needs: initialize
-    if: >-
-      needs.initialize.outputs.run_mobile_native == 'true' &&
-      ((inputs.store_track != '' && inputs.store_track != 'none') ||
+    if: |-
+      needs.initialize.outputs.run_mobile_native == 'true' && ((inputs.store_track != '' && inputs.store_track != 'none') ||
        (inputs.selection != '' && inputs.selection != 'auto')) &&
       needs.initialize.outputs.native_ios == 'true'
-    runs-on: [self-hosted, macOS, X64, ios-builder]
+    runs-on:
+      - self-hosted
+      - macOS
+      - X64
+      - ios-builder
     timeout-minutes: 90
     outputs:
       build_number: ${{ steps.ios_identity.outputs.build_number }}
@@ -1163,9 +1052,6 @@ jobs:
           echo "build_number=$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")).buildNumber' "$RUNNER_TEMP/ios-build.json")" >> "$GITHUB_OUTPUT"
       - name: Remove iOS credentials and build output
         if: always()
-        # Also the local EAS build tree (under $TMPDIR, ~4 GB per attempt) and Xcode
-        # DerivedData: a cancelled attempt leaves both behind, and five of them filled
-        # the Mac runner's disk (run 34860249069: pod install "No space left on device").
         run: |
           rm -f "$RUNNER_TEMP/AuthKey_${{ secrets.EXPO_ASC_KEY_ID }}.p8" "$RUNNER_TEMP"/beeline-*.ipa "$RUNNER_TEMP/ios-upload.json"
           rm -rf "$RUNNER_TEMP/private_keys" "${TMPDIR:-/tmp}/eas-build-local-nodejs" ~/Library/Developer/Xcode/DerivedData
@@ -1175,14 +1061,18 @@ jobs:
         run: |
           xargs security list-keychains -d user -s < "$RUNNER_TEMP/user-keychains.txt"
           xargs security default-keychain -d user -s < "$RUNNER_TEMP/user-default-keychain.txt"
-
-
-  # This checkpoint can finish while any Mac/desktop/helper build is queued.
-  # Native jobs still attach their checked artifacts in release_result below.
   delivery_result:
-    needs: [initialize, server, mobile_ota, mobile_ota_after_proof, website, release_proof]
+    needs:
+      - initialize
+      - server
+      - mobile_ota
+      - mobile_ota_after_proof
+      - website
+      - release_proof
     if: "!cancelled() && needs.initialize.result == 'success'"
-    runs-on: [self-hosted, beeline-prod-host]
+    runs-on:
+      - self-hosted
+      - beeline-prod-host
     timeout-minutes: 3
     outputs:
       report: ${{ steps.live.outputs.report }}
@@ -1199,12 +1089,22 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
           TRIGGER_EPOCH: ${{ needs.initialize.outputs.trigger_epoch }}
         run: node scripts/release-delivery.mjs measure
-
   release_result:
-    # !cancelled(), not always(): a run superseded by cancel-in-progress must not
-    # classify itself as a failed attempt.
     if: "!cancelled() && needs.initialize.result == 'success'"
-    needs: [initialize, server, helper_linux, helper_macos, helper, mobile_ota, mobile_ota_after_proof, mobile_native_android, mobile_native_ios, desktop_installers, website, release_proof, delivery_result]
+    needs:
+      - initialize
+      - server
+      - helper_linux
+      - helper_macos
+      - helper
+      - mobile_ota
+      - mobile_ota_after_proof
+      - mobile_native_android
+      - mobile_native_ios
+      - desktop_installers
+      - website
+      - release_proof
+      - delivery_result
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -1222,8 +1122,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # Read durable facts from their authority rather than transporting a large
-      # encoded blob that GitHub can discard as a secret-mask false positive.
       - name: Read the published baseline for release finalization
         if: needs.initialize.outputs.has_previous == 'true'
         env:
@@ -1293,7 +1191,6 @@ jobs:
             echo "whole_run_elapsed_seconds=$whole_run_elapsed"
             echo "soft_limit_seconds=$soft_limit_seconds"
           } >> "$GITHUB_OUTPUT"
-      # Installers built by this run's desktop job (same-run build output).
       - name: Download newly built stable desktop installers
         if: steps.result.outputs.outcome == 'success' && needs.initialize.outputs.run_desktop == 'true'
         uses: actions/download-artifact@v4
@@ -1457,13 +1354,7 @@ jobs:
           RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
           RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
           BEELINE_RELEASE_NOTIFY_SECRET: ${{ secrets.BEELINE_RELEASE_NOTIFY_SECRET }}
-        run: >-
-          node scripts/unified-release.mjs notify
-          --version "$RELEASE_VERSION"
-          --sha "$RELEASE_SHA"
-          --manifest-url "$MANIFEST_URL"
-          --repository "$GITHUB_REPOSITORY"
-          --output "$RUNNER_TEMP/release-notification.json"
+        run: node scripts/unified-release.mjs notify --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" --manifest-url "$MANIFEST_URL" --repository "$GITHUB_REPOSITORY" --output "$RUNNER_TEMP/release-notification.json"
       - name: Surface release outcome and duration
         if: steps.result.outputs.state_ready != 'false'
         env:
@@ -1519,13 +1410,12 @@ jobs:
           echo "Release failed (${{ steps.result.outputs.failure_class }}): ${{ steps.result.outputs.incomplete }}" >&2
           echo 'Rerun the release: the same commit resumes its draft identity and every leg skips what already shipped.' >&2
           exit 1
-
-  # Delivery bookkeeping (merges delivered, OTA runtimes, owner phone receipt,
-  # job timings) goes to the Loops/insights data store. Nothing in the release
-  # reads it back, and continue-on-error keeps any failure here out of the
-  # release result.
   bookkeeping:
-    needs: [initialize, mobile_ota, mobile_ota_after_proof, release_result]
+    needs:
+      - initialize
+      - mobile_ota
+      - mobile_ota_after_proof
+      - release_result
     if: "!cancelled() && needs.initialize.result == 'success'"
     continue-on-error: true
     runs-on: ubuntu-latest

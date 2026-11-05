@@ -50,9 +50,6 @@ async function notifyLive(
   await database.query('SELECT pg_notify($1,$2)', [POSTGRES_LIVE_CHANNEL, JSON.stringify(payload)]);
 }
 
-export function notifyAgentCommand(database: Pick<SqlDatabase, 'query'>, roomId: string, agentId: string) {
-  return notifyLive(database, { table: 'agent_commands', operation: 'UPDATE', roomId, agentId });
-}
 export function notifyMcpWebhook(database: Pick<SqlDatabase, 'query'>, roomId: string) {
   return notifyLive(database, { table: MCP_WEBHOOK_TABLE, operation: 'INSERT', roomId });
 }

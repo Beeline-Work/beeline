@@ -2,12 +2,13 @@
 
 This batch implements the captain's accepted recommendations. The code batch
 https://github.com/Beeline-Work/beeline/pull/3447 merged after green CI. L1 is
-complete. B1 has deleted all **63,964 approved ledger rows**, preserved all 228
-skill versions via SET NULL, and updated **4,951 note cards**. B1 is now **paused
-by firstmate for the production release retry**. The cleanup backend has exited,
-holds zero locks, and blocks zero clients. **187,138 cards and 147 fields** remain.
-No further production access will occur until firstmate resumes the task. See
-`b1-release-pause.json`; B8 remains staged and unapplied.
+complete. B1 has cumulatively deleted **63,964 ledger rows** and updated **4,951
+cards**. The Nov 5 attempt stopped before any update: its first monitor sample
+found an existing global lock wait of **28,639.227 ms**, above the new 1,000 ms
+limit. No client was blocked by cleanup. Current before/after counts are unchanged:
+**187,275 cards and 151 fields** remain, with all **229 current skill versions**
+preserved. The cleanup backend is absent, with no locks or blocked clients.
+See `b1-nov5-stop.json` and the fresh `b1-nov5-restore-point.json`. B8 is untouched.
 
 | Decision | Implementation |
 | --- | --- |
@@ -334,3 +335,29 @@ Current cumulative state:
 `b1-quarter-before.json` records the six-row dry run. `b1-release-pause.json`
 records the pass receipt, current counts, release proof and explicit pause.
 Further work requires firstmate's resume instruction.
+
+## Nov 5 window: stopped on pre-existing global lock wait (inbox 019)
+
+Firstmate reported v0.1.158, the bounded-standby fix and six valid production
+indexes, and explicitly resumed B1 for 08:00Z. The fresh ready restore branch is
+`audit-b1-20261105080036-pre-cleanup`, parent LSN `A/EF78DF90`. The operator used
+updates-only three-row batches with 200 ms pauses and the new rule: stop on **any
+observed lock wait over 1,000 ms or any error**. Nine local boundary, runtime and
+batch tests passed before the window. No production call occurred before 08:00Z.
+
+The read-only dry run at 08:01Z verified 187,275 cards, 151 field values and 229
+original composite skill keys. SQL cancellation completed in 3 ms in that session
+and 4 ms in the intended apply session. The apply's first monitor sample observed
+one globally waiting backend at **28,639.227 ms**, with **zero clients blocked by
+cleanup** and no lock wait of the cleanup itself. The run stopped before calling
+the updates-only cleanup, so no batch or update occurred. No retry was made.
+
+Independent read-back at 08:04:31Z confirms the exact same counts, 229 skill
+versions and the SET NULL FK. Today's retained cohorts remain **68,386 MCP-audit /
+11,810 turn-trace rows**; later live totals 68,416 / 11,810 reflect new writes.
+Backend 1159477 is absent, holds zero locks and blocks zero clients.
+
+`b1-nov5-before.json` records the fresh baseline; `b1-nov5-stop.json` contains the
+stop, actual SQL PID, operator-source hashes and read-back. Cumulative B1 changes
+remain 63,964 ledger deletions and 4,951 card updates. B8 remains staged and
+unapplied. Further production changes await firstmate's direction.

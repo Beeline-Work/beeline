@@ -1,0 +1,203 @@
+{
+  "recordedAt": "2026-11-05T08:06:02.992203+00:00",
+  "outcome": "Stopped at first sample, before updates, on pre-existing global lock wait >1s",
+  "restorePoint": "audit-b1-20261105080036-pre-cleanup",
+  "restoreParentLsn": "A/EF78DF90",
+  "beforeArtifact": "b1-nov5-before.json",
+  "apply": {
+    "ok": false,
+    "phase": "monitored-apply",
+    "error": "Cleanup stopped for blocking: clients=0, waiting locks=0",
+    "connection": {
+      "directEndpoint": true,
+      "pidAuthority": "SQL pg_backend_pid()",
+      "monitoringPid": 1159477
+    },
+    "fk": {
+      "confdeltype": "n"
+    },
+    "statistics": {
+      "globalSamples": 1,
+      "maxObservedLockWaitMs": 0,
+      "maxObservedWaitingClients": 0,
+      "acknowledgedChanges": {},
+      "completedBatches": 0,
+      "operatorParameters": {
+        "updatesOnly": true,
+        "batchSize": 3,
+        "pauseMs": 200
+      },
+      "stopRule": {
+        "anyObservedLockWaitMs": 1000,
+        "stopOnError": true
+      },
+      "cancelRequests": 1,
+      "cancelProof": {
+        "observedSleep": true,
+        "cancelled": true,
+        "errorCode": "57014",
+        "receivedWithinMs": 4,
+        "limitMs": 2000
+      },
+      "maxObservedGlobalLockWaitMs": 28639.227,
+      "maxObservedGlobalWaitingBackends": 1,
+      "maxCleanupOwnWaitingLocks": 0,
+      "lastSample": {
+        "blockedClients": 0,
+        "maxWaitMs": 0,
+        "globalMaxWaitMs": 28639.227,
+        "cleanupWaitingLocks": 0
+      },
+      "stopReason": "observed-lock-wait-over-1000ms"
+    }
+  },
+  "readback": {
+    "after": {
+      "mode": "dry-run",
+      "cutoff": "2026-11-05 08:04:31.746828+00",
+      "counts": [
+        {
+          "table": "institutional_memory_outcomes",
+          "predicate": "TRUE",
+          "count": 0
+        },
+        {
+          "table": "institutional_history_searches",
+          "predicate": "TRUE",
+          "count": 0
+        },
+        {
+          "table": "workspace_skill_uses",
+          "predicate": "TRUE",
+          "count": 0
+        },
+        {
+          "table": "institutional_memory_fact_events",
+          "predicate": "TRUE",
+          "count": 0
+        },
+        {
+          "table": "institutional_review_findings",
+          "predicate": "TRUE",
+          "count": 0
+        },
+        {
+          "table": "institutional_memory_jobs",
+          "predicate": "TRUE",
+          "count": 0
+        },
+        {
+          "table": "beeline_github_webhook_deliveries",
+          "predicate": "received_at<now()-interval '30 days'",
+          "count": 0
+        },
+        {
+          "table": "beeline_github_repo_events",
+          "predicate": "received_at<now()-interval '30 days'",
+          "count": 0
+        },
+        {
+          "table": "operator_finance_snapshots",
+          "predicate": "source='entered' AND scope='fixed-plan'",
+          "count": 0
+        },
+        {
+          "table": "corner_attention_flags",
+          "count": 0,
+          "absent": true
+        },
+        {
+          "table": "service_review_rollout",
+          "predicate": "TRUE",
+          "count": 0
+        },
+        {
+          "table": "google_oauth_grants",
+          "predicate": "TRUE",
+          "count": 0
+        },
+        {
+          "table": "push_level_migration_counts",
+          "predicate": "TRUE",
+          "count": 0
+        },
+        {
+          "table": "wallet_balance_snapshots",
+          "predicate": "TRUE",
+          "count": 0
+        },
+        {
+          "table": "messages",
+          "predicate": "card_type='github-corner-note' AND (card ? 'source' OR card ? 'dedupe')",
+          "count": 187275
+        },
+        {
+          "table": "identities",
+          "predicate": "welcome_cards_due IS NOT NULL",
+          "count": 122
+        },
+        {
+          "table": "room_read_marks",
+          "predicate": "read_at IS NOT NULL",
+          "count": 4
+        },
+        {
+          "table": "needs_you_marks",
+          "predicate": "reminder_dismissed_at IS NOT NULL",
+          "count": 2
+        },
+        {
+          "table": "github_star_prompts",
+          "predicate": "reached_at IS NOT NULL OR last_win_at IS NOT NULL",
+          "count": 23
+        }
+      ],
+      "skillVersions": 229,
+      "linkedVersionsPreserved": 0,
+      "retainedTelemetry": {
+        "cutoff": "2026-11-05 08:04:31.746828+00",
+        "before": {
+          "rooms_mcp_audit": 68416,
+          "agent_turn_traces": 11810
+        },
+        "after": {
+          "rooms_mcp_audit": 68416,
+          "agent_turn_traces": 11810
+        }
+      }
+    },
+    "fk": {
+      "confdeltype": "n"
+    },
+    "released": {
+      "cleanup_backends": 0,
+      "blocked_by_cleanup": 0,
+      "cleanup_locks": 0
+    },
+    "retainedTelemetry": {
+      "cutoff": "2026-11-05 08:01:00.332747+00",
+      "before": {
+        "rooms_mcp_audit": 68386,
+        "agent_turn_traces": 11810
+      },
+      "after": {
+        "rooms_mcp_audit": 68386,
+        "agent_turn_traces": 11810
+      }
+    }
+  },
+  "thisRunDeletedRows": 0,
+  "thisRunUpdatedRows": 0,
+  "cumulativeDeletedRows": 63964,
+  "cumulativeUpdatedCards": 4951,
+  "maximumGlobalObservedLockWaitMs": 28639.227,
+  "maximumCleanupAttributedWaitMs": 0,
+  "b8ContractApplied": false,
+  "operatorSourceHashes": {
+    "scripts/audit-decisions-cleanup.mjs": "1c4ff6217de725cac1213997ef4676e2d9029db1f5c9f9ce53c59515a88adec0",
+    ".audit-b1-runtime.mjs": "1492205f7fc599cda938fe59afb221dcfe75fe8600d3a7aabc069038f29403da",
+    ".audit-b1-observer.mjs": "47c0545817015e02edaeabc7b89914896c7995cc56f7e78f5a602658063d1c57",
+    ".audit-b1-operator.mjs": "46d4707295297d479daed37708889331c42f2e256287a9f4f199e83546d24dd5",
+    ".audit-b1-updates.mjs": "6177d4883b1402b5388e58c6ee4e5c9a4280059cd28301db5f1e1a7776b383c6"
+  }
+}

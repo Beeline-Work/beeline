@@ -24,6 +24,19 @@ describe('opaque immutable owned-model credential primitive', () => {
     expect(before[0]?.token_hash).toBe(createHash('sha256').update(issued.token).digest('hex'));
   });
 
+  it('keeps its immutable bearer when the same runtime reconnects through another server instance',async()=>{
+    const {db,credentials,issued,actor}=fixture;
+    await db.query(`UPDATE agent_connections SET turn_connection_id=connection_id,turn_connection_epoch=epoch,
+      turn_transport_id=connection_id,released_at=clock_timestamp()`);
+    await expect(db.transaction(tx=>credentials.assertCurrent(tx,actor))).rejects.toThrow('authority');
+    await db.query(`INSERT INTO live_server_instances VALUES('reconnected-server',clock_timestamp());
+      UPDATE agent_connections SET connection_id='reconnected-socket',turn_transport_id='reconnected-socket',
+        epoch=epoch+1,instance_id='reconnected-server',released_at=NULL`);
+    expect(await db.transaction(tx=>credentials.issueInTransaction(tx,MODEL_CLAIM))).toEqual(issued);
+    await db.transaction(tx=>credentials.assertCurrent(tx,actor));
+    expect((await db.query('SELECT count(*)::int n FROM owned_model_credentials')).rows[0]).toEqual({n:1});
+  });
+
   it('separates the key-derivation and credential-message MAC domains from direct sealing-key MACs', async () => {
     const { db, issued, credentials } = fixture;
     const row = (await db.query('SELECT * FROM owned_model_credentials')).rows[0]!;

@@ -2,30 +2,26 @@
 
 This batch implements the captain's accepted recommendations. The code batch
 https://github.com/Beeline-Work/beeline/pull/3447 merged after green CI. L1 is
-complete. B1 is detached on **squire**, outside app-machine deploys. Inbox 027
-replaced the slow one-row pass after verifying its SQL sessions/locks were gone.
-The replacement updates **up to 25 keys per transaction**, each UPDATE capped at
-**100 ms**, with **no pause**. A timed-out batch rolls back and retries its keys
-one at a time under the same cap; individual timeouts roll back and skip. The
-150 ms cleanup-client wait and other-error stops remain. Local process
-**1892546** writes `.audit-b1-squire-batch.log`; SQL writer **1192199** and
-observer **1192200** are live. Baseline: **124,190 cards +151 fields**. Initial
-read-back at 10:42Z: **120,941 cards**, all 229 versions and fixed telemetry
-cohorts preserved. Initial logs confirm several thousand committed cards with
-zero observed cleanup-client wait. Ten-minute measurement: **44,049 committed cards in 636 seconds**
-(**69.3/second**, about **4,157/minute**),
-with one individual timeout skip and zero observed cleanup-client wait. Read-back
-leaves **81,066 cards**, all versions and telemetry cohorts preserved. See
-`b1-squire-batch-ten-minute.json`.
-B8 is untouched. See `b1-squire-batch-before.json` and
-`b1-squire-batch-start.json`; prior operation records remain historical.
+complete. **B1 production cleanup is complete.** Independent read-back at
+**2026-11-05 11:12Z** confirms **every approved deletion/update predicate is
+zero**, no audit writer/observer sessions, zero cleanup locks or blocked clients,
+all **229 skill versions** preserved, and the job FK still `ON DELETE SET NULL`.
+Both telemetry tables remain excluded and their fixed cohorts are unchanged.
+The final squire batch pass updated **124,186 cards and 151 field rows**; its
+four individual timeout skips then succeeded on one-row retries under the same
+100 ms cap after the prior writer exited. Final squire total: **124,190 cards**.
+All **63,964** approved ledger rows were deleted earlier. Earlier interrupted
+card passes lack exact final counters, so no exact cumulative card total is
+claimed. Final passes observed **zero cleanup-attributed client wait**. B8's
+column-drop contract was **not run**. See `b1-production-complete.json`,
+`b1-squire-batch-completed.json`, and `b1-squire-remainder-completed.json`.
 
 | Decision | Implementation |
 | --- | --- |
 | G1 | `scripts/check-architecture.mjs` reports relaxations for weekly review; candidate rules still must pass. `scripts/ci-workspace-tasks.sh` runs the candidate guard. |
 | G2 | System catalog shape and source-use guards remain; phrase changes are reviewed weekly without a wording hash approval gate. |
 | G3 | The old System fingerprint lock was already removed. The wording-hash approval gate and corner declaration lock are retired; the catalog guard and exhaustive corner reference replace them. |
-| B1 | `scripts/audit-decisions-cleanup.mjs` defaults to `BEGIN READ ONLY`, counts exact D1 classes, and rolls back. `--apply` changes the skill-version job FK to `ON DELETE SET NULL` before deleting jobs, and checks that every skill version survived. Never called by deployment. All 63,964 approved ledger rows deleted and SET NULL preserved all versions; 25,915 cards cumulatively updated. Latest read-back leaves 166,311 cards and 151 fields; stopped above the 150 ms client budget in inbox 021. |
+| B1 | `scripts/audit-decisions-cleanup.mjs` defaults to `BEGIN READ ONLY`, counts exact D1 classes, and rolls back. `--apply` changes the skill-version job FK to `ON DELETE SET NULL` before deleting jobs, and checks that every skill version survived. Never called by deployment. All 63,964 approved ledger rows deleted; final read-back has zero rows for every approved predicate, all 229 current skill versions preserved, and the SET NULL FK intact. Both telemetry tables remain excluded. See `b1-production-complete.json`. |
 | B2 | Maintenance keeps the latest 200 tool/output activity rows per archived corner, matching `ROOM_VIEW_TOOL_ROW_LIMIT`; leaves open corners, prose and durable facts alone. Scans at most 20 archived corners and deletes at most 1,000 rows per pass; an ephemeral cursor rotates completed slices. |
 | B3 | Check-start and individual check-pass notes stop. Whole-head green, failure, conflict and merge notes remain; note IDs retain their dedupe formulas. |
 | B4 | Expired claims become terminal `uncertain` after a crashed send, or `failed` for exhausted retries. Active outbox windows survive. Uncertain rows retain an hour before deletion. Expired join devices and notifications are swept in bounded batches after the existing one-hour delivery window. |
@@ -68,7 +64,7 @@ reference (1 with 1,344 combinations), corner-person-state projection (1), joine
 session (11), and external rules (4). Push-outbox tests passed (10 passed; the
 isolated PostgreSQL performance proof was skipped without its opt-in local URL).
 The one-time cleanup's PGlite proof passed and retained every skill version.
-No lifecycle command, release, B1 apply or B8 contract was run.
+During code validation, no lifecycle command, release, B1 apply or B8 contract was run. The separately authorized production B1 run is now complete, as recorded above.
 
 ## L1 production read-back
 
@@ -76,7 +72,7 @@ All four rows remain stored. `max_runs` now equals `run_count`:
 0487e469 = 14, e61b92db = 2, ea5594a0 = 7, fc1f2142 = 5.
 Every `next_run_at` is 9999-12-31 00:00:00+00, and no workflow is running on
 these rows. An independent READ ONLY transaction matched the update receipt.
-B1 deletion and the B8 column contract were not run.
+At the time of this L1 read-back, B1 deletion and the B8 column contract had not been run. B1 subsequently completed; the B8 column contract remains unrun.
 
 ## B1 execution authorization update
 

@@ -1,0 +1,43 @@
+{
+  "recordedAt": "2026-11-05T11:13:14.684866+00:00",
+  "state": "complete",
+  "finalVerifiedAt": "2026-11-05T11:12:09.646Z",
+  "allApprovedCleanupPredicatesZero": true,
+  "confirmedDeadLedgerRowsDeleted": 63964,
+  "latestSquireBatchCardsUpdated": 124190,
+  "latestSquireFieldRowsUpdated": 151,
+  "exactCumulativeCardsAcrossInterruptedEarlierPasses": "not available; interrupted streams lacked final counters",
+  "skillVersionsPreserved": 229,
+  "skillVersionJobForeignKey": "ON DELETE SET NULL",
+  "auditSessions": [],
+  "remainingLocks": {
+    "prior_cleanup_locks": 0,
+    "prior_cleanup_blocked_clients": 0
+  },
+  "fixedTelemetryCohorts": {
+    "cutoff": "2026-11-05 09:09:23.470814+00",
+    "before": {
+      "rooms_mcp_audit": 68981,
+      "agent_turn_traces": 11810
+    },
+    "after": {
+      "rooms_mcp_audit": 68981,
+      "agent_turn_traces": 11810
+    }
+  },
+  "maxObservedCleanupClientWaitMsInFinalPasses": 0,
+  "batchStatementTimeouts": 62,
+  "batchFallbacks": 58,
+  "initialIndividualTimeoutSkips": {
+    "messages": 4
+  },
+  "remainingIndividualTimeoutSkips": {},
+  "mainPassEvidence": "b1-squire-batch-completed.json",
+  "remainderAndFinalReadbackEvidence": "b1-squire-remainder-completed.json",
+  "b8ContractApplied": false,
+  "operationalSourceHashes": {
+    ".audit-b1-batched-updates.mjs": "0e27544c2c21843efc1fc3e15e473d62bb95981a72439e23bd621399437e1694",
+    ".audit-b1-observer.mjs": "1b6cf4d6cbe9132344f7aac1f0436a60827c20765d7c0accc9378853a35845bd",
+    ".audit-b1-runtime.mjs": "1492205f7fc599cda938fe59afb221dcfe75fe8600d3a7aabc069038f29403da"
+  }
+}

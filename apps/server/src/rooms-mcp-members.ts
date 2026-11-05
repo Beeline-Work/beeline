@@ -12,7 +12,7 @@ import { isIP } from 'node:net';
 import { Agent, request as httpsRequest } from 'node:https';
 import { MCP_STARTER_ROUTINE, uniqueAgentHandle } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
-import { fetchMcpLogo, mcpMemberAvatar, mcpClientName } from './rooms-mcp-logos.js';
+import { fetchMcpLogo, mcpMemberAvatar, mcpClientName, mcpVendorDisplay, mcpVerifiedDisplay } from './rooms-mcp-logos.js';
 import { normalizeAvatar } from './durable-avatar.js';
 import { openSecrets, sealSecrets } from './free-agents.js';
 import { publicMcpAddress } from './company-mcp-discovery.js';
@@ -94,13 +94,19 @@ async function replaceMcpMemberAvatar(db: SqlDatabase, memberId: string, avatar:
  */
 export async function ensureMcpMember(
   db: SqlDatabase,
-  input: { clientId: string; ownerId: string; modelLabel: string; workspaceIds?: string[] },
+  input: { clientId: string; ownerId: string; modelLabel: string; workspaceIds?: string[]; redirectUri?: string },
 ): Promise<string | undefined> {
   const client = (await db.query<{ name: string; redirects: string[]; logo: string | null }>(
     'SELECT name,redirects,logo FROM rooms_mcp_clients WHERE id=$1', [input.clientId])).rows[0];
-  const clientName = client ? mcpClientName(client.name, client.redirects) : input.modelLabel;
-  const modelLabel = client && input.modelLabel === client.name ? clientName : input.modelLabel;
-  const avatar = client ? await mcpLogoAvatar(clientName, client.logo) : undefined;
+  // Brand the member only for the redirect this grant actually returns to.
+  // Any other redirect keeps the self-declared name and does not wear a bundled mark.
+  const vendor = client
+    ? input.redirectUri !== undefined
+      ? mcpVendorDisplay(client.name, input.redirectUri)
+      : mcpVerifiedDisplay(client.name, client.redirects)
+    : undefined;
+  const modelLabel = vendor ?? input.modelLabel;
+  const avatar = client ? await mcpLogoAvatar(vendor ?? 'Connected app', vendor ? client.logo : null) : undefined;
   return db.transaction(async (tx) => {
     const owner = (
       await tx.query<{ workspaces: string[] }>(

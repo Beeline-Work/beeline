@@ -39,12 +39,65 @@ export async function fetchMcpLogo(value: string, size = 96): Promise<string> {
   } finally { agent.destroy(); }
 }
 
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', '[::1]', 'localhost']);
+/**
+ * Bundled marks are only for these exact callbacks. A self-chosen name with any
+ * other redirect, including another path on the same host, stays unverified.
+ * Cursor's agents callback is Grok Bot; the desktop and other web callback stay Cursor.
+ */
+const MCP_VENDOR_CALLBACKS: readonly { names: RegExp; redirect: string; display: string }[] = [
+  { names: /^Cursor$/, redirect: 'https://www.cursor.com/agents/mcp/oauth/callback', display: 'Grok Bot' },
+  { names: /^Cursor$/, redirect: 'cursor://anysphere.cursor-mcp/oauth/callback', display: 'Cursor' },
+  { names: /^Cursor$/, redirect: 'https://cursor.com/agents/oauth/callback', display: 'Cursor' },
+  { names: /^(meta muse|metamuse|muse)$/i, redirect: 'https://agent.meta.ai/api/hatch/oauth/callback', display: 'Meta Muse' },
+];
+
+/** The bundled name for this sign-in's redirect, or undefined when the name is only self-declared. */
+export function mcpVendorDisplay(name: string, redirect: string): string | undefined {
+  return MCP_VENDOR_CALLBACKS.find(item => item.names.test(name) && item.redirect === redirect)?.display;
+}
+
+function unknownHttpsRedirect(name: string, redirect: string): boolean {
+  let url: URL;
+  try { url = new URL(redirect); } catch { return false; }
+  return url.protocol === 'https:' && !LOOPBACK_HOSTS.has(url.hostname) && !mcpVendorDisplay(name, redirect);
+}
+
+/**
+ * Vendor label for a client whose redirects are all known callbacks, loopback,
+ * or private-use schemes. One unknown https redirect keeps the self-declared name.
+ */
+export function mcpVerifiedDisplay(name: string, redirects: readonly string[]): string | undefined {
+  if (redirects.some(redirect => unknownHttpsRedirect(name, redirect))) return undefined;
+  for (const redirect of redirects) {
+    const display = mcpVendorDisplay(name, redirect);
+    if (display) return display;
+  }
+  return undefined;
+}
+
+export interface RedirectTrust {
+  kind: 'vendor' | 'loopback' | 'device' | 'handoff' | 'confirm';
+  display: string;
+  host: string;
+  reason: string;
+}
+
+/** Why this sign-in's redirect may receive a code, and the host the consent page must show. */
+export function redirectTrust(name: string, redirect: string, handoff: string): RedirectTrust {
+  const url = new URL(redirect);
+  const host = url.host || url.protocol.replace(/:$/, '');
+  const vendor = mcpVendorDisplay(name, redirect);
+  if (vendor) return { kind: 'vendor', display: vendor, host, reason: `Allowed because this is ${vendor}'s known callback.` };
+  if (redirect === handoff) return { kind: 'handoff', display: name, host, reason: 'Allowed because it returns to this Beeline session.' };
+  if (LOOPBACK_HOSTS.has(url.hostname)) return { kind: 'loopback', display: name, host, reason: 'Allowed because it returns to an app on this computer.' };
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return { kind: 'device', display: name, host, reason: 'Allowed because it returns to the app on this device.' };
+  return { kind: 'confirm', display: name, host, reason: 'This name is unverified. Allowed only after you type this host. If someone sent you this link, close this page.' };
+}
+
 /** Registration identity shared by consent and member defaults. */
 export function mcpClientName(name: string, redirects: readonly string[] = []): string {
-  // Grok Bot registers as Cursor with https://www.cursor.com/agents/mcp/oauth/callback.
-  // Cursor desktop and the other web callback must retain Cursor's identity.
-  return name === 'Cursor' && redirects.includes('https://www.cursor.com/agents/mcp/oauth/callback')
-    ? 'Grok Bot' : name;
+  return mcpVerifiedDisplay(name, redirects) ?? name;
 }
 
 const bundled = new Map<string, Promise<string>>();

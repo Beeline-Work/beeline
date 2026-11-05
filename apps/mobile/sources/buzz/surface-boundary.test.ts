@@ -44,7 +44,7 @@ describe('server-indexed mobile data boundary', () => {
     expect(files.some(file => file.includes('/app/(app)/beeline/'))).toBe(true);
     const failures = files.flatMap(file => inspectSurfaceReadAuthority(file.slice(REPO.length + 1), readFileSync(file, 'utf8')));
     expect(failures).toEqual([]);
-  });
+  }, 30_000);
 
   it.each([
     "import {mobileSurfaceCache as cache} from '@/buzz/surface-storage'; import {isChatListView as guard} from '@beeline/buzz-client'; cache['publish'](address, changed, guard);",

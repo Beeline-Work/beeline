@@ -35,9 +35,9 @@ describe('corner text', () => {
 
 import { Check } from 'typebox/value';
 import { agentToolsFor, callAgentTool } from './read-only-mcp.js';
-import { CAPABILITY_TOOLS } from './minimal-tool-surface.js';
+import { CAPABILITY_TOOLS, toolValidationSchema } from './minimal-tool-surface.js';
 
-const schema = (name: string) => agentToolsFor(true,false,true,true).find(tool => tool.name === name)!.inputSchema;
+const schema = (name: string) => toolValidationSchema(name)!;
 
 describe('canonical tool contracts', () => {
   it('requires explicit ownership and a complete brief with optional opening approval', () => {
@@ -480,10 +480,10 @@ m9_describe('beeline-agent request_grant', () => {
     m9_expect(ops).toEqual([]);
   });
 
-  m9_it('requires purpose in the advertised request schema but permits listing without it', () => {
+  m9_it('requires purpose in the validation contract but permits listing without it', () => {
     const schema = m9_agentToolsFor(true, false).find(tool => tool.name === 'request_grant')!.inputSchema;
     m9_expect(schema.properties.purpose).toMatchObject({ minLength: 1, maxLength: 240 });
-    m9_expect(schema.anyOf).toEqual(m9_expect.arrayContaining([m9_expect.objectContaining({ required: ['action', 'kind', 'target', 'reason', 'purpose'] })]));
+    m9_expect(toolValidationSchema('request_grant')!.anyOf).toEqual(m9_expect.arrayContaining([m9_expect.objectContaining({ required: ['action', 'kind', 'target', 'reason', 'purpose'] })]));
   });
 
   m9_it('asks for one coarse shared asset category with a reason and a Room card', async () => {

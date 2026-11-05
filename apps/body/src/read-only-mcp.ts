@@ -5,7 +5,7 @@ import { resolveGrantCommand, isNativeGrantExecutable, resolveGrantScriptExecuta
 import { beelineManagedSkills, runningBeelineReleaseId } from './beeline-skill.js';
 import { builtinBeelineApp } from '@beeline/api-contract/workbench';
 import { Check, Errors } from 'typebox/value';
-import { CAPABILITY_ROUTES, REPOSITORY_ROUTES, SCRATCH_ROUTES, minimalTools, placeBeelineApps, repositoryTools, scratchTools, CAPABILITY_TOOLS, RUNNER_TOOL, SILENT_TOOL } from './minimal-tool-surface.js';
+import { CAPABILITY_ROUTES, REPOSITORY_ROUTES, SCRATCH_ROUTES, agentToolsFor, toolValidationSchema, placeBeelineApps, repositoryTools, CAPABILITY_TOOLS } from './minimal-tool-surface.js';
 import { squireReachCause } from './squire-status.js';
 import { nonhumanSilentWake } from './silent-wake.js';
 /**
@@ -151,29 +151,9 @@ function memorySources(args: JsonObject): unknown[] {
   return args.source_message_ids;
 }
 
-const agentSurface = process.env.BEELINE_MCP_SURFACE === 'agent';
-/** The ordinary surface is stable across warm turns; optional schemas are read through app_tool. */
-export function agentToolsFor(
-  agentSurface: boolean,
-  _directMessage: boolean,
-  cornerTurn = false,
-  repositoryCorner = false,
-  commandRunnerAvailable = true,
-  institutionalMemoryEnabled = true,
-  nativeIoProven = false,
-): ToolDefinition[] {
-  if (!agentSurface) return repositoryTools();
-  const tools = minimalTools(cornerTurn).filter(tool =>
-    institutionalMemoryEnabled || !['search', 'remember'].includes(tool.name));
-  if (commandRunnerAvailable) tools.push(RUNNER_TOOL);
-  // no_reply_needed mounts on every harness: it is the only silence path, so a
-  // nonhuman wake must always be able to end without posting prose. The tool
-  // itself refuses human wakes.
-  tools.push(SILENT_TOOL);
-  if (!nativeIoProven) tools.push(...scratchTools(cornerTurn && !repositoryCorner));
-  return tools;
-}
+export { agentToolsFor } from './minimal-tool-surface.js';
 
+const agentSurface = process.env.BEELINE_MCP_SURFACE === 'agent';
 const TOOLS = agentToolsFor(
   agentSurface,
   process.env.BEELINE_AGENT_DM === '1',
@@ -2878,6 +2858,12 @@ function advertisedAgentTool(name: string): ToolDefinition {
   if (!tool) throw new Error(`unknown or unavailable tool: ${name}; use only advertised tools`);
   return tool;
 }
+function validateAdvertisedToolInput(tool: ToolDefinition, args: JsonObject): void {
+  // Restore root combinations while retaining surface-specific restrictions
+  // such as scratch_io without quota. App operations have their own contracts
+  // and may share a name (e.g. workflow read) with an ordinary tool.
+  validateToolInput({ ...tool, inputSchema: { ...toolValidationSchema(tool.name), ...tool.inputSchema } }, args);
+}
 function validateToolInput(tool: ToolDefinition, args: JsonObject): void {
   const requestedAction = args.action;
   if (tool.name === 'search' && typeof args.query === 'string'
@@ -2985,7 +2971,7 @@ async function executeAgentTool(name: string, args: JsonObject, toolCallId: stri
   if (name === 'read' && args.cursor !== undefined &&
       (!args.cursor || typeof args.cursor !== 'object' || Array.isArray(args.cursor)))
     throw new Error('read: pass the returned next object unchanged as cursor');
-  validateToolInput(advertisedAgentTool(name), args);
+  validateAdvertisedToolInput(advertisedAgentTool(name), args);
   let deliveryWarning = '';
   if (name === 'order' || name === 'report' || name === 'post') {
     const named = namedPrivateFiles(attachRootsFromEnv(), String(args.text ?? ''), true)
@@ -4092,7 +4078,7 @@ async function handleLine(line: string): Promise<void> {
         const definition = TOOLS.find(tool => tool.name === params.name);
         if (!definition) throw new Error(`unknown or unavailable tool: ${params.name}`);
         if (params.arguments !== undefined && (!params.arguments || typeof params.arguments !== 'object' || Array.isArray(params.arguments))) throw new Error('tool arguments must be an object');
-        validateToolInput(definition, asObject(params.arguments));
+        validateAdvertisedToolInput(definition, asObject(params.arguments));
         return agentSurface
           ? callAgentTool(params.name as string, asObject(params.arguments), toolCallId(params, request.id))
           : callTool(params.name as string, asObject(params.arguments));

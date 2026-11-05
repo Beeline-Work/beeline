@@ -278,10 +278,10 @@ export function taggedIdentityIdsSql(message: string): string {
     WITH mention_text AS MATERIALIZED (
       SELECT ${withoutForwardCaptionSql(`${message}.text`)} text
     ), mention_members AS MATERIALIZED (
-      SELECT member.identity_id,tagged.handle
-      FROM memberships member JOIN identities tagged ON tagged.id=member.identity_id
-      WHERE member.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=${message}.room_id)
-        AND member.removed_at IS NULL
+      SELECT tagged_roster_member.identity_id,tagged.handle
+      FROM memberships tagged_roster_member JOIN identities tagged ON tagged.id=tagged_roster_member.identity_id
+      WHERE tagged_roster_member.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=${message}.room_id)
+        AND tagged_roster_member.removed_at IS NULL
     )
     SELECT tagged_member.identity_id
     FROM mention_members tagged_member CROSS JOIN mention_text

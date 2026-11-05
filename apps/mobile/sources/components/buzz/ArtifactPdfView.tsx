@@ -1,3 +1,4 @@
+import { IndexRow } from '@/components/buzz/IndexRow';
 import { useArtifactRecoveryGeneration } from '@/buzz/use-artifact-recovery';
 import React, { useEffect, useRef, useState } from 'react';
 import { Platform, Text, View } from 'react-native';
@@ -64,8 +65,8 @@ export function ArtifactPdfView({
   }, [attachment, mode, recovery]);
   if (failed) {
     return (
-      <View style={styles.placeholder} testID="artifact-pdf-failed">
-        <Text style={styles.placeholderText}>{ARTIFACT_PDF_FAILURE_TEXT}</Text>
+      <View style={styles.failureInset} testID="artifact-pdf-failed">
+        <IndexRow inset="flush" title="PDF unavailable" description={(ARTIFACT_PDF_FAILURE_TEXT)} />
       </View>
     );
   }
@@ -135,8 +136,8 @@ function ArtifactPdfWebView({
   const status = useSandboxWebViewStatus();
   if (documentHtml != null && !WebView && status === 'unavailable') {
     return (
-      <View style={styles.placeholder} testID="artifact-pdf-failed">
-        <Text style={styles.placeholderText}>{ARTIFACT_PDF_FAILURE_TEXT}</Text>
+      <View style={styles.failureInset} testID="artifact-pdf-failed">
+        <IndexRow inset="flush" title="PDF unavailable" description={(ARTIFACT_PDF_FAILURE_TEXT)} />
       </View>
     );
   }
@@ -174,6 +175,7 @@ const pdfFrameStyle: React.CSSProperties = {
 };
 
 const styles = StyleSheet.create((theme) => ({
+  failureInset: { paddingHorizontal: theme.buzz.roomList.edge },
   webview: { flex: 1, backgroundColor: '#ffffff' },
   placeholder: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: theme.buzz.space.md },
   placeholderText: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet, textAlign: 'center' },

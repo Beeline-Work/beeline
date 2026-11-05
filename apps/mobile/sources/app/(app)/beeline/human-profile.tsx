@@ -1,3 +1,4 @@
+import { IndexRow } from '@/components/buzz/IndexRow';
 import { useSurfaceFocus } from '@/buzz/use-surface-focus';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
@@ -235,18 +236,9 @@ export function HumanProfile({
       <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 32 }]}>
         {loading && <SurfaceGlyphLoader />}
         {displayedError && (
-          <View>
-            <Text style={styles.copy} accessibilityRole="alert">
-              {displayedError}
-            </Text>
-            {!member && (
-              <Button size="inline"
-                label="Retry"
-                onPress={() => { setError(null); setRetry((value) => value + 1); }}
-                variant="secondary"
-              />
-            )}
-          </View>
+          <IndexRow inset="flush" title={displayedError}
+            action={!member ? 'Retry' : undefined}
+            onPress={!member ? () => { setError(null); setRetry((value) => value + 1); } : undefined} />
         )}
         {member && (
           <>

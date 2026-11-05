@@ -6146,7 +6146,9 @@ export function BuzzChatSurface({
               />
             </View>
           </View>
-          <IndexRow title={connectionErrorTitle} description={connectionErrorDescription} action="Retry" onPress={retryHydration} testID="room-read-error" />
+          <View style={styles.hydrationFailureInset}>
+            <IndexRow inset="flush" title={connectionErrorTitle} description={connectionErrorDescription} action="Retry" onPress={retryHydration} testID="room-read-error" />
+          </View>
         </View>
       );
     }
@@ -6741,7 +6743,7 @@ export function BuzzChatSurface({
                       />
                     )}
                     {cornerOpenRepoPrompt && (roomRepoAccessIssue ? (
-                      <ErrorBanner inline title={roomRepoAccessIssue.reason === 'revoked' ? 'ACCESS TO THIS REPO WAS REVOKED' : 'THIS REPO ISN’T IN THE BEELINE INSTALLATION'}
+                      <ErrorBanner inline title={roomRepoAccessIssue.reason === 'revoked' ? 'Access to this repo was revoked' : 'This repo isn’t in the Beeline installation'}
                         description={`${roomRepoAccessIssue.fullName} must be reconnected before a ${CORNER_LABEL} can open.`}
                         retryLabel={roomRepoAccessIssue.reason === 'not_granted' ? 'Add this repo to the Beeline installation' : `Connect ${roomRepoAccessIssue.fullName.split('/')[0]}`}
                         retryDestination="external"
@@ -6820,7 +6822,7 @@ export function BuzzChatSurface({
                           >
                             {desktopDeliveryState === 'delivered'
                               ? 'DELIVERED'
-                              : 'MESSAGE FAILED · RETRY FROM THE MESSAGE'}
+                              : 'Message failed · retry from the message'}
                           </Text>
                         ) : settledTurn ? (
                           <TurnSettledLine line={settledTurn.line} testID="turn-settled-line" />
@@ -7333,7 +7335,7 @@ export function BuzzChatSurface({
             />
             {(renameError || membershipError) && (
               <View accessibilityRole="alert" style={styles.membershipError}>
-                <Text style={styles.membershipErrorText}>! {renameError ?? membershipError}</Text>
+                <ErrorBanner inline title={renameError ?? membershipError ?? ''} />
               </View>
             )}
           </>
@@ -7376,7 +7378,7 @@ export function BuzzChatSurface({
         )}
         {membershipError && (
           <View accessibilityRole="alert" style={styles.membershipError}>
-            <Text style={styles.membershipErrorText}>! {membershipError}</Text>
+            <ErrorBanner inline title={membershipError} />
           </View>
         )}
         <HullActionSheetCancel
@@ -7458,9 +7460,7 @@ export function BuzzChatSurface({
           value={renameDraft}
         />
         {renameError ? (
-          <Text accessibilityRole="alert" style={styles.membershipErrorText}>
-            {renameError}
-          </Text>
+          <ErrorBanner inline title={renameError} />
         ) : null}
       </HullDialog>
 
@@ -7547,6 +7547,7 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       justifyContent: 'center',
     },
+    hydrationFailureInset: { paddingHorizontal: theme.buzz.roomList.edge },
     hydrationErrorHeader: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -7557,23 +7558,6 @@ const styles = StyleSheet.create((theme) => {
       borderBottomColor: groknight.border,
       backgroundColor: groknight.bgBase,
     },
-    hydrationErrorBody: {
-      flex: 1,
-      alignItems: 'flex-start',
-      justifyContent: 'center',
-      paddingHorizontal: groknight.space.xl,
-    },
-    errorLabel: {
-      ...theme.buzz.type.sectionHead,
-      fontFamily: groknight.monoSemibold,
-      color: groknight.accent,
-    },
-    hydrationErrorText: {
-      ...theme.buzz.type.body,
-      marginTop: groknight.space.sm,
-      color: groknight.textSecondary,
-    },
-    hydrationErrorRetry: { marginTop: groknight.space.md },
     loadingText: {
       ...theme.buzz.type.sectionHead,
       fontFamily: groknight.monoSemibold,
@@ -7723,11 +7707,6 @@ const styles = StyleSheet.create((theme) => {
       borderWidth: 1,
       borderColor: groknight.borderStrong,
       backgroundColor: groknight.bgHighlight,
-    },
-    membershipErrorText: {
-      ...Typography.default('semiBold'),
-      ...theme.buzz.type.meta,
-      color: groknight.textSecondary,
     },
 
     // ── Message blocks ──────────────────────────────────────────────

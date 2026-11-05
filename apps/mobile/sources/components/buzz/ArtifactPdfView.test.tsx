@@ -1,3 +1,4 @@
+import { IndexRow } from './IndexRow';
 vi.mock('@/buzz/use-artifact-recovery', () => ({ useArtifactRecoveryGeneration: () => 0 }));
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
@@ -31,7 +32,7 @@ vi.mock('react-native-unistyles', () => ({
   StyleSheet: {
     create: (factory: (theme: unknown) => unknown) =>
       factory({
-        buzz: { ledgerQuiet: '#777', space: { md: 12 }, type: { meta: {} } },
+        buzz: { roomList: { edge: 20 }, ledgerQuiet: '#777', space: { md: 12 }, type: { meta: {} } },
       }),
   },
 }));
@@ -173,7 +174,7 @@ describe('the Android PDF render', () => {
     const renderer = render(<ArtifactPdfView attachment={attachment()} mode="viewer" />);
     await flush();
     const failed = renderer.root.findByProps({ testID: 'artifact-pdf-failed' });
-    expect(failed.findByType('Text' as any).props.children).toBe(ARTIFACT_PDF_FAILURE_TEXT);
+    expect(failed.findByType(IndexRow).props.description).toBe(ARTIFACT_PDF_FAILURE_TEXT);
   });
 });
 
@@ -217,7 +218,7 @@ describe('a PDF that cannot be fetched at all', () => {
     const renderer = render(<ArtifactPdfView attachment={attachment()} mode="viewer" />);
     await flush();
     const failed = renderer.root.findByProps({ testID: 'artifact-pdf-failed' });
-    expect(failed.findByType('Text' as any).props.children).toBe(ARTIFACT_PDF_FAILURE_TEXT);
+    expect(failed.findByType(IndexRow).props.description).toBe(ARTIFACT_PDF_FAILURE_TEXT);
     expect(ARTIFACT_PDF_FAILURE_TEXT).toContain('Open in browser');
   });
 

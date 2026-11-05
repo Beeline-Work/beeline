@@ -1,3 +1,4 @@
+import { IndexRow } from '@/components/buzz/IndexRow';
 import { useArtifactRecoveryGeneration } from '@/buzz/use-artifact-recovery';
 import { Button } from '@/components/buzz/Button';
 import { CloseButton } from '@/components/buzz/CloseGlyph';
@@ -166,8 +167,8 @@ export function DesktopArtifactFrame({
   }, [attachment, format, recovery]);
   if (failed) {
     return (
-      <View style={styles.placeholder} testID="desktop-artifact-failed">
-        <Text style={styles.placeholderText}>The page could not be loaded. Try again.</Text>
+      <View style={styles.failureInset} testID="desktop-artifact-failed">
+        <IndexRow inset="flush" title="Page unavailable" description={"The page could not be loaded. Try again."} />
       </View>
     );
   }
@@ -216,8 +217,8 @@ function DesktopArtifactMarkdown({ attachment }: { attachment: AttachmentReferen
   }, [attachment, recovery]);
   if (failed) {
     return (
-      <View style={styles.placeholder} testID="desktop-artifact-failed">
-        <Text style={styles.placeholderText}>The page could not be loaded. Try again.</Text>
+      <View style={styles.failureInset} testID="desktop-artifact-failed">
+        <IndexRow inset="flush" title="Page unavailable" description={"The page could not be loaded. Try again."} />
       </View>
     );
   }
@@ -243,6 +244,7 @@ const sandboxedFrameStyle: React.CSSProperties = {
 };
 
 const styles = StyleSheet.create((theme) => ({
+  failureInset: { paddingHorizontal: theme.buzz.roomList.edge },
   screen: { flex: 1, backgroundColor: theme.buzz.bgBase },
   header: {
     flexDirection: 'row',

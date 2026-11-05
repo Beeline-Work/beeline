@@ -1,3 +1,4 @@
+import { IndexRow } from '@/components/buzz/IndexRow';
 import { useArtifactRecoveryGeneration } from '@/buzz/use-artifact-recovery';
 import { funnelOnboarding } from '@/auth/signin-funnel';
 import React, { useEffect, useRef, useState } from 'react';
@@ -67,8 +68,8 @@ export function RunnableArtifact({ attachment }: { attachment: AttachmentReferen
   }
   if (failed || (Platform.OS !== 'web' && status === 'unavailable')) {
     return (
-      <View style={styles.placeholder}>
-        <Text style={styles.text}>Stopped. Close and reopen it to try again.</Text>
+      <View style={styles.failureInset} >
+        <IndexRow inset="flush" title="Artifact stopped" description={"Stopped. Close and reopen it to try again."} />
       </View>
     );
   }
@@ -142,6 +143,7 @@ export function RunnableArtifact({ attachment }: { attachment: AttachmentReferen
 }
 
 const styles = StyleSheet.create((theme) => ({
+  failureInset: { paddingHorizontal: theme.buzz.roomList.edge },
   frame: { flex: 1 },
   placeholder: {
     flex: 1,

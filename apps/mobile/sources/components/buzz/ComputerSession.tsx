@@ -1,3 +1,4 @@
+import { IndexRow } from '@/components/buzz/IndexRow';
 import { Button } from './Button';
 import { CloseButton } from './CloseGlyph';
 import { ContentTarget, InlineRow } from './IndexRow';
@@ -369,7 +370,9 @@ export function ComputerSessionViewer({ session, onClose, roomId, agentHandle, a
       </InlineRow>
       <View style={styles.viewerStream}>
         {unavailable ? (
-          <View style={styles.ended}><Text style={styles.endedText}>Browser is unavailable</Text></View>
+          <View style={styles.failureInset} >
+            <IndexRow inset="flush" title="Browser unavailable" description={"Browser is unavailable"} />
+          </View>
         ) : displayed ? (
           <ComputerStream session={shownSession} warm={warm} interactive={active} onEnded={() => setEnded(true)}
           onFirstFrame={() => { firstFrame.current = true; setPreviewFrame(null); }}
@@ -394,6 +397,7 @@ export function ComputerSessionViewer({ session, onClose, roomId, agentHandle, a
 }
 
 const styles = StyleSheet.create((theme) => ({
+  failureInset: { paddingHorizontal: theme.buzz.roomList.edge },
   warmHost: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 100 },
   card: { width: '100%', marginTop: theme.buzz.transcriptCard.marginTop, borderWidth: 1, borderColor: theme.buzz.borderStrong, borderRadius: theme.buzz.transcriptCard.cornerRadius, overflow: 'hidden' },
   preview: { height: 218, backgroundColor: theme.buzz.bgBase },

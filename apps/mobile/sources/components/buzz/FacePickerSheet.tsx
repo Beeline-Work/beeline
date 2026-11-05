@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import React, { useState } from 'react';
 import { Text, View } from 'react-native';
@@ -72,9 +73,7 @@ export function FacePickerSheet({
         />
       </View>
       {error ? (
-        <Text accessibilityRole="alert" style={styles.error} testID="face-picker-error">
-          {error}
-        </Text>
+        <ErrorBanner inline title={error} titleTestID="face-picker-error" />
       ) : null}
       <HullActionSheetCancel label="Done" onPress={onClose} testID="face-picker-done" />
     </HullActionSheetModal>
@@ -83,10 +82,4 @@ export function FacePickerSheet({
 
 const styles = StyleSheet.create((theme) => ({
   gridSlot: { alignItems: 'center', paddingVertical: theme.buzz.space.sm },
-  error: {
-    ...theme.buzz.type.meta,
-    color: theme.buzz.textSecondary,
-    paddingHorizontal: theme.buzz.space.lg,
-    paddingBottom: 8,
-  },
 }));

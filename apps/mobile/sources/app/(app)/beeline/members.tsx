@@ -1,4 +1,4 @@
-
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { useSurfaceFocus } from '@/buzz/use-surface-focus';
 import { presentPersonInvite } from '@/components/buzz/PersonInviteSheet';
 import { appErrorCopy, connectionErrorDescription } from '@/buzz/app-error-copy';
@@ -1227,11 +1227,9 @@ export default function BuzzMembers({
                           </Text>
                         )}
                         {modelAxisError === kind && (
-                          <Text style={styles.axisError} testID={`model-axis-error-${kind}`}>
-                            {axis
+                          <ErrorBanner inline title={(axis
                               ? 'Could not open these choices. Try again.'
-                              : 'Could not load effort choices for this model. Make sure the agent is online, then try again or choose another model.'}
-                          </Text>
+                              : 'Could not load effort choices for this model. Make sure the agent is online, then try again or choose another model.')} titleTestID={`model-axis-error-${kind}`} />
                         )}
                       </View>
                     );
@@ -1290,9 +1288,7 @@ export default function BuzzMembers({
                     {accessCaption(selectedAgent.access, selectedAgent.agent.identity.name)}
                   </Text>
                   {accessError && (
-                    <Text style={styles.switchError} testID="agent-access-error">
-                      {accessError}
-                    </Text>
+                    <ErrorBanner inline title={accessError} titleTestID="agent-access-error" />
                   )}
                 </View>
               )}
@@ -1330,9 +1326,7 @@ export default function BuzzMembers({
                     </Text>
                   )}
                   {yoloError && (
-                    <Text style={styles.switchError} testID="agent-yolo-error">
-                      {yoloError}
-                    </Text>
+                    <ErrorBanner inline title={yoloError} titleTestID="agent-yolo-error" />
                   )}
                 </View>
               )}
@@ -1565,13 +1559,6 @@ const styles = StyleSheet.create((theme) => {
       paddingHorizontal: hull.space.lg,
     },
     loadingText: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
-    errorPanel: { padding: hull.space.sm },
-    error: {
-      ...Typography.default(),
-      ...hull.type.meta,
-      color: hull.danger,
-      textAlign: 'center',
-    },
     desktopColumn: { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' },
     content: {
       padding: hull.space.md,
@@ -1605,13 +1592,6 @@ const styles = StyleSheet.create((theme) => {
       minWidth: 0,
       textAlign: 'right',
     },
-    axisError: {
-      ...Typography.default(),
-      ...hull.type.meta,
-      color: hull.danger,
-      paddingHorizontal: hull.space.sm,
-      paddingBottom: hull.space.sm,
-    },
     switchSection: { gap: hull.space.xs },
     switchRow: {
       minHeight: 40,
@@ -1621,7 +1601,6 @@ const styles = StyleSheet.create((theme) => {
       gap: hull.space.sm,
     },
     switchLabelOn: { color: hull.accent },
-    switchError: { ...Typography.default(), ...hull.type.meta, color: hull.danger },
     // The destructive action is a full 44pt target below configuration. The
     // red is the border: `dialogDanger` clears the 3:1 non-text floor on both
     // canvases, where the same value as small ink would sit at 4.36:1 on

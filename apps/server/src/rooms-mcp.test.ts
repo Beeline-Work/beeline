@@ -1450,13 +1450,21 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       'SELECT id FROM messages WHERE room_id=$1 AND author_id=$2 ORDER BY created_at DESC,id DESC LIMIT 1', [ROOM, member])).rows[0]!.id;
     const secondCommand = await agentCommand(secondId);
     expect(secondCommand.agent_depth).toBe(3);
-    // The demo agent's next tag cannot open a new member turn: the loop stops.
+    // The final tag still reaches the external member, without a helper turn.
     const stopped = await latestMemberCommand();
     await daemon.execute('claimAgentCommand', { roomId: ROOM, commandId: secondCommand.id, generationId: 'loop-2' }, AGENT);
     await daemon.execute('postAgentTurnReceipt', { roomId: ROOM, agentId: AGENT, requestId: secondCommand.turn_request_id, generationId: 'loop-2', status: 'working' }, AGENT);
     await daemon.execute('postRoomMessage', { roomId: ROOM, requestId: secondCommand.turn_request_id, generationId: 'loop-2', text: `@${handle} step two done` }, AGENT);
     expect(await latestMemberCommand()).toEqual(stopped);
-    expect((await db.query('SELECT 1 FROM rooms_mcp_webhook_outbox WHERE member_id=$1', [member])).rowCount).toBe(2);
+    expect((await db.query('SELECT 1 FROM rooms_mcp_webhook_outbox WHERE member_id=$1', [member])).rowCount).toBe(3);
+    // Its reply retains that depth, so it cannot start a fourth helper hop.
+    const reply = await client.callTool(replyTool === 'post'
+      ? { name: 'post', arguments: { address: ROOM, text: '@demo-agent step three' } }
+      : { name: 'send_message', arguments: { room: ROOM, text: '@demo-agent step three' } });
+    expect(reply.isError).not.toBe(true);
+    const replyId = (await db.query<{ id: string }>(
+      'SELECT id FROM messages WHERE room_id=$1 AND author_id=$2 ORDER BY created_at DESC,id DESC LIMIT 1', [ROOM, member])).rows[0]!.id;
+    expect((await db.query('SELECT 1 FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2', [replyId, AGENT])).rowCount).toBe(0);
   });
   it.each([
     ['Claude Code', [], 'Claude Code'],
@@ -1499,6 +1507,38 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const second = await client.callTool({ name: 'send_message', arguments: { room: ROOM, text: 'idempotent handoff @demo-agent', idempotencyKey: 'job-1' } });
     expect(JSON.parse((second.content as { text: string }[])[0]!.text).data.messageId).toBe(id);
     expect((await db.query('SELECT 1 FROM messages WHERE text=$1', ['idempotent handoff @demo-agent'])).rowCount).toBe(1);
+  });
+  it.each(['member', 'client', 'none'])('MCP-TAG-DEPTH: depth-three report preserves the tag with %s webhook', async callback => {
+    await deliverMcpMemberWebhooks(db, async () => new Response('', { status: 200 }));
+    const { client, grant, member } = await connected();
+    const url = 'https://hooks.example/depth-three';
+    if (callback === 'member')
+      await client.callTool({ name: 'set_webhook', arguments: { url } });
+    if (callback === 'client')
+      await db.query('UPDATE rooms_mcp_clients SET callback_url=$2 WHERE id=$1', [grant.clientId, url]);
+    await db.query("UPDATE rooms_mcp_members SET last_bridge_poll_at=now()-interval '1 hour' WHERE member_id=$1", [member]);
+    expect((await db.query('SELECT 1 FROM rooms_mcp_event_subscriptions WHERE member_id=$1', [member])).rowCount).toBe(0);
+    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+    const source = await phone.execute('sendRoomMessage', { roomId: ROOM, text: '@demo-agent report back' }, USER);
+    const command = (await db.query<{ id: string; turn_request_id: string }>(
+      "UPDATE agent_commands SET agent_depth=3,reason='report' WHERE source_message_id=$1 AND agent_id=$2 RETURNING id,turn_request_id",
+      [source.messageId, AGENT])).rows[0]!;
+    const generationId = `depth-three-${callback}`;
+    await daemon.execute('claimAgentCommand', { roomId: ROOM, commandId: command.id, generationId }, AGENT);
+    await daemon.execute('postAgentTurnReceipt', { roomId: ROOM, agentId: AGENT, requestId: command.turn_request_id, generationId, status: 'working' }, AGENT);
+    const result = await daemon.execute('postRoomMessage', { roomId: ROOM, requestId: command.turn_request_id, generationId, text: `@${handle} the work is finished` }, AGENT);
+    expect((await db.query('SELECT 1 FROM rooms_mcp_mentions WHERE member_id=$1 AND message_id=$2', [member, result.id])).rowCount).toBe(1);
+    expect((await db.query('SELECT 1 FROM agent_commands WHERE agent_id=$1', [member])).rowCount).toBe(0);
+    const posts: { url: string; body: { messageId: string; memberId: string } }[] = [];
+    await deliverMcpMemberWebhooks(db, async (url, init) => {
+      posts.push({ url, body: JSON.parse(init.body) });
+      return new Response('', { status: 200 });
+    });
+    expect(posts.filter(post => post.body.memberId === member)).toEqual(callback === 'none' ? [] : [
+      { url, body: expect.objectContaining({ messageId: result.id, memberId: member }) },
+    ]);
+    const mentions = await client.callTool({ name: 'list_mentions', arguments: {} });
+    expect(JSON.stringify(mentions)).toContain(result.id);
   });
   it.each(['human tag', 'DM', 'agent tag'])('MCP-WAKE-1: %s wakes only the webhook', async path => {
     const { client, grant, member } = await connected();

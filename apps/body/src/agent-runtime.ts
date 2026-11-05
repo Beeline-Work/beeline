@@ -252,7 +252,10 @@ export async function runAgentRuntime(
     savingVaultCards.add(submission.cardId);
     const client = new StdioSquireMcpClient({ scope: { agentId, roomId: submission.roomId }, log: () => {} });
     void storeVaultSubmission(submission, (tool, args) => client.call(tool, args))
-      .then(answer => daemonApi.answerVaultSave(submission.attemptId, answer))
+      .then(answer => {
+        if (answer.status === 'saved') void daemonApi.refreshMachineVault();
+        return daemonApi.answerVaultSave(submission.attemptId, answer);
+      })
       .catch(() => {})
       .finally(() => { client.close(); savingVaultCards.delete(submission.cardId); });
   });
@@ -387,6 +390,7 @@ export async function runAgentRuntime(
           api: daemonApi,
           agentId,
           registryHome: config.operatorHome,
+          refreshVault: () => daemonApi.refreshMachineVault(),
           log: (message) => console.log(`[body] connector: ${message}`),
         });
         daemonApi.setConnectorAssignmentListener(() => connectorLoop?.wake());

@@ -277,7 +277,7 @@ move1_describe('server-mediated connected app tools', () => {
     move1_expect(calls).toEqual([{ name: 'connect', input: move1_expect.objectContaining({ squireAvailable: false }) }]);
   });
 
-  move1_it('refreshes the vault through the mounted agent relay before connect checks readiness', async () => {
+  move1_it('probes the mounted agent relay before connect checks readiness without reporting the vault', async () => {
     move1_vi.stubEnv('BEELINE_SQUIRE_RELAY_URL', 'http://squire.test');
     move1_vi.stubEnv('BEELINE_SQUIRE_RELAY_TOKEN', 'relay-only');
     const sequence: string[] = [];
@@ -298,7 +298,7 @@ move1_describe('server-mediated connected app tools', () => {
     move1_expect(JSON.parse(reply))
       .toMatchObject({ status: 'needs_squire', squire: { url: 'https://example.com' } });
     move1_expect(move1_pendingGrantToolCall({ title: 'connect', content: reply })).toBe(false);
-    move1_expect(sequence).toEqual(['mcp', 'postConnectorVault', 'connect']);
+    move1_expect(sequence).toEqual(['mcp', 'connect']);
   });
 
   move1_it('reports unavailable when mounted Squire cannot be reached without attempting a browser drive', async () => {
@@ -356,7 +356,7 @@ move1_describe('server-mediated connected app tools', () => {
       const { reply, sequence, connects } = await run(asset, {
         start: page(asset, [['@e:1', 'b', '@credits'], ['@e:2', 'b', '@create']]) });
       move1_expect(reply).toMatchObject({ status: 'ready' });
-      move1_expect(sequence).toEqual(['list_credentials', 'postConnectorVault', 'connect', 'operate_start',
+      move1_expect(sequence).toEqual(['list_credentials', 'connect', 'operate_start',
         'operate_observe:sign in', 'operate_observe:log in', 'operate_observe:sign up', 'operate_finish', 'connect']);
       move1_expect(connects[0]).toMatchObject({ signedInUrl: asset });
       move1_expect(connects[0]).not.toHaveProperty('squireSignedIn');
@@ -373,7 +373,7 @@ move1_describe('server-mediated connected app tools', () => {
     ])('keeps the needs_squire handback for %s', async (_case, start) => {
       const { reply, sequence, connects } = await run(asset, { start });
       move1_expect(reply).toMatchObject({ status: 'needs_squire', squire: { url: 'https://www.google.com/search?q=Dreamina' } });
-      move1_expect(sequence).toEqual(['list_credentials', 'postConnectorVault', 'connect', 'operate_start', 'operate_finish']);
+      move1_expect(sequence).toEqual(['list_credentials', 'connect', 'operate_start', 'operate_finish']);
       move1_expect(connects).toHaveLength(1);
     });
 

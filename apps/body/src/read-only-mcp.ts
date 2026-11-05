@@ -1877,20 +1877,12 @@ export async function createSchedule(
   if (!prompt) throw new Error('prompt must be a non-empty string');
   if (prompt.length > 2000) throw new Error('prompt exceeds 2000 characters');
   const { cadence, floored, describe } = parseScheduleCadence(args);
-  const maxRuns = args.maxRuns;
-  if (
-    maxRuns !== undefined &&
-    (typeof maxRuns !== 'number' || !Number.isInteger(maxRuns) || maxRuns < 1)
-  ) {
-    throw new Error('maxRuns must be a positive integer');
-  }
   const created = await deps.execute('createAgentSchedule', {
     roomId: deps.roomId,
     prompt,
     cadence,
     ...(args.title !== undefined ? { title: args.title } : {}),
     ...(stringArg(args, 'workflowName') ? { workflowName: stringArg(args, 'workflowName')! } : {}),
-    ...(maxRuns !== undefined ? { maxRuns } : {}),
   });
   const scheduleId = typeof created.scheduleId === 'string' ? created.scheduleId : 'unknown';
   const floorNote = floored
@@ -1898,7 +1890,6 @@ export async function createSchedule(
     : '';
   return (
     `Schedule ${scheduleId} created: ${describe()}` +
-    (maxRuns !== undefined ? `, ${maxRuns} run${maxRuns === 1 ? '' : 's'}` : '') +
     `; the prompt runs as a mention to you in this Room.` +
     floorNote +
     ' Use wake(action:delete, scheduleId) to remove it.'
@@ -2050,15 +2041,8 @@ export async function updateSchedule(
   if (args.prompt !== undefined && !prompt) throw new Error('prompt must be a non-empty string');
   if (prompt && prompt.length > 2000) throw new Error('prompt exceeds 2000 characters');
   const parsed = args.cadence === undefined ? undefined : parseScheduleCadence(args);
-  const maxRuns = args.maxRuns;
-  if (
-    maxRuns !== undefined &&
-    (typeof maxRuns !== 'number' || !Number.isInteger(maxRuns) || maxRuns < 1)
-  ) {
-    throw new Error('maxRuns must be a positive integer');
-  }
-  if (prompt === undefined && parsed === undefined && maxRuns === undefined && args.title === undefined && !stringArg(args, 'workflowName'))
-    throw new Error('give a prompt, cadence, or maxRuns to change');
+  if (prompt === undefined && parsed === undefined && args.title === undefined && !stringArg(args, 'workflowName'))
+    throw new Error('give a prompt, cadence, title, or workflowName to change');
   const updated = await deps.execute('updateAgentSchedule', {
     roomId: deps.roomId,
     scheduleId,
@@ -2067,7 +2051,6 @@ export async function updateSchedule(
     ...(stringArg(args, 'workflowName') ? { workflowName: stringArg(args, 'workflowName')! } : {}),
     ...(prompt !== undefined ? { prompt } : {}),
     ...(parsed ? { cadence: parsed.cadence } : {}),
-    ...(maxRuns !== undefined ? { maxRuns } : {}),
   });
   const nextRunAt =
     typeof updated.nextRunAt === 'number'
@@ -3143,7 +3126,7 @@ async function executeAgentTool(name: string, args: JsonObject, toolCallId: stri
       if (args.action === 'delete' && args.trigger === undefined && args.scheduleId !== undefined)
         args = { ...args, trigger: 'schedule' };
       // Explicit allowlist: no payload can select an arbitrary daemon operation or recipient.
-      const allowed = new Set(['action', 'trigger', 'address', 'scheduleId', 'subscriptionId', 'prompt', 'cadence', 'maxRuns', 'title', 'when', 'workflowName', 'source', 'event', 'repository', 'channelId', 'channelName', 'kinds']);
+      const allowed = new Set(['action', 'trigger', 'address', 'scheduleId', 'subscriptionId', 'prompt', 'cadence', 'title', 'when', 'workflowName', 'source', 'event', 'repository', 'channelId', 'channelName', 'kinds']);
       if (Object.keys(args).some(key => !allowed.has(key))) throw new Error('wake only manages this agent’s own wake sources');
       if (args.trigger !== 'lifecycle' && args.address !== undefined) throw new Error('address is only supported for lifecycle wakes; schedules and events belong to this place');
       if (args.trigger === 'lifecycle' && !args.address) throw new Error('lifecycle wake requires address');

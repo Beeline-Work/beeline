@@ -82,7 +82,6 @@ import {
   runningBeelineReleaseId,
   SITUATIONAL_SKILL_NAMES,
 } from './beeline-skill.js';
-import { isTrustySquireMcpLaunch } from './external-mcp-capabilities.js';
 import { classifyImportedMcpServer, isCodeOwnedHostMcpName } from './mcp-route-class.js';
 import {
   grantedSquireHostRoute,
@@ -100,7 +99,6 @@ import {
   type OpenRouterRoutingHomeInput,
 } from './openrouter-routing.js';
 import { extractTomlSections, tomlChildTableNames } from './toml-section.js';
-import { trustySquireLegacyStorePaths } from './trusty-squire-storage.js';
 
 const AGENT_PRIVATE_STATE_ENV = 'BEELINE_AGENT_PRIVATE_DIR';
 
@@ -1005,69 +1003,6 @@ async function provisionPiCustomModelConfig(
     await unlink(target).catch(() => undefined);
     if (failClosed) throw error;
     console.warn('[body] operator Pi custom model passthrough failed:', error);
-  }
-}
-
-export function hasLocalTrustySquireState(
-  operatorHome = homedir(),
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return trustySquireLegacyStorePaths(operatorHome, env).some(existsSync);
-}
-
-export function hasAmbientTrustySquireConfiguration(operatorHome = homedir()): boolean {
-  return collectTrustySquireImportedServers(operatorHome).length > 0;
-}
-
-function collectTrustySquireImportedServers(operatorHome: string): string[] {
-  const names = new Set<string>();
-  addTrustySquireTomlNames(names, resolve(operatorHome, '.codex/config.toml'));
-  addTrustySquireTomlNames(names, resolve(operatorHome, '.grok/config.toml'));
-  addTrustySquireClaudeNames(names, resolve(operatorHome, '.claude.json'));
-  addTrustySquireClaudeNames(names, resolve(operatorHome, PI_MCP_CONFIG.source));
-  addTrustySquireGooseNames(names, resolve(operatorHome, '.config/goose/config.yaml'));
-  return [...names];
-}
-
-function addTrustySquireTomlNames(names: Set<string>, path: string): void {
-  const source = readExistingText(path);
-  if (source === undefined) return;
-  let servers: unknown;
-  try {
-    servers = parseToml(source).mcp_servers;
-  } catch {
-    return;
-  }
-  addTrustySquireNamesFromMap(names, recordValue(servers));
-}
-
-function addTrustySquireClaudeNames(names: Set<string>, path: string): void {
-  addTrustySquireNamesFromMap(names, recordValue(readJsonObject(path)?.mcpServers));
-}
-
-function addTrustySquireGooseNames(names: Set<string>, path: string): void {
-  addTrustySquireNamesFromMap(names, readGooseExtensions(path));
-}
-
-function addTrustySquireNamesFromMap(
-  names: Set<string>,
-  servers: Record<string, unknown> | undefined,
-): void {
-  if (!servers) return;
-  for (const [name, value] of Object.entries(servers)) {
-    const declaration = recordValue(value) ?? {};
-    if (classifyImportedMcpServer({ name, declaration }) !== 'host') continue;
-    const command =
-      typeof declaration.command === 'string'
-        ? declaration.command
-        : typeof declaration.cmd === 'string'
-          ? declaration.cmd
-          : '';
-    const args =
-      Array.isArray(declaration.args) && declaration.args.every((arg) => typeof arg === 'string')
-        ? (declaration.args as string[])
-        : [];
-    if (name === 'squire' || (command && isTrustySquireMcpLaunch(command, args))) names.add(name);
   }
 }
 

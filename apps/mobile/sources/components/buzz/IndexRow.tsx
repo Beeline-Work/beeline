@@ -145,7 +145,7 @@ export type IndexRowTrailingPress = {
 };
 
 /** The inline text action on the trailing axis, such as Connect. */
-export type IndexRowActionControl = {
+type IndexRowActionControl = {
   accessibilityLabel?: string;
   disabled?: boolean;
   label: string;

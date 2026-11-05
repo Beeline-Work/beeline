@@ -40,7 +40,7 @@ let successfulPagesSinceReport = 0;
 const SUCCESS_SAMPLE_RATE = 8;
 
 /** The successful Room GET's wire timing, kept locally until the existing page observation. */
-export function recordRoomReadNetworkTiming(
+function recordRoomReadNetworkTiming(
   roomId: string,
   timing: { requestToFirstByteMs: number; serverProcessingMs: number; jsResponseDelayMs?: number },
 ): void {

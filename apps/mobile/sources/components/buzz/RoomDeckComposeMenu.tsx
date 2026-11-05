@@ -54,7 +54,7 @@ const FAB_SIZE = 44;
  * Flat hull compose affordance for the Room deck. The brass plus rotates into
  * a close mark while the shared bottom Hull sheet owns the floating actions.
  */
-export function RoomDeckComposeMenu({
+function RoomDeckComposeMenu({
   onSelect,
   canManageWorkspace = true,
   header = false,

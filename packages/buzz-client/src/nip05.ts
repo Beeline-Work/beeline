@@ -7,6 +7,7 @@ const MANAGED_HANDLE_RE = /^[a-z0-9][a-z0-9-]{2,29}$/;
 const GITHUB_HANDLE_RE = /^[a-z0-9][a-z0-9-]{0,38}$/;
 const MANAGED_HANDLE_BLOCKLIST = new Set(['admin', 'support', 'beeline']);
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export interface ManagedIdentity {
   handle: string;
   displayName: string;
@@ -16,6 +17,7 @@ export interface ManagedIdentity {
 }
 
 /** Normalize a key-only managed handle, or return null when it violates the naming rules. */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function normalizeManagedHandle(value: string): string | null {
   const handle = value.trim().toLowerCase();
   return MANAGED_HANDLE_RE.test(handle) && !MANAGED_HANDLE_BLOCKLIST.has(handle) ? handle : null;
@@ -77,6 +79,7 @@ export function normalizeNip05Identifier(identifier: string): string | null {
   return parsed ? `${parsed.local}@${parsed.domain}` : null;
 }
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export type Nip05VerificationStatus = 'verified' | 'mismatch' | 'unreachable' | 'invalid';
 
 export interface Nip05VerificationResult {

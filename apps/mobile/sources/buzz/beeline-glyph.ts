@@ -210,11 +210,11 @@ const PROOF_FRAMES: readonly ProofFrame[] = [
   },
 ];
 
-export function glyphPaintProofFrames(): readonly ProofFrame[] {
+function glyphPaintProofFrames(): readonly ProofFrame[] {
   return PROOF_FRAMES;
 }
 
-export function buildGlyphPaintProofHtml(): string {
+function buildGlyphPaintProofHtml(): string {
   const cards = PROOF_FRAMES.map((frame) => {
     const ground = glyphPaintGround(frame.dark);
     const svg = glyphPaintCaptureSvg({ ...frame, ground: true });

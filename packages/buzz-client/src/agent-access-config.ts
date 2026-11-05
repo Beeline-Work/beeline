@@ -7,6 +7,7 @@ export const MAX_AGENT_ACCESS_ALLOWLIST = 64;
 const HEX_64 = /^[0-9a-f]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$/;
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export type AgentAccessPolicyV1 = 'everyone' | 'creator' | 'allowlist';
 
 export interface AgentAccessConfigV1 {
@@ -75,6 +76,7 @@ function uniqueTag(event: NostrEvent, name: string): string | undefined {
   return matches.length === 1 ? matches[0]?.[1] : undefined;
 }
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function buildAgentAccessConfig(
   pairedOwner: Identity,
   input: AgentAccessConfigV1,
@@ -101,6 +103,7 @@ export function buildAgentAccessConfig(
   );
 }
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function parseAgentAccessConfig(event: NostrEvent): AgentAccessConfigV1 | undefined {
   if (
     event.kind !== KIND_AGENT_ACCESS_CONFIG ||

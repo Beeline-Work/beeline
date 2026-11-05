@@ -194,14 +194,6 @@ function isCornerReviewTurn(reviewer: boolean, trigger: string): boolean {
   return reviewer && /\bpassed a check\b/i.test(trigger);
 }
 
-export async function cornerHasUndeliveredRepositoryWork(
-  worktreePath: string,
-  featureBranch?: string,
-  targetBranch?: string,
-): Promise<boolean> {
-  return Boolean(await cornerUndeliveredRepositoryState(worktreePath, featureBranch, targetBranch));
-}
-
 async function cornerUndeliveredRepositoryState(
   worktreePath: string,
   featureBranch?: string,

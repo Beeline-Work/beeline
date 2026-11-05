@@ -71,7 +71,7 @@ export class OrderedRecordStore<T> {
 }
 
 /** Replay changes observed after a read began, in their arrival order. */
-export function replayAfter<T, D>(
+function replayAfter<T, D>(
   base: T,
   mark: RecordMark,
   changes: readonly { readonly clock: number; readonly delta: D }[],

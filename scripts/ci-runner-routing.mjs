@@ -9,8 +9,6 @@ const baseLabels = ['self-hosted', 'Linux', 'X64', 'beeline-ci', 'beeline-ci-bal
 const poolRole = name => name === 'beeline-ci-squire-01' ? 'control'
   : name === 'beeline-ci-squire-10' ? 'workspace'
   : /^beeline-ci-squire-0[2-7]$/.test(name ?? '') ? 'heavy' : undefined;
-// 2026-11-04 successful-job empirical p99 + two minutes; see data/ci/.
-const serverShardTimeouts = [21, 27, 29, 21, 21, 23, 21, 18];
 const roles = ['control', 'heavy', 'workspace'];
 const hosted = () => ['ubuntu-latest'];
 const yes = value => value === true || value === 'true';
@@ -67,7 +65,7 @@ export function routeRunners({ runners = [], flags = {}, event = 'pull_request',
   targets.shared = take('shared', 'heavy');
   const serverMatrix = Array.from({ length: 8 }, (_, index) => {
     const target = take(`server-${index + 1}`, 'heavy', server || dispatched('server-suite') || dispatched('server-integration'));
-    return { shard: index + 1, target, hosted: target[0] === 'ubuntu-latest', timeoutMinutes: serverShardTimeouts[index] };
+    return { shard: index + 1, target, hosted: target[0] === 'ubuntu-latest' };
   });
   targets.deadCode = take('deadCode', 'heavy', yes(flags.code) || dispatched('dead-code'));
   targets.native = take('native', 'heavy', yes(flags.nativeFingerprint) || yes(flags.mobileSuite) || dispatched('native-fingerprint') || dispatched('mobile-suite'));

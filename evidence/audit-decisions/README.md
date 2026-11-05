@@ -2,14 +2,13 @@
 
 This batch implements the captain's accepted recommendations. The code batch
 https://github.com/Beeline-Work/beeline/pull/3447 merged after green CI. L1 is
-complete. B1's one-row pass has last confirmed **1,934 new card updates and one
-rolled-back timeout**; cumulative confirmed card updates are at least **27,849**,
-with 63,964 ledger deletions already complete. **The original writer's current
-state is unconfirmed** after its SSH output stalled and both Fly control routes
-failed. No second writer was launched. SQL backend **1173283**, application
-`audit-b1-20261105-cleanup`, needs firstmate verification before restart.
-See `b1-control-connection-gap.json`. The 20 ms pause variant is prepared locally;
-B8 remains untouched.
+complete. Firstmate verified directly on Neon at 09:35Z that B1's original
+one-row writer **1173283** and observer **1173284** are alive and committing,
+with no open transaction. Per inbox 024 the original **100 ms statement cap /
+200 ms normal pause** pass is left running, the 20 ms change is skipped, and no
+second writer is allowed. The Fly log stream is delayed; last received counters
+are historical lower bounds, not current progress. Further verified progress will
+be reported around each 25,000 cards when transport recovers. B8 is untouched.
 
 | Decision | Implementation |
 | --- | --- |
@@ -444,3 +443,17 @@ errors are recorded in `b1-control-connection-gap.json`. Current counts, backend
 state and current locks are **not verified**. The original pass may still be
 running; do not launch a duplicate. No further control retry was made after the
 two failed routes. B8 remains unapplied.
+
+## Firstmate verification: keep original writer running (inbox 024)
+
+Firstmate bypassed Fly and directly verified SQL backend 1173283 committing
+(last COMMIT 30 ms before the check), observer 1173284 alive, and no open
+transaction. The instruction is to leave the pass running under its original
+200 ms rules, skip the 20 ms change, start no duplicate and resume log reporting
+when Fly transport returns.
+
+The local prepared configuration was restored to 200 ms; no new writer or
+further stop attempt was made. Current data counts are not inferred from stale
+SSH output. The last received receipt at this point is 1,971 committed cards
+and one timeout in this pass, which is a historical lower bound. The worker is
+watching the existing stream and read-only Fly availability.

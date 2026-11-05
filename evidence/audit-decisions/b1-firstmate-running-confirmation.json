@@ -1,0 +1,15 @@
+{
+  "recordedAt": "2026-11-05T09:45:57.392818+00:00",
+  "authority": "firstmate inbox 024",
+  "verifiedBy": "firstmate directly on Neon, bypassing Fly",
+  "verifiedAt": "2026-11-05T09:35:41Z",
+  "cleanupPid": 1173283,
+  "observerPid": 1173284,
+  "reportedState": "alive, committing, no open transaction",
+  "normalPauseMs": 200,
+  "statementTimeoutMs": 100,
+  "twentyMsChange": "skipped; local configuration restored",
+  "newWriterStarted": false,
+  "workerAction": "leave original running; wait for existing Fly log stream; report verified progress around 25k cards",
+  "b8ContractApplied": false
+}

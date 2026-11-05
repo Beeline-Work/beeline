@@ -3318,12 +3318,6 @@
         "room": "Existing source-capture JSON alias retains the changed Room identifier for committed scheduling causes.",
         "roomId": "Existing scheduled-row source JSON alias preserves the Room scope across old/new capture."
       },
-      "desired": {
-        "kind": "Selects the closed source-owned expiry handler for this descriptor.",
-        "workspace": "Binds the source deadline to its canonical Workspace.",
-        "room": "Binds the source deadline to its Room for authority and audience checks.",
-        "due": "Retains the exact source-derived UTC deadline at microsecond precision."
-      },
       "reservation": {
         "day": "Retains the quota day charged at admission even when settlement occurs on another day.",
         "reserved": "Preserves the admitted token reservation needed for exact settlement.",

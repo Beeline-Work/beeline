@@ -392,25 +392,56 @@ jobs:
         with:
           mobile: true
         if: steps.changes.outputs.run == 'true'
-      - name: Run the canonical server seams on isolated PostgreSQL
+      - name: Prove incident deadlock recovery on isolated PostgreSQL
+        run: npm test -w @beeline/server -- --run src/incident-deadlocks.test.ts --maxWorkers=1 --minWorkers=1
+        env:
+          BEELINE_INCIDENT_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
+        if: steps.changes.outputs.run == 'true'
+      - name: Prove release migration lock handoff on isolated PostgreSQL
+        run: npm test -w @beeline/server -- --run src/migration-steps.test.ts src/router-release-migration.postgres.test.ts --maxWorkers=1 --minWorkers=1
+        env:
+          BEELINE_MIGRATION_LOCK_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
+        if: steps.changes.outputs.run == 'true'
+      - name: Prove push outbox migration lock handoff on isolated PostgreSQL
+        run: npm test -w @beeline/server -- --run src/push-outbox.test.ts --maxWorkers=1 --minWorkers=1
+        env:
+          BEELINE_PUSH_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
+        if: steps.changes.outputs.run == 'true'
+      - name: Prove router command identity and authority fences on isolated PostgreSQL
         env:
           NODE_OPTIONS: --max-old-space-size=4096
           BEELINE_COMMAND_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
-          BEELINE_APP_DISCOVERY_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
-          BEELINE_ATTENTION_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
-          BEELINE_INVITE_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
-          BEELINE_LIFETIME_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
-          BEELINE_MERGE_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
-          BEELINE_REVIEW_RECOVERY_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
-          BEELINE_SENTRY_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
-          BEELINE_STOP_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
         run: |
-          for suite in tests/seams/*.test.ts; do
-            npx vitest run "$suite" --maxWorkers=2 --minWorkers=1
-          done
+          npx vitest run tests/seams/server-db.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/production-deadlocks.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/mcp-webhook-deadline.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/agent-schedule-deadline.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/pending-attachment-deadline.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/connector-offer-expiry.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          BEELINE_SENTRY_TEST_POSTGRES_URL="$BEELINE_COMMAND_TEST_POSTGRES_URL" npm test -w @beeline/server -- src/sentry-wake.test.ts -t 'SENTRY-CLOCK|SENTRY-DEADLINE' --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/background-leader.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/background-deadlines.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/router-group-c-completion.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/router-group-c-oauth.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/router-group-c-replay.postgres.test.ts --maxWorkers=2 --minWorkers=1
           node --import tsx scripts/prove-router-group-c-room-payload.mjs
           BEELINE_GROUP_C_COST_PROOF=1 node --import tsx scripts/prove-router-group-c-room-payload.mjs
+          npm test -w @beeline/server -- src/router-command.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/router-projections.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/durable-live.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/slow-query-workload.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/rooms-mcp-stream.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/phone-media.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/router-authority-fences.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/helper-overlay.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/turn-ownership-socket.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/rooms-mcp-stream.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/computer-expiry.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/choice-expiry.test.ts --maxWorkers=2 --minWorkers=1
+          BEELINE_VOICE_TEST_POSTGRES_URL="$BEELINE_COMMAND_TEST_POSTGRES_URL" npm test -w @beeline/server -- src/voice-budget.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/helper-usage.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/helper-activation.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/operator-system-dm-source.postgres.test.ts --maxWorkers=2 --minWorkers=1
         if: steps.changes.outputs.run == 'true'
   server-suite:
     name: SERVER SUITE

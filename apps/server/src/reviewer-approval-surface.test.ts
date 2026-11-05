@@ -1,0 +1,178 @@
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { PgliteDatabase, migratedDatabase, insertCornerFacts, setCornerOwner, seedCornerOpening } from './test-support.js';
+import { PhoneService } from './phone-service.js';
+import { DaemonService } from './daemon-service.js';
+import { LiveHub } from './live.js';
+import { systemLine } from './system-line.js';
+import { reconcileConfiguredCornerReviewers } from './agent-command.js';
+
+/**
+ * A reconciled reviewer must be woken into a turn that can record a verdict.
+ *
+ * The body decides whether to mount `approve_merge` from two server answers
+ * that meet in one session: `getAgentConfiguration` says whether this agent
+ * holds the Room's reviewer post, and `listRoomCorners` says who opened the
+ * corner. They must agree. When they disagreed, the reviewer was told to
+ * approve a head and handed no tool to approve it with, so its PASS could only
+ * be prose while the merge gate stayed at `approvalPending=true`.
+ */
+const H = 'a'.repeat(64),
+  REVIEWER = 'b'.repeat(64),
+  IMPLEMENTER = 'c'.repeat(64);
+const W = '11111111-1111-4111-8111-111111111111',
+  R = '22222222-2222-4222-8222-222222222222',
+  C = '33333333-3333-4333-8333-333333333333';
+const HEAD = '1'.repeat(40);
+
+let db: PgliteDatabase, phone: PhoneService, daemon: DaemonService;
+
+/** What the body reads at session activation to decide the reviewer surface. */
+async function activationFacts(agentId: string) {
+  const [configuration, corners] = await Promise.all([
+    daemon.execute('getAgentConfiguration', { agentId, roomId: C }, agentId),
+    daemon.execute('listRoomCorners', { roomId: R }, agentId),
+  ]);
+  const corner = corners.corners.find((entry) => entry.cornerId === C);
+  return {
+    isReviewer: configuration.isReviewer,
+    openedBy: corner?.createdBy,
+    // apps/body appends the reviewer rules (and mounts the beeline-review
+    // skill) from the reviewer post alone; who opened the corner no longer
+    // picks the prompt (PR #2224: a reviewer that opened its corner was given
+    // the implementer prompt and pushed a fix).
+    reviewerSurface: configuration.isReviewer,
+  };
+}
+
+beforeAll(async () => {
+  db = await migratedDatabase();
+  await db.query(
+    `INSERT INTO identities(id,kind,name,handle)
+     VALUES($1,'human','Human','human'),($2,'agent','Hoots','hoots'),($3,'agent','Goosy','goosy')`,
+    [H, REVIEWER, IMPLEMENTER],
+  );
+  await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$3),($2,$3)`, [
+    REVIEWER,
+    IMPLEMENTER,
+    H,
+  ]);
+  await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [W]);
+  await db.query(`INSERT INTO rooms(id,workspace_id,name,created_by) VALUES($1,$2,'Room',$3)`, [
+    R,
+    W,
+    H,
+  ]);
+  await db.query(
+    `INSERT INTO rooms(id,workspace_id,parent_id,name,created_by) VALUES($1,$2,$3,'Corner',$4)`,
+    [C, W, R, H],
+  );
+  await insertCornerFacts(db, { cornerId: C, ownerAgentId: IMPLEMENTER, lifecycle: JSON.stringify({
+        lifecycle: 'in-review',
+        checks: 'passing',
+        pr: { number: 7, url: 'https://github.com/acme/repo/pull/7', headSha: HEAD },
+      }) });
+  for (const who of [H, REVIEWER, IMPLEMENTER])
+    for (const room of [null, R])
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`,
+        [W, room, who],
+      );
+  phone = new PhoneService(db, 'http://test');
+  daemon = new DaemonService(db, new LiveHub());
+  // These lifecycle fixtures model an independent PR author; provider checks have separate coverage.
+  Object.assign(daemon, { github: { assertCornerReviewerNotAuthor: async () => {} } });
+}, 30_000);
+afterAll(async () => db?.close());
+beforeEach(async () => {
+  await setCornerOwner(db, C, IMPLEMENTER);
+  await db.query(`UPDATE rooms SET created_by=$2 WHERE id=$1`, [C, H]);
+  await db.query(
+    `UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`,
+    [R, REVIEWER],
+  );
+  await phone.execute('updateRoom', { roomId: R, reviewerAgentId: REVIEWER }, H);
+  await systemLine(db, {
+    roomId: C,
+    authorId: H,
+    subject: { kind: 'github', name: 'GitHub' },
+    verb: 'passed a check',
+    kind: 'check-passed',
+  });
+  // Clear whatever the configuration tap and the check event already
+  // dispatched, so each test measures the reconcile pass on its own. The
+  // corner's workflow run moved with that dispatch, so it is cleared with it.
+  await db.query(`DELETE FROM agent_commands`);
+  await db.query(`DELETE FROM messages WHERE card_type='corner-workflow-handoff'`);
+  // The owner is an assignment command, so it is seeded after the clear.
+  await setCornerOwner(db, C, IMPLEMENTER);
+});
+
+/** The reconciled wake, as the reviewer's own command poll would see it. */
+const reviewCommands = () =>
+  daemon.execute('getAgentCommands', { roomId: C }, REVIEWER).then((r) => r.commands);
+
+describe('the turn a reconciled reviewer is woken into', () => {
+  it('carries a reviewer surface for a corner somebody else opened', async () => {
+    await expect(reconcileConfiguredCornerReviewers(db)).resolves.toEqual(
+      expect.objectContaining({ commands: 1 }),
+    );
+    expect(await reviewCommands()).toEqual([expect.objectContaining({ agentId: REVIEWER })]);
+    await expect(activationFacts(REVIEWER)).resolves.toEqual({
+      isReviewer: true,
+      openedBy: IMPLEMENTER,
+      reviewerSurface: true,
+    });
+  });
+
+  it('still carries one when the corner owner was never recorded', async () => {
+    // The population reconciliation exists for: green heads old enough that
+    // `owner_agent_id` predates the corner-owner backfill. The listing must
+    // fall back to the Room's recorded creator, exactly as the configuration
+    // query does — never to whichever agent happens to be polling.
+    await setCornerOwner(db, C, null);
+    await expect(reconcileConfiguredCornerReviewers(db)).resolves.toEqual(
+      expect.objectContaining({ commands: 1 }),
+    );
+    expect(await reviewCommands()).toEqual([expect.objectContaining({ agentId: REVIEWER })]);
+    const facts = await activationFacts(REVIEWER);
+    expect(facts.openedBy).toBe(H);
+    expect(facts.openedBy).not.toBe(REVIEWER);
+    expect(facts).toEqual({
+      isReviewer: true,
+      openedBy: H,
+      reviewerSurface: true,
+    });
+  });
+
+  it('agrees with the configuration query when the reviewer opened the corner itself', async () => {
+    // The reviewer's own opening order makes it the opener.
+    await setCornerOwner(db, C, null);
+    await seedCornerOpening(db, { cornerId: C, agentId: REVIEWER });
+    // The reviewer keeps its reviewer rules; if it writes the code itself,
+    // its conditional merge rule sends the yes to a person (prompt
+    // discipline; the server gate no longer excludes the corner's opener).
+    await expect(activationFacts(REVIEWER)).resolves.toEqual({
+      isReviewer: true,
+      openedBy: REVIEWER,
+      reviewerSurface: true,
+    });
+  });
+
+  it('withholds the reviewer surface when the configured reviewer is not a parent member', async () => {
+    await db.query(
+      `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
+      [R, REVIEWER],
+    );
+    // Parent departure revokes both configuration and merge access immediately.
+    await expect(
+      daemon.execute('getAgentConfiguration', { agentId: REVIEWER, roomId: C }, REVIEWER),
+    ).rejects.toThrow('daemon room access denied');
+    await expect(
+      daemon.execute(
+        'approveCornerMerge',
+        { cornerId: C, headSha: HEAD, briefRevision: 1 },
+        REVIEWER,
+      ),
+    ).rejects.toThrow('daemon room access denied');
+  });
+});

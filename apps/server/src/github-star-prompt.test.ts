@@ -1,0 +1,347 @@
+import { createCipheriv, createHash, randomBytes } from 'node:crypto';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { once } from 'node:events';
+import WebSocket from 'ws';
+import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
+import { GitHubAppClient, type GitHubOAuthClient } from '@beeline/auth/github';
+import type { AgentCommand } from '@beeline/api-contract/daemon';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PhoneService } from './phone-service.js';
+import { DaemonService } from './daemon-service.js';
+import { LiveHub } from './live.js';
+import { createBeelineServer } from './server.js';
+import type { TokenAuth } from './auth.js';
+import { GitHubOperations } from './github-operations.js';
+
+const H = 'a'.repeat(64),
+  A = 'b'.repeat(64);
+const W = '11111111-1111-4111-8111-111111111111',
+  R = '22222222-2222-4222-8222-222222222222';
+const CLIENT_SECRET = 'client-secret';
+const USER_TOKEN = 'person-user-token';
+
+let db: PgliteDatabase, phone: PhoneService, daemon: DaemonService;
+const live = new LiveHub();
+let github: Server;
+let starResponse = 204;
+let starred = false;
+const githubCalls: string[] = [];
+
+/** The same sealing GitHubOperations uses for stored user tokens. */
+function seal(token: string): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv(
+    'aes-256-gcm',
+    createHash('sha256').update(CLIENT_SECRET).digest(),
+    iv,
+  );
+  const ciphertext = Buffer.concat([cipher.update(token, 'utf8'), cipher.final()]);
+  return [iv, cipher.getAuthTag(), ciphertext].map((value) => value.toString('base64url')).join('.');
+}
+
+const read = () => phone.execute('readStarPrompt', {}, H);
+const answer = (action: 'star' | 'later' | 'dismiss', milestone: number) =>
+  phone.execute('answerStarPrompt', { action, milestone }, H);
+
+/** One full agent turn: the person tags the agent, the agent claims and replies. */
+async function turn(text = 'hello', artifact = false): Promise<string> {
+  await phone.execute('sendRoomMessage', { roomId: R, text: `@hoots ${text}` }, H);
+  const commands = (await daemon.execute('getAgentCommands', { roomId: R }, A)).commands;
+  const command = commands.at(-1) as AgentCommand;
+  await daemon.execute(
+    'claimAgentCommand',
+    { roomId: R, commandId: command.id, generationId: 'g1' },
+    A,
+  );
+  await daemon.execute(
+    'postAgentTurnReceipt',
+    { roomId: R, agentId: A, requestId: command.turnRequestId, generationId: 'g1', status: 'working' },
+    A,
+  );
+  if (artifact)
+    await db.query(
+      `INSERT INTO agent_pending_attachments(room_id,agent_id,url,name,mime_type,size,request_id,generation_id)
+       VALUES($1,$2,'https://server.test/media/artifact','report.html','text/html',10,$3,'g1')`,
+      [R, A, command.turnRequestId],
+    );
+  const reply = await daemon.execute(
+    'postRoomMessage',
+    { roomId: R, requestId: command.turnRequestId, generationId: 'g1', text: `answer to ${text}` },
+    A,
+  );
+  return reply.id;
+}
+
+beforeAll(async () => {
+  github = createServer((request, response) => {
+    githubCalls.push(`${request.method} ${request.url} ${request.headers.authorization}`);
+    if (request.url !== '/user/starred/Beeline-Work/beeline') {
+      response.writeHead(404).end();
+      return;
+    }
+    if (request.method === 'PUT') {
+      starred = starResponse === 204;
+      response.writeHead(starResponse).end();
+      return;
+    }
+    response.writeHead(starred ? 204 : 404).end();
+  });
+  await new Promise<void>((resolve) => github.listen(0, '127.0.0.1', resolve));
+  const apiBaseUrl = `http://127.0.0.1:${(github.address() as AddressInfo).port}`;
+
+  db = await migratedDatabase();
+  await db.query(
+    `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Person','person'),($2,'agent','Hoots','hoots')`,
+    [H, A],
+  );
+  await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [A, H]);
+  await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Stars')`, [W]);
+  await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [R, W]);
+  for (const who of [H, A])
+    for (const room of [null, R])
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`,
+        [W, room, who],
+      );
+  await db.query(
+    `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence','{"status":"online"}')`,
+    [R, A],
+  );
+  await db.query(
+    `INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience) VALUES('github','42',$1,'https://github.com','github')`,
+    [H],
+  );
+  await db.query(`INSERT INTO github_user_tokens(subject,encrypted_token) VALUES('42',$1)`, [
+    seal(USER_TOKEN),
+  ]);
+  const operations = new GitHubOperations(
+    db,
+    {} as GitHubOAuthClient,
+    new GitHubAppClient({ appId: '1', privateKey: 'unused', slug: 'beeline', apiBaseUrl }),
+    CLIENT_SECRET,
+  );
+  phone = new PhoneService(db, 'http://test', operations);
+  daemon = new DaemonService(db, live);
+}, 30_000);
+
+afterAll(async () => {
+  await db?.close();
+  await new Promise((resolve) => github?.close(resolve));
+});
+
+beforeEach(async () => {
+  // A conversation-only message can leave an unclaimed input behind. Keep
+  // each scenario's queue independent so later tags are not folded into it.
+  await db.query(`DELETE FROM agent_commands`);
+  await db.query(`DELETE FROM agent_turns`);
+  await db.query(`DELETE FROM github_star_prompts`);
+  await db.query(`DELETE FROM free_agents`);
+  starResponse = 204;
+  starred = false;
+  githubCalls.length = 0;
+});
+
+it.each(['helper', 'free/hosted'])('shows the card on a fresh account’s 3rd completed reply (%s) and stars with the person token', async (runtime) => {
+  if (runtime === 'free/hosted') await db.query(
+    `INSERT INTO free_agents(agent_id,workspace_id,owner_id,sealed_keys,state) VALUES($1,$2,$3,'fixture','running')`,
+    [A, W, H],
+  );
+  await turn('one');
+  await turn('two');
+  expect(await read()).toEqual({ prompt: null });
+  await turn('three');
+  expect(await read()).toEqual({
+    prompt: {
+      milestone: 3,
+      repository: 'Beeline-Work/beeline',
+      url: 'https://github.com/Beeline-Work/beeline',
+    },
+  });
+  await vi.waitFor(() => expect(githubCalls).toEqual([
+    `GET /user/starred/Beeline-Work/beeline Bearer ${USER_TOKEN}`,
+  ]));
+
+  expect(await answer('star', 3)).toEqual({ outcome: 'starred' });
+  expect(githubCalls.at(-1)).toBe(`PUT /user/starred/Beeline-Work/beeline Bearer ${USER_TOKEN}`);
+  expect(starred).toBe(true);
+  expect(await read()).toEqual({ prompt: null });
+});
+
+it('shows immediately when the milestone reply itself carries an artifact', async () => {
+  await turn('one');
+  await turn('two');
+  await turn('three with a report', true);
+  expect(
+    (await db.query<{ attachments: unknown[] }>(
+      `SELECT attachments FROM messages WHERE text='answer to three with a report'`,
+    )).rows[0]?.attachments,
+  ).toHaveLength(1);
+  expect((await read()).prompt?.milestone).toBe(3);
+  await answer('later', 3);
+  await turn('four with a report', true);
+  expect(await read()).toEqual({ prompt: null });
+});
+
+it('opens the repository instead when GitHub refuses the star', async () => {
+  starResponse = 403;
+  await db.query(
+    `INSERT INTO github_star_prompts(identity_id,replies)
+     VALUES($1,3)`,
+    [H],
+  );
+  expect((await read()).prompt?.milestone).toBe(3);
+  expect(await answer('star', 3)).toEqual({
+    outcome: 'open',
+    url: 'https://github.com/Beeline-Work/beeline',
+  });
+  expect(await read()).toEqual({ prompt: null });
+});
+
+it('waits for the next milestone after Not now and stops for good after close', async () => {
+  await db.query(
+    `INSERT INTO github_star_prompts(identity_id,replies)
+     VALUES($1,29)`,
+    [H],
+  );
+  expect((await read()).prompt?.milestone).toBe(3);
+  expect(await answer('later', 3)).toEqual({ outcome: 'later' });
+  expect(await read()).toEqual({ prompt: null });
+
+  await turn('thirty');
+  expect((await read()).prompt?.milestone).toBe(30);
+
+  expect(await answer('dismiss', 30)).toEqual({ outcome: 'dismissed' });
+  await db.query(
+    `UPDATE github_star_prompts SET replies=299`,
+  );
+  expect(await read()).toEqual({ prompt: null });
+});
+
+it('stays hidden mid-conversation and after a failed turn, and persists one star check per milestone', async () => {
+  await db.query(
+    `INSERT INTO github_star_prompts(identity_id,replies)
+     VALUES($1,3)`,
+    [H],
+  );
+  expect((await read()).prompt?.milestone).toBe(3);
+
+  await phone.execute('sendRoomMessage', { roomId: R, text: 'one more thing' }, H);
+  expect(await read()).toEqual({ prompt: null });
+  await db.query(`UPDATE messages SET created_at=created_at-interval '1 minute'`);
+  expect((await read()).prompt?.milestone).toBe(3);
+
+  await db.query(
+    `INSERT INTO agent_turns(room_id,request_id,agent_id,status) VALUES($1,'failed-turn',$2,'failed')`,
+    [R, A],
+  );
+  expect(await read()).toEqual({ prompt: null });
+  await db.query(`DELETE FROM agent_turns WHERE request_id='failed-turn'`);
+
+  await vi.waitFor(async () => {
+    const checked = (await db.query<{ checked_milestone: number }>(
+      `SELECT checked_milestone FROM github_star_prompts WHERE identity_id=$1`, [H],
+    )).rows[0]?.checked_milestone;
+    expect(checked).toBe(3);
+  });
+  starred = true;
+  expect((await read()).prompt?.milestone).toBe(3);
+  await db.query(`UPDATE github_star_prompts SET replies=30 WHERE identity_id=$1`, [H]);
+  expect((await read()).prompt?.milestone).toBe(30);
+  await vi.waitFor(async () => {
+    expect((await db.query<{ closed: string | null }>(
+      `SELECT closed FROM github_star_prompts WHERE identity_id=$1`, [H],
+    )).rows[0]?.closed).toBe('starred');
+  });
+  starred = false;
+  // The GitHub result is saved; a later visit makes no remote request.
+  expect(await read()).toEqual({ prompt: null });
+});
+
+it('counts only replies to a person, never cards', async () => {
+  await turn('counted');
+  await phone.execute('sendRoomMessage', { roomId: R, text: '@hoots card please' }, H);
+  const command = (await daemon.execute('getAgentCommands', { roomId: R }, A)).commands.at(
+    -1,
+  ) as AgentCommand;
+  await daemon.execute(
+    'claimAgentCommand',
+    { roomId: R, commandId: command.id, generationId: 'g1' },
+    A,
+  );
+  await daemon.execute(
+    'postRoomMessage',
+    {
+      roomId: R,
+      requestId: command.turnRequestId,
+      generationId: 'g1',
+      text: 'a card',
+      presentation: 'card',
+    },
+    A,
+  );
+  expect(
+    (await db.query<{ replies: number }>(`SELECT replies FROM github_star_prompts`)).rows,
+  ).toEqual([{ replies: 1 }]);
+});
+
+it('a reaction stays successful when optional prompt eligibility cannot be read', async () => {
+  const messageId = await turn('reaction enrichment failure');
+  const eligibility = vi.spyOn(phone, 'liveStarPrompt').mockRejectedValueOnce(new Error('eligibility unavailable'));
+  try {
+    const result = await phone.execute('reactToMessage', { roomId: R, messageId, emoji: '👍' }, H);
+    expect(result).toMatchObject({ id: messageId, reactions: [expect.objectContaining({ emoji: '👍', reacted: true })] });
+    expect(result).not.toHaveProperty('prompt');
+  } finally { eligibility.mockRestore(); }
+});
+
+it('shows on the 300th reply once, and does not count failed receipts or duplicate replies', async () => {
+  await db.query(`INSERT INTO github_star_prompts(identity_id,replies,answered_milestone)
+    VALUES($1,299,30)`, [H]);
+  await phone.execute('sendRoomMessage', { roomId: R, text: '@hoots failing' }, H);
+  const command = (await daemon.execute('getAgentCommands', { roomId: R }, A)).commands.at(-1) as AgentCommand;
+  await daemon.execute('claimAgentCommand', { roomId: R, commandId: command.id, generationId: 'failed' }, A);
+  await daemon.execute('postAgentTurnReceipt', { roomId: R, requestId: command.turnRequestId,
+    generationId: 'failed', status: 'failed', reason: 'not signed in', reasonKind: 'not-signed-in' }, A);
+  expect((await db.query(`SELECT replies FROM github_star_prompts`)).rows).toEqual([{ replies: 299 }]);
+  expect(await read()).toEqual({ prompt: null });
+  await turn('three hundred');
+  expect((await read()).prompt?.milestone).toBe(300);
+  const completed = (await db.query<{turn_request_id: string}>(`SELECT turn_request_id FROM agent_commands
+    WHERE result_message_id IS NOT NULL ORDER BY completed_at DESC LIMIT 1`)).rows[0]!;
+  await daemon.execute('postRoomMessage', { roomId: R, requestId: completed.turn_request_id,
+    generationId: 'g1', text: 'answer to three hundred' }, A);
+  expect((await db.query(`SELECT replies FROM github_star_prompts`)).rows).toEqual([{ replies: 300 }]);
+  await answer('later', 300);
+  await turn('three hundred and one');
+  expect(await read()).toEqual({ prompt: null });
+});
+
+it('delivers the third plain reply’s prompt over the live socket without a later win', async () => {
+  const server = createBeelineServer({ database: db, phone, daemon, live, mediaMaximumBytes: 1,
+    auth: { authenticatePhone: async () => H } as unknown as TokenAuth });
+  let socket: WebSocket | undefined;
+  try {
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    socket = new WebSocket(`ws://127.0.0.1:${(server.address() as AddressInfo).port}/v1/phone/live`, ['bearer.fixture']);
+    const frames: { type: string; message?: { id: string }; starPrompt?: { milestone: number } | null }[] = [];
+    socket.on('message', raw => frames.push(JSON.parse(String(raw))));
+    await once(socket, 'open');
+    socket.send(JSON.stringify({ type: 'viewing', roomId: R, viewing: true }));
+    socket.send(JSON.stringify({ type: 'subscribe', roomId: R }));
+    await vi.waitFor(() => expect(frames.some(frame => frame.type === 'subscribed')).toBe(true));
+    for (let n = 1; n <= 3; n++) {
+      const id = await turn(`live reply ${n}`);
+      await vi.waitFor(() => {
+        const delta = frames.find(frame => frame.type === 'message-delta' && frame.message?.id === id);
+        expect(delta).toBeDefined();
+        expect(delta?.starPrompt?.milestone ?? null).toBe(n === 3 ? 3 : null);
+      });
+    }
+  } finally {
+    socket?.terminate();
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});

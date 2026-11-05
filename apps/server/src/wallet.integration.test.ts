@@ -1,0 +1,1209 @@
+import { createAgentCommand, claimAgentCommand } from './agent-command.js';
+import { createHash, createHmac, generateKeyPairSync } from 'node:crypto';
+import { CdpWalletClient, WalletTransactionPending } from './cdp-client.js';
+import { AddressInfo } from 'node:net';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { migrate } from './database.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { TokenAuth } from './auth.js';
+import { PhoneService } from './phone-service.js';
+import { DaemonService } from './daemon-service.js';
+import { LiveHub } from './live.js';
+import { createBeelineServer } from './server.js';
+import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
+import { GitHubOperations } from './github-operations.js';
+import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
+import { walletSource } from './wallet.js';
+import { walletExplorerTxUrl } from '@beeline/api-contract/wallet';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import { PushDeliveryLoop } from './background.js';
+import { postWalletNotice, type WalletNotice } from './wallet-notices.js';
+import type { FakeWalletState } from './cdp-fake.js';
+
+const HUMAN = createHash('sha256').update('github:owner').digest('hex');
+const HELPER = 'b'.repeat(64);
+const ROOM = '22222222-2222-4222-8222-222222222222';
+const WALLET_REQUEST = 'e'.repeat(64);
+const WORKSPACE = '11111111-1111-4111-8111-111111111111';
+
+/**
+ * The wallet runs on the FAKE CDP source (never a real key) through the same
+ * phone/daemon operation surfaces the mobile app and the MCP tools use.
+ */
+const BRIDGE2 = '0x2Df1c51E09aECF9cacB7bc98cB1742757f163dF7';
+
+describe('wallet over the fake CDP seam', () => {
+  let database: PgliteDatabase;
+  let auth: TokenAuth;
+  let origin: string;
+  let server: ReturnType<typeof createBeelineServer>;
+  let accessToken: string;
+  let helperToken: string;
+
+  beforeEach(async () => {
+    database = await migratedDatabase();
+    await new AuthStore(database as unknown as TransactionalDatabase).migrate();
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle,github_subject)
+       VALUES($1,'human','Owner','owner','owner'),($2,'agent','Bee','bee',NULL)`,
+      [HUMAN, HELPER],
+    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [HELPER, HUMAN]);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [WORKSPACE]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member')`,
+      [WORKSPACE, HUMAN, HELPER],
+    );
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Wallet tests')`, [
+      ROOM,
+      WORKSPACE,
+    ]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member'),($1,$2,$4,'member')`,
+      [WORKSPACE, ROOM, HUMAN, HELPER],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'use my wallet')`,
+      [WALLET_REQUEST, ROOM, HUMAN],
+    );
+    const command = await createAgentCommand(database, {
+      roomId: ROOM,
+      agentId: HELPER,
+      sourceMessageId: WALLET_REQUEST,
+      reason: 'human_mention',
+    });
+    await claimAgentCommand(database, ROOM, HELPER, command!.id, 'wallet-generation');
+    auth = new TokenAuth(database, async (proof) => {
+      const login = proof === 'proof' ? 'owner' : proof;
+      return { subject: login, login, name: login };
+    });
+    const githubOperations = new GitHubOperations(
+      database,
+      {} as unknown as GitHubOAuthClient,
+      {} as unknown as GitHubAppClient,
+      'github-client-secret',
+    );
+    const phone = new PhoneService(database, 'http://placeholder', githubOperations);
+    const live = new LiveHub();
+    const daemon = new DaemonService(database, live);
+    server = createBeelineServer({ database, auth, phone, daemon, live, cdpWebhookSecrets: { test: 'fixture-only-webhook-secret' } });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    accessToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
+    helperToken = (await auth.exchangeDaemonToken(
+      (await auth.createDaemonExchange(HELPER)).exchangeToken,
+    ))!.daemonToken;
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (database) await database.close();
+  });
+
+  const phoneOperation = async (name: string, payload: unknown) => {
+    const response = await fetch(`${origin}/v1/phone/operations/${name}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    expect([200, 204]).toContain(response.status);
+    return response.status === 204 ? undefined : ((await response.json()) as unknown);
+  };
+
+  const daemonOperation = async (name: string, payload: unknown) => {
+    const pending = (
+      await database.query<{ id: string }>(
+        `SELECT id FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 ORDER BY created_at DESC LIMIT 1`,
+        [ROOM, HELPER, WALLET_REQUEST],
+      )
+    ).rows[0];
+    if (pending) await claimAgentCommand(database, ROOM, HELPER, pending.id, 'wallet-generation');
+    const response = await fetch(`${origin}/v1/daemon/operations/${name}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${helperToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        ...(payload as object),
+        roomId: ROOM,
+        requestId: WALLET_REQUEST,
+        generationId: 'wallet-generation',
+      }),
+    });
+    return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+  };
+
+  function fakeState(): FakeWalletState {
+    const source = walletSource() as CdpWalletSourceLike;
+    expect('state' in source).toBe(true);
+    return (source as unknown as { state: FakeWalletState }).state;
+  }
+
+  type CdpWalletSourceLike = { readonly state?: unknown };
+
+  async function createdWallet() {
+    const view = (await phoneOperation('createWallet', { workspaceId: WORKSPACE })) as {
+      address: string;
+      totalUsd: string;
+    };
+    return view;
+  }
+
+  const harmlessTypedData = {
+    domain: { name: 'Exchange', version: '1', chainId: 1337, verifyingContract: `0x${'0'.repeat(40)}` },
+    types: { BeelineTest: [{ name: 'notice', type: 'string' }] },
+    primaryType: 'BeelineTest', message: { notice: 'Harmless test; no order or transfer' },
+  };
+
+  it('wallet-503: owned agent reads resolve its wallet and Workbench follows signing delegation', async () => {
+    const wallet = await createdWallet();
+    const readCatalog = async () => (await daemonOperation('readAgentWorkbench', {})).body.catalog as Array<{ connectorType: string; paired?: { status: string } }>;
+    expect((await readCatalog()).find((entry) => entry.connectorType === 'wallet')?.paired).toBeUndefined();
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    for (const name of ['getWalletToolState', 'getWalletToolChains', 'getWalletToolBalance']) {
+      const result = await daemonOperation(name, { agentId: HELPER });
+      expect(result.status).toBe(200);
+      if (name === 'getWalletToolState') expect(result.body.wallet).toMatchObject({ address: wallet.address });
+    }
+    expect((await readCatalog()).find((entry) => entry.connectorType === 'wallet')?.paired).toMatchObject({ status: 'connected', onThisMachine: true });
+    for (const agentId of ['self', 'f'.repeat(64)]) {
+      const result = await daemonOperation('getWalletToolState', { agentId });
+      expect(result.status).toBe(503);
+      expect(result.body.error).toBe('daemon token does not own requested agent');
+    }
+    await database.query(`UPDATE wallet_bindings SET delegation_standing=false,delegation_expires_at=NULL WHERE identity_id=$1`, [HUMAN]);
+    expect((await readCatalog()).find((entry) => entry.connectorType === 'wallet')?.paired).toBeUndefined();
+  });
+
+  it.each(['standing', 'timed'])('wallet-2593: owner disconnect revokes %s signing without deleting the wallet or history', async (kind) => {
+    const wallet = await createdWallet();
+    try {
+      await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+      if (kind === 'timed') await database.query(
+        `UPDATE wallet_bindings SET delegation_standing=false,delegation_expires_at=now()+interval '1 day' WHERE identity_id=$1`, [HUMAN]);
+      const input = { agentId: HELPER, ...harmlessTypedData };
+      expect((await daemonOperation('walletSignTypedData', input)).body.outcome).toBe('signed');
+      const foreignToken = (await auth.exchangeGitHubOidc('outsider')).accessToken;
+      const foreignRevoke = await fetch(`${origin}/v1/phone/operations/revokeWalletDelegation`, {
+        method: 'POST', headers: { authorization: `Bearer ${foreignToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ identityId: HUMAN }),
+      });
+      expect([200, 204]).toContain(foreignRevoke.status);
+      expect(await phoneOperation('readWallet', {})).toMatchObject({ delegation: { active: true } });
+      const sign = vi.spyOn(walletSource(), 'signTypedData');
+      fundChain(wallet.address, 'base', 'usdc', 10);
+      fundChain(wallet.address, 'base', 'eth', 1);
+      expect(await phoneOperation('sendFromWallet', { workspaceId: WORKSPACE, chain: 'base', asset: 'usdc', amount: '1', to: `0x${'a'.repeat(40)}` })).toMatchObject({ outcome: 'sent' });
+      await phoneOperation('readWallet', {});
+      const before = await phoneOperation('readWalletHistory', {});
+      expect(before).toMatchObject({ entries: expect.arrayContaining([expect.objectContaining({ direction: 'out' })]) });
+      // A supplied identity cannot redirect the authenticated owner's revocation.
+      await phoneOperation('revokeWalletDelegation', { identityId: HELPER });
+      await phoneOperation('revokeWalletDelegation', {});
+      expect((await phoneOperation('readWallet', {}))).toMatchObject({ address: wallet.address, delegation: { active: false, expiresAt: null } });
+      expect(await phoneOperation('readWalletHistory', {})).toEqual(before);
+      expect((await phoneOperation('readWorkbench', { workspaceId: WORKSPACE }))).toMatchObject({ wallet: { delegationActive: false, delegationExpiresAt: null } });
+      expect((await daemonOperation('walletSignTypedData', input)).body.outcome).toBe('delegation-expired');
+      expect(sign).not.toHaveBeenCalled();
+      expect((await daemonOperation('walletPay', { agentId: HELPER, chain: 'base', asset: 'usdc', amount: '1', to: '0xabc' })).body.outcome).toBe('delegation-expired');
+      const catalog = (await daemonOperation('readAgentWorkbench', {})).body.catalog as Array<{ connectorType: string; paired?: unknown }>;
+      expect(catalog.find(entry => entry.connectorType === 'wallet')?.paired).toBeUndefined();
+      await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+      expect((await daemonOperation('walletSignTypedData', input)).body.outcome).toBe('signed');
+    } finally {
+      fakeState().holdings.clear();
+      fakeState().transactions.clear();
+    }
+  });
+
+  it('signs harmless Exchange chainId 1337 data only with live delegation and records a signature audit', async () => {
+    const wallet = await createdWallet();
+    const source = walletSource();
+    const sign = vi.spyOn(source, 'signTypedData');
+    const input = { agentId: HELPER, ...harmlessTypedData };
+    expect((await daemonOperation('walletSignTypedData', input)).body.outcome).toBe('delegation-expired');
+    expect(sign).not.toHaveBeenCalled();
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    const result = await daemonOperation('walletSignTypedData', input);
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({ outcome: 'signed', signature: expect.stringMatching(/^0x[a-f0-9]{130}$/) });
+    expect(sign).toHaveBeenCalledWith(wallet.address, harmlessTypedData);
+    const audit = (await database.query<{ card: Record<string, unknown>; text: string }>(
+      `SELECT card,text FROM messages WHERE card_type='wallet-signature'`,
+    )).rows;
+    expect(audit).toHaveLength(1);
+    expect(audit[0]!.card).toMatchObject({ agentId: HELPER, address: wallet.address, domain: harmlessTypedData.domain, primaryType: 'BeelineTest', payloadSha256: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    expect(audit[0]!.card).not.toHaveProperty('signature');
+    expect(audit[0]!.text).toContain('signed EIP-712 typed data');
+    expect((await database.query('SELECT id FROM wallet_transactions')).rows).toHaveLength(0);
+    expect((await daemonOperation('getWalletToolBalance', { agentId: HELPER })).body.totalUsd).toBe('$0.00');
+    await database.query(`UPDATE wallet_bindings SET delegation_standing=false,delegation_expires_at=NULL WHERE identity_id=$1`, [HUMAN]);
+    expect((await daemonOperation('walletSignTypedData', input)).body.outcome).toBe('delegation-expired');
+    expect(sign).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds typed-data signing for third-party requesters, consumes once approval and rejects foreign agents', async () => {
+    await createdWallet();
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    const requester = 'c'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Requester')`, [requester]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`, [WORKSPACE, requester, ROOM]);
+    await database.query(`UPDATE messages SET author_id=$2 WHERE id=$1`, [WALLET_REQUEST, requester]);
+    const sign = vi.spyOn(walletSource(), 'signTypedData');
+    const input = { agentId: HELPER, ...harmlessTypedData };
+    const pending = await daemonOperation('walletSignTypedData', input);
+    expect(pending.body.status).toBe('permission-required');
+    expect(sign).not.toHaveBeenCalled();
+    const grant = (await database.query<{ command_id: string; requested_by: string }>(`SELECT command_id,requested_by FROM agent_grants WHERE id=$1`, [pending.body.grantId])).rows[0]!;
+    expect(grant.command_id).toBeTruthy();
+    expect(grant.requested_by).toBe(requester);
+    await phoneOperation('decideAgentGrant', { grantId: pending.body.grantId, decision: 'once' });
+    expect((await daemonOperation('walletSignTypedData', input)).body.outcome).toBe('signed');
+    expect((await daemonOperation('walletSignTypedData', input)).body.status).toBe('permission-required');
+    expect((await daemonOperation('walletSignTypedData', { ...input, agentId: 'f'.repeat(64) })).status).toBe(503);
+    expect(sign).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects malformed typed data and reports provider refusals without recording success', async () => {
+    await createdWallet();
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    const sign = vi.spyOn(walletSource(), 'signTypedData').mockRejectedValue(new Error('CDP policy refused chainId 1337'));
+    for (const bad of [{ domain: null }, { types: [] }, { message: [] }, { primaryType: 'Missing' }, { types: { BeelineTest: [{}] } }]) {
+      expect((await daemonOperation('walletSignTypedData', { agentId: HELPER, ...harmlessTypedData, ...bad })).body).toMatchObject({ outcome: 'failed', reason: 'invalid EIP-712 typed data' });
+    }
+    expect(sign).not.toHaveBeenCalled();
+    for (const roomInput of [{}, { roomId: ROOM }]) {
+      const response = await fetch(`${origin}/v1/daemon/operations/walletSignTypedData`, {
+        method: 'POST', headers: { authorization: `Bearer ${helperToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ agentId: HELPER, ...harmlessTypedData, ...roomInput }),
+      });
+      expect(response.ok).toBe(false);
+    }
+    expect(sign).not.toHaveBeenCalled();
+    expect((await daemonOperation('walletSignTypedData', { agentId: HELPER, ...harmlessTypedData })).body).toEqual({ outcome: 'failed', reason: 'CDP policy refused chainId 1337' });
+    expect((await database.query(`SELECT id FROM messages WHERE card_type='wallet-signature'`)).rows).toHaveLength(0);
+  });
+
+  it('one tap creates the wallet bound to the signed-in identity', async () => {
+    const view = await createdWallet();
+    expect(view.address).toMatch(/^0x/);
+    const again = (await phoneOperation('createWallet', { workspaceId: WORKSPACE })) as {
+      address: string;
+    };
+    expect(again.address).toBe(view.address);
+
+    const emptyChats = (await (
+      await fetch(`${origin}/v1/phone/workspaces/${WORKSPACE}/chats`, {
+        headers: { authorization: `Bearer ${accessToken}` },
+      })
+    ).json()) as { chats: Array<{ directMessage?: { peer: { handle?: string } } }> };
+    expect(emptyChats.chats.some((chat) => chat.directMessage?.peer.handle === 'system')).toBe(
+      true,
+    );
+
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE, ttlHours: 24 });
+    const chats = (await (
+      await fetch(`${origin}/v1/phone/workspaces/${WORKSPACE}/chats`, {
+        headers: { authorization: `Bearer ${accessToken}` },
+      })
+    ).json()) as {
+      chats: Array<{
+        latestMessage?: { text: string };
+        directMessage?: { peer: { name: string; handle?: string; avatar?: string } };
+      }>;
+    };
+    const wallet = chats.chats.find((chat) => chat.directMessage?.peer.handle === 'system');
+    expect(wallet?.directMessage?.peer).toMatchObject({
+      name: 'System',
+      handle: 'system',
+      avatar: 'http://placeholder/v1/connectors/logo/system.svg',
+    });
+    expect(wallet?.latestMessage?.text).toContain('granted agents permission to sign');
+  });
+
+  it('rejects missing, malformed, and inaccessible grant Workspaces before changing expiry', async () => {
+    await createdWallet();
+    await database.query(
+      `UPDATE wallet_bindings SET delegation_expires_at=now() - interval '1 hour' WHERE identity_id=$1`,
+      [HUMAN],
+    );
+    expect(
+      (
+        (await phoneOperation('readWallet', { workspaceId: '' })) as {
+          delegation: { active: boolean };
+        }
+      ).delegation.active,
+    ).toBe(false);
+    const otherWorkspace = '33333333-3333-4333-8333-333333333333';
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Other')`, [otherWorkspace]);
+    for (const [payload, expected] of [
+      [{}, 'valid Workspace ID required'],
+      [{ workspaceId: '' }, 'valid Workspace ID required'],
+      [{ workspaceId: 'not-a-uuid' }, 'valid Workspace ID required'],
+      [{ workspaceId: otherWorkspace }, 'workspace membership required'],
+    ] as const) {
+      const response = await fetch(`${origin}/v1/phone/operations/grantWalletDelegation`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      expect(response.status).toBe(400);
+      expect(((await response.json()) as { error: string }).error).toBe(expected);
+      const expiry = (
+        await database.query<{ active: boolean }>(
+          `SELECT delegation_expires_at > now() AS active FROM wallet_bindings WHERE identity_id=$1`,
+          [HUMAN],
+        )
+      ).rows[0];
+      expect(expiry?.active).toBe(false);
+    }
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    expect(
+      (
+        (await phoneOperation('readWallet', { workspaceId: '' })) as {
+          delegation: { active: boolean };
+        }
+      ).delegation.active,
+    ).toBe(true);
+    const expiry = (
+      await database.query<{ active: boolean; expires_at: Date | null }>(
+        `SELECT delegation_standing AS active,delegation_expires_at AS expires_at FROM wallet_bindings WHERE identity_id=$1`,
+        [HUMAN],
+      )
+    ).rows[0];
+    expect(expiry?.active).toBe(true);
+    expect(expiry?.expires_at).toBeNull();
+  });
+
+  it('distinguishes never granted, legacy timed, expired, standing, and revoked states', async () => {
+    await createdWallet();
+    const read = async () =>
+      (await phoneOperation('readWallet', { workspaceId: WORKSPACE })) as {
+        delegation: { active: boolean; expiresAt: number | null };
+      };
+    expect((await read()).delegation).toEqual({ active: false, expiresAt: null });
+
+    const legacyExpiry = new Date(Date.now() + 3_600_000);
+    await database.query(
+      `UPDATE wallet_bindings SET delegation_expires_at=$2 WHERE identity_id=$1`,
+      [HUMAN, legacyExpiry],
+    );
+    expect((await read()).delegation).toEqual({ active: true, expiresAt: legacyExpiry.getTime() });
+    await database.query(
+      `UPDATE wallet_bindings SET delegation_expires_at=now() - interval '1 hour' WHERE identity_id=$1`,
+      [HUMAN],
+    );
+    expect((await read()).delegation.active).toBe(false);
+
+    expect(await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE })).toEqual({
+      expiresAt: null,
+    });
+    expect((await read()).delegation).toEqual({ active: true, expiresAt: null });
+    const grantCard = (
+      await database.query<{ text: string; card: { standing: boolean } }>(
+        `SELECT text,card FROM messages WHERE card_type='wallet-delegation' ORDER BY created_at DESC LIMIT 1`,
+      )
+    ).rows[0];
+    expect(grantCard?.text).toContain('until revoked');
+    expect(grantCard?.card).toEqual({ standing: true });
+    const workbench = (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as {
+      wallet: { delegationActive: boolean; delegationExpiresAt: number | null };
+    };
+    expect(workbench.wallet).toMatchObject({ delegationActive: true, delegationExpiresAt: null });
+    await database.query(
+      `UPDATE wallet_bindings SET delegation_standing=false WHERE identity_id=$1`,
+      [HUMAN],
+    );
+    expect((await read()).delegation).toEqual({ active: false, expiresAt: null });
+    expect(
+      (
+        (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as {
+          wallet: { delegationActive: boolean };
+        }
+      ).wallet.delegationActive,
+    ).toBe(false);
+    expect(
+      (
+        await daemonOperation('walletPay', {
+          agentId: HELPER,
+          chain: 'base',
+          asset: 'usdc',
+          amount: '1',
+          to: '0xabc',
+        })
+      ).body.outcome,
+    ).toBe('delegation-expired');
+  });
+
+  it('a wallet offer card connects the wallet when its addressee accepts', async () => {
+    const offered = await daemonOperation('offerConnector', {
+      connectorType: 'wallet',
+      reason: 'pay the hosting invoice',
+    });
+    expect(offered.status).toBe(200);
+    const offerId = offered.body.offerId as string;
+    const pending = await database.query<{ card: Record<string, any> }>(
+      `SELECT card FROM messages WHERE card_type='connector-offer'`,
+    );
+    expect(pending.rows[0]!.card).toMatchObject({
+      offerId,
+      connectorType: 'wallet',
+      status: 'pending',
+      consequence:
+        'This changes your Connectors. Once it is added, I can pay the hosting invoice — you can revoke permission any time',
+    });
+
+    // A Workspace admin who is not the addressee cannot grant someone else's wallet.
+    const adminToken = (await auth.exchangeGitHubOidc('mara')).accessToken;
+    const admin = (
+      await database.query<{ id: string }>(`SELECT id FROM identities WHERE github_subject='mara'`)
+    ).rows[0]!;
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'admin')`,
+      [WORKSPACE, admin.id],
+    );
+    const refused = await fetch(`${origin}/v1/phone/operations/acceptConnectorOffer`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ offerId }),
+    });
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({
+      error: 'Only the person the agent addressed can connect their own wallet',
+    });
+    expect(
+      (await database.query(`SELECT 1 FROM wallet_bindings WHERE identity_id=$1`, [HUMAN]))
+        .rowCount,
+    ).toBe(0);
+
+    // The addressee accepts: that tap creates the wallet and grants agents
+    // permission to sign, and the card settles without a helper ceremony.
+    expect(await phoneOperation('acceptConnectorOffer', { offerId })).toEqual({
+      offerId,
+      status: 'accepted',
+      roomId: ROOM,
+    });
+    const binding = await database.query<{ delegation_standing: boolean }>(
+      `SELECT delegation_standing FROM wallet_bindings WHERE identity_id=$1`,
+      [HUMAN],
+    );
+    expect(binding.rows[0]?.delegation_standing).toBe(true);
+    const settled = await database.query<{ card: Record<string, any> }>(
+      `SELECT card FROM messages WHERE card_type='connector-offer'`,
+    );
+    expect(settled.rows[0]!.card).toMatchObject({ status: 'accepted', acceptedAt: expect.any(Number) });
+    expect(settled.rows[0]!.card.acceptedBy.pubkey).toBe(HUMAN);
+    const decision = await database.query<{ card: Record<string, any> }>(
+      `SELECT card FROM messages WHERE card_type='connector-offer-decision'`,
+    );
+    expect(decision.rows.map((row) => row.card)).toEqual([{ offerId, status: 'accepted' }]);
+
+    // A connected wallet is not offered again.
+    const again = await daemonOperation('offerConnector', {
+      connectorType: 'wallet',
+      reason: 'pay the hosting invoice',
+    });
+    expect(again.status).toBe(409);
+  });
+
+  it('a failing history read does not break createWallet or readWallet', async () => {
+    // The real CDP v2 history endpoint is unconfirmed (it 401s/404s); the
+    // wallet must be fully usable — address + balances — regardless.
+    const source = walletSource() as CdpWalletSourceLike & {
+      history: (address: string, limit: number) => Promise<never>;
+    };
+    const originalHistory = source.history.bind(source);
+    source.history = () => Promise.reject(new Error('CDP GET .../transfers failed (401)'));
+    try {
+      const view = (await phoneOperation('createWallet', { workspaceId: WORKSPACE })) as {
+        address: string;
+        totalUsd: string;
+      };
+      expect(view.address).toMatch(/^0x/);
+      const read = (await phoneOperation('readWallet', { workspaceId: WORKSPACE })) as {
+        address: string;
+        totalUsd: string;
+      };
+      expect(read.address).toBe(view.address);
+      expect(typeof read.totalUsd).toBe('string');
+    } finally {
+      source.history = originalHistory;
+    }
+  });
+
+  it('holds third-party paid calls for the wallet owner and sends only after scoped approval', async () => {
+    await createdWallet();
+    fakeState().holdings.forEach((holdings) => holdings.set('usdc', 500));
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE, ttlHours: 24 });
+    const requester = 'c'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Requester')`, [
+      requester,
+    ]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, requester, ROOM],
+    );
+    await database.query(`UPDATE messages SET author_id=$2 WHERE id=$1`, [
+      WALLET_REQUEST,
+      requester,
+    ]);
+    const payment = { agentId: HELPER, chain: 'base', asset: 'usdc', amount: '120', to: '0xabc' };
+    const before = (await phoneOperation('readWallet', { workspaceId: WORKSPACE })) as {
+      totalUsd: string;
+    };
+    const pending = await daemonOperation('walletPay', payment);
+    expect(pending.body.status).toBe('permission-required');
+    const unchanged = (await phoneOperation('readWallet', { workspaceId: WORKSPACE })) as {
+      totalUsd: string;
+    };
+    expect(unchanged.totalUsd).toBe(before.totalUsd);
+    const grant = (
+      await database.query<{ requested_by: string; command_id: string }>(
+        `SELECT requested_by,command_id FROM agent_grants WHERE id=$1`,
+        [pending.body.grantId],
+      )
+    ).rows[0]!;
+    expect(grant.requested_by).toBe(requester);
+    expect(grant.command_id).toBeTruthy();
+    await phoneOperation('decideAgentGrant', { grantId: pending.body.grantId, decision: 'once' });
+    expect((await daemonOperation('walletPay', payment)).body.outcome).toBe('sent');
+    expect((await daemonOperation('walletPay', payment)).body.status).toBe('permission-required');
+    expect((await database.query(`SELECT id FROM agent_grants WHERE kind='budget'`)).rows).toEqual(
+      [],
+    );
+  });
+
+  it('an agent pay is refused without a live delegation, then lands and posts one ledger card', async () => {
+    const view = await createdWallet();
+    // Fund the fake: 500 USDC.
+    fakeState().holdings.forEach((holdings) => holdings.set('usdc', 500));
+
+    const refused = (await daemonOperation('walletPay', {
+      agentId: HELPER,
+      chain: 'base',
+      asset: 'usdc',
+      amount: '120',
+      to: '0xabc',
+    })) as { body: { outcome: string } };
+    expect(refused.body.outcome).toBe('delegation-expired');
+
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE, ttlHours: 24 });
+
+    const sent = (await daemonOperation('walletPay', {
+      agentId: HELPER,
+      chain: 'base',
+      asset: 'usdc',
+      amount: '120',
+      to: '0xabc',
+    })) as { body: { outcome: string; balanceAfterUsd: string } };
+    expect(sent.body.outcome).toBe('sent');
+
+    const after = (await phoneOperation('readWallet', { workspaceId: WORKSPACE })) as {
+      totalUsd: string;
+    };
+    expect(after.totalUsd).toBe(view.totalUsd === '$0.00' ? '$380.00' : after.totalUsd);
+  });
+
+  it('a grant still authorizes agent send and swap after 24 hours', async () => {
+    await createdWallet();
+    fakeState().holdings.forEach((holdings) => holdings.set('usdc', 500));
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    const grantedAt = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(grantedAt + 25 * 3_600_000);
+
+    const pay = await daemonOperation('walletPay', {
+      agentId: HELPER,
+      chain: 'base',
+      asset: 'usdc',
+      amount: '10',
+      to: '0xabc',
+    });
+    expect(pay.body.outcome).toBe('sent');
+
+    const swap = await daemonOperation('walletSwap', {
+      agentId: HELPER,
+      chain: 'base',
+      fromAsset: 'usdc',
+      toAsset: 'eth',
+      amount: '10',
+    });
+    expect(swap.body.outcome).toBe('sent');
+  });
+
+
+  it.each(['0x0', '0x1', null])('Reproduction swap-receipt-1: daemon reports receipt %s truthfully', async (receiptStatus) => {
+    await createdWallet();
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    const key = generateKeyPairSync('ed25519').privateKey;
+    const walletKey = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey;
+    const client = new CdpWalletClient({ keyId: 'test',
+      keySecret: key.export({ type: 'pkcs8', format: 'pem' }).toString(),
+      walletSecret: walletKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+    });
+    const originalFetch = globalThis.fetch;
+    let submissions = 0;
+    vi.stubGlobal('fetch', async (url: RequestInfo | URL, options?: RequestInit) => {
+      if (String(url).startsWith(origin)) return originalFetch(url, options);
+      if (String(url).endsWith('/evm/swaps')) return Response.json({
+        toAmount: '43210000', transaction: { to: '0x2222222222222222222222222222222222222222', data: '0xabcd', gas: '420491' },
+      });
+      if (String(url).endsWith('/send/transaction')) {
+        submissions += 1;
+        return Response.json({ transactionHash: '0xreceiptproof' });
+      }
+      const entries = JSON.parse(String(options?.body)) as { id: number }[];
+      return Response.json(entries.map(({ id }) => ({ jsonrpc: '2.0', id,
+        result: receiptStatus === null ? null : { status: receiptStatus },
+      })));
+    });
+    vi.spyOn(walletSource(), 'swap').mockImplementation(async (address, input) => {
+      vi.useFakeTimers();
+      try {
+        const result = client.swap(address, input);
+        const observed = result.then(value => ({ value }), error => ({ error }));
+        await vi.runAllTimersAsync();
+        const settled = await observed;
+        if ('error' in settled) throw settled.error;
+        return settled.value;
+      } finally { vi.useRealTimers(); }
+    });
+    const before = (await database.query('SELECT * FROM wallet_transactions')).rows.length;
+    const response = await daemonOperation('walletSwap', {
+      agentId: HELPER, chain: 'arbitrum', fromAsset: 'eth', toAsset: 'usdc', amount: '0.017',
+    });
+    expect(response.status).toBe(200);
+    expect(response.body.outcome).toBe(receiptStatus === '0x0' ? 'failed' : receiptStatus === '0x1' ? 'sent' : 'pending');
+    if (receiptStatus === '0x0') expect(response.body.reason).toContain('0xreceiptproof reverted');
+    if (receiptStatus === null) expect(response.body.txUrl).toContain('0xreceiptproof');
+    expect(submissions).toBe(1);
+    const after = (await database.query('SELECT * FROM wallet_transactions')).rows.length;
+    expect(after - before).toBe(receiptStatus === '0x1' ? 1 : 0);
+    console.log(`Reproduction swap-receipt-1: daemon walletSwap receipt=${receiptStatus} outcome=${response.body.outcome}; submissions=${submissions}; ledger additions=${after - before}`);
+    vi.unstubAllGlobals();
+  });
+
+  async function notices() {
+    return (await database.query<{
+      id: string; author_id: string; room_id: string; text: string; card: WalletNotice;
+      presentation: string; card_type: string | null; direct_participants: string[];
+    }>(`SELECT message.*,room.direct_participants FROM messages message
+      JOIN rooms room ON room.id=message.room_id
+      WHERE message.card->>'walletNotice'='true' ORDER BY message.created_at,message.id`)).rows;
+  }
+
+  async function deliverWalletEvent(type: string, data: Record<string, unknown>, eventId = 'fixture-event') {
+    const raw = JSON.stringify({ id: eventId, type, data });
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const names = 'content-type x-event-id x-event-type';
+    const signature = createHmac('sha256', 'fixture-only-webhook-secret')
+      .update(`${timestamp}.${names}.application/json.${eventId}.${type}.${raw}`).digest('hex');
+    return fetch(`${origin}/v1/wallet/events/cdp/test`, {
+      method: 'POST', body: raw, headers: {
+        'content-type': 'application/json', 'x-event-id': eventId, 'x-event-type': type,
+        'x-hook0-signature': `t=${timestamp},h=${names},v1=${signature}`,
+      },
+    });
+  }
+
+  it('each phone send, agent pay, swap and contract call posts a linked owner-only @System notice', async () => {
+    const wallet = await createdWallet();
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    fundChain(wallet.address, 'base', 'usdc', 500);
+    fundChain(wallet.address, 'base', 'eth', 1);
+    const pay = { chain: 'base', asset: 'usdc', amount: '2', to: `0x${'7'.repeat(40)}` };
+    expect(await phoneOperation('sendFromWallet', { ...pay, workspaceId: WORKSPACE })).toMatchObject({ outcome: 'sent' });
+    expect((await daemonOperation('walletPay', { ...pay, agentId: HELPER })).body.outcome).toBe('sent');
+    expect((await daemonOperation('walletSwap', {
+      agentId: HELPER, chain: 'base', fromAsset: 'usdc', toAsset: 'eth', amount: '3',
+    })).body.outcome).toBe('sent');
+    expect((await daemonOperation('walletContractCall', {
+      agentId: HELPER, chain: 'base', contract: pay.to, data: '0x', value: '0.001',
+    })).body.outcome).toBe('sent');
+    const rows = (await notices()).filter(row => row.card.txUrl);
+    expect(rows).toHaveLength(4);
+    expect(rows.map(row => row.card.operation)).toEqual(['send', 'send', 'swap', 'contract']);
+    for (const row of rows) {
+      expect(row.author_id).toBe(SYSTEM_IDENTITY_ID);
+      expect(row.direct_participants.sort()).toEqual([SYSTEM_IDENTITY_ID, HUMAN].sort());
+      expect(row.presentation).toBe('system');
+      expect(row.card_type).toBeNull(); // DM push eligibility + the linked system-line renderer
+      expect(row.card.txUrl).toMatch(/^https:\/\/basescan\.(?:io|org)\/tx\//);
+      expect(row.text).toContain(row.card.counterparty);
+      expect(row.text).toContain('base');
+    }
+    expect(rows[0]!.text).toContain('you');
+    expect(rows.slice(1).every(row => row.text.includes('@bee') && row.card.agentId === HELPER)).toBe(true);
+    expect(rows[2]!.text).toContain('USDC');
+    expect(rows[2]!.text).toContain('ETH');
+    expect(rows[2]!.text).toContain('confirmed swap');
+    const history = await fetch(`${origin}/v1/phone/rooms/${rows[0]!.room_id}/history`, {
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(history.status).toBe(200);
+    expect(JSON.stringify(await history.json())).toContain(rows[0]!.card.txUrl);
+    expect((await database.query(`SELECT id FROM messages WHERE author_id=$1 AND card_type='wallet-tx'`,
+      [SYSTEM_IDENTITY_ID])).rows).toHaveLength(0);
+  });
+
+  it('records indexed incoming receipts in wallet history without a System message', async () => {
+    await createdWallet();
+    await database.query(`INSERT INTO push_devices(token,identity_id,platform,environment) VALUES('silent-wallet-device-token-123456789012345',$1,'android','physical')`, [HUMAN]);
+    const send = vi.fn(async () => undefined);
+    const push = new PushDeliveryLoop(database, { send });
+    await push.runOnce();
+    const txUrl = `https://basescan.org/tx/0x${'9'.repeat(64)}`;
+    vi.spyOn(walletSource(), 'history').mockResolvedValue([{ direction: 'in', amountText: '+5 USDC', counterparty: 'sender', chain: 'base', balanceAfterUsd: '$5.00', agentName: null, txUrl, createdAt: 123 }]);
+    await phoneOperation('readWallet', { workspaceId: WORKSPACE });
+    const history = await daemonOperation('getWalletToolHistory', { agentId: HELPER });
+    expect(history.body.entries).toEqual(expect.arrayContaining([expect.objectContaining({ direction: 'in', txUrl })]));
+    expect((await database.query(`SELECT 1 FROM wallet_transactions WHERE identity_id=$1 AND tx_url=$2`, [HUMAN, txUrl])).rowCount).toBe(1);
+    expect((await notices()).filter(row => row.card.txUrl === txUrl)).toEqual([]);
+    expect(await push.runOnce()).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+    console.log('DM-1: wallet history read retains indexed incoming receipt; zero System messages for the receipt');
+  });
+
+  it('pending swaps get one notice without claiming confirmation or crediting output', async () => {
+    await createdWallet();
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    const hash = `0x${'1'.repeat(64)}`;
+    vi.spyOn(walletSource(), 'swap').mockResolvedValue({ txId: hash, toAmount: '100', status: 'pending' });
+    const result = await daemonOperation('walletSwap', {
+      agentId: HELPER, chain: 'base', fromAsset: 'usdc', toAsset: 'eth', amount: '3',
+    });
+    expect(result.body.outcome).toBe('pending');
+    const rows = (await notices()).filter(row => row.card.txUrl?.endsWith(hash));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.card).toMatchObject({ status: 'pending', operation: 'swap', agentId: HELPER });
+    expect(rows[0]!.text).toContain('confirmation pending');
+    expect(rows[0]!.text).not.toContain('100 ETH');
+    expect((await database.query(`SELECT id FROM wallet_transactions WHERE tx_id=$1`, [hash])).rows).toHaveLength(0);
+  });
+
+  it('completionV1 phone and agent sends preserve UNKNOWN without a success ledger or automatic resend', async () => {
+    const wallet = await createdWallet();
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    fundChain(wallet.address, 'base', 'usdc', 500);
+    const source = vi.spyOn(walletSource(), 'sendTransaction').mockImplementation(async (_address, input) => {
+      expect(input.completionV1).toBe(true);
+      throw new WalletTransactionPending();
+    });
+    const input = { completionV1: true, chain: 'base', asset: 'usdc', amount: '2', to: `0x${'7'.repeat(40)}` };
+    expect(await phoneOperation('sendFromWallet', { ...input, workspaceId: WORKSPACE })).toEqual({
+      outcome: 'pending', reason: expect.stringContaining('UNKNOWN'),
+    });
+    expect((await daemonOperation('walletPay', { ...input, agentId: HELPER })).body).toEqual({
+      outcome: 'pending', reason: expect.stringContaining('UNKNOWN'),
+    });
+    expect(source).toHaveBeenCalledTimes(2); // Two explicit independent actions; neither is redispatched.
+    const pending = (await notices()).filter(row => row.card.status === 'pending');
+    expect(pending).toHaveLength(2);
+    expect(pending.every(row => !row.card.txUrl && row.card.reason?.includes('UNKNOWN'))).toBe(true);
+    expect(pending.every(row => row.direct_participants.includes(HUMAN))).toBe(true);
+    expect((await database.query(`SELECT id FROM wallet_transactions WHERE identity_id=$1 AND direction='out'`, [HUMAN])).rows).toHaveLength(0);
+  });
+
+  it.each([false, true].flatMap(providerFirst => [true, undefined].map(completionV1 =>
+    ({ providerFirst, completionV1: completionV1 as true | undefined }))))
+    ('an unconfirmed approval stays owner/chain/hash-bound without dependent submission (provider first=$providerFirst, completionV1=$completionV1)', async ({providerFirst, completionV1}) => {
+    const wallet = await createdWallet();
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    fundChain(wallet.address, 'base', 'usdc', 500);
+    const hash = `0x${'c'.repeat(64)}`;
+    const contract = `0x${'7'.repeat(40)}`;
+    const client = new CdpWalletClient({ keyId: 'approval-fixture',
+      keySecret: generateKeyPairSync('ed25519').privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+      walletSecret: generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey
+        .export({ type: 'pkcs8', format: 'pem' }).toString(),
+    });
+    const originalFetch = globalThis.fetch;
+    let submissions = 0;
+    let receipts = 0;
+    vi.stubGlobal('fetch', async (url: RequestInfo | URL, options?: RequestInit) => {
+      if (String(url).startsWith(origin)) return originalFetch(url, options);
+      if (String(url).endsWith('/send/transaction')) {
+        submissions += 1;
+        return Response.json({ transactionHash: hash });
+      }
+      const rows = JSON.parse(String(options?.body)) as { id: number; method: string }[];
+      return Response.json(rows.map(({ id, method }) => {
+        if (method === 'eth_getTransactionReceipt') { receipts += 1; return { id, result: null }; }
+        expect(method).toBe('eth_getTransactionByHash');
+        return { id, result: { from: wallet.address, to: contract, value: '0x0', input: '0x' } };
+      }));
+    });
+    const source = vi.spyOn(walletSource(), 'contractCall').mockImplementation((address, input) => client.contractCall(address, input));
+    const data = { address: wallet.address, transaction_hash: hash, network: 'base-mainnet' };
+    if (providerFirst)
+      expect((await deliverWalletEvent('wallet.transaction.confirmed', data, 'provider-first-approval')).status).toBe(200);
+    const response = await daemonOperation('walletContractCall', {
+      ...(completionV1 ? { completionV1 } : {}), agentId: HELPER, chain: 'base', contract, data: '0x12345678',
+      approve: { asset: 'usdc', amount: '2' },
+    });
+    expect(response.body).toMatchObject({ outcome: 'pending', txUrl: walletExplorerTxUrl('base', hash),
+      reason: expect.stringContaining('dependent transaction was not submitted') });
+    expect(source.mock.calls[0]?.[1].completionV1).toBe(completionV1);
+    expect({ submissions, receipts }).toEqual({ submissions: 1, receipts: 1 });
+    const readApproval = async () => (await notices()).find(row => row.card.txUrl === walletExplorerTxUrl('base', hash))!;
+    expect((await readApproval()).card).toMatchObject({ operation: 'approval',
+      status: providerFirst ? 'confirmed' : 'pending', amountText: '2 USDC', agentId: HELPER });
+    expect((await deliverWalletEvent('wallet.transaction.confirmed', { ...data, address: `0x${'9'.repeat(40)}` }, 'wrong-owner')).status).toBe(200);
+    expect((await deliverWalletEvent('wallet.transaction.confirmed', { ...data, network: 'arbitrum-mainnet' }, 'wrong-chain')).status).toBe(200);
+    expect((await deliverWalletEvent('wallet.transaction.confirmed', { ...data, transaction_hash: `0x${'d'.repeat(64)}` }, 'wrong-hash')).status).toBe(200);
+    expect((await readApproval()).card.status).toBe(providerFirst ? 'confirmed' : 'pending');
+    expect((await deliverWalletEvent('wallet.transaction.confirmed', data, 'approval-confirmed')).status).toBe(200);
+    expect((await deliverWalletEvent('wallet.transaction.confirmed', data, 'approval-confirmed-repeat')).status).toBe(200);
+    const settled = await readApproval();
+    expect(settled.card).toMatchObject({ operation: 'approval', status: 'confirmed', agentId: HELPER });
+    expect(settled.text).toContain('dependent transaction was not submitted');
+    expect(settled.text).toContain('new explicit action');
+    expect({ submissions, receipts }).toEqual({ submissions: 1, receipts: 1 });
+    expect((await database.query(`SELECT id FROM wallet_transactions WHERE identity_id=$1 AND direction='out'`, [HUMAN])).rows).toHaveLength(0);
+  });
+
+  it('failed phone sends, agent sends and swaps, delegation and venue refusals all reach @System', async () => {
+    const wallet = await createdWallet();
+    fundChain(wallet.address, 'base', 'usdc', 500);
+    const pay = { chain: 'base', asset: 'usdc', amount: '2', to: `0x${'7'.repeat(40)}` };
+    expect((await daemonOperation('walletPay', { ...pay, agentId: HELPER })).body.outcome).toBe('delegation-expired');
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    vi.spyOn(walletSource(), 'sendTransaction').mockRejectedValue(new Error('CDP refused transfer'));
+    expect(await phoneOperation('sendFromWallet', { ...pay, workspaceId: WORKSPACE })).toMatchObject({ outcome: 'failed' });
+    expect((await daemonOperation('walletPay', { ...pay, agentId: HELPER })).body.outcome).toBe('failed');
+    const hash = `0x${'2'.repeat(64)}`;
+    vi.spyOn(walletSource(), 'swap').mockRejectedValue(new Error(`transaction ${hash} reverted`));
+    expect((await daemonOperation('walletSwap', {
+      agentId: HELPER, chain: 'base', fromAsset: 'usdc', toAsset: 'eth', amount: '3',
+    })).body.outcome).toBe('failed');
+    expect((await daemonOperation('walletPay', { ...pay, chain: 'arbitrum', to: BRIDGE2, agentId: HELPER })).body.outcome).toBe('failed');
+    const rows = (await notices()).filter(row => row.card.status === 'failed');
+    expect(rows).toHaveLength(5);
+    expect(rows.every(row => row.author_id === SYSTEM_IDENTITY_ID && row.card.reason)).toBe(true);
+    expect(rows.find(row => row.card.operation === 'swap')!.card.txUrl).toContain(hash);
+    expect(rows.find(row => row.card.counterparty === BRIDGE2)!.text).toContain(BRIDGE2);
+  });
+
+  it('provider status and retries settle the same notice and preserve the initiating agent', async () => {
+    const wallet = await createdWallet();
+    const hash = `0x${'3'.repeat(64)}`;
+    const notice: WalletNotice = { walletNotice: true, status: 'pending', operation: 'swap', execution: true,
+      amountText: '3 USDC→ETH', counterparty: 'Coinbase CDP', chain: 'base', agentId: HELPER,
+      agentName: '@bee', txUrl: walletExplorerTxUrl('base', hash) };
+    await postWalletNotice(database, WORKSPACE, HUMAN, notice);
+    const data = { address: wallet.address, transaction_hash: hash, network: 'base-mainnet' };
+    expect((await deliverWalletEvent('wallet.transaction.failed', data)).status).toBe(200);
+    expect((await deliverWalletEvent('wallet.transaction.failed', data, 'retry')).status).toBe(200);
+    expect((await deliverWalletEvent('wallet.transaction.broadcast', data, 'late')).status).toBe(200);
+    const rows = await notices();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.card).toMatchObject({ status: 'failed', agentId: HELPER, amountText: '3 USDC→ETH' });
+    expect(rows[0]!.text).toContain('@bee');
+  });
+
+  it('signed Base transfer pushes arrive without a wallet read, merge logs and stay private per owner', async () => {
+    const wallet = await createdWallet();
+    const hash = `0x${'4'.repeat(64)}`;
+    const data = { network: 'base-mainnet', transactionHash: hash, logIndex: 1,
+      contractAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      from: `0x${'7'.repeat(40)}`, to: wallet.address, value: '5000000' };
+    expect((await deliverWalletEvent('wallet.activity.multi', data)).status).toBe(200);
+    expect((await deliverWalletEvent('wallet.activity.multi', data, 'retry')).status).toBe(200);
+    expect((await deliverWalletEvent('wallet.activity.multi', { ...data, logIndex: 2,
+      from: wallet.address, to: `0x${'8'.repeat(40)}`, value: '2000000' }, 'outgoing')).status).toBe(200);
+    const rows = await notices();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.card.status).toBe('confirmed');
+    expect(rows[0]!.text).toContain('+5 USDC');
+    expect(rows[0]!.text).toContain('−2 USDC');
+    expect(rows[0]!.text).toContain('initiator not known');
+    expect(rows[0]!.direct_participants.sort()).toEqual([SYSTEM_IDENTITY_ID, HUMAN].sort());
+    expect(rows[0]!.card.txUrl).toContain(hash);
+  });
+
+  it.each([true, false])('provider-first settlement indexes token receipts once (swap=%s), then joins execution attribution', async (includeIncoming) => {
+    const wallet = await createdWallet();
+    const hash = `0x${'5'.repeat(64)}`;
+    const venue = `0x${'6'.repeat(40)}`;
+    const token = `0x${'9'.repeat(40)}`;
+    const transferTopic = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+    const topic = (address: string) => `0x${address.slice(2).padStart(64, '0')}`;
+    const word = (amount: number) => `0x${amount.toString(16).padStart(64, '0')}`;
+    const originalFetch = globalThis.fetch;
+    const rpcCalls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      if (String(url).startsWith(origin)) return originalFetch(url, init);
+      const batch = JSON.parse(String(init?.body)) as Array<{ id: number; method: string }>;
+      return Response.json(batch.map(call => {
+        rpcCalls.push(call.method);
+        return { id: call.id, jsonrpc: '2.0', result: call.method === 'eth_getTransactionByHash'
+          ? { from: wallet.address, to: venue, value: '0x0', input: '0x12345678' }
+          : { logs: [
+            { address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', logIndex: '0x1',
+              topics: [transferTopic, topic(wallet.address), topic(venue)], data: word(5_000_000) },
+            ...(includeIncoming ? [{ address: token, logIndex: '0x2', topics: [transferTopic, topic(venue), topic(wallet.address)], data: word(7) }] : []),
+          ] } };
+      }));
+    });
+    const data = { address: wallet.address, transaction_hash: hash, network: 'base' };
+    expect((await deliverWalletEvent('wallet.transaction.confirmed', data)).status).toBe(200);
+    expect((await deliverWalletEvent('wallet.transaction.confirmed', data, 'retry')).status).toBe(200);
+    expect(rpcCalls).toEqual(['eth_getTransactionByHash', 'eth_getTransactionReceipt']);
+    let rows = await notices();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.text).toContain(includeIncoming ? 'confirmed swap' : 'confirmed contract');
+    expect(rows[0]!.text).toContain('−5 USDC');
+    if (includeIncoming) expect(rows[0]!.text).toContain('+7 raw units');
+    expect(rows[0]!.text).not.toContain('−−');
+    expect(rows[0]!.text).toContain(venue);
+    await postWalletNotice(database, WORKSPACE, HUMAN, {
+      walletNotice: true, status: 'pending', operation: 'swap', execution: true,
+      amountText: '5 USDC→ETH', counterparty: 'Coinbase CDP', chain: 'base', agentId: HELPER,
+      agentName: '@bee', txUrl: walletExplorerTxUrl('base', hash),
+    });
+    rows = await notices();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.card).toMatchObject({ status: 'confirmed', agentId: HELPER });
+    expect(rows[0]!.text).toContain('@bee');
+  });
+
+  it('ignores unknown accounts and testnets and records each insufficient attempt separately', async () => {
+    const wallet = await createdWallet();
+    const data = { address: `0x${'6'.repeat(40)}`, transaction_hash: `0x${'5'.repeat(64)}`, network: 'base-mainnet' };
+    expect((await deliverWalletEvent('wallet.transaction.confirmed', data)).status).toBe(200);
+    expect((await deliverWalletEvent('wallet.transaction.confirmed', { ...data, address: wallet.address, network: 'base-sepolia' })).status).toBe(200);
+    expect(await notices()).toHaveLength(0);
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    const pay = { chain: 'base', asset: 'usdc', amount: '999999', to: `0x${'7'.repeat(40)}`, agentId: HELPER };
+    expect((await daemonOperation('walletPay', pay)).body.outcome).toBe('insufficient');
+    expect((await daemonOperation('walletPay', pay)).body.outcome).toBe('insufficient');
+    const rows = await notices();
+    expect(rows).toHaveLength(2);
+    expect(rows.every(row => row.card.status === 'refused' && row.text.includes(pay.to) && row.text.includes('@bee'))).toBe(true);
+  });
+
+  it('rejects forged provider events and phone sends into inaccessible Workspaces before sending', async () => {
+    await createdWallet();
+    const send = vi.spyOn(walletSource(), 'sendTransaction');
+    const response = await fetch(`${origin}/v1/phone/operations/sendFromWallet`, {
+      method: 'POST', headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ workspaceId: '99999999-9999-4999-8999-999999999999',
+        chain: 'base', asset: 'usdc', amount: '1', to: `0x${'7'.repeat(40)}` }),
+    });
+    expect(response.ok).toBe(false);
+    expect(send).not.toHaveBeenCalled();
+    const forged = await fetch(`${origin}/v1/wallet/events/cdp/test`, {
+      method: 'POST', body: '{}', headers: { 'x-hook0-signature': 'forged' },
+    });
+    expect(forged.status).toBe(401);
+    expect(await notices()).toHaveLength(0);
+  });
+
+  /** Fund one non-Base chain of the fake wallet. */
+  function fundChain(address: string, chain: string, symbol: string, units: number) {
+    const key = chain === 'base' ? address : `${chain}:${address}`;
+    const holdings = fakeState().holdings.get(key) ?? new Map<string, number>();
+    holdings.set(symbol, units);
+    fakeState().holdings.set(key, holdings);
+  }
+
+  it('an Arbitrum-only wallet reads its real balance, chains, quote and inbound history', async () => {
+    // The fake outlives a test; start from an empty wallet on every chain.
+    fakeState().holdings.clear();
+    const wallet = await createdWallet();
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    fundChain(wallet.address, 'arbitrum', 'eth', 0.5);
+
+    const balance = (await daemonOperation('getWalletToolBalance', { agentId: HELPER })).body;
+    expect(balance).toEqual({
+      totalUsd: '$1,600.00',
+      coins: [{ symbol: 'eth', name: 'ETH', chain: 'arbitrum', amount: '0.50', usd: '$1,600.00' }],
+    });
+    const chains = (await daemonOperation('getWalletToolChains', { agentId: HELPER })).body
+      .chains as Array<{ id: string; hasBalance: boolean }>;
+    expect(chains.filter((chain) => chain.hasBalance).map((chain) => chain.id)).toEqual(['arbitrum']);
+    expect(
+      (await daemonOperation('getWalletToolQuote', { agentId: HELPER, chain: 'arbitrum', asset: 'eth', amount: '0.001' })).body,
+    ).toMatchObject({ available: '0.50', sufficient: true, chain: 'arbitrum' });
+    expect(
+      (await daemonOperation('getWalletToolQuote', { agentId: HELPER, chain: 'base', asset: 'eth', amount: '0.001' })).body,
+    ).toMatchObject({ available: '0', sufficient: false, chain: 'base' });
+
+    const history = async () =>
+      (await daemonOperation('getWalletToolHistory', { agentId: HELPER })).body.entries as Array<{
+        direction: string;
+        amountText: string;
+        chain: string;
+        txUrl: string | null;
+      }>;
+    const arbitrumInbound = async () =>
+      (await history()).filter((entry) => entry.direction === 'in' && entry.chain === 'arbitrum');
+    const inbound = await arbitrumInbound();
+    expect(inbound).toEqual([
+      expect.objectContaining({ amountText: '+0.5 ETH', chain: 'arbitrum', txUrl: null }),
+    ]);
+    // A repeated read records the same deposit once.
+    expect(await arbitrumInbound()).toHaveLength(1);
+    fundChain(wallet.address, 'arbitrum', 'eth', 0.75);
+    expect((await arbitrumInbound()).map((entry) => entry.amountText)).toEqual([
+      '+0.5 ETH',
+      '+0.25 ETH',
+    ]);
+  });
+
+  it('pays and swaps on Arbitrum without reading the swap output as a deposit', async () => {
+    // The fake outlives a test; start from an empty wallet on every chain.
+    fakeState().holdings.clear();
+    const wallet = await createdWallet();
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    fundChain(wallet.address, 'arbitrum', 'eth', 1);
+    fundChain(wallet.address, 'arbitrum', 'usdc', 50);
+
+    const paid = await daemonOperation('walletPay', {
+      agentId: HELPER, chain: 'arbitrum', asset: 'usdc', amount: '20', to: '0xabc',
+    });
+    expect(paid.body).toMatchObject({ outcome: 'sent', txUrl: expect.stringMatching(/^https:\/\/arbiscan\.io\/tx\//) });
+    expect(fakeState().holdings.get(`arbitrum:${wallet.address}`)!.get('usdc')).toBe(30);
+
+    const swapped = await daemonOperation('walletSwap', {
+      agentId: HELPER, chain: 'arbitrum', fromAsset: 'eth', toAsset: 'usdc', amount: '0.5',
+    });
+    expect(swapped.body).toMatchObject({ outcome: 'sent', txUrl: expect.stringMatching(/^https:\/\/arbiscan\.io\/tx\//) });
+    const entries = (await daemonOperation('getWalletToolHistory', { agentId: HELPER })).body.entries as Array<{
+      direction: string; amountText: string; chain: string;
+    }>;
+    expect(
+      entries
+        .filter((entry) => entry.direction === 'in' && entry.chain === 'arbitrum')
+        .map((entry) => entry.amountText)
+        .sort(),
+    ).toEqual([
+      '+1 ETH',
+      '+50 USDC',
+    ]);
+    expect(entries.filter((entry) => entry.direction === 'out').every((entry) => entry.chain === 'arbitrum')).toBe(true);
+  });
+
+  it('reports an unsupported swap chain as a named failure', async () => {
+    await createdWallet();
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    vi.spyOn(walletSource(), 'swap').mockRejectedValue(new Error('swap unsupported on zora'));
+    expect(
+      (await daemonOperation('walletSwap', { agentId: HELPER, chain: 'zora', fromAsset: 'usdc', toAsset: 'eth', amount: '1' })).body,
+    ).toEqual({ outcome: 'failed', reason: 'swap unsupported on zora' });
+  });
+
+  it('refuses a wallet_pay to Hyperliquid Bridge2 that the venue rule says is lost', async () => {
+    // The fake outlives a test; start from an empty wallet on every chain.
+    fakeState().holdings.clear();
+    const wallet = await createdWallet();
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    fundChain(wallet.address, 'arbitrum', 'usdc', 10);
+    fundChain(wallet.address, 'arbitrum', 'eth', 1);
+    const send = vi.spyOn(walletSource(), 'sendTransaction');
+    const pay = (asset: string, amount: string) =>
+      daemonOperation('walletPay', { agentId: HELPER, chain: 'arbitrum', asset, amount, to: BRIDGE2 });
+
+    expect((await pay('usdc', '4.99')).body).toEqual({
+      outcome: 'failed',
+      reason:
+        'Hyperliquid Bridge2 deposits must be at least 5 USDC; a smaller deposit is never credited and is lost',
+    });
+    expect((await pay('eth', '0.1')).body).toMatchObject({
+      outcome: 'failed',
+      reason: expect.stringContaining('credits only USDC'),
+    });
+    expect(send).not.toHaveBeenCalled();
+    expect((await pay('usdc', '5')).body).toMatchObject({ outcome: 'sent' });
+    expect(send).toHaveBeenCalledWith(wallet.address, {
+      chain: 'arbitrum',
+      asset: 'usdc',
+      amount: '5',
+      to: BRIDGE2,
+    });
+  });
+
+  it('approves an exact amount and calls a contract, under the same funds and ledger rules', async () => {
+    fakeState().holdings.clear();
+    const wallet = await createdWallet();
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    const call = vi.spyOn(walletSource(), 'contractCall');
+    const vault = '0x' + '7'.repeat(40);
+    const deposit = { agentId: HELPER, chain: 'arbitrum', contract: vault, data: '0xb6b55f25' + '0'.repeat(64) };
+
+    expect(
+      (await daemonOperation('walletContractCall', { ...deposit, approve: { asset: 'usdc', amount: '20' } })).body,
+    ).toMatchObject({ outcome: 'insufficient', asset: 'usdc', needed: '20', available: '0' });
+    expect(call).not.toHaveBeenCalled();
+
+    fundChain(wallet.address, 'arbitrum', 'usdc', 50);
+    const sent = await daemonOperation('walletContractCall', {
+      ...deposit,
+      approve: { asset: 'usdc', amount: '20' },
+    });
+    expect(sent.body).toMatchObject({
+      outcome: 'sent',
+      amountText: '−20 USDC',
+      txUrl: expect.stringMatching(/^https:\/\/arbiscan\.io\/tx\//),
+    });
+    expect(call).toHaveBeenCalledWith(wallet.address, {
+      chain: 'arbitrum',
+      contract: vault,
+      data: deposit.data,
+      approve: { asset: 'usdc', amount: '20' },
+    });
+    const entries = (await daemonOperation('getWalletToolHistory', { agentId: HELPER })).body.entries as Array<{
+      direction: string; amountText: string; counterparty: string;
+    }>;
+    expect(entries.filter((entry) => entry.direction === 'out')).toEqual([
+      expect.objectContaining({ amountText: '−20 USDC', counterparty: vault }),
+    ]);
+  });
+
+  it('refuses contract calls that grant an allowance or break a venue rule', async () => {
+    fakeState().holdings.clear();
+    const wallet = await createdWallet();
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    fundChain(wallet.address, 'arbitrum', 'usdc', 50);
+    fundChain(wallet.address, 'arbitrum', 'eth', 1);
+    const call = vi.spyOn(walletSource(), 'contractCall');
+    const usdc = '0xaf88d065e77c8cC2239327C5EDb3A432268e5831';
+    const word = (hex: string) => hex.replace(/^0x/, '').toLowerCase().padStart(64, '0');
+    const contractCall = (input: Record<string, unknown>) =>
+      daemonOperation('walletContractCall', { agentId: HELPER, chain: 'arbitrum', ...input });
+
+    // An unlimited approve hidden in call data.
+    expect(
+      (await contractCall({ contract: usdc, data: `0x095ea7b3${word('0x' + '7'.repeat(40))}${'f'.repeat(64)}` })).body,
+    ).toEqual({
+      outcome: 'failed',
+      reason: 'call data grants a token allowance; use approve, which approves an exact amount',
+    });
+    // A USDC transfer to Bridge2 below the minimum, encoded as call data.
+    expect(
+      (await contractCall({ contract: usdc, data: `0xa9059cbb${word(BRIDGE2)}${word((4_000_000).toString(16))}` })).body,
+    ).toMatchObject({ outcome: 'failed', reason: expect.stringContaining('at least 5 USDC') });
+    // Native value sent to Bridge2.
+    expect((await contractCall({ contract: BRIDGE2, data: '0x', value: '0.1' })).body).toMatchObject({
+      outcome: 'failed',
+      reason: expect.stringContaining('credits only USDC'),
+    });
+    expect((await contractCall({ contract: '0x1234', data: '0x' })).body).toMatchObject({ outcome: 'failed' });
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it('the only spending refusal is insufficient funds', async () => {
+    await createdWallet();
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE, ttlHours: 24 });
+    const sent = (await daemonOperation('walletPay', {
+      agentId: HELPER,
+      chain: 'base',
+      asset: 'usdc',
+      amount: '999999',
+      to: '0xabc',
+    })) as { body: { outcome: string; asset: string; available: string } };
+    expect(sent.body.outcome).toBe('insufficient');
+    expect(sent.body.asset).toBe('usdc');
+  });
+});

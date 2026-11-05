@@ -1,0 +1,189 @@
+import { describe, expect, it } from 'vitest';
+import { seedCornerOpening, PgliteDatabase, migratedDatabase, insertCornerFacts, recordCornerRun } from './test-support.js';
+import { PhoneService } from './phone-service.js';
+import { CORNER_ROW_CACHE_COLUMNS, CORNER_ROW_FACT_COLUMNS, CORNER_ROW_MESSAGE_COLUMNS } from './corner-row-projection.js';
+
+const VIEWER = 'a'.repeat(64);
+const AGENT = 'b'.repeat(64);
+const WORKSPACE = '11111111-1111-4111-8111-111111111111';
+const ROOM = '22222222-2222-4222-8222-222222222222';
+const FAILING = '33333333-3333-4333-8333-333333333331';
+const mineId = (index: number) => `44444444-4444-4444-8444-${String(index).padStart(12, '0')}`;
+const otherId = (index: number) => `55555555-5555-4555-8555-${String(index).padStart(12, '0')}`;
+
+/**
+ * Nine corners the viewer commissioned, opened first, then three newer ones
+ * an agent opened for someone else. The newest is in `implement` with no
+ * recorded outcome while its PR checks fail.
+ */
+async function fixture() {
+  const database = await migratedDatabase();
+  await database.query(
+    `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Ada','ada'),($2,'agent','Bot','bot')`,
+    [VIEWER, AGENT],
+  );
+  await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [WORKSPACE]);
+  await database.query(
+    `INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'alpha')`,
+    [ROOM, WORKSPACE, VIEWER],
+  );
+  const corners: Array<[string, string, boolean]> = [
+    ...Array.from({ length: 9 }, (_, index) => [mineId(index), `Mine ${index}`, true] as [string, string, boolean]),
+    [otherId(1), 'Other 1', false],
+    [otherId(2), 'Other 2', false],
+    [FAILING, 'Failing checks', false],
+  ];
+  for (const [index, [id, name, mine]] of corners.entries()) {
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name,created_at)
+       VALUES($1,$2,$3,$4,$5,'2026-01-01T00:00:00Z'::timestamptz + make_interval(mins => $6))`,
+      [id, WORKSPACE, ROOM, AGENT, name, index],
+    );
+    await insertCornerFacts(database, { cornerId: id, ownerAgentId: AGENT, commissionedBy: mine ? VIEWER : null });
+  }
+  await database.query(
+    `UPDATE corner_facts SET
+       lifecycle='{"lifecycle":"open","checks":"failing","pr":{"url":"https://github.com/o/r/pull/1","number":1}}'
+     WHERE corner_id=$1`,
+    [FAILING],
+  );
+  await recordCornerRun(database, FAILING, 'implement');
+  await database.query(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+     SELECT $1::uuid,NULL::uuid,$2::text,'owner' UNION ALL
+     SELECT $1::uuid,id,$2::text,'owner' FROM rooms WHERE workspace_id=$1::uuid AND parent_id IS NULL`,
+    [WORKSPACE, VIEWER],
+  );
+  await database.query(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+     SELECT $1::uuid,id,$2::text,'member' FROM rooms WHERE workspace_id=$1::uuid AND parent_id IS NULL`,
+    [WORKSPACE, AGENT],
+  );
+  return { database, phone: new PhoneService(database, 'http://local.test') };
+}
+
+async function roomListRow(phone: PhoneService) {
+  return (await phone.readChats(WORKSPACE, VIEWER))!.chats.find((item) => item.room.id === ROOM)!;
+}
+
+describe('one corner projection for the Room list read, the live frame and the Corners page', () => {
+  it('reads idle for finished failing checks with no running or queued work everywhere', async () => {
+    const { database, phone } = await fixture();
+    // Mine, so the capped Room list carries it. The repair window has elapsed.
+    await database.query(`DELETE FROM agent_commands WHERE room_id=$1 AND reason='corner_objective'`, [FAILING]);
+    await seedCornerOpening(database, { cornerId: FAILING, agentId: AGENT, commissionedBy: VIEWER });
+    await database.query(
+      `UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checksSummary}',jsonb_build_object('status','failing','updatedAt',extract(epoch FROM now()-interval '31 minutes'),'checks','[]'::jsonb)) WHERE corner_id=$1`,
+      [FAILING],
+    );
+    const read = await roomListRow(phone);
+    const frame = (await phone.liveChatCornerStatus(ROOM, VIEWER))!;
+    const page = (await phone.readCorners(ROOM, VIEWER))!;
+    const failing = (list: readonly { id: string; state: string }[] | undefined) =>
+      list?.find((corner) => corner.id === FAILING)?.state;
+    expect(failing(read.openCorners)).toBe('idle');
+    expect(failing(frame.openCorners)).toBe('idle');
+    expect(page.corners.find((item) => item.corner.id === FAILING)).toMatchObject({
+      state: 'idle',
+    });
+  });
+
+  it('keeps every Mine corner in the capped list and sends the same list and counts on read and frame', async () => {
+    const { phone } = await fixture();
+    const read = await roomListRow(phone);
+    const frame = (await phone.liveChatCornerStatus(ROOM, VIEWER))!;
+    expect(read.openCorners?.map((corner) => corner.id)).toEqual(
+      Array.from({ length: 9 }, (_, index) => mineId(8 - index)),
+    );
+    expect(read).toMatchObject({ cornerCount: 12, mineCornerCount: 9 });
+    expect({
+      cornerCount: frame.cornerCount,
+      waitingCornerCount: frame.waitingCornerCount,
+      mineCornerCount: frame.mineCornerCount,
+      openCorners: frame.openCorners,
+    }).toEqual({
+      cornerCount: read.cornerCount,
+      waitingCornerCount: read.waitingCornerCount,
+      mineCornerCount: read.mineCornerCount,
+      openCorners: read.openCorners,
+    });
+  });
+
+  it('sends the Room list summary on the first open Corners page only', async () => {
+    const { phone } = await fixture();
+    const read = await roomListRow(phone);
+    const page = (await phone.readCorners(ROOM, VIEWER))!;
+    expect(page.summary).toEqual({
+      cornerCount: read.cornerCount,
+      waitingCornerCount: read.waitingCornerCount,
+      mineCornerCount: read.mineCornerCount,
+      openCorners: read.openCorners,
+    });
+    const archived = (await phone.readCorners(ROOM, VIEWER, false, true))!;
+    expect(archived).not.toHaveProperty('summary');
+    const later = (await phone.readCorners(ROOM, VIEWER, false, false, undefined,
+      { micros: String(Date.now() * 1000), id: 'ffffffff-ffff-4fff-bfff-ffffffffffff' }))!;
+    expect(later).not.toHaveProperty('summary');
+  });
+
+  it('marks the same corners Mine on the Corners page as on the Room list', async () => {
+    const { phone } = await fixture();
+    const read = await roomListRow(phone);
+    const page = (await phone.readCorners(ROOM, VIEWER))!;
+    const pageMine = page.corners.filter((item) => item.mine).map((item) => item.corner.id);
+    const readMine = read.openCorners!.filter((corner) => corner.mine).map((corner) => corner.id);
+    expect(pageMine).toEqual(readMine);
+    expect(pageMine).toHaveLength(9);
+  });
+
+  it('names the approval actor on the read and the live frame alike', async () => {
+    const { database, phone } = await fixture();
+    await database.query(
+      `INSERT INTO permission_authority(permission_id,room_id,principal_id,request_id,scope,status)
+       VALUES('perm-1',$1,$2,'request-1','{}'::jsonb,'pending')`,
+      [FAILING, AGENT],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+       VALUES('card-1',$1,$2,'','card','permission',
+         jsonb_build_object('permissionId','perm-1','agent',jsonb_build_object('pubkey',$2::text)))`,
+      [FAILING, AGENT],
+    );
+    const read = await roomListRow(phone);
+    const frame = (await phone.liveChatCornerStatus(ROOM, VIEWER))!;
+    expect(read.attentionReason).toEqual({ kind: 'approval', actor: 'Bot' });
+    expect(frame.agentState).toBe('needs-you');
+    expect(frame.attentionReason).toEqual(read.attentionReason);
+  });
+
+  it('never takes a deleted message as a corner latest message', async () => {
+    const { database, phone } = await fixture();
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at,deleted_at) VALUES
+        ('kept',$1,$2,'kept','2026-02-01T00:00:00Z',NULL),
+        ('gone',$1,$2,'gone','2026-02-02T00:00:00Z','2026-02-03T00:00:00Z')`,
+      [FAILING, AGENT],
+    );
+    const page = (await phone.readCorners(ROOM, VIEWER))!;
+    expect(page.corners.find((item) => item.corner.id === FAILING)?.latestMessage?.id).toBe('kept');
+  });
+});
+
+describe('corner row live trigger inputs', () => {
+  it('cover every corner-fact and latest-message column the corner row reads', () => {
+    const phone = new PhoneService(new PgliteDatabase(), 'https://beeline.test');
+    const sql = (phone as unknown as {
+      cornerRowsSql(order: boolean, archived: boolean): string;
+    }).cornerRowsSql(false, false);
+    const read = (alias: string) =>
+      new Set([...sql.matchAll(new RegExp(`\\b${alias}\\.(\\w+)`, 'g'))].map((match) => match[1]!));
+    expect([...read('f')].filter((column) =>
+      column !== 'corner_id' && !(CORNER_ROW_FACT_COLUMNS as readonly string[]).includes(column))).toEqual([]);
+    expect([...read('gh')].filter((column) =>
+      column !== 'corner_id' && !(CORNER_ROW_CACHE_COLUMNS as readonly string[]).includes(column))).toEqual([]);
+    expect([...read('lm')].filter((column) =>
+      !(CORNER_ROW_MESSAGE_COLUMNS as readonly string[]).includes(column))).toEqual([]);
+    expect([...read('message')].filter((column) =>
+      !(CORNER_ROW_MESSAGE_COLUMNS as readonly string[]).includes(column))).toEqual([]);
+  });
+});

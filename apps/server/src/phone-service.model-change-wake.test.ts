@@ -1,0 +1,311 @@
+import { describe, expect, it } from 'vitest';
+import type { QueryResultRow } from 'pg';
+import { type QueryResult, type SqlDatabase } from './database.js';
+import { migratedDatabase } from './test-support.js';
+import { PhoneService } from './phone-service.js';
+import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
+
+const OWNER = 'a'.repeat(64);
+const AGENT = 'c'.repeat(64);
+const OTHER = 'd'.repeat(64);
+const WORKSPACE = '11111111-1111-4111-8111-111111111111';
+const ROOM_A = '22222222-2222-4222-8222-222222222221';
+const ROOM_B = '22222222-2222-4222-8222-222222222222';
+
+type Notify = { channel: string; payload: Record<string, unknown> };
+
+/** Records the pg_notify wakes a transaction issues, then delegates. */
+class RecordingDatabase implements SqlDatabase {
+  readonly notifies: Notify[];
+  constructor(
+    private readonly inner: SqlDatabase,
+    notifies: Notify[] = [],
+  ) {
+    this.notifies = notifies;
+  }
+  query<Row extends QueryResultRow = QueryResultRow>(
+    sql: string,
+    values: unknown[] = [],
+  ): Promise<QueryResult<Row>> {
+    if (sql.includes('pg_notify')) {
+      this.notifies.push({
+        channel: values[0] as string,
+        payload: JSON.parse(values[1] as string) as Record<string, unknown>,
+      });
+    }
+    return this.inner.query<Row>(sql, values);
+  }
+  transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {
+    return this.inner.transaction((database) =>
+      work(new RecordingDatabase(database, this.notifies)),
+    );
+  }
+}
+
+async function fixture() {
+  const database = await migratedDatabase();
+  await database.query(
+    `INSERT INTO identities(id,kind,name,handle) VALUES
+      ($1,'human','Charles','lunchboxfortwo'),($2,'agent','Bee','bee'),
+      ($3,'human','Other','other')`,
+    [OWNER, AGENT, OTHER],
+  );
+  await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [WORKSPACE]);
+  await database.query(
+    `INSERT INTO rooms(id,workspace_id,created_by,name) VALUES
+      ($1,$3,$4,'one'),($2,$3,$4,'two')`,
+    [ROOM_A, ROOM_B, WORKSPACE, OWNER],
+  );
+  await database.query(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+      ($1,NULL,$2,'owner'),($1,$3,$2,'owner'),($1,$4,$2,'owner'),
+      ($1,NULL,$5,'member'),($1,$3,$5,'member'),($1,$4,$5,'member'),
+      ($1,NULL,$6,'member')`,
+    [WORKSPACE, OWNER, ROOM_A, ROOM_B, AGENT, OTHER],
+  );
+  await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, OWNER]);
+  await database.query(`UPDATE agents SET model_catalog=$2::jsonb WHERE agent_id=$1`, [
+    AGENT,
+    JSON.stringify([
+      { id: 'model', category: 'model', options: [{ id: 'sonnet-5' }, { id: 'opus-6' }] },
+      { id: 'effort', category: 'reasoning_effort', options: [{ id: 'high' }, { id: 'max' }] },
+    ]),
+  ]);
+  return database;
+}
+
+const change = (database: RecordingDatabase, input: Record<string, unknown>) =>
+  new PhoneService(database, 'http://local.test')
+    .execute(
+      'updateAgentModelSelection',
+      { workspaceId: WORKSPACE, agentId: AGENT, ...input },
+      OWNER,
+    )
+    .then(() => database.notifies);
+
+const refresh = (database: RecordingDatabase) =>
+  new PhoneService(database, 'http://local.test')
+    .execute('refreshAgentModelCatalog', { workspaceId: WORKSPACE, agentId: AGENT }, OWNER)
+    .then(() => database.notifies);
+
+const wake = (notify: Notify) => notify.payload;
+
+describe('a model/effort selection change wakes the agent daemon', () => {
+  it('persists Fast mode, wakes sessions, and rejects unsupported or other-owner changes', async () => {
+    const database = await fixture();
+    try {
+      const recorder = new RecordingDatabase(database);
+      expect(
+        (
+          await database.query<{ fast_mode: boolean }>(
+            `SELECT fast_mode FROM agents WHERE agent_id=$1`,
+            [AGENT],
+          )
+        ).rows[0]?.fast_mode,
+      ).toBe(false);
+      await expect(change(recorder, { fastMode: true })).rejects.toThrow(
+        'Fast mode is unavailable',
+      );
+      await database.query(`UPDATE agents SET model_catalog=$2::jsonb WHERE agent_id=$1`, [
+        AGENT,
+        JSON.stringify([
+          {
+            id: 'model',
+            category: 'model',
+            currentValue: 'sonnet-5',
+            options: [{ id: 'sonnet-5' }],
+          },
+          { id: 'fast-mode', category: 'model_config', options: [{ id: 'off' }, { id: 'on' }] },
+        ]),
+      ]);
+      await expect(
+        new PhoneService(database, 'http://local.test').execute(
+          'updateAgentModelSelection',
+          { workspaceId: WORKSPACE, agentId: AGENT, fastMode: true },
+          OTHER,
+        ),
+      ).rejects.toThrow();
+      await change(recorder, { fastMode: true });
+      expect(
+        (
+          await database.query<{ fast_mode: boolean }>(
+            `SELECT fast_mode FROM agents WHERE agent_id=$1`,
+            [AGENT],
+          )
+        ).rows[0]?.fast_mode,
+      ).toBe(true);
+      expect(
+        (await new PhoneService(database, 'http://local.test').readAgent(WORKSPACE, AGENT, OWNER))
+          ?.fastMode,
+      ).toBe(true);
+      await database.query(`UPDATE agents SET selected_model='other-model' WHERE agent_id=$1`, [
+        AGENT,
+      ]);
+      expect(
+        (await new PhoneService(database, 'http://local.test').readAgent(WORKSPACE, AGENT, OWNER))
+          ?.fastMode,
+      ).toBe(false);
+      await database.query(`UPDATE agents SET selected_model=NULL WHERE agent_id=$1`, [AGENT]);
+      expect(recorder.notifies).toHaveLength(2);
+      await change(recorder, { fastMode: false });
+      expect(
+        (
+          await database.query<{ fast_mode: boolean }>(
+            `SELECT fast_mode FROM agents WHERE agent_id=$1`,
+            [AGENT],
+          )
+        ).rows[0]?.fast_mode,
+      ).toBe(false);
+      expect(
+        (await new PhoneService(database, 'http://local.test').readAgent(WORKSPACE, AGENT, OWNER))
+          ?.fastMode,
+      ).toBe(false);
+    } finally {
+      await database.close();
+    }
+  });
+  it('prefers a known effort category and falls back to the first non-model, non-Fast axis', async () => {
+    const database = await fixture();
+    try {
+      const recorder = new RecordingDatabase(database);
+      const setCatalog = (catalog: unknown[]) =>
+        database.query(`UPDATE agents SET model_catalog=$2::jsonb WHERE agent_id=$1`, [
+          AGENT,
+          JSON.stringify(catalog),
+        ]);
+      const model = { id: 'model', category: 'model', options: [{ id: 'sonnet-5' }] };
+      const fast = {
+        id: 'fast-mode',
+        category: 'model_config',
+        options: [{ id: 'off' }, { id: 'on' }],
+      };
+      // A harness that names its effort category differently keeps its picker,
+      // and Fast mode listed first is never mistaken for it.
+      await setCatalog([
+        model,
+        fast,
+        { id: 'depth', category: 'thinking_depth', options: [{ id: 'deep' }] },
+      ]);
+      await change(recorder, { effort: 'deep' });
+      await expect(change(recorder, { effort: 'on' })).rejects.toThrow('effort is not available');
+      // A known category still wins over an earlier unknown axis.
+      await setCatalog([
+        model,
+        { id: 'depth', category: 'thinking_depth', options: [{ id: 'deep' }] },
+        { id: 'effort', category: 'reasoning_effort', options: [{ id: 'high' }] },
+      ]);
+      await change(recorder, { effort: 'high' });
+      await expect(change(recorder, { effort: 'deep' })).rejects.toThrow('effort is not available');
+      expect(
+        (
+          await database.query<{ selected_effort: string }>(
+            `SELECT selected_effort FROM agents WHERE agent_id=$1`,
+            [AGENT],
+          )
+        ).rows[0]?.selected_effort,
+      ).toBe('high');
+    } finally {
+      await database.close();
+    }
+  });
+  it('clears stale choices and wakes the daemon for an explicit catalog refresh', async () => {
+    const database = await fixture();
+    try {
+      const recorder = new RecordingDatabase(database);
+      const notifies = await refresh(recorder);
+      expect(notifies.map(wake)).toEqual([
+        { table: 'agent_config', operation: 'UPDATE', roomId: ROOM_A, agentId: AGENT },
+        { table: 'agent_config', operation: 'UPDATE', roomId: ROOM_B, agentId: AGENT },
+      ]);
+      expect(
+        (
+          await database.query<{ model_catalog: unknown[] }>(
+            `SELECT model_catalog FROM agents WHERE agent_id=$1`,
+            [AGENT],
+          )
+        ).rows[0]?.model_catalog,
+      ).toEqual([]);
+    } finally {
+      await database.close();
+    }
+  });
+
+  it('publishes one agent-config wake per Room when the selection changes', async () => {
+    const database = await fixture();
+    try {
+      const notifies = await change(new RecordingDatabase(database), {
+        model: 'opus-6',
+        effort: 'max',
+      });
+      expect(notifies.map((notify) => notify.channel)).toEqual([
+        POSTGRES_LIVE_CHANNEL,
+        POSTGRES_LIVE_CHANNEL,
+      ]);
+      expect(notifies.map(wake)).toEqual([
+        { table: 'agent_config', operation: 'UPDATE', roomId: ROOM_A, agentId: AGENT },
+        { table: 'agent_config', operation: 'UPDATE', roomId: ROOM_B, agentId: AGENT },
+      ]);
+      expect(
+        (
+          await database.query<{ selected_model: string | null; selected_effort: string | null }>(
+            `SELECT selected_model,selected_effort FROM agents WHERE agent_id=$1`,
+            [AGENT],
+          )
+        ).rows[0],
+      ).toEqual({ selected_model: 'opus-6', selected_effort: 'max' });
+    } finally {
+      await database.close();
+    }
+  });
+
+  it('publishes nothing when the selection did not change', async () => {
+    const database = await fixture();
+    try {
+      const recorder = new RecordingDatabase(database);
+      await change(recorder, { model: 'sonnet-5', effort: 'high' });
+      expect(recorder.notifies).toHaveLength(2);
+      // The exact same selection again: the row is rewritten, but nothing
+      // changed, so no wake may leave — a reconnect-shaped no-op stays silent.
+      const repeat = new RecordingDatabase(database);
+      await change(repeat, { model: 'sonnet-5', effort: 'high' });
+      expect(repeat.notifies).toEqual([]);
+    } finally {
+      await database.close();
+    }
+  });
+
+  it('publishes a wake for an effort-only change too', async () => {
+    const database = await fixture();
+    try {
+      const recorder = new RecordingDatabase(database);
+      await change(recorder, { effort: 'max' });
+      expect(recorder.notifies.map(wake)).toEqual([
+        { table: 'agent_config', operation: 'UPDATE', roomId: ROOM_A, agentId: AGENT },
+        { table: 'agent_config', operation: 'UPDATE', roomId: ROOM_B, agentId: AGENT },
+      ]);
+    } finally {
+      await database.close();
+    }
+  });
+});
+
+
+it('requests usage from only the owned agent without clearing its snapshot or starting a turn', async () => {
+  const database = await fixture();
+  try {
+    const recorder = new RecordingDatabase(database);
+    const service = new PhoneService(recorder, 'http://local.test');
+    await expect(service.execute('refreshAgentUsage', { workspaceId: WORKSPACE, agentId: AGENT }, OTHER)).rejects.toThrow();
+    expect(recorder.notifies).toHaveLength(0);
+    // A machine without a live helper connection answers at once and asks nothing.
+    await expect(service.execute('refreshAgentUsage', { workspaceId: WORKSPACE, agentId: AGENT }, OWNER))
+      .resolves.toEqual({ status: 'offline' });
+    expect(recorder.notifies).toHaveLength(0);
+    await database.query(`INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id) VALUES($1,1,'c','i')`, [AGENT]);
+    await service.execute('refreshAgentUsage', { workspaceId: WORKSPACE, agentId: AGENT }, OWNER);
+    expect(recorder.notifies).toEqual([{ channel: POSTGRES_LIVE_CHANNEL, payload: {
+      table: 'agent_usage_refresh', operation: 'UPDATE', roomId: '', agentId: AGENT, requestId: expect.any(String),
+    } }]);
+    expect((await database.query('SELECT id FROM agent_commands')).rows).toHaveLength(0);
+  } finally { await database.close(); }
+});

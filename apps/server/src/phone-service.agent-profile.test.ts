@@ -1,0 +1,232 @@
+import { afterEach, describe, expect, it } from 'vitest';
+import { PhoneService } from './phone-service.js';
+import { PgliteDatabase, migratedDatabase, insertCornerFacts, seedCornerOpening } from './test-support.js';
+
+const workspace = '11111111-1111-4111-8111-111111111111';
+const parent = '22222222-2222-4222-8222-222222222222';
+const agent = 'a'.repeat(64);
+const viewer = 'b'.repeat(64);
+const other = 'c'.repeat(64);
+let database: PgliteDatabase;
+afterEach(async () => database?.close());
+
+describe('agent profile recent work', () => {
+  it('shows only merged, attributed work in readable corners, and revokes it with membership', async () => {
+    database = await migratedDatabase();
+    await database.query(
+      `INSERT INTO identities(id,kind,name) VALUES ($1,'agent','Agent'),($2,'human','Viewer'),($3,'agent','Other')`,
+      [agent, viewer, other],
+    );
+    await database.query(`INSERT INTO workspaces(id,name) VALUES ($1,'Workspace')`, [workspace]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES ($1,$2,'Parent')`, [
+      parent,
+      workspace,
+    ]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES ($1,$2)`, [agent, viewer]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,identity_id,role) VALUES ($1,$2,'member'),($1,$3,'member')`,
+      [workspace, agent, viewer],
+    );
+    const privateParent = '22222222-2222-4222-8222-000000000002';
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Private Room')`, [privateParent, workspace]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+      [workspace, parent, viewer],
+    );
+    const corners = ['Readable', 'Private', 'Unmerged', 'Other author', 'Unsafe URL'];
+    for (const [index, title] of corners.entries()) {
+      const id = `33333333-3333-4333-8333-${String(index).padStart(12, '0')}`;
+      await database.query(
+        `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES ($1,$2,$3,$4)`,
+        [id, workspace, index === 1 ? privateParent : parent, title],
+      );
+      await insertCornerFacts(database, { cornerId: id, ownerAgentId: index === 3 ? other : agent, lifecycle: JSON.stringify({
+            lifecycle: 'done',
+            checks: 'passing',
+            pr: {
+              title,
+              url:
+                index === 4
+                  ? 'https://evil.example/pull/1'
+                  : `https://github.com/acme/repo/pull/${index + 1}`,
+              ...(index === 2 ? {} : { mergedAt: '2026-09-24T00:00:00Z' }),
+            },
+          }) });
+      // Each corner was opened by its owner agent.
+      await seedCornerOpening(database, { cornerId: id, agentId: index === 3 ? other : agent });
+    }
+    const phone = new PhoneService(database, 'https://server.example');
+    expect((await phone.readAgent(workspace, agent, viewer))?.recentWork).toEqual([
+      { title: 'Readable', url: 'https://github.com/acme/repo/pull/1' },
+    ]);
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,name)
+      SELECT ('44444444-4444-4444-8444-' || lpad(n::text,12,'0'))::uuid,$1,$2,'Older '||n
+      FROM generate_series(1,24) n`,
+      [workspace, parent],
+    );
+    await database.query(
+      `INSERT INTO corner_facts(corner_id,lifecycle)
+      SELECT id,jsonb_build_object('pr', jsonb_build_object('title',name,
+        'url','https://github.com/acme/repo/pull/'||right(id::text,12),
+        'mergedAt','2026-09-23T00:00:00Z')) FROM rooms WHERE workspace_id=$1 AND name LIKE 'Older %'`,
+      [workspace],
+    );
+    for (const { id } of (await database.query<{ id: string }>(
+      `SELECT id FROM rooms WHERE workspace_id=$1 AND name LIKE 'Older %' ORDER BY id`, [workspace])).rows)
+      await seedCornerOpening(database, { cornerId: id, agentId: agent });
+    const first = await phone.readAgent(workspace, agent, viewer);
+    expect(first?.recentWork).toHaveLength(5);
+    expect(first?.recentWorkCursor).toBeTruthy();
+    const second = await phone.readAgent(workspace, agent, viewer, first!.recentWorkCursor);
+    expect(second?.recentWork).toHaveLength(5);
+    expect(second?.recentWorkCursor).toBeTruthy();
+    expect(
+      new Set([...first!.recentWork!, ...second!.recentWork!].map((work) => work.url)).size,
+    ).toBe(10);
+    await expect(phone.readAgent(workspace, agent, viewer, 'bad cursor')).rejects.toThrow('cursor');
+    await database.query(
+      `UPDATE memberships SET removed_at=now() WHERE identity_id=$1 AND room_id IS NOT NULL`,
+      [viewer],
+    );
+    expect((await phone.readAgent(workspace, agent, viewer))?.recentWork).toEqual([]);
+    expect(
+      (await phone.readAgent(workspace, agent, viewer, first!.recentWorkCursor))?.recentWork,
+    ).toEqual([]);
+    await database.query(`UPDATE memberships SET removed_at=now() WHERE identity_id=$1`, [viewer]);
+    expect(await phone.readAgent(workspace, agent, viewer)).toBeNull();
+  });
+});
+
+describe('removing a human from the Workspace', () => {
+  it('spends the invite on first use, so a removed person cannot rejoin with the old link', async () => {
+    database = await migratedDatabase();
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES ($1,'human','Owner'),($2,'human','Person')`, [
+      viewer,
+      other,
+    ]);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES ($1,'Workspace')`, [workspace]);
+    await database.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES ($1,$2,'owner')`, [
+      workspace,
+      viewer,
+    ]);
+    const phone = new PhoneService(database, 'https://server.example');
+    const invite = await phone.execute('createInvite', { workspaceId: workspace }, viewer);
+    expect((await phone.execute('redeemInvite', { token: invite.token }, other)).joined).toBe(true);
+    await phone.execute('removeWorkspaceMember', { workspaceId: workspace, memberId: other }, viewer);
+    expect(await phone.readWorkspace(workspace, other)).toBeNull();
+    // This was the bug: invites stayed reusable until expiry, so a removed
+    // person could let themself back in with the same link.
+    await expect(phone.execute('redeemInvite', { token: invite.token }, other)).rejects.toThrow(
+      'invite not found',
+    );
+    const freshInvite = await phone.execute('createInvite', { workspaceId: workspace }, viewer);
+    expect(
+      (await phone.execute('redeemInvite', { token: freshInvite.token }, other)).joined,
+    ).toBe(true);
+  });
+});
+
+it('enforces strict role authority and spectator writes and lists Workspace-owned agents', async () => {
+  database = await migratedDatabase();
+  await database.query(
+    `INSERT INTO identities(id,kind,name) VALUES ($1,'human','Owner'),($2,'human','Person'),($3,'agent','Agent')`,
+    [viewer, other, agent],
+  );
+  await database.query(`INSERT INTO workspaces(id,name) VALUES ($1,'Workspace')`, [workspace]);
+  await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES ($1,$2,'Room')`, [
+    parent,
+    workspace,
+  ]);
+  await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES ($1,$2)`, [agent, other]);
+  await database.query(
+    `INSERT INTO memberships(workspace_id,identity_id,role) VALUES ($1,$2,'owner'),($1,$3,'member'),($1,$4,'member')`,
+    [workspace, viewer, other, agent],
+  );
+  await database.query(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES ($1,$2,$3,'member')`,
+    [workspace, parent, other],
+  );
+  const phone = new PhoneService(database, 'https://server.example');
+  const change = (actor: string, memberId: string, role: 'admin' | 'member' | 'spectator') =>
+    phone.execute('addWorkspaceMember', { workspaceId: workspace, memberId, role }, actor);
+  await expect(change(other, viewer, 'member')).rejects.toThrow();
+  await change(viewer, other, 'spectator');
+  expect((await phone.readWorkspace(workspace, other))?.viewer.permissions.send).toBe(false);
+  await expect(
+    phone.execute('sendRoomMessage', { roomId: parent, text: 'blocked' }, other),
+  ).rejects.toThrow();
+  await change(viewer, other, 'admin');
+  await expect(change(other, viewer, 'member')).rejects.toThrow();
+  await database.query(
+    `UPDATE memberships SET role='admin' WHERE identity_id=$1 AND room_id IS NULL`,
+    [viewer],
+  );
+  await expect(change(other, viewer, 'member')).rejects.toThrow();
+  const owned = await phone.readWorkspaceMembers(workspace, other, {
+    kind: 'agent',
+    ownerId: other,
+  });
+  expect(owned?.agents.map((member) => member.identity.pubkey)).toEqual([agent]);
+  expect(
+    (await phone.readWorkspaceMembers(workspace, other, { kind: 'agent', ownerId: viewer }))
+      ?.agents,
+  ).toEqual([]);
+  // The profile read names the person and the agents they own in one answer.
+  const profile = await phone.readWorkspaceMembers(workspace, viewer, { memberId: other });
+  expect(profile?.members.map((member) => member.identity.pubkey)).toEqual([other]);
+  expect(profile?.agents.map((member) => member.identity.pubkey)).toEqual([agent]);
+  expect(profile?.agentTotal).toBe(1);
+});
+
+it('Reproduction R12-1: exposes grant Room names only to authorized viewers', async () => {
+  database = await migratedDatabase();
+  const plain = 'd'.repeat(64);
+  const corner = '66666666-6666-4666-8666-666666666666';
+  await database.query(
+    `INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'human','M'),
+      ($3,'agent','Agent'),($4,'human','P')`, [viewer, other, agent, plain],
+  );
+  await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Workspace')`, [workspace]);
+  await database.query(`INSERT INTO rooms(id,workspace_id,name,visibility) VALUES($1,$2,'X','invite-only')`, [parent, workspace]);
+  await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, other]);
+  await database.query(
+    `INSERT INTO memberships(workspace_id,identity_id,role)
+      VALUES($1,$2,'owner'),($1,$3,'member'),($1,$4,'member'),($1,$5,'member')`,
+    [workspace, viewer, other, agent, plain],
+  );
+  await database.query(
+    `INSERT INTO agent_grants(id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status)
+      VALUES($1,$2,$3,'repository','acme/repo','Ship it',$4,$5,'approved')`,
+    ['55555555-5555-4555-8555-555555555555', agent, workspace, other, parent],
+  );
+  const phone = new PhoneService(database, 'https://server.example');
+  const grant = async (actor: string) =>
+    (await phone.readWorkspaceMembers(workspace, actor, { memberId: other }))!.grants![0];
+  const hidden = await grant(plain);
+  console.log(`Reproduction R12-1: plain member sees roomName=${hidden.roomName}`);
+  expect(hidden).not.toHaveProperty('roomName');
+  expect(hidden.roomId).toBe(parent);
+  await database.query(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+    [workspace, parent, plain],
+  );
+  expect((await grant(plain)).roomName).toBe('X');
+  await database.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [parent, plain]);
+  expect(await grant(plain)).not.toHaveProperty('roomName');
+  expect((await grant(viewer)).roomName).toBe('X');
+  await database.query(`INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Corner')`, [corner, workspace, parent]);
+  await database.query(`UPDATE agent_grants SET room_id=$1`, [corner]);
+  expect(await grant(viewer)).not.toHaveProperty('roomName');
+
+  expect(await grant(plain)).not.toHaveProperty('roomName');
+  await database.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [parent, plain]);
+  expect((await grant(plain)).roomName).toBe('Corner');
+  await database.query(`UPDATE agent_grants SET room_id=$1`, [parent]);
+  await database.query(`UPDATE memberships SET role='admin' WHERE room_id IS NULL AND identity_id=$1`, [viewer]);
+  expect((await grant(viewer)).roomName).toBe('X');
+  await database.query(`UPDATE rooms SET direct_participants=$2::jsonb WHERE id=$1`, [parent, JSON.stringify([viewer, other])]);
+  expect(await grant(viewer)).not.toHaveProperty('roomName');
+  await database.query(`UPDATE rooms SET direct_participants=NULL,archived_at=now() WHERE id=$1`, [parent]);
+  expect(await grant(viewer)).not.toHaveProperty('roomName');
+});

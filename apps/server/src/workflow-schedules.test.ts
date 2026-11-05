@@ -1,0 +1,532 @@
+import { randomBytes } from 'node:crypto';
+import type { AddressInfo } from 'node:net';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import type { TokenAuth } from './auth.js';
+import { createBeelineServer } from './server.js';
+import { migrate } from './database.js';
+import { describedWorkflow, PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PhoneService } from './phone-service.js';
+import { DaemonService } from './daemon-service.js';
+import { LiveHub } from './live.js';
+import { AgentScheduleLoop } from './agent-schedules.js';
+import { saveWorkflow, startWorkflow, cancelWorkflowRun, getWorkflowRun } from './workflow-runs.js';
+import { createAgentCommand, type CommandRow } from './agent-command.js';
+import { scheduleWorkflowName } from './workflow-admin.js';
+
+const WORKSPACE = '10000000-0000-4000-8000-000000000001';
+const ROOM = '20000000-0000-4000-8000-000000000001';
+const OTHER_ROOM = '20000000-0000-4000-8000-000000000002';
+const CORNER = '20000000-0000-4000-8000-000000000003';
+const OWNER = 'a'.repeat(64),
+  ADMIN = 'b'.repeat(64),
+  AGENT = 'c'.repeat(64);
+let snapshot: Blob | File;
+let db: PgliteDatabase;
+let phone: PhoneService;
+let daemon: DaemonService;
+
+beforeAll(async () => {
+  const seed = await migratedDatabase();
+  await seed.query(
+    `INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'human','Admin'),($3,'agent','Worker')`,
+    [OWNER, ADMIN, AGENT],
+  );
+  await seed.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, OWNER]);
+  await seed.query(`INSERT INTO workspaces(id,name) VALUES($1,'Workspace')`, [WORKSPACE]);
+  await seed.query(
+    `INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$3,$4,'Room'),($2,$3,$4,'Other')`,
+    [ROOM, OTHER_ROOM, WORKSPACE, OWNER],
+  );
+  for (const [identity, role] of [
+    [OWNER, 'owner'],
+    [ADMIN, 'member'],
+    [AGENT, 'member'],
+  ]) {
+    await seed.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,$3),($1,$4,$2,$3),($1,$5,$2,$3)`,
+      [WORKSPACE, identity, role, ROOM, OTHER_ROOM],
+    );
+  }
+  // ADMIN manages schedules as a Workspace admin; the Room role grants nothing.
+  await seed.query(`UPDATE memberships SET role='admin' WHERE identity_id=$1 AND room_id IS NULL`, [
+    ADMIN,
+  ]);
+  await seed.query(
+    `INSERT INTO messages(id,room_id,author_id,text) VALUES('save',$1,$2,'Save daily')`,
+    [ROOM, OWNER],
+  );
+  const command = (await createAgentCommand(seed, {
+    roomId: ROOM,
+    agentId: AGENT,
+    sourceMessageId: 'save',
+    reason: 'human_tag',
+  }))!;
+  await saveWorkflow(seed, command, {
+    contract: describedWorkflow({
+      version: 1,
+      name: 'daily',
+      description: 'Daily work',
+      roles: ['worker'],
+      start: 'work',
+      handoffs: {
+        work: { role: 'worker', requires: [], on: { done: 'done' } },
+        done: { kind: 'terminal', status: 'done' },
+      },
+    }),
+  });
+  snapshot = await seed.snapshot();
+  await seed.close();
+});
+beforeEach(() => {
+  db = PgliteDatabase.fromSnapshot(snapshot);
+  phone = new PhoneService(db, 'http://local.test');
+  daemon = new DaemonService(db, new LiveHub());
+});
+afterEach(async () => {
+  await db.close();
+});
+
+const start = () =>
+  startWorkflow(
+    db,
+    { room_id: ROOM, agent_id: OWNER },
+    { name: 'daily', roleBindings: { worker: AGENT } },
+  );
+
+describe('Reproduction workflow-timer-mutations-1', () => {
+  it.each([ROOM, CORNER])('a Workspace admin cannot delete engine timers in %s', async (surfaceId) => {
+    const { runId } = await start();
+    if (surfaceId === CORNER) {
+      await db.query(
+        `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Corner')`,
+        [CORNER, WORKSPACE, ROOM, OWNER],
+      );
+
+      await db.query(`UPDATE agent_schedules SET room_id=$2 WHERE workflow_run->>'runId'=$1`, [
+        runId,
+        CORNER,
+      ]);
+    }
+    const timers = (
+      await db.query(`SELECT * FROM agent_schedules WHERE workflow_run->>'runId'=$1 ORDER BY id`, [
+        runId,
+      ])
+    ).rows;
+    expect(timers).toHaveLength(2);
+    const run = await getWorkflowRun(db, ROOM, runId);
+    for (const timer of timers) {
+      await expect(
+        phone.execute('deleteRoomSchedule', { roomId: ROOM, scheduleId: timer.id }, ADMIN),
+      ).rejects.toThrow('schedule not found');
+    }
+    expect(
+      (
+        await db.query(
+          `SELECT * FROM agent_schedules WHERE workflow_run->>'runId'=$1 ORDER BY id`,
+          [runId],
+        )
+      ).rows,
+    ).toEqual(timers);
+    expect(await getWorkflowRun(db, ROOM, runId)).toEqual(run);
+    const ordinary = await daemon.execute(
+      'createAgentSchedule',
+      { title: 'Scheduled check',
+        roomId: surfaceId,
+        agentId: AGENT,
+        prompt: 'Ordinary task',
+        cadence: { kind: 'interval', everyMinutes: 1 },
+      },
+      AGENT,
+    );
+    await phone.execute(
+      'deleteRoomSchedule',
+      { roomId: ROOM, scheduleId: ordinary.scheduleId },
+      ADMIN,
+    );
+    expect(
+      (await db.query(`SELECT 1 FROM agent_schedules WHERE id=$1`, [ordinary.scheduleId])).rowCount,
+    ).toBe(0);
+    console.log(
+      `Demonstrated workflow-timer-mutations-1: Room admin got schedule not found for both timers in ${surfaceId}; timer rows and run unchanged; ordinary deletion succeeded`,
+    );
+  });
+
+  it.each(['deleteAgentSchedule', 'updateAgentSchedule'] as const)(
+    '%s cannot mutate engine timers',
+    async (operation) => {
+      const { runId } = await start();
+      const timers = (
+        await db.query(
+          `SELECT * FROM agent_schedules WHERE workflow_run->>'runId'=$1 ORDER BY id`,
+          [runId],
+        )
+      ).rows;
+      expect(timers).toHaveLength(2);
+      const run = await getWorkflowRun(db, ROOM, runId);
+      for (const timer of timers) {
+        await expect(
+          daemon.execute(
+            operation,
+            {
+              roomId: ROOM,
+              scheduleId: timer.id,
+              ...(operation === 'updateAgentSchedule'
+                ? {
+                    prompt: 'Rewritten timer',
+                    cadence: { kind: 'interval' as const, everyMinutes: 60 },
+                    maxRuns: 3,
+                  }
+                : {}),
+            },
+            AGENT,
+          ),
+        ).rejects.toThrow('schedule not found');
+      }
+      expect(
+        (
+          await db.query(
+            `SELECT * FROM agent_schedules WHERE workflow_run->>'runId'=$1 ORDER BY id`,
+            [runId],
+          )
+        ).rows,
+      ).toEqual(timers);
+      expect(await getWorkflowRun(db, ROOM, runId)).toEqual(run);
+      console.log(
+        `Demonstrated workflow-timer-mutations-1: ${operation} rejected both engine timers; timer rows and run unchanged`,
+      );
+    },
+  );
+});
+
+async function schedule(prompt: string, explicit = false) {
+  const created = await daemon.execute(
+    'createAgentSchedule',
+    { title: 'Scheduled check',
+      roomId: ROOM,
+      agentId: AGENT,
+      prompt,
+      cadence: { kind: 'interval', everyMinutes: 1 },
+      maxRuns: 1,
+      ...(explicit ? { workflowName: 'daily' } : {}),
+    },
+    AGENT,
+  );
+  const due = new Date();
+  await db.query(`UPDATE agent_schedules SET next_run_at=$2 WHERE id=$1`, [
+    created.scheduleId,
+    due,
+  ]);
+  return { ...created, due };
+}
+
+it('Reproduction schedules-11: keeps maxRuns:1 through skips and later starts exactly one run', async () => {
+  const live = await start();
+  const { scheduleId, due } = await schedule('Start workflow daily', true);
+  const loop = new AgentScheduleLoop(db);
+  expect(await loop.runOnce(due)).toBe(1);
+  const remaining = (await daemon.execute('listAgentSchedules', { roomId: ROOM }, AGENT)).schedules;
+  expect(remaining).toEqual([
+    expect.objectContaining({
+      scheduleId,
+      runCount: 0,
+      maxRuns: 1,
+      nextRunAt: Math.floor(due.getTime() / 1000) + 60,
+    }),
+  ]);
+  expect((await db.query(`SELECT 1 FROM agent_commands WHERE reason='schedule'`)).rowCount).toBe(0);
+  const next = new Date(due.getTime() + 60_000);
+  expect(await loop.runOnce(next)).toBe(1);
+  expect(
+    (await daemon.execute('listAgentSchedules', { roomId: ROOM }, AGENT)).schedules[0]?.runCount,
+  ).toBe(0);
+  await cancelWorkflowRun(
+    db,
+    { room_id: ROOM, agent_id: OWNER },
+    { runId: live.runId, reason: 'Allow the next scheduled run' },
+  );
+  expect(await loop.runOnce(new Date(next.getTime() + 60_000))).toBe(1);
+  const commands = (
+    await db.query<CommandRow>(`SELECT * FROM agent_commands WHERE reason='schedule'`)
+  ).rows;
+  expect(commands).toHaveLength(1);
+  const fresh = await startWorkflow(db, commands[0]!, {
+    name: 'daily',
+    roleBindings: { worker: AGENT },
+  });
+  expect(await getWorkflowRun(db, ROOM, fresh.runId)).toMatchObject({ state: 'work' });
+  expect((await daemon.execute('listAgentSchedules', { roomId: ROOM }, AGENT)).schedules).toEqual(
+    [],
+  );
+  expect(await loop.runOnce(new Date(next.getTime() + 120_000))).toBe(0);
+  console.log(
+    'Demonstrated schedules-11: two skips preserved maxRuns:1 and advanced nextRunAt; after cancellation the next tick started exactly one run and removed the schedule',
+  );
+});
+
+it.each([1, 2, 3])('Reproduction schedule-silent-end-1: blocked slots preserve %i workflow starts and delete silently', async (maxRuns) => {
+  const blocking = await start();
+  const { scheduleId, due } = await schedule('Start workflow daily', true);
+  await db.query(`UPDATE agent_schedules SET max_runs=$2 WHERE id=$1`, [scheduleId, maxRuns]);
+  const loop = new AgentScheduleLoop(db);
+  for (let slot = 0; slot < 2; slot += 1) {
+    await loop.runOnce(new Date(due.getTime() + slot * 60_000));
+    expect((await daemon.execute('listAgentSchedules', { roomId: ROOM }, AGENT)).schedules)
+      .toEqual([expect.objectContaining({ scheduleId, runCount: 0, maxRuns })]);
+  }
+  await cancelWorkflowRun(db, { room_id: ROOM, agent_id: OWNER }, {
+    runId: blocking.runId, reason: 'Release the blocked slots',
+  });
+  const runIds: string[] = [];
+  const usedCommands = new Set<string>();
+  for (let slot = 2; slot < 2 + maxRuns; slot += 1) {
+    await loop.runOnce(new Date(due.getTime() + slot * 60_000));
+    const command = (await db.query<CommandRow>(
+      `SELECT * FROM agent_commands WHERE reason='schedule'`,
+    )).rows.find((row) => !usedCommands.has(row.id));
+    expect(command).toBeDefined();
+    const fresh = await startWorkflow(db, command!, {
+      name: 'daily', roleBindings: { worker: AGENT },
+    });
+    runIds.push(fresh.runId);
+    usedCommands.add(command!.id);
+    await cancelWorkflowRun(db, { room_id: ROOM, agent_id: OWNER }, {
+      runId: fresh.runId, reason: 'Finish this occurrence before the next slot',
+    });
+  }
+  expect(runIds).toHaveLength(maxRuns);
+  expect((await db.query(`SELECT 1 FROM agent_commands WHERE reason='schedule'`)).rowCount).toBe(maxRuns);
+  expect((await daemon.execute('listAgentSchedules', { roomId: ROOM }, AGENT)).schedules).toEqual([]);
+
+  await loop.runOnce(new Date(due.getTime() + 5 * 60_000));
+  const notices = (await db.query<{ room_id: string; presentation: string; text: string }>(
+    `SELECT room_id,presentation,text FROM messages WHERE text LIKE '%schedule expired%'`,
+  )).rows;
+  expect(notices).toEqual([]);
+  expect((await db.query('SELECT 1 FROM agent_schedules WHERE id=$1', [scheduleId])).rowCount).toBe(0);
+  expect((await db.query("SELECT 1 FROM messages WHERE system_event->>'kind'='schedule-ran'")).rowCount).toBe(maxRuns);
+});
+
+it('Reproduction schedules-12: resolves Start the daily workflow with… and skips before restart', async () => {
+  await start();
+  const { scheduleId, due } = await schedule('Start the daily workflow with today’s input');
+  const listed = (await daemon.execute('listAgentSchedules', { roomId: ROOM }, AGENT)).schedules;
+  expect(await new AgentScheduleLoop(db).runOnce(due)).toBe(1);
+  console.log('schedules-12 observed:', {
+    workflowName: listed[0]?.workflowName,
+    skips: (await db.query(`SELECT 1 FROM messages WHERE text LIKE '%skipped a run%'`)).rowCount,
+    wakes: (await db.query(`SELECT 1 FROM agent_commands WHERE reason='schedule'`)).rowCount,
+  });
+  expect(listed).toEqual([expect.objectContaining({ scheduleId, workflowName: 'daily' })]);
+  expect(
+    (await db.query(`SELECT 1 FROM messages WHERE text LIKE '%skipped a run%'`)).rowCount,
+  ).toBe(1);
+  expect((await db.query(`SELECT 1 FROM agent_commands WHERE reason='schedule'`)).rowCount).toBe(0);
+  console.log(
+    'Demonstrated schedules-12: prompt resolved daily at creation; live run caused one skip and no schedule wake before any restart',
+  );
+});
+
+it('Reproduction schedules-13: a Workspace admin lists and deletes each Room schedule only through its Room', async () => {
+  const input = {
+    title: 'Run daily',
+    roomId: ROOM,
+    agentId: AGENT,
+    prompt: 'Run daily',
+    cadence: { kind: 'interval' as const, everyMinutes: 1 },
+  };
+  const created = await daemon.execute('createAgentSchedule', input, AGENT);
+  const other = await daemon.execute(
+    'createAgentSchedule',
+    { ...input, roomId: OTHER_ROOM },
+    AGENT,
+  );
+  expect(
+    (await phone.execute('listRoomSchedules', { roomId: ROOM }, ADMIN)).schedules.map(
+      (row) => row.id,
+    ),
+  ).toEqual([created.scheduleId]);
+  await db.query(`UPDATE agent_schedules SET workflow_slug='daily',run_count=4 WHERE id=$1`, [
+    created.scheduleId,
+  ]);
+  expect((await phone.execute('listRoomSchedules', { roomId: ROOM }, ADMIN)).schedules).toEqual([
+    expect.objectContaining({ id: created.scheduleId, workflowSlug: 'daily', runCount: 4 }),
+  ]);
+  expect(
+    (await phone.execute('listRoomSchedules', { roomId: OTHER_ROOM }, ADMIN)).schedules.map((row) => row.id),
+  ).toEqual([other.scheduleId]);
+  await expect(
+    phone.execute('deleteRoomSchedule', { roomId: ROOM, scheduleId: other.scheduleId }, ADMIN),
+  ).rejects.toThrow('schedule not found');
+  // A Workspace member is refused even with a Room admin role.
+  await db.query(`UPDATE memberships SET role='member' WHERE identity_id=$1 AND room_id IS NULL`, [ADMIN]);
+  await db.query(`UPDATE memberships SET role='admin' WHERE identity_id=$1 AND room_id=$2`, [ADMIN, OTHER_ROOM]);
+  await expect(
+    phone.execute(
+      'deleteRoomSchedule',
+      { roomId: OTHER_ROOM, scheduleId: other.scheduleId },
+      ADMIN,
+    ),
+  ).rejects.toThrow('workspace admins only');
+  await db.query(`UPDATE memberships SET role='admin' WHERE identity_id=$1 AND room_id IS NULL`, [ADMIN]);
+  await phone.execute(
+    'deleteRoomSchedule',
+    { roomId: ROOM, scheduleId: created.scheduleId },
+    ADMIN,
+  );
+  expect((await phone.execute('listRoomSchedules', { roomId: ROOM }, ADMIN)).schedules).toEqual([]);
+  expect(
+    (await phone.execute('listRoomSchedules', { roomId: OTHER_ROOM }, OWNER)).schedules.map(
+      (row) => row.id,
+    ),
+  ).toEqual([other.scheduleId]);
+  console.log(
+    'Demonstrated schedules-13: Room admin listed and deleted their schedule; other Room schedules stayed hidden and could not be deleted',
+  );
+});
+
+describe('workflow prompt resolution', () => {
+  it.each([
+    'Start workflow daily',
+    'start_workflow "daily"',
+    'workflow `daily`',
+    'Start the daily workflow with input',
+    'Start the "daily" workflow with input',
+    'Start the DAILY workflow with input',
+  ])('resolves %s', async (prompt) => {
+    expect(await scheduleWorkflowName(db, ROOM, prompt)).toBe('daily');
+  });
+  it.each([
+    'Start the missing workflow with input',
+    'Start workflow daily-other',
+    'notdaily workflow',
+    'daily workflows',
+    'ordinary prompt',
+  ])('does not resolve %s', async (prompt) => {
+    expect(await scheduleWorkflowName(db, ROOM, prompt)).toBeUndefined();
+  });
+});
+
+it('backfills with the same resolver and preserves already resolved workflows', async () => {
+  const prompts = [
+    'Start the daily workflow with input',
+    'Start workflow daily',
+    'start_workflow "daily"',
+    'workflow `daily`',
+    'Start the DAILY workflow with input',
+    'Start workflow daily-other',
+    'ordinary prompt',
+  ];
+  const expected = [];
+  for (const prompt of prompts) {
+    const created = await schedule(prompt);
+    expected.push({
+      id: created.scheduleId,
+      workflow_slug: (await scheduleWorkflowName(db, ROOM, prompt)) ?? null,
+    });
+    await db.query(`UPDATE agent_schedules SET workflow_slug=NULL WHERE id=$1`, [
+      created.scheduleId,
+    ]);
+  }
+  const preserved = await schedule('Start the daily workflow with input');
+  await db.query(`UPDATE agent_schedules SET workflow_slug='recorded-target' WHERE id=$1`, [
+    preserved.scheduleId,
+  ]);
+  await migrate(db, { deferData: true });
+  for (const row of expected) {
+    expect(
+      (await db.query(`SELECT id,workflow_slug FROM agent_schedules WHERE id=$1`, [row.id])).rows,
+    ).toEqual([row]);
+  }
+  expect(
+    (
+      await db.query(`SELECT workflow_slug FROM agent_schedules WHERE id=$1`, [
+        preserved.scheduleId,
+      ])
+    ).rows,
+  ).toEqual([{ workflow_slug: 'recorded-target' }]);
+});
+
+it('Reproduction R1: answers a stop of an already-deleted schedule with its own 404 code', async () => {
+  const created = await daemon.execute(
+    'createAgentSchedule',
+    { title: 'Scheduled check', roomId: ROOM, agentId: AGENT, prompt: 'Run daily', cadence: { kind: 'interval', everyMinutes: 1 } },
+    AGENT,
+  );
+  const server = createBeelineServer({
+    database: db,
+    auth: { authenticatePhone: async () => ADMIN } as unknown as TokenAuth,
+    phone,
+    daemon,
+    live: new LiveHub(),
+    mediaMaximumBytes: 1,
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = (server.address() as AddressInfo).port;
+    const stop = async (roomId: string) => {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/phone/operations/deleteRoomSchedule`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${'p'.repeat(20)}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ roomId, scheduleId: created.scheduleId }),
+      });
+      return { status: response.status, body: response.status === 204 ? null : await response.json() };
+    };
+    expect(await stop(ROOM)).toEqual({ status: 204, body: null });
+    // The phone treats this exact answer as "already stopped".
+    expect(await stop(ROOM)).toEqual({ status: 404, body: { error: 'schedule not found' } });
+    // A wrong Room is also a 404, but with its own code, so it still reads as a failure.
+    expect(await stop('20000000-0000-4000-8000-0000000000ff')).toEqual({
+      status: 404,
+      body: { error: 'room not found' },
+    });
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+it('Reproduction ebc844ec744260fdaf5b93010d0ffe549b6e30e1a33efbd47cd8b939ef54f162: names and one-time facts survive wake writes and phone reads', async () => {
+  const input = { roomId: ROOM, prompt: 'One-time 24-hour Play report access check.',
+    title: 'Play downloads check', cadence: { kind: 'interval' as const, everyMinutes: 1440 }, maxRuns: 1 };
+  const created = await daemon.execute('createAgentSchedule', input, AGENT);
+  let rows = (await phone.execute('listRoomSchedules', { roomId: ROOM }, ADMIN)).schedules;
+  expect(rows).toEqual([expect.objectContaining({ title: 'Play downloads check', maxRuns: 1 })]);
+  // Renaming a saved schedule is a Workspace admin's edit.
+  const ask = randomBytes(32).toString('hex');
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Rename it')`, [ask, ROOM, ADMIN]);
+  const renameCommand = await createAgentCommand(db, { roomId: ROOM, agentId: AGENT, sourceMessageId: ask, reason: 'human_message' });
+  await daemon.execute('claimAgentCommand', { roomId: ROOM, commandId: renameCommand!.id, generationId: 'rename' }, AGENT);
+  await daemon.execute('updateAgentSchedule', { roomId: ROOM, scheduleId: created.scheduleId,
+    title: 'Downloads check', requestId: renameCommand!.turn_request_id, generationId: 'rename' }, AGENT);
+  rows = (await phone.execute('listRoomSchedules', { roomId: ROOM }, ADMIN)).schedules;
+  expect(rows[0]).toMatchObject({ title: 'Downloads check', maxRuns: 1, cadence: input.cadence });
+  await expect(daemon.execute('updateAgentSchedule', { roomId: ROOM, scheduleId: created.scheduleId,
+    title: 'This title has too many words' }, AGENT)).rejects.toThrow('one to four words');
+  await db.query(`UPDATE agent_schedules SET title=NULL,workflow_slug='feedback-triage' WHERE id=$1`, [created.scheduleId]);
+  expect((await phone.execute('listRoomSchedules', { roomId: ROOM }, ADMIN)).schedules[0]?.title).toBe('Feedback triage');
+  await db.query('UPDATE agent_schedules SET workflow_slug=NULL WHERE id=$1', [created.scheduleId]);
+  expect((await phone.execute('listRoomSchedules', { roomId: ROOM }, ADMIN)).schedules[0]?.title).toBe('One-time 24-hour Play report');
+});
+
+it('backfills the existing Beeline labels without editing cadence or instructions', async () => {
+  const labels = [
+    ['ea5594a0-42ec-49dd-8957-5582216ebedd', 'Prompt replay'],
+    ['0487e469-2907-47e7-8432-7ec4ec49ad42', 'Morning card'],
+    ['df2db89e-4a28-4db0-9b54-36bd0f671f03', 'App speed test'],
+    ['213bcf80-8846-42b1-9d49-6399b770fe87', 'Release'],
+    ['92803c2f-e007-42af-a244-999750212ae9', 'Feedback triage'],
+    ['b13d3597-6504-4e2a-b89d-b47b02f02e91', 'Play downloads check'],
+  ];
+  const cadence = { kind: 'interval', everyMinutes: 1440 };
+  for (const [id] of labels) await db.query(
+    `INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at)
+      VALUES($1,$2,$3,$4,$4,$5::jsonb,'Original instructions','2030-01-01')`,
+    [id, WORKSPACE, ROOM, AGENT, JSON.stringify(cadence)]);
+  await migrate(db);
+  for (const [id, title] of labels) expect((await db.query(
+    'SELECT title,cadence,message FROM agent_schedules WHERE id=$1', [id])).rows[0])
+    .toMatchObject({ title, cadence, message: 'Original instructions' });
+  await db.query("UPDATE agent_schedules SET title='Custom name' WHERE id=$1", [labels[0]![0]]);
+  await migrate(db);
+  expect((await db.query('SELECT title FROM agent_schedules WHERE id=$1', [labels[0]![0]])).rows[0]?.title)
+    .toBe('Custom name');
+});

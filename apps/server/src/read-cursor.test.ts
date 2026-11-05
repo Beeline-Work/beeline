@@ -1,0 +1,497 @@
+import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
+import { AddressInfo } from 'node:net';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import WebSocket from 'ws';
+import { migrate } from './database.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { TokenAuth } from './auth.js';
+import { PhoneService } from './phone-service.js';
+import { DaemonService } from './daemon-service.js';
+import { LiveHub } from './live.js';
+import { createBeelineServer } from './server.js';
+import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
+import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
+import { COMMAND_COMPLETION_CHANNEL } from './command-completion.js';
+
+/** Real database notifications through the same listener used by each server. */
+class ListenClient extends EventEmitter implements LivePgClient {
+  private readonly releases = new Map<string, () => Promise<void>>();
+  constructor(private readonly database: PgliteDatabase) { super(); }
+  async connect(): Promise<void> {}
+  async query(sql: string): Promise<void> {
+    const channel = [POSTGRES_LIVE_CHANNEL, COMMAND_COMPLETION_CHANNEL]
+      .find(value => sql === `LISTEN ${value}`);
+    if (!channel) throw new Error(`unexpected query: ${sql}`);
+    if (this.releases.has(channel)) return;
+    this.releases.set(channel, await this.database.client.listen(channel, payload =>
+      this.emit('notification', { channel, payload })));
+  }
+  async end(): Promise<void> {
+    await Promise.all([...this.releases.values()].map(release => release()));
+    this.releases.clear();
+  }
+}
+
+/**
+ * The read cursor over the real HTTP and WebSocket surface: the boundary a
+ * phone writes, the count served beside it, mark-unread putting it back, and
+ * the one definition of unread that the cursor and the deck now share.
+ *
+ * Read marks are reader-scoped live projections (legacy clients receive
+ * invalidations), so another device reconciles its dot without notifying peers.
+ */
+const OWNER = createHash('sha256').update('github:owner').digest('hex');
+const OTHER = createHash('sha256').update('github:recipient').digest('hex');
+const AGENT = 'b'.repeat(64);
+const WORKSPACE = '11111111-1111-4111-8111-111111111111';
+const ROOM = '22222222-2222-4222-8222-222222222222';
+/** Four agent messages, oldest first, at distinct stored times. */
+const MESSAGES = ['1a', '2b', '3c', '4d'].map((seed, index) => ({
+  id: seed.padEnd(64, seed[1]!),
+  at: `2026-09-12 01:00:0${index}.000+00`,
+}));
+
+describe('the read cursor over the live phone surface', () => {
+  let database: PgliteDatabase;
+  let auth: TokenAuth;
+  let origin: string;
+  let server: ReturnType<typeof createBeelineServer>;
+  let ownerToken: string;
+  let otherToken: string;
+  let phone: PhoneService;
+  let peerOrigin: string;
+  let peerServer: ReturnType<typeof createBeelineServer>;
+  let listeners: PostgresLiveListener[];
+
+  beforeEach(async () => {
+    database = await migratedDatabase();
+    await new AuthStore(database as unknown as TransactionalDatabase).migrate();
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle,github_subject) VALUES
+       ($1,'human','Owner','owner','owner'),
+       ($2,'human','Recipient','recipient','recipient'),
+       ($3,'agent','Bee','bee',NULL)`,
+      [OWNER, OTHER, AGENT],
+    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, OWNER]);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [WORKSPACE]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'General')`, [
+      ROOM,
+      WORKSPACE,
+    ]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+       ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,NULL,$4,'member'),
+       ($1,$5,$2,'owner'),($1,$5,$3,'member'),($1,$5,$4,'member')`,
+      [WORKSPACE, OWNER, OTHER, AGENT, ROOM],
+    );
+    for (const message of MESSAGES) {
+      await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES($1,$2,$3,$4,$5)`,
+        [message.id, ROOM, AGENT, `message ${message.id.slice(0, 2)}`, message.at],
+      );
+    }
+    auth = new TokenAuth(database, async (proof) => {
+      const login = proof === 'proof' ? 'owner' : proof === 'recipient-proof' ? 'recipient' : proof;
+      return { subject: login, login, name: login[0]!.toUpperCase() + login.slice(1) };
+    });
+    const live = new LiveHub();
+    phone = new PhoneService(database, 'http://placeholder', undefined, undefined, live);
+    const daemon = new DaemonService(database, live, async () => ({
+      token: 'github-room-token',
+      expiresAt: Date.now() + 60_000,
+    }));
+    server = createBeelineServer({
+      database,
+      auth,
+      phone,
+      daemon,
+      live,
+      mediaMaximumBytes: 1024 * 1024,
+    });
+    const peerLive = new LiveHub();
+    peerServer = createBeelineServer({
+      database, auth,
+      phone: new PhoneService(database, 'http://placeholder', undefined, undefined, peerLive),
+      daemon: new DaemonService(database, peerLive), live: peerLive, mediaMaximumBytes: 1024 * 1024,
+    });
+    listeners = [live, peerLive].map((hub) =>
+      new PostgresLiveListener(database, hub, () => new ListenClient(database)));
+    for (const listener of listeners) void listener.run();
+    for (let attempt = 0; !listeners.every((listener) => listener.projectionHealth().connected); attempt++) {
+      if (attempt > 100) throw new Error('listener did not connect');
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    await new Promise<void>((resolve) => peerServer.listen(0, '127.0.0.1', resolve));
+    origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    peerOrigin = `http://127.0.0.1:${(peerServer.address() as AddressInfo).port}`;
+    ownerToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
+    otherToken = (await auth.exchangeGitHubOidc('recipient-proof')).accessToken;
+  });
+
+  afterEach(async () => {
+    await Promise.all(listeners?.map((listener) => listener.stop()) ?? []);
+    if (peerServer) await new Promise<void>((resolve) => peerServer.close(() => resolve()));
+    if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+    await database.close?.();
+  });
+
+  const request = (path: string, method = 'GET', payload?: unknown, token = ownerToken) =>
+    fetch(`${origin}${path}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${token}`,
+        ...(payload ? { 'content-type': 'application/json' } : {}),
+      },
+      ...(payload ? { body: JSON.stringify(payload) } : {}),
+    });
+
+  const cursor = async (token = ownerToken) => {
+    const view = (await (
+      await request(`/v1/phone/rooms/${ROOM}`, 'GET', undefined, token)
+    ).json()) as {
+      viewer: {
+        readCursor?: {
+          messageId: string | null;
+          firstUnreadMessageId: string | null;
+          unreadCount?: number;
+        };
+      };
+    };
+    return view.viewer.readCursor;
+  };
+
+  const deckRow = async (token = ownerToken) => {
+    const view = (await (
+      await request(`/v1/phone/workspaces/${WORKSPACE}/chats`, 'GET', undefined, token)
+    ).json()) as { chats: Array<{ room: { id: string }; unread: boolean; latestMessage?: { id: string; text: string; createdAt: number } }> };
+    return view.chats.find((chat) => chat.room.id === ROOM)!;
+  };
+
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 150));
+
+  it('chooses the newest visible preview and unread row after newer rows are hidden or deleted', async () => {
+    const visible = MESSAGES[3]!.id;
+    expect((await deckRow()).latestMessage?.id).toBe(visible);
+    await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId: visible });
+    expect((await deckRow()).unread).toBe(false);
+    const deleted = 'de'.padEnd(64, 'e');
+    const hidden = 'fa'.padEnd(64, 'a');
+    const activity = 'ac'.padEnd(64, 'c');
+    for (const [id, presentation, cardType, at] of [
+      [deleted, 'message', null, '2026-09-12 01:00:04.000+00'],
+      [hidden, 'system', 'grant-decision', '2026-09-12 01:00:05.000+00'],
+      [activity, 'activity', null, '2026-09-12 01:00:06.000+00'],
+    ] as const) {
+      await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,created_at)
+         VALUES($1,$2,$3,'hidden', $4,$5,$6)`,
+        [id, ROOM, AGENT, presentation, cardType, at],
+      );
+    }
+    expect((await deckRow()).latestMessage?.id).toBe(deleted);
+    expect((await deckRow()).unread).toBe(true);
+    await database.query(`UPDATE messages SET deleted_at=now(),text='' WHERE id=$1`, [deleted]);
+    const delta = await phone.readLiveDelta(ROOM, OWNER, { type: 'message', messageId: deleted });
+    expect(delta).toMatchObject({ type: 'message-delta', message: { id: deleted, deleted: true } });
+    expect((await deckRow()).latestMessage?.id).toBe(visible);
+    expect((await deckRow()).unread).toBe(false);
+    expect((await cursor())?.unreadCount).toBe(0);
+  });
+
+  it('moves the author’s own read mark with their send, with no second request', async () => {
+    expect((await cursor())?.unreadCount).toBe(4);
+    const sent = '5e'.padEnd(64, 'e');
+    const response = await request('/v1/phone/operations/sendRoomMessage', 'POST', {
+      roomId: ROOM,
+      messageId: sent,
+      text: 'on it',
+      mentions: [],
+      attachments: [],
+    });
+    expect(response.status).toBe(200);
+    expect(await cursor()).toMatchObject({ messageId: sent, unreadCount: 0 });
+    expect((await deckRow()).unread).toBe(false);
+    // Another person's read state is untouched by it.
+    expect((await cursor(otherToken))?.messageId).toBeNull();
+  });
+
+  it('serves the count beside the boundary, and takes it back on mark-unread', async () => {
+    expect(await cursor()).toEqual({
+      messageId: null,
+      firstUnreadMessageId: MESSAGES[0]!.id,
+      unreadCount: 4,
+    });
+    expect((await deckRow()).unread).toBe(true);
+
+    // The viewport reaches the second message and stops. This is the write the
+    // debounced advancer makes — a mid-transcript row, not the tail.
+    expect(
+      (await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId: MESSAGES[1]!.id }))
+        .status,
+    ).toBe(204);
+    expect(await cursor()).toEqual({
+      messageId: MESSAGES[1]!.id,
+      firstUnreadMessageId: MESSAGES[2]!.id,
+      unreadCount: 2,
+    });
+
+    // Reaching the newest row settles the Room.
+    await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId: MESSAGES[3]!.id });
+    expect(await cursor()).toEqual({
+      messageId: MESSAGES[3]!.id,
+      firstUnreadMessageId: null,
+      unreadCount: 0,
+    });
+    expect((await deckRow()).unread).toBe(false);
+
+    // Mark-unread from the third message. The monotonic guard that makes
+    // markRead forward-only must not apply here.
+    expect(
+      (await request(`/v1/phone/rooms/${ROOM}/unread`, 'POST', { messageId: MESSAGES[2]!.id }))
+        .status,
+    ).toBe(204);
+    expect(await cursor()).toEqual({
+      messageId: MESSAGES[1]!.id,
+      firstUnreadMessageId: MESSAGES[2]!.id,
+      unreadCount: 2,
+    });
+    expect((await deckRow()).unread).toBe(true);
+
+    // The other member's own cursor was never touched by any of it.
+    expect((await cursor(otherToken))?.unreadCount).toBe(4);
+  });
+
+  it('Send projects read and queued-command state to a second device without covering reads', async () => {
+    const socket = new WebSocket(`${peerOrigin.replace('http', 'ws')}/v1/phone/live`, [`bearer.${ownerToken}`]);
+    await new Promise<void>((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
+    const frames: Array<{ type?: string; reason?: string; commands?: unknown[] }> = [];
+    socket.on('message', raw => frames.push(JSON.parse(String(raw))));
+    socket.send(JSON.stringify({ type: 'subscribe', roomId: ROOM, roomStateProjections: true }));
+    try {
+      for (let i = 0; i < 100 && !frames.some(frame => frame.type === 'subscribed'); i++) await settle();
+      frames.length = 0;
+      const roomReads = vi.spyOn(phone, 'readRoom');
+      const listReads = vi.spyOn(phone, 'readChats');
+      const response = await request('/v1/phone/operations/sendRoomMessage', 'POST', {
+        roomId: ROOM, messageId: 'e'.repeat(64), text: '@bee help with this please',
+      });
+      expect(response.status).toBe(200);
+      for (let i = 0; i < 100 && !frames.some(frame => frame.type === 'room-commands'); i++) await settle();
+      expect(frames).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: 'message-delta' }),
+        expect.objectContaining({ type: 'read-state', readCursor: expect.objectContaining({
+          messageId: 'e'.repeat(64), unreadCount: 0,
+        }) }),
+        expect.objectContaining({ type: 'room-commands', commands: [expect.objectContaining({
+          requestId: 'e'.repeat(64), agentPubkey: AGENT,
+        })] }),
+      ]));
+      expect(frames.filter(frame => frame.type === 'invalidate' &&
+        ['postgres:agent_commands', 'postgres:room_read_marks'].includes(frame.reason ?? ''))).toEqual([]);
+      expect(roomReads).not.toHaveBeenCalled();
+      expect(listReads).not.toHaveBeenCalled();
+    } finally { socket.close(); vi.restoreAllMocks(); }
+  });
+
+  it('NET-READS-2: publishes each committed read change once to reader devices across server hubs', async () => {
+    // Two capable reader sockets, one legacy reader, and another member.
+    // Readers receive projections or a legacy hint; the other member gets none.
+    const sockets = await Promise.all(
+      [ownerToken, ownerToken, otherToken, ownerToken].map(async (token, index) => {
+        const socketOrigin = index === 0 ? origin : peerOrigin;
+        const socket = new WebSocket(`${socketOrigin.replace('http', 'ws')}/v1/phone/live`, [
+          `bearer.${token}`,
+        ]);
+        await new Promise<void>((resolve, reject) => {
+          socket.once('open', () => resolve());
+          socket.once('error', reject);
+        });
+        const frames: unknown[] = [];
+        socket.on('message', (raw) => {
+          const value = JSON.parse(raw.toString()) as { type?: string };
+          if (value.type !== 'subscribed') frames.push(value);
+        });
+        socket.send(JSON.stringify({ type: 'subscribe', roomId: ROOM,
+          ...(index < 3 ? { roomStateProjections: true } : {}) }));
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error('subscribe timeout')), 3000);
+          socket.on('message', function onMessage(raw) {
+            if ((JSON.parse(raw.toString()) as { type?: string }).type !== 'subscribed') return;
+            clearTimeout(timer);
+            socket.off('message', onMessage);
+            resolve();
+          });
+        });
+        return { socket, frames };
+      }),
+    );
+    try {
+      await settle();
+      for (const entry of sockets) entry.frames.length = 0;
+
+      for (const [operation, messageId, unreadCount] of [
+        ['read', MESSAGES[1]!.id, 2],
+        ['read', MESSAGES[3]!.id, 0],
+        ['unread', MESSAGES[2]!.id, 2],
+        ['unread', MESSAGES[0]!.id, 4],
+      ] as const) {
+        for (const entry of sockets) entry.frames.length = 0;
+        expect((await request(`/v1/phone/rooms/${ROOM}/${operation}`, 'POST', { messageId })).status).toBe(204);
+        await settle();
+        for (const entry of sockets.slice(0, 2)) {
+          expect(entry.frames).toEqual([expect.objectContaining({
+            type: 'read-state', readCursor: expect.objectContaining({ unreadCount }),
+          })]);
+        }
+        expect(sockets[2]!.frames).toEqual([]);
+        expect(sockets[3]!.frames).toEqual([expect.objectContaining({
+          type: 'invalidate', reason: 'postgres:room_read_marks',
+        })]);
+        for (const base of [origin, peerOrigin]) {
+          const response = await fetch(`${base}/v1/phone/rooms/${ROOM}`, {
+            headers: { authorization: `Bearer ${ownerToken}` },
+          });
+          expect((await response.json()).viewer.readCursor.unreadCount).toBe(unreadCount);
+        }
+        expect((await deckRow()).unread).toBe(unreadCount > 0);
+      }
+      // A repeated forward mark writes no row and must publish nothing.
+      await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId: MESSAGES[3]!.id });
+      await settle();
+      for (const entry of sockets) entry.frames.length = 0;
+      await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId: MESSAGES[3]!.id });
+      await settle();
+      expect(sockets.map((entry) => entry.frames)).toEqual([[], [], [], []]);
+    } finally {
+      for (const entry of sockets) entry.socket.close();
+    }
+  });
+
+  it('marks the whole Room unread when nothing precedes the chosen message', async () => {
+    await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId: MESSAGES[3]!.id });
+    expect((await cursor())?.unreadCount).toBe(0);
+
+    expect(
+      (await request(`/v1/phone/rooms/${ROOM}/unread`, 'POST', { messageId: MESSAGES[0]!.id }))
+        .status,
+    ).toBe(204);
+    expect(await cursor()).toEqual({
+      messageId: null,
+      firstUnreadMessageId: MESSAGES[0]!.id,
+      unreadCount: 4,
+    });
+  });
+
+  it('counts the cursor and the deck boolean over one definition of unread', async () => {
+    // An agent narrating a turn writes activity rows. They are the case the
+    // old definitions disagreed on: the cursor's `presentation<>'activity'`
+    // and the deck's allowlist both excluded them, but the phone's own queue
+    // counted them, so a long turn inflated the reader's count past anything
+    // the server would agree to. Nothing counts them now.
+    for (const [index, id] of ['9e', '8f'].entries()) {
+      await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,created_at)
+         VALUES($1,$2,$3,'narrating','activity',$4)`,
+        [id.padEnd(64, id[1]!), ROOM, AGENT, `2026-09-12 01:00:1${index}.000+00`],
+      );
+    }
+
+    // Still the four real messages, and the Room is still unread.
+    expect((await cursor())?.unreadCount).toBe(4);
+    expect((await deckRow()).unread).toBe(true);
+
+    // Reading the newest real message settles the Room, even though two newer
+    // activity rows sit past the mark. The cursor and the deck agree.
+    await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId: MESSAGES[3]!.id });
+    expect(await cursor()).toEqual({
+      messageId: MESSAGES[3]!.id,
+      firstUnreadMessageId: null,
+      unreadCount: 0,
+    });
+    expect((await deckRow()).unread).toBe(false);
+  });
+
+  it('caps the count rather than scanning a whole abandoned backlog', async () => {
+    for (let index = 0; index < 120; index += 1) {
+      await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES($1,$2,$3,$4,$5)`,
+        [
+          `c${index.toString().padStart(2, '0')}`.padEnd(64, 'c'),
+          ROOM,
+          AGENT,
+          `bulk ${index}`,
+          new Date(Date.parse('2026-09-12T02:00:00Z') + index * 1000).toISOString(),
+        ],
+      );
+    }
+    expect((await cursor())?.unreadCount).toBe(99);
+  });
+
+  it('refuses to hold the viewer’s own message unread', async () => {
+    // OWN-MESSAGE-MARK-UNREAD. The action used to be offered on the viewer's
+    // own row, announce success and draw a NEW MESSAGES divider there, while
+    // the count — which never admits viewer-authored rows — stayed at zero and
+    // the deck stayed read. The two now agree: the write is refused.
+    const own = 'e5'.padEnd(64, '5');
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES($1,$2,$3,'mine',$4)`,
+      [own, ROOM, OWNER, '2026-09-12 01:00:09.000+00'],
+    );
+    await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId: own });
+    expect(await cursor()).toEqual({
+      messageId: own,
+      firstUnreadMessageId: null,
+      unreadCount: 0,
+    });
+
+    const refused = await request(`/v1/phone/rooms/${ROOM}/unread`, 'POST', { messageId: own });
+    expect(refused.status).toBe(400);
+
+    // Nothing moved: no boundary at the viewer's own row, no count behind it.
+    expect(await cursor()).toEqual({
+      messageId: own,
+      firstUnreadMessageId: null,
+      unreadCount: 0,
+    });
+    expect((await deckRow()).unread).toBe(false);
+
+    // The incoming row the reader would actually reach for still works, and
+    // the count it reports is the one the boundary implies.
+    expect(
+      (await request(`/v1/phone/rooms/${ROOM}/unread`, 'POST', { messageId: MESSAGES[3]!.id }))
+        .status,
+    ).toBe(204);
+    expect(await cursor()).toEqual({
+      messageId: MESSAGES[2]!.id,
+      firstUnreadMessageId: MESSAGES[3]!.id,
+      unreadCount: 1,
+    });
+    expect((await deckRow()).unread).toBe(true);
+  });
+
+  it('refuses a read or unread write against a Room the caller cannot read', async () => {
+    const outsider = createHash('sha256').update('github:outsider').digest('hex');
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle,github_subject) VALUES($1,'human','Out','out','outsider')`,
+      [outsider],
+    );
+    const outsiderToken = (await auth.exchangeGitHubOidc('outsider')).accessToken;
+    for (const path of ['read', 'unread']) {
+      const response = await request(
+        `/v1/phone/rooms/${ROOM}/${path}`,
+        'POST',
+        { messageId: MESSAGES[0]!.id },
+        outsiderToken,
+      );
+      expect(response.status).not.toBe(204);
+    }
+    const marks = await database.query<{ count: string }>(
+      `SELECT count(*)::text count FROM room_read_marks WHERE identity_id=$1`,
+      [outsider],
+    );
+    expect(marks.rows[0]!.count).toBe('0');
+  });
+});

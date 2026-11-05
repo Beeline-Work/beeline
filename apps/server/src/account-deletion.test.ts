@@ -1,0 +1,829 @@
+import { cornerOwnerSql } from './corner-worker.js';
+import { cornerCommissionerSql, cornerKindSql, cornerOpenedFromSql, cornerRequestSql } from './corner-opening.js';
+import { createHash } from 'node:crypto';
+import { AddressInfo } from 'node:net';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import { migrate, type SqlDatabase } from './database.js';
+import { claimAgentCommand } from './agent-command.js';
+import { setCornerHold } from './corner-holds.js';
+import { taggedIdentityIdsSql } from './message-mentions.js';
+import { cornerRunStateSql } from './corner-run.js';
+import { seedCornerOpening, MemoryObjectStorage, PgliteDatabase, migratedDatabase, insertCornerFacts, setCornerOwner } from './test-support.js';
+import { ObjectService } from './object-service.js';
+import { TokenAuth } from './auth.js';
+import { PhoneService } from './phone-service.js';
+import { DaemonService } from './daemon-service.js';
+import { LiveHub } from './live.js';
+import { createBeelineServer } from './server.js';
+import {
+  DELETED_ACCOUNT_IDENTITY_ID,
+  DELETED_ACCOUNT_NAME,
+} from '@beeline/api-contract/system-identity';
+import { REVIEW_WORKSPACE_ID } from './review-proof-fixture.js';
+import { REVIEW_IDENTITY_ID, ReviewAccess } from './review-access.js';
+import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
+import type { ComposioApps } from './composio-apps.js';
+
+// sha256('github:owner') — the same derivation TokenAuth.exchangeGitHubOidc
+// uses, so the fresh sign-in assertion below recreates the SAME id.
+const OWNER = createHash('sha256').update('github:owner').digest('hex');
+const PARTNER = createHash('sha256').update('github:partner').digest('hex');
+const AGENT = 'b'.repeat(64);
+const WORKSPACE = '11111111-1111-4111-8111-111111111111';
+const ROOM = '22222222-2222-4222-8222-222222222222';
+const DM_HUMAN = '33333333-3333-4333-8333-333333333333';
+const DM_AGENT = '44444444-4444-4444-8444-444444444444';
+const CORNER = '55555555-5555-4555-8555-555555555555';
+const REVIEW_SECRET = 'play-review-secret-value-0001';
+
+describe('deleteAccount', () => {
+  let database: PgliteDatabase;
+  let auth: TokenAuth;
+  let phone: PhoneService;
+  let storage: MemoryObjectStorage;
+  let objects: ObjectService;
+  let origin: string | undefined;
+  let server: ReturnType<typeof createBeelineServer> | undefined;
+  let ownerToken: string;
+
+  const seed = async () => {
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle,github_subject) VALUES
+         ($1,'human','Owner','owner','owner'),($2,'human','Partner','partner','partner'),
+         ($3,'agent','Bee','bee',NULL)`,
+      [OWNER, PARTNER, AGENT],
+    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, OWNER]);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [WORKSPACE]);
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,name,created_by) VALUES($1,$2,'General',$3)`,
+      [ROOM, WORKSPACE, OWNER],
+    );
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,name,direct_participants) VALUES($1,$2,'Direct message',$4::jsonb),
+         ($3,$2,'Direct message',$5::jsonb)`,
+      [
+        DM_HUMAN,
+        WORKSPACE,
+        DM_AGENT,
+        JSON.stringify([OWNER, PARTNER]),
+        JSON.stringify([OWNER, AGENT]),
+      ],
+    );
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Corner')`,
+      [CORNER, WORKSPACE, ROOM],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+         ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),
+         ($1,$4,$2,'owner'),($1,$4,$3,'member'),($1,$4,$5,'member'),
+         ($1,$6,$2,'member'),($1,$6,$3,'member'),
+         ($1,$7,$2,'member'),($1,$7,$5,'member')`,
+      [WORKSPACE, OWNER, PARTNER, ROOM, AGENT, DM_HUMAN, DM_AGENT],
+    );
+    await database.query(
+      `UPDATE memberships SET invited_by=$1
+       WHERE workspace_id=$2 AND room_id IS NULL AND identity_id=$3`,
+      [OWNER, WORKSPACE, PARTNER],
+    );
+    await insertCornerFacts(database, { cornerId: CORNER, ownerAgentId: AGENT, commissionedBy: OWNER, workerAgentId: AGENT, lifecycle: '{"lifecycle":"working"}' });
+    // Authored content: the owner in the shared Room mentioning the partner,
+    // the agent in the shared Room mentioning the owner, the owner in the
+    // human DM.
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES
+         ('m1',$1,$2,'hello @partner'),
+         ('m2',$1,$3,'on it @owner'),
+         ('m3',$4,$2,'just us')`,
+      [ROOM, OWNER, AGENT, DM_HUMAN],
+    );
+    // The agent's working state and schedules.
+    await database.query(
+      `INSERT INTO agent_turns(room_id,request_id,agent_id,status) VALUES($1,'req-1',$2,'complete')`,
+      [ROOM, AGENT],
+    );
+    await database.query(
+      `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'turn-1','draft','{"text":"working"}'::jsonb)`,
+      [ROOM, AGENT],
+    );
+    await database.query(
+      `INSERT INTO work_schedules(schedule_id,agent_id,room_id,revision,schedule) VALUES('ws-1',$1,$2,1,'{"kind":"cron"}'::jsonb)`,
+      [AGENT, ROOM],
+    );
+    await database.query(
+      `INSERT INTO schedule_receipts(schedule_id,occurrence_id,agent_id,room_id,status) VALUES('ws-1','occ-1',$1,$2,'ran')`,
+      [AGENT, ROOM],
+    );
+    await database.query(
+      `INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at)
+       VALUES('66666666-6666-4666-8666-666666666666',$1,$2,$3,$4,'{"kind":"interval"}'::jsonb,'check',now()+interval '1 hour')`,
+      [WORKSPACE, ROOM, AGENT, OWNER],
+    );
+    await database.query(
+      `INSERT INTO agent_mandates(agent_id,room_id,generation,mandate) VALUES($1,$2,1,'{"kind":"always"}'::jsonb)`,
+      [AGENT, ROOM],
+    );
+    // Grants, invites, pairing codes, media, authority rows, GitHub.
+    await database.query(
+      `INSERT INTO agent_grants(id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status)
+       VALUES('77777777-7777-4777-8777-777777777777',$1,$2,'command','npm test','needed',$3,$4,'approved')`,
+      [AGENT, WORKSPACE, OWNER, ROOM],
+    );
+    await database.query(
+      `INSERT INTO invites(token_hash,workspace_id,created_by,expires_at) VALUES($1,$2,$3,now()+interval '1 day')`,
+      ['a'.repeat(64), WORKSPACE, OWNER],
+    );
+    await database.query(
+      `INSERT INTO agent_pairing_codes(code_hash,workspace_id,created_by,expires_at) VALUES($1,$2,$3,now()+interval '1 day')`,
+      ['b'.repeat(64), WORKSPACE, OWNER],
+    );
+    await database.query(
+      `INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at) VALUES
+         ('88888888-8888-4888-8888-888888888888',$1,'media',$3,'text/plain','notes.txt',1,$2,'ready',now()+interval '24 hours')`,
+      [OWNER, createHash('sha256').update('notes').digest('hex'), `media/${OWNER}/${'n'.repeat(64)}`],
+    );
+    await database.query(
+      `INSERT INTO permission_authority(permission_id,room_id,principal_id,request_id,scope,status)
+       VALUES('perm-1',$1,$2,'req-perm','{}'::jsonb,'authorized')`,
+      [ROOM, AGENT],
+    );
+    await database.query(
+      `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES('device-token',$1,'ios','physical')`,
+      [OWNER],
+    );
+    await database.query(
+      `INSERT INTO github_installations(installation_id,owner_id,account_login,account_type) VALUES(9001,$1,'owner','User')`,
+      [OWNER],
+    );
+    await database.query(
+      `INSERT INTO github_user_tokens(subject,encrypted_token) VALUES('owner','enc')`,
+    );
+  };
+
+  beforeEach(async () => {
+    database = await migratedDatabase();
+    await new AuthStore(database as unknown as TransactionalDatabase).migrate();
+    await seed();
+    storage = new MemoryObjectStorage();
+    storage.blobs.set(`media/${OWNER}/${'n'.repeat(64)}`, {
+      bytes: Buffer.from('notes'), type: 'text/plain',
+    });
+    objects = new ObjectService(database, storage.asStorage(), 'http://placeholder');
+    auth = new TokenAuth(database, async (proof) => {
+      const login = proof === 'proof' ? 'owner' : proof === 'partner-proof' ? 'partner' : proof;
+      return { subject: login, login, name: login[0]!.toUpperCase() + login.slice(1) };
+    });
+    phone = new PhoneService(database, 'http://placeholder', undefined, async () => undefined,
+      undefined, false, database, objects);
+  });
+
+  afterEach(async () => {
+    if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
+    await database.close();
+  });
+
+  /** Mounts the real HTTP server so the operation runs over the wire. */
+  const startServer = async () => {
+    server = createBeelineServer({
+      database,
+      auth,
+      phone,
+      daemon: new DaemonService(database, new LiveHub(), async () => ({
+        token: 'github-room-token',
+        expiresAt: Date.now() + 60_000,
+      })),
+      live: new LiveHub(),
+      review: new ReviewAccess({
+        secret: REVIEW_SECRET,
+        mint: () => auth.exchangeReviewIdentity(),
+        log: () => undefined,
+      }),
+      mediaMaximumBytes: 1024 * 1024,
+    });
+    await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
+    origin = `http://127.0.0.1:${(server!.address() as AddressInfo).port}`;
+  };
+
+  const expectRowCount = async (sql: string, values: unknown[], expected: number) => {
+    const result = await database.query(sql, values);
+    expect(result.rowCount, sql).toBe(expected);
+  };
+
+  it('retains workspace deletion audits when their actor deletes their account (R-ACCOUNT-AUDIT)', async () => {
+    await startServer();
+    ownerToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
+    const workspaceId = '66666666-6666-4666-8666-666666666666';
+    const operation = (name: string, input: object) => fetch(`${origin}/v1/phone/operations/${name}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${ownerToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    });
+    expect((await operation('createWorkspace', { workspaceId, name: 'Deleted workspace' })).status).toBe(200);
+    expect((await operation('deleteWorkspace', { workspaceId })).status).toBe(204);
+    const before = (await database.query(
+      `SELECT workspace_id,workspace_name,deleted_by,deleted_at FROM workspace_deletions WHERE workspace_id=$1`,
+      [workspaceId],
+    )).rows;
+    expect(before).toHaveLength(1);
+    expect(before[0]!.deleted_by).toBe(OWNER);
+
+    expect((await operation('deleteAccount', {})).status).toBe(204);
+    await expectRowCount(`SELECT 1 FROM identities WHERE id=$1`, [OWNER], 0);
+    expect((await database.query(
+      `SELECT workspace_id,workspace_name,deleted_by,deleted_at FROM workspace_deletions WHERE workspace_id=$1`,
+      [workspaceId],
+    )).rows).toEqual([{ ...before[0], deleted_by: DELETED_ACCOUNT_IDENTITY_ID }]);
+  });
+
+  it('PROVENANCE-ORDER derives provenance from the opening order and preserves it through deletion', async () => {
+    const origin = '77777777-7777-4777-8777-777777777777';
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,name,created_by) VALUES($1,$2,$3,'Origin',$4)`,
+      [origin, WORKSPACE, ROOM, AGENT],
+    );
+    await database.query(`INSERT INTO corner_facts(corner_id) VALUES($1)`, [origin]);
+    await database.query(`UPDATE rooms SET created_by=$2 WHERE id=$1`, [CORNER, AGENT]);
+    await database.query(
+      `UPDATE agent_commands SET turn_request_id='provenance-request',
+         private_payload=private_payload||jsonb_build_object('fromRoomId',$2::text,'openKey','provenance-open')
+       WHERE room_id=$1 AND reason='corner_objective'`, [CORNER, origin],
+    );
+    const provenance = async (id: string) => (await database.query(
+      `SELECT ${cornerKindSql('corner.id')} kind,${cornerCommissionerSql('corner.id')} commissioner,
+         ${cornerOpenedFromSql('corner.id')} opened_from,${cornerRequestSql('corner.id')} request
+       FROM rooms corner WHERE corner.id=$1`, [id],
+    )).rows[0];
+    expect(await provenance(CORNER)).toEqual({ kind: 'agent', commissioner: OWNER,
+      opened_from: origin, request: 'provenance-request' });
+    const daemon = new DaemonService(database, new LiveHub());
+    expect(await daemon.execute('getCornerRestoreState', { cornerId: CORNER }, AGENT)).toMatchObject({
+      kind: 'agent', openedFromCornerId: origin, requestId: 'provenance-request',
+    });
+    const human = await phone.execute('createHumanCorner', { roomId: ROOM, title: 'Phone' }, OWNER);
+    expect(await provenance(human.id)).toEqual({ kind: 'human', commissioner: OWNER, opened_from: null, request: null });
+    expect(await daemon.execute('getCornerRestoreState', { cornerId: human.id }, AGENT)).toMatchObject({
+      kind: 'human', titleGenerated: true,
+    });
+    await database.query(`INSERT INTO corner_brief_revisions(corner_id,revision,spec,author_id,source_room_id)
+      VALUES($1,1,'First brief',$2,$3)`, [human.id, AGENT, ROOM]);
+    expect(await daemon.execute('getCornerRestoreState', { cornerId: human.id }, AGENT)).not.toHaveProperty('titleGenerated');
+    const before = (await database.query(`SELECT id,private_payload,root_source_message_id FROM agent_commands
+      WHERE room_id=$1 AND reason='corner_objective'`, [CORNER])).rows[0]!;
+    await phone.execute('deleteAccount', {}, OWNER);
+    expect((await database.query(`SELECT id,agent_id,private_payload,root_source_message_id FROM agent_commands
+      WHERE id=$1`, [before.id])).rows[0]).toEqual({ ...before, agent_id: DELETED_ACCOUNT_IDENTITY_ID });
+    expect(await provenance(CORNER)).toEqual({ kind: 'agent', commissioner: DELETED_ACCOUNT_IDENTITY_ID,
+      opened_from: origin, request: 'provenance-request' });
+  });
+
+  it('deletes an account with stored agent traces and preserves another account (R-ACCOUNT-TRACES)', async () => {
+    const partnerAgent = 'c'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Partner Bee','partner-bee')`,
+      [partnerAgent],
+    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [partnerAgent, PARTNER]);
+    // Both agents have diagnostics in the same surviving shared Room.
+    await database.query(
+      `INSERT INTO agent_turn_traces(room_id,request_id,agent_id,outcome,trace) VALUES
+         ($1,'owner-trace',$2,'complete','{"steps":[]}'::jsonb),
+         ($1,'partner-trace',$3,'complete','{"steps":["keep"]}'::jsonb)`,
+      [ROOM, AGENT, partnerAgent],
+    );
+    const partnerTrace = (await database.query(
+      `SELECT * FROM agent_turn_traces WHERE agent_id=$1`, [partnerAgent],
+    )).rows;
+    await startServer();
+    ownerToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
+    const response = await fetch(`${origin}/v1/phone/operations/deleteAccount`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${ownerToken}`, 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(response.status).toBe(204);
+    await expectRowCount(`SELECT 1 FROM identities WHERE id=ANY($1)`, [[OWNER, AGENT]], 0);
+    await expectRowCount(`SELECT 1 FROM agents WHERE owner_id=$1`, [OWNER], 0);
+    await expectRowCount(`SELECT 1 FROM agent_turn_traces WHERE agent_id=$1`, [AGENT], 0);
+    await expectRowCount(`SELECT 1 FROM identities WHERE id=ANY($1)`, [[PARTNER, partnerAgent]], 2);
+    await expectRowCount(`SELECT 1 FROM agents WHERE agent_id=$1 AND owner_id=$2`, [partnerAgent, PARTNER], 1);
+    expect((await database.query(
+      `SELECT * FROM agent_turn_traces WHERE agent_id=$1`, [partnerAgent],
+    )).rows).toEqual(partnerTrace);
+  });
+
+  it('deletes the account and its agents through the real operation path, anonymising shared content', async () => {
+    await startServer();
+    ownerToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
+
+    const response = await fetch(`${origin}/v1/phone/operations/deleteAccount`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${ownerToken}`, 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(response.status).toBe(204);
+    expect(storage.blobs.size).toBe(0);
+
+    // The person and their agent are gone; the tombstone author is in.
+    await expectRowCount(`SELECT 1 FROM identities WHERE id=ANY($1)`, [[OWNER, AGENT]], 0);
+    await expectRowCount(
+      `SELECT 1 FROM identities WHERE id=$1 AND kind='human' AND hidden_from_roster AND name=$2 AND github_subject IS NULL`,
+      [DELETED_ACCOUNT_IDENTITY_ID, DELETED_ACCOUNT_NAME],
+      1,
+    );
+
+    // Shared-content rule: messages survive, re-attributed and unmentioned.
+    await expectRowCount(
+      `SELECT 1 FROM messages WHERE id IN ('m1','m2','m3') AND author_id=$1`,
+      [DELETED_ACCOUNT_IDENTITY_ID],
+      3,
+    );
+    // Nothing had to scrub the tags: the deleted account is no longer a member
+    // of anything, so `@owner` in a surviving line now names nobody.
+    await expectRowCount(
+      `SELECT 1 FROM messages message WHERE message.id IN ('m1','m2','m3')
+       AND ${taggedIdentityIdsSql('message')} && $1::text[]`,
+      [[OWNER, AGENT]],
+      0,
+    );
+
+    // The human DM survives with the deleted participant scrubbed; the DM
+    // nobody else relies on (person↔own agent) goes with the account.
+    await expectRowCount(`SELECT 1 FROM rooms WHERE id=$1`, [DM_HUMAN], 1);
+    await expectRowCount(
+      `SELECT 1 FROM rooms WHERE id=$1 AND direct_participants=$2::jsonb`,
+      [DM_HUMAN, JSON.stringify([PARTNER])],
+      1,
+    );
+    await expectRowCount(`SELECT 1 FROM rooms WHERE id=$1`, [DM_AGENT], 0);
+
+    // The agent's corner archives as done/abandoned; its opening order now
+    // names the deleted-account tombstone, so the agent no longer owns it.
+    await expectRowCount(
+      `SELECT 1 FROM rooms r JOIN corner_facts f ON f.corner_id=r.id
+       WHERE r.id=$1 AND r.archived_at IS NOT NULL
+         AND ${cornerOwnerSql('r.id')}=$2
+         AND f.lifecycle->>'lifecycle'='done' AND f.lifecycle->>'outcome'='abandoned'`,
+      [CORNER, DELETED_ACCOUNT_IDENTITY_ID],
+      1,
+    );
+    // It closes through closeCornerState, as a human close does: the corner
+    // state machine reaches `closed` with the archival.
+    await expectRowCount(
+      `SELECT 1 FROM corner_facts WHERE corner_id=$1 AND ${cornerRunStateSql('corner_id')}='closed'`,
+      [CORNER],
+      1,
+    );
+
+    // Personal state: everything keyed to the person or the agent is gone.
+    for (const [sql, values] of [
+      [`SELECT 1 FROM agent_turns WHERE agent_id=ANY($1)`, [[OWNER, AGENT]]],
+      [`SELECT 1 FROM live_outputs WHERE agent_id=ANY($1)`, [[OWNER, AGENT]]],
+      [`SELECT 1 FROM work_schedules WHERE agent_id=ANY($1)`, [[OWNER, AGENT]]],
+      [`SELECT 1 FROM schedule_receipts WHERE agent_id=ANY($1)`, [[OWNER, AGENT]]],
+      [
+        `SELECT 1 FROM agent_schedules WHERE creator_id=ANY($1) OR agent_id=ANY($1)`,
+        [[OWNER, AGENT]],
+      ],
+      [`SELECT 1 FROM agent_mandates WHERE agent_id=ANY($1)`, [[OWNER, AGENT]]],
+      [`SELECT 1 FROM agent_grants WHERE requested_by=ANY($1)`, [[OWNER, AGENT]]],
+      [`SELECT 1 FROM permission_authority WHERE principal_id=ANY($1)`, [[OWNER, AGENT]]],
+      [`SELECT 1 FROM invites`, []],
+      [`SELECT 1 FROM agent_pairing_codes`, []],
+      [`SELECT 1 FROM push_devices WHERE identity_id=ANY($1)`, [[OWNER, AGENT]]],
+      [`SELECT 1 FROM github_installations WHERE owner_id=ANY($1)`, [[OWNER, AGENT]]],
+      [`SELECT 1 FROM github_user_tokens WHERE subject='owner'`, []],
+      [`SELECT 1 FROM memberships WHERE identity_id=ANY($1)`, [[OWNER, AGENT]]],
+      [`SELECT 1 FROM agents WHERE agent_id=ANY($1)`, [[OWNER, AGENT]]],
+      [`SELECT 1 FROM phone_sessions WHERE identity_id=ANY($1)`, [[OWNER, AGENT]]],
+      [`SELECT 1 FROM phone_access_tokens WHERE identity_id=ANY($1)`, [[OWNER, AGENT]]],
+      [`SELECT 1 FROM daemon_tokens WHERE agent_id=ANY($1)`, [[OWNER, AGENT]]],
+    ] as const) {
+      await expectRowCount(sql, values, 0);
+    }
+
+    // Object bytes are gone; the tombstone keeps the "expired" story honest.
+    await expectRowCount(`SELECT 1 FROM objects WHERE owner_id=ANY($1)`, [[OWNER, AGENT]], 0);
+    await expectRowCount(
+      `SELECT 1 FROM object_expirations
+       WHERE id='88888888-8888-4888-8888-888888888888' AND retention_hours=24`,
+      [],
+      1,
+    );
+
+    // Attribution the account created is lifted off the shared artifacts.
+    await expectRowCount(`SELECT 1 FROM rooms WHERE id=$1 AND created_by IS NULL`, [ROOM], 1);
+    await expectRowCount(
+      `SELECT 1 FROM memberships
+       WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND invited_by IS NULL`,
+      [WORKSPACE, PARTNER],
+      1,
+    );
+
+    // Sole surviving owner succession: the partner now owns the Workspace.
+    await expectRowCount(
+      `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND role='owner'`,
+      [WORKSPACE, PARTNER],
+      1,
+    );
+
+    // Every token the account held is dead: the access token authenticates to
+    // nothing and the refresh family is gone.
+    expect(await auth.authenticatePhone(ownerToken)).toBeNull();
+  });
+
+  it('clears every non-cascading reference to identities (R-ACCOUNT-FKS)', async () => {
+    // Each foreign key to identities that neither cascades nor sets null must
+    // be cleared by deleteAccount before the identity row goes; otherwise the
+    // delete fails for any account with such a row. A new foreign key fails
+    // here until deleteAccount handles it and it is listed below.
+    const handled = [
+      'agent_commands.agent_id', 'agent_grants.decided_by', 'agent_grants.requested_by',
+      'agent_mandates.agent_id', 'agent_pairing_codes.claimed_by',
+      'agent_pairing_codes.created_by', 'agent_schedules.agent_id',
+      'agent_schedules.creator_id', 'agent_schedules.owner_id', 'agent_schedules.updated_by',
+      'agent_turn_traces.agent_id', 'agent_turns.agent_id', 'agents.owner_id',
+      'computer_sessions.agent_id', 'connector_offers.accepted_by',
+      'corner_apps.author_agent_id', 'corner_app_bindings.bound_by',
+      'corner_app_installations.installed_by', 'corner_app_installations.developer_agent_id',
+      'corner_brief_revisions.author_id', 'corner_facts.owner_agent_id', 'corner_facts.reviewer_agent_id',
+      'corner_merge_approvals.approved_by',
+      'corner_merge_holds.actor_id', 'corner_merge_holds.released_by',
+      'corner_merge_holds.set_by_agent_id',
+      'free_agents.owner_id', 'github_installations.owner_id',
+      'identity_successions.new_identity_id', 'identity_successions.old_identity_id',
+      'invites.created_by', 'live_outputs.agent_id', 'messages.author_id',
+      'messages.deleted_by', 'objects.owner_id',
+      'permission_authority.principal_id', 'rooms.created_by', 'rooms.reviewer_agent_id',
+      'schedule_receipts.agent_id', 'starter_onboarding_runs.beebee_id',
+      'starter_onboarding_runs.luna_id', 'starter_onboarding_runs.user_id',
+      'work_schedules.agent_id',
+      'workspace_deletions.deleted_by', 'workspace_skills.creator_agent_id',
+      'workspace_skills.owner_agent_id',
+    ];
+    const references = await database.query<{ reference: string }>(
+      `SELECT c.conrelid::regclass::text||'.'||a.attname AS reference
+       FROM pg_constraint c JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=c.conkey[1]
+       WHERE c.contype='f' AND c.confrelid='identities'::regclass AND c.confdeltype IN ('a','r')
+       ORDER BY 1`,
+    );
+    expect(references.rows.map((row) => row.reference)).toEqual([...handled].sort());
+    // Nothing reached through a cascade from identities is itself held by a
+    // non-cascading reference.
+    const indirect = await database.query(
+      `WITH RECURSIVE reached(tbl) AS (
+         SELECT 'identities'::regclass
+         UNION SELECT c.conrelid FROM pg_constraint c JOIN reached ON c.confrelid=reached.tbl
+         WHERE c.contype='f' AND c.confdeltype='c')
+       SELECT c.conname FROM pg_constraint c
+       WHERE c.contype='f' AND c.confdeltype IN ('a','r') AND c.confrelid<>'identities'::regclass
+         AND c.confrelid IN (SELECT tbl FROM reached)`,
+    );
+    expect(indirect.rows).toEqual([]);
+  });
+
+  it('anonymises retained app storage without blocking account deletion (SENTRY-22)', async () => {
+    const installation = '66666666-6666-4666-8666-666666666666';
+    await database.query(
+      `INSERT INTO corner_app_installations(id,workspace_id,installed_by,developer_agent_id,manifest)
+       VALUES($1,$2,$3,$4,'{"name":"Legacy"}')`,
+      [installation, WORKSPACE, OWNER, AGENT],
+    );
+    await database.query(
+      `INSERT INTO corner_app_bindings(corner_id,installation_id,instance_id,bound_by)
+       VALUES($1,$2,'77777777-7777-4777-8777-777777777777',$3)`,
+      [CORNER, installation, OWNER],
+    );
+    await database.query(
+      `INSERT INTO corner_apps(corner_id,slug,author_agent_id,definition)
+       VALUES($1,'legacy',$2,'{"command":"legacy"}')`, [CORNER, AGENT],
+    );
+    await startServer();
+    ownerToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
+    const response = await fetch(`${origin}/v1/phone/operations/deleteAccount`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${ownerToken}`, 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(response.status).toBe(204);
+    await expectRowCount(`SELECT 1 FROM identities WHERE id=ANY($1)`, [[OWNER, AGENT]], 0);
+    await expectRowCount(
+      `SELECT 1 FROM corner_app_installations WHERE id=$1 AND installed_by=$2 AND developer_agent_id=$2`,
+      [installation, DELETED_ACCOUNT_IDENTITY_ID], 1,
+    );
+    await expectRowCount(`SELECT 1 FROM corner_app_bindings WHERE corner_id=$1 AND bound_by=$2`,
+      [CORNER, DELETED_ACCOUNT_IDENTITY_ID], 1);
+    await expectRowCount(`SELECT 1 FROM corner_apps WHERE corner_id=$1 AND author_agent_id=$2`,
+      [CORNER, DELETED_ACCOUNT_IDENTITY_ID], 1);
+  });
+
+  it('keeps shared corner records under the tombstone and releases holds on the corners it archives', async () => {
+    await database.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [CORNER, AGENT]);
+    await database.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [ROOM, AGENT]);
+    await database.query(`UPDATE messages SET deleted_by=$1 WHERE id='m3'`, [OWNER]);
+    await database.query(
+      `INSERT INTO corner_brief_revisions(corner_id,revision,content,author_id,source_room_id)
+       VALUES($1,1,'brief',$2,$3)`,
+      [CORNER, AGENT, ROOM],
+    );
+    await database.query(
+      `INSERT INTO corner_merge_holds(corner_id,actor_id,standing) VALUES($1,$2,'owner')`,
+      [CORNER, OWNER],
+    );
+
+    await phone.execute('deleteAccount', {}, OWNER);
+
+    await expectRowCount(`SELECT 1 FROM identities WHERE id=ANY($1)`, [[OWNER, AGENT]], 0);
+    await expectRowCount(`SELECT 1 FROM corner_facts WHERE corner_id=$1 AND owner_agent_id=$2`, [CORNER, DELETED_ACCOUNT_IDENTITY_ID], 1);
+    await expectRowCount(`SELECT 1 FROM rooms WHERE id=$1 AND reviewer_agent_id IS NULL`, [ROOM], 1);
+    await expectRowCount(`SELECT 1 FROM messages WHERE id='m3' AND deleted_by=$1`, [DELETED_ACCOUNT_IDENTITY_ID], 1);
+    await expectRowCount(
+      `SELECT 1 FROM corner_brief_revisions WHERE corner_id=$1 AND author_id=$2 AND content='brief'`,
+      [CORNER, DELETED_ACCOUNT_IDENTITY_ID],
+      1,
+    );
+    await expectRowCount(
+      `SELECT 1 FROM corner_merge_holds WHERE corner_id=$1 AND actor_id=$2
+         AND set_by_agent_id IS NULL AND released_by=$3 AND released_at IS NOT NULL`,
+      [CORNER, DELETED_ACCOUNT_IDENTITY_ID, SYSTEM_IDENTITY_ID],
+      1,
+    );
+  });
+
+  it('keeps a person hold\'s release rule when the account and its agent both held a surviving corner (R-DELETE-HOLD-AUTHORITY)', async () => {
+    // A partner agent owns the corner, so the corner survives the deletion.
+    const partnerAgent = 'c'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Partner Bee')`, [partnerAgent]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [partnerAgent, PARTNER]);
+    await setCornerOwner(database, CORNER, partnerAgent);
+    // A plain member stays a member after the deletion promotes the partner.
+    const member = 'e'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Member','member')`, [member]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$3,'member'),($1,$2,$3,'member')`,
+      [WORKSPACE, ROOM, member],
+    );
+    // Historical standings can differ: the person hold is weaker by standing
+    // but, unlike the agent hold, only someone above member may release it.
+    const personHold = (
+      await database.query<{ id: string }>(
+        `INSERT INTO corner_merge_holds(corner_id,actor_id,standing) VALUES($1,$2,'member') RETURNING id::text`,
+        [CORNER, OWNER],
+      )
+    ).rows[0]!.id;
+    await database.query(
+      `INSERT INTO corner_merge_holds(corner_id,actor_id,standing,set_by_agent_id) VALUES($1,$2,'owner',$3)`,
+      [CORNER, OWNER, AGENT],
+    );
+    await expect(setCornerHold(database, { cornerId: CORNER, releaseHoldId: personHold }, member)).rejects.toThrow(
+      'hold release denied',
+    );
+
+    await phone.execute('deleteAccount', {}, OWNER);
+
+    await expectRowCount(`SELECT 1 FROM rooms WHERE id=$1 AND archived_at IS NULL`, [CORNER], 1);
+    const kept = (
+      await database.query<{ id: string }>(
+        `SELECT id::text FROM corner_merge_holds WHERE corner_id=$1 AND released_at IS NULL
+           AND actor_id=$2 AND set_by_agent_id IS NULL AND standing='member'`,
+        [CORNER, DELETED_ACCOUNT_IDENTITY_ID],
+      )
+    ).rows;
+    expect(kept).toEqual([{ id: personHold }]);
+    await expectRowCount(`SELECT 1 FROM corner_merge_holds WHERE corner_id=$1 AND released_at IS NULL`, [CORNER], 1);
+    await expect(setCornerHold(database, { cornerId: CORNER, releaseHoldId: personHold }, member)).rejects.toThrow(
+      'hold release denied',
+    );
+    await expectRowCount(`SELECT 1 FROM corner_merge_holds WHERE corner_id=$1 AND released_at IS NULL`, [CORNER], 1);
+  });
+
+  it('is idempotent: a second call resolves without effect', async () => {
+    await phone.execute('deleteAccount', {}, OWNER);
+    await expect(phone.execute('deleteAccount', {}, OWNER)).resolves.toBeUndefined();
+    await expectRowCount(`SELECT 1 FROM identities WHERE id=$1`, [OWNER], 0);
+  });
+
+  it('refuses a newly expanded archival scope before erasing the account instead of taking lifecycle under authority', async () => {
+    const addedCorner='66666666-6666-4666-8666-666666666666';
+    const transaction=database.transaction.bind(database);
+    let inserted=false;
+    // Inject a real source change after the discovery read. This isolated
+    // transaction fixture tests scope expansion/rollback; cross-pool lock
+    // ordering is covered separately by the real PostgreSQL ownership proof.
+    const wrap=(tx:SqlDatabase):SqlDatabase=>({transaction:work=>tx.transaction(inner=>work(wrap(inner))),query:async(sql,args)=>{
+      const result=await tx.query(sql,args);
+      if(!inserted&&sql.includes(cornerOwnerSql('c.id'))&&sql.includes('ORDER BY c.id')&&!sql.includes('FOR KEY SHARE')){
+        inserted=true;
+        await tx.query(`INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'New synthetic corner')`,[addedCorner,WORKSPACE,ROOM]);
+        await insertCornerFacts(tx,{cornerId:addedCorner,ownerAgentId:AGENT,workerAgentId:AGENT,commissionedBy:OWNER});
+      }
+      return result;
+    }});
+    const observe=vi.spyOn(database,'transaction').mockImplementation(work=>transaction(tx=>work(wrap(tx))));
+    try{
+      await expect(phone.execute('deleteAccount',{},OWNER)).rejects.toThrow('Account changed while deletion was being prepared');
+      expect(inserted).toBe(true);
+      await expectRowCount(`SELECT 1 FROM identities WHERE id=ANY($1)`,[[OWNER,AGENT]],2);
+      await expectRowCount(`SELECT 1 FROM rooms WHERE id=$1 AND archived_at IS NULL`,[CORNER],1);
+      await expectRowCount(`SELECT 1 FROM rooms WHERE id=$1`,[addedCorner],0);
+      expect(storage.blobs.size).toBeGreaterThan(0);
+    }finally{observe.mockRestore();}
+  });
+
+  it('keeps owned object rows and the account retryable when storage deletion fails', async () => {
+    const key = `media/${OWNER}/${'n'.repeat(64)}`;
+    const original = storage.deleteObject.bind(storage);
+    const deleting = vi.spyOn(storage, 'deleteObject')
+      .mockImplementation(async candidate => {
+        if (candidate === key) throw new Error('storage unavailable');
+        await original(candidate);
+      });
+    await expect(phone.execute('deleteAccount', {}, OWNER)).rejects.toThrow('storage unavailable');
+    await expectRowCount(`SELECT 1 FROM identities WHERE id=$1`, [OWNER], 1);
+    await expectRowCount(`SELECT 1 FROM objects WHERE key=$1`, [key], 1);
+    expect(storage.blobs.has(key)).toBe(true);
+    expect(deleting.mock.calls.filter(([candidate]) => candidate === key)).toHaveLength(1);
+    const attempts = deleting.mock.calls.length;
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try { await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000); } finally { vi.useRealTimers(); }
+    expect(deleting).toHaveBeenCalledTimes(attempts);
+    deleting.mockImplementation(original);
+    await phone.execute('deleteAccount', {}, OWNER);
+    expect(storage.blobs.has(key)).toBe(false);
+    await expectRowCount(`SELECT 1 FROM objects WHERE key=$1`, [key], 0);
+  });
+
+  it('cancels a surviving helper assignment when its owner account archives the corner', async () => {
+    const helper = 'd'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Helper')`, [helper]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,[WORKSPACE,ROOM,helper]);
+    await database.query(
+      `INSERT INTO agent_commands(id,room_id,agent_id,source_message_id,turn_request_id,
+        action,reason,root_command_id,root_source_message_id,agent_depth)
+       VALUES('helper-input',$1,$2,'m1','helper-turn','input','mention','helper-input','m1',0)`,
+      [CORNER, helper]);
+    // Dispatch already created optimistic activity. Claim it as the helper
+    // would, so deletion must cancel the actual running assignment too.
+    await claimAgentCommand(database, CORNER, helper, 'helper-input', 'helper-generation');
+    await phone.execute('deleteAccount', {}, OWNER);
+    await expectRowCount(
+      `SELECT 1 FROM agent_commands WHERE room_id=$1 AND action IN ('input','resume')
+         AND state IN ('pending','claimed')`, [CORNER], 0);
+    await expectRowCount(
+      `SELECT 1 FROM agent_turns WHERE room_id=$1 AND status='working'`, [CORNER], 0);
+  });
+
+  const seedAppConnections = async () => {
+    await database.query(
+      `INSERT INTO workspace_apps(id,workspace_id,owner_identity_id,app_key,display_name,
+         transport,route,composio_account_id,state) VALUES
+         ('99999999-9999-4999-8999-999999999991',$1,$2,'youtube','YouTube','composio','composio','ca_youtube','active'),
+         ('99999999-9999-4999-8999-999999999992',$1,$2,'gmail','Gmail','composio','composio','ca_gmail','disconnected'),
+         ('99999999-9999-4999-8999-999999999993',$1,$3,'slack','Slack','composio','composio','ca_partner','active')`,
+      [WORKSPACE, OWNER, PARTNER],
+    );
+  };
+  const fakeComposio = () =>
+    ({ deleteAccount: vi.fn(async (_accountId: string) => undefined) }) as unknown as ComposioApps & {
+      deleteAccount: ReturnType<typeof vi.fn>;
+    };
+  const phoneWith = (composio?: ComposioApps) =>
+    new PhoneService(
+      database,
+      'http://placeholder',
+      undefined,
+      async () => undefined,
+      undefined,
+      false,
+      database,
+      objects,
+      undefined,
+      undefined,
+      composio,
+    );
+
+  it('revokes every Composio account the person owns at the provider', async () => {
+    await seedAppConnections();
+    const composio = fakeComposio();
+    phone = phoneWith(composio);
+    await startServer();
+    ownerToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
+    const response = await fetch(`${origin}/v1/phone/operations/deleteAccount`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${ownerToken}`, 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(response.status).toBe(204);
+    expect(composio.deleteAccount.mock.calls.map(([id]) => id).sort()).toEqual([
+      'ca_gmail',
+      'ca_youtube',
+    ]);
+    await expectRowCount(`SELECT 1 FROM identities WHERE id=$1`, [OWNER], 0);
+    await expectRowCount(`SELECT 1 FROM workspace_apps WHERE owner_identity_id=$1`, [PARTNER], 1);
+  });
+
+  it('keeps the account intact when the provider revocation fails, so a retry can finish it', async () => {
+    await seedAppConnections();
+    const composio = fakeComposio();
+    composio.deleteAccount.mockRejectedValueOnce(new Error('provider unavailable'));
+    await expect(phoneWith(composio).execute('deleteAccount', {}, OWNER)).rejects.toThrow(
+      /provider unavailable/,
+    );
+    await expectRowCount(`SELECT 1 FROM identities WHERE id=$1`, [OWNER], 1);
+    await phoneWith(composio).execute('deleteAccount', {}, OWNER);
+    await expectRowCount(`SELECT 1 FROM identities WHERE id=$1`, [OWNER], 0);
+  });
+
+  it('refuses to delete while app connections exist and nothing can revoke them', async () => {
+    await seedAppConnections();
+    await expect(phoneWith(undefined).execute('deleteAccount', {}, OWNER)).rejects.toThrow(
+      /cannot be revoked/,
+    );
+    await expectRowCount(`SELECT 1 FROM identities WHERE id=$1`, [OWNER], 1);
+  });
+
+  it('deletes the identity links that map the person to Google or GitHub subjects', async () => {
+    const legacyKey = 'c'.repeat(64);
+    const partnerKey = 'd'.repeat(64);
+    await database.query(
+      `INSERT INTO beeline_identity_links(community,issuer,audience,subject,pubkey,created_at) VALUES
+         ('hive','https://github.com','github','owner',$1,now()),
+         ('hive','https://accounts.google.com','google-client','google-owner',$1,now()),
+         ('hive','https://accounts.google.com','google-client','google-direct',$2,now()),
+         ('hive','https://github.com','github','partner',$3,now())`,
+      [legacyKey, OWNER, partnerKey],
+    );
+    await phone.execute('deleteAccount', {}, OWNER);
+    await expectRowCount(
+      `SELECT 1 FROM beeline_identity_links WHERE pubkey=ANY($1) OR subject=ANY($2)`,
+      [[legacyKey, OWNER], ['owner', 'google-owner', 'google-direct']],
+      0,
+    );
+    await expectRowCount(`SELECT 1 FROM beeline_identity_links WHERE pubkey=$1`, [partnerKey], 1);
+  });
+
+  it('lets the same GitHub subject sign in fresh afterwards', async () => {
+    await phone.execute('deleteAccount', {}, OWNER);
+    const fresh = await auth.exchangeGitHubOidc('proof');
+    expect(fresh.accessToken).toBeTruthy();
+    expect(await auth.authenticatePhone(fresh.accessToken)).toBe(OWNER);
+    // A NEW account: no agent and no durable messages.
+    await expectRowCount(`SELECT 1 FROM agents WHERE agent_id=$1`, [OWNER], 0);
+    await expectRowCount(
+      `SELECT 1 FROM messages WHERE author_id=$1 AND presentation='message'`,
+      [OWNER],
+      0,
+    );
+  });
+
+  it('deletes the review identity and restores it when the review link is redeemed again', async () => {
+    await startServer();
+    const redeem = async () => {
+      const response = await fetch(`${origin}/v1/auth/review/exchange`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ secret: REVIEW_SECRET }),
+      });
+      expect(response.status).toBe(200);
+      return (await response.json()) as { accessToken: string; identityId: string };
+    };
+
+    const first = await redeem();
+    expect(first.identityId).toBe(REVIEW_IDENTITY_ID);
+    const deleted = await fetch(`${origin}/v1/phone/operations/deleteAccount`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${first.accessToken}`, 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(deleted.status).toBe(204);
+    await expectRowCount(`SELECT 1 FROM identities WHERE id=$1`, [REVIEW_IDENTITY_ID], 0);
+    await expectRowCount(`SELECT 1 FROM memberships WHERE identity_id=$1`, [REVIEW_IDENTITY_ID], 0);
+    await expectRowCount(
+      `SELECT 1 FROM phone_sessions WHERE identity_id=$1`,
+      [REVIEW_IDENTITY_ID],
+      0,
+    );
+    await expectRowCount(
+      `SELECT 1 FROM phone_access_tokens WHERE identity_id=$1`,
+      [REVIEW_IDENTITY_ID],
+      0,
+    );
+
+    const restored = await redeem();
+    expect(restored.identityId).toBe(REVIEW_IDENTITY_ID);
+    await expectRowCount(`SELECT 1 FROM identities WHERE id=$1`, [REVIEW_IDENTITY_ID], 1);
+    await expectRowCount(
+      `SELECT 1 FROM memberships
+       WHERE identity_id=$1 AND workspace_id=$2 AND room_id IS NULL AND removed_at IS NULL`,
+      [REVIEW_IDENTITY_ID, REVIEW_WORKSPACE_ID],
+      1,
+    );
+    await expectRowCount(
+      `SELECT 1 FROM memberships m JOIN rooms r ON r.id=m.room_id
+       WHERE m.identity_id=$1 AND r.workspace_id=$2 AND r.name='general' AND m.removed_at IS NULL`,
+      [REVIEW_IDENTITY_ID, REVIEW_WORKSPACE_ID],
+      1,
+    );
+  });
+});

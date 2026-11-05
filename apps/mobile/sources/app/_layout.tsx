@@ -88,23 +88,12 @@ import { UpdateReadyPrompt } from '@/components/UpdateReadyPrompt';
 import { DesktopDeepLinkBridge } from '@/components/DesktopDeepLinkBridge';
 import { useIsDesktop } from '@/utils/responsive';
 import { startDesktopNotifications } from '@/push/desktop-notifications';
+import { afterFirstFrame, FirstContentDrawContext } from '@/navigation/initial-landing';
 import { startIdentityLive } from '@/buzz/identity-live';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { latencyFrameTraceEnabled, markLatencyRouteNavigation, markLatencyTouch } from '@/buzz/latency-frame-trace';
 
 const consumedNotificationResponses = createConsumedNotificationResponseStore(AsyncStorage);
-
-/** Run once after a frame has had a chance to paint, even if navigation has an active interaction. */
-function afterFirstFrame(run: () => void): () => void {
-  let secondFrame: number | undefined;
-  const firstFrame = requestAnimationFrame(() => {
-    secondFrame = requestAnimationFrame(run);
-  });
-  return () => {
-    cancelAnimationFrame(firstFrame);
-    if (secondFrame !== undefined) cancelAnimationFrame(secondFrame);
-  };
-}
 
 // Foreground OS-banner policy: while the app is active, pushes for other
 // conversations are shown and listed silently. Native background display and
@@ -279,124 +268,19 @@ async function loadFonts() {
 export default function RootLayout() {
   const routeSegments = useSegments();
   React.useLayoutEffect(() => { setMobileErrorRoute(routeSegments); }, [routeSegments]);
-  React.useEffect(() => {
-    let disposed = false;
-    let stop = () => {};
-    const cancel = afterFirstFrame(() => {
-      void import('@/buzz/native-crash-reporting').then(({ startNativeCrashReporting }) => {
-        if (!disposed) stop = startNativeCrashReporting();
-      }).catch(() => {});
-    });
-    return () => { disposed = true; cancel(); stop(); };
-  }, []);
-  React.useEffect(() => {
-    let active=true;
-    const opened=async(newOpen=false)=>{
-      const url=await Linking.getInitialURL().catch(()=>null);
-      if(url && /\/review(?:\/|\?)/.test(url))return;
-      const identityId=await monolithSession.identityId();
-      if(identityId===bytesToHex(sha256(utf8ToBytes('beeline:play-review-identity'))))return;
-      const signedIn=!!identityId;
-      if(active)await funnelOpened(signedIn,newOpen,signedIn?await monolithSession.authorization().catch(()=>undefined):undefined);
-    };
-    void opened().catch(()=>undefined);
-    let lastState=AppState.currentState;
-    const subscription=AppState.addEventListener('change',state=>{
-      const resumed=state==='active' && lastState!=='active';lastState=state;
-      if(resumed)void opened(true).catch(()=>undefined);
-    });
-    return()=>{active=false;subscription.remove();};
-  },[]);
-  React.useEffect(startDesktopNotifications, []);
-  React.useEffect(startIdentityLive, []);
   const isDesktop = useIsDesktop();
-  React.useEffect(() => {
-    // The server's push level wins: it is read once per launch, and every
-    // later change is stored and announced, so the device copy is only the
-    // cold-start hint until the server answers.
-    let readPushLevelFor: string | null = null;
-    // The last level the subscription announced; the device copy only stands
-    // in until it has announced one for this identity.
-    let heardPushLevel: { pubkey: string; level: PushLevel } | null = null;
-    const reconcileLevel = (changed?: { pubkey: string; level: PushLevel }) => {
-      if (changed) heardPushLevel = changed;
-      if (AppState.currentState !== 'active') return;
-      void (async () => {
-        const identity = await loadBuzzIdentity();
-        if (changed && changed.pubkey !== identity?.publicKey) return;
-        const heard = heardPushLevel?.pubkey === identity?.publicKey ? heardPushLevel?.level : undefined;
-        const pushLevel =
-          heard ?? (identity ? await loadStoredPushLevel(identity.publicKey) : 'attention');
-        if (!changed && identity && readPushLevelFor !== identity.publicKey) {
-          const settings = await loadActiveCommunityId(identity.publicKey)
-            .then((workspaceId) => readIdentitySettings(workspaceId ?? undefined))
-            .catch(() => null);
-          if (settings) {
-            readPushLevelFor = identity.publicKey;
-            // The save announces the server level; that announcement reconciles.
-            return saveStoredPushLevel(identity.publicKey, settings.identity.pushLevel);
-          }
-        }
-        if (pushLevel !== 'off' && getOpenBuzzChannelId()) return;
-        await reconcilePresentedNotificationBadge(Notifications, Platform.OS, pushLevel);
-      })().catch((error) => {
-        console.log('Failed to reconcile the presented notification badge:', error);
-      });
-    };
-    const reconcileBadge = () => reconcileLevel();
-    void clearLegacyPresentedNotificationsOnce(Notifications, Platform.OS, AsyncStorage).catch(
-      (error) => {
-        console.log('Failed to clear legacy presented notifications:', error);
-      },
-    );
-    // Begin after the first frame without waiting for a tap or navigation to end.
-    const cancelInitialBadge = afterFirstFrame(reconcileBadge);
-    const subscription = AppState.addEventListener('change', reconcileBadge);
-    const stopPushLevel = subscribeStoredPushLevel((pubkey, level) => reconcileLevel({ pubkey, level }));
-    return () => {
-      cancelInitialBadge();
-      subscription.remove();
-      stopPushLevel();
-    };
+  const [drawn, setDrawn] = React.useState(false);
+  const firstLayout = React.useRef<(() => void) | null>(null);
+  const onContentLayout = React.useCallback(() => {
+    if (!firstLayout.current) firstLayout.current = afterFirstFrame(() => setDrawn(true));
   }, []);
-
-  React.useEffect(() => {
-    let stop: (() => void) | undefined;
-    const cancelStart = afterFirstFrame(() => {
-      stop = startPushRegistrationLifecycle({
-        loadIdentity: loadBuzzIdentity,
-        subscribeIdentityChange: subscribeClientReset,
-        subscribeForeground: (listener) => {
-          const subscription = AppState.addEventListener('change', (state) => {
-            if (state === 'active') listener();
-          });
-          return () => subscription.remove();
-        },
-        register: registerBuzzPushNotifications,
-        retry: retryBuzzPushRegistration,
-        clearIdentity: Platform.OS === 'web' ? clearWebPushSubscription : undefined,
-        reportUpdate: reportRunningUpdateReceipt,
-        reportFailure: (error) =>
-          console.warn(
-            '[beeline-push] lifecycle:',
-            error instanceof Error ? error.message : String(error),
-          ),
-      });
-    });
-    return () => {
-      cancelStart();
-      stop?.();
-    };
-  }, []);
-
-  React.useEffect(
-    () => (Platform.OS === 'web' ? installWebPushForegroundResponder() : undefined),
-    [],
-  );
-
+  React.useEffect(() => () => { firstLayout.current?.(); firstLayout.current = null; }, []);
   useTauriZoom();
   useTauriDrag();
   const pathname = usePathname();
+  React.useEffect(() => {
+    if (pathname !== '/' && pathname !== '/beeline/channels') return afterFirstFrame(onContentLayout);
+  }, [pathname, onContentLayout]);
   React.useEffect(() => {
     if (latencyFrameTraceEnabled) markLatencyRouteNavigation(pathname);
   }, [pathname]);
@@ -501,7 +385,6 @@ export default function RootLayout() {
   }, [handleNotificationResponse]);
 
   // Track the screens
-  useTrackScreens();
 
   //
   // Not inited
@@ -523,10 +406,11 @@ export default function RootLayout() {
               : { flex: 1, backgroundColor: theme.colors.groupped.background }
           }
         >
-          <UpdateProvider>
+          <UpdateProvider active={drawn}>
             <ThemeProvider value={navigationTheme}>
               <StatusBarProvider />
-              <StoreUpdateGate fontsReady={initialized}>
+              {drawn && <BackgroundEffects />}
+              <StoreUpdateGate fontsReady={initialized} active={drawn}>
               <ModalProvider>
                 <DesktopDeepLinkBridge />
                 <BrowserNavigationShortcuts />
@@ -549,5 +433,125 @@ export default function RootLayout() {
     providers = <PostHogProvider client={tracking}>{providers}</PostHogProvider>;
   }
 
-  return providers;
+  return <FirstContentDrawContext.Provider value={onContentLayout}>{providers}</FirstContentDrawContext.Provider>;
+}
+
+function BackgroundEffects() {
+  React.useEffect(() => {
+    let disposed = false;
+    let stop = () => {};
+    const cancel = afterFirstFrame(() => {
+      void import('@/buzz/native-crash-reporting').then(({ startNativeCrashReporting }) => {
+        if (!disposed) stop = startNativeCrashReporting();
+      }).catch(() => {});
+    });
+    return () => { disposed = true; cancel(); stop(); };
+  }, []);
+  React.useEffect(() => {
+    let active=true;
+    const opened=async(newOpen=false)=>{
+      const url=await Linking.getInitialURL().catch(()=>null);
+      if(url && /\/review(?:\/|\?)/.test(url))return;
+      const identityId=await monolithSession.identityId();
+      if(identityId===bytesToHex(sha256(utf8ToBytes('beeline:play-review-identity'))))return;
+      const signedIn=!!identityId;
+      if(active)await funnelOpened(signedIn,newOpen,signedIn?await monolithSession.authorization().catch(()=>undefined):undefined);
+    };
+    void opened().catch(()=>undefined);
+    let lastState=AppState.currentState;
+    const subscription=AppState.addEventListener('change',state=>{
+      const resumed=state==='active' && lastState!=='active';lastState=state;
+      if(resumed)void opened(true).catch(()=>undefined);
+    });
+    return()=>{active=false;subscription.remove();};
+  },[]);
+  React.useEffect(startDesktopNotifications, []);
+  React.useEffect(startIdentityLive, []);
+  React.useEffect(() => {
+    // The server's push level wins: it is read once per launch, and every
+    // later change is stored and announced, so the device copy is only the
+    // cold-start hint until the server answers.
+    let readPushLevelFor: string | null = null;
+    // The last level the subscription announced; the device copy only stands
+    // in until it has announced one for this identity.
+    let heardPushLevel: { pubkey: string; level: PushLevel } | null = null;
+    const reconcileLevel = (changed?: { pubkey: string; level: PushLevel }) => {
+      if (changed) heardPushLevel = changed;
+      if (AppState.currentState !== 'active') return;
+      void (async () => {
+        const identity = await loadBuzzIdentity();
+        if (changed && changed.pubkey !== identity?.publicKey) return;
+        const heard = heardPushLevel?.pubkey === identity?.publicKey ? heardPushLevel?.level : undefined;
+        const pushLevel =
+          heard ?? (identity ? await loadStoredPushLevel(identity.publicKey) : 'attention');
+        if (!changed && identity && readPushLevelFor !== identity.publicKey) {
+          const settings = await loadActiveCommunityId(identity.publicKey)
+            .then((workspaceId) => readIdentitySettings(workspaceId ?? undefined))
+            .catch(() => null);
+          if (settings) {
+            readPushLevelFor = identity.publicKey;
+            // The save announces the server level; that announcement reconciles.
+            return saveStoredPushLevel(identity.publicKey, settings.identity.pushLevel);
+          }
+        }
+        if (pushLevel !== 'off' && getOpenBuzzChannelId()) return;
+        await reconcilePresentedNotificationBadge(Notifications, Platform.OS, pushLevel);
+      })().catch((error) => {
+        console.log('Failed to reconcile the presented notification badge:', error);
+      });
+    };
+    const reconcileBadge = () => reconcileLevel();
+    void clearLegacyPresentedNotificationsOnce(Notifications, Platform.OS, AsyncStorage).catch(
+      (error) => {
+        console.log('Failed to clear legacy presented notifications:', error);
+      },
+    );
+    // Begin after the first frame without waiting for a tap or navigation to end.
+    const cancelInitialBadge = afterFirstFrame(reconcileBadge);
+    const subscription = AppState.addEventListener('change', reconcileBadge);
+    const stopPushLevel = subscribeStoredPushLevel((pubkey, level) => reconcileLevel({ pubkey, level }));
+    return () => {
+      cancelInitialBadge();
+      subscription.remove();
+      stopPushLevel();
+    };
+  }, []);
+
+  React.useEffect(() => {
+    let stop: (() => void) | undefined;
+    const cancelStart = afterFirstFrame(() => {
+      stop = startPushRegistrationLifecycle({
+        loadIdentity: loadBuzzIdentity,
+        subscribeIdentityChange: subscribeClientReset,
+        subscribeForeground: (listener) => {
+          const subscription = AppState.addEventListener('change', (state) => {
+            if (state === 'active') listener();
+          });
+          return () => subscription.remove();
+        },
+        register: registerBuzzPushNotifications,
+        retry: retryBuzzPushRegistration,
+        clearIdentity: Platform.OS === 'web' ? clearWebPushSubscription : undefined,
+        reportUpdate: reportRunningUpdateReceipt,
+        reportFailure: (error) =>
+          console.warn(
+            '[beeline-push] lifecycle:',
+            error instanceof Error ? error.message : String(error),
+          ),
+      });
+    });
+    return () => {
+      cancelStart();
+      stop?.();
+    };
+  }, []);
+
+  React.useEffect(
+    () => (Platform.OS === 'web' ? installWebPushForegroundResponder() : undefined),
+    [],
+  );
+
+  React.useEffect(() => { void import('@/buzz/message-outbox-runtime').then(({ startMessageOutbox }) => startMessageOutbox()); }, []);
+  useTrackScreens();
+  return null;
 }

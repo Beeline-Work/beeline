@@ -1,5 +1,5 @@
 import React from 'react';
-import { Text, View, type ViewStyle } from 'react-native';
+import { Text, View, type ViewProps, type ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { SurfaceGlyphLoader } from './SurfaceGlyphLoader';
 
@@ -8,12 +8,13 @@ import { SurfaceGlyphLoader } from './SurfaceGlyphLoader';
  * real app, so this treatment appears only when Rooms themselves are loading.
  */
 export function RoomDeckLoadingView({
-  style,
+  style, onLayout,
 }: {
   style?: ViewStyle;
+  onLayout?: ViewProps['onLayout'];
 }) {
   return (
-    <View style={[styles.center, style]} testID="rooms-loader-gate">
+    <View style={[styles.center, style]} testID="rooms-loader-gate" onLayout={onLayout}>
       <SurfaceGlyphLoader testID="rooms-loader" />
       <Text style={styles.loading}>LOADING ROOMS</Text>
     </View>

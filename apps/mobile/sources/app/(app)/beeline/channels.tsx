@@ -16,7 +16,7 @@ import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
 import { useGitHubInstallationSession } from '@/auth/github-installation-host';
 
 import { acquireChatList, type ChatListHandle } from '@/buzz/chat-list-store';
-import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
+import { saveActiveCommunityId, saveLastViewedChannel, watchActiveCommunityId } from '@/buzz/community-storage';
 import { cornerHref, navigateToRoom } from '@/buzz/corner-navigation';
 import { useCornerDropdowns } from '@/buzz/corner-dropdowns';
 import { agentPairingCommand } from '@/buzz/agent-pairing-command';
@@ -34,13 +34,12 @@ import { cornerOpenTappedAgain } from '@/buzz/corner-open-status';
 import type { CornerOpenAttempt } from '@/buzz/open-random-corner';
 import { roomListSections, roomRowName } from '@/buzz/room-list-row';
 import { useRoomListGestures } from '@/buzz/use-room-list-gestures';
-import { useActiveCommunityId } from '@/buzz/use-active-community';
 import { leaveRoomWithConfirmation } from '@/buzz/room-leave';
 import { validRoomSlug } from '@/buzz/room-name';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import { inviteOnlyForRepository, type RepoCandidate } from '@/buzz/room-repo-picker';
 import { workspaceRailItem, type WorkspaceMemberDisplayItem } from '@/buzz/room-view-presentation';
-import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
+import { mobileSurfaceCache, surfaceAddress, restoreStoredSurface } from '@/buzz/surface-storage';
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell, CommunityDrawerTrigger, CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
 import { ConversationRow } from '@/components/buzz/ConversationRow';
@@ -71,6 +70,7 @@ import { BuzzRigTransport } from '@/sync/transport';
 import { RoomViewClient, isRoomViewTimeoutError } from '@/sync/transport/room-view-client';
 import { useIsDesktop } from '@/utils/responsive';
 import {
+  isChatListView,
   isWorkspaceListView,
   isWorkspaceView,
   type ChatListItem,
@@ -81,8 +81,8 @@ import {
 } from '@beeline/buzz-client';
 import { useFocusEffect } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
-import { router, useLocalSearchParams, type Href } from 'expo-router';
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { router, useLocalSearchParams, usePathname, type Href } from 'expo-router';
+import { startTransition, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AppState,
   Keyboard,
@@ -95,6 +95,13 @@ import { Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
+import { afterFirstFrame, FirstContentDrawContext, isInitialLandingNavigationSuppressed, isInitialLandingResolved, markInitialLandingResolved } from '@/navigation/initial-landing';
+import { isPersonNameOnboardingPending } from '@/buzz/person-name';
+import { initialAuthUrl } from '@/auth/desktop-auth-session';
+import { deliverDesktopDeepLink } from '@/auth/desktop-deep-link';
+import { parseCommunityInviteToken } from '@/buzz/community-invite';
+import { parseReviewSecret } from '@/buzz/review-link';
+import { subscribeClientReset } from '@/sync/client-reset';
 
 const AGE_TICK_MS = 60_000;
 const COMPOSE_FAB_CLEARANCE = 80;
@@ -168,7 +175,100 @@ function workspaceMembers(view: WorkspaceView | null): WorkspaceMemberDisplayIte
     }));
 }
 
-export default function BuzzChannels() {
+type DeckSession = { identity: Identity; relayUrl: string; workspaceId: string | null };
+
+export default function SavedRoomDeck() {
+  const insets = useSafeAreaInsets();
+  const rootRoute = useRef(usePathname() === '/').current;
+  const rootLanding = useRef(rootRoute && !isInitialLandingResolved()).current;
+  const requestedWorkspaceId = firstParam(useLocalSearchParams<{ communityId?: string | string[] }>().communityId);
+  const notifyDraw = useContext(FirstContentDrawContext);
+  const [session, setSession] = useState<DeckSession | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    let stopWorkspace: (() => void) | undefined;
+    const restore = async () => {
+      stopWorkspace?.();
+      setSession(null);
+      setError(null);
+      const [identity, relayUrl, url, naming] = await Promise.all([
+        loadBuzzIdentity(),
+        getEffectiveRelayUrl(),
+        rootLanding ? initialAuthUrl().catch(() => null) : null,
+        rootRoute ? isPersonNameOnboardingPending() : false,
+      ]);
+      if (cancelled) return;
+      const mayRedirect = !rootLanding || !isInitialLandingNavigationSuppressed();
+      if (rootLanding && url && mayRedirect) {
+        if (deliverDesktopDeepLink(url, router)) return;
+        const review = parseReviewSecret(url);
+        const invite = parseCommunityInviteToken(url);
+        if (review) {
+          router.replace({ pathname: '/review/[secret]', params: { secret: review } });
+          return;
+        }
+        if (invite) {
+          router.replace({ pathname: '/join/[token]', params: { token: invite } });
+          return;
+        }
+      }
+      if (!identity || naming) {
+        if (mayRedirect) router.replace('/beeline/onboarding');
+        return;
+      }
+      stopWorkspace = watchActiveCommunityId(identity.publicKey, (workspaceId) => {
+        if (cancelled) return;
+        restoreStoredSurface(surfaceAddress(relayUrl, identity.publicKey, '/workspaces'), isWorkspaceListView);
+        setSession({ identity, relayUrl, workspaceId });
+      });
+    };
+    void restore().catch((reason) => {
+      if (!cancelled) setError(appErrorCopy(reason));
+    });
+    const stopReset = subscribeClientReset(() => {
+      cancelled = true;
+      stopWorkspace?.();
+      setSession(null);
+      setRetry(value => value + 1);
+    });
+    return () => {
+      cancelled = true;
+      stopWorkspace?.();
+      stopReset();
+    };
+  }, [rootRoute, rootLanding, retry]);
+  useEffect(() => { if (session || error) markInitialLandingResolved(); }, [session, error]);
+  useEffect(() => {
+    if (session || error) return;
+    const deadline = setTimeout(() => setError(connectionErrorTitle), 35_000);
+    return () => clearTimeout(deadline);
+  }, [session, error, retry]);
+  if (error) return (
+    <View
+      style={{ flex: 1, paddingTop: insets.top, paddingBottom: insets.bottom }}
+      onLayout={notifyDraw}
+      testID="room-deck-unavailable"
+    >
+      <IndexRow
+        testID="room-deck-error-retry"
+        title={error === connectionErrorTitle ? connectionErrorTitle : 'Secure storage unavailable'}
+        description={error === connectionErrorTitle ? connectionErrorDescription : error}
+        action="Retry"
+        onPress={() => { reconnectNow(); setRetry(value => value + 1); }}
+      />
+    </View>
+  );
+  return session ? (
+    <BuzzChannels
+      key={`${session.identity.publicKey}:${session.relayUrl}:${requestedWorkspaceId ?? session.workspaceId}`}
+      session={session}
+    />
+  ) : <RoomDeckLoadingView />;
+}
+
+function BuzzChannels({ session }: { session: DeckSession }) {
   const [retryGeneration, setRetryGeneration] = useState(0);
   const insets = useSafeAreaInsets();
   const isDesktop = useIsDesktop();
@@ -179,24 +279,32 @@ export default function BuzzChannels() {
   }>();
   const requestedWorkspaceId = firstParam(params.communityId);
   // The route's Workspace wins; without one the deck follows the current Workspace.
-  const storedWorkspaceId = useActiveCommunityId(retryGeneration);
-  const deckWorkspaceId = requestedWorkspaceId ?? storedWorkspaceId;
+  const deckWorkspaceId = requestedWorkspaceId ?? session.workspaceId;
   const requestedNewRoom = firstParam(params.newRoom);
   const requestedNewDirectMessage = firstParam(params.newDirectMessage);
-  const [identity, setIdentity] = useState<Identity | null>(null);
-  const [relayUrl, setRelayUrl] = useState<string | null>(null);
-  const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
+  const { identity, relayUrl } = session;
+  const transport = useMemo(() => new BuzzRigTransport(identity), [identity]);
   const workspaceListAddress = useMemo(
-    () =>
-      identity && relayUrl ? surfaceAddress(relayUrl, identity.publicKey, '/workspaces') : null,
-    [identity?.publicKey, relayUrl],
+    () => surfaceAddress(relayUrl, identity.publicKey, '/workspaces'),
+    [identity.publicKey, relayUrl],
   );
   const workspaceList = useSurfaceSnapshot(workspaceListAddress, isWorkspaceListView);
   // Only a live read (never a cached one) may say "you have no Workspace".
   const [confirmedWorkspaceCount, setConfirmedWorkspaceCount] = useState<number | null>(null);
 
-  const [chatListState, setChatList] = useState<ChatListView | null>(null);
-  const chatList = (chatListState);
+  const [selectedId] = useState(() => deckWorkspaceId ?? mobileSurfaceCache.peek(workspaceListAddress, isWorkspaceListView)?.workspaces[0]?.id);
+  const [chatList, setChatList] = useState<ChatListView | null>(() => selectedId
+    ? restoreStoredSurface(surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/chats', { workspaceId: selectedId }), isChatListView)
+    : null);
+  const notifyDraw = useContext(FirstContentDrawContext);
+  const [drawn, setDrawn] = useState(false);
+  const firstLayout = useRef<(() => void) | null>(null);
+  const onLayout = useCallback(() => {
+    if (firstLayout.current) return;
+    notifyDraw();
+    firstLayout.current = afterFirstFrame(() => setDrawn(true));
+  }, [notifyDraw]);
+  useEffect(() => () => { firstLayout.current?.(); firstLayout.current = null; }, []);
   useLatencyRouteFrame('/beeline/channels', chatList !== null, true);
   // A covering list read seeds the Needs-you rows behind the badge;
   // ordinary changes carry typed row deltas on the live socket.
@@ -400,7 +508,7 @@ export default function BuzzChannels() {
   );
 
   useEffect(() => {
-    if (deckWorkspaceId === undefined) return;
+    if (!drawn) return;
     setConfirmedWorkspaceCount(null);
     let cancelled = false;
     const identityGeneration = clientResetGeneration();
@@ -420,46 +528,34 @@ export default function BuzzChannels() {
     let releaseChats: (() => void) | undefined;
     void (async () => {
       setError(null);
-      const [nextIdentity, pendingInvite, nextRelayUrl] = await Promise.all([
-        loadBuzzIdentity(),
-        loadPendingInvite(),
-        getEffectiveRelayUrl(),
-      ]);
-      if (!nextIdentity) {
-        router.replace('/beeline/onboarding');
-        return;
-      }
+      const nextIdentity = identity;
+      const nextRelayUrl = relayUrl;
+      const pendingInvite = await loadPendingInvite();
+      if (cancelled) return;
       // An invite opened before sign-in outranks every other landing.
-      if (pendingInvite) {
+      if (pendingInvite && deckFocusedRef.current) {
         if (!cancelled)
           router.replace({ pathname: '/join/[token]', params: { token: pendingInvite } });
         return;
       }
       if (cancelled) return;
-      const browserShareId = await takePendingBrowserShare();
+      const browserShareId = deckFocusedRef.current ? await takePendingBrowserShare() : null;
       if (cancelled) return;
-      if (browserShareId) {
+      if (browserShareId && deckFocusedRef.current) {
         router.replace({ pathname: '/beeline/browser-share', params: { id: browserShareId } });
         return;
       }
-      const nextTransport = new BuzzRigTransport(nextIdentity);
+      const nextTransport = transport;
       const http = new RoomViewClient({ baseUrl: nextRelayUrl, identity: nextIdentity });
       const relayPromise = nextTransport.ensureClient();
-      setIdentity(nextIdentity);
-      setRelayUrl(nextRelayUrl);
-      setTransport(nextTransport);
 
       const workspaceCacheAddress = surfaceAddress(
         nextRelayUrl,
         nextIdentity.publicKey,
         '/workspaces',
       );
-      const cachedWorkspaces = await mobileSurfaceCache.read(
-        workspaceCacheAddress,
-        isWorkspaceListView,
-      );
+      const cachedWorkspaces = mobileSurfaceCache.peek(workspaceCacheAddress, isWorkspaceListView);
       if (cancelled) return;
-      const selectedId = deckWorkspaceId ?? cachedWorkspaces?.workspaces[0]?.id;
       let selectedWorkspaceRemoved = false;
 
       readWorkspace = async () => {
@@ -489,7 +585,7 @@ export default function BuzzChannels() {
             setError(null);
             const nextId = value.workspaces[0]?.id ?? null;
             void saveActiveCommunityId(nextIdentity.publicKey, nextId);
-            if (nextId) {
+            if (nextId && deckFocusedRef.current) {
               router.replace({
                 pathname: '/beeline/channels',
                 params: { communityId: nextId },
@@ -589,7 +685,7 @@ export default function BuzzChannels() {
       readWorkspaceRef.current = null;
       chatStore.current = null;
     };
-  }, [deckVisible, deckWorkspaceId, refreshMissed, retryGeneration]);
+  }, [drawn, identity, relayUrl, transport, selectedId, deckVisible, refreshMissed, retryGeneration]);
 
   // Cover local identity/selection/cache reads as well as socket RPCs. Those
   // native promises can stall before any individual request deadline starts.
@@ -954,7 +1050,7 @@ export default function BuzzChannels() {
   if (landing.kind !== 'deck' || !chatList) {
     // Choice: the create-or-join screen is the landing and the effect above
     // is replacing this one; loader: nothing has answered yet.
-    return <RoomDeckLoadingView style={{ paddingTop: insets.top }} />;
+    return <RoomDeckLoadingView style={{ paddingTop: insets.top }} onLayout={onLayout} />;
   }
 
   return (
@@ -971,6 +1067,7 @@ export default function BuzzChannels() {
       <View
         style={[styles.container, { paddingTop: insets.top }]}
         testID={refreshing ? 'room-list-refreshing' : 'room-list-idle'}
+        onLayout={onLayout}
       >
         <InlineRow style={styles.header}>
           {!isDesktop && <CommunityDrawerTrigger community={activeCommunity} />}

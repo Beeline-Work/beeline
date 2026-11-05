@@ -7,7 +7,6 @@ import { useUnistyles } from 'react-native-unistyles';
 import { statusBarStyleForTheme } from '@/components/StatusBarProvider';
 import { CornerOpenToast } from '@/components/buzz/CornerOpenToast';
 import { useIsDesktop } from '@/utils/responsive';
-import { startMessageOutbox } from '@/buzz/message-outbox-runtime';
 
 /** @public Expo Router consumes this named export through its filesystem convention. */
 export const unstable_settings = {
@@ -24,10 +23,6 @@ export default function RootLayout() {
     () => router.replace('/beeline/onboarding'), undefined,
     () => !pathnameRef.current.startsWith('/review/'),
   ), [pathname]);
-  React.useEffect(() => {
-    // Delivery is required on every signed-in route, including a stale web tab.
-    void startMessageOutbox();
-  }, []);
   const isDesktop = useIsDesktop();
   const { theme } = useUnistyles();
 

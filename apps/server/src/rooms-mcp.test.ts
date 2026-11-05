@@ -2457,11 +2457,11 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       await ok(client, 'read', { facet: 'members', address: ROOM });
       await ok(client, 'post', { address: ROOM, text: 'Auditing now.' });
       expect((await db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1 AND private_payload->>'kind'='order' AND state='pending'`, [member])).rowCount).toBe(1);
-      expect((await call(client, 'report', { address: ROOM, status: 'done', text: 'finished without a prefix' })).error).toBe(true);
-      await ok(client, 'report', { address: ROOM, status: 'done', text: 'done: three corners, all green' });
+      expect((await call(client, 'report', { address: ROOM, status: 'done', text: '' })).error).toBe(true);
+      await ok(client, 'report', { address: ROOM, status: 'done', text: 'three corners, all green' });
       const back = (await db.query<{ private_payload: { kind: string; text: string } }>(
         `SELECT private_payload FROM agent_commands WHERE agent_id=$1 AND reason='report' ORDER BY created_at DESC LIMIT 1`, [AGENT])).rows[0]!;
-      expect(back.private_payload).toMatchObject({ kind: 'report', text: expect.stringContaining('three corners, all green') });
+      expect(back.private_payload).toMatchObject({ kind: 'report', text: 'done: three corners, all green' });
       expect((await db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1 AND state<>'complete'`, [member])).rowCount).toBe(0);
       // A reviewer dispatch by legacy webhook carries the same review hint as MCP Events and list_mentions.
       const review = await createAgentCommand(db, {

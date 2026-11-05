@@ -12,7 +12,8 @@ import type { AddressInfo } from 'node:net';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { migrate } from './database.js';
-import { PgliteDatabase, assignCornerWorker, insertCornerFacts } from './test-support.js';
+import { MemoryObjectStorage, PgliteDatabase, assignCornerWorker, insertCornerFacts } from './test-support.js';
+import { ObjectService } from './object-service.js';
 import { TokenAuth, tokenHash } from './auth.js';
 import { recordSigninAttempt } from './signin-attempts.js';
 import { PhoneService } from './phone-service.js';
@@ -70,7 +71,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     server = createBeelineServer(options);
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    options.roomsMcp = new RoomsMcp(new RoomsMcpOAuth(db, origin, auth, 'localhost'), phone, live, daemon, undefined,
+    options.roomsMcp = new RoomsMcp(new RoomsMcpOAuth(db, origin, auth, 'localhost'), phone, live, daemon,
+      new ObjectService(db, new MemoryObjectStorage().asStorage(), origin),
       new RoomsMcpEvents(db, (url, init) => eventTransport(url, init)));
   }, 60_000);
   beforeEach(async () => {
@@ -2601,6 +2603,44 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
         JOIN corner_facts f ON f.corner_id=c.id
         LEFT JOIN corner_github_cache gh ON gh.corner_id=c.id ${cornerWorkSql()} WHERE c.id=$1`, [corner])).rows[0]!.worker_active;
     }
+    it.each(['standalone', 'order'] as const)('R-MCP-ARTIFACT: a Room member posts files into its corner without a corner membership (%s)', async mode => {
+      const { client, member } = await connected();
+      const corner = await reportCorner(member);
+      const order = mode === 'order' ? await createAgentCommand(db, { roomId: corner, agentId: member,
+        sourceMessageId: null, reason: 'order', privatePayload: {
+          kind: 'order', authorId: AGENT, fromRoomId: ROOM, text: 'Post the corner mock.',
+        } }) : null;
+      const command = order ? { commandId: order.id } : {};
+      const noCornerMemberships = async () => expect((await db.query(
+        'SELECT 1 FROM memberships WHERE room_id=$1', [corner])).rowCount).toBe(0);
+      await noCornerMemberships();
+      const posted = await ok(client, 'post_artifact', { ...command, address: corner, title: 'mock.html',
+        html: '<!doctype html><title>Mock</title><p>Corner mock</p>', text: 'Here is the mock.' });
+      expect((await db.query('SELECT room_id,text,attachments FROM messages WHERE id=$1', [posted.id])).rows[0])
+        .toMatchObject({ room_id: corner, text: 'Here is the mock.', attachments: [
+          { name: 'mock.html', mimeType: 'text/html', url: expect.stringContaining('/media/') },
+        ] });
+      const second = await ok(client, 'post_artifact', { ...command, address: corner, title: 'mock.txt',
+        mime: 'text/plain', bytes: Buffer.from('Mock notes').toString('base64') });
+      expect((await db.query('SELECT room_id,attachments FROM messages WHERE id=$1', [second.id])).rows[0])
+        .toMatchObject({ room_id: corner, attachments: [{ name: 'mock.txt', mimeType: 'text/plain' }] });
+      expect((await db.query('SELECT 1 FROM messages WHERE room_id=$1 AND author_id=$2', [ROOM, member])).rowCount).toBe(0);
+      expect((await db.query('SELECT 1 FROM agent_pending_attachments WHERE agent_id=$1', [member])).rowCount).toBe(0);
+      await noCornerMemberships();
+    });
+    it('R-MCP-ARTIFACT: refuses inaccessible and archived corners before uploading', async () => {
+      const { client, member } = await connected();
+      const corner = await reportCorner(member);
+      const artifact = { title: 'private.html', html: '<p>Private mock</p>' };
+      expect((await call(client, 'post_artifact', { ...artifact, address: CORNER })).text).toContain('Access denied');
+      await db.query('UPDATE rooms SET archived_at=now() WHERE id=$1', [corner]);
+      expect((await call(client, 'post_artifact', { ...artifact, address: corner })).text).toContain('Access denied');
+      await db.query('UPDATE rooms SET archived_at=NULL WHERE id=$1', [corner]);
+      await db.query('UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2', [ROOM, member]);
+      expect((await call(client, 'post_artifact', { ...artifact, address: corner })).text).toContain('Access denied');
+      expect((await db.query('SELECT 1 FROM objects WHERE owner_id=$1', [member])).rowCount).toBe(0);
+      expect((await db.query('SELECT 1 FROM messages WHERE author_id=$1', [member])).rowCount).toBe(0);
+    });
     // Reproduction (R-MCP-PROGRESS): an outside agent could only post whole messages, so a corner showed none of
     // its work while it ran; created agents' narration lands as corner activity.
     it('E1: explicit order preserves requester and generation through merge yes and report', async () => {

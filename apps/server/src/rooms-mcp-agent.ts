@@ -567,15 +567,21 @@ export class RoomsMcpAgentTools {
     if (!bytes?.length) throw new McpToolError('the file is empty');
     const mime = text(args.mime) ?? (args.html !== undefined ? 'text/html' : 'application/octet-stream');
     const title = text(args.title)!;
-    if (await this.place(member, at) !== at) throw new McpToolError('post_artifact needs an address you are a direct member of');
+    await this.place(member, at);
     const uploaded = await this.objects.uploadArtifact(member, bytes, mime, title).catch((error: unknown) => {
       throw new McpToolError(`artifact refused: ${error instanceof Error ? error.message : 'invalid artifact'}`);
     });
-    return this.inTurn(member, at, async (_, context) => {
+    // Queue and publish in the addressed place, even when access comes from
+    // its parent Room. Reuse an explicitly bound order's authority.
+    const bound = this.boundTurn.getStore();
+    const turn = bound ?? await this.begin(member, at, false);
+    const context = { roomId: turn.roomId, requestId: turn.requestId, generationId: turn.generationId };
+    try {
       await exec('postAgentAttachment', { ...context, attachment: { url: uploaded.url, name: title, mimeType: uploaded.mimeType, size: bytes.length } });
-      // The file posts with this call's own reply, the way a turn's final reply carries it.
-      return exec('postRoomMessage', { ...context, text: text(args.text) ?? '' });
-    });
+      return await exec('postCornerMessage', { ...context, cornerId: at, text: text(args.text) ?? title });
+    } finally {
+      if (!bound) await this.end(member, turn, false);
+    }
   }
 
   private async appTool(member: string, args: Args, exec: (op: string, input: Args) => Promise<unknown>,

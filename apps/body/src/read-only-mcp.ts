@@ -2393,23 +2393,15 @@ export function connectorOfferDepsFromEnv(): ConnectorOfferDeps {
     tailscaleReach: (enabled) => describeTailscaleReach({ enabled, installIfMissing: enabled }),
     // This task relay reaches only the broker on this agent's own machine.
     squireReach: relayUrl && relayToken ? async () => {
-      let connections: Awaited<ReturnType<typeof readVault>>;
       try {
-        connections = await readVault({ call: squireCall! });
+        await readVault({ call: squireCall! });
       } catch (error) {
         // Task authorization and stale turns are not machine failures.
         if (/not authorized|active task|active server command|Squire relay HTTP 403/i.test(
           error instanceof Error ? error.message : ''))
           return { reachable: false, cause: 'Squire status probe was not authorized' };
-        const cause = squireReachCause(error);
-        try {
-          await daemonExecute('postConnectorVault', { connections: [], errorMessage: cause });
-        } catch { /* The live verdict remains useful when its report fails. */ }
-        return { reachable: false, cause };
+        return { reachable: false, cause: squireReachCause(error) };
       }
-      try {
-        await daemonExecute('postConnectorVault', { connections });
-      } catch { /* A failed metadata sync does not change MCP reachability. */ }
       return { reachable: true };
     } : undefined,
   };

@@ -1,4 +1,3 @@
-import { squireReachCause } from './squire-status.js';
 /**
  * The helper's connector work queue (Workbench PR 2).
  *
@@ -19,8 +18,8 @@ import { squireReachCause } from './squire-status.js';
  * survives it. A failed step reports its error.
  *
  * One helper carries ONE Squire account (captain decision 2026-09-14), so
- * after an install or a `sync` assignment the vault list is reported once
- * through `postConnectorVault` and covers every connector this helper serves.
+ * after an install or a `sync` assignment the machine owner refreshes its
+ * vault observation. This per-agent queue never publishes vault reports.
  * One assignment at a time per connector; failures are logged, never raised —
  * the next drain retries on the next push or reconnect.
  */
@@ -28,7 +27,6 @@ import type {
   ConnectorAssignment,
   ConnectorStatus,
   ConnectorStep,
-  VaultConnectionMeta,
 } from '@beeline/api-contract/daemon';
 import { type DaemonApiClient } from './daemon-api-client.js';
 import {
@@ -36,7 +34,6 @@ import {
   installSquire,
   isProcessAlive,
   releaseSquireConnectSession,
-  readVault,
   revokeGrants,
   squireConnectSession,
   type InstallSquireOptions,
@@ -45,8 +42,6 @@ import {
 } from './connector-squire.js';
 import { installTailscale, watchTailscaleSignIn, type InstallTailscaleResult } from './connector-tailscale.js';
 import { defaultSquireMcpClient } from './squire-mcp-client.js';
-import { existsSync } from 'node:fs';
-import { squireHostPaths, squireBrokerInstallEntry } from './squire-host.js';
 import {
   CEREMONY_EXPIRED,
   installRegistryMcp,
@@ -74,13 +69,11 @@ export type ConnectorAssignmentLoopOptions = {
   readonly watchTailscaleSignIn?: typeof watchTailscaleSignIn;
   /** Host-owned state root for Registry OAuth grants (never an isolated agent home). */
   readonly registryHome?: string;
-  readonly brokerInstalled?: () => boolean;
+  readonly refreshVault?: () => Promise<void>;
   readonly installRegistry?: (
     input: Parameters<typeof installRegistryMcp>[0],
   ) => Promise<RegistryInstallResult>;
   readonly providerWebhook?: typeof runProviderWebhookAssignment;
-  /** Override the vault reader. */
-  readonly readVault?: (mcp: SquireMcpClient) => Promise<VaultConnectionMeta[]>;
   /** Override the grant revoker. */
   readonly revokeGrants?: (
     mcp: SquireMcpClient,
@@ -113,7 +106,7 @@ export class ConnectorAssignmentLoop {
     string,
     { attemptId: string; endsAt: number; expired?: boolean }
   >();
-  private readonly readVaultFn: (mcp: SquireMcpClient) => Promise<VaultConnectionMeta[]>;
+  private readonly refreshVault: () => Promise<void>;
   private readonly revokeGrantsFn: (
     mcp: SquireMcpClient,
     ref: string,
@@ -125,8 +118,6 @@ export class ConnectorAssignmentLoop {
   /** One install at a time per connector; concurrent wakes skip it. */
   private readonly inFlight = new Set<string>();
   private mcp?: SquireMcpClient;
-  private readonly brokerInstalled: () => boolean;
-  private reporting?: Promise<void>;
 
   constructor(options: ConnectorAssignmentLoopOptions) {
     this.agentId = options.agentId;
@@ -136,12 +127,9 @@ export class ConnectorAssignmentLoop {
     this.installTailscale = options.installTailscale ?? installTailscale;
     this.watchTailscaleSignIn = options.watchTailscaleSignIn ?? watchTailscaleSignIn;
     this.registryHomeDir = options.registryHome ?? process.env.HOME ?? process.cwd();
-    this.brokerInstalled = options.brokerInstalled ?? (() =>
-      existsSync(squireBrokerInstallEntry(this.registryHomeDir)) ||
-      existsSync(squireHostPaths(this.registryHomeDir).mcpSocket));
+    this.refreshVault = options.refreshVault ?? (async () => {});
     this.installRegistry = options.installRegistry ?? installRegistryMcp;
     this.providerWebhook = options.providerWebhook ?? runProviderWebhookAssignment;
-    this.readVaultFn = options.readVault ?? readVault;
     this.revokeGrantsFn = options.revokeGrants ?? revokeGrants;
   }
 
@@ -184,9 +172,6 @@ export class ConnectorAssignmentLoop {
 
   /** Drain the queue once; every failure is logged, never raised. */
   async runOnce(): Promise<void> {
-    // A startup/reconnect checks the local broker even with no install assignment.
-    this.reporting ??= this.reportLocalBroker().finally(() => { this.reporting = undefined; });
-    // A slow broker must not hold up other connectors on this helper.
     let assignments: readonly ConnectorAssignment[];
     try {
       const result = await this.api.execute('getConnectorAssignments', { agentId: this.agentId });
@@ -474,7 +459,7 @@ export class ConnectorAssignmentLoop {
         ...(result.signedInAs ? { signedInAs: result.signedInAs } : {}),
         ...generation,
       });
-      await this.reportLocalBroker(true);
+      await this.refreshVault();
       return;
     }
     // Still installing: the human has not signed in yet; keep the steps. This
@@ -519,9 +504,9 @@ export class ConnectorAssignmentLoop {
     return status.steps.length > 0 && status.steps.every((step) => step.status === 'pending');
   }
 
-  /** One vault report covers every live trusty-squire connector on this helper. */
+  /** The machine owner coalesces observations and publishes changed content. */
   private async runSync(): Promise<void> {
-    await this.reportLocalBroker(true);
+    await this.refreshVault();
   }
 
   private async runRevoke(connectorId: string, reference: string): Promise<void> {
@@ -536,30 +521,6 @@ export class ConnectorAssignmentLoop {
       ref: reference,
     });
     void connectorId;
-  }
-
-  private async reportLocalBroker(brokerKnown = false): Promise<void> {
-    let report: { agentId: string; connections: readonly VaultConnectionMeta[];
-      notAdded?: boolean; errorMessage?: string };
-    try {
-      if (!brokerKnown && !this.brokerInstalled()) {
-        report = {
-          agentId: this.agentId, connections: [], notAdded: true,
-        };
-      } else {
-        report = { agentId: this.agentId, connections: await this.readVaultFn(this.squire()) };
-      }
-    } catch (error) {
-      // A failed observation cannot replace the last broker verdict. The next
-      // ordinary report reads it again; install failures have their own status.
-      this.log(`Squire vault observation unavailable: ${squireReachCause(error)}`);
-      return;
-    }
-    try {
-      await this.api.execute('postConnectorVault', report);
-    } catch (reportError) {
-      this.log(`Squire machine report unavailable: ${describe(reportError)}`);
-    }
   }
 }
 

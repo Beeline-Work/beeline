@@ -672,6 +672,7 @@ export class MonolithCornerTurnLoop {
         return view.apps?.find(app => app.appKey === service.trim().toLowerCase() &&
           app.transport === 'squire-api' && app.status === 'connected')?.connectionReference;
       },
+      () => options.api.refreshMachineVault(),
     );
     this.options = { ...options, api: this.commandContext.bind(options.api) };
     this.activationContext=new CommandActivationContext({

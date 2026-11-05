@@ -2,17 +2,16 @@
 
 This batch implements the captain's accepted recommendations. The code batch
 https://github.com/Beeline-Work/beeline/pull/3447 merged after green CI. L1 is
-complete. After the previous SSH-attached pass exited, inbox 025 authorized a
-single detached continuation: one-row transactions, a 100 ms local statement cap,
-and a 20 ms normal pause. Prior cleanup and observer sessions were verified absent
-before launch. `nohup` now writes `/tmp/b1.log` on the server; SQL cleanup backend
-**1182311** and observer **1182312** are live. At 10:17Z: 24,595 committed cards,
-11 timeout skips and zero cleanup-attributed client wait; independent count:
-135,522 cards remain.
-Cancellation proof passed in 3 ms. No duplicate writer was started. Progress will
-be checked from both the durable log and read-only counts; B8 is untouched. See
-`b1-detached-progress-25k.json`, `b1-detached-start.json`, and the preceding
-`b1-one-row-transport-ended.json`.
+complete. B1's detached continuation is blocked pending firstmate verification:
+after a Fly machine-list timeout, a successful SSH read found `/tmp/b1.log`
+missing. A bounded independent database read-back then timed out without a
+result. Current writer/observer state is **unconfirmed**; do not launch another
+writer until SQL backends **1182311 / 1182312** are verified absent. Last verified
+sample at 10:27Z: **34,557 committed cards, 14 timeout skips, zero observed
+cleanup-attributed client wait**, with **125,623 cards remaining**. A machine
+restart/replacement is possible but unproven. No writer restart or parameter
+change was made. B8 is untouched. See `b1-detached-missing-log.json`; earlier
+`b1-detached-progress-25k.json` and `b1-detached-start.json` retain prior proof.
 
 | Decision | Implementation |
 | --- | --- |

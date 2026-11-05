@@ -1,0 +1,41 @@
+{
+  "recordedAt": "2026-11-05T10:33:57.598623+00:00",
+  "authority": "firstmate inbox 025",
+  "state": "blocked; current writer state unconfirmed",
+  "cleanupPid": 1182311,
+  "observerPid": 1182312,
+  "remoteLog": "/tmp/b1.log",
+  "remoteScript": "/tmp/b1-runner.cjs",
+  "lastVerified": {
+    "observedAt": "2026-11-05T10:27:00.619Z",
+    "committedCards": 34557,
+    "timeoutSkips": 14,
+    "maxObservedCleanupClientWaitMs": 0,
+    "remainingCards": 125623,
+    "cleanupState": "idle",
+    "observerState": "idle"
+  },
+  "subsequentObservations": [
+    {
+      "kind": "Fly machine-list connection timeout",
+      "result": "failed decoding response; read tcp connection timed out"
+    },
+    {
+      "kind": "bounded read-only retry",
+      "result": "ENOENT: no such file or directory, open '/tmp/b1.log'",
+      "exitCode": 1
+    },
+    {
+      "kind": "independent readback",
+      "timeoutSeconds": 45,
+      "exitCode": 124,
+      "receivedResult": false
+    }
+  ],
+  "machineRestartOrReplacementConfirmed": false,
+  "writerExitConfirmed": false,
+  "finalCountersAvailable": false,
+  "newWriterStartedAfterMissingLog": false,
+  "b8ContractApplied": false,
+  "workerAction": "No further production retries or writer launches; require firstmate verification of existing SQL sessions before any continuation."
+}

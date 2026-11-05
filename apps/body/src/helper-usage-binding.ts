@@ -9,8 +9,8 @@ export function helperUsageBinding(api:DaemonApiClient){
     publish:input=>api.execute('publishAgentUsageAccount',input),
     attach:input=>api.execute('attachAgentUsageAccount',input)});
   return {
-    scopeKey():string{const current=scope();return current?JSON.stringify(['account-v1',current.origin,current.ownerId]):api.channel?.isOpen?'machine':'legacy';},
-    publicationKey():string{return JSON.stringify(scope()??(api.channel?.isOpen?'machine':'legacy'));},
+    scopeKey():string{const current=scope();return current?JSON.stringify(['account-v1',current.origin,current.ownerId]):Boolean(api.channel?.isOpen)?'machine':'legacy';},
+    publicationKey():string{return JSON.stringify(scope()??(Boolean(api.channel?.isOpen)?'machine':'legacy'));},
     captureSource():()=>boolean{const captured=JSON.stringify(scope());return()=>JSON.stringify(scope())===captured;},
     async deliver(usage:AgentUsage):Promise<boolean>{
       let current=scope();

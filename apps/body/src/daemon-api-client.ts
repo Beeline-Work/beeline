@@ -346,7 +346,6 @@ export class DaemonApiClient {
       this.liveRooms.delete(roomId);
       this.liveSubscriptions.delete(roomId);
       this.#channel.send({ type: 'unsubscribe', roomId });
-      this.completeLiveRecovery();
       if (!this.liveRooms.size && !this.roomsChangedListener && !this.operationChannelDemanded) this.#channel.stop();
     };
   }
@@ -556,9 +555,6 @@ export class DaemonApiClient {
     capabilities?: {pushIntake:boolean; connectionPresence:boolean; connectionGeneration:number};
   }>();
 
-  private completeLiveRecovery(): void {
-  }
-
   private completeLiveSubscription(roomId: string): void {
     const current = this.liveSubscriptions.get(roomId);
     if (!current || current.ready || !current.capabilities || !current.commandsSeen ||
@@ -566,7 +562,6 @@ export class DaemonApiClient {
     current.ready = true;
     for (const registration of this.liveRooms.get(roomId)?.registrations ?? [])
       registration.onState?.(true, current.capabilities);
-    this.completeLiveRecovery();
   }
 
   private currentLiveSubscription(event: Record<string, unknown>) {
@@ -587,7 +582,6 @@ export class DaemonApiClient {
     // so the reconciliation and the drain still reach them.
     this.roomsChangedListener?.();
     this.connectorAssignmentListener?.();
-    this.completeLiveRecovery();
   }
 
   private liveMessage(event: Record<string, unknown>): void {

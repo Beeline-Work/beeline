@@ -82,7 +82,7 @@ m19_describe('real quota reader through negotiated daemon publication adapter',(
     await first.publish('claude',{});await second.publish('claude',{});m19_expect(calls).toHaveLength(2);
     m19_expect(calls.find(call=>call.name==='publishAgentUsageAccount')?.input).toMatchObject({ownerId,revision:m19_expect.stringMatching(/^[a-f0-9]{64}$/)});
   });
-  m19_it('preserves initial legacy mode and never downgrades a selected account publication after capability loss',async()=>{
+  m19_it('waits for machine registration before publishing after a disconnect',async()=>{
     const scope={origin:`https://${m19_randomUUID()}.invalid`,ownerId:'owner',generation:1,source:{connectionId:'fixture-source',epoch:1}};let capable=false;
     const execute=m19_vi.fn(async()=>({ownerId:'owner',accountId:'1',revision:'c'.repeat(64)}));
     let reconnect!:()=>void;
@@ -90,6 +90,7 @@ m19_describe('real quota reader through negotiated daemon publication adapter',(
     const api={agentId:'agent',channel:{usageAccountScope:()=>capable?scope:undefined},waitForConnection:()=>ready,execute} as unknown as m19_DaemonApiClient;
     const binding=m19_helperUsageBinding(api),usage={updatedAt:100,windows:[],account:{provider:'claude',key:'id:'+'e'.repeat(32)}};
     m19_expect(await binding.deliver(usage)).toBe(false);m19_expect(execute).not.toHaveBeenCalled();
+    Object.assign(api.channel,{isOpen:()=>capable});
     capable=true;m19_expect(await binding.deliver(usage)).toBe(true);m19_expect(execute).toHaveBeenCalledTimes(1);
     capable=false;const pending=binding.deliver(usage);
     await Promise.resolve();m19_expect(execute).toHaveBeenCalledTimes(1);

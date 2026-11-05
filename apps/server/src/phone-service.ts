@@ -116,6 +116,7 @@ import {
 import {
   resolveCurrentMemberMentions,
   taggedIdentityIdsSql,
+  tagsKnownIdentitySql,
   typedMentionHandles,
 } from './message-mentions.js';
 import { recordSystemReportMention, reportMessageIssue } from './feedback.js';
@@ -1855,7 +1856,8 @@ export class PhoneService {
             AND other_room.identity_id<>$2
         ) leave_deletes_room,
         lm.id latest_id,lm.text latest_text,lm.attachments latest_attachments,lm.created_at latest_created_at,lm.author_id latest_author_id,
-        $2=ANY(${taggedIdentityIdsSql('lm')}) latest_tags_viewer,
+        COALESCE(lm.author_id<>$2 AND ${tagsKnownIdentitySql('lm', '$2',
+          '(SELECT handle FROM identities WHERE id=$2)', '(SELECT kind FROM identities WHERE id=$2)')},false) latest_tags_viewer,
         li.kind latest_author_kind,li.name latest_author_name,li.handle latest_author_handle,li.avatar latest_author_avatar,li.face_id latest_author_face,
         ${roomAttentionActorSql('r')} attention_actor_name,
         peer.id peer_id,peer.kind peer_kind,peer.name peer_name,peer.handle peer_handle,peer.avatar peer_avatar,peer.face_id peer_face,
@@ -1915,8 +1917,9 @@ export class PhoneService {
           SELECT room.id room_id,presence.body peer_presence_body,
             presence.updated_at peer_presence_updated_at,
             GREATEST(
-              (SELECT max(message.created_at) FROM messages message
-               WHERE message.room_id=room.id AND message.author_id=peer.id),
+              CASE WHEN peer.id IS NOT NULL THEN
+                (SELECT max(message.created_at) FROM messages message
+                 WHERE message.room_id=room.id AND message.author_id=peer.id) END,
               (SELECT max(mark.updated_at) FROM room_read_marks mark
                WHERE mark.room_id=room.id AND mark.identity_id=peer.id)
             ) peer_activity_at,
@@ -2858,14 +2861,17 @@ export class PhoneService {
            ORDER BY (i.id<>$2),i.id LIMIT (SELECT CASE WHEN parent_id IS NULL THEN 2147483647
              ELSE ${ROOM_VIEW_MEMBER_LIMIT} END FROM authorized_room)
          ), turn_rows AS (
-           SELECT DISTINCT ON(turn.agent_id)
-             turn.request_id,turn.agent_id,turn.status,turn.started_at,turn.created_at,turn.generation_id,
+           SELECT turn.request_id,turn.agent_id,turn.status,turn.started_at,turn.created_at,turn.generation_id,
              requester.id requested_by
            FROM authorized_room room
-           JOIN agent_turns turn ON turn.room_id=room.id
+           CROSS JOIN LATERAL (
+             SELECT DISTINCT ON(agent_id) * FROM agent_turns
+             WHERE room_id=room.id
+             ORDER BY agent_id,created_at DESC,request_id DESC
+           ) turn
            LEFT JOIN messages trigger ON trigger.id=${turnRootMessageSql('turn')}
            LEFT JOIN identities requester ON requester.id=trigger.author_id AND requester.kind='human'
-           ORDER BY turn.agent_id,turn.created_at DESC,turn.request_id DESC
+           ORDER BY turn.agent_id
          ), pending_command_rows AS (
            SELECT DISTINCT ON(command.agent_id)
              command.agent_id,command.turn_request_id,command.created_at

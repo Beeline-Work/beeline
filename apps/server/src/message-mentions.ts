@@ -205,8 +205,8 @@ async function resolveChannelMentionMembers(
  * Only `.` and `-` need escaping; a handle is otherwise letters, digits and
  * underscores, none of which are pattern operators.
  */
-function handleWrittenIn(textExpr: string, handleExpr: string): string {
-  return `${withoutForwardCaptionSql(textExpr)} ~ ('(^|[^[:alnum:]_.-])@' ||
+function handleWrittenIn(textExpr: string, handleExpr: string, sanitized = false): string {
+  return `${sanitized ? textExpr : withoutForwardCaptionSql(textExpr)} ~ ('(^|[^[:alnum:]_.-])@' ||
     regexp_replace(btrim(ltrim(${handleExpr},'@')),'([.-])','\\&','g') ||
     '[.-]*($|[^[:alnum:]_.-])')`;
 }
@@ -228,8 +228,8 @@ function withoutForwardCaptionSql(textExpr: string): string {
 }
 
 /** `handleWrittenIn`, pinned to the reserved `@channel` token, case-insensitive. */
-function channelMentionWrittenSql(textExpr: string): string {
-  return `${withoutForwardCaptionSql(textExpr)} ~* '(^|[^[:alnum:]_.-])@channel[.-]*($|[^[:alnum:]_.-])'`;
+function channelMentionWrittenSql(textExpr: string, sanitized = false): string {
+  return `${sanitized ? textExpr : withoutForwardCaptionSql(textExpr)} ~* '(^|[^[:alnum:]_.-])@channel[.-]*($|[^[:alnum:]_.-])'`;
 }
 
 /**
@@ -238,7 +238,7 @@ function channelMentionWrittenSql(textExpr: string): string {
  * `resolveChannelMentionMembers`. `message` is the SQL alias of the row being
  * read.
  */
-function channelTaggedMembersSql(message: string): string {
+function channelTaggedMembersSql(message: string, sanitizedText: string): string {
   return `SELECT channel_member.identity_id
     FROM rooms channel_room
     JOIN memberships channel_member ON channel_member.room_id=COALESCE(channel_room.parent_id,channel_room.id)
@@ -248,7 +248,7 @@ function channelTaggedMembersSql(message: string): string {
     WHERE channel_room.id=${message}.room_id
       AND ${message}.presentation NOT IN ('system','card')
       AND channel_member.identity_id<>${message}.author_id
-      AND ${channelMentionWrittenSql(`${message}.text`)}`;
+      AND ${channelMentionWrittenSql(sanitizedText, true)}`;
 }
 
 /**
@@ -275,23 +275,28 @@ function channelTaggedMembersSql(message: string): string {
  */
 export function taggedIdentityIdsSql(message: string): string {
   return `ARRAY(
+    WITH mention_text AS MATERIALIZED (
+      SELECT ${withoutForwardCaptionSql(`${message}.text`)} text
+    ), mention_members AS MATERIALIZED (
+      SELECT member.identity_id,tagged.handle
+      FROM memberships member JOIN identities tagged ON tagged.id=member.identity_id
+      WHERE member.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=${message}.room_id)
+        AND member.removed_at IS NULL
+    )
     SELECT tagged_member.identity_id
-    FROM memberships tagged_member
-    JOIN identities tagged ON tagged.id=tagged_member.identity_id
+    FROM mention_members tagged_member CROSS JOIN mention_text
     WHERE ${message}.presentation NOT IN ('system','card')
-      AND tagged_member.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=${message}.room_id) AND tagged_member.removed_at IS NULL
       AND tagged_member.identity_id<>${message}.author_id
-      AND tagged.handle IS NOT NULL AND btrim(tagged.handle)<>''
-      AND ${handleWrittenIn(`${message}.text`, 'tagged.handle')}
+      AND tagged_member.handle IS NOT NULL AND btrim(tagged_member.handle)<>''
+      AND ${handleWrittenIn('mention_text.text', 'tagged_member.handle', true)}
       AND NOT EXISTS (
-        SELECT 1 FROM memberships rival_member
-        JOIN identities rival ON rival.id=rival_member.identity_id
-        WHERE rival_member.room_id=tagged_member.room_id AND rival_member.removed_at IS NULL
-          AND rival_member.identity_id<>tagged_member.identity_id
-          AND btrim(ltrim(rival.handle,'@'))=btrim(ltrim(tagged.handle,'@'))
+        SELECT 1 FROM mention_members rival_member
+        WHERE rival_member.identity_id<>tagged_member.identity_id
+          AND btrim(ltrim(rival_member.handle,'@'))=btrim(ltrim(tagged_member.handle,'@'))
       )
     UNION
-    ${channelTaggedMembersSql(message)}
+    SELECT channel_tag.identity_id FROM mention_text
+    CROSS JOIN LATERAL (${channelTaggedMembersSql(message, 'mention_text.text')}) channel_tag
   )`;
 }
 

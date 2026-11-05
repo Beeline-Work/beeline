@@ -10,6 +10,7 @@ import { mediaIdFromUrl } from '@/buzz/artifact';
 import { openExternalUrl } from '@/utils/open-external-url';
 import type { AttachmentReference } from '@beeline/buzz-client';
 export { subscribeArtifactBytesPurge };
+export { ArtifactPreviewUnavailable } from './artifact-byte-owner';
 export type { ArtifactByteOptions };
 
 /**

@@ -49,7 +49,9 @@ export function ArtifactPdfView({
     setFailed(false);
     void (async () => {
       try {
-        const pdfBase64 = await artifactBase64(attachment, { signal: controller.signal, preview: mode === 'preview' });
+        // Page-one rendering still needs the complete PDF, bounded by the
+        // shared byte owner's file limit and reused by Open/Save.
+        const pdfBase64 = await artifactBase64(attachment, { signal: controller.signal });
         const html = await loadPdfViewerDocument({ pdfBase64, mode });
         if (live && !controller.signal.aborted) {
           guardRef.current = createInitialLoadGuard(ARTIFACT_PDF_BASE_URL);

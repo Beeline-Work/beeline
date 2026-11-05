@@ -168,6 +168,7 @@ export function lifecycleItem(message: SystemLineMessage): LifecycleItem | undef
   };
 }
 
+/** Each group carries its noun, even for one item or when earlier states are absent. */
 export function lifecycleSummary(items: readonly LifecycleItem[]): string {
   const counts = new Map<string, { kind: string; state: string; count: number }>();
   const seenPrEvents = new Set<string>();

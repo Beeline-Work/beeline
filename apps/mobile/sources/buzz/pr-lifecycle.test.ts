@@ -49,6 +49,19 @@ describe('lifecycle-1: stored GitHub lifecycle summaries', () => {
     expect(lifecycleItem(messages[1])?.state.toLowerCase()).toBe('closed');
   });
 
+  it.each([
+    [4, 12, '4 PRs merged · 12 issues filed'],
+    [1, 1, '1 PR merged · 1 issue filed'],
+    [4, 0, '4 PRs merged'],
+    [0, 1, '1 issue filed'],
+  ] as const)('keeps the noun with %i merged PRs and %i filed issues when no PRs opened', (prs, issues, expected) => {
+    const messages = [
+      ...Array.from({ length: issues }, (_, index) => event(`issue-${index}`, 'issue', 'opened', index + 1)),
+      ...Array.from({ length: prs }, (_, index) => event(`pr-${index}`, 'pull-request', 'merged', index + 1)),
+    ];
+    expect(lifecycleSummary(run(messages).items)).toBe(expected);
+  });
+
   it('keeps repositories, lifecycle kinds and runs distinct', () => {
     const closed = event('closed', 'pull-request', 'closed', 42);
     const otherRepo = event('other-repo', 'pull-request', 'closed', 42);

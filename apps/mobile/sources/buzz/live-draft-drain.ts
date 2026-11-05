@@ -337,11 +337,14 @@ export function applyLiveOverlayStructure(
   const previous = at < 0 ? undefined : (current[at] as Extract<LiveOverlay, { kind: 'draft' }>);
   const sameRequest = previous?.requestId === update.requestId;
 
+  // An empty baseline initializes the transport; it is not a transcript entry.
+  // The first prose opens the lane, without displacing text from an older turn.
+  if (!sameRequest && !store.getReceived(storeKey)) return current;
+
   if (!sameRequest && previous) {
     store.remove(liveDraftDrainKey(previous.agentPubkey, previous.requestId));
   }
   if (update.closed) store.stop(storeKey);
-  if (update.closed && !previous && !store.getReceived(storeKey)) return current;
   if (sameRequest && previous?.closed === update.closed) return current;
 
   const structural: Extract<LiveOverlay, { kind: 'draft' }> = {

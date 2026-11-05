@@ -1,5 +1,4 @@
 import { appErrorCopy } from '@/buzz/app-error-copy';
-import { connectionErrorDescription } from '@/buzz/app-error-copy';
 import { HullDialogActions } from '@/components/buzz/HullDialog';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useTextDraft } from '@/buzz/use-text-draft';
@@ -478,10 +477,10 @@ function WorkspaceSettings({ workspaceId }, ref) {
   return (
     <View style={styles.container}>
       {!workspaceView ? (
-        <SettingsRow title={error ?? `Could not load ${WORKSPACE_LABEL} settings`} description={connectionErrorDescription} action="Retry" onPress={() => setRetryGeneration((value) => value + 1)} testID="workspace-settings-retry" />
+        error === '' ? null : <SettingsRow title={error ?? `Could not load ${WORKSPACE_LABEL} settings`}  action="Retry" onPress={() => setRetryGeneration((value) => value + 1)} testID="workspace-settings-retry" />
       ) : (
         <View testID={canManageWorkspace ? 'workspace-settings-manage' : 'workspace-settings-read-only'}>
-          {error && !errorRow ? <SettingsRow title={error} description={connectionErrorDescription} action="Retry" onPress={() => setRetryGeneration((value) => value + 1)} /> : null}
+          {error && !errorRow ? <SettingsRow title={error}  action="Retry" onPress={() => setRetryGeneration((value) => value + 1)} /> : null}
           <View testID="workspace-overview-settings">
             <RoomListSectionHeader title="General" inset="content" />
             {canManageWorkspace ? (

@@ -97,7 +97,7 @@ it('CR1: unrelated prose and elapsed time do not read; a real invalidation and R
   let tree: any;
   try {
     await act(async () => { tree = create(<Corner />); });
-    expect(current.error).toBe('Couldn’t reach Beeline');
+    expect(current.error).toBe('Could not complete request');
     await act(async () => {
       vi.advanceTimersByTime(300000);
       for (let n = 0; n < 1000; n++) {

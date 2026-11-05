@@ -26,13 +26,6 @@ export type CornerOpenStatus =
       retry: () => void;
     };
 
-/**
- * `MONOLITH_REQUEST_TIMEOUT_MS` in seconds, the deadline `createHumanCorner`
- * runs under; restated so this module stays free of the session and its
- * native storage (`room-list-new-corner.test.ts` holds the two equal).
- */
-export const CORNER_OPEN_DEADLINE_SECONDS = 15;
-
 let current: CornerOpenStatus = { status: 'idle' };
 const listeners = new Set<() => void>();
 
@@ -103,6 +96,6 @@ export function isCornerOpenUnreachable(error: unknown): { timedOut: boolean } |
   // session and its native storage (the browser proof bundles it).
   if (error instanceof Error && error.name === 'MonolithRequestTimeoutError')
     return { timedOut: true };
-  if (error instanceof TypeError) return { timedOut: false };
+  if (error instanceof TypeError || error instanceof Error && error.name === 'PhoneSocketDisconnectedError') return { timedOut: false };
   return null;
 }

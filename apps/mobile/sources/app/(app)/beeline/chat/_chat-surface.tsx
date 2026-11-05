@@ -4,10 +4,9 @@ import { useSurfaceFocus } from '@/buzz/use-surface-focus';
 import { trackDictatedMessage } from '@/buzz/dictation-timing';
 import { presentPersonInvite } from '@/components/buzz/PersonInviteSheet';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
-import { appErrorCopy, connectionErrorDescription, connectionErrorTitle } from '@/buzz/app-error-copy';
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { useDesktopParentRoom } from '@/buzz/use-desktop-parent-room';
 import { DesktopRoomListToggle } from '@/components/buzz/DesktopRoomListToggle';
-import { ConnectionStatus } from '@/components/buzz/ConnectionStatus';
 import { useDesktopLayout, setDesktopPaneOpen } from '@/buzz/desktop-layout-state';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { MonolithRequestTimeoutError } from '@/auth/monolith-session';
@@ -1365,7 +1364,7 @@ export function BuzzChatSurface({
         } else {
           Modal.alert(
             'Could not open destination',
-            `Beeline could not verify access to ${referenceLabel}. Check your connection and try again.`,
+            `Beeline could not verify access to ${referenceLabel}. Try again.`,
           );
         }
       } finally {
@@ -4819,8 +4818,8 @@ export function BuzzChatSurface({
     if (!transport) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Modal.alert(
-        'Not connected yet',
-        `A new ${CORNER_LABEL} could not be opened because the app is still connecting to the server. Try again in a moment.`,
+        `Could not open ${CORNER_LABEL}`,
+        `A new ${CORNER_LABEL} could not be opened while Rooms are loading. Try again.`,
       );
       return;
     }
@@ -4866,8 +4865,8 @@ export function BuzzChatSurface({
       if (!transport) {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         Modal.alert(
-          'Not connected yet',
-          `A new ${CORNER_LABEL} could not be opened because the app is still connecting to the server. Try again in a moment.`,
+          `Could not open ${CORNER_LABEL}`,
+          `A new ${CORNER_LABEL} could not be opened while Rooms are loading. Try again.`,
         );
         return;
       }
@@ -4962,7 +4961,7 @@ export function BuzzChatSurface({
     try {
       await loadRoomRepoPicker(true);
     } catch (err) {
-      setRoomRepoError('Could not load repos. Check your connection and try again.');
+      setRoomRepoError('Could not load repos. Try again.');
     }
   }, [activeCommunityId, loadRoomRepoPicker, transport]);
 
@@ -6140,7 +6139,7 @@ export function BuzzChatSurface({
             </View>
           </View>
           <View style={styles.hydrationFailureInset}>
-            <IndexRow inset="flush" title={connectionErrorTitle} description={connectionErrorDescription} action="Retry" onPress={retryHydration} testID="room-read-error" />
+            {transcriptHydrationError && <IndexRow inset="flush" title={transcriptHydrationError} action="Retry" onPress={retryHydration} testID="room-read-error" />}
           </View>
         </View>
       );
@@ -6386,7 +6385,6 @@ export function BuzzChatSurface({
               </View>
             )}
           </View>
-          <ConnectionStatus />
 
           {!isCorner && !isDirectMessage && (() => {
             const call = workspaceChats.find(chat => chat.room.id === decodedId)?.voiceCall;
@@ -6681,7 +6679,7 @@ export function BuzzChatSurface({
                 typing in. The Room's corners door in the header is the one way
                 in; the corner's own state is read there, in the corners list,
                 and on the Room-list row. */}
-                  {transcriptHydrationFailed && <IndexRow title={connectionErrorTitle} description={connectionErrorDescription} action="Retry" onPress={retryHydration} testID="room-read-error" />}
+                  {transcriptHydrationFailed && !!transcriptHydrationError && <IndexRow title={transcriptHydrationError} action="Retry" onPress={retryHydration} testID="room-read-error" />}
                 {isReadOnlyDirectMessage ? (
                   <View style={[styles.archivedInputBar, readOnlyFooterInset]}>
                     <Text style={styles.archivedInputText}>

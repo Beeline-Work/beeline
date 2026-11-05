@@ -1,5 +1,5 @@
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
-import { appErrorCopy, connectionErrorDescription } from '@/buzz/app-error-copy';
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { useDesktopLayout } from '@/buzz/desktop-layout-state';
 import { useSurfaceFocus } from '@/buzz/use-surface-focus';
@@ -249,7 +249,7 @@ export function DesktopRoomInspector({
       ) : (
         <>
           {observed.error ? (
-            <SettingsRow title={observed.error} description={connectionErrorDescription} action="Retry" onPress={observed.retry} testID="desktop-corner-retry" />
+            <SettingsRow title={observed.error}  action="Retry" onPress={observed.retry} testID="desktop-corner-retry" />
           ) : null}
           <CornerCockpit
             client={client}

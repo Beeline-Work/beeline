@@ -1,4 +1,3 @@
-import { connectionErrorDescription } from '@/buzz/app-error-copy';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
@@ -174,7 +173,7 @@ export default function BuzzCorners() {
   if (!surface) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
-        <SettingsRow title={error!} description={connectionErrorDescription} action="Retry" onPress={() => void corners.refresh()} />
+        <SettingsRow title={error!}  action="Retry" onPress={() => void corners.refresh()} />
       </View>
     );
   }
@@ -208,7 +207,7 @@ export default function BuzzCorners() {
           onAdd={() => void createCorner()}
         />
         {!!error && (
-          <SettingsRow title={error!} description={connectionErrorDescription} action="Retry"
+          <SettingsRow title={error!}  action="Retry"
             onPress={() => void corners.refresh()} />
         )}
         <CornerOpenRow roomId={decodedId} />

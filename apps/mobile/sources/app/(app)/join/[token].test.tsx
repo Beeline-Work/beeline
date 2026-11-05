@@ -262,7 +262,8 @@ describe('CommunityInviteJoin', () => {
     expect(renderer.root.findAllByProps({ testID: 'invite-unreachable' }).length).toBeGreaterThan(
       0,
     );
-    expect(text(renderer)).toContain('Couldn’t reach Beeline');
+    expect(text(renderer)).not.toContain('Couldn’t reach Beeline');
+    expect(renderer.root.findByProps({ testID: 'invite-retry' }).props.label).toBe('Try invite again');
     expect(renderer.root.findAllByProps({ testID: 'invite-unavailable' })).toHaveLength(0);
     expect(controls.clearPendingInvite).not.toHaveBeenCalled();
 

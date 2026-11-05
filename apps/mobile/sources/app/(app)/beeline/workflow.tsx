@@ -1,4 +1,4 @@
-import { appErrorCopy, connectionErrorDescription } from '@/buzz/app-error-copy';
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
@@ -61,7 +61,7 @@ export default function Workflow() {
         testID="workflow-header"
       />
       {error ? (
-        <SettingsRow title={error} description={connectionErrorDescription} action="Retry" onPress={() => void reload()} />
+        <SettingsRow title={error}  action="Retry" onPress={() => void reload()} />
       ) : null}
       {!detail && !error ? <SurfaceGlyphLoader /> : null}
       {detail ? (

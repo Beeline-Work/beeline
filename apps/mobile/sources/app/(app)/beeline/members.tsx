@@ -1,7 +1,7 @@
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { useSurfaceFocus } from '@/buzz/use-surface-focus';
 import { presentPersonInvite } from '@/components/buzz/PersonInviteSheet';
-import { appErrorCopy, connectionErrorDescription } from '@/buzz/app-error-copy';
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop } from '@/utils/responsive';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
@@ -1361,7 +1361,7 @@ export default function BuzzMembers({
   if (!surface) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
-        <SettingsRow title={displayedError!} description={connectionErrorDescription} action="Retry" onPress={() => {setRetryGeneration((value) => value + 1);}} />
+        <SettingsRow title={displayedError!}  action="Retry" onPress={() => {setRetryGeneration((value) => value + 1);}} />
       </View>
     );
   }
@@ -1429,7 +1429,7 @@ export default function BuzzMembers({
           titleTestID="members-title"
         />
         {!!displayedError && (
-          <SettingsRow title={displayedError!} description={connectionErrorDescription} action="Retry" onPress={() => { setError(null); void readWorkspaceRef.current?.(); }} />
+          <SettingsRow title={displayedError!}  action="Retry" onPress={() => { setError(null); void readWorkspaceRef.current?.(); }} />
         )}
         <KeyboardAwareScrollView
           bottomOffset={16}

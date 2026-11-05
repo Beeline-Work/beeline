@@ -5,6 +5,43 @@ import assert from 'node:assert/strict';
 import { it } from 'node:test';
 import { judgeTree, readInvariants } from './architecture-invariants.mjs';
 
+it('rejects extra connection surfaces, mounts and triggers, including inside owner files', () => {
+  mkdirSync(path.join(process.cwd(), '.beeline-proof'), { recursive: true });
+  const root = mkdtempSync(path.join(process.cwd(), '.beeline-proof', 'connection-banner-'));
+  const rules = readInvariants(process.cwd()).rules.filter(rule => rule.id.startsWith('phone.connection-error-'));
+  assert.equal(rules.length, 3);
+  const network = 'apps/mobile/sources/sync/transport/live-connection.ts';
+  const banner = 'apps/mobile/sources/components/buzz/ConnectionStatus.tsx';
+  const layout = 'apps/mobile/sources/app/(app)/_layout.tsx';
+  const sources = {
+    [network]: 'let connectionFailed=false; function setConnectionFailure(failed) { connectionFailed=failed; } export function useConnectionFailure() {} class LiveConnection { request() { setConnectionFailure(true); } }',
+    [banner]: 'function ConnectionStatus() { const failed=useConnectionFailure(); return <IndexRow title="Beeline isn’t connected" />; }',
+    [layout]: 'function RootLayout() { return <ConnectionStatus />; }',
+  };
+  const write = (file, source) => {
+    mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    writeFileSync(path.join(root, file), source);
+  };
+  try {
+    for (const [file, source] of Object.entries(sources)) write(file, source);
+    assert.deepEqual(judgeTree(root, { rules }), []);
+    for (const [file, extra, rule] of [
+      ['apps/mobile/sources/feature.tsx', 'const Extra=()=> <IndexRow title="Couldn’t reach Beeline" />;', 'surface'],
+      ['apps/mobile/sources/feature.tsx', 'const failed=useConnectionFailure();', 'surface'],
+      [network, 'function onclose() { setConnectionFailure(true); }', 'trigger'],
+      [network, 'connectionFailed=true;', 'trigger'],
+      [layout, 'function Extra() { return <ConnectionStatus />; }', 'mount'],
+      [layout, 'function Extra() { return React.createElement(ConnectionStatus); }', 'mount'],
+    ]) {
+      write(file, (sources[file] ?? '') + extra);
+      assert.match(judgeTree(root, { rules }).join('\n'), new RegExp(`phone\\.connection-error-${rule}`));
+      write(file, sources[file] ?? '');
+    }
+    write(network, sources[network].replace('setConnectionFailure(true);', 'setConnectionFailure(true); setConnectionFailure(true);'));
+    assert.match(judgeTree(root, { rules }).join('\n'), /phone\.connection-error-trigger.*expected exactly/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 it('rejects a planted phone write backdoor, including inside the HTTP server owner file', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'phone-write-door-'));
   const rule = readInvariants(process.cwd()).rules.find(rule => rule.id === 'phone.write-door');

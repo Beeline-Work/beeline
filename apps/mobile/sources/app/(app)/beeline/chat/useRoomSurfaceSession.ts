@@ -1,6 +1,6 @@
 import type { MessageSendState } from '@/buzz/message-outbox';
 
-import { appErrorCopy, connectionErrorTitle } from '@/buzz/app-error-copy';
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -1261,7 +1261,7 @@ export function useRoomSurfaceSession({
               void mobileSurfaceCache.remove(address);
             }
             setHydrationFailed(true);
-            setHydrationError(connectionErrorTitle);
+            setHydrationError(appErrorCopy(error, 'Could not load this Room.'));
           }
         };
         readRoomRef.current = readRoom;

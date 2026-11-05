@@ -5,6 +5,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { statusBarStyleForTheme } from '@/components/StatusBarProvider';
+import { ConnectionStatus } from '@/components/buzz/ConnectionStatus';
 import { CornerOpenToast } from '@/components/buzz/CornerOpenToast';
 import { useIsDesktop } from '@/utils/responsive';
 import { startMessageOutbox } from '@/buzz/message-outbox-runtime';
@@ -38,6 +39,7 @@ export default function RootLayout() {
         backgroundColor: isDesktop ? theme.colors.surface : theme.colors.groupped.background,
       }}
     >
+      <ConnectionStatus />
       <Stack
         initialRouteName="index"
         screenOptions={{
@@ -213,7 +215,7 @@ export default function RootLayout() {
         <Stack.Screen name="artifact-viewer" options={{ headerShown: false }} />
         <Stack.Screen name="text-selection" options={{ headerShown: false }} />
       </Stack>
-      {/* One corner-open notice over every screen: pending, or unreachable with Retry. */}
+      {/* One corner-open notice over every screen: pending, or a failed action with Retry. */}
       <CornerOpenToast />
     </View>
   );

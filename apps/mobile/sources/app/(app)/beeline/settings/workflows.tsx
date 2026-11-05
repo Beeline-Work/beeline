@@ -1,5 +1,5 @@
 import { SettingsRow } from '@/components/buzz/SettingsRow';
-import { appErrorCopy, connectionErrorTitle, connectionErrorDescription } from '@/buzz/app-error-copy';
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
@@ -159,7 +159,7 @@ export default function RoomWorkflows() {
           {error && (
             <SettingsRow
               title={error}
-              description={error === connectionErrorTitle ? connectionErrorDescription : undefined}
+
               action="Retry"
               onPress={() => void reload()}
               testID="workflows-error"

@@ -376,5 +376,8 @@ runs:
             -v "$RUNNER_TEMP/server-release:/proof:ro" \
             --entrypoint node "$image_ref" scripts/run-contract-migrations.mjs \
             --machines /proof/machines-drained.json \
-            --image "$image_ref" --trees "/proof/trees-$previous.json"
+            --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" --trees "/proof/trees-$previous.json"
         done < "$RUNNER_TEMP/server-release/previous-refs"
+      env:
+        RELEASE_SHA: ${{ inputs.release_sha }}
+        RELEASE_VERSION: ${{ inputs.release_version }}

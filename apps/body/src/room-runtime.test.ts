@@ -500,7 +500,7 @@ m37_afterEach(async () => {
 
 
 m37_describe('idle corner discovery', () => {
-  m37_it('mass pushed starts have no capacity ceiling; a server reset parks repeated starts', async () => {
+  m37_it('mass pushed starts have no capacity ceiling or timed retry barrier', async () => {
     const supervisorRoot = await m37_mkdtemp(m37_resolve(m37_tmpdir(), 'beeline-corner-storm-'));
     roots.push(supervisorRoot);
     m37_vi.useFakeTimers();
@@ -537,8 +537,10 @@ m37_describe('idle corner discovery', () => {
     const reads = execute.mock.calls.filter(([name]) => name === 'getCornerRestoreState').length;
     m37_expect(reads).toBeGreaterThan(0);
     m37_expect(reads).toBe(80);
-    await Promise.all(Array.from({ length: 80 }, (_, i) => start(i)));
-    m37_expect(execute.mock.calls.filter(([name]) => name === 'getCornerRestoreState')).toHaveLength(reads);
+    const nextJobs=Array.from({length:80},(_,i)=>start(i));
+    await m37_vi.advanceTimersByTimeAsync(1000);
+    await Promise.all(nextJobs);
+    m37_expect(execute.mock.calls.filter(([name]) => name === 'getCornerRestoreState')).toHaveLength(reads+80);
     // Failed startup leaves the authoritative pending commands untouched.
     m37_expect(execute.mock.calls.some(([name]) => name === 'postAgentTurnReceipt')).toBe(false);
     const wakes = coordinators.map(coordinator => {
@@ -551,7 +553,7 @@ m37_describe('idle corner discovery', () => {
     const resumed = start(0);
     await m37_vi.advanceTimersByTimeAsync(1000);
     await resumed;
-    m37_expect(execute.mock.calls.filter(([name]) => name === 'getCornerRestoreState')).toHaveLength(reads + 1);
+    m37_expect(execute.mock.calls.filter(([name]) => name === 'getCornerRestoreState')).toHaveLength(reads + 81);
     await Promise.all(coordinators.map(coordinator => coordinator.shutdown()));
   });
 

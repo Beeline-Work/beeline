@@ -59,7 +59,6 @@ import {
 export type WorkspaceMembershipStatus = 'member' | 'not-member' | 'unknown';
 export const REMOVAL_CONFIRMATION_READS = 2;
 export const ROOM_JOIN_CONCURRENCY = 4;
-export const DEFAULT_DRAIN_DEADLINE_MS = 30 * 60_000;
 export const CORNER_BRANCH_DELETE_ATTEMPTS = 3;
 
 class CornerCredentialLookupError extends Error {

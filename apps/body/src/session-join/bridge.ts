@@ -214,7 +214,7 @@ export async function serveOutboxes(dir: string): Promise<number> {
 }
 
 /** Leaves a tool call in the working folder's outbox and waits for the bridge's answer. */
-export async function toolViaOutbox(cwd: string, name: string, args: Record<string, unknown>, _timeoutMs = 90_000): Promise<{ ok: boolean; data?: unknown; error?: string } | undefined> {
+export async function toolViaOutbox(cwd: string, name: string, args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; error?: string } | undefined> {
   const dirPath = outboxDir(cwd);
   mkdirSync(dirPath, { recursive: true });
   // Keep the outbox out of the person's repository.

@@ -5,7 +5,6 @@ import { RoomRuntimeCoordinator } from './room-runtime.js';
 import type { InterruptedTurn } from './force-update-journal.js';
 
 export {
-  DEFAULT_DRAIN_DEADLINE_MS,
   REMOVAL_CONFIRMATION_READS,
   ROOM_JOIN_CONCURRENCY,
   mapWithConcurrency,

@@ -12,8 +12,8 @@ it('renews only on actual viewer activity and persists that lease once',async()=
   renewals.track('session',{requestMcp} as unknown as StdioSquireMcpClient,result(now+60_000));
   await vi.advanceTimersByTimeAsync(30_000);expect(requestMcp).not.toHaveBeenCalled();
   renewSquireShareOnViewerActivity('session');await flush();
-  expect(requestMcp).toHaveBeenCalledExactlyOnceWith('tools/call',{name:'operate_share',arguments:{session_id:'session'}});
-  expect(persist).toHaveBeenCalledExactlyOnceWith({sessionId:'session',upstreamUrl:url,expiresAt:now+120_000});
+  expect(requestMcp).toHaveBeenCalledTimes(1);expect(requestMcp).toHaveBeenCalledWith('tools/call',{name:'operate_share',arguments:{session_id:'session'}});
+  expect(persist).toHaveBeenCalledTimes(1);expect(persist).toHaveBeenCalledWith({sessionId:'session',upstreamUrl:url,expiresAt:now+120_000});
   await vi.advanceTimersByTimeAsync(60_000);expect(requestMcp).toHaveBeenCalledOnce();
 });
 it('coalesces overlapping viewer activity and never revives an expired or replaced owner',async()=>{

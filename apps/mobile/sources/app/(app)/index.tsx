@@ -1,3 +1,4 @@
+import { RoomDeckLoadingView } from '@/components/buzz/RoomDeckLoadingView';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { Button } from '@/components/buzz/Button';
@@ -129,9 +130,11 @@ export default function Home() {
     personNameOnboardingPending,
   ]);
 
-  // Wait for the async identity check before rendering.
+  // This route can remain mounted underneath a deep-linked destination.
+  if (pathname !== '/') return null;
+
   if (!buzzCheckDone) {
-    return null;
+    return <RoomDeckLoadingView />;
   }
 
   if (buzzStorageError) {
@@ -151,7 +154,7 @@ export default function Home() {
 
   // Beeline owns the app root. The replace keeps back navigation from revealing
   // The app entry always resolves through Beeline identity state.
-  if (!landingStalled) return null;
+  if (!landingStalled) return <RoomDeckLoadingView />;
   return (
     <View style={styles.portraitContainer}>
       <Text style={styles.title}>Opening Beeline…</Text>

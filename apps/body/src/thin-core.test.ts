@@ -33,13 +33,14 @@ async function fixture(execute: ReturnType<typeof m44_vi.fn>) {
   roots.push(root);
   const agent = m44_identityFromKey('11'.repeat(32), 'Bee');
   let wake!: () => void;
-  const api = { execute, setRoomsChangedListener: (listener: () => void) => { wake = listener; } } as unknown as m44_DaemonApiClient;
+  const reconnect = m44_vi.fn();
+  const api = { execute, link: { reconnectNow: reconnect }, setRoomsChangedListener: (listener: () => void) => { wake = listener; } } as unknown as m44_DaemonApiClient;
   const core = new m44_ThinDaemonCore({
     agent: { publicKey: agent.publicKey, secretKeyHex: '11'.repeat(32), name: 'Bee' },
     rooms: [], communityId: 'workspace', supervisorRoot: root,
     transport: { kind: 'monolith', baseUrl: 'http://127.0.0.1', daemonToken: 'fixture' },
   } as unknown as m44_AgentRuntimeRecord, m44_resolve(root, 'runtime.json'), { workspaceRoot: root } as never, { daemonApi: api });
-  return { core, root, wake: () => wake() };
+  return { core, root, reconnect, wake: () => wake() };
 }
 
 
@@ -75,6 +76,31 @@ m44_it('stops renewing the 180-second watchdog when reconcile freezes while the 
     stop(); controller.abort(); unblock(); await running;
   }
   m44_expect(core.workLoopDiagnostics().stage).toBe('idle');
+});
+
+
+m44_it('answers local watchdog wakes after a failed discovery and reads again on reconnect', async () => {
+  const execute = m44_vi.fn().mockRejectedValueOnce(new m44_DaemonApiError('Machine operation outcome is UNKNOWN', 503, true, 'outcome_unknown'))
+    .mockResolvedValue({ workspaceIds: ['workspace'], rooms: [] });
+  m44_vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  const { core, wake, reconnect } = await fixture(execute);
+  const controller = new AbortController();
+  const progress = m44_vi.fn();
+  const running = core.run({ signal: controller.signal, onProgress: progress });
+  await m44_vi.waitFor(() => m44_expect(progress).toHaveBeenCalledOnce());
+  m44_vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+  const feed = m44_vi.fn(async () => undefined);
+  const stop = m44_startLocalWatchdog({ progress: feed }, () => 'degraded',
+    () => core.requestWorkLoopProgress(), 60_000, { WATCHDOG_USEC: '180000000' });
+  try {
+    await m44_vi.advanceTimersByTimeAsync(3_600_000);
+    m44_expect(feed).toHaveBeenCalledTimes(60);
+    m44_expect(reconnect).toHaveBeenCalledOnce();
+    m44_expect(execute).toHaveBeenCalledOnce();
+    wake();
+    await m44_vi.advanceTimersByTimeAsync(0);
+    m44_expect(execute).toHaveBeenCalledTimes(2);
+  } finally { stop(); controller.abort(); await running; }
 });
 
 

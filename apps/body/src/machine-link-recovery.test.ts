@@ -116,6 +116,42 @@ it('re-registers after repeated server drops before catch-up completes', () => {
   expect(socket.frames.filter(frame => frame.type === 'register')).toHaveLength(4);
 });
 
+it('replaces an UNKNOWN turn transport, reads current commands and leaves replay to intake', async () => {
+  const { sockets, api, register, fetcher } = fixture();
+  const first = sockets[0]!;
+  register(first);
+  const generationId = '00000000-0000-4000-8000-000000000042';
+  const claim = api.execute('claimAgentCommand', { roomId, commandId, generationId });
+  const rejected = expect(claim).rejects.toMatchObject({ code: 'turn ownership outcome unknown' });
+  const frame = first.frames.find(frame => frame.type === 'turn-operation')!;
+  first.receive({ type: 'turn-result', requestId: frame.requestId, error: 'unavailable' });
+  await rejected;
+  expect(sockets).toHaveLength(2);
+  expect(first.frames.filter(frame => frame.operation === 'claimAgentCommand')).toHaveLength(1);
+  const second = sockets[1]!;
+  register(second);
+  expect(second.frames.some(frame => frame.operation === 'claimAgentCommand')).toBe(false);
+  const read = api.execute('getAgentCommands', { roomId });
+  await vi.waitFor(() => expect(second.frames.some(frame => frame.operation === 'getAgentCommands')).toBe(true));
+  const request = second.frames.find(frame => frame.operation === 'getAgentCommands')!;
+  second.receive({ type: 'daemon-operation-result', requestId: request.requestId,
+    result: { commandProtocol: 1, commands: [] } });
+  expect(await read).toEqual({ commandProtocol: 1, commands: [] });
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it('keeps the successor socket when pending turn controls fail on a socket loss', async () => {
+  const { sockets, api, register } = fixture();
+  register(sockets[0]!);
+  const controls = Promise.allSettled(['first', 'second'].map(commandId =>
+    api.execute('acknowledgeAgentCommand', { roomId, commandId, generationId: 'generation' })));
+  sockets[0]!.close();
+  expect((await controls).every(result => result.status === 'rejected')).toBe(true);
+  expect(sockets).toHaveLength(2);
+  register(sockets[1]!);
+  expect(sockets[1]!.frames.some(frame => frame.type === 'turn-operation')).toBe(false);
+});
+
 it.each(['registration_failed', 'too_many_agents'])('reconnects %s but retains settled credential refusal and explicit stop', code => {
   vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   const { sockets, machine, api } = fixture();

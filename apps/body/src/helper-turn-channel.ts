@@ -23,7 +23,11 @@ export class HelperTurnChannel {
     operation: HelperTurnOperation; resolve: (value: unknown) => void; reject: (error: Error) => void;
     deadline: ReturnType<typeof setTimeout>;
   }>();
-  constructor(private readonly send: (frame: Record<string, unknown>) => boolean, private readonly open: () => boolean) {}
+  constructor(
+    private readonly send: (frame: Record<string, unknown>) => boolean,
+    private readonly open: () => boolean,
+    private readonly reconnect: () => void = () => {},
+  ) {}
 
   scope(): HelperTurnOwnershipSource | undefined { return this.open() ? this.source : undefined; }
   negotiate(source: HelperTurnOwnershipSource | undefined, advertised = source !== undefined): void {
@@ -95,12 +99,14 @@ export class HelperTurnChannel {
       const deadline = setTimeout(() => {
         this.pending.delete(requestId);
         reject(new Error('Turn operation outcome is UNKNOWN; keep the same command and generation.'));
+        this.reconnect();
       }, HELPER_TURN_REQUEST_DEADLINE_MS);
       deadline.unref?.();
       this.pending.set(requestId, { operation, resolve: value => resolve(value as DaemonOperationMap[N]['output']), reject, deadline });
       if (!this.send(frame)) {
         this.pending.delete(requestId); clearTimeout(deadline);
         reject(new Error('Turn operation outcome is UNKNOWN; keep the same command and generation.'));
+        this.reconnect();
       }
     });
   }
@@ -112,10 +118,14 @@ export class HelperTurnChannel {
     if (Object.keys(frame).some(field => !['type', 'agentId', 'requestId', 'result', 'error'].includes(field)) ||
         typeof frame.error === 'string') {
       pending.reject(new Error('Turn operation outcome is UNKNOWN; keep the same command and generation.'));
+      this.reconnect();
       return true;
     }
     try { pending.resolve(helperTurnCodecs(pending.operation).result.parse(frame.result)); }
-    catch { pending.reject(new Error('Turn reply malformed; outcome is UNKNOWN.')); }
+    catch {
+      pending.reject(new Error('Turn reply malformed; outcome is UNKNOWN.'));
+      this.reconnect();
+    }
     return true;
   }
 }

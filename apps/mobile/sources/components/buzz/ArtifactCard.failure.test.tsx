@@ -15,7 +15,6 @@ vi.mock('./IndexRow', () => {
 vi.mock('./Button', () => ({ Button: (props: any) => React.createElement('Button', props) }));
 vi.mock('@/buzz/use-artifact-recovery', () => ({ useArtifactRecoveryGeneration: () => 0 }));
 vi.mock('@/buzz/chat-attachment', () => ({ formatAttachmentSize: () => '2 KB' }));
-vi.mock('@/buzz/router-owner', () => ({ routerOwnerArtifactAction: vi.fn() }));
 vi.mock('@/buzz/artifact-link', () => ({
   artifactImageSource: bytes.image, fetchArtifactText: bytes.text, fetchArtifactBytes: bytes.full,
   releaseArtifactImageSource: vi.fn(), subscribeArtifactBytesPurge: () => () => {},

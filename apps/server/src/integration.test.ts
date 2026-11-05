@@ -9123,7 +9123,7 @@ describe('monolith integration', () => {
     );
   });
 
-  it('posts one corner-open daemon-fact card and does not push it', async () => {
+  it('posts one corner-open daemon-fact card at a requesting message and does not push it', async () => {
     const send = vi.fn(async () => undefined);
     const loop = new PushDeliveryLoop(database, { send });
     await loop.runOnce(); // establish the durable floor before the new events
@@ -9132,9 +9132,15 @@ describe('monolith integration', () => {
        VALUES('owner-device-token-12345678901234567890',$1,'android','physical')`,
       [HUMAN],
     );
+    const requestId = 'corner-open-card';
+    const sourceMessageId = createHash('sha256').update(requestId).digest('hex');
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Open a corner for the widget')`,
+      [sourceMessageId, ROOM, HUMAN],
+    );
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
-      requestId: 'corner-open-card',
+      requestId,
       name: 'Ship-the-widget',
       objective: 'Ship the widget end to end',
     });
@@ -9149,6 +9155,7 @@ describe('monolith integration', () => {
     expect(cards.rows[0]!.card).toEqual({
       type: 'corner-open',
       cornerId,
+      sourceMessageId,
       name: 'Ship-the-widget',
       objective: 'Ship-the-widget',
     });
@@ -10221,6 +10228,11 @@ describe('monolith integration', () => {
 
   it('creates every independently keyed corner requested by one originating task', async () => {
     const requestId = 'multiple-corner-open';
+    const sourceMessageId = createHash('sha256').update(requestId).digest('hex');
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Open corners for both independent problems')`,
+      [sourceMessageId, ROOM, HUMAN],
+    );
     const first = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId,

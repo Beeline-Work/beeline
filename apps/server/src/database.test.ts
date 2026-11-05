@@ -1,5 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { priorReleaseCornerListSql } from './fixtures/sentry-22-load-corners.js';
+import { CornerAccessDatabase } from './corner-access-database.js';
+import { CommandScopedDatabase } from './command-scoped-database.js';
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Pool } from 'pg';
@@ -246,6 +248,31 @@ function poolWithQuery(query: ReturnType<typeof vi.fn>): Pool {
   });
   return { query: vi.fn(), on: vi.fn(), connect, end: vi.fn() } as unknown as Pool;
 }
+
+describe('named prepared Room reads', () => {
+  it('retains names through access and transaction scopes and separates SQL variants', async () => {
+    const client = stubClient();
+    const database = new PostgresDatabase('', 1, { pool: poolHandingOut([client, client, client]) });
+    const scoped = new CommandScopedDatabase(new CornerAccessDatabase(database));
+    const sql = 'SELECT member.identity_id FROM memberships member WHERE member.identity_id=$1';
+    await scoped.query(sql, ['first'], 'phone-room-test');
+    await scoped.transaction(tx => scoped.run(tx, () => scoped.query(sql, ['second'], 'phone-room-test')));
+    await scoped.query(sql + ' AND member.removed_at IS NULL', ['third'], 'phone-room-test');
+    const prepared = client.query.mock.calls.filter(([query]) => typeof query === 'object')
+      .map(([query]) => query as { name: string; text: string; values: unknown[] });
+    expect(prepared).toHaveLength(3);
+    expect(prepared[0]).toMatchObject({
+      name: expect.stringMatching(/^phone-room-test-/),
+      text: sql.replace('FROM memberships', 'FROM room_access'), values: ['first'],
+    });
+    expect(prepared[1]).toMatchObject({ name: prepared[0]!.name, text: prepared[0]!.text, values: ['second'] });
+    expect(prepared[2]!.name).not.toBe(prepared[0]!.name);
+    expect(prepared[2]!.values).toEqual(['third']);
+    expect(database.queryProfiles().top.some(profile => profile.calls === 2)).toBe(true);
+    expect(client.release).toHaveBeenCalledTimes(3);
+    await database.close();
+  });
+});
 
 describe('pool checkout telemetry', () => {
   it('separates queued checkout time from checked-out query time and releases on failure', async () => {

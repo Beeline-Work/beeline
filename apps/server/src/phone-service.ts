@@ -1606,7 +1606,7 @@ export class PhoneService {
        FROM identities viewer LEFT JOIN visible ON true
        WHERE viewer.id=$1
        ORDER BY visible.updated_at DESC NULLS LAST,visible.id`,
-      [viewerId, viewerId],
+      [viewerId, viewerId], 'phone-workspaces-0',
     );
     const viewer = rows.rows[0];
     if (!viewer) throw new Error('identity not found');
@@ -1844,7 +1844,7 @@ export class PhoneService {
       SELECT r.*,
         (SELECT message.card FROM voice_calls call JOIN messages message ON message.id=call.message_id
           WHERE call.room_id=r.id AND call.ended_at IS NULL) voice_call,
-        (SELECT count(*)::text FROM memberships rm WHERE rm.room_id=r.id AND rm.removed_at IS NULL) member_count,
+        (SELECT count(*)::text FROM memberships rm WHERE rm.room_id=COALESCE(r.parent_id,r.id) AND rm.removed_at IS NULL) member_count,
         NOT EXISTS (
           SELECT 1 FROM memberships other_room
           JOIN memberships other_workspace ON other_workspace.workspace_id=r.workspace_id
@@ -1852,7 +1852,7 @@ export class PhoneService {
             AND other_workspace.identity_id=other_room.identity_id
             AND other_workspace.removed_at IS NULL
             AND other_workspace.role IN ('owner','admin')
-          WHERE other_room.room_id=r.id AND other_room.removed_at IS NULL
+          WHERE other_room.room_id=COALESCE(r.parent_id,r.id) AND other_room.removed_at IS NULL
             AND other_room.identity_id<>$2
         ) leave_deletes_room,
         lm.id latest_id,lm.text latest_text,lm.attachments latest_attachments,lm.created_at latest_created_at,lm.author_id latest_author_id,
@@ -1878,7 +1878,7 @@ export class PhoneService {
             )
         )) closed
       FROM rooms r
-      JOIN memberships member ON member.room_id=r.id AND member.identity_id=$2 AND member.removed_at IS NULL
+      JOIN memberships member ON member.room_id=COALESCE(r.parent_id,r.id) AND member.identity_id=$2 AND member.removed_at IS NULL
       LEFT JOIN LATERAL (
         SELECT * FROM messages message
         WHERE message.room_id=r.id AND ${visibleChatMessageSql('message')}
@@ -1897,7 +1897,7 @@ export class PhoneService {
         (SELECT to_jsonb(viewer) FROM identities viewer WHERE viewer.id=$2) viewer_row,
         COALESCE((SELECT jsonb_agg(to_jsonb(visible_rooms)) FROM visible_rooms),'[]'::jsonb) room_rows
       FROM visible_workspace`,
-      [workspaceId, viewerId],
+      [workspaceId, viewerId], 'phone-chats-0',
     );
     const current = result.rows[0]?.workspace;
     if (!current) return null;
@@ -1950,7 +1950,7 @@ export class PhoneService {
               WHERE agent_id=member.identity_id AND kind='presence'
               ORDER BY updated_at DESC LIMIT 1
             ) agent_status ON true
-            WHERE member.room_id=room.id AND member.removed_at IS NULL
+            WHERE member.room_id=COALESCE(room.parent_id,room.id) AND member.removed_at IS NULL
           ) agent_presence ON true
           WHERE room.id=ANY($1::uuid[])
         ), cursors AS (
@@ -1971,7 +1971,7 @@ export class PhoneService {
           COALESCE((SELECT jsonb_agg(to_jsonb(c)) FROM cursors c),'[]'::jsonb) cursors,
           COALESCE((SELECT jsonb_agg(to_jsonb(c) ORDER BY c.created_at DESC,c.id DESC)
             FROM corner_rows c),'[]'::jsonb) corner_rows`,
-        [roomIds, viewerId, new Date(Date.now() - AGENT_REACHABLE_HORIZON_MS)],
+        [roomIds, viewerId, new Date(Date.now() - AGENT_REACHABLE_HORIZON_MS)], 'phone-chats-1',
       ),
     );
     const enrichmentRow = enrichment?.rows[0];
@@ -2781,7 +2781,7 @@ export class PhoneService {
               FROM (${openCornerFactsSql('=authorized.id', '$2')}) deck_corner),'[]'::jsonb))
           END` : 'NULL::jsonb'} deck
       FROM authorized JOIN identities viewer ON viewer.id=$2`,
-      before ? [roomId, viewerId, before.micros, before.id] : [roomId, viewerId],
+      before ? [roomId, viewerId, before.micros, before.id] : [roomId, viewerId], 'phone-corners-0',
     );
     const loaded = result.rows[0];
     if (!loaded) return null;
@@ -2993,7 +2993,7 @@ export class PhoneService {
            ) END corner
            ${('')}
          FROM authorized_room ${('')}`,
-        ([roomId, viewerId]),
+        ([roomId, viewerId]), 'phone-room-0',
       )
     ).rows[0];
     if (!row) return undefined;
@@ -3026,7 +3026,7 @@ export class PhoneService {
         }>(`SELECT ${viewerReadCursorSql()} read_cursor FROM rooms room WHERE room.id=$1`, [
           roomId,
           viewerId,
-        ]),
+        ], 'phone-room-1'),
       ),
       this.optionalEnrichment(
         'presence',
@@ -3044,7 +3044,7 @@ export class PhoneService {
              ORDER BY updated_at DESC LIMIT 1
            ) presence ON true
            WHERE member.room_id=$1 AND member.removed_at IS NULL`,
-          [roomId],
+          [roomId], 'phone-room-2',
         ),
       ),
       this.optionalEnrichment(
@@ -3052,7 +3052,7 @@ export class PhoneService {
         this.enrichmentDatabase.query<{ id: string; tagged_ids: string[] }>(
           `SELECT m.id,${roomMessageTagsSql('m')} tagged_ids
            FROM messages m WHERE m.id=ANY($1::text[])`,
-          [row.transcript.map((message) => message.id)],
+          [row.transcript.map((message) => message.id)], 'phone-room-3',
         ),
       ),
       repositoryId
@@ -3061,7 +3061,7 @@ export class PhoneService {
             this.enrichmentDatabase
               .query<{ allow_auto_merge: boolean | null }>(
                 `SELECT allow_auto_merge FROM github_repositories WHERE repository_id=$1`,
-                [repositoryId],
+                [repositoryId], 'phone-room-4',
               )
               .then((result) => result.rows[0]?.allow_auto_merge ?? undefined),
           )
@@ -3177,7 +3177,7 @@ export class PhoneService {
           visibleIds,
           [...mediaIds],
           repositoryId,
-        ],
+        ], 'phone-room-enrichment-0',
       ),
     );
     const value = result?.rows[0];
@@ -8801,7 +8801,7 @@ export class PhoneService {
     const row = await database.query(
       `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
        AND identity_id=$2 AND removed_at IS NULL`,
-      [workspaceId, identityId],
+      [workspaceId, identityId], 'phone-workspace-member-0',
     );
     if (!row.rowCount) throw new Error('workspace membership required');
   }
@@ -8965,7 +8965,7 @@ export class PhoneService {
     const ids = messages.flatMap(message => message.voiceCall?.endedAt ? [message.voiceCall.id] : []);
     if (!ids.length) return messages;
     const rows = await this.database.query<{ id: string; end_reason: string | null }>(
-      `SELECT id,end_reason FROM voice_calls WHERE room_id=$1 AND id=ANY($2::uuid[]) AND ended_at IS NOT NULL`, [roomId, ids]);
+      `SELECT id,end_reason FROM voice_calls WHERE room_id=$1 AND id=ANY($2::uuid[]) AND ended_at IS NOT NULL`, [roomId, ids], 'phone-room-card-voice-0');
     const silent = new Set(rows.rows.filter(row => row.end_reason === 'silence').map(row => row.id));
     return messages.map(message => message.voiceCall && silent.has(message.voiceCall.id)
       ? { ...message, voiceCall: { ...message.voiceCall, endReason: 'silence' as const } } : message);
@@ -8978,7 +8978,7 @@ export class PhoneService {
     }))];
     if (!ids.length) return messages;
     const rows = await this.database.query<{ id: string; room_id: string }>(
-      `SELECT id,room_id FROM messages WHERE id=ANY($1::text[]) AND deleted_at IS NULL`, [ids],
+      `SELECT id,room_id FROM messages WHERE id=ANY($1::text[]) AND deleted_at IS NULL`, [ids], 'phone-room-card-sources-0',
     );
     const rooms = new Map(rows.rows.map(row => [row.id, row.room_id]));
     return messages.map(message => {
@@ -9010,7 +9010,7 @@ export class PhoneService {
        FROM rooms corner JOIN messages message
          ON message.room_id=$2 AND message.card->>'cornerId'=corner.id::text
        WHERE corner.id=ANY($1::uuid[]) AND corner.parent_id=$2 AND message.id=ANY($3::text[])`,
-      [cornerIds, roomId, messages.map(message => message.id)],
+      [cornerIds, roomId, messages.map(message => message.id)], 'phone-room-cards-0',
     );
     const current = new Map(rows.rows.map((row) => [row.message_id, row]));
     return messages.map((message) => {
@@ -9044,7 +9044,7 @@ export class PhoneService {
     if (!ids.size) return messages;
     const rows = await this.database.query<IdentityRow>(
       `SELECT id,kind,name,handle,avatar,face_id FROM identities WHERE id=ANY($1::text[])`,
-      [[...ids]],
+      [[...ids]], 'phone-room-card-identities-0',
     );
     const current = new Map(rows.rows.map(row => [row.id, identity(row, this.publicOrigin)]));
     const resolve = (person: RoomViewIdentity): RoomViewIdentity =>
@@ -10467,7 +10467,7 @@ export class PhoneService {
     const [expired, objectRows] = await Promise.all([
       this.database.query<{ id: string }>(
         `SELECT id::text id FROM object_expirations WHERE id=ANY($1::uuid[])`,
-        [[...ids]],
+        [[...ids]], 'phone-room-media-0',
       ),
       this.database.query<{
         id: string;
@@ -10480,7 +10480,7 @@ export class PhoneService {
                 COALESCE(i.handle, i.name) author
          FROM objects o JOIN identities i ON i.id=o.owner_id
          WHERE o.state='ready' AND o.id=ANY($1::uuid[])`,
-        [[...ids]],
+        [[...ids]], 'phone-room-media-1',
       ),
     ]);
     return {

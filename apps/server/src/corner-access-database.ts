@@ -18,8 +18,9 @@ export class CornerAccessDatabase implements SqlDatabase {
   query<Row extends QueryResultRow = QueryResultRow>(
     sql: string,
     values?: unknown[],
+    preparedName?: string,
   ): Promise<QueryResult<Row>> {
-    return this.database.query<Row>(new CornerAccessStatement(sql).sql, values);
+    return this.database.query<Row>(new CornerAccessStatement(sql).sql, values, preparedName);
   }
 
   transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {

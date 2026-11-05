@@ -30,7 +30,7 @@ beforeEach(() => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;resetClientState();mobileSurfaceCache.clear();fixture.storage.clear();
   fixture.origin = 'https://synthetic.invalid';current.length = 0;rendered.length = 0;vi.clearAllMocks();fixture.read.mockResolvedValue(dto());
 });
-afterEach(() => {if (tree) act(() => tree.unmount());tree = undefined;});
+afterEach(() => {if (tree) act(() => tree.unmount());tree = undefined;vi.unstubAllGlobals();});
 describe('Room picker cached reads', () => {
 
   it('keeps a held roster visible for bylines but 1,000 closed-picker renders perform zero Workspace reads', async () => {
@@ -42,7 +42,7 @@ describe('Room picker cached reads', () => {
   it('two concurrent visible pickers share one actual snapshot flight', async () => {
     let finish!: (value: WorkspaceView) => void;fixture.read.mockImplementation(() => new Promise<WorkspaceView>((resolve) => {finish = resolve;}));
     await act(async () => {tree = create(/*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(Picker, { open: true }), /*#__PURE__*/React.createElement(Picker, { open: true, index: 1 })));});
-    expect(fixture.read).toHaveBeenCalledTimes(1);
+    await act(async () => {await vi.waitFor(() => expect(fixture.read).toHaveBeenCalledTimes(1));});
     await act(async () => finish(dto()));
     expect(current.map((value) => value?.members[0]?.identity.pubkey)).toEqual([viewer, viewer]);
     expect(fixture.read).toHaveBeenCalledTimes(1);expect(fixture.error).not.toHaveBeenCalled();
@@ -59,4 +59,26 @@ describe('Room picker cached reads', () => {
     expect(rendered.slice(changedOrigin).every((value) => value === null)).toBe(true);
     expect(current[0]).toBeNull();expect(fixture.read).not.toHaveBeenCalled();
   });
+  it('yields optional roster reads to the mounted screen frame',async()=>{
+    const frames:FrameRequestCallback[]=[];
+    vi.stubGlobal('requestAnimationFrame',(callback:FrameRequestCallback)=>frames.push(callback));
+    await act(async()=>{tree=create(React.createElement(Picker,{open:true}));});
+    expect(fixture.read).not.toHaveBeenCalled();
+    expect(frames).toHaveLength(1);
+    await act(async()=>{frames.shift()!(0);});
+    expect(fixture.read).not.toHaveBeenCalled();
+    await act(async()=>{frames.shift()!(16);await new Promise(resolve=>setTimeout(resolve,0));});
+    expect(fixture.read).toHaveBeenCalledTimes(1);
+    expect(current[0]?.workspace.id).toBe(workspace);
+  });
+  it('cancels optional roster work when the screen leaves before its frame',async()=>{
+    const frames:FrameRequestCallback[]=[];
+    vi.stubGlobal('requestAnimationFrame',(callback:FrameRequestCallback)=>frames.push(callback));
+    await act(async()=>{tree=create(React.createElement(Picker,{open:true}));});
+    await act(async()=>{tree.unmount();tree=undefined;});
+    await act(async()=>{frames.shift()!(0);frames.shift()!(16);await new Promise(resolve=>setTimeout(resolve,0));});
+    expect(fixture.read).not.toHaveBeenCalled();
+    expect(fixture.error).not.toHaveBeenCalled();
+  });
+
 });

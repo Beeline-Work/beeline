@@ -10,7 +10,7 @@ import {
 import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { helperVersion, helperVersionHeader } from './helper-version.js';
-import { HostReadBudget, ReadBudgetFullError } from './host-read-budget.js';
+import { HostReadBudget, hostReadBudget, ReadBudgetFullError } from './host-read-budget.js';
 import {
   isNetworkFailure,
   retryAfterMs,
@@ -199,7 +199,7 @@ export class DaemonApiClient {
   ) {
     // Test transports may supply their own admission model. The real network
     // transport always takes the machine-wide budget.
-    this.readBudget = readBudget ?? (fetchImpl === fetch ? new HostReadBudget(baseUrl) : undefined);
+    this.readBudget = readBudget ?? (fetchImpl === fetch ? hostReadBudget : undefined);
     this.machine =
       machine ??
       new MachineLink({
@@ -463,6 +463,7 @@ export class DaemonApiClient {
             ? 'urgent'
             : 'background',
           Date.now() + REQUEST_DEADLINE_MS,
+          controller.signal,
         );
       }
       this.inFlight += 1;

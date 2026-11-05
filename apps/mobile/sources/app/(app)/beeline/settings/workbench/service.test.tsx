@@ -78,7 +78,25 @@ vi.mock('@/buzz/app-sign-in', () => ({ openAppSignIn: vi.fn(async () => undefine
 import { mobileSurfaceCache } from '@/buzz/surface-storage';
 import { MockWorkbenchSource } from '@/buzz/workbench-source.mock';
 import { setWorkbenchSource } from '@/buzz/workbench-source';
-import { companyWorkbench, companyRow, squireRow } from '@/test/company-workbench';
+/** Synthetic server answers. Tests must never recreate company grouping on the phone. */
+function companyRow(id: string, name = id, section: import('@beeline/api-contract/workbench').WorkbenchCompany['section'] = 'keys'): import('@beeline/api-contract/workbench').WorkbenchCompany {
+  return { id, name, domain: `${id}.example`, kind: 'company', section, logo: { kind: 'image', uri: `https://server.test/v1/company-logos/${id}`, plate: 'dark' },
+    subtitle: '1 key', items: [{ id: `${id}-key`, title: 'Production API', subtitle: `${id}.example`, kind: 'key', target: { kind: 'key', connectionId: `${id}-key` } }], machines: [], alsoAvailable: [] };
+}
+function companyOption(id: string, name: string, flow: import('@beeline/api-contract/workbench').CompanySuggestion['flow'] = 'app'): import('@beeline/api-contract/workbench').CompanySuggestion {
+  return { appKey: id, appName: name, name, purpose: `Connect to ${name}`, providerId: id, providerName: name,
+    domain: `${id}.example`, logo: { kind: 'image', uri: `https://server.test/v1/company-logos/${id}`, plate: 'dark' }, flow };
+}
+function companyWorkbench(rows: readonly import('@beeline/api-contract/workbench').WorkbenchCompany[] = [companyRow('vercel', 'Vercel')],
+  suggestions: readonly import('@beeline/api-contract/workbench').CompanySuggestion[] = []): import('@/buzz/workbench').WorkbenchView {
+  return { helpers: [], connectors: [], connections: [], apps: [], companies: { version: 1, rows, suggestions,
+    hasConnections: rows.some(r => r.items.length || r.machines.some(m => m.status !== 'not-added')),
+    summary: { value: `${rows.length} connections` } } };
+}
+function squireRow(status: 'connected' | 'not-added' = 'connected'): import('@beeline/api-contract/workbench').WorkbenchCompany {
+  return { ...companyRow('squire-signin', 'Trusty Squire', 'signin'), kind: 'sign-in-service', subtitle: '1 computer',
+    status: status === 'connected' ? 'Ready' : 'Not added', items: [], machines: [{ id: 'machine-one', name: 'Laptop', online: true, status }] };
+}
 import ConnectorServiceScreen from './service';
 
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn() }));

@@ -1163,7 +1163,6 @@ m11_describe('beeline-agent schedule tools', () => {
       {
         prompt: "message 'hello @bananaman614305'",
         cadence: { kind: 'interval', everyMinutes: 0.5 },
-        maxRuns: 5,
       },
       deps(ops),
     );
@@ -1174,14 +1173,12 @@ m11_describe('beeline-agent schedule tools', () => {
           roomId: 'room-1',
           prompt: "message 'hello @bananaman614305'",
           cadence: { kind: 'interval', everyMinutes: 1 },
-          maxRuns: 5,
         },
       },
     ]);
     m11_expect(result).toContain('sched-1');
     m11_expect(result).toContain('The minimum cadence is 1 minute');
     m11_expect(result).toContain('every 1 minute');
-    m11_expect(result).toContain('5 runs');
   });
 
   m11_it('passes a short title on create and title-only updates', async () => {
@@ -1216,12 +1213,6 @@ m11_describe('beeline-agent schedule tools', () => {
     await m11_expect(
       m11_createSchedule({ prompt: 'p', cadence: { kind: 'cron', expression: '* * * *' } }, deps(ops)),
     ).rejects.toThrow('five fields');
-    await m11_expect(
-      m11_createSchedule(
-        { prompt: 'p', cadence: { kind: 'interval', everyMinutes: 5 }, maxRuns: 0 },
-        deps(ops),
-      ),
-    ).rejects.toThrow('maxRuns');
     m11_expect(ops).toEqual([]);
   });
 
@@ -1294,10 +1285,7 @@ m11_describe('beeline-agent schedule tools', () => {
     ]);
     m11_expect(result).toBe('Schedule sched-1 updated. Next run 2027-01-15T08:00:00.000Z.');
     await m11_expect(m11_updateSchedule({ scheduleId: 'sched-1' }, deps(ops))).rejects.toThrow(
-      'give a prompt, cadence, or maxRuns to change',
-    );
-    await m11_expect(m11_updateSchedule({ scheduleId: 'sched-1', maxRuns: 0 }, deps(ops))).rejects.toThrow(
-      'maxRuns',
+      'give a prompt, cadence, title, or workflowName to change',
     );
     m11_expect(ops).toHaveLength(1);
   });
@@ -2281,6 +2269,21 @@ m31_it('calls watchCorner in the current corner and returns readable state and k
     'passing',
   ])
     m31_expect(text).toContain(value);
+});
+
+
+m31_it('rejects schedule run limits on create and update before calling the daemon', async () => {
+  for (const dm of [false, true]) {
+    const tool = m31_agentToolsFor(true, dm).find(t => t.name === 'wake')!;
+    m31_expect(tool.inputSchema.properties).not.toHaveProperty('maxRuns');
+  }
+  for (const action of ['create', 'update']) {
+    await m31_expect(m31_callAgentTool('wake', {
+      action, trigger: 'schedule', title: 'Daily scan', scheduleId: 'sched-1',
+      prompt: 'Scan.', cadence: { kind: 'interval', everyMinutes: 60 }, maxRuns: 14,
+    }, `limited-${action}`)).rejects.toThrow(/invalid arguments/);
+  }
+  m31_expect(calls).toEqual([]);
 });
 
 

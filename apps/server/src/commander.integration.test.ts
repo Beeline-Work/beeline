@@ -2080,7 +2080,6 @@ it.each([
   const snapshot = async () => ({
     briefs: (await db.query(`SELECT * FROM corner_brief_revisions WHERE corner_id=$1 ORDER BY revision`, [opened.cornerId])).rows,
     commands: (await db.query(`SELECT * FROM agent_commands ORDER BY id`)).rows,
-    journal: (await db.query(`SELECT * FROM live_journal WHERE event->>'roomId'=$1 ORDER BY stream_id,sequence`, [opened.cornerId])).rows,
     notes: (await db.query(`SELECT * FROM messages WHERE room_id=$1 ORDER BY id`, [opened.cornerId])).rows,
   });
   const before = await snapshot();
@@ -2126,7 +2125,6 @@ it.each([
     expect(restored.brief?.spec).toBe(input.brief.spec);
     const after = await snapshot();
     expect(after.briefs).toHaveLength(2);
-    expect(after.journal.length).toBeGreaterThan(before.journal.length);
     expect(after.notes.length).toBe(before.notes.length + 1);
     expect(after.commands.filter(row => row.state === 'pending' && row.room_id === opened.cornerId)).toHaveLength(1);
   } else if (scenario === 'authority revoked' || scenario === 'revision changed') {

@@ -179,7 +179,7 @@ export type RoomViewHeader = {
 
 export type RoomToolReference = { readonly roomId: string; readonly anchor: string };
 export type RoomToolPage = { readonly roomId: string; readonly messages: readonly RoomViewMessage[];
-  readonly next?: string; readonly authority: import('./router-protocol.js').RouterAuthorityCertificate };
+  readonly next?: string };
 export type RoomViewActivity = {
   readonly toolGroup?: RoomToolReference & { readonly count: number };
   readonly toolOutput?: RoomToolReference & { readonly messageId: string };

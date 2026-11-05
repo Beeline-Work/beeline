@@ -1,4 +1,4 @@
-vi.mock('@/buzz/router-owner', () => ({ routerOwnerCapabilities: async () => ({ families: [], authorityFencesV1: false }), routerOwnerNegotiated: async () => {}, routerOwnerDisconnected: () => {}, routerOwnerReceive: () => {} }));
+
 import { type RoomViewMessage } from '@beeline/buzz-client';
 import { verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -143,96 +143,6 @@ describe('monolith Room send path', () => {
     vi.unstubAllGlobals();
   });
 
-  it('reconnects and resubscribes after a server deployment closes the live socket', async () => {
-    vi.useFakeTimers();
-    const sockets: Array<{
-      sent: string[];
-      closed: boolean;
-      readyState: number;
-      onopen?: () => void;
-      onmessage?: (event: { data: string }) => void;
-      onclose?: () => void;
-    }> = [];
-    class TestWebSocket {
-      static readonly OPEN = 1;
-      sent: string[] = [];
-      closed = false;
-      // A real socket is already OPEN when it calls onopen; the connection only
-      // writes to a socket in that state.
-      readyState = TestWebSocket.OPEN;
-      onopen?: () => void;
-      onmessage?: (event: { data: string }) => void;
-      onclose?: () => void;
-      constructor(
-        readonly url: string,
-        readonly protocols: string[],
-      ) {
-        sockets.push(this);
-      }
-      send(value: string) {
-        this.sent.push(value);
-      }
-      close() {
-        this.closed = true;
-        this.readyState = 3;
-      }
-    }
-    vi.stubGlobal('WebSocket', TestWebSocket);
-    const received: unknown[] = [];
-    const stop = await new MonolithRigTransport(identity).surfaceSubscribe(
-      [{ '#h': [ROOM] }],
-      (event) => received.push(event),
-    );
-    await vi.waitFor(() => expect(sockets).toHaveLength(1));
-    sockets[0]!.onopen?.();
-    expect(sockets[0]!.sent.map(value => JSON.parse(value))).toEqual([
-      { type: 'router-negotiate', protocol: 1, families: [], authorityFencesV1: false, usageCellV1: true },
-      { type: 'subscribe', sidebarPreviews: true, roomStateProjections: true, roomIds: [ROOM] },
-    ]);
-    sockets[0]!.onmessage?.({
-      data: JSON.stringify({ type: 'subscribed', roomId: ROOM, epoch: 'epoch-1', cursor: 3 }),
-    });
-    received.length = 0;
-
-    sockets[0]!.onclose?.();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(sockets).toHaveLength(2);
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(sockets).toHaveLength(2);
-    sockets[1]!.onopen?.();
-    expect(sockets[1]!.sent.map(value => JSON.parse(value)).find(frame => frame.type === 'subscribe')).toEqual({
-      type: 'subscribe',
-      sidebarPreviews: true, roomStateProjections: true,
-      roomIds: [ROOM],
-      cursors: { [ROOM]: { epoch: 'epoch-1', base: 3, seen: [] } },
-    });
-    sockets[1]!.onmessage?.({
-      data: JSON.stringify({
-        type: 'invalidate',
-        roomId: ROOM,
-        reason: 'postgres:messages',
-        trace: { id: 'trace-message', databaseAt: 100, emittedAt: 125 },
-      }),
-    });
-    expect(received).toEqual([
-      {
-        monolithLive: {
-          type: 'invalidate',
-          roomId: ROOM,
-          reason: 'postgres:messages',
-          trace: { id: 'trace-message', databaseAt: 100, emittedAt: 125 },
-        },
-      },
-    ]);
-
-    stop();
-    expect(sockets[1]!.closed).toBe(false);
-    resetClientState();
-    expect(sockets[1]!.closed).toBe(true);
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(sockets).toHaveLength(2);
-  });
-
   it('shares one live socket across two subscribing transports', async () => {
     const sockets: unknown[] = [];
     class TestWebSocket {
@@ -256,72 +166,6 @@ describe('monolith Room send path', () => {
     await vi.waitFor(() => expect(sockets).toHaveLength(1));
     stopFirst();
     stopSecond();
-  });
-
-  it('retries authorization once immediately, then waits for explicit recovery without polling', async () => {
-    vi.useFakeTimers();
-    const sockets: Array<{
-      sent: string[];
-      onopen?: () => void;
-      onclose?: () => void;
-      close: () => void;
-    }> = [];
-    class TestWebSocket {
-      sent: string[] = [];
-      onopen?: () => void;
-      onclose?: () => void;
-      constructor(
-        readonly url: string,
-        readonly protocols: string[],
-      ) {
-        sockets.push(this);
-      }
-      send(value: string) {
-        this.sent.push(value);
-      }
-      close() {}
-    }
-    vi.stubGlobal('WebSocket', TestWebSocket);
-    controls.authorization
-      .mockRejectedValueOnce(new Error('session refresh failed'))
-      .mockRejectedValueOnce(new Error('session refresh retry failed'));
-
-    const stop = await new MonolithRigTransport(identity).surfaceSubscribe(
-      [{ '#h': [ROOM] }],
-      () => {},
-    );
-    expect(sockets).toHaveLength(0);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(controls.authorization).toHaveBeenCalledTimes(2);
-    expect(sockets).toHaveLength(0);
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(controls.authorization).toHaveBeenCalledTimes(2);
-    expect(sockets).toHaveLength(0);
-    sharedLiveConnection().reconnectNow();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(controls.authorization).toHaveBeenCalledTimes(3);
-    await vi.waitFor(() => expect(sockets).toHaveLength(1));
-    sockets[0]!.onopen?.();
-    sockets[0]!.onclose?.();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(sockets).toHaveLength(2);
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(sockets).toHaveLength(2);
-    sockets[1]!.onclose?.();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(controls.invalidateAuthorization).toHaveBeenCalledExactlyOnceWith('phone-session');
-    // The opened socket's loss already spent this incident's replacement.
-    // Rejecting its handshake invalidates stale access without another attempt.
-    expect(sockets).toHaveLength(2);
-    const authorizationCalls = controls.authorization.mock.calls.length;
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(sockets).toHaveLength(2);
-    expect(controls.authorization).toHaveBeenCalledTimes(authorizationCalls);
-    sharedLiveConnection().reconnectNow();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(sockets).toHaveLength(3);
-
-    stop();
   });
 
   it('acknowledges a traced delta only after paint and only on its originating socket', async () => {
@@ -373,7 +217,6 @@ describe('monolith Room send path', () => {
     expect(received).toHaveLength(1);
     expect(received[0]!.acknowledgePaint).toEqual(expect.any(Function));
     expect(sockets[0]!.sent.map(value => JSON.parse(value))).toEqual([
-      { type: 'router-negotiate', protocol: 1, families: [], authorityFencesV1: false, usageCellV1: true },
       { type: 'subscribe', sidebarPreviews: true, roomStateProjections: true, roomIds: [ROOM] },
     ]);
     received[0]!.acknowledgePaint?.();

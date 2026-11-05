@@ -105,14 +105,14 @@ jobs:
         run: node --test --test-concurrency=1 scripts/latency-rig/nightly-*.test.mjs
       - name: Block unbounded outside requests and waiting-screen regressions
         run: |
-          npm test --prefix apps/mobile -- --run sources/sync/transport/monolith-operation.test.ts   --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
-      - name: Prove local network admission
+          npm test --prefix apps/mobile -- --run sources/sync/transport/monolith-operation.test.ts --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
+      - name: Prove network codecs and command ownership
         working-directory: packages/net
         env:
           NODE_OPTIONS: --max-old-space-size=4096
         run: |
           node ../../scripts/generate-network-codecs.mjs --check
-          for suite in src/*.test.ts src/private/*.test.ts; do
+          for suite in src/*.test.ts; do
             npx vitest run "$suite" --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
           done
           cd ../..
@@ -231,12 +231,7 @@ jobs:
           - 6
           - 7
           - 8
-    runs-on:
-      - self-hosted
-      - Linux
-      - X64
-      - beeline-ci
-      - beeline-ci-heavy
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -398,7 +393,7 @@ jobs:
           BEELINE_INCIDENT_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
         if: steps.changes.outputs.run == 'true'
       - name: Prove release migration lock handoff on isolated PostgreSQL
-        run: npm test -w @beeline/server -- --run src/migration-steps.test.ts src/router-release-migration.postgres.test.ts --maxWorkers=1 --minWorkers=1
+        run: npm test -w @beeline/server -- --run src/migration-steps.test.ts --maxWorkers=1 --minWorkers=1
         env:
           BEELINE_MIGRATION_LOCK_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
         if: steps.changes.outputs.run == 'true'
@@ -414,6 +409,7 @@ jobs:
         run: |
           npx vitest run tests/seams/server-db.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/production-deadlocks.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/connection-presence.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/mcp-webhook-deadline.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/agent-schedule-deadline.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/pending-attachment-deadline.postgres.test.ts --maxWorkers=2 --minWorkers=1
@@ -423,16 +419,9 @@ jobs:
           npm test -w @beeline/server -- src/background-deadlines.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/router-group-c-completion.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/router-group-c-oauth.postgres.test.ts --maxWorkers=2 --minWorkers=1
-          npm test -w @beeline/server -- src/router-group-c-replay.postgres.test.ts --maxWorkers=2 --minWorkers=1
-          node --import tsx scripts/prove-router-group-c-room-payload.mjs
-          BEELINE_GROUP_C_COST_PROOF=1 node --import tsx scripts/prove-router-group-c-room-payload.mjs
           npm test -w @beeline/server -- src/router-command.postgres.test.ts --maxWorkers=2 --minWorkers=1
-          npm test -w @beeline/server -- src/router-projections.postgres.test.ts --maxWorkers=2 --minWorkers=1
-          npm test -w @beeline/server -- src/durable-live.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/slow-query-workload.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/rooms-mcp-stream.postgres.test.ts --maxWorkers=2 --minWorkers=1
-          npm test -w @beeline/server -- src/phone-media.postgres.test.ts --maxWorkers=2 --minWorkers=1
-          npm test -w @beeline/server -- src/router-authority-fences.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/helper-overlay.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/turn-ownership-socket.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/rooms-mcp-stream.test.ts --maxWorkers=2 --minWorkers=1

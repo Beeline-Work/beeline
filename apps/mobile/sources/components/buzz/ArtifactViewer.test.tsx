@@ -1,3 +1,4 @@
+vi.mock('@/buzz/use-artifact-recovery', () => ({ useArtifactRecoveryGeneration: () => 0 }));
 import { ViewerConversationDock } from './ViewerConversationDock';
 vi.mock('./Button', () => ({ Button: 'Button' }));
 vi.mock('./RunnableArtifact', () => ({ RunnableArtifact: 'RunnableArtifact' }));

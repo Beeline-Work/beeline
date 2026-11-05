@@ -1,4 +1,3 @@
-import type { UsageCellView } from '@/buzz/agent-usage-cell';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { InlineActionRow } from './IndexRow';
 import { ErrorBanner } from './ErrorBanner';
@@ -6,7 +5,7 @@ import { AgentUsageSection } from './AgentUsageSection';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { HullDialogActions, HullDialogInput } from '@/components/buzz/HullDialog';
 import React, { useEffect, useRef, useState } from 'react';
-import { Linking, Pressable, Text, TextInput, View } from 'react-native';
+import { Linking, Text, View } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -37,7 +36,6 @@ export function AgentProfileView({
   avatarDisabled,
   onGenerateAvatar,
   refreshUsage,
-  usageCell,
   loadMoreWork,
   editing,
   saving,
@@ -66,7 +64,6 @@ export function AgentProfileView({
   avatarDisabled: boolean;
   onGenerateAvatar: (soul: string) => Promise<void>;
   refreshUsage?: () => Promise<unknown>;
-  usageCell?: UsageCellView;
   loadMoreWork?: (cursor: string) => Promise<AgentDetailView>;
   editing: boolean;
   saving: boolean;
@@ -343,7 +340,7 @@ export function AgentProfileView({
                 </>
               )}
             </View>
-            {canEdit && (!usageCell || usageCell.mode === 'legacy' || usageCell.mode === 'router' && usageCell.cell?.allowed) ? <AgentUsageSection key={detail.agent.identity.pubkey} usage={usageCell?.mode === 'router' && usageCell.cell?.allowed ? usageCell.cell.usage ?? undefined : detail.usage} harness={detail.harness} onRefresh={refreshUsage} /> : null}
+            {canEdit ? <AgentUsageSection key={detail.agent.identity.pubkey} usage={detail.usage} harness={detail.harness} onRefresh={refreshUsage} /> : null}
             <AgentVoiceSection
               key={`${detail.workspaceId}:${identity.pubkey}:${voiceApi?.contextKey ?? ''}`}
               agentId={identity.pubkey}

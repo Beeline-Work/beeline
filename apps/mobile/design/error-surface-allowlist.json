@@ -2,7 +2,7 @@
   {
     "layoutHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "file": "app/(app)/beeline/chat/RoomMessageVariants.tsx",
-    "line": 1687,
+    "line": 1699,
     "tag": "ErrorBanner",
     "source": "<ErrorBanner inline\n            title={sendState.text}\n            icon={<Ionicons name=\"alert-circle-outline\" size={13} color={styles.sendFailure.color} />}\n            secondaryAction={{ label: 'Dismiss', onPress: () => onDismiss(message.id) }}\n            testID={`outbox-delivery-failed-${message.id}`}\n          />",
     "ancestors": [
@@ -14,7 +14,7 @@
   {
     "layoutHash": "986bb68ae2c9cc0b62de89c1511233de88cb8d7af3d474c39cc349b6f7e174bc",
     "file": "app/(app)/beeline/chat/_chat-surface.tsx",
-    "line": 6701,
+    "line": 6744,
     "tag": "ErrorBanner",
     "source": "<ErrorBanner inline title={roomRepoAccessIssue.reason === 'revoked' ? 'ACCESS TO THIS REPO WAS REVOKED' : 'THIS REPO ISN’T IN THE BEELINE INSTALLATION'}\n                        description={`${roomRepoAccessIssue.fullName} must be reconnected before a ${CORNER_LABEL} can open.`}\n                        retryLabel={roomRepoAccessIssue.reason === 'not_granted' ? 'Add this repo to the Beeline installation' : `Connect ${roomRepoAccessIssue.fullName.split('/')[0]}`}\n                        retryDestination=\"external\"\n                        onRetry={() => void handleReconnectRoomRepository()} retryTestID=\"corner-open-repo-connect\"\n                        secondaryAction={{ label: 'Dismiss', onPress: () => setCornerOpenRepoPrompt(false), testID: 'corner-open-repo-prompt-dismiss' }} testID=\"corner-open-repo-prompt\" />",
     "ancestors": [
@@ -30,7 +30,7 @@
   {
     "layoutHash": "7e27798b43bbeb36321a3cf6b672e812634dc958cdeee9e7b07750f766013593",
     "file": "app/(app)/beeline/chat/_chat-surface.tsx",
-    "line": 7294,
+    "line": 7336,
     "tag": "Text",
     "source": "<Text style={styles.membershipErrorText}>",
     "ancestors": [
@@ -44,7 +44,7 @@
   {
     "layoutHash": "7e27798b43bbeb36321a3cf6b672e812634dc958cdeee9e7b07750f766013593",
     "file": "app/(app)/beeline/chat/_chat-surface.tsx",
-    "line": 7337,
+    "line": 7379,
     "tag": "Text",
     "source": "<Text style={styles.membershipErrorText}>",
     "ancestors": [
@@ -58,7 +58,7 @@
   {
     "layoutHash": "8c09edac98eb5633727c6b999bc9b58629122b9578dfb7a936ce974bcdef1123",
     "file": "app/(app)/beeline/chat/_chat-surface.tsx",
-    "line": 7419,
+    "line": 7461,
     "tag": "Text",
     "source": "<Text accessibilityRole=\"alert\" style={styles.membershipErrorText}>",
     "ancestors": [
@@ -97,7 +97,7 @@
   {
     "layoutHash": "3620a2631d15476b125d3efc572f4faf74186f8f3d38425e0240418d493395ab",
     "file": "app/(app)/beeline/human-profile.tsx",
-    "line": 235,
+    "line": 239,
     "tag": "Text",
     "source": "<Text style={styles.copy} accessibilityRole=\"alert\">",
     "ancestors": [
@@ -111,7 +111,7 @@
   {
     "layoutHash": "9410f021b25773c0aefe141445438714218f22b6af583d818d58b54bda5ce22f",
     "file": "app/(app)/beeline/members.tsx",
-    "line": 1189,
+    "line": 1230,
     "tag": "Text",
     "source": "<Text style={styles.axisError} testID={`model-axis-error-${kind}`}>",
     "ancestors": [
@@ -124,7 +124,7 @@
   {
     "layoutHash": "3eaa59cc2c3745820e13d4848e117a97fd7b7d7121f468a326ee6ff25d9d09a4",
     "file": "app/(app)/beeline/members.tsx",
-    "line": 1252,
+    "line": 1293,
     "tag": "Text",
     "source": "<Text style={styles.switchError} testID=\"agent-access-error\">",
     "ancestors": [
@@ -137,7 +137,7 @@
   {
     "layoutHash": "3eaa59cc2c3745820e13d4848e117a97fd7b7d7121f468a326ee6ff25d9d09a4",
     "file": "app/(app)/beeline/members.tsx",
-    "line": 1292,
+    "line": 1333,
     "tag": "Text",
     "source": "<Text style={styles.switchError} testID=\"agent-yolo-error\">",
     "ancestors": [
@@ -150,7 +150,7 @@
   {
     "layoutHash": "d5517cc8d6b9f633f91ef4348a4e6669c92e0bbbe892a00d28df037473778207",
     "file": "app/(app)/beeline/onboarding.tsx",
-    "line": 598,
+    "line": 632,
     "tag": "ErrorBanner",
     "source": "<ErrorBanner inline title={notice.title} description={notice.message} />",
     "ancestors": [
@@ -162,7 +162,7 @@
   {
     "layoutHash": "db2800bd9b78ccbaf9b983f7c2401e57a38f7c4ce28f9eb2d6690ba917b964cc",
     "file": "app/(app)/beeline/onboarding.tsx",
-    "line": 628,
+    "line": 662,
     "tag": "ErrorBanner",
     "source": "<ErrorBanner inline title={notice.title} description={notice.message} />",
     "ancestors": [
@@ -173,7 +173,7 @@
   {
     "layoutHash": "63aaa80d1205e3739fb542a0c034122ec229b3690783e55e588a1e5225475429",
     "file": "app/(app)/beeline/settings/identity.tsx",
-    "line": 701,
+    "line": 704,
     "tag": "Text",
     "source": "<Text style={styles.errorLabel}>",
     "ancestors": [
@@ -187,7 +187,7 @@
   {
     "layoutHash": "ed187cfb3a2d7372bad60de0c6348f3ea0c2e965fa612cbceef354bf9afaa76a",
     "file": "app/(app)/beeline/settings/identity.tsx",
-    "line": 702,
+    "line": 705,
     "tag": "Text",
     "source": "<Text style={styles.errorText}>",
     "ancestors": [
@@ -201,7 +201,7 @@
   {
     "layoutHash": "096c9720717f6f3dee00b8dafeccee589c2f709bf75643a2ee0dcf97d691fd73",
     "file": "app/(app)/beeline/settings/workbench/connect.tsx",
-    "line": 389,
+    "line": 393,
     "tag": "Text",
     "source": "<Text style={styles.failure} testID=\"connect-error\">",
     "ancestors": [
@@ -226,7 +226,7 @@
   {
     "layoutHash": "66170278634acfc57d9ad02ffc1cfd2b93b9b4b74dae048274c04c8c288d0f13",
     "file": "app/(app)/beeline/tray.tsx",
-    "line": 843,
+    "line": 870,
     "tag": "Text",
     "source": "<Text style={styles.empty}>",
     "ancestors": [
@@ -263,7 +263,7 @@
   {
     "layoutHash": "65813716cc959b8cd98d427bf2ba9ed4a6448e51cbd167641cb79895ddf51cb7",
     "file": "components/DesktopRoomInspector.tsx",
-    "line": 651,
+    "line": 653,
     "tag": "Text",
     "source": "<Text style={styles.error}>",
     "ancestors": [
@@ -276,7 +276,7 @@
   {
     "layoutHash": "0ced32308678388d08cc42d5f8b67dc0fd813ad6e986e7b6f28844fc1ca2f8d2",
     "file": "components/buzz/AgentProfileView.tsx",
-    "line": 157,
+    "line": 185,
     "tag": "Text",
     "source": "<Text style={styles.copy} accessibilityRole=\"alert\">",
     "ancestors": [
@@ -290,7 +290,7 @@
   {
     "layoutHash": "f64aafc50f9efe01b182ef520865c14b8047c9206d0251043a714f98354d1516",
     "file": "components/buzz/AgentProfileView.tsx",
-    "line": 341,
+    "line": 404,
     "tag": "ErrorBanner",
     "source": "<ErrorBanner inline title=\"Could not load older work. Your current list is still available.\" onRetry={() => void moreWork()} retrying={workLoading} retryTestID=\"load-more-agent-work\" />",
     "ancestors": [
@@ -324,7 +324,7 @@
   {
     "layoutHash": "1457aa205aef10d1de5120408b61b27bf92e9a88fd680f92e4543b7c1b298b68",
     "file": "components/buzz/ConversationComposer.tsx",
-    "line": 697,
+    "line": 700,
     "tag": "Text",
     "source": "<Text style={styles.statusText} accessibilityRole=\"alert\" testID=\"voice-connection-error\">",
     "ancestors": [
@@ -361,7 +361,7 @@
   {
     "layoutHash": "ee1b919b31745fd1b156f8e4cc9c591a32e7678b2dcbd5adf9a07d0ff3aaa02c",
     "file": "components/buzz/MemberPickerSheet.tsx",
-    "line": 120,
+    "line": 121,
     "tag": "Text",
     "source": "<Text accessibilityRole=\"alert\" style={styles.error} testID=\"member-picker-error\">",
     "ancestors": [
@@ -444,7 +444,7 @@
   {
     "layoutHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "file": "components/buzz/RoomCornersList.tsx",
-    "line": 409,
+    "line": 401,
     "tag": "ErrorBanner",
     "source": "<ErrorBanner inline\n                title={more.reason}\n                retryLabel=\"Retry\"\n                onRetry={onMoreArchived}\n                retryTestID=\"room-corners-archived-more\" />",
     "ancestors": [
@@ -456,7 +456,7 @@
   {
     "layoutHash": "263f7a804d8dc71d66d6770d052c585303593256ada6f0804b4e102ace572710",
     "file": "components/buzz/RoomReviewerActions.tsx",
-    "line": 35,
+    "line": 34,
     "tag": "Text",
     "source": "<Text style={styles.errorText}>",
     "ancestors": [
@@ -468,7 +468,7 @@
   {
     "layoutHash": "1bdb63c2a3b489216f87c0e2b3c778031cd078c5a3af24b1e3937ed63fa1b0c2",
     "file": "components/buzz/RoomReviewerActions.tsx",
-    "line": 179,
+    "line": 158,
     "tag": "Text",
     "source": "<Text style={styles.errorText}>",
     "ancestors": [
@@ -481,7 +481,7 @@
   {
     "layoutHash": "33f1d02d3cf84bd2e01e5ede88d4a63482836a1a9074470c2219a0ec14776cf6",
     "file": "components/buzz/RoomRosterSheet.tsx",
-    "line": 267,
+    "line": 271,
     "tag": "Text",
     "source": "<Text style={styles.membershipErrorText}>",
     "ancestors": [
@@ -508,7 +508,7 @@
   {
     "layoutHash": "c3fa07a2e2bf6847d2f9128cd618a4fdf9e300076b925fae6bc64800017f4fd6",
     "file": "components/buzz/SoulPortraitControls.tsx",
-    "line": 153,
+    "line": 106,
     "tag": "Text",
     "source": "<Text accessibilityRole=\"alert\" style={styles.copy} testID=\"avatar-generation-error\">",
     "ancestors": [

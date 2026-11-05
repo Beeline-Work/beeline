@@ -1,4 +1,3 @@
-import { isUsageCellOnlyChange } from './agent-usage-cell';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { useFocusEffect } from 'expo-router';
@@ -97,7 +96,6 @@ export function useFreshWorkbenchSurface<T>(
     void sharedLiveConnection().register([], (event) => {
       if (cancelled || !('monolithLive' in event)) return;
       const live = event.monolithLive;
-      if (isUsageCellOnlyChange(live)) return;
       if ((live.type === 'resource-change' &&
           ['workbench', 'install', 'agent'].includes(live.resource)) ||
           (live.type === 'invalidate' && live.roomId === '' && live.reason === 'reconnect'))

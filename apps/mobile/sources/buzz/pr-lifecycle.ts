@@ -130,7 +130,7 @@ export function lifecycleItem(message: SystemLineMessage): LifecycleItem | undef
     const url = check.object?.url;
     const target = url?.match(/\/(pull|issues)\/(\d+)(?:[/?#]|$)/);
     const kind = target?.[1] === 'pull' ? 'pull-request' : target ? 'issue' : 'notice';
-    const verb = check.verb.replace(/ a pull request$/, '');
+    const verb = check.verb.replace(/ (?:a )?pull request$/, '');
     const state = kind === 'issue' && verb === 'opened' ? 'Filed' : verb;
     return {
       ...base,
@@ -170,6 +170,7 @@ export function lifecycleItem(message: SystemLineMessage): LifecycleItem | undef
 
 export function lifecycleSummary(items: readonly LifecycleItem[]): string {
   const counts = new Map<string, { kind: string; state: string; count: number }>();
+  const seenPrEvents = new Set<string>();
   for (const item of items) {
     const kind =
       item.kind === 'pull-request'
@@ -187,12 +188,26 @@ export function lifecycleSummary(items: readonly LifecycleItem[]): string {
                   : 'notice';
     const state = item.state.replace(/^(PR|Checks) /, '').toLowerCase();
     const key = `${kind}:${state}`;
+    // Stored webhook and subscription lines can describe the same PR event.
+    // Count it once per run, keeping each committed line in the disclosure.
+    if (item.kind === 'pull-request' && item.url) {
+      const url = item.url.split(/[?#]/)[0].replace(/\/$/, '').toLowerCase();
+      const eventKey = `${url}:${key}`;
+      if (seenPrEvents.has(eventKey)) continue;
+      seenPrEvents.add(eventKey);
+    }
     const group = counts.get(key) ?? { kind, state, count: 0 };
     group.count++;
     counts.set(key, group);
   }
-  return [...counts.values()]
-    .map(({ kind, state, count }) => `${count} ${kind}${count === 1 ? '' : 's'} ${state}`)
+  const order = ['PR:opened', 'PR:merged', 'PR:closed', 'issue:filed', 'issue:closed'];
+  const rank = (key: string) => {
+    const index = order.indexOf(key);
+    return index < 0 ? order.length : index;
+  };
+  return [...counts.entries()]
+    .sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b))
+    .map(([, { kind, state, count }]) => `${count} ${kind}${count === 1 ? '' : 's'} ${state}`)
     .join(' · ');
 }
 

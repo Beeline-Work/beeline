@@ -3408,6 +3408,16 @@ describe('monolith integration', () => {
     // Nothing is dropped or duplicated across the two windows: together they
     // cover every one of the 250 rows exactly once.
     expect(new Set([...earliest, ...recent]).size).toBe(250);
+    // A future-dated row is readable without swallowing intervening history.
+    const future=rowId(251);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
+      VALUES($1,$2,$3,'future row',now()+interval '30 seconds')`,[future,ROOM,HUMAN]);
+    const futurePage=await (await daemonOperation('getRoomConversation',{roomId:ROOM,limit:5})).json() as {
+      items:{id:string}[];cursor:string;
+    };
+    expect(futurePage.items.at(-1)?.id).toBe(future);
+    expect(futurePage.cursor).toBe(`${base+250*1000},${rowId(250)}`);
+
   });
 
   it('fetches an exact Room message in bounded pages under Room membership', async () => {

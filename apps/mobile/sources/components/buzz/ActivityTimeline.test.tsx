@@ -1,6 +1,7 @@
 import { ErrorBanner } from './ErrorBanner';
+vi.mock('@/sync/transport/monolith-operation',()=>({monolithPhoneOperation:(name:string,args:unknown)=>{if(name!=='readRoomTools')throw Error('Unexpected operation');return toolReader(args);}}));
 const toolReader=vi.hoisted(()=>vi.fn());
-vi.mock('@/buzz/router-owner',()=>({readRouterToolPage:toolReader}));
+
 import * as React from 'react';
 import { useFonts } from 'expo-font';
 vi.mock('expo-font', () => ({ useFonts: vi.fn(() => [true, null]) }));

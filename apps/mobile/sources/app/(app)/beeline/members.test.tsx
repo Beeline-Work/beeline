@@ -1,7 +1,7 @@
 const profileLane=vi.hoisted(()=>({mode:'legacy' as 'legacy'|'pending'|'router',view:null as any,listeners:new Set<()=>void>(),acquire:vi.fn(),query:vi.fn(),retry:vi.fn()}));
-vi.mock('@/buzz/router-family',()=>({useRouterFamily:()=>profileLane.mode}));
-vi.mock('@/buzz/router-owner',()=>({routerOwnerUsageProfile:vi.fn(),acquireRouterRosterQuery:(...args:any[])=>profileLane.query(...args),acquireRouterLane:(...args:any[])=>profileLane.acquire(...args),retryRouterLane:(...args:any[])=>profileLane.retry(...args)}));
-vi.mock('@/buzz/use-agent-usage-cell', () => ({ useAgentUsageCell: () => ({ mode: 'legacy', cell: null }) }));
+
+
+
 vi.mock('@/utils/responsive', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/utils/responsive')>()), useIsDesktop: () => false }));
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
 vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
@@ -520,49 +520,6 @@ function baseAgent() {
     watchFilters: [],
   };
 }
-
-it('F03 negotiated Members render exact roster facts and admit search only on submit, never text editing or transient frames',async()=>{
-  const {MemberRosterRow}=await import('@/components/buzz/MemberRosterRow');
-  profileLane.mode='router';profileLane.view={state:'LIVE',value:{...baseWorkspace(),revision:'1'},error:null,cut:null};
-  const renderer=await render();
-  expect(profileLane.acquire.mock.calls.map(call=>call[0])).toEqual([{family:'workspace-roster',workspaceId:WORKSPACE}]);
-  const field=()=>renderer.root.findAll((node:any)=>node.props.testID==='members-search'&&node.props.onChangeText)[0]!;
-  for(let n=0;n<1000;n++){
-    await act(async()=>field().props.onChangeText(`edited-${n}`));
-    for(const listener of liveListeners)listener({monolithLive:{type:'presence',roomId:'',agentId:AGENT,status:'online'}});
-  }
-  expect(profileLane.query).not.toHaveBeenCalled();expect(roomView.workspace).not.toHaveBeenCalled();expect(roomView.workspaceMembers).not.toHaveBeenCalled();
-  const next={...profileLane.view.value,revision:'2',members:profileLane.view.value.members.map((member:any)=>
-    member.identity.pubkey===MEMBER?{...member,role:'spectator'}:member)};
-  await act(async()=>{profileLane.view={...profileLane.view,value:next};for(const wake of profileLane.listeners)wake();});
-  expect(renderer.root.findAllByType(MemberRosterRow).find((row:any)=>row.props.pubkey===MEMBER)?.props.role).toBe('spectator');
-  profileLane.query.mockImplementation(()=>({current:()=>({state:'LIVE',value:{...next,members:[],agents:[],peopleTotal:0,agentTotal:0},error:null,cut:null}),
-    release:()=>{},subscribe:()=>()=>{}}));
-  await act(async()=>field().props.onSubmitEditing());
-  expect(profileLane.query.mock.calls[0]?.[0]).toEqual({family:'workspace-roster',workspaceId:WORKSPACE,query:{revision:'2',q:'edited-999'}});
-  expect(renderer.root.findAllByType(MemberRosterRow)).toHaveLength(0);
-  expect(roomView.workspace).not.toHaveBeenCalled();expect(roomView.workspaceMembers).not.toHaveBeenCalled();expect(liveListeners.size).toBe(0);
-});
-
-it('F09 negotiated native profile and portrait consume one canonical detail; transient frames never read another profile or Workspace',async()=>{
-  const {AgentProfileView}=await import('@/components/buzz/AgentProfileView');
-  const {SoulPortraitControls}=await import('@/components/buzz/SoulPortraitControls');
-  profileLane.mode='router';profileLane.view={state:'LIVE',value:{...baseAgent(),canRemove:true,configVersion:'1',voiceRevision:'voice-1'},error:null,cut:null};
-  let renderer!:ReactTestRenderer;
-  await act(async()=>{renderer=create(<AgentProfileRoute/>);});
-  expect(profileLane.acquire).toHaveBeenCalledTimes(1);
-  expect(profileLane.acquire.mock.calls[0]![0]).toEqual({family:'agent-profile',workspaceId:WORKSPACE,agentId:AGENT});
-  expect(renderer.root.findByType(AgentProfileView).props.detail).toBe(profileLane.view.value);
-  expect(renderer.root.findByType(SoulPortraitControls).props.detail).toBe(profileLane.view.value);
-  const voiceReads=roomView.agentVoices.mock.calls.length;
-  for(let n=0;n<1000;n++)for(const listener of liveListeners)listener({monolithLive:{type:'resource-change',roomId:'',resource:'agent',resourceId:AGENT}});
-  const next={...profileLane.view.value,configVersion:'2',agent:{...profileLane.view.value.agent,identity:{...profileLane.view.value.agent.identity,avatar:'https://synthetic.invalid/committed.png'}}};
-  await act(async()=>{profileLane.view={...profileLane.view,value:next};for(const wake of profileLane.listeners)wake();});
-  expect(renderer.root.findByType(AgentProfileView).props.detail).toBe(next);
-  expect(renderer.root.findByType(SoulPortraitControls).props.detail).toBe(next);
-  expect(roomView.agent).not.toHaveBeenCalled();expect(roomView.workspace).not.toHaveBeenCalled();expect(phoneOperation).not.toHaveBeenCalled();
-  expect(profileLane.acquire).toHaveBeenCalledTimes(1);expect(roomView.agentVoices).toHaveBeenCalledTimes(voiceReads);
-});
 
 // Every screen unmounts before the next case, so it releases the shared
 // Workspace watch and the next case opens its own.
@@ -2276,19 +2233,14 @@ describe('Members workspace management', () => {
   });
 });
 
-it('negotiated usage-only changes skip a full profile read while actual agent configuration still refreshes', async () => {
-  const { installUsageCellConnection, suspendUsageCellConnection } = await import('@/buzz/agent-usage-cell');
+it('refreshes an open profile from its plain read after a usage change', async () => {
   const renderer = await render(); await openAgentProfile(renderer);
   const before = roomView.agent.mock.calls.length;
-  installUsageCellConnection({ generation: 1, usageCellV1: true, origin: 'https://relay.test', principal: VIEWER,
-    executeRead: async () => { throw new Error('No private source adapter in this compatibility fixture'); } });
-  try {
-    await act(async () => { for (const listener of liveListeners) listener({ monolithLive: {
-      type: 'resource-change', roomId: '', resource: 'agent', resourceId: AGENT, usageOnly: true,
-    } }); });
-    expect(roomView.agent.mock.calls.length).toBe(before);
-    await agentChanged(); expect(roomView.agent.mock.calls.length).toBe(before + 1);
-  } finally { suspendUsageCellConnection(); }
+  await act(async () => { for (const listener of liveListeners) listener({ monolithLive: {
+    type: 'resource-change', roomId: '', resource: 'agent', resourceId: AGENT, usageOnly: true,
+  } }); });
+  expect(roomView.agent.mock.calls.length).toBe(before + 1);
+  await agentChanged(); expect(roomView.agent.mock.calls.length).toBe(before + 2);
 });
 
 it('the existing Refresh usage action does not follow its receipt with a full Agent read', async () => {

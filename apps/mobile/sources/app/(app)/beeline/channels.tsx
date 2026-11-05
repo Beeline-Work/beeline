@@ -14,8 +14,7 @@ import {
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
 import { useGitHubInstallationSession } from '@/auth/github-installation-host';
-import { useRouterFamily } from '@/buzz/router-family';
-import { retryRouterLane, routerFamilyMode } from '@/buzz/router-owner';
+
 import { acquireChatList, type ChatListHandle } from '@/buzz/chat-list-store';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
 import { cornerHref, navigateToRoom } from '@/buzz/corner-navigation';
@@ -42,7 +41,7 @@ import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import { inviteOnlyForRepository, type RepoCandidate } from '@/buzz/room-repo-picker';
 import { workspaceRailItem, type WorkspaceMemberDisplayItem } from '@/buzz/room-view-presentation';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
-import { ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
+import { ROOM_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell, CommunityDrawerTrigger, CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
 import { ConversationRow } from '@/components/buzz/ConversationRow';
 import { DesktopRoomCorners } from '@/components/buzz/DesktopRoomCorners';
@@ -72,7 +71,6 @@ import { BuzzRigTransport } from '@/sync/transport';
 import { RoomViewClient, isRoomViewTimeoutError } from '@/sync/transport/room-view-client';
 import { useIsDesktop } from '@/utils/responsive';
 import {
-  SurfaceRefreshScheduler,
   isWorkspaceListView,
   isWorkspaceView,
   type ChatListItem,
@@ -196,9 +194,9 @@ export default function BuzzChannels() {
   const workspaceList = useSurfaceSnapshot(workspaceListAddress, isWorkspaceListView);
   // Only a live read (never a cached one) may say "you have no Workspace".
   const [confirmedWorkspaceCount, setConfirmedWorkspaceCount] = useState<number | null>(null);
-  const chatListMode = useRouterFamily('room-list');
+
   const [chatListState, setChatList] = useState<ChatListView | null>(null);
-  const chatList = chatListMode === 'pending' ? null : chatListState;
+  const chatList = (chatListState);
   useLatencyRouteFrame('/beeline/channels', chatList !== null, true);
   // A covering list read seeds the Needs-you rows behind the badge;
   // ordinary changes carry typed row deltas on the live socket.
@@ -234,7 +232,7 @@ export default function BuzzChannels() {
   const [repoPickerNotice, setRepoPickerNotice] = useState<string | null>(null);
   const handledNewRoomRequest = useRef<string | null>(null);
   const chatStore = useRef<ChatListHandle | null>(null);
-  const workspaceScheduler = useRef<SurfaceRefreshScheduler<WorkspaceListView | null> | null>(null);
+  const readWorkspaceRef = useRef<(() => Promise<void>) | null>(null);
   const deckFocusedRef = useRef(true);
   const deckVisible = useCallback(
     () => deckFocusedRef.current && AppState.currentState === 'active',
@@ -345,14 +343,12 @@ export default function BuzzChannels() {
   }, [isDesktop, requestedNewDirectMessage, viewerIsAgent]);
 
   const refreshNow = useCallback(() => {
-    workspaceScheduler.current?.force();
-    if (activeCommunityId && routerFamilyMode('room-list') === 'router')
-      retryRouterLane({ family: 'room-list', workspaceId: activeCommunityId });
-    else chatStore.current?.force();
+    void readWorkspaceRef.current?.();
+    chatStore.current?.force();
   }, [activeCommunityId]);
 
   const refreshMissed = useCallback(() => {
-    if (deckMissedRef.current.workspaces) workspaceScheduler.current?.force();
+    if (deckMissedRef.current.workspaces) void readWorkspaceRef.current?.();
     chatStore.current?.catchUp();
     deckMissedRef.current = { workspaces: false };
   }, []);
@@ -420,7 +416,7 @@ export default function BuzzChannels() {
     });
     let unsubscribeWorkspaces: (() => void) | undefined;
     let unsubscribeChats: (() => void) | undefined;
-    let workspaceRefresh: SurfaceRefreshScheduler<WorkspaceListView | null> | undefined;
+    let readWorkspace: (() => Promise<void>) | undefined;
     let releaseChats: (() => void) | undefined;
     void (async () => {
       setError(null);
@@ -465,20 +461,18 @@ export default function BuzzChannels() {
       if (cancelled) return;
       const selectedId = deckWorkspaceId ?? cachedWorkspaces?.workspaces[0]?.id;
       let selectedWorkspaceRemoved = false;
-      let workspaceReadConfirmed = false;
-      let startupTimeoutRetried = false;
 
-      workspaceRefresh = new SurfaceRefreshScheduler({
-        fetch: () => {
+      readWorkspace = async () => {
+        if (cancelled) return;
+        try {
           deckMissedRef.current.workspaces = false;
-          return mobileSurfaceCache.fetch(workspaceCacheAddress, isWorkspaceListView, () =>
+          const value = await mobileSurfaceCache.fetch(workspaceCacheAddress, isWorkspaceListView, () =>
             http.workspaces(),
           );
-        },
-        apply: (value) => {
+          if (cancelled) return;
+
           // Null: an eviction overtook the read; there is nothing to paint.
           if (!value) return;
-          workspaceReadConfirmed = true;
           setConfirmedWorkspaceCount(value.workspaces.length);
           if (value.deletedNotices?.length) {
             setDeletedWorkspaceNotice('This workspace was deleted by its owner');
@@ -502,21 +496,13 @@ export default function BuzzChannels() {
               } as never);
             }
           }
-        },
-        onError: (reason) => {
-          // A cold post-auth read can time out on the connection used during
-          // the browser handoff. The transport moves off that connection;
-          // give this initial discovery one bounded recovery read before
-          // asking the person to retry. Never retry refusals or later reads.
-          if (!workspaceReadConfirmed && !startupTimeoutRetried && isRoomViewTimeoutError(reason)) {
-            startupTimeoutRetried = true;
-            workspaceRefresh?.force();
-            return;
+        } catch (reason) {
+          if (!cancelled) {
+            setError(appErrorCopy(reason));
           }
-          setError(appErrorCopy(reason));
-        },
-      });
-      workspaceScheduler.current = workspaceRefresh;
+        }
+      };
+      readWorkspaceRef.current = readWorkspace;
 
       // The app-level Room list owns its live watch, covering reads and disk
       // copy; the deck paints it and reports whether it is on view.
@@ -545,7 +531,7 @@ export default function BuzzChannels() {
                   reason instanceof RoomViewHttpError &&
                   (reason.status === 403 || reason.status === 404)
                 )
-                  workspaceRefresh?.force();
+                  void readWorkspace?.();
               },
             },
           )
@@ -562,8 +548,7 @@ export default function BuzzChannels() {
         // Live list reconciliation must yield to a Room or push navigation.
         // Its committed transcript rows are already in the scoped cache.
         unsubscribeChats = chats.subscribe(() => {
-          if (routerFamilyMode('room-list') === 'router') paint();
-          else startTransition(paint);
+          startTransition(paint);
         });
       }
       const relay = await relayPromise;
@@ -581,7 +566,7 @@ export default function BuzzChannels() {
               !invalidatesWorkspaceList(event)
             )
               return;
-            if (deckVisible()) workspaceRefresh?.signal();
+            if (deckVisible()) void readWorkspace?.();
             else deckMissedRef.current.workspaces = true;
           },
         )
@@ -589,7 +574,8 @@ export default function BuzzChannels() {
           if (cancelled) stop();
           else unsubscribeWorkspaces = stop;
         });
-      await workspaceRefresh.startAfter(workspaceListenReady);
+      await workspaceListenReady;
+      await readWorkspace();
     })().catch((reason) => {
       if (!cancelled) setError(appErrorCopy(reason));
     });
@@ -598,9 +584,8 @@ export default function BuzzChannels() {
       activation.remove();
       unsubscribeWorkspaces?.();
       unsubscribeChats?.();
-      workspaceRefresh?.dispose();
       releaseChats?.();
-      workspaceScheduler.current = null;
+      readWorkspaceRef.current = null;
       chatStore.current = null;
     };
   }, [deckVisible, deckWorkspaceId, refreshMissed, retryGeneration]);
@@ -953,42 +938,15 @@ export default function BuzzChannels() {
   );
 
   if (landing.kind === 'error') {
-    if (error === connectionErrorTitle) {
-      return (
-        <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]} testID="room-deck-unavailable">
-          <InlineRow style={styles.header}>
-            {!isDesktop && (
-              <CommunitySwitcherTrigger community={activeCommunity} expanded={false} />
-            )}
-          </InlineRow>
-          <View style={styles.failureInset}>
-            <IndexRow
-              inset="flush"
-              title="Beeline couldn’t connect"
-              description="Your Rooms can’t load right now. There are no saved messages on this device yet."
-              action="Reconnect"
-              onPress={() => {
-                reconnectNow();
-                setError(null);
-                setRetryGeneration((value) => value + 1);
-              }}
-              testID="room-deck-reconnect"
-            />
-          </View>
-        </View>
-      );
-    }
     return (
-      <View style={[styles.center, { paddingTop: insets.top }]}>
-        <IndexRow
-          title={error!}
-          description={connectionErrorDescription}
-          action="Retry"
-          onPress={() => {
-            setError(null);
-            setRetryGeneration((value) => value + 1);
-          }}
-        />
+      <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]} testID="room-deck-unavailable">
+        <InlineRow style={styles.header}>
+          {!isDesktop && <CommunitySwitcherTrigger community={activeCommunity} expanded={false} />}
+        </InlineRow>
+        <View style={styles.failureInset}>
+          <IndexRow inset="flush" title={connectionErrorTitle} description={connectionErrorDescription} testID="room-deck-error-retry" action="Retry"
+            onPress={() => { reconnectNow(); setError(null); setRetryGeneration(value => value + 1); }} />
+        </View>
       </View>
     );
   }

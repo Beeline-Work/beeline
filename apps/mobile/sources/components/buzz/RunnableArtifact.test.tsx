@@ -1,4 +1,5 @@
 import { IndexRow } from './IndexRow';
+vi.mock('@/sync/transport/live-connection',()=>({sharedLiveConnection:()=>({subscribeConnected:()=>()=>{},commandState:()=>({generation:1})})}));
 vi.mock('@/auth/signin-funnel', () => ({ funnelOnboarding: vi.fn(async () => undefined) }));
 vi.mock('./Button', () => ({ Button: 'Button' }));
 import React from 'react';
@@ -27,7 +28,7 @@ vi.mock('react-native-unistyles', () => ({
       fn({ buzz: { roomList: { edge: 20 }, space: { md: 16 }, type: { body: {} }, textSecondary: 'text' } }),
   },
 }));
-vi.mock('@/buzz/router-owner', () => ({ routerOwnerArtifactAction: state.admit }));
+
 vi.mock('@/buzz/media-cache-connection', () => ({ mediaRecoveryRevision: () => 0, subscribeMediaRecovery: () => () => {}, retainMediaObjectDisplay: () => () => {}, mediaMetadataAvailable: () => true, subscribeMediaCacheBoundary: (listener: (event: unknown) => void) => { state.authorityListeners.add(listener); return () => { state.authorityListeners.delete(listener); }; } }));
 vi.mock('@/buzz/artifact-link', () => ({
   runnableArtifactUrl: async () => {
@@ -102,14 +103,6 @@ describe('runnable viewer boundary', () => {
     await act(async () => props.onRenderProcessGone());
     expect(tree.root.findAllByType('WebView')).toHaveLength(0);
     expect(tree.root.findByType(IndexRow).props.description).toContain('Stopped.');
-    await act(async () => tree.unmount());
-  });
-  it('a committed object removal tears down the running frame without minting or reloading', async () => {
-    state.os = 'web'; state.requests = 0; let tree: any;
-    await act(async () => { tree = create(<RunnableArtifact attachment={attachment} />); });
-    expect(tree.root.findAllByType('iframe')).toHaveLength(1);
-    await act(async () => { for (const listener of state.authorityListeners) listener({ kind: 'revoke', authorityScope: 'object:11111111-1111-4111-8111-111111111111', epoch: '1', objectIds: ['11111111-1111-4111-8111-111111111111'] }); });
-    expect(tree.root.findAllByType('iframe')).toHaveLength(0); expect(state.requests).toBe(1);
     await act(async () => tree.unmount());
   });
   it('keeps a running game mounted when trusted parent controls rerender', async () => {

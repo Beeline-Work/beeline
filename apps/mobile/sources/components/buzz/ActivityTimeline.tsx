@@ -1,8 +1,8 @@
 import { displayRoomMessage } from '@/buzz/room-view-presentation';
 import { readRoomViewMessage, type PhoneOperationMap } from '@beeline/api-contract/phone';
-import { readRouterToolPage } from '@/buzz/router-owner';
+import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import React, { useEffect, useMemo, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { AgentActivityItem } from '@/sync/transport/rig-transport';
 import { buildTurnActivity } from '@/buzz/activity-timeline';
@@ -132,7 +132,7 @@ function useToolOutput() {
     setError(null);
     if (!next.toolOutput) { setLine(next); return; }
     setLine({ ...next, detail: 'Loading…' });
-    const request = readRouterToolPage(next.toolOutput);
+    const request = monolithPhoneOperation('readRoomTools', next.toolOutput);
     void request.then(page => {
       if (generation !== current.current) return;
       const full = toolPageLines(page).find(item => item.id === next.id);
@@ -173,7 +173,7 @@ function ToolRunGroupRow({
   const load=()=>{
     const group=remote[remoteIndex];if(!group||pending.current)return;
     pending.current=true;setLoading(true);setFailed(false);
-    const request=readRouterToolPage({roomId:group.roomId,anchor:group.anchor,...(cursor?{before:cursor}:{})});
+    const request=monolithPhoneOperation('readRoomTools', {roomId:group.roomId,anchor:group.anchor,...(cursor?{before:cursor}:{})});
     void request.then(page=>{
       const lines=toolPageLines(page);setLoaded(previous=>[...previous,...lines]);
       setCursor(page.next);if(!page.next)setRemoteIndex(index=>index+1);

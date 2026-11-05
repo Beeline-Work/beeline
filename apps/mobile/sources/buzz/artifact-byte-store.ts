@@ -3,19 +3,14 @@ import { cacheDirectory, deleteAsync, EncodingType, getInfoAsync, makeDirectoryA
   moveAsync, readAsStringAsync, readDirectoryAsync, writeAsStringAsync } from 'expo-file-system/legacy';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
-import type { RouterAuthorityCertificate } from '@beeline/api-contract/router-protocol';
 import type { ImmutableByteStore } from './immutable-byte-cache';
 import { base64ToBytes, bytesToBase64 } from './byte-base64';
 import { requireByteWork as requireVisible, runByteChunks } from './artifact-byte-work';
 const DISK_LIMIT = 126 * 1024 * 1024; // Reserve index/atomic-write overhead below the 128 MiB ceiling.
 const OBJECT_LIMIT = 25 * 1024 * 1024;
-type Meta = { name: string; size: number; used: number; authority?: RouterAuthorityCertificate };
-type Details = { format: string; authority?: RouterAuthorityCertificate };
-const removedBy = (authority: RouterAuthorityCertificate | undefined, scope: string, epoch: string) =>
-  !authority || !Array.isArray(authority.scopes) || authority.scopes.some(domain => !domain ||
-    typeof domain.authorityScope !== 'string' || !/^\d+$/.test(domain.epoch) ||
-    domain.authorityScope === scope && BigInt(domain.epoch) <= BigInt(epoch));
-export type ArtifactByteStore = ImmutableByteStore & { localUri(key: string): Promise<string | null>; revoke(scope: string, epoch: string): Promise<readonly string[]> };
+type Meta = { name: string; size: number; used: number };
+type Details = { format: string };
+export type ArtifactByteStore = ImmutableByteStore & { localUri(key: string): Promise<string | null> };
 
 /** The raw byte API already ships in runtime40. Older native cohorts retain
  * their local legacy codec; absence never selects a different transport.
@@ -188,7 +183,7 @@ class NativeArtifactByteStore implements ArtifactByteStore {
         throw new Error('Incomplete cached object.');
       await moveAsync({ from: temp, to: destination }); moved = true;
       requireVisible(signal);
-      this.index.set(key, { name, size: bytes.byteLength, used: ++this.sequence, authority: this.details(key).authority });
+      this.index.set(key, { name, size: bytes.byteLength, used: ++this.sequence });
       await this.saveIndex();
     } catch (error) {
       this.index.delete(key); this.initialized = false;
@@ -209,20 +204,14 @@ class NativeArtifactByteStore implements ArtifactByteStore {
     this.index.clear(); this.initialized = false;
     if (this.directory) await deleteAsync(this.directory, { idempotent: true });
   }); }
-  revoke(scope: string, epoch: string): Promise<readonly string[]> { return this.run(async () => {
-    await this.initialize(); const removed: string[] = [];
-    for (const [key, entry] of this.index) if (removedBy(entry.authority, scope, epoch)) {
-      removed.push(key); this.index.delete(key); await deleteAsync(`${this.directory}${entry.name}`, { idempotent: true });
-    }
-    await this.saveIndex(); return removed;
-  }); }
+
   localUri(key: string): Promise<string | null> { return this.run(async () => {
     await this.initialize(); const value = this.index.get(key); if (!value) return null;
     const uri = `${this.directory}${value.name}`; return (await getInfoAsync(uri)).exists ? uri : null;
   }); }
 }
 
-type WebRow = { key: string; bytes: ArrayBuffer; size: number; used: number; authority?: RouterAuthorityCertificate };
+type WebRow = { key: string; bytes: ArrayBuffer; size: number; used: number };
 class WebArtifactByteStore implements ArtifactByteStore {
   constructor(private readonly details: (key: string) => Details) {}
   private database?: Promise<IDBDatabase>;
@@ -244,7 +233,7 @@ class WebArtifactByteStore implements ArtifactByteStore {
       request.onsuccess = () => {
         const row = request.result as WebRow | undefined;
         if (row && row.size <= OBJECT_LIMIT && row.bytes.byteLength === row.size) {
-          bytes = new Uint8Array(row.bytes); transaction.objectStore('metadata').put({ key, size: row.size, used: Date.now(), authority: row.authority });
+          bytes = new Uint8Array(row.bytes); transaction.objectStore('metadata').put({ key, size: row.size, used: Date.now() });
         }
       };
       transaction.oncomplete = () => resolve(bytes); transaction.onerror = () => reject(transaction.error);
@@ -257,8 +246,8 @@ class WebArtifactByteStore implements ArtifactByteStore {
       const transaction = db.transaction(['objects', 'metadata'], 'readwrite');
       const metadata = transaction.objectStore('metadata');
       const used = Date.now();
-      transaction.objectStore('objects').put({ key, bytes: bytes.slice().buffer, size: bytes.byteLength, used, authority: this.details(key).authority });
-      metadata.put({ key, size: bytes.byteLength, used, authority: this.details(key).authority });
+      transaction.objectStore('objects').put({ key, bytes: bytes.slice().buffer, size: bytes.byteLength, used });
+      metadata.put({ key, size: bytes.byteLength, used });
       const request = metadata.getAll();
       request.onsuccess = () => {
         const rows = request.result as Omit<WebRow, 'bytes'>[];
@@ -287,16 +276,7 @@ class WebArtifactByteStore implements ArtifactByteStore {
       transaction.oncomplete = () => resolve(); transaction.onerror = () => reject(transaction.error);
     });
   }
-  async revoke(scope: string, epoch: string): Promise<readonly string[]> {
-    const db = await this.open(); return new Promise((resolve, reject) => {
-      const transaction = db.transaction(['objects', 'metadata'], 'readwrite');
-      const metadata = transaction.objectStore('metadata'); const request = metadata.getAll(); const removed: string[] = [];
-      request.onsuccess = () => { for (const row of request.result as WebRow[]) if (removedBy(row.authority, scope, epoch)) {
-        removed.push(row.key); metadata.delete(row.key); transaction.objectStore('objects').delete(row.key);
-      } };
-      transaction.oncomplete = () => resolve(removed); transaction.onerror = () => reject(transaction.error);
-    });
-  }
+
   async localUri(): Promise<null> { return null; }
 }
 export function createArtifactByteStore(details: (key: string) => Details = () => ({ format: 'bin' })): ArtifactByteStore {

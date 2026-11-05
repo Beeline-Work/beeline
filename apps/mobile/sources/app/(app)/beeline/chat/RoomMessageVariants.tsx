@@ -6,7 +6,7 @@ import { funnelOnboarding } from '@/auth/signin-funnel';
 import { LedgerUntaggedHint } from '@/components/buzz/Ledger';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { Image, Platform, Pressable, Text, View } from 'react-native';
+import { Platform, Pressable, Text, View } from 'react-native';
 export { GitHubEventCard, DaemonFactCard } from '@/components/buzz/LifecycleCard';
 import { NotificationLifecycleCard } from '@/components/buzz/PrLifecycleCard';
 export { NotificationLifecycleCard };
@@ -14,7 +14,7 @@ import TranscriptSwipeable, { type TranscriptSwipeableMethods as SwipeableMethod
 import { DesktopMessageAction } from '@/components/buzz/DesktopMessageAction';
 import { ButtonRowFrame } from '@/components/buzz/ButtonRow';
 import { DesktopWorkspacePortal } from '@/components/buzz/DesktopWorkspacePortal';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 import {
   MESSAGE_REACTION_EMOJIS,
   type AttachmentReference,
@@ -56,14 +56,13 @@ import { isLedgerDayOpener } from '@/buzz/message-dates';
 import { useTranscriptStamp } from '@/buzz/use-transcript-stamp';
 import { attachmentOpenUrl, formatAttachmentSize } from '@/buzz/chat-attachment';
 import { artifactFormat, mediaIdFromUrl } from '@/buzz/artifact';
-import { routerOwnerArtifactAction } from '@/buzz/router-owner';
 import { ArtifactImage } from '@/components/buzz/ArtifactMedia';
 import { TranscriptReference } from '@/components/buzz/TranscriptReference';
 import { openComputerSessionViewer } from '@/components/buzz/ComputerSession';
 import { ArtifactCard, openArtifactViewer } from '@/components/buzz/ArtifactCard';
 import { ArtifactViewerScreen } from '@/components/buzz/ArtifactViewer';
 import { showPictureActions } from '@/buzz/picture-actions';
-import { ROOM_LABEL, CORNER_LABEL } from '@/buzz/vocabulary';
+import { CORNER_LABEL } from '@/buzz/vocabulary';
 import { CornerGlyph } from '@/components/buzz/CornerGlyph';
 import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { ContentTarget } from '@/components/buzz/IndexRow';
@@ -700,7 +699,6 @@ export const TargetBranchProposalCard = React.memo(function TargetBranchProposal
   );
 });
 
-
 /**
  * Attachment bytes are kept for 24 hours (`apps/server/src/media-ttl.ts`); the
  * message that carried them is kept forever. Past the window the server marks
@@ -725,7 +723,6 @@ function AttachmentCard({
     // desktop included; the work pane keeps only its documents.
     if (attachment.mimeType.startsWith('image/')) {
       const objectId = mediaIdFromUrl(attachment.url);
-      if (objectId) routerOwnerArtifactAction('OpenArtifact', objectId);
       Modal.show({
         component: ArtifactViewerScreen,
         props: { attachment },

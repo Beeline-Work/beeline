@@ -1,4 +1,3 @@
-import { routerOwnerListPanel } from '@/buzz/router-owner';
 import { InlineRow } from '@/components/buzz/IndexRow';
 import { subscribeDesktopArtifact, type DesktopArtifactSelection } from '@/buzz/desktop-artifact-pane';
 import { DesktopArtifactPane } from '@/components/buzz/DesktopArtifactPane';
@@ -82,7 +81,6 @@ export const SidebarNavigator = React.memo(() => {
   }, [document]);
   React.useEffect(() => setDocument(null), [pathname]);
   const showSidebar = showSessionChrome && !zenMode && desktopLayout.showRoomList;
-  React.useLayoutEffect(() => { routerOwnerListPanel(showSidebar); }, [showSidebar]);
   const { width: windowWidth } = useWindowDimensions();
 
   React.useEffect(() => {

@@ -41,8 +41,9 @@ it('downloads a roughly 500 KB agent image without a thumbnail for the phone art
     expect(response.status).toBe(200);
     expect(Buffer.from(await response.arrayBuffer()).equals(bytes)).toBe(true);
     host = await phoneArtifactHost(VIEWER, origin);
-    host.phone.installMediaCacheConnection({ origin, principal: VIEWER, generation: 1, mediaMetadataV1: true,
-      executeMetadata: (objectId: string) => readMediaMetadata(db, objectId, VIEWER) });
+    host.phone.host.operation = (name: string, args: { objectId: string }) => {
+      expect(name).toBe('readMediaMetadata'); return readMediaMetadata(db, args.objectId, VIEWER);
+    };
     const image = await host.phone.artifactImageSource({ ...attachment, name: 'canyon.png', kind: 'artifact' }, { preview: true });
     expect(image).toEqual({ uri: 'file:///synthetic/image.png' });
     expect(await host.phone.artifactLocalUri({ ...attachment, name: 'canyon.png', kind: 'artifact' })).toBe(image.uri);

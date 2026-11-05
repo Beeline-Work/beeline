@@ -505,7 +505,7 @@
   {
     "layoutHash": "263f7a804d8dc71d66d6770d052c585303593256ada6f0804b4e102ace572710",
     "file": "components/buzz/RoomReviewerActions.tsx",
-    "line": 35,
+    "line": 34,
     "tag": "Text",
     "source": "<Text style={styles.errorText}>",
     "ancestors": [

@@ -6,9 +6,7 @@
 #
 # Triggers:
 #   pull_request  — the workflow always starts so a skipped required check
-#                   still reports. The three-runner matrix runs only when
-#                   desktop code, packages/, or an unmapped path changes.
-#                   A sources/-only mobile PR does not build the shell.
+#                   still reports. Only the light icon/helper checks run.
 #                   `unmapped` uses `predicate-quantifier: every` in its own
 #                   step. The default `some` treats `**` as a match for every
 #                   file, so the matrix was starting on module-only diffs.
@@ -20,8 +18,8 @@
 #
 # The variant selects which config the CLI merges over tauri.conf.json:
 # production is the release identity, preview installs beside it with console
-# logging kept, dev is the local-identity build. Pull requests build preview —
-# an artifact from a PR should never claim to be the release app.
+# logging kept, dev is the local-identity build. Installers build only during
+# release or an explicit tester dispatch, never during pull-request CI.
 #
 # Production macOS builds are signed, notarized once as the disk image (which
 # covers the app inside it), stapled, and strictly verified when the complete
@@ -115,7 +113,7 @@ jobs:
   changes:
     name: Detect desktop changes
     if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, beeline-ci, beeline-ci-control]
     timeout-minutes: 5
     outputs:
       desktop: ${{ steps.decide.outputs.desktop }}
@@ -186,7 +184,7 @@ jobs:
         github.event_name != 'pull_request' ||
         needs.changes.outputs.desktop == 'true'
       )
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, beeline-ci, beeline-ci-control]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
@@ -204,7 +202,7 @@ jobs:
   build:
     name: DESKTOP BUILD (${{ matrix.label }})
     needs: [changes, icons]
-    if: ${{ !cancelled() && (needs.icons.result == 'success' || inputs.release_sha != '') }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'merge_group' && (needs.icons.result == 'success' || inputs.release_sha != '') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:

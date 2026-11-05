@@ -2063,6 +2063,43 @@ test('ARTIFACT-NOT-FOUND: a rerun plans from the published record alone and read
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('desktop installers run for release and explicit dispatch, never a pull request', () => {
+  const { build } = parse(readFileSync('.github/workflows/desktop.yml', 'utf8')).jobs;
+  for (const [event, releaseSha, icons, expected] of [
+    ['pull_request', '', 'success', false], ['merge_group', '', 'success', false],
+    ['workflow_dispatch', '', 'success', true], ['workflow_dispatch', NEW_SHA, 'skipped', true],
+    ['workflow_dispatch', '', 'failure', false],
+  ]) {
+    const condition = build.if.replace(/^\$\{\{\s*|\s*\}\}$/g, '')
+      .replaceAll('github.event_name', JSON.stringify(event));
+    assert.equal(evaluateWorkflowCondition(condition, {
+      inputs: { release_sha: releaseSha }, needs: { icons: { result: icons } }, steps: {},
+    }), expected, `${event}/${releaseSha}/${icons}`);
+  }
+});
+
+test('Intel Mac acceptance verifies the candidate archive before helper promotion', () => {
+  const { helper_macos: mac, helper } = parse(readFileSync('.github/workflows/unified-release.yml', 'utf8')).jobs;
+  const install = mac.steps.find(step => step.name === 'Install the candidate Intel Mac archive for acceptance');
+  const acceptance = mac.steps.filter(step => step.name?.startsWith('Prove '));
+  assert.equal(acceptance.length, 4);
+  assert.equal(install.run, 'node scripts/verify-beeline-install.mjs --platform darwin-x64');
+  assert.equal(acceptance.find(step => step.name.startsWith('Prove pairing')).env.BEELINE_ACCEPTANCE_INSTALL_ROOT,
+    install.env.BEELINE_INSTALL_VERIFY_ROOT);
+  for (const step of [install, ...acceptance]) {
+    assert.notEqual(step['continue-on-error'], true);
+    for (const [platform, shipped, expected] of [['darwin-x64', 'false', true], ['darwin-arm64', 'false', false], ['darwin-x64', 'true', false]]) {
+      assert.equal(evaluateWorkflowCondition(step.if.replaceAll('matrix.platform', JSON.stringify(platform)), {
+        inputs: {}, needs: {}, steps: { shipped: { outputs: { shipped } } },
+      }), expected);
+    }
+  }
+  assert.ok(acceptance.every(step => mac.steps.indexOf(step) > mac.steps.indexOf(install)));
+  assert.equal(evaluateWorkflowCondition(helper.if, { inputs: {}, steps: {}, needs: {
+    initialize: { outputs: { run_helper: 'true' } }, helper_linux: { result: 'success' }, helper_macos: { result: 'failure' },
+  } }), false);
+});
+
 test('R-DESKTOP-EVIDENCE: notification diagnostics are optional while desktop build and installer uploads remain required', () => {
   const workflow = parse(readFileSync('.github/workflows/desktop.yml', 'utf8'));
   const steps = workflow.jobs.build.steps;

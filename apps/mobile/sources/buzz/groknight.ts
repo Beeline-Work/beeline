@@ -161,11 +161,9 @@ export const typeRoles = {
   /** Literal machine output: commands, paths, hashes, code, tool rows, their timestamps. */
   machine: { fontFamily: mono, fontSize: 13, lineHeight: calmLineHeight(13), letterSpacing: 0 },
 } as const satisfies Record<string, TypeRole>;
-export type TypeRoleName = keyof typeof typeRoles;
 
 /** The one spacing scale. Nothing is nudged by 3. */
 export const space = { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, xxl: 48 } as const;
-export type SpaceStep = keyof typeof space;
 /** Rows are 64 tall, sections sit 24 apart, screens start 24 below the header. */
 export const layout = { row: 64, sectionGap: 24, screenTop: 24 } as const;
 
@@ -426,4 +424,3 @@ export type BeelineThemeTokens = (typeof beelineThemes)[BeelineThemeName];
 
 /** Backward-compatible name for the new default token set. */
 export const groknight = beelineThemes.obsidian;
-export type GrokNightToken = keyof typeof groknight;

@@ -864,10 +864,6 @@ jobs:
       - uses: ./.github/actions/ci-workspace
         with:
           mobile: true
-      - name: Prove server pools disable JIT on isolated PostgreSQL
-        run: npm test -w @beeline/server -- --run src/database-jit.test.ts --maxWorkers=1 --minWorkers=1
-        env:
-          BEELINE_JIT_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
       - name: Prove incident deadlock recovery on isolated PostgreSQL
         run: npm test -w @beeline/server -- --run src/incident-deadlocks.test.ts --maxWorkers=1 --minWorkers=1
         env:
@@ -886,7 +882,7 @@ jobs:
           BEELINE_COMMAND_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
         run: |
           npm test -w @beeline/server -- src/network-router-runtime.postgres.test.ts --maxWorkers=2 --minWorkers=1
-          npm test -w @beeline/server -- src/database-one-attempt.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npx vitest run tests/seams/server-db.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/mcp-webhook-deadline.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/agent-schedule-deadline.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/pending-attachment-deadline.postgres.test.ts --maxWorkers=2 --minWorkers=1

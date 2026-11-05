@@ -4,7 +4,7 @@ import {
   INSTITUTIONAL_CONTEXT_HEADER,
   tombstoneInstitutionalMemoryForMessage,
 } from './institutional-memory-shadow.js';
-import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { claimAgentCommand, createAgentCommand } from './agent-command.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';

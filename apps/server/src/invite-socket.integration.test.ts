@@ -11,7 +11,7 @@ import { PhoneService } from './phone-service.js';
 import { REVIEW_IDENTITY_ID } from './review-access.js';
 import { createBeelineServer } from './server.js';
 import { createStarterInvite } from './starter-invite.js';
-import { migratedDatabase } from "../../../tests/helpers/server.js";
+import { migratedDatabase } from './test-support.js';
 
 it.each(['ordinary', 'review'] as const)('joins a Room-targeted invite through the live socket as an %s person', async kind => {
   const db = await migratedDatabase();

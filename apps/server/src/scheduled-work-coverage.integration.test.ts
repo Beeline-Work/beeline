@@ -1,6 +1,6 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 import type {SqlDatabase} from './database.js';
-import {migratedDatabase,type PgliteDatabase} from "../../../tests/helpers/server.js";
+import {migratedDatabase,type PgliteDatabase} from './test-support.js';
 import {PhoneService} from './phone-service.js';
 import {LiveHub} from './live.js';
 import {routerSocketProtocol} from './router-socket.js';

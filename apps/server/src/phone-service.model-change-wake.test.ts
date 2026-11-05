@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { QueryResultRow } from 'pg';
 import { type QueryResult, type SqlDatabase } from './database.js';
-import { migratedDatabase } from "../../../tests/helpers/server.js";
+import { migratedDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
 

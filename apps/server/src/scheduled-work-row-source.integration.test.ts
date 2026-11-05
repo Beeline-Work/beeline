@@ -1,6 +1,6 @@
 import {readFile} from 'node:fs/promises';
 import {afterEach,beforeEach,describe,expect,it} from 'vitest';
-import {migratedDatabase,type PgliteDatabase} from "../../../tests/helpers/server.js";
+import {migratedDatabase,type PgliteDatabase} from './test-support.js';
 import {postgresLiveSchema} from './postgres-live.js';
 import {ROOM_SCHEDULES_CAPTURE_SCHEMA} from './room-schedules-capture.js';
 import {routerSourcePlan} from './router-source-plan.js';

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { migrate } from './database.js';
-import { PgliteDatabase, type SqlDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase, type SqlDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { ObjectService } from './object-service.js';
 import type { ObjectStorage } from './object-storage.js';

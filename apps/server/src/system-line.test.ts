@@ -12,7 +12,7 @@ import {
 import { PushDeliveryLoop } from './background.js';
 import { backfillSystemEventKinds, type SqlDatabase } from './database.js';
 import { PhoneService } from './phone-service.js';
-import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { composeSystemLine, systemLine, ensureSystemDirectMessageRoom, type SystemLineInput } from './system-line.js';
 
 async function fixtureSystemNotice(database: SqlDatabase, input: Omit<SystemLineInput, 'roomId'> & { workspaceId: string }) {

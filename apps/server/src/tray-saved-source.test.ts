@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { migratedDatabase, PgliteDatabase } from "../../../tests/helpers/server.js";
+import { migratedDatabase, PgliteDatabase } from './test-support.js';
 import type { SqlDatabase } from './database.js';
 import { TRAY_SAVED_WINDOW_SCHEMA, readTraySavedWindow } from './tray-saved-window.js';
 import { TRAY_SAVED_SOURCE_SCHEMA, readTraySavedSourceCause } from './tray-saved-source.js';

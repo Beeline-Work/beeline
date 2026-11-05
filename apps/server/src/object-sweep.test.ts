@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
-import { PgliteDatabase, type SqlDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase, type SqlDatabase } from './test-support.js';
 import { MediaExpiryLoop } from './background.js';
 import { ObjectService } from './object-service.js';
 import type { ObjectStorage } from './object-storage.js';

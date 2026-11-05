@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { migratedDatabase, type PgliteDatabase } from "../../../tests/helpers/server.js";
+import { migratedDatabase, type PgliteDatabase } from './test-support.js';
 import { ObjectService, isArtifactMimeType } from './object-service.js';
 import type { ObjectStorage } from './object-storage.js';
 import { ARTIFACT_TTL_HOURS, MEDIA_TTL_HOURS } from './media-ttl.js';

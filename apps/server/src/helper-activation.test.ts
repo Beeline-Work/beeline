@@ -1,7 +1,7 @@
 import { afterAll,beforeAll,describe,expect,it,vi } from 'vitest';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
-import { migratedDatabase,type PgliteDatabase } from "../../../tests/helpers/server.js";
+import { migratedDatabase,type PgliteDatabase } from './test-support.js';
 import { HELPER_ACTIVATION_SCHEMA } from './helper-activation-schema.js';
 import { captureCommandActivation,fenceCommandActivationEnqueue } from './helper-activation.js';
 import type { CommandActivationInput } from '@beeline/api-contract/helper-activation';

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll,beforeAll,describe,expect,it,vi } from 'vitest';
 import type { SqlDatabase } from './database.js';
-import { migratedDatabase,type PgliteDatabase } from "../../../tests/helpers/server.js";
+import { migratedDatabase,type PgliteDatabase } from './test-support.js';
 import { BackgroundWork } from './background-work.js';
 import { BackgroundJobRunner } from './background.js';
 import { DaemonService } from './daemon-service.js';

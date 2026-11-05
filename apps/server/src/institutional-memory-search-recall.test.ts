@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it, beforeEach, vi } from 'vitest';
 import { INSTITUTIONAL_MEMORY_EMBEDDING_DIMENSIONS } from '@beeline/api-contract/daemon';
-import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { claimAgentCommand, createAgentCommand } from './agent-command.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';

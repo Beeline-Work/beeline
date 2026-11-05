@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createAgentCommand, claimAgentCommand } from './agent-command.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
-import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
 const HUMAN = 'a'.repeat(64);
 const AGENT = 'b'.repeat(64);

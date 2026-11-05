@@ -6,7 +6,7 @@ import type { PhoneService } from './phone-service.js';
 import type { DaemonService } from './daemon-service.js';
 import type { ReleaseNotifier } from './release-notify.js';
 import { LiveHub } from './live.js';
-import { PgliteDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase } from './test-support.js';
 import { MOBILE_MINIMUM_SCHEMA } from './mobile-minimum.js';
 
 const servers: ReturnType<typeof createBeelineServer>[] = [];

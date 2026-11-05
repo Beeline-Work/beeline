@@ -1,7 +1,7 @@
 import {afterEach,beforeEach,describe,expect,it} from 'vitest';
 import {countNeedsYouItems,countNeedsYouProjection,readNeedsYouCountSnapshot,needsYouItems} from './needs-you.js';
 import {readRouterCut,readRouterAuthority} from './router-projections.js';
-import {migratedDatabase,type PgliteDatabase} from "../../../tests/helpers/server.js";
+import {migratedDatabase,type PgliteDatabase} from './test-support.js';
 import {PhoneService} from './phone-service.js';
 const VIEWER='a'.repeat(64),PEER='b'.repeat(64),AGENT='c'.repeat(64);
 const WORKSPACE='11111111-1111-4111-8111-111111111111',ROOM='22222222-2222-4222-8222-222222222222';

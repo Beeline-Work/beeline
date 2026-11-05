@@ -15,7 +15,7 @@ import {
   INSTITUTIONAL_HISTORY_SNIPPET_MAX_BYTES,
 } from '@beeline/api-contract/daemon';
 import { searchInstitutionalHistory } from './institutional-history.js';
-import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import type { QueryResult, SqlDatabase } from './database.js';
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000101';

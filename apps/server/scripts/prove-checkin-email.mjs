@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 import sharp from 'sharp';
-import { PgliteDatabase } from "../../../tests/helpers/server.ts";
+import { PgliteDatabase } from '../src/test-support.ts';
 import { migrate } from '../dist/database.js';
 import { TokenAuth } from '../dist/auth.js';
 import { PhoneService } from '../dist/phone-service.js';

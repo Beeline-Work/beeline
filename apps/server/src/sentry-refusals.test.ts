@@ -1,7 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import { Pool } from 'pg';
 import { PostgresDatabase, migrate } from './database.js';
-import { PgliteDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { CommandRefusalError } from './commander.js';

@@ -14,7 +14,7 @@ import {
   SPENDING_OWNER_AUTHORITY_MESSAGE,
   WORKSPACE_ADMIN_AUTHORITY_MESSAGE,
 } from './phone-service.js';
-import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { humanRoomAdmin, humanRoomMember } from './workflow-admin.js';
 
 // Permissions come from three places only: the agent's owner, the Workspace

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import type { AddressInfo } from 'node:net';
 import { migrate } from './database.js';
-import { PgliteDatabase, describedWorkflow, insertCornerFacts } from "../../../tests/helpers/server.js";
+import { PgliteDatabase, describedWorkflow, insertCornerFacts } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { TokenAuth, tokenHash } from './auth.js';

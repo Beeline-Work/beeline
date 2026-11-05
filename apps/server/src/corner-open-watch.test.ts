@@ -1,7 +1,7 @@
 import { flushDueCommanderWakes } from './commander-wakes.js';
 import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
-import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { GitHubOperations } from './github-operations.js';

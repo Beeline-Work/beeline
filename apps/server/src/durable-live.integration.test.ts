@@ -11,7 +11,7 @@ import { DurableLiveReplay, LIVE_REPLAY_LIMIT } from './durable-live.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import { createBeelineServer } from './server.js';
-import { PgliteDatabase, insertCornerFacts } from "../../../tests/helpers/server.js";
+import { PgliteDatabase, insertCornerFacts } from './test-support.js';
 import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
 
 const VIEWER = 'a'.repeat(64);

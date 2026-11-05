@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createHash, randomBytes } from 'node:crypto';
 import { ROOMS_MCP_SCHEMA } from './rooms-mcp-schema.js';
 import { migrate } from './database.js';
-import { PgliteDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';

@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PgliteDatabase } from "../../../tests/helpers/server.js";
-import {installBackgroundOwnerTestProof,backgroundOwnerTestLock} from "../../../tests/helpers/server.js";
+import { PgliteDatabase } from './test-support.js';
+import {installBackgroundOwnerTestProof,backgroundOwnerTestLock} from './test-fixtures/background-owner-test-support.js';
 import { BackgroundOwnership, BACKGROUND_OWNERSHIP_SCHEMA, BackgroundEffectConflict,
   BackgroundOwnershipLost, BackgroundEnqueueContractError, type BackgroundEpoch,
   type BackgroundAttempt, type BackgroundEffectRequest } from './background-ownership.js';

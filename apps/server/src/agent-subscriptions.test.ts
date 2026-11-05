@@ -3,7 +3,7 @@ import { randomUUID, createHmac } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { setRoomEventSubscriptions } from './agent-subscriptions.js';
-import { migratedDatabase } from "../../../tests/helpers/server.js";
+import { migratedDatabase } from './test-support.js';
 import {
   createAgentSubscription, deleteAgentSubscription, fireRepositorySubscriptions,
   deleteRoomSubscription, listAgentSubscriptions, listRoomSubscriptions, subscriptionPromptBody,

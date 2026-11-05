@@ -1,7 +1,7 @@
 import { createAgentCommand, claimAgentCommand } from './agent-command.js';
 import { describe, expect, it, vi } from 'vitest';
 import { PushDeliveryLoop } from './background.js';
-import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';

@@ -34,7 +34,7 @@ import { AuraSpeech, OpenRouterVoiceBrain, VoiceQuotaError } from './voice-provi
 import { VoiceService as RealVoiceService } from './voice-service.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { migrate } from './database.js';
-import { PgliteDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase } from './test-support.js';
 import { LiveHub } from './live.js';
 import { routeHumanMessage, claimAgentCommand } from './agent-command.js';
 import { DaemonService } from './daemon-service.js';

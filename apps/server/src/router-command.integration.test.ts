@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PgliteDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase } from './test-support.js';
 import { RouterCommandLedger, ROUTER_COMMAND_SCHEMA, CommandDigestConflict, commandArgumentDigest } from './router-command-ledger.js';
 import { notifyCommandCompletion, recoverCommandCompletions, subscribeCommandCompletion, waitForCommittedChange } from './command-completion.js';
 import { CommandScopedDatabase } from './command-scoped-database.js';

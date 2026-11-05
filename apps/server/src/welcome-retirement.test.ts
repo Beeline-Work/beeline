@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_WORKSPACE_ID, WELCOME_ROOM_ID } from '@beeline/api-contract/phone';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { migrate } from './database.js';
-import { PgliteDatabase, migratedDatabase, insertCornerFacts } from "../../../tests/helpers/server.js";
+import { PgliteDatabase, migratedDatabase, insertCornerFacts } from './test-support.js';
 import { TokenAuth } from './auth.js';
 import {
   WELCOME_RETIREMENT_STEP,

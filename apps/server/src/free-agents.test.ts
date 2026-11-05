@@ -37,7 +37,7 @@ import { PhoneService } from './phone-service.js';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import type { GitHubOperations } from './github-operations.js';
 import { ObjectService } from './object-service.js';
-import { PgliteDatabase, MemoryObjectStorage, migratedDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase, MemoryObjectStorage, migratedDatabase } from './test-support.js';
 import { recordSigninFunnelEvent, recordOnboardingEvent } from './signin-funnel.js';
 import { dashboardPeriods } from './operator-dashboard-periods.js';
 import { reportSquireWork } from './squire-machine.js';

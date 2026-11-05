@@ -4,7 +4,7 @@ import { TokenAuth } from './auth.js';
 import type { AddressInfo } from 'node:net';
 import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { NextDayCheckin, checkinDueAt, renderCheckinEmail, type CheckinEmail } from './next-day-checkin.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';

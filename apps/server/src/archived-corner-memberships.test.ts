@@ -9,7 +9,7 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import { resolveCurrentMemberMentions } from './message-mentions.js';
-import { seedCornerOpening, migratedDatabase, type PgliteDatabase, insertCornerFacts } from "../../../tests/helpers/server.js";
+import { seedCornerOpening, migratedDatabase, type PgliteDatabase, insertCornerFacts } from './test-support.js';
 import type { TokenAuth } from './auth.js';
 import { createBeelineServer } from './server.js';
 

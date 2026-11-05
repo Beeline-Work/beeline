@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SqlDatabase } from './database.js';
-import { PgliteDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase } from './test-support.js';
 import { DURABLE_LIVE_SCHEMA } from './durable-live.js';
 import { splitMigrationStatements } from './migration-steps.js';
 import { readMessageBookmarks } from './tray-projection.js';

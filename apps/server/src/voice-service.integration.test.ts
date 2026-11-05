@@ -5,7 +5,7 @@ import { DaemonService } from './daemon-service.js';
 import { createBeelineServer } from './server.js';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
-import { PgliteDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase } from './test-support.js';
 import { LiveHub } from './live.js';
 import { routeAgentResult, type CommandRow } from './agent-command.js';
 import { readVoiceContext } from './voice-context.js';

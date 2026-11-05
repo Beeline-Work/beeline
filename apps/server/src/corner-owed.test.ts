@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { backfillCornerOwed, type SqlDatabase } from './database.js';
 import { addressedToPersonSql, cornerOwedBackfillSql, cornerOwedSchemaSql } from './corner-owed.js';
 import { PhoneService } from './phone-service.js';
-import { seedCornerOpening, PgliteDatabase, migratedDatabase, insertCornerFacts } from "../../../tests/helpers/server.js";
+import { seedCornerOpening, PgliteDatabase, migratedDatabase, insertCornerFacts } from './test-support.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';

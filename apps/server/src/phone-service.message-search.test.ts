@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { MessageSearchTooBroadError, PhoneService } from './phone-service.js';
 import type { SqlDatabase } from './database.js';
 

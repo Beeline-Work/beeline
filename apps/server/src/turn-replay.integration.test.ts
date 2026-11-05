@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
-import { PgliteDatabase, migratedDatabase, insertCornerFacts } from "../../../tests/helpers/server.js";
+import { PgliteDatabase, migratedDatabase, insertCornerFacts } from './test-support.js';
 const { DaemonService } = await import(process.env.BEELINE_REPLAY_BUILT_PROOF ? '../dist/daemon-service.js' : './daemon-service.js');
 const { PhoneService } = await import(process.env.BEELINE_REPLAY_BUILT_PROOF ? '../dist/phone-service.js' : './phone-service.js');
 import { LiveHub } from './live.js';

@@ -3,7 +3,7 @@ import { Pool } from 'pg';
 import { expect, it } from 'vitest';
 import { migrate, PostgresDatabase, type SqlDatabase } from './database.js';
 import { PhoneService } from './phone-service.js';
-import { PgliteDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase } from './test-support.js';
 
 // Optional production-sized proof uses only a disposable loopback database.
 const postgresUrl = process.env.BEELINE_INVITE_TEST_POSTGRES_URL;

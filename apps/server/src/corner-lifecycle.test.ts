@@ -6,7 +6,7 @@ import type { QueryResultRow } from 'pg';
 import { validateCornerWorkflow } from '@beeline/api-contract/daemon';
 import { migrate, migrateData, type QueryResult, type SqlDatabase } from './database.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
-import { describedWorkflow, PgliteDatabase, migratedDatabase, assignCornerWorker } from "../../../tests/helpers/server.js";
+import { describedWorkflow, PgliteDatabase, migratedDatabase, assignCornerWorker } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { GitHubOperations } from './github-operations.js';

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { expect, it, vi } from 'vitest';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
-import { migratedDatabase } from "../../../tests/helpers/server.js";
+import { migratedDatabase } from './test-support.js';
 import { dispatchPromptReplay, isPromptInput } from './prompt-replay.js';
 import { GitHubOperations } from './github-operations.js';
 const OWNER = 'a'.repeat(64), BABY = 'b'.repeat(64), TERRA = 'c'.repeat(64), SPEEDY = 'd'.repeat(64);

@@ -13,7 +13,7 @@ import {
   signInService,
   withoutReaderTags,
 } from './needs-you.js';
-import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
 describe('the Needs-you ask rule', () => {
   it('asks when the text ends with a question mark or says please, approve or feedback', () => {

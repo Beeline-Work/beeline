@@ -1,7 +1,7 @@
-import { describedWorkflow, migratedDatabase } from "../../../tests/helpers/server.js";
+import { describedWorkflow, migratedDatabase } from './test-support.js';
 import { randomBytes } from 'node:crypto';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PgliteDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase } from './test-support.js';
 import { createAgentCommand } from './agent-command.js';
 import { saveWorkflow, startWorkflow, handoff } from './workflow-runs.js';
 import { activeWorkflowRunIds } from './workflow-admin.js';

@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import type { SigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
-import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { migrate } from './database.js';
 import {
   recordSigninFunnelEvent,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 
 const VIEWER = 'a'.repeat(64);

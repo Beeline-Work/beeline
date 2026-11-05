@@ -11,7 +11,7 @@ import type { AddressInfo } from 'node:net';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { migrate } from './database.js';
-import { PgliteDatabase, assignCornerWorker, insertCornerFacts } from "../../../tests/helpers/server.js";
+import { PgliteDatabase, assignCornerWorker, insertCornerFacts } from './test-support.js';
 import { TokenAuth, tokenHash } from './auth.js';
 import { recordSigninAttempt } from './signin-attempts.js';
 import { PhoneService } from './phone-service.js';

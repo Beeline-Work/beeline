@@ -10,7 +10,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { findChromiumPage, shareChromiumPage, waitForComputerHandback } from '../../body/src/browser-share.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { migrate } from './database.js';
-import { PgliteDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase } from './test-support.js';
 import { LiveHub } from './live.js';
 import { systemLine } from './system-line.js';
 import { createAgentCommand, claimAgentCommand, readAgentCommands } from './agent-command.js';

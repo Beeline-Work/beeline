@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CHOICE_CARD_TYPE } from '@beeline/api-contract/phone';
 import type { RouterSnapshot } from '@beeline/api-contract/router-protocol';
-import { migratedDatabase, PgliteDatabase } from "../../../tests/helpers/server.js";
+import { migratedDatabase, PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { TRAY_SAVED_WINDOW_SCHEMA } from './tray-saved-window.js';
 import { TRAY_MUTABLE_SOURCE_SCHEMA } from './tray-mutable-source.js';

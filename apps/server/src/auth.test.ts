@@ -1,7 +1,7 @@
 import { createCipheriv, createHash, randomBytes } from 'node:crypto';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { migrate, migrateData } from './database.js';
-import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { TokenAuth, tokenHash, verifierFromEnvironment, type PhoneTokens } from './auth.js';
 import { compactSigninAttempts, recordSigninAttempt } from './signin-attempts.js';
 

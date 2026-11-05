@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { migrate } from './database.js';
-import { PgliteDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase } from './test-support.js';
 import { cleanupUnfinishedAppSignIns } from './unfinished-app-sign-ins.js';
 it('CONNECTORS-1 backfill preserves successful legacy accounts and previously connected cards', async () => {
   const db=new PgliteDatabase(), owner='a'.repeat(64), workspace='11111111-1111-4111-8111-111111111111',room='22222222-2222-4222-8222-222222222222';

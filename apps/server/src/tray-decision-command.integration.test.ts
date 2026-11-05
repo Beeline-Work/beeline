@@ -6,7 +6,7 @@ import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import { postRoomChoice } from './room-choice.js';
 import { CommandDigestConflict, InvalidCommandArguments, RouterCommandLedger } from './router-command-ledger.js';
-import { describedWorkflow, migratedDatabase, type PgliteDatabase } from "../../../tests/helpers/server.js";
+import { describedWorkflow, migratedDatabase, type PgliteDatabase } from './test-support.js';
 import { dispatchTrayDecisionCommand, isTrayDecisionCommand, type TrayDecisionOperation } from './tray-decision-command.js';
 import { TRAY_MUTABLE_SOURCE_SCHEMA } from './tray-mutable-source.js';
 import { getWorkflowRun, saveWorkflow, startWorkflow } from './workflow-runs.js';

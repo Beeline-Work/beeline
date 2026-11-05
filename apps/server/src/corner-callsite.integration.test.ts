@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
-import { PgliteDatabase, migratedDatabase, insertCornerFacts } from "../../../tests/helpers/server.js";
+import { PgliteDatabase, migratedDatabase, insertCornerFacts } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { expect, it } from 'vitest';
 import { SUBSCRIBABLE_EVENT_KINDS } from '@beeline/api-contract/phone';
 import { type SqlDatabase } from './database.js';
-import { migratedDatabase } from "../../../tests/helpers/server.js";
+import { migratedDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 
 // Retired predecessor writer: the post-cutover database must reject it.

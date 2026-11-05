@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PgliteDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase } from './test-support.js';
 import type { SqlDatabase } from './database.js';
-import {installBackgroundOwnerTestProof,backgroundOwnerTestLock} from "../../../tests/helpers/server.js";
+import {installBackgroundOwnerTestProof,backgroundOwnerTestLock} from './test-fixtures/background-owner-test-support.js';
 import { BackgroundOwnership, BACKGROUND_OWNERSHIP_SCHEMA, BackgroundOwnershipLost, type BackgroundEpoch } from './background-ownership.js';
 import { DURABLE_LIVE_SCHEMA } from './durable-live.js';
 import { TRAY_CLOCK_SOURCE_SCHEMA } from './tray-clock-source.js';

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DaemonService } from './daemon-service.js';
 import { claimAgentCommand, type CommandRow } from './agent-command.js';
 import { saveWorkflow, startWorkflow } from './workflow-runs.js';
-import { describedWorkflow, migratedDatabase } from "../../../tests/helpers/server.js";
+import { describedWorkflow, migratedDatabase } from './test-support.js';
 import { AGENT_SUBSCRIPTIONS_SCHEMA, subscriptionPromptBody } from './agent-subscriptions.js';
 import { webhookToken, webhookDetails, ingestSubscriptionWebhook, WEBHOOK_BODY_LIMIT } from './subscription-webhooks.js';
 import { createBeelineServer, type ServerOptions } from './server.js';

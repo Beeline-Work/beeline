@@ -2,7 +2,7 @@ import { RoomsMcpAgentTools } from './rooms-mcp-agent.js';
 import type { DaemonService } from './daemon-service.js';
 import { randomUUID } from 'node:crypto';
 import { beforeEach, afterEach, describe, it, expect } from 'vitest';
-import { migratedDatabase, type PgliteDatabase } from "../../../tests/helpers/server.js";
+import { migratedDatabase, type PgliteDatabase } from './test-support.js';
 import {
   claimAgentCommand,
   claimMcpOrder,

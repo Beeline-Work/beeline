@@ -4,7 +4,7 @@ import { listRoomWorkflowRuns, readWorkflowRun } from './workflow-run-views.js';
 import { activeWorkflowRunIds } from './workflow-admin.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
-import { describedWorkflow } from "../../../tests/helpers/server.js";
+import { describedWorkflow } from './test-support.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';

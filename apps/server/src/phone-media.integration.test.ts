@@ -1,6 +1,6 @@
 import { afterEach,beforeEach,describe,expect,it } from 'vitest';
 import { fenceMediaMetadataEnqueue,readMediaMetadata } from './phone-media.js';
-import { migratedDatabase,type PgliteDatabase } from "../../../tests/helpers/server.js";
+import { migratedDatabase,type PgliteDatabase } from './test-support.js';
 const VIEWER='a'.repeat(64),OWNER='b'.repeat(64),OUTSIDER='c'.repeat(64);
 const WORKSPACE='11111111-1111-4111-8111-111111111111',ROOM='22222222-2222-4222-8222-222222222222';
 const OBJECT='33333333-3333-4333-8333-333333333333',THUMB='44444444-4444-4444-8444-444444444444';

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { PhoneService } from './phone-service.js';
 import { TokenAuth } from './auth.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
-import { PgliteDatabase, migratedDatabase, insertCornerFacts, seedCornerOpening } from "../../../tests/helpers/server.js";
+import { PgliteDatabase, migratedDatabase, insertCornerFacts, seedCornerOpening } from './test-support.js';
 
 const OWNER = 'a'.repeat(64);
 const AGENT = 'b'.repeat(64);

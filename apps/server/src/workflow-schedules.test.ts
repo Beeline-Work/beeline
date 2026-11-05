@@ -4,7 +4,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { TokenAuth } from './auth.js';
 import { createBeelineServer } from './server.js';
 import { migrate } from './database.js';
-import { describedWorkflow, PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
+import { describedWorkflow, PgliteDatabase, migratedDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';

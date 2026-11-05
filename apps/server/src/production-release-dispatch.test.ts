@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
-import { PgliteDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase } from './test-support.js';
 import { productionReleaseDispatch } from './production-release-dispatch.js';
 import * as Sentry from '@sentry/node';
 import { captureServerError } from './sentry.js';

@@ -12,7 +12,7 @@ import * as phoneOperations from './phone-operations.js';
 import { PhoneService } from './phone-service.js';
 import { phoneSocketRequests } from './phone-socket.js';
 import { createBeelineServer } from './server.js';
-import { migratedDatabase, type PgliteDatabase } from "../../../tests/helpers/server.js";
+import { migratedDatabase, type PgliteDatabase } from './test-support.js';
 
 let db: PgliteDatabase;
 beforeEach(async () => { db = await migratedDatabase(); });

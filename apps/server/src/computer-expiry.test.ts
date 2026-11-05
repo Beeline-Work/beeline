@@ -1,5 +1,5 @@
 import { afterAll,afterEach,beforeAll,describe,expect,it,vi } from 'vitest';
-import { migratedDatabase,type PgliteDatabase } from "../../../tests/helpers/server.js";
+import { migratedDatabase,type PgliteDatabase } from './test-support.js';
 import type { SqlDatabase } from './database.js';
 import { COMPUTER_EXPIRY_SCHEMA } from './computer-expiry-schema.js';
 import { COMMAND_COMPLETION_CHANNEL,notifyCommandCompletion } from './command-completion.js';

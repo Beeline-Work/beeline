@@ -1,10 +1,10 @@
 import { listRoomWorkflowRuns } from './workflow-run-views.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
-import { seedCornerOpening, describedWorkflow, migratedDatabase, insertCornerFacts } from "../../../tests/helpers/server.js";
+import { seedCornerOpening, describedWorkflow, migratedDatabase, insertCornerFacts } from './test-support.js';
 import { randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PgliteDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase } from './test-support.js';
 import { createAgentCommand, claimAgentCommand, readAgentCommands, type CommandRow } from './agent-command.js';
 import { advanceCorner } from './corner-lifecycle.js';
 import { PhoneService } from './phone-service.js';

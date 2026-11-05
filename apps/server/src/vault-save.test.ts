@@ -5,7 +5,7 @@ import { vaultSaveRequest } from '@beeline/api-contract/daemon';
 import { vaultSaveHttp } from './vault-save-http.js';
 import { VaultSaveRelay } from './vault-save-relay.js';
 import { storeVaultSubmission, type VaultSaveSubmission } from '../../body/src/vault-save.js';
-import { PgliteDatabase, migratedDatabase, insertCornerFacts } from "../../../tests/helpers/server.js";
+import { PgliteDatabase, migratedDatabase, insertCornerFacts } from './test-support.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import type { TokenAuth } from './auth.js';

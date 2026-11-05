@@ -2,7 +2,7 @@ import { ExpectedRefusalError } from './command-refusal.js';
 import { activeWorkflowRunIds } from './workflow-admin.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
-import { describedWorkflow, insertCornerFacts } from "../../../tests/helpers/server.js";
+import { describedWorkflow, insertCornerFacts } from './test-support.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { randomBytes } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';

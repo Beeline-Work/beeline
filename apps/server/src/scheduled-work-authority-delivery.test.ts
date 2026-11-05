@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto';
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 import type {RouterFact,RouterSnapshot,ScheduledWorkAuthorityFrame,RouterAuthorityFence} from '@beeline/api-contract/router-protocol';
-import {migratedDatabase,type PgliteDatabase} from "../../../tests/helpers/server.js";
+import {migratedDatabase,type PgliteDatabase} from './test-support.js';
 import {PhoneService} from './phone-service.js';
 import {LiveHub} from './live.js';
 import {SCHEDULED_WORK_AUTHORITY_SCHEMA,scheduledMemberDomain} from './scheduled-work-authority.js';

@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 import {afterEach,beforeEach,describe,expect,it} from 'vitest';
 import {ReadLanes,type LaneBatch} from '../../../packages/net/src/private/read-lanes.js';
 import {RouterBatchAssembly} from '../../../packages/net/src/private/batch-assembly.js';
-import {migratedDatabase,type PgliteDatabase} from "../../../tests/helpers/server.js";
+import {migratedDatabase,type PgliteDatabase} from './test-support.js';
 import {PhoneService} from './phone-service.js';
 import {LiveHub} from './live.js';
 import {routerSocketProtocol} from './router-socket.js';

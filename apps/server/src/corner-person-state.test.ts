@@ -5,7 +5,7 @@ import { expect, it } from 'vitest';
 import { migrate } from './database.js';
 import { migrateCornerPersonState } from './corner-person-state.js';
 import { setRoomEventSubscriptions } from './agent-subscriptions.js';
-import { seedCornerOpening, PgliteDatabase, insertCornerFacts } from "../../../tests/helpers/server.js";
+import { seedCornerOpening, PgliteDatabase, insertCornerFacts } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';

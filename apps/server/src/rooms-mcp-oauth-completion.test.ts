@@ -5,7 +5,7 @@ import type { TokenAuth } from './auth.js';
 import { RoomsMcpOAuth } from './rooms-mcp-oauth.js';
 import { ROOMS_MCP_SCHEMA } from './rooms-mcp-schema.js';
 import { COMMAND_COMPLETION_CHANNEL,notifyCommandCompletion } from './command-completion.js';
-import { migratedDatabase,type PgliteDatabase } from "../../../tests/helpers/server.js";
+import { migratedDatabase,type PgliteDatabase } from './test-support.js';
 import type { SqlDatabase } from './database.js';
 describe('actual committed MCP OAuth held completion',()=>{
   let db:PgliteDatabase,server:Server,origin:string,ready=true,release:()=>Promise<void>;

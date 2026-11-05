@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { migratedDatabase, type PgliteDatabase } from "../../../tests/helpers/server.js";
+import { migratedDatabase, type PgliteDatabase } from './test-support.js';
 import { BackgroundWork } from './background-work.js';
 import { ConnectorOfferExpiryLoop, CONNECTOR_OFFER_DUE_KEY } from './connector-offer-expiry.js';
 import { COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion, subscribeCommandCompletion } from './command-completion.js';

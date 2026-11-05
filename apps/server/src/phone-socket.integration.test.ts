@@ -15,7 +15,7 @@ import { LiveHub } from './live.js';
 import { phoneReadLimits } from './phone-read-limit.js';
 import { PhoneService } from './phone-service.js';
 import { createBeelineServer } from './server.js';
-import { PgliteDatabase } from "../../../tests/helpers/server.js";
+import { PgliteDatabase } from './test-support.js';
 import { OperationOutcomes } from './operation-outcomes.js';
 import { commandArgumentDigest } from './router-command-ledger.js';
 

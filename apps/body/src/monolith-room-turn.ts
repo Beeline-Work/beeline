@@ -596,6 +596,8 @@ export class MonolithRoomTurnLoop {
   private client?: AcpClient;
   private claudeLoginWatch?: { close(): void };
   private sessionId?: string;
+  /** MCP subprocesses capture this generation-specific path at launch. */
+  private sessionContextPath?: string;
   private sessionCwd?: string;
   private sessionCommit?: string;
   private sessionGitHubToken?: string;
@@ -993,6 +995,7 @@ export class MonolithRoomTurnLoop {
     this.stopClaudeLoginWatch();
     this.client = undefined;
     this.sessionId = undefined;
+    this.sessionContextPath = undefined;
     this.sessionCwd = undefined;
     this.sessionCommit = undefined;
     this.sessionGitHubToken = undefined;
@@ -1014,7 +1017,7 @@ export class MonolithRoomTurnLoop {
    * `AcpClient not started` instead of spawning a fresh one.
    */
   private async sessionIsCurrent(): Promise<boolean> {
-    if (!this.client?.isAlive) return false;
+    if (!this.client?.isAlive || this.sessionContextPath !== this.commandContext.path) return false;
     await this.refreshTurnCheckout();
     return (
       this.sessionCwd === this.options.cwd &&
@@ -1104,7 +1107,7 @@ export class MonolithRoomTurnLoop {
       previousStep = now;
     };
     await this.refreshTurnCheckout();
-    if (this.client?.isAlive && this.sessionId) {
+    if (this.client?.isAlive && this.sessionId && this.sessionContextPath === this.commandContext.path) {
       if (this.options.config.agentHomeRoot) {
         await repairRoomAgentCredentialLinks({
           root: this.options.config.agentHomeRoot,
@@ -1171,7 +1174,7 @@ export class MonolithRoomTurnLoop {
         ...hostImportedMcpDeclarations({ operatorHome, agentKind: this.options.config.agentKind }),
         ...registryHostDeclarations,
       })
-        ? { relay: await this.squireRelay.listen() }
+        ? { relay: await this.squireRelay.listen(this.commandContext.path) }
         : {}),
     };
     const resourceAuthFile = await writeSessionResourceAuth(this.options.api, this.commandContext.path);
@@ -1547,6 +1550,7 @@ export class MonolithRoomTurnLoop {
     }
     this.warmTranscript.rememberSession(opened.sessionId, conversationFingerprint);
     this.sessionId = opened.sessionId;
+    this.sessionContextPath = this.commandContext.path;
     this.sessionCwd = this.options.cwd;
     this.sessionCommit = this.turnCheckout?.commit;
     this.sessionGitHubToken = this.turnCheckout?.githubToken;
@@ -1632,6 +1636,7 @@ export class MonolithRoomTurnLoop {
     this.stopClaudeLoginWatch();
     this.client = undefined;
     this.sessionId = undefined;
+    this.sessionContextPath = undefined;
     this.sessionFingerprint = undefined;
     this.sessionCodegraphReady = false;
     if (client) await client.stop();

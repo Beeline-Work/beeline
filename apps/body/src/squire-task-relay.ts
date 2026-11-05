@@ -178,7 +178,7 @@ export class SquireTaskRelay {
     for (const id of ids) { this.shareRenewals.stop(id); this.sessionSites.delete(id); this.onSessionEnded(id); }
   }
 
-  async listen(): Promise<{ url: string; token: string; contextFile: string }> {
+  async listen(contextFile = this.contextFile): Promise<{ url: string; token: string; contextFile: string }> {
     if (this.closed) throw new Error('Squire task relay is closed');
     if (!this.server) {
       const server = createServer(async (request, response) => {
@@ -218,7 +218,7 @@ export class SquireTaskRelay {
       if (!address || typeof address === 'string') throw new Error('Squire relay has no TCP port');
       this.url = `http://127.0.0.1:${address.port}`;
     }
-    return { url: this.url!, token: this.token, contextFile: this.contextFile };
+    return { url: this.url!, token: this.token, contextFile };
   }
 
   activate(command: AgentCommand, generationId: string): void {

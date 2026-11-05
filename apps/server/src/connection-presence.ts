@@ -33,6 +33,7 @@ interface PresenceMetadata {
   sourceSha?: string;
   available?: boolean;
   lifecycleId?: string;
+  turnRuntimeId?: string;
 }
 
 /** One live helper connection for one agent, held by one server instance. */
@@ -760,13 +761,17 @@ export async function claimAgentConnection(
     await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`presence:${agentId}`]);
     await lockAgentMachine(db, agentId);
     const claimed = await db.query<{ epoch: string | number }>(
-      `INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id,connected_at,released_at)
-       VALUES($1,1,$2,$3,clock_timestamp(),NULL)
+      `INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id,connected_at,released_at,turn_connection_id,turn_connection_epoch,turn_transport_id)
+       VALUES($1,1,$2,$3,clock_timestamp(),NULL,$4,CASE WHEN $4::text IS NOT NULL THEN 1 END,$2)
        ON CONFLICT(agent_id) DO UPDATE SET epoch=agent_connections.epoch+1,
          connection_id=EXCLUDED.connection_id,instance_id=EXCLUDED.instance_id,
-         connected_at=EXCLUDED.connected_at,released_at=NULL
+         connected_at=EXCLUDED.connected_at,released_at=NULL,
+         turn_connection_id=EXCLUDED.turn_connection_id,turn_transport_id=EXCLUDED.turn_transport_id,
+         turn_connection_epoch=CASE WHEN EXCLUDED.turn_connection_id IS NULL THEN NULL
+           WHEN agent_connections.turn_connection_id=EXCLUDED.turn_connection_id THEN agent_connections.turn_connection_epoch
+           ELSE agent_connections.epoch+1 END
        RETURNING epoch`,
-      [agentId, connection.connectionId, connection.instanceId],
+      [agentId, connection.connectionId, connection.instanceId, metadata.turnRuntimeId ?? null],
     );
     const announcement = await writeAgentAnnouncement(db, undefined, agentId, metadata, connection, true);
     // A free agent's Machine is serving again; the wake latency ends here.

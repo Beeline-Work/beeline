@@ -52,6 +52,7 @@ export class AgentChannel {
   #operationsSelected = false;
   #operationsAvailable = false;
   get operationsSelected(): boolean { return this.#operationsSelected; }
+  readonly #turnRuntimeId = randomUUID();
   readonly #operationWaiters = new Set<(open: boolean) => void>();
   readonly #operationRequests = new Map<string, {
     resolve: (value: unknown) => void; reject: (error: Error) => void;
@@ -95,9 +96,9 @@ export class AgentChannel {
     });
   }
 
-  #suspendOperations(): void {
+  #suspendOperations(ended = false): void {
     this.#operationsAvailable = false;
-    for (const settle of this.#operationWaiters) settle(false);
+    if (ended) for (const settle of this.#operationWaiters) settle(false);
     for (const pending of this.#operationRequests.values()) {
       clearTimeout(pending.deadline);
       pending.reject(new Error('Machine operation outcome is UNKNOWN; no HTTP fallback'));
@@ -149,8 +150,8 @@ export class AgentChannel {
   stop(): void {
     if (!this.#wanted) return;
     this.#wanted = false;
-    this.#suspendOperations();
-    this.turn.suspend();
+    this.#suspendOperations(true);
+    this.turn.stop();
     this.#activationSource=undefined;this.activation.suspend();
     this.#usageOwnerId=undefined;this.#usageSource=undefined;
     this.usage.suspend();
@@ -187,7 +188,7 @@ export class AgentChannel {
     this.#pending = true;
     this.#armIntakeDeadline();
     if (!this.machine.link.send(JSON.stringify({
-      ...this.handlers.registration(), type: 'register', agentId: this.agentId, intakeHeartbeat: true, overlayV1:true, usageAccountV1:true, activationContextV1:true, turnOwnershipV1:true, daemonOperationsV1:true,
+      ...this.handlers.registration(), type: 'register', agentId: this.agentId, intakeHeartbeat: true, overlayV1:true, usageAccountV1:true, activationContextV1:true, turnOwnershipV1:true, turnRuntimeId:this.#turnRuntimeId, daemonOperationsV1:true,
     }))) this.#pending = false;
   }
 
@@ -206,11 +207,11 @@ export class AgentChannel {
       this.#operationsAvailable = (event.capabilities as {daemonOperationsV1?: unknown} | undefined)?.daemonOperationsV1 === true;
       if (this.#operationsAvailable) this.#operationsSelected = true;
       this.initialSnapshotsV1 = (event.capabilities as {initialSnapshotsV1?:unknown}|undefined)?.initialSnapshotsV1 === true;
-      const turnCapabilities = event.capabilities as { turnOwnershipV1?: unknown; turnConnectionId?: unknown; turnConnectionEpoch?: unknown } | undefined;
+      const turnCapabilities = event.capabilities as { turnOwnershipV1?: unknown; turnConnectionId?: unknown; turnConnectionEpoch?: unknown; turnContinuationV1?: unknown } | undefined;
       this.turn.negotiate(turnCapabilities?.turnOwnershipV1 === true && typeof turnCapabilities.turnConnectionId === 'string' &&
         Number.isSafeInteger(turnCapabilities.turnConnectionEpoch) && Number(turnCapabilities.turnConnectionEpoch) > 0
         ? { connectionId: turnCapabilities.turnConnectionId, epoch: Number(turnCapabilities.turnConnectionEpoch) } : undefined,
-        turnCapabilities?.turnOwnershipV1 === true);
+        turnCapabilities?.turnOwnershipV1 === true, turnCapabilities?.turnContinuationV1 === true);
       const activationCapabilities=event.capabilities as {activationContextV1?:unknown;activationConnectionId?:unknown;activationConnectionEpoch?:unknown}|undefined;
       if(activationCapabilities?.activationContextV1===true)this.activationContextSelected=true;
       this.#activationSource=activationCapabilities?.activationContextV1===true&&typeof activationCapabilities.activationConnectionId==='string'&&
@@ -248,7 +249,7 @@ export class AgentChannel {
     if (event.type === 'register-refused') {
       if (this.#refused) return;
       this.#pending = false;
-      this.#suspendOperations();
+      this.#suspendOperations(true);
       this.#clearIntakeDeadline();
       const code = typeof event.code === 'string' ? event.code : 'refused';
       console.warn(`[machine-link] server refused agent ${this.agentId}: ${code}`);
@@ -256,6 +257,7 @@ export class AgentChannel {
       this.handlers.onRefused?.(code);
       if (this.#refused) {
         this.#wanted = false;
+        this.turn.stop();
         // A helper with only refused agents must not keep opening sockets
         // that the server will immediately close for having no registration.
         this.machine.unwant(this);
@@ -289,9 +291,10 @@ export class AgentChannel {
   }
 
   /** @internal The machine socket closed: every registration ended with it. */
-  socketClosed(): void {
-    this.#suspendOperations();
-    this.turn.suspend();
+  socketClosed(ended = false): void {
+    this.#suspendOperations(ended);
+    if (ended) this.turn.stop();
+    else this.turn.suspend();
     this.#activationSource=undefined;this.activation.suspend();
     this.#usageOwnerId=undefined;this.#usageSource=undefined;
     this.usage.suspend();
@@ -441,7 +444,7 @@ export class MachineLink {
   want(channel: AgentChannel): void {
     const previous = this.#channels.get(channel.agentId);
     this.#channels.set(channel.agentId, channel);
-    if (previous && previous !== channel) previous.socketClosed();
+    if (previous && previous !== channel) previous.socketClosed(true);
     if (this.link.isOpen()) channel.register();
     else {
       this.link.start();
@@ -462,7 +465,7 @@ export class MachineLink {
   }
 
   stop(forUpdate = false): void {
-    for (const channel of this.#channels.values()) channel.socketClosed();
+    for (const channel of this.#channels.values()) channel.socketClosed(true);
     this.#channels.clear();
     this.link.stop(forUpdate);
   }

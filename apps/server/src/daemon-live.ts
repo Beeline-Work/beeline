@@ -122,6 +122,7 @@ export interface DaemonSessionTransport {
 export class DaemonAgentSession {
   readonly connectionId = randomUUID();
   epoch: number | undefined;
+  turnSource?: { connectionId: string; epoch: number };
   readonly #releases = new Map<string, () => void>();
   readonly #subscriptionIntents = new Map<string, Record<string, unknown>>();
   readonly #wakeReleases: Array<() => void> = [];
@@ -140,7 +141,8 @@ export class DaemonAgentSession {
   get usageAccountV1():boolean{return this.presence.usageAccountV1===true&&helperUsageEnabled()&&this.usageOwnerId!==undefined&&this.epoch!==undefined;}
   get overlayV1():boolean{return this.presence.overlayV1===true&&helperOverlayEnabled()&&this.epoch!==undefined;}
   get activationContextV1():boolean{return this.presence.activationContextV1===true&&helperActivationEnabled()&&this.epoch!==undefined;}
-  get turnOwnershipV1():boolean{return this.#turnOwnershipAccepted&&Number.isSafeInteger(this.epoch)&&Number(this.epoch)>0;}
+  get turnContinuationV1():boolean{return this.presence.turnRuntimeId!==undefined;}
+  get turnOwnershipV1():boolean{return this.turnSource!==undefined&&this.#turnOwnershipAccepted&&Number.isSafeInteger(this.epoch)&&Number(this.epoch)>0;}
   get ownedModelV1():boolean{return this.turnOwnershipV1&&this.#ownedModelCapability!==undefined&&this.deps.daemon.ownedModelReady();}
 
   constructor(
@@ -149,6 +151,7 @@ export class DaemonAgentSession {
     private readonly transport: DaemonSessionTransport,
     private readonly presence: {
       lifecycleId?: string;
+      turnRuntimeId?: string;
       releaseVersion?: string;
       sourceSha?: string;
       overlayV1?: boolean;
@@ -282,9 +285,14 @@ export class DaemonAgentSession {
         return;
       }
       this.epoch = epoch;
+      const runtime = this.presence.turnRuntimeId;
+      this.turnSource = runtime ? (await this.deps.database.query<{connectionId:string;epoch:number}>(
+        `SELECT turn_connection_id "connectionId",turn_connection_epoch::integer epoch FROM agent_connections
+         WHERE agent_id=$1 AND connection_id=$2 AND epoch=$3`, [this.agentId,this.connectionId,epoch])).rows[0]
+        : { connectionId: this.connectionId, epoch };
       const requested = this.presence.turnOwnershipV1 === true && turnOwnershipEnabled();
       const model = requested ? await this.deps.daemon.negotiateOwnedModel(this.agentId,
-        { connectionId: this.connectionId, epoch }, this.presence.ownedModelV1 === true) : undefined;
+        this.turnSource!, this.presence.ownedModelV1 === true) : undefined;
       this.#ownedModelCapability = model?.capability;
       this.#turnOwnershipAccepted = requested && (model?.freeAgent !== true || model.capability !== undefined);
       this.deps.registry.settled(this);
@@ -429,15 +437,16 @@ export class DaemonAgentSession {
           throw new Error('Turn unknown frame field');
         const input = helperTurnCodecs(operation).params.parse(item.input);
         if ('agentId' in input && input.agentId !== this.agentId) throw new Error('Turn registration mismatch');
-        const source = { connectionId: this.connectionId, epoch: this.epoch };
+        const source = this.turnSource!;
         const result = helperTurnCodecs(operation).result.parse(await this.deps.daemon.execute(operation, input, this.agentId, source, this.#ownedModelCapability));
         const reply = { type: 'turn-result', requestId: item.requestId, result };
         await this.deps.daemon.fenceOwnedTurnReply(this.agentId, source, input, () => {
           if (!this.#closed && this.transport.isOpen()) this.transport.send(reply);
         }, operation === 'claimAgentCommand');
-      } catch {
+      } catch (error) {
         if (!this.#closed && this.transport.isOpen())
-          this.transport.send({ type: 'turn-result', requestId: item.requestId, error: 'turn_operation_unconfirmed' });
+          this.transport.send({ type: 'turn-result', requestId: item.requestId, error: 'turn_operation_unconfirmed',
+            status: this.deps.operationErrorStatus?.(error) ?? 503 });
       }
       return;
     }
@@ -598,7 +607,7 @@ export class DaemonAgentSession {
         while (commandsRequested && active && transport.isOpen() && !this.#closed) {
           commandsRequested = false;
           const page = await daemon.execute('getAgentCommands', { roomId }, agentId,
-            this.turnOwnershipV1 ? { connectionId: this.connectionId, epoch: this.epoch! } : undefined);
+            this.turnOwnershipV1 ? this.turnSource : undefined);
           if (!active || this.#closed || !transport.isOpen()) return;
           const currentTrigger = commandTrigger;
           commandTrigger = undefined;
@@ -950,6 +959,8 @@ export function serveMachineSocket(
           ...(item.usageAccountV1===true?{usageAccountV1:true}:{}),
           ...(item.activationContextV1===true?{activationContextV1:true}:{}),
           ...(item.turnOwnershipV1===true?{turnOwnershipV1:true}:{}),
+          ...(item.turnOwnershipV1===true && typeof item.turnRuntimeId==='string' && /^[a-f0-9-]{36}$/.test(item.turnRuntimeId)
+            ? {turnRuntimeId:item.turnRuntimeId} : {}),
           ...(item.ownedModelV1===true?{ownedModelV1:true}:{}),
           ...(item.daemonOperationsV1===true?{daemonOperationsV1:true}:{}),
         },
@@ -967,7 +978,7 @@ export function serveMachineSocket(
         agentId,
         capabilities: { initialSnapshotsV1: true, discoveryWake: true, pushIntake: true,
           ...(item.daemonOperationsV1 === true ? {daemonOperationsV1:true} : {}), intakeHeartbeat: item.intakeHeartbeat === true && !session.turnOwnershipV1,
-          ...(session.turnOwnershipV1 ? {turnOwnershipV1:true,turnConnectionId:session.connectionId,turnConnectionEpoch:session.epoch} : {}),
+          ...(session.turnOwnershipV1 ? {turnOwnershipV1:true,turnConnectionId:session.turnSource!.connectionId,turnConnectionEpoch:session.turnSource!.epoch,turnContinuationV1:session.turnContinuationV1} : {}),
           ...(session.ownedModelV1 ? {ownedModelV1:true} : {}),
           ...(session.overlayV1?{overlayV1:true}:{}),
           ...(session.activationContextV1?{activationContextV1:true,activationConnectionId:session.connectionId,activationConnectionEpoch:session.epoch}:{}),

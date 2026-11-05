@@ -116,14 +116,16 @@ it('parks a previously selected channel when re-registration lacks the capabilit
 it('uses the registration deadline to reconnect and resume machine operations without HTTP', async () => {
   vi.useFakeTimers();
   const {api, socket, fetcher} = fixture(); socket.registerReplies = false;
-  const first = api.execute('getAgentConfiguration', {agentId: 'agent'}).catch(error => error);
+  let settled = false;
+  const first = api.execute('getAgentConfiguration', {agentId: 'agent'}).finally(()=>{settled=true;});
   socket.open();
   await vi.advanceTimersByTimeAsync(LIVE_LINK_TIMING.heartbeatTimeoutMs / 2);
   socket.emit('ping');
   await vi.advanceTimersByTimeAsync(LIVE_LINK_TIMING.heartbeatTimeoutMs / 2);
-  expect(await first).toMatchObject({message: 'Machine operation registration unavailable'});
+  expect(settled).toBe(false);
   socket.registerReplies = true;
   socket.open();
+  await expect(first).resolves.toMatchObject({id:'getAgentConfiguration'});
   await expect(api.execute('getAgentConfiguration', {agentId: 'agent'})).resolves.toMatchObject({id: 'getAgentConfiguration'});
   expect(fetcher).not.toHaveBeenCalled();
   expect(socket.frames.filter(frame => frame.type === 'register')).toHaveLength(2);

@@ -112,7 +112,9 @@ function signatureData(value: OwnedModelBinding): string {
  * Current membership is resolved from stored parent rows, never HTTP metadata. */
 const CURRENT = `SELECT command.agent_id,starter.owner_id,room.workspace_id,room.id room_id,room.parent_id,
  command.id command_id,command.generation_id,command.turn_request_id request_id,
- connection.connection_id,connection.epoch connection_epoch,connection.instance_id,
+ COALESCE(connection.turn_connection_id,connection.connection_id) connection_id,COALESCE(connection.turn_connection_epoch,connection.epoch) connection_epoch,
+ CASE WHEN connection.turn_connection_id IS NOT NULL THEN COALESCE(issued.instance_id,connection.instance_id)
+   ELSE connection.instance_id END instance_id,
  COALESCE(starter.model,$4::text) model,starter.model agent_model,starter.model_token_hash,
  floor(extract(epoch FROM (command.claimed_at+($5::double precision*interval '1 millisecond')))*1000)::bigint expires_ms,
  floor(extract(epoch FROM clock_timestamp())*1000)::bigint now_ms,
@@ -123,10 +125,11 @@ const CURRENT = `SELECT command.agent_id,starter.owner_id,room.workspace_id,room
  JOIN free_agents starter ON starter.agent_id=command.agent_id AND starter.owner_id=agent.owner_id
  JOIN agent_connections connection ON connection.agent_id=command.agent_id
  JOIN live_server_instances server ON server.instance_id=connection.instance_id
+ LEFT JOIN owned_model_credentials issued ON issued.command_id=command.id AND issued.generation_id=command.generation_id
  JOIN agent_command_generation_owners immutable ON immutable.command_id=command.id AND immutable.generation_id=command.generation_id
    AND immutable.connection_id=command.turn_owner_connection_id AND immutable.connection_epoch=command.turn_owner_epoch
  WHERE command.id=$1 AND command.agent_id=$2 AND command.generation_id=$3 AND command.state='claimed' AND command.action IN ('input','resume')
-   AND command.turn_owner_connection_id=connection.connection_id AND command.turn_owner_epoch=connection.epoch
+   AND command.turn_owner_connection_id=COALESCE(connection.turn_connection_id,connection.connection_id) AND command.turn_owner_epoch=COALESCE(connection.turn_connection_epoch,connection.epoch)
    AND connection.released_at IS NULL AND starter.removed_at IS NULL AND starter.state='running'
    AND starter.model_token_hash IS NOT NULL AND command.claimed_at IS NOT NULL
    AND room.archived_at IS NULL AND parent.archived_at IS NULL

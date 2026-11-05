@@ -550,8 +550,10 @@ export class ConnectorAssignmentLoop {
         report = { agentId: this.agentId, connections: await this.readVaultFn(this.squire()) };
       }
     } catch (error) {
-      const errorMessage = squireReachCause(error);
-      report = { agentId: this.agentId, connections: [], errorMessage };
+      // A failed observation cannot replace the last broker verdict. The next
+      // ordinary report reads it again; install failures have their own status.
+      this.log(`Squire vault observation unavailable: ${squireReachCause(error)}`);
+      return;
     }
     try {
       await this.api.execute('postConnectorVault', report);

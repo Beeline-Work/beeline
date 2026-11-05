@@ -386,7 +386,7 @@ export async function runServerCommandIntake(options: {
           busy = Promise.resolve()
             .then(() => {
               const currentOwner = api.turnOwnershipScope?.();
-              if (claimOwner && (!currentOwner || currentOwner.connectionId !== claimOwner.connectionId || currentOwner.epoch !== claimOwner.epoch))
+              if (claimOwner && currentOwner && (currentOwner.connectionId !== claimOwner.connectionId || currentOwner.epoch !== claimOwner.epoch))
                 throw new Error('Turn owner changed before activation');
               return options.run(command);
             })

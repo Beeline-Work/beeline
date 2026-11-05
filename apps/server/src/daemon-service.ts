@@ -6356,15 +6356,13 @@ export class DaemonService {
            WHERE source.id=$1 AND author.kind='human' AND source.presentation='message' AND source.system_event IS NULL`, [incoming.source_message_id])).rowCount));
       if (!ownOrder) return { ...this.writeResult(), delivered: true, skipped: true };
     }
-    const prefix = automatic
-      ? text.match(/^(done|blocked|failed|needs[-_]decision):\s*\S/)?.[1]?.replace('_', '-')
-      : String(status).replace('_', '-');
     if (!automatic) {
-      const body = text.replace(/^(?:done|blocked|failed|needs[-_]decision):\s*/, '').trim();
-      if (!['done', 'blocked', 'failed', 'needs_decision'].includes(String(status)) || !body)
+      text = text.replace(/^(?:done|blocked|failed|needs[-_]decision):\s*/, '');
+      if (!['done', 'blocked', 'failed', 'needs_decision'].includes(String(status)) || !text.trim())
         throw new CommandRefusalError('report requires status done, blocked, failed, or needs_decision and nonempty text', 400);
-      text = `${prefix}: ${body}`;
+      text = `${String(status).replace('_', '-')}: ${text}`;
     }
+    const prefix = text.match(/^(done|blocked|failed|needs[-_]decision):\s*\S/)?.[1]?.replace('_', '-');
     // Keep automatic reports' established prefix without inventing a status.
     text = text.replace(/^needs_decision:/, 'needs-decision:');
     if (prefix === 'done') {

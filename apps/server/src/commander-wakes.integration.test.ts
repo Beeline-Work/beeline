@@ -221,7 +221,7 @@ it.each(['','done:   '])('rejects an empty report body %s', async text => {
 });
 it('Reproduction report-schema: stores and delivers a complete multi-paragraph report', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
-  const text = 'blocked: ' + 'Synthetic paragraph for report delivery.\n\n'.repeat(150) + 'End of report.';
+  const text = 'blocked: ' + 'Synthetic paragraph for report delivery.\n\n'.repeat(150) + 'End of report.\n\n';
   await daemon.execute('report', { ...authority(turn), status: 'blocked', text }, WORKER);
   const report = (await commands(DM, RUBY)).find(command => command.reason === 'report')!;
   expect(report.source.body).toBe(text);

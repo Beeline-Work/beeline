@@ -22,7 +22,7 @@ function errorMessage(error: unknown): string | undefined {
 }
 
 /** Actionable copy plus the original failure detail for on-device diagnosis. */
-export function publishFailurePresentation(error: unknown): PublishFailurePresentation {
+function publishFailurePresentation(error: unknown): PublishFailurePresentation {
   if (error instanceof RawPhotoDecodeError) {
     return { message: error.message, retryable: false };
   }

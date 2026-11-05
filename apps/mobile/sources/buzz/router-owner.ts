@@ -225,6 +225,7 @@ export function routerOwnerListPanel(visible: boolean): void {
 
 /** Advertise persistent authority support before the server selects families.
  * Unsupported storage keeps the legacy cohort, without suppressing its hints. */
+/** @public live-connection loads this owner through dynamic import during connection bootstrap. */
 export function routerOwnerCapabilities(): { families: readonly LaneFamily[]; authorityFencesV1: boolean; scheduledWorkCoverageV1: boolean } {
   const ready = routerAuthorityStorageReady();
   return { families: ready ? ['room-list', 'needs-you-count', 'room-head','room-workflows','workspace-roster','agent-profile','owner-workbench','owner-wallet',...(routerCommandStorageReady()?['room-scheduled-work' as const,'needs-you-tray' as const,'needs-you-saved-page' as const]:[])] : [], authorityFencesV1: ready, scheduledWorkCoverageV1: ready&&routerCommandStorageReady() };
@@ -233,6 +234,7 @@ export function routerOwnerCapabilities(): { families: readonly LaneFamily[]; au
 /** Sole transport owner calls this only after authentication and negotiation.
  * A server without the capability supplies an empty family set.
  */
+/** @public live-connection loads this owner through dynamic import during connection bootstrap. */
 export async function routerOwnerNegotiated(offered: Omit<Negotiation,'families'> & {families:RouterCapabilities['families']}): Promise<void> {
   // Protocol additions cannot opt an unfinished local lane into service.
   if(offered.families.some(family=>!families.includes(family)))throw new Error('Unsupported router family.');
@@ -311,6 +313,7 @@ export async function routerOwnerNegotiated(offered: Omit<Negotiation,'families'
   }, { scheduledWorkCoverageV1:!!next.scheduledWorkCoverageV1, roomHeadContinuityV1: next.roomHeadContinuityV1 === true && next.authorityFencesV1 === true });
   reconcile();
 }
+/** @public live-connection loads this owner through dynamic import during connection bootstrap. */
 export function routerOwnerDisconnected(): void {
   usageDemand?.disconnected(); suspendUsageCellConnection();
   mediaDemand?.disconnected(); suspendMediaCacheConnection();
@@ -352,6 +355,7 @@ function fact(value: unknown): boolean {
 /** Socket input is untrusted at runtime even when a transport callback has a
  * static protocol type. Malformed frames re-read only their affected lanes.
  */
+/** @public live-connection loads this owner through dynamic import during connection bootstrap. */
 export function routerOwnerReceive(value: unknown): void {
   if (!negotiation || !record(value)) return;
   if (value.kind === 'usage-cell') { if (negotiation.usageCellV1) receiveUsageCell(value.cell); return; }
@@ -421,6 +425,7 @@ export function routerOwnerReceive(value: unknown): void {
 }
 
 /** Cover only the data named by a missed delivery on the retained socket. */
+/** @public live-connection loads this owner through dynamic import during connection bootstrap. */
 export function routerOwnerRefresh(roomId?: string): void {
   lanes?.refresh(request => roomId ? request.roomId === roomId : !request.roomId);
 }

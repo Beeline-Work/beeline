@@ -101,8 +101,3 @@ export async function admitSharedAssets(
   }
   return (await free()) >= BigInt(floor + estimatedBytes);
 }
-
-export async function releaseReserveOnEnospc(supervisorRoot: string, error: unknown): Promise<void> {
-  if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOSPC')
-    await releasePrivateRecoveryReserve(supervisorRoot);
-}

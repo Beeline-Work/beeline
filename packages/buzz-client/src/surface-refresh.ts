@@ -21,6 +21,7 @@ type SurfaceExpectation<T> = {
  * carry no durable state: they only set the dirty bit. There is never more
  * than one authenticated GET in flight.
  */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export class SurfaceRefreshScheduler<T> {
   private readonly minimumIntervalMs: number;
   private readonly maximumWaitMs: number;

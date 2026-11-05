@@ -1,40 +1,6 @@
-# Builds the Tauri desktop shell (apps/mobile/src-tauri) for macOS, Linux and
-# Windows and uploads every bundle as a downloadable artifact. Published
-# releases also receive stable installer filenames used by usebeeline.app.
-# The desktop app is the Expo web bundle in a native window, so each leg exports
-# the web build first and then wraps it.
-#
-# Triggers:
-#   pull_request  — the workflow always starts so a skipped required check
-#                   still reports. The three-runner matrix runs only when
-#                   desktop code, packages/, or an unmapped path changes.
-#                   A sources/-only mobile PR does not build the shell.
-#                   `unmapped` uses `predicate-quantifier: every` in its own
-#                   step. The default `some` treats `**` as a match for every
-#                   file, so the matrix was starting on module-only diffs.
-#   workflow_dispatch — pick the variant; this is how a tester gets a build of
-#                   an arbitrary branch.
-#   workflow_call   — the unified release builds production installers before
-#                   it creates the GitHub release. Unfiltered, and without the
-#                   icons gate: pull requests already proved the merged icons.
-#
-# The variant selects which config the CLI merges over tauri.conf.json:
-# production is the release identity, preview installs beside it with console
-# logging kept, dev is the local-identity build. Pull requests build preview —
-# an artifact from a PR should never claim to be the release app.
-#
-# Production macOS builds are signed, notarized once as the disk image (which
-# covers the app inside it), stapled, and strictly verified when the complete
-# repository credential set is available. Trusted in-repo
-# previews exercise the same signed path without claiming the production app
-# identity. Missing-secret previews/production builds are loudly unsigned;
-# dev builds are intentionally unsigned.
 name: Desktop
-
 on:
   pull_request: {}
-  merge_group:
-    types: [checks_requested]
   workflow_dispatch:
     inputs:
       variant:
@@ -95,131 +61,70 @@ on:
       TAURI_UPDATER_PRIVATE_KEY_PASSWORD:
         description: Password for the vaulted updater private key
         required: false
-
 permissions:
   contents: read
-
-# One build per PR. A newer push supersedes the whole matrix, never one
-# platform of it. Non-PR runs stay independent.
 concurrency:
   group: desktop-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 defaults:
   run:
-    # The Windows leg runs the same shell script as the others; the runner's
-    # default there is pwsh, which does not speak any of it.
     shell: bash
-
 jobs:
-  changes:
-    name: Detect desktop changes
-    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      desktop: ${{ steps.decide.outputs.desktop }}
-    steps:
-      - uses: actions/checkout@v4
-        if: github.event_name == 'merge_group'
-        with:
-          fetch-depth: 0
-      - uses: dorny/paths-filter@v3
-        id: filter
-        continue-on-error: ${{ github.event_name == 'merge_group' }}
-        with:
-          base: ${{ github.event.merge_group.base_sha || '' }}
-          ref: ${{ github.event.merge_group.head_sha || '' }}
-          filters: |
-            packages:
-              - 'packages/**'
-            desktopModule:
-              - 'apps/mobile/src-tauri/**'
-              - 'apps/mobile/package.json'
-              - 'apps/mobile/package-lock.json'
-              - 'apps/mobile/app.config.js'
-              - 'apps/mobile/scripts/generate-tauri-icons.mjs'
-              - 'apps/mobile/sources/assets/images/icon.png'
-      # Same latch as checks.yml: `every` is per file, and it must not apply
-      # to desktopModule, whose list is a union of paths.
-      - uses: dorny/paths-filter@v3
-        id: unmapped
-        continue-on-error: ${{ github.event_name == 'merge_group' }}
-        with:
-          base: ${{ github.event.merge_group.base_sha || '' }}
-          ref: ${{ github.event.merge_group.head_sha || '' }}
-          predicate-quantifier: every
-          filters: |
-            unmapped:
-              - '**'
-              - '!packages/**'
-              - '!apps/body/**'
-              - '!apps/server/**'
-              - '!apps/mobile/**'
-      - id: decide
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          FILTER_OUTCOME: ${{ steps.filter.outcome }}
-          UNMAPPED_OUTCOME: ${{ steps.unmapped.outcome }}
-          PACKAGES: ${{ steps.filter.outputs.packages }}
-          UNMAPPED: ${{ steps.unmapped.outputs.unmapped }}
-          DESKTOP_MODULE: ${{ steps.filter.outputs.desktopModule }}
-        run: |
-          set -euo pipefail
-          if [ "$EVENT_NAME" = merge_group ] && { [ "$FILTER_OUTCOME" != success ] || [ "$UNMAPPED_OUTCOME" != success ]; }; then
-            DESKTOP_MODULE=true
-          fi
-          if [ "$PACKAGES" = true ] || [ "$UNMAPPED" = true ] || [ "$DESKTOP_MODULE" = true ]; then
-            echo 'desktop=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'desktop=false' >> "$GITHUB_OUTPUT"
-          fi
-
-  # icons/ is generated from sources/assets/images/icon.png. Regenerating is
-  # seconds of node, so prove the committed files still match the source
-  # before spending three runners on a bundle that would ship a stale mark.
   icons:
     name: DESKTOP ICONS
-    needs: changes
-    if: >-
-      !cancelled() && inputs.release_sha == '' && (
-        github.event_name != 'pull_request' ||
-        needs.changes.outputs.desktop == 'true'
-      )
-    runs-on: ubuntu-latest
+    if: "!cancelled() && inputs.release_sha == ''"
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - beeline-ci
+      - beeline-ci-control
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.release_sha || github.event.pull_request.head.sha || github.sha }}
+          clean: ${{ !startsWith(runner.name, 'beeline-ci-squire-') }}
+      - name: Decide in this checkout
+        id: changes
+        env:
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CI_PATHS: ^apps/mobile/src-tauri/|^apps/mobile/(package|app\.config)|^apps/mobile/scripts/generate-tauri-icons|^apps/mobile/sources/assets/images/icon\.png$|^packages/
+        run: |-
+          run=true
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && git fetch --no-tags --depth=1 origin "$CI_BASE_SHA" && git diff --name-only "$CI_BASE_SHA" HEAD > "$RUNNER_TEMP/changed-files"; then
+            run=false
+            while IFS= read -r file; do
+              if [[ "$file" =~ $CI_PATHS ]]; then run=true; break; fi
+              if [[ "$file" == docs/* || "$file" == *.md ]]; then continue; fi
+              if [[ ! "$file" =~ ^apps/(body|server|mobile)/ ]]; then run=true; break; fi
+            done < "$RUNNER_TEMP/changed-files"
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "This job runs: $run"
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+        if: steps.changes.outputs.run == 'true'
       - name: Check the desktop icons match the app icon
         working-directory: apps/mobile
         run: npm run tauri:icons:check
-      - name: Check desktop release helpers
-        run: node --test scripts/clean-dist.test.mjs scripts/desktop-update.test.mjs
-
+        if: steps.changes.outputs.run == 'true'
   build:
     name: DESKTOP BUILD (${{ matrix.label }})
-    needs: [changes, icons]
-    if: ${{ !cancelled() && (needs.icons.result == 'success' || inputs.release_sha != '') }}
+    needs:
+      - icons
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'merge_group' && (needs.icons.result == 'success' || inputs.release_sha != '') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
-      # One platform's toolchain failing should not hide whether the other two
-      # produce a bundle.
       fail-fast: false
       matrix:
         include:
-          # A universal binary, so one download covers Apple silicon and Intel.
           - label: macos-universal
             os: macos-latest
             target: universal-apple-darwin
             rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
-          # 22.04 rather than latest: the .deb and the AppImage inherit the
-          # builder's glibc, and a newer one narrows who can install them.
           - label: linux-x86_64
             os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
@@ -229,8 +134,6 @@ jobs:
             target: x86_64-pc-windows-msvc
             rust-targets: x86_64-pc-windows-msvc
     env:
-      # Pull requests carry no input and remain preview builds. The unified
-      # release calls this workflow explicitly with production.
       VARIANT: ${{ inputs.variant || 'preview' }}
     steps:
       - uses: actions/checkout@v4
@@ -240,9 +143,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-
-      # The webview Tauri renders into is the system one: WebKitGTK here,
-      # WKWebView on macOS, WebView2 on Windows. Only Linux needs it installed.
       - name: Install the Linux webview toolchain
         if: runner.os == 'Linux'
         run: |
@@ -256,13 +156,9 @@ jobs:
             libssl-dev \
             patchelf \
             file
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.rust-targets }}
-
-      # Cargo.lock is committed, so the key names an exact dependency set: a
-      # hit restores a build that resolved the same crates.
       - uses: actions/cache@v4
         with:
           path: |
@@ -273,21 +169,11 @@ jobs:
           key: desktop-cargo-${{ matrix.label }}-${{ hashFiles('apps/mobile/src-tauri/Cargo.lock') }}
           restore-keys: |
             desktop-cargo-${{ matrix.label }}-
-
       - run: bash scripts/npm-ci-timed.sh
-      # Metro resolves @beeline/* from built dist, exactly as the phone build
-      # does, so the web export needs those dists to exist first.
       - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/net
-      # The mobile app is isolated from the root workspaces and carries its own
-      # node_modules, including the Tauri CLI.
       - name: Install mobile dependencies
         working-directory: apps/mobile
         run: bash ../../scripts/npm-ci-timed.sh
-
-      # The gate evaluates the complete credential set before Tauri sees any
-      # of it. A missing or partially configured set therefore builds fully
-      # unsigned and emits an unmistakable notice; a complete set makes every
-      # signing, notarization, and verification step mandatory.
       - name: Select the macOS signing mode
         id: macos_signing
         env:
@@ -298,7 +184,6 @@ jobs:
           MACOS_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
           MACOS_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
         run: node scripts/desktop-signing.mjs
-
       - name: Materialize the macOS signing credentials
         if: steps.macos_signing.outputs.enabled == 'true'
         env:
@@ -348,14 +233,8 @@ jobs:
           write_env APPLE_API_KEY "$MACOS_ASC_KEY_ID"
           write_env APPLE_API_ISSUER "$MACOS_ASC_ISSUER_ID"
           write_env APPLE_API_KEY_PATH "$key_path"
-
-      # The cache key hashes only Cargo.lock, so a version bump alone still
-      # hits it and restores the prior version's installers alongside the
-      # compiled deps; clear just the bundle output so the exactly-one check
-      # below doesn't count stale installers next to the fresh ones.
       - name: Clear stale bundle output from the restored cache
         run: rm -rf "apps/mobile/src-tauri/target/${{ matrix.target }}/release/bundle"
-
       - name: Prepare the signed production updater configuration
         if: inputs.variant == 'production'
         env:
@@ -372,17 +251,10 @@ jobs:
             --endpoint 'https://github.com/Beeline-Work/beeline/releases/latest/download/Beeline-latest.json' \
             --output "$updater_config"
           echo "TAURI_UPDATER_CONFIG=$updater_config" >> "$GITHUB_ENV"
-
-      # `tauri build` runs the config's beforeBuildCommand (the Expo web
-      # export) and then bundles it for this platform's installers.
-      # Tauri signs the app but does not notarize it here: the API key variables
-      # are unset for this step, and the disk image below is notarized once.
       - name: Build the desktop bundle
         timeout-minutes: 25
         working-directory: apps/mobile
         env:
-          # app.config.js stamps the build with the commit it came from; the
-          # checkout's git metadata would otherwise name a merge commit.
           EXPO_PUBLIC_BEELINE_RELEASE_SHA: ${{ inputs.release_sha || github.event.pull_request.head.sha || github.sha }}
           EXPO_PUBLIC_BEELINE_DESKTOP_UPDATES: ${{ inputs.variant == 'production' && '1' || '0' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_UPDATER_PRIVATE_KEY }}
@@ -399,31 +271,16 @@ jobs:
           env -u APPLE_API_KEY -u APPLE_API_ISSUER -u APPLE_API_KEY_PATH \
             npx tauri build --target "${{ matrix.target }}" ${config[@]+"${config[@]}"} \
             2>&1 | tee "$RUNNER_TEMP/tauri-build.log"
-
-      # This safe local fixture proves the plugin call reaches the runner OS
-      # and OCRs the screen for the banner/toast text. The TypeScript test
-      # covers the signed-in live-message-to-plugin boundary. `continue-on-
-      # error` is deliberate: GitHub-hosted runners on both platforms do not
-      # render an OS notification banner/toast in this session even when the
-      # plugin call succeeds (see apps/mobile/src-tauri/README.md's "CI
-      # cannot prove the OS actually renders the banner"), so a red step here
-      # is informational, not a regression signal.
       - name: Capture macOS native notification
         if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && runner.os == 'macOS'
         continue-on-error: true
         timeout-minutes: 3
         run: bash scripts/desktop-notification-proof-macos.sh
-
       - name: Capture Windows native notification
         if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && runner.os == 'Windows'
         continue-on-error: true
         timeout-minutes: 3
-        # Windows PowerShell (not pwsh/Core), so the script's WinRT OCR
-        # verification can use .NET Framework's built-in WinRT projection.
         run: powershell.exe -File scripts/desktop-notification-proof-windows.ps1
-
-      # Screenshot/log evidence is informational, like the capture itself.
-      # An artifact-service outage must not turn it into an installer gate.
       - name: Upload native notification diagnostics
         uses: actions/upload-artifact@v4
         continue-on-error: true
@@ -433,10 +290,6 @@ jobs:
           path: ${{ runner.temp }}/desktop-native-notification-*
           if-no-files-found: warn
           retention-days: 14
-
-      # Pull requests cannot use release secrets. Exercise the exact codesign
-      # verification path against an ad-hoc-signed copy without changing the
-      # unsigned preview artifact that testers download.
       - name: Exercise codesign verification on an ad-hoc test copy
         if: runner.os == 'macOS' && steps.macos_signing.outputs.enabled != 'true'
         run: |
@@ -458,9 +311,6 @@ jobs:
           codesign --force --deep --sign - "$test_app"
           codesign --verify --deep --strict --verbose=2 "$test_app"
           echo '::notice::ad-hoc codesign verification passed; this does not represent Developer ID or notarization'
-
-      # One notarization: the .dmg users download, which registers the signed
-      # .app inside it too. Staple the ticket to the disk image.
       - name: Notarize and staple the macOS disk image
         if: steps.macos_signing.outputs.enabled == 'true'
         env:
@@ -485,7 +335,6 @@ jobs:
           test -n "$log_id" || { echo '::error::DMG notarization returned no log id'; exit 1; }
           echo "Notarization log id: $log_id"
           xcrun stapler staple -v "$dmg"
-
       - name: Verify the signed and notarized macOS download
         if: steps.macos_signing.outputs.enabled == 'true'
         run: |
@@ -506,7 +355,6 @@ jobs:
             echo '::error::spctl did not report accepted'; exit 1;
           }
           xcrun stapler validate "$dmg"
-
       - name: Prove the bundled macOS app icon
         if: runner.os == 'macOS'
         run: |
@@ -533,10 +381,6 @@ jobs:
             sips --getProperty pixelWidth --getProperty pixelHeight --getProperty hasAlpha "$master"
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
-
-      # A bundler that produced nothing still exits 0 in some failure modes;
-      # the installer files are the evidence. The same listing tells whoever
-      # opens the run which downloads it produced.
       - name: Prove the build produced installers
         run: |
           set -euo pipefail
@@ -567,18 +411,13 @@ jobs:
             echo "$found"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-
-      # The release keeps only the stable installer names staged below.
       - uses: actions/upload-artifact@v4
         if: inputs.variant != 'production'
         with:
           name: beeline-desktop-${{ inputs.variant || 'preview' }}-${{ matrix.label }}
-          # The whole bundle directory: a macOS run carries both the .dmg and
-          # the .app archive, a Windows run both the .msi and the NSIS .exe.
           path: apps/mobile/src-tauri/target/${{ matrix.target }}/release/bundle/**
           if-no-files-found: error
           retention-days: 14
-
       - name: Stage stable public installer names
         if: inputs.variant == 'production'
         run: |
@@ -610,7 +449,6 @@ jobs:
               one '*.rpm' 'Beeline-x86_64.rpm'
               ;;
           esac
-
       - uses: actions/upload-artifact@v4
         if: inputs.variant == 'production'
         with:

@@ -57,7 +57,7 @@ export function directMessageHeaderIdentity(
   return { name: fallbackMemberName(pubkey) };
 }
 
-export function directMessagePeer(dm: DirectMessage, viewerPubkey: string): string {
+function directMessagePeer(dm: DirectMessage, viewerPubkey: string): string {
   const peer = dm.participants.find((pubkey) => pubkey !== viewerPubkey);
   if (!peer) throw new Error('viewer is not a participant in this direct message');
   return peer;

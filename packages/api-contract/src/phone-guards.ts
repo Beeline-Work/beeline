@@ -667,7 +667,7 @@ export function readConnectorOfferCardView(value: unknown): ConnectorOfferCardVi
   };
 }
 
-export function isConnectorOfferCardView(value: unknown): value is ConnectorOfferCardView {
+function isConnectorOfferCardView(value: unknown): value is ConnectorOfferCardView {
   return readConnectorOfferCardView(value) !== null;
 }
 
@@ -1948,6 +1948,7 @@ export function readChatListView(value: unknown): ChatListView | null {
   };
 }
 
+/** @public The phone push-prefetch boundary consumes this guard through the client facade. */
 export function isChatListView(value: unknown): value is ChatListView {
   return readChatListView(value) !== null;
 }

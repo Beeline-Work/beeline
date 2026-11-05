@@ -1,5 +1,32 @@
 // This suite exercises an installed old-server path, with explicit legacy negotiation.
-vi.mock('@/buzz/router-owner', async () => (await import('@/test-fixtures/legacy-router-owner')).legacyRouterOwner);
+vi.mock('@/buzz/router-owner', () => {
+const empty = Object.freeze({state:'ABSENT' as const,value:null,error:null,cut:null});
+const noAction = () => {};
+const forbidden = () => { throw new Error('Legacy fixture cannot spend router authority'); };
+return {
+  routerFamilyMode: () => 'legacy' as const,
+  subscribeRouterOwner: () => noAction,
+  routerLaneSnapshot: () => empty,
+  routerOwnerCapabilities: () => ({families:[],authorityFencesV1:false,scheduledWorkCoverageV1:false}),
+  routerOwnerNavigation: noAction,
+  routerOwnerListPanel: noAction,
+  routerOwnerUsageProfile: noAction,
+  routerOwnerArtifactAction: noAction,
+  routerOwnerArtifactViewport: noAction,
+  routerOwnerDisconnected: noAction,
+  routerOwnerReceive: noAction,
+  routerOwnerNegotiated: forbidden,
+  acquireRouterLane: forbidden,
+  acquireRouterSavedContinuation: forbidden,
+  retryRouterLane: forbidden,
+  readRouterToolPage: forbidden,
+  admitRouterPreparedMessage: forbidden,
+  admitRouterScheduledStop: forbidden,
+  admitRouterTrayCommand: forbidden,
+  admitRouterTrayPaint: forbidden,
+};
+
+});
 vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
 vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
 vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ register: async () => () => undefined }) }));
@@ -14,8 +41,40 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
   getEffectiveRelayUrl: async () => 'https://relay.test',
   loadBuzzIdentity: async () => ({ publicKey: 'human-dani' }),
 }));
-vi.mock('@/buzz/surface-storage', async () =>
-  (await import('@/test/mock-surface-storage')).mockSurfaceStorage());
+vi.mock('@/buzz/surface-storage', () => {
+  type Address = { endpoint: string; params?: Record<string, unknown> };
+  const values = new Map<string, unknown>();
+  const listeners = new Map<string, Set<() => void>>();
+  const key = (address: Address) => `${address.endpoint}:${JSON.stringify(address.params ?? {})}`;
+  const announce = (address: Address) => listeners.get(key(address))?.forEach((listener) => listener());
+  return {
+    surfaceAddress: (_relay: string, _viewer: string, endpoint: string,
+      params?: Record<string, unknown>) => ({ endpoint, params }),
+    clearMobileSurfaceStorage: () => {
+      values.clear(); listeners.forEach((set) => set.forEach((listener) => listener()));
+    },
+    mobileSurfaceCache: {
+      clear: () => { values.clear(); listeners.forEach((set) => set.forEach((listener) => listener())); },
+      peek: (address: Address) => values.get(key(address)) ?? null,
+      read: async (address: Address) => values.get(key(address)) ?? null,
+      write: async (address: Address, value: unknown) => {
+        values.set(key(address), value); announce(address);
+      },
+      publish: (address: Address, value: unknown) => {
+        values.set(key(address), value); announce(address); return value;
+      },
+      remove: async (address: Address) => { values.delete(key(address)); announce(address); },
+      fetch: async (address: Address, _guard: unknown, request: () => Promise<unknown>) => {
+        const value = await request(); values.set(key(address), value); announce(address); return value;
+      },
+      subscribe: (address: Address, listener: () => void) => {
+        const set = listeners.get(key(address)) ?? new Set<() => void>();
+        set.add(listener); listeners.set(key(address), set);
+        return () => { set.delete(listener); };
+      },
+    },
+  };
+});
 import { mobileSurfaceCache } from '@/buzz/surface-storage';
 
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));

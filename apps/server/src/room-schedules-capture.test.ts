@@ -1,6 +1,6 @@
 import { setRoomEventSubscriptions } from './agent-subscriptions.js';
 import {afterEach,beforeEach,describe,expect,it} from 'vitest';
-import {migratedDatabase,type PgliteDatabase} from './test-support.js';
+import {migratedDatabase,type PgliteDatabase} from "../../../tests/helpers/server.js";
 import {ROOM_SCHEDULES_CAPTURE_SCHEMA} from './room-schedules-capture.js';
 import {SCHEDULED_WORK_AUTHORITY_SCHEMA} from './scheduled-work-authority.js';
 import {buildRoomSchedulesProjection} from './room-schedules-projection.js';

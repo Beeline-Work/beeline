@@ -8,7 +8,7 @@ import { groupFeedback } from '../../../scripts/feedback-signals.mjs';
 import { LiveHub } from './live.js';
 import { hasSystemReportMention, taggedIdentityIdsSql } from './message-mentions.js';
 import { PhoneService } from './phone-service.js';
-import { PgliteDatabase, migratedDatabase, insertCornerFacts } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, insertCornerFacts } from "../../../tests/helpers/server.js";
 import { ensureSystemIdentity } from './system-line.js';
 
 const PERSON = 'a'.repeat(64);

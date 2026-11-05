@@ -4,7 +4,7 @@ import { DaemonService, type OwnedModelClaimCapability } from './daemon-service.
 import { LiveHub } from './live.js';
 import { OwnedModelAttempts } from './owned-model-attempt.js';
 import { OwnedModelUnknownGeneration } from './owned-model-credential.js';
-import { MODEL_AGENT, MODEL_CLAIM, MODEL_OWNER, MODEL_ROOM, MODEL_SOURCE, MODEL_WORKSPACE, ownedModelFixture } from './test-fixtures/owned-model.js';
+import { MODEL_AGENT, MODEL_CLAIM, MODEL_OWNER, MODEL_ROOM, MODEL_SOURCE, MODEL_WORKSPACE, ownedModelFixture } from "../../../tests/helpers/server.js";
 
 describe('actual owned-model claim transaction and secret boundary', () => {
   let f: Awaited<ReturnType<typeof ownedModelFixture>>, live: LiveHub, daemon: DaemonService, commandId: string;

@@ -2,7 +2,7 @@ import { flushDueCommanderWakes } from './commander-wakes.js';
 import { advanceCorner } from './corner-lifecycle.js';
 import { createHash, randomUUID, randomBytes } from 'node:crypto';
 import { beforeAll, beforeEach, afterAll, expect, it, vi } from 'vitest';
-import { MemoryObjectStorage, PgliteDatabase, migratedDatabase } from './test-support.js';
+import { MemoryObjectStorage, PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
 import { ObjectService } from './object-service.js';
 import { callAgentTool, postArtifact } from '../../body/src/read-only-mcp.js';
 import { createServer } from 'node:http';

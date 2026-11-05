@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { AgentVoiceService, renderVoiceAudio } from './agent-voice.js';
 import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase } from "../../../tests/helpers/server.js";
 import { VoiceService } from './voice-service.js';
 import { LiveHub } from './live.js';
 import { VOICE_SCHEMA } from './voice-schema.js';

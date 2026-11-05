@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase } from "../../../tests/helpers/server.js";
 import { migrate } from './database.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';

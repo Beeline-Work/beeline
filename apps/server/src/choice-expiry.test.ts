@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { migratedDatabase, type PgliteDatabase } from './test-support.js';
+import { migratedDatabase, type PgliteDatabase } from "../../../tests/helpers/server.js";
 import type { SqlDatabase } from './database.js';
 import { BackgroundWork } from './background-work.js';
 import { ChoiceExpiryLoop } from './choice-expiry.js';

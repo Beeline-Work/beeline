@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BackgroundOwnership, BACKGROUND_OWNERSHIP_SCHEMA, BackgroundOwnershipLost, type BackgroundEpoch } from './background-ownership.js';
-import {installBackgroundOwnerTestProof,backgroundOwnerTestLock} from './test-fixtures/background-owner-test-support.js';
+import {installBackgroundOwnerTestProof,backgroundOwnerTestLock} from "../../../tests/helpers/server.js";
 import type { SqlDatabase } from './database.js';
 import { postRoomChoice } from './room-choice.js';
-import { migratedDatabase, type PgliteDatabase } from './test-support.js';
+import { migratedDatabase, type PgliteDatabase } from "../../../tests/helpers/server.js";
 import { TrayChoiceClockOwner } from './tray-choice-clock-owner.js';
 import { TRAY_CLOCK_OWNER_SCHEMA } from './tray-clock-owner.js';
 import { TRAY_CLOCK_SOURCE_SCHEMA } from './tray-clock-source.js';

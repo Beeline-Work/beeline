@@ -21,7 +21,7 @@ import { AGENT_MENTION_NOTICE_GRACE_MS } from '@beeline/api-contract/agent-acces
 import { CORNER_BRIEF_SPEC_MAX_LENGTH } from '@beeline/api-contract/daemon';
 import { migrate } from './database.js';
 import { upgradeGrantPolicy } from './grant-policy-upgrade.js';
-import { MemoryObjectStorage, PgliteDatabase, migratedDatabase, insertCornerFacts } from './test-support.js';
+import { MemoryObjectStorage, PgliteDatabase, migratedDatabase, insertCornerFacts } from "../../../tests/helpers/server.js";
 import { cornerImplementerSql, cornerOwnerSql } from './corner-worker.js';
 import { ObjectService } from './object-service.js';
 import { TokenAuth, tokenHash } from './auth.js';

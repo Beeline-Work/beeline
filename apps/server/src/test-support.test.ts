@@ -1,6 +1,6 @@
 import type { PGliteInterface } from '@electric-sql/pglite';
 import { describe, expect, it, vi } from 'vitest';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase } from "../../../tests/helpers/server.js";
 
 describe('PgliteDatabase teardown', () => {
   it('releases the engine even when a service or spy retains the wrapper', async () => {

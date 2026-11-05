@@ -12,7 +12,7 @@ import { LiveHub } from './live.js';
 import { ReleaseNotifier } from './release-notify.js';
 import type { PhoneService } from './phone-service.js';
 import { createBeelineServer, type ServerOptions } from './server.js';
-import { migratedDatabase } from './test-support.js';
+import { migratedDatabase } from "../../../tests/helpers/server.js";
 
 const AGENT_A = 'a'.repeat(64);
 const AGENT_B = 'b'.repeat(64);

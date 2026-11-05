@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
 import {
   firstHealthyAgent,
   isCornerReviewer,

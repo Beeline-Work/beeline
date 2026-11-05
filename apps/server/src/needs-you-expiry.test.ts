@@ -6,7 +6,7 @@ import { LiveHub, type LiveEvent } from './live.js';
 import { DeadlineExpiry } from './deadline-expiry.js';
 import { PhoneService } from './phone-service.js';
 import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
 
 const VIEWER = 'a'.repeat(64);
 const PEER = 'b'.repeat(64);

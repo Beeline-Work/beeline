@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
 import { RegistryMcpOAuth } from './registry-mcp-oauth.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';

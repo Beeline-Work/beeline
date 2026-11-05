@@ -4,7 +4,7 @@ import { createAgentCommand } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
 import { describe, expect, it, vi } from 'vitest';
 import type { RoomScheduleCadence } from '@beeline/api-contract/phone';
-import { migratedDatabase } from './test-support.js';
+import { migratedDatabase } from "../../../tests/helpers/server.js";
 import {
   AgentScheduleLoop,
   nextScheduleOccurrence,

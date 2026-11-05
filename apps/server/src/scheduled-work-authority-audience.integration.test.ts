@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
-import {migratedDatabase,type PgliteDatabase} from './test-support.js';
+import {migratedDatabase,type PgliteDatabase} from "../../../tests/helpers/server.js";
 import {SCHEDULED_WORK_AUTHORITY_SCHEMA,scheduledRoomDomain,currentScheduledWorkFence} from './scheduled-work-authority.js';
 import {scheduledWorkAudience} from './scheduled-work-audience.js';
 import {routerSourcePlan} from './router-source-plan.js';

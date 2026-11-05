@@ -9,7 +9,7 @@ import {
   type FaceId,
 } from '@beeline/api-contract/phone';
 import { PhoneService } from './phone-service.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
 const OWNER = 'a'.repeat(64);

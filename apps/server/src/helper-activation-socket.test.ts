@@ -7,7 +7,7 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import type { PhoneService } from './phone-service.js';
 import { createBeelineServer } from './server.js';
-import { migratedDatabase,type PgliteDatabase } from './test-support.js';
+import { migratedDatabase,type PgliteDatabase } from "../../../tests/helpers/server.js";
 import { HELPER_ACTIVATION_SCHEMA } from './helper-activation-schema.js';
 import { MACHINE_SOCKET_PROTOCOL } from './daemon-live.js';
 const owner='a'.repeat(64),agent='b'.repeat(64),workspace='11111111-1111-4111-8111-111111111111',room='22222222-2222-4222-8222-222222222222';

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { migrate } from './database.js';
 import { PushDeliveryLoop } from './background.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase } from "../../../tests/helpers/server.js";
 import { PhoneService } from './phone-service.js';
 import { directMessageRoomId, ensureSystemDirectMessageRoom, systemLine } from './system-line.js';
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase } from "../../../tests/helpers/server.js";
 import { createOperatorFinances, OPERATOR_FINANCES_SCHEMA } from './operator-finances.js';
 import { createDashboardServices } from './operator-dashboard-services.js';
 import { financesWire } from './operator-finances-wire.js';

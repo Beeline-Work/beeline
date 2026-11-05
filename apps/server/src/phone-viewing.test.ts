@@ -3,7 +3,7 @@ import { AddressInfo } from 'node:net';
 import WebSocket from 'ws';
 import { PushDeliveryLoop } from './background.js';
 import { clearStalePhoneViews, PhoneViewing } from './phone-viewing.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
 import { createBeelineServer } from './server.js';
 import { LiveHub } from './live.js';
 import type { TokenAuth } from './auth.js';

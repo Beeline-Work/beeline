@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { migrate } from './database.js';
-import { migratedDatabase } from './test-support.js';
+import { migratedDatabase } from "../../../tests/helpers/server.js";
 
 describe('historical storage compatibility', () => {
   it('keeps the connect-grant table and its rows, and drops the retired empty tables', async () => {

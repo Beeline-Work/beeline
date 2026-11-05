@@ -2,7 +2,7 @@ import { postRoomChoice } from './room-choice.js';
 import { fenceCommandReceiptEnqueue } from './router-command-coverage.js';
 import type { RouterCommandReceipt } from '@beeline/api-contract/router-command';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { migratedDatabase, type PgliteDatabase } from './test-support.js';
+import { migratedDatabase, type PgliteDatabase } from "../../../tests/helpers/server.js";
 import { PhoneService } from './phone-service.js';
 import { createPhoneOperationDispatcher } from './phone-operations.js';
 import { phoneReadLimits } from './phone-read-limit.js';

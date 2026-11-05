@@ -1,4 +1,4 @@
-import { seedCornerOpening, describedWorkflow, migratedDatabase, insertCornerFacts } from './test-support.js';
+import { seedCornerOpening, describedWorkflow, migratedDatabase, insertCornerFacts } from "../../../tests/helpers/server.js";
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { CommandRow } from './agent-command.js';
@@ -14,7 +14,7 @@ import {
   loadWorkspaceSkill,
   saveSkill,
 } from './institutional-skills.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase } from "../../../tests/helpers/server.js";
 import { saveWorkflow, startWorkflow } from './workflow-runs.js';
 import { pgvectorLiteral } from './institutional-memory-embeddings.js';
 import {

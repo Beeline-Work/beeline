@@ -4,7 +4,7 @@ import {
   refreshWorkspaceSkillAnchors,
   type InstitutionalSkillAnchorSource,
 } from './institutional-skill-anchors.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000301';
 const ROOM = '20000000-0000-4000-8000-000000000301';

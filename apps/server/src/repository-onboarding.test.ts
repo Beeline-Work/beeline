@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import type { SqlDatabase } from './database.js';
 import { migrate } from './database.js';
-import { seedCornerOpening, PgliteDatabase } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase } from "../../../tests/helpers/server.js";
 import { PhoneService } from './phone-service.js';
 import type { GitHubOperations } from './github-operations.js';
 import { postRepositoryOnboarding, repositoryStarters, type RepositorySignals } from './repository-onboarding.js';

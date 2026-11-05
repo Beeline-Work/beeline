@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GitHubAppClient, type GitHubOAuthClient } from '@beeline/auth/github';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
-import { PgliteDatabase, migratedDatabase, assignCornerWorker, recordCornerRun, insertCornerFacts, setCornerOwner, seedCornerOpening } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, assignCornerWorker, recordCornerRun, insertCornerFacts, setCornerOwner, seedCornerOpening } from "../../../tests/helpers/server.js";
 import { GitHubOperations } from './github-operations.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';

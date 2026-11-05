@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase } from "../../../tests/helpers/server.js";
 import { createFreeAgentInWorkspace, freeAgentConfigFromEnv, LUNA_BACKFILL_HELLO } from './free-agents.js';
 import { backfillLuna, LUNA_BACKFILL_SKIP, LUNA_BACKFILL_EXTRA_ROOM } from './luna-backfill.js';
 

@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { migratedDatabase } from './test-support.js';
+import { migratedDatabase } from "../../../tests/helpers/server.js";
 import { createAgentSubscription, deleteAgentSubscription, deleteRoomSubscription,
   listAgentSubscriptions, listServiceSubscriptionEvents, subscriptionPromptBody } from './agent-subscriptions.js';
 import { completeProviderWebhookAssignment, ingestProviderWebhook,

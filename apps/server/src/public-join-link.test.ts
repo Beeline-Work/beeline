@@ -2,7 +2,7 @@ import { afterEach, expect, it } from 'vitest';
 import { migrate } from './database.js';
 import { PhoneService } from './phone-service.js';
 import { InvitePreviewAccess } from './invite-preview.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
 const workspace = '8556a9be-d929-41e7-a0ef-d70af452a494';
 const room = '22222222-2222-4222-8222-222222222222';
 const owner = 'a'.repeat(64),

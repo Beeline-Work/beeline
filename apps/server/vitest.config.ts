@@ -14,7 +14,7 @@ export default defineConfig({
     fakeTimers: {
       toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'],
     },
-    globalSetup: ['./scripts/test-database-setup.ts'],
+    globalSetup: ["../../tests/helpers/server.ts"],
     // CI on main records per-file function coverage for PR test selection.
     setupFiles: ['./scripts/test-event-loop.ts',
       ...(process.env.SERVER_COVERAGE_MAP_DIR ? ['./scripts/coverage-map-setup.mjs'] : [])],

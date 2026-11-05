@@ -2,7 +2,7 @@ import { expect, it } from 'vitest';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { GitHubOperations } from './github-operations.js';
 import { type SqlDatabase } from './database.js';
-import { migratedDatabase } from './test-support.js';
+import { migratedDatabase } from "../../../tests/helpers/server.js";
 
 it('finishes an earlier slow suspension before a later installation deletion', async () => {
   let suspended!: () => void;

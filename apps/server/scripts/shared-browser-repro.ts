@@ -18,7 +18,7 @@ import { join } from 'node:path';
 import { WebSocket } from 'ws';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { migrate } from '../src/database.js';
-import { PgliteDatabase } from '../src/test-support.js';
+import { PgliteDatabase } from "../../../tests/helpers/server.js";
 import { LiveHub } from '../src/live.js';
 import { computerViewToken, createComputerSession, serveComputerSession, serveComputerStatus, upgradeComputerSession } from '../src/computer-session.js';
 

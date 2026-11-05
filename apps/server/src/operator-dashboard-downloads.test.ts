@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
 import { dashboardDownloads } from './operator-dashboard-downloads.js';
 import { generateKeyPairSync } from 'node:crypto';
 import {

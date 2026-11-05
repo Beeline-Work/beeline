@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { migrate, PostgresDatabase, type SqlDatabase } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase } from "../../../tests/helpers/server.js";
 import { TokenAuth } from './auth.js';
 import { PhoneService } from './phone-service.js';
 

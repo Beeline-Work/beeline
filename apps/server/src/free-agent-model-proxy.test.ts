@@ -15,7 +15,7 @@ import {
 } from './free-agent-model-proxy.js';
 import { freeAgentConfigFromEnv, tokenHash } from './free-agents.js';
 import { DEFAULT_FREE_AGENT_LIMITS, FREE_AGENT_BUDGET_MESSAGE, freeAgentLimitsFromEnv } from './free-agent-limits.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
 import { projectAgentUsage } from './agent-usage.js';
 import { PhoneService } from './phone-service.js';
 

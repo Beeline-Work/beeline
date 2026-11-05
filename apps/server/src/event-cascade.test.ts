@@ -10,7 +10,7 @@ import { setRoomEventSubscriptions } from './agent-subscriptions.js';
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MAX_EVENT_DEPTH, MAX_TURNS_PER_ROOT } from '@beeline/api-contract/phone';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
 import { EventCascadeRefusedError, systemLine } from './system-line.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';

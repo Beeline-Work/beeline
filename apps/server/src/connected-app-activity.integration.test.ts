@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
-import { migratedDatabase, type PgliteDatabase } from './test-support.js';
+import { migratedDatabase, type PgliteDatabase } from "../../../tests/helpers/server.js";
 import { createAgentCommand } from './agent-command.js';
 import { clearConnectedAppPlaceholders } from './migrations/connected-app-turns.js';
 import { PhoneService } from './phone-service.js';

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase } from "../../../tests/helpers/server.js";
 import { VoiceAudioMeter, VoiceBudgetStore, voiceBudgetDay } from './voice-budget.js';
 
 const db = new PgliteDatabase();

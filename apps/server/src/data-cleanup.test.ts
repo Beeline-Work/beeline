@@ -9,7 +9,7 @@ import {
   cancelStaleClosedCornerStops,
 } from './corner-close.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
 import { PendingAttachmentCleanupLoop, sweepPendingAttachments } from './pending-attachment-cleanup.js';
 
 const HUMAN = 'a'.repeat(64);

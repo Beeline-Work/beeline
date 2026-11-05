@@ -13,7 +13,7 @@ import {
 import { TokenAuth } from './auth.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
-import { seedCornerOpening, MemoryObjectStorage, migratedDatabase, insertCornerFacts } from './test-support.js';
+import { seedCornerOpening, MemoryObjectStorage, migratedDatabase, insertCornerFacts } from "../../../tests/helpers/server.js";
 import {
   ARTIFACT_TTL_HOURS,
   MEDIA_SWEEP_INTERVAL_MS,

@@ -1,10 +1,10 @@
 // Shared isolated database/provider fixture for the workflow test files.
-import { describedWorkflow, migratedDatabase } from '../test-support.js';
+import { describedWorkflow, migratedDatabase } from "../../../../tests/helpers/server.js";
 import { randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, vi } from 'vitest';
 import type { QueryResultRow } from 'pg';
 import { type QueryResult, type SqlDatabase } from '../database.js';
-import { PgliteDatabase } from '../test-support.js';
+import { PgliteDatabase } from "../../../../tests/helpers/server.js";
 import { createAgentCommand, type CommandRow } from '../agent-command.js';
 import { AgentScheduleLoop } from '../agent-schedules.js';
 import { handoff, getWorkflowRun, saveWorkflow, settleWorkflowGate, startWorkflow } from '../workflow-runs.js';

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
 import { dashboardXAds } from './x-ads.js';
 import { syncXSiteVisits } from './x-site-visits.js';
 import recorded from './x-site-visits.recorded.json';

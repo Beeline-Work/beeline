@@ -1,7 +1,7 @@
 import { CommandRefusalError } from './command-refusal.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
-import { describedWorkflow } from './test-support.js';
+import { describedWorkflow } from "../../../tests/helpers/server.js";
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { CHOICE_LABEL_MAX_LENGTH } from '@beeline/api-contract/phone';
 import { randomBytes } from 'node:crypto';

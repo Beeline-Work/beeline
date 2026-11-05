@@ -1,7 +1,7 @@
 import { afterEach, expect, it } from 'vitest';
 import { ensureSystemDirectMessageRoom } from './system-line.js';
 import { PhoneService } from './phone-service.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
 
 let database: PgliteDatabase;
 afterEach(async () => database?.close());

@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { PhoneService } from './phone-service.js';
-import { migratedDatabase } from './test-support.js';
+import { migratedDatabase } from "../../../tests/helpers/server.js";
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000301';
 const ALLOWED_A = '20000000-0000-4000-8000-000000000301';

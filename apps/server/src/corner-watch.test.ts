@@ -1,6 +1,6 @@
 import { flushDueCommanderWakes } from './commander-wakes.js';
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
-import { PgliteDatabase, migratedDatabase, recordCornerRun, insertCornerFacts } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, recordCornerRun, insertCornerFacts } from "../../../tests/helpers/server.js";
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { GITHUB_SUBJECT, systemLine } from './system-line.js';

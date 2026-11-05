@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { PgliteDatabase, migratedDatabase, insertCornerFacts, setCornerOwner, seedCornerOpening } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, insertCornerFacts, setCornerOwner, seedCornerOpening } from "../../../tests/helpers/server.js";
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';

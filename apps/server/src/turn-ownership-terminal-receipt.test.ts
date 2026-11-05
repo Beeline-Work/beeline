@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createAgentCommand } from './agent-command.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
-import { migratedDatabase, type PgliteDatabase } from './test-support.js';
+import { migratedDatabase, type PgliteDatabase } from "../../../tests/helpers/server.js";
 
 const room='11111111-1111-4111-8111-111111111111',workspace='22222222-2222-4222-8222-222222222222';
 const owner='b'.repeat(64),agent='a'.repeat(64),source={connectionId:'receipt-owner',epoch:1};

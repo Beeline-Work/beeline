@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import * as Sentry from '@sentry/node';
 import { expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase } from "../../../tests/helpers/server.js";
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { TokenAuth, tokenHash } from './auth.js';

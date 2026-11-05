@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase } from "../../../tests/helpers/server.js";
 import { COMMAND_COMPLETION_CHANNEL, commandCompletionSchema, notifyCommandCompletion } from './command-completion.js';
 import { waitForConnection } from './connection-wait.js';
 

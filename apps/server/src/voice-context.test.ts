@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase } from "../../../tests/helpers/server.js";
 import { readVoiceContext } from './voice-context.js';
 
 it('VOICE-CONTEXT-1: includes every speaker, new room posts, attachment and card references in a bounded window', async () => {

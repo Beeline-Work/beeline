@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { expect, it } from 'vitest';
 import sharp from 'sharp';
@@ -8,8 +9,8 @@ import { ObjectService } from './object-service.js';
 import { PhoneService } from './phone-service.js';
 import { readMediaMetadata } from './phone-media.js';
 import { createBeelineServer } from './server.js';
-import { MemoryObjectStorage, migratedDatabase } from './test-support.js';
-import { phoneArtifactHost } from './test-fixtures/test-support-phone-artifact-host.js';
+import { MemoryObjectStorage, migratedDatabase } from "../../../tests/helpers/server.js";
+import { phoneArtifactHost } from "../../../tests/helpers/server.js";
 
 const VIEWER = 'a'.repeat(64), AGENT = 'b'.repeat(64);
 const WS = '11111111-1111-4111-8111-111111111111', ROOM = '22222222-2222-4222-8222-222222222222';
@@ -40,7 +41,7 @@ it('downloads a roughly 500 KB agent image without a thumbnail for the phone art
     const response = await fetch(`${origin}/v1/media/${id}`);
     expect(response.status).toBe(200);
     expect(Buffer.from(await response.arrayBuffer()).equals(bytes)).toBe(true);
-    host = await phoneArtifactHost(VIEWER, origin);
+    host = await phoneArtifactHost(VIEWER, origin, resolve('../..'));
     host.phone.installMediaCacheConnection({ origin, principal: VIEWER, generation: 1, mediaMetadataV1: true,
       executeMetadata: (objectId: string) => readMediaMetadata(db, objectId, VIEWER) });
     const image = await host.phone.artifactImageSource({ ...attachment, name: 'canyon.png', kind: 'artifact' }, { preview: true });

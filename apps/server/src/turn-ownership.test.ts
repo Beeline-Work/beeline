@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase } from "../../../tests/helpers/server.js";
 import {
   TURN_OWNERSHIP_SCHEMA, assertCurrentTurnOwner, commandOwnerExpiredSql, commandOwnerLiveSql, turnOwnershipEnabled, workingTurnFreshSql,
 } from './turn-ownership.js';

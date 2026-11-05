@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { PhoneService } from './phone-service.js';
-import { PgliteDatabase, migratedDatabase, insertCornerFacts, seedCornerOpening } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, insertCornerFacts, seedCornerOpening } from "../../../tests/helpers/server.js";
 
 const workspace = '11111111-1111-4111-8111-111111111111';
 const parent = '22222222-2222-4222-8222-222222222222';

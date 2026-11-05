@@ -1,6 +1,6 @@
 import { TURN_OWNERSHIP_SCHEMA } from './turn-ownership.js';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase } from "../../../tests/helpers/server.js";
 import { appendHelperOverlay, type HelperOverlayFrame } from '@beeline/api-contract/helper-overlay';
 import { HELPER_OVERLAY_SCHEMA, HelperOverlayViewer, applyHelperOverlay, fenceHelperOverlayEnqueue, helperOverlayDemand, type HelperOverlayLiveEvent } from './helper-overlay.js';
 const room='11111111-1111-4111-8111-111111111111',workspace='22222222-2222-4222-8222-222222222222';

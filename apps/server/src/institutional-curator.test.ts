@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { migrateData } from './database.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
 import { runInstitutionalCuratorCycle } from './institutional-curator.js';
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000301';

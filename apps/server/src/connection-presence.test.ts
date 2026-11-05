@@ -1,7 +1,7 @@
 import { RecentIdentityTimes } from './connection-presence.js';
 import * as backgroundWork from './background-work.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
 import { ConnectionPresence, recordAgentEvidence, claimAgentConnection } from './connection-presence.js';
 import { LiveHub } from './live.js';
 import { runMaintenance } from './background.js';

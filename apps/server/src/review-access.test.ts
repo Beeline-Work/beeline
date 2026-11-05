@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_WORKSPACE_ID } from '@beeline/api-contract/phone';
 import { TokenAuth, type PhoneTokens } from './auth.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
 import {
   REVIEW_IDENTITY_ID,
   REVIEW_IDENTITY_NAME,

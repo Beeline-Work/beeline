@@ -4,7 +4,7 @@ import { Pool } from 'pg';
 import type { AddressInfo } from 'node:net';
 import { afterEach, expect, it, vi } from 'vitest';
 import { migrate, PostgresDatabase, type ClosableDatabase } from './database.js';
-import { migratedDatabase } from './test-support.js';
+import { migratedDatabase } from "../../../tests/helpers/server.js";
 import { createBeelineServer, type ServerOptions } from './server.js';
 import { LiveHub } from './live.js';
 import { flushSentryWakes, nextSentryWakeDelayMs, runSentryWakeDeadline, sentryWakeAgentFromEnv } from './sentry-wake.js';

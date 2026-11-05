@@ -17,7 +17,7 @@ import {
 } from './feedback-triage-workflow.js';
 import { getInstitutionalContext } from './institutional-memory-shadow.js';
 import { loadWorkspaceSkill } from './institutional-skills.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
 import { completeServiceReview, readServiceReviewPage } from './service-review.js';
 import { handoff, startWorkflow, saveWorkflow } from './workflow-runs.js';
 

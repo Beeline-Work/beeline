@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { AgentUsage } from '@beeline/api-contract/daemon';
 import { canonicalUsageAccountSnapshot } from '@beeline/api-contract/helper-usage';
-import { migratedDatabase, type PgliteDatabase } from './test-support.js';
+import { migratedDatabase, type PgliteDatabase } from "../../../tests/helpers/server.js";
 import { COMMAND_COMPLETION_CHANNEL,notifyCommandCompletion } from './command-completion.js';
 import { HELPER_USAGE_SCHEMA, attachUsageAccount, fenceAgentUsageCellEnqueue, publishUsageAccount, readAgentUsageCell, subscribeAgentUsageCells } from './helper-usage.js';
 const owner='a'.repeat(64),other='b'.repeat(64),first='c'.repeat(64),second='d'.repeat(64),outsider='e'.repeat(64);

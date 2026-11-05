@@ -11,7 +11,7 @@ import { reserveServiceReviewWorkspaces, readServiceReviewPage } from './service
 import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
 import { COMMAND_COMPLETION_CHANNEL } from './command-completion.js';
 import { createBeelineServer } from './server.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
 
 // Reproduction R-J28/R-J29/R-J30: one real database, LISTEN bridge, phone
 // socket server and phone operations. A write from one session must reach

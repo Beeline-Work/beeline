@@ -3,7 +3,7 @@ import { Pool, type QueryResultRow } from 'pg';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { migrate, PostgresDatabase, type SqlDatabase } from './database.js';
-import { PgliteDatabase, insertCornerFacts } from './test-support.js';
+import { PgliteDatabase, insertCornerFacts } from "../../../tests/helpers/server.js";
 import { GitHubOperations } from './github-operations.js';
 import { claimAgentCommand, createAgentCommand } from './agent-command.js';
 import { DaemonService } from './daemon-service.js';

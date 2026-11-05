@@ -3,7 +3,7 @@ import { runInNewContext } from 'node:vm';
 import { ModuleKind, transpileModule } from 'typescript';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { migrateData } from './database.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
 import { FREE_AGENT_CONNECT_GUIDE, freeAgentConfigFromEnv, freeAgentInstructions } from './free-agents.js';
 import { recordAgentConnectedAfterNudge, warnFreeAgentOwner } from './free-agent-warning.js';
 import { PhoneService } from './phone-service.js';

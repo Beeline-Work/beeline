@@ -4,7 +4,7 @@ import {BACKGROUND_OWNERSHIP_SCHEMA,BackgroundOwnership} from './background-owne
 import {TRAY_CLOCK_OWNER_SCHEMA} from './tray-clock-owner.js';
 import {TrayClockHealth} from './tray-clock-health.js';
 import {readTrayClockBasis} from './tray-clock-basis.js';
-import {installBackgroundOwnerTestProof,backgroundOwnerTestLock} from './test-fixtures/background-owner-test-support.js';
+import {installBackgroundOwnerTestProof,backgroundOwnerTestLock} from "../../../tests/helpers/server.js";
 import {TrayClockReadiness} from './tray-clock-readiness.js';
 import {TRAY_CLOCK_SOURCE_SCHEMA} from './tray-clock-source.js';
 import {TRAY_SAVED_WINDOW_SCHEMA} from './tray-saved-window.js';
@@ -19,7 +19,7 @@ import { PhoneService } from './phone-service.js';
 import { buildRouterSnapshot, encodeRouterBatch, fenceRouterBatch, fenceRouterEnqueue, readRouterCertificate, RouterProjectionDrain } from './router-projections.js';
 import { routerSocketProtocol } from './router-socket.js';
 import { routerSourcePlan } from './router-source-plan.js';
-import { migratedDatabase, type PgliteDatabase } from './test-support.js';
+import { migratedDatabase, type PgliteDatabase } from "../../../tests/helpers/server.js";
 
 const VIEWER='a'.repeat(64), OTHER='b'.repeat(64);
 const WORKSPACE='11111111-1111-4111-8111-111111111111';

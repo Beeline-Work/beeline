@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { setImmediate as yieldToDatabase } from 'node:timers/promises';
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { type SqlDatabase } from './database.js';
-import { PgliteDatabase, migratedDatabase, insertCornerFacts } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, insertCornerFacts } from "../../../tests/helpers/server.js";
 import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';

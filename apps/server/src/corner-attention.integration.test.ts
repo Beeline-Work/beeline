@@ -10,7 +10,7 @@ import { cornerOwedSchemaSql } from './corner-owed.js';
 import { migrate, PostgresDatabase, type SqlDatabase } from './database.js';
 import { Pool } from 'pg';
 import { randomUUID } from 'node:crypto';
-import { seedCornerOpening, PgliteDatabase, recordCornerRun, insertCornerFacts } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase, recordCornerRun, insertCornerFacts } from "../../../tests/helpers/server.js";
 import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';

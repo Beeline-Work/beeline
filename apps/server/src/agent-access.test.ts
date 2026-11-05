@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { taggedIdentityIdsSql } from './message-mentions.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
 import { PhoneService, ACCESS_POLICY_AUTHORITY_MESSAGE } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';

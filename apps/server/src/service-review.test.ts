@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { migrate } from './database.js';
 import { COHORT_SQL } from './operator-dashboard-cohort.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
 import { completeServiceReview, readServiceReviewPage, reserveServiceReviewWorkspaces } from './service-review.js';
 
 let db: PgliteDatabase;

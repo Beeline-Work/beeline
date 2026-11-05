@@ -13,7 +13,7 @@ import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import { createBeelineServer } from './server.js';
 import { wakeLateCornerWatcher } from './system-line.js';
-import { seedCornerOpening, PgliteDatabase, migratedDatabase } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
 
 // Reproduction 2026-10-08: save_memory on a turn woken by a child corner's
 // report answered "503: institutional memory requester authority is

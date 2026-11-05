@@ -9,7 +9,7 @@ import { claimAgentCommand } from './agent-command.js';
 import { setCornerHold } from './corner-holds.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
 import { cornerRunStateSql } from './corner-run.js';
-import { seedCornerOpening, MemoryObjectStorage, PgliteDatabase, migratedDatabase, insertCornerFacts, setCornerOwner } from './test-support.js';
+import { seedCornerOpening, MemoryObjectStorage, PgliteDatabase, migratedDatabase, insertCornerFacts, setCornerOwner } from "../../../tests/helpers/server.js";
 import { ObjectService } from './object-service.js';
 import { TokenAuth } from './auth.js';
 import { PhoneService } from './phone-service.js';

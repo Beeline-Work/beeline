@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { seedCornerOpening, PgliteDatabase, migratedDatabase, insertCornerFacts, recordCornerRun } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase, migratedDatabase, insertCornerFacts, recordCornerRun } from "../../../tests/helpers/server.js";
 import { PhoneService } from './phone-service.js';
 import { CORNER_ROW_CACHE_COLUMNS, CORNER_ROW_FACT_COLUMNS, CORNER_ROW_MESSAGE_COLUMNS } from './corner-row-projection.js';
 

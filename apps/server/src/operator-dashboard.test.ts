@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { recordSigninFunnelEvent } from './signin-funnel.js';
 import { createSigninFunnelClient } from '@beeline/api-contract/signin-funnel-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
 import { createBeelineServer } from './server.js';
 import { dashboardHealth, dashboardOps } from './operator-dashboard.js';
 import { dashboardOverview } from './operator-dashboard-overview.js';

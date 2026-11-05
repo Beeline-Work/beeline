@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PushDeliveryLoop } from './background.js';
-import { seedCornerOpening, PgliteDatabase, migratedDatabase, insertCornerFacts } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase, migratedDatabase, insertCornerFacts } from "../../../tests/helpers/server.js";
 
 const person = 'a'.repeat(64),
   teammate = 'b'.repeat(64),

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { migrate } from './database.js';
 import { withdrawSupersededGrantAsks } from './grant-policy-upgrade.js';
 import { ensureSystemDirectMessageRoom } from './system-line.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
 
 const OWNER = 'a'.repeat(64);
 const AGENT = 'c'.repeat(64);

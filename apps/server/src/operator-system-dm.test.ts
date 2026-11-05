@@ -4,7 +4,7 @@ import type { Pool } from 'pg';
 import { PostgresDatabase } from './database.js';
 import { BackgroundJobRunner } from './background.js';
 import * as sentry from './sentry.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { claimAgentCommand, createAgentCommand } from './agent-command.js';

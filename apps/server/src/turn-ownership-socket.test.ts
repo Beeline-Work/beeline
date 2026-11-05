@@ -10,7 +10,7 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import type { PhoneService } from './phone-service.js';
 import { createBeelineServer } from './server.js';
-import { migratedDatabase, type PgliteDatabase } from './test-support.js';
+import { migratedDatabase, type PgliteDatabase } from "../../../tests/helpers/server.js";
 import type { PostgresDatabase } from './database.js';
 import { groupBPostgresDatabase } from './test-fixtures/test-support-router-group-b-postgres.js';
 import { PostgresLiveListener } from './postgres-live.js';

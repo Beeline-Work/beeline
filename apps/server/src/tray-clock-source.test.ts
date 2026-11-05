@@ -1,7 +1,7 @@
 import {BACKGROUND_OWNERSHIP_SCHEMA} from './background-ownership.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { SqlDatabase } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase } from "../../../tests/helpers/server.js";
 import { DURABLE_LIVE_SCHEMA } from './durable-live.js';
 import { TRAY_CLOCK_SOURCE_SCHEMA, consumeTrayClockInTransaction, readTrayClockBasis, readTrayClockCause, readTrayClockDue, readTrayClockNext, readTrayClockWake,
   readTrayClockBasisCause,type TrayClockClaim } from './tray-clock-source.js';

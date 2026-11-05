@@ -5,7 +5,7 @@ import { generateKeyPair, exportPKCS8 } from 'jose';
 import { GitHubAppClient, GitHubHttpError, GitHubOAuthClient } from '@beeline/auth/github';
 import { type QueryResult, type SqlDatabase } from './database.js';
 import type { QueryResultRow } from 'pg';
-import { seedCornerOpening, PgliteDatabase, migratedDatabase, insertCornerFacts, setCornerOwner } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase, migratedDatabase, insertCornerFacts, setCornerOwner } from "../../../tests/helpers/server.js";
 import { captureServerError } from './sentry.js';
 vi.mock('./sentry.js', () => ({ captureServerError: vi.fn() }));
 import { GitHubOperations } from './github-operations.js';

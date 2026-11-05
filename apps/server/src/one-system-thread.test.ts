@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { SYSTEM_IDENTITY_ID, DELETED_ACCOUNT_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { CONNECTOR_KINDS } from '@beeline/api-contract/workbench';
 import { migrate, migrateData } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase } from "../../../tests/helpers/server.js";
 import { directMessageRoomId, ensureSystemDirectMessageRoom } from './system-line.js';
 import { PhoneService } from './phone-service.js';
 import { TokenAuth } from './auth.js';

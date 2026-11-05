@@ -4,7 +4,7 @@ import sharp from 'sharp';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { normalizeAvatar, AVATAR_MAX_BYTES, AVATAR_INPUT_MAX_BYTES } from './durable-avatar.js';
 import { migrate } from './database.js';
-import { MemoryObjectStorage, PgliteDatabase, migratedDatabase } from './test-support.js';
+import { MemoryObjectStorage, PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
 import { TokenAuth } from './auth.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';

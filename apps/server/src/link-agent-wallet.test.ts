@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from "../../../tests/helpers/server.js";
 import { LinkAgentWallet } from './link-agent-wallet.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';

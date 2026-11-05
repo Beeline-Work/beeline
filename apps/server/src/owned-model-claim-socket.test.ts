@@ -12,7 +12,7 @@ import { LiveHub } from './live.js';
 import { OwnedModelAttempts } from './owned-model-attempt.js';
 import type { PhoneService } from './phone-service.js';
 import { createBeelineServer } from './server.js';
-import { MODEL_AGENT, MODEL_CLAIM, MODEL_OWNER, MODEL_ROOM, MODEL_WORKSPACE, ownedModelFixture } from './test-fixtures/owned-model.js';
+import { MODEL_AGENT, MODEL_CLAIM, MODEL_OWNER, MODEL_ROOM, MODEL_WORKSPACE, ownedModelFixture } from "../../../tests/helpers/server.js";
 
 type Frame = Record<string, unknown> & { capabilities?: Record<string, unknown>; result?: DaemonOperationMap['claimAgentCommand']['output'] };
 const TOKEN = 'bdt_' + 's'.repeat(43);

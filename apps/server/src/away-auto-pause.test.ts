@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { migratedDatabase } from './test-support.js';
-import type { SqlDatabase } from './database.js';
+import { migrate, type SqlDatabase } from './database.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { nextAwayPauseDelay } from './away-auto-pause.js';
 import { setAgentWakePaused } from './agent-wake-pause.js';
@@ -66,11 +66,36 @@ describe('away auto pause', () => {
     expect((await db.query('SELECT id FROM agent_commands')).rowCount).toBe(0);
   });
 
-  it('uses the scheduler deadline for subscription-only owners, including legacy null activity', async () => {
+  it('starts existing people at migration time instead of warning from account age', async () => {
+    const { room, loop, phone } = await fixture();
+    await phone.execute('sendRoomMessage', { roomId: room, text: 'Active before the upgrade' }, PERSON);
+    await db.query("UPDATE identities SET created_at=now()-interval '30 days' WHERE id=$1", [PERSON]);
+    // Recreate the upgrade from the schema before activity tracking existed.
+    await db.query('ALTER TABLE identities DROP COLUMN last_app_active_at');
+    const beforeMigration = new Date();
+    await migrate(db);
+    await loop.runOnce();
+    expect(await warningCount()).toBe(0);
+    expect((await state()).last_app_active_at.getTime()).toBeGreaterThanOrEqual(beforeMigration.getTime());
+    expect(await loop.nextDelayMs()).toBeGreaterThan(3 * DAY - 60_000);
+    expect((await db.query('SELECT id FROM agent_schedules WHERE paused_at IS NOT NULL')).rowCount).toBe(0);
+    expect((await db.query('SELECT id FROM agent_subscriptions WHERE paused_at IS NOT NULL')).rowCount).toBe(0);
+
+    // Repeated migrations preserve real activity rather than restarting the clock.
+    const activeAt = new Date(Date.now() - DAY);
+    await db.query('UPDATE identities SET last_app_active_at=$2 WHERE id=$1', [PERSON, activeAt]);
+    await migrate(db);
+    expect((await state()).last_app_active_at).toEqual(activeAt);
+    const newcomer = (await db.query<{ last_app_active_at: Date }>(`INSERT INTO identities(id,kind,name)
+      VALUES($1,'human','New person') RETURNING last_app_active_at`, ['d'.repeat(64)])).rows[0]!;
+    expect(newcomer.last_app_active_at.getTime()).toBeGreaterThanOrEqual(beforeMigration.getTime());
+  });
+
+  it('uses the scheduler deadline for subscription-only owners', async () => {
     const { now, loop } = await fixture();
     await db.query('DELETE FROM agent_schedules');
-    await db.query('UPDATE identities SET last_app_active_at=NULL,created_at=$2 WHERE id=$1',
-      [PERSON, new Date(now.getTime() - 10 * DAY)]);
+    await db.query('UPDATE identities SET last_app_active_at=$2 WHERE id=$1',
+      [PERSON, new Date(now.getTime() - 3 * DAY)]);
     expect(await loop.nextDelayMs()).toBe(0);
     await loop.runOnce(now);
     expect(await warningCount()).toBe(1);
@@ -117,11 +142,12 @@ describe('away auto pause', () => {
 
   it('agent activity and delivered scheduled output do not count as person interaction', async () => {
     const { now, room, schedule, loop, phone } = await fixture();
+    const agentActivity = (await db.query('SELECT last_app_active_at FROM identities WHERE id=$1', [AGENT])).rows[0]?.last_app_active_at;
     await db.query('UPDATE agent_schedules SET creator_id=$2,next_run_at=$3 WHERE id=$1', [schedule, PERSON, now]);
     await loop.runOnce(now);
     await phone.execute('sendRoomMessage', { roomId: room, text: 'Agent output' }, AGENT);
     expect((await state()).last_app_active_at).toEqual(now);
-    expect((await db.query('SELECT last_app_active_at FROM identities WHERE id=$1', [AGENT])).rows[0]?.last_app_active_at).toBeNull();
+    expect((await db.query('SELECT last_app_active_at FROM identities WHERE id=$1', [AGENT])).rows[0]?.last_app_active_at).toEqual(agentActivity);
     await loop.runOnce(new Date(now.getTime() + 3 * DAY));
     expect((await state()).away_warning_at).not.toBeNull();
   });

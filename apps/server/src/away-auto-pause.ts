@@ -21,14 +21,14 @@ const activeWork = `SELECT schedule.room_id,agent.owner_id FROM agent_schedules 
   JOIN room_access member ON member.room_id=subscription.room_id AND member.identity_id=subscription.agent_id AND member.removed_at IS NULL
   WHERE subscription.paused_at IS NULL`;
 const deadline = `COALESCE(person.away_warning_at+interval '1 day',
-  COALESCE(person.last_app_active_at,person.created_at)+interval '3 days')`;
+  person.last_app_active_at+interval '3 days')`;
 
 /** Shares the scheduler's existing deadline and committed-change wake. */
 export async function nextAwayPauseDelay(db: SqlDatabase): Promise<number | undefined> {
   return (await db.query<{ delay_ms: number }>(`SELECT greatest(0,ceil(extract(epoch FROM
     (min(${deadline})-clock_timestamp()))*1000))::float8 delay_ms
     FROM identities person WHERE person.kind='human' AND NOT person.hidden_from_roster
-      AND EXISTS(SELECT 1 FROM (${activeWork}) work WHERE work.owner_id=person.id) HAVING count(*)>0`)).rows[0]?.delay_ms ?? undefined;
+      AND EXISTS(SELECT 1 FROM (${activeWork}) work WHERE work.owner_id=person.id) HAVING min(${deadline}) IS NOT NULL`)).rows[0]?.delay_ms ?? undefined;
 }
 
 export async function pauseAwayWork(db: SqlDatabase, now: Date, onPosted?: (roomId: string) => void): Promise<void> {

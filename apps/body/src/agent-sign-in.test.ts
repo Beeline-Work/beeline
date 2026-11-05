@@ -252,3 +252,98 @@ describe('@agent login on the agent machine', () => {
       .toBeUndefined();
   });
 });
+
+/**
+ * Contract for the harness logins `@agent /login` drives. Their headless
+ * output is not a public API: these tests pin the exact text each CLI printed
+ * (fixtures) and, where a CLI is installed on this machine, re-read its help
+ * so a renamed flag fails here before it reaches an owner.
+ */
+import { execFileSync as m12_execFileSync } from 'node:child_process';
+
+import { describe as m12_describe, expect as m12_expect, it as m12_it } from 'vitest';
+
+import {
+  CLI_SIGN_INS as m12_CLI_SIGN_INS,
+  parseCodexDeviceLogin as m12_parseCodexDeviceLogin,
+  parseCursorLogin as m12_parseCursorLogin,
+  parseGrokDeviceLogin as m12_parseGrokDeviceLogin,
+} from "./agent-sign-in.js";
+
+import { CODEX_DEVICE_OUTPUT as m12_CODEX_DEVICE_OUTPUT, CURSOR_LOGIN_OUTPUT as m12_CURSOR_LOGIN_OUTPUT, GROK_DEVICE_OUTPUT as m12_GROK_DEVICE_OUTPUT } from "./agent-sign-in.fixtures.js";
+import { describe as mergedDescribe12 } from 'vitest';
+mergedDescribe12("agent-sign-in.contract.test.ts", () => {
+
+
+const NOW = 1_800_000_000_000;
+
+
+function installed(command: string): boolean {
+  try {
+    m12_execFileSync('which', [command], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+
+function help(command: string, args: string[]): string {
+  return m12_execFileSync(command, args, { encoding: 'utf8', timeout: 15_000, stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
+
+m12_describe('harness login contract', () => {
+  m12_it('reads the link, code and expiry Codex prints', () => {
+    m12_expect(m12_parseCodexDeviceLogin(m12_CODEX_DEVICE_OUTPUT, NOW)).toEqual({
+      kind: 'device-code',
+      authorizeUrl: 'https://auth.openai.com/codex/device',
+      userCode: 'EBQ9-VJCLN',
+      expiresAt: NOW + 15 * 60_000,
+    });
+  });
+
+  m12_it('reads the link and code Grok prints', () => {
+    m12_expect(m12_parseGrokDeviceLogin(m12_GROK_DEVICE_OUTPUT, NOW)).toMatchObject({
+      kind: 'device-code',
+      authorizeUrl: 'https://accounts.x.ai/oauth2/device?user_code=2RDF-2C74',
+      userCode: '2RDF-2C74',
+    });
+  });
+
+  m12_it('reads the link Cursor prints', () => {
+    m12_expect(m12_parseCursorLogin(m12_CURSOR_LOGIN_OUTPUT)).toEqual({
+      kind: 'approve-wait',
+      authorizeUrl: m12_expect.stringMatching(/^https:\/\/cursor\.com\/loginDeepControl\?challenge=[\w-]+&uuid=/),
+    });
+  });
+
+  m12_it('waits rather than guessing while the output is incomplete', () => {
+    m12_expect(m12_parseCodexDeviceLogin(m12_CODEX_DEVICE_OUTPUT.split('2.')[0]!, NOW)).toBeUndefined();
+    m12_expect(m12_parseGrokDeviceLogin(m12_GROK_DEVICE_OUTPUT.split('Confirm')[0]!, NOW)).toBeUndefined();
+    m12_expect(m12_parseCursorLogin('Starting login process...\n')).toBeUndefined();
+  });
+
+  m12_it('runs each harness its own headless login', () => {
+    m12_expect(m12_CLI_SIGN_INS.codex).toMatchObject({ command: 'codex', args: ['login', '--device-auth'] });
+    m12_expect(m12_CLI_SIGN_INS.grok).toMatchObject({ command: 'grok', args: ['login', '--device-auth'] });
+    m12_expect(m12_CLI_SIGN_INS.cursor).toMatchObject({
+      command: 'cursor-agent',
+      args: ['login'],
+      env: { NO_OPEN_BROWSER: '1' },
+    });
+  });
+
+  m12_it.skipIf(!installed('codex'))('matches the installed Codex login flags', () => {
+    m12_expect(help('codex', ['login', '--help'])).toContain('--device-auth');
+  });
+
+  m12_it.skipIf(!installed('grok'))('matches the installed Grok login flags', () => {
+    m12_expect(help('grok', ['login', '--help'])).toContain('--device-auth');
+  });
+
+  m12_it.skipIf(!installed('cursor-agent'))('matches the installed Cursor login command', () => {
+    m12_expect(help('cursor-agent', ['--help'])).toContain('login');
+  });
+});
+});

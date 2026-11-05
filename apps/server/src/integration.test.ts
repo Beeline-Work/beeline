@@ -3263,8 +3263,8 @@ describe('monolith integration', () => {
     const parent = (await (
       await request(`/v1/phone/rooms/${ROOM}`, 'GET', undefined, aliceToken)
     ).json()) as RoomView;
-    // A source-free opening is visible at its open time through inherited access.
-    expect(parent.messages).toContainEqual(
+    // Inherited access still opens the corner, but a source-free turn posts no opening line.
+    expect(parent.messages).not.toContainEqual(
       expect.objectContaining({
         daemonFact: expect.objectContaining({ type: 'corner-open', cornerId }),
       }),
@@ -6352,6 +6352,11 @@ describe('monolith integration', () => {
   });
 
   it('authenticates an explicit corner close and routes structured stops without chat prose', async () => {
+    const sourceMessageId = createHash('sha256').update('phone-close-corner').digest('hex');
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Open a corner for the phone close proof')`,
+      [sourceMessageId, ROOM, HUMAN],
+    );
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'phone-close-corner',
@@ -7257,6 +7262,11 @@ describe('monolith integration', () => {
     const daemonRoomToken = await daemonOperation('getRoomGitHubToken', { roomId: ROOM });
     expect(daemonRoomToken.status).toBe(200);
     expect(await daemonRoomToken.json()).toMatchObject({ token: 'github-room-token' });
+    const sourceMessageId = createHash('sha256').update('corner-request').digest('hex');
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Open a corner to ship the widget')`,
+      [sourceMessageId, ROOM, HUMAN],
+    );
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-request',
@@ -9123,7 +9133,7 @@ describe('monolith integration', () => {
     );
   });
 
-  it('posts one corner-open daemon-fact card and does not push it', async () => {
+  it('posts one corner-open daemon-fact card at a requesting message and does not push it', async () => {
     const send = vi.fn(async () => undefined);
     const loop = new PushDeliveryLoop(database, { send });
     await loop.runOnce(); // establish the durable floor before the new events
@@ -9132,9 +9142,15 @@ describe('monolith integration', () => {
        VALUES('owner-device-token-12345678901234567890',$1,'android','physical')`,
       [HUMAN],
     );
+    const requestId = 'corner-open-card';
+    const sourceMessageId = createHash('sha256').update(requestId).digest('hex');
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Open a corner for the widget')`,
+      [sourceMessageId, ROOM, HUMAN],
+    );
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
-      requestId: 'corner-open-card',
+      requestId,
       name: 'Ship-the-widget',
       objective: 'Ship the widget end to end',
     });
@@ -9149,6 +9165,7 @@ describe('monolith integration', () => {
     expect(cards.rows[0]!.card).toEqual({
       type: 'corner-open',
       cornerId,
+      sourceMessageId,
       name: 'Ship-the-widget',
       objective: 'Ship-the-widget',
     });
@@ -9515,6 +9532,11 @@ describe('monolith integration', () => {
       objective: 'Ship the widget end to end',
       brief: { content: 'A1: ship the agreed widget behavior.' },
     };
+    const sourceMessageId = createHash('sha256').update(input.requestId).digest('hex');
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Open a corner for the agreed widget work')`,
+      [sourceMessageId, ROOM, HUMAN],
+    );
     const first = await daemonOperation('createCorner', input);
     const second = await daemonOperation('createCorner', input);
     expect(first.status).toBe(200);
@@ -10221,6 +10243,11 @@ describe('monolith integration', () => {
 
   it('creates every independently keyed corner requested by one originating task', async () => {
     const requestId = 'multiple-corner-open';
+    const sourceMessageId = createHash('sha256').update(requestId).digest('hex');
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Open corners for both independent problems')`,
+      [sourceMessageId, ROOM, HUMAN],
+    );
     const first = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId,
@@ -10364,9 +10391,15 @@ describe('monolith integration', () => {
   });
 
   it('renders a legacy Room opening with its name and without private objective or DM text', async () => {
+    const requestId = 'corner-legacy-card';
+    const sourceMessageId = createHash('sha256').update(requestId).digest('hex');
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Open a corner for the room list')`,
+      [sourceMessageId, ROOM, HUMAN],
+    );
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
-      requestId: 'corner-legacy-card',
+      requestId,
       name: 'Legacy-corner',
       objective: 'Rework the room list so every corner row carries a state mark',
     });

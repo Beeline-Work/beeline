@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import {
   MESSAGE_SEARCH_QUERY_MAX_BYTES, PHONE_READ_OPERATIONS, messageSearchTerms,
 } from '@beeline/api-contract/phone';
-import { PHONE_OPERATION_NAMES, MessageSearchTooBroadError, parseArchivedCornerCursor, type PhoneService } from './phone-service.js';
+import { PHONE_OPERATION_NAMES, MessageSearchTooBroadError, parseArchivedCornerCursor } from './phone-service.js';
 import { recordOperatorFunctionEvent } from './operator-dashboard.js';
 import { IdentityRateLimit } from './phone-read-limit.js';
 import { VoiceBudgetExceeded } from './voice-budget.js';
@@ -75,12 +75,11 @@ function isIanaTimeZone(value: string): boolean {
 /** One authenticated context for both transports; no operation is reimplemented per transport. */
 export function createPhoneOperationDispatcher(
   options: ServerOptions,
-  legacyOperation: PhoneService['execute'],
   errorStatus: (error: unknown) => number = error => error instanceof PhoneOperationError ? error.status : 500,
 ) {
   const ledger = new RouterCommandLedger(options.database);
   const execute = async (name: string, input: Record<string, unknown>, viewerId: string,
-    invokeLegacy?: () => Promise<unknown>, familyId?: string): Promise<unknown> => {
+    familyId?: string): Promise<unknown> => {
     const phone = options.phone;
     switch (name) {
       case 'readMediaMetadata': return readMediaMetadata(options.database,uuid(input,'objectId'),viewerId);
@@ -168,10 +167,9 @@ export function createPhoneOperationDispatcher(
       case 'voiceResume':
       case 'voiceLeave': {
         if (!options.voice) refuse(503, 'Voice mode is unavailable');
-        const voice = options.voice;
-        if (name === 'voiceCurrent') return voice.current(uuid(input, 'roomId'), viewerId);
+        if (name === 'voiceCurrent') return options.voice.current(uuid(input, 'roomId'), viewerId);
         if (name === 'voiceJoin') {
-          try { return await voice.join(uuid(input, 'roomId'), viewerId, optional(input, 'expectedCallId')); }
+          try { return await options.voice.join(uuid(input, 'roomId'), viewerId, optional(input, 'expectedCallId')); }
           catch (error) {
             if (error instanceof VoiceBudgetExceeded)
               throw new PhoneOperationError(429, { error: error.message, code: 'voice-daily-limit', budget: error.budget });
@@ -179,12 +177,12 @@ export function createPhoneOperationDispatcher(
           }
         }
         const call = uuid(input, 'callId');
-        if (name === 'voiceState') return voice.idleState(call, viewerId, undefined, optional(input, 'sessionId'));
-        if (name === 'voiceIdle') return voice.idle(call, viewerId, optional(input, 'sessionId'));
+        if (name === 'voiceState') return options.voice.idleState(call, viewerId, undefined, optional(input, 'sessionId'));
+        if (name === 'voiceIdle') return options.voice.idle(call, viewerId, optional(input, 'sessionId'));
         if (name === 'voiceResume') {
-          await voice.resume(call, viewerId, required(input, 'sessionId')); return { resumed: true };
+          await options.voice.resume(call, viewerId, required(input, 'sessionId')); return { resumed: true };
         }
-        await voice.leave(call, viewerId, false, optional(input, 'sessionId')); return { left: true };
+        await options.voice.leave(call, viewerId, false, optional(input, 'sessionId')); return { left: true };
       }
       case 'readAgentVoices':
       case 'saveAgentVoice':
@@ -233,13 +231,12 @@ export function createPhoneOperationDispatcher(
             (network as { serverProcessingMs: number }).serverProcessingMs), jsResponseDelay as number | undefined);
         return;
       }
-      default: return invokeLegacy ? invokeLegacy()
-        : legacyOperation.call(phone, name as never, input as never, viewerId, undefined, familyId, true);
+      default: return phone.execute(name as never, input as never, viewerId, undefined, familyId, true);
     }
   };
 
   const dispatch = async (name: string, input: Record<string, unknown>, viewerId: string, signal?: AbortSignal,
-    invokeLegacy?: () => Promise<unknown>, familyId?: string, command?: RouterCommandIdentity): Promise<unknown> => {
+    familyId?: string, command?: RouterCommandIdentity): Promise<unknown> => {
     if (!viewerId) refuse(401, 'phone_token_required');
     if (!PHONE_OPERATION_NAMES.has(name as never)) refuse(404, 'unknown_phone_operation');
     if (!input || typeof input !== 'object' || Array.isArray(input)) refuse(400, 'invalid_args');
@@ -265,7 +262,7 @@ export function createPhoneOperationDispatcher(
     const effect = () => { performed = true;
       if(identity&&scheduledStopCommands.has(name))return options.phone.stopScheduledWorkCommand(name as 'deleteRoomSchedule'|'deleteRoomSubscription',
         input as {roomId:string;scheduleId?:string;subscriptionId?:string},viewerId);
-      return execute(name, input, viewerId, invokeLegacy, familyId);
+      return execute(name, input, viewerId, familyId);
     };
     try {
       if (identity) {
@@ -284,7 +281,7 @@ export function createPhoneOperationDispatcher(
           if (command) return receipt;
           refuse(409, receipt.state === 'result-expired' ? 'command_result_expired' : 'command_outcome_unknown');
         }
-      } else result = await execute(name, input, viewerId, invokeLegacy, familyId);
+      } else result = await execute(name, input, viewerId, familyId);
     } catch (error) {
       if (error instanceof CommandDigestConflict) refuse(409, 'command_identity_conflict');
       if (error instanceof InvalidCommandArguments) refuse(400, 'invalid_command_arguments');

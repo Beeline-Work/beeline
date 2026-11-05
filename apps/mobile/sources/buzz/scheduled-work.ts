@@ -16,8 +16,6 @@ import { useSharedSurface } from './use-shared-surface';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { subscribeClientReset } from '@/sync/client-reset';
 import type { SurfaceCacheAddress } from '@beeline/buzz-client';
-import { canonical } from './command-owner';
-import { activeCommandOwner } from './command-owner';
 
 const NEXT_RUN = new Intl.DateTimeFormat(undefined, {
   month: 'short',
@@ -255,18 +253,7 @@ async function stopRow(
   }
 }
 
-function prepareScheduledStop(operation: 'deleteRoomSchedule' | 'deleteRoomSubscription', roomId: string, id: string): Promise<void> | undefined {
-  const owner = activeCommandOwner();
-  if (!owner?.canPrepare()) return;
-  const input = operation === 'deleteRoomSchedule' ? { roomId, scheduleId: id } : { roomId, subscriptionId: id };
-  const prepared = owner.prepare({ wire: { operation, input: canonical(input) },
-    isCurrent: () => activeCommandOwner() === owner });
-  return prepared.then(async record => { await owner.deliver(record.id); });
-}
-
 export async function stopSchedule(roomId: string, scheduleId: string): Promise<StopOutcome> {
-  const command=prepareScheduledStop('deleteRoomSchedule',roomId,scheduleId);
-  if(command){await command;return 'stopped';}
   const outcome = await stopRow(
     () => monolithPhoneOperation('deleteRoomSchedule', { roomId, scheduleId }), 'schedule not found');
   const [identity, relay] = await Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]);
@@ -280,8 +267,6 @@ export async function stopSchedule(roomId: string, scheduleId: string): Promise<
 }
 
 export async function stopSubscription(roomId: string, subscriptionId: string): Promise<StopOutcome> {
-  const command=prepareScheduledStop('deleteRoomSubscription',roomId,subscriptionId);
-  if(command){await command;return 'stopped';}
   const outcome = await stopRow(
     () => monolithPhoneOperation('deleteRoomSubscription', { roomId, subscriptionId }), 'subscription not found');
   const [identity, relay] = await Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]);

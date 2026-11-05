@@ -1,6 +1,5 @@
 import { EmptyState } from '@/components/buzz/EmptyState';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
-import { prepareTrayCommand, type PreparedTrayCommand, type TrayCommand } from '@/buzz/tray-command';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
@@ -91,7 +90,7 @@ type Target = {
 };
 
 /** A section clear held back until its own Undo window closes. */
-type PendingClear = { readonly expiresAt: number; readonly workspaceId: string; readonly prepared?: PreparedTrayCommand } & (
+type PendingClear = { readonly expiresAt: number; readonly workspaceId: string } & (
   | { readonly kind: 'needs'; readonly items: readonly NeedsYouItemView[] }
   | { readonly kind: 'saved'; readonly items: readonly MessageBookmarkView[]; readonly more: boolean }
 );
@@ -415,8 +414,7 @@ export default function TrayScreen() {
     const removal = removeNeedsYou(item.workspaceId, [item.messageId]);
     try {
       const input = { workspaceId: item.workspaceId, messageId: item.messageId, ...(dismissReminder ? { dismissReminder: true } : {}) };
-      const prepared = prepareTrayCommand({operation:'clearNeedsYou',input});
-      if (prepared) await prepared.deliver(); else await monolithPhoneOperation('clearNeedsYou', input);
+      await monolithPhoneOperation('clearNeedsYou', input);
       removal.settle();
     } catch (cause) {
       // A failure that lands after an account switch belongs to the previous account.
@@ -438,15 +436,7 @@ export default function TrayScreen() {
     const generation = clientResetGeneration();
     setError(null);
     try {
-      const command: TrayCommand | undefined = action.kind === 'grant'
-        ? {operation:'decideAgentGrant',input:{grantId:action.grantId,decision:action.decision}}
-        : action.kind === 'write-access'
-          ? {operation:'decideWritePermission',input:{roomId:item.roomId,permissionId:action.permissionId,
-            requestId:action.requestId,agentId:action.agentId,repository:action.repository,decision:action.decision}}
-          : action.kind === 'skip-choice' ? {operation:'skipChoice',input:{choiceId:action.choiceId}} : undefined;
-      const prepared = command && prepareTrayCommand(command);
-      if (prepared) await prepared.deliver();
-      else switch (action.kind) {
+      switch (action.kind) {
         case 'grant':
           await monolithPhoneOperation('decideAgentGrant', { grantId: action.grantId, decision: action.decision });
           break;
@@ -487,11 +477,6 @@ export default function TrayScreen() {
   /** Send one Workspace-scoped operation after Undo expires. */
   const commitClear = useCallback(async (clear: PendingClear) => {
     const generation = clientResetGeneration();
-    if (clear.prepared) {
-      try { await clear.prepared.deliver(); await loadNeedsYouList(clear.workspaceId); await loadSavedList(clear.workspaceId); }
-      catch(cause) { if(generation===clientResetGeneration()) setError(appErrorCopy(cause)); }
-      return;
-    }
     const ids = new Set(clear.items.map((item) => item.messageId));
     if (clear.kind === 'needs') {
       const removal = removeNeedsYou(clear.workspaceId, ids);
@@ -578,11 +563,7 @@ export default function TrayScreen() {
           ? { ...held, kind, items: visibleNeeds }
           : { ...held, kind, items: visibleBookmarks, more: !!savedNext };
       if (!clear.items.length) return;
-      const prepared = prepareTrayCommand(kind === 'needs'
-        ? {operation:'clearNeedsYouSection',input:{workspaceId}}
-        : {operation:'clearMessageBookmarks',input:{workspaceId}});
-      if(prepared) void prepared.ready.catch(cause=>setError(appErrorCopy(cause)));
-      pendingRef.current = [...pendingRef.current, {...clear,prepared}];
+      pendingRef.current = [...pendingRef.current, clear];
       setPending(pendingRef.current);
       AccessibilityInfo.announceForAccessibility(`${clearedLabel(clear)}. Undo available.`);
     },
@@ -591,8 +572,6 @@ export default function TrayScreen() {
 
   /** Undo the newest held clear; an older one still in its window shows next. */
   const undoClear = useCallback(() => {
-    const clear = pendingRef.current.at(-1);
-    if(clear?.prepared) void clear.prepared.cancel().catch(cause=>setError(appErrorCopy(cause)));
     pendingRef.current = pendingRef.current.slice(0, -1);
     setPending(pendingRef.current);
     AccessibilityInfo.announceForAccessibility('Restored');
@@ -606,8 +585,7 @@ export default function TrayScreen() {
     AccessibilityInfo.announceForAccessibility('Bookmark removed. Undo available.');
     try {
       const input = {roomId:bookmark.roomId,messageId:bookmark.messageId,bookmarked:false};
-      const prepared = prepareTrayCommand({operation:'setMessageBookmark',input});
-      if(prepared) await prepared.deliver(); else await monolithPhoneOperation('setMessageBookmark', input);
+      await monolithPhoneOperation('setMessageBookmark', input);
       edit.settle();
     } catch (cause) {
       if (generation !== clientResetGeneration()) return;
@@ -626,8 +604,7 @@ export default function TrayScreen() {
     AccessibilityInfo.announceForAccessibility('Bookmark restored');
     try {
       const input = {roomId:bookmark.roomId,messageId:bookmark.messageId,bookmarked:true};
-      const prepared = prepareTrayCommand({operation:'setMessageBookmark',input});
-      if(prepared) await prepared.deliver(); else await monolithPhoneOperation('setMessageBookmark', input);
+      await monolithPhoneOperation('setMessageBookmark', input);
       if (generation !== clientResetGeneration()) return;
       revealSavedItems(bookmark.workspaceId, [bookmark.messageId]);
       await loadSavedList(bookmark.workspaceId);

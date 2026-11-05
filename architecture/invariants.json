@@ -1,6 +1,40 @@
 {
   "rules": [
     {
+      "id": "phone.write-door",
+      "module": "Phone socket",
+      "invariant": "Phone writes use the existing live socket; HTTP adapters hold only the read function.",
+      "pattern": "\\b(?:phone\\.(?:execute|markRead|markUnread|stopScheduledWorkCommand|uploadMedia)|options\\.voice\\.(?:join|leave|idle|resume|nativeStop|profiles\\.(?:save|preview))|dispatchPhoneOperation|requestCommand)\\s*\\(|\\bt\\s*:\\s*[\\'\"]req[\\'\"]",
+      "scope": [
+        "apps/mobile/sources",
+        "apps/server/src"
+      ],
+      "owners": [
+        "apps/mobile/sources/sync/transport/live-connection.ts",
+        "apps/server/src/phone-operations.ts",
+        "apps/server/src/server.ts",
+        "apps/server/src/rooms-mcp.ts"
+      ],
+      "ownerFunctions": {
+        "apps/mobile/sources/sync/transport/live-connection.ts": [
+          "sendRequest"
+        ],
+        "apps/server/src/phone-operations.ts": [
+          "execute", "effect"
+        ],
+        "apps/server/src/server.ts": [
+          "readPhoneOperation", "route"
+        ],
+        "apps/server/src/rooms-mcp.ts": [
+          "call"
+        ]
+      },
+      "ownerSites": 16,
+      "strict": true,
+      "total": 0,
+      "fix": "Send phone operations through LiveConnection.request. Do not add an HTTP write handler or another sender. Rooms MCP retains its separate authenticated tool boundary."
+    },
+    {
       "id": "work.command-creation",
       "module": "Work authority",
       "invariant": "Agent commands are created only by agent-command.ts creation functions; only a command authorizes a turn.",

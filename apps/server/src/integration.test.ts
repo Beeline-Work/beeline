@@ -1,3 +1,4 @@
+import { phoneFetch } from '../../../tests/helpers/phone-operation.js';
 import { setRoomEventSubscriptions, migrateMembershipSubscriptions } from './agent-subscriptions.js';
 import { cornerObjectiveSql } from './corner-objective.js';
 import { cornerCommissionerSql, cornerKindSql, cornerRequestSql } from './corner-opening.js';
@@ -284,7 +285,7 @@ describe('monolith integration', () => {
     if (database) await database.close();
   });
   const request = async (path: string, method = 'GET', payload?: unknown, token = accessToken) =>
-    fetch(`${origin}${path}`, {
+    phoneFetch(`${origin}${path}`, {
       method,
       headers: {
         authorization: `Bearer ${token}`,
@@ -780,7 +781,7 @@ describe('monolith integration', () => {
   const webhook = async (event: string, delivery: string, payload: unknown) => {
     const bytes = Buffer.from(JSON.stringify(payload));
     const signature = `sha256=${createHmac('sha256', 'webhook-secret').update(bytes).digest('hex')}`;
-    return fetch(`${origin}/v1/github/webhook`, {
+    return phoneFetch(`${origin}/v1/github/webhook`, {
       method: 'POST',
       headers: {
         'x-hub-signature-256': signature,
@@ -842,7 +843,7 @@ describe('monolith integration', () => {
     expect(isAgentDetailView(first)).toBe(true);
     const url = first!.agent.identity.avatar!;
     expect(url).toContain('/v1/agent-avatars/');
-    const picture = await fetch(url);
+    const picture = await phoneFetch(url);
     expect(picture.status).toBe(200);
     expect(picture.headers.get('content-type')).toBe('image/webp');
     const bytes = new Uint8Array(await picture.arrayBuffer());
@@ -882,7 +883,7 @@ describe('monolith integration', () => {
     expect(
       (await database.query('SELECT id FROM agent_avatars WHERE agent_id=$1', [AGENT])).rowCount,
     ).toBe(1);
-    expect((await fetch(url)).status).toBe(404);
+    expect((await phoneFetch(url)).status).toBe(404);
     await database.query("UPDATE agent_commands SET state='complete' WHERE id=$1", [command.id]);
     expect((await call(input)).status).not.toBe(200);
   });
@@ -2194,7 +2195,7 @@ describe('monolith integration', () => {
       .toBe(204);
     expect((await operation('redeemInvite', { token: first.token }, bobToken)).status).toBe(404);
     expect((await operation('resolveInvite', { token: first.token }, bobToken)).status).toBe(404);
-    expect((await fetch(`${origin}/v1/public/invite-preview?token=${first.token}`)).status)
+    expect((await phoneFetch(`${origin}/v1/public/invite-preview?token=${first.token}`)).status)
       .toBe(404);
     const fresh = (await (await operation('createInvite', { workspaceId })).json()) as {
       token: string;
@@ -5095,7 +5096,7 @@ describe('monolith integration', () => {
       sourceSha,
     });
 
-    const response = await fetch(`${origin}/v1/releases/daemon-readiness`);
+    const response = await phoneFetch(`${origin}/v1/releases/daemon-readiness`);
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
@@ -5161,7 +5162,7 @@ describe('monolith integration', () => {
       sourceSha: 'd03cff8f'.padEnd(40, '0'),
     });
 
-    const readiness = await fetch(`${origin}/v1/releases/daemon-readiness`);
+    const readiness = await phoneFetch(`${origin}/v1/releases/daemon-readiness`);
     expect(readiness.status).toBe(200);
     const body = (await readiness.json()) as {
       daemons: Array<{ agentPubkey: string; state: string; observedAt?: number }>;
@@ -5176,7 +5177,7 @@ describe('monolith integration', () => {
       exchangeToken: grant.exchangeToken,
     });
     expect(rolledBack.status).toBe(204);
-    const afterReadiness = await fetch(`${origin}/v1/releases/daemon-readiness`);
+    const afterReadiness = await phoneFetch(`${origin}/v1/releases/daemon-readiness`);
     const afterBody = (await afterReadiness.json()) as typeof body;
     expect(
       afterBody.daemons.find((daemon) => daemon.agentPubkey === grant.agentPubkey),
@@ -5240,7 +5241,7 @@ describe('monolith integration', () => {
     expect(isCommunityInviteToken(invite.token)).toBe(true);
     expect(invite.token).toMatch(/^inv_[0-9a-f]{64}$/);
 
-    const publicPreview = await fetch(
+    const publicPreview = await phoneFetch(
       `${origin}/v1/public/invite-preview?token=${encodeURIComponent(invite.token)}`,
     );
     expect(publicPreview.status).toBe(200);
@@ -5304,7 +5305,7 @@ describe('monolith integration', () => {
       '/v1/public/invite-preview?token=not-an-invite',
     ];
     for (const path of paths) {
-      const response = await fetch(`${origin}${path}`);
+      const response = await phoneFetch(`${origin}${path}`);
       expect(response.status).toBe(404);
       expect(await response.json()).toEqual({ valid: false });
     }
@@ -5313,9 +5314,9 @@ describe('monolith integration', () => {
   it('rate-limits anonymous public invite previews per client', async () => {
     const path = `${origin}/v1/public/invite-preview?token=not-an-invite`;
     for (let requestNumber = 0; requestNumber < 60; requestNumber += 1)
-      expect((await fetch(path)).status).toBe(404);
+      expect((await phoneFetch(path)).status).toBe(404);
 
-    const limited = await fetch(path);
+    const limited = await phoneFetch(path);
     expect(limited.status).toBe(429);
     expect(await limited.json()).toEqual({ error: 'too_many_requests' });
   });
@@ -5949,7 +5950,7 @@ describe('monolith integration', () => {
 
   it('stores and serves media bytes through token auth with the configured cap', async () => {
     expect(DEFAULT_MEDIA_MAXIMUM_BYTES).toBe(25 * 1024 * 1024);
-    const upload = await fetch(`${origin}/v1/phone/media`, {
+    const upload = await phoneFetch(`${origin}/v1/phone/media`, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${accessToken}`,
@@ -5966,19 +5967,19 @@ describe('monolith integration', () => {
       attachments: [{ url: attachment.url, name: 'tiny.png', mimeType: 'image/png', size: 9 }],
     });
     expect(sent.status).toBe(200);
-    const media = await fetch(attachment.url, {
+    const media = await phoneFetch(attachment.url, {
       headers: { authorization: `Bearer ${accessToken}` },
     });
     expect(media.status).toBe(200);
     expect(Buffer.from(await media.arrayBuffer()).toString()).toBe('png-bytes');
     expect(
       (
-        await fetch(`${origin}/v1/media/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`, {
+        await phoneFetch(`${origin}/v1/media/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`, {
           headers: { authorization: `Bearer ${accessToken}` },
         })
       ).status,
     ).toBe(404);
-    const tooLarge = await fetch(`${origin}/v1/phone/media`, {
+    const tooLarge = await phoneFetch(`${origin}/v1/phone/media`, {
       method: 'POST',
       headers: { authorization: `Bearer ${accessToken}` },
       body: Buffer.alloc(1024 * 1024 + 1),
@@ -5987,7 +5988,7 @@ describe('monolith integration', () => {
   });
 
   it('expires attachment bytes after the TTL and keeps the message that carried them', async () => {
-    const upload = await fetch(`${origin}/v1/phone/media`, {
+    const upload = await phoneFetch(`${origin}/v1/phone/media`, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${accessToken}`,
@@ -6014,7 +6015,7 @@ describe('monolith integration', () => {
     ).toBeGreaterThan(0);
 
     // The bytes are gone for good, and the endpoint says so in one status.
-    const gone = await fetch(attachment.url, {
+    const gone = await phoneFetch(attachment.url, {
       headers: { authorization: `Bearer ${accessToken}` },
     });
     expect(gone.status).toBe(410);
@@ -6022,7 +6023,7 @@ describe('monolith integration', () => {
     // An id that never existed is still absent, not expired.
     expect(
       (
-        await fetch(`${origin}/v1/media/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`, {
+        await phoneFetch(`${origin}/v1/media/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`, {
           headers: { authorization: `Bearer ${accessToken}` },
         })
       ).status,
@@ -6057,7 +6058,7 @@ describe('monolith integration', () => {
     // window restarts rather than the new message inheriting an old row's age.
     const repost = async () =>
       (await (
-        await fetch(`${origin}/v1/phone/media`, {
+        await phoneFetch(`${origin}/v1/phone/media`, {
           method: 'POST',
           headers: {
             authorization: `Bearer ${accessToken}`,
@@ -6077,7 +6078,7 @@ describe('monolith integration', () => {
       }).runOnce(),
     ).toBe(0);
     expect(
-      (await fetch(reposted.url, { headers: { authorization: `Bearer ${accessToken}` } })).status,
+      (await phoneFetch(reposted.url, { headers: { authorization: `Bearer ${accessToken}` } })).status,
     ).toBe(200);
   });
 
@@ -6085,7 +6086,7 @@ describe('monolith integration', () => {
     // The agent file-sharing path is post_artifact (object storage); the bytea
     // media store answers a 410 that names the replacement instead of a bare
     // 404, and an unauthenticated daemon still answers 401 first.
-    const retired = await fetch(`${origin}/v1/daemon/media`, {
+    const retired = await phoneFetch(`${origin}/v1/daemon/media`, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${daemonToken}`,
@@ -6098,7 +6099,7 @@ describe('monolith integration', () => {
     await expect(retired.json()).resolves.toMatchObject({ error: 'media_store_retired' });
     expect(
       await (
-        await fetch(`${origin}/v1/daemon/media`, { method: 'POST', body: 'x' })
+        await phoneFetch(`${origin}/v1/daemon/media`, { method: 'POST', body: 'x' })
       ).status,
     ).toBe(401);
 
@@ -6185,7 +6186,7 @@ describe('monolith integration', () => {
       size: 16,
     });
     expect(typeof withFile[0]!.attachments![0].size).toBe('number');
-    const media = await fetch(withFile[0]!.attachments![0].url, {
+    const media = await phoneFetch(withFile[0]!.attachments![0].url, {
       headers: { authorization: `Bearer ${accessToken}` },
     });
     expect(Buffer.from(await media.arrayBuffer()).toString()).toBe('agent-file-bytes');
@@ -6265,7 +6266,7 @@ describe('monolith integration', () => {
       close_requested: true,
       lifecycle: { lifecycle: 'done', checks: 'unknown' },
     });
-    const media = await fetch(attachment.url, {
+    const media = await phoneFetch(attachment.url, {
       headers: { authorization: `Bearer ${accessToken}` },
     });
     expect(media.status).toBe(200);
@@ -7080,7 +7081,7 @@ describe('monolith integration', () => {
     const payload = Buffer.from(JSON.stringify({ action: 'opened' }));
     const signature = `sha256=${createHmac('sha256', 'webhook-secret').update(payload).digest('hex')}`;
     const send = () =>
-      fetch(`${origin}/v1/github/webhook`, {
+      phoneFetch(`${origin}/v1/github/webhook`, {
         method: 'POST',
         headers: {
           'x-hub-signature-256': signature,
@@ -8847,7 +8848,7 @@ describe('monolith integration', () => {
   });
 
   it('completes the GitHub App callback on the monolith route', async () => {
-    const response = await fetch(
+    const response = await phoneFetch(
       `${origin}/v1/github/install/callback?state=server-state&installation_id=77`,
       { redirect: 'manual' },
     );
@@ -9690,7 +9691,7 @@ describe('monolith integration', () => {
         service: objectService,
       }).runOnce(),
     ).toBe(0);
-    expect((await fetch(`${origin}/v1/media/${mediaId}`)).status).toBe(200);
+    expect((await phoneFetch(`${origin}/v1/media/${mediaId}`)).status).toBe(200);
     await database.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
       VALUES($1,$2,'presence','presence','{"status":"online"}')`, [ROOM, AGENT]);
     const revision = await daemonOperation('reviseCornerBrief', {
@@ -11463,7 +11464,7 @@ describe('monolith integration', () => {
         ).json()
       ).allowed,
     ).toBe(true);
-    const response = await fetch(`${origin}/v1/daemon/operations/authorizeResourceCall`, {
+    const response = await phoneFetch(`${origin}/v1/daemon/operations/authorizeResourceCall`, {
       method: 'POST',
       headers: { authorization: `Bearer ${daemonToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({ roomId: ROOM, target: 'paid-api' }),
@@ -13313,7 +13314,7 @@ describe('monolith integration', () => {
   });
 
   const redeemReview = (secret: unknown) =>
-    fetch(`${origin}/v1/auth/review/exchange`, {
+    phoneFetch(`${origin}/v1/auth/review/exchange`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ secret }),

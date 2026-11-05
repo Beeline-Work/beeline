@@ -1,14 +1,14 @@
+import { PHONE_READ_OPERATIONS } from '@beeline/api-contract/phone';
 import { phoneLiveOutput } from './phone-live-output.js';
 import { HelperOverlayViewer, helperOverlayEnabled, fenceHelperOverlayEnqueue } from './helper-overlay.js';
 import { syncXAdReports } from './x-ad-reports.js';
 import { syncXSiteVisits } from './x-site-visits.js';
 import { dashboardFinances } from './operator-finances.js';
 import { fenceCommandReceiptEnqueue } from './router-command-coverage.js';
-import { parseRouterCommandIdentity } from '@beeline/api-contract/router-command';
 import { startConnectionWork } from './background-work.js';
 import { owedMentions } from './owed-mentions.js';
 import { serveEmailImage } from './email-images.js';
-import { createPhoneOperationDispatcher, PhoneOperationError, type PhoneOperationDispatcher } from './phone-operations.js';
+import { createPhoneOperationDispatcher, PhoneOperationError } from './phone-operations.js';
 import { phoneSocketRequests } from './phone-socket.js';
 import { parseMobileMinimum } from '@beeline/api-contract/mobile-minimum';
 import { readMobileMinimums, writeMobileMinimum } from './mobile-minimum.js';
@@ -541,7 +541,14 @@ export function createBeelineServer(options: ServerOptions): Server {
   const intakeCheckpoints = new Map<WebSocket, () => void>();
   const invitePreview = new InvitePreviewAccess(options.database);
   const phoneViewing = new PhoneViewing(options.database, options.connectionPresence?.instanceId ?? randomUUID());
-  const dispatchPhoneOperation = createPhoneOperationDispatcher(options, options.phone.execute, requestErrorStatus);
+  const dispatchPhoneOperation = createPhoneOperationDispatcher(options, requestErrorStatus);
+  // HTTP retains read-only wire compatibility; only the live socket holds the write dispatcher.
+  const readPhoneOperation: PhoneHttpRead = (name, input, viewerId, familyId) => {
+    if (!(PHONE_READ_OPERATIONS as readonly string[]).includes(name) ||
+        ((name === 'readNeedsYou' || name === 'readTray') && input.markSeen !== false))
+      throw new PhoneOperationError(409, { error: 'phone_socket_required' });
+    return dispatchPhoneOperation(name, input, viewerId, undefined, familyId);
+  };
   const server = createServer((request, response) => {
     if (gameOrigin && request.headers.host === new URL(gameOrigin).host) {
       void serveRunnableArtifact(request, response, gameOrigin, options.objectService).catch(() => {
@@ -560,23 +567,14 @@ export function createBeelineServer(options: ServerOptions): Server {
       method === 'POST' &&
       (url.pathname === '/v1/phone/media' || url.pathname === '/v1/daemon/uploads')
         ? 'attachment_upload'
-        : method === 'POST' &&
-            /^\/v1\/phone\/operations\/(sendRoomMessage|sendRoomReply)$/.test(url.pathname)
-          ? 'message_delivery'
-          : method === 'POST' &&
-              (url.pathname === '/v1/phone/operations/createHumanCorner' ||
-                url.pathname === '/v1/daemon/operations/createCorner')
-            ? 'corner_open'
-            : null;
+        : method === 'POST' && url.pathname === '/v1/daemon/operations/createCorner'
+          ? 'corner_open' : null;
     if (observedFunction) {
       const started = performance.now();
       response.once('finish', () => {
         // The observation is after the response. It cannot delay the write or
         // paint that it describes, and it carries no user or message content.
         if (response.statusCode === 401 || response.statusCode === 403) return;
-        // Successful messages are observed when an actual subscribed phone
-        // acknowledges paint below. A failed write has no paint to await.
-        if (observedFunction === 'message_delivery' && response.statusCode < 400) return;
         const duration = Math.min(600_000, Math.round(performance.now() - started));
         void recordOperatorFunctionEvent(
           options.database,
@@ -614,7 +612,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       invitePreview,
       liveHealth,
       helperVersionGate,
-      dispatchPhoneOperation,
+      readPhoneOperation,
     ).catch((error) => {
       const message = error instanceof Error ? error.message : 'request failed';
       const status = requestErrorStatus(error);
@@ -1507,6 +1505,9 @@ async function refuseDaemon(
   else json(response, 401, { error: 'daemon_token_required' });
 }
 
+type PhoneHttpRead = (name: (typeof PHONE_READ_OPERATIONS)[number], input: Record<string, unknown>,
+  viewerId: string, familyId?: string) => Promise<unknown>;
+
 async function route(
   request: IncomingMessage,
   response: ServerResponse,
@@ -1514,7 +1515,7 @@ async function route(
   invitePreview: InvitePreviewAccess,
   liveHealth: () => object,
   helperVersionGate: HelperVersionGate,
-  dispatchPhoneOperation: PhoneOperationDispatcher,
+  readPhoneOperation: PhoneHttpRead,
 ): Promise<void> {
   const url = exactPath(request.url);
   const method = request.method ?? 'GET';
@@ -2298,6 +2299,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     response.end(logo);
     return;
   }
+  // OS Stop runs while JavaScript/the phone socket is suspended; its scoped stop token is a separate boundary.
   const nativeVoiceStop = url.pathname.match(/^\/v1\/phone\/voice\/([0-9a-f-]{36})\/native-stop$/);
   if (nativeVoiceStop && method === 'POST') {
     if (!options.voice) { json(response, 503, { error: 'Voice mode is unavailable' }); return; }
@@ -2444,43 +2446,29 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     return;
   }
 
-  const operation = async (name: string, input: Record<string, unknown>, project?: (result: unknown) => unknown,
-    invokeLegacy?: () => Promise<unknown>, command?: import('@beeline/api-contract/router-command').RouterCommandIdentity) => {
+  const operation = async (name: (typeof PHONE_READ_OPERATIONS)[number], input: Record<string, unknown>, project?: (result: unknown) => unknown) => {
     if (['readRoomTools','readMediaMetadata','readMediaLink','readMediaPlayback'].includes(name))
       throw new PhoneOperationError(409, { error: 'phone_socket_required' });
-    const familyId = phoneFamilies.get(request);
-    const result = await dispatchPhoneOperation(name, input, identityId!, undefined, invokeLegacy, familyId, command);
-    await fenceCommandReceiptEnqueue(options.database, identityId!, result, safeResult => {
-      if (safeResult === undefined) {
-        response.writeHead(204, { 'cache-control': 'private, no-store' });
-        response.end();
-      } else json(response, 200, project ? project(safeResult) : safeResult);
-      return undefined;
-    });
+    const result = await readPhoneOperation(name, input, identityId!, phoneFamilies.get(request));
+    if (result === undefined) { response.writeHead(204); response.end(); }
+    else json(response, 200, project ? project(result) : result);
   };
 
   const profileVoiceMatch = url.pathname.match(
-    /^\/v1\/phone\/workspaces\/([0-9a-f-]{36})\/agents\/([a-f0-9]{64})\/(voices|voice-preview)$/,
+    /^\/v1\/phone\/workspaces\/([0-9a-f-]{36})\/agents\/([a-f0-9]{64})\/(voices)$/,
   );
   if (profileVoiceMatch) {
-    const [, workspaceId, agentId, action] = profileVoiceMatch;
-    if (method === 'GET' && action === 'voices')
+    const [, workspaceId, agentId] = profileVoiceMatch;
+    if (method === 'GET')
       await operation('readAgentVoices', { workspaceId, agentId, ...(url.searchParams.has('roomId') ? { roomId: url.searchParams.get('roomId') } : {}) });
-    else if (method === 'POST')
-      await operation(action === 'voice-preview' ? 'previewAgentVoice' : 'saveAgentVoice', { ...(await body(request)), workspaceId, agentId });
     else json(response, 405, { error: 'method_not_allowed' });
     return;
   }
-  const voiceMatch = url.pathname.match(/^\/v1\/phone\/voice\/([0-9a-f-]{36})\/(current|join|leave|idle|state|resume)$/);
-  if (voiceMatch) {
+  const voiceMatch = url.pathname.match(/^\/v1\/phone\/voice\/([0-9a-f-]{36})\/(current|state)$/);
+  if (method === 'GET' && voiceMatch) {
     const [, id, action] = voiceMatch;
-    if (method !== (action === 'current' || action === 'state' ? 'GET' : 'POST')) {
-      json(response, 405, { error: 'method_not_allowed' }); return;
-    }
-    const name = { current: 'voiceCurrent', join: 'voiceJoin', leave: 'voiceLeave', idle: 'voiceIdle', state: 'voiceState', resume: 'voiceResume' }[action!];
-    await operation(name!, {
-      ...(method === 'POST' ? await body(request, true) : Object.fromEntries(url.searchParams)),
-      ...(action === 'current' || action === 'join' ? { roomId: id } : { callId: id }),
+    await operation(action === 'current' ? 'voiceCurrent' : 'voiceState', {
+      ...Object.fromEntries(url.searchParams), ...(action === 'current' ? { roomId: id } : { callId: id }),
     });
     return;
   }
@@ -2507,7 +2495,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     await operation('resolveMessageLink', { messageId: match[1] }); return;
   }
   const compact = wantsCompactView(request.headers[COMPACT_VIEW_HEADER]);
-  match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)(?:\/(history|outline|corners|read|unread))?$/);
+  match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)(?:\/(history|outline|corners))?$/);
   if (match) {
     const [, roomId, action] = match;
     if (method === 'GET' && !action) {
@@ -2528,10 +2516,8 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     if (method === 'GET' && action === 'corners') {
       await operation('readCorners', { ...Object.fromEntries(url.searchParams), roomId, archived: url.searchParams.get('archived') === '1' }); return;
     }
-    if (method === 'POST' && (action === 'read' || action === 'unread')) {
-      await operation(action === 'read' ? 'markRead' : 'markUnread', { ...(await body(request)), roomId }); return;
-    }
   }
+  // Binary media uploads do not fit the socket's JSON operation envelope.
   if (method === 'POST' && url.pathname === '/v1/phone/media') {
     if (!options.objectService) {
       json(response, 503, { error: 'object_storage_unavailable' });
@@ -2562,6 +2548,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     }
     return;
   }
+  // Dictation streams audio bytes to the transcriber; control operations use the socket.
   if (method === 'POST' && url.pathname === '/v1/phone/transcriptions') {
     if (!options.speechTranscriber) {
       json(response, 503, { error: 'transcription_unavailable' });
@@ -2602,12 +2589,6 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     }
     return;
   }
-  if (method === 'POST' && url.pathname === '/v1/phone/observations/client-error') {
-    await operation('reportClientError', await body(request)); return;
-  }
-  if (method === 'POST' && url.pathname === '/v1/phone/observations/page-load') {
-    await operation('reportPageLoad', await body(request)); return;
-  }
   match = url.pathname.match(/^\/v1\/phone\/github\/room-token\/([0-9a-f-]+)$/);
   if (method === 'GET' && match) {
     if (!options.github?.roomToken) throw new Error('GitHub room token service unavailable');
@@ -2618,19 +2599,6 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     json(response, 200, await options.github.roomToken(identityId!, match[1]!));
     return;
   }
-  match = url.pathname.match(/^\/v1\/phone\/operations\/([A-Za-z][A-Za-z0-9]+)$/);
-  if (method === 'POST' && match) {
-    const name = match[1]!;
-    const rawInput = await body(request);
-    const { command: commandValue, ...input } = rawInput;
-    let command;
-    try { command = commandValue === undefined ? undefined : parseRouterCommandIdentity(commandValue); }
-    catch { throw new PhoneOperationError(400, { error: 'invalid_command_identity' }); }
-    await operation(name, input, undefined,
-      () => options.phone.execute(name as never, input as never, identityId!, undefined, phoneFamilies.get(request), true), command);
-    return;
-  }
-
   if (method === 'POST' && url.pathname === '/v1/daemon/artifacts') {
     const agentId = await daemonIdentity(request, options);
     if (!agentId) {

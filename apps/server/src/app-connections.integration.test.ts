@@ -1,3 +1,4 @@
+import { phoneFetch } from '../../../tests/helpers/phone-operation.js';
 import { COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion } from './command-completion.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -324,7 +325,7 @@ describe('connect_app', () => {
       await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
       vi.mocked(captureServerError).mockClear();
       try {
-        const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/phone/operations/beginAppSignIn`, {
+        const response = await phoneFetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/phone/operations/beginAppSignIn`, {
           method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer fixture-phone-token-0001' },
           body: JSON.stringify({ appId }),
         });
@@ -630,7 +631,7 @@ describe('connect_app', () => {
       auth: { authenticateDaemon: async () => HELPER, authenticatePhone: async () => null } as unknown as TokenAuth });
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     try {
-      const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/daemon/operations/connect`, {
+      const response = await phoneFetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/daemon/operations/connect`, {
         method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer bdt_fixture-token-0001' },
         body: JSON.stringify({ ...turn, service: 'GitHub', reason: 'Read repository issues', squireAvailable: true }),
       });
@@ -1372,7 +1373,7 @@ describe('connect_app', () => {
           : 'GitHub is connected through squire-api, not app tools. ' +
             'Call GitHub\'s API with Trusty Squire use_credential (reference "vault:github").';
         for (const operation of ['listAppTools', 'executeAppTool']) {
-          const response = await fetch(`${origin}/v1/daemon/operations/${operation}`, {
+          const response = await phoneFetch(`${origin}/v1/daemon/operations/${operation}`, {
             method: 'POST',
             headers: { 'content-type': 'application/json', authorization: 'Bearer bdt_fixture-token-0001' },
             body: JSON.stringify({ ...turn, appId: 'github',
@@ -1416,7 +1417,7 @@ describe('connect_app', () => {
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     const call = async (operation: string, args: Record<string, unknown>) => {
-      const response = await fetch(`${origin}/v1/daemon/operations/${operation}`, {
+      const response = await phoneFetch(`${origin}/v1/daemon/operations/${operation}`, {
         method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer bdt_fixture-token-0001' },
         body: JSON.stringify({ ...turn, ...args }),
       });
@@ -1491,7 +1492,7 @@ describe('connect_app', () => {
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     try {
-      const response = await fetch(`${origin}/v1/daemon/operations/listAppTools`, {
+      const response = await phoneFetch(`${origin}/v1/daemon/operations/listAppTools`, {
         method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer bdt_fixture-token-0001' },
         body: JSON.stringify({ ...turn, appId: started.appId!, query: 'nonexistent-tool' }),
       });
@@ -1651,19 +1652,19 @@ describe('connect_app', () => {
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     try {
-      const callback = await fetch(`${origin}/v1/apps/oauth/verify?session_uri=session-fixture`);
+      const callback = await phoneFetch(`${origin}/v1/apps/oauth/verify?session_uri=session-fixture`);
       expect(callback.status).toBe(200);
       const html = await callback.text();
       const returnLink = new URL(html.match(/id="open-beeline" href="([^"]+)"/)![1]);
       expect(html).toContain('Open Beeline</a>');
       expect(provider.completeAuth).not.toHaveBeenCalled();
       const input = { sessionUri: returnLink.searchParams.get('appSignInSession'), appId };
-      const unauthorized = await fetch(`${origin}/v1/phone/operations/completeAppSignIn`, {
+      const unauthorized = await phoneFetch(`${origin}/v1/phone/operations/completeAppSignIn`, {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) });
       expect(unauthorized.status).toBe(401);
       expect(provider.completeAuth).not.toHaveBeenCalled();
       provider.accountStatus.mockResolvedValue({ status: 'active' });
-      const completion = await fetch(`${origin}/v1/phone/operations/completeAppSignIn`, {
+      const completion = await phoneFetch(`${origin}/v1/phone/operations/completeAppSignIn`, {
         method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer fixture-phone-token-0001' },
         body: JSON.stringify(input) });
       expect(completion.status).toBe(200);
@@ -2271,7 +2272,7 @@ describe('connect_app', () => {
         const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
         vi.mocked(captureServerError).mockClear();
         try {
-          const response = await fetch(`${origin}/v1/daemon/operations/executeAppTool`, {
+          const response = await phoneFetch(`${origin}/v1/daemon/operations/executeAppTool`, {
             method: 'POST',
             headers: { 'content-type': 'application/json', authorization: 'Bearer bdt_fixture-token-0001' },
             body: JSON.stringify({ ...turn, appId: YOUTUBE_APP,

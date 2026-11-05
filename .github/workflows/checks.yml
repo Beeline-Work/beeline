@@ -100,8 +100,8 @@ concurrency:
   group: checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Control uses one CPU, heavy listeners at most two, and mobile at most three.
-# The CI slice shares its ten-CPU hard cap across all ten jobs and every PR.
+# Six heavy listeners use one CPU each, control one and mobile three.
+# The balanced-label pool sums to the existing ten-CPU slice cap.
 env:
   CI_TEST_WORKERS: '2'
   UV_THREADPOOL_SIZE: '1'
@@ -672,10 +672,9 @@ jobs:
   # that commit, so changes merged since the map count as changed too.
   server-test-selection:
     name: SELECT SERVER TESTS
-    needs: [changes, prepare-workspace]
+    needs: changes
     if: >-
-      github.event_name == 'pull_request' && needs.prepare-workspace.outputs.mode == 'subset' &&
-      (needs.changes.outputs.serverSuite == 'true' || needs.prepare-workspace.outputs.server == 'true')
+      github.event_name == 'pull_request' && needs.changes.outputs.code == 'true'
     runs-on: ${{ fromJSON(needs.changes.outputs.runner_serverSelection || '["ubuntu-latest"]') }}
     env:
       CI_TEST_WORKERS: '1'
@@ -728,15 +727,9 @@ jobs:
           fi
       - name: Select the server tests this PR touches
         id: select
-        env:
-          WORKSPACE_MODE: ${{ needs.prepare-workspace.outputs.mode }}
         run: |
-          if [ "$WORKSPACE_MODE" = subset ]; then
-            node apps/server/scripts/test-selection.mjs select --map "$RUNNER_TEMP/map/server-coverage-map.json" \
-              --out "$RUNNER_TEMP/selection.json" | tee -a "$GITHUB_STEP_SUMMARY"
-          else
-            printf '%s' '{"mode":"full","reason":"Workspace selection requires every suite"}' > "$RUNNER_TEMP/selection.json"
-          fi
+          node apps/server/scripts/test-selection.mjs select --map "$RUNNER_TEMP/map/server-coverage-map.json" \
+            --out "$RUNNER_TEMP/selection.json" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "selection=$(node -e "const s=require(process.argv[1]);console.log(JSON.stringify({mode:s.mode,reason:s.reason,files:s.files,mapCommit:s.mapCommit}))" "$RUNNER_TEMP/selection.json")" >> "$GITHUB_OUTPUT"
 
   server-suite-shard:

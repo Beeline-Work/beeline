@@ -256,6 +256,19 @@ describe('real mobile router owner', () => {
     expect(execute).toHaveBeenCalledTimes(1);
     lane.release();
   });
+  it('Retry after the screen lost its admission still re-reads instead of throwing (BEELINE-MOBILE-Y)', async () => {
+    const execute = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue(snapshot());
+    routerOwnerNavigation(navigation());
+    const lane = acquireRouterLane(request, () => true, () => {});
+    await routerOwnerNegotiated({ generation: 1, families: ['needs-you-count'], execute }); await settle();
+    expect(lane.current().state).toBe('PARKED');
+    // The tap lands while the app is not foreground-admitted (e.g. returning from the failure).
+    fixture.state = 'background'; fixture.events.forEach(listener => listener('background'));
+    expect(() => retryRouterLane(request)).not.toThrow();
+    fixture.state = 'active'; fixture.events.forEach(listener => listener('active')); await settle();
+    expect(() => retryRouterLane(request)).not.toThrow(); await settle();
+    expect(execute.mock.calls.length).toBeGreaterThanOrEqual(2); expect(lane.current().state).toBe('LIVE'); lane.release();
+  });
   it('a failed read waits for a synchronous explicit Retry and never repeats itself', async () => {
     const execute = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue(snapshot());
     routerOwnerNavigation(navigation());

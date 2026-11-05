@@ -10,7 +10,7 @@ import type { DaemonService } from './daemon-service.js';
 import type { ObjectService } from './object-service.js';
 import { ExpectedRefusalError } from './command-refusal.js';
 import { McpToolError, mcpProvenance } from './rooms-mcp-members.js';
-import { createClaimedMcpAgentCommand } from './agent-command.js';
+import { claimMcpOrder, releaseUnreportedMcpOrder, dismissAgentCommandWakes, createClaimedMcpAgentCommand } from './agent-command.js';
 import { mcpWakeNext } from './rooms-mcp-events.js';
 
 /**
@@ -294,30 +294,9 @@ export class RoomsMcpAgentTools {
     const chain = incoming?.command;
     return this.db.transaction(async tx => {
       if (order) {
-        const waiting = (await tx.query<{ id: string; room_id: string }>(
-          `SELECT ordered.id,ordered.room_id FROM agent_commands ordered
-           JOIN rooms room ON room.id=ordered.room_id AND room.archived_at IS NULL
-           JOIN effective_memberships member ON member.room_id=room.id AND member.identity_id=$1 AND member.removed_at IS NULL
-           WHERE ordered.agent_id=$1 AND ordered.action IN ('input','resume')
-             AND ordered.private_payload->>'kind'='order'
-             AND (ordered.state='pending' OR (ordered.state='claimed' AND ordered.lease_expires_at<=now()))`, [member])).rows;
-        if (!waiting.some(item => item.room_id === target) && waiting.length > 1)
-          throw new McpToolError(`ambiguous report; pass commandId from the order: ${waiting.map(item => `${item.id} at ${item.room_id}`).join(', ')}`);
-        const bound = (await tx.query<{ id: string; turn_request_id: string; room_id: string }>(
-          `UPDATE agent_commands SET state='claimed',generation_id=$3,lease_expires_at=now()+interval '90 seconds',claimed_at=now(),
-             turn_owner_connection_id=NULL,turn_owner_epoch=NULL
-           WHERE id=(SELECT ordered.id FROM agent_commands ordered
-             JOIN rooms room ON room.id=ordered.room_id AND room.archived_at IS NULL
-             JOIN effective_memberships member ON member.room_id=room.id AND member.identity_id=$2 AND member.removed_at IS NULL
-             WHERE ordered.agent_id=$2 AND ordered.action IN ('input','resume')
-               AND ordered.private_payload->>'kind'='order'
-               AND (ordered.state='pending' OR (ordered.state='claimed' AND ${commandOwnerExpiredSql('ordered')}))
-             ORDER BY (ordered.room_id=$1) DESC,ordered.created_at,ordered.id LIMIT 1 FOR UPDATE OF ordered SKIP LOCKED)
-           RETURNING id,turn_request_id,room_id`, [target, member, generationId])).rows[0];
-        if (bound) {
-          await this.startTurn(tx, bound.room_id, member, bound.turn_request_id, generationId);
-          return { roomId: bound.room_id, requestId: bound.turn_request_id, generationId, commandId: bound.id, order: true };
-        }
+        const bound = await claimMcpOrder(tx, member, target, generationId);
+        if (bound) return { roomId: bound.room_id, requestId: bound.turn_request_id,
+          generationId: bound.generation_id!, commandId: bound.id, order: true };
         const corner = (await tx.query(`SELECT 1 FROM rooms WHERE id=$1 AND parent_id IS NOT NULL AND archived_at IS NULL`, [target])).rowCount;
         if (!corner) {
           const orders = (await tx.query<{ room_id: string }>(`SELECT DISTINCT room_id FROM agent_commands
@@ -336,38 +315,18 @@ export class RoomsMcpAgentTools {
       const id = await createClaimedMcpAgentCommand(tx, {
         roomId, agentId: member, generationId, parent: chain ?? undefined, requesterMessageId: requester,
       });
-      await this.startTurn(tx, roomId, member, id, generationId);
       return { roomId, requestId: id, generationId, commandId: id, order: false };
     });
   }
 
-  private async startTurn(db: SqlDatabase, roomId: string, member: string, requestId: string, generationId: string) {
-    await db.query(
-      `INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id) VALUES($1,$2,$3,'working',$4)
-       ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET status='working',generation_id=EXCLUDED.generation_id,
-         failure_reason=NULL,created_at=now() WHERE agent_turns.status<>'cancelled'`,
-      [roomId, requestId, member, generationId]);
-  }
-
-  /** End the turn with the agent's own terminal receipt; an unreported order waits again. */
+  /** An unreported order remains owed; terminal receipts use the normal daemon owner. */
   private async end(member: string, turn: McpTurn, reported: boolean) {
     if (turn.order && !reported) {
-      await this.db.query(
-        `UPDATE agent_commands SET state='pending',generation_id=NULL,lease_expires_at=NULL,claimed_at=NULL
-         WHERE id=$1 AND state='claimed' AND generation_id=$2`, [turn.commandId, turn.generationId]);
-      await this.db.query(`UPDATE agent_turns SET status='complete',created_at=now()
-        WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working' AND generation_id=$4`, [turn.roomId, member, turn.requestId, turn.generationId]);
+      await this.db.transaction(tx => releaseUnreportedMcpOrder(tx, turn.commandId, turn.generationId));
       return;
     }
-    try {
-      await this.exec(member, 'postAgentTurnReceipt', { roomId: turn.roomId, agentId: member, requestId: turn.requestId,
-        generationId: turn.generationId, status: 'complete' });
-    } catch (error) {
-      console.error('[rooms-mcp] turn receipt failed; completing the command directly', error);
-      await this.db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1 AND state='claimed' AND generation_id=$2`, [turn.commandId, turn.generationId]);
-      await this.db.query(`UPDATE agent_turns SET status='complete',created_at=now()
-        WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working' AND generation_id=$4`, [turn.roomId, member, turn.requestId, turn.generationId]);
-    }
+    await this.exec(member, 'postAgentTurnReceipt', { roomId: turn.roomId, agentId: member,
+      requestId: turn.requestId, generationId: turn.generationId, status: 'complete' });
   }
 
   private async inTurn<T>(member: string, target: string, run: (turn: McpTurn, context: Args) => Promise<T>, order = false): Promise<T> {
@@ -398,18 +357,9 @@ export class RoomsMcpAgentTools {
       const target = addressArg(args.address ?? args.room);
       await this.place(member, target);
       const turn = await this.db.transaction(async tx => {
-        const claimed = (await tx.query<{ id: string; room_id: string; turn_request_id: string; generation_id: string }>(
-          `UPDATE agent_commands SET state='claimed',
-             generation_id=CASE WHEN state='claimed' AND lease_expires_at>now() THEN generation_id ELSE $4 END,
-             lease_expires_at=now()+interval '90 seconds',claimed_at=now()
-           WHERE id=$1 AND agent_id=$2 AND room_id=$3 AND action IN ('input','resume')
-             AND private_payload->>'kind'='order'
-             AND (state='pending' OR (state='claimed' AND (lease_expires_at<=now() OR generation_id LIKE 'mcp:%')))
-           RETURNING id,room_id,turn_request_id,generation_id`,
-          [args.commandId, member, target, `mcp:${randomUUID()}`])).rows[0];
+        const claimed = await claimMcpOrder(tx, member, target, `mcp:${randomUUID()}`, String(args.commandId));
         if (!claimed) throw new McpToolError('commandId is not an available order for you at this address');
-        await this.startTurn(tx, claimed.room_id, member, claimed.turn_request_id, claimed.generation_id);
-        return { roomId: claimed.room_id, requestId: claimed.turn_request_id, generationId: claimed.generation_id,
+        return { roomId: claimed.room_id, requestId: claimed.turn_request_id, generationId: claimed.generation_id!,
           commandId: claimed.id, order: true };
       });
       const { commandId: _, ...input } = args;
@@ -487,23 +437,9 @@ export class RoomsMcpAgentTools {
           if (typeof args.messageId !== 'string' || !/^[0-9a-f]{64}$/.test(args.messageId)) throw new McpToolError('Invalid messageId');
           return { cleared: await clearOwedMention(this.db, member, roomId, args.messageId) };
         }
-        // The same rows pendingMcpWakes lists: pending, or claimed with an expired lease.
-        const waiting = `room_id=$1 AND agent_id=$2 AND action IN ('input','resume') AND reason<>'mcp_call'
-          AND (state='pending' OR (state='claimed' AND lease_expires_at<=now()))`;
-        if (args.commandId !== undefined) {
-          if (typeof args.commandId !== 'string' || !/^[0-9a-f]{64}$/.test(args.commandId)) throw new McpToolError('Invalid commandId');
-          const wake = (await this.db.query<{ kind: string | null }>(
-            `SELECT private_payload->>'kind' kind FROM agent_commands WHERE id=$3 AND ${waiting}`, [roomId, member, args.commandId])).rows[0];
-          if (!wake) return { cleared: 0 };
-          if (wake.kind === 'order') throw new McpToolError('that wake is an order; answer it with report');
-          const cleared = await this.db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$3 AND ${waiting}`,
-            [roomId, member, args.commandId]);
-          return { cleared: cleared.rowCount ?? 0 };
-        }
-        const cleared = await this.db.query(
-          `UPDATE agent_commands SET state='complete',completed_at=now()
-           WHERE ${waiting} AND COALESCE(private_payload->>'kind','')<>'order'`, [roomId, member]);
-        return { cleared: cleared.rowCount ?? 0 };
+        if (args.commandId !== undefined && (typeof args.commandId !== 'string' || !/^[0-9a-f]{64}$/.test(args.commandId)))
+          throw new McpToolError('Invalid commandId');
+        return { cleared: await dismissAgentCommandWakes(this.db, roomId, member, text(args.commandId)) };
       }
     }
     throw new McpToolError(`unknown tool: ${name}`);

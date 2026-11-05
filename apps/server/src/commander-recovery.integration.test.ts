@@ -1202,16 +1202,16 @@ it('Reproduction commander-files: a commander home file reaches the worker as th
       await expect(openCorner('Private-path', { spec: `Read ${named}` }))
         .rejects.toThrow(`the brief names ${path}, which only you can open`);
       await expect(callAgentTool('order', { address: ROOM, agent: 'worker', text: `Read ${named}` }, 'order-private'))
-        .rejects.toThrow(`the order names ${path}, which recipients cannot open`);
+        .resolves.toContain(`Warning: the order names ${path}, which recipients may not be able to open`);
     }
     // A path that cannot be read is refused by name.
     await expect(openCorner('Missing-file', { spec: 'Read the trace.', attachments: [
       { path: join(home, 'gone.csv'), purpose: 'Failing trace', required: true }] }))
       .rejects.toThrow(`brief attachment ${join(home, 'gone.csv')} cannot be delivered`);
     expect(await cornerCount()).toBe(before);
-    // An order that names the private file is refused by name.
+    // An order that names a private file is delivered with advice to attach it.
     await expect(callAgentTool('order', { address: ROOM, agent: 'worker', text: `Read ${trace}` }, 'order-named'))
-      .rejects.toThrow(`the order names ${trace}, which recipients cannot open`);
+      .resolves.toContain(`Warning: the order names ${trace}, which recipients may not be able to open`);
     const opened = JSON.parse(await openCorner('Attached-trace', { spec: `Read "${spaced}" and find the failing step.`,
       attachments: [{ path: spaced, purpose: 'Failing trace', required: true }] }));
     const next = await worker(opened.address);

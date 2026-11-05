@@ -4,51 +4,46 @@ These drop-ins change resource accounting only. Preserve the existing
 credential-free `beeline-ci` user, mount namespace, runner labels and all
 release/production services. There is no new service or workflow gate.
 
-The pool has ten active listeners and one job per listener. Instance 01 has
-one CPU for control work. Instances 02–09 have two CPUs / 8 GiB for server
-shards, shared-package tests, TYPECHECK and independent companion checks. Instance 10 has three CPUs / 12 GiB
-and CPUWeight 300 for MOBILE SUITE. Each job owns its checkout; parallel checks
-never share a mutable working tree. The slice shares `CPUQuota=1000%` / `MemoryMax=60G` across all
-listeners; individual maxima are not additive capacity. Limits cover every
-child process. Existing credential isolation and production/release services
-are preserved. The cache tar wrapper uses a shared file lock; no service is added.
+The balanced pool has eight active listeners: 01 for one-CPU control work,
+02–07 for six one-CPU heavy jobs, and 10 for the three-CPU mobile suite.
+Their maxima sum to the existing `CPUQuota=1000%`; `MemoryMax=60G` is unchanged.
+The other ten cores of the 20-core host remain available to agent work.
+Listeners 08 and 09 are drained and disabled. Existing isolation, checkout
+ownership and cache locking remain intact.
+
+The additional `beeline-ci-balanced` label is a rollout boundary. Workflows
+require it as well as the existing role labels, and routing accepts only the
+eight declared listener names in their assigned roles. An older ten-listener
+inventory cannot silently receive balanced work. Until activation, execution
+falls back to the existing hosted pool; this is not a completed rollout or a
+15-minute acceptance result.
 
 ## Activation order
 
-1. Wait for the separate server integration-test memory fix to merge, then
-   rebase the CI branch on main. Do not restore the runners against the
-   leaking integration suite.
-2. With the CI listeners still stopped, install `beeline-ci@.service.d/50-budget.conf`
-   `beeline-ci.slice.d/50-budget.conf`, and the instance-specific
-   `beeline-ci@01.service.d/60-control-budget.conf` and
-   `beeline-ci@10.service.d/60-workspace-budget.conf` beneath `/etc/systemd/system/`.
-   Run `systemctl daemon-reload`. Installation requires host-write authority;
-   a worktree-only worker can prepare these files but cannot apply them.
-3. Verify `systemctl show beeline-ci.slice` reports a ten-CPU quota, 48 GiB
-   MemoryHigh and 60 GiB MemoryMax. Verify every instance 01 through 10 has
-   a two-CPU quota (one CPU for 01), 6 GiB MemoryHigh, 8 GiB MemoryMax and
-   the correct slice. Instance 10 overrides this to three CPUs, CPUWeight 300,
-   MemoryHigh 10 GiB / MemoryMax 12 GiB.
-   Existing resource drop-ins must not override these values. Verify the
-   parent slice does not impose an unexpected tighter limit.
-4. Enable/start `beeline-ci@01.service` through `beeline-ci@10.service`. Confirm
-   names remain `beeline-ci-squire-01` through `-10`, with the `beeline-ci`
-   label. Verify ten are online and the parent quota remains ten CPUs. Instance 01
-   also has `beeline-ci-control`; 02–09 have `beeline-ci-heavy`; 10 has
-   `beeline-ci-workspace` and must not also have the heavy role. PR gates select
-   those roles explicitly so preparation cannot queue behind long suites.
-5. Run a monitored real-PR trial. Firstmate accepted the initial rollout at
-   27m20s; the follow-up targets reliable green checks and server shards at or
-   below twenty minutes while CI stays inside the same pool. Firstmate controls landing; subsequent three-PR proof uses real PRs carrying
-   this routing and the leak fix. An older PR head still runs its own old workflow;
-   rerunning it does not test the new routing. Coordinate those heads with
-   their owners, without rewriting another worker's branch.
+1. Wait for active CI work to drain. Disable listeners 08 and 09 without
+   interrupting running jobs. Preserve every production/release service.
+2. Install the checked-in resource drop-ins beneath `/etc/systemd/system/`
+   and reload the manager. The default heavy quota is now one CPU, with the
+   existing control and mobile overrides. Installation requires host-write
+   authority; a worktree-only worker prepares the change but cannot apply it.
+3. Verify the effective parent limit is ten CPUs / 60 GiB, the six heavy
+   listeners have one CPU / 8 GiB each, control one CPU, and mobile three CPUs /
+   12 GiB. Per-service MemoryHigh and the parent MemoryHigh remain unchanged.
+4. Activate only 01–07 and 10. After verifying the limits, add
+   `beeline-ci-balanced` to those eight listeners, retaining their current
+   `beeline-ci-control`, `beeline-ci-heavy` or `beeline-ci-workspace` role.
+   Do not give the rollout label to 08/09 or a production/release listener.
+5. After landing, measure the first ten PR runs carrying the fix from push/run
+   creation through the final check, including queues and rerun delay. Record
+   job queues and runtime by pool. Failed, cancelled, pending and undersampled
+   runs cannot establish the target. An old branch workflow is not a trial of
+   this policy. No required check is added or renamed.
 
 ## Measurement and abort
 
 Before the load test, record `uptime`, available memory, active listener count
 and effective service/slice limits. Capture load and memory at least every
-five seconds throughout all three runs. Use `systemctl show beeline-ci.slice
+five seconds throughout the ten-run sample. Use `systemctl show beeline-ci.slice
 -p ControlGroup --value` to locate the live cgroup instead of assuming its
 path. Record its `memory.current`, `memory.peak`, `memory.events`, `cpu.stat`
 and `cpu.max`, and each listener's resource counters. Record a host idle
@@ -72,8 +67,9 @@ helper and desktop timings separately. A failed or cancelled run is not a
 passing timing result. Report maximum sampled whole-host one-minute load,
 minimum available memory, peak pool memory and OOM/throttling deltas.
 
-The follow-up targets each server shard at or below twenty minutes, with CI
-pool usage inside ten CPUs and 60 GiB and no OOM kills. Report measured per-PR
+The target is all required checks within fifteen minutes of push on ten
+consecutive PR runs under the real concurrent workload, with CI pool usage
+inside ten CPUs and 60 GiB and no OOM kills. Report measured per-PR
 wall time, remaining unexplained failures and concurrent workload. The captain now targets as close to ten minutes per PR as possible through
 selection and cache/setup reuse, with no additional paid runners. Host load is context; it is not the CI CPU
 budget. A ten-CPU quota alone does not prove wall-time capacity.

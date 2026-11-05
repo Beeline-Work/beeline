@@ -1,3 +1,4 @@
+import { setRoomEventSubscriptions, migrateMembershipSubscriptions } from './agent-subscriptions.js';
 import { cornerObjectiveSql } from './corner-objective.js';
 import { cornerCommissionerSql, cornerKindSql, cornerRequestSql } from './corner-opening.js';
 import { ConnectorOfferExpiryLoop } from './connector-offer-expiry.js';
@@ -6461,6 +6462,7 @@ describe('monolith integration', () => {
        WHERE room_id=$1 AND identity_id=$2`,
       [ROOM, AGENT],
     );
+    await migrateMembershipSubscriptions(database);
     const created = await operation('createHumanCorner', {
       roomId: ROOM,
       title: 'Subscription-inherit-check',
@@ -13443,10 +13445,11 @@ describe('monolith integration', () => {
       [greeterRoom, WORKSPACE, HUMAN],
     );
     await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
-       VALUES($1,NULL,$2,'member','[]'::jsonb),($1,$3,$2,'member','["joined"]'::jsonb)`,
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
       [WORKSPACE, WELCOME_AGENT, greeterRoom],
     );
+    await setRoomEventSubscriptions(database, greeterRoom, WELCOME_AGENT, ['joined']);
     const invite = (await (await operation('createInvite', { workspaceId: WORKSPACE })).json()) as {
       token: string;
     };
@@ -13519,10 +13522,11 @@ describe('monolith integration', () => {
       [publicRoom, WORKSPACE, HUMAN],
     );
     await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
-       VALUES($1,$2,$3,'member','["joined"]'::jsonb)`,
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,$2,$3,'member')`,
       [WORKSPACE, publicRoom, WELCOME_AGENT],
     );
+    await setRoomEventSubscriptions(database, publicRoom, WELCOME_AGENT, ['joined']);
 
     const newcomer = await phoneToken('arrival-newcomer');
     const newcomerId = createHash('sha256').update('github:arrival-newcomer').digest('hex');
@@ -13762,6 +13766,7 @@ describe('monolith integration', () => {
        WHERE room_id=$1 AND identity_id=$2`,
       [ROOM, AGENT],
     );
+    await migrateMembershipSubscriptions(database);
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-subscription-inherit-request',

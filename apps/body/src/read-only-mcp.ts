@@ -1711,8 +1711,7 @@ const BRIEF_FILE_INERT_MIMES = new Set(['text/html', 'image/svg+xml', 'applicati
 /** File citations, including Markdown links, file URLs and key=value text. */
 const NAMED_PATH = /(?:^|[\s(<[=:])(?:"([^"\n]+)"|'([^'\n]+)'|`([^`\n]+)`|(file:\/\/[^\s`'"()<>\]]+|[^\s`'"()<>\]=:]+))/g;
 
-/** Recognize private paths even when missing or unreadable, so delivery fails
- *  explicitly rather than handing the worker an inaccessible filename. */
+/** Recognize private paths even when missing or unreadable for delivery advice. */
 export function namedPrivateFiles(roots: string[], text: string, includeRelative = false): { named: string; resolved: string }[] {
   const home = process.env.HOME?.trim();
   const found: { named: string; resolved: string }[] = [];
@@ -1748,7 +1747,7 @@ export function namedPrivateFiles(roots: string[], text: string, includeRelative
     try {
       resolved = resolveAttachPath(roots, absolute);
     } catch {
-      // A named path in our roots still needs a refusal if it cannot be read.
+      // A named private path still needs advice if it cannot be read.
       if (!inRoots && !/^(?:~\/|\/(?:tmp|var\/tmp|home|Users|root|private\/var)\/)/.test(path)) continue;
     }
     if (!found.some((file) => file.resolved === resolved)) found.push({ named, resolved });
@@ -3018,16 +3017,19 @@ async function executeAgentTool(name: string, args: JsonObject, toolCallId: stri
       (!args.cursor || typeof args.cursor !== 'object' || Array.isArray(args.cursor)))
     throw new Error('read: pass the returned next object unchanged as cursor');
   validateToolInput(advertisedAgentTool(name), args);
+  let deliveryWarning = '';
   if (name === 'order' || name === 'report' || name === 'post') {
     const named = namedPrivateFiles(attachRootsFromEnv(), String(args.text ?? ''), true)
       .filter(file => basename(file.named) !== file.named || !attachmentNames.includes(file.named));
-    if (named.length) throw new Error(
-      `the ${name} names ${named.map(file => file.named).join(', ')}, which recipients cannot open; ` +
-      'upload the file with post_artifact and name its attachment instead, or attach it to the target corner brief with revise_corner',
-    );
+    if (named.length) deliveryWarning =
+      `Warning: the ${name} names ${named.map(file => file.named).join(', ')}, which recipients may not be able to open; ` +
+      'upload the file with post_artifact and name its attachment instead, or attach it to the target corner brief with revise_corner.';
   }
   const addressed = { ...args, ...(typeof args.address === 'string' ? { cornerId: args.address } : {}) };
-  const execute = (operation: string, input = args) => executeAgentOperation(operation, input, toolCallId);
+  const execute = async (operation: string, input = args) => {
+    const result = await executeAgentOperation(operation, input, toolCallId);
+    return deliveryWarning ? `${result}\n\n${deliveryWarning}` : result;
+  };
   switch (name) {
     case 'read': {
       const facet = args.facet;

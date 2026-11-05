@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { compareReleasedRuntime, enforceReleasedRuntime } from './release-preflight-native.mjs';
 const require = createRequire(import.meta.url);
-const { triageFailure, validateRunnerResults, recoverFailures } = require('./release-preflight.cjs');
+const { triageFailure, validateRunnerResults, recoverFailures, runnerMatrix } = require('./release-preflight.cjs');
 
 test('forced release failure creates exactly one triage issue even after redelivery and closure', async () => {
   const issues = [];
@@ -44,6 +44,29 @@ test('runner completion inspects once and fails closed for incomplete or failed 
   await assert.rejects(validateRunnerResults({github,context,core}),/probes failed/);assert.equal(reads,3);
   const workflow=readFileSync('.github/workflows/release-preflight.yml','utf8');
   assert.match(workflow,/runners_online:\n    needs: runner\n    if: always\(\)/);
+});
+
+test('preflight probes and requires only selected release platforms', async () => {
+  for (const selected of ['production', 'android', 'ios']) {
+    const inputs = Object.fromEntries(['production', 'android', 'ios'].map(label => [label, String(label === selected)]));
+    let jobs = ['production', 'android', 'ios'].map(label => ({ name: `Runner probe ${label}`,
+      status: label === selected ? 'completed' : 'queued', conclusion: label === selected ? 'success' : null }));
+    const github = { paginate: async () => jobs, rest: { actions: { listJobsForWorkflowRun() {} } } };
+    const context = { repo: {}, runId: 42, payload: { inputs } }, core = { info() {} };
+    await validateRunnerResults({ github, context, core });
+    assert.deepEqual(runnerMatrix(inputs).map(probe => probe.label), [selected]);
+    jobs = jobs.filter(job => job.name === `Runner probe ${selected}`);
+    await validateRunnerResults({ github, context, core });
+    jobs[0].conclusion = 'failure';
+    await assert.rejects(validateRunnerResults({ github, context, core }), /probes failed/);
+    jobs = [];
+    await assert.rejects(validateRunnerResults({ github, context, core }), /completion is unavailable/);
+  }
+  assert.deepEqual(runnerMatrix({ production: false, android: false, ios: false }), []);
+  const workflow = readFileSync('.github/workflows/release-preflight.yml', 'utf8');
+  assert.match(workflow, /runnerMatrix\(context.payload.inputs\)/);
+  assert.match(workflow, /include: \$\{\{ fromJSON\(needs.select.outputs.matrix\) \}\}/);
+  for (const platform of ['production', 'android', 'ios']) assert.match(workflow, new RegExp(`${platform}:\\n        description:.*\\n        type: boolean`));
 });
 
 test('compares native fingerprints and shipped pins independently for each platform', () => {
@@ -119,6 +142,8 @@ function recoveryFixture() {
 test('successful preflight closes all earlier preflight issues with recovery links, leaving release failures open', async () => {
   const f = recoveryFixture();
   f.run.path = '.github/workflows/release-preflight.yml';
+  f.jobs.splice(0, f.jobs.length, ...['Runner probe production', 'Runner probe android', 'Runner probe ios', 'native']
+    .map(name => ({ name, conclusion: 'success' })));
   f.add('Release preflight: failure (run 100)');
   f.add('Release preflight: cancelled (run 101)');
   f.add('Unified production release: failure (run 102)', ['server']);
@@ -127,6 +152,18 @@ test('successful preflight closes all earlier preflight issues with recovery lin
   assert.equal(f.comments.length, 2);
   assert.ok(f.comments.every(comment => comment.body.includes(f.run.html_url)));
   assert.ok(f.updates.every(update => update.state_reason === 'completed'));
+});
+
+test('a successful platform subset closes only failures it actually retested', async () => {
+  const f = recoveryFixture();
+  f.run.path = '.github/workflows/release-preflight.yml';
+  f.jobs.splice(0, f.jobs.length, { name: 'Runner probe production', conclusion: 'success' },
+    { name: 'native', conclusion: 'skipped' });
+  f.add('Release preflight: failure (run 100)', ['Runner probe production']);
+  f.add('Release preflight: failure (run 101)', ['Runner probe ios']);
+  f.add('Release preflight: failure (run 102)');
+  await recoverFailures(f);
+  assert.deepEqual(f.issues.map(issue => issue.state), ['closed', 'open', 'open']);
 });
 
 test('unified recovery requires every recorded failed job to succeed; skipped or absent jobs keep issues open', async () => {

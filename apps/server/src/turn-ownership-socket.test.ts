@@ -1,5 +1,5 @@
 import { DaemonApiClient } from '../../body/src/daemon-api-client.js';
-import { ConnectorAssignmentLoop } from '../../body/src/connector-assignments.js';
+import { MachineLink } from '../../body/src/machine-link.js';
 import type { AddressInfo } from 'node:net';
 import { setTimeout as realTimeout, clearTimeout as realClearTimeout } from 'node:timers';
 import WebSocket from 'ws';
@@ -111,19 +111,27 @@ describe.each(['pglite', ...(postgresUrl ? ['postgres'] : [])])('P12 actual sele
     const bootstrap = await connect();
     bootstrap.socket.terminate();
     const helperSockets: WebSocket[] = [];
-    const api = new DaemonApiClient(`http://127.0.0.1:${(server!.address() as AddressInfo).port}`,
-      'bdt_synthetic', agent, fetch, (url, protocols, options) => {
+    const log = vi.fn();
+    let vaultRevision = 0;
+    const vault = vi.fn(async () => ({ connections: [{
+      reference: 'synthetic-credential', service: 'example', label: `revision-${vaultRevision}`,
+      fieldNames: ['password'], allowedHosts: ['example.test'], createdAt: 1,
+      stale: false, state: 'active' as const,
+    }] }));
+    const baseUrl = `http://127.0.0.1:${(server!.address() as AddressInfo).port}`;
+    const machine = new MachineLink({ baseUrl, readVault: vault, log,
+      factory: (url, protocols, options) => {
         const socket = new WebSocket(url, protocols, options);
         helperSockets.push(socket); sockets.push(socket); return socket;
-      });
-    const log = vi.fn();
-    const vault = vi.fn(async () => []);
-    const connector = new ConnectorAssignmentLoop({api, agentId:agent, log,
-      brokerInstalled:()=>true, readVault:vault, mcp:{call:async()=>({})}});
+      } });
+    const api = new DaemonApiClient(baseUrl, 'bdt_synthetic', agent, fetch,
+      undefined, undefined, undefined, machine);
     const lost = vi.fn();
     const turn = {roomId:room,requestId:command.turn_request_id,generationId:'socket-continuation'};
     const report = async () => {
-      await connector.runOnce();
+      // Join the actual observation/delivery. An already-connected server
+      // verdict cannot prove that an asynchronous vault report has settled.
+      await machine.refreshVault();
       await vi.waitFor(async () => expect((await daemon.execute('getConnectorStatus',
         {agentId:agent,connectorId:`squire:${agent}`},agent)).status).toBe('connected'));
     };
@@ -153,16 +161,22 @@ describe.each(['pglite', ...(postgresUrl ? ['postgres'] : [])])('P12 actual sele
           expect(lost).not.toHaveBeenCalled();
           expect(await expireOwnedAgentTurns(db,live,agent)).toBe(0);
           // A lost broker report is not a new broker failure verdict.
+          // Only changed machine observations are sent. Exercise a real new
+          // vault revision so every cut reaches a committed report.
+          vaultRevision += 1;
           cut='postConnectorVault';
-          await connector.runOnce();
+          await machine.refreshVault();
+          expect(cut).toBeUndefined();
           await vi.waitFor(()=>expect(log.mock.calls.filter(([line])=>String(line).includes('machine report unavailable'))).toHaveLength(drop+1));
           await api.execute('getAgentCommands',{roomId:room});
           await report();
         }
         // A failed local observation must also retain the last connected fact.
+        const observations = vault.mock.calls.length;
         vault.mockRejectedValueOnce(new Error('Squire MCP session closed'));
-        await connector.runOnce();
-        await vi.waitFor(()=>expect(log.mock.calls.some(([line])=>String(line).includes('vault observation unavailable'))).toBe(true));
+        await machine.refreshVault();
+        expect(vault).toHaveBeenCalledTimes(observations + 1);
+        expect(log.mock.calls.some(([line])=>String(line).includes('Squire MCP session closed'))).toBe(true);
         expect((await daemon.execute('getConnectorStatus',{agentId:agent,connectorId:`squire:${agent}`},agent)).status).toBe('connected');
         await api.execute('postRoomMessage',{...turn,text:'Finished despite seven socket drops.'});
         cut='postAgentTurnReceipt';
@@ -179,7 +193,7 @@ describe.each(['pglite', ...(postgresUrl ? ['postgres'] : [])])('P12 actual sele
     } catch(error) {
       console.info(`SOCKET-CONTINUE interrupted: cancellations=${lost.mock.calls.length}; sockets=${helperSockets.length}; error=${error instanceof Error?error.message:String(error)}`);
       throw error;
-    } finally { connector.stop(); api.closeLive(); }
+    } finally { api.closeLive(); machine.stop(); }
   });
 
   it('binds the actual registration, replays without row writes, and rejects freshness/legacy receipt paths', async () => {

@@ -12,7 +12,7 @@ const WEB_ZOOM_CLASS = 'happy-app-zoomed';
 
 const clampZoom = (zoom: number) => Math.max(MIN_APP_ZOOM, Math.min(MAX_APP_ZOOM, zoom));
 
-export function getBrowserAppZoomValue(): string {
+function getBrowserAppZoomValue(): string {
     return String(BROWSER_APP_ZOOM);
 }
 

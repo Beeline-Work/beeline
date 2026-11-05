@@ -47,6 +47,6 @@ export function getOpenBuzzChannelId(): string | null {
 }
 
 /** Test-only reset. */
-export function resetOpenBuzzChannelIdsForTests(): void {
+function resetOpenBuzzChannelIdsForTests(): void {
   openChannelStack.length = 0;
 }

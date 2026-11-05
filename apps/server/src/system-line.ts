@@ -1,3 +1,4 @@
+import { roomEventSubscriptions } from './agent-subscriptions.js';
 import { restoreRoomMembership } from './membership-join.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { CornerAccessDatabase } from './corner-access-database.js';
@@ -313,52 +314,6 @@ async function canonicalPhrase(
   };
 }
 
-/**
- * The agent members of this Room that subscribed to `kind`.
- *
- * One query, one place: a producer says the kind, never who cares about it.
- * Rooms hold tens of agents, so no index is needed yet — when a Room holds
- * hundreds, this is the query that wants a GIN index on `event_subscriptions`.
- *
- * A failure here must never take the caller down with it: the join that posts
- * the line is a real membership write, and losing it to a subscription lookup
- * would be a silent partial join. So the lookup is caught and logged, and the
- * line is still written with whatever wakes the producer named explicitly.
- * The residual limit, stated plainly: PostgreSQL aborts a transaction on a
- * failed statement, so a caller that passes its own transaction handle is
- * still lost if THIS query is what failed inside it. The catch covers every
- * caller that passes the pool, and every failure that is not the statement
- * itself. Keeping the query trivial — one indexed predicate over a column the
- * migration creates — is what keeps that case theoretical.
- *
- * A per-item kind (`isSubscribableEventKind` false) is never looked up here:
- * its item's owner is already woken directly by the caller's own `wakes`, and
- * a stale `event_subscriptions` row from before the migration that strips
- * them must not resurrect a Room-wide wake on every such item.
- */
-async function subscribers(
-  database: SqlDatabase,
-  roomId: string,
-  kind: SystemEventKind | undefined,
-): Promise<string[]> {
-    database = new CornerAccessDatabase(database);
-  // Passive opened notifications contain no request for work. Explicit
-  // subscriptions with a task prompt still run through subscription-fired.
-  if (!kind || kind === 'corner-opened' || !isSubscribableEventKind(kind)) return [];
-  try {
-    const rows = await database.query<{ identity_id: string }>(
-      `SELECT DISTINCT member.identity_id FROM memberships member
-       JOIN identities identity ON identity.id=member.identity_id AND identity.kind='agent'
-       WHERE member.room_id=$1 AND member.removed_at IS NULL
-         AND member.event_subscriptions @> $2::jsonb`,
-      [roomId, JSON.stringify([kind])],
-    );
-    return rows.rows.map((row) => row.identity_id);
-  } catch (error) {
-    console.error('[system-line] subscriber lookup failed', roomId, kind, error);
-    return [];
-  }
-}
 
 type Cascade = { causeId: string | null; rootCauseId: string; depth: number };
 
@@ -409,6 +364,7 @@ async function resolveCascade(
   database: SqlDatabase,
   causeId: string,
   wakeCount: number,
+  excludeMessageId?: string,
 ): Promise<Cascade> {
   const cause = await database.query<{
     event_root_cause_id: string | null;
@@ -427,8 +383,8 @@ async function resolveCascade(
   // What this cascade has already spent, in turns woken.
   const spent = await database.query<{ woken: number }>(
     `SELECT COALESCE(SUM(event_woken),0)::int woken
-     FROM messages WHERE event_root_cause_id=$1`,
-    [rootCauseId],
+     FROM messages WHERE event_root_cause_id=$1 ${excludeMessageId ? 'AND id<>$2' : ''}`,
+    excludeMessageId ? [rootCauseId, excludeMessageId] : [rootCauseId],
   );
   const woken = spent.rows[0]?.woken ?? 0;
   if (woken + wakeCount > MAX_TURNS_PER_ROOT)
@@ -453,12 +409,8 @@ export async function systemLine(
     ),
   );
   const id = input.id ?? randomBytes(32).toString('hex');
-  const wakes = [
-    ...new Set([
-      ...(input.wakes ?? []),
-      ...(await subscribers(database, input.roomId, input.kind)),
-    ]),
-  ].filter(agentId => input.kind !== 'corner-opened' || agentId !== input.subject.id);
+  let subscriptions: Awaited<ReturnType<typeof roomEventSubscriptions>> = [];
+  let wakes = [...new Set(input.wakes ?? [])].filter(agentId => input.kind !== 'corner-opened' || agentId !== input.subject.id);
   // Only an event carries a cascade. A line with no kind is one nothing reacts
   // to, so it has no root to belong to and no budget to spend.
   const write = async (
@@ -496,6 +448,29 @@ export async function systemLine(
       ],
     );
     if (result.rowCount) {
+      // Preserve message-before-subscription lock order. One capture chooses each
+      // subscription's mode, so a prompt edit cannot dispatch twice on two cuts.
+      if (input.kind && isSubscribableEventKind(input.kind)) {
+        await db.query('SAVEPOINT room_event_recipients');
+        try {
+          subscriptions = await roomEventSubscriptions(db, input.roomId, input.kind, true);
+        } catch (error) {
+          // Preserve the fact and explicit targets even after a failed SQL lookup.
+          await db.query('ROLLBACK TO SAVEPOINT room_event_recipients');
+          console.error('[system-line] subscriber lookup failed', input.roomId, input.kind, error);
+        }
+        await db.query('RELEASE SAVEPOINT room_event_recipients');
+        const explicitCount = wakes.length;
+        wakes = [...new Set([...wakes, ...subscriptions
+          .filter(row => row.prompt === null && input.kind !== 'corner-opened').map(row => row.agent_id)])];
+        if (wakes.length !== explicitCount) {
+          // The provisional fact is private to this transaction. Judge its full
+          // wake count against the existing cascade, excluding that provisional row.
+          if (cascade?.causeId) await resolveCascade(db, cascade.causeId, wakes.length + watches.length, id);
+          await db.query('UPDATE messages SET event_woken=$2 WHERE id=$1', [id, wakes.length + watches.length]);
+        }
+      }
+
       const watched = watches.length ? (await db.query<{ name: string; merge_sha: string | null }>(`SELECT room.name,fact.lifecycle->'pr'->>'mergeCommitSha' merge_sha FROM rooms room LEFT JOIN corner_github_cache fact ON fact.corner_id=room.id WHERE room.id=$1`, [input.card?.cornerId ?? input.roomId])).rows[0] : undefined;
       for (const watch of watches)
         await createAgentCommand(db, {
@@ -518,18 +493,8 @@ export async function systemLine(
         followup: input.kind === 'check-failed' &&
           Boolean((input.payload as { followup?: unknown } | undefined)?.followup),
       });
-      if (input.kind && isSubscribableEventKind(input.kind)) {
-        const subscriptions = await db.query<{
-          id: string; agent_id: string; prompt: string; workflow_slug: string | null;
-        }>(`SELECT subscription.id,subscription.agent_id,subscription.prompt,subscription.workflow_slug
-          FROM agent_subscriptions subscription JOIN memberships member
-            ON member.room_id=subscription.room_id AND member.identity_id=subscription.agent_id
-            AND member.removed_at IS NULL
-          WHERE subscription.room_id=$1 AND subscription.source='room' AND subscription.event=$2
-          ORDER BY subscription.id
-          FOR UPDATE OF subscription`,
-          [input.roomId, input.kind]);
-        for (const subscription of subscriptions.rows) {
+      if (input.kind && isSubscribableEventKind(input.kind) && subscriptions.some(row => row.prompt !== null)) {
+        for (const subscription of subscriptions.filter(row => row.prompt !== null)) {
           if (input.kind === 'corner-opened' && subscription.agent_id === input.subject.id) continue;
           const firedId = createHash('sha256').update(`room-subscription:${id}:${subscription.id}`).digest('hex');
           const fired = await systemLine(db, {
@@ -538,7 +503,7 @@ export async function systemLine(
             verb: systemMessage("system-line.received"), object: systemMessage("system-line.a-room-event"), consequence: input.kind,
             kind: 'subscription-fired', causeId: id, wakes: [subscription.agent_id],
             payload: { source: 'room', event: input.kind, text },
-            subscriptionPrompt: subscription.prompt,
+            subscriptionPrompt: subscription.prompt!,
             subscriptionWorkflowSlug: subscription.workflow_slug ?? undefined,
           });
           if (fired.inserted) await db.query(`UPDATE agent_subscriptions

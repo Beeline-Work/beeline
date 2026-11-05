@@ -637,11 +637,26 @@ export class ComposioApps {
     }
   }
 
-  async listTools(toolkit: string, query?: string): Promise<readonly {
+  async listTools(toolkit: string, query?: string): Promise<{ tools: readonly {
     slug: string; name: string; description: string; inputParameters?: unknown;
-  }[]> {
+  }[]; next?: string }> {
+    // Carry both the provider page and our compact-page offset through the
+    // existing query field, so discovery can reach every tool without loading
+    // all provider pages into one response.
+    let page: { cursor?: string; offset: number } = { offset: 0 };
+    if (query?.startsWith('beeline-page:')) {
+      try {
+        const decoded = JSON.parse(Buffer.from(query.slice('beeline-page:'.length), 'base64url').toString());
+        if (Number.isSafeInteger(decoded.offset) && decoded.offset >= 0 &&
+            (decoded.cursor === undefined || typeof decoded.cursor === 'string')) {
+          page = decoded;
+          query = undefined;
+        }
+      } catch { /* An ordinary search, including malformed continuation text. */ }
+    }
     const params = new URLSearchParams({ toolkit_slug: toolkit, toolkit_versions: 'latest',
       include_deprecated: 'false', limit: '1000' });
+    if (page.cursor) params.set('cursor', page.cursor);
     if (query) params.set('query', query.slice(0, 120));
     const result = await this.request(`/tools?${params}`, 'GET');
     if (!Array.isArray(result.items)) throw new Error('App provider returned an invalid response');
@@ -653,32 +668,38 @@ export class ComposioApps {
       description: typeof row.description === 'string' ? row.description : '',
       inputParameters: stripSecrets(row.input_parameters ?? {}),
     }));
-    const catalog = toolkit === 'youtube' ? [youtubeAnalyticsTool, ...tools]
-      : toolkit === 'github' ? [...tools, githubRestReadTool] : tools;
+    const catalog = toolkit === 'youtube' && !page.cursor ? [youtubeAnalyticsTool, ...tools]
+      : toolkit === 'github' && !page.cursor ? [...tools, githubRestReadTool] : tools;
     if (query?.trim()) {
       const search = query.trim().toLowerCase();
       const exact = catalog.filter(tool => tool.slug.toLowerCase() === search || tool.name.toLowerCase() === search);
-      if (exact.length) return exact;
+      if (exact.length) return { tools: exact };
       const terms = search.split(/\s+/);
-      return catalog.filter(tool => {
+      return { tools: catalog.filter(tool => {
         const text = `${tool.slug} ${tool.name} ${tool.description}`.toLowerCase();
         return terms.every(term => text.includes(term));
-      });
+      }) };
     }
     // Discovery stays cheap even for providers with thousands of schemas.
     const compact = catalog.map(({ slug, name, description }) => ({
-      slug: slug.slice(0, 160), name: name.slice(0, 120),
+      slug, name,
       description: description.replace(/\s+/g, ' ').slice(0, 160),
     }));
     const bounded: typeof compact = [];
     let bytes = 2;
-    for (const tool of compact) {
+    for (const tool of compact.slice(page.offset)) {
       const size = Buffer.byteLength(JSON.stringify(tool)) + 1;
-      if (bytes + size > 24_000) break;
+      if (bounded.length && bytes + size > 24_000) break;
       bounded.push(tool);
       bytes += size;
     }
-    return bounded;
+    const offset = page.offset + bounded.length;
+    const nextPage = offset < compact.length ? { ...page, offset }
+      : typeof result.next_cursor === 'string' && result.next_cursor
+        ? { cursor: result.next_cursor, offset: 0 } : undefined;
+    return { tools: bounded, ...(nextPage ? {
+      next: `More tools are available. Continue with app_tool query="beeline-page:${Buffer.from(JSON.stringify(nextPage)).toString('base64url')}".`,
+    } : {}) };
   }
 
   /** Uploads one Room file through Composio's Files API and returns the descriptor its tools take. */

@@ -32,10 +32,10 @@ BEGIN
       WHEN 'identities' THEN IF ROW(NEW.kind,NEW.name,NEW.hidden_from_roster) IS NOT DISTINCT FROM ROW(OLD.kind,OLD.name,OLD.hidden_from_roster) THEN RETURN NEW;END IF;
       WHEN 'rooms' THEN IF ROW(NEW.workspace_id,NEW.parent_id,NEW.archived_at,NEW.direct_participants,NEW.name,NEW.reviewer_agent_id)
         IS NOT DISTINCT FROM ROW(OLD.workspace_id,OLD.parent_id,OLD.archived_at,OLD.direct_participants,OLD.name,OLD.reviewer_agent_id) THEN RETURN NEW;END IF;
-      WHEN 'memberships' THEN IF ROW(NEW.workspace_id,NEW.room_id,NEW.identity_id,NEW.role,NEW.removed_at,NEW.event_subscriptions,NEW.joined_at)
-        IS NOT DISTINCT FROM ROW(OLD.workspace_id,OLD.room_id,OLD.identity_id,OLD.role,OLD.removed_at,OLD.event_subscriptions,OLD.joined_at) THEN RETURN NEW;END IF;
-      WHEN 'corner_person_state' THEN IF ROW(NEW.corner_id,NEW.identity_id,NEW.event_subscriptions,NEW.created_at)
-        IS NOT DISTINCT FROM ROW(OLD.corner_id,OLD.identity_id,OLD.event_subscriptions,OLD.created_at) THEN RETURN NEW;END IF;
+      WHEN 'memberships' THEN IF ROW(NEW.workspace_id,NEW.room_id,NEW.identity_id,NEW.role,NEW.removed_at,NEW.joined_at)
+        IS NOT DISTINCT FROM ROW(OLD.workspace_id,OLD.room_id,OLD.identity_id,OLD.role,OLD.removed_at,OLD.joined_at) THEN RETURN NEW;END IF;
+      WHEN 'corner_person_state' THEN IF ROW(NEW.corner_id,NEW.identity_id,NEW.subscriptions_overridden,NEW.created_at)
+        IS NOT DISTINCT FROM ROW(OLD.corner_id,OLD.identity_id,OLD.subscriptions_overridden,OLD.created_at) THEN RETURN NEW;END IF;
       WHEN 'corner_facts' THEN IF ROW(NEW.corner_id,NEW.reviewer_agent_id) IS NOT DISTINCT FROM ROW(OLD.corner_id,OLD.reviewer_agent_id) THEN RETURN NEW;END IF;
       ELSE RETURN NEW;
     END CASE;

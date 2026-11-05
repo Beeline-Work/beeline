@@ -10,6 +10,7 @@ export const CHANNEL_TAG = 'helper-update-channel';
 // carry an unchanged Mac bundle forward instead of rebuilding it.
 export const MAC_INPUT_FILES = ['mac-helper-inputs-darwin-arm64.json', 'mac-helper-inputs-darwin-x64.json'];
 
+/** @public Pages and helper release actions import these from github-script. */
 export async function downloadPagesChannel({ github, repo, directory }) {
   const { data: release } = await github.rest.repos.getReleaseByTag({ ...repo, tag: CHANNEL_TAG });
   async function download(name) {
@@ -47,6 +48,7 @@ export async function downloadPagesChannel({ github, repo, directory }) {
   return (await validateBundleDirectory(directory)).manifest;
 }
 
+/** @public Pages and helper release actions import these from github-script. */
 export async function publishPagesChannel({
   github,
   repo,

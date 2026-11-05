@@ -1,0 +1,139 @@
+{
+  "server": {
+    "pid": 1191181,
+    "observed_at": "2026-11-05T10:36:55.441Z"
+  },
+  "sessions": [],
+  "result": {
+    "mode": "dry-run",
+    "cutoff": "2026-11-05 10:36:55.50282+00",
+    "counts": [
+      {
+        "table": "institutional_memory_outcomes",
+        "predicate": "TRUE",
+        "count": 0
+      },
+      {
+        "table": "institutional_history_searches",
+        "predicate": "TRUE",
+        "count": 0
+      },
+      {
+        "table": "workspace_skill_uses",
+        "predicate": "TRUE",
+        "count": 0
+      },
+      {
+        "table": "institutional_memory_fact_events",
+        "predicate": "TRUE",
+        "count": 0
+      },
+      {
+        "table": "institutional_review_findings",
+        "predicate": "TRUE",
+        "count": 0
+      },
+      {
+        "table": "institutional_memory_jobs",
+        "predicate": "TRUE",
+        "count": 0
+      },
+      {
+        "table": "beeline_github_webhook_deliveries",
+        "predicate": "received_at<now()-interval '30 days'",
+        "count": 0
+      },
+      {
+        "table": "beeline_github_repo_events",
+        "predicate": "received_at<now()-interval '30 days'",
+        "count": 0
+      },
+      {
+        "table": "operator_finance_snapshots",
+        "predicate": "source='entered' AND scope='fixed-plan'",
+        "count": 0
+      },
+      {
+        "table": "corner_attention_flags",
+        "count": 0,
+        "absent": true
+      },
+      {
+        "table": "service_review_rollout",
+        "predicate": "TRUE",
+        "count": 0
+      },
+      {
+        "table": "google_oauth_grants",
+        "predicate": "TRUE",
+        "count": 0
+      },
+      {
+        "table": "push_level_migration_counts",
+        "predicate": "TRUE",
+        "count": 0
+      },
+      {
+        "table": "wallet_balance_snapshots",
+        "predicate": "TRUE",
+        "count": 0
+      },
+      {
+        "table": "messages",
+        "predicate": "card_type='github-corner-note' AND (card ? 'source' OR card ? 'dedupe')",
+        "count": 124414
+      },
+      {
+        "table": "identities",
+        "predicate": "welcome_cards_due IS NOT NULL",
+        "count": 122
+      },
+      {
+        "table": "room_read_marks",
+        "predicate": "read_at IS NOT NULL",
+        "count": 4
+      },
+      {
+        "table": "needs_you_marks",
+        "predicate": "reminder_dismissed_at IS NOT NULL",
+        "count": 2
+      },
+      {
+        "table": "github_star_prompts",
+        "predicate": "reached_at IS NOT NULL OR last_win_at IS NOT NULL",
+        "count": 23
+      }
+    ],
+    "skillVersions": 229,
+    "linkedVersionsPreserved": 0,
+    "retainedTelemetry": {
+      "cutoff": "2026-11-05 10:36:55.50282+00",
+      "before": {
+        "rooms_mcp_audit": 69749,
+        "agent_turn_traces": 11810
+      },
+      "after": {
+        "rooms_mcp_audit": 69749,
+        "agent_turn_traces": 11810
+      }
+    }
+  },
+  "fk": {
+    "confdeltype": "n"
+  },
+  "locks": {
+    "prior_cleanup_locks": 0,
+    "prior_cleanup_blocked_clients": 0
+  },
+  "retainedTelemetry": {
+    "cutoff": "2026-11-05 09:09:23.470814+00",
+    "before": {
+      "rooms_mcp_audit": 68981,
+      "agent_turn_traces": 11810
+    },
+    "after": {
+      "rooms_mcp_audit": 68981,
+      "agent_turn_traces": 11810
+    }
+  }
+}

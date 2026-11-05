@@ -2,16 +2,19 @@
 
 This batch implements the captain's accepted recommendations. The code batch
 https://github.com/Beeline-Work/beeline/pull/3447 merged after green CI. L1 is
-complete. B1's detached continuation is blocked pending firstmate verification:
-after a Fly machine-list timeout, a successful SSH read found `/tmp/b1.log`
-missing. A bounded independent database read-back then timed out without a
-result. Current writer/observer state is **unconfirmed**; do not launch another
-writer until SQL backends **1182311 / 1182312** are verified absent. Last verified
-sample at 10:27Z: **34,557 committed cards, 14 timeout skips, zero observed
-cleanup-attributed client wait**, with **125,623 cards remaining**. A machine
-restart/replacement is possible but unproven. No writer restart or parameter
-change was made. B8 is untouched. See `b1-detached-missing-log.json`; earlier
-`b1-detached-progress-25k.json` and `b1-detached-start.json` retain prior proof.
+complete. Firstmate confirmed the v0.1.163 redeploy killed the Fly writer and
+cleared its sessions/locks. Inbox 026 moved the detached continuation to
+**squire**, outside the app-machine lifecycle. Preflight at 10:36Z found
+**124,414 cards + 151 fields**, all 229 versions, unchanged fixed telemetry
+cohorts, no prior sessions and zero locks. Local `nohup` process **1801406** logs
+to `.audit-b1-squire.log`; SQL writer **1191258** and observer **1191261** are
+live. Cancellation proof passed in 73 ms. The one-row / 100 ms statement cap /
+20 ms pause / timeout-skip / 150 ms cleanup-client wait rule is unchanged.
+Initial progress is slow over this connection; the first read-back at 10:38Z
+leaves **124,347 cards**, with versions and telemetry preserved. Credentials are
+retrieved into memory through Neon API and never logged, stored or put in argv.
+B8 is untouched. See `b1-squire-before.json`, `b1-squire-start.json`, and historical
+`b1-detached-missing-log.json`.
 
 | Decision | Implementation |
 | --- | --- |

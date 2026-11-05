@@ -76,7 +76,7 @@ it.each(['deadline', 'disconnect'] as const)('keeps sent effects UNKNOWN after %
   expect(api.metrics().timeouts).toBe(cause === 'deadline' ? 1 : 0);
   expect(socket.frames.filter(frame => frame.type === 'daemon-operation')).toHaveLength(1);
   api.closeLive();
-  await expect(api.execute('getAgentConfiguration', {agentId: 'agent'})).rejects.toThrow('UNKNOWN');
+  await expect(api.execute('getAgentConfiguration', {agentId: 'agent'})).rejects.toThrow('registration unavailable');
   expect(fetcher).not.toHaveBeenCalled();
 });
 it('correlates concurrent results and preserves settled refusal statuses', async () => {

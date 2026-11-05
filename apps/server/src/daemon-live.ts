@@ -138,7 +138,6 @@ export class DaemonAgentSession {
   #ownedModelCapability?: OwnedModelClaimCapability;
   readonly #projections = new Set<Promise<unknown>>();
   #checkpointPending = false;
-  #operations = 0;
 
   readonly #overlayReleases=new Map<string,()=>void>();
   usageOwnerId:string|undefined;
@@ -315,14 +314,7 @@ export class DaemonAgentSession {
       // queue or its database semaphore: Stop/subscriptions still need service.
       // This is the same authenticated service adapter as old HTTP ingress.
       if (!this.presence.daemonOperationsV1 || !this.transport.admit(raw)) return;
-      if (this.#operations >= 64 || frameBytes > 1024 * 1024 + 1024) {
-        this.deps.errors.overload++;
-        this.transport.send({ type: 'daemon-operation-result', requestId: raw.requestId,
-          error: 'daemon_operation_capacity', status: 429 });
-        return;
-      }
-      this.#operations++;
-      void this.#operation(raw).finally(() => { this.#operations--; });
+      void this.#operation(raw);
       return;
     }
     if((raw.type==='overlay-update'||raw.type==='usage-operation'||raw.type==='activation-context'||raw.type==='turn-operation')&&frameBytes>HELPER_OVERLAY_MAX_FRAME_BYTES){
@@ -404,7 +396,7 @@ export class DaemonAgentSession {
   }
 
   async #operation(item: Record<string, unknown>): Promise<void> {
-    if (typeof item.requestId !== 'string' || !item.requestId || item.requestId.length > 128) return;
+    if (typeof item.requestId !== 'string' || !item.requestId) return;
     const reply = (value: Record<string, unknown>) => {
       if (!this.#closed && this.transport.isOpen())
         this.transport.send({ type: 'daemon-operation-result', requestId: item.requestId, ...value });
@@ -428,8 +420,6 @@ export class DaemonAgentSession {
         reply({ error: 'dedicated_machine_channel_required', status: 409 }); return;
       }
       const result = await this.deps.daemon.execute(operation, item.input as never, this.agentId);
-      if (Buffer.byteLength(JSON.stringify(result)) > 16 * 1024 * 1024)
-        throw new Error('Daemon operation reply exceeds capacity; outcome UNKNOWN');
       reply({ result });
     } catch (error) {
       reply({ error: error instanceof Error ? error.message : 'daemon_operation_unconfirmed',

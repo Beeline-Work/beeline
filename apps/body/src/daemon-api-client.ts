@@ -472,18 +472,11 @@ export class DaemonApiClient {
       }finally{this.inFlight--;}
     }
     if (this.#channel.operationsSelected) {
-      this.requestCount++;
-      let release: (() => Promise<void>) | undefined;
-      let admitted = false;
+      // Preserve existing diagnostics without extending HTTP read admission.
+      this.requestCount++; this.inFlight++;
       try {
-        const deadlineAt = Date.now() + REQUEST_DEADLINE_MS;
-        release = await this.admitRead(String(name), deadlineAt);
-        this.inFlight++; admitted = true;
-        return await this.#channel.requestOperation(name, input, deadlineAt);
-      }
-      catch (error) {
-        if (error instanceof ReadBudgetFullError)
-          throw new DaemonApiError(error.message, 429, true, 'read_budget_full', 1_000);
+        return await this.#channel.requestOperation(name, input);
+      } catch (error) {
         const failure = error as {status?: number; code?: string};
         const status = failure.status ?? 503;
         if (failure.code === 'deadline_exceeded') this.timeoutCount++;
@@ -491,15 +484,9 @@ export class DaemonApiClient {
           status, status === 408 || status === 429 || status >= 500, failure.code ?? 'outcome_unknown');
         if (status === 401) this.authorityRefusalListener?.(refusal);
         throw refusal;
-      } finally { if (admitted) this.inFlight--; await release?.(); }
+      } finally { this.inFlight--; }
     }
     return this.#requestHttp(name, input);
-  }
-
-  private admitRead(operation: string, deadlineAt: number): Promise<(() => Promise<void>) | undefined> {
-    if (!this.readBudget || !/^(get|list|read|search)/.test(operation)) return Promise.resolve(undefined);
-    return this.readBudget.acquire(
-      ['getAgentCommands', 'getRoomInbox', 'getDaemonBootstrap'].includes(operation) ? 'urgent' : 'background', deadlineAt);
   }
 
   /** Old servers have no declared protocol floor (HelperVersionGate is opt-in).
@@ -516,7 +503,17 @@ export class DaemonApiClient {
     let admitted = false;
     let output: Output<Name>;
     try {
-      release = await this.admitRead(String(name), Date.now() + REQUEST_DEADLINE_MS);
+      const operation = String(name);
+      if (this.readBudget && /^(get|list|read|search)/.test(operation)) {
+        release = await this.readBudget.acquire(
+          operation === 'getAgentCommands' ||
+            operation === 'getRoomInbox' ||
+            operation === 'getDaemonBootstrap'
+            ? 'urgent'
+            : 'background',
+          Date.now() + REQUEST_DEADLINE_MS,
+        );
+      }
       this.inFlight += 1;
       admitted = true;
       const response = await this.fetchImpl(

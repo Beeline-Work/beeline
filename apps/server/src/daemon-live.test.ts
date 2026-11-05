@@ -563,7 +563,7 @@ it('carries ordinary daemon families through the registered machine owner with n
   } finally { api.closeLive(); }
 });
 
-it('serves controls and subscriptions while an ordinary operation awaits external work', async () => {
+it('serves controls and subscriptions while 65 ordinary operations await external work', async () => {
   let finish!: (value: unknown) => void;
   const held = new Promise(resolve => { finish = resolve; });
   const daemon = daemonStub();
@@ -577,14 +577,16 @@ it('serves controls and subscriptions while an ordinary operation awaits externa
   client.send({type: 'register', agentId: AGENT_A, token: 'bdt_a', daemonOperationsV1: true});
   expect(await client.next(frame => frame.type === 'registered')).toMatchObject({capabilities: {daemonOperationsV1: true}});
   try {
-    client.send({type: 'daemon-operation', agentId: AGENT_A, requestId: 'held', operation: 'waitForCornerWake', input: {cornerId: 'corner'}});
+    for (let index = 0; index < 65; index++)
+      client.send({type: 'daemon-operation', agentId: AGENT_A, requestId: `held-${index}`, operation: 'waitForCornerWake', input: {cornerId: 'corner'}});
     client.send({type: 'daemon-operation', agentId: AGENT_A, requestId: 'stop', operation: 'stopAgentTurn', input: {roomId: 'room'}});
     expect(await client.next(frame => frame.requestId === 'stop')).toMatchObject({type: 'daemon-operation-result', result: {id: 'done'}});
     client.send({type: 'subscribe', agentId: AGENT_A, requestId: 'subscribe', roomId: 'room', inbox: false});
     await client.next(frame => frame.type === 'subscribed');
-    expect(client.frames.some(frame => frame.requestId === 'held')).toBe(false);
+    await vi.waitFor(() => expect(vi.mocked(daemon.execute).mock.calls.filter(([name]) => name === 'waitForCornerWake')).toHaveLength(65));
+    expect(client.frames.some(frame => String(frame.requestId).startsWith('held-'))).toBe(false);
   } finally { finish({id: 'wake', createdAt: 1}); }
-  expect(await client.next(frame => frame.requestId === 'held')).toMatchObject({result: {id: 'wake'}});
+  expect(await client.next(frame => frame.requestId === 'held-64')).toMatchObject({result: {id: 'wake'}});
 });
 
 it('rejects unknown operations and dedicated activation on ordinary machine dispatch before effects', async () => {

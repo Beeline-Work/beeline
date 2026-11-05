@@ -3,6 +3,8 @@ import type WebSocket from 'ws';
 import { afterEach, expect, it, vi } from 'vitest';
 import { DaemonApiClient, type DaemonWebSocketFactory } from './daemon-api-client.js';
 import type { AgentChannel } from './machine-link.js';
+import type { HostReadBudget } from './host-read-budget.js';
+import { LIVE_LINK_TIMING } from './live-link.js';
 
 
 class Socket extends EventEmitter {
@@ -12,13 +14,14 @@ class Socket extends EventEmitter {
   onmessage?: (event: {data: string}) => void;
   frames: Record<string, any>[] = [];
   hold = false;
+  registerReplies = true;
   constructor(public capable: boolean) { super(); }
   receive(frame: Record<string, unknown>) {
     this.onmessage?.({data: JSON.stringify({agentId: 'agent', ...frame})});
   }
   send(raw: string) {
     const frame = JSON.parse(raw); this.frames.push(frame);
-    if (frame.type === 'register') this.receive({type: 'registered', capabilities: this.capable ? {daemonOperationsV1: true} : {}});
+    if (frame.type === 'register' && this.registerReplies) this.receive({type: 'registered', capabilities: this.capable ? {daemonOperationsV1: true} : {}});
     if (frame.type === 'daemon-operation' && !this.hold)
       this.receive({type: 'daemon-operation-result', requestId: frame.requestId, result: {id: frame.operation, createdAt: 1}});
   }
@@ -28,11 +31,11 @@ class Socket extends EventEmitter {
 }
 const cleanups: (() => void)[] = [];
 afterEach(() => { for (const release of cleanups.splice(0)) release(); vi.useRealTimers(); });
-function fixture(capable = true) {
+function fixture(capable = true, readBudget?: HostReadBudget) {
   const socket = new Socket(capable);
   const fetcher = vi.fn(async () => Response.json({id: 'http', createdAt: 1}));
   const api = new DaemonApiClient('http://synthetic.invalid', 'token', 'agent', fetcher,
-    (() => socket as unknown as WebSocket) as DaemonWebSocketFactory);
+    (() => socket as unknown as WebSocket) as DaemonWebSocketFactory, readBudget);
   cleanups.push(() => api.closeLive());
   return {api, socket, fetcher};
 }
@@ -108,4 +111,25 @@ it('parks a previously selected channel when re-registration lacks the capabilit
   await expect(api.execute('getAgentConfiguration', {agentId: 'agent'})).rejects.toThrow('UNKNOWN');
   expect(fetcher).not.toHaveBeenCalled();
   expect(socket.frames.filter(frame => frame.type === 'daemon-operation')).toHaveLength(1);
+});
+
+it('uses the existing registration deadline and then stays parked without HTTP', async () => {
+  vi.useFakeTimers();
+  const {api, socket, fetcher} = fixture(); socket.registerReplies = false;
+  const first = api.execute('getAgentConfiguration', {agentId: 'agent'}).catch(error => error);
+  socket.open();
+  await vi.advanceTimersByTimeAsync(LIVE_LINK_TIMING.heartbeatTimeoutMs / 2);
+  socket.emit('ping');
+  await vi.advanceTimersByTimeAsync(LIVE_LINK_TIMING.heartbeatTimeoutMs / 2);
+  expect(await first).toMatchObject({message: 'Machine operation registration unavailable'});
+  await expect(api.execute('getAgentConfiguration', {agentId: 'agent'})).rejects.toThrow('registration unavailable');
+  expect(fetcher).not.toHaveBeenCalled();
+  expect(socket.frames.filter(frame => frame.type === 'register')).toHaveLength(1);
+});
+it('sends selected machine reads even when the old HTTP read budget is full', async () => {
+  const acquire = vi.fn(async () => { throw new Error('HTTP budget full'); });
+  const {api, socket, fetcher} = fixture(true, {acquire} as unknown as HostReadBudget);
+  const read = api.execute('getAgentConfiguration', {agentId: 'agent'}); socket.open();
+  await expect(read).resolves.toMatchObject({id: 'getAgentConfiguration'});
+  expect(acquire).not.toHaveBeenCalled(); expect(fetcher).not.toHaveBeenCalled();
 });

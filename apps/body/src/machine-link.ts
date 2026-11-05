@@ -57,37 +57,35 @@ export class AgentChannel {
     deadline: ReturnType<typeof setTimeout>;
   }>();
 
-  /** Only the daemon operation owner may acquire this transport capability. */
+  /** Only the daemon operation owner may acquire this transport capability.
+   * Registration is already bounded by the existing intake deadline. */
   async operationReady(): Promise<void> {
     if (this.isOpen() || this.operationsSelected) return;
+    if (this.#refused || (this.#wanted && !this.#pending && this.machine.link.isOpen()))
+      throw new Error('Machine operation registration unavailable');
     await new Promise<void>((resolve, reject) => {
       const settle = (open: boolean) => {
-        clearTimeout(deadline);
         this.#operationWaiters.delete(settle);
         if (open) resolve();
         else reject(new Error('Machine operation registration unavailable'));
       };
-      const deadline = setTimeout(() => settle(false), 30_000);
-      deadline.unref?.();
       this.#operationWaiters.add(settle);
       this.start();
     });
   }
 
   /** Correlation only; command/generation authority remains in DaemonService. */
-  requestOperation<N extends keyof DaemonOperationMap>(operation: N, input: DaemonOperationMap[N]['input'], deadlineAt = Date.now() + 30_000): Promise<DaemonOperationMap[N]['output']> {
-    if (!this.#operationsAvailable || !this.isOpen() || this.#operationRequests.size >= 64)
+  requestOperation<N extends keyof DaemonOperationMap>(operation: N, input: DaemonOperationMap[N]['input']): Promise<DaemonOperationMap[N]['output']> {
+    if (!this.#operationsAvailable || !this.isOpen())
       return Promise.reject(new Error('Machine operation outcome is UNKNOWN; no HTTP fallback'));
     const requestId = randomUUID();
     const frame = { type: 'daemon-operation', requestId, operation, input };
-    if (Buffer.byteLength(JSON.stringify(frame)) > 1024 * 1024 + 1024)
-      return Promise.reject(new Error('Machine operation request exceeds capacity'));
     return new Promise((resolve, reject) => {
       const deadline = setTimeout(() => {
         this.#operationRequests.delete(requestId);
         reject(Object.assign(new Error('Machine operation outcome is UNKNOWN; no HTTP fallback'),
           {status: 408, code: 'deadline_exceeded'}));
-      }, Math.max(1, deadlineAt - Date.now()));
+      }, 30_000);
       deadline.unref?.();
       this.#operationRequests.set(requestId, { resolve: value => resolve(value as DaemonOperationMap[N]['output']), reject, deadline });
       if (!this.send(frame)) this.#suspendOperations();
@@ -334,7 +332,7 @@ export class AgentChannel {
       if(this.#registered) {
         this.send({ type: 'unregister' });
         this.#ended();
-      }
+      } else this.#suspendOperations();
     }, this.machine.intakeTimeoutMs ?? LIVE_LINK_TIMING.heartbeatTimeoutMs);
     this.#intakeDeadline.unref?.();
   }

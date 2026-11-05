@@ -634,7 +634,16 @@ describe('Bookmarks mobile list', () => {
 describe('Bookmarks empty state', () => {
   it('tells a desktop reader about the strip its pointer reaches, and nothing about long press', async () => {
     serve({ bookmarks: [] });
-    const empty = textOf(await renderTray());
+    const tree = await renderTray();
+    const empty = textOf(tree);
+    for (const testID of ['needs-you-empty', 'bookmarks-empty']) {
+      const section = tree.root.findByProps({ testID });
+      expect(section.findAllByProps({ accessibilityRole: 'alert' })).toHaveLength(0);
+      const detail = section.findAllByType('Text' as any)[1];
+      expect(detail.props.style.color).toBe(theme.buzz.textSecondary);
+    }
+    expect(empty).toContain('Nothing needs you');
+    expect(empty).toContain('Nobody has tagged you with a question or a request.');
     expect(empty).toContain('No bookmarks yet');
     expect(empty).toContain('Hover a message and press its bookmark mark.');
     expect(empty).not.toContain('Long press');
@@ -644,7 +653,16 @@ describe('Bookmarks empty state', () => {
     layout.os = 'ios';
     layout.width = 390;
     serve({ bookmarks: [] });
-    const empty = textOf(await renderTray());
+    const tree = await renderTray();
+    const empty = textOf(tree);
+    for (const testID of ['needs-you-empty', 'bookmarks-empty']) {
+      const section = tree.root.findByProps({ testID });
+      expect(section.findAllByProps({ accessibilityRole: 'alert' })).toHaveLength(0);
+      const detail = section.findAllByType('Text' as any)[1];
+      expect(detail.props.style.color).toBe(theme.buzz.textSecondary);
+    }
+    expect(empty).toContain('Nothing needs you');
+    expect(empty).toContain('Nobody has tagged you with a question or a request.');
     expect(empty).toContain('No bookmarks yet');
     expect(empty).toContain('Long press a message and pick Bookmark.');
     expect(empty).not.toContain('desktop');

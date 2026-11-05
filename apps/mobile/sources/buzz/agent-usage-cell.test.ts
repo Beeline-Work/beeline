@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentUsageCell } from '@beeline/api-contract/helper-usage';
 import { resetClientState } from '@/sync/client-reset';
 import { installUsageCellConnection, isUsageCellOnlyChange, receiveUsageCell, setUsageCellProfile,
-  subscribeUsageCell, suspendUsageCellConnection, usageCellSnapshot } from './agent-usage-cell';
+subscribeUsageCell, suspendUsageCellConnection, usageCellSnapshot } from './agent-usage-cell';
 import { useAgentUsageCell } from './use-agent-usage-cell';
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 vi.mock('react-native', () => ({ Text: 'Text', View: 'View', ActivityIndicator: 'ActivityIndicator', AccessibilityInfo: { announceForAccessibility: vi.fn() } }));
@@ -15,50 +15,50 @@ vi.mock('@/components/buzz/IndexRow', () => ({ InlineRow: 'InlineRow' }));
 vi.mock('@/components/buzz/Button', () => ({ Button: 'Button' }));
 vi.mock('@/components/buzz/RoomListSectionHeader', () => ({ RoomListSectionHeader: 'RoomListSectionHeader' }));
 import { AgentUsageSection } from '@/components/buzz/AgentUsageSection';
-const principal = 'a'.repeat(64); const agentId = 'b'.repeat(64);
+const principal = 'a'.repeat(64);const agentId = 'b'.repeat(64);
 function fact(revision: number, used = 0.14): AgentUsageCell {
   return { v: 1, agentId, ownerId: principal, generation: '1'.repeat(32), revision, allowed: true,
     usage: { updatedAt: 100 + revision, windows: [{ rateLimitType: 'five_hour', status: 'allowed', utilization: used, updatedAt: 100 + revision }], context: { used: 1234, size: 10000 } } };
 }
-const drain = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
+const drain = async () => {for (let i = 0; i < 30; i++) await Promise.resolve();};
 const installed = (executeRead: (id: string) => Promise<AgentUsageCell>, generation = 1, usageCellV1 = true) =>
-  installUsageCellConnection({ generation, usageCellV1, origin: 'https://synthetic.test', principal, executeRead });
-beforeEach(() => { resetClientState(); (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true; });
-afterEach(() => { resetClientState(); vi.restoreAllMocks(); });
+installUsageCellConnection({ generation, usageCellV1, origin: 'https://synthetic.test', principal, executeRead });
+beforeEach(() => {resetClientState();(globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT?: boolean;}).IS_REACT_ACT_ENVIRONMENT = true;});
+afterEach(() => {resetClientState();vi.restoreAllMocks();});
 describe('independent canonical usage cells', () => {
   it('only committed profile selection reads; subscribe/remount and repeated selection cannot replenish it', async () => {
-    const read = vi.fn(async () => fact(1)); installed(read);
-    const stop = subscribeUsageCell(() => {}); stop(); subscribeUsageCell(() => {})();
-    await drain(); expect(read).not.toHaveBeenCalled();
-    setUsageCellProfile(agentId); setUsageCellProfile(agentId); await drain();
-    expect(read).toHaveBeenCalledTimes(1); expect(usageCellSnapshot(agentId).cell).toEqual(fact(1));
-    setUsageCellProfile(null); expect(usageCellSnapshot(agentId).cell).toBeNull();
+    const read = vi.fn(async () => fact(1));installed(read);
+    const stop = subscribeUsageCell(() => {});stop();subscribeUsageCell(() => {})();
+    await drain();expect(read).not.toHaveBeenCalled();
+    setUsageCellProfile(agentId);setUsageCellProfile(agentId);await drain();
+    expect(read).toHaveBeenCalledTimes(1);expect(usageCellSnapshot(agentId).cell).toEqual(fact(1));
+    setUsageCellProfile(null);expect(usageCellSnapshot(agentId).cell).toBeNull();
   });
   it('a canonical source cell arriving before initial dispatch consumes the joined read opportunity', async () => {
-    const executeRead = vi.fn(async () => fact(1)); const joinedRead = vi.fn();
+    const executeRead = vi.fn(async () => fact(1));const joinedRead = vi.fn();
     installUsageCellConnection({ generation: 1, usageCellV1: true, origin: 'https://synthetic.test', principal, executeRead, joinedRead });
-    setUsageCellProfile(agentId); receiveUsageCell(fact(2)); await drain();
-    expect(executeRead).not.toHaveBeenCalled(); expect(joinedRead).toHaveBeenCalledWith(agentId);
+    setUsageCellProfile(agentId);receiveUsageCell(fact(2));await drain();
+    expect(executeRead).not.toHaveBeenCalled();expect(joinedRead).toHaveBeenCalledWith(agentId);
     expect(usageCellSnapshot(agentId).cell?.revision).toBe(2);
   });
   it('a newer source cell wins over an older pending initial snapshot without a profile read', async () => {
     let resolve!: (cell: AgentUsageCell) => void;
-    const read = vi.fn(() => new Promise<AgentUsageCell>(done => { resolve = done; })); installed(read); setUsageCellProfile(agentId);
-    await drain(); receiveUsageCell(fact(2, 0.42)); resolve(fact(1)); await drain();
-    expect(usageCellSnapshot(agentId).cell).toEqual(fact(2, 0.42)); expect(read).toHaveBeenCalledTimes(1);
+    const read = vi.fn(() => new Promise<AgentUsageCell>((done) => {resolve = done;}));installed(read);setUsageCellProfile(agentId);
+    await drain();receiveUsageCell(fact(2, 0.42));resolve(fact(1));await drain();
+    expect(usageCellSnapshot(agentId).cell).toEqual(fact(2, 0.42));expect(read).toHaveBeenCalledTimes(1);
   });
   it('revoke fences delayed private cells; a newer canonical regrant supplies the complete replacement', async () => {
-    installed(async () => fact(1)); setUsageCellProfile(agentId); await drain();
+    installed(async () => fact(1));setUsageCellProfile(agentId);await drain();
     receiveUsageCell({ ...fact(2), allowed: false, usage: undefined });
     expect(usageCellSnapshot(agentId).cell?.allowed).toBe(false);
-    receiveUsageCell(fact(1)); expect(usageCellSnapshot(agentId).cell?.allowed).toBe(false);
+    receiveUsageCell(fact(1));expect(usageCellSnapshot(agentId).cell?.allowed).toBe(false);
     receiveUsageCell({ ...fact(3, 0.6), generation: '2'.repeat(32) });
     expect(usageCellSnapshot(agentId).cell).toEqual({ ...fact(3, 0.6), generation: '2'.repeat(32) });
     receiveUsageCell({ ...fact(2), allowed: false, usage: undefined });
     expect(usageCellSnapshot(agentId).cell?.revision).toBe(3);
   });
   it('foreign owner, malformed cell and unsupported generation cannot replace a validated answer', async () => {
-    installed(async () => fact(1)); setUsageCellProfile(agentId); await drain();
+    installed(async () => fact(1));setUsageCellProfile(agentId);await drain();
     receiveUsageCell({ ...fact(2), ownerId: 'foreign' });
     receiveUsageCell({ ...fact(1), generation: 'forged' });
     receiveUsageCell({ ...fact(1), usage: undefined });
@@ -66,53 +66,53 @@ describe('independent canonical usage cells', () => {
   });
   it('malformed current-reader data parks only its affected private cell and fences an older in-flight answer', async () => {
     let resolve!: (cell: AgentUsageCell) => void;
-    installed(() => new Promise(done => { resolve = done; })); setUsageCellProfile(agentId); await drain();
-    receiveUsageCell(fact(2)); receiveUsageCell({ ...fact(3), generation: 'invalid', allowed: false });
-    resolve(fact(1)); await drain(); receiveUsageCell(fact(2));
+    installed(() => new Promise((done) => {resolve = done;}));setUsageCellProfile(agentId);await drain();
+    receiveUsageCell(fact(2));receiveUsageCell({ ...fact(3), generation: 'invalid', allowed: false });
+    resolve(fact(1));await drain();receiveUsageCell(fact(2));
     expect(usageCellSnapshot(agentId)).toEqual({ mode: 'pending', cell: null });
-    installed(async () => fact(4), 2); await drain(); expect(usageCellSnapshot(agentId).cell?.revision).toBe(4);
+    installed(async () => fact(4), 2);await drain();expect(usageCellSnapshot(agentId).cell?.revision).toBe(4);
   });
   it('disconnection and identity change hide the cell and fence late replies', async () => {
-    let resolve!: (cell: AgentUsageCell) => void; installed(() => new Promise(done => { resolve = done; }));
-    setUsageCellProfile(agentId); await drain(); suspendUsageCellConnection(); resolve(fact(1)); await drain();
+    let resolve!: (cell: AgentUsageCell) => void;installed(() => new Promise((done) => {resolve = done;}));
+    setUsageCellProfile(agentId);await drain();suspendUsageCellConnection();resolve(fact(1));await drain();
     expect(usageCellSnapshot(agentId)).toEqual({ mode: 'pending', cell: null });
-    resetClientState(); installed(async () => fact(1)); setUsageCellProfile(agentId); await drain();
+    resetClientState();installed(async () => fact(1));setUsageCellProfile(agentId);await drain();
     expect(usageCellSnapshot(agentId).cell?.ownerId).toBe(principal);
-    resetClientState(); expect(usageCellSnapshot(agentId).cell).toBeNull();
+    resetClientState();expect(usageCellSnapshot(agentId).cell).toBeNull();
   });
   it('an old negotiation cannot downgrade or replenish a newer suspended family', async () => {
-    const read = vi.fn(async () => fact(1)); installed(read, 2, true); setUsageCellProfile(agentId); await drain();
-    suspendUsageCellConnection(); installed(read, 1, false); installed(read, 2, true); await drain();
-    expect(usageCellSnapshot(agentId)).toEqual({ mode: 'pending', cell: null }); expect(read).toHaveBeenCalledTimes(1);
-    installed(read, 3, true); await drain(); expect(read).toHaveBeenCalledTimes(2);
+    const read = vi.fn(async () => fact(1));installed(read, 2, true);setUsageCellProfile(agentId);await drain();
+    suspendUsageCellConnection();installed(read, 1, false);installed(read, 2, true);await drain();
+    expect(usageCellSnapshot(agentId)).toEqual({ mode: 'pending', cell: null });expect(read).toHaveBeenCalledTimes(1);
+    installed(read, 3, true);await drain();expect(read).toHaveBeenCalledTimes(2);
   });
   it('legacy selection has one active path and retains compatibility hints', async () => {
-    const read = vi.fn(async () => fact(1)); installed(read, 1, false); setUsageCellProfile(agentId); await drain();
-    expect(read).not.toHaveBeenCalled(); expect(usageCellSnapshot(agentId).mode).toBe('legacy');
+    const read = vi.fn(async () => fact(1));installed(read, 1, false);setUsageCellProfile(agentId);await drain();
+    expect(read).not.toHaveBeenCalled();expect(usageCellSnapshot(agentId).mode).toBe('legacy');
     const usage = { type: 'resource-change', resource: 'agent', resourceId: agentId, usageOnly: true };
-    expect(isUsageCellOnlyChange(usage)).toBe(false); installed(read, 2, true); await drain();
+    expect(isUsageCellOnlyChange(usage)).toBe(false);installed(read, 2, true);await drain();
     expect(isUsageCellOnlyChange(usage)).toBe(true);
     expect(isUsageCellOnlyChange({ ...usage, usageOnly: false })).toBe(false);
     expect(isUsageCellOnlyChange({ type: 'resource-change', resource: 'install', usageOnly: true })).toBe(false);
   });
   it('updates the existing usage display directly from canonical cells and hides revoked numbers', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {}); const read = vi.fn(async () => fact(1));
-    installed(read); setUsageCellProfile(agentId); await drain();
+    vi.spyOn(console, 'error').mockImplementation(() => {});const read = vi.fn(async () => fact(1));
+    installed(read);setUsageCellProfile(agentId);await drain();
     const refresh = vi.fn(async () => ({ status: 'fresh' }));
-    function Display() { const snapshot = useAgentUsageCell(agentId); return snapshot.cell?.allowed
-      ? <AgentUsageSection usage={snapshot.cell.usage ?? undefined} harness="claude" onRefresh={refresh} /> : <>{'hidden'}</>; }
+    function Display() {const snapshot = useAgentUsageCell(agentId);return snapshot.cell?.allowed ? /*#__PURE__*/
+      React.createElement(AgentUsageSection, { usage: snapshot.cell.usage ?? undefined, harness: "claude", onRefresh: refresh }) : /*#__PURE__*/React.createElement(React.Fragment, null, 'hidden');}
     let tree!: ReturnType<typeof create>;
-    act(() => { tree = create(<Display />); });
+    act(() => {tree = create(/*#__PURE__*/React.createElement(Display, null));});
     const renderedText = (node: unknown): string => {
       if (typeof node === 'string' || typeof node === 'number') return String(node);
       if (Array.isArray(node)) return node.map(renderedText).join(' ');
       return node && typeof node === 'object' && 'children' in node ? renderedText(node.children) : '';
     };
     const text = () => renderedText(tree.toJSON());
-    expect(text()).toContain('14%'); act(() => receiveUsageCell(fact(2, 0.52)));
-    expect(text()).toContain('52%'); expect(text()).not.toContain('14%');
-    expect(read).toHaveBeenCalledTimes(1); expect(refresh).not.toHaveBeenCalled();
+    expect(text()).toContain('14%');act(() => receiveUsageCell(fact(2, 0.52)));
+    expect(text()).toContain('52%');expect(text()).not.toContain('14%');
+    expect(read).toHaveBeenCalledTimes(1);expect(refresh).not.toHaveBeenCalled();
     act(() => receiveUsageCell({ ...fact(3), allowed: false, usage: undefined }));
-    expect(text()).toContain('hidden'); expect(text()).not.toContain('52%'); act(() => tree.unmount());
+    expect(text()).toContain('hidden');expect(text()).not.toContain('52%');act(() => tree.unmount());
   });
 });

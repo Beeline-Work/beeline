@@ -46,9 +46,9 @@ vi.mock('@/components/buzz/Button', async () => {
 
 vi.mock('@/constants/Typography', () => ({ Typography: { default: () => ({}) } }));
 
-import Home from '../app/(app)/index';
+import Home from './index';
 import { routeBuzzNotificationResponse } from '@/push/notification-response';
-import { markInitialLandingResolved, resetInitialLandingForTests } from './initial-landing';
+import { markInitialLandingResolved, resetInitialLandingForTests } from '../../navigation/initial-landing';
 
 const originalConsoleError = console.error;
 
@@ -213,7 +213,7 @@ describe('Buzz root launch routing', () => {
         handled: new Set(),
         defaultActionIdentifier: 'default',
         waitForInitialLanding: async () => 'committed',
-        suppressPendingInitialLanding: (await import('./initial-landing'))
+        suppressPendingInitialLanding: (await import('../../navigation/initial-landing'))
           .suppressInitialLandingNavigation,
         clearLastResponse: async () => undefined,
         resolveTarget: async (target) => target,

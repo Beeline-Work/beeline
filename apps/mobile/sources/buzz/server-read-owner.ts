@@ -1,35 +1,19 @@
-import type { ReadAuthority } from './read-authority';
-import { useEffect, useSyncExternalStore, useCallback, useRef } from 'react';
+import { useEffect, useSyncExternalStore, useCallback } from 'react';
 import { AppState } from 'react-native';
 import {
-  SurfaceRefreshScheduler,
   isChatListView,
   type ChatListView,
   type SurfaceCacheAddress,
 } from '@beeline/buzz-client';
-import {
-  readChatListView,
-  type MessageBookmarkListResult,
-  type MessageBookmarkView,
-  type NeedsYouItemView,
-  type NeedsYouListResult,
-} from '@beeline/api-contract/phone';
+import { type MessageBookmarkListResult, type MessageBookmarkView, type NeedsYouItemView, type NeedsYouListResult } from '@beeline/api-contract/phone';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset';
-import { monolithPhoneOperation, readServerSurface } from '@/sync/transport/monolith-operation';
+import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { isDraftFrame } from '@/sync/transport/live-frames';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
-import { useRouterFamily, holdRouterConnection } from './router-family';
-import {
-  acquireRouterLane,
-  acquireRouterForwardList,
-  routerLaneSnapshot,
-  routerFamilyMode,
-  subscribeRouterOwner,
-} from './router-owner';
 import {
   chatWatchFiltersKey,
   withoutCornerFacts,
@@ -63,10 +47,7 @@ export interface ChatListHandle {
   remove(): Promise<void>;
 }
 
-// Compatibility is a wire adapter owned here, not a feature-selected store.
-// v142 client/server ordering is proven in data/network-ops-fixes/room-list-release-compatibility.md.
-// Web Tray cannot advertise command-dependent lanes (routerCommandStorageReady is false).
-const readAuthority = Object.freeze({}) as ReadAuthority;
+// Existing plain read stores keep the last server answer while the next read runs.
 namespace ChatReads {
   type Filters = ChatListView['watchFilters'];
   type SurfaceEvent = Parameters<
@@ -90,22 +71,17 @@ namespace ChatReads {
     private readonly address: SurfaceCacheAddress;
     private readonly consumers = new Set<ChatListConsumer>();
     private readonly subscriptions = new Set<() => void>();
-    private readonly scheduler: SurfaceRefreshScheduler<ChatListView>;
     private stopWatch?: () => void;
     private watchKey = '';
     private watchGeneration = 0;
     private watched = new Set<string>();
-    private covered = new Set<string>();
     private reading = false;
     private readStamp = 0;
-    private deltasDuringRead: Parameters<typeof applyChatListDelta>[2][] = [];
+    private deltasDuringRead: Parameters<typeof applyChatListDelta>[1][] = [];
     private missed = false;
     private confirmedRead = false;
-    /** The opening read failed. A later subscribe is a reconnect, not the open. */
-    private openingReadFailed = false;
     private closed = false;
     private durableTimer?: ReturnType<typeof setTimeout>;
-    private stopConnected?: () => void;
 
     constructor(
       readonly key: ChatListKey,
@@ -113,56 +89,45 @@ namespace ChatReads {
     ) {
       this.address = addressOf(key);
       this.restore(this.current());
-      this.scheduler = new SurfaceRefreshScheduler({
-        fetch: async () => {
-          this.missed = false;
-          this.reading = true;
-          this.readStamp = currentSurfaceStamp();
-          this.deltasDuringRead = [];
-          const cornerClock = cornerStoreClock();
-          try {
-            const identity = await loadBuzzIdentity();
-            if (!identity || identity.publicKey !== key.viewerPubkey)
-              throw new Error('The signed-in identity changed before the Room list was read.');
-            const read = await new RoomViewClient({ baseUrl: key.relayUrl, identity }).chats(
-              readAuthority,
-              key.workspaceId,
-            );
-            if (!read.unavailable?.includes('corners'))
-              applyChatListCorners(read.chats, cornerClock);
-            return read;
-          } catch (error) {
-            this.openingReadFailed = true;
-            throw error;
-          } finally {
-            this.reading = false;
-          }
-        },
-        apply: (read) => {
-          if (this.closed) return;
-          const held = this.current();
-          const value = this.deltasDuringRead.reduce(
-            (view, delta) => applyChatListDelta(readAuthority, view, delta, deltaContext),
-            withoutCornerFacts(readAuthority, keepUnavailableChatFacts(readAuthority, held, read)),
-          );
-          this.openingReadFailed = false;
-          this.confirmedRead = true;
-          this.covered = new Set(this.watched);
-          mobileSurfaceCache.publish(this.address, value, isChatListView, this.readStamp);
-          void mobileSurfaceCache.persist(this.address, this.saved(value), isChatListView);
-          for (const consumer of this.consumers) consumer.onRead?.();
-          if (chatWatchFiltersKey(value.watchFilters) !== this.watchKey)
-            void this.watch(value.watchFilters);
-        },
-        onError: (reason) => {
-          if (!this.closed) for (const consumer of this.consumers) consumer.onError?.(reason);
-        },
-      });
-      // Stubs that only register a watch omit this. The real socket always has it.
-      this.stopConnected = sharedLiveConnection().subscribeConnected?.(() => {
-        if (!this.closed && this.openingReadFailed) this.force();
-      });
+
       void this.open();
+    }
+
+    private async read(): Promise<void> {
+      if (this.closed) return;
+
+      this.missed = false;
+      this.reading = true;
+      this.readStamp = currentSurfaceStamp();
+      this.deltasDuringRead = [];
+      const cornerClock = cornerStoreClock();
+
+      try {
+        const identity = await loadBuzzIdentity();
+        if (!identity || identity.publicKey !== this.key.viewerPubkey)
+          throw new Error('The signed-in identity changed before the Room list was read.');
+        const read = await new RoomViewClient({ baseUrl: this.key.relayUrl, identity }).chats(
+          this.key.workspaceId,
+        );
+        if (!read.unavailable?.includes('corners')) applyChatListCorners(read.chats, cornerClock);
+
+        if (this.closed) return;
+        const held = this.current();
+        const value = this.deltasDuringRead.reduce(
+          (view, delta) => applyChatListDelta(view, delta, deltaContext),
+          withoutCornerFacts(keepUnavailableChatFacts(held, read)),
+        );
+        this.confirmedRead = true;
+        mobileSurfaceCache.publish(this.address, value, isChatListView, this.readStamp);
+        void mobileSurfaceCache.persist(this.address, this.saved(value), isChatListView);
+        for (const consumer of this.consumers) consumer.onRead?.();
+        if (chatWatchFiltersKey(value.watchFilters) !== this.watchKey)
+          void this.watch(value.watchFilters);
+      } catch (reason) {
+        if (!this.closed) for (const consumer of this.consumers) consumer.onError?.(reason);
+      } finally {
+        this.reading = false;
+      }
     }
 
     current(): ChatListView | null {
@@ -188,7 +153,7 @@ namespace ChatReads {
     }
     force(): void {
       this.missed = false;
-      this.scheduler.force();
+      void this.read();
     }
     catchUp(): void {
       if (this.missed) this.force();
@@ -203,7 +168,7 @@ namespace ChatReads {
     }
 
     private saved(value: ChatListView): ChatListView {
-      return withCornerFacts(readAuthority, value, (roomId) => {
+      return withCornerFacts(value, (roomId) => {
         const summary = getRoomCornerSummary(roomId);
         return summary && { cornerCount: summary.cornerCount, openCorners: summary.openCorners };
       });
@@ -214,7 +179,7 @@ namespace ChatReads {
       applyChatListCorners(value.chats, -1);
       mobileSurfaceCache.publish(
         this.address,
-        withoutCornerFacts(readAuthority, value),
+        withoutCornerFacts(value),
         isChatListView,
         0,
       );
@@ -232,7 +197,7 @@ namespace ChatReads {
         AppState.currentState !== 'background' &&
         [...this.consumers].some((consumer) => consumer.visible())
       )
-        this.scheduler.signal();
+        void this.read();
       else this.missed = true;
     }
     private async open(): Promise<void> {
@@ -240,8 +205,7 @@ namespace ChatReads {
       if (this.closed) return;
       const filters = this.current()?.watchFilters ?? [];
       await this.watch(filters);
-      await sharedLiveConnection().whenSubscribed(filters, 1_500);
-      if (!this.closed) await this.scheduler.startAfter(Promise.resolve());
+      if (!this.closed) await this.read();
     }
     private async watch(filters: Filters): Promise<void> {
       const generation = ++this.watchGeneration;
@@ -299,8 +263,8 @@ namespace ChatReads {
           this.requestRead();
           return;
         }
-        const needsRead = chatListDeltaNeedsRead(readAuthority, held, live);
-        const next = applyChatListDelta(readAuthority, held, live, deltaContext);
+        const needsRead = chatListDeltaNeedsRead(held, live);
+        const next = applyChatListDelta(held, live, deltaContext);
         if (next !== held) {
           mobileSurfaceCache.publish(this.address, next, isChatListView);
           this.persistSoon();
@@ -314,18 +278,7 @@ namespace ChatReads {
         (live?.type === 'invalidate' && live.deliveryId)
       )
         return;
-      // The opening subscribe arrives before that read finishes. Ignore it.
-      // After the read fails, the next subscribe is the reconnect: read again
-      // so Retry is not the only way off the error screen.
-      if (live?.type === 'subscribed' && !this.confirmedRead && !this.openingReadFailed) return;
-      if (live?.type === 'subscribed' && !this.confirmedRead && this.reading) return;
-      if (
-        live?.type === 'subscribed' &&
-        this.confirmedRead &&
-        live.resumed &&
-        this.covered.has(live.roomId)
-      )
-        return;
+      if (live?.type === 'subscribed' || live?.type === 'sync-ok') return;
       this.requestRead();
     }
     private close(persist = true): void {
@@ -338,8 +291,6 @@ namespace ChatReads {
           void mobileSurfaceCache.persist(this.address, this.saved(value), isChatListView);
       }
       this.closed = true;
-      this.scheduler.dispose();
-      this.stopConnected?.();
       this.stopWatch?.();
       for (const stop of this.subscriptions) stop();
       this.subscriptions.clear();
@@ -355,20 +306,15 @@ namespace ChatReads {
   subscribeClientReset(resetStores);
 
   export function acquireChatList(key: ChatListKey, consumer: ChatListConsumer): ChatListHandle {
-    return acquireRoutedChatList(key, consumer);
+    return acquireWireChatList(key, consumer);
   }
   export function liveChatList(key: ChatListKey): ChatListView | null {
-    const mode = routerFamilyMode('room-list');
-    if (mode === 'pending') return null;
-    if (mode === 'router') {
-      const view = routerLaneSnapshot({ family: 'room-list', workspaceId: key.workspaceId });
-      return view.state === 'LIVE' && isChatListView(view.value) ? view.value : null;
-    }
+
     const store = stores.get(idOf(key));
     return store?.confirmed() ? store.current() : null;
   }
   export function chatListSnapshot(key: ChatListKey): ChatListView | null {
-    if (routerFamilyMode('room-list') !== 'legacy') return liveChatList(key);
+
     return mobileSurfaceCache.peek(addressOf(key), isChatListView);
   }
   export function refreshChatList(key: ChatListKey): void {
@@ -404,92 +350,6 @@ namespace ChatReads {
       remove: () => {
         released = true;
         return held.remove();
-      },
-    };
-  }
-
-  /** A family changes owners only at a negotiated epoch. The previous legacy
-   * scheduler/watch is disposed before the router lane is attached.
-   */
-  function acquireRoutedChatList(key: ChatListKey, consumer: ChatListConsumer): ChatListHandle {
-    let current: ChatListHandle | undefined;
-    let mode: ReturnType<typeof routerFamilyMode> = 'pending';
-    let stopCurrent: (() => void) | undefined;
-    let closed = false;
-    const listeners = new Set<() => void>();
-    const publish = () => {
-      for (const listener of listeners) listener();
-    };
-    const request = { family: 'room-list' as const, workspaceId: key.workspaceId };
-    let reported: unknown;
-    const lane = acquireRouterLane(request, consumer.visible, () => {
-      if (mode === 'router') {
-        const state = lane.current();
-        if (state.state === 'LIVE' && state.value !== reported) {
-          reported = state.value;
-          consumer.onRead?.();
-        }
-        if (state.state === 'PARKED' && state.error !== reported) {
-          reported = state.error;
-          consumer.onError?.(new Error(state.error!));
-        }
-        publish();
-      }
-    });
-    const choose = () => {
-      const next = routerFamilyMode('room-list');
-      if (closed || (next === mode && current)) return;
-      if (next === mode && next === 'pending') return;
-      stopCurrent?.();
-      stopCurrent = undefined;
-      current?.release();
-      current = undefined;
-      mode = next;
-      if (next === 'legacy') {
-        current = acquireWireChatList(key, consumer);
-        stopCurrent = current.subscribe(publish);
-      } else if (next === 'router') {
-        current = {
-          current: () => readChatListView(lane.current().value),
-          confirmed: () => lane.current().state === 'LIVE',
-          subscribe: lane.subscribe,
-          // These compatibility callbacks may come from invalidations or command
-          // receipts. They may observe visibility, never create a new read pass.
-          force: () => lane.refreshVisibility(),
-          catchUp: () => lane.refreshVisibility(),
-          release: () => {},
-          remove: async () => {},
-        };
-        publish();
-      }
-      publish();
-    };
-    const stopMode = subscribeRouterOwner(choose);
-    const stopConnection = holdRouterConnection();
-    choose();
-    return {
-      current: () => current?.current() ?? null,
-      confirmed: () => current?.confirmed() ?? false,
-      subscribe: (listener) => {
-        listeners.add(listener);
-        return () => {
-          listeners.delete(listener);
-        };
-      },
-      force: () => current?.force(),
-      catchUp: () => current?.catchUp(),
-      release: () => {
-        if (closed) return;
-        closed = true;
-        stopMode();
-        stopCurrent?.();
-        current?.release();
-        lane.release();
-        stopConnection();
-        listeners.clear();
-      },
-      remove: async () => {
-        await current?.remove();
       },
     };
   }
@@ -611,10 +471,8 @@ namespace TrayReads {
   const current = (workspaceId: string) => viewer && slots.get(`${viewer.key}\u0000${workspaceId}`);
   function write(slot: Slot, entry: Entry, persist = true): void {
     if (
-      !active(slot) ||
-      entry === slot.entry ||
-      (routerFamilyMode('needs-you-tray') !== 'legacy' &&
-        routerFamilyMode('needs-you-count') !== 'legacy')
+      (!active(slot) ||
+      entry === slot.entry)
     )
       return;
     const before = slot.entry;
@@ -674,17 +532,6 @@ namespace TrayReads {
     liveStarting = false;
     notify();
     if (listeners.size) void resolveViewer();
-  });
-  let selectedModes = `${routerFamilyMode('needs-you-tray')}:${routerFamilyMode('needs-you-count')}`;
-  subscribeRouterOwner(() => {
-    const next = `${routerFamilyMode('needs-you-tray')}:${routerFamilyMode('needs-you-count')}`;
-    if (next === selectedModes) return;
-    selectedModes = next;
-    slots.clear();
-    needsIntents.clear();
-    savedIntents.clear();
-    heldNeeds.clear();
-    notify();
   });
   function startLive(): void {
     if (liveStop || liveStarting) return;
@@ -772,21 +619,13 @@ namespace TrayReads {
   export async function loadNeedsYouList(
     workspaceId: string,
   ): Promise<readonly NeedsYouItemView[]> {
-    if (
-      routerFamilyMode('needs-you-tray') !== 'legacy' &&
-      routerFamilyMode('needs-you-count') !== 'legacy'
-    )
-      return [];
+
     const slot = slotFor(await resolveViewer(), workspaceId);
-    if (
-      routerFamilyMode('needs-you-tray') !== 'legacy' &&
-      routerFamilyMode('needs-you-count') !== 'legacy'
-    )
-      return [];
+
     const at = ++slot.clock;
     slot.reads.add(at);
     try {
-      const result = await readServerSurface(readAuthority, 'readNeedsYou', {
+      const result = await monolithPhoneOperation('readNeedsYou', {
         workspaceId,
         markSeen: false,
       });
@@ -805,13 +644,13 @@ namespace TrayReads {
     }
   }
   export async function loadSavedList(workspaceId: string, before?: string): Promise<void> {
-    if (routerFamilyMode('needs-you-tray') !== 'legacy') return;
+
     const slot = slotFor(await resolveViewer(), workspaceId);
-    if (routerFamilyMode('needs-you-tray') !== 'legacy') return;
+
     const at = ++slot.clock;
     slot.reads.add(at);
     try {
-      const result = await readServerSurface(readAuthority, 'listMessageBookmarks', {
+      const result = await monolithPhoneOperation('listMessageBookmarks', {
         workspaceId,
         ...(before ? { before } : {}),
       });
@@ -840,17 +679,17 @@ namespace TrayReads {
     workspaceId: string,
     force = false,
   ): Promise<{ needsError?: string; savedError?: string }> {
-    if (routerFamilyMode('needs-you-tray') !== 'legacy') return {};
+
     const slot = slotFor(await resolveViewer(), workspaceId);
     if (!slot.entry.needs) await seed(workspaceId, 'needs-you');
     if (!slot.entry.saved) await seed(workspaceId, 'bookmarks');
-    if (routerFamilyMode('needs-you-tray') !== 'legacy') return {};
+
     if (!force && !slot.forgotten && !slot.needsStale && slot.entry.needs && slot.entry.saved)
       return {};
     if (slot.trayRead) return slot.trayRead;
     const at = ++slot.clock;
     slot.reads.add(at);
-    const read = readServerSurface(readAuthority, 'readTray', { workspaceId, markSeen: false })
+    const read = monolithPhoneOperation('readTray', { workspaceId, markSeen: false })
       .then((result) => {
         if (!active(slot) || (slot.forgotten && at <= Math.max(slot.needsRead, slot.savedRead)))
           return {};
@@ -886,11 +725,7 @@ namespace TrayReads {
     return read;
   }
   async function seed(workspaceId: string, kind: 'needs-you' | 'bookmarks'): Promise<boolean> {
-    if (
-      routerFamilyMode('needs-you-tray') !== 'legacy' &&
-      routerFamilyMode('needs-you-count') !== 'legacy'
-    )
-      return false;
+
     const slot = slotFor(await resolveViewer(), workspaceId);
     if (!slot.pubkey) return false;
     const at = slot.clock;
@@ -1007,7 +842,7 @@ namespace TrayReads {
     workspaceId: string,
     read: (reason: string) => void,
   ): () => void {
-    if (routerFamilyMode('needs-you-tray') !== 'legacy') return () => {};
+
     const readers = trayReaders.get(workspaceId) ?? new Set<(reason: string) => void>();
     readers.add(read);
     trayReaders.set(workspaceId, readers);
@@ -1041,7 +876,7 @@ namespace TrayReads {
       : entry.needs;
   };
   export function useTrayList(workspaceId: string | null | undefined, enabled = true) {
-    const entry = useEntry(workspaceId, enabled && routerFamilyMode('needs-you-tray') === 'legacy');
+    const entry = useEntry(workspaceId, (enabled));
     const ids = hidden(workspaceId ? current(workspaceId) : undefined, 'saved');
     return {
       needs: workspaceId ? visibleNeeds(entry, workspaceId) : null,
@@ -1071,72 +906,41 @@ namespace TrayReads {
       },
     ));
   }
-  /** One subscription owner selects the negotiated count source. Pending or
-   * disconnected router generations never acquire the old-server reader. */
   export function useNeedsYouCount(
     workspaceId: string | null | undefined,
     refreshKey: unknown,
     visible?: () => boolean,
   ) {
-    const visibleRef = useRef(visible);
-    visibleRef.current = visible;
-    const mode = useRouterFamily('needs-you-count');
-    const subscribeCount = useCallback(
-      (listener: () => void) => {
-        if (!workspaceId || refreshKey === undefined) return () => {};
-        if (mode === 'legacy') return subscribe(listener);
-        if (mode !== 'router') return () => {};
-        const lane = acquireRouterLane(
-          { family: 'needs-you-count', workspaceId },
-          () => visibleRef.current?.() ?? true,
-          listener,
-        );
-        return lane.release;
-      },
-      [mode, workspaceId, refreshKey === undefined],
-    );
+    const subscribeCount = useCallback((listener: () => void) =>
+      workspaceId && refreshKey !== undefined ? subscribe(listener) : () => {},
+    [workspaceId, refreshKey === undefined]);
     const snapshot = useCallback(() => {
       if (!workspaceId) return 0;
-      if (mode === 'legacy') {
-        const entry = current(workspaceId)?.entry;
-        return entry ? (visibleNeeds(entry, workspaceId)?.length ?? 0) : 0;
-      }
-      if (mode !== 'router') return 0;
-      const value = routerLaneSnapshot({ family: 'needs-you-count', workspaceId }).value as {
-        count?: number;
-      } | null;
-      return value?.count ?? 0;
-    }, [mode, workspaceId]);
+      const entry = current(workspaceId)?.entry;
+      return entry ? (visibleNeeds(entry, workspaceId)?.length ?? 0) : 0;
+    }, [workspaceId]);
     const count = useSyncExternalStore(subscribeCount, snapshot, () => 0);
     const generation = useSyncExternalStore(subscribeClientReset, clientResetGeneration);
+    useEffect(() => { void resolveViewer(); }, []);
     useEffect(() => {
-      if (mode === 'legacy') void resolveViewer();
-    }, [mode]);
-    useEffect(() => {
-      if (mode !== 'legacy' || !workspaceId || refreshKey === undefined) return;
+      if (!workspaceId || refreshKey === undefined) return;
       badgeReaders.set(workspaceId, (badgeReaders.get(workspaceId) ?? 0) + 1);
       return () => {
         const remaining = (badgeReaders.get(workspaceId) ?? 1) - 1;
         if (remaining) badgeReaders.set(workspaceId, remaining);
         else badgeReaders.delete(workspaceId);
       };
-    }, [workspaceId, refreshKey, mode]);
+    }, [workspaceId, refreshKey]);
     useEffect(() => {
-      if (mode !== 'legacy' || !workspaceId || refreshKey === undefined) return;
+      if (!workspaceId || refreshKey === undefined || visible && !visible()) return;
       let cancelled = false;
       void (async () => {
         const slot = slotFor(await resolveViewer(), workspaceId);
         if (cancelled || !active(slot) || (slot.entry.needs && !slot.needsStale)) return;
-        try {
-          await refreshProjection(slot);
-        } catch {
-          /* Keep the previous projection. */
-        }
+        try { await refreshProjection(slot); } catch { /* Keep the cached count. */ }
       })();
-      return () => {
-        cancelled = true;
-      };
-    }, [workspaceId, refreshKey, count, generation, mode]);
+      return () => { cancelled = true; };
+    }, [workspaceId, refreshKey, count, generation]);
     return count;
   }
 
@@ -1145,7 +949,7 @@ namespace TrayReads {
     workspaceId: string,
     messageIds: readonly string[],
   ): Promise<void> {
-    if (routerFamilyMode('needs-you-tray') !== 'legacy') return;
+
     const slot = current(workspaceId);
     if (!slot || slot.forgotten) return;
     const ids = [...new Set(messageIds)].filter(
@@ -1205,29 +1009,7 @@ export const revealSavedItems = TrayReads.revealSavedItems;
 
 /** Existing Forward gesture only. All other consumers attach observations. */
 export function readChatList(key: ChatListKey): Promise<ChatListView> {
-  if (routerFamilyMode('room-list') === 'pending')
-    return Promise.reject(new Error('Room list unavailable.'));
-  if (routerFamilyMode('room-list') === 'router') {
-    return new Promise((resolve, reject) => {
-      let handle: ReturnType<typeof acquireRouterForwardList> | undefined;
-      const finish = () => {
-        if (!handle) return;
-        const view = handle.current();
-        if (view.state === 'PARKED') {
-          handle.release();
-          reject(new Error(view.error ?? 'Room list unavailable.'));
-          return;
-        }
-        if (view.state !== 'LIVE') return;
-        const value = readChatListView(view.value);
-        handle.release();
-        if (value) resolve(value);
-        else reject(new Error('Invalid Room list.'));
-      };
-      handle = acquireRouterForwardList(key.workspaceId, () => true, finish);
-      finish();
-    });
-  }
+
   return new Promise((resolve, reject) => {
     let handle: ChatListHandle | undefined;
     let stop: (() => void) | undefined;

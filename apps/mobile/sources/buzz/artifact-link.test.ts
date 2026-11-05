@@ -1,4 +1,5 @@
-vi.mock('@/buzz/router-owner', () => ({ routerOwnerArtifactAction: vi.fn() }));
+import { requestMediaPlayback } from './media-cache-connection';
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -25,7 +26,7 @@ vi.mock('@/auth/monolith-session', () => ({
   monolithSession: { authorization: mocks.authorization, fetch: mocks.fetch },
 }));
 vi.mock('@/auth/buzz-identity-storage', () => ({ loadBuzzIdentity: async () => ({ publicKey: 'synthetic-reader' }) }));
-vi.mock('./media-cache-connection', () => ({ retainMediaObjectDisplay: () => () => {}, mediaTransportMode: () => mocks.mediaMode.value, mediaMetadataAvailable: () => false, mediaMetadataFor: async () => undefined, mediaCertificateCurrent: () => false, mediaCacheFences: () => [], subscribeMediaCacheBoundary: () => () => {} }));
+vi.mock('./media-cache-connection',()=>({requestMediaLink:vi.fn(),requestMediaPlayback:vi.fn(),mediaMetadataFor:async()=>undefined,mediaMetadataCurrent:()=>false,subscribeMediaCacheBoundary:()=>()=>{}}));
 vi.mock('./artifact-byte-store', () => ({ createArtifactByteStore: () => ({ get: async () => null, set: async () => {}, remove: async () => {}, clear: async () => {}, revoke: async () => [], localUri: async () => 'file:///cache/immutable-photo.jpg' }) }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: vi.fn() }));
 vi.mock('@/modal', () => ({ Modal: { alert: vi.fn() } }));
@@ -156,19 +157,13 @@ describe('the PDF bytes as a string for the hosts that take one', () => {
 describe('runnable capability URL', () => {
   it('mints through the configured session origin and rejects application-host execution', async () => {
     for (const origin of ['https://server.usebeeline.app', 'https://usebeeline.app', 'https://games.usebeeline.app', 'http://games.example.net']) {
-      mocks.fetch.mockResolvedValue({ok:true,json:async()=>({url:`${origin}/play/${ID}`})});
+      vi.mocked(requestMediaPlayback).mockResolvedValue({url:`${origin}/play/${ID}`,expiresIn:60});
       await expect(runnableArtifactUrl(attachment(`/v1/media/${ID}`))).rejects.toThrow(/not isolated/);
     }
     const url = `https://beeline-games.fly.dev/play/${ID}?token=opaque`;
-    mocks.fetch.mockResolvedValue({ok:true,json:async()=>({url})});
+    vi.mocked(requestMediaPlayback).mockResolvedValue({url,expiresIn:60});
     expect(await runnableArtifactUrl(attachment(`https://evil.example/v1/media/${ID}`))).toBe(url);
-    expect(mocks.fetch).toHaveBeenLastCalledWith(`${mocks.monolithUrl}/v1/media/${ID}/play`,{}, {timeoutMs:10_000});
+    expect(requestMediaPlayback).toHaveBeenLastCalledWith(ID);
+    expect(mocks.fetch).not.toHaveBeenCalled();
   });
-});
-
-it('a parked metadata route cannot downgrade link/play actions to legacy HTTP', async () => {
-  mocks.mediaMode.value = 'pending';
-  await expect(openArtifactInBrowser(attachment(`/v1/media/${ID}`))).rejects.toThrow('awaiting connection');
-  await expect(runnableArtifactUrl(attachment(`/v1/media/${ID}`))).rejects.toThrow('awaiting connection');
-  expect(mocks.fetch).not.toHaveBeenCalled();
 });

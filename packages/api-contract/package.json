@@ -84,11 +84,6 @@
       "import": "./dist/x-attribution.js",
       "default": "./dist/x-attribution.js"
     },
-    "./router-protocol": {
-      "types": "./dist/router-protocol.d.ts",
-      "import": "./dist/router-protocol.js",
-      "default": "./dist/router-protocol.js"
-    },
     "./router-command": {
       "types": "./dist/router-command.d.ts",
       "import": "./dist/router-command.js",

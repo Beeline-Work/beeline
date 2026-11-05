@@ -8,7 +8,6 @@ import { postRoomChoice } from './room-choice.js';
 import { CommandDigestConflict, InvalidCommandArguments, RouterCommandLedger } from './router-command-ledger.js';
 import { describedWorkflow, migratedDatabase, type PgliteDatabase } from './test-support.js';
 import { dispatchTrayDecisionCommand, isTrayDecisionCommand, type TrayDecisionOperation } from './tray-decision-command.js';
-import { TRAY_MUTABLE_SOURCE_SCHEMA } from './tray-mutable-source.js';
 import { getWorkflowRun, saveWorkflow, startWorkflow } from './workflow-runs.js';
 
 const A = 'a'.repeat(64), B = 'b'.repeat(64), AGENT = 'c'.repeat(64);
@@ -21,7 +20,7 @@ describe('durable DB-only Tray decision adapter', () => {
   let db: PgliteDatabase, live: LiveHub, phone: PhoneService;
   beforeEach(async () => {
     db = await migratedDatabase();
-    await db.query(TRAY_MUTABLE_SOURCE_SCHEMA);
+
     await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES
       ($1,'human','Owner','owner'),($2,'human','Member','member'),($3,'agent','Agent','agent')`, [A, B, AGENT]);
     await db.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)', [AGENT, A]);

@@ -1,8 +1,6 @@
 import type { MessageSendState } from '@/buzz/message-outbox';
-import { reconnectNow } from '@/sync/transport/live-connection';
-import { useRouterFamily } from '@/buzz/router-family';
-import { acquireRouterLane, retryRouterLane } from '@/buzz/router-owner';
-import { appErrorCopy } from '@/buzz/app-error-copy';
+
+import { appErrorCopy, connectionErrorTitle } from '@/buzz/app-error-copy';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -11,7 +9,6 @@ import type { RoomRepositoryResult } from '@beeline/api-contract/phone';
 import {
   KIND_AGENT_DRAFT,
   LiveOverlayDecoder,
-  SurfaceRefreshScheduler,
   isRoomView,
   type LiveOverlay,
   type RoomView,
@@ -67,7 +64,6 @@ import { scheduleAnimationFrame } from '@/buzz/host-scheduler';
 import { hasPrefetchedRoomOpen, takePrefetchedPushRoom } from '@/push/push-room-prefetch';
 
 /** A socket that never answers must not hold the open's one Room read. */
-const SUBSCRIBE_HANDSHAKE_TIMEOUT_MS = 2_000;
 const LIVE_CACHE_WRITE_DELAY_MS = 1_000;
 const EMPTY_ROUTER_OVERLAYS: readonly LiveOverlay[] = Object.freeze([]);
 const EMPTY_ROUTER_PRESENCES: Record<string, RoomAgentPresence> = Object.freeze({});
@@ -189,7 +185,6 @@ function messageTimeMs(message: RoomView['messages'][number]): number {
 
 /** A read carries a message newer than anything the painted Room held. */
 
-
 type RoomOutbox = ReturnType<typeof createRoomOutbox>;
 
 /**
@@ -225,11 +220,6 @@ export interface RoomSurfaceOutboxHandle {
   failedIds: ReadonlySet<string>;
   states: ReadonlyMap<string, MessageSendState>;
   dismiss(eventId: string): void;
-}
-
-export interface RoomSurfaceRefreshSignal {
-  signal(): void;
-  force(): void;
 }
 
 export interface UseRoomSurfaceSessionOptions {
@@ -282,7 +272,7 @@ export interface UseRoomSurfaceSessionResult {
   hydrationFailed: boolean;
   hydrationError: string | null;
   retryHydration(): void;
-  refreshSignal: RoomSurfaceRefreshSignal;
+  readRoom(): void;
   outbox: RoomSurfaceOutboxHandle;
 }
 
@@ -293,9 +283,9 @@ export function useRoomSurfaceSession({
   isFocused = true,
   bindingsRef,
 }: UseRoomSurfaceSessionOptions): UseRoomSurfaceSessionResult {
-  const routerHeadMode = useRouterFamily('room-head');
+
   const [openingCache] = useState(() => {
-    if (routerHeadMode !== 'legacy') return null;
+
     const viewer = peekBuzzViewerContext();
     if (!viewer) return null;
     const view = mobileSurfaceCache.peek(surfaceAddress(viewer.relayUrl, viewer.viewerPubkey, `/room/${channelId}`), isRoomView);
@@ -315,8 +305,8 @@ export function useRoomSurfaceSession({
   const turnRecords = useRoomTurnRecords(identityRecordScope, channelId);
   const selectedRoomSurface = useMemo(
     () => {
-      if (routerHeadMode === 'pending' || !roomSurface) return null;
-      if (routerHeadMode === 'router') return roomSurface;
+      if ((!roomSurface)) return null;
+
       const view = identityRecordScope
         ? new IdentitySelection(identityRecordScope, roomReadStampRef.current).roomView(roomSurface)
         : roomSurface;
@@ -325,7 +315,7 @@ export function useRoomSurfaceSession({
         (turnRecords.length === 0 && view.latestAgentTurns.length === 0)
         ? view : { ...view, latestAgentTurns: turnRecords };
     },
-    [roomSurface, identityRecordScope, identityVersion, turnRecords, routerHeadMode],
+    [roomSurface, identityRecordScope, identityVersion, turnRecords],
   );
   const applyRoomRepositoryResult = useCallback((result: RoomRepositoryResult) => {
     if (result.channelId !== channelId) return;
@@ -414,7 +404,7 @@ export function useRoomSurfaceSession({
   const roomClientRef = useRef<RoomViewClient | null>(null);
   roomClientRef.current = roomClient;
   const liveOverlaysRef = useRef(liveOverlays);
-  const schedulerRef = useRef<SurfaceRefreshScheduler<RoomView> | null>(null);
+  const readRoomRef = useRef<(() => Promise<void>) | null>(null);
   const reconciledViewRef = useRef<RoomView | null>(openingCache?.view ?? null);
   const sessionStartedRef = useRef(false);
   const openingDrawRef = useRef<number | undefined>(undefined);
@@ -436,23 +426,6 @@ export function useRoomSurfaceSession({
   agentPresencesRef.current = heartbeatPresences;
   reconnectGraceRef.current = presenceReconnectGrace;
   liveOverlaysRef.current = liveOverlays;
-
-  useLayoutEffect(() => {
-    if (routerHeadMode !== 'pending') return;
-    // A backgrounded owner may not hear lane invalidation. Clear retained
-    // private projections before another frame can expose them on foreground.
-    reconciledViewRef.current = null;
-    liveOverlaysRef.current = EMPTY_ROUTER_OVERLAYS;
-    agentPresencesRef.current = EMPTY_ROUTER_PRESENCES;
-    reconnectGraceRef.current = EMPTY_ROUTER_GRACE;
-    setRoomSurface(null);
-    setLiveOverlays(EMPTY_ROUTER_OVERLAYS);
-    setAgentPresences(EMPTY_ROUTER_PRESENCES);
-    setPresenceReconnectGrace(EMPTY_ROUTER_GRACE);
-    setPresenceResolved(false);
-    setFirstUnreadMessageId(null);
-    bindingsRef.current.resetTranscript();
-  }, [routerHeadMode, bindingsRef]);
 
   useEffect(() => {
     const traces = pendingPaintTracesRef.current;
@@ -520,13 +493,13 @@ export function useRoomSurfaceSession({
       const view = reconciledViewRef.current;
       if (becameFocused && view?.room.id === channelId)
         queueNewestFrameMark(view.messages.at(-1)?.id, channelId);
-      const scheduler = schedulerRef.current;
-      if (scheduler) {
+      const read = readRoomRef.current;
+      if (read) {
         const draw = waitForRoomDraw();
         if (draw) void draw.then(() => {
-          if (isFocusedRef.current && schedulerRef.current === scheduler) scheduler.signal();
+          if (isFocusedRef.current && readRoomRef.current === read) void read();
         });
-        else scheduler.signal();
+        else void read();
       }
       return;
     }
@@ -609,19 +582,13 @@ export function useRoomSurfaceSession({
     [bindingsRef],
   );
 
-  const refreshSignal = useMemo<RoomSurfaceRefreshSignal>(
-    () => ({
-      signal: () => schedulerRef.current?.signal(),
-      force: () => schedulerRef.current?.force(),
-    }),
-    [],
-  );
+  const readRoom = useCallback(() => { void readRoomRef.current?.(); }, []);
 
   // Focus starts a session once. A covered native-stack route retains its
   // transcript and transport; focus alone never tears them down or rebuilds them.
   const sessionActivated = isFocused || sessionStartedRef.current;
   useEffect(() => {
-    if (!channelId || routerHeadMode === 'pending') return;
+    if ((!channelId)) return;
     if (!sessionActivated) return;
     isCornerRef.current = false;
     setFirstUnreadMessageId(null);
@@ -636,24 +603,20 @@ export function useRoomSurfaceSession({
     };
     let cancelled = false;
     let stopOutbox: (() => void) | undefined;
-    let stopRouterLane: (() => void) | undefined;
     let unsubscribe: (() => void) | undefined;
-    let scheduler: SurfaceRefreshScheduler<RoomView> | undefined;
-    let incompleteDelivery = false;
-    const visibleScheduler = () => {
+    let readRoom: (() => Promise<void>) | undefined;
+    const readVisibleRoom = () => {
       if (
         !isFocusedRef.current ||
         AppState.currentState === 'background' ||
         AppState.currentState === 'inactive'
       ) {
-        incompleteDelivery = true;
         return undefined;
       }
-      return scheduler;
+      void readRoom?.();
     };
     // Any frame on this watch since the last applied read. A read that finds a
     // newer message while the socket stayed silent proves the socket missed it.
-    let refreshFailed = false;
     // Turn deltas heard while a Room read is in flight. Turn times are whole
     // seconds, so the read cannot tell a same-second retry from a stale turn;
     // replaying these in order on top of the read keeps what the socket said.
@@ -664,10 +627,6 @@ export function useRoomSurfaceSession({
     let decoder: LiveOverlayDecoder | undefined;
     let pendingOverlayEvents: Parameters<LiveOverlayDecoder['decode']>[0][] = [];
     let watchGeneration = 0;
-    let readRacedAhead = false;
-    let watchStarted = false;
-    /** Ends the watch's handshake wait when the reader leaves before it. */
-    let abandonHandshakeWait: (() => void) | undefined;
     let hasPainted = false;
     let reopenedChat = false;
     let pendingReadTraces: ReceivedLiveTrace[] = [];
@@ -733,7 +692,7 @@ export function useRoomSurfaceSession({
       const selectedTurns = roomTurns(messageRecordScopeRef.current, channelId);
       const selectedView = selectedTurns.length === 0 && view.latestAgentTurns.length === 0
         ? view : { ...view, latestAgentTurns: selectedTurns };
-      const stableView = routerHeadMode === 'router' ? view : reconcileRoomView(reconciledViewRef.current, selectedView);
+      const stableView = (reconcileRoomView(reconciledViewRef.current, selectedView));
       for (const message of stableView.messages) {
         if (message.requestId) {
           liveDraftDrainStore.finalize(liveDraftDrainKey(message.author.pubkey, message.requestId));
@@ -834,7 +793,7 @@ export function useRoomSurfaceSession({
         return next.size === current.size ? current : next;
       });
       cacheAddress = surfaceAddress(relayUrl, identityPubkey, `/room/${channelId}`);
-      if (fresh && routerHeadMode === 'legacy') {
+      if ((fresh)) {
         void mobileSurfaceCache.write(cacheAddress, stableView, isRoomView);
       }
     };
@@ -857,13 +816,7 @@ export function useRoomSurfaceSession({
     // Enter the storage queue before the app suspends; background writes flush it.
     const cacheAppStateSubscription = AppState.addEventListener('change', (state) => {
       if (state === 'background' || state === 'inactive') flushCacheWrite();
-      else if (state === 'active' && routerHeadMode === 'legacy' && (refreshFailed || incompleteDelivery)) {
-        const visible = visibleScheduler();
-        if (visible) {
-          incompleteDelivery = false;
-          visible.force();
-        }
-      }
+
     });
     scheduleCacheWriteRef.current = scheduleCacheWrite;
 
@@ -884,11 +837,6 @@ export function useRoomSurfaceSession({
 
     const installWatch = async (): Promise<void> => {
       const generation = ++watchGeneration;
-      let handshakeSeen = false;
-      let listenReady: (() => void) | undefined;
-      const handshake = new Promise<void>((resolve) => {
-        listenReady = resolve;
-      });
       const currentTransport = transportForEffect;
       if (!currentTransport) return;
       const client = await currentTransport.ensureClient();
@@ -901,9 +849,7 @@ export function useRoomSurfaceSession({
         [{ '#h': [channelId] }],
         (event: Parameters<LiveOverlayDecoder['decode']>[0] | MonolithSurfaceEvent) => {
           if (cancelled || generation !== watchGeneration) return;
-          if (routerHeadMode === 'router' && (!isFocusedRef.current || AppState.currentState !== 'active')) return;
-          if (routerHeadMode === 'router' && 'monolithLive' in event &&
-              !['presence', 'draft', 'thought', 'retract'].includes((event as MonolithSurfaceEvent).monolithLive.type)) return;
+
           if ('monolithLive' in event) {
             const surfaceEvent = event as MonolithSurfaceEvent;
             const live = surfaceEvent.monolithLive;
@@ -914,24 +860,10 @@ export function useRoomSurfaceSession({
             if (live.type === 'sync-ok') return;
             if (live.type === 'subscribed') {
               markRoomOpen('subscribed', live.roomId);
-              // This watch's first frame is listen-ready. A later frame on
-              // this same watch is a reconnect and may need one reconcile.
-              // A push-prefetched read can predate this lane, in which case
-              // one follow-up read covers that gap.
-              if (handshakeSeen) {
-                if (refreshFailed || !hasPainted || !live.resumed) visibleScheduler()?.force();
-                return;
-              }
-              handshakeSeen = true;
-              listenReady?.();
-              if (readRacedAhead) {
-                markRoomOpen('covering-read');
-                visibleScheduler()?.followUp();
-              }
               return;
             }
             if (live.type === 'sidebar-preview') {
-              if (live.roomId === channelId) visibleScheduler()?.signal();
+              if (live.roomId === channelId) readVisibleRoom();
               return;
             }
             if (live.type === 'read-state' || live.type === 'room-commands') {
@@ -1054,11 +986,11 @@ export function useRoomSurfaceSession({
                 const namedRow =
                   typeof live.messageId === 'string' ||
                   (typeof live.agentId === 'string' && typeof live.requestId === 'string');
-                if (!namedRow) visibleScheduler()?.signal();
+                if (!namedRow) readVisibleRoom();
               } else if (live.reason === 'postgres:agent_turns') {
-                visibleScheduler()?.force();
+                readVisibleRoom();
               } else {
-                visibleScheduler()?.signal();
+                readVisibleRoom();
               }
             } else if (live.roomId !== channelId) {
               // A Room watch no longer includes child corners. An ephemeral
@@ -1127,7 +1059,7 @@ export function useRoomSurfaceSession({
             applyDecodedOverlay(overlay);
             return;
           }
-          if (routerHeadMode === 'router') return;
+
           const markers = eventMarkers(event);
           const requestId = eventTag(event, 'request');
           const replayedFreshWorkingReceipt =
@@ -1141,7 +1073,7 @@ export function useRoomSurfaceSession({
             requestId &&
             (!replaying || replayedFreshWorkingReceipt)
           ) {
-            visibleScheduler()?.signal();
+            readVisibleRoom();
             return;
           }
           if (replaying) return;
@@ -1159,9 +1091,9 @@ export function useRoomSurfaceSession({
                 ].includes(marker),
               ));
           if (expectsPaintedMessage) {
-            visibleScheduler()?.signal();
+            readVisibleRoom();
           } else {
-            visibleScheduler()?.signal();
+            readVisibleRoom();
           }
         },
       );
@@ -1170,26 +1102,7 @@ export function useRoomSurfaceSession({
         stop();
         return;
       }
-      if (routerHeadMode === 'router') { unsubscribe?.(); unsubscribe = stop; return; }
-      let handshakeTimer: ReturnType<typeof setTimeout> | undefined;
-      await Promise.race([
-        handshake,
-        new Promise<void>((resolve) => {
-          abandonHandshakeWait = resolve;
-        }),
-        new Promise<void>((resolve) => {
-          handshakeTimer = setTimeout(() => {
-            readRacedAhead = true;
-            resolve();
-          }, SUBSCRIBE_HANDSHAKE_TIMEOUT_MS);
-        }),
-      ]);
-      if (handshakeTimer) clearTimeout(handshakeTimer);
-      abandonHandshakeWait = undefined;
-      if (cancelled || generation !== watchGeneration) {
-        stop();
-        return;
-      }
+
       unsubscribe?.();
       unsubscribe = stop;
     };
@@ -1247,7 +1160,7 @@ export function useRoomSurfaceSession({
         const address = surfaceAddress(relayUrl, viewerPubkey, `/room/${channelId}`);
         markRoomOpen('session-start', channelId);
         markRoomOpen('cache-read-start');
-        const cached = routerHeadMode === 'legacy' ? await mobileSurfaceCache.read(address, isRoomView) : null;
+        const cached = (await mobileSurfaceCache.read(address, isRoomView));
         markRoomOpen('cache-read-end', cached ? 'hit' : 'miss');
         let paintedCache: RoomView | null = null;
         if (cached && !cancelled) {
@@ -1309,75 +1222,37 @@ export function useRoomSurfaceSession({
         if (paintedCache) enrichView(paintedCache, identity.publicKey, relayUrl, false);
         if (cancelled) return;
 
-        if (routerHeadMode === 'router') {
-          const request = { family: 'room-head' as const, roomId: channelId };
-          const changed = () => {
-            if (cancelled) return;
-            const state = lane.current();
-            if (state.value && isRoomView(state.value)) {
-              applyView(state.value, identity.publicKey, relayUrl, true);
-              releaseOpeningResponse(state.value);
-            } else if (state.state === 'REVOKED' || state.value === null && state.state === 'PARKED') {
-              reconciledViewRef.current = null; setRoomSurface(null);
-              liveOverlaysRef.current = []; setLiveOverlays([]);
-              setHydrationFailed(true); setHydrationError(state.error);
-            }
-            if (state.state === 'PARKED') { setHydrationFailed(true); setHydrationError(state.error); }
-          };
-          const lane = acquireRouterLane(request, () => isFocusedRef.current, changed);
-          stopRouterLane = lane.release;
-          changed();
-          // This retains only the existing ephemeral overlay/viewing channel.
-          // Durable state comes exclusively from the negotiated lane actor.
-          await installWatch();
-          return;
-        }
-
         let openingPrefetch = takePrefetchedPushRoom(notificationResponseId ?? `room-open:${channelId}`, channelId);
-        const openReadBeforeWatch = Boolean(notificationResponseId || openingPrefetch);
-        scheduler = new SurfaceRefreshScheduler({
-          fetch: async () => {
-            incompleteDelivery = false;
-            const traces = pendingReadTraces;
-            pendingReadTraces = [];
-            logLiveTrace('room-read-start', traces);
-            markRoomOpen('room-read-start');
-            messageDeltasDuringRead = [];
-            commandsDuringRead = undefined;
-            cursorDuringRead = undefined;
-            try {
-              const prefetched = openingPrefetch;
-              openingPrefetch = null;
-              readStamp = prefetched ? 0 : currentSurfaceStamp();
-              const view = await (prefetched
-                ? prefetched.catch(() => nextRoomClient.room(channelId))
-                : nextRoomClient.room(channelId));
-              logLiveTrace('room-read-end', traces);
-              markRoomOpen('room-read-end', view.messages.at(-1)?.id);
-              markRoomOpenWeight(view);
-              pendingPaintTracesRef.current = traces;
-              return view;
-            } catch (error) {
-              logLiveTrace('room-read-error', traces);
-              markRoomOpen('room-read-error');
-              messageDeltasDuringRead = undefined;
-              throw error;
-            }
-          },
-          apply: (view) => {
+        readRoom = async () => {
+          if (cancelled) return;
+
+          const traces = pendingReadTraces;
+          pendingReadTraces = [];
+          logLiveTrace('room-read-start', traces);
+          markRoomOpen('room-read-start');
+          messageDeltasDuringRead = [];
+          commandsDuringRead = undefined;
+          cursorDuringRead = undefined;
+          try {
+            const prefetched = openingPrefetch;
+            openingPrefetch = null;
+            readStamp = prefetched ? 0 : currentSurfaceStamp();
+            const view = await (prefetched ? prefetched : nextRoomClient.room(channelId));
+            logLiveTrace('room-read-end', traces);
+            markRoomOpen('room-read-end', view.messages.at(-1)?.id);
+            markRoomOpenWeight(view);
+            pendingPaintTracesRef.current = traces;
+
             if (cancelled) return;
-            refreshFailed = false;
             roomReadStampRef.current = readStamp;
             const replayedMessages = messageDeltasDuringRead ?? [];
             messageDeltasDuringRead = undefined;
             applyView(
-              replayedMessages.reduce(
-                reconcileRoomMessageDelta,
-                { ...view,
-                  ...(commandsDuringRead ? { pendingAgentCommands: commandsDuringRead } : {}),
-                  ...(cursorDuringRead ? { viewer: { ...view.viewer, readCursor: cursorDuringRead } } : {}),
-                },
-              ),
+              replayedMessages.reduce(reconcileRoomMessageDelta, {
+                ...view,
+                ...(commandsDuringRead ? { pendingAgentCommands: commandsDuringRead } : {}),
+                ...(cursorDuringRead ? { viewer: { ...view.viewer, readCursor: cursorDuringRead } } : {}),
+              }),
               identity.publicKey,
               relayUrl,
               true,
@@ -1387,56 +1262,36 @@ export function useRoomSurfaceSession({
             // the opening read is actually applied (cleanup also unsubscribes).
             stopOpeningResponse();
             releaseOpeningResponse(view);
-            if (openReadBeforeWatch && !watchStarted) {
-              watchStarted = true;
-              readRacedAhead = true;
-              // A push needs its fresh Room answer on screen first. Installing
-              // the live watch during that GET delayed the response until the
-              // subscribe completed on Android. The first subscribed frame
-              // forces a covering read for writes in the read/watch gap.
-              void yieldToPaint().then(async () => {
-                await waitForRoomDraw();
-                if (cancelled) return;
-                markRoomOpen('watch-install');
-                void installWatch().catch((error) => {
-                  if (!cancelled) setHydrationError(appErrorCopy(error, 'Live updates unavailable.'));
-                });
-              });
-            }
             if (!view.parent && !reopenedChat) {
               reopenedChat = true;
               // Only a Room the reader dismissed from the list needs reopening;
               // the live Room list says which, or else the server decides.
-              void reopenIfDismissed(nextTransport, view, relayUrl, identity.publicKey).catch(
-                () => {
-                  reopenedChat = false;
-                },
-              );
+              void reopenIfDismissed(nextTransport, view, relayUrl, identity.publicKey).catch(() => {
+                reopenedChat = false;
+              });
             }
             // The read mark is no longer advanced from here. A fetched view
             // says what EXISTS, not what was seen, and marking its tail read
             // cleared the badge for messages sitting well below the fold.
             // The viewport owns the boundary now (`advanceReadCursor`).
-          },
-          onError: (error) => {
+          } catch (error) {
+            logLiveTrace('room-read-error', traces);
+            markRoomOpen('room-read-error');
+            messageDeltasDuringRead = undefined;
+
             if (cancelled) return;
             releaseOpeningResponse();
             setPresenceResolved(false);
             const terminal =
               error instanceof RoomViewHttpError &&
-              (error.status === 401 ||
-                error.status === 403 ||
-                error.status === 404);
+              (error.status === 401 || error.status === 403 || error.status === 404);
             // A failed read waits for the next subscribed frame or foreground.
             // It does not schedule another read.
-            refreshFailed = !terminal;
             if (terminal) {
               setRoomSurface(null);
               for (const overlay of liveOverlaysRef.current) {
                 if (overlay.kind === 'draft') {
-                  liveDraftDrainStore.remove(
-                    liveDraftDrainKey(overlay.agentPubkey, overlay.requestId),
-                  );
+                  liveDraftDrainStore.remove(liveDraftDrainKey(overlay.agentPubkey, overlay.requestId));
                 }
               }
               liveOverlaysRef.current = [];
@@ -1445,39 +1300,15 @@ export function useRoomSurfaceSession({
               unsubscribe = undefined;
               void mobileSurfaceCache.remove(address);
             }
-            if (terminal || !hasPainted) {
-              setHydrationFailed(true);
-              setHydrationError(
-                isRoomViewTimeoutError(error)
-                  ? 'The server did not respond. Check your connection and retry.'
-                  : error instanceof RoomViewHttpError && error.code === 'invalid_surface_response'
-                    ? 'The server returned an invalid Room response.'
-                    : appErrorCopy(error, 'Could not load this conversation.'),
-              );
-            }
-            if (openReadBeforeWatch && !terminal && !watchStarted) {
-              watchStarted = true;
-              readRacedAhead = true;
-              markRoomOpen('watch-install');
-              void installWatch().catch(() => undefined);
-            }
-          },
-        });
-        schedulerRef.current = scheduler;
-        if (openReadBeforeWatch) {
-          scheduler.refreshNow();
-          await scheduler.startAfter(Promise.resolve());
-        } else {
-          // Attach the live lane before the single opening GET. A healthy
-          // subscribe handshake proves there is no read/watch gap; any rows
-          // received during the GET are replayed on its result.
-          watchStarted = true;
-          markRoomOpen('watch-install');
-          await installWatch();
-          if (cancelled) return;
-          scheduler.refreshNow();
-          await scheduler.startAfter(Promise.resolve());
-        }
+            setHydrationFailed(true);
+            setHydrationError(connectionErrorTitle);
+          }
+        };
+        readRoomRef.current = readRoom;
+        markRoomOpen('watch-install');
+        await installWatch();
+        if (cancelled) return;
+        await readRoom();
         markRoomOpen('watch-ready');
       } catch (error) {
         if (cancelled) return;
@@ -1487,18 +1318,15 @@ export function useRoomSurfaceSession({
     })();
 
     return () => {
-      stopRouterLane?.();
       stopOpeningResponse();
       cacheAppStateSubscription.remove();
       flushCacheWrite();
       cancelled = true;
       watchGeneration += 1;
-      abandonHandshakeWait?.();
-      scheduler?.dispose();
       unsubscribe?.();
       stopOutbox?.();
       outboxRef.current = null;
-      schedulerRef.current = null;
+      readRoomRef.current = null;
       reconciledViewRef.current = null;
       scheduleCacheWriteRef.current = undefined;
       for (const overlay of liveOverlaysRef.current) {
@@ -1508,15 +1336,7 @@ export function useRoomSurfaceSession({
       }
       liveOverlaysRef.current = [];
     };
-  }, [
-    applyAgentPresence,
-    bindingsRef,
-    channelId,
-    hydrationAttempt,
-    routerHeadMode,
-    notificationResponseId,
-    sessionActivated,
-  ]);
+  }, [applyAgentPresence, bindingsRef, channelId, hydrationAttempt, notificationResponseId, sessionActivated]);
 
   const outbox = useMemo<RoomSurfaceOutboxHandle>(
     () => ({
@@ -1529,10 +1349,8 @@ export function useRoomSurfaceSession({
   );
 
   const retryHydration = useCallback(() => {
-    if (routerHeadMode === 'router') retryRouterLane({ family: 'room-head', roomId: channelId });
-    else if (routerHeadMode === 'pending') reconnectNow();
-    else setHydrationAttempt((attempt) => attempt + 1);
-  }, [channelId, routerHeadMode]);
+    setHydrationAttempt((attempt) => attempt + 1);
+  }, [channelId]);
 
   return {
     transport,
@@ -1546,22 +1364,22 @@ export function useRoomSurfaceSession({
     applyPendingAgentCommands,
     applyRoomName,
     applyRoomReviewer,
-    firstUnreadMessageId: routerHeadMode === 'pending' ? null : firstUnreadMessageId,
+    firstUnreadMessageId: (firstUnreadMessageId),
     advanceReadCursor,
     markUnreadFrom,
     acknowledgeReadMark,
-    liveOverlays: routerHeadMode === 'pending' ? EMPTY_ROUTER_OVERLAYS : liveOverlays,
+    liveOverlays: (liveOverlays),
     liveDraftStore: liveDraftDrainStore,
     userPubkey,
-    heartbeatPresences: routerHeadMode === 'pending' ? EMPTY_ROUTER_PRESENCES : heartbeatPresences,
-    presenceResolved: routerHeadMode !== 'pending' && presenceResolved,
-    presenceReconnectGrace: routerHeadMode === 'pending' ? EMPTY_ROUTER_GRACE : presenceReconnectGrace,
+    heartbeatPresences: (heartbeatPresences),
+    presenceResolved: (presenceResolved),
+    presenceReconnectGrace: (presenceReconnectGrace),
     presenceNow,
     setPresenceNow,
     hydrationFailed,
     hydrationError,
     retryHydration,
-    refreshSignal,
+    readRoom,
     outbox,
   };
 }

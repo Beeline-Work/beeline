@@ -5,7 +5,6 @@ import {
   type PersonProfile,
   type RoomViewIdentity,
 } from '@beeline/buzz-client';
-import type { Nip05VerificationStatus } from '@beeline/buzz-client';
 import type { ChatTitleIdentity } from '@beeline/api-contract/phone';
 
 export function fallbackMemberName(pubkey: string): string {
@@ -14,22 +13,6 @@ export function fallbackMemberName(pubkey: string): string {
 
 export function fallbackMemberHandle(pubkey: string): string {
   return personHandle(fallbackMemberName(pubkey), pubkey);
-}
-
-/**
- * Verified NIP-05 wins, then the app-local @handle, then the display name, then a friendly
- * local name as a last resort. A present-but-unverified/mismatched nip05 never renders as the label —
- * an honest fallback is safer than showing an identifier that hasn't been confirmed.
- */
-export function personIdentityLabel(
-  profile: Pick<PersonProfile, 'name' | 'handle' | 'nip05'> | undefined,
-  pubkey: string,
-  nip05Status?: Nip05VerificationStatus | 'checking' | 'none',
-): string {
-  if (profile?.nip05 && nip05Status === 'verified') return profile.nip05;
-  if (profile?.handle) return `@${profile.handle}`;
-  if (profile?.name) return profile.name;
-  return fallbackMemberName(pubkey);
 }
 
 /**

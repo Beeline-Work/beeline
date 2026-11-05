@@ -1,22 +1,4 @@
 const WINDOW_MS = 60_000;
-/**
- * The phone pages history one request at a time, 30 messages per page. On a
- * local server with a 19,199-message Room, a client paging the whole Room back
- * to back made 640 requests at about 80 per second (12 ms median). This limit
- * is half that loopback ceiling: a deep scroll of up to 72,000 messages fits in
- * one window at any speed, and a reader whose page round trip is 25 ms or more
- * (server time plus network and render) can never reach it at all. A parallel
- * loop on one token gets no more than that sequential reader.
- */
-export const HISTORY_REQUESTS_PER_WINDOW = 2_400;
-/** The phone reads the outline once per Room visit; two visits a second is not a person. */
-export const OUTLINE_REQUESTS_PER_WINDOW = 120;
-/**
- * The Room list searches about 250 ms after typing stops, only once a word has
- * four letters, and not again while the searched words stay the same. A person
- * typing asks a few times a query; more than one a second is a loop.
- */
-export const SEARCH_REQUESTS_PER_WINDOW = 60;
 /** A flood must not be able to grow process memory without bound. */
 const MAX_TRACKED_IDENTITIES = 10_000;
 
@@ -69,24 +51,4 @@ export class IdentityRateLimit {
     this.attempts.set(identityId, { count: 1, resetAt: now + this.windowMs });
     return true;
   }
-}
-
-export interface PhoneReadLimits {
-  readonly history: IdentityRateLimit;
-  readonly outline: IdentityRateLimit;
-  readonly search: IdentityRateLimit;
-}
-
-export function phoneReadLimits(
-  options: {
-    history?: IdentityRateLimitOptions;
-    outline?: IdentityRateLimitOptions;
-    search?: IdentityRateLimitOptions;
-  } = {},
-): PhoneReadLimits {
-  return {
-    history: new IdentityRateLimit('phone-history', HISTORY_REQUESTS_PER_WINDOW, options.history),
-    outline: new IdentityRateLimit('phone-outline', OUTLINE_REQUESTS_PER_WINDOW, options.outline),
-    search: new IdentityRateLimit('phone-search', SEARCH_REQUESTS_PER_WINDOW, options.search),
-  };
 }

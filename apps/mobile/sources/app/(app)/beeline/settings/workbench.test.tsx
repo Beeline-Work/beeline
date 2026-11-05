@@ -1,33 +1,6 @@
 // This suite exercises an installed old-server path, with explicit legacy negotiation.
-vi.mock('@/buzz/router-owner', () => {
-const empty = Object.freeze({state:'ABSENT' as const,value:null,error:null,cut:null});
-const noAction = () => {};
-const forbidden = () => { throw new Error('Legacy fixture cannot spend router authority'); };
-return {
-  routerFamilyMode: () => 'legacy' as const,
-  subscribeRouterOwner: () => noAction,
-  routerLaneSnapshot: () => empty,
-  routerOwnerCapabilities: () => ({families:[],authorityFencesV1:false,scheduledWorkCoverageV1:false}),
-  routerOwnerNavigation: noAction,
-  routerOwnerListPanel: noAction,
-  routerOwnerUsageProfile: noAction,
-  routerOwnerArtifactAction: noAction,
-  routerOwnerArtifactViewport: noAction,
-  routerOwnerDisconnected: noAction,
-  routerOwnerReceive: noAction,
-  routerOwnerNegotiated: forbidden,
-  acquireRouterLane: forbidden,
-  acquireRouterSavedContinuation: forbidden,
-  retryRouterLane: forbidden,
-  readRouterToolPage: forbidden,
-  admitRouterPreparedMessage: forbidden,
-  admitRouterScheduledStop: forbidden,
-  admitRouterTrayCommand: forbidden,
-  admitRouterTrayPaint: forbidden,
-};
 
-});
-vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
+
 import * as React from 'react';
 import * as WebBrowser from 'expo-web-browser';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.

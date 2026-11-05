@@ -1,4 +1,3 @@
-import { isUsageCellOnlyChange } from './agent-usage-cell';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { isWorkbenchCompanyIndex } from './workbench-company-validation';
 import { useCallback, useEffect } from 'react';
@@ -11,7 +10,6 @@ import { useFreshWorkbenchSurface, useSharedSurface } from './use-shared-surface
 import type { ConnectionDetailView, WorkbenchView } from './workbench';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset';
-import {useRoutedResource} from './router-resource';
 import {useSurfaceFocus} from './use-surface-focus';
 
 export type WorkbenchScope = { workspaceId: string; viewerId: string };
@@ -83,7 +81,6 @@ export function holdSharedWorkbench(address: SurfaceCacheAddress, scope: Workben
   void sharedLiveConnection().register([], (event) => {
     if (!('monolithLive' in event)) return;
     const live = event.monolithLive;
-    if (isUsageCellOnlyChange(live)) return;
     if ((live.type === 'resource-change' &&
         ['workbench', 'install', 'agent'].includes(live.resource)) ||
         (live.type === 'invalidate' && live.roomId === '' && live.reason === 'reconnect')) {
@@ -104,14 +101,13 @@ export function holdSharedWorkbench(address: SurfaceCacheAddress, scope: Workben
 
 export function useSharedWorkbench(scope: WorkbenchScope | null) {
   const focused=useSurfaceFocus();
-  const routed=useRoutedResource('owner-workbench',scope?{family:'owner-workbench'}:undefined,focused&&!!scope,isWorkbenchView);
   const request = useCallback(() => readWorkbenchWithTimeout(scope!),
     [scope?.workspaceId, scope?.viewerId]);
   const resource = useSharedSurface('/workspace/:id/workbench', scope ?? undefined,
-    isWorkbenchView, request, Boolean(scope?.viewerId)&&focused&&routed.mode==='legacy');
+    isWorkbenchView, request, (Boolean(scope?.viewerId)&&focused));
   useFocusEffect(useCallback(() => {
-    if (routed.mode==='legacy'&&scope && resource.address) return holdSharedWorkbench(resource.address, scope);
-  }, [routed.mode,resource.address, scope?.workspaceId, scope?.viewerId]));
+    if ((scope) && resource.address) return holdSharedWorkbench(resource.address, scope);
+  }, [resource.address, scope?.workspaceId, scope?.viewerId]));
   useEffect(() => {
     if (!resource.address) return;
     const key = JSON.stringify(resource.address);
@@ -122,15 +118,14 @@ export function useSharedWorkbench(scope: WorkbenchScope | null) {
   }, [resource.address, resource.setError]);
   // A mutation must not reuse a read that started before its commit.
   const refreshAfterChange = useCallback(async () => {
-    if(routed.mode!=='legacy')return null;
+
     if (!resource.address) return null;
     const next = await readWorkbenchWithTimeout(scope!);
     await mobileSurfaceCache.write(resource.address, next, isWorkbenchView);
     return next;
-  }, [routed.mode,resource.address, scope?.workspaceId, scope?.viewerId]);
-  if(routed.mode==='legacy')return { ...resource, refreshAfterChange };
-  return {...resource,value:routed.value,
-    loading:routed.loading,error:routed.error,refresh:async()=>{routed.retry();return null;},refreshAfterChange};
+  }, [resource.address, scope?.workspaceId, scope?.viewerId]);
+  return { ...resource, refreshAfterChange };
+
 }
 
 const isConnectionDetail = (value: unknown): value is ConnectionDetailView => Boolean(

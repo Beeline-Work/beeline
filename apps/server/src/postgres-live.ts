@@ -155,14 +155,12 @@ export async function notifyAgentConfigChange(
 
 /** Build after module initialization; notifier callers must not initialize dependent schemas. */
 export async function postgresLiveSchema(): Promise<string> {
-  const [{ cornerOwnerSql }, { askSql }, { DURABLE_LIVE_SCHEMA }, { SCHEDULED_WORK_ROW_SOURCE_SCHEMA },
+  const [{ cornerOwnerSql }, { askSql }, { COMMITTED_JOURNAL_SCHEMA },
     { CORNER_ROW_CACHE_COLUMNS, CORNER_ROW_FACT_COLUMNS, CORNER_ROW_MESSAGE_COLUMNS, CORNER_ROW_ROOM_COLUMNS, rowChangedSql }] = await Promise.all([
-      import('./corner-worker.js'), import('./needs-you.js'), import('./durable-live.js'),
-      import('./scheduled-work-row-source.js'), import('./corner-row-projection.js'),
+      import('./corner-worker.js'), import('./needs-you.js'), import('./committed-journal-schema.js'), import('./corner-row-projection.js'),
     ]);
   return `
-${DURABLE_LIVE_SCHEMA}
-${SCHEDULED_WORK_ROW_SOURCE_SCHEMA}
+${COMMITTED_JOURNAL_SCHEMA}
 CREATE OR REPLACE FUNCTION beeline_notify_live() RETURNS trigger AS $$
 DECLARE
   payload jsonb;
@@ -490,63 +488,6 @@ BEGIN
         to_jsonb(NEW)->>'workspace_id',to_jsonb(OLD)->>'workspace_id');
       IF TG_TABLE_NAME='workspaces' THEN workspace := COALESCE(NEW.id,OLD.id)::text; END IF;
     END IF;
-    -- Draft text/presence is an overlay, restored by the existing snapshot.
-    -- Durable Room state, including reactions and deletes, is ID-only here.
-    IF TG_TABLE_NAME <> 'live_outputs' AND (source_room IS NOT NULL OR workspace IS NOT NULL) THEN
-      -- Capture both sides of moves before taking any legacy Room lock.
-      -- OLD retains the Workspace even after a Room has moved or been deleted.
-      previous_room := COALESCE(to_jsonb(OLD)->>'room_id',
-        CASE WHEN TG_TABLE_NAME='rooms' THEN to_jsonb(OLD)->>'id' END,
-        to_jsonb(OLD)->>'corner_id');
-      workspace_scopes := ARRAY[workspace,to_jsonb(NEW)->>'workspace_id',to_jsonb(OLD)->>'workspace_id'];
-      IF previous_room IS NOT NULL AND TG_TABLE_NAME<>'rooms' THEN
-        workspace_scopes := workspace_scopes || ARRAY(SELECT workspace_id::text FROM rooms WHERE id=previous_room::uuid);
-      END IF;
-      FOR workspace_target IN SELECT DISTINCT value FROM unnest(workspace_scopes) value
-        WHERE value IS NOT NULL ORDER BY value LOOP
-        -- The early canonical row source owns these two Workspace appends,
-        -- before any legacy Room lock. Keep this notification's original
-        -- Workspace hints and every Room/parent journal body below unchanged.
-        IF TG_TABLE_NAME NOT IN('agent_schedules','agent_subscriptions') THEN
-        PERFORM beeline_journal('workspace:' || workspace_target,jsonb_build_object(
-          'type','invalidate','roomId','','reason','workspace-replay','sourceRoomId',source_room,
-          'sourceTable',TG_TABLE_NAME,'operation',TG_OP,
-          'messageId',payload->>'messageId','identityId',payload->>'identityId',
-          'agentId',payload->>'agentId','parentRoomId',parent_room,
-          'oldRoomId',previous_room,'newRoomId',source_room,
-          'oldParentRoomId',CASE WHEN TG_TABLE_NAME='rooms' THEN to_jsonb(OLD)->>'parent_id' END,
-          'newParentRoomId',CASE WHEN TG_TABLE_NAME='rooms' THEN to_jsonb(NEW)->>'parent_id' END,
-          'sourceRemoved',TG_TABLE_NAME='rooms' AND TG_OP='UPDATE'
-            AND to_jsonb(OLD)->>'workspace_id'=workspace_target
-            AND to_jsonb(NEW)->>'workspace_id' IS DISTINCT FROM to_jsonb(OLD)->>'workspace_id',
-          'needsYouCandidate',payload->'needsYouCandidate','workflowRunsChanged',payload->'workflowRunsChanged','removed',payload->'removed'));
-        END IF;
-        streams := array_append(streams,'workspace:' || workspace_target);
-      END LOOP;
-      IF source_room IS NOT NULL THEN
-        body := jsonb_strip_nulls(jsonb_build_object(
-          'type','invalidate','roomId',source_room,'reason','postgres:' || TG_TABLE_NAME,
-          'messageId',payload->>'messageId','agentId',payload->>'agentId',
-          'requestId',payload->>'requestId',
-          'trace',jsonb_build_object('id',payload->>'traceId',
-            'databaseAt',payload->'databaseAt','emittedAt',payload->'databaseAt'),
-          'readerId',CASE WHEN TG_TABLE_NAME='room_read_marks' THEN payload->>'identityId' END));
-        PERFORM beeline_journal('room:' || source_room,body);
-        streams := array_append(streams,'room:' || source_room);
-      END IF;
-      IF previous_room IS NOT NULL AND previous_room IS DISTINCT FROM source_room THEN
-        PERFORM beeline_journal('room:' || previous_room,jsonb_build_object(
-          'type','invalidate','roomId',previous_room,'reason','postgres:'||TG_TABLE_NAME,
-          'messageId',payload->>'messageId','operation',TG_OP));
-        streams := array_append(streams,'room:'||previous_room);
-      END IF;
-      IF parent_room IS NOT NULL AND parent_room IS DISTINCT FROM source_room THEN
-        PERFORM beeline_journal('room:' || parent_room,jsonb_build_object(
-          'type','invalidate','roomId',parent_room,'reason','corner-status'));
-        streams := array_append(streams,'room:' || parent_room);
-      END IF;
-    END IF;
-    payload := payload || jsonb_build_object('journalStreams',streams);
     PERFORM pg_notify('${POSTGRES_LIVE_CHANNEL}', payload::text);
   END IF;
   IF TG_TABLE_NAME='agent_commands' THEN

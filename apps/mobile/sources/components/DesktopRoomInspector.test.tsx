@@ -398,7 +398,7 @@ describe('DesktopRoomInspector work pane', () => {
     const reads = (options.client as unknown as { corners: ReturnType<typeof vi.fn> }).corners;
     expect(reads).toHaveBeenCalledTimes(1);
     await act(async () => {
-      acceptCornerStatusFrame({ roomId: 'room', sequence: 1, cornerCount: 2,
+      acceptCornerStatusFrame({ roomId: 'room', cornerCount: 2,
         openCorners: [],
         corners: [{ ...corners[0], corner: { ...corners[0].corner, name: 'Fix fixture again' } },
           corners[1]] });

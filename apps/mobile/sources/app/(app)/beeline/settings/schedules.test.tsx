@@ -1,34 +1,7 @@
-vi.mock('@/buzz/command-owner', () => ({ activeCommandOwner: () => { throw new Error('Legacy Scheduled Work must not use router command authority'); } }));
+vi.mock('@/buzz/command-owner', () => ({ activeCommandOwner: () => undefined, canonical: JSON.stringify }));
 // This suite exercises an installed old-server path, with explicit legacy negotiation.
-vi.mock('@/buzz/router-owner', () => {
-const empty = Object.freeze({state:'ABSENT' as const,value:null,error:null,cut:null});
-const noAction = () => {};
-const forbidden = () => { throw new Error('Legacy fixture cannot spend router authority'); };
-return {
-  routerFamilyMode: () => 'legacy' as const,
-  subscribeRouterOwner: () => noAction,
-  routerLaneSnapshot: () => empty,
-  routerOwnerCapabilities: () => ({families:[],authorityFencesV1:false,scheduledWorkCoverageV1:false}),
-  routerOwnerNavigation: noAction,
-  routerOwnerListPanel: noAction,
-  routerOwnerUsageProfile: noAction,
-  routerOwnerArtifactAction: noAction,
-  routerOwnerArtifactViewport: noAction,
-  routerOwnerDisconnected: noAction,
-  routerOwnerReceive: noAction,
-  routerOwnerNegotiated: forbidden,
-  acquireRouterLane: forbidden,
-  acquireRouterSavedContinuation: forbidden,
-  retryRouterLane: forbidden,
-  readRouterToolPage: forbidden,
-  admitRouterPreparedMessage: forbidden,
-  admitRouterScheduledStop: forbidden,
-  admitRouterTrayCommand: forbidden,
-  admitRouterTrayPaint: forbidden,
-};
 
-});
-vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
+
 vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => undefined) }));
 vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));

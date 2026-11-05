@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import equal from 'fast-deep-equal';
 import type { ChatListView } from '@beeline/buzz-client';
-import { useRouterFamily } from './router-family';
+
 import { acquireChatList, liveChatList } from './server-read-owner';
 import type { ChatListKey } from './server-read-owner';
 export { readChatList, acquireChatList, liveChatList, chatListSnapshot, refreshChatList, resetChatListStoresForTest } from './server-read-owner';
@@ -24,7 +24,6 @@ function sameTranscriptContext(before: ChatListView | null, after: ChatListView 
 export type UseChatListOptions = { readonly visible?: () => boolean; readonly onError?: (reason: unknown) => void;
   readonly transcriptRoomId?: string };
 export function useChatList(key: ChatListKey | null, options: UseChatListOptions = {}): ChatListView | null {
-  const mode = useRouterFamily('room-list');
   const [value, setValue] = useState<ChatListView | null>(null);
   const painted = useRef<ChatListView | null>(null);
   const optionsRef = useRef(options);
@@ -50,8 +49,7 @@ export function useChatList(key: ChatListKey | null, options: UseChatListOptions
   }, [id]);
   // A retained sidebar cannot expose its prior private projection while a
   // replacement connection has not negotiated and reauthorized its family.
-  if (mode === 'pending') return null;
-  if (mode === 'router') return key ? liveChatList(key) : null;
+
   // Other local interactions still read the newest canonical ordering and DTO.
   return options.transcriptRoomId && key ? liveChatList(key) ?? value : value;
 }

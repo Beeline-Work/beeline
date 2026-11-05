@@ -53,17 +53,6 @@ export async function releasePrivateRecoveryReserve(supervisorRoot: string): Pro
   return true;
 }
 
-/** Best-effort release when monitoring observes pressure; writers can race the check. */
-export async function checkPrivateRecoveryReserve(
-  supervisorRoot: string,
-  freeBytes: () => Promise<bigint> = () => availableBytes(supervisorRoot),
-): Promise<boolean> {
-  const reserve = await stat(privateRecoveryReservePath(supervisorRoot)).catch(() => undefined);
-  if (!reserve) return false;
-  if ((await freeBytes()) >= BigInt(reserve.size + 256 * 1024 ** 2)) return false;
-  return releasePrivateRecoveryReserve(supervisorRoot);
-}
-
 /** A best-effort floor blocks new shared writers and releases reserve under pressure. */
 export async function admitSharedAssets(
   supervisorRoot: string,

@@ -3,7 +3,6 @@ import { access, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 export const CORNER_GIT_SYNC_TIMEOUT_MS = 120_000;
-export const CORNER_GIT_SYNC_KILL_GRACE_MS = 1_000;
 
 class CornerGitSyncInterruptedError extends Error {}
 

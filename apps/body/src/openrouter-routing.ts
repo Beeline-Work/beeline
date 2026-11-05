@@ -51,10 +51,8 @@ import { writePrivateFileAtomically } from './atomic-private-file.js';
 export const OPENROUTER_ENDPOINTS_BASE_URL = 'https://openrouter.ai/api/v1/models';
 export const OPENROUTER_COMPLETIONS_URL = 'https://openrouter.ai/api/v1/chat/completions';
 export const OPENROUTER_ROUTING_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-export const OPENROUTER_ROUTING_FETCH_TIMEOUT_MS = 10_000;
 /** Default bound for the direct probe helper; daily qualification checks all eligible providers. */
 export const OPENROUTER_PROBE_MAX_CANDIDATES = 6;
-export const OPENROUTER_PROBE_TIMEOUT_MS = 20_000;
 export const OPENROUTER_UPTIME_BAR = 98;
 export const OPENROUTER_UPTIME_BAR_RELAXED = 95;
 export const OPENROUTER_MIN_PROVIDERS = 2;

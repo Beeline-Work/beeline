@@ -25,8 +25,6 @@ import {
 type TurnKey = { roomId: string; requestId: string; taskId: string; generationId: string };
 type RelayRequest = TurnKey & { method: string; params?: Record<string, unknown> };
 export type SquireTaskCall = TurnKey & { tool: string; args: Record<string, unknown> };
-/** Close an unused conversation connection after this bound. */
-export const SQUIRE_TASK_IDLE_LEASE_MS = 15 * 60_000;
 
 function sessionIds(value: unknown, depth = 0): string[] {
   if (depth > 8 || !value) return [];

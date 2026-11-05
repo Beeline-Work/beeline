@@ -13,13 +13,12 @@ describe('command setup admission and reuse',()=>{
     expect(new Set(values).size).toBe(1);expect(read).toHaveBeenCalledTimes(1);
     await context.read({...input,commandId:'next-command'});expect(read).toHaveBeenCalledTimes(2);
   });
-  it('joins refused captures until a different connection or command and never downgrades selected mode',async()=>{
-    let generation=1,available=false;const read=vi.fn(async(value:CommandActivationInput)=>snapshot(value));
+  it('joins refused captures by command and source and keeps machine transport while disconnected',async()=>{
+    let generation=1,available=true;const read=vi.fn(async(value:CommandActivationInput)=>snapshot(value));
     read.mockRejectedValueOnce(new Error('capture unavailable'));
-    const transport:ActivationTransport={scope:()=>available?{origin:'https://synthetic.invalid',generation,source:{connectionId:'source-'+generation,epoch:generation}}:undefined,machine:()=>false,ready:async()=>{},read};
+    const transport:ActivationTransport={scope:()=>available?{origin:'https://synthetic.invalid',generation,source:{connectionId:'source-'+generation,epoch:generation}}:undefined,machine:()=>true,ready:async()=>{},read};
     const context=new CommandActivationContext(transport,()=>100);
-    expect(await context.read(input)).toBeUndefined();expect(read).not.toHaveBeenCalled();
-    available=true;await expect(context.read(input)).rejects.toThrow('capture unavailable');
+    await expect(context.read(input)).rejects.toThrow('capture unavailable');
     await expect(context.read(input)).rejects.toThrow('capture unavailable');expect(read).toHaveBeenCalledTimes(1);
     generation++;await context.read(input);expect(read).toHaveBeenCalledTimes(2);
     available=false;await expect(context.read(input)).rejects.toThrow('Activation capability unavailable');expect(read).toHaveBeenCalledTimes(2);

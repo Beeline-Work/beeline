@@ -6,7 +6,7 @@
  * actually use — the server's human selection when one exists, otherwise the
  * runtime record's. The phone's MODEL / EFFORT rows read that row verbatim.
  *
- * Bounded by design: one probe per activation, a hard timeout, a persisted
+ * Bounded by design: one probe per activation, a persisted
  * hash so an unchanged catalog is never re-posted, and every failure is one
  * logged line — never a thrown error into the Room loop.
  */
@@ -22,7 +22,6 @@ import type { AgentModelConfigOption } from './model-types.js';
 
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
 
-export const MODEL_CATALOG_PROBE_TIMEOUT_MS = 30_000;
 export const MODEL_CATALOG_HASH_FILE = 'model-catalog.sha256';
 
 type Selection = { model?: string; effort?: string };

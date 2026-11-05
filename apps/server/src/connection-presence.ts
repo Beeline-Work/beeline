@@ -15,7 +15,6 @@ import { notifyAgentConnection } from './postgres-live.js';
 import { renudgeStrandedPendingCommands } from './agent-command.js';
 
 export const DELIVERY_PICKUP_WINDOW_MS = 90_000;
-export const PRESENCE_OBSERVE_DEBOUNCE_MS = 25;
 export const PRESENCE_EVIDENCE_MIN_INTERVAL_MS = 30_000;
 /** How often a server instance renews its lease row. Constant per instance:
  *  no work here scales with agents or with heartbeat pings. */

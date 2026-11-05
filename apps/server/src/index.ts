@@ -640,9 +640,9 @@ async function main() {
   process.once('SIGTERM', () => void stop());
 }
 
-/** `--add-free-agent <workspaceId>`: give an existing Workspace its free agent. */
-async function runAddFreeAgent(workspaceId: string | undefined): Promise<void> {
-  if (!workspaceId) throw new Error('--add-free-agent requires a Workspace id');
+/** Operator creation or release-time warming, using the normal free-agent service. */
+async function runFreeAgentOperation(refresh: boolean, workspaceId: string | undefined): Promise<void> {
+  if (!refresh && !workspaceId) throw new Error('--add-free-agent requires a Workspace id');
   const config = freeAgentConfigFromEnv(process.env, required('PUBLIC_ORIGIN'));
   if (!config) throw new Error('free agents are not configured on this server');
   const database = new PostgresDatabase(required('DATABASE_URL'), 1, { mode: 'long-running' });
@@ -660,7 +660,11 @@ async function runAddFreeAgent(workspaceId: string | undefined): Promise<void> {
         throw new Error('bootstrap is served by the running server');
       },
     );
-    const agentId = await addFreeAgentToWorkspace(database, service, workspaceId);
+    if (refresh) {
+      await service.refreshSleepingMachines();
+      return;
+    }
+    const agentId = await addFreeAgentToWorkspace(database, service, workspaceId!);
     console.log(agentId
       ? `[free-agents] added free agent ${agentId} to Workspace ${workspaceId}`
       : `[free-agents] Workspace ${workspaceId} already has a free agent, or its owner is at the limit`);
@@ -682,11 +686,11 @@ async function runWelcomeRetirementPreflight(): Promise<void> {
 
 const migrationMode =
   process.argv[2] === '--migrate' || process.argv[2] === '--welcome-retirement-preflight' ||
-  process.argv[2] === '--add-free-agent';
+  process.argv[2] === '--add-free-agent' || process.argv[2] === '--refresh-free-agents';
 (process.argv[2] === '--welcome-retirement-preflight'
   ? runWelcomeRetirementPreflight()
-  : process.argv[2] === '--add-free-agent'
-    ? runAddFreeAgent(process.argv[3])
+  : process.argv[2] === '--add-free-agent' || process.argv[2] === '--refresh-free-agents'
+    ? runFreeAgentOperation(process.argv[2] === '--refresh-free-agents', process.argv[3])
   : migrationMode
     ? runReleaseMigration()
     : main()

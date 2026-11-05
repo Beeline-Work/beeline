@@ -100,6 +100,12 @@ class FakeMachines implements FreeAgentMachines {
     this.calls.push(`start ${id}`);
     this.states.set(id, 'started');
   }
+  async refresh(id: string, _image: string, force = false) {
+    if (!force && this.states.get(id) !== 'stopped') return false;
+    await this.stop(id);
+    await this.start(id);
+    return true;
+  }
   async suspend(id: string) {
     this.calls.push(`suspend ${id}`);
     if (this.failSuspend) throw new Error('suspend unavailable');
@@ -894,6 +900,7 @@ describe('free starter agents', () => {
     expect(machines.calls).toEqual([`stop ${agent.fly_machine_id}`]);
     // The normal helper sleep path also releases after the terminal report.
     await db.query(`UPDATE free_agents SET state='running' WHERE agent_id=$1`, [agent.agent_id]);
+    machines.states.set(agent.fly_machine_id!, 'started');
     expect(await freeAgents.requestSleep(agent.agent_id)).toEqual({ sleep: true });
     await vi.waitFor(() => expect(machines.calls).toContain(`suspend ${agent.fly_machine_id}`));
   });
@@ -945,7 +952,7 @@ describe('free starter agents', () => {
     } finally { off(); }
   });
 
-  it('sleeps only when no wake is pending, suspending and falling back to stop', async () => {
+  it('sleeps only when no wake is pending and leaves suspend failures visible without stopping', async () => {
     const { id, roomId } = await createWorkspace();
     await settle();
     const agent = await freeAgentOf(id);
@@ -968,8 +975,48 @@ describe('free starter agents', () => {
     machines.calls.length = 0;
     expect(await freeAgents.requestSleep(agent.agent_id)).toEqual({ sleep: true });
     await new Promise((resolve) => setTimeout(resolve, 400));
-    expect(machines.calls).toEqual(['suspend m1', 'stop m1']);
+    expect(machines.calls).toEqual(['suspend m1']);
     expect(roomId).toBeTruthy();
+  });
+
+  it('refreshes before idle suspension, then wakes the warmed helper', async () => {
+    const { id, roomId } = await createWorkspace();
+    await settle();
+    const agent = await freeAgentOf(id);
+    await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE agent_id=$1`, [agent.agent_id]);
+    await db.query(`UPDATE free_agents SET state='running' WHERE agent_id=$1`, [agent.agent_id]);
+    machines.calls.length = 0;
+    expect(await freeAgents.requestSleep(agent.agent_id, { refresh: true })).toEqual({ sleep: true });
+    await vi.waitFor(() => expect(machines.calls).toEqual(['stop m1', 'start m1']));
+    // The refreshed helper establishes its connection before asking to sleep.
+    await db.query(`UPDATE free_agents SET state='running' WHERE agent_id=$1`, [agent.agent_id]);
+    expect(await freeAgents.requestSleep(agent.agent_id)).toEqual({ sleep: true });
+    await vi.waitFor(() => expect(machines.states.get('m1')).toBe('suspended'));
+    await createAgentCommand(db, { roomId, agentId: agent.agent_id, sourceMessageId: null, reason: 'human_tag' });
+    await freeAgents.wake(agent.agent_id);
+    expect(machines.calls).toEqual(['stop m1', 'start m1', 'suspend m1', 'start m1']);
+  });
+
+  it('image promotion warms existing stopped agents without provisioning new Machines or model work', async () => {
+    const { id } = await createWorkspace();
+    await settle();
+    const agent = await freeAgentOf(id);
+    await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE agent_id=$1`, [agent.agent_id]);
+    await db.query(`UPDATE free_agents SET state='sleeping' WHERE agent_id=$1`, [agent.agent_id]);
+    machines.states.set('m1', 'stopped');
+    machines.calls.length = 0;
+    await freeAgents.refreshSleepingMachines();
+    expect(machines.calls).toEqual(['stop m1', 'start m1']);
+    expect((await db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1 AND state='pending'`, [agent.agent_id])).rowCount).toBe(0);
+    machines.calls.length = 0;
+    await freeAgents.refreshSleepingMachines();
+    expect(machines.calls).toEqual([]);
+    // A service stop is an existing authority fence, distinct from a sleeping
+    // agent whose Fly Machine was stopped by the old refresh path.
+    await db.query(`UPDATE free_agents SET state='stopped' WHERE agent_id=$1`, [agent.agent_id]);
+    machines.states.set('m1', 'stopped');
+    await freeAgents.refreshSleepingMachines();
+    expect(machines.calls).toEqual([]);
   });
 
   it('sweeps: retries provisioning, wakes an overdue wake, reaps an idle Machine, deletes after 30 days and recreates on wake', async () => {

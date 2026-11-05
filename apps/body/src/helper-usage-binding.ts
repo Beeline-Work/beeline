@@ -14,8 +14,12 @@ export function helperUsageBinding(api:DaemonApiClient){
     publicationKey():string{return JSON.stringify(scope()??(selected?'account-unavailable':'legacy'));},
     captureSource():()=>boolean{const captured=JSON.stringify(scope());return()=>JSON.stringify(scope())===captured;},
     async deliver(usage:AgentUsage):Promise<boolean>{
-      const current=scope();if(current)selected=true;
-      else if(selected||api.channel?.usageAccountSelected)throw new Error('Usage account capability unavailable; publication remains parked');
+      let current=scope();
+      if(!current&&(selected||api.channel?.usageAccountSelected)){
+        await api.waitForConnection();current=scope();
+        if(!current)throw new Error('Usage account capability unavailable');
+      }
+      if(current)selected=true;
       return publisher.deliver(api.agentId,usage);
     },
   };
@@ -25,10 +29,13 @@ const selectedWriters=new WeakSet<DaemonApiClient>();
 const contextWrites=new Map<string,{actor:string;sequence:number;digest?:string;pending?:Promise<unknown>}>();
 /** Existing context/key-spend calls share one ordered source per authenticated
  * agent actor. Repeated context values join; uncertainty never starts retries. */
-export function postChangedAgentUsage(api:DaemonApiClient,agentId:string,usage:AgentUsage):Promise<unknown>{
-  const scope=api.channel?.usageAccountScope?.();
+export async function postChangedAgentUsage(api:DaemonApiClient,agentId:string,usage:AgentUsage):Promise<unknown>{
+  let scope=api.channel?.usageAccountScope?.();
+  if(!scope&&(selectedWriters.has(api)||api.channel?.usageAccountSelected)){
+    await api.waitForConnection();scope=api.channel?.usageAccountScope?.();
+    if(!scope)throw new Error('Usage source unavailable');
+  }
   if(!scope){
-    if(selectedWriters.has(api)||api.channel?.usageAccountSelected)return Promise.reject(new Error('Usage source unavailable; write remains parked'));
     return api.execute('postAgentUsage',{agentId,usage});
   }
   selectedWriters.add(api);

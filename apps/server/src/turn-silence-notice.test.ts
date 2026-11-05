@@ -149,7 +149,8 @@ describe('first-silence notice', () => {
 
   it('harness-node-missing-path: writes an actionable Room row from a failed daemon receipt', async () => {
     const requestId = 'f'.repeat(64);
-    await ask(database, requestId);
+    const command=await ask(database, requestId);
+    await database.query('UPDATE agent_commands SET hiccup_attempts=2 WHERE id=$1',[command.id]);
     await new DaemonService(database, new LiveHub()).execute('postAgentTurnReceipt', {
       roomId: ROOM,
       requestId,
@@ -164,7 +165,7 @@ describe('first-silence notice', () => {
     expect(row?.text).not.toContain('runtime_exited');
   });
 
-  it('reopens a hiccup command and phrases the restart remedy', async () => {
+  it('reopens a hiccup command without a failure notice', async () => {
     const requestId = '1'.repeat(64);
     const command = await ask(database, requestId);
     const result = await new DaemonService(database, new LiveHub()).execute(
@@ -180,11 +181,7 @@ describe('first-silence notice', () => {
       AGENT,
     );
     expect(result).toMatchObject({ hiccupRestart: true, hiccupAttempt: 1 });
-    expect(await failureLine(database, requestId)).toEqual({
-      text: "@candy could not answer · its provider is failing; switch its model in the agent's settings. provider error 429 concurrency_limit. Resending your message.",
-      silence: 'hiccup',
-      state: 'failed',
-    });
+    expect(await failureLine(database, requestId)).toBeUndefined();
     expect(await commandState(database, command.id)).toEqual({
       state: 'pending',
       hiccup_attempts: 1,
@@ -232,11 +229,7 @@ describe('first-silence notice', () => {
     const result = await daemon.execute('postAgentTurnReceipt', receipt, AGENT);
     expect(result).toMatchObject({ updateRequeued: true });
     expect(result.hiccupRestart).toBeUndefined();
-    expect(await failureLine(database, requestId)).toEqual({
-      text: '@candy was interrupted by an update · the request is queued to resume.',
-      silence: 'update-interrupted',
-      state: 'failed',
-    });
+    expect(await failureLine(database, requestId)).toBeUndefined();
     expect(await commandState(database, command.id)).toEqual({
       state: 'pending',
       hiccup_attempts: 0,
@@ -252,12 +245,12 @@ describe('first-silence notice', () => {
           [ROOM, requestId],
         )
       ).rows,
-    ).toHaveLength(1);
+    ).toHaveLength(0);
     await claimAgentCommand(database, ROOM, AGENT, command.id, 'g2');
     expect((await commandState(database, command.id))?.state).toBe('claimed');
   });
 
-  it('restates a presence failure in place when the updated helper replays a generation-free receipt', async () => {
+  it('silently preserves a requeued command when the updated helper replays a generation-free receipt', async () => {
     const requestId = 'f'.repeat(64);
     const command = await ask(database, requestId);
     const live = new LiveHub();
@@ -268,19 +261,7 @@ describe('first-silence notice', () => {
       generationId: 'g1',
       reason: 'the turn stalled',
     });
-    const original = (
-      await database.query<{ id: string }>(
-        `SELECT id FROM messages WHERE room_id=$1 AND card_type='turn-failed'
-         AND card->>'requestId'=$2`,
-        [ROOM, requestId],
-      )
-    ).rows[0]!;
-    // An install can exceed the usual recent-line coalescing window. The
-    // journaled receipt still names the same failed turn, so it must update
-    // that line rather than post another one.
-    await database.query(`UPDATE messages SET created_at=now()-interval '11 minutes' WHERE id=$1`, [
-      original.id,
-    ]);
+    expect(await failureLine(database, requestId)).toBeUndefined();
     expect(await commandState(database, command.id)).toMatchObject({
       state: 'pending',
       hiccup_attempts: 1,
@@ -298,11 +279,7 @@ describe('first-silence notice', () => {
     expect(await daemon.execute('postAgentTurnReceipt', receipt, AGENT)).toMatchObject({
       updateRequeued: true,
     });
-    expect(await failureLine(database, requestId)).toEqual({
-      text: '@candy was interrupted by an update · the request is queued to resume.',
-      silence: 'update-interrupted',
-      state: 'failed',
-    });
+    expect(await failureLine(database, requestId)).toBeUndefined();
     expect(await commandState(database, command.id)).toMatchObject({
       state: 'pending',
       hiccup_attempts: 1,
@@ -319,7 +296,7 @@ describe('first-silence notice', () => {
           [ROOM, requestId],
         )
       ).rows,
-    ).toEqual([{ id: original.id }]);
+    ).toEqual([]);
   });
 
   it('maps each standing condition to its approved line and does not restart', async () => {
@@ -674,7 +651,7 @@ describe('first-silence notice', () => {
     });
   });
 
-  it('keeps the silence line after a later successful answer', async () => {
+  it.each(['Activation result unavailable', 'the model ended its turn with no text (stop reason end_turn)'])('automatically resends %s with one answer and no failure notice', async reason => {
     const requestId = '8'.repeat(64);
     const command = await ask(database, requestId);
     const daemon = new DaemonService(database, new LiveHub());
@@ -685,7 +662,7 @@ describe('first-silence notice', () => {
         requestId,
         generationId: 'g1',
         status: 'failed',
-        reason: 'the model ended its turn with no text (stop reason end_turn)',
+        reason,
         reasonKind: 'hiccup',
       },
       AGENT,
@@ -696,10 +673,9 @@ describe('first-silence notice', () => {
       { roomId: ROOM, requestId, generationId: 'g2', text: 'Here is the answer.' },
       AGENT,
     );
-    expect(await failureLine(database, requestId)).toMatchObject({
-      text: '@candy could not answer · the model ended its turn with no text (stop reason end_turn). Resending your message.',
-      state: 'failed',
-    });
+    expect(await failureLine(database, requestId)).toBeUndefined();
+    expect((await database.query(`SELECT id FROM messages WHERE room_id=$1 AND author_id=$2
+      AND request_id=$3 AND presentation='message'`, [ROOM, AGENT, requestId])).rows).toHaveLength(1);
   });
 
   it('records a deliberate no-reply completion without calling it a failure', async () => {
@@ -894,13 +870,9 @@ describe('90-second first silence from presence', () => {
     });
     await vi.advanceTimersByTimeAsync(100);
     await vi.waitFor(async () => {
-      expect(await failureLine(database, requestId)).toBeTruthy();
+      expect(await commandState(database, command.id)).toMatchObject({state: 'pending'});
     });
-    expect(await failureLine(database, requestId)).toEqual({
-      text: expect.stringMatching(/no turn receipt for \d+ seconds; the helper disconnected\. Resending your message\./),
-      silence: 'hiccup',
-      state: 'failed',
-    });
+    expect(await failureLine(database, requestId)).toBeUndefined();
     expect(await commandState(database, command.id)).toEqual({
       state: 'pending',
       hiccup_attempts: 1,

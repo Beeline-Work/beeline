@@ -57,7 +57,7 @@ import { HarnessQuotaReader as m19_HarnessQuotaReader } from "./harness-quota.js
 
 import { QUOTA_AXI_CLAUDE_REPORT as m19_QUOTA_AXI_CLAUDE_REPORT } from "../../../tests/helpers/helper.js";
 
-import { helperUsageBinding as m19_helperUsageBinding } from "./helper-usage-binding.js";
+import { postChangedAgentUsage, helperUsageBinding as m19_helperUsageBinding } from "./helper-usage-binding.js";
 import { describe as mergedDescribe19 } from 'vitest';
 mergedDescribe19("helper-usage.integration.test.ts", () => {
 
@@ -85,11 +85,16 @@ m19_describe('real quota reader through negotiated daemon publication adapter',(
   m19_it('preserves initial legacy mode and never downgrades a selected account publication after capability loss',async()=>{
     const scope={origin:`https://${m19_randomUUID()}.invalid`,ownerId:'owner',generation:1,source:{connectionId:'fixture-source',epoch:1}};let capable=false;
     const execute=m19_vi.fn(async()=>({ownerId:'owner',accountId:'1',revision:'c'.repeat(64)}));
-    const api={agentId:'agent',channel:{usageAccountScope:()=>capable?scope:undefined},execute} as unknown as m19_DaemonApiClient;
+    let reconnect!:()=>void;
+    const ready=new Promise<void>(resolve=>{reconnect=resolve;});
+    const api={agentId:'agent',channel:{usageAccountScope:()=>capable?scope:undefined},waitForConnection:()=>ready,execute} as unknown as m19_DaemonApiClient;
     const binding=m19_helperUsageBinding(api),usage={updatedAt:100,windows:[],account:{provider:'claude',key:'id:'+'e'.repeat(32)}};
     m19_expect(await binding.deliver(usage)).toBe(false);m19_expect(execute).not.toHaveBeenCalled();
     capable=true;m19_expect(await binding.deliver(usage)).toBe(true);m19_expect(execute).toHaveBeenCalledTimes(1);
-    capable=false;await m19_expect(binding.deliver(usage)).rejects.toThrow('unavailable');m19_expect(execute).toHaveBeenCalledTimes(1);
+    capable=false;const pending=binding.deliver(usage);
+    await Promise.resolve();m19_expect(execute).toHaveBeenCalledTimes(1);
+    capable=true;scope.generation++;scope.source.epoch++;reconnect();
+    m19_expect(await pending).toBe(true);m19_expect(execute).toHaveBeenCalledTimes(2);
   });
   m19_it.each(['owner','connection'] as const)('never republishes a late provider read across a changed %s source',async changed=>{
     let ownerId='old-owner',generation=1,finish!:(report:string)=>void;
@@ -125,4 +130,20 @@ m19_describe('real quota reader through negotiated daemon publication adapter',(
   });
 
 });
+});
+
+it('binds an unsent usage write only after the selected socket registers again', async () => {
+  let reconnect!:()=>void, open=false;
+  const ready=new Promise<void>(resolve=>{reconnect=resolve;});
+  const scope={origin:'https://usage-reconnect.invalid',ownerId:'owner',generation:2,source:{connectionId:'new-source',epoch:2}};
+  const execute=m19_vi.fn(async()=>({}));
+  const api={agentId:'agent',channel:{usageAccountSelected:true,usageAccountScope:()=>open?scope:undefined},
+    waitForConnection:()=>ready,execute} as unknown as m19_DaemonApiClient;
+  const usage={updatedAt:100,windows:[]};
+  const pending=postChangedAgentUsage(api,'agent',usage);
+  await Promise.resolve();expect(execute).not.toHaveBeenCalled();
+  open=true;reconnect();await pending;
+  expect(execute).toHaveBeenCalledTimes(1);
+  expect(execute).toHaveBeenCalledWith('postAgentUsage',{agentId:'agent',usage,
+    usageSource:{v:1,ownerId:'owner',source:scope.source,revision:1}});
 });

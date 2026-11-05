@@ -46,6 +46,6 @@ export function parseReviewSecret(value: string | string[] | undefined): string 
 }
 
 /** True when this URL is a review link, so a cold start routes to it instead of onboarding. */
-export function isReviewLink(value: string | null | undefined): boolean {
+function isReviewLink(value: string | null | undefined): boolean {
   return parseReviewSecret(value ?? undefined) !== null;
 }

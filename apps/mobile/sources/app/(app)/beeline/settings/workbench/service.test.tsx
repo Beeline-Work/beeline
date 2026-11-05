@@ -1,5 +1,32 @@
 // This suite exercises an installed old-server path, with explicit legacy negotiation.
-vi.mock('@/buzz/router-owner', async () => (await import('@/test-fixtures/legacy-router-owner')).legacyRouterOwner);
+vi.mock('@/buzz/router-owner', () => {
+const empty = Object.freeze({state:'ABSENT' as const,value:null,error:null,cut:null});
+const noAction = () => {};
+const forbidden = () => { throw new Error('Legacy fixture cannot spend router authority'); };
+return {
+  routerFamilyMode: () => 'legacy' as const,
+  subscribeRouterOwner: () => noAction,
+  routerLaneSnapshot: () => empty,
+  routerOwnerCapabilities: () => ({families:[],authorityFencesV1:false,scheduledWorkCoverageV1:false}),
+  routerOwnerNavigation: noAction,
+  routerOwnerListPanel: noAction,
+  routerOwnerUsageProfile: noAction,
+  routerOwnerArtifactAction: noAction,
+  routerOwnerArtifactViewport: noAction,
+  routerOwnerDisconnected: noAction,
+  routerOwnerReceive: noAction,
+  routerOwnerNegotiated: forbidden,
+  acquireRouterLane: forbidden,
+  acquireRouterSavedContinuation: forbidden,
+  retryRouterLane: forbidden,
+  readRouterToolPage: forbidden,
+  admitRouterPreparedMessage: forbidden,
+  admitRouterScheduledStop: forbidden,
+  admitRouterTrayCommand: forbidden,
+  admitRouterTrayPaint: forbidden,
+};
+
+});
 vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
 vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
 import * as React from 'react';
@@ -10,8 +37,40 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
   getEffectiveRelayUrl: async () => 'https://relay.test',
   loadBuzzIdentity: async () => ({ publicKey: 'human-dani' }),
 }));
-vi.mock('@/buzz/surface-storage', async () =>
-  (await import('@/test/mock-surface-storage')).mockSurfaceStorage());
+vi.mock('@/buzz/surface-storage', () => {
+  type Address = { endpoint: string; params?: Record<string, unknown> };
+  const values = new Map<string, unknown>();
+  const listeners = new Map<string, Set<() => void>>();
+  const key = (address: Address) => `${address.endpoint}:${JSON.stringify(address.params ?? {})}`;
+  const announce = (address: Address) => listeners.get(key(address))?.forEach((listener) => listener());
+  return {
+    surfaceAddress: (_relay: string, _viewer: string, endpoint: string,
+      params?: Record<string, unknown>) => ({ endpoint, params }),
+    clearMobileSurfaceStorage: () => {
+      values.clear(); listeners.forEach((set) => set.forEach((listener) => listener()));
+    },
+    mobileSurfaceCache: {
+      clear: () => { values.clear(); listeners.forEach((set) => set.forEach((listener) => listener())); },
+      peek: (address: Address) => values.get(key(address)) ?? null,
+      read: async (address: Address) => values.get(key(address)) ?? null,
+      write: async (address: Address, value: unknown) => {
+        values.set(key(address), value); announce(address);
+      },
+      publish: (address: Address, value: unknown) => {
+        values.set(key(address), value); announce(address); return value;
+      },
+      remove: async (address: Address) => { values.delete(key(address)); announce(address); },
+      fetch: async (address: Address, _guard: unknown, request: () => Promise<unknown>) => {
+        const value = await request(); values.set(key(address), value); announce(address); return value;
+      },
+      subscribe: (address: Address, listener: () => void) => {
+        const set = listeners.get(key(address)) ?? new Set<() => void>();
+        set.add(listener); listeners.set(key(address), set);
+        return () => { set.delete(listener); };
+      },
+    },
+  };
+});
 vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({
   register: async () => () => undefined,
 }) }));
@@ -19,7 +78,25 @@ vi.mock('@/buzz/app-sign-in', () => ({ openAppSignIn: vi.fn(async () => undefine
 import { mobileSurfaceCache } from '@/buzz/surface-storage';
 import { MockWorkbenchSource } from '@/buzz/workbench-source.mock';
 import { setWorkbenchSource } from '@/buzz/workbench-source';
-import { companyWorkbench, companyRow, squireRow } from '@/test/company-workbench';
+/** Synthetic server answers. Tests must never recreate company grouping on the phone. */
+function companyRow(id: string, name = id, section: import('@beeline/api-contract/workbench').WorkbenchCompany['section'] = 'keys'): import('@beeline/api-contract/workbench').WorkbenchCompany {
+  return { id, name, domain: `${id}.example`, kind: 'company', section, logo: { kind: 'image', uri: `https://server.test/v1/company-logos/${id}`, plate: 'dark' },
+    subtitle: '1 key', items: [{ id: `${id}-key`, title: 'Production API', subtitle: `${id}.example`, kind: 'key', target: { kind: 'key', connectionId: `${id}-key` } }], machines: [], alsoAvailable: [] };
+}
+function companyOption(id: string, name: string, flow: import('@beeline/api-contract/workbench').CompanySuggestion['flow'] = 'app'): import('@beeline/api-contract/workbench').CompanySuggestion {
+  return { appKey: id, appName: name, name, purpose: `Connect to ${name}`, providerId: id, providerName: name,
+    domain: `${id}.example`, logo: { kind: 'image', uri: `https://server.test/v1/company-logos/${id}`, plate: 'dark' }, flow };
+}
+function companyWorkbench(rows: readonly import('@beeline/api-contract/workbench').WorkbenchCompany[] = [companyRow('vercel', 'Vercel')],
+  suggestions: readonly import('@beeline/api-contract/workbench').CompanySuggestion[] = []): import('@/buzz/workbench').WorkbenchView {
+  return { helpers: [], connectors: [], connections: [], apps: [], companies: { version: 1, rows, suggestions,
+    hasConnections: rows.some(r => r.items.length || r.machines.some(m => m.status !== 'not-added')),
+    summary: { value: `${rows.length} connections` } } };
+}
+function squireRow(status: 'connected' | 'not-added' = 'connected'): import('@beeline/api-contract/workbench').WorkbenchCompany {
+  return { ...companyRow('squire-signin', 'Trusty Squire', 'signin'), kind: 'sign-in-service', subtitle: '1 computer',
+    status: status === 'connected' ? 'Ready' : 'Not added', items: [], machines: [{ id: 'machine-one', name: 'Laptop', online: true, status }] };
+}
 import ConnectorServiceScreen from './service';
 
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn() }));

@@ -216,3 +216,56 @@ it('allows npm ci in a fresh private review tree while protecting mounted trees'
     expect(result.status, result.stderr).toBe(0);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+import { it as m17_it, expect as m17_expect } from 'vitest';
+
+import { mkdtemp as m17_mkdtemp, mkdir as m17_mkdir, writeFile as m17_writeFile, rm as m17_rm, symlink as m17_symlink } from 'node:fs/promises';
+
+import { tmpdir as m17_tmpdir } from 'node:os';
+
+import { resolve as m17_resolve } from 'node:path';
+
+import { spawnSync as m17_spawnSync } from 'node:child_process';
+
+import { extraDependencyRoots as m17_extraDependencyRoots, dependencyFingerprint as m17_dependencyFingerprint } from "./dependency-generation.js";
+import { describe as mergedDescribe17 } from 'vitest';
+mergedDescribe17("extra-dependencies.test.ts", () => {
+
+
+m17_it('registers disposable copies without installing and replaces the session fingerprint', async () => {
+  const root = await m17_mkdtemp(m17_resolve(m17_tmpdir(), 'extra-request-'));
+  const script = m17_resolve('../../scripts/prepare-corner.mjs');
+  try {
+    const corner = m17_resolve(root, 'corner');
+    const home = m17_resolve(root, 'home');
+    await m17_mkdir(corner); await m17_mkdir(home);
+    const before = await m17_dependencyFingerprint(corner, home);
+    for (const extra of [m17_resolve(corner, '.verification'), m17_resolve(home, 'temp-rig')]) {
+      await m17_mkdir(extra);
+      // No package.json: an accidental npm ci would fail.
+      const result = m17_spawnSync(process.execPath, [script, '--extra', extra], { cwd: corner, encoding: 'utf8' });
+      m17_expect(result.status, result.stderr).toBe(0);
+    }
+    m17_expect(await m17_extraDependencyRoots(corner, home)).toHaveLength(2);
+    m17_expect(await m17_dependencyFingerprint(corner, home)).not.toBe(before);
+    await m17_rm(m17_resolve(home, 'temp-rig'), { recursive: true });
+    m17_expect(await m17_extraDependencyRoots(corner, home)).toEqual([m17_resolve(corner, '.verification')]);
+    const outside = m17_resolve(root, 'outside'); await m17_mkdir(outside);
+    await m17_symlink(outside, m17_resolve(home, 'temp-rig'));
+    await m17_expect(m17_extraDependencyRoots(corner, home)).rejects.toThrow('inside this corner');
+  } finally { await m17_rm(root, { recursive: true, force: true }); }
+});
+
+
+m17_it('rejects redirected registries and oversized requests', async () => {
+  const root = await m17_mkdtemp(m17_resolve(m17_tmpdir(), 'extra-invalid-'));
+  try {
+    const registry = m17_resolve(root, '.beeline-extra-dependencies');
+    await m17_symlink(m17_tmpdir(), registry);
+    await m17_expect(m17_extraDependencyRoots(root)).rejects.toThrow('Invalid extra dependency registry');
+    await m17_rm(registry); await m17_mkdir(registry);
+    await m17_writeFile(m17_resolve(registry, 'a'.repeat(64)), 'x'.repeat(8193));
+    await m17_expect(m17_extraDependencyRoots(root)).rejects.toThrow('Invalid extra dependency request');
+  } finally { await m17_rm(root, { recursive: true, force: true }); }
+});
+});

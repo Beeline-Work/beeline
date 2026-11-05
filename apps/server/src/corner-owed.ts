@@ -1,6 +1,6 @@
 import { cornerImplementerSql, cornerOwnerSql } from './corner-worker.js';
 import { cornerCommissionerSql } from './corner-opening.js';
-import { cornerWaitingReportSql, humanReportCornerSql } from './corner-waiting-report.js';
+import { cornerWaitingReportSql, humanReportCornerSql, cornerHumanReportsSql } from './corner-waiting-report.js';
 import { CHOICE_CARD_TYPE } from '@beeline/api-contract/phone';
 import {
   CORNER_AGENT_UNREACHABLE_CARD_TYPE,
@@ -228,10 +228,14 @@ export function cornerOwedAnswerTimesSql(corner: string): string {
     FROM (${cornerOwedRowsSql(`owed_corner.id=${corner}`, false, corner, undefined, true)})
       owed(corner_id,person_id,message_id,created_at,expires_at,answerable,blocking)
     JOIN messages item ON item.id=owed.message_id
-    JOIN messages answer ON answer.author_id=owed.person_id
-      AND answer.room_id IN (owed.corner_id,item.room_id)
-      AND answer.presentation='message' AND answer.deleted_at IS NULL
-      AND answer.created_at>owed.created_at
+    CROSS JOIN LATERAL (SELECT DISTINCT unnest(ARRAY[owed.corner_id,item.room_id]) room_id) scope
+    CROSS JOIN LATERAL (
+      SELECT answer.created_at FROM messages answer
+      WHERE answer.author_id=owed.person_id AND answer.room_id=scope.room_id
+        AND answer.presentation='message' AND answer.deleted_at IS NULL
+        AND answer.created_at>owed.created_at
+      ORDER BY answer.created_at LIMIT 1
+    ) answer
     WHERE owed.answerable
     GROUP BY owed.message_id,owed.person_id`;
 }
@@ -253,8 +257,9 @@ function reportAnswerSql(report: string, answer: string, order = false): string 
 /** Answered worker reports, read from the command/message log, date their resolution. */
 export function cornerReportAnswerTimesSql(corner: string): string {
   return `WITH report_corner AS MATERIALIZED (
-      SELECT c.id,${cornerImplementerSql('f', 'c')} worker_id FROM rooms c JOIN corner_facts f ON f.corner_id=c.id
-      WHERE c.id=${corner}
+      SELECT history_corner.id,${cornerImplementerSql('history_fact', 'history_corner')} worker_id
+      FROM rooms history_corner JOIN corner_facts history_fact ON history_fact.corner_id=history_corner.id
+      WHERE history_corner.id=${corner} AND history_corner.archived_at IS NULL
     ), reports AS (
     SELECT scope.id corner_id,report.room_id return_room_id,report.created_at,report.agent_id commander_id
     FROM report_corner scope JOIN agent_commands report
@@ -264,12 +269,15 @@ export function cornerReportAnswerTimesSql(corner: string): string {
       AND report.private_payload->>'waitingAnswered'='true'
     UNION ALL
     SELECT scope.id,item.room_id,item.created_at,item.card->>'reportToId'
-    FROM report_corner scope JOIN messages item ON item.author_id=scope.worker_id
-    WHERE item.card->>'reportToId' IS NOT NULL
-      AND ${humanReportCornerSql('item')}=scope.id::text
-      AND item.presentation='message' AND item.system_event IS NULL AND item.deleted_at IS NULL
-      AND item.text ~ '^(needs-decision|blocked):'
-      AND item.card->>'waitingAnswered'='true'
+    FROM report_corner scope CROSS JOIN LATERAL (
+      SELECT item.* FROM (${cornerHumanReportsSql('scope.id', 'scope.worker_id')}) item
+      WHERE item.author_id=scope.worker_id AND item.card->>'reportToId' IS NOT NULL
+        AND ${humanReportCornerSql('item')}=scope.id::text
+        AND item.presentation='message' AND item.system_event IS NULL AND item.deleted_at IS NULL
+        AND item.text ~ '^(needs-decision|blocked):'
+        AND item.card->>'waitingAnswered'='true'
+      OFFSET 0
+    ) item
   ) SELECT resolution.ended_at FROM reports report
     CROSS JOIN LATERAL (SELECT min(answered.at) ended_at FROM (
       SELECT answer.created_at at FROM messages answer WHERE ${reportAnswerSql('report', 'answer')}
@@ -332,7 +340,7 @@ function cornerMessageCandidatesSql(corner?: string, parent?: string): string {
  * Expired rows stay; readers skip them by `expires_at`.
  */
 export function cornerOwedSchemaSql(): string {
-  const reportScope = `report_corner.parent_id IS NOT NULL
+  const reportScope = `report_corner.parent_id IS NOT NULL AND report_corner.archived_at IS NULL
       AND (report_corner.id=scope OR (scope IS NULL AND report_corner.id::text IN (
         SELECT answer_room::text
         UNION SELECT report.private_payload->>'fromRoomId' FROM agent_commands report
@@ -360,14 +368,15 @@ BEGIN
   END IF;
   -- Most Room inserts cannot answer a corner report. Resolve the small indexed
   -- candidate set before planning/evaluating the full waiting-report projection.
-  -- Keep the identical scope predicate below so this shortcut cannot broaden or
-  -- narrow which existing reports are answered.
+  -- Materialize that same live candidate set below before deriving waits;
+  -- archived report history cannot affect an open corner.
   IF NOT EXISTS(SELECT 1 FROM rooms report_corner WHERE ${reportScope}) THEN RETURN NULL; END IF;
-  WITH answered AS MATERIALIZED (
+  WITH report_corners AS MATERIALIZED (
+    SELECT * FROM rooms report_corner WHERE ${reportScope}
+  ), answered AS MATERIALIZED (
     SELECT DISTINCT waiting.report_id,waiting.message_id,waiting.card_id
-    FROM rooms report_corner CROSS JOIN LATERAL (${cornerWaitingReportSql('report_corner')}) waiting
-    WHERE ${reportScope}
-      AND (TG_TABLE_NAME='corner_github_cache'
+    FROM report_corners report_corner CROSS JOIN LATERAL (${cornerWaitingReportSql('report_corner')}) waiting
+    WHERE (TG_TABLE_NAME='corner_github_cache'
         OR (TG_TABLE_NAME='agent_commands' AND waiting.commander_id=answer_author)
         OR (TG_TABLE_NAME='messages' AND waiting.created_at<answer_at
           AND (waiting.corner_id=answer_room OR waiting.return_room_id=answer_room)

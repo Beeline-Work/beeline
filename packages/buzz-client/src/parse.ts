@@ -25,7 +25,7 @@ export function parseMembersEvent(event: NostrEvent): ChannelMember[] {
 }
 
 /** Sort events oldest-first by created_at, then id for stability. */
-export function sortEventsChronological(events: NostrEvent[]): NostrEvent[] {
+function sortEventsChronological(events: NostrEvent[]): NostrEvent[] {
   return [...events].sort((a, b) => {
     if (a.created_at !== b.created_at) return a.created_at - b.created_at;
     return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;

@@ -29,7 +29,7 @@ export function markRoomUnmigratable(channelId: string, pubkey: string, atMs = D
 }
 
 /** Seed from durable storage at process start (idempotent; keeps earliest stamp). */
-export function seedUnmigratableRooms(entries: readonly UnmigratableRoom[]): void {
+function seedUnmigratableRooms(entries: readonly UnmigratableRoom[]): void {
   for (const entry of entries) {
     if (!entry?.channelId || !entry?.pubkey) continue;
     markRoomUnmigratable(entry.channelId, entry.pubkey);
@@ -37,7 +37,7 @@ export function seedUnmigratableRooms(entries: readonly UnmigratableRoom[]): voi
 }
 
 /** Current verdicts, for embedders to persist durably. */
-export function unmigratableRooms(): UnmigratableRoom[] {
+function unmigratableRooms(): UnmigratableRoom[] {
   return [...verdicts.keys()].map((key) => {
     const separator = key.indexOf(':');
     return { channelId: key.slice(0, separator), pubkey: key.slice(separator + 1) };

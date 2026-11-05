@@ -1,10 +1,12 @@
 // Runs on a hosted runner so an offline release runner cannot hide a failed preflight.
+/** @public Release workflows invoke these through github-script. */
 exports.runnerMatrix = (inputs = {}) => [
   { label: 'production', runner: '["self-hosted", "beeline-prod-host"]' },
   { label: 'android', runner: '["self-hosted", "beeline-android"]' },
   { label: 'ios', runner: '["self-hosted", "macOS", "X64", "ios-builder"]' },
 ].filter(({ label }) => inputs[label] !== false && inputs[label] !== 'false');
 
+/** @public Release workflows invoke these through github-script. */
 exports.validateRunnerResults = async ({ github, context, core }) => {
   // The workflow dependency is the completion signal. Inspect its result once.
   const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
@@ -19,6 +21,7 @@ exports.validateRunnerResults = async ({ github, context, core }) => {
   core.info('Selected release runner labels executed node -v successfully.');
 };
 
+/** @public Release workflows invoke these through github-script. */
 exports.triageFailure = async ({ github, context, run = context.payload.workflow_run }) => {
   if (!['failure', 'cancelled'].includes(run.conclusion)) return;
   if (!['.github/workflows/unified-release.yml', '.github/workflows/release-preflight.yml'].includes(run.path)) return;
@@ -55,6 +58,7 @@ exports.triageFailure = async ({ github, context, run = context.payload.workflow
   return created;
 };
 
+/** @public Release workflows invoke these through github-script. */
 exports.recoverFailures = async ({ github, context, run = context.payload.workflow_run }) => {
   if (run.conclusion !== 'success') return;
   const preflight = run.path === '.github/workflows/release-preflight.yml';

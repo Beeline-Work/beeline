@@ -235,17 +235,17 @@ export function selectComposerAckPresentation(
  * Motion means one thing product-wide: an agent is working in that corner.
  * Waiting and review show no breath.
  */
-export function isPinnedCornerLive(status: CornerState): boolean {
+function isPinnedCornerLive(status: CornerState): boolean {
   return status === 'working';
 }
 
 /** A corner has an approvable change waiting. */
-export function isPinnedCornerReadyForReview(status: CornerState): boolean {
+function isPinnedCornerReadyForReview(status: CornerState): boolean {
   return status === 'review';
 }
 
 /** Human-facing branch label for a full Git target ref. */
-export function humanBranchName(ref: string | undefined): string | undefined {
+function humanBranchName(ref: string | undefined): string | undefined {
   const value = ref?.trim();
   if (!value) return undefined;
   return value.replace(/^refs\/heads\//, '');

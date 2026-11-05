@@ -2,15 +2,19 @@
 import { TAG_AGENT_PRESENCE } from './kinds.js';
 import { AGENT_REACHABLE_HORIZON_MS, isAgentReachable } from '@beeline/api-contract/agent-access';
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export const AGENT_PRESENCE_STALE_MS = AGENT_REACHABLE_HORIZON_MS;
 
 /** An explicit offline fact ages into dormancy after a day. */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export const AGENT_PRESENCE_DORMANT_MS = 24 * 60 * 60_000;
 
 export type AgentPresenceStatus = 'online' | 'offline';
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export type AgentPresenceTier = 'online' | 'offline' | 'dormant';
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export type AgentPresence = {
   agentPubkey: string;
   status: AgentPresenceStatus;
@@ -35,6 +39,7 @@ export function isAgentPresenceOnline(
   );
 }
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function resolveAgentPresenceTier(
   presence: AgentPresence | undefined,
   now = Date.now(),
@@ -99,6 +104,7 @@ export function resolveAgentRosterStanding(params: {
 }
 
 /** Keep the newest signal; an explicit offline marker wins a same-second tie. */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function newerAgentPresence(
   current: AgentPresence | undefined,
   incoming: AgentPresence,

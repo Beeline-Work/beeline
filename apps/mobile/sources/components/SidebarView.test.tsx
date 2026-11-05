@@ -3,13 +3,17 @@ import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 
 // These fixtures exercise the negotiated legacy compatibility path. The actual
 // router owner/negotiation path has independent integration coverage.
 
 
 
-const workspaceLive = vi.hoisted(() => ({ listeners: new Set<() => void>(), deleted: false, empty: false }));
+const workspaceLive = vi.hoisted(() => ({ listeners: new Set<(event: MonolithSurfaceEvent) => void>(), deleted: false, empty: false }));
+const workspaceChange: MonolithSurfaceEvent = {
+  monolithLive: { type: 'invalidate', roomId: '', reason: 'postgres:memberships' },
+};
 const routerReplace = vi.hoisted(() => vi.fn());
 const routerPush = vi.hoisted(() => vi.fn());
 const routerNavigate = vi.hoisted(() => vi.fn());
@@ -231,7 +235,7 @@ vi.mock('@/sync/transport/room-view-client', () => ({
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     createHumanCorner = createHumanCorner;
-    async surfaceSubscribe(_filters: unknown, listener: () => void) {
+    async surfaceSubscribe(_filters: unknown, listener: (event: MonolithSurfaceEvent) => void) {
       workspaceLive.listeners.add(listener);
       return () => workspaceLive.listeners.delete(listener);
     }
@@ -414,10 +418,32 @@ describe('desktop Workspace navigation', () => {
     await settle();
   });
 
+  it('keeps send-related Tray and bookmark deltas from rereading both navigation lists', async () => {
+    const workspaceReads = workspaces.mock.calls.length;
+    const chatReads = chats.mock.calls.length;
+    await act(async () => {
+      for (const listener of workspaceLive.listeners) {
+        listener({ monolithLive: { type: 'needs-you-delta', roomId: '',
+          workspaceId: 'workspace-a', sourceRoomId: 'room-a', count: 0, items: [] } });
+        listener({ monolithLive: { type: 'bookmark-delta', roomId: '',
+          workspaceId: 'workspace-a', messageId: 'message-a', bookmark: null } });
+      }
+    });
+    await settle();
+    expect(workspaces).toHaveBeenCalledTimes(workspaceReads);
+    expect(chats).toHaveBeenCalledTimes(chatReads);
+    await act(async () => {
+      for (const listener of workspaceLive.listeners) listener(workspaceChange);
+    });
+    await settle();
+    expect(workspaces).toHaveBeenCalledTimes(workspaceReads + 1);
+    expect(chats).toHaveBeenCalledTimes(chatReads + 1);
+  });
+
 
   it.each(['Retry', 'committed workspace update', 'shared covering read'])('restores Room rows after outage recovery through %s', async recovery => {
     workspaces.mockRejectedValueOnce(new Error('isolated outage'));
-    await act(async () => { for (const listener of [...workspaceLive.listeners]) listener(); });
+    await act(async () => { for (const listener of [...workspaceLive.listeners]) listener(workspaceChange); });
     await settle();
     const failed = tree.root.findAll((node: any) => node.props.action === 'Retry' && node.props.title === 'Could not load workspaces.');
     expect(failed.length).toBeGreaterThan(0);
@@ -428,7 +454,7 @@ describe('desktop Workspace navigation', () => {
       else if (recovery === 'shared covering read') {
         for (const listener of surfaceListeners.get('/workspaces:') ?? []) listener();
       }
-      else for (const listener of [...workspaceLive.listeners]) listener();
+      else for (const listener of [...workspaceLive.listeners]) listener(workspaceChange);
     });
     await settle();
     expect(workspaces).toHaveBeenCalledTimes(reads + (recovery === 'shared covering read' ? 0 : 1));
@@ -439,7 +465,7 @@ describe('desktop Workspace navigation', () => {
   it('removes the deleted workspace from the permanent rail while a Room is open', async () => {
     route.pathname = '/beeline/chat/room-a';
     workspaceLive.deleted = true;
-    await act(async () => { for (const listener of [...workspaceLive.listeners]) listener(); });
+    await act(async () => { for (const listener of [...workspaceLive.listeners]) listener(workspaceChange); });
     await settle();
     expect(tree.root.findByType('DesktopWorkspaceRail').props.workspaces.map((workspace: { id: string }) => workspace.id)).toEqual(['workspace-empty']);
     expect(saveActiveCommunityId).toHaveBeenCalledWith('viewer', 'workspace-empty');
@@ -450,7 +476,7 @@ describe('desktop Workspace navigation', () => {
 
   it('clears the permanent rail when its final workspace is deleted', async () => {
     workspaceLive.empty = true;
-    await act(async () => { for (const listener of [...workspaceLive.listeners]) listener(); });
+    await act(async () => { for (const listener of [...workspaceLive.listeners]) listener(workspaceChange); });
     await settle();
     expect(tree.root.findByType('DesktopWorkspaceRail').props.workspaces).toEqual([]);
     expect(saveActiveCommunityId).toHaveBeenCalledWith('viewer', null);

@@ -1176,8 +1176,19 @@ export function useRoomSurfaceSession({
         const updateOutbox = () => {
           if (cancelled) return;
           if (isFocusedRef.current && AppState.currentState === 'active') void outbox.acknowledgeFailures();
-          setOutboxStates(new Map(outbox.list().map(record => [record.event.id, outbox.state(record.event.id)!])));
-          setFailedIds(new Set(outbox.list().filter(record => record.status === 'failed').map(record => record.event.id)));
+          // Rows display failures, never the delivery queue. Healthy sends must
+          // not rerender the whole Room before the receipt can paint.
+          const states = new Map<string, MessageSendState>();
+          const failed = new Set<string>();
+          for (const record of outbox.list()) {
+            const state = outbox.state(record.event.id);
+            if (state && state.kind !== 'sending') states.set(record.event.id, state);
+            if (record.status === 'failed') failed.add(record.event.id);
+          }
+          setOutboxStates(current => current.size === states.size && [...states].every(([id, state]) =>
+            current.get(id)?.kind === state.kind && current.get(id)?.text === state.text) ? current : states);
+          setFailedIds(current => current.size === failed.size && [...failed].every(id => current.has(id))
+            ? current : failed);
         };
         stopOutbox = outbox.subscribe(updateOutbox);
         updateOutbox();

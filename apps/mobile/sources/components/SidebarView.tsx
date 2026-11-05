@@ -8,6 +8,7 @@ import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { InlineRow } from '@/components/buzz/IndexRow';
 import { removeRoomSearchDrafts } from '@/buzz/room-search-drafts';
 import { useNeedsYouCount } from '@/buzz/needs-you-store';
+import { invalidatesWorkspaceList } from '@/buzz/workspace-list-invalidation';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { saveActiveCommunityId, subscribeActiveCommunityId } from '@/buzz/community-storage';
 import { cornerHref, navigateToRoom, roomCornersHref } from '@/buzz/corner-navigation';
@@ -236,8 +237,8 @@ export const SidebarView = React.memo(function SidebarView() {
       setWorkspaceId(selected);
       if (routeWorkspaceId && selected === routeWorkspaceId && selected !== stored)
         void saveActiveCommunityId(identity.publicKey, selected);
-      void new BuzzRigTransport(identity).surfaceSubscribe([], () => {
-        if (!cancelled) setRefreshNonce((nonce) => nonce + 1);
+      void new BuzzRigTransport(identity).surfaceSubscribe([], (event) => {
+        if (!cancelled && invalidatesWorkspaceList(event)) setRefreshNonce((nonce) => nonce + 1);
       }).then((stop) => {
         if (cancelled) stop();
         else stopWorkspaces = stop;

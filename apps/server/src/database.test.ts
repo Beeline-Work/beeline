@@ -34,6 +34,38 @@ import {
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { requireRoomSlug, reserveRoomName } from './room-names.js';
 
+it('removes installed Tray clocks and unused provider effects while source writes still work', async () => {
+  const database = await migratedDatabase();
+  try {
+    await database.query(`CREATE TABLE tray_clock_sources(id text);
+      CREATE TABLE tray_clock_deadlines(id text);
+      CREATE TABLE tray_clock_state(id text);
+      CREATE TABLE tray_clock_readiness(id text);
+      CREATE TABLE tray_clock_readiness_floor(id text);
+      CREATE TABLE tray_clock_health(id text);
+      CREATE TABLE tray_clock_owner_fences(id text);
+      CREATE TABLE background_leader_owners(id text);
+      CREATE TABLE background_effect_attempts(id text);
+      CREATE FUNCTION beeline_tray_clock_capture() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN INSERT INTO tray_clock_sources VALUES(NEW.id); RETURN NEW; END $$;
+      CREATE TRIGGER beeline_tray_clock_message_insert AFTER INSERT ON messages
+        FOR EACH ROW EXECUTE FUNCTION beeline_tray_clock_capture();`);
+    await migrate(database);
+    await migrate(database);
+    expect((await database.query(`SELECT tablename FROM pg_tables WHERE schemaname=current_schema()
+      AND (tablename LIKE 'tray_clock_%' OR tablename IN ('background_leader_owners','background_effect_attempts'))`)).rows).toEqual([]);
+    expect((await database.query(`SELECT proname FROM pg_proc WHERE pronamespace=current_schema()::regnamespace
+      AND (proname LIKE 'beeline_tray_clock_%' OR proname IN ('beeline_register_tray_clock_owner','beeline_commit_tray_clock_owner','beeline_background_backend_holds'))`)).rows).toEqual([]);
+    const author='f'.repeat(64), workspace='11111111-1111-4111-8111-111111119991', room='22222222-2222-4222-8222-222222229991';
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Author')`,[author]);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Clock migration proof')`,[workspace]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Proof Room')`,[room,workspace]);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text)
+      VALUES('clock-migration-message',$1,$2,'Please review?')`, [room,author]);
+    expect((await database.query(`SELECT text FROM messages WHERE id='clock-migration-message'`)).rows).toEqual([{text:'Please review?'}]);
+  } finally { await database.close(); }
+});
+
 it('indexes delivered claims still awaiting a read-clear push', async () => {
   const database = await migratedDatabase();
   try {

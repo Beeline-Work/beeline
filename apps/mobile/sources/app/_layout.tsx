@@ -11,7 +11,6 @@ import * as SplashScreen from 'expo-splash-screen';
 import * as Fonts from 'expo-font';
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { FontAwesome } from '@expo/vector-icons';
 import { useNavigationContainerRef, usePathname, useSegments } from 'expo-router';
 import { setMobileErrorRoute } from '@/buzz/sentry';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
@@ -249,7 +248,6 @@ async function loadFonts() {
         'SpaceGrotesk-Medium': require('@/assets/fonts/SpaceGrotesk-Medium.ttf'),
         'SpaceGrotesk-SemiBold': require('@/assets/fonts/SpaceGrotesk-SemiBold.ttf'),
 
-        ...FontAwesome.font,
       });
       loaded = true;
     } else {
@@ -268,7 +266,6 @@ async function loadFonts() {
             'SpaceGrotesk-Medium': require('@/assets/fonts/SpaceGrotesk-Medium.ttf'),
             'SpaceGrotesk-SemiBold': require('@/assets/fonts/SpaceGrotesk-SemiBold.ttf'),
 
-            ...FontAwesome.font,
           });
           loaded = true;
         } catch (e) {

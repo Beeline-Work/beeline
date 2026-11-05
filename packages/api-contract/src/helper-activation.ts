@@ -25,5 +25,3 @@ export interface CommandActivationSnapshot extends CommandActivationInput {
   readonly repository:DaemonOperationMap['getRoomRepositoryState']['output'];
   readonly corner?:DaemonOperationMap['getCornerRestoreState']['output'];
 }
-
-export const COMMAND_ACTIVATION_MAX_BYTES=256*1024;

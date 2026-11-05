@@ -20,12 +20,14 @@ export function cornerHumanReportsSql(cornerId: string, workerId: string): strin
       AND message.card->>'reportToId' IS NOT NULL AND message.card->>'sourceRoomId' IS NULL
       AND ${humanReportCornerSql('message')}=(${cornerId})::text
     UNION ALL
-    SELECT message.* FROM agent_commands source
-    JOIN messages message ON message.request_id=source.id AND message.author_id=source.agent_id
-    WHERE source.agent_id=${workerId}
-      AND (CASE WHEN source.private_payload->>'originCornerId'
-        ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-        THEN (source.private_payload->>'originCornerId')::uuid ELSE source.room_id END)=${cornerId}
+    SELECT message.* FROM messages message
+    WHERE message.author_id=${workerId}
+      AND EXISTS (SELECT 1 FROM agent_commands source
+        WHERE source.id=message.request_id AND source.agent_id=message.author_id
+          AND (CASE WHEN source.private_payload->>'originCornerId'
+            ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+            THEN (source.private_payload->>'originCornerId')::uuid ELSE source.room_id END)=${cornerId}
+        OFFSET 0)
       AND message.room_id<>${cornerId} AND message.card->>'reportToId' IS NOT NULL
       AND message.card->>'sourceRoomId' IS NULL
       AND ${humanReportCornerSql('message')}=(${cornerId})::text`;

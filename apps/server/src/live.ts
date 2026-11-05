@@ -70,7 +70,7 @@ export type LiveEvent =
   | { type: 'resource-change'; roomId: ''; ownerId: string; agentId?: undefined;
       resource: 'install' | 'workbench' | 'agent'; resourceId?: string; version?: string;usageOnly?:true }
   /** `agentId` names the author when one agent's own write caused it; a fact the
-   *  server itself publishes carries none. `corner-wake.ts` reads it. */
+   *  server itself publishes carries none. */
   | {
       type: 'invalidate';
       roomId: string;
@@ -356,21 +356,6 @@ export class LiveHub {
   subscribeProjectionUnavailable(listener:()=>void):()=>void {
     this.#events.on('projection-unavailable',listener);
     return ()=>this.#events.off('projection-unavailable',listener);
-  }
-
-  subscribeTrayClockUnavailable(listener:()=>void):()=>void {
-    this.#events.on('tray-clock-unavailable',listener);
-    return ()=>this.#events.off('tray-clock-unavailable',listener);
-  }
-
-  /** A broken socket must not prevent other consumers from hiding stale Tray
-   * state. Report any delivery failure to the shared availability owner. */
-  trayClockUnavailable():boolean {
-    let delivered=true;
-    for(const listener of this.#events.listeners('tray-clock-unavailable')){
-      try{listener();}catch{delivered=false;}
-    }
-    return delivered;
   }
 
   projectionUnavailable():void {this.#events.emit('projection-unavailable');}

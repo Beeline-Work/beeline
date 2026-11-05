@@ -198,11 +198,10 @@ export async function* memberStream(session: Pick<JoinedSession,'server'|'cursor
     while(!signal.aborted){
       const next=await reader.read();if(next.done)break;
       buffered+=decoder.decode(next.value,{stream:true});
-      if(Buffer.byteLength(buffered)>2*256*1024)throw new Error('Beeline stream frame exceeds capacity');
       let end:number;
       while((end=buffered.indexOf('\n'))>=0){
         const line=buffered.slice(0,end);buffered=buffered.slice(end+1);
-        if(!line)continue;if(Buffer.byteLength(line)>256*1024)throw new Error('Beeline stream frame exceeds capacity');
+        if(!line)continue;
         yield JSON.parse(line) as unknown;
       }
     }

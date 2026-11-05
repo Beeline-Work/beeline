@@ -17,7 +17,7 @@ describe('outside-agent rules', () => {
   it('teaches the command structure, place, review and progress rules on both surfaces', () => {
     for (const surface of ['mcp', 'session'] as const) {
       const text = externalAgentRules(surface);
-      for (const rule of ['commandId', 'not a plain', 'done:, blocked:, failed:, needs-decision:', "asker's exact @handle", 'one step up',
+      for (const rule of ['commandId', 'not a plain', 'Choose the terminal status', 'server adds its status prefix', "asker's exact @handle", 'one step up',
         'Code work belongs in a corner', 'approve_merge on the exact head SHA', 'post short progress there', 'Nothing you write only'])
         expect(text).toContain(rule);
     }

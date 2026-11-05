@@ -122,22 +122,30 @@ function toolPageLines(page:PhoneOperationMap['readRoomTools']['output']):ToolLe
   if(messages.some(message=>!message))throw new Error('Tool output is unavailable.');
   return toolLedgerLines(buildTurnActivity(messages.flatMap(message=>displayRoomMessage(message!,'').activity??[])).steps);
 }
-function useToolOutput(){
-  const [line,setLine]=useState<ToolLedgerLine|null>(null);
-  const current=React.useRef(0);
-  useEffect(()=>()=>{current.current++;},[]);
-  const open=(next:ToolLedgerLine)=>{
-    const generation=++current.current;
-    if(!next.toolOutput){setLine(next);return;}
-    setLine({...next,detail:'Loading…'});
-    const request=monolithPhoneOperation('readRoomTools', next.toolOutput);
-    void request.then(page=>{
-      if(generation!==current.current)return;
-      const full=toolPageLines(page).find(item=>item.id===next.id);
-      setLine({...next,detail:full?.detail??'Output unavailable.'});
-    }).catch(()=>{if(generation===current.current)setLine({...next,detail:'Output unavailable. Open again to retry.'});});
+function useToolOutput() {
+  const [line, setLine] = useState<ToolLedgerLine | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const current = React.useRef(0);
+  useEffect(() => () => { current.current++; }, []);
+  const open = (next: ToolLedgerLine) => {
+    const generation = ++current.current;
+    setError(null);
+    if (!next.toolOutput) { setLine(next); return; }
+    setLine({ ...next, detail: 'Loading…' });
+    const request = monolithPhoneOperation('readRoomTools', next.toolOutput);
+    void request.then(page => {
+      if (generation !== current.current) return;
+      const full = toolPageLines(page).find(item => item.id === next.id);
+      setLine({ ...next, detail: full?.detail ?? 'Output unavailable.' });
+      if (full?.detail == null) setError('Output unavailable.');
+    }).catch(() => {
+      if (generation !== current.current) return;
+      const message = 'Output unavailable. Open again to retry.';
+      setLine({ ...next, detail: message });
+      setError(message);
+    });
   };
-  return {line,open,close:()=>{current.current++;setLine(null);}};
+  return { line, error, open, close: () => { current.current++; setLine(null); } };
 }
 
 /**
@@ -220,7 +228,7 @@ export const TurnStepsLine = React.memo(function TurnStepsLine({
     () => groupToolLedgerRuns(toolLedgerLines(buildTurnActivity(items).steps)),
     [items],
   );
-  const {line:sheetLine,open:openLine,close:closeLine}=useToolOutput();
+  const {line:sheetLine,error:sheetError,open:openLine,close:closeLine}=useToolOutput();
   if (!runs.length) return null;
   return (
     <View testID={testID}>
@@ -229,6 +237,7 @@ export const TurnStepsLine = React.memo(function TurnStepsLine({
       ))}
       <ToolOutputSheet
         detail={sheetLine?.detail}
+        error={sheetError}
         onClose={closeLine}
         subtitle={sheetLine?.outcome === 'failure' ? sheetLine?.reason : undefined}
         title={sheetLine?.label ?? 'Output'}
@@ -260,7 +269,7 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
     () => groupToolLedgerRuns(toolLedgerLines(turn.steps, active)),
     [turn, active],
   );
-  const {line:sheetLine,open:openLine,close:closeLine}=useToolOutput();
+  const {line:sheetLine,error:sheetError,open:openLine,close:closeLine}=useToolOutput();
   // The provisional face and tone, plus this lane's own spacing. One object,
   // memoised, so the markdown renderer's identity check still bails out.
   const draftTextStyle = useMemo(
@@ -300,6 +309,7 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
       ) : null}
       <ToolOutputSheet
         detail={sheetLine?.detail}
+        error={sheetError}
         onClose={closeLine}
         subtitle={sheetLine?.outcome === 'failure' ? sheetLine?.reason : undefined}
         title={sheetLine?.label ?? 'Output'}

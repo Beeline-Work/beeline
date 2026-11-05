@@ -568,7 +568,7 @@ it('serves controls and subscriptions while 65 ordinary operations await externa
   const held = new Promise(resolve => { finish = resolve; });
   const daemon = daemonStub();
   vi.mocked(daemon.execute).mockImplementation(async (name: string) => {
-    if (name === 'waitForCornerWake') return held;
+    if (name === 'searchMcpRegistry') return held;
     if (name === 'getAgentCommands') return {commandProtocol: 1, commands: []};
     return {id: 'done', createdAt: 1};
   });
@@ -578,12 +578,12 @@ it('serves controls and subscriptions while 65 ordinary operations await externa
   expect(await client.next(frame => frame.type === 'registered')).toMatchObject({capabilities: {daemonOperationsV1: true}});
   try {
     for (let index = 0; index < 65; index++)
-      client.send({type: 'daemon-operation', agentId: AGENT_A, requestId: `held-${index}`, operation: 'waitForCornerWake', input: {cornerId: 'corner'}});
+      client.send({type: 'daemon-operation', agentId: AGENT_A, requestId: `held-${index}`, operation: 'searchMcpRegistry', input: {roomId: 'room', query: 'proof'}});
     client.send({type: 'daemon-operation', agentId: AGENT_A, requestId: 'stop', operation: 'stopAgentTurn', input: {roomId: 'room'}});
     expect(await client.next(frame => frame.requestId === 'stop')).toMatchObject({type: 'daemon-operation-result', result: {id: 'done'}});
     client.send({type: 'subscribe', agentId: AGENT_A, requestId: 'subscribe', roomId: 'room', inbox: false});
     await client.next(frame => frame.type === 'subscribed');
-    await vi.waitFor(() => expect(vi.mocked(daemon.execute).mock.calls.filter(([name]) => name === 'waitForCornerWake')).toHaveLength(65));
+    await vi.waitFor(() => expect(vi.mocked(daemon.execute).mock.calls.filter(([name]) => name === 'searchMcpRegistry')).toHaveLength(65));
     expect(client.frames.some(frame => String(frame.requestId).startsWith('held-'))).toBe(false);
   } finally { finish({id: 'wake', createdAt: 1}); }
   expect(await client.next(frame => frame.requestId === 'held-64')).toMatchObject({result: {id: 'wake'}});

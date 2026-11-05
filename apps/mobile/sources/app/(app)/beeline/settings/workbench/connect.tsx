@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
@@ -390,8 +391,8 @@ function ConnectToolFlow() {
             ))}
           </View>
         ) : null}
-        {errorUnplaced ? <Text style={styles.failure} testID="connect-error">{error}</Text> : null}
-        {helperLoadError && !helpers ? <Text style={styles.failure} testID="connect-error">Helpers are unavailable right now</Text> : null}
+        {errorUnplaced ? <ErrorBanner inline title={error ?? ''} titleTestID="connect-error" /> : null}
+        {helperLoadError && !helpers ? <ErrorBanner inline title={"Helpers are unavailable right now"} titleTestID="connect-error" /> : null}
       </ScrollView>
       {showSteps ? (
         <View style={[styles.foot, { paddingBottom: theme.buzz.space.lg + insets.bottom }]}>

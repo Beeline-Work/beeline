@@ -1,3 +1,4 @@
+import { IndexRow } from './IndexRow';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { InlineActionRow } from './IndexRow';
 import { ErrorBanner } from './ErrorBanner';
@@ -181,12 +182,7 @@ export function AgentProfileView({
       >
         {loading && <SurfaceGlyphLoader testID="agent-profile-loader" />}
         {error && (
-          <View style={styles.section}>
-            <Text style={styles.copy} accessibilityRole="alert">
-              {error}
-            </Text>
-            <Button size="inline" label="Retry" onPress={onRetry} variant="secondary" />
-          </View>
+          <IndexRow inset="flush" title={error} action="Retry" onPress={onRetry} />
         )}
         {identity && (
           <>
@@ -404,9 +400,7 @@ export function AgentProfileView({
                 <ErrorBanner inline title="Could not load older work. Your current list is still available." onRetry={() => void moreWork()} retrying={workLoading} retryTestID="load-more-agent-work" />
               )}
               {linkError && (
-                <Text style={styles.copy} accessibilityRole="alert">
-                  Could not open this pull request. Select it to retry.
-                </Text>
+                <ErrorBanner inline title={"Could not open this pull request. Select it to retry."}  />
               )}
             </View>
           </>

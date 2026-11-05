@@ -1,21 +1,14 @@
 import { isSubscribableEventKind } from '@beeline/api-contract/phone';
 import { setRoomEventSubscriptions, unsubscribeRoomReviewer, subscribeRoomReviewer } from './agent-subscriptions.js';
-import { ROOM_ROUTER_CTES,ROOM_ROUTER_HEAD_JOIN,roomRouterColumnsSql,roomMessageTagsSql } from './room-router-read.js';
-import { projectRoomToolSummaries,type RoomToolSummaryRow } from './room-tool-projection.js';
-import { buildTrayProjection, readMessageBookmarks } from './tray-projection.js';
-import { readTraySavedWindow } from './tray-saved-window.js';
-import { buildTraySavedFacts, type TraySavedTarget } from './tray-saved-projection.js';
+import { roomMessageTagsSql } from './room-router-read.js';
+import { readMessageBookmarks } from './tray-projection.js';
 import { workingTurnFreshSql } from './turn-ownership.js';
 import { readHelperOverlayFrame } from '@beeline/api-contract/helper-overlay';
-import { buildRouterSnapshot,RouterProjectionUnavailable,routerAuthority,routerAtomicGroup } from './router-projections.js';
-import { profileDomain } from './router-profile-source.js';
-import {ownerFamily,buildOwnerSnapshot} from './router-owner-projections.js';
-import {readWalletProjection} from './wallet.js';
-import {projectWorkbenchDisplay} from '@beeline/api-contract/workbench';
+
 import { CommandScopedDatabase } from './command-scoped-database.js';
 import type { TrayDecisionOperation } from './tray-decision-command.js';
 import {ROUTER_AUTHORITY_LOCK} from './router-authority-lock.js';
-import type { RouterSnapshotInput, RouterValues, RouterFamily,RouterSnapshot,RouterAuthorityCertificate } from '@beeline/api-contract/router-protocol';
+
 import { createWorkspace } from './workspace-creation.js';
 import { withdrawMergeApprovalsBy } from './corner-merge-approval.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
@@ -53,7 +46,7 @@ import { SQUIRE_MCP_TARGET } from '@beeline/api-contract/phone';
 import { FIRST_PARTY_INTEGRATIONS } from './first-party-integrations.js';
 import { machineSquireReport, queueSquireWork, queueOwnerSquireWork, squireMachineAddress, squireMachineId, squireWorkStatus } from './squire-machine.js';
 import { webhookDetails, webhookToken, requireWebhookAdmin, requireScheduledWorkManager } from './subscription-webhooks.js';
-import {buildRoomSchedulesProjection} from './room-schedules-projection.js';
+
 import { listRoomSubscriptions, deleteRoomSubscription } from './agent-subscriptions.js';
 import {
   beginAgentSignInCards,
@@ -61,8 +54,8 @@ import {
   completeAgentSignInCard,
 } from './agent-sign-in.js';
 import { settleWorkflowGate, startWorkflow } from './workflow-runs.js';
-import { humanRoomAdmin, humanRoomMember } from './workflow-admin.js';
-import { releaseArchivedCornerHolds, setCornerHold, collapseTombstonedCornerHolds } from './corner-holds.js';
+import { humanRoomMember } from './workflow-admin.js';
+import { setCornerHold, collapseTombstonedCornerHolds } from './corner-holds.js';
 import {
   createAgentCommand,
   dropQueuedOrdersForStop,
@@ -97,57 +90,8 @@ import {
   ROOM_VIEW_TOOL_ROW_LIMIT,
   WORKSPACE_MEMBER_PAGE_SIZE,
 } from '@beeline/api-contract/phone';
-import type {
-  AgentGrantView,
-  AgentDetailView,
-  AgentPairingClaimView,
-  ChatListView,
-  ChatListItem,
-  ChatListCorner,
-  CornerListView,
-  CornerLifecycleView,
-  InviteView,
-  MessageSearchSnippetPart,
-  MessageSearchView,
-  MessageBookmarkView,
-  NeedsYouItemView,
-  RoomLiveDelta,
-  RoomHistoryOutline,
-  RoomHistoryView,
-  RoomView,
-  RoomScheduleView,
-  RoomViewIdentity,
-  RoomViewMember,
-  RoomViewMessage,
-  SystemEvent,
-  WorkspaceListView,
-  WorkspaceAgentView,
-  WorkspaceMemberGrantView,
-  WorkspaceMemberListQuery,
-  WorkspaceMemberListView,
-  WorkspaceView,
-} from '@beeline/api-contract/phone';
-import {
-  assignSeededAgentIdentity,
-  chatActivityAt,
-  uniqueAgentHandle,
-  cornerDisplayName,
-  createCommunityInviteToken,
-  defaultFaceForSeed,
-  FACE_SOULS,
-  formatSystemLine,
-  isCommunityInviteToken,
-  isFaceId,
-  MESSAGE_REACTION_EMOJIS,
-  messageSearchTerms,
-  resolveFace,
-  type PhoneOperationMap,
-  type WelcomeCardsView,
-  isPushLevel,
-  type PushLevel,
-  type ArtifactAttachment,
-  type AgentSignInCardView,
-} from '@beeline/api-contract/phone';
+import type { AgentGrantView, AgentDetailView, AgentPairingClaimView, ChatListView, ChatListItem, ChatListCorner, CornerListView, InviteView, MessageSearchSnippetPart, MessageSearchView, MessageBookmarkView, NeedsYouItemView, RoomLiveDelta, RoomHistoryOutline, RoomHistoryView, RoomView, RoomScheduleView, RoomViewIdentity, RoomViewMember, RoomViewMessage, SystemEvent, WorkspaceListView, WorkspaceAgentView, WorkspaceMemberGrantView, WorkspaceMemberListQuery, WorkspaceMemberListView, WorkspaceView } from '@beeline/api-contract/phone';
+import { assignSeededAgentIdentity, chatActivityAt, uniqueAgentHandle, cornerDisplayName, createCommunityInviteToken, FACE_SOULS, formatSystemLine, isCommunityInviteToken, isFaceId, MESSAGE_REACTION_EMOJIS, messageSearchTerms, resolveFace, type PhoneOperationMap, type WelcomeCardsView, isPushLevel, type PushLevel, type ArtifactAttachment, type AgentSignInCardView } from '@beeline/api-contract/phone';
 import {
   isCommandGrantScript,
   type AgentGrantDecision,
@@ -175,8 +119,8 @@ import {
   typedMentionHandles,
 } from './message-mentions.js';
 import { recordSystemReportMention, reportMessageIssue } from './feedback.js';
-import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
-import { clearNeedsYouQuestions, countNeedsYouItems, readNeedsYouCountSnapshot, readNeedsYouOrder, needsYouItems, markNeedsYouSeen } from './needs-you.js';
+import { type SqlDatabase } from './database.js';
+import { clearNeedsYouQuestions, countNeedsYouItems, readNeedsYouOrder, needsYouItems, markNeedsYouSeen } from './needs-you.js';
 import { tombstoneInstitutionalMemoryForMessage } from './institutional-memory-shadow.js';
 import {
   notifyAgentConfigRoom,
@@ -262,19 +206,8 @@ import {
   faviconDomain,
   uniqueVaultConnections,
 } from '@beeline/api-contract/workbench';
-import type {
-  GrantWalletDelegationInput,
-  ReadWalletHistoryInput,
-} from '@beeline/api-contract/wallet';
-import {
-  createWallet,
-  readWallet,
-  sendFromWallet,
-  grantWalletDelegation,
-  revokeWalletDelegation,
-  walletBinding,
-  walletHistory,
-} from './wallet.js';
+import type { ReadWalletHistoryInput } from '@beeline/api-contract/wallet';
+import { createWallet, readWallet, sendFromWallet, grantWalletDelegation, revokeWalletDelegation, walletHistory } from './wallet.js';
 import { ARTIFACT_TTL_HOURS, mediaIdFromUrl, mediaTtlHours } from './media-ttl.js';
 import type { ObjectService } from './object-service.js';
 import { closeCornerPullRequestBestEffort, closeCornerState, lockCornerArchivalAuthority, markOwnedCornersAbandoned } from './corner-close.js';
@@ -537,9 +470,6 @@ interface RoomReadEnrichment {
   allow_auto_merge: boolean | null;
 }
 interface RoomReadRow {
-  router_metadata?:{epoch:string|null;sequence:string|null;scopes:RouterAuthorityCertificate['scopes']};
-  router_tools?:RoomToolSummaryRow[];
-  router_enrichment?:RoomReadEnrichment;
   starter_onboarding_pending: boolean;
   room: RoomRow & {
     viewer_push_muted: boolean;
@@ -1059,9 +989,6 @@ export class PhoneService {
   /** Only with a live hub: the cache is unsound without its message invalidations. */
   private readonly outlineCache?: HistoryOutlineCache;
 
-  private pureProjection = false;
-  private routerRoomRows?:RoomReadRow;
-  private expectedRouterWorkspace?:string;
   private starterOnboarding?: StarterOnboardingService;
   setStarterOnboarding(service: StarterOnboardingService): void { this.starterOnboarding = service; }
 
@@ -1098,7 +1025,7 @@ export class PhoneService {
   private readonly connectorDiscovery: ConnectorDiscoveryCache;
 
   private async optionalEnrichment<T>(name: string, work: Promise<T>): Promise<T | undefined> {
-    if (this.pureProjection) return work;
+
     let deadline: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([
@@ -1177,125 +1104,6 @@ export class PhoneService {
       return row.trigger_id;
     });
     if(trigger&&this.composio)await this.composio.deleteWebhookTrigger(trigger);
-  }
-
-  readRouterSnapshot(input: RouterSnapshotInput, viewerId: string) {
-    if(ownerFamily(input.family))return this.database.transaction(async db=>{
-      await db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
-      return buildOwnerSnapshot(db,this,input,viewerId);
-    });
-    if(input.family==='room-head')return this.readRoomRouterSnapshot({...input,family:'room-head'},viewerId);
-    if (input.family === 'needs-you-count') return readNeedsYouCountSnapshot(this.database,input.workspaceId,viewerId);
-    return buildRouterSnapshot(this.database, input, viewerId, (db, args, viewer) => this.buildRouterValue(db, args, viewer));
-  }
-
-  /** Pure router builders bind both core and enrichment to the caller's
-   * repeatable-read handle. No providers, live cache, onboarding or seen marks. */
-  async buildRouterValue(database: SqlDatabase, input: RouterSnapshotInput,
-    viewerId: string): Promise<RouterValues[RouterFamily] | null> {
-    const reader = new PhoneService(database, this.publicOrigin);
-    reader.pureProjection = true;
-    if(input.family==='owner-workbench')return projectWorkbenchDisplay(await reader.readWorkbench({workspaceId:''},viewerId),viewerId);
-    if(input.family==='owner-wallet')return readWalletProjection(database,viewerId);
-    if(input.family==='agent-profile'){
-      const value=await reader.readAgent(input.workspaceId,input.agentId,viewerId);
-      if(!value)return null;
-      const {usage:_usage,configVersion:_version,...stable}=value;
-      const revision=(await database.query<{epoch:string}>('SELECT epoch::text FROM router_authority WHERE scope=$1',
-        [profileDomain(input.workspaceId,input.agentId)])).rows[0]?.epoch;
-      if(!revision)throw new RouterProjectionUnavailable('authority');
-      const metadata=(await database.query<{role:string;chosen_voices:unknown}>(`SELECT member.role,agent.chosen_voices
-        FROM memberships member LEFT JOIN agents agent ON agent.agent_id=$3
-        WHERE member.workspace_id=$1 AND member.room_id IS NULL AND member.identity_id=$2 AND member.removed_at IS NULL`,
-        [input.workspaceId,viewerId,input.agentId])).rows[0];
-      const canRemove=value.access?.owner?.id===viewerId||metadata?.role==='owner'||metadata?.role==='admin';
-      const voiceRevision=hash(JSON.stringify({voices:metadata?.chosen_voices??{},soul:value.soul?.instructions??'',
-        name:value.agent.identity.name,handle:value.agent.identity.handle,owner:value.access?.owner?.id,role:metadata?.role}));
-      const result={...stable,configVersion:revision,canRemove,voiceRevision};
-      return result;
-    }
-    if (input.family === 'room-workflows') {
-      const value=await reader.listRoomWorkflowRuns(input.roomId, viewerId);
-      return value;
-    }
-    if (input.family === 'workspace-roster') {
-      const revision=(await database.query<{epoch:string}>('SELECT epoch::text FROM router_authority WHERE scope=$1',
-        [`roster:${input.workspaceId}`])).rows[0]?.epoch;
-      if(!revision)throw new RouterProjectionUnavailable('dependency');
-      if(input.query&&input.query.revision!==revision)throw new RouterProjectionUnavailable('dependency');
-      const value = await reader.readWorkspace(input.workspaceId, viewerId,input.query);
-      return value?{...value,revision}:null;
-    }
-    if (input.family === 'room-list') return reader.readChats(input.workspaceId, viewerId);
-    if (input.family === 'room-head') {
-      if (!input.roomId) throw new Error('roomId is required for room-head');
-      reader.expectedRouterWorkspace=input.workspaceId;
-      return reader.readRoom(input.roomId,viewerId);
-    }
-    if(input.family==='room-scheduled-work')return buildRoomSchedulesProjection(reader.database,input.roomId,viewerId,this.publicOrigin);
-    if(input.family==='needs-you-tray')return buildTrayProjection(reader.database,input.workspaceId,viewerId,row=>identity(row,reader.publicOrigin));
-    if(input.family==='needs-you-saved-page')return readTraySavedWindow(reader.database,input,viewerId,row=>identity(row,reader.publicOrigin));
-    if(input.family==='needs-you-count')return countNeedsYouItems(reader.database,input.workspaceId,viewerId);
-    if(input.family!=='needs-you')throw new Error('Unsupported router projection family');
-    await reader.requireWorkspaceMember(input.workspaceId, viewerId);
-    const needs = await needsYouItems(reader.database, input.workspaceId, viewerId,
-      (row) => identity(row, reader.publicOrigin), false);
-    return { count: needs.items.length, ...needs };
-  }
-
-  /** Room data, certificate, canonical head and enrichment are one SELECT
-   * after the read-only isolation statement. No authority read is removed:
-   * the existing final READ COMMITTED enqueue fence still runs separately. */
-  private readRoomRouterSnapshot(
-    input: { family: 'room-head'; roomId: string; workspaceId?: string },
-    viewer: string,
-  ): Promise<RouterSnapshot> {
-    return this.database.transaction(async db => {
-      await db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
-      const reader = new PhoneService(db, this.publicOrigin);
-      reader.pureProjection = true;
-      reader.expectedRouterWorkspace = input.workspaceId;
-      const value = await reader.readRoom(input.roomId, viewer);
-      const rows = reader.routerRoomRows, meta = rows?.router_metadata;
-      if (!value || !rows || !meta || (input.workspaceId && input.workspaceId !== rows.room.workspace_id))
-        throw new RouterProjectionUnavailable('authority');
-      const domains = [
-        `reader:${viewer}:workspace:${rows.room.workspace_id}`, `room:${input.roomId}`,
-        ...(rows.room.parent_id ? [`room:${rows.room.parent_id}`] : []),
-      ];
-      if (meta.scopes.length !== domains.length || domains.some(domain => !meta.scopes.some(
-        scope => scope.authorityScope === domain && /^[1-9][0-9]*$/.test(scope.epoch ?? ''),
-      )))
-        throw new RouterProjectionUnavailable('authority');
-      const through = Number(meta.sequence);
-      if (!meta.epoch || meta.sequence === null || !Number.isSafeInteger(through) || through < 0)
-        throw new RouterProjectionUnavailable('dependency');
-      const result: RouterSnapshot = {
-        kind: 'snapshot', family: 'room-head', scope: input.roomId, value,
-        cut: { stream: `workspace:${rows.room.workspace_id}`, epoch: meta.epoch, through, protocol: 1 },
-        authority: routerAuthority(meta.scopes.map(scope => ({ authorityScope: scope.authorityScope, epoch: scope.epoch }))),
-        atomicGroup: routerAtomicGroup(input, viewer),
-      };
-      return result;
-    });
-  }
-
-  /** Source-key row facts, never a window/top-N reread or a cache inventory. */
-  buildRouterSavedFacts(database:SqlDatabase,workspaceId:string,viewerId:string,targets:readonly TraySavedTarget[]){
-    return buildTraySavedFacts(database,workspaceId,viewerId,targets,row=>identity(row,this.publicOrigin));
-  }
-
-  async buildRouterNeedsHead(database:SqlDatabase,workspaceId:string,viewerId:string){
-    const value=await needsYouItems(database,workspaceId,viewerId,row=>identity(row,this.publicOrigin),false);
-    return value;
-  }
-
-  async buildRouterNeedsRooms(database:SqlDatabase,workspaceId:string,viewerId:string,rooms:readonly string[]){
-    const order=await readNeedsYouOrder(database,workspaceId,viewerId);
-    const {items}=await needsYouItems(database,workspaceId,viewerId,row=>identity(row,this.publicOrigin),false,rooms);
-    const value={kind:'needs-you-rooms-replace' as const,scope:workspaceId,...order,
-      rooms:rooms.map(roomId=>({roomId,items:items.filter(item=>item.roomId===roomId)}))};
-    return value;
   }
 
   canReadRoom(roomId: string, identityId: string): Promise<boolean> {
@@ -1663,12 +1471,11 @@ export class PhoneService {
        WHERE room.id=$1`, [roomId, viewerId],
     )).rows[0];
     if (!scope) return null;
-    const order=await readNeedsYouOrder(database,scope.workspace_id,viewerId);
+    const order=await readNeedsYouOrder(database, scope.workspace_id, viewerId);
     // This snapshot proves there are no cells to project. Legacy replay still
     // sends the empty delta, without repeating the expensive cell query.
     if(order.count===0)return {workspaceId:scope.workspace_id,count:0,items:[]};
-    const { items } = await needsYouItems(database, scope.workspace_id, viewerId,
-      (row) => identity(row, this.publicOrigin), false,[roomId]);
+    const { items } = await needsYouItems(database, scope.workspace_id, viewerId, (row) => identity(row, this.publicOrigin), false, [roomId]);
     const selected=new Map(items.map(item=>[item.messageId,item]));
     return { workspaceId: scope.workspace_id, count: order.count,
       items: order.order.flatMap(id=>selected.has(id)?[selected.get(id)!]:[]) };
@@ -2349,7 +2156,7 @@ export class PhoneService {
     };
     const rows = await measured('data', this.roomRows(roomId, viewerId));
     if (!rows) return null;
-    if (!this.pureProjection && rows.starter_onboarding_pending) this.starterOnboarding?.open(roomId, viewerId);
+    if ((rows.starter_onboarding_pending)) this.starterOnboarding?.open(roomId, viewerId);
     const room = rows.room;
     const corner = rows.corner;
     const parent = corner?.parent ?? undefined;
@@ -2375,7 +2182,7 @@ export class PhoneService {
       Boolean(corner),
       viewerId,
     );
-    const enrichment = rows.router_enrichment?this.projectRoomEnrichment(rows.router_enrichment):corner
+    const enrichment = corner
       ? await measured(
           'enrichment',
           this.cornerRoomEnrichment(room, rows, initialMessageResult, viewerId),
@@ -2423,7 +2230,7 @@ export class PhoneService {
       briefingRows.map((row) => projectedMessage(row, this.publicOrigin)).sort(messageOrder),
     ));
     const [attachmentFacts, appMessages] = await Promise.all([
-      corner||this.pureProjection
+      (corner)
         ? Promise.resolve(
             enrichment?.attachmentFacts ?? { expired: new Set<string>(), artifacts: new Map() },
           )
@@ -2543,7 +2350,7 @@ export class PhoneService {
         }),
       );
     }
-    if(this.pureProjection)return {...view,toolRows:undefined,messages:[...view.messages,...projectRoomToolSummaries(rows.router_tools??[],roomId)].sort(messageOrder).slice(-30)};
+
     return view;
   }
 
@@ -3003,7 +2810,7 @@ export class PhoneService {
   /** Bound each authorized message window before identity/reaction decoration.
    * The author foreign key preserves the original inner-join membership. */
   private async roomRows(roomId: string, viewerId: string): Promise<RoomReadRow | undefined> {
-    if(this.pureProjection)this.routerRoomRows=undefined;
+
     const row = (
       await this.database.query<RoomReadRow>(
         `WITH authorized_room AS (
@@ -3022,14 +2829,14 @@ export class PhoneService {
                WHERE other_room.room_id=COALESCE(room.parent_id,room.id) AND other_room.removed_at IS NULL
                  AND other_room.identity_id<>$2
              )) leave_deletes_room,
-             ${this.pureProjection?`CASE WHEN room.parent_id IS NULL THEN ${viewerReadCursorSql()} END`:'NULL::jsonb'} read_cursor
+             ${('NULL::jsonb')} read_cursor
            FROM rooms room
            JOIN memberships membership ON membership.room_id=COALESCE(room.parent_id,room.id)
              AND membership.identity_id=$2 AND membership.removed_at IS NULL
            JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
              AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
              AND workspace_member.removed_at IS NULL
-           WHERE room.id=$1 ${this.pureProjection?'AND ($3::uuid IS NULL OR room.workspace_id=$3)':''}
+           WHERE room.id=$1 ${('')}
          ), member_rows AS (
            SELECT i.id,i.kind,i.name,i.handle,i.avatar,i.face_id,
              COALESCE(roster_workspace.role,roster_member.role) role,NULL::jsonb presence_body,
@@ -3101,7 +2908,7 @@ export class PhoneService {
              SELECT m.* FROM messages m JOIN active_turn_rows turn ON turn.agent_id=m.author_id
                AND m.created_at>=date_trunc('second',turn.created_at)
              WHERE m.room_id=room.id AND m.presentation='activity' AND m.durable_fact IS NULL
-               ${this.pureProjection ? `AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(m.activity) item WHERE item->>'kind'='tool')` : ''}
+               ${('')}
              ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_MESSAGE_LIMIT}
            ) m ON true
            JOIN identities i ON i.id=m.author_id
@@ -3113,7 +2920,7 @@ export class PhoneService {
            FROM authorized_room room
            JOIN LATERAL (
              SELECT m.* FROM messages m WHERE m.room_id=room.id
-               AND room.parent_id IS NOT NULL ${this.pureProjection ? 'AND false' : ''} AND m.presentation='activity'
+               AND room.parent_id IS NOT NULL ${('')} AND m.presentation='activity'
                AND m.durable_fact IS NULL AND EXISTS(
                  SELECT 1 FROM jsonb_array_elements(m.activity) item
                  WHERE item->>'kind' IN ('tool','output'))
@@ -3133,7 +2940,7 @@ export class PhoneService {
            ) m ON true
            JOIN identities i ON i.id=m.author_id
          )
-         ${this.pureProjection?ROOM_ROUTER_CTES:''}
+         ${('')}
          SELECT
            EXISTS(SELECT 1 FROM starter_onboarding_runs onboarding
              WHERE onboarding.room_id=authorized_room.id AND onboarding.user_id=$2
@@ -3172,14 +2979,14 @@ export class PhoneService {
                ORDER BY corner_tool_rows.created_at DESC,corner_tool_rows.id DESC)
                FROM corner_tool_rows),'[]'::jsonb)
            ) END corner
-           ${this.pureProjection?roomRouterColumnsSql():''}
-         FROM authorized_room ${this.pureProjection?ROOM_ROUTER_HEAD_JOIN:''}`,
-        this.pureProjection?[roomId,viewerId,this.expectedRouterWorkspace??null]:[roomId, viewerId],
+           ${('')}
+         FROM authorized_room ${('')}`,
+        ([roomId, viewerId]),
       )
     ).rows[0];
     if (!row) return undefined;
-    if(this.pureProjection)this.routerRoomRows=row;
-    if (row.corner||this.pureProjection) {
+
+    if ((row.corner)) {
       reviveDates(row.room, ['archived_at', 'repository_updated_at', 'created_at', 'updated_at']);
       if (row.corner?.parent)
         reviveDates(row.corner.parent, [
@@ -3604,12 +3411,12 @@ export class PhoneService {
     );
     const config = core.rows[0];
     if (!config) return null;
-    const presence = this.pureProjection?undefined:await this.optionalEnrichment('member-presence',
+    const presence = (await this.optionalEnrichment('member-presence',
       this.enrichmentDatabase.query<{
         presence_body: MemberRow['presence_body']; presence_updated_at: Date | null;
       }>(`SELECT live.body presence_body,live.updated_at presence_updated_at
         FROM live_outputs live WHERE live.agent_id=$1 AND live.kind='presence'
-        ORDER BY live.updated_at DESC LIMIT 1`, [agentId]));
+        ORDER BY live.updated_at DESC LIMIT 1`, [agentId])));
     const presenceRow = presence?.rows[0];
     // An AI-client member's instructions live in its own app, so its profile
     // names that app instead of a made-up animal soul.
@@ -9306,10 +9113,8 @@ export class PhoneService {
     input: Input<'readWorkbench'>,
     viewerId: string,
   ): Promise<Output<'readWorkbench'>> {
-    const linkAccount = this.pureProjection?(await this.database.query<{connected:boolean;pending:boolean;ineligible:boolean}>(
-      `SELECT sealed_grant IS NOT NULL connected,(state IS NOT NULL AND attempt_expires_at>now()) pending,ineligible
-       FROM link_oauth_accounts WHERE owner_identity_id=$1`,[viewerId])).rows[0]:await this.linkWallet?.status(viewerId);
-    if (input.refreshVault&&!this.pureProjection) {
+    const linkAccount = (await this.linkWallet?.status(viewerId));
+    if ((input.refreshVault)) {
       const machines = (await this.database.query<{ machine_id: string }>(
         `SELECT DISTINCT COALESCE(machine_id,agent_id) machine_id FROM agents WHERE owner_id=$1`, [viewerId],
       )).rows;
@@ -9440,7 +9245,7 @@ export class PhoneService {
 
     // Squire API rows point at vault credentials. They remain installed for
     // agent use, but the person's Connectors page presents them under Keys.
-    const apps = (await readOwnerApps(this.database, viewerId, this.composio,{pure:this.pureProjection}))
+    const apps = (await readOwnerApps(this.database, viewerId, this.composio))
       .filter((app) => app.transport !== 'squire-api' && app.hasConnected);
     const catalogKeys = new Set([
       'gmail',
@@ -9459,7 +9264,7 @@ export class PhoneService {
         .filter((app) => app.transport === 'composio')
         .map((app) => composioToolkitForApp(app.appKey)),
     ]);
-    const appCatalog = this.pureProjection?[]:await this.readAppCatalog(catalogKeys);
+    const appCatalog = (await this.readAppCatalog(catalogKeys));
     const appMetadata = new Map(appCatalog.map((item) => [item.appKey, item]));
     const uniqueConnections = uniqueVaultConnections(connections);
     const walletRow = (
@@ -9468,10 +9273,7 @@ export class PhoneService {
         delegation_expires_at: Date | null;
         delegation_standing: boolean;
       }>(
-        this.pureProjection?`SELECT to_timestamp((value->>'createdAt')::double precision) created_at,
-          to_timestamp((value->>'expiresAt')::double precision) delegation_expires_at,(value->>'standing')::boolean delegation_standing
-          FROM owner_projection_cells WHERE owner_id=$1 AND cell='wallet-summary'`:
-          `SELECT created_at,delegation_expires_at,delegation_standing FROM wallet_bindings WHERE identity_id=$1`,
+        (`SELECT created_at,delegation_expires_at,delegation_standing FROM wallet_bindings WHERE identity_id=$1`),
         [viewerId],
       )
     ).rows[0];
@@ -9584,24 +9386,24 @@ export class PhoneService {
     const ownedCompanies = new Set([...view.connections.map(key => resolveCompany(key).id),
       ...(view.apps ?? []).filter(app => app.transport === 'squire-api').map(app => resolveCompany(app).id)]);
     const oauthApps = new Set<string>();
-    if (!this.pureProjection&&this.composio) await Promise.all(COMPANY_APPS.filter(app => ownedCompanies.has(resolveCompany({ domain: app.domain }).id))
+    if ((this.composio)) await Promise.all(COMPANY_APPS.filter(app => ownedCompanies.has(resolveCompany({ domain: app.domain }).id))
       .map(async app => {
         try {
           if (await this.composio!.supportsOAuth(composioToolkitForApp(app.appKey))) oauthApps.add(app.appKey);
         } catch { /* Keep existing routes available when provider discovery is unavailable. */ }
       }));
-    const companies = projectWorkbenchCompanies(view, this.publicOrigin, this.pureProjection?new Map<string,number>():await companyPopularity(this.database), undefined, oauthApps);
+    const companies = projectWorkbenchCompanies(view, this.publicOrigin, (await companyPopularity(this.database)), undefined, oauthApps);
     const keys = companies.rows.flatMap(company => {
       const known = companyForMcp(company.domain ?? company.id);
       return known ? [`company:${known.id}`, `search:${known.id}`] : [];
     });
-    const cached = await this.connectorDiscovery.read(this.pureProjection?[]:keys);
+    const cached = await this.connectorDiscovery.read((keys));
     const rows = companies.rows.map(company => {
       if (company.kind !== 'company' || company.items.some(item => item.kind === 'connection')) return company;
       const known = companyForMcp(company.domain ?? company.id);
       if (!known) return company;
       const cacheKey = `company:${known.id}`;
-      if(!this.pureProjection)this.connectorDiscovery.warm(cacheKey, viewerId, cached.get(cacheKey));
+      this.connectorDiscovery.warm(cacheKey, viewerId, cached.get(cacheKey));
       const manifest = [...cached.get(cacheKey)?.manifests ?? [], ...cached.get(`search:${known.id}`)?.manifests ?? []]
         .find(manifest => registryServerAppKey(manifest.name) === appIdentity(known.domain!)?.key
           && known.hosts.includes(registryServerDomain(manifest.name) ?? '') && !manifest.secretInputNames.length
@@ -10441,7 +10243,7 @@ export class PhoneService {
           agent.selected_model,agent.model_catalog,
           ${mcpClientIdentitySql('agent.agent_id')} mcp_client,
           owner.id owner_id,owner.name owner_name,owner.handle owner_handle,
-          ${this.pureProjection?'NULL::jsonb usage_snapshot':agentUsageColumns('agent', '$7')}
+          ${(agentUsageColumns('agent', '$7'))}
         FROM memberships m JOIN identities i ON i.id=m.identity_id
         LEFT JOIN agents agent ON agent.agent_id=i.id
         LEFT JOIN identities owner ON owner.id=agent.owner_id
@@ -10485,7 +10287,7 @@ export class PhoneService {
       ...peoplePage.slice(0, WORKSPACE_MEMBER_PAGE_SIZE),
       ...agentPage.slice(0, WORKSPACE_MEMBER_PAGE_SIZE),
     ];
-    if (pageRows.length&&!this.pureProjection) {
+    if ((pageRows.length)) {
       const presence = await this.optionalEnrichment(
         'member-presence',
         this.enrichmentDatabase.query<{
@@ -10531,7 +10333,7 @@ export class PhoneService {
         ? mcpClientName(config.mcp_client.name, config.mcp_client.redirects)
         : config ? selectedModelLabel(config.selected_model, config.model_catalog ?? []) : undefined;
       // Usage columns are owner-filtered in SQL; other viewers' rows carry nulls.
-      const usage = config&&!this.pureProjection ? projectAgentUsage(config) : undefined;
+      const usage = (config) ? projectAgentUsage(config) : undefined;
       return {
         ...member,
         ...(model ? { model } : {}),

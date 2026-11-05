@@ -1,4 +1,3 @@
-import { createNetworkRouterRuntime } from './network-router-runtime.js';
 import { requiredServerSetting as required } from './server-configuration.js';
 import { DISPLAY_DEADLINE_KEY } from './deadline-expiry-source.js';
 import { backgroundDatabaseCut } from './background-deadline-clock.js';
@@ -52,7 +51,6 @@ import { clearStalePhoneViews } from './phone-viewing.js';
 import { createFirebasePushSender } from './firebase-push.js';
 import { createApnsPushSender } from './apns-push.js';
 import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
-import { DurableLiveReplay } from './durable-live.js';
 import { objectStorageFromEnv } from './object-storage.js';
 import { ObjectService } from './object-service.js';
 import { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
@@ -87,7 +85,6 @@ import {
   freeAgentConfigFromEnv,
 } from './free-agents.js';
 import { FlyMachines } from './fly-machines.js';
-
 
 async function runReleaseMigration(): Promise<void> {
   const database = new PostgresDatabase(required('MIGRATION_DATABASE_URL'), 1, {
@@ -406,17 +403,11 @@ async function main() {
   const backgroundJobs = new BackgroundJobRunner();
   const operationOutcomes = new OperationOutcomes();
   const sentryWakeAgentId = sentryWakeAgentFromEnv();
-  const router = createNetworkRouterRuntime({
-    instanceId: connectionPresence.instanceId, publicOrigin,
-    listenerReady: () => liveListener.projectionHealth().connected,
-  });
   liveListener.setServerLeaseEvidence((instance, renewedAt, removed) => {
     connectionPresence.observeServerLease(instance, renewedAt, removed);
   });
   const server = createBeelineServer({
-    ...(router ? { routerProjections: router.policy, mediaMetadataV1: router.mediaMetadataV1 } : {}),
     operationOutcomes,
-    replay: new DurableLiveReplay(database, live),
     roomsMcp: new RoomsMcp(new RoomsMcpOAuth(database, publicOrigin, auth, undefined, () => liveListener.projectionHealth().connected), phone, live, daemon, objectService, undefined, () => liveListener.projectionHealth().connected),
     sentryWakeAgentId,
     database,
@@ -622,7 +613,6 @@ async function main() {
     stopAttachmentRecovery();stopAttachmentResync();stopAttachmentWake();
     stopScheduleRecovery();stopScheduleResync();stopScheduleWake();
     await leader.stop();
-    await router?.close();
     stopBackgroundSources();
     stopVoiceDeadlines();
     // The provider flight intentionally does not block unrelated leader jobs.

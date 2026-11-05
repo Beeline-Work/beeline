@@ -4,15 +4,12 @@ import type { Server } from 'node:http';
 import WebSocket from 'ws';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  PHONE_SOCKET_MAX_FRAME_BYTES,
-  PHONE_SOCKET_MAX_IN_FLIGHT,
   type PhoneResponseFrame,
 } from '@beeline/api-contract/phone';
 import type { TokenAuth } from './auth.js';
 import type { DaemonService } from './daemon-service.js';
 import { migrate, type SqlDatabase } from './database.js';
 import { LiveHub } from './live.js';
-import { phoneReadLimits } from './phone-read-limit.js';
 import { PhoneService } from './phone-service.js';
 import { createBeelineServer } from './server.js';
 import { PgliteDatabase } from './test-support.js';
@@ -85,7 +82,6 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
       auth: { authenticatePhone } as unknown as TokenAuth,
       daemon: {} as DaemonService,
       mediaMaximumBytes: 1,
-      phoneReadLimits: phoneReadLimits({ history: { maxRequestsPerWindow: 4 } }),
     });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
@@ -103,7 +99,7 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
     const socket = new WebSocket(`${origin.replace('http:', 'ws:')}/v1/phone/live`, [
       `bearer.${token.repeat(8)}`,
     ]);
-    socket.setMaxListeners(PHONE_SOCKET_MAX_IN_FLIGHT * 2);
+    socket.setMaxListeners(128);
     sockets.push(socket);
     await once(socket, 'open');
     return socket;
@@ -156,97 +152,20 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
     expect(socket.readyState).toBe(WebSocket.OPEN);
   });
 
-  it('P10: legacy clients remain usable across selected-policy upgrade and policy rollback', async () => {
-    async function restart(selected: boolean) {
-      for (const socket of sockets.splice(0)) socket.terminate();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-      server = createBeelineServer({
-        database: db,
-        phone,
-        live,
-        auth: { authenticatePhone } as unknown as TokenAuth,
-        daemon: {} as DaemonService,
-        mediaMaximumBytes: 1,
-        ...(selected
-          ? {
-              routerProjections: {
-                families: ['needs-you-count' as const],
-                listenerReady: () => true,
-              },
-            }
-          : {}),
-      });
-      server.listen(0, '127.0.0.1');
-      await once(server, 'listening');
-      origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    }
-    async function negotiate(socket: WebSocket) {
-      const frame = new Promise<Record<string, unknown>>((resolve, reject) => {
-        const close = () => reject(new Error('closed during negotiation'));
-        const receive = (raw: WebSocket.RawData) => {
-          const value = JSON.parse(String(raw));
-          if (value.type !== 'router-capabilities') return;
-          socket.off('message', receive);
-          socket.off('close', close);
-          resolve(value);
-        };
-        socket.on('message', receive);
-        socket.once('close', close);
-      });
-      socket.send(
-        JSON.stringify({
-          type: 'router-negotiate',
-          protocol: 1,
-          families: ['needs-you-count'],
-          authorityFencesV1: true,
-        }),
-      );
-      return frame;
-    }
-    const committed = 'd'.repeat(64);
-    for (const selected of [false, true, false]) {
-      await restart(selected);
-      // This client sends only the legacy operation envelope, never negotiation.
-      const legacy = await open();
-      expect(await request(legacy, 'readRoom', { roomId: ROOM })).toMatchObject({ ok: true });
-      const modern = await open();
-      expect(await negotiate(modern)).toMatchObject({
-        families: selected ? ['needs-you-count'] : [],
-      });
-      const snapshot = await request(modern, 'readRouterSnapshot', {
-        family: 'needs-you-count',
-        workspaceId: WORKSPACE,
-      });
-      expect(snapshot.ok).toBe(selected);
-      if (selected) {
-        expect(snapshot).toMatchObject({ result: { value: { count: 0 } } });
-        const expiryRefresh=new Promise<Record<string,unknown>>(resolve=>{
-          const receive=(raw:WebSocket.RawData)=>{
-            const frame=JSON.parse(String(raw));
-            if(frame.kind!=='router-unavailable'||frame.stream!=='control:tray-clock')return;
-            modern.off('message',receive);resolve(frame);
-          };
-          modern.on('message',receive);
-        });
-        live.publish({type:'invalidate',roomId:'',reason:'postgres:needs_you_marks',
-          readerId:VIEWER,sourceRoomId:ROOM});
-        expect(await expiryRefresh).toMatchObject({kind:'router-unavailable',
-          families:['needs-you','needs-you-tray','needs-you-count','needs-you-saved-page']});
-
-        expect(
-          await request(legacy, 'sendRoomMessage', {
-            roomId: ROOM,
-            messageId: committed,
-            text: 'Survives policy rollback',
-          }),
-        ).toMatchObject({ ok: true });
-      }
-      expect(await request(modern, 'readWorkspaces')).toMatchObject({ ok: true });
-    }
-    expect((await db.query('SELECT text FROM messages WHERE id=$1', [committed])).rows).toEqual([
-      { text: 'Survives policy rollback' },
-    ]);
-    expect((await db.query('SELECT 1 FROM needs_you_marks')).rowCount).toBe(0);
+  it('installed phones select plain reads through the existing sync acknowledgement',async()=>{
+    const socket=await open();
+    const synchronized=new Promise<void>(resolve=>{
+      const receive=(raw:WebSocket.RawData)=>{
+        if(JSON.parse(String(raw)).type!=='sync-ok')return;
+        socket.off('message',receive);resolve();
+      };
+      socket.on('message',receive);
+    });
+    socket.send(JSON.stringify({type:'router-negotiate',protocol:1,families:['room-head','room-list']}));
+    socket.send(JSON.stringify({type:'sync',workspaceCursors:{}}));
+    await synchronized;
+    expect(await request(socket,'readWorkspaces')).toMatchObject({ok:true});
+    expect(await request(socket,'readRoom',{roomId:ROOM})).toMatchObject({ok:true});
   });
 
   it('authenticates once at upgrade and reuses that identity for operation requests', async () => {
@@ -271,7 +190,6 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
       auth: { authenticatePhone } as unknown as TokenAuth,
       daemon: {} as DaemonService,
       mediaMaximumBytes: 1,
-      routerProjections: { families: [], commandDedupV1: true, listenerReady: () => true },
     });
     selected.listen(0, '127.0.0.1');
     await once(selected, 'listening');
@@ -283,19 +201,6 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
     sockets.push(socket);
     try {
       await once(socket, 'open');
-      const capability = once(socket, 'message');
-      socket.send(
-        JSON.stringify({
-          type: 'router-negotiate',
-          protocol: 1,
-          families: [],
-          commandDedupV1: true,
-        }),
-      );
-      expect(JSON.parse(String((await capability)[0]))).toMatchObject({
-        type: 'router-capabilities',
-        commandDedupV1: true,
-      });
       first = await request(socket, op, args, undefined, command);
     } finally {
       socket.terminate();
@@ -468,29 +373,17 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
     expect(order).toEqual(gates.map((_, index) => `concurrent-${19 - index}`));
   });
 
-  it('rejects excess in-flight requests with busy and frees the slots after completion', async () => {
-    const socket = await open(),
-      gate = deferred(),
-      admitted = deferred();
-    const read = phone.readWorkspaces.bind(phone);
-    let count = 0;
-    vi.spyOn(phone, 'readWorkspaces').mockImplementation(async (viewer) => {
-      if (++count === PHONE_SOCKET_MAX_IN_FLIGHT) admitted.resolve();
+  it('does not refuse ordinary concurrent reads at the former admission cap', async () => {
+    const socket = await open(), gate = deferred(), admitted = deferred();
+    const read = phone.readWorkspaces.bind(phone); let count = 0;
+    vi.spyOn(phone, 'readWorkspaces').mockImplementation(async viewer => {
+      if (++count === 40) admitted.resolve();
       await gate.promise;
       return read(viewer);
     });
-    const pending = Array.from({ length: PHONE_SOCKET_MAX_IN_FLIGHT }, () =>
-      request(socket, 'readWorkspaces'),
-    );
-    await admitted.promise;
-    expect(await request(socket, 'readWorkspaces')).toMatchObject({
-      ok: false,
-      error: { code: 'busy', retryable: true },
-    });
-    expect(count).toBe(PHONE_SOCKET_MAX_IN_FLIGHT);
-    gate.resolve();
-    expect((await Promise.all(pending)).every((reply) => reply.ok)).toBe(true);
-    expect(await request(socket, 'readWorkspaces')).toMatchObject({ ok: true });
+    const pending = Array.from({length: 40}, () => request(socket, 'readWorkspaces'));
+    await admitted.promise; gate.resolve();
+    expect((await Promise.all(pending)).every(reply => reply.ok)).toBe(true);
   });
 
   it('returns typed errors for unknown operations, malformed frames, validation and current membership', async () => {
@@ -534,19 +427,10 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
     expect(await refused).toEqual({ status: 401, body: { error: 'phone_token_required' } });
   });
 
-  it('shares history rate limits between legacy HTTP, operation HTTP and the socket', async () => {
+  it('serves repeated history reads through the socket without read admission', async () => {
     const socket = await open();
-    expect((await http(`/v1/phone/rooms/${ROOM}/history`)).status).toBe(200);
-    expect((await http('/v1/phone/operations/readHistory', { roomId: ROOM })).status).toBe(200);
-    expect(await request(socket, 'readHistory', { roomId: ROOM })).toMatchObject({ ok: true });
-    expect(
-      await request(socket, 'readHistoryAfter', { roomId: ROOM, messageId: MESSAGE }),
-    ).toMatchObject({ ok: true });
-    expect(await request(socket, 'readHistory', { roomId: ROOM })).toMatchObject({
-      ok: false,
-      error: { code: 'too_many_requests', retryable: true },
-    });
-    expect((await http(`/v1/phone/rooms/${ROOM}/history`)).status).toBe(429);
+    for (let attempt = 0; attempt < 6; attempt++)
+      expect(await request(socket, 'readHistory', {roomId: ROOM})).toMatchObject({ok: true});
   });
 
   it('LATER-1: an unavailable forward cursor keeps failing while the latest history remains readable', async () => {
@@ -770,7 +654,7 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
 
   it('a frame beyond the former limit does not hang up on the phone', async () => {
     const socket = await open();
-    const reply = await request(socket, 'readWorkspaces', { padding: 'x'.repeat(PHONE_SOCKET_MAX_FRAME_BYTES) });
+    const reply = await request(socket, 'readWorkspaces', { padding: 'x'.repeat(64 * 1024) });
     expect(reply).toMatchObject({ ok: true });
     expect(socket.readyState).toBe(WebSocket.OPEN);
     expect(await request(socket, 'readRoom', { roomId: ROOM })).toMatchObject({ ok: true });

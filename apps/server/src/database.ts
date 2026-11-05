@@ -1,6 +1,3 @@
-import { TRAY_SAVED_WINDOW_SCHEMA } from './tray-saved-window.js';
-import { TRAY_SAVED_SOURCE_SCHEMA } from './tray-saved-source.js';
-import { TRAY_MUTABLE_SOURCE_SCHEMA } from './tray-mutable-source.js';
 import { OWNED_MODEL_CREDENTIAL_SCHEMA } from './owned-model-credential.js';
 import { OWNED_MODEL_ATTEMPT_SCHEMA } from './owned-model-attempt.js';
 import { DISPLAY_DEADLINE_SOURCE_SCHEMA } from './deadline-expiry-source.js';
@@ -13,16 +10,9 @@ import { HELPER_USAGE_SCHEMA } from './helper-usage.js';
 import { HELPER_OVERLAY_SCHEMA } from './helper-overlay.js';
 import { BACKGROUND_DUE_SOURCE_SCHEMA } from './background-due-source.js';
 import { MCP_MEMBER_STREAM_SCHEMA } from './rooms-mcp-stream.js';
-import { MEDIA_AUTHORITY_SCHEMA } from './media-authority-schema.js';
 import { X_SIGNUP_DELIVERY_SCHEMA } from './x-ads.js';
 import { SERVER_LEASE_DEADLINE_SCHEMA } from './server-lease-deadlines.js';
 import { commandCompletionSchema } from './command-completion.js';
-import { ROUTER_PROJECTION_SCHEMA, ROUTER_EXTRA_CAPTURE_SCHEMA } from './router-projection-schema.js';
-import { ROUTER_PROFILE_SCHEMA } from './router-profile-source.js';
-import { ROUTER_OWNER_SCHEMA } from './router-owner-source.js';
-import { ROUTER_ROSTER_SCHEMA } from './router-roster-source.js';
-import { SCHEDULED_WORK_AUTHORITY_SCHEMA } from './scheduled-work-authority.js';
-import { ROOM_SCHEDULES_CAPTURE_SCHEMA } from './room-schedules-capture.js';
 import { ROUTER_COMMAND_SCHEMA } from './router-command-ledger.js';
 import { backfillWelcomeVideoWorkflow } from './welcome-video-workflow.js';
 import { closeCompletedCommandTurns } from './migrations/completed-command-turns.js';
@@ -270,11 +260,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-// Preserve the schema46 image's boot marker through the additive expansion.
-// Router readiness has its own marker, written only after all migrations finish.
-// The expansion image (router off) becomes the switch release's rollback floor.
 export const REQUIRED_SCHEMA_VERSION = 46;
-export const REQUIRED_ROUTER_SCHEMA_VERSION = 62;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -287,25 +273,14 @@ export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
     VALUES (true, ${REQUIRED_SCHEMA_VERSION}, now())
     ON CONFLICT (singleton) DO UPDATE
       SET version=EXCLUDED.version, migrated_at=EXCLUDED.migrated_at;
-    CREATE TABLE IF NOT EXISTS beeline_router_schema_state (
-      singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
-      version integer NOT NULL,
-      migrated_at timestamptz NOT NULL DEFAULT now()
-    );
-    INSERT INTO beeline_router_schema_state(singleton, version, migrated_at)
-    VALUES (true, ${REQUIRED_ROUTER_SCHEMA_VERSION}, now())
-    ON CONFLICT (singleton) DO UPDATE
-      SET version=EXCLUDED.version, migrated_at=EXCLUDED.migrated_at
   `);
 }
 
 export async function assertSchemaCurrent(database: SqlDatabase): Promise<void> {
-  let result: QueryResult<{ version: number; router_version: number | null }>;
+  let result: QueryResult<{ version: number }>;
   try {
-    result = await database.query<{ version: number; router_version: number | null }>(
-      `SELECT version,
-        (SELECT version FROM beeline_router_schema_state WHERE singleton=true) router_version
-       FROM beeline_schema_state WHERE singleton=true`,
+    result = await database.query<{ version: number }>(
+      `SELECT version FROM beeline_schema_state WHERE singleton=true`,
     );
   } catch (error) {
     // Unavailability is not a schema mismatch and grants no timed observation.
@@ -322,12 +297,7 @@ export async function assertSchemaCurrent(database: SqlDatabase): Promise<void> 
       `database schema is not ready for this server image (expected schema version ${REQUIRED_SCHEMA_VERSION}, found ${version ?? 'no marker'}); run the release migration step`,
     );
   }
-  const routerVersion = result.rows[0]?.router_version;
-  if (routerVersion !== REQUIRED_ROUTER_SCHEMA_VERSION) {
-    throw new Error(
-      `database schema is not ready for this server image (expected router schema version ${REQUIRED_ROUTER_SCHEMA_VERSION}, found ${routerVersion ?? 'no marker'}); run the release migration step`,
-    );
-  }
+
 }
 
 export class PostgresDatabase implements ClosableDatabase {
@@ -821,7 +791,6 @@ CREATE TABLE IF NOT EXISTS legacy_daemon_migrations (
   migrated_at timestamptz NOT NULL DEFAULT now()
 );
 
-
 CREATE TABLE IF NOT EXISTS workspaces (
   id uuid PRIMARY KEY,
   name text NOT NULL,
@@ -842,7 +811,6 @@ UPDATE workspaces SET internal=true WHERE NOT internal AND id IN (
   'b81a2815-924c-4bd9-bc04-d38bdee177bc',
   '18e555f7-e191-452b-9b0f-b825f58ee4ba'
 );
-
 
 -- Retired: empty in production on 2026-11-02 and written by nothing on main.
 DROP TABLE IF EXISTS service_review_notice_deliveries;
@@ -2905,8 +2873,6 @@ CREATE INDEX IF NOT EXISTS connector_offers_workspace_idx ON connector_offers(wo
 CREATE INDEX IF NOT EXISTS connector_offers_message_idx
   ON connector_offers(message_id) WHERE message_id IS NOT NULL;
 
-
-
 -- What an agent did with a connection, as reported by the helper. The ledger
 -- behind the connection detail screen; also the source for batched receipt
 -- DMs (one card per agent turn, keyed by turn_key).
@@ -2931,7 +2897,6 @@ CREATE INDEX IF NOT EXISTS connection_receipts_turn_idx
   ON connection_receipts(connection_id, turn_key) WHERE turn_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS connection_receipts_workspace_idx ON connection_receipts(workspace_id);
 ALTER TABLE connection_receipts ADD COLUMN IF NOT EXISTS event_class text;
-
 
 -- Apps: the one front door (\`app-connections.ts\`). ONE row per app per
 -- person, served by an existing Workbench connection, managed OAuth, or
@@ -3275,6 +3240,41 @@ export async function migrate(
   );
   await ddlScript('agent command schema', AGENT_COMMAND_SCHEMA);
   await ddlScript('turn ownership schema', TURN_OWNERSHIP_SCHEMA);
+  // The phone reads source rows directly. Disable old capture triggers on
+  // upgraded databases; keep stored rows available to an older server rollback.
+  await ddlScript('remove retired phone read capture', `
+    DO $$ DECLARE retired record; BEGIN
+      FOR retired IN SELECT trigger.tgname, table_schema.nspname, relation.relname
+        FROM pg_trigger trigger JOIN pg_proc function ON function.oid=trigger.tgfoid
+        JOIN pg_class relation ON relation.oid=trigger.tgrelid
+        JOIN pg_namespace table_schema ON table_schema.oid=relation.relnamespace
+        WHERE NOT trigger.tgisinternal AND table_schema.nspname=current_schema()
+          AND function.proname IN (
+        'beeline_usage_cell_source',
+        'beeline_commit_tray_clock_owner',
+        'beeline_media_authority',
+        'beeline_owner_projection_source',
+        'beeline_profile_projection_source',
+        'beeline_room_schedules_capture',
+        'beeline_roster_projection_source',
+        'beeline_router_authority_capture',
+        'beeline_router_extra_capture',
+        'beeline_router_workspace_stream',
+        'beeline_saved_source_capture',
+        'beeline_saved_window_capture',
+        'beeline_saved_window_identity',
+        'beeline_scheduled_work_authority',
+        'beeline_scheduled_work_row_source',
+        'beeline_tray_clock_capture',
+        'beeline_tray_clock_health_change',
+        'beeline_tray_clock_room_move',
+        'beeline_tray_clock_workspace_birth',
+        'beeline_tray_mutable_capture')
+      LOOP
+        EXECUTE format('DROP TRIGGER %I ON %I.%I',retired.tgname,retired.nspname,retired.relname);
+      END LOOP;
+    END $$;
+  `);
   await ddlScript('router command identity', ROUTER_COMMAND_SCHEMA);
   await ddlScript('startup wake backoff', STARTUP_WAKE_BACKOFF_SCHEMA);
   await ddlScript('free agents schema', FREE_AGENTS_SCHEMA);
@@ -3636,21 +3636,8 @@ export async function migrate(
   await ddlScript('computer expiry source', COMPUTER_EXPIRY_SCHEMA);
   await ddlScript('choice expiry source', CHOICE_EXPIRY_SCHEMA);
   await ddlScript('connector offer expiry source', CONNECTOR_OFFER_EXPIRY_SCHEMA);
-  await ddlScript('router projection authority', ROUTER_PROJECTION_SCHEMA);
-  await ddlScript('router projection extra sources', ROUTER_EXTRA_CAPTURE_SCHEMA);
-  await ddlScript('router profile sources', ROUTER_PROFILE_SCHEMA);
-  await ddlScript('router owner sources', ROUTER_OWNER_SCHEMA);
-  await ddlScript('router roster source',ROUTER_ROSTER_SCHEMA);
-  // Saved source capture reads the incarnation metadata; all Tray capture
-  // depends on the durable journal and router authority installed above.
-  await ddlScript('Tray saved window', TRAY_SAVED_WINDOW_SCHEMA);
-  await ddlScript('Tray saved sources', TRAY_SAVED_SOURCE_SCHEMA);
-  await ddlScript('Tray mutable sources', TRAY_MUTABLE_SOURCE_SCHEMA);
-  await ddlScript('scheduled work authority', SCHEDULED_WORK_AUTHORITY_SCHEMA);
-  await ddlScript('scheduled work sources', ROOM_SCHEDULES_CAPTURE_SCHEMA);
   await ddlScript('server lease deadlines', SERVER_LEASE_DEADLINE_SCHEMA);
   await ddlScript('X signup delivery deadlines', X_SIGNUP_DELIVERY_SCHEMA);
-  await ddlScript('media authority domains', MEDIA_AUTHORITY_SCHEMA);
   await ddlScript('command completion notifications', commandCompletionSchema());
   await ddlScript('MCP member stream', MCP_MEMBER_STREAM_SCHEMA);
   await ddlScript('Helper overlay demand', HELPER_OVERLAY_SCHEMA);
@@ -4034,13 +4021,17 @@ async function createIndexConcurrently(
   );
   const state = existing.rows[0];
   if (state?.valid) return;
-  if (state) await database.query(`DROP INDEX CONCURRENTLY IF EXISTS ${name}`);
-  // A concurrent build waits for every older transaction without blocking
-  // anyone, so the 1s migration lock timeout would only abort it on a live
-  // database. The release migration runs on one connection; statement_timeout
-  // still bounds the build.
-  await database.query('SET lock_timeout=0');
-  try { await database.query(create); } finally { await database.query('RESET lock_timeout'); }
+  // A concurrent build waits for every older transaction, and a standby
+  // background leader waits on its advisory lock indefinitely. The index only
+  // speeds reads, so a release skips it instead of stalling; the next release
+  // (or an operator) builds it.
+  try {
+    if (state) await database.query(`DROP INDEX CONCURRENTLY IF EXISTS ${name}`);
+    await database.query(create);
+  } catch (error) {
+    if ((error as { code?: string }).code !== '55P03') throw error;
+    console.warn(`[migration] ${name} skipped: an older transaction is still open`);
+  }
 }
 
 /** Backfill machine_id on legacy workspace_connectors rows. */

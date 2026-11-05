@@ -1,9 +1,6 @@
-import type { RouterValues } from '@beeline/api-contract/router-protocol';
 import type { PhoneOperationMap } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { needsYouItems } from './needs-you.js';
-import { RouterProjectionUnavailable } from './router-projections.js';
-import {readTraySavedWindow} from './tray-saved-window.js';
 
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
 type Output<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['output'];
@@ -103,20 +100,4 @@ export async function readMessageBookmarks(database: SqlDatabase, input: Input<'
         });
       }),
     };
-}
-
-/** Complete existing Tray content, with no seen write or provider operation.
- * Both sections share the caller's repeatable-read handle; a failure makes
- * the projection unavailable rather than asserting a partial coherent cut. */
-export async function buildTrayProjection(database: SqlDatabase, workspaceId: string,
-  viewerId: string, toIdentity: IdentityFormatter): Promise<RouterValues['needs-you-tray']> {
-  const [needs, saved] = await Promise.all([
-    needsYouItems(database, workspaceId, viewerId, toIdentity, false),
-    readTraySavedWindow(database, { workspaceId }, viewerId, toIdentity).catch(error=>{
-      if(error instanceof Error&&error.message==='saved_window_budget')throw new RouterProjectionUnavailable('budget');
-      throw error;
-    }),
-  ]);
-  const value = { needs, saved };
-  return value;
 }

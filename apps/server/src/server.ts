@@ -5,7 +5,6 @@ import { syncXSiteVisits } from './x-site-visits.js';
 import { dashboardFinances } from './operator-finances.js';
 import { fenceCommandReceiptEnqueue } from './router-command-coverage.js';
 import { parseRouterCommandIdentity } from '@beeline/api-contract/router-command';
-import { routerSocketProtocol, type RouterProjectionPolicy } from './router-socket.js';
 import { startConnectionWork } from './background-work.js';
 import { owedMentions } from './owed-mentions.js';
 import { serveEmailImage } from './email-images.js';
@@ -35,7 +34,6 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { serveComputerSession, serveComputerStatus, upgradeBodyComputerSource, upgradeComputerSession, upgradeComputerWaiter } from './computer-session.js';
 import type { Duplex } from 'node:stream';
 import { isTransientDatabaseConnectionError, type SqlDatabase } from './database.js';
-import { DurableLiveReplay, readLiveCursor } from './durable-live.js';
 import type { FreeAgentService } from './free-agents.js';
 import { handleFreeAgentModelRequest, type FreeAgentModelProxyOptions } from './free-agent-model-proxy.js';
 import { isAppSignInLink } from './composio-apps.js';
@@ -86,7 +84,6 @@ import { connectorLogo } from './workbench.js';
 import type { LinkAgentWallet } from './link-agent-wallet.js';
 import type { RegistryMcpOAuth } from './registry-mcp-oauth.js';
 import { InvitePreviewAccess } from './invite-preview.js';
-import { phoneReadLimits, type PhoneReadLimits } from './phone-read-limit.js';
 import type { ConnectionPresence } from './connection-presence.js';
 import {
   parseDashboardPlatforms,
@@ -122,14 +119,13 @@ const MAX_LIVE_OUTBOUND_BUFFERED_BYTES = 16 * 1024 * 1024;
 /** Rows one socket remembers for `admitRow`; rows with a read in flight stay. */
 const SENT_ROW_LIMIT = 256;
 /** A message's version, or the live epoch and sequence a corner status was read for. */
-type RowOrder = { version: number } | { epoch?: string; sequence: number };
+type RowOrder = { version: number };
 type SentRow = { order?: RowOrder; fingerprint?: string; reads: number };
 
 /** Whether `next` is not newer than the frame already sent; unordered frames always are newer. */
 function rowOrderIsNotNewer(next: RowOrder | undefined, sent: RowOrder | undefined): boolean {
   if (!next || !sent) return false;
-  if ('version' in next) return 'version' in sent && next.version <= sent.version;
-  return !('version' in sent) && next.epoch === sent.epoch && next.sequence <= sent.sequence;
+  return next.version <= sent.version;
 }
 const LIVE_PING_FRAME = JSON.stringify({ type: 'ping' });
 const LIVE_PONG_FRAME = JSON.stringify({ type: 'pong' });
@@ -144,11 +140,8 @@ export interface GitHubServerHooks {
 }
 
 export interface ServerOptions {
-  routerProjections?: RouterProjectionPolicy;
   /** Production enables this with the router; object storage and authority remain required. */
-  mediaMetadataV1?:boolean;
   operationOutcomes?: import('./operation-outcomes.js').OperationOutcomes;
-  replay?: DurableLiveReplay;
   roomsMcp?: RoomsMcp;
   sentryWakeSecret?: string;
   sentryWakeAgentId?: string;
@@ -207,8 +200,6 @@ export interface ServerOptions {
   authHandler?: (request: IncomingMessage, response: ServerResponse) => void;
   /** Exact browser origins allowed to call the bearer-authenticated HTTP API. */
   webAppOrigins?: readonly string[];
-  /** Per-identity limits on phone history and outline reads; defaults in phone-read-limit.ts. */
-  phoneReadLimits?: PhoneReadLimits;
   /** Protocol ping interval for helper sockets; tests shorten it. */
   liveHeartbeatMs?: number;
   /** Existing connection control owner; injectable without changing Node/pg clocks. */
@@ -549,8 +540,7 @@ export function createBeelineServer(options: ServerOptions): Server {
   const intakeCheckpoints = new Map<WebSocket, () => void>();
   const invitePreview = new InvitePreviewAccess(options.database);
   const phoneViewing = new PhoneViewing(options.database, options.connectionPresence?.instanceId ?? randomUUID());
-  const readLimits = options.phoneReadLimits ?? phoneReadLimits();
-  const dispatchPhoneOperation = createPhoneOperationDispatcher(options, readLimits, options.phone.execute, requestErrorStatus);
+  const dispatchPhoneOperation = createPhoneOperationDispatcher(options, options.phone.execute, requestErrorStatus);
   const server = createServer((request, response) => {
     if (gameOrigin && request.headers.host === new URL(gameOrigin).host) {
       void serveRunnableArtifact(request, response, gameOrigin, options.objectService).catch(() => {
@@ -879,7 +869,6 @@ export function createBeelineServer(options: ServerOptions): Server {
       const viewedRooms = new Set<string>();
       const previewRooms = new Set<string>();
       const releases = new Map<string, () => void>();
-      const workspaceReleases = new Map<string, () => void>();
       let phoneViewClosed = false;
       // Workspace membership notifications survive the deletion cascade and
       // reach the affected identity without requiring a readable Room.
@@ -887,7 +876,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       // Workspace and identity changes keep their commit order on this socket.
       let identityDelivery = Promise.resolve();
       const sendNeedsYouDelta = (event: LiveEvent, roomId: string) => {
-        if ((routerProtocol.supports('needs-you') && routerProtocol.supports('needs-you-count')) || !options.phone.liveNeedsYou) return;
+        if (!options.phone.liveNeedsYou) return;
         // A later projection must not overtake an earlier one and then be
         // overwritten by its stale count or slice on the same socket.
         needsYouDelivery = needsYouDelivery.then(() =>
@@ -900,7 +889,6 @@ export function createBeelineServer(options: ServerOptions): Server {
       };
       const releaseWorkspaces = options.live.subscribeAll((event) => {
         if (event.type === 'resource-change') {
-          if (event.usageOnly && routerProtocol.supportsUsage()) return;
           if (event.ownerId === principal.identityId)
             sendLive(JSON.stringify({ type: 'resource-change', roomId: '',
               resource: event.resource, ...(event.resourceId ? { resourceId: event.resourceId } : {}),
@@ -910,8 +898,7 @@ export function createBeelineServer(options: ServerOptions): Server {
         if (event.type !== 'invalidate') return;
         if (event.roomId !== '') {
           if (releases.has(event.roomId)) return;
-          if (!event.messageId || !options.phone.liveNeedsYou ||
-              (routerProtocol.supports('needs-you') && routerProtocol.supports('needs-you-count'))) return;
+          if (!event.messageId || !options.phone.liveNeedsYou) return;
           const local = event.committedRow?.type === 'message' ? event.committedRow.row : null;
           const candidate = event.needsYouCandidate || event.reason === 'phone-write' ||
             event.agentId === principal.identityId ||
@@ -957,10 +944,6 @@ export function createBeelineServer(options: ServerOptions): Server {
           return;
         }
         if (event.reason === 'postgres:needs_you_marks' && event.sourceRoomId) {
-          if (routerProtocol.supports('needs-you-count')) sendLive(JSON.stringify({
-            kind:'router-unavailable',stream:'control:tray-clock',
-            families:['needs-you','needs-you-tray','needs-you-count','needs-you-saved-page'],reason:'dependency',
-          }));
           sendNeedsYouDelta(event, event.sourceRoomId);
           return;
         }
@@ -985,11 +968,6 @@ export function createBeelineServer(options: ServerOptions): Server {
         if (client.readyState === client.OPEN)
           sendLive(JSON.stringify({ type: 'invalidate', roomId: '', reason: 'reconnect' }));
       });
-      // The socket is an ordered stream. Keep the last text handed to this
-      // reader so duplicate local/PG publications cost no wire bytes, and a
-      // growing draft carries only its new suffix. A new subscription starts
-      // with a full snapshot below.
-      const draftWire = new Map<string, { text: string; revision: number }>();
       // Keep in-flight rows while ordering and deduplicating delivered projections.
       const sentRows = new Map<string, SentRow>();
       const beginRowRead = (key: string) => {
@@ -1014,44 +992,16 @@ export function createBeelineServer(options: ServerOptions): Server {
           if (sentRows.size <= SENT_ROW_LIMIT) break;
           if (!row.reads) sentRows.delete(candidate);
         }
-        return sent.fingerprint !== fingerprint ||
-          (order !== undefined && 'sequence' in order &&
-            (sent.order === undefined || !('sequence' in sent.order) || order.epoch !== sent.order.epoch));
+        return sent.fingerprint !== fingerprint;
       };
-      const sendDraft = (event: Extract<LiveEvent, { type: 'draft' | 'thought' }>,
-        sequence?: number, epoch?: string):boolean => {
-        const key = `${event.roomId}:${event.agentId}:${event.turnId}:${event.type}`;
-        const previous = draftWire.get(key);
-        const overlay=event.overlayV1;
-        if (!overlay && previous?.text === event.text) return false;
-        if (previous && event.text.startsWith(previous.text) && (!overlay || overlay.type==='append')) {
-          const revision = previous.revision + 1;
-          const chunk = event.text.slice(previous.text.length);
-          draftWire.set(key, { text: event.text, revision });
-          return sendLive(JSON.stringify({
-            type: `${event.type}-append`, roomId: event.roomId,
-            ...(overlay?{overlayV1:overlay}:{}),
-            agentId: event.agentId, turnId: event.turnId,
-            revision, offset: previous.text.length,
-            chunk,
-            ...(sequence !== undefined ? { sequence } : {}),
-            ...(epoch !== undefined ? { epoch } : {}),
-            ...(event.latestChunk !== undefined && event.latestChunk !== chunk
-              ? { latestChunk: event.latestChunk } : {}),
-          }));
-        }
-        draftWire.set(key, { text: event.text, revision: 0 });
-        return sendLive(JSON.stringify({ ...event, revision: 0,
-          ...(sequence !== undefined ? { sequence } : {}),
-          ...(epoch !== undefined ? { epoch } : {}) }));
-      };
+      const sendDraft = (event: Extract<LiveEvent, { type: 'draft' | 'thought' }>): boolean =>
+        sendLive(JSON.stringify(event));
       const enqueueHelperOverlay=(raw:LiveEvent):boolean=>{
         if(client.readyState!==client.OPEN||!overlayViewer.canDeliver(raw))return false;
         const event=overlayViewer.normalize(raw);
         let sent=false;
         if(event.type==='draft'||event.type==='thought')sent=sendDraft(event);
         else if(event.type==='retract'){
-          draftWire.delete(`${event.roomId}:${event.agentId}:${event.turnId}:${event.kind}`);
           sent=sendLive(JSON.stringify(event));
         }
         if(sent)overlayViewer.delivered(event);
@@ -1085,21 +1035,9 @@ export function createBeelineServer(options: ServerOptions): Server {
           if (oldest) pendingPaintTraces.delete(oldest);
         }
       };
-      const routerProtocol = routerSocketProtocol(options.database, principal.identityId, sendLive, options.routerProjections,
-        { live: options.live, phone: options.phone, rooms: () => [...releases.keys()],mediaMetadataV1:options.mediaMetadataV1===true && Boolean(options.objectService) });
-      client.once('close', () => routerProtocol.close());
-      let routerNegotiating = false;
       const handlePhoneRequest = phoneSocketRequests(client, principal.identityId,
-        async (name, args, ...rest) => {
-          if (name === 'readRouterSnapshot') {
-            routerProtocol.requireSnapshot(args);
-            if (rest[4] === undefined) return routerProtocol.snapshot(args as unknown as Parameters<typeof routerProtocol.snapshot>[0]);
-          }
-          if(name==='readRoomTools')routerProtocol.requireSnapshot({family:'room-head',roomId:args.roomId});
-          if (name === 'readAgentUsageCell') routerProtocol.requireUsage();
-          return dispatchPhoneOperation(name, args, ...rest);
-        }, sendLive, requestErrorStatus, principal.familyId,
-        (name, args, result, enqueue) => routerProtocol.fenceReply(name, args, result, enqueue));
+        dispatchPhoneOperation, sendLive, requestErrorStatus, principal.familyId,
+        (_name, _args, result, enqueue) => fenceCommandReceiptEnqueue(options.database, principal.identityId, result, enqueue));
       client.on('message', (raw) => {
         const frameBytes = Array.isArray(raw)
           ? raw.reduce((total, part) => total + part.length, 0)
@@ -1110,13 +1048,12 @@ export function createBeelineServer(options: ServerOptions): Server {
           sendLive(LIVE_PONG_FRAME);
           return;
         }
-        if (!routerNegotiating && frameBytes <= 32 && raw.toString() === '{"type":"sync"}') {
+        if (frameBytes <= 32 && raw.toString() === '{"type":"sync"}') {
           sendLive('{"type":"sync-ok"}');
           return;
         }
         try {
           const parsed = JSON.parse(raw.toString());
-          if (parsed?.type === 'router-negotiate') routerNegotiating = true;
           if (handlePhoneRequest(parsed)) return;
         } catch {
           liveErrors.invalid++;
@@ -1133,59 +1070,8 @@ export function createBeelineServer(options: ServerOptions): Server {
           }
           if (!message || typeof message !== 'object') return;
           const item = message as Record<string, unknown>;
-          if (await routerProtocol.handle(item)) { routerNegotiating = false; return; }
-          if (item.type === 'sync' && options.replay) {
-            const workspaces = await options.database.query<{ workspace_id: string }>(
-              `SELECT workspace_id FROM memberships WHERE identity_id=$1
-               AND room_id IS NULL AND removed_at IS NULL`, [principal.identityId]);
-            const cursors = item.workspaceCursors && typeof item.workspaceCursors === 'object'
-              ? item.workspaceCursors as Record<string, unknown> : {};
-            const currentWorkspaces = new Set(workspaces.rows.map(row => row.workspace_id));
-            for (const workspaceId of Object.keys(cursors)) {
-              if (!currentWorkspaces.has(workspaceId)) {
-                workspaceReleases.get(workspaceId)?.();
-                workspaceReleases.delete(workspaceId);
-                sendLive(JSON.stringify({ type: 'workspace-cursor', roomId: '',
-                  workspaceId, sequence: 0, epoch: '', reload: true }));
-              }
-            }
-            for (const { workspace_id: workspaceId } of workspaces.rows) {
-              if (workspaceReleases.has(workspaceId)) continue;
-              const cursor = readLiveCursor(cursors[workspaceId]);
-              const checkpoint = (sequence: number, epoch: string, reload: boolean) => {
-                sendLive(JSON.stringify({ type: 'workspace-cursor', roomId: '',
-                  workspaceId, sequence, epoch, reload }));
-              };
-              const subscription = await options.replay.subscribe(
-                `workspace:${workspaceId}`, '', cursor,
-                (event, sequence, epoch) => {
-                  if (event.type === 'invalidate' && event.sourceRoomId && releases.has(event.sourceRoomId)) return;
-                  sendLive(JSON.stringify({ type: 'invalidate', roomId: '',
-                    reason: 'workspace-replay', workspaceId, sequence, epoch }));
-                }, checkpoint, async () => (await options.database.query(
-                  `SELECT 1 FROM memberships WHERE workspace_id=$1 AND identity_id=$2
-                   AND room_id IS NULL AND removed_at IS NULL`, [workspaceId, principal.identityId])).rowCount > 0).catch(error => {
-                  console.error('[live] Workspace replay unavailable', error);
-                  checkpoint(0, '', true);
-                  return null;
-                });
-              if (!subscription) continue;
-              if (client.readyState !== client.OPEN) { subscription.release(); return; }
-              workspaceReleases.set(workspaceId, subscription.release);
-              checkpoint(subscription.resumed ? cursor!.base : subscription.sequence,
-                subscription.epoch, !subscription.resumed);
-              for (const entry of subscription.replay) {
-                if (entry.event.type === 'invalidate' && entry.event.sourceRoomId &&
-                    releases.has(entry.event.sourceRoomId)) continue;
-                sendLive(JSON.stringify({ type: 'invalidate', roomId: '', reason: 'workspace-replay',
-                  workspaceId, sequence: entry.sequence, epoch: subscription.epoch }));
-              }
-              if (subscription.resumed) checkpoint(subscription.sequence, subscription.epoch, false);
-              subscription.start();
-            }
-            sendLive('{"type":"sync-ok"}');
-            return;
-          }
+          // Installed phones still send sync before selecting ordinary reads.
+          if (item.type === 'sync') { sendLive('{"type":"sync-ok"}'); return; }
           if (item.type === 'trace-paint' && typeof item.id === 'string') {
             const trace = pendingPaintTraces.get(item.id);
             if (!trace || client.readyState !== client.OPEN) return;
@@ -1253,31 +1139,16 @@ export function createBeelineServer(options: ServerOptions): Server {
               principal.identityId,
             );
             for (const roomId of requestedRoomIds) {
-              if (!readableRooms.has(roomId) || releases.has(roomId)) continue;
+              if (!readableRooms.has(roomId)) continue;
+              releases.get(roomId)?.();
               if (item.sidebarPreviews === true) previewRooms.add(roomId);
               // Agents whose draft this socket has already been handed live.
               // The snapshot below is read asynchronously, so a delta can land
               // first; replacing it with the older row would show the reader the
               // answer going backwards.
               const streamed = new Set<string>();
-              const candidateCursor = (item.cursors && typeof item.cursors === 'object' &&
-                !Array.isArray(item.cursors)
-                ? (item.cursors as Record<string, unknown>)[roomId] : undefined);
-              const cursor = candidateCursor && typeof candidateCursor === 'object' &&
-                !Array.isArray(candidateCursor) ? candidateCursor as Record<string, unknown> : undefined;
-              const resume = cursor && typeof cursor.epoch === 'string' &&
-                typeof cursor.base === 'number' && Array.isArray(cursor.seen)
-                ? { epoch: cursor.epoch, base: cursor.base,
-                    seen: cursor.seen.filter((value): value is number => typeof value === 'number') }
-                : undefined;
-              let latestEpoch: string | undefined;
-              const forwardEvent = (event: LiveEvent, sequence?: number, epoch?: string) => {
-                  if (epoch !== undefined) latestEpoch = epoch;
-                  const currentEpoch = () => epoch === undefined || epoch === latestEpoch;
-                  const sendFrame = (payload: Record<string, unknown>) => currentEpoch() && sendLive(JSON.stringify({
-                    ...payload, ...(sequence !== undefined ? { sequence } : {}),
-                    ...(epoch !== undefined ? { epoch } : {}),
-                  }));
+              const forwardEvent = (event: LiveEvent) => {
+                  const sendFrame = (payload: Record<string, unknown>) => sendLive(JSON.stringify(payload));
                   if (
                     event.type === 'invalidate' &&
                     event.readerId &&
@@ -1291,23 +1162,10 @@ export function createBeelineServer(options: ServerOptions): Server {
                       if(!viewedRooms.has(roomId)||!overlayViewer.accept(event))return;
                       return fenceHelperOverlayEnqueue(options.database,event,()=>enqueueHelperOverlay(event),principal.identityId);
                     }
-                    if (event.type === 'draft' || event.type === 'thought') sendDraft(event, sequence, epoch);
+                    if (event.type === 'draft' || event.type === 'thought') sendDraft(event);
                     else {
-                      if (event.type === 'retract')
-                        draftWire.delete(`${event.roomId}:${event.agentId}:${event.turnId}:${event.kind}`);
                       sendFrame(event);
                     }
-                    return;
-                  }
-                  // Canonical facts own these durable families after negotiation.
-                  // Keep the separate ephemeral branch above and legacy corner
-                  // lists until their own family is migrated.
-                  if(event.reason!=='corner-status' && (routerProtocol.supports('room-head') ||
-                    (routerProtocol.supports('room-list') && previewRooms.has(roomId) && !viewedRooms.has(roomId)))){
-                    const row=event.committedRow?.type==='message'?event.committedRow.row:undefined;
-                    if(event.messageId && (event.needsYouCandidate || event.agentId===principal.identityId || event.reason==='phone-write' ||
-                        (row && (row.author_id===principal.identityId || row.presentation==='card' || row.presentation==='system' || isNeedsYouAsk(row.text)))))
-                      sendNeedsYouDelta(event,roomId);
                     return;
                   }
                   // committedRow is process-local authority input. Strip it
@@ -1338,9 +1196,9 @@ export function createBeelineServer(options: ServerOptions): Server {
                         ? options.phone.liveReadState(roomId, principal.identityId)
                         : options.phone.liveRoomCommands(roomId, principal.identityId))
                         .then((state) => {
-                          if (client.readyState !== client.OPEN || !currentEpoch()) return;
+                          if (client.readyState !== client.OPEN) return;
                           if (state === null) { sendFrame(wireEvent); return; }
-                          if (!admitRow(stateKey, sequence !== undefined ? { epoch, sequence } : undefined,
+                          if (!admitRow(stateKey, undefined,
                             JSON.stringify(state))) return;
                           sendFrame(readMark ? { type: 'read-state', roomId, readCursor: state }
                             : { type: 'room-commands', roomId, commands: state });
@@ -1353,10 +1211,10 @@ export function createBeelineServer(options: ServerOptions): Server {
                       beginRowRead(statusKey);
                       return readCornerStatusForViewer(event, roomId, principal.identityId)
                         .then((status) => {
-                          if (client.readyState !== client.OPEN || !currentEpoch()) return;
+                          if (client.readyState !== client.OPEN) return;
                           if (!status) { sendFrame(wireEvent); return; }
                           if (!admitRow(statusKey,
-                            sequence !== undefined ? { epoch, sequence } : undefined,
+                            undefined,
                             JSON.stringify(status))) return;
                           sendFrame({ type: 'corner-status', roomId, ...status });
                         })
@@ -1434,7 +1292,6 @@ export function createBeelineServer(options: ServerOptions): Server {
                       const publicDelta = { ...result.delta,
                         ...(workflowRuns ? { workflowRuns } : {}),
                         ...(starPrompt ? { starPrompt: starPrompt.prompt } : {}) };
-                      if (!currentEpoch()) return;
                       // Never roll a row back after a newer projection.
                       if (!admitRow(rowKey,
                         publicDelta.type === 'message-delta' && publicDelta.version !== undefined
@@ -1473,33 +1330,8 @@ export function createBeelineServer(options: ServerOptions): Server {
                     })
                     .finally(() => endRowRead(rowKey));
               };
-              const subscription = options.replay
-                ? await options.replay.subscribe(`room:${roomId}`, roomId, readLiveCursor(cursor), forwardEvent,
-                    (sequence, epoch, reload) => {
-                      sendLive(JSON.stringify({ type: reload ? 'reload' : 'cursor', roomId, sequence, epoch }));
-                    },
-                    async () => (await options.phone.canReadRooms([roomId], principal.identityId)).has(roomId)).catch(error => {
-                    console.error('[live] Room replay unavailable', error);
-                    sendLive(JSON.stringify({ type: 'reload', roomId }));
-                    return null;
-                  })
-                : options.live.subscribeReplay(roomId, resume, forwardEvent);
-              if (!subscription) continue;
-              if (client.readyState !== client.OPEN) { subscription.release(); return; }
-              releases.set(roomId, subscription.release);
-              sendLive(JSON.stringify({ type: 'subscribed', roomId,
-                epoch: subscription.epoch,
-                cursor: subscription.resumed ? resume!.base : subscription.sequence,
-                resumed: subscription.resumed }));
-              if (subscription.resumed) {
-                for (const { event, sequence } of subscription.replay)
-                  await forwardEvent(event, sequence, subscription.epoch);
-                // Filtered or unchanged rows still advance the durable cursor.
-                if ('start' in subscription) sendLive(JSON.stringify({ type: 'cursor', roomId,
-                  sequence: subscription.sequence, epoch: subscription.epoch }));
-              }
-              if ('start' in subscription && typeof subscription.start === 'function') subscription.start();
-              else if (subscription.resumed) continue;
+              releases.set(roomId, options.live.subscribe(roomId, forwardEvent));
+              sendLive(JSON.stringify({ type: 'subscribed', roomId }));
               // A live lane carries only what is written after this point, so a
               // reader who joins a turn already in progress has missed the draft
               // it is writing. Hand over the running one now; every later delta
@@ -1556,8 +1388,6 @@ export function createBeelineServer(options: ServerOptions): Server {
             releases.delete(item.roomId);
             previewRooms.delete(item.roomId);
             sentRows.delete(`${item.roomId}:corner-status`);
-            for (const key of draftWire.keys())
-              if (key.startsWith(`${item.roomId}:`)) draftWire.delete(key);
           }
         };
         socketTaskTail = socketTaskTail
@@ -1604,10 +1434,7 @@ export function createBeelineServer(options: ServerOptions): Server {
         releasePersonalResync();
         pendingPaintTraces.clear();
         for (const release of releases.values()) release();
-        for (const release of workspaceReleases.values()) release();
-        workspaceReleases.clear();
         releases.clear();
-        draftWire.clear();
         sentRows.clear();
       });
     },
@@ -2618,8 +2445,8 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
 
   const operation = async (name: string, input: Record<string, unknown>, project?: (result: unknown) => unknown,
     invokeLegacy?: () => Promise<unknown>, command?: import('@beeline/api-contract/router-command').RouterCommandIdentity) => {
-    if (['readRoomTools','readAgentUsageCell','readRouterSnapshot','readMediaMetadata','readMediaLink','readMediaPlayback'].includes(name))
-      throw new PhoneOperationError(409, { error: 'router_socket_required' });
+    if (['readRoomTools','readMediaMetadata','readMediaLink','readMediaPlayback'].includes(name))
+      throw new PhoneOperationError(409, { error: 'phone_socket_required' });
     const familyId = phoneFamilies.get(request);
     const result = await dispatchPhoneOperation(name, input, identityId!, undefined, invokeLegacy, familyId, command);
     await fenceCommandReceiptEnqueue(options.database, identityId!, result, safeResult => {

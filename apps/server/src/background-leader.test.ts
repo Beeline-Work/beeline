@@ -36,7 +36,7 @@ describe('source and deadline owned background leadership',()=>{
     const leader=new BackgroundLeader({connectDedicated:lock.connect},cycle);void leader.run();await settle();
     await vi.advanceTimersByTimeAsync(86_400_000);
     expect(cycle).toHaveBeenCalledOnce();expect(vi.getTimerCount()).toBe(0);
-    expect(lock.clients[0]!.statements).toEqual(['SET statement_timeout=0; SET lock_timeout=0','SELECT pg_advisory_lock($1)']);
+    expect(lock.clients[0]!.statements).toEqual(['SET statement_timeout=0; SET lock_timeout=60000','SELECT pg_advisory_lock($1)']);
     leader.wake();await settle();expect(cycle).toHaveBeenCalledTimes(2);expect(cycle).toHaveBeenLastCalledWith(false, expect.any(AbortSignal));
     await leader.stop();expect(lock.clients[0]!.release).toHaveBeenCalledOnce();
   });

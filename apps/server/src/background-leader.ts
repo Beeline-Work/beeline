@@ -72,7 +72,10 @@ export class BackgroundLeader {
         // This is a dedicated ownership wait, never a data query. Always
         // destroy the connection on release, so these settings cannot leak
         // into the app/job pools. Shutdown destroys a blocked acquisition.
-        await client.query('SET statement_timeout=0; SET lock_timeout=0');
+        // An endless wait pins the database's cleanup horizon (dead rows piled
+        // up 110x on live_streams) and blocks concurrent index builds, so the
+        // standby gives up after a minute and waits again on a fresh connection.
+        await client.query('SET statement_timeout=0; SET lock_timeout=60000');
         if (this.stopped || this.lost) continue;
         await client.query('SELECT pg_advisory_lock($1)', [BACKGROUND_LOCK_KEY]);
         this.acquiring = false;
@@ -86,7 +89,7 @@ export class BackgroundLeader {
           await this.wait(typeof delay === 'number' ? delay : Infinity);
         }
       } catch (error) {
-        if (!this.stopped) captureServerError(error);
+        if (!this.stopped && (error as { code?: string }).code !== '55P03') captureServerError(error);
       } finally {
         retire();if(this.abortCycle===retire)this.abortCycle=undefined;
         this.acquiring = false;

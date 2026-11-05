@@ -12,7 +12,6 @@ import {
   artifactFormat,
   mediaIdFromUrl,
 } from '@/buzz/artifact';
-import { routerOwnerArtifactAction } from '@/buzz/router-owner';
 import {
   artifactImageSource,
   releaseArtifactImageSource,
@@ -30,14 +29,12 @@ import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
 import { Modal } from '@/modal';
 
-
 /** Reopen the same artifact surface from a card or transcript reference. */
 export function openArtifactViewer(attachment: AttachmentReference, isDesktop = false,
   roomId = currentViewerConversation()?.roomId, authorHandle = attachment.author,
   photoAttachments?: readonly AttachmentReference[]) {
   const format = artifactFormat(attachment.mimeType);
   const objectId = mediaIdFromUrl(attachment.url);
-  if (objectId) routerOwnerArtifactAction(format === 'game' ? 'RunArtifact' : 'OpenArtifact', objectId);
   // A picture is not a document: every surface opens the same centered
   // full-screen viewer, so desktop reads an image the way mobile does. The
   // work pane keeps its documents — its sandboxed iframe is the right shape

@@ -476,17 +476,6 @@ describe('Corner list live path', () => {
     expect(painted(renderer)).toEqual(['corner-1:review']);
   });
 
-  it('drops a frame older than one the lane already applied', async () => {
-    const renderer = await mountList();
-    // The lane has committed through 4. Sequence 5 is contiguous; a later 4
-    // is stale, rather than an initial gap that requires a covering read.
-    server.subscribed(false, 'epoch', 4);
-    server.status(5, [corner('corner-1', 'review')]);
-    server.status(4, [corner('corner-1', 'working')]);
-    await settle();
-    expect(painted(renderer)).toEqual(['corner-1:review']);
-  });
-
   it('never repeats a corner a frame moved from a later page to the first', async () => {
     const renderer = await mountList();
     server.status(1, [corner('corner-1', 'waiting')], 'older');
@@ -634,7 +623,7 @@ describe('Corner list live path', () => {
     expect(painted(renderer)).toEqual(['corner-1:working']);
   });
 
-  it('does not re-read for parent chat traffic, only for a fresh lane', async () => {
+  it('reads on reconnect invalidation, not parent chat traffic or subscription acknowledgement', async () => {
     const renderer = await mountList();
     server.emit({ type: 'invalidate', roomId: 'room-a', reason: 'postgres:messages', messageId: 'm1' });
     await settle();
@@ -642,6 +631,9 @@ describe('Corner list live path', () => {
 
     list.state = 'working';
     server.subscribed(false, 'epoch-2');
+    await settle();
+    expect(openReads()).toBe(1);
+    server.emit({ type: 'invalidate', roomId: 'room-a', reason: 'reconnect' });
     await settle();
     expect(openReads()).toBe(2);
     expect(painted(renderer)).toEqual(['corner-1:working']);
@@ -658,7 +650,7 @@ describe('Corner header reads the parent Room record (3.6)', () => {
     await settle();
     expect(painted(screen)).toEqual(['corner-1:review']);
     expect(headerText(header)).toBe('RUBY · review · checks failed');
-    expect(openReads()).toBe(1);
+    expect(openReads()).toBe(2);
   });
 
   it('keeps an idle row idle while a turn runs in the corner', async () => {

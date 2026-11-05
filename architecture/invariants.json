@@ -367,7 +367,7 @@
         "apps/mobile/sources"
       ],
       "owners": [],
-      "total": 19,
+      "total": 17,
       "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
     },
     {
@@ -1577,8 +1577,7 @@
           "source_room_name": "existing before the registry; weekly audit reviews",
           "source_room_kind": "existing before the registry; weekly audit reviews",
           "message_created_at": "existing before the registry; weekly audit reviews",
-          "created_at": "existing before the registry; weekly audit reviews",
-          "bookmark_id": "Server-owned incarnation distinguishes delete/recreate and ordering changes even when the bookmark natural key returns to the same value."
+          "created_at": "existing before the registry; weekly audit reviews"
         }
       },
       "messages": {
@@ -2936,16 +2935,6 @@
           "bound_at": "Retired (SENTRY-22): older images still join it during rolling deploy and rollback; drop in a contract migration."
         }
       },
-      "agent_usage_cells": {
-        "module": "Helper usage cells (apps/server/src/helper-usage.ts)",
-        "reason": "Committed full-cell generations/revisions order canonical usage across source switches and server restarts.",
-        "columns": {
-          "agent_id": "Identifies the exact agent whose canonical usage cell changed, independently of client possession.",
-          "owner_id": "Pins the authorized owner for targeted committed source delivery and final enqueue fencing.",
-          "generation": "A durable generation prevents an older account/actor source from overwriting a newly selected source.",
-          "revision": "A committed monotonic cell revision orders all full replacements within that generation."
-        }
-      },
       "agent_usage_source_heads": {
         "module": "Helper usage cells (apps/server/src/helper-usage.ts)",
         "reason": "Per-registration source heads fence replayed account/actor publications before altering the canonical usage cell.",
@@ -2975,8 +2964,8 @@
         }
       },
       "router_authority": {
-        "module": "Router authority fencing (apps/server/src/router-projection-schema.ts)",
-        "reason": "Monotonic authority epochs survive response eviction and make revoke/regrant distinguishable at final enqueue and cold restore.",
+        "module": "Membership authority (apps/server/src/membership-authority-schema.ts)",
+        "reason": "Revocation epochs protect the separate MCP credential stream at final enqueue.",
         "columns": {
           "scope": "Identifies the exact permission domain whose readers must fence older private certificates.",
           "epoch": "A durable monotonic generation invalidates pre-revocation certificates even after an access regrant."
@@ -2992,7 +2981,6 @@
           "digest": "Detects conflicting canonical arguments attempting to reuse an admitted command identity.",
           "state": "Preserves durable pending, committed or unknown outcome when a reply or provider result is lost.",
           "result": "Retains the original committed outcome for bounded replay without executing its effect again.",
-          "coverage": "Binds optional original convenience data to its actual committed cut and authority for later replay fencing.",
           "created_at": "Records durable claim admission time for audit and pending outcome diagnosis.",
           "completed_at": "Records the committed completion boundary independently of when a caller receives its reply.",
           "result_expires_at": "Bounds full result retention while preserving permanent used identity/digest tombstones."
@@ -3018,24 +3006,6 @@
           "connection_epoch": "Rejects transaction completion if a takeover replaced the admitted registration.",
           "command_id": "Identifies the actual command authorizing the effect and prevents mixing commands in one registration transaction.",
           "generation_id": "Pins the effect to its immutable execution generation even if that command is requeued before COMMIT."
-        }
-      },
-      "owner_projection_cells": {
-        "module": "Owner display projections (apps/server/src/router-owner-source.ts)",
-        "reason": "Committed owner summary cells separate pure Workbench display from wallet/provider observation and share one owner authority stream.",
-        "columns": {
-          "owner_id": "Partitions committed display cells by authenticated owner, independent of Workspace selection.",
-          "cell": "Names the bounded server-authored summary within an owner projection.",
-          "value": "Captures the transactional summary used by pure display snapshots without invoking the wallet/provider reader."
-        }
-      },
-      "owner_wallet_projections": {
-        "module": "Wallet observations (apps/server/src/wallet.ts)",
-        "reason": "A retained actual provider observation lets pure snapshots report measured balances and their age without observing the provider again.",
-        "columns": {
-          "owner_id": "Partitions the retained observation by the wallet owner.",
-          "value": "Preserves the last actual provider result, never a fabricated fresh balance.",
-          "observed_at": "Records when the retained provider observation changed, independently of display reads."
         }
       },
       "agent_command_owner_ends": {
@@ -3304,20 +3274,6 @@
         "command": "Retired corner app's command; only the unique index reads it, for older images."
       },
       "manifest": {},
-      "coverage": {
-        "cut": "Stores the original committed canonical data cut; replay cannot relabel an older convenience DTO at a newer cut.",
-        "authority": "Stores the original certificate for current-permission validation before replaying private convenience data.",
-        "workspaceId": "Binds the original command convenience projection to its canonical Workspace scope.",
-        "roomId": "Binds optional Room convenience data to the exact scope whose authority must still match."
-      },
-      "value": {
-        "createdAt": "Committed binding creation time in the owner Workbench summary.",
-        "expiresAt": "Committed delegation expiry in the owner Workbench summary.",
-        "standing": "Committed standing-delegation flag in the owner Workbench summary.",
-        "workspace": "Existing source-capture JSON alias retains the changed Workspace identifier for committed scheduling causes.",
-        "room": "Existing source-capture JSON alias retains the changed Room identifier for committed scheduling causes.",
-        "roomId": "Existing scheduled-row source JSON alias preserves the Room scope across old/new capture."
-      },
       "reservation": {
         "day": "Retains the quota day charged at admission even when settlement occurs on another day.",
         "reserved": "Preserves the admitted token reservation needed for exact settlement.",

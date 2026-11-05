@@ -795,7 +795,7 @@ export class FreeAgentService {
 
   /**
    * The helper reports a minute without work. Refuse while a wake is pending;
-   * otherwise record the sleep and ask Fly to suspend (or stop) the Machine.
+   * otherwise refresh an outdated Machine or suspend its ready helper.
    */
   async requestSleep(agentId: string, options: { refresh?: boolean } = {}): Promise<{ sleep: boolean }> {
     const slept = (
@@ -811,32 +811,45 @@ export class FreeAgentService {
       )
     ).rows[0];
     if (!slept) return { sleep: false };
-    // A helper behind the announced release stops instead, so its next boot
-    // installs the new release; a suspended Machine would resume the old one.
-    const mode = options.refresh ? 'stop' : 'suspend';
+    const mode = options.refresh ? 'refresh' : 'suspend';
     await recordFreeAgentEvent(this.database, agentId, 'sleep_requested', { mode });
     void this.#sleepMachine(agentId, slept.fly_machine_id, mode);
     return { sleep: true };
   }
 
-  async #sleepMachine(agentId: string, machineId: string, mode: 'suspend' | 'stop'): Promise<void> {
+  /** Image promotion warms existing sleepers without queuing an agent turn. */
+  async refreshSleepingMachines(): Promise<void> {
+    const sleepers = await this.database.query<{ agent_id: string; fly_machine_id: string }>(
+      `SELECT agent_id,fly_machine_id FROM free_agents
+       WHERE removed_at IS NULL AND fly_machine_id IS NOT NULL AND state='sleeping'`,
+    );
+    const results = await Promise.allSettled(sleepers.rows.map(async row => {
+      if (await this.machines.refresh(row.fly_machine_id, this.config.image)) {
+        await recordFreeAgentEvent(this.database, row.agent_id, 'refresh_started', {
+          machineId: row.fly_machine_id, image: this.config.image,
+        });
+      }
+    }));
+    const failures = results.filter(result => result.status === 'rejected');
+    if (failures.length) throw new AggregateError(failures.map(result => result.reason),
+      `Free-agent image refresh failed: ${failures.map(result => String(result.reason)).join('; ')}`);
+  }
+
+  async #sleepMachine(agentId: string, machineId: string, mode: 'suspend' | 'refresh'): Promise<void> {
     // Let the helper's response leave the Machine before it freezes.
     await new Promise((resolve) => setTimeout(resolve, 250));
     try {
-      let reached: 'suspended' | 'stopped' = mode === 'suspend' ? 'suspended' : 'stopped';
-      if (mode === 'suspend') {
-        try {
-          await this.machines.suspend(machineId);
-        } catch (error) {
-          this.log(`agent ${agentId.slice(0, 12)} suspend failed, stopping: ${String(error)}`);
-          await this.machines.stop(machineId);
-          reached = 'stopped';
-        }
-      } else await this.machines.stop(machineId);
+      if (await this.machines.refresh(machineId, this.config.image, mode === 'refresh')) {
+        // The new boot connects and uses this same idle-sleep path once the
+        // installer and helper are ready. Never snapshot a half-booted helper.
+        await recordFreeAgentEvent(this.database, agentId, 'refresh_started', { machineId, image: this.config.image });
+        return;
+      }
+      await this.machines.suspend(machineId);
       // A suspend takes seconds to snapshot memory; `slept` marks the Machine
       // actually asleep, not the request.
-      await this.machines.waitFor(machineId, reached, 60).catch(() => undefined);
-      await recordFreeAgentEvent(this.database, agentId, 'slept', { machineId, state: reached });
+      await this.machines.waitFor(machineId, 'suspended', 60);
+      await recordFreeAgentEvent(this.database, agentId, 'slept', { machineId, state: 'suspended' });
     } catch (error) {
       this.log(`agent ${agentId.slice(0, 12)} sleep failed: ${String(error)}`);
     }

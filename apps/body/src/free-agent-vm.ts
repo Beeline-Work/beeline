@@ -226,7 +226,7 @@ async function upgradeFreeAgentHarness(configPath: string, env: NodeJS.ProcessEn
 
 /**
  * POST the idle report; the server answers whether it will sleep this Machine.
- * `refresh` asks for a stop instead of a suspend, so the next boot installs
+ * `refresh` asks the server to reboot before suspension, so that boot installs
  * the newer helper release the server announced.
  */
 export async function requestFreeAgentSleep(

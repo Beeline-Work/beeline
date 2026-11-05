@@ -939,3 +939,11 @@ it('keeps a validated corner destination on repository events', () => {
   expect(read(event)?.cornerId).toBe(roomId);
   expect(read({ ...event, cornerId: 'invalid' })?.cornerId).toBeUndefined();
 });
+
+it('keeps the message text when a preceding phone cannot recognize a newly registered event kind', () => {
+  const event = {subject:{kind:'person',name:'Owner'},verb:'left',kind:'future-event'};
+  const decoded = readRoomViewMessage({...message,presentation:'system',text:'Owner left',systemEvent:event});
+  expect(decoded).toMatchObject({id:message.id,text:'Owner left',presentation:'system'});
+  expect(decoded?.systemEvent).toBeUndefined();
+  expect(readRoomViewMessage({...message,systemEvent:{...event,kind:'left'}})?.systemEvent?.kind).toBe('left');
+});

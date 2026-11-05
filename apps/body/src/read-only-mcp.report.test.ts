@@ -124,25 +124,26 @@ for (const name of ['order', 'report', 'post']) {
     'done: [proof](file:///tmp/worker-only/evidence.log)',
     'done: proof=evidence.txt',
     'done: read `./evidence.txt`',
-  ])(`Reproduction handoff-files-unreachable: ${name} refuses %s`, async (text) => {
+  ])(`Reproduction handoff-files-unreachable: ${name} delivers %s with advice`, async (text) => {
     setupTurn(`handoff-${name}-${text}`);
-    const fetchMock = vi.fn(async () => Response.json({ delivered: true }));
+    const fetchMock = vi.fn(async (_url: URL, _init: RequestInit) => Response.json({ delivered: true }));
     vi.stubGlobal('fetch', fetchMock);
-    await expect(callAgentTool(name, { text, ...(name === 'order' ? { address: '22222222-2222-4222-8222-222222222222', agent: 'worker' } : name === 'report' ? { status: 'done' } : {}) }, 'handoff')).rejects.toThrow(/post_artifact/);
-    expect(fetchMock).not.toHaveBeenCalled();
+    await expect(callAgentTool(name, { text, ...(name === 'order' ? { address: '22222222-2222-4222-8222-222222222222', agent: 'worker' } : name === 'report' ? { status: 'done' } : {}) }, 'handoff')).resolves.toContain('Warning:');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]![1]!.body)).text).toBe(text);
   });
 
-  it(`Reproduction files-1: ${name} refuses a foreign workspace temp path before sending`, async () => {
+  it(`Reproduction files-1: ${name} delivers a foreign workspace temp path with advice`, async () => {
     setupTurn(`foreign-${name}`);
-    const fetchMock = vi.fn(async () => Response.json({ delivered: true }));
+    const fetchMock = vi.fn(async (_url: URL, _init: RequestInit) => Response.json({ delivered: true }));
     vi.stubGlobal('fetch', fetchMock);
     const text = 'done: read /tmp/another-agent-workspace/evidence.txt';
-    await expect(callAgentTool(name, { text, ...(name === 'order' ? { address: '22222222-2222-4222-8222-222222222222', agent: 'worker' } : name === 'report' ? { status: 'done' } : {}) }, 'foreign')).rejects.toThrow(/attach|upload/);
-    expect(fetchMock).not.toHaveBeenCalled();
+    await expect(callAgentTool(name, { text, ...(name === 'order' ? { address: '22222222-2222-4222-8222-222222222222', agent: 'worker' } : name === 'report' ? { status: 'done' } : {}) }, 'foreign')).resolves.toContain('Warning:');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 }
 
-it('keeps tracked source citations deliverable while refusing generated checkout proofs', async () => {
+it('keeps tracked source citations deliverable and warns for generated checkout proofs', async () => {
   setupTurn('tracked-source');
   const checkout = mkdtempSync(join(scratch, 'checkout-'));
   execFileSync('/usr/bin/git', ['init', checkout], { stdio: 'ignore' });
@@ -152,18 +153,18 @@ it('keeps tracked source citations deliverable while refusing generated checkout
   vi.stubEnv('BEELINE_ATTACH_ROOT', checkout);
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ delivered: true })));
   await expect(callAgentTool('report', { status: 'done', text: 'done: changed source.ts' }, 'source')).resolves.toContain('delivered');
-  await expect(callAgentTool('report', { status: 'done', text: 'done: proof.log' }, 'proof')).rejects.toThrow('post_artifact');
+  await expect(callAgentTool('report', { status: 'done', text: 'done: proof.log' }, 'proof')).resolves.toContain('Warning:');
 });
 
-it('refuses relative proof paths in the writable home without reading outside the allow-list', async () => {
+it('delivers relative proof paths in the writable home with advice', async () => {
   setupTurn('scratch-proof');
   const home = mkdtempSync(join(scratch, 'home-'));
   writeFileSync(join(home, 'capture.png'), 'synthetic image');
   vi.stubEnv('BEELINE_ATTACH_SCRATCH_ROOT', home);
-  const fetchMock = vi.fn();
+  const fetchMock = vi.fn(async () => Response.json({ delivered: true }));
   vi.stubGlobal('fetch', fetchMock);
-  await expect(callAgentTool('report', { status: 'done', text: 'done: `capture.png`' }, 'proof')).rejects.toThrow('post_artifact');
-  expect(fetchMock).not.toHaveBeenCalled();
+  await expect(callAgentTool('report', { status: 'done', text: 'done: `capture.png`' }, 'proof')).resolves.toContain('Warning:');
+  expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
 it('Reproduction upload-1: an unrelated successful file cannot hide missing evidence', async () => {

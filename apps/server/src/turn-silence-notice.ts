@@ -2,7 +2,7 @@ import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { commandOwnerExpiredBeforeSql, commandOwnerExpiredSql } from './turn-ownership.js';
 import { reportToCommander } from './commander.js';
 import { closeFreeAgentTurn } from './free-agent-turn-close.js';
-import type { CommandRow } from './agent-command.js';
+import { claimAgentCommand, settleAgentCommand, type CommandRow } from './agent-command.js';
 /**
  * First silence after a delivered message: one durable Room line, and for a
  * hiccup only, reopen the original command so the helper answers it again
@@ -56,18 +56,19 @@ export async function recoverModelCapacityCompletion(
     [command.result_message_id, 'Selected model is at capacity. Please try a different model.'],
   )).rows[0];
   if (!diagnostic) return;
-  const reopened = await db.query(`UPDATE agent_commands SET state='claimed',completed_at=NULL,result_message_id=NULL
-    WHERE id=$1 AND generation_id=$2 AND state='complete' RETURNING id`,[command.id,command.generation_id]);
-  if (!reopened.rowCount) return;
+  // The exact diagnostic is a corrected terminal receipt, not new work. Reuse
+  // the recorded generation through the claim owner, including Stop/turn fences.
+  await claimAgentCommand(db, command.room_id, command.agent_id, command.id, command.generation_id!,
+    command.turn_owner_connection_id ? { connectionId: command.turn_owner_connection_id,
+      epoch: Number(command.turn_owner_epoch) } : undefined, true);
   await db.query(`UPDATE agent_turns SET status='failed',failure_reason=$5,created_at=now()
-    WHERE room_id=$1 AND request_id=$2 AND agent_id=$3 AND generation_id=$4 AND status='complete'`,
+    WHERE room_id=$1 AND request_id=$2 AND agent_id=$3 AND generation_id=$4 AND status IN ('working','complete')`,
     [command.room_id,command.turn_request_id,command.agent_id,command.generation_id,diagnostic.text]);
   const outcome = await noteFirstSilence(db,live,{
     roomId:command.room_id,requestId:command.turn_request_id,agentId:command.agent_id,
     generationId:command.generation_id,reason:diagnostic.text,reasonKind:'hiccup',
   });
-  if (!outcome.hiccupRestart) await db.query(`UPDATE agent_commands SET state='complete',completed_at=now()
-    WHERE id=$1 AND state='claimed' AND generation_id=$2`,[command.id,command.generation_id]);
+  if (!outcome.hiccupRestart) await settleAgentCommand(db, command, 'complete');
   live.publish({type:'invalidate',roomId:command.room_id,reason:'turn'});
   return outcome;
 }

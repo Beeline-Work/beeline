@@ -11,6 +11,7 @@ for (const system of [false, true])
         async () => {
           const mobile = process.cwd();
           const shims = { ...webProofShims(mobile) };
+          shims['@/sync/transport/monolith-operation'] = 'export const monolithPhoneOperation = async () => ({});';
           shims['react-native-unistyles'] = shims['react-native-unistyles'].replace(
             'beelineThemes.obsidian',
             `beelineThemes.${theme}`,

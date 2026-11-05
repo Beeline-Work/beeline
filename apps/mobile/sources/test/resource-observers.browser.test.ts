@@ -124,7 +124,7 @@ describe('resource observers in the desktop web renderer', () => {
           globalThis.__invalidate?.({ monolithLive: { type: 'invalidate', roomId: 'corner', reason: 'postgres:messages' } });
         }, 600);
         setTimeout(() => { globalThis.__failureText = document.getElementById('root').textContent; globalThis.__offline = false; globalThis.__done = true;
-          globalThis.__invalidate?.({ monolithLive: { type: 'subscribed', roomId: 'corner' } }); }, 1800);
+          globalThis.__invalidate?.({ monolithLive: { type: 'invalidate', roomId: 'corner', reason: 'reconnect' } }); }, 1800);
         setTimeout(() => { document.getElementById('result').textContent = JSON.stringify({
           failureText: globalThis.__failureText, status: document.querySelector('[data-testid="workflow-run-status"]')?.textContent,
           reads: globalThis.__reads, errors: globalThis.__console });
@@ -177,11 +177,11 @@ describe('resource observers in the desktop web renderer', () => {
         const push = () => globalThis.__listener({ monolithLive: { type: 'invalidate', roomId: 'corner', reason: 'message' } });
         setTimeout(() => globalThis.__listener({ monolithLive: { type: 'subscribed', roomId: 'corner' } }), 150);
         for (let i = 1; i <= 5; i++) setTimeout(push, i * 200);
-        setTimeout(() => { globalThis.__streakNotices = notices; globalThis.__streakText = errorLine()?.textContent; globalThis.__recover = true; globalThis.__listener({monolithLive:{type:'subscribed',roomId:'corner',resumed:false}}); }, 3200);
+        setTimeout(() => { globalThis.__streakNotices = notices; globalThis.__streakText = errorLine()?.textContent; globalThis.__recover = true; globalThis.__listener({monolithLive:{type:'invalidate',roomId:'corner',reason:'reconnect'}}); }, 3200);
         setTimeout(() => { globalThis.__clearedAfterSuccess = !errorLine(); }, 3400);
         setTimeout(() => { globalThis.__recover = false; push(); }, 3500);
         setTimeout(() => { globalThis.__secondError = errorLine()?.textContent; globalThis.__noticesAfterSuccess = notices;
-          globalThis.__recover = true; globalThis.__listener({monolithLive:{type:'subscribed',roomId:'corner',resumed:false}}); }, 4800);
+          globalThis.__recover = true; globalThis.__listener({monolithLive:{type:'invalidate',roomId:'corner',reason:'reconnect'}}); }, 4800);
         setTimeout(() => { document.getElementById('result').textContent = JSON.stringify({
           streakNotices: globalThis.__streakNotices, noticesAfterSuccess: globalThis.__noticesAfterSuccess,
           streakText: globalThis.__streakText, visibleError: globalThis.__secondError,
@@ -198,7 +198,7 @@ describe('resource observers in the desktop web renderer', () => {
       } });
       expect(result.status, result.stderr).toBe(0);
       console.log('Reproductions R9-OBS-06 and R12k desktop web:', result.result);
-      expect(JSON.parse(result.result)).toMatchObject({ streakNotices: 0, noticesAfterSuccess: 0, reads: 4, clearedAfterSuccess: true, retryRecovered: true });
+      expect(JSON.parse(result.result)).toMatchObject({ streakNotices: 0, noticesAfterSuccess: 0, reads: 9, clearedAfterSuccess: true, retryRecovered: true });
     } finally { await rm(directory, { recursive: true, force: true }); }
   }, 90000);
 

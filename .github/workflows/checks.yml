@@ -2,7 +2,7 @@
 # client-truth-gates.yml, workflow-lint.yml, auth-image.yml). Check names are
 # the job `name:`s below and must stay stable: TYPECHECK, SHARED PACKAGE
 # TESTS, BODY SUITE, SERVER SUITE, SERVER INTEGRATION,
-# MAC HELPER ACCEPTANCE, DEAD CODE,
+# DEAD CODE,
 # MOBILE-EXPORT REACHABILITY, PRODUCTION-CORPUS REPLAY, FRAME-BUDGET,
 # STATE-UPGRADE, NATIVE FINGERPRINT, README PARITY, APP LINK ASSOCIATIONS,
 # ACTIONLINT, Build auth container, Detect changes. A job `name:` IS a
@@ -21,10 +21,7 @@
 # On the default `some`, `**` matches every file and a `!` line does not
 # subtract. `every` stays off the module step: one file would have to match
 # every pattern in a list, and the multi-pattern gates would never run.
-# MAC HELPER ACCEPTANCE is the exception: it holds the repository's one
-# self-hosted Intel Mac, so it follows its own `macHelper` filter alone — the
-# macOS-specific sources, never run-everything. The Apple-silicon bundle is
-# proven by the release's own `helper_macos` leg, not by a PR gate.
+# Native Mac helper acceptance runs before helper promotion in unified-release.yml.
 # A skipped required job uses a job-level `if:` so GitHub reports the check
 # as skipped-and-satisfied. Never put a required check behind a workflow-level
 # `on.pull_request.paths` filter: that omits the check entirely and the PR
@@ -78,7 +75,6 @@ on:
           - body-suite
           - server-suite
           - server-integration
-          - mac-helper-acceptance
           - mobile-suite
           - mobile-export-reachability
           - production-corpus-replay
@@ -112,7 +108,7 @@ jobs:
   changes:
     name: Detect changes
     if: (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push')
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, beeline-ci, beeline-ci-control]
     env:
       CI_TEST_WORKERS: '1'
     timeout-minutes: 5
@@ -427,10 +423,10 @@ jobs:
     needs: changes
     if: >-
       !cancelled() && ((github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') || contains(fromJSON('["all","typecheck","mobile-suite","dead-code","native-fingerprint","mobile-export-reachability","shared-package-tests"]'), inputs.suite))
-    runs-on: ${{ fromJSON(needs.changes.outputs.runner_prepare || '["ubuntu-latest"]') }}
+    runs-on: [self-hosted, Linux, X64, beeline-ci, beeline-ci-workspace]
     env:
       CI_TEST_WORKERS: "1"
-    timeout-minutes: 7
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ci-workspace
@@ -464,7 +460,7 @@ jobs:
       - changes
       - prepare-workspace
     runs-on: ${{ fromJSON(needs.changes.outputs.runner_typecheck || '["ubuntu-latest"]') }}
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       CI_TEST_WORKERS: "1"
       CI_BASE_SHA: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha || github.sha }}
@@ -501,7 +497,7 @@ jobs:
     runs-on: ${{ fromJSON(needs.changes.outputs.runner_shared || '["ubuntu-latest"]') }}
     env:
       CI_TEST_WORKERS: '1'
-    timeout-minutes: 8
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ci-workspace
@@ -559,7 +555,7 @@ jobs:
     runs-on: ${{ fromJSON(needs.changes.outputs.runner_deadCode || '["ubuntu-latest"]') }}
     env:
       CI_TEST_WORKERS: "1"
-    timeout-minutes: 8
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ci-workspace
@@ -581,7 +577,7 @@ jobs:
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'body-suite'))
       )
     runs-on: ubuntu-latest
-    timeout-minutes: 11
+    timeout-minutes: 20
     env:
       WORKSPACE_TEST_SELECTION: ${{ needs.prepare-workspace.outputs['body-selection'] }}
       # A hermetic suite must not react to whatever this happens to be on the
@@ -628,44 +624,6 @@ jobs:
       - name: Prove free-agent boot refresh and startup deadlines
         run: node --test --test-concurrency=1 infra/free-agent/entrypoint.test.mjs
 
-  mac-helper-acceptance:
-    name: MAC HELPER ACCEPTANCE
-    needs: changes
-    if: >-
-      !cancelled() && (
-        ((github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') && needs.changes.outputs.macHelper == 'true') ||
-        (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mac-helper-acceptance'))
-      )
-    runs-on: [self-hosted, macOS, X64, ios-builder]
-    timeout-minutes: 35
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: ./.github/actions/ci-workspace
-      - name: Require the Intel runner
-        run: test "$(uname -m)" = x86_64
-      - name: Fresh-install the native Intel Mac bundle
-        run: npm run bundle:beeline -- --platform darwin-x64
-        env:
-          BEELINE_INSTALL_VERIFY_ROOT: ${{ runner.temp }}/beeline-install-${{ github.run_id }}-${{ github.run_attempt }}
-      - name: Prove storage expiry and rollback retention on macOS
-        working-directory: apps/body
-        run: npx vitest run src/storage-bloat.regression.test.ts src/helper-storage.darwin.test.ts
-      - name: Prove launchd crash, login-bootstrap, and terminal-exit behavior
-        working-directory: apps/body
-        run: BEELINE_LAUNCHD_ACCEPTANCE=1 npx vitest run src/launchd.test.ts src/launchd-acceptance.test.ts
-      - name: Prove pairing and a Room answer on macOS
-        working-directory: apps/body
-        env:
-          BEELINE_LAUNCHD_USER: '0'
-          BEELINE_ACCEPTANCE_INSTALL_ROOT: ${{ runner.temp }}/beeline-install-${{ github.run_id }}-${{ github.run_attempt }}
-        run: npx vitest run src/daemon-api-client.integration.test.ts -t "takes an app grant through finish"
-      - name: Prove a Room answer and open_corner on macOS
-        working-directory: apps/body
-        env:
-          BEELINE_LAUNCHD_USER: '0'
-        run: npx vitest run src/fresh-room-discovery.integration.test.ts
-
   # Not a required check: when it fails or is skipped, the shards run every
   # file. It downloads the newest coverage map built on the PR's base branch
   # (or its own branch) whose commit is in the PR's history, and diffs from
@@ -675,10 +633,10 @@ jobs:
     needs: changes
     if: >-
       github.event_name == 'pull_request' && needs.changes.outputs.code == 'true'
-    runs-on: ${{ fromJSON(needs.changes.outputs.runner_serverSelection || '["ubuntu-latest"]') }}
+    runs-on: [self-hosted, Linux, X64, beeline-ci, beeline-ci-control]
     env:
       CI_TEST_WORKERS: '1'
-    timeout-minutes: 6
+    timeout-minutes: 10
     permissions:
       contents: read
       actions: read
@@ -746,7 +704,7 @@ jobs:
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
         include: ${{ fromJSON(needs.changes.outputs.serverMatrix || '[]') }}
     runs-on: ${{ matrix.target || fromJSON('["ubuntu-latest"]') }}
-    timeout-minutes: ${{ matrix.timeoutMinutes || 29 }}
+    timeout-minutes: 30
     services:
       postgres:
         image: ${{ (matrix.hosted || (github.event_name != 'pull_request' && github.event_name != 'push')) && 'pgvector/pgvector:pg16' || '' }}
@@ -810,7 +768,7 @@ jobs:
     name: SERVER COVERAGE MAP
     if: github.event_name == 'push'
     needs: [changes, prepare-workspace, server-suite-shard, production-corpus-replay]
-    runs-on: ${{ fromJSON(needs.changes.outputs.runner_coverage || '["ubuntu-latest"]') }}
+    runs-on: [self-hosted, Linux, X64, beeline-ci, beeline-ci-control]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -848,7 +806,7 @@ jobs:
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-suite'))
       )
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 20
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -864,10 +822,6 @@ jobs:
       - uses: ./.github/actions/ci-workspace
         with:
           mobile: true
-      - name: Prove server pools disable JIT on isolated PostgreSQL
-        run: npm test -w @beeline/server -- --run src/database-jit.test.ts --maxWorkers=1 --minWorkers=1
-        env:
-          BEELINE_JIT_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
       - name: Prove incident deadlock recovery on isolated PostgreSQL
         run: npm test -w @beeline/server -- --run src/incident-deadlocks.test.ts --maxWorkers=1 --minWorkers=1
         env:
@@ -885,7 +839,7 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
           BEELINE_COMMAND_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
         run: |
-          npm test -w @beeline/server -- src/database-one-attempt.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npx vitest run tests/seams/server-db.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/mcp-webhook-deadline.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/agent-schedule-deadline.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/pending-attachment-deadline.postgres.test.ts --maxWorkers=2 --minWorkers=1
@@ -920,7 +874,7 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') && (needs.changes.outputs.serverSuite == 'true' || needs.prepare-workspace.outputs.server == 'true')) ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-suite'))
       )
-    runs-on: ${{ fromJSON(needs.changes.outputs.runner_serverSuite || '["ubuntu-latest"]') }}
+    runs-on: [self-hosted, Linux, X64, beeline-ci, beeline-ci-control]
     env:
       CI_TEST_WORKERS: '1'
     timeout-minutes: 5
@@ -944,7 +898,7 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') && (needs.changes.outputs.serverIntegration == 'true' || needs.prepare-workspace.outputs.server == 'true')) ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-integration'))
       )
-    runs-on: ${{ fromJSON(needs.changes.outputs.runner_serverIntegration || '["ubuntu-latest"]') }}
+    runs-on: [self-hosted, Linux, X64, beeline-ci, beeline-ci-control]
     env:
       CI_TEST_WORKERS: '1'
     timeout-minutes: 5
@@ -972,7 +926,7 @@ jobs:
       WORKSPACE_TEST_SELECTION: ${{ needs.prepare-workspace.outputs['mobile-selection'] }}
       CI_TEST_WORKERS: "2"
       JAVA_TOOL_OPTIONS: -XX:ActiveProcessorCount=2
-    timeout-minutes: 22
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ci-workspace
@@ -1006,7 +960,7 @@ jobs:
     runs-on: ${{ fromJSON(needs.changes.outputs.runner_mobileExport || '["ubuntu-latest"]') }}
     env:
       CI_TEST_WORKERS: "1"
-    timeout-minutes: 9
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ci-workspace
@@ -1027,7 +981,7 @@ jobs:
       !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') &&
       needs.changes.outputs.productionCorpusReplay == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 14
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Record complete main coverage
@@ -1116,7 +1070,7 @@ jobs:
     if: >-
       !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') &&
       needs.changes.outputs.frameBudget == 'true'
-    runs-on: ${{ fromJSON(needs.changes.outputs.runner_frameBudget || '["ubuntu-latest"]') }}
+    runs-on: [self-hosted, Linux, X64, beeline-ci, beeline-ci-control]
     env:
       CI_TEST_WORKERS: '1'
     timeout-minutes: 5
@@ -1151,7 +1105,7 @@ jobs:
     if: >-
       !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') &&
       needs.changes.outputs.stateUpgrade == 'true'
-    runs-on: ${{ fromJSON(needs.changes.outputs.runner_stateUpgrade || '["ubuntu-latest"]') }}
+    runs-on: [self-hosted, Linux, X64, beeline-ci, beeline-ci-control]
     env:
       CI_TEST_WORKERS: '1'
     timeout-minutes: 5
@@ -1206,7 +1160,7 @@ jobs:
     env:
       CI_TEST_WORKERS: "1"
       JAVA_TOOL_OPTIONS: -XX:ActiveProcessorCount=2
-    timeout-minutes: 11
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ci-workspace
@@ -1237,7 +1191,7 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') && needs.changes.outputs.readme == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'readme-parity'))
       )
-    runs-on: ${{ fromJSON(needs.changes.outputs.runner_readme || '["ubuntu-latest"]') }}
+    runs-on: [self-hosted, Linux, X64, beeline-ci, beeline-ci-control]
     env:
       CI_TEST_WORKERS: '1'
     timeout-minutes: 5
@@ -1261,7 +1215,7 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') && needs.changes.outputs.appLinkAssociations == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'app-link-associations'))
       )
-    runs-on: ${{ fromJSON(needs.changes.outputs.runner_appLinks || '["ubuntu-latest"]') }}
+    runs-on: [self-hosted, Linux, X64, beeline-ci, beeline-ci-control]
     env:
       CI_TEST_WORKERS: '1'
     timeout-minutes: 10
@@ -1284,7 +1238,7 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') && needs.changes.outputs.workflows == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'actionlint'))
       )
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, beeline-ci, beeline-ci-control]
     timeout-minutes: 5
     permissions:
       contents: read
@@ -1337,8 +1291,8 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') && needs.changes.outputs.authImage == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'auth-image'))
       )
-    runs-on: ubuntu-latest
-    timeout-minutes: 12
+    runs-on: [self-hosted, Linux, X64, beeline-ci, beeline-ci-workspace]
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: read

@@ -1,3 +1,4 @@
+import { IndexRow } from '@/components/buzz/IndexRow';
 import { observeArtifactRows, setArtifactViewportActive } from '@/buzz/artifact-viewport';
 import { useSurfaceFocus } from '@/buzz/use-surface-focus';
 import { prepareRouterMessageGesture } from '@/buzz/command-message-gesture';
@@ -6145,7 +6146,7 @@ export function BuzzChatSurface({
               />
             </View>
           </View>
-          <ErrorBanner title={connectionErrorTitle} description={connectionErrorDescription} onRetry={retryHydration} testID="room-read-error" />
+          <IndexRow title={connectionErrorTitle} description={connectionErrorDescription} action="Retry" onPress={retryHydration} testID="room-read-error" />
         </View>
       );
     }
@@ -6685,7 +6686,7 @@ export function BuzzChatSurface({
                 typing in. The Room's corners door in the header is the one way
                 in; the corner's own state is read there, in the corners list,
                 and on the Room-list row. */}
-                  {transcriptHydrationFailed && <ErrorBanner title={connectionErrorTitle} description={connectionErrorDescription} onRetry={retryHydration} testID="room-read-error" />}
+                  {transcriptHydrationFailed && <IndexRow title={connectionErrorTitle} description={connectionErrorDescription} action="Retry" onPress={retryHydration} testID="room-read-error" />}
                 {isReadOnlyDirectMessage ? (
                   <View style={[styles.archivedInputBar, readOnlyFooterInset]}>
                     <Text style={styles.archivedInputText}>

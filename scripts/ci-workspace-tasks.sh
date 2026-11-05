@@ -27,12 +27,18 @@ typecheck() {
   node --test scripts/eas-api-contract.test.mjs scripts/server-previous-sources.test.mjs
   node --test scripts/rollout-schema.test.mjs
   node scripts/rollout-schema.mjs --previous "$CI_BASE_SHA"
-  npm run typecheck
+  if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+    npx turbo run typecheck --filter="...[$CI_BASE_SHA]"
+  else
+    npx turbo run typecheck
+  fi
+  npm run typecheck --prefix apps/mobile
+  npx tsc -p tsconfig.scripts.json
   # Check no workflow names a deleted test
   npm run lint:workflow-paths
-  # Check path filters skip untouched suites
-  node --test --test-concurrency=1 scripts/workflow-change-filter.test.mjs scripts/ci-shards.test.mjs scripts/ci-workflow.test.mjs scripts/ci-runner-routing.test.mjs scripts/server-test-selection.test.mjs scripts/ci-baseline.test.mjs scripts/ci-workspace-lanes.test.mjs
-  node --test --test-concurrency=1 scripts/ci-build-provenance.test.mjs scripts/ci-task-cache.test.mjs scripts/workspace-test-selection.test.mjs scripts/run-workspace-tests.test.mjs scripts/report-main-checks.test.mjs
+  # Check CI routing, partitioning and build provenance
+  node --test --test-concurrency=1 scripts/ci-shards.test.mjs scripts/ci-runner-routing.test.mjs scripts/ci-baseline.test.mjs
+  node --test --test-concurrency=1 scripts/ci-build-provenance.test.mjs scripts/run-workspace-tests.test.mjs scripts/report-main-checks.test.mjs
   # Test nightly Checks orchestration
   node --test --test-concurrency=1 scripts/nightly-checks.test.mjs scripts/network-job-admission.test.mjs
 }

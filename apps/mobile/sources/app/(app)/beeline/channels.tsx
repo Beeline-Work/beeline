@@ -50,7 +50,6 @@ import { ExitGlyph } from '@/components/buzz/ExitGlyph';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
 import { Button } from '@/components/buzz/Button';
 import { ConnectionStatus } from '@/components/buzz/ConnectionStatus';
-import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { reconnectNow } from '@/sync/transport/live-connection';
 import { clientResetGeneration } from '@/sync/client-reset';
 import { InlineRow } from '@/components/buzz/IndexRow';
@@ -942,8 +941,8 @@ export default function BuzzChannels() {
   if (landing.kind === 'error') {
     return (
       <View style={[styles.center, { paddingTop: insets.top }]} testID="room-deck-unavailable">
-        <ErrorBanner title={connectionErrorTitle} description={connectionErrorDescription} testID="room-deck-error"
-          onRetry={() => { reconnectNow(); setError(null); setRetryGeneration(value => value + 1); }} />
+        <IndexRow title={connectionErrorTitle} description={connectionErrorDescription} testID="room-deck-error-retry" action="Retry"
+          onPress={() => { reconnectNow(); setError(null); setRetryGeneration(value => value + 1); }} />
       </View>
     );
   }

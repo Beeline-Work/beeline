@@ -558,7 +558,7 @@ describe('navigateToBuzzChannelFromNotification', () => {
     // same channel. Assert that dependency, not the whole literal list —
     // the rest of the list is free to change with the effect's internals.
     const hydrationEffect = roomSurfaceSessionSource.slice(
-      roomSurfaceSessionSource.indexOf('useEffect(() => {\n    if (!channelId || routerHeadMode'),
+      roomSurfaceSessionSource.lastIndexOf('useEffect(() => {', roomSurfaceSessionSource.indexOf('let openingPrefetch =')),
       roomSurfaceSessionSource.indexOf('const outbox = useMemo'),
     );
     expect(

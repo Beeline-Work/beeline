@@ -1,4 +1,3 @@
-import { AppState } from 'react-native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   isCornerListView,
@@ -139,7 +138,10 @@ export function useRoomCorners(
     setError(null);
     const filters = [{ '#h': [roomId] }] as const;
     const live = sharedLiveConnection();
-    const holding = live.register(filters, () => undefined);
+    const holding = live.register(filters, (event) => {
+      if ('monolithLive' in event && event.monolithLive.type === 'invalidate' &&
+          event.monolithLive.reason === 'reconnect') void read(true);
+    });
     void (async () => {
       try {
         const held = getRoomCorners(roomId);
@@ -164,16 +166,6 @@ export function useRoomCorners(
       void holding.then((stop) => stop());
     };
   }, [read, reader, roomId, rereadOnMount]);
-
-  useEffect(() => {
-    if (!roomId) return;
-    let previous = AppState.currentState;
-    const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active' && previous !== 'active' && readyRef.current) void read(true);
-      previous = state;
-    });
-    return () => subscription.remove();
-  }, [read, roomId]);
 
   useEffect(() => {
     if (!roomId || !record || !readyRef.current) return;

@@ -1,4 +1,5 @@
-// This suite exercises an installed old-server path, with explicit legacy negotiation.
+vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ register: async () => () => {} }) }));
+// Settings follows server Workbench answers across focus and live changes.
 
 
 vi.mock('@/components/buzz/WorkspaceSettingsPanel', async () => { const React = await import('react'); return { WORKSPACE_VISIBILITY_LABELS: { public: 'Public', 'invite-only': 'Invite-only' }, default: React.forwardRef((props: object, _ref) => React.createElement('WorkspaceSettings', props)) }; });

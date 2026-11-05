@@ -33,6 +33,7 @@
       // Shell hooks and device harnesses invoke these by path, outside the
       // JavaScript module graph Knip can follow.
       "entry": [
+        "tests/seams/**/*.test.ts",
         // The static homepage loads this module; its documented JS build bundles the demo.
         "web/marketing/boot.mjs",
         "web/marketing/demo-source.mjs",
@@ -121,6 +122,7 @@
         "scripts/transcript-speed/{capture-*,seed,serve,inspect-web,reset,report,symbolicate-room-profile,list-engine-report,list-visual-audit,prepare-list-engines}.mjs",
       ],
       "project": [
+        "tests/seams/**/*.ts",
         "scripts/**/*.{js,cjs,mjs,ts,tsx}",
         "!scripts/fixtures/dead-code-regression/**",
         // Ignored captures and ad hoc trace adapters are local benchmark artifacts.

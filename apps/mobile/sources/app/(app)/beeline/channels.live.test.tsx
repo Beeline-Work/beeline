@@ -610,7 +610,7 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
     await quiet();
     expect(deck.workspaceReads).toBe(1);
     expect(router.replace).not.toHaveBeenCalledWith('/beeline/community');
-    expect(renderer.root.findAllByProps({ action: 'Retry' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ action: 'Retry' })).toHaveLength(1);
     expect(
       renderer.root.findAllByProps({ testID: 'room-deck-unavailable' }).length,
     ).toBeGreaterThan(0);
@@ -623,7 +623,7 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
       'Check your connection and try again.',
     );
     const reconnect = renderer.root.findByProps({ testID: 'room-deck-error-retry' });
-    expect(reconnect.props.variant).toBe('secondary');
+    expect(reconnect.props.action).toBe('Retry');
     await act(async () => {
       reconnect.props.onPress();
     });

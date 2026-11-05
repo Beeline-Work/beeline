@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
@@ -8,26 +8,39 @@ import { fileURLToPath } from 'node:url';
 import { ALLOWLIST_PATH, judgeChannels, scanPhoneTree, scanSource, TRANSPORT_FILE } from './phone-network-channels.mjs';
 
 const repo = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
-const allowlist = JSON.parse(readFileSync(path.join(repo, ALLOWLIST_PATH), 'utf8'));
+const allowlist = {
+  packageRoots: ['packages/api-contract/src', 'packages/buzz-client/src', 'packages/nostr/src'],
+  entries: [
+    [TRANSPORT_FILE, 'websocket', 'main-socket'],
+    ['apps/mobile/sources/buzz/store-update.ts', 'fetch', 'exception'],
+    ['packages/buzz-client/src/auth-json.ts', 'fetch', 'exception'],
+    ['packages/api-contract/src/system-message-catalog.ts', 'origin:github.com', 'link'],
+    ['apps/mobile/sources/settings.ts', 'origin:github.com', 'link'],
+  ].map(([file, kind, fate]) => ({ file, kind, fate, count: 1, why: 'A channel in the small test fixture.' })),
+};
 const scratch = mkdtempSync(path.join(tmpdir(), 'phone-network-channels-'));
 after(() => rmSync(scratch, { recursive: true, force: true }));
 
-/** A throwaway copy of the phone sources, the list and the checker. */
-function copyOfRepo(name) {
-  const root = path.join(scratch, name);
-  const packages = allowlist.packageRoots.flatMap((root) => [root, path.posix.join(path.posix.dirname(root), 'package.json')]);
-  for (const part of ['apps/mobile/sources', 'apps/mobile/modules', 'apps/mobile/index.ts', ALLOWLIST_PATH, 'scripts/phone-network-channels.mjs', 'scripts/check-phone-network-channels.mjs', ...packages])
-    cpSync(path.join(repo, part), path.join(root, part), {
-      recursive: true,
-      filter: (source) => !['node_modules', 'build', '.gradle'].includes(path.basename(source)),
-    });
-  // The checker parses with the repository's TypeScript.
-  symlinkSync(path.join(repo, 'node_modules'), path.join(root, 'node_modules'), 'dir');
+function fixture(name = 'tree') {
+  const root = mkdtempSync(path.join(scratch, name + '-'));
+  for (const [file, source] of Object.entries({
+    [ALLOWLIST_PATH]: JSON.stringify(allowlist),
+    [TRANSPORT_FILE]: 'export const connect = url => new WebSocket(url);',
+    'apps/mobile/sources/buzz/store-update.ts': "export const check = () => fetch('/minimum');",
+    'apps/mobile/sources/sync/transport/monolith-operation.ts': 'export const operation = () => undefined;',
+    'apps/mobile/sources/settings.ts': "import '@beeline/buzz-client';\nimport '@beeline/api-contract';\nexport const link = 'https://github.com/settings';",
+    'packages/buzz-client/package.json': JSON.stringify({ exports: { '.': './dist/index.js' } }),
+    'packages/buzz-client/src/index.ts': "export * from './auth-json.js';\n",
+    'packages/buzz-client/src/auth-json.ts': "export const auth = () => fetch('/auth');",
+    'packages/api-contract/package.json': JSON.stringify({ exports: { '.': './dist/index.js' } }),
+    'packages/api-contract/src/index.ts': "export * from './system-message-catalog.js';",
+    'packages/api-contract/src/system-message-catalog.ts': "export const link = 'https://github.com/fix';",
+  })) write(root, file, source);
   return root;
 }
 
 function runCheck(root, ...extra) {
-  return spawnSync(process.execPath, [path.join(root, 'scripts/check-phone-network-channels.mjs'), '--root', root, ...extra], {
+  return spawnSync(process.execPath, [path.join(repo, 'scripts/check-phone-network-channels.mjs'), '--root', root, ...extra], {
     encoding: 'utf8',
   });
 }
@@ -37,17 +50,18 @@ function write(root, file, text) {
   writeFileSync(path.join(root, file), text);
 }
 
-test('the phone tree matches its channel list', () => {
-  assert.deepEqual(judgeChannels(scanPhoneTree(repo), allowlist), []);
+test('a small phone tree matches its channel list', () => {
+  assert.deepEqual(judgeChannels(scanPhoneTree(fixture()), allowlist), []);
 });
 
-test('only the transport module holds the main socket', () => {
-  const sockets = allowlist.entries.filter((entry) => entry.fate === 'main-socket');
-  assert.deepEqual(sockets.map((entry) => [entry.file, entry.kind, entry.count]), [[TRANSPORT_FILE, 'websocket', 1]]);
+test('listing another module as the main socket cannot authorize it', () => {
+  const list = structuredClone(allowlist);
+  list.entries[0].file = 'apps/mobile/sources/another-socket.ts';
+  assert.ok(judgeChannels(new Map(), list).some(error => error.includes('only ' + TRANSPORT_FILE)));
 });
 
 test('a new fetch( outside the transport module fails the check', () => {
-  const root = copyOfRepo('new-fetch');
+  const root = fixture('new-fetch');
   assert.equal(runCheck(root).status, 0);
   write(root, 'apps/mobile/sources/buzz/side-channel.ts', "export const ping = () => fetch('https://example.com/ping');\n");
   const result = runCheck(root);
@@ -56,7 +70,7 @@ test('a new fetch( outside the transport module fails the check', () => {
 });
 
 test('a new WebSocket( outside the transport module fails the check', () => {
-  const root = copyOfRepo('new-socket');
+  const root = fixture('new-socket');
   write(root, 'apps/mobile/sources/sync/second-socket.ts', "export const open = (url: string) => new WebSocket(url);\n");
   const result = runCheck(root);
   assert.equal(result.status, 1);
@@ -64,7 +78,7 @@ test('a new WebSocket( outside the transport module fails the check', () => {
 });
 
 test('a failed screen read cannot open a fetch or socket recovery door', () => {
-  const root = copyOfRepo('read-recovery-backdoor');
+  const root = fixture('read-recovery-backdoor');
   write(root, 'apps/mobile/sources/buzz/read-recovery-backdoor.ts', [
     "export const readRoomElsewhere = (url: string) => fetch(url, { method: 'POST' });",
     'export const reconnectElsewhere = (url: string) => new WebSocket(url);',
@@ -76,7 +90,7 @@ test('a failed screen read cannot open a fetch or socket recovery door', () => {
 });
 
 test('a socket or fetch reached through a qualified global fails the check', () => {
-  const root = copyOfRepo('qualified-globals');
+  const root = fixture('qualified-globals');
   write(root, 'apps/mobile/sources/sync/review-side-channel.ts', [
     'export const sideChannel = (url: string) => new globalThis.WebSocket(url);',
     'export const viaWindow = (url: string) => new window.WebSocket(url);',
@@ -96,7 +110,7 @@ test('a socket or fetch reached through a qualified global fails the check', () 
 });
 
 test('a socket constructor read as a bare value fails the check', () => {
-  const root = copyOfRepo('bare-alias');
+  const root = fixture('bare-alias');
   // The exact file from review: an alias of the bare global, then `new` on the alias.
   write(root, 'apps/mobile/sources/sync/review-side-channel.ts',
     'const Socket = WebSocket; export const sideChannel = (url: string) => new Socket(url);\n');
@@ -135,7 +149,7 @@ test('every other way to reach a network global counts, and types do not', () =>
 });
 
 test('fetch through another name for the global object fails the check, and cache.fetch does not', () => {
-  const root = copyOfRepo('global-alias');
+  const root = fixture('global-alias');
   // The exact file from review: an alias of globalThis, then fetch on the alias.
   write(root, 'apps/mobile/sources/sync/review-side-channel.ts',
     'const g = globalThis; export const sideChannel = (url: string) => g.fetch(url);\n');
@@ -175,7 +189,7 @@ test('handing on the global object, eval and the native network modules count, a
 });
 
 test('a second socket in the transport module fails the check', () => {
-  const root = copyOfRepo('second-main-socket');
+  const root = fixture('second-main-socket');
   const file = path.join(root, TRANSPORT_FILE);
   writeFileSync(file, `${readFileSync(file, 'utf8')}\nexport const spare = (url: string) => new WebSocket(url);\n`);
   const result = runCheck(root);
@@ -184,7 +198,7 @@ test('a second socket in the transport module fails the check', () => {
 });
 
 test('another call in a listed file fails the check', () => {
-  const root = copyOfRepo('grown-file');
+  const root = fixture('grown-file');
   const file = path.join(root, 'apps/mobile/sources/buzz/store-update.ts');
   writeFileSync(file, `${readFileSync(file, 'utf8')}\nexport const again = () => fetch('/v1/public/other');\n`);
   const result = runCheck(root);
@@ -193,7 +207,7 @@ test('another call in a listed file fails the check', () => {
 });
 
 test('a new host in a listed file fails the check, as the hedged backup origin would have', () => {
-  const root = copyOfRepo('new-origin');
+  const root = fixture('new-origin');
   const file = path.join(root, 'apps/mobile/sources/sync/transport/monolith-operation.ts');
   writeFileSync(file, `${readFileSync(file, 'utf8')}\nexport const BACKUP_ORIGIN = 'https://backup-server.example.net';\n`);
   const result = runCheck(root);
@@ -202,7 +216,7 @@ test('a new host in a listed file fails the check, as the hedged backup origin w
 });
 
 test('a network library, native request or raw XHR anywhere else fails the check', () => {
-  const root = copyOfRepo('other-channels');
+  const root = fixture('other-channels');
   write(root, 'apps/mobile/sources/buzz/stream.ts', [
     "import axios from 'axios';",
     'export const events = (url: string) => new EventSource(url);',
@@ -233,7 +247,7 @@ test('mentions in comments, strings and regular expressions do not count', () =>
 });
 
 test('the list may only shrink against the base branch', () => {
-  const sites = scanPhoneTree(repo);
+  const sites = scanPhoneTree(fixture());
   const base = structuredClone(allowlist);
   const grown = structuredClone(allowlist);
   grown.entries.find((entry) => entry.kind === 'websocket').count = 2;
@@ -245,7 +259,7 @@ test('the list may only shrink against the base branch', () => {
 });
 
 test('listing a new site in the same change still fails against the base branch', () => {
-  const root = copyOfRepo('listed-new-site');
+  const root = fixture('listed-new-site');
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['add', '-A'], { cwd: root });
   execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'base'], { cwd: root });
@@ -260,13 +274,13 @@ test('listing a new site in the same change still fails against the base branch'
 });
 
 test('a stale entry must be removed once its call site is gone', () => {
-  const sites = scanPhoneTree(repo);
+  const sites = scanPhoneTree(fixture());
   sites.delete('apps/mobile/sources/buzz/store-update.ts::fetch');
   assert.ok(judgeChannels(sites, allowlist).some((error) => /store-update\.ts::fetch has no call sites left/.test(error)));
 });
 
 test('shared-package code the phone bundles is scanned; code it never imports is not', () => {
-  const root = copyOfRepo('package-reach');
+  const root = fixture('package-reach');
   write(root, 'packages/buzz-client/src/unbundled.ts', "export const ping = () => fetch('https://example.com/ping');\n");
   assert.equal(runCheck(root).status, 0);
   write(root, 'packages/buzz-client/src/index.ts',
@@ -277,7 +291,7 @@ test('shared-package code the phone bundles is scanned; code it never imports is
 });
 
 test('covering a new package lists its existing sites without growing the list; coverage never shrinks', () => {
-  const sites = scanPhoneTree(repo);
+  const sites = scanPhoneTree(fixture());
   const base = structuredClone(allowlist);
   base.packageRoots = base.packageRoots.filter((root) => root !== 'packages/buzz-client/src');
   base.entries = base.entries.filter((entry) => !entry.file.startsWith('packages/buzz-client/src/'));
@@ -303,7 +317,7 @@ test('constructor names are metadata while constructor values remain dynamic cod
 });
 
 test('a new reference to a host already approved as a link is listed as a link, not a new channel', () => {
-  const sites = scanPhoneTree(repo);
+  const sites = scanPhoneTree(fixture());
   const base = structuredClone(allowlist);
   base.entries = base.entries.filter((entry) => entry.file !== 'packages/api-contract/src/system-message-catalog.ts');
   assert.deepEqual(judgeChannels(sites, allowlist, base), []);

@@ -1275,8 +1275,8 @@ it('rolls final storage back if creating the next command fails', async () => {
 it('gives old helpers only projected commands and refuses unsolicited old output', async () => {
   await send('@hoots');
   await send('ordinary traffic');
-  const a = await daemon.execute('getRoomInbox', { roomId: R, startAtLatest: true }, A);
-  const b = await daemon.execute('getRoomInbox', { roomId: R, startAtLatest: true }, B);
+  const a = await daemon.execute('getRoomInbox', { roomId: R }, A);
+  const b = await daemon.execute('getRoomInbox', { roomId: R }, B);
   expect(a.items).toHaveLength(1);
   // The item reached A because the server routed it to A; the row itself
   // carries no reader to re-check that against.

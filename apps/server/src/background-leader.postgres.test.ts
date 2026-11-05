@@ -91,8 +91,9 @@ describe.skipIf(!url)('real PostgreSQL blocking leader ownership',()=>{
       backend = (await client.query('SELECT pg_backend_pid() id')).rows[0].id;
       return client;
     } }, async (initial, signal) => {
+      signal.addEventListener('abort', () => lost.resolve(), { once: true });
       const delay = await work.run(initial, signal); drained.resolve(); return delay;
-    }, { acquired: async () => {}, lost: () => { lost.resolve(); } });
+    });
     try {
       void leader.run(); await entered.promise;
       await admin.query('SELECT pg_terminate_backend($1)', [backend]);

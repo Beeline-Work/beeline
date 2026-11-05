@@ -599,8 +599,6 @@ async function main() {
     await connectionPresence.renewLease();
     await connectionPresence.start();
   }, port, host);
-  // The existing aggregate lease also covers the background owner when no
-  // phone/helper socket is attached. This adds no separate renewal loop.
   void leader.run();
   const stopOperationOutcomes = startOperationOutcomeFlush(jobsDatabase, operationOutcomes, backgroundJobs, wake => jobsDatabase.onRecovery(wake));
   const stopComputerExpiry = startComputerExpirySweep(database, live);

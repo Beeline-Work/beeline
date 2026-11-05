@@ -324,7 +324,10 @@ describe('PhoneService Needs-you tray', () => {
       (await database.query(`SELECT 1 FROM needs_you_marks WHERE message_id=$1`, [id])).rowCount,
     ).toBe(0);
 
-    const first = (await read()).items[0]!;
+    const firstRead=await read();
+    const first = firstRead.items[0]!;
+    expect(firstRead.nextExpiry).toBeGreaterThan(Date.now()+23*3600000);
+    expect((await phone.execute('countNeedsYou',{workspaceId:WORKSPACE},VIEWER)).nextExpiry).toBe(firstRead.nextExpiry);
     expect(first.expiresAt).toBeGreaterThan(Date.now() / 1000 + 23 * 3600);
     const again = (await read()).items[0]!;
     expect(again.expiresAt).toBe(first.expiresAt);
@@ -347,7 +350,7 @@ describe('PhoneService Needs-you tray', () => {
     const trayPreview = await phone.execute('readTray', { workspaceId: WORKSPACE, markSeen: false }, VIEWER);
     expect(trayPreview.needs?.items.every(item => item.expiresAt === undefined)).toBe(true);
     expect((await database.query(`SELECT * FROM needs_you_marks`)).rowCount).toBe(0);
-    // Advance the age of the still-unseen asks by 25 hours, within the lookback.
+    // Advancing an unseen ask never starts its first-seen expiry.
     await database.query(`UPDATE messages SET created_at=created_at-interval '25 hours' WHERE id=ANY($1::text[])`, [[first, second]]);
     expect((await badge()).items.map(item => item.messageId)).toEqual([first, second]);
     expect(await count()).toBe(2);

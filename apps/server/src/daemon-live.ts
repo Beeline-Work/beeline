@@ -194,6 +194,9 @@ export class DaemonAgentSession {
           !transport.isOpen()
         )
           return;
+        if(event.reason==='computer-viewer-activity'&&event.requestId){
+          transport.send({type:'share-viewer-activity',sessionId:event.requestId});return;
+        }
         if (event.reason === 'connector-assignment') {
           transport.send({ type: 'connector-assignment' });
           return;
@@ -261,12 +264,8 @@ export class DaemonAgentSession {
         return;
       }
       this.epoch = epoch;
-      const runtime = this.presence.turnRuntimeId;
-      this.turnSource = runtime ? (await this.deps.database.query<{connectionId:string;epoch:number}>(
-        `SELECT turn_connection_id "connectionId",turn_connection_epoch::integer epoch FROM agent_connections
-         WHERE agent_id=$1 AND connection_id=$2 AND epoch=$3`, [this.agentId,this.connectionId,epoch])).rows[0]
-        : { connectionId: this.connectionId, epoch };
-      const requested = this.presence.turnOwnershipV1 === true && turnOwnershipEnabled();
+      this.turnSource = {connectionId:this.connectionId,epoch};
+      const requested = true;
       const model = requested ? await this.deps.daemon.negotiateOwnedModel(this.agentId,
         this.turnSource!, this.presence.ownedModelV1 === true) : undefined;
       this.#ownedModelCapability = model?.capability;
@@ -390,7 +389,7 @@ export class DaemonAgentSession {
               return {error:'activation_source_mismatch',status:409};
             return {result:await this.deps.daemon.readCommandActivation(parsed,this.agentId)};
           }
-          const owned=this.turnOwnershipV1 && ['claimAgentCommand','acknowledgeAgentCommand','postAgentTurnReceipt'].includes(operation);
+          const owned=['claimAgentCommand','acknowledgeAgentCommand','postAgentTurnReceipt'].includes(operation);
           return {result:await this.deps.daemon.execute(operation,input,this.agentId,
             owned ? this.turnSource : undefined,owned ? this.#ownedModelCapability : undefined)};
         } catch(error) {

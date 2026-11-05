@@ -859,30 +859,6 @@ export class DaemonService {
               return this.writeResult({ updateRequeued: true }) as Output<Name>;
           }
         }
-        if (
-          name === 'postAgentTurnReceipt' &&
-          candidate.status === 'working' &&
-          !candidate.heartbeat
-        ) {
-          // Old helpers claim the projected command through their first receipt.
-          const pending = (
-            await db.query<{ id: string }>(
-              `SELECT id FROM agent_commands
-            WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 AND action IN ('input','resume')
-            AND state IN ('pending','claimed') ORDER BY created_at DESC LIMIT 1`,
-              [scopedRoom, authenticatedAgentId, requestId],
-            )
-          ).rows[0];
-          if (pending)
-            await claimAgentCommand(
-              db,
-              scopedRoom,
-              authenticatedAgentId,
-              pending.id,
-              String(candidate.generationId ?? ''),
-              turnOwner,
-            );
-        }
         // A stopped generation may upload diagnostics only. It cannot publish,
         // renew its lease, or change the requester's terminal cancellation.
         if (name === 'postAgentTurnReceipt' && candidate.status === 'cancelled' && candidate.trace) {
@@ -1380,6 +1356,7 @@ export class DaemonService {
           authenticatedAgentId,
         ))) as Output<Name>;
       case 'claimAgentCommand': {
+        if(!turnOwner)throw new Error('helper claim requires its machine connection owner');
         const claimed = await queueDatabaseWork(this.database, `turn:${scopedRoom}:${authenticatedAgentId}`, () => this.database.transaction(async (db) => {
           if (ownedIntent) await this.lockOwnedTurnAccess(db, scopedRoom!, authenticatedAgentId);
           const row = await claimAgentCommand(db, scopedRoom!, authenticatedAgentId,

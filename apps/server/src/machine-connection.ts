@@ -213,7 +213,7 @@ export function serveMachineSocket(
         deps,
         agentId,
         {
-          send: (event) => reply({ ...event, agentId }),
+          send: (event) => send({ ...event, agentId }),
           isOpen: (): boolean => isOpen() && sessions.get(agentId) === session,
           drop: (code, reason) => {
             if (sessions.get(agentId) !== session) return;
@@ -238,8 +238,6 @@ export function serveMachineSocket(
           ...(item.usageAccountV1===true?{usageAccountV1:true}:{}),
           ...(item.activationContextV1===true?{activationContextV1:true}:{}),
           ...(item.turnOwnershipV1===true?{turnOwnershipV1:true}:{}),
-          ...(item.turnOwnershipV1===true && typeof item.turnRuntimeId==='string' && /^[a-f0-9-]{36}$/.test(item.turnRuntimeId)
-            ? {turnRuntimeId:item.turnRuntimeId} : {}),
           ...(item.ownedModelV1===true?{ownedModelV1:true}:{}),
           ...(item.daemonOperationsV1===true?{daemonOperationsV1:true}:{}),
         },

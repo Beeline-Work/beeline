@@ -30,7 +30,6 @@ export interface AgentChannelHandlers {
 export class AgentChannel {
   readonly turn = new HelperTurnChannel();
   readonly overlay = new HelperOverlayChannel(frame => this.send(frame), () => this.isOpen());
-  readonly #turnRuntimeId = randomUUID();
   readonly #waiters = new Set<() => void>();
   readonly #requests = new Map<string, {
     frame: Record<string, unknown>; sent: boolean;
@@ -107,7 +106,7 @@ export class AgentChannel {
   registration(): Record<string,unknown> | undefined {
     return this.#wanted && !this.#registered ? {...this.handlers.registration(),agentId:this.agentId,
       overlayV1:true,usageAccountV1:true,activationContextV1:true,turnOwnershipV1:true,
-      turnRuntimeId:this.#turnRuntimeId,daemonOperationsV1:true} : undefined;
+      daemonOperationsV1:true} : undefined;
   }
   receive(event:Record<string,unknown>):void {
     if (event.type === 'registered') {

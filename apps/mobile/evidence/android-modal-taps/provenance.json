@@ -1,40 +1,34 @@
 {
-  "native": {
-    "versionCode": 144,
-    "versionName": "0.2.24",
-    "runtime": 44,
-    "apkSha256": "db3ef9243602daf129b329ef1f97819b9dc8b473f5c8afb1e9bc3e37c4d64488"
-  },
-  "release": {
-    "version": "v0.1.159",
-    "commit": "a99f410cd91e7a17a63cd27a0340a9ad465137c9",
-    "updateId": "01a1aa88-f02c-7c2d-9e71-96ee8237ca90"
-  },
-  "device": {
-    "os": "Android 35",
-    "architecture": "x86_64",
-    "emulatorVersion": "37.3.6",
-    "cpuCores": 4,
-    "ramMb": 2048,
-    "resolution": "1080x2400",
-    "densityDpi": 420,
-    "gpu": "Android Emulator OpenGL ES Translator (Intel(R) Iris(TM) Plus Graphics OpenGL Engine)",
-    "gpuMode": "host",
-    "hostOs": "macOS 26.5.1"
-  },
-  "bundles": {
-    "before": {
-      "sha256": "e1207556e16606394d8a14cd3d34150edfb0468fd37d82c5f0261afb16aae0e5",
-      "bytes": 13097972
-    },
-    "after": {
-      "sha256": "fb4106d2fda58b5ce16e1934f236d0cf9867e38d18cbb92d05de0dfbf21f7cd3",
-      "bytes": 13097936
-    }
-  },
-  "differingSources": [
-    "/sources/components/buzz/HullDialog.tsx"
+  "runtime": "44 (local test override only)",
+  "device": "Android35 x86_64 emulator5650; 4 cores, 2GB, 1080x2400, 420dpi",
+  "hostGPU": "Intel Iris Plus OpenGL / skiagl; host acceleration",
+  "controlSource": "2bb645b72bbddb88a39b97c3787fce279460707c",
+  "finalIntegratedMain": "12ea5b428fd013cf37dc20b4da70a431c80ceb9b",
+  "integrationDifference": "Room-list navigation priority only; Room action code and SDK control unchanged",
+  "testOverrides": [
+    "updates.enabled=false and native manifest ENABLED=false in local APKs",
+    "temporary React profiling renderer and buffered timestamp hooks, removed before commit"
   ],
-  "commonSourceModules": 3718,
-  "commonSourceSha256": "6af955792390c82a86f156e27716b10327cb48fe7f905ec4da9e6f56d66189de"
+  "beforeAPK": "beb843b0db7de977afb838937309cae2f1450ba6059f03da7374b89b59aa1b85",
+  "afterAPK": "12d8b5c56b23c317da724456c40a1a7a7799d9fa3777002c763f71935a362fd9",
+  "beforeEmbeddedBundle": "4b9fb99c9b5d9b5954857220c3962a4337d20afeb5e54ae3bb366556d06a91a3",
+  "afterEmbeddedBundle": "04333e7b5b10bc650ce9b31aabebb1a0f5eac7cf45148e7b95dc36e9692eb483",
+  "allFiveAPKsNativeEntriesMatch": true,
+  "nativeEntryCount": 39,
+  "nativeEntryManifestSHA256": "7a648853c0c00022674db58788fb8bbf5922168da7c554450148781749c8035e",
+  "bodyPixelComparison": {
+    "rectangle": [
+      0,
+      1370,
+      1080,
+      2328
+    ],
+    "differentPixels": 0
+  },
+  "captures": {
+    "opensPerCase": 5,
+    "firstSheetUnwarmed": true,
+    "installedAPKHashAndRuntimeMarkersVerified": true
+  },
+  "scope": "Room actions sheet; native-frame proxy, not optical visibility. No send/Room-load target claim."
 }

@@ -2,6 +2,7 @@ import { ButtonRow } from './ButtonRow';
 import React from 'react';
 import {
   Modal,
+  BackHandler,
   StyleSheet as NativeStyleSheet,
   Platform,
   Pressable,
@@ -12,6 +13,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
+import Animated, { Easing, FadeOut, ReduceMotion } from 'react-native-reanimated';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { layout, space, typeRoles } from '@/buzz/groknight';
@@ -89,6 +91,8 @@ type HullModalProps = {
   scrimTestID?: string;
   testID?: string;
   visible: boolean;
+  /** Room actions can cover their existing full-screen parent on Android. */
+  withinScreen?: boolean;
 };
 
 type FloatingCallback = (...args: unknown[]) => unknown;
@@ -250,6 +254,10 @@ function useStableFloatingPresentation(props: HullModalProps): HullModalProps {
   return presentation.current.value as HullModalProps;
 }
 
+const screenModalExit = FadeOut.duration(200)
+  .easing(Easing.in(Easing.quad))
+  .reduceMotion(ReduceMotion.System);
+
 /**
  * The only React Native Modal boundary owned by Beeline. Every app-rendered
  * floating surface gets the same scrim, keyboard behavior, platform-back
@@ -269,7 +277,63 @@ const StableHullModal = React.memo(function StableHullModal({
   scrimTestID,
   testID,
   visible,
+  withinScreen = false,
 }: HullModalProps) {
+  React.useLayoutEffect(() => {
+    if (!withinScreen || Platform.OS !== 'android' || !visible) return;
+    const back = BackHandler.addEventListener('hardwareBackPress', () => {
+      onRequestClose();
+      return true;
+    });
+    return () => back.remove();
+  }, [onRequestClose, visible, withinScreen]);
+  const body = (
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : 'translate-with-padding'}
+      enabled={keyboardAvoiding}
+      style={[
+        styles.modalRoot,
+        placement === 'center' && styles.modalRootCenter,
+        placement === 'bottom' && styles.modalRootBottom,
+      ]}
+      testID={testID}
+    >
+      {dismissOnBackdrop ? (
+        <Pressable
+          accessibilityLabel={accessibilityLabel}
+          accessibilityRole="button"
+          onPress={onRequestClose}
+          style={styles.scrim}
+          testID={scrimTestID}
+        />
+      ) : (
+        <View
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          style={styles.scrim}
+        />
+      )}
+      <View
+        accessibilityViewIsModal
+        style={[
+          styles.modalContent,
+          placement === 'center' && styles.modalContentCenter,
+          placement === 'bottom' && styles.modalContentBottom,
+          placement === 'fill' && styles.modalContentFill,
+          contentStyle,
+        ]}
+      >
+        {children}
+      </View>
+    </KeyboardAvoidingView>
+  );
+  if (withinScreen && Platform.OS === 'android') {
+    return visible ? (
+      <Animated.View exiting={screenModalExit} style={styles.screenModal}>
+        {body}
+      </Animated.View>
+    ) : null;
+  }
   return (
     <Modal
       animationType={animationType}
@@ -282,44 +346,7 @@ const StableHullModal = React.memo(function StableHullModal({
       transparent
       visible={visible}
     >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'translate-with-padding'}
-        enabled={keyboardAvoiding}
-        style={[
-          styles.modalRoot,
-          placement === 'center' && styles.modalRootCenter,
-          placement === 'bottom' && styles.modalRootBottom,
-        ]}
-        testID={testID}
-      >
-        {dismissOnBackdrop ? (
-          <Pressable
-            accessibilityLabel={accessibilityLabel}
-            accessibilityRole="button"
-            onPress={onRequestClose}
-            style={styles.scrim}
-            testID={scrimTestID}
-          />
-        ) : (
-          <View
-            accessibilityElementsHidden
-            importantForAccessibility="no-hide-descendants"
-            style={styles.scrim}
-          />
-        )}
-        <View
-          accessibilityViewIsModal
-          style={[
-            styles.modalContent,
-            placement === 'center' && styles.modalContentCenter,
-            placement === 'bottom' && styles.modalContentBottom,
-            placement === 'fill' && styles.modalContentFill,
-            contentStyle,
-          ]}
-        >
-          {children}
-        </View>
-      </KeyboardAvoidingView>
+      {body}
     </Modal>
   );
 });
@@ -518,6 +545,7 @@ export const HullDialogInput = React.forwardRef<
 const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
+    screenModal: { ...NativeStyleSheet.absoluteFillObject, zIndex: 1000 },
     modalRoot: { flex: 1, minWidth: 0 },
     modalRootCenter: { alignItems: 'center', justifyContent: 'center', padding: hull.space.lg },
     modalRootBottom: { alignItems: 'center', justifyContent: 'flex-end' },

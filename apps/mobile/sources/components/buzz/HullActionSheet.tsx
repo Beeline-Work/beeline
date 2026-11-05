@@ -273,6 +273,7 @@ type HullActionSheetModalProps = {
   titleTestID?: string;
   subtitle?: string;
   visible: boolean;
+  withinScreen?: boolean;
 };
 
 export function HullActionSheetModal({
@@ -295,6 +296,7 @@ export function HullActionSheetModal({
   titleAccessibilityLabel,
   titleTestID,
   visible,
+  withinScreen,
 }: HullActionSheetModalProps) {
   const insets = useSafeAreaInsets();
   const isDesktop = useIsDesktop();
@@ -310,6 +312,7 @@ export function HullActionSheetModal({
       scrimTestID={scrimTestID}
       testID={modalTestID}
       visible={visible}
+      withinScreen={withinScreen}
     >
       <HullActionSheet
         desktop={isDesktop}

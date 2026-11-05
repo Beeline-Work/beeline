@@ -180,7 +180,8 @@
       "HullFloatingSurface",
       "HullModal",
       "StableHullModal",
-      "HullDialogActions"
+      "HullDialogActions",
+      "body"
     ],
     "components/buzz/HullMenuTrigger.tsx": ["HullMenuTrigger"],
     "components/buzz/HullSwitch.tsx": ["HullSwitch"],
@@ -307,7 +308,9 @@
       "footer",
       "list",
       "row",
-      "useRoomRepositoryChoice"
+      "useRoomRepositoryChoice",
+      "RoomActionsSheet",
+      "RoomActionsBackground"
     ],
     "components/buzz/RoomRepositorySubtitle.tsx": ["RoomRepositorySubtitle"],
     "components/buzz/RoomReviewerActions.tsx": [

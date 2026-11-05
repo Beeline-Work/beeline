@@ -1,448 +1,416 @@
 {
   "distributions": {
-    "after/cold": {
-      "activityFirstDrawMs": {
+    "after": {
+      "handlerMs": {
         "n": 5,
-        "median": 4180,
-        "max": 4413
+        "median": 10.614,
+        "max": 32.706
       },
-      "fontLoadMs": {
-        "n": 5,
-        "median": 300.358,
-        "max": 363.127
-      },
-      "listCommitMs": {
-        "n": 5,
-        "median": 4961.195,
-        "max": 5534.637
-      },
-      "listNativeFrameProxyMs": {
-        "n": 5,
-        "median": 5453.604,
-        "max": 6106.871
-      },
-      "roomDataCommitMs": {
-        "n": 5,
-        "median": 399.04,
-        "max": 708.958
-      },
-      "roomNativeFrameProxyMs": {
-        "n": 5,
-        "median": 864.108,
-        "max": 1100.859
-      },
-      "rootModuleMs": {
-        "n": 5,
-        "median": 3628.142,
-        "max": 3892.403
-      },
-      "splashHideMs": {
-        "n": 5,
-        "median": 4226.208,
-        "max": 4472.767
-      }
-    },
-    "after/sheet": {
       "contentCommitMs": {
         "n": 5,
-        "median": 148.732,
-        "max": 181.791
+        "median": 52.984,
+        "max": 235.268
       },
-      "hiddenReconcileMs": {
+      "nativeLayoutCallbackMs": {
         "n": 5,
-        "median": 0.538,
-        "max": 0.904
+        "median": 63.604,
+        "max": 267.295
       },
       "nativeFrameProxyMs": {
         "n": 5,
-        "median": 295.479,
-        "max": 427.528
+        "median": 171.245,
+        "max": 319.295
+      },
+      "callbackGatedFrameProxyMs": {
+        "n": 5,
+        "median": 171.245,
+        "max": 625.142
       },
       "rootRenderMs": {
         "n": 5,
-        "median": 66.152,
-        "max": 128.067
-      },
-      "visibleReconcileMs": {
-        "n": 5,
-        "median": 0.328,
-        "max": 1.647
+        "median": 32.367,
+        "max": 77.439
       }
     },
-    "before/cold": {
-      "activityFirstDrawMs": {
+    "before": {
+      "handlerMs": {
         "n": 5,
-        "median": 3567,
-        "max": 6267
+        "median": 11.258,
+        "max": 19.933
       },
-      "fontLoadMs": {
-        "n": 5,
-        "median": 278.923,
-        "max": 450.984
-      },
-      "listCommitMs": {
-        "n": 5,
-        "median": 4469.07,
-        "max": 7843.788
-      },
-      "listNativeFrameProxyMs": {
-        "n": 5,
-        "median": 4756.171,
-        "max": 8203.111
-      },
-      "roomDataCommitMs": {
-        "n": 5,
-        "median": 347.648,
-        "max": 407.641
-      },
-      "roomNativeFrameProxyMs": {
-        "n": 5,
-        "median": 677.679,
-        "max": 824.927
-      },
-      "rootModuleMs": {
-        "n": 5,
-        "median": 3132.601,
-        "max": 5534.269
-      },
-      "splashHideMs": {
-        "n": 5,
-        "median": 3623.889,
-        "max": 6282.76
-      }
-    },
-    "before/sheet": {
       "contentCommitMs": {
         "n": 5,
-        "median": 112.551,
-        "max": 221.828
+        "median": 136.531,
+        "max": 165.928
       },
-      "hiddenReconcileMs": {
+      "nativeLayoutCallbackMs": {
         "n": 5,
-        "median": 2.814,
-        "max": 10.628
+        "median": 155.101,
+        "max": 236.592
       },
       "nativeFrameProxyMs": {
         "n": 5,
-        "median": 295.352,
-        "max": 438.067
+        "median": 240.39,
+        "max": 449.61
+      },
+      "callbackGatedFrameProxyMs": {
+        "n": 5,
+        "median": 240.39,
+        "max": 449.61
       },
       "rootRenderMs": {
         "n": 5,
-        "median": 57.834,
-        "max": 143.791
+        "median": 75.162,
+        "max": 109.281
+      }
+    },
+    "no-animation": {
+      "handlerMs": {
+        "n": 5,
+        "median": 13.579,
+        "max": 20.089
       },
-      "visibleReconcileMs": {
+      "contentCommitMs": {
         "n": 5,
-        "median": 0.284,
-        "max": 5.362
-      }
-    },
-    "production/cold": {
-      "activityFirstDrawMs": {
+        "median": 103.549,
+        "max": 129.531
+      },
+      "nativeLayoutCallbackMs": {
         "n": 5,
-        "median": 3794,
-        "max": 3825
-      }
-    },
-    "production/sheet": {
+        "median": 119.191,
+        "max": 153.103
+      },
       "nativeFrameProxyMs": {
         "n": 5,
-        "median": 253.955,
-        "max": 342.619
+        "median": 249.686,
+        "max": 314.905
+      },
+      "callbackGatedFrameProxyMs": {
+        "n": 5,
+        "median": 249.686,
+        "max": 314.905
+      },
+      "rootRenderMs": {
+        "n": 5,
+        "median": 63.347,
+        "max": 73.445
+      }
+    },
+    "overlay": {
+      "handlerMs": {
+        "n": 5,
+        "median": 9.717,
+        "max": 17.308
+      },
+      "contentCommitMs": {
+        "n": 5,
+        "median": 115.231,
+        "max": 160.717
+      },
+      "nativeLayoutCallbackMs": {
+        "n": 5,
+        "median": 124.595,
+        "max": 168.927
+      },
+      "nativeFrameProxyMs": {
+        "n": 5,
+        "median": 202.208,
+        "max": 263.166
+      },
+      "callbackGatedFrameProxyMs": {
+        "n": 5,
+        "median": 263.166,
+        "max": 373.563
+      },
+      "rootRenderMs": {
+        "n": 5,
+        "median": 78.04,
+        "max": 103.369
+      }
+    },
+    "sheet-state": {
+      "handlerMs": {
+        "n": 5,
+        "median": 15.215,
+        "max": 18.294
+      },
+      "contentCommitMs": {
+        "n": 5,
+        "median": 91.823,
+        "max": 98.241
+      },
+      "nativeLayoutCallbackMs": {
+        "n": 5,
+        "median": 125.117,
+        "max": 191.998
+      },
+      "nativeFrameProxyMs": {
+        "n": 5,
+        "median": 182.413,
+        "max": 286.096
+      },
+      "callbackGatedFrameProxyMs": {
+        "n": 5,
+        "median": 287.271,
+        "max": 345.188
+      },
+      "rootRenderMs": {
+        "n": 5,
+        "median": 34.934,
+        "max": 35.545
       }
     }
   },
   "samples": [
     {
-      "arm": "production",
-      "kind": "cold",
+      "arm": "before",
       "sample": 0,
-      "activityFirstDrawMs": 3715
+      "handlerMs": 13.427,
+      "contentCommitMs": 136.531,
+      "nativeLayoutCallbackMs": 155.101,
+      "nativeFrameProxyMs": 365.071,
+      "callbackGatedFrameProxyMs": 365.071,
+      "rootRenderMs": 75.162
     },
     {
-      "arm": "production",
-      "kind": "cold",
+      "arm": "before",
       "sample": 1,
-      "activityFirstDrawMs": 3803
+      "handlerMs": 10.551,
+      "contentCommitMs": 142.755,
+      "nativeLayoutCallbackMs": 183.93,
+      "nativeFrameProxyMs": 240.39,
+      "callbackGatedFrameProxyMs": 240.39,
+      "rootRenderMs": 109.281
     },
     {
-      "arm": "production",
-      "kind": "cold",
+      "arm": "before",
       "sample": 2,
-      "activityFirstDrawMs": 3794
+      "handlerMs": 19.933,
+      "contentCommitMs": 165.928,
+      "nativeLayoutCallbackMs": 236.592,
+      "nativeFrameProxyMs": 449.61,
+      "callbackGatedFrameProxyMs": 449.61,
+      "rootRenderMs": 102.052
     },
     {
-      "arm": "production",
-      "kind": "cold",
+      "arm": "before",
       "sample": 3,
-      "activityFirstDrawMs": 3825
+      "handlerMs": 10.818,
+      "contentCommitMs": 78.775,
+      "nativeLayoutCallbackMs": 95.179,
+      "nativeFrameProxyMs": 217.217,
+      "callbackGatedFrameProxyMs": 217.217,
+      "rootRenderMs": 46.39
     },
     {
-      "arm": "production",
-      "kind": "cold",
+      "arm": "before",
       "sample": 4,
-      "activityFirstDrawMs": 3697
+      "handlerMs": 11.258,
+      "contentCommitMs": 95.496,
+      "nativeLayoutCallbackMs": 108.551,
+      "nativeFrameProxyMs": 217.393,
+      "callbackGatedFrameProxyMs": 217.393,
+      "rootRenderMs": 58.705
     },
     {
-      "arm": "production",
-      "kind": "sheet",
+      "arm": "no-animation",
       "sample": 0,
-      "nativeFrameProxyMs": 253.955
+      "handlerMs": 9.539,
+      "contentCommitMs": 108.438,
+      "nativeLayoutCallbackMs": 119.795,
+      "nativeFrameProxyMs": 281.336,
+      "callbackGatedFrameProxyMs": 281.336,
+      "rootRenderMs": 49.017
     },
     {
-      "arm": "production",
-      "kind": "sheet",
+      "arm": "no-animation",
       "sample": 1,
-      "nativeFrameProxyMs": 239.939
+      "handlerMs": 13.579,
+      "contentCommitMs": 73.044,
+      "nativeLayoutCallbackMs": 86.211,
+      "nativeFrameProxyMs": 178.725,
+      "callbackGatedFrameProxyMs": 178.725,
+      "rootRenderMs": 33.754
     },
     {
-      "arm": "production",
-      "kind": "sheet",
+      "arm": "no-animation",
       "sample": 2,
-      "nativeFrameProxyMs": 169.837
+      "handlerMs": 7.115,
+      "contentCommitMs": 102.442,
+      "nativeLayoutCallbackMs": 117.033,
+      "nativeFrameProxyMs": 216.986,
+      "callbackGatedFrameProxyMs": 216.986,
+      "rootRenderMs": 73.445
     },
     {
-      "arm": "production",
-      "kind": "sheet",
+      "arm": "no-animation",
       "sample": 3,
-      "nativeFrameProxyMs": 286.215
+      "handlerMs": 17.466,
+      "contentCommitMs": 103.549,
+      "nativeLayoutCallbackMs": 119.191,
+      "nativeFrameProxyMs": 249.686,
+      "callbackGatedFrameProxyMs": 249.686,
+      "rootRenderMs": 63.347
     },
     {
-      "arm": "production",
-      "kind": "sheet",
+      "arm": "no-animation",
       "sample": 4,
-      "nativeFrameProxyMs": 342.619
+      "handlerMs": 20.089,
+      "contentCommitMs": 129.531,
+      "nativeLayoutCallbackMs": 153.103,
+      "nativeFrameProxyMs": 314.905,
+      "callbackGatedFrameProxyMs": 314.905,
+      "rootRenderMs": 65.212
     },
     {
-      "arm": "before",
-      "kind": "cold",
+      "arm": "overlay",
       "sample": 0,
-      "activityFirstDrawMs": 6267,
-      "rootModuleMs": 5534.269,
-      "splashHideMs": 6282.76,
-      "listCommitMs": 7843.788,
-      "fontLoadMs": 450.984,
-      "listNativeFrameProxyMs": 8203.111,
-      "roomDataCommitMs": 407.641,
-      "roomNativeFrameProxyMs": 824.927
+      "handlerMs": 17.308,
+      "contentCommitMs": 151.122,
+      "nativeLayoutCallbackMs": 164.193,
+      "nativeFrameProxyMs": 182.589,
+      "callbackGatedFrameProxyMs": 373.563,
+      "rootRenderMs": 78.969
     },
     {
-      "arm": "before",
-      "kind": "cold",
+      "arm": "overlay",
       "sample": 1,
-      "activityFirstDrawMs": 4601,
-      "rootModuleMs": 3975.931,
-      "splashHideMs": 4677.176,
-      "listCommitMs": 5283.594,
-      "fontLoadMs": 373.366,
-      "listNativeFrameProxyMs": 5802.558,
-      "roomDataCommitMs": 316.274,
-      "roomNativeFrameProxyMs": 608.706
+      "handlerMs": 8.905,
+      "contentCommitMs": 115.231,
+      "nativeLayoutCallbackMs": 124.595,
+      "nativeFrameProxyMs": 263.166,
+      "callbackGatedFrameProxyMs": 263.166,
+      "rootRenderMs": 78.04
     },
     {
-      "arm": "before",
-      "kind": "cold",
+      "arm": "overlay",
       "sample": 2,
-      "activityFirstDrawMs": 3461,
-      "rootModuleMs": 3050.394,
-      "splashHideMs": 3519.139,
-      "listCommitMs": 3962.641,
-      "fontLoadMs": 220.578,
-      "listNativeFrameProxyMs": 4308.555,
-      "roomDataCommitMs": 347.648,
-      "roomNativeFrameProxyMs": 660.938
+      "handlerMs": 15.532,
+      "contentCommitMs": 160.717,
+      "nativeLayoutCallbackMs": 168.927,
+      "nativeFrameProxyMs": 202.809,
+      "callbackGatedFrameProxyMs": 286.802,
+      "rootRenderMs": 103.369
     },
     {
-      "arm": "before",
-      "kind": "cold",
+      "arm": "overlay",
       "sample": 3,
-      "activityFirstDrawMs": 3567,
-      "rootModuleMs": 3132.601,
-      "splashHideMs": 3623.889,
-      "listCommitMs": 4469.07,
-      "fontLoadMs": 204.517,
-      "listNativeFrameProxyMs": 4756.171,
-      "roomDataCommitMs": 328.187,
-      "roomNativeFrameProxyMs": 719.076
+      "handlerMs": 3.668,
+      "contentCommitMs": 60.846,
+      "nativeLayoutCallbackMs": 67.224,
+      "nativeFrameProxyMs": 163.546,
+      "callbackGatedFrameProxyMs": 163.546,
+      "rootRenderMs": 37.359
     },
     {
-      "arm": "before",
-      "kind": "cold",
+      "arm": "overlay",
       "sample": 4,
-      "activityFirstDrawMs": 3455,
-      "rootModuleMs": 2970.505,
-      "splashHideMs": 3514.662,
-      "listCommitMs": 3950.432,
-      "fontLoadMs": 278.923,
-      "listNativeFrameProxyMs": 4340.521,
-      "roomDataCommitMs": 358.936,
-      "roomNativeFrameProxyMs": 677.679
+      "handlerMs": 9.717,
+      "contentCommitMs": 88.832,
+      "nativeLayoutCallbackMs": 96.813,
+      "nativeFrameProxyMs": 202.208,
+      "callbackGatedFrameProxyMs": 202.208,
+      "rootRenderMs": 58.749
     },
     {
-      "arm": "before",
-      "kind": "sheet",
+      "arm": "sheet-state",
       "sample": 0,
-      "nativeFrameProxyMs": 295.352,
-      "contentCommitMs": 112.551,
-      "rootRenderMs": 57.834,
-      "hiddenReconcileMs": 2.203,
-      "visibleReconcileMs": 5.362
+      "handlerMs": 15.215,
+      "contentCommitMs": 98.241,
+      "nativeLayoutCallbackMs": 125.117,
+      "nativeFrameProxyMs": 130.934,
+      "callbackGatedFrameProxyMs": 287.271,
+      "rootRenderMs": 23.121
     },
     {
-      "arm": "before",
-      "kind": "sheet",
+      "arm": "sheet-state",
       "sample": 1,
-      "nativeFrameProxyMs": 202.653,
-      "contentCommitMs": 98.655,
-      "rootRenderMs": 51.069,
-      "hiddenReconcileMs": 2.136,
-      "visibleReconcileMs": 0.23
+      "handlerMs": 18.294,
+      "contentCommitMs": 97.453,
+      "nativeLayoutCallbackMs": 191.283,
+      "nativeFrameProxyMs": 283.281,
+      "callbackGatedFrameProxyMs": 317.539,
+      "rootRenderMs": 35.073
     },
     {
-      "arm": "before",
-      "kind": "sheet",
+      "arm": "sheet-state",
       "sample": 2,
-      "nativeFrameProxyMs": 207.767,
-      "contentCommitMs": 85.071,
-      "rootRenderMs": 47.156,
-      "hiddenReconcileMs": 2.814,
-      "visibleReconcileMs": 0.257
+      "handlerMs": 15.338,
+      "contentCommitMs": 73.53,
+      "nativeLayoutCallbackMs": 107.833,
+      "nativeFrameProxyMs": 170.124,
+      "callbackGatedFrameProxyMs": 170.124,
+      "rootRenderMs": 34.934
     },
     {
-      "arm": "before",
-      "kind": "sheet",
+      "arm": "sheet-state",
       "sample": 3,
-      "nativeFrameProxyMs": 326.881,
-      "contentCommitMs": 152.506,
-      "rootRenderMs": 103.037,
-      "hiddenReconcileMs": 3.55,
-      "visibleReconcileMs": 0.284
+      "handlerMs": 13.161,
+      "contentCommitMs": 91.823,
+      "nativeLayoutCallbackMs": 191.998,
+      "nativeFrameProxyMs": 286.096,
+      "callbackGatedFrameProxyMs": 345.188,
+      "rootRenderMs": 35.545
     },
     {
-      "arm": "before",
-      "kind": "sheet",
+      "arm": "sheet-state",
       "sample": 4,
-      "nativeFrameProxyMs": 438.067,
-      "contentCommitMs": 221.828,
-      "rootRenderMs": 143.791,
-      "hiddenReconcileMs": 10.628,
-      "visibleReconcileMs": 0.522
+      "handlerMs": 8.746,
+      "contentCommitMs": 59.538,
+      "nativeLayoutCallbackMs": 94.341,
+      "nativeFrameProxyMs": 182.413,
+      "callbackGatedFrameProxyMs": 182.413,
+      "rootRenderMs": 28.591
     },
     {
       "arm": "after",
-      "kind": "cold",
       "sample": 0,
-      "activityFirstDrawMs": 4413,
-      "rootModuleMs": 3871.001,
-      "splashHideMs": 4472.767,
-      "listCommitMs": 4961.195,
-      "fontLoadMs": 300.358,
-      "listNativeFrameProxyMs": 5453.604,
-      "roomDataCommitMs": 392.069,
-      "roomNativeFrameProxyMs": 711.751
+      "handlerMs": 32.706,
+      "contentCommitMs": 235.268,
+      "nativeLayoutCallbackMs": 267.295,
+      "nativeFrameProxyMs": 319.295,
+      "callbackGatedFrameProxyMs": 625.142,
+      "rootRenderMs": 77.439
     },
     {
       "arm": "after",
-      "kind": "cold",
       "sample": 1,
-      "activityFirstDrawMs": 3729,
-      "rootModuleMs": 3206.086,
-      "splashHideMs": 3776.983,
-      "listCommitMs": 4274.719,
-      "fontLoadMs": 276.236,
-      "listNativeFrameProxyMs": 4697.677,
-      "roomDataCommitMs": 447.339,
-      "roomNativeFrameProxyMs": 864.108
+      "handlerMs": 4.551,
+      "contentCommitMs": 52.624,
+      "nativeLayoutCallbackMs": 63.604,
+      "nativeFrameProxyMs": 171.245,
+      "callbackGatedFrameProxyMs": 171.245,
+      "rootRenderMs": 32.367
     },
     {
       "arm": "after",
-      "kind": "cold",
       "sample": 2,
-      "activityFirstDrawMs": 4180,
-      "rootModuleMs": 3628.142,
-      "splashHideMs": 4226.208,
-      "listCommitMs": 5433.111,
-      "fontLoadMs": 318.787,
-      "listNativeFrameProxyMs": 6106.871,
-      "roomDataCommitMs": 708.958,
-      "roomNativeFrameProxyMs": 1100.859
+      "handlerMs": 11.102,
+      "contentCommitMs": 52.984,
+      "nativeLayoutCallbackMs": 62.272,
+      "nativeFrameProxyMs": 153.017,
+      "callbackGatedFrameProxyMs": 153.017,
+      "rootRenderMs": 26.311
     },
     {
       "arm": "after",
-      "kind": "cold",
       "sample": 3,
-      "activityFirstDrawMs": 4392,
-      "rootModuleMs": 3892.403,
-      "splashHideMs": 4459.665,
-      "listCommitMs": 5534.637,
-      "fontLoadMs": 266.011,
-      "listNativeFrameProxyMs": 5950.642,
-      "roomDataCommitMs": 399.04,
-      "roomNativeFrameProxyMs": 865.05
+      "handlerMs": 10.614,
+      "contentCommitMs": 51.784,
+      "nativeLayoutCallbackMs": 60.203,
+      "nativeFrameProxyMs": 135.391,
+      "callbackGatedFrameProxyMs": 135.391,
+      "rootRenderMs": 25.975
     },
     {
       "arm": "after",
-      "kind": "cold",
       "sample": 4,
-      "activityFirstDrawMs": 4109,
-      "rootModuleMs": 3470.326,
-      "splashHideMs": 4155.907,
-      "listCommitMs": 4744.361,
-      "fontLoadMs": 363.127,
-      "listNativeFrameProxyMs": 5130.905,
-      "roomDataCommitMs": 336.717,
-      "roomNativeFrameProxyMs": 699.653
-    },
-    {
-      "arm": "after",
-      "kind": "sheet",
-      "sample": 0,
-      "nativeFrameProxyMs": 427.528,
-      "contentCommitMs": 181.791,
-      "rootRenderMs": 82.524,
-      "hiddenReconcileMs": 0.797,
-      "visibleReconcileMs": 1.647
-    },
-    {
-      "arm": "after",
-      "kind": "sheet",
-      "sample": 1,
-      "nativeFrameProxyMs": 295.479,
-      "contentCommitMs": 148.732,
-      "rootRenderMs": 66.152,
-      "hiddenReconcileMs": 0.429,
-      "visibleReconcileMs": 0.302
-    },
-    {
-      "arm": "after",
-      "kind": "sheet",
-      "sample": 2,
-      "nativeFrameProxyMs": 198.312,
-      "contentCommitMs": 82.399,
-      "rootRenderMs": 52.372,
-      "hiddenReconcileMs": 0.904,
-      "visibleReconcileMs": 0.317
-    },
-    {
-      "arm": "after",
-      "kind": "sheet",
-      "sample": 3,
-      "nativeFrameProxyMs": 276.092,
-      "contentCommitMs": 105.589,
-      "rootRenderMs": 61.53,
-      "hiddenReconcileMs": 0.532,
-      "visibleReconcileMs": 0.328
-    },
-    {
-      "arm": "after",
-      "kind": "sheet",
-      "sample": 4,
-      "nativeFrameProxyMs": 310.941,
-      "contentCommitMs": 170.896,
-      "rootRenderMs": 128.067,
-      "hiddenReconcileMs": 0.538,
-      "visibleReconcileMs": 0.701
+      "handlerMs": 10.22,
+      "contentCommitMs": 80.908,
+      "nativeLayoutCallbackMs": 95.294,
+      "nativeFrameProxyMs": 189.393,
+      "callbackGatedFrameProxyMs": 189.393,
+      "rootRenderMs": 47.389
     }
   ]
 }

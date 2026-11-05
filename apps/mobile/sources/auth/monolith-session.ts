@@ -10,7 +10,6 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { markRoomOpen } from '@/buzz/room-open-trace';
 import { beginNetworkResponseTiming } from './network-response-timing';
-import { isOptionalRoomRequest, waitForRoomDraw } from '@/buzz/room-draw-barrier';
 import { reportRequestDeadlineMissed } from '@/sync/transport/request-deadline';
 
 // Capture before OAuth leaves the landing URL; the shared first-party cookie survives it.
@@ -417,15 +416,9 @@ export class MonolithSession {
       timeoutMs?: number;
       idempotent?: boolean;
       fetchImpl?: typeof fetch;
-      afterRoomDraw?: boolean;
     } = {},
   ): Promise<Response> {
     const sessionRevision = this.sessionRevision;
-    if (options.afterRoomDraw ?? isOptionalRoomRequest(input)) {
-      const draw = waitForRoomDraw(init.signal);
-      if (draw) await draw;
-      if (sessionRevision !== this.sessionRevision) throw new MonolithSessionChangedError();
-    }
     const dispatch = () =>
       options.fetchImpl
         ? this.perform(input, init, options.timeoutMs, options.fetchImpl)

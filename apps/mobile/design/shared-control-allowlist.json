@@ -136,12 +136,12 @@
   },
   {
     "file": "components/buzz/ConversationComposer.tsx",
-    "line": 374,
+    "line": 378,
     "rule": "6b",
     "detail": "custom failure/reconnect notice with an action",
-    "id": "7ebe302144058a61dc8f",
+    "id": "f21989672a6ed772c2e9",
     "control": "<View ref={containerRef as React.Ref<View>} {...containerProps} style={[styles.composer, focused && styles.composerFocused, ...(viewerPill ? [styles.viewerPill] : [])]} > {(reply || attachments.length > 0) && ( <View style={styles.adjuncts} testID={`${testIDPrefix}-composer-adjuncts`}> {reply && ( <View style={styles.reply} testID=\"reply-composer-banner\"> <View style={styles.replyCopy}> <Text numb",
-    "reason": "Attachment/composer layout, not a boxed failure notice: sibling attachment separators and file metadata remain intact; Retry already uses Button."
+    "reason": "Approved unified error-surface mock: shared inline feedback uses the existing caller content inset; no new control or retry action is introduced."
   },
   {
     "file": "components/buzz/ConversationComposer.tsx",
@@ -216,24 +216,6 @@
     "reason": "Shared icon action with hover tooltip; descendant text is the tooltip, not its button label."
   },
   {
-    "file": "components/buzz/ErrorBanner.tsx",
-    "line": 50,
-    "rule": "6b",
-    "detail": "custom failure/reconnect notice with an action",
-    "id": "816b57b963be3aac0d8b",
-    "control": "<View accessibilityLiveRegion=\"polite\" accessibilityRole=\"alert\" style={inline ? styles.inline : styles.banner} testID={testID} > {icon} <Text style={inline ? styles.inlineText : styles.title} testID={titleTestID}> {inline && description ? `${title} ${description}` : title} </Text> {!inline && description ? ( <Text style={inline ? styles.inlineText : styles.description}>{description}</Text> ) : nu",
-    "reason": "Shared ErrorBanner implementation owns boxed page failures and inline contextual recovery."
-  },
-  {
-    "file": "components/buzz/ErrorBanner.tsx",
-    "line": 64,
-    "rule": "6b",
-    "detail": "custom failure/reconnect notice with an action",
-    "id": "51ec48f7706c7dd7f1ae",
-    "control": "<View style={inline ? styles.inlineActions : secondaryAction ? styles.actions : styles.retry} > {onRetry ? ( <Button size={inline ? 'inline' : 'default'} label={retryLabel} destination={retryDestination} loading={retrying} onPress={onRetry} testID={retryTestID ?? (testID ? `${testID}-retry` : undefined)} variant={retryVariant} /> ) : null} {secondaryAction ? ( <Button size={inline ? 'inline' : 'de",
-    "reason": "Shared ErrorBanner implementation owns boxed page failures and inline contextual recovery."
-  },
-  {
     "file": "components/buzz/HullActionSheet.tsx",
     "line": 140,
     "rule": "6a",
@@ -271,12 +253,12 @@
   },
   {
     "file": "components/buzz/MemberPickerSheet.tsx",
-    "line": 115,
+    "line": 120,
     "rule": "6b",
     "detail": "custom failure/reconnect notice with an action",
-    "id": "d7d288afb88f747811df",
-    "control": "<View style={styles.footer}> {error && ( <Text accessibilityRole=\"alert\" style={styles.error} testID=\"member-picker-error\"> ! {error} </Text> )} {!agentConnectOnly && ( <View style={styles.addInset}> <Button disabled={chosen.length === 0} label={chosen.length > 0 ? `Add ${chosen.length}` : 'Add'} loading={busy} onPress={() => onAdd(chosen.map((candidate) => candidate.pubkey))} testID=\"member-picke",
-    "reason": "Real member-picker form footer; its error text and Add decision are not a retry notice."
+    "id": "67fb853716e1227c8f48",
+    "control": "<View style={styles.footer}> {error && ( <ErrorBanner inline title={error} titleTestID=\"member-picker-error\" /> )} {!agentConnectOnly && ( <View style={styles.addInset}> <Button disabled={chosen.length === 0} label={chosen.length > 0 ? `Add ${chosen.length}` : 'Add'} loading={busy} onPress={() => onAdd(chosen.map((candidate) => candidate.pubkey))} testID=\"member-picker-add\" /> </View> )} </View>",
+    "reason": "Approved unified error-surface mock: shared inline feedback uses the existing caller content inset; no new control or retry action is introduced."
   },
   {
     "file": "components/buzz/MemberPickerSheet.tsx",

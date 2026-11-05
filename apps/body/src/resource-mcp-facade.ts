@@ -444,6 +444,8 @@ export function squireLoginWallFromMcp(
   return squireLoginWallIn(response.result);
 }
 
+// Sandboxed resource processes have no machine registration. These closed
+// permission/approval adapters retain server command authority on old HTTP wire.
 async function postSquireApproval(
   approval: SquireApprovalRelay,
   authFile: string,

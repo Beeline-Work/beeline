@@ -41,6 +41,8 @@ export class BrowserShareHost {
             shareId: request.shareId,
             serverBaseUrl: request.serverBaseUrl,
             daemonToken: request.daemonToken,
+            // The hosted share can outlive its model/MCP process; this closed
+            // session-end receipt has its own lifetime, without a turn source.
             onEnded: async () => {
               await fetch(new URL('/v1/daemon/operations/endComputerSession', request.serverBaseUrl), {
                 method: 'POST',

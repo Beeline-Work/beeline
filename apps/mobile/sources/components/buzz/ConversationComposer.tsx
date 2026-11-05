@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import type { DictationTiming } from '@/buzz/dictation-timing';
 import { InlineRow } from './IndexRow';
 import { Button } from '@/components/buzz/Button';
@@ -697,7 +698,7 @@ function ConversationComposerContent({
       </View>
       )}
       {dailyLimitError && <View style={styles.statusLine}>
-        <Text style={styles.statusText} accessibilityRole="alert" testID="voice-connection-error">{dailyLimitError}</Text>
+        <ErrorBanner inline title={dailyLimitError} titleTestID="voice-connection-error" />
       </View>}
       {statusLine ? (
         <TouchableOpacity

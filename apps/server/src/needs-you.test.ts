@@ -418,7 +418,7 @@ describe('PhoneService Needs-you tray', () => {
     expect(await count()).toBe(0);
   });
 
-  it('reads and clears all 505 questions in one operation', async () => {
+  it('CLEAR removes every question after reading more than 500 in one operation', async () => {
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)
        SELECT lpad(to_hex(1000000 + series),64,'0'),$1,$2,'@ada please review this',

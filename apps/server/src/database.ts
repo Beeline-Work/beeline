@@ -113,7 +113,7 @@ export const ENRICHMENT_STATEMENT_TIMEOUT_MS = 750;
 export const ENRICHMENT_POOL_WAIT_TIMEOUT_MS = 500;
 export const HEALTH_STATEMENT_TIMEOUT_MS = 2_000;
 export const HEALTH_POOL_WAIT_TIMEOUT_MS = 1_000;
-export const MIGRATION_LOCK_TIMEOUT_MS = 1_000;
+export const MIGRATION_LOCK_TIMEOUT_MS = 15_000;
 /** Schema statements retry a busy table this many times (about 2 minutes). */
 export const MIGRATION_DDL_ATTEMPTS = 120;
 export const MIGRATION_STATEMENT_TIMEOUT_MS = 10 * 60_000;

@@ -20,13 +20,14 @@ const human = '1'.repeat(64), agent = '2'.repeat(64);
 
 type Plan = { 'Execution Time': number; 'Planning Time': number; Plan: PlanNode;
   Triggers?: { 'Trigger Name': string; Time: number }[] };
-type PlanNode = { 'Relation Name'?: string; 'Node Type': string; 'Actual Loops': number; Plans?: PlanNode[] };
+type PlanNode = { 'Relation Name'?: string; 'CTE Name'?: string; 'Node Type': string; 'Actual Loops': number;
+  'Actual Rows': number; 'Temp Read Blocks': number; Plans?: PlanNode[] };
 function executed(node: PlanNode): PlanNode[] {
   return [node, ...(node.Plans ?? []).flatMap(executed)].filter(item => item['Actual Loops'] > 0);
 }
 
 describe.skipIf(!url)('production-shaped slow-query regression', () => {
-  it('keeps live/archived idle, report delivery, tray and writes below one second with 1,895 Rooms and 416,880 messages', async () => {
+  it('keeps live/archived idle, report delivery, tray and writes below one second with busy-corner and membership skew', async () => {
     const schema = `slow_queries_${randomUUID().replaceAll('-', '')}`;
     const admin = new Pool({ connectionString: url, max: 1 });
     await admin.query(`CREATE SCHEMA ${schema}`);
@@ -39,6 +40,22 @@ describe.skipIf(!url)('production-shaped slow-query regression', () => {
       await writer.query(await readFile(new URL('../proofs/slow-query-fixture.sql', import.meta.url), 'utf8'));
       expect(Number((await writer.query('SELECT count(*) count FROM rooms')).rows[0].count)).toBe(1895);
       expect(Number((await writer.query('SELECT count(*) count FROM messages')).rows[0].count)).toBe(416880);
+      // A busy corner and many unrelated Room members exposed a join expansion
+      // absent from the evenly distributed fixture: 10k items x 525 memberships.
+      await writer.query(`SET session_replication_role=replica;
+        INSERT INTO rooms(id,workspace_id,name,created_by)
+          VALUES('88888888-8888-4888-8888-888888888888','${workspace}','Unrelated Room','${human}');
+        INSERT INTO identities(id,kind,name,handle)
+          SELECT md5('member-'||n)||md5('identity-'||n),'agent','Member '||n,'member-'||n
+          FROM generate_series(1,525) n;
+        INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+          SELECT '${workspace}','88888888-8888-4888-8888-888888888888',md5('member-'||n)||md5('identity-'||n),'member'
+          FROM generate_series(1,525) n;
+        INSERT INTO messages(id,room_id,author_id,text,created_at)
+          SELECT md5('busy-'||n)||md5('history-'||n),'${corner}','${agent}',
+            repeat('Ordinary corner history. ',80),now()-interval '5 days'+n*interval '1 second'
+          FROM generate_series(1,10000) n;
+        SET session_replication_role=origin; ANALYZE;`);
       const explain = async (name: string, sql: string, values: unknown[] = []): Promise<Plan> => {
         const result = await writer.query(`EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) ${sql}`, values);
         const plan = result.rows[0]['QUERY PLAN'][0] as Plan;
@@ -47,7 +64,12 @@ describe.skipIf(!url)('production-shaped slow-query regression', () => {
         expect(plan['Execution Time'] + plan['Planning Time'], name).toBeLessThan(1000);
         return plan;
       };
-      await explain('live idle', cornerIdleSql('$1'), [corner]);
+      const idle = await explain('live idle with skewed history', cornerIdleSql('$1'), [corner]);
+      expect(idle.Plan['Temp Read Blocks'], 'idle history must not spill a membership cross product').toBe(0);
+      for (const node of executed(idle.Plan).filter(node => node['CTE Name'] === 'candidate_items'))
+        expect(node['Actual Rows'], 'local history already covered by the human boundary stays out of owed candidates').toBeLessThan(500);
+      expect(Math.max(...executed(idle.Plan).map(node => node['Actual Rows'] * node['Actual Loops'])),
+        'idle history must not expand local messages across unrelated memberships').toBeLessThan(50_000);
       const closed = await explain('archived idle', cornerIdleSql('$1'), [archived]);
       expect(executed(closed.Plan).filter(node => ['messages', 'agent_turns'].includes(node['Relation Name'] ?? ''))).toEqual([]);
       await explain('idle report fence', `SELECT ${currentIdleReportSql('command')}

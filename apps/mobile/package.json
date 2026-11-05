@@ -230,7 +230,13 @@
       ],
       "exclude": [
         "@sentry/react-native"
-      ]
+      ],
+      "android": {
+        "exclude": [
+          "@sentry/react-native",
+          "@expo/ui"
+        ]
+      }
     }
   }
 }

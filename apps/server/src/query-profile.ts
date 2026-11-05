@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { captureSlowQuery } from './sentry.js';
 
 export interface QueryProfile {
   readonly fingerprint: string;
@@ -81,9 +80,6 @@ export class QueryProfiler {
       .digest('hex')
       .slice(0, 16);
     const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
-    // Alert before the bounded profile map: an overflowing fingerprint still
-    // represents real user latency and must remain observable.
-    if (durationMs > 1000) captureSlowQuery(fingerprint, durationMs, normalizedSql.slice(0, 300), code);
     const previous = this.#profiles.get(fingerprint);
     if (!previous && this.#profiles.size >= 128) {
       this.#overflow++;

@@ -3985,13 +3985,17 @@ async function createIndexConcurrently(
   );
   const state = existing.rows[0];
   if (state?.valid) return;
-  if (state) await database.query(`DROP INDEX CONCURRENTLY IF EXISTS ${name}`);
-  // A concurrent build waits for every older transaction without blocking
-  // anyone, so the 1s migration lock timeout would only abort it on a live
-  // database. The release migration runs on one connection; statement_timeout
-  // still bounds the build.
-  await database.query('SET lock_timeout=0');
-  try { await database.query(create); } finally { await database.query('RESET lock_timeout'); }
+  // A concurrent build waits for every older transaction, and a standby
+  // background leader waits on its advisory lock indefinitely. The index only
+  // speeds reads, so a release skips it instead of stalling; the next release
+  // (or an operator) builds it.
+  try {
+    if (state) await database.query(`DROP INDEX CONCURRENTLY IF EXISTS ${name}`);
+    await database.query(create);
+  } catch (error) {
+    if ((error as { code?: string }).code !== '55P03') throw error;
+    console.warn(`[migration] ${name} skipped: an older transaction is still open`);
+  }
 }
 
 /** Backfill machine_id on legacy workspace_connectors rows. */

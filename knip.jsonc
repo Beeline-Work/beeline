@@ -41,6 +41,8 @@
         "scripts/release-preflight.cjs",
         "scripts/prompt-pr-replay.mjs",
         "scripts/sync-play-metadata.mjs",
+        // Authenticated operator compatibility entry; docs/release-pipeline.md owns its command-grant rules.
+        "scripts/dispatch-production-release.mjs",
         "tests/seams/**/*.test.ts",
         // The static homepage loads this module; its documented JS build bundles the demo.
         "web/marketing/boot.mjs",

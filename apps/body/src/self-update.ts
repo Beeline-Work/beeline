@@ -426,7 +426,7 @@ async function fetchText(url: string, fetchImpl: typeof fetch): Promise<string> 
 function run(
   command: string,
   args: string[],
-  timeoutMs: number,
+  _timeoutMs: number,
 ): Promise<{ status: number | null; stderr: string }> {
   return new Promise((resolveRun) => {
     const child = spawn(command, args, { stdio: ['ignore', 'ignore', 'pipe'] });
@@ -435,13 +435,10 @@ function run(
     child.stderr?.on('data', (chunk: string) => {
       stderr = `${stderr}${chunk}`.slice(-4_000);
     });
-    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
     child.once('error', () => {
-      clearTimeout(timer);
       resolveRun({ status: -1, stderr });
     });
     child.once('exit', (status) => {
-      clearTimeout(timer);
       resolveRun({ status, stderr });
     });
   });
@@ -575,17 +572,14 @@ export async function stageRelease(
     const entries = (
       await new Promise<string>((resolveList, rejectList) => {
         const child = spawn('tar', ['-tzf', tempArchive], { stdio: ['ignore', 'pipe', 'inherit'] });
-        const timer = setTimeout(() => child.kill('SIGKILL'), Math.min(30_000, remaining()));
         let out = '';
         child.stdout?.on('data', (chunk: Buffer) => {
           out += chunk.toString('utf8');
         });
         child.once('error', (error) => {
-          clearTimeout(timer);
           rejectList(error);
         });
         child.once('exit', (status) => {
-          clearTimeout(timer);
           status === 0 ? resolveList(out) : rejectList(new Error('tar -tzf failed'));
         });
       })

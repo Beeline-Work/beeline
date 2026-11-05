@@ -720,7 +720,7 @@ export class MonolithRoomTurnLoop {
     this.options = { ...options, api: this.commandContext.bind(options.api) };
     this.activationContext=new CommandActivationContext({
       scope:()=>options.api.channel?.activationScope?.(),
-      selected:()=>options.api.channel?.activationContextSelected===true,
+      selected:()=>Boolean(options.api.channel),
       ready:()=>options.api.waitForConnection(),
       read:input=>options.api.readCommandActivation(input),
     });
@@ -858,10 +858,10 @@ export class MonolithRoomTurnLoop {
   }
 
   private commandActivation(){
-    if(!this.options.api.channel?.activationContextSelected&&!this.options.api.channel?.activationScope?.())return Promise.resolve(undefined);
+    if(!this.options.api.channel)return Promise.resolve(undefined);
     const command=this.commandContext?.current;
     if(!command){
-      if(this.options.api.channel?.activationContextSelected)return Promise.reject(new Error('Activation requires a claimed command'));
+      if(this.options.api.channel)return Promise.reject(new Error('Activation requires a claimed command'));
       return Promise.resolve(undefined);
     }
     return this.activationContext.read({agentId:this.agent.publicKey,workspaceId:this.options.workspaceId,

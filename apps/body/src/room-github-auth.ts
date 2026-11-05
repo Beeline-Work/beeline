@@ -73,7 +73,6 @@ function registry(connectorId, context, connectionId, method, params, id) {
     const socket = createConnection(config.registryBrokerSocket);
     let output = '';
     socket.setEncoding('utf8');
-    socket.setTimeout(125000, () => socket.destroy(new Error('GitHub MCP request timed out')));
     socket.on('error', reject);
     socket.on('connect', () => socket.end(JSON.stringify({ connectorId, turn: context, connectionId,
       line: JSON.stringify({ jsonrpc: '2.0', ...(id === undefined ? {} : { id }), method, params }) })));

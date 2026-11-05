@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { redactReplayError, isAgentCommand, type AgentCommand } from '@beeline/api-contract/daemon';
 import { DaemonApiError, type DaemonApiClient } from './daemon-api-client.js';
-import { isStandingRuntimeFault, retryNotBefore } from './retry-barrier.js';
+import { isStandingRuntimeFault } from './runtime-start-fault.js';
 import { isNetworkFailure } from './live-link.js';
 
 /** Session-local output context. No transcript or sender policy enters this boundary. */
@@ -165,17 +165,12 @@ export async function runServerCommandIntake(options: {
   let reconciliation: Promise<void> | undefined;
   let reconciliationError: unknown;
   let stopped = false;
-  let retryAt = 0;
   let standingFailure = false;
   let configurationVersion = 0;
-  const canStartTurn = () => !standingFailure && Date.now() >= retryAt && options.canStartTurn?.() !== false;
+  const canStartTurn = () => !standingFailure && options.canStartTurn?.() !== false;
   const parkFailure = (error: unknown, sameConfiguration: boolean) => {
     if (sameConfiguration && isStandingRuntimeFault(error)) standingFailure = true;
-    const reset = retryNotBefore(error);
-    if (reset === undefined) return;
-    retryAt = Math.max(retryAt, reset);
-    // Retry-After is an earliest eligible bound, never a timer admission.
-    // A new configuration/connection/command boundary must wake parked work.
+
   };
   const pending = new Map(first.commands.map((command) => [command.id, command]));
   const claimed = new Set<string>();
@@ -309,7 +304,6 @@ export async function runServerCommandIntake(options: {
                 if (!(error instanceof DaemonApiError && error.status === 409)) options.onError?.(error);
                 break;
               }
-              retryAt=Math.max(retryAt,retryNotBefore(error)??0);
               blockedClaims.add(command.id);
               pending.set(command.id, command);
               options.onError?.(error);

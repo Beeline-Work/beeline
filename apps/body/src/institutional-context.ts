@@ -51,7 +51,7 @@ export function startInstitutionalContextFetch(
   api: Pick<DaemonApiClient, 'execute'>,
   roomId: string,
   enabled = true,
-  now: () => number = () => performance.now(),
+  _now: () => number = () => performance.now(),
 ): InstitutionalContextFetch {
   const startedAt = now();
   const promise = enabled
@@ -75,22 +75,11 @@ export function startInstitutionalContextFetch(
 export async function awaitInstitutionalContext(
   fetch: InstitutionalContextFetch,
   log: (message: string) => void = console.warn,
-  budgetMs = INSTITUTIONAL_CONTEXT_TIMEOUT_MS,
-  now: () => number = () => performance.now(),
+  _budgetMs = INSTITUTIONAL_CONTEXT_TIMEOUT_MS,
+  _now: () => number = () => performance.now(),
 ): Promise<InstitutionalContextSnapshot & { outcome: InstitutionalContextOutcome }> {
-  const remainingMs = budgetMs - (now() - fetch.startedAt);
-  let timer: NodeJS.Timeout | undefined;
   try {
-    const snapshot = await Promise.race([
-      fetch.promise,
-      new Promise<InstitutionalContextSnapshot>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error('institutional context timed out')),
-          Math.max(0, remainingMs),
-        );
-        timer.unref?.();
-      }),
-    ]);
+    const snapshot = await fetch.promise;
     return { ...snapshot, outcome: snapshot.text !== '' ? 'served' : 'empty' };
   } catch (error) {
     log(
@@ -101,7 +90,5 @@ export async function awaitInstitutionalContext(
       text: INSTITUTIONAL_CONTEXT_MISSED_TEXT,
       outcome: 'timed-out',
     };
-  } finally {
-    if (timer) clearTimeout(timer);
   }
 }

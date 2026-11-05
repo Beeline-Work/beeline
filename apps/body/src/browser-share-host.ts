@@ -75,7 +75,6 @@ export function startHostedBrowserShare(socketPath: string, request: ShareReques
     const socket = createConnection(socketPath);
     let output = '';
     socket.setEncoding('utf8');
-    socket.setTimeout(5_000, () => socket.destroy(new Error('Browser share host timed out')));
     socket.once('connect', () => socket.end(JSON.stringify(request)));
     socket.on('data', (chunk: string) => { output += chunk; });
     socket.once('error', reject);

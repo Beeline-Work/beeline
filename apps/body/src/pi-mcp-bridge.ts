@@ -230,22 +230,14 @@ function callServer(server, request, signal, timeoutMs) {
     let settled = false;
     let buffer = '';
     let stderr = '';
-    let timer;
     const finish = (error, value) => {
       if (settled) return;
       settled = true;
-      if (timer) clearTimeout(timer);
       signal?.removeEventListener?.('abort', onAbort);
       child.kill('SIGKILL');
       if (error) rejectPromise(error); else resolvePromise(value);
     };
     const onAbort = () => finish(new Error(server.name + ' call cancelled'));
-    if (timeoutMs) {
-      timer = setTimeout(
-        () => finish(new Error(server.name + ' did not answer in ' + timeoutMs + 'ms')),
-        timeoutMs,
-      );
-    }
     if (signal) {
       if (signal.aborted) { onAbort(); return; }
       signal.addEventListener?.('abort', onAbort, { once: true });

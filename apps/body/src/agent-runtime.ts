@@ -216,7 +216,6 @@ export async function runAgentRuntime(
   console.log(`[body] agent binary: ${formatAgentCommand(agent)}`);
   console.log(`[body] ${sandbox.advisory}`);
 
-  let privateStorageTimer: ReturnType<typeof setInterval> | undefined;
   let discoveryReady = false;
   const markEstablished = () => {
     if (controller.signal.aborted || !discoveryReady || !daemonApi.channel.isOpen()) return;
@@ -341,13 +340,6 @@ export async function runAgentRuntime(
         });
       },
     });
-    // The existing six-hour local-disk timer now reclaims whole unused objects
-    // from previously confirmed lifecycle facts. It makes no server reads.
-    privateStorageTimer = setInterval(() => {
-      void core.reclaimKnownPrivateStorage().catch(error =>
-        console.error('[body] private storage cleanup deferred:', error));
-    }, 6 * 60 * 60_000);
-    privateStorageTimer.unref();
     leaveHost = host.attach({ agentId, runtimeDir, lifecycle, core });
     daemonApi.setForceUpdateListener((minVersion) => host.requestForceUpdate(minVersion));
     daemonApi.setHelperReleaseListener(({ version, sha }) => {
@@ -439,7 +431,6 @@ export async function runAgentRuntime(
   } finally {
     signal.removeEventListener('abort', abortFromHost);
     leaveHost?.();
-    clearInterval(privateStorageTimer);
     connectorLoop?.stop();
     agentSignIn?.stop();
     await registryMcpBroker?.stop();

@@ -234,7 +234,7 @@ async function main(): Promise<void> {
 }
 async function convergeDependencies(
   layout: ReturnType<typeof discoveredBeelineInstallLayout>,
-  deadlineAt: number,
+  _deadlineAt: number,
 ): Promise<void> {
   const entry = await resolveBundleEntrypoint(layout.libDir);
   if (!entry) throw new Error('dependency phase has no selected body');
@@ -243,23 +243,10 @@ async function convergeDependencies(
       env: { ...process.env, BEELINE_LIB_DIR: layout.libDir, BEELINE_INTERNAL_RECOVERY: '1' },
       stdio: 'inherit',
     });
-    const timer = setTimeout(
-      () => {
-        child.kill('SIGKILL');
-        reject(
-          new Error(
-            'dependency convergence exceeded the command deadline; helper remains supervised',
-          ),
-        );
-      },
-      Math.max(1, deadlineAt - Date.now()),
-    );
     child.once('error', (error) => {
-      clearTimeout(timer);
       reject(error);
     });
     child.once('exit', (code) => {
-      clearTimeout(timer);
       code === 0
         ? done()
         : reject(new Error(`dependency convergence exited ${code}; helper remains supervised`));

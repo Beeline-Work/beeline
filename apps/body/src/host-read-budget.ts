@@ -27,12 +27,10 @@ export class HostReadBudget {
     const startedAt = Date.now();
     return new Promise((resolve, reject) => {
       const remove = () => {
-        clearTimeout(deadline);
         signal?.removeEventListener('abort', cancel);
         this.queue.splice(this.queue.indexOf(waiter), 1);
       };
       const cancel = () => { remove(); reject(new ReadBudgetFullError()); };
-      const deadline = setTimeout(cancel, deadlineAt - startedAt);
       const waiter = { priority, admit: (slot: number) => {
         if (Date.now() >= deadlineAt || signal?.aborted) { cancel(); return; }
         remove();

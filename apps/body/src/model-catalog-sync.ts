@@ -68,24 +68,6 @@ export function modelCatalogHash(
     .digest('hex');
 }
 
-async function withTimeout<T>(work: Promise<T>, timeoutMs: number, what: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const expiry = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error(`${what} timed out after ${timeoutMs}ms`)),
-      timeoutMs,
-    );
-  });
-  try {
-    return await Promise.race([work, expiry]);
-  } finally {
-    clearTimeout(timer);
-    // A probe that outlives the deadline still cleans itself up; its outcome
-    // is simply no longer reported.
-    work.catch(() => undefined);
-  }
-}
-
 /** Probe the harness once and publish its catalog when it differs from the last post. */
 export async function syncAgentModelCatalog(
   input: ModelCatalogSyncInput,
@@ -110,11 +92,7 @@ export async function syncAgentModelCatalog(
       input.startupSelection.model === selection?.model &&
       input.startupSelection.effort === selection?.effort
       ? input.startupUnavailable : undefined;
-    const { catalog } = await withTimeout(
-      fetchCatalog(input.agent, input.agentEnv, startupUnavailable ? undefined : selection),
-      input.timeoutMs ?? MODEL_CATALOG_PROBE_TIMEOUT_MS,
-      'model catalog probe',
-    );
+    const {catalog} = await fetchCatalog(input.agent,input.agentEnv,startupUnavailable ? undefined : selection);
     // session/new reports the harness defaults before Beeline applies the
     // persisted selection. Publish the effective values so the phone does not
     // mistake every activation for an unfinished model switch and hide the

@@ -1,4 +1,4 @@
-import { captureHelperError, flushHelperErrors } from './sentry.js';
+import { captureHelperError } from './sentry.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { MachineControl, machineControlPath } from './machine-control.js';
@@ -49,7 +49,6 @@ import {
 import type { InstalledBundleIdentity } from './self-update-manifest.js';
 import {
   installTrustySquireBrokerService,
-  startLocalWatchdog,
   SystemdNotifier,
 } from './systemd.js';
 import { squireBrokerMeetsComputerUseMinimum, squireBrokerInstallEntry, squireHostPaths } from './squire-host.js';
@@ -141,23 +140,6 @@ async function serveMachineHelper(
   const notifier = new SystemdNotifier();
   const slots = new Map<string, AgentSlot>();
   const hosted = new Map<string, HostedAgent>();
-  // Free-agent Machines have no native manager to stop a pre-socket retry loop.
-  // Exit 78 tells their entrypoint to leave this boot stopped for inspection.
-  const inheritedDeadline = Number(env.BEELINE_FREE_AGENT_START_DEADLINE) * 1_000;
-  const startupBudget = Number.isFinite(inheritedDeadline) && inheritedDeadline > 0
-    ? Math.max(1, inheritedDeadline - Date.now()) : 5 * 60_000;
-  const startupAlreadyServed = options.freeAgentIdle && env.BEELINE_FREE_AGENT_READY_FILE &&
-    await stat(env.BEELINE_FREE_AGENT_READY_FILE).then(() => true, () => false);
-  const startupDeadline = options.freeAgentIdle && !startupAlreadyServed ? setTimeout(() => {
-    const error = new Error('free agent did not serve within its startup deadline; stopping this boot');
-    captureHelperError(error);
-    console.error('[helper]', error.message);
-    void flushHelperErrors().finally(() => {
-      lifecycle.stop('failed');
-      (options.exitProcess ?? process.exit)(78);
-    });
-  }, options.freeAgentIdle.startupTimeoutMs ?? startupBudget) : undefined;
-  startupDeadline?.unref();
   const links = new Map<string, MachineLink>();
   const archiveStoragePending = new Map<string, import('./helper-storage.js').StorageRoomState>();
   let archiveStorageRunning = false;
@@ -239,7 +221,6 @@ async function serveMachineHelper(
   };
 
   const finish = async (reason: HelperExitReason) => {
-    clearTimeout(startupDeadline);
     disposeSignals();
     stopReserveMonitor();
     usage?.stop();
@@ -477,8 +458,7 @@ async function serveMachineHelper(
     established: (agentId) => {
       const slot = [...slots.values()].find((candidate) => candidate.agentId === agentId);
       if (!slot) return;
-      clearTimeout(startupDeadline);
-      if (options.freeAgentIdle && env.BEELINE_FREE_AGENT_READY_FILE)
+        if (options.freeAgentIdle && env.BEELINE_FREE_AGENT_READY_FILE)
         void writeFile(env.BEELINE_FREE_AGENT_READY_FILE, 'ready\n', { mode: 0o600 })
           .catch(error => console.warn('[helper] could not record startup readiness:', error));
       slot.established = true;
@@ -726,31 +706,6 @@ async function serveMachineHelper(
   });
   await control.start();
   signals.on('SIGHUP', onHangup);
-  const pendingWatchdogAgents = new Set<string>();
-  const stopWatchdog = startLocalWatchdog(
-    notifier,
-    statusLine,
-    async () => {
-      // Startup/backoff slots have no live core to acknowledge. Include every
-      // hosted core so an actual stalled loop cannot borrow a sibling's health.
-      pendingWatchdogAgents.clear();
-      await Promise.all([...hosted.values()].map(async (agent) => {
-        pendingWatchdogAgents.add(agent.agentId);
-        try { await agent.core.requestWorkLoopProgress(); }
-        finally { pendingWatchdogAgents.delete(agent.agentId); }
-      }));
-      return true;
-    },
-    undefined,
-    env,
-    () => restartHelper('failed'),
-    () => console.warn('[helper] watchdog awaiting work-loop progress', JSON.stringify(
-      [...pendingWatchdogAgents].map(agentId => ({
-        agentId, ...hosted.get(agentId)?.core.workLoopDiagnostics(),
-      })),
-    )),
-  );
-
   const freeAgentIdle = options.freeAgentIdle;
   const idle = freeAgentIdle
     ? new FreeAgentIdle({
@@ -759,13 +714,7 @@ async function serveMachineHelper(
         activeTurns: () =>
           [...hosted.values()].reduce((total, agent) => total + agent.core.activeTurnCount(), 0),
         onResume: () => {
-          const reconnect = () => {
-            for (const link of links.values()) link.reconnectNow();
-          };
-          if (env.BEELINE_HOSTED_SERVICES !== '1') {
-            reconnect();
-            return;
-          }
+          if (env.BEELINE_HOSTED_SERVICES !== '1') return;
           // The image owns the manager and unit. Restore them before taking
           // resumed connector work; only systemd starts the production broker.
           execFile('/bin/sh', ['/opt/beeline/hosted-services.sh'], { env, timeout: 30_000 }, (error) => {
@@ -774,7 +723,6 @@ async function serveMachineHelper(
               restartHelper('failed');
               return;
             }
-            reconnect();
           });
         },
         log: (line) => console.log(`[helper] free agent ${line}`),
@@ -807,7 +755,6 @@ async function serveMachineHelper(
   } finally {
     idle?.stop();
     signals.off('SIGHUP', onHangup);
-    stopWatchdog();
     update?.dispose();
     await control.stop();
     for (const link of links.values()) link.stop();

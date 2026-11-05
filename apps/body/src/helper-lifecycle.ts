@@ -63,7 +63,6 @@ export class AgentLifecycle {
 /** Only the native service manager decides whether an exited helper restarts. */
 export class HelperLifecycle {
   #state: HelperLifecycleState = { kind: 'starting' };
-  #hardStop: ReturnType<typeof setTimeout> | undefined;
   #exited = false;
   constructor(
     private readonly options: {
@@ -87,17 +86,11 @@ export class HelperLifecycle {
   stop(reason: HelperExitReason): void {
     if (this.#state.kind === 'stopping') return;
     this.#state = { kind: 'stopping', reason };
-    this.#hardStop = setTimeout(
-      () => this.exit(reason),
-      this.options.hardStopMs ?? HELPER_HARD_STOP_MS,
-    );
-    this.#hardStop.unref?.();
     this.options.controller.abort();
   }
   exit(reason: HelperExitReason): void {
     if (this.#exited) return;
     this.#exited = true;
-    clearTimeout(this.#hardStop);
     (this.options.exitProcess ?? process.exit)(HELPER_EXIT_CODES[reason]);
   }
   installSignals(emitter: EventEmitter = process): () => void {
@@ -160,8 +153,8 @@ export async function retryBeforeReady<T>(
           // timer never admits another server observation.
           await options.extendStartTimeout(slice+15_000);
           await new Promise<void>(resolve=>{
-            const done=()=>{clearTimeout(timer);options.signal?.removeEventListener('abort',done);resolve();};
-            const timer=setTimeout(done,slice);wake=done;
+            const done=()=>{options.signal?.removeEventListener('abort',done);resolve();};
+            wake=done;
             options.signal?.addEventListener('abort',done,{once:true});
             if(epoch!==attemptEpoch || options.signal?.aborted)done();
           });

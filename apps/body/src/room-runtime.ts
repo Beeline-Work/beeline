@@ -40,7 +40,7 @@ import { agentGitIdentity } from './agent-git-identity.js';
 import { reclaimHelperStorage, removeStoragePath, storageTree, isSquirePath, ordinaryDirectory, type StorageRoomState } from './helper-storage.js';
 import { pruneOpenCheckoutObjects, publishStorageFacts, rememberStorageOwner, discoverLegacyStorageOwners, readStorageOwners, reclaimOwnedCheckout, type StorageOwner } from './storage-owners.js';
 import { SurfaceHealth, type SurfaceHealthState } from './surface-health.js';
-import { cornerStarts, isStandingRuntimeFault, retryNotBefore } from './retry-barrier.js';
+import { isStandingRuntimeFault } from './runtime-start-fault.js';
 import { RoomSupervisor } from './room-supervisor.js';
 import type { AgentRuntimeRecord, RoomRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
@@ -524,8 +524,6 @@ export class RoomRuntimeCoordinator {
   private stopped = false;
   /** Runtime refusals wait for a server configuration/sign-in change. */
   private readonly standingRuntimeStartFaults = new Set<string>();
-  private readonly cornerStartScope: string;
-  private cornerStartRetryAt = 0;
   /** Per corner, the requests whose start failure has already been said out loud. */
   private readonly reportedCornerStartFailures = new Map<string, Set<string>>();
   /** Standing workspace-configuration faults: the config that failed, and how. */
@@ -575,7 +573,6 @@ export class RoomRuntimeCoordinator {
     if (!runtime.transport) throw new Error('thin daemon requires monolith transport');
     this.supervisor = new RoomSupervisor(options.daemonApi);
     this.runtime = runtime;
-    this.cornerStartScope = JSON.stringify([runtime.supervisorRoot, runtime.transport.baseUrl]);
     this.agent = runtimeIdentity(runtime.agent);
     this.now = options.now ?? Date.now;
     this.grantRunner = new GrantCommandRunner({
@@ -1279,20 +1276,6 @@ export class RoomRuntimeCoordinator {
     }
   }
 
-  private deferCornerStarts(retryAt: number): void {
-    this.cornerStartRetryAt = Math.max(this.cornerStartRetryAt, retryAt);
-    cornerStarts.defer(this.cornerStartScope, this.cornerStartRetryAt);
-    // Earliest eligible bound only. A committed/configuration/link event must
-    // independently wake discovery after it; time cannot authorize a read.
-  }
-
-  private cornerStartsDeferred(): boolean {
-    const retryAt = Math.max(this.cornerStartRetryAt, cornerStarts.retryAt(this.cornerStartScope));
-    if (retryAt <= Date.now()) return false;
-    if (retryAt !== this.cornerStartRetryAt) this.deferCornerStarts(retryAt);
-    return true;
-  }
-
   private async startCorner(corner: DesiredCorner): Promise<void> {
     if (this.stopped) return;
     if (this.running.has(corner.cornerId) || this.startingCorners.has(corner.cornerId)) return;
@@ -1300,13 +1283,12 @@ export class RoomRuntimeCoordinator {
       this.storageDeferredStarts.add(corner.cornerId);
       return;
     }
-    if (this.cornerStartsDeferred() || this.standingRuntimeStartFaults.has(corner.cornerId)) return;
+    if (this.standingRuntimeStartFaults.has(corner.cornerId)) return;
     this.surfaceHealth.discover(corner.cornerId, 'corner');
     this.startingCorners.add(corner.cornerId);
-    const releaseStart = await cornerStarts.acquire();
     let configKey: string | undefined;
     try {
-      if (this.stopped || this.cornerStartsDeferred()) return;
+      if (this.stopped) return;
       const [restore, repository] = await Promise.all([
         this.options.daemonApi.execute('getCornerRestoreState', { cornerId: corner.cornerId }),
         this.parentRepositoryState(corner.parentRoomId),
@@ -1493,12 +1475,6 @@ export class RoomRuntimeCoordinator {
     } catch (error) {
       this.surfaceHealth.degraded(corner.cornerId, 'corner failed to start');
       console.error(`[thin-core] failed to start corner ${corner.cornerId}:`, error);
-      const retryAt = retryNotBefore(error instanceof CornerCredentialLookupError ? error.cause : error);
-      if (retryAt !== undefined) {
-        this.deferCornerStarts(retryAt);
-        // Keep the authoritative command pending until its provider recovers.
-        return;
-      }
       // Keep the pending command available for the next reconciliation. A
       // temporary token lookup must not turn into a human repair request.
       if (error instanceof CornerCredentialLookupError) return;
@@ -1509,7 +1485,6 @@ export class RoomRuntimeCoordinator {
         this.standingCornerStartFaults.set(corner.cornerId, { configKey, error });
       }
     } finally {
-      releaseStart();
       this.startingCorners.delete(corner.cornerId);
     }
   }

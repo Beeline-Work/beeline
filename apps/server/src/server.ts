@@ -93,12 +93,9 @@ import {
 import { HelperVersionGate, helperVersionBelowMinimum } from './helper-version-gate.js';
 import {
   DaemonConnectionRegistry,
-  LIVE_HEARTBEAT_MS,
-  MACHINE_SOCKET_PROTOCOL,
-  serveAgentSocket,
-  serveMachineSocket,
   type DaemonLiveDependencies,
 } from './daemon-live.js';
+import { MACHINE_SOCKET_PROTOCOL, serveAgentSocket, serveMachineSocket, machineConnectionOutput } from './machine-connection.js';
 
 export const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
 
@@ -532,13 +529,6 @@ export function createBeelineServer(options: ServerOptions): Server {
         daemonRegistry.observeEpoch(event.agentId, event.epoch);
     });
   };
-  // Protocol-level heartbeat for every helper socket. A ping is a control
-  // frame: no database work, no read, no Room event. A socket that has not
-  // answered the previous ping by the next tick is dead and is terminated;
-  // the helper drops a socket that stops pinging it and reconnects.
-  const heartbeatMs = options.liveHeartbeatMs ?? LIVE_HEARTBEAT_MS;
-  const heartbeatStops = new Map<WebSocket, () => void>();
-  const intakeCheckpoints = new Map<WebSocket, () => void>();
   const invitePreview = new InvitePreviewAccess(options.database);
   const phoneViewing = new PhoneViewing(options.database, options.connectionPresence?.instanceId ?? randomUUID());
   const dispatchPhoneOperation = createPhoneOperationDispatcher(options, requestErrorStatus);
@@ -640,8 +630,6 @@ export function createBeelineServer(options: ServerOptions): Server {
     // Connections stay held across a restart: helpers reconnect to a running
     // instance, and this instance's lease releases whatever never returns.
     shuttingDown = true;
-    for (const stopHeartbeat of heartbeatStops.values()) stopHeartbeat();
-    heartbeatStops.clear();
     releaseConnectionEpochs?.();
     for (const client of webSockets.clients) client.terminate();
     webSockets.close();
@@ -810,45 +798,11 @@ export function createBeelineServer(options: ServerOptions): Server {
     ) => {
       const sendLive = principal.kind === 'phone'
         ? phoneLiveOutput(client, MAX_LIVE_OUTBOUND_BUFFERED_BYTES, () => { liveErrors.overload++; })
-        : (payload: string):boolean => {
-        if (client.readyState !== client.OPEN) return false;
-        if (client.bufferedAmount + Buffer.byteLength(payload) > MAX_LIVE_OUTBOUND_BUFFERED_BYTES) {
-          liveErrors.overload++;
-          client.close(1013, 'live backpressure');
-          return false;
-        }
-        client.send(payload);
-        return true;
-      };
+        : machineConnectionOutput(client, MAX_LIVE_OUTBOUND_BUFFERED_BYTES, () => { liveErrors.overload++; });
       if (principal.kind !== 'phone') {
         watchConnectionEpochs();
-        let answered = true;
-        const stopHeartbeat = (options.connectionWork ?? startConnectionWork)(() => {
-          if (!answered) {
-            liveCounters.heartbeatTerminations++;
-            stopHeartbeat();
-            heartbeatStops.delete(client);
-            intakeCheckpoints.delete(client);
-            client.terminate();
-            return;
-          }
-          answered = false;
-          try {
-            client.ping();
-            intakeCheckpoints.get(client)?.();
-          } catch {
-            // A socket that cannot queue a ping misses the next tick.
-          }
-        }, heartbeatMs);
-        heartbeatStops.set(client, stopHeartbeat);
-        client.on('pong', () => { answered = true; });
         const trackSubscriptions = (count: () => number) => socketSubscriptions.set(client, count);
-        client.on('close', () => {
-          stopHeartbeat();
-          heartbeatStops.delete(client);
-          intakeCheckpoints.delete(client);
-          socketSubscriptions.delete(client);
-        });
+        client.on('close', () => socketSubscriptions.delete(client));
         if (principal.kind === 'machine')
           serveMachineSocket(
             daemonLive,
@@ -856,8 +810,6 @@ export function createBeelineServer(options: ServerOptions): Server {
             principal,
             sendLive,
             trackSubscriptions,
-            heartbeatMs,
-            checkpoint => intakeCheckpoints.set(client, checkpoint),
           );
         else serveAgentSocket(daemonLive, client, principal, sendLive, trackSubscriptions);
         return;

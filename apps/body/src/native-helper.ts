@@ -30,7 +30,6 @@ ExecStart=%h/.local/bin/beeline helper-bootstrap
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=1s
-WatchdogSec=180s
 CPUWeight=1000
 IOWeight=1000
 Nice=-5

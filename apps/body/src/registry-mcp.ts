@@ -900,7 +900,6 @@ async function brokerRequest(socketPath: string, request: BrokerRequest): Promis
     const socket = createConnection(socketPath);
     let output = '';
     socket.setEncoding('utf8');
-    socket.setTimeout(125_000, () => socket.destroy(new Error('Registry MCP broker timed out')));
     socket.on('connect', () => socket.end(JSON.stringify(request)));
     socket.on('data', (chunk) => {
       output += chunk;

@@ -104,26 +104,10 @@ export async function requestMachine(
         if (!socket && !connecting) connect();
       }
     });
-    const timer = setTimeout(
-      () =>
-        finish(
-          new Error(
-            `helper convergence timed out${
-              lastStatus
-                ? `: ${Object.entries(lastStatus.agents)
-                    .filter(([, agent]) => agent.state !== 'serving' && agent.state !== 'stopped')
-                    .map(([id, agent]) => `${id}: ${agent.state} (${agent.status})`)
-                    .join('; ')}`
-                : '; no live helper acknowledgment'
-            }`,
-          ),
-        ),
-      timeoutMs,
-    );
+
     function finish(error?: Error, status?: HelperStatusFile) {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
       watcher.close();
       socket?.destroy();
       if (error) reject(error);
@@ -162,8 +146,7 @@ export async function requestMachine(
               Array.isArray(status.agents)
             )
               throw new Error('invalid helper acknowledgment');
-            lastStatus = status;
-            if (accept(status)) finish(undefined, status);
+                  if (accept(status)) finish(undefined, status);
           } catch (error) {
             finish(error instanceof Error ? error : new Error(String(error)));
           }

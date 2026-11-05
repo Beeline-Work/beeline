@@ -90,14 +90,6 @@ export interface ModelCatalogProbeLimits {
  * but also never keeps the process alive on its own account: an `unref`ed
  * timer that only ever rejects cannot be what a caller is waiting on.
  */
-function withDeadline<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout>;
-  const expired = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms}ms`)), ms);
-    timer.unref?.();
-  });
-  return Promise.race([work, expired]).finally(() => clearTimeout(timer));
-}
 
 async function withAgentModelCatalog<T>(
   agent: ModelCatalogAgent,
@@ -142,17 +134,7 @@ async function withAgentModelCatalog<T>(
     );
     const catalog = filterAgentModelCatalog(agent, raw, probeEnv);
     const inspected = inspect({ client, sessionId, raw, catalog });
-    // `inspect` (live-validating every advertised model, one ACP round trip
-    // each) has no timeout of its own to inherit: each individual round trip
-    // defaults to a generous 60s, so a whole-read deadline set on this call
-    // must also bound this step or a catalog with several model choices can
-    // run well past it in total silence. A probe that outlives the deadline
-    // still finishes on its own account; its result is simply no longer
-    // awaited here, matching `client.stop()` below tearing the session down.
-    const inspectDeadline = remaining();
-    return inspectDeadline === undefined
-      ? await inspected
-      : await withDeadline(inspected, inspectDeadline, 'model catalog probe');
+    return await inspected;
   } finally {
     await client.stop().catch(() => undefined);
     await rm(scratchCwd, { recursive: true, force: true }).catch(() => undefined);

@@ -58,7 +58,7 @@ export function hullDialogActionsMinimumHeight() {
   );
 }
 
-export function hullDialogMinimumHeight(contentHeight: number, includesBody: boolean) {
+function hullDialogMinimumHeight(contentHeight: number, includesBody: boolean) {
   return (
     hullDialogActionsMinimumHeight() +
     HULL_DIALOG_LAYOUT.copyPaddingTop +

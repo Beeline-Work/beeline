@@ -242,7 +242,10 @@ const VIEWER_ROOMS=viewerRoomsSql();
 export function questionForSql(viewerId: string): string {
   return `${askingMessageSql('m')} AND m.author_id<>${viewerId}
   AND mark.cleared_at IS NULL
-  AND (${tagsKnownIdentitySql('m', 'viewer.id', 'viewer.handle', 'viewer.kind')}
+  -- Most untagged reports belong to agent commanders. Avoid running the
+  -- quote/code-aware mention parser for text that cannot contain a tag.
+  AND (CASE WHEN strpos(m.text,'@')>0
+    THEN ${tagsKnownIdentitySql('m', 'viewer.id', 'viewer.handle', 'viewer.kind')} ELSE false END
     -- A report to a human commander addresses them without a tag.
     OR (m.text ~ '^(needs-decision|blocked):' AND m.card->>'reportToId'=${viewerId}))
   AND NOT EXISTS (

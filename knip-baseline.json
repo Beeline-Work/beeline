@@ -7,8 +7,6 @@
     "types"
   ],
   "findings": [
-    "exports:apps/mobile/scripts/identity-axis-proof-shims.tsx:HullLivePulse",
-    "exports:apps/mobile/scripts/identity-axis-proof-shims.tsx:useUnistyles",
     "exports:apps/mobile/sources/components/buzz/decorative-glyph.web.ts:DECORATIVE_GLYPH_PROPS",
     "exports:apps/mobile/sources/sync/transport/live-connection.ts:reportRequestDeadlineMissed",
     "exports:apps/mobile/sources/utils/readFileBytes.web.ts:readFileBytes"

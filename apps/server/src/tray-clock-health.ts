@@ -85,9 +85,3 @@ export class TrayClockHealth{
  }
 }
 
-/** Pure proof/accessor seam; production producers compose the expression. */
-export async function readTrayClockHealth(db:SqlDatabase,workspaceId:string):Promise<boolean>{
- const row=(await db.query<{healthy:boolean}>(`SELECT (${TRAY_CLOCK_HEALTH_PREDICATE_SQL}) healthy
-   FROM tray_clock_state clock WHERE clock.workspace_id=$1`,[workspaceId])).rows[0];
- return row?.healthy===true;
-}

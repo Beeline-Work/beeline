@@ -23,9 +23,8 @@ This inventory covers every current `apps/server/src/**/*.test.ts` file after th
 | `auth.test.ts` | opaque token ceremony | retained |
 | `background.test.ts` | background advisory locks, turn routing, push delivery, and media sweep | retained |
 | `can-read-rooms.test.ts` | PhoneService.canReadRooms batch authorization | retained |
-| `cdp-client.chains.test.ts` | swaps; sends; balances on every chain; related cases | retained |
-| `cdp-client.keyparse.test.ts` | cdp Ed25519 key parsing | retained |
-| `cdp-client.test.ts` | cdp request construction | retained |
+| `cdp-client.test.ts` | request signing, Ed25519 key parsing, chain balances/sends/swaps and bounded settlement outcomes | consolidated into one adjacent unit; source snapshot and duplicate assertions removed |
+| `evm-chain.test.ts` | exact decimal conversion, excess precision and negative amounts | moved from the CDP chain tests to its product owner |
 | `channel-mention.test.ts` | @channel mention expansion; @channel push delivery | retained |
 | `chat-corner-counts.test.ts` | chat corner counts | retained |
 | `choice-expiry.test.ts` | ChoiceExpiryLoop | retained |

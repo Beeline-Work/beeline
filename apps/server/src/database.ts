@@ -185,7 +185,10 @@ export function postgresPoolConfig(
   };
 }
 
-const TRANSIENT_CONNECTION_CODES = new Set(['57P01', '57P03', '53300', '08006', '08003', '08000', 'ETIMEDOUT', 'EAI_AGAIN']);
+const TRANSIENT_CONNECTION_CODES = ['57P01', '57P03', '53300', '08006', '08003', '08000', 'ETIMEDOUT', 'EAI_AGAIN'] as const;
+const transientConnectionCodes = new Set<string>(TRANSIENT_CONNECTION_CODES);
+/** Named handled states; arbitrary driver details retain the generic error path. */
+export type DatabaseFailureKind = typeof TRANSIENT_CONNECTION_CODES[number] | '40P01' | '55P03' | '57014' | 'unknown';
 const TRANSIENT_CONNECTION_MESSAGE =
   /Connection terminated|ECONNRESET|server closed the connection|terminating connection|timeout exceeded when trying to connect/i;
 
@@ -193,7 +196,7 @@ export function isTransientDatabaseConnectionError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
   const candidate = error as { code?: unknown; message?: unknown };
   return (
-    (typeof candidate.code === 'string' && TRANSIENT_CONNECTION_CODES.has(candidate.code)) ||
+    (typeof candidate.code === 'string' && transientConnectionCodes.has(candidate.code)) ||
     (typeof candidate.message === 'string' && TRANSIENT_CONNECTION_MESSAGE.test(candidate.message))
   );
 }
@@ -3585,6 +3588,43 @@ export async function migrate(
   await ddlScript('corner owed schema', cornerOwedSchemaSql());
   await ddlScript('corner explicit wait function', cornerWaitingFunctionSql());
   await ddlScript('corner attention schema', CORNER_ATTENTION_SCHEMA);
+  // Idle reads use bounded ordered probes, including a corner with a long
+  // execution/transcript history. Build outside busy writer transactions.
+  await runMigrationStep('corner idle turn history index', () => createIndexConcurrently(
+    database, 'agent_turns_idle_latest_idx',
+    `CREATE INDEX CONCURRENTLY IF NOT EXISTS agent_turns_idle_latest_idx
+     ON agent_turns(room_id,ended_at DESC NULLS LAST,created_at DESC) INCLUDE(agent_id,status)
+     WHERE COALESCE(generation_id,'') NOT LIKE 'pending:%'`,
+  ));
+  await runMigrationStep('corner working turn index', () => createIndexConcurrently(
+    database, 'agent_turns_working_room_idx',
+    `CREATE INDEX CONCURRENTLY IF NOT EXISTS agent_turns_working_room_idx
+     ON agent_turns(room_id,agent_id,request_id)
+     WHERE status='working' AND COALESCE(generation_id,'') NOT LIKE 'pending:%'`,
+  ));
+  await runMigrationStep('corner human input history index', () => createIndexConcurrently(
+    database, 'messages_idle_human_history_idx',
+    `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_idle_human_history_idx
+     ON messages(room_id,author_id,created_at DESC)
+     WHERE presentation='message' AND system_event IS NULL`,
+  ));
+  await runMigrationStep('corner private report card index', () => createIndexConcurrently(
+    database, 'messages_private_report_card_idx',
+    `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_private_report_card_idx
+     ON messages(id) WHERE card_type='agent-command' AND card->>'kind'='report'`,
+  ));
+  await runMigrationStep('corner human report origin history index', () => createIndexConcurrently(
+    database, 'messages_human_report_origin_idx',
+    `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_human_report_origin_idx
+     ON messages((card->>'sourceRoomId'),author_id,created_at DESC,id DESC)
+     WHERE card->>'reportToId' IS NOT NULL`,
+  ));
+  await runMigrationStep('corner legacy human report history index', () => createIndexConcurrently(
+    database, 'messages_human_report_legacy_idx',
+    `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_human_report_legacy_idx
+     ON messages(room_id,author_id,created_at DESC,id DESC)
+     WHERE card->>'reportToId' IS NOT NULL AND card->>'sourceRoomId' IS NULL`,
+  ));
   await ddlScript('corner follows schema', cornerFollowsSchemaSql());
   await ddlScript('live notification schema', (await postgresLiveSchema()));
   await ddlScript('sentry eligibility source', SENTRY_WAKE_SOURCE_SCHEMA);
@@ -3961,7 +4001,12 @@ async function createIndexConcurrently(
   const state = existing.rows[0];
   if (state?.valid) return;
   if (state) await database.query(`DROP INDEX CONCURRENTLY IF EXISTS ${name}`);
-  await database.query(create);
+  // A concurrent build waits for every older transaction without blocking
+  // anyone, so the 1s migration lock timeout would only abort it on a live
+  // database. The release migration runs on one connection; statement_timeout
+  // still bounds the build.
+  await database.query('SET lock_timeout=0');
+  try { await database.query(create); } finally { await database.query('RESET lock_timeout'); }
 }
 
 /** Backfill machine_id on legacy workspace_connectors rows. */

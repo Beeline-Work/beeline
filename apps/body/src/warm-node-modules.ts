@@ -119,11 +119,6 @@ export function sharedPnpmStoreDir(supervisorRoot: string): string {
   return resolve(supervisorRoot, 'beeline', 'pnpm-store');
 }
 
-/** Cargo build output shared by every corner on this host. */
-export function sharedCargoTargetDir(supervisorRoot: string): string {
-  return resolve(supervisorRoot, 'beeline', 'cargo-target');
-}
-
 /**
  * Turbo's build cache, shared by every corner on this host.
  *

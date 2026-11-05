@@ -2,6 +2,7 @@ import { verifyEvent, type NostrEvent } from '@beeline/nostr';
 import type { RoomViewMessage } from './room-view.js';
 import { isRoomViewMessage } from './surface-guards.js';
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export type SignedOutboxRecord = {
   readonly event: NostrEvent;
   readonly row: RoomViewMessage;
@@ -16,6 +17,7 @@ export type SignedOutboxStorage = {
 };
 
 /** Durable exact-event outbox. Retries reuse the byte-identical prepared frame. */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export class SignedEventOutbox {
   private records: SignedOutboxRecord[] = [];
 

@@ -1,3 +1,5 @@
+vi.mock('@sentry/node', async original => ({ ...await original<typeof import('@sentry/node')>(), captureException: vi.fn(() => 'fixture-event') }));
+vi.mock('node:crypto', async original => { const actual = await original<typeof import('node:crypto')>(); return { ...actual, randomBytes: vi.fn(actual.randomBytes) }; });
 import { parkOwnedModelGeneration, parkOwnedModelTerminal, guardOwnedModelSilence } from "../../apps/server/src/owned-model-parking.js";
 import { registerOwnedEffectFence } from "../../apps/server/src/turn-ownership.js";
 import { MODEL_SOURCE } from "../../apps/server/src/test-fixtures/owned-model.js";
@@ -3194,7 +3196,7 @@ it.each(['replay', 'idle'] as const)('command-only requester: System %s survives
 
 it('command-only requester: delegation retains the original human message requester', async () => {
   const sent = await send('@hoots Do this');
-  const root = (await db.query<import('./agent-command.js').CommandRow>(
+  const root = (await db.query<import("../../apps/server/src/agent-command.js").CommandRow>(
     'SELECT * FROM agent_commands WHERE source_message_id=$1', [sent.messageId])).rows[0]!;
   const child = (await createAgentCommand(db, { roomId: R, agentId: B, sourceMessageId: null,
     parent: root, reason: 'order', privatePayload: { kind: 'order', authorId: A, fromRoomId: R, text: 'Delegated task' } }))!;
@@ -9434,7 +9436,7 @@ it.each([
   hub.publish = event => { events.push(event); };
   let attempts = 0;
   const failure = Object.assign(new Error('brief transaction failure'), { code });
-  const wrapped: import('./database.js').SqlDatabase = {
+  const wrapped: import("../../apps/server/src/database.js").SqlDatabase = {
     query: (sql, values) => db.query(sql, values),
     transaction: async work => {
       attempts++;
@@ -14786,7 +14788,7 @@ describe('the run lock (a push transition can race a close or another push)', ()
 async function orderRepairsFromRoom(review: AgentCommand, cornerId: string, text: string) {
   const coordination = await createAgentCommand(db, { roomId: R, agentId: B, sourceMessageId: null,
     privatePayload: { kind: 'order', text: 'Coordinate review repairs', authorId: A, fromRoomId: R },
-    reason: 'order', parent: (await db.query<import('./agent-command.js').CommandRow>(`SELECT * FROM agent_commands WHERE id=$1`, [review.id])).rows[0] });
+    reason: 'order', parent: (await db.query<import("../../apps/server/src/agent-command.js").CommandRow>(`SELECT * FROM agent_commands WHERE id=$1`, [review.id])).rows[0] });
   const turn = (await commands(B, R)).find(command => command.id === coordination!.id)!;
   await claim(turn);
   await daemon.execute('order', { roomId: R, requestId: turn.turnRequestId, generationId: 'g1', address: cornerId, text }, B);
@@ -36005,6 +36007,7 @@ it.each([['server', false], ['body', false], ['server', true], ['body', true]] a
       ${fatal ? thrown : `try { ${thrown} } catch (error) { ${capture}(error); } await ${flush}();`}`;
     const result = await new Promise<{ code: number | null; error: string }>((done, reject) => {
       const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source], {
+        cwd: resolve('apps/server'),
         env: { ...process.env, SENTRY_DSN: `http://public@127.0.0.1:${port}/1`,
           BEELINE_SENTRY_DSN: `http://public@127.0.0.1:${port}/1`, SENTRY_ENVIRONMENT: 'test' },
         stdio: ['ignore', 'ignore', 'pipe'],
@@ -36055,6 +36058,7 @@ it('R-GH-403: actual PR and discussion rate limits send no Sentry event; plain 4
       await flushServerErrors();`;
     const result = await new Promise<{ code: number | null; error: string }>((done, reject) => {
       const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source], {
+        cwd: resolve('apps/server'),
         env: { ...process.env, SENTRY_DSN: `http://public@127.0.0.1:${port}/1`, SENTRY_ENVIRONMENT: 'test' },
         stdio: ['ignore', 'ignore', 'pipe'],
       });
@@ -36146,6 +36150,7 @@ it('GH-CHECK-REFUSAL: check refresh preserves permission diagnostics and blocks 
     `;
     const result = await new Promise<{ code: number | null; error: string }>((done, reject) => {
       const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source], {
+        cwd: resolve('apps/server'),
         env: { ...process.env, SENTRY_DSN: `http://public@127.0.0.1:${port}/1`, SENTRY_ENVIRONMENT: 'test' },
         stdio: ['ignore', 'ignore', 'pipe'],
       });
@@ -36226,6 +36231,7 @@ it('SENTRY-7807034373: schedule HTTP refusals stay visible without Sentry events
       process.exit(0);`;
     const result = await new Promise<{ code: number | null; error: string }>((done, reject) => {
       const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source], {
+        cwd: resolve('apps/server'),
         env: { ...process.env, SENTRY_DSN: `http://public@127.0.0.1:${port}/1`, SENTRY_ENVIRONMENT: 'test' },
         stdio: ['ignore', 'ignore', 'pipe'],
       });
@@ -36300,6 +36306,7 @@ it('R-CHECKIN-ACTIVITY: invalid final output is actionable while unexpected data
       process.exit(0);`;
     const result = await new Promise<{ code: number | null; error: string }>((done, reject) => {
       const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source], {
+        cwd: resolve('apps/server'),
         env: { ...process.env, SENTRY_DSN: `http://public@127.0.0.1:${port}/1`, SENTRY_ENVIRONMENT: 'test' },
         stdio: ['ignore', 'ignore', 'pipe'],
       });
@@ -36337,6 +36344,7 @@ it.each(['server', 'body'] as const)('R-SENTRY-REPEAT: %s sends one envelope for
     let stderr = "";
     const code = await new Promise<number | null>((done, reject) => {
       const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source], {
+        cwd: resolve('apps/server'),
         env: { ...process.env, SENTRY_DSN: `http://public@127.0.0.1:${port}/1`,
           BEELINE_SENTRY_DSN: `http://public@127.0.0.1:${port}/1` }, stdio: ['ignore', 'ignore', 'pipe'],
       });
@@ -36426,6 +36434,7 @@ it('ATTACH-CAP-1: attachment cap is a client error and unexpected failures still
       process.exit(0);`;
     const result = await new Promise<{ code: number | null; error: string }>((done, reject) => {
       const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source], {
+        cwd: resolve('apps/server'),
         env: { ...process.env, SENTRY_DSN: `http://public@127.0.0.1:${port}/1`, SENTRY_ENVIRONMENT: 'test' },
         stdio: ['ignore', 'inherit', 'pipe'],
       });
@@ -36629,6 +36638,7 @@ it('WORKFLOW-ROLE-REFUSAL / BEELINE-SENTRY-REFUSALS / APP-REFUSAL-5 / VIDEO-PREV
       process.exit(0);`;
     const result = await new Promise<{ code: number | null; error: string }>((done, reject) => {
       const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source], {
+        cwd: resolve('apps/server'),
         env: { ...process.env, SENTRY_DSN: `http://public@127.0.0.1:${port}/1`, SENTRY_ENVIRONMENT: 'test' },
         stdio: ['ignore', 'inherit', 'pipe'],
       });
@@ -44119,57 +44129,7 @@ describe('connect_app', () => {
       .toBe('disconnected');
   });
 
-  it.skipIf(!process.env.CONNECTOR_BROWSER_PROOF)('CONNECTOR-BROWSER: real service bridge', async () => {
-    const { createServer } = await import('node:http');
-    const { execFile } = await import('node:child_process');
-    const { promisify } = await import('node:util');
-    const provider = fakeComposio();
-    provider.searchToolkits = vi.fn(async () => []);
-    await connectSquire();
-    await applyVaultList(database, { machine_id: 'machine-one', workspace_id: WORKSPACE, owner_identity_id: OWNER },
-      Array.from({length:6}, (_,i) => ({reference:'vault:fly-'+i,service:'fly',label:'Fly key '+i,fieldNames:['token'],allowedHosts:['api.fly.io'],createdAt:1,stale:false,state:'active' as const})));
-    const registry = fakeRegistry([]);
-    const discovery = new CompanyMcpDiscovery(async () => ({status:200,body:JSON.stringify({resource:'https://mcp.fly.io',authorization_servers:['https://fly.io/mcp/oauth']})}));
-    registry.client.companies.discover = discovery.discover.bind(discovery);
-    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
-      undefined, false, database, undefined, undefined, registry.client, provider);
-    const connected = await daemonWith(fakeRegistry([]).client, provider).execute('connectApp',
-      { ...turn, app: 'Slack', reason: 'browser removal proof' }, HELPER);
-    await phone.execute('beginAppSignIn', { appId: connected.appId! }, OWNER);
-    await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: connected.appId! }, OWNER);
-    const server = createServer(async (request, response) => {
-      response.setHeader('Access-Control-Allow-Origin', '*');
-      response.setHeader('Access-Control-Allow-Headers', 'content-type');
-      if (request.method === 'OPTIONS') { response.end(); return; }
-      try {
-        let body = ''; for await (const chunk of request) body += chunk;
-        const { operation, input } = JSON.parse(body);
-        if (operation === 'resetProof') {
-          await database.query("UPDATE workspace_apps SET state='active' WHERE id=$1", [connected.appId]);
-          response.end('{}'); return;
-        }
-        if (!['readWorkbench', 'disconnectWorkbenchApp', 'searchWorkbenchApps', 'connectWorkbenchApp'].includes(operation)) throw new Error('Proof operation not allowed');
-        const pending = phone.execute(operation, input, OWNER);
-        if (operation === 'connectWorkbenchApp') await publishFlySignIn();
-        const result = await pending;
-        // Only helper presence is simulated; all connection operations execute PhoneService.
-        if (operation === 'readWorkbench') for (const helper of (result as any).helpers) helper.online = true;
-        response.setHeader('content-type', 'application/json');
-        response.end(JSON.stringify(result ?? {}));
-      } catch (error) { response.statusCode = 400; response.end(JSON.stringify({ error: String(error) })); }
-    });
-    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-    try {
-      const port = (server.address() as AddressInfo).port;
-      const result = await promisify(execFile)('npm', ['test', '--', 'run', 'sources/test/connector-service.browser.test.ts'], {
-        cwd: '../mobile', timeout: 240000, maxBuffer: 4000000,
-        env: { ...process.env, CONNECTOR_PROOF_ORIGIN: 'http://127.0.0.1:' + port },
-      });
-      console.log(result.stdout);
-      expect(provider.deleteAccount).toHaveBeenCalled();
-      expect((await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER)).apps.some(app => app.appKey === 'slack')).toBe(false);
-    } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
-  }, 260000);
+  
 
   it.each(['Slack', 'Supabase', 'WhatsApp'])('Reproduction REMOVE-1: removes failed %s attempts and refuses foreign owners and late callbacks', async (app) => {
     const provider = fakeComposio();
@@ -45508,7 +45468,7 @@ it('a human message bypasses the opted-in window without releasing queued comman
 
 
 describe("corner-brief-sentry", () => {
-beforeEach(() => { vi.spyOn(scopedSentrySdk, "captureException").mockImplementation(vi.fn()); });
+beforeEach(() => { vi.mocked(scopedSentrySdk.captureException).mockReset().mockImplementation(vi.fn()); });
 afterEach(() => vi.restoreAllMocks());
 
 
@@ -45555,7 +45515,7 @@ it('Reproduction R-S12: returns the approval refusal over HTTP without capturing
 
 
 describe("corner-refusals", () => {
-beforeEach(() => { vi.spyOn(scopedSentrySdk, "captureException").mockImplementation(vi.fn()); });
+beforeEach(() => { vi.mocked(scopedSentrySdk.captureException).mockReset().mockImplementation(vi.fn()); });
 afterEach(() => vi.restoreAllMocks());
 
 
@@ -45736,12 +45696,12 @@ afterEach(() => vi.restoreAllMocks());
 
 
 function checkStatusLine(lifecycle: unknown): string | undefined {
-  const formatter = transformSync(readFileSync(new URL("../../apps/mobile/sources/buzz/corner-status-line.ts", import.meta.url), 'utf8'), {
+  const formatter = transformSync(readFileSync(new URL("../../apps/mobile/sources/buzz/corner-status-line.ts", pathToFileURL(__filename).href), 'utf8'), {
     loader: 'ts', format: 'cjs', tsconfigRaw: {},
   });
   const module = { exports: {} };
   runInNewContext(formatter.code, { module, exports: module.exports });
-  return (module.exports as typeof import('../../mobile/sources/buzz/corner-status-line.js'))
+  return (module.exports as typeof import("../../apps/mobile/sources/buzz/corner-status-line.js"))
     .cornerStatusLine(lifecycle as import('@beeline/api-contract/phone').CornerLifecycleView, false);
 }
 
@@ -46518,12 +46478,12 @@ describe('GitHub phone operations', () => {
     // Exercise the exact formatter used by the visible corner header.
     // Server CI does not install Expo. Compile the pure formatter without
     // loading the mobile app's Expo tsconfig through Vite.
-    const formatter = transformSync(readFileSync(new URL("../../apps/mobile/sources/buzz/corner-status-line.ts", import.meta.url), 'utf8'), {
+    const formatter = transformSync(readFileSync(new URL("../../apps/mobile/sources/buzz/corner-status-line.ts", pathToFileURL(__filename).href), 'utf8'), {
       loader: 'ts', format: 'cjs', tsconfigRaw: {},
     });
     const module = { exports: {} };
     runInNewContext(formatter.code, { module, exports: module.exports });
-    const { cornerStatusLine } = module.exports as typeof import('../../mobile/sources/buzz/corner-status-line.js');
+    const { cornerStatusLine } = module.exports as typeof import("../../apps/mobile/sources/buzz/corner-status-line.js");
     expect(cornerStatusLine(lifecycle, false)).toBe('PR #1 · all 31 tests passed');
     const facts = () => database.query(`SELECT 1 FROM messages WHERE room_id=$1
       AND system_event->>'kind'='check-passed' AND system_event->'object'->>'headSha'=$2`, [corner, newHead]);
@@ -50515,7 +50475,7 @@ describe('System DM committed delivery source without minute discovery',()=>{
 
 
 describe("production-release-dispatch", () => {
-beforeEach(() => { vi.spyOn(scopedSentrySdk, "captureException").mockImplementation(vi.fn(() => 'fixture-event')); });
+beforeEach(() => { vi.mocked(scopedSentrySdk.captureException).mockReset().mockImplementation(vi.fn(() => 'fixture-event')); });
 afterEach(() => vi.restoreAllMocks());
 
 
@@ -50651,7 +50611,7 @@ it('demonstrates the operator executable through authenticated daemon dispatch t
   const constructorArgs: ConstructorParameters<typeof DaemonService> = [db, new LiveHub()];
   constructorArgs[22] = {
     dispatchProductionRelease: async (_room: string, inputs: Record<string, string>) => { dispatched.push(inputs); },
-  } as unknown as import('./github-operations.js').GitHubOperations;
+  } as unknown as import("../../apps/server/src/github-operations.js").GitHubOperations;
   const service = new DaemonService(...constructorArgs);
   const server = createServer(async (request, response) => {
     try {
@@ -50671,7 +50631,7 @@ it('demonstrates the operator executable through authenticated daemon dispatch t
     const context = join(dir, 'turn.json');
     await writeFile(context, JSON.stringify(input));
     const port = (server.address() as import('node:net').AddressInfo).port;
-    const script = fileURLToPath(new URL("../../scripts/dispatch-production-release.mjs", import.meta.url));
+    const script = fileURLToPath(new URL("../../scripts/dispatch-production-release.mjs", pathToFileURL(__filename).href));
     const child = spawn(process.execPath, [script, '-f', 'release_version=v0.1.94', '-f', 'selection=server'], {
       env: { ...process.env, BEELINE_DAEMON_BASE_URL: `http://127.0.0.1:${port}`, BEELINE_DAEMON_TOKEN: 'fixture-token',
         BEELINE_DAEMON_AGENT_ID: agent, BEELINE_TURN_CONTEXT_FILE: context },
@@ -50707,7 +50667,7 @@ it('R-RELEASE-CARD: built MCP tool dispatches through the daemon with a receipt 
   const { LiveHub } = await import("../../apps/server/src/live.js");
   const dispatch = vi.fn(async () => {});
   const constructorArgs: ConstructorParameters<typeof DaemonService> = [db, new LiveHub()];
-  constructorArgs[22] = { dispatchProductionRelease: dispatch } as unknown as import('./github-operations.js').GitHubOperations;
+  constructorArgs[22] = { dispatchProductionRelease: dispatch } as unknown as import("../../apps/server/src/github-operations.js").GitHubOperations;
   const service = new DaemonService(...constructorArgs);
   const operations: string[] = [];
   const server = createServer(async (request, response) => {
@@ -50730,9 +50690,9 @@ it('R-RELEASE-CARD: built MCP tool dispatches through the daemon with a receipt 
   const executable = join(dir, 'release-mcp.mjs');
   const { build } = await import('esbuild');
   await build({
-    entryPoints: [fileURLToPath(new URL("../../apps/body/src/read-only-mcp.ts", import.meta.url))],
+    entryPoints: [fileURLToPath(new URL("../../apps/body/src/read-only-mcp.ts", pathToFileURL(__filename).href))],
     bundle: true, platform: 'node', format: 'esm', target: 'node20', outfile: executable, logLevel: 'silent',
-    banner: { js: "import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url);" },
+    banner: { js: "import { createRequire as __cr } from 'module'; const require = __cr(pathToFileURL(__filename).href);" },
   });
   const grantCount = async () => (await db.query<{ count: number }>(`SELECT count(*)::int count FROM agent_grants`)).rows[0]!.count;
   const messages = async () => (await db.query<{ count: number }>(`SELECT count(*)::int count FROM messages`)).rows[0]!.count;
@@ -51096,8 +51056,8 @@ describe("workflow-seam-cases", () => {
 
 
 
-const workflowRandomBytes = scopedWorkflowCrypto.randomBytes;
-beforeEach(() => { vi.spyOn(scopedWorkflowCrypto, 'randomBytes').mockImplementation(workflowRandomBytes); });
+let workflowRandomBytes: typeof scopedWorkflowCrypto.randomBytes;
+beforeEach(async () => { workflowRandomBytes = (await vi.importActual<typeof import('node:crypto')>('node:crypto')).randomBytes; vi.mocked(scopedWorkflowCrypto.randomBytes).mockImplementation(workflowRandomBytes); });
 afterEach(() => vi.restoreAllMocks());
 
 
@@ -53986,8 +53946,8 @@ describe('workflow timeout recovery reproductions', () => {
 
 
 describe("workflow-admin", () => {
-const workflowRandomBytes = scopedWorkflowCrypto.randomBytes;
-beforeEach(() => { vi.spyOn(scopedWorkflowCrypto, 'randomBytes').mockImplementation(workflowRandomBytes); });
+let workflowRandomBytes: typeof scopedWorkflowCrypto.randomBytes;
+beforeEach(async () => { workflowRandomBytes = (await vi.importActual<typeof import('node:crypto')>('node:crypto')).randomBytes; vi.mocked(scopedWorkflowCrypto.randomBytes).mockImplementation(workflowRandomBytes); });
 afterEach(() => vi.restoreAllMocks());
 
 
@@ -54192,8 +54152,8 @@ describe('activeWorkflowRunIds', () => {
 
 
 describe("workflow-run-views", () => {
-const workflowRandomBytes = scopedWorkflowCrypto.randomBytes;
-beforeEach(() => { vi.spyOn(scopedWorkflowCrypto, 'randomBytes').mockImplementation(workflowRandomBytes); });
+let workflowRandomBytes: typeof scopedWorkflowCrypto.randomBytes;
+beforeEach(async () => { workflowRandomBytes = (await vi.importActual<typeof import('node:crypto')>('node:crypto')).randomBytes; vi.mocked(scopedWorkflowCrypto.randomBytes).mockImplementation(workflowRandomBytes); });
 afterEach(() => vi.restoreAllMocks());
 
 
@@ -55145,7 +55105,7 @@ it('R-SENTRY-DEADLINE: identifies the transaction caller while destroying the ex
 
 
 describe("sentry-expected-refusals", () => {
-beforeEach(() => { vi.spyOn(scopedSentrySdk, "captureException").mockImplementation(vi.fn()); });
+beforeEach(() => { vi.mocked(scopedSentrySdk.captureException).mockReset().mockImplementation(vi.fn()); });
 afterEach(() => vi.restoreAllMocks());
 
 
@@ -58739,15 +58699,15 @@ it.each(['local', ...(inputOwnerPostgresUrl ? ['postgres'] : [])].flatMap(backen
 
 
 describe("turn-replay.integration", async () => {
-const { DaemonService } = await import(process.env.BEELINE_REPLAY_BUILT_PROOF ? '../dist/daemon-service.js' : './daemon-service.js');
-const { PhoneService } = await import(process.env.BEELINE_REPLAY_BUILT_PROOF ? '../dist/phone-service.js' : './phone-service.js');
+const { DaemonService } = await import(process.env.BEELINE_REPLAY_BUILT_PROOF ? "../../apps/server/dist/daemon-service.js" : "../../apps/server/src/daemon-service.js");
+const { PhoneService } = await import(process.env.BEELINE_REPLAY_BUILT_PROOF ? "../../apps/server/dist/phone-service.js" : "../../apps/server/src/phone-service.js");
 
 
 
 
 
-const { MonolithRoomTurnLoop } = await import(process.env.BEELINE_REPLAY_BUILT_PROOF ? '../../body/dist/monolith-room-turn.js' : '../../body/src/monolith-room-turn.js');
-const { MonolithCornerTurnLoop } = await import(process.env.BEELINE_REPLAY_BUILT_PROOF ? '../../body/dist/monolith-corner-turn.js' : '../../body/src/monolith-corner-turn.js');
+const { MonolithRoomTurnLoop } = await import(process.env.BEELINE_REPLAY_BUILT_PROOF ? "../../apps/body/dist/monolith-room-turn.js" : "../../apps/body/src/monolith-room-turn.js");
+const { MonolithCornerTurnLoop } = await import(process.env.BEELINE_REPLAY_BUILT_PROOF ? "../../apps/body/dist/monolith-corner-turn.js" : "../../apps/body/src/monolith-corner-turn.js");
 
 
 

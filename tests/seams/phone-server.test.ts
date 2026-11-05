@@ -34042,8 +34042,8 @@ describe('per-group final authority fence',()=>{
 
 
 describe("router-phone-group-a.postgres", () => {
-let SurfaceRegistry: typeof import('../../mobile/sources/buzz/surface-registry.js').SurfaceRegistry;
-let shouldReadWorkspaceRoster: typeof import('../../mobile/sources/buzz/room-participants.js').shouldReadWorkspaceRoster;
+let SurfaceRegistry: typeof import("../../apps/mobile/sources/buzz/surface-registry.js").SurfaceRegistry;
+let shouldReadWorkspaceRoster: typeof import("../../apps/mobile/sources/buzz/room-participants.js").shouldReadWorkspaceRoster;
 
 
 

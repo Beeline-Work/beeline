@@ -1,3 +1,4 @@
+import { setAgentWakePaused } from './agent-wake-pause.js';
 import { roomEventSubscriptions } from './agent-subscriptions.js';
 import { settleAgentCommand, renewAgentCommandLease } from './agent-command.js';
 import {parkOwnedModelTerminal,OwnedModelOwnerEndRefusal} from './owned-model-parking.js';
@@ -698,6 +699,7 @@ export class DaemonService {
       'requestAgentGrant',
       'createAgentSubscription',
       'deleteAgentSubscription',
+      'setAgentWakePaused',
       'authorizeSquireCall',
       'authorizeResourceCall',
       'authorizeRepositoryCall',
@@ -1516,6 +1518,10 @@ export class DaemonService {
       case 'listAgentSubscriptions':
         return await listAgentSubscriptions(this.database,
           (input as Input<'listAgentSubscriptions'>).roomId, authenticatedAgentId) as Output<Name>;
+      case 'setAgentWakePaused': {
+        await setAgentWakePaused(this.database, authenticatedAgentId, input as Input<'setAgentWakePaused'>);
+        return this.writeResult() as Output<Name>;
+      }
       case 'deleteAgentSubscription': {
         const i = input as Input<'deleteAgentSubscription'>;
         await deleteAgentSubscription(this.database, i.roomId, authenticatedAgentId, i.subscriptionId, this.composio);
@@ -5944,10 +5950,11 @@ export class DaemonService {
       max_runs: number | null;
       run_count: number;
       next_run_at: Date;
+      paused_at: Date | null;
     }>(
       `SELECT schedule.title,schedule.workflow_slug,schedule.id,schedule.agent_id,agent.handle agent_handle,schedule.cadence,
          schedule.room_id,room.name room_name,
-         schedule.message,schedule.max_runs,schedule.run_count,schedule.next_run_at
+         schedule.message,schedule.max_runs,schedule.run_count,schedule.next_run_at,schedule.paused_at
        FROM agent_schedules schedule JOIN identities agent ON agent.id=schedule.agent_id
        JOIN rooms room ON room.id=schedule.room_id
        WHERE (schedule.room_id=$1 OR ($3::boolean AND EXISTS (
@@ -5971,6 +5978,7 @@ export class DaemonService {
           ...(row.workflow_slug ? { workflowName: row.workflow_slug } : {}),
           title: scheduleDisplayTitle({ title: row.title, workflow: row.workflow_slug, prompt: row.message }),
           scheduleId: row.id,
+          ...(row.paused_at ? { paused: true } : {}),
           ...(input.selfOnly ? { roomId: row.room_id, roomName: row.room_name } : {}),
           agentId: row.agent_id,
           ...(row.agent_handle ? { agentHandle: row.agent_handle } : {}),
@@ -9314,6 +9322,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   listServiceSubscriptionEvents: true,
   listAgentSubscriptions: true,
   deleteAgentSubscription: true,
+  setAgentWakePaused: true,
   watchCorner: true,
   listEventSubscriptions: true,
   postRoomEvent: true,

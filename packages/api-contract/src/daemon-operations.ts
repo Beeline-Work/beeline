@@ -80,6 +80,7 @@ export type AgentScheduleResult = {
   readonly nextRunAt: number;
 };
 export type AgentScheduleEntry = {
+  readonly paused?: boolean;
   readonly title?: string;
   /** Location included by workspace-wide self-only wake reads. */
   readonly roomId?: string;
@@ -359,6 +360,7 @@ export type DaemonOperationMap = {
     channelId?: string; channelName?: string; title?: string; when?: string; prompt: string; workflowName?: string }, RoomSubscriptionView>;
   listServiceSubscriptionEvents: Operation<RoomInput, SubscriptionEventCatalog>;
   listAgentSubscriptions: Operation<RoomInput, RoomSubscriptionListResult>;
+  setAgentWakePaused: Operation<RoomInput & { scheduleId?: string; subscriptionId?: string; paused: boolean }, WriteResult>;
   deleteAgentSubscription: Operation<RoomInput & { subscriptionId: string }, WriteResult>;
   watchCorner: Operation<
     TurnOutputAuthority & RoomInput & { readonly cornerId: string; readonly kinds: readonly CornerWatchKind[] },

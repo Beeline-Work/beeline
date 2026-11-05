@@ -1125,6 +1125,7 @@ export function readRoomViewMessage(value: unknown): RoomViewMessage | null {
     ...field('targetBranch', readTargetBranch(item.targetBranch)),
     ...field('githubEvent', readGithubEvent(item.githubEvent)),
     ...field('daemonFact', readDaemonFact(item.daemonFact)),
+    ...field('awayWarning', typeof item.awayWarning === 'boolean' ? item.awayWarning : undefined),
     ...field('systemEvent', isSystemEvent(item.systemEvent) ? item.systemEvent : undefined),
   };
 }

@@ -1170,11 +1170,11 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "wake",
-    "description": "Manage your own wake sources. List your schedules across every Room you belong to by scheduleId; update and delete require a turn started by a human Workspace admin of the schedule’s Room, and a scheduled wake cannot do either; lists include roomId and roomName. Creating schedules and managing events stay in this place. Schedules and events reject address. lifecycle requires address and watches opened/merged. Opening a corner already watches it. events discovers the catalog. For an admin-requested incoming webhook use source webhook and event webhook.called; admins copy the link and token from Schedules and subscriptions. Never posts, orders or reports. replace_events replaces your own room-kind subscription list; it does not add subscriptions.",
+    "description": "Manage your own wake sources. List your schedules across every Room you belong to by scheduleId; update and delete require a turn started by a human Workspace admin of the schedule’s Room, and a scheduled wake cannot do either; lists include roomId and roomName. Creating schedules and managing events stay in this place. Schedules and events reject address. lifecycle requires address and watches opened/merged. Opening a corner already watches it. events discovers the catalog. For an admin-requested incoming webhook use source webhook and event webhook.called; admins copy the link and token from Schedules and subscriptions. pause and resume take exactly one scheduleId or subscriptionId. Resume skips missed schedule runs. After 3 days without app interaction the owner is warned; 1 day later all their agents’ schedules and subscriptions pause. Ask the owner which to resume. Never posts, orders or reports. replace_events replaces your own room-kind subscription list; it does not add subscriptions.",
     "inputSchema": {
       "type": "object",
       "properties": {
-        "action": {"type": "string", "enum": ["create", "list", "update", "delete", "events", "replace_events"]},
+        "action": {"type": "string", "enum": ["create", "list", "update", "delete", "pause", "resume", "events", "replace_events"]},
         "trigger": {"type": "string", "enum": ["schedule", "event", "lifecycle"]},
         "address": {
           "type": "string",
@@ -1237,6 +1237,8 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
           "required": ["action", "trigger"]
         },
         {"properties": {"action": {"const": "delete"}, "trigger": {"const": "schedule"}}, "required": ["action", "scheduleId"]},
+        {"properties": {"action": {"enum": ["pause", "resume"]}}, "required": ["action", "scheduleId"]},
+        {"properties": {"action": {"enum": ["pause", "resume"]}}, "required": ["action", "subscriptionId"]},
         {"properties": {"action": {"const": "replace_events"}}, "required": ["action", "kinds"]}
       ]
     }

@@ -246,6 +246,7 @@ export type ChatDisplayMessage = {
   deleted?: boolean;
   /** The server-phrased event behind a system line or card header (`buzz/system-lines.ts`). */
   systemEvent?: SystemEvent;
+  awayWarning?: boolean;
   isAgentAuthor?: boolean;
   isAgentActivity?: boolean;
   isAgentLiveTurn?: boolean;
@@ -414,6 +415,7 @@ export function displayRoomMessage(
       : {}),
     ...(message.presentation === 'system' ? { isSystemNotice: true } : {}),
     ...(message.deleted ? { deleted: true } : {}),
+    ...(message.awayWarning ? { awayWarning: true } : {}),
     ...(message.systemEvent ? { systemEvent: message.systemEvent } : {}),
     ...(message.presentation === 'activity' ? { isAgentActivity: true } : {}),
     ...(message.activity ? { activity: activityItems(message) } : {}),

@@ -295,3 +295,8 @@ it('uses the server DM flag for location and fallback trigger wording, not a mis
   expect(subscriptionWhen({ source: 'room', event: 'joined' } as any, true)).toBe('On someone joining this DM');
   expect(subscriptionWhen({ source: 'room', event: 'other' } as any, true)).toBe('On an event in this DM');
 });
+
+it('shows paused schedules and subscriptions without claiming a next run', () => {
+  expect(scheduleTrigger({ paused: true } as any)).toBe('Paused while you were away');
+  expect(subscriptionWhen({ paused: true, registrationStatus: 'registering' } as any)).toBe('Paused while you were away');
+});

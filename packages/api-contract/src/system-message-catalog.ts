@@ -3,6 +3,8 @@
  * variables describe the ordered slots; parts preserve every byte around them.
  */
 export const SYSTEM_MESSAGE_CATALOG = {
+  'away-auto-pause.warning': { parts: ['will pause schedules and subscriptions for'], variables: [] },
+  'away-auto-pause.come-back': { parts: ['You have been away for 3 days. Come back within 1 day to keep them running. After they pause, ask your agent to resume.'], variables: [] },
   'agent-command.agent-mention': {
     parts: ['@', ''],
     variables: ['target_handle'],

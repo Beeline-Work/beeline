@@ -87,6 +87,9 @@ describe('agent-created webhook subscription', () => {
       expect((await post({ authorization: `Bearer ${token}`, 'x-beeline-delivery': 'first' })).status).toBe(200);
       expect(await (await post({ authorization: `Bearer ${token}`, 'x-beeline-delivery': 'first' })).json()).toEqual({ outcome: 'skipped' });
       expect((await post({ 'x-beeline-signature': `sha256=${createHmac('sha256', token).update(body).digest('hex')}`, 'x-beeline-delivery': 'signed' })).status).toBe(200);
+      await db.query('UPDATE agent_subscriptions SET paused_at=now() WHERE id=$1', [subscription.id]);
+      expect((await post({ authorization: `Bearer ${token}`, 'x-beeline-delivery': 'paused' })).status).toBe(409);
+      await db.query('UPDATE agent_subscriptions SET paused_at=NULL WHERE id=$1', [subscription.id]);
       const signedQuery = `${endpoint}?signature=${createHmac('sha256', token).update(body).digest('hex')}&delivery=query`;
       expect((await fetch(signedQuery, { method: 'POST', body })).status).toBe(200);
       expect((await post({ 'x-beeline-signature': '0'.repeat(64) })).status).toBe(401);

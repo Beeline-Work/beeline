@@ -664,6 +664,7 @@
         "module": "Background work and timers",
         "reason": "existing before the registry; weekly audit reviews",
         "columns": {
+          "paused_at": "Preserves suspension managed by away-auto-pause.ts and agent-wake-pause.ts so schedule admission stops without deleting its cadence or prompt.",
           "id": "existing before the registry; weekly audit reviews",
           "workspace_id": "existing before the registry; weekly audit reviews",
           "room_id": "existing before the registry; weekly audit reviews",
@@ -701,6 +702,7 @@
         "module": "Background work and timers",
         "reason": "existing before the registry; weekly audit reviews",
         "columns": {
+          "paused_at": "Preserves suspension managed by away-auto-pause.ts and agent-wake-pause.ts so every event ingress stops wakes without deleting the subscription.",
           "id": "existing before the registry; weekly audit reviews",
           "workspace_id": "existing before the registry; weekly audit reviews",
           "room_id": "existing before the registry; weekly audit reviews",
@@ -1270,6 +1272,8 @@
         "module": "Identity and sign-in",
         "reason": "existing before the registry; weekly audit reviews",
         "columns": {
+          "last_app_active_at": "Persists the person's last app interaction for away-auto-pause.ts; agent output and delivery cannot reconstruct this activity.",
+          "away_warning_at": "Persists when away-auto-pause.ts warned the person so one warning grants a full day across scheduler passes and restarts.",
           "id": "existing before the registry; weekly audit reviews",
           "kind": "existing before the registry; weekly audit reviews",
           "name": "existing before the registry; weekly audit reviews",

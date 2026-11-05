@@ -201,6 +201,7 @@ const daemonOperations = {
   createLinkSpendRequest: true,
   deleteAgentSchedule: true,
   deleteAgentSubscription: true,
+  setAgentWakePaused: true,
   deleteInstitutionalMemory: true,
   deleteSkill: true,
   dispatchRoomWorkflow: true,

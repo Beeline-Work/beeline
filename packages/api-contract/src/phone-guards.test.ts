@@ -164,6 +164,7 @@ const cases: Case[] = [
       'githubEvent',
       'daemonFact',
       'systemEvent',
+      'awayWarning',
       'presentation',
       'text',
     ],

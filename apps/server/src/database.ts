@@ -683,6 +683,9 @@ CREATE TABLE IF NOT EXISTS identities (
 );
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS hidden_from_roster boolean NOT NULL DEFAULT false;
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS face_id text NULL;
+-- Start existing people's inactivity clock at rollout; account age is not app inactivity.
+ALTER TABLE identities ADD COLUMN IF NOT EXISTS last_app_active_at timestamptz DEFAULT now();
+ALTER TABLE identities ADD COLUMN IF NOT EXISTS away_warning_at timestamptz;
 -- Null excludes every identity present at rollout. New humans inherit true;
 -- completion changes it to false and follows the account across devices.
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS welcome_cards_due boolean;
@@ -1893,6 +1896,7 @@ ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS ownership_initialized bool
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS workflow_slug text;
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS human_command_message_id text;
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS title text;
+ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS paused_at timestamptz;
 -- Owner-approved labels for the existing #beeline schedules and its corners.
 UPDATE agent_schedules SET title=labels.title FROM (VALUES
   ('ea5594a0-42ec-49dd-8957-5582216ebedd'::uuid,'Prompt replay'),

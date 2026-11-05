@@ -4,6 +4,7 @@ import { addressedToPersonSql } from './corner-owed.js';
 export function pushDirectAttentionSql(turnIds: string): string {
   return `(
     (room.direct_participants IS NOT NULL AND (m.presentation='message' OR m.card_type IS NULL OR m.card_type='grant-request'))
+    OR (m.card_type='away-warning' AND m.card->>'ownerId'=recipient.id)
     OR (m.card_type='machine-offline' AND m.card->>'status'='open'
       AND m.card->>'ownerId'=recipient.id)
     OR ${addressedToPersonSql('m', 'recipient.id', 'recipient.handle', 'recipient.kind', false)}

@@ -841,6 +841,7 @@ jobs:
         run: |
           npm test -w @beeline/server -- src/network-router-runtime.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npx vitest run tests/seams/server-db.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/production-deadlocks.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/mcp-webhook-deadline.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/agent-schedule-deadline.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/pending-attachment-deadline.postgres.test.ts --maxWorkers=2 --minWorkers=1

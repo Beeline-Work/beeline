@@ -102,10 +102,13 @@ it('Reproduction MERGE-DEADLOCK-1: rolls back a deadlocked archival and commits 
   const retryDatabase: SqlDatabase = {
     query: db.query.bind(db),
     transaction: work => db.transaction(async tx => {
+      const previouslyArchived = await tx.query(`SELECT 1 FROM rooms WHERE id=$1 AND archived_at IS NOT NULL`, [C]);
       const result = await work(tx);
       // Fail after all writes: rollback must leave the next event fresh authority.
+      // Repository notes commit independently; observing an already archived
+      // corner in their transaction is not another archival attempt.
       const archived = await tx.query(`SELECT 1 FROM rooms WHERE id=$1 AND archived_at IS NOT NULL`, [C]);
-      if (archived.rowCount && ++attempts === 1)
+      if (!previouslyArchived.rowCount && archived.rowCount && ++attempts === 1)
         throw Object.assign(new Error('deadlock detected'), { code: '40P01' });
       return result;
     }),
@@ -142,6 +145,42 @@ it.each([['40P01', 1], ['XX000', 1]] as const)('returns archival %s without repl
   expect((await db.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND action='stop'`, [C])).rowCount).toBe(0);
   expect((await db.query(`SELECT 1 FROM messages WHERE card->>'type'='corner-complete'`)).rowCount).toBe(0);
   expect(app.deleteBranch).not.toHaveBeenCalled();
+});
+
+it('a repository-note failure cannot skip cleanup for a committed archival', async () => {
+  const failure = new Error('Synthetic repository note outage');
+  let noteFailures = 0;
+  const wrap = (tx: SqlDatabase): SqlDatabase => ({
+    query: async <Row extends QueryResultRow>(sql: string, values?: unknown[]) => {
+      if (sql.includes('INSERT INTO messages(') && values?.[7] === 'github-event') {
+        noteFailures++;
+        throw failure;
+      }
+      return tx.query<Row>(sql, values);
+    },
+    transaction: work => work(wrap(tx)),
+  });
+  const failing: SqlDatabase = {
+    query: db.query.bind(db),
+    transaction: work => db.transaction(tx => work(wrap(tx))),
+  };
+  const merge = (github: GitHubOperations) => github['mergeCorner']({
+    corner_id: C, parent_id: R, author_id: A, corner_name: 'Corner', summary: '',
+    repository_id: '101', installation_id: '77',
+  }, {
+    repository: 'owner/widgets', branch: event.pull_request.head.ref,
+    title: event.pull_request.title, url: event.pull_request.html_url,
+    number: 1, headSha: event.pull_request.head.sha, targetBranch: 'main', commits: 1, files: 1,
+  });
+  await expect(merge(operations(failing))).rejects.toBe(failure);
+  expect(noteFailures).toBe(1);
+  expect((await db.query(`SELECT 1 FROM rooms WHERE id=$1 AND archived_at IS NULL`, [C])).rowCount).toBe(1);
+  expect((await db.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND action='stop'`, [C])).rowCount).toBe(0);
+  expect(app.deleteBranch).not.toHaveBeenCalled();
+  await merge(operations());
+  await assertArchived();
+  expect(app.deleteBranch).toHaveBeenCalledOnce();
+  expect((await db.query(`SELECT 1 FROM messages WHERE card_type='github-event'`, [])).rowCount).toBe(1);
 });
 
 it.skipIf(!postgresUrl).each(['merge webhook', 'agent close', 'phone close'] as const)(

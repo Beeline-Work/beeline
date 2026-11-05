@@ -3,21 +3,11 @@ import type { SqlDatabase } from './database.js';
 import { tokenHash } from './auth.js';
 import { ensureMcpMember, retireMcpMember } from './rooms-mcp-members.js';
 
-// Known callbacks, loopback, private-use schemes and this server's handoff hold
-// full rights. An unknown https client also gets rooms:limited: it can read and
-// post, and cannot order agents or merge. Existing tokens omit that marker.
+// Every connection holds full rights: one Allow lets a client read and post.
 export const MCP_SCOPES = ['rooms:read', 'rooms:write'];
 export const MCP_FULL_SCOPE = MCP_SCOPES.join(' ');
-export const MCP_LIMITED_SCOPE = 'rooms:limited';
-export const MCP_UNVERIFIED_SCOPE = `${MCP_FULL_SCOPE} ${MCP_LIMITED_SCOPE}`;
-export function mcpScopeLimited(scope: string): boolean {
-  return scope.split(' ').includes(MCP_LIMITED_SCOPE);
-}
-export function mcpRefreshedScope(scope: string): string {
-  return mcpScopeLimited(scope) ? MCP_UNVERIFIED_SCOPE : MCP_FULL_SCOPE;
-}
 
-interface Grant { client_id: string; identity_id: string; scope: string; redirect_uri?: string }
+interface Grant { client_id: string; identity_id: string; scope: string }
 const opaque = () => randomBytes(32).toString('base64url');
 
 /** The caller holds the connection lock before issuing or rotating a family. */
@@ -42,7 +32,6 @@ export async function connectMcp(db: SqlDatabase, grant: Grant) {
     clientId: grant.client_id,
     ownerId: grant.identity_id,
     modelLabel: client?.name ?? 'Connected app',
-    redirectUri: grant.redirect_uri,
   });
   await db.query(`INSERT INTO rooms_mcp_connections(client_id,identity_id,scope) VALUES($1,$2,$3)
     ON CONFLICT(client_id,identity_id) DO UPDATE SET scope=EXCLUDED.scope,revoked_at=NULL,
@@ -75,12 +64,10 @@ export async function refreshMcp(db: SqlDatabase, raw: string, clientId: string,
       return undefined;
     }
     // Older read-only families widen to full rights; a narrower requested scope never narrows them.
-    // rooms:limited stays on unknown https clients and is not a scope they can request.
     if (scope !== undefined && scope.split(' ').some(s => !MCP_SCOPES.includes(s))) return undefined;
-    const nextScope = mcpRefreshedScope(row.scope);
     await tx.query('UPDATE rooms_mcp_refresh SET consumed_at=now() WHERE hash=$1', [tokenHash(raw)]);
-    await tx.query('UPDATE rooms_mcp_families SET scope=$2 WHERE id=$1', [row.id, nextScope]);
-    return issueMcpTokens(tx, { ...row, scope: nextScope }, row.id);
+    await tx.query('UPDATE rooms_mcp_families SET scope=$2 WHERE id=$1', [row.id, MCP_FULL_SCOPE]);
+    return issueMcpTokens(tx, { ...row, scope: MCP_FULL_SCOPE }, row.id);
   });
 }
 

@@ -2,21 +2,19 @@ import { createWorkspace, defaultWorkspaceName } from './workspace-creation.js';
 import { renderMcpWorkspaceSelection, MCP_WORKSPACE_SCRIPT, MCP_WORKSPACE_STYLE } from './rooms-mcp-consent-ui.js';
 import { readFileSync } from 'node:fs';
 import { joinOrigin } from './rooms-mcp-endpoints.js';
-import { fetchMcpLogo, bundledMcpLogo, mcpVerifiedDisplay, redirectTrust, type RedirectTrust } from './rooms-mcp-logos.js';
+import { fetchMcpLogo, bundledMcpLogo, supportedMcpAgent } from './rooms-mcp-logos.js';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { SqlDatabase } from './database.js';
 import type { TokenAuth } from './auth.js';
 import { tokenHash } from './auth.js';
-import { connectMcp, refreshMcp, MCP_FULL_SCOPE, MCP_UNVERIFIED_SCOPE } from './rooms-mcp-connections.js';
+import { connectMcp, refreshMcp, MCP_FULL_SCOPE } from './rooms-mcp-connections.js';
 import { setMcpMemberWebhook, McpToolError, ensureMcpMember, mcpMemberId, setMcpMemberProfile } from './rooms-mcp-members.js';
 import { MCP_STARTER_ROUTINE, agentHandleFromName, uniqueAgentHandle } from '@beeline/api-contract/phone';
 import { subscribeCommandCompletion,waitForCommittedChange } from './command-completion.js';
 
 export const MCP_READ = 'rooms:read';
 export const MCP_WRITE = 'rooms:write';
-/** Anonymous dynamic registration, separate from the shared OAuth admission bucket. */
-export const MCP_REGISTER_PER_MINUTE = 40;
 const opaque = () => randomBytes(32).toString('base64url');
 const escape = (text: string) => text.replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]!);
 // The real Beeline app icon, inline because the page CSP allows only data images.
@@ -25,7 +23,7 @@ const BEELINE_ICON = `data:image/svg+xml;base64,${readFileSync(new URL('../asset
 const PAGE_STYLE = `@font-face{font-family:SG;src:url('/mcp/oauth/SpaceGrotesk-Regular.ttf')}@font-face{font-family:SG;src:url('/mcp/oauth/SpaceGrotesk-Medium.ttf');font-weight:500}@font-face{font-family:SG;src:url('/mcp/oauth/SpaceGrotesk-SemiBold.ttf');font-weight:600}
 :root{--canvas:#F3EEE4;--raised:#ECE4D5;--border:#DED2BC;--strong:#C9BBA0;--t1:#171310;--t2:#4A4038;--quiet:#6F6455;--muted:#8B7F6E;--brass:#8a6323;--fill:#1C1712;--fillText:#F3EDE3}
 @media (prefers-color-scheme:dark){:root{--canvas:#14091A;--raised:#190e21;--border:#291e33;--strong:#3b3048;--t1:#f0f0f3;--t2:#c9c9d1;--quiet:#90909B;--muted:#83838d;--brass:#b08a4a;--fill:#F3EDE3;--fillText:#1C1712}}
-*{box-sizing:border-box}html{background:var(--canvas)}body{margin:0;background:var(--canvas);color:var(--t1);font:16px/23px SG,system-ui,sans-serif}
+*{box-sizing:border-box}html{background:var(--canvas);overflow-wrap:anywhere}body{margin:0;background:var(--canvas);color:var(--t1);font:16px/23px SG,system-ui,sans-serif}
 main{display:flex;flex-direction:column;min-height:100vh;max-width:440px;margin:0 auto;padding:48px 24px 32px}
 a{color:var(--brass);text-decoration:none}a:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(--brass);outline-offset:3px}
 .brand{display:flex;align-items:center;gap:16px;margin-bottom:32px}
@@ -38,7 +36,7 @@ h1{font-weight:500;font-size:22px;line-height:32px;letter-spacing:-.3px;margin:0
 .btn.primary{background:var(--fill);color:var(--fillText);border-color:var(--fill)}
 .stack{display:flex;flex-direction:column;gap:8px}.row{display:flex;gap:8px}.row .btn{flex:1}
 .meta,.who,.fine{font-size:13px;line-height:19px;color:var(--quiet);margin:0}
-.meta{margin-top:16px}.who{margin-bottom:24px}.who b{color:var(--brass)}.fine{margin-bottom:24px}.host{font-weight:500;overflow-wrap:anywhere;margin:0 0 8px}
+.meta{margin-top:16px}.who{margin-bottom:24px}.who b{color:var(--brass)}.fine{margin-bottom:24px}
 .head{font-weight:500;font-size:10px;line-height:15px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
 .joins{display:flex;align-items:center;gap:16px;border:1px solid var(--border);border-radius:3px;padding:12px 16px;margin-bottom:24px}
 .plate{width:36px;height:36px;flex:0 0 36px;border-radius:3px;background:var(--raised);padding:6px;object-fit:contain}
@@ -50,16 +48,12 @@ span.plate{display:grid;place-items:center;padding:0;font-weight:500}
 label{display:block;font-weight:500;margin-bottom:8px}.field{margin-bottom:24px}.field p{font-size:13px;line-height:19px;color:var(--quiet);margin:8px 0 0}
 input{width:100%;height:44px;font:16px SG,system-ui,sans-serif;padding:0 12px;border:1px solid var(--strong);border-radius:3px;background:var(--raised);color:var(--t1)}
 .routine{margin-top:32px;padding-top:24px;border-top:1px solid var(--border)}.routine h2{font-size:16px;line-height:23px;font-weight:500;margin:0 0 8px}.routine-text{color:var(--t2);margin:16px 0;padding-left:24px}.routine-text li+li{margin-top:8px}.copy{min-height:44px;padding:0;border:0;background:transparent;color:var(--brass);font:inherit;cursor:pointer}.copy-status{font-size:13px;line-height:19px;color:var(--quiet)}
-.foot{margin:auto 0 0;padding-top:24px;display:flex;justify-content:center;gap:16px;font-size:13px;line-height:19px}${MCP_WORKSPACE_STYLE}`;
+.foot{margin:auto 0 0;padding-top:24px;display:flex;justify-content:center;gap:16px;font-size:13px;line-height:19px}.warn{border:2px solid #b3261e;background:color-mix(in srgb,#b3261e 10%,var(--canvas));border-radius:6px;padding:16px;margin:0 0 24px}.warn strong{display:block;color:#b3261e;font-size:18px;line-height:26px;margin-bottom:8px}.warn p{margin:0 0 8px;color:var(--t1)}.warn .host{font-weight:600;font-size:18px;overflow-wrap:anywhere}
+label.check{display:flex;white-space:normal;gap:12px;align-items:flex-start;font-weight:400;margin:24px 0 0;padding:12px;border:1px solid var(--strong);border-radius:3px}.check-text{flex:1 1 auto;min-width:0;overflow-wrap:anywhere;white-space:normal}label.check input{width:22px;height:22px;flex:0 0 22px;margin:0}
+.btn:disabled{opacity:.35;cursor:not-allowed}.stack{display:grid;gap:12px}
+${MCP_WORKSPACE_STYLE}`;
 // Static code only; owner, app and Room text never enter executable script.
 const COPY_ROUTINE_SCRIPT = `${MCP_WORKSPACE_SCRIPT}
-const confirmHost = document.getElementById('confirm_host');
-if (confirmHost) {
-  const allow = document.querySelector('button[name="decision"][value="allow"]');
-  const ready = () => { if (allow) allow.disabled = confirmHost.value.trim().toLowerCase() !== confirmHost.getAttribute('data-host'); };
-  confirmHost.addEventListener('input', ready);
-  ready();
-}
 document.getElementById('copy-routine').addEventListener('click', async () => {
   const prompt = document.getElementById('starter-routine');
   const status = document.getElementById('copy-status');
@@ -127,25 +121,7 @@ function redirectUri(value: unknown): string {
   if (raw.includes('#') || url.username || url.password ||
       !(url.protocol === 'https:' || (url.protocol === 'http:' && loopback) || privateUse))
     throw new Error('invalid_redirect_uri');
-  // A host the parser decodes differently from the registered text can name one
-  // site on the page and send the code to another. Require the raw authority.
-  if (raw.includes('://')) {
-    const authority = raw.slice(raw.indexOf('://') + 3).split(/[/?#]/)[0] ?? '';
-    if (authority.includes('%') || authority.includes('\\') || (url.host && !authority.toLowerCase().includes(url.host.toLowerCase())))
-      throw new Error('invalid_redirect_uri');
-  }
   return raw;
-}
-/** The registered redirect equal to this request, including path and query. A longer path is a different redirect. */
-function exactRegisteredRedirect(registered: readonly string[], requested: string): string | undefined {
-  const match = registered.find(uri => uri === requested);
-  if (!match) return undefined;
-  try {
-    const known = new URL(match), asked = new URL(requested);
-    if (known.protocol !== asked.protocol || known.host !== asked.host || known.pathname !== asked.pathname || known.search !== asked.search)
-      return undefined;
-  } catch { return undefined; }
-  return match;
 }
 /** Non-secret registration metadata, so a refused client can be diagnosed from the log. */
 function registrationSummary(input: Record<string, unknown> | undefined) {
@@ -173,7 +149,7 @@ interface Flow {
   name: string; redirects: string[]; logo: string | null; identity_name: string | null;
   joiner_name: string | null; joiner_handle: string | null;
   claude_inbound_fallback: boolean;
-  trust: RedirectTrust;
+  supported: boolean;
 }
 export function sessionMessageConsent(fallback: boolean, codex = false): string {
   const consent = fallback
@@ -197,14 +173,6 @@ export class RoomsMcpOAuth {
     this.origin = new URL(origin).origin;
     this.resource = `${this.origin}/mcp`;
   }
-  private async admit(key: string, limit: number): Promise<boolean> {
-    const admitted = await this.database.query(`INSERT INTO rooms_mcp_admission(key,calls) VALUES($1,1)
-      ON CONFLICT(key) DO UPDATE SET calls=CASE WHEN rooms_mcp_admission.window_at<=now()-interval '1 minute' THEN 1 ELSE rooms_mcp_admission.calls+1 END,
-      window_at=CASE WHEN rooms_mcp_admission.window_at<=now()-interval '1 minute' THEN now() ELSE rooms_mcp_admission.window_at END
-      WHERE rooms_mcp_admission.window_at<=now()-interval '1 minute' OR rooms_mcp_admission.calls<$2 RETURNING key`,
-      [key, limit]);
-    return admitted.rowCount > 0;
-  }
   private cookie(request: IncomingMessage): string {
     return (request.headers.cookie ?? '').split(';').map(part => part.trim()).find(part => part.startsWith('beeline_mcp='))?.slice(12) ?? '';
   }
@@ -222,25 +190,11 @@ export class RoomsMcpOAuth {
     });
     response.end(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>${escape(title)} · Beeline</title><style>${PAGE_STYLE}</style><main>${content}<p class="foot"><a href="https://usebeeline.app/privacy/">Privacy</a><a href="https://usebeeline.app/terms/">Terms</a><a href="mailto:hello@usebeeline.app">Support</a></p></main>${copyScript}</html>`);
   }
-  private redirectNotice(flow: Flow, confirm: boolean): string {
-    const host = escape(flow.trust.host);
-    const unverified = flow.trust.kind === 'vendor' ? '' : '<p class="fine">Unverified name. Beeline has not confirmed this app is who it says.</p>';
-    const typed = confirm && flow.trust.kind === 'confirm'
-      ? `<div class="field"><label for="confirm_host">Type ${host} to confirm</label><input id="confirm_host" name="confirm_host" form="mcp-consent-form" autocomplete="off" spellcheck="false" data-host="${host.toLowerCase()}"></div>`
-      : '';
-    return `<p class="head">Returns to</p><p class="host">${host}</p>${unverified}<p class="fine">${escape(flow.trust.reason)}</p>${typed}`;
-  }
-  private permissions(name: string, limited: boolean): string {
-    const act = limited
-      ? '<div class="perm"><strong>Read and post only</strong><span>It cannot order agents, open corners, or merge. That stays off for an app whose return address Beeline does not already know.</span></div>'
-      : '<div class="perm"><strong>Act like your other agents</strong><span>It can order agents, open corners, review and merge through the same checks. It cannot spend from your wallet or run commands on your machines.</span></div>';
-    return `<p class="head">It can</p><div class="perms"><div class="perm"><strong>Read public Rooms in selected Workspaces</strong><span>It joins their public Rooms, like your other agents. Add or remove it in any Room under Members.</span></div><div class="perm"><strong>Post as ${escape(name)}</strong><span>Its messages show as ${escape(name)}, never as you. Allowing it is your approval for it to answer anyone in a Room who tags it.</span></div>${act}</div>`;
-  }
   /** The client's own mark joined to the real Beeline icon by a dashed line. */
   private brand(flow: Pick<Flow, 'name' | 'logo'>): string {
     const client = flow.logo
       ? `<img class="mark client" src="${escape(flow.logo)}" alt="${escape(flow.name)}">`
-      : `<span class="mark client initial" role="img" aria-label="${escape(flow.name)}">${escape((flow.name[0] ?? 'C').toUpperCase())}</span>`;
+      : `<span class="mark client initial" role="img" aria-label="${escape(flow.name)}">?</span>`;
     return `<div class="brand">${client}<span class="link" aria-hidden="true"></span><img class="mark" src="${BEELINE_ICON}" alt="Beeline"></div>`;
   }
   private redirect(response: ServerResponse, location: string): void {
@@ -253,10 +207,10 @@ export class RoomsMcpOAuth {
       [typeof id === 'string' && id && id.length <= 100 ? id : '', tokenHash(this.cookie(request))]);
     if (!result.rows[0]) throw new Refusal('invalid_request', 'flow_missing_or_expired');
     const flow = result.rows[0];
-    const registeredName = flow.name;
-    flow.trust = redirectTrust(registeredName, flow.redirect_uri, `${this.origin}/mcp/oauth/handoff`);
-    flow.name = flow.trust.display;
-    flow.logo = flow.trust.kind === 'vendor' ? await bundledMcpLogo(flow.name) ?? flow.logo : null;
+    const agent = supportedMcpAgent(flow.name, flow.redirect_uri, `${this.origin}/mcp/oauth/handoff`);
+    flow.supported = !!agent;
+    flow.name = agent?.name ?? flow.name;
+    flow.logo = agent ? await bundledMcpLogo(agent.name) ?? null : null;
     return flow;
   }
   /** Require the registered authentication method before consuming any grant. */
@@ -353,15 +307,16 @@ export class RoomsMcpOAuth {
           revocation_endpoint_auth_methods_supported: AUTH_METHODS, scopes_supported: [MCP_READ, MCP_WRITE], authorization_response_iss_parameter_supported: true }); return true;
       }
       // Shared across server instances; never trust a caller-provided forwarded address.
-      if (!await this.admit(tokenHash(request.socket.remoteAddress ?? 'unknown'), 300)) {
+      const admitted = await this.database.query(`INSERT INTO rooms_mcp_admission(key,calls) VALUES($1,1)
+        ON CONFLICT(key) DO UPDATE SET calls=CASE WHEN rooms_mcp_admission.window_at<=now()-interval '1 minute' THEN 1 ELSE rooms_mcp_admission.calls+1 END,
+        window_at=CASE WHEN rooms_mcp_admission.window_at<=now()-interval '1 minute' THEN now() ELSE rooms_mcp_admission.window_at END
+        WHERE rooms_mcp_admission.window_at<=now()-interval '1 minute' OR rooms_mcp_admission.calls<300 RETURNING key`,
+        [tokenHash(request.socket.remoteAddress ?? 'unknown')]);
+      if (!admitted.rowCount) {
         if (registration) console.warn('[rooms-mcp-oauth] registration refused', JSON.stringify({ error: 'temporarily_unavailable' }));
         // The rate-limited body is never read, so only the branch and header categories reach the log.
         if (request.method === 'POST' && path === '/mcp/oauth/token')
           console.warn('[rooms-mcp-oauth] token refused', JSON.stringify({ error: 'temporarily_unavailable', reason: 'rate_limited', ...tokenHeaders(request) }));
-        mcpJson(response, 429, { error: 'temporarily_unavailable' }); return true;
-      }
-      if (registration && !await this.admit(tokenHash(`register:${request.socket.remoteAddress ?? 'unknown'}`), MCP_REGISTER_PER_MINUTE)) {
-        console.warn('[rooms-mcp-oauth] registration refused', JSON.stringify({ error: 'temporarily_unavailable', reason: 'registration_rate_limited' }));
         mcpJson(response, 429, { error: 'temporarily_unavailable' }); return true;
       }
       if (request.method === 'POST' && path === '/mcp/oauth/register') {
@@ -374,12 +329,10 @@ export class RoomsMcpOAuth {
             (input.response_types !== undefined && JSON.stringify(input.response_types) !== '["code"]')) throw new Error('invalid_client_metadata');
         const redirects = input.redirect_uris.map(redirectUri);
         const id = opaque();
-        // A bundled mark is stored only when every redirect is already a known callback.
-        const vendor = mcpVerifiedDisplay(name, redirects);
-        const bundled = vendor ? await bundledMcpLogo(vendor) : undefined;
-        const logo = input.logo_uri === undefined ? bundled : await Promise.resolve(input.logo_uri).then(uri => fetchMcpLogo(string(uri))).catch(async (error: unknown) => {
+        // A logo Beeline cannot load must not block sign-in; fall back to the bundled logo or initial.
+        const logo = input.logo_uri === undefined ? await bundledMcpLogo(name) : await Promise.resolve(input.logo_uri).then(uri => fetchMcpLogo(string(uri))).catch(async (error: unknown) => {
           console.warn('[rooms-mcp-oauth] registration logo skipped', JSON.stringify({ client_name: name, reason: error instanceof Error ? error.message : 'invalid_request' }));
-          return bundled;
+          return bundledMcpLogo(name);
         });
         // An optional outgoing callback lets the client be pushed a tag instead of polling.
         const callback = input.webhook_uri === undefined ? null : callbackUri(input.webhook_uri);
@@ -399,19 +352,17 @@ export class RoomsMcpOAuth {
         if (q.get('code_challenge_method') !== 'S256' || !/^[A-Za-z0-9_-]{43}$/.test(q.get('code_challenge') ?? '')) throw new Refusal('invalid_request', 'pkce_invalid');
         // Cursor may omit resource or send the origin; the token step accepts the same values.
         if (!this.isResource(q.get('resource') ?? undefined)) throw new Refusal('invalid_request', 'resource_mismatch');
-        const client = (await this.database.query<{ name: string; redirects: string[] }>('SELECT name,redirects FROM rooms_mcp_clients WHERE id=$1', [q.get('client_id')])).rows[0];
+        const client = (await this.database.query<{ redirects: string[] }>('SELECT redirects FROM rooms_mcp_clients WHERE id=$1', [q.get('client_id')])).rows[0];
         if (!client) throw new Refusal('invalid_request', 'client_unknown');
-        const redirect = exactRegisteredRedirect(client.redirects, q.get('redirect_uri') ?? '');
-        if (!redirect) throw new Refusal('invalid_request', 'redirect_uri_unregistered');
+        if (!client.redirects.includes(q.get('redirect_uri') ?? '')) throw new Refusal('invalid_request', 'redirect_uri_unregistered');
         const scopes = [...new Set((q.get('scope') ?? MCP_READ).split(' '))];
         if (!scopes.length || scopes.some(scope => ![MCP_READ, MCP_WRITE].includes(scope))) throw new Refusal('invalid_scope', 'scope_invalid');
         const id = opaque(), browser = opaque();
-        const trust = redirectTrust(client.name, redirect, `${this.origin}/mcp/oauth/handoff`);
         // A joining session proposes its own name; the Allow page shows it and the person can edit it.
         const proposed = (q.get('member_name') ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().replace(/\s+/g, ' ').slice(0, 60).trim();
         await this.database.query(`INSERT INTO rooms_mcp_flows(id,browser_hash,client_id,redirect_uri,state,challenge,scope,expires_at,joiner_name,joiner_handle,claude_inbound_fallback)
           VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '10 minutes',$8,$9,$10)`,
-          [id, tokenHash(browser), q.get('client_id'), redirect, q.get('state') ?? '', q.get('code_challenge'), trust.kind === 'confirm' ? MCP_UNVERIFIED_SCOPE : MCP_FULL_SCOPE,
+          [id, tokenHash(browser), q.get('client_id'), q.get('redirect_uri'), q.get('state') ?? '', q.get('code_challenge'), MCP_FULL_SCOPE,
             proposed || null, null, q.get('claude_inbound_fallback') === '1']);
         response.setHeader('set-cookie', `beeline_mcp=${browser}; Path=/mcp/oauth; HttpOnly; SameSite=Lax; Max-Age=600${this.origin.startsWith('https:') ? '; Secure' : ''}`);
         this.redirect(response, `/mcp/oauth/consent?flow=${id}`); return true;
@@ -443,7 +394,7 @@ export class RoomsMcpOAuth {
       if (request.method === 'GET' && path === '/mcp/oauth/consent') {
         const flow = await this.flow(url.searchParams.get('flow'), request);
         const client = escape(flow.name);
-        if (!flow.identity_id) this.page(response, `Connect ${flow.name} to Beeline`, `${this.brand(flow)}<h1>Connect ${client} to Beeline</h1><p class="lede">Sign in to Beeline. Next, you see what <b>${client}</b> can do before you allow it.</p>${this.redirectNotice(flow, false)}<div class="stack"><a class="btn primary" href="/mcp/oauth/login?flow=${flow.id}&amp;provider=google">Continue with Google</a><a class="btn" href="/mcp/oauth/login?flow=${flow.id}&amp;provider=github">Continue with GitHub</a></div><p class="meta">Beeline never shares your sign-in with ${client}.</p>`);
+        if (!flow.identity_id) this.page(response, `Connect ${flow.name} to Beeline`, `${this.brand(flow)}<h1>Connect ${client} to Beeline</h1><p class="lede">Sign in to Beeline. Next, you see what <b>${client}</b> can do before you allow it.</p><div class="stack"><a class="btn primary" href="/mcp/oauth/login?flow=${flow.id}&amp;provider=google">Continue with Google</a><a class="btn" href="/mcp/oauth/login?flow=${flow.id}&amp;provider=github">Continue with GitHub</a></div><p class="meta">Beeline never shares your sign-in with ${client}.</p>`);
         else {
           const member = await mcpMemberId(this.database, flow.client_id, flow.identity_id);
           const existing = member
@@ -461,7 +412,7 @@ export class RoomsMcpOAuth {
           }
           const who = `<p class="who">Signed in as <b>${escape(flow.identity_name ?? 'Beeline user')}</b></p>`;
           if (url.searchParams.get('edit') === '1') {
-            this.page(response, `Name ${flow.name}'s Beeline member`, `${this.brand(flow)}<h1>Name ${client}'s Beeline member</h1>${who}${this.redirectNotice(flow, false)}<form method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><div class="field"><label for="joiner_name">Name</label><input id="joiner_name" name="joiner_name" value="${escape(name)}" maxlength="60"></div><div class="field"><label for="joiner_handle">Handle</label><input id="joiner_handle" name="joiner_handle" value="${escape(handle)}" maxlength="40"><p>Tag it as @${escape(handle)} in a Room.</p></div><div class="row"><a class="btn" href="/mcp/oauth/consent?flow=${flow.id}">Cancel</a><button class="btn primary" name="decision" value="save">Save</button></div></form>`);
+            this.page(response, `Name ${flow.name}'s Beeline member`, `${this.brand(flow)}<h1>Name ${client}'s Beeline member</h1>${who}<form method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><div class="field"><label for="joiner_name">Name</label><input id="joiner_name" name="joiner_name" value="${escape(name)}" maxlength="60"></div><div class="field"><label for="joiner_handle">Handle</label><input id="joiner_handle" name="joiner_handle" value="${escape(handle)}" maxlength="40"><p>Tag it as @${escape(handle)} in a Room.</p></div><div class="row"><a class="btn" href="/mcp/oauth/consent?flow=${flow.id}">Cancel</a><button class="btn primary" name="decision" value="save">Save</button></div></form>`);
             return true;
           }
           const workspaces = await this.database.query<{ id: string; name: string; publicRoomCount: number; selected: boolean; alreadyConnected: boolean }>(
@@ -476,11 +427,16 @@ export class RoomsMcpOAuth {
              LEFT JOIN rooms_mcp_members member ON member.client_id=$2 AND member.owner_id=owner.identity_id
              WHERE owner.identity_id=$1 AND owner.room_id IS NULL AND owner.removed_at IS NULL
              ORDER BY lower(w.name),w.id`, [flow.identity_id, flow.client_id]);
-          const memberLogo = existing?.avatar_base64 ? `data:image/webp;base64,${existing.avatar_base64.replace(/\s/g, '')}` : flow.logo;
-          const plate = memberLogo ? `<img class="plate" src="${escape(memberLogo)}" alt="">` : `<span class="plate" aria-hidden="true">${escape((name[0] ?? 'C').toUpperCase())}</span>`;
-          const publisher = flow.trust.kind === 'vendor' ? PUBLISHERS[flow.name.toLowerCase()] : undefined;
+          const memberLogo = flow.supported && existing?.avatar_base64 ? `data:image/webp;base64,${existing.avatar_base64.replace(/\s/g, '')}` : flow.logo;
+          const plate = memberLogo ? `<img class="plate" src="${escape(memberLogo)}" alt="">` : `<span class="plate" aria-hidden="true">${escape(flow.supported ? (name[0] ?? 'C').toUpperCase() : '?')}</span>`;
+          const publisher = flow.supported ? PUBLISHERS[flow.name.toLowerCase()] : undefined;
           const terms = publisher ? `${escape(publisher)}'s privacy terms` : 'its own privacy terms';
-          this.page(response, `Add ${flow.name} to your team`, `${this.brand(flow)}<h1>Add ${client} to your team</h1>${who}${this.redirectNotice(flow, true)}<p class="head">Joins as</p><div class="joins">${plate}<div class="who-am"><div class="name">${escape(name)}</div><div class="tag">@${escape(handle)} · ${client}</div></div><a class="edit" href="/mcp/oauth/consent?flow=${flow.id}&amp;edit=1">Edit</a></div>${renderMcpWorkspaceSelection(workspaces.rows, defaultWorkspaceName(flow.identity_name))}${this.permissions(name, flow.trust.kind === 'confirm')}${flow.redirect_uri === `${this.origin}/mcp/oauth/handoff` ? `<p class="fine">${sessionMessageConsent(flow.claude_inbound_fallback, flow.name === 'Codex')}</p>` : ''}<p class="fine">Room text it reads goes to ${client} under ${terms}. Remove it any time in Settings, under Connectors.</p><form id="mcp-consent-form" method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><div class="field"><label for="wake_url">Webhook URL (optional)</label><input id="wake_url" name="wake_url" type="url" maxlength="2048" autocomplete="off"><p>For clients with their own HTTPS receiver. For ChatGPT or Codex dots using MCP Events, leave these fields blank; the host supplies its callback when you ask it to monitor mentions. Paste a receiver token with or without &#39;Bearer &#39;.</p></div><div class="field"><label for="wake_key">Auth token (optional)</label><input id="wake_key" name="wake_key" type="password" maxlength="512" autocomplete="new-password"></div><div class="row"><button class="btn" name="decision" value="deny">Cancel</button><button class="btn primary" name="decision" value="allow">Allow</button></div></form><section class="routine" aria-label="Starter instructions"><h2>Starter instructions</h2><p class="fine">Paste into this agent’s saved instructions or existing routine prompt.</p><ol id="starter-routine" class="routine-text">${MCP_STARTER_ROUTINE.split('\n').filter(line => line.trim()).map(line => `<li>${escape(line)}</li>`).join('\n')}</ol><button class="copy" id="copy-routine" type="button">Copy</button><p class="copy-status" id="copy-status" role="status"></p></section>`);
+          const host = escape(new URL(flow.redirect_uri).host || new URL(flow.redirect_uri).protocol);
+          const notice = flow.supported
+            ? `<p class="who">Supported agent · sends its code to <b>${host}</b></p>`
+            : `<div class="warn"><strong>This is not a supported agent</strong><p>It calls itself <b>“${client}”</b>, but Beeline does not recognize it. Its sign-in code goes to:</p><p class="host">${host}</p><p>Only continue if you set this app up yourself and trust that address. An app pretending to be a known agent could read and post in your Rooms and act like your agents.</p></div>`;
+          const confirmation = flow.supported ? '' : `<label class="check"><input type="checkbox" id="trust_app" name="trust_app" value="1"><span class="check-text">I set this app up myself and trust <b>${host}</b></span></label>`;
+          this.page(response, `Add ${flow.supported ? flow.name : 'an unsupported app'} to your team`, `${this.brand(flow)}<h1>Add ${flow.supported ? client : 'an unsupported app'} to your team</h1>${notice}${who}<p class="head">Joins as</p><div class="joins">${plate}<div class="who-am"><div class="name">${escape(name)}</div><div class="tag">@${escape(handle)} · ${flow.supported ? client : `unverified app at ${host}`}</div></div><a class="edit" href="/mcp/oauth/consent?flow=${flow.id}&amp;edit=1">Edit</a></div>${renderMcpWorkspaceSelection(workspaces.rows, defaultWorkspaceName(flow.identity_name))}<p class="head">It can</p><div class="perms"><div class="perm"><strong>Read public Rooms in selected Workspaces</strong><span>It joins their public Rooms, like your other agents. Add or remove it in any Room under Members.</span></div><div class="perm"><strong>Post as ${escape(name)}</strong><span>Its messages show as ${escape(name)}, never as you. Allowing it is your approval for it to answer anyone in a Room who tags it.</span></div><div class="perm"><strong>Act like your other agents</strong><span>It can order agents, open corners, review and merge through the same checks. It cannot spend from your wallet or run commands on your machines.</span></div></div>${flow.redirect_uri === `${this.origin}/mcp/oauth/handoff` ? `<p class="fine">${sessionMessageConsent(flow.claude_inbound_fallback, flow.name === 'Codex')}</p>` : ''}<p class="fine">Room text it reads goes to ${client} under ${terms}. Remove it any time in Settings, under Connectors.</p><form id="mcp-consent-form" method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><div class="field"><label for="wake_url">Webhook URL (optional)</label><input id="wake_url" name="wake_url" type="url" maxlength="2048" autocomplete="off"><p>For clients with their own HTTPS receiver. For ChatGPT or Codex dots using MCP Events, leave these fields blank; the host supplies its callback when you ask it to monitor mentions. Paste a receiver token with or without &#39;Bearer &#39;.</p></div><div class="field"><label for="wake_key">Auth token (optional)</label><input id="wake_key" name="wake_key" type="password" maxlength="512" autocomplete="new-password"></div>${confirmation}<div class="stack" style="margin-top:16px"><button class="btn primary" name="decision" value="allow"${flow.supported ? '' : ' disabled'}>Allow</button><button class="btn" name="decision" value="deny">Cancel</button></div></form><section class="routine" aria-label="Starter instructions"><h2>Starter instructions</h2><p class="fine">Paste into this agent’s saved instructions or existing routine prompt.</p><ol id="starter-routine" class="routine-text">${MCP_STARTER_ROUTINE.split('\n').filter(line => line.trim()).map(line => `<li>${escape(line)}</li>`).join('\n')}</ol><button class="copy" id="copy-routine" type="button">Copy</button><p class="copy-status" id="copy-status" role="status"></p></section>`);
         }
         return true;
       }
@@ -502,13 +458,10 @@ export class RoomsMcpOAuth {
           const flow = await this.flow(input.flow, request, db);
           if (!flow.identity_id) throw new Refusal('invalid_request', 'flow_not_signed_in');
           if (!['allow', 'deny'].includes(String(input.decision))) throw new Refusal('invalid_request', 'decision_invalid');
-          if (input.decision === 'allow' && flow.trust.kind === 'confirm') {
-            const typed = typeof input.confirm_host === 'string' ? input.confirm_host.trim().toLowerCase() : '';
-            if (typed !== flow.trust.host.toLowerCase()) throw new Refusal('invalid_request', 'redirect_host_unconfirmed');
-          }
           const target = new URL(flow.redirect_uri);
           target.searchParams.set('state', flow.state); target.searchParams.set('iss', this.origin);
           if (input.decision === 'allow') {
+            if (!flow.supported && input.trust_app !== '1') throw new Refusal('invalid_request', 'app_trust_unconfirmed');
             let workspaceIds = typeof input.workspace_ids === 'string' ? [input.workspace_ids] : input.workspace_ids;
             if (input.workspace_selection === '1' && (workspaceIds === undefined || (Array.isArray(workspaceIds) && !workspaceIds.length))) {
               // Serialize simultaneous first connections for this person. Only an account
@@ -526,7 +479,7 @@ export class RoomsMcpOAuth {
               throw new Refusal('invalid_request', 'workspaces_invalid');
             try {
               await ensureMcpMember(db, { clientId: flow.client_id, ownerId: flow.identity_id, modelLabel: flow.name,
-                redirectUri: flow.redirect_uri, workspaceIds: workspaceIds.map(id => (id as string).toLowerCase()) });
+                workspaceIds: workspaceIds.map(id => (id as string).toLowerCase()) });
             } catch (error) {
               if (error instanceof McpToolError) throw new Refusal('invalid_request', 'workspaces_invalid');
               throw error;
@@ -633,10 +586,8 @@ export class RoomsMcpOAuth {
         const code = tokenHash(input.code), redirect = input.redirect_uri;
         const token = await this.database.transaction(async db => {
           // OAuth 2.1 drops redirect_uri from the token request; the code stays bound to the stored one and to PKCE.
-          // The code is bound to the exact redirect stored at authorize, path included.
-          // Omitting redirect_uri stays valid: Cursor's token request does not send one.
-          const row = (await db.query<{ identity_id: string; client_id: string; scope: string; redirect_uri: string }>(`DELETE FROM rooms_mcp_codes
-            WHERE hash=$1 AND client_id=$2 AND ($3::text IS NULL OR redirect_uri=$3) AND challenge=$4 AND expires_at>now() RETURNING identity_id,client_id,scope,redirect_uri`,
+          const row = (await db.query<{ identity_id: string; client_id: string; scope: string }>(`DELETE FROM rooms_mcp_codes
+            WHERE hash=$1 AND client_id=$2 AND ($3::text IS NULL OR redirect_uri=$3) AND challenge=$4 AND expires_at>now() RETURNING identity_id,client_id,scope`,
             [code, clientId, redirect ?? null, challenge])).rows[0];
           if (!row) {
             const stored = (await db.query<{ client_id: string; redirect_uri: string; challenge: string; expired: boolean }>(
@@ -709,6 +660,7 @@ export const BROWSER_REFUSALS: Record<string, string> = {
   flow_already_signed_in: 'This sign-in already finished. The page opened a second time.',
   ticket_missing: 'The sign-in provider came back without a sign-in ticket.',
   ticket_exchange_failed: 'Beeline could not confirm your sign-in with the provider.',
+  app_trust_unconfirmed: 'Confirm that you set this app up yourself and trust its return address before allowing it.',
   origin_mismatch: 'The form came from a page outside Beeline.',
   body_too_large: 'The form sent more data than Beeline accepts.',
   body_not_object: 'The form data is not in a shape Beeline reads.',
@@ -720,7 +672,6 @@ export const BROWSER_REFUSALS: Record<string, string> = {
   wake_unavailable: 'Auth tokens are not enabled on this server. Ask the operator to configure BEELINE_MCP_WEBHOOK_KEY.',
   wake_invalid: 'The webhook URL must use public HTTPS. An auth token needs a webhook URL and cannot contain internal spaces or control characters.',
   decision_invalid: 'The page sent an answer other than Allow or Cancel.',
-  redirect_host_unconfirmed: 'Type the return host shown on the page before allowing this app.',
   handoff_invalid: 'The session sent a return address Beeline cannot use.',
   invalid_parameter: 'Beeline hit an unexpected problem on this step.',
 };

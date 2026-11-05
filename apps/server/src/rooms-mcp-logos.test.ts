@@ -18,7 +18,7 @@ vi.mock('node:https', () => ({
     return req;
   },
 }));
-import { bundledMcpLogo, fetchMcpLogo, mcpClientName, mcpMemberAvatar, mcpVendorDisplay, redirectTrust } from './rooms-mcp-logos.js';
+import { bundledMcpLogo, fetchMcpLogo, mcpMemberAvatar, supportedMcpAgent } from './rooms-mcp-logos.js';
 afterEach(() => { state.answers = [{ address: '93.184.216.34', family: 4 }]; state.status = 200; state.type = 'image/png'; state.calls = 0; });
 it('rejects unsafe URL schemes and any private DNS answer before connecting', async () => {
   for (const url of ['http://example.com/a', 'file:///etc/passwd', 'https://user:password@example.com/a', 'https://example.com:8443/a'])
@@ -42,20 +42,6 @@ it('rejects redirects, active content, spoofed images and oversized responses', 
   state.status = 200; state.type = 'image/svg+xml'; await expect(fetchMcpLogo('https://example.com/a')).rejects.toThrow();
   state.type = 'image/png'; state.bytes = Buffer.from('<html>not pixels</html>'); await expect(fetchMcpLogo('https://example.com/a')).rejects.toThrow();
   state.bytes = Buffer.alloc(262145); await expect(fetchMcpLogo('https://example.com/a')).rejects.toThrow('too large');
-});
-it('wears a bundled name only for that vendor callback', () => {
-  const grok = 'https://www.cursor.com/agents/mcp/oauth/callback';
-  expect(mcpVendorDisplay('Cursor', grok)).toBe('Grok Bot');
-  expect(mcpVendorDisplay('Cursor', 'https://www.cursor.com/callback')).toBeUndefined();
-  expect(mcpVendorDisplay('Claude', 'https://evil.example/cb')).toBeUndefined();
-  expect(mcpClientName('Cursor', [grok, 'http://localhost:8787/callback'])).toBe('Grok Bot');
-  expect(mcpClientName('Cursor', [grok, 'https://evil.example/cb'])).toBe('Cursor');
-  expect(mcpClientName('Claude', ['https://evil.example/cb'])).toBe('Claude');
-  const handoff = 'https://beeline.example/mcp/oauth/handoff';
-  expect(redirectTrust('Claude', 'https://evil.example/phish/callback', handoff)).toMatchObject({ kind: 'confirm', host: 'evil.example', display: 'Claude' });
-  expect(redirectTrust('Cursor', grok, handoff)).toMatchObject({ kind: 'vendor', display: 'Grok Bot', host: 'www.cursor.com' });
-  expect(redirectTrust('Claude Code', 'http://127.0.0.1:9876/callback', handoff).kind).toBe('loopback');
-  expect(redirectTrust('Claude Code', handoff, handoff).kind).toBe('handoff');
 });
 it('bundles the official client marks and leaves unknown clients to the monogram', async () => {
   expect(await bundledMcpLogo('Grok')).toMatch(/^data:image\/png;base64,/);
@@ -83,4 +69,16 @@ it('retains an unknown app supplied image and uses letters only without one', as
   expect(center[0]).toBeGreaterThan(240);
   expect(center[1]).toBeLessThan(10);
   expect(await mcpMemberAvatar('Other', null)).toBeUndefined();
+});
+
+it('uses the fixed website list for local agents and fixed callback identity for remote agents', async () => {
+  for (const name of ['Codex', 'Claude Code', 'Claude Duet', 'Cursor', 'Goose', 'Pi', 'OpenCode', 'Grok', 'Grok Bot', 'Hermes', 'Muse', 'ChatGPT', 'Gemini', 'ZCode']) {
+    for (const redirect of ['http://127.0.0.1:9876/callback', 'http://localhost:12345/cb', 'https://server.usebeeline.app/mcp/oauth/handoff'])
+      expect(supportedMcpAgent(name, redirect)?.name).toBe(name);
+    expect(await bundledMcpLogo(name)).toMatch(/^data:image\/png;base64,/);
+  }
+  expect(supportedMcpAgent('Claude', 'https://chatgpt.com/cb')?.name).toBe('ChatGPT');
+  expect(supportedMcpAgent('Anything', 'cursor://anysphere.cursor-mcp/cb')?.name).toBe('Cursor');
+  for (const redirect of ['https://claude.ai.evil.example/cb', 'https://evil.example/cb', 'other://anysphere.cursor-mcp/cb', 'cursor://evil.example/cb', 'https://server.usebeeline.app/other'])
+    expect(supportedMcpAgent('Claude', redirect)).toBeUndefined();
 });

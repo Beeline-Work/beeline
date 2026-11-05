@@ -39,76 +39,47 @@ export async function fetchMcpLogo(value: string, size = 96): Promise<string> {
   } finally { agent.destroy(); }
 }
 
-const LOOPBACK_HOSTS = new Set(['127.0.0.1', '[::1]', 'localhost']);
-/**
- * Bundled marks are only for these exact callbacks. A self-chosen name with any
- * other redirect, including another path on the same host, stays unverified.
- * Cursor's agents callback is Grok Bot; the desktop and other web callback stay Cursor.
- */
-const MCP_VENDOR_CALLBACKS: readonly { names: RegExp; redirect: string; display: string }[] = [
-  { names: /^Cursor$/, redirect: 'https://www.cursor.com/agents/mcp/oauth/callback', display: 'Grok Bot' },
-  { names: /^Cursor$/, redirect: 'cursor://anysphere.cursor-mcp/oauth/callback', display: 'Cursor' },
-  { names: /^Cursor$/, redirect: 'https://cursor.com/agents/oauth/callback', display: 'Cursor' },
-  { names: /^(meta muse|metamuse|muse)$/i, redirect: 'https://agent.meta.ai/api/hatch/oauth/callback', display: 'Meta Muse' },
+// Website-supported agents. Only local/handoff callbacks use the registered name
+// to select a fixed entry; web/native callbacks determine their own identity.
+const MCP_AGENTS = [
+  { name: 'Codex', logo: 'codex.png', aliases: /^(codex|openai codex)$/i },
+  { name: 'Claude Code', logo: 'claude.png', aliases: /^(claude|claude code)$/i },
+  { name: 'Claude Duet', logo: 'claude.png', aliases: /^claude duet$/i, hosts: ['claude.ai', 'claude.com'] },
+  { name: 'Cursor', logo: 'cursor.svg', aliases: /^cursor$/i, hosts: ['cursor.com', 'www.cursor.com'], scheme: 'cursor:', authority: 'anysphere.cursor-mcp' },
+  { name: 'Goose', logo: 'goose.png', aliases: /^goose$/i },
+  { name: 'Pi', logo: 'pi.svg', aliases: /^pi$/i },
+  { name: 'OpenCode', logo: 'opencode.svg', aliases: /^opencode$/i },
+  { name: 'Grok', logo: 'grok.svg', aliases: /^grok$/i },
+  { name: 'Grok Bot', logo: 'grok-bot.svg', aliases: /^(grok bot|grokbot)$/i, callback: 'https://www.cursor.com/agents/mcp/oauth/callback' },
+  { name: 'Hermes', logo: 'hermes.svg', aliases: /^hermes$/i },
+  { name: 'Muse', logo: 'muse.webp', aliases: /^(meta muse|metamuse|muse)$/i, hosts: ['agent.meta.ai'] },
+  { name: 'ChatGPT', logo: 'dots.png', aliases: /^(chatgpt|chatgpt dots|dots|openai dots)$/i, hosts: ['chatgpt.com'] },
+  { name: 'Gemini', logo: 'gemini.png', aliases: /^gemini$/i },
+  { name: 'ZCode', logo: 'zcode.png', aliases: /^zcode$/i },
 ];
 
-/** The bundled name for this sign-in's redirect, or undefined when the name is only self-declared. */
-export function mcpVendorDisplay(name: string, redirect: string): string | undefined {
-  return MCP_VENDOR_CALLBACKS.find(item => item.names.test(name) && item.redirect === redirect)?.display;
-}
-
-function unknownHttpsRedirect(name: string, redirect: string): boolean {
-  let url: URL;
-  try { url = new URL(redirect); } catch { return false; }
-  return url.protocol === 'https:' && !LOOPBACK_HOSTS.has(url.hostname) && !mcpVendorDisplay(name, redirect);
-}
-
-/**
- * Vendor label for a client whose redirects are all known callbacks, loopback,
- * or private-use schemes. One unknown https redirect keeps the self-declared name.
- */
-export function mcpVerifiedDisplay(name: string, redirects: readonly string[]): string | undefined {
-  if (redirects.some(redirect => unknownHttpsRedirect(name, redirect))) return undefined;
-  for (const redirect of redirects) {
-    const display = mcpVendorDisplay(name, redirect);
-    if (display) return display;
-  }
-  return undefined;
-}
-
-export interface RedirectTrust {
-  kind: 'vendor' | 'loopback' | 'device' | 'handoff' | 'confirm';
-  display: string;
-  host: string;
-  reason: string;
-}
-
-/** Why this sign-in's redirect may receive a code, and the host the consent page must show. */
-export function redirectTrust(name: string, redirect: string, handoff: string): RedirectTrust {
+/** The redirect selects web branding; a remote app cannot claim a vendor by name. */
+export function supportedMcpAgent(name: string, redirect: string, handoff?: string) {
   const url = new URL(redirect);
-  const host = url.host || url.protocol.replace(/:$/, '');
-  const vendor = mcpVendorDisplay(name, redirect);
-  if (vendor) return { kind: 'vendor', display: vendor, host, reason: `Allowed because this is ${vendor}'s known callback.` };
-  if (redirect === handoff) return { kind: 'handoff', display: name, host, reason: 'Allowed because it returns to this Beeline session.' };
-  if (LOOPBACK_HOSTS.has(url.hostname)) return { kind: 'loopback', display: name, host, reason: 'Allowed because it returns to an app on this computer.' };
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') return { kind: 'device', display: name, host, reason: 'Allowed because it returns to the app on this device.' };
-  return { kind: 'confirm', display: name, host, reason: 'This name is unverified. Allowed only after you type this host. If someone sent you this link, close this page.' };
+  const callback = MCP_AGENTS.find(agent => agent.callback === redirect);
+  if (callback) return callback;
+  const remote = MCP_AGENTS.find(agent =>
+    (url.protocol === 'https:' && !url.port && agent.hosts?.includes(url.hostname)) ||
+    (agent.scheme === url.protocol && agent.authority === url.host));
+  if (remote) return remote;
+  if (['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || redirect === handoff ||
+      redirect === 'https://server.usebeeline.app/mcp/oauth/handoff')
+    return MCP_AGENTS.find(agent => agent.aliases.test(name));
+  return undefined;
 }
 
 /** Registration identity shared by consent and member defaults. */
 export function mcpClientName(name: string, redirects: readonly string[] = []): string {
-  return mcpVerifiedDisplay(name, redirects) ?? name;
+  return redirects.length ? supportedMcpAgent(name, redirects[0]!)?.name ?? name : name;
 }
 
 const bundled = new Map<string, Promise<string>>();
-const bundledKey = (name: string) =>
-  /^(grok bot|grokbot)$/i.test(name) ? 'grok-bot.svg'
-    : /^grok$/i.test(name) ? 'grok.svg'
-    : /^(meta muse|metamuse|muse)$/i.test(name) ? 'muse.webp'
-    : /^(codex|openai codex)$/i.test(name) ? 'codex.png'
-    : /^(claude|claude code)$/i.test(name) ? 'claude.png'
-    : /^cursor$/i.test(name) ? 'cursor.svg'
-    : /^(dots|openai dots)$/i.test(name) ? 'dots.png' : undefined;
+const bundledKey = (name: string) => MCP_AGENTS.find(agent => agent.aliases.test(name))?.logo;
 export function bundledMcpLogo(name: string): Promise<string | undefined> {
   const key = bundledKey(name);
   if (!key) return Promise.resolve(undefined);

@@ -17,7 +17,7 @@ import type { LiveHub } from './live.js';
 import { visibleChatMessageSql } from './read-cursor.js';
 import { MCP_AVATAR_MAX_CHARS, McpToolError, routeMcpMemberPost, setMcpMemberProfile, setMcpMemberWebhook } from './rooms-mcp-members.js';
 import { RoomsMcpOAuth, mcpBody, mcpJson, type McpPrincipal } from './rooms-mcp-oauth.js';
-import { MCP_FULL_SCOPE, mcpScopeLimited } from './rooms-mcp-connections.js';
+import { MCP_FULL_SCOPE } from './rooms-mcp-connections.js';
 import type { DaemonService } from './daemon-service.js';
 import type { ObjectService } from './object-service.js';
 import { MCP_AGENT_EXCLUSIONS, MCP_AGENT_TOOLS, RoomsMcpAgentTools, mcpRefusal, pendingMcpWakes } from './rooms-mcp-agent.js';
@@ -71,8 +71,6 @@ const ROOM_TOOLS: Tool[] = [
     { url: { type: 'string', maxLength: 2048, description: 'An https:// URL, or empty to remove the webhook.' }, secret: { type: 'string', minLength: 1, maxLength: 512 } }, ['url'], true),
 ];
 const TOOLS: Tool[] = [...ROOM_TOOLS, ...MCP_AGENT_TOOLS];
-/** Unknown https clients can read and post. Ordering and merge stay off. */
-const UNVERIFIED_DENY = new Set(['order', 'stop', 'open_corner', 'approve_merge', 'merge_corner', 'record_merge_yes', 'set_corner_hold']);
 /** Repeated in read results until set_profile, for hosts that drop server instructions. */
 const SETUP_NOTE = `Setup: call list_rooms first to verify you, owner and the intended Rooms. Preserve the approved @handle; use set_profile only for a profile change requested by the person. Your owner's Allow is standing approval to answer when a Room member tags your @handle. ${MCP_STARTER_ROUTINE} Repository writes go through a corner implementer. This note stops after set_profile.`;
 const READABLE = `SELECT r.id,r.name,r.parent_id,r.workspace_id FROM rooms r
@@ -188,7 +186,7 @@ export class RoomsMcp {
           result = { resultType: 'complete', supportedVersions: ['2026-07-28'], capabilities: { tools: {}, events: {}, memberStreamV1: memberStreamEnabled()&&this.memberStreamReady() },
             serverInfo: { name: 'beeline-rooms', version: '1.0.0' }, instructions: INSTRUCTIONS };
         } else if (mcp2 && input.method === 'tools/list') {
-          result = { tools: this.visibleTools(principal) };
+          result = { tools: this.agentTools ? TOOLS : ROOM_TOOLS };
         } else if (mcp2 && input.method === 'tools/call') {
           const call = CallToolRequestSchema.safeParse(input);
           if (!call.success) throw new McpEventError(-32602, 'Invalid tool arguments');
@@ -208,7 +206,7 @@ export class RoomsMcp {
     }
     const capabilities = { tools: {}, events: {} };
     const server = new Server({ name: 'beeline-rooms', version: '1.0.0' }, { capabilities, instructions: INSTRUCTIONS });
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: this.visibleTools(principal) }));
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: this.agentTools ? TOOLS : ROOM_TOOLS }));
     server.setRequestHandler(CallToolRequestSchema, async call =>
       this.toolResult(principal, call.params.name, call.params.arguments ?? {}));
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
@@ -270,13 +268,7 @@ export class RoomsMcp {
       wakes: await pendingMcpWakes(db, member),
     };
   }
-  private visibleTools(principal: McpPrincipal): Tool[] {
-    const tools = this.agentTools ? TOOLS : ROOM_TOOLS;
-    return mcpScopeLimited(principal.scope) ? tools.filter(tool => !UNVERIFIED_DENY.has(tool.name)) : tools;
-  }
   private async call(principal: McpPrincipal, name: string, args: Record<string, unknown>): Promise<unknown> {
-    if (mcpScopeLimited(principal.scope) && UNVERIFIED_DENY.has(name))
-      throw new McpToolError('This connection cannot order agents or merge.');
     if (MCP_AGENT_EXCLUSIONS[name]) throw new McpToolError(`${name}: ${MCP_AGENT_EXCLUSIONS[name]}`);
     const definition = ROOM_TOOLS.find(t => t.name === name);
     const db = this.oauth.database;

@@ -232,6 +232,12 @@ export async function claimAgentConnection(
        RETURNING epoch`,
       [agentId, connection.connectionId, connection.instanceId, metadata.turnRuntimeId ?? null],
     );
+    // Pre-upgrade helpers claimed without a connection source. This registration
+    // supersedes those claims once; MCP calls/orders retain their own leases.
+    await db.query(`UPDATE agent_commands SET state='pending',generation_id=NULL,
+      lease_expires_at=NULL,claimed_at=NULL,turn_owner_epoch=NULL
+      WHERE agent_id=$1 AND state='claimed' AND turn_owner_connection_id IS NULL
+        AND reason<>'mcp_call' AND COALESCE(generation_id,'') NOT LIKE 'mcp:%'`,[agentId]);
     const announcement = await writeAgentAnnouncement(db, undefined, agentId, metadata, connection, true);
     // A free agent's Machine is serving again; the wake latency ends here.
     const freeAgent = await db.query<{ previous: string }>(
@@ -278,8 +284,9 @@ export async function releaseAgentConnection(
       lease_expires_at=NULL,claimed_at=NULL,turn_owner_connection_id=NULL,turn_owner_epoch=NULL
       FROM agent_connections connection WHERE connection.agent_id=$1 AND connection.connection_id=$2
         AND command.agent_id=$1 AND command.state='claimed'
-        AND (command.turn_owner_connection_id IS NULL OR
-          command.turn_owner_connection_id=COALESCE(connection.turn_connection_id,connection.connection_id))`,[agentId,connectionId]);
+        AND (command.turn_owner_connection_id=COALESCE(connection.turn_connection_id,connection.connection_id)
+          OR (command.turn_owner_connection_id IS NULL AND command.reason<>'mcp_call'
+            AND COALESCE(command.generation_id,'') NOT LIKE 'mcp:%'))`,[agentId,connectionId]);
 
     await db.query(
       `UPDATE live_outputs SET body=body || ${releasedPresenceSql('$1')} || jsonb_build_object(

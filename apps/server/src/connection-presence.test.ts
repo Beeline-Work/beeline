@@ -1,7 +1,8 @@
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 import {migratedDatabase,type PgliteDatabase} from './test-support.js';
 import {ConnectionPresence,recordAgentEvidence,RecentIdentityTimes} from './connection-presence.js';
-import {createAgentCommand,claimAgentCommand} from './agent-command.js';
+import {createAgentCommand,claimAgentCommand,createClaimedMcpAgentCommand} from './agent-command.js';
+import {randomUUID} from 'node:crypto';
 import {LiveHub} from './live.js';
 
 const ROOM='22222222-2222-4222-8222-222222222222',WORKSPACE='11111111-1111-4111-8111-111111111111';
@@ -71,4 +72,43 @@ it('evidence merges with a concurrent lifecycle announcement',async()=>{
 it('bounded observation timestamps require no maintenance timer',()=>{
   const times=new RecentIdentityTimes(2,100);times.set('one',1);times.set('two',2);times.set('three',3);
   expect(times.size).toBe(2);expect(times.get('one')).toBeUndefined();times.set('four',200);expect(times.size).toBe(1);
+});
+
+it('registration recovers only its agent’s ownerless helper claims once and preserves live MCP claims',async()=>{
+  const legacy=(await createAgentCommand(database,{roomId:ROOM,agentId:AGENT,sourceMessageId:null,reason:'system'}))!;
+  await database.transaction(db=>claimAgentCommand(db,ROOM,AGENT,legacy.id,'pre-upgrade-helper'));
+  const peer='c'.repeat(64);
+  await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Other helper')`,[peer]);
+  await database.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)',[peer,HUMAN]);
+  await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+    VALUES($1,$2,$3,'member'),($1,NULL,$3,'member')`,[WORKSPACE,ROOM,peer]);
+  const other=(await createAgentCommand(database,{roomId:ROOM,agentId:peer,sourceMessageId:null,reason:'system'}))!;
+  await database.transaction(db=>claimAgentCommand(db,ROOM,peer,other.id,'other-helper'));
+  const mcpRooms=[randomUUID(),randomUUID()];
+  for(const roomId of mcpRooms){
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'MCP')`,[roomId,WORKSPACE]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,$2,$3,'member')`,[WORKSPACE,roomId,AGENT]);
+  }
+  // Explicit app calls and app-claimed orders identify MCP ownership differently.
+  const mcpCall=await createClaimedMcpAgentCommand(database,{roomId:mcpRooms[0]!,agentId:AGENT,generationId:'older-app-call'});
+  const mcpOrder=(await createAgentCommand(database,{roomId:mcpRooms[1]!,agentId:AGENT,sourceMessageId:null,reason:'order',
+    privatePayload:{kind:'order',text:'Live app order',authorId:HUMAN,fromRoomId:ROOM}}))!;
+  await database.transaction(db=>claimAgentCommand(db,mcpRooms[1]!,AGENT,mcpOrder.id,'mcp:live-order'));
+  const untouched=async()=>(await database.query(`SELECT id,xmin::text version,state,generation_id,claimed_at,lease_expires_at
+    FROM agent_commands WHERE id=ANY($1::text[]) ORDER BY id`,[[other.id,mcpCall,mcpOrder.id]])).rows;
+  const before=await untouched();
+  await presence.claimConnection(AGENT,{connectionId:'upgraded'});
+  expect((await database.query(`SELECT state,generation_id,claimed_at,lease_expires_at,turn_owner_connection_id,turn_owner_epoch
+    FROM agent_commands WHERE id=$1`,[legacy.id])).rows).toEqual([{state:'pending',generation_id:null,claimed_at:null,
+      lease_expires_at:null,turn_owner_connection_id:null,turn_owner_epoch:null}]);
+  expect((await database.query('SELECT status FROM agent_turns WHERE request_id=$1',[legacy.turn_request_id])).rows)
+    .toEqual([{status:'working'}]);
+  expect(await untouched()).toEqual(before);
+  const version=(await database.query('SELECT xmin::text version FROM agent_commands WHERE id=$1',[legacy.id])).rows;
+  const source={connectionId:'again',epoch:await presence.claimConnection(AGENT,{connectionId:'again'})};
+  expect((await database.query('SELECT xmin::text version FROM agent_commands WHERE id=$1',[legacy.id])).rows).toEqual(version);
+  await database.transaction(db=>claimAgentCommand(db,ROOM,AGENT,legacy.id,'upgraded-generation',source));
+  await presence.releaseConnection(AGENT,source.connectionId);
+  expect(await untouched()).toEqual(before);
 });

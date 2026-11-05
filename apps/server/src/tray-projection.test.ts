@@ -62,9 +62,9 @@ describe('pure complete Tray projection',()=>{
     const next=await readTraySavedWindow(db,{workspaceId:workspace,before:value.saved!.next},viewer,toIdentity);
     expect(next.rows).toHaveLength(1);expect(new Set([...value.saved!.rows,...next.rows].map(row=>row.value.messageId)).size).toBe(31);
   });
-  it('parks on the legacy question cap instead of certifying truncated cells',async()=>{
+  it('reads every question beyond the former candidate cap',async()=>{
     await db.query(`INSERT INTO messages(id,room_id,author_id,text) SELECT 'overflow-'||n,$1,$2,'@ada please review?' FROM generate_series(1,500)n`,[room,author]);
-    await expect(build()).rejects.toMatchObject({reason:'budget'});
+    expect((await build()).needs.items).toHaveLength(501);
     expect((await db.query('SELECT * FROM needs_you_marks')).rows).toEqual([]);
   });
   it('keeps only the unavailable saved reference after Room authority is revoked',async()=>{

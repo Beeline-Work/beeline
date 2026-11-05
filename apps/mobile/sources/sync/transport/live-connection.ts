@@ -5,12 +5,11 @@ import {
 } from '@beeline/api-contract/phone';
 import {
   MonolithRequestTimeoutError,
-  MonolithSessionChangedError,
   monolithSession,
 } from '@/auth/monolith-session';
 import { PhoneSocketError, PhoneSocketDisconnectedError } from './phone-socket-error';
 import { useSyncExternalStore } from 'react';
-import { AppState } from 'react-native';
+import { AppState, NativeEventEmitter, NativeModules, Platform } from 'react-native';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import type { NostrEvent } from '@beeline/nostr';
 import type { LiveWireEvent, MonolithSurfaceEvent } from './monolith-rig-transport';
@@ -93,6 +92,7 @@ export class LiveConnection {
   private disposed = false;
   private readonly stopAppState: () => void;
   private readonly stopIdentity: () => void;
+  private readonly stopNetwork: () => void;
 
   constructor(private readonly deps: Dependencies) {
     const subscription = AppState.addEventListener('change', (state) => {
@@ -101,6 +101,23 @@ export class LiveConnection {
       }
     });
     this.stopAppState = () => subscription.remove();
+    const online = () => this.refreshRoom();
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined') window.addEventListener('online', online);
+      this.stopNetwork = () => {
+        if (typeof window !== 'undefined') window.removeEventListener('online', online);
+      };
+    } else if (NativeModules.RNCNetInfo) {
+      // Consume the OS event directly. NetInfo's JS reachability fallback
+      // starts HTTP probes and timers, which must not own socket recovery.
+      const network = new NativeEventEmitter(NativeModules.RNCNetInfo).addListener(
+        'netInfo.networkStatusDidChange',
+        (state: { isConnected: boolean; isInternetReachable?: boolean }) => {
+          if (state.isConnected && state.isInternetReachable !== false) online();
+        },
+      );
+      this.stopNetwork = () => network.remove();
+    } else this.stopNetwork = () => {};
     this.stopIdentity = deps.subscribeIdentityChange(() => {
       this.identity++;
       this.viewEpoch++;
@@ -145,25 +162,19 @@ export class LiveConnection {
     options: RequestOptions = {},
   ): Promise<PhoneOperationMap[Name]['output']> {
     const identity = this.identity;
-    const read = (PHONE_READ_OPERATIONS as readonly string[]).includes(operation);
     let failed: boolean | undefined;
     try {
-      for (let attempt = 0; ; attempt++) {
-        if (identity !== this.identity) throw new MonolithSessionChangedError();
-        try {
-          const result = await this.sendRequest(operation, args, options);
-          failed = false;
-          return result as PhoneOperationMap[Name]['output'];
-        } catch (error) {
-          // A refusal is an answered request. It neither closes a healthy
-          // socket nor turns a missing file or denied action into an outage.
-          if (error instanceof PhoneSocketError) { failed = false; throw error; }
-          const transportFailure = error instanceof PhoneSocketDisconnectedError ||
-            error instanceof MonolithRequestTimeoutError;
-          if (!transportFailure || options.signal?.aborted || identity !== this.identity) throw error;
-          if (!read || attempt === 2) { failed = true; throw error; }
-        }
-      }
+      const result = await this.sendRequest(operation, args, options);
+      failed = false;
+      return result as PhoneOperationMap[Name]['output'];
+    } catch (error) {
+      // A refusal is an answer. Publish an explicit transport failure on its
+      // first outcome; the next screen read or network-online event reconnects.
+      if (error instanceof PhoneSocketError) failed = false;
+      else if (!options.signal?.aborted &&
+        (error instanceof PhoneSocketDisconnectedError || error instanceof MonolithRequestTimeoutError))
+        failed = true;
+      throw error;
     } finally {
       // The sole connection-banner trigger: an explicit socket request outcome.
       if (failed !== undefined && identity === this.identity) setConnectionFailure(failed);
@@ -288,6 +299,7 @@ export class LiveConnection {
             if (reply.ok === true) pending.resolve(reply.result);
             else {
               const error = reply.error as { code: string; message: string; retryable: boolean };
+              if (error.code === 'unauthorized') this.deps.invalidateAuthorization?.(token);
               pending.reject(new PhoneSocketError(error.code, error.message, error.retryable));
             }
             return;
@@ -296,10 +308,8 @@ export class LiveConnection {
         };
         const failed = () => {
           if (this.socket !== socket) return;
-          // A rejected opening invalidates only this access token; the next read
-          // attempt obtains the refreshed authorization through the same callback.
-          if (socket.readyState !== 1 && this.connecting === connection)
-            this.deps.invalidateAuthorization?.(token);
+          // A network failure says nothing about the credential. Forcing an
+          // HTTP renewal here delays the next read after the network returns.
           this.socketFailed(socket);
         };
         socket.onerror = failed;
@@ -317,8 +327,8 @@ export class LiveConnection {
     if (this.socket !== socket) return;
     const waitingRead = [...this.requests.values()].some((request) => request.read);
     this.dropConnection();
-    // An in-flight read already owns its three attempts. An idle broken socket
-    // asks the open screens to invoke that same read, which reconnects as needed.
+    // An in-flight read receives the failure. An idle broken socket asks the
+    // open screens to read, making the failed request and recovery visible.
     if (!waitingRead && AppState.currentState === 'active') this.refreshRoom();
   }
   private dropConnection(): void {
@@ -459,6 +469,7 @@ export class LiveConnection {
     this.dropConnection();
     this.stopAppState();
     this.stopIdentity();
+    this.stopNetwork();
     this.registrations.clear();
     this.roomReferences.clear();
     this.viewing.clear();

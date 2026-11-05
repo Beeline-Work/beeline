@@ -13,7 +13,7 @@ export async function phoneReadHost() {
   const stubs: Record<string, string> = {
     'react': `export const useSyncExternalStore=()=>{throw Error('UI hook outside proof host');};`,
     'react-native': `export const AppState={currentState:'active',addEventListener:()=>({remove(){}})};
-      export const Platform={OS:'web'},NativeModules={};`,
+      export const Platform={OS:'web'},NativeModules={}; export class NativeEventEmitter {}`,
     'auth/monolith-session': `export class MonolithRequestTimeoutError extends Error{constructor(){super('Read timed out');this.name='MonolithRequestTimeoutError';}}
       export class MonolithSessionChangedError extends Error{}
       export const monolithSession={authorization:async()=>{throw Error('Use the proof connection');},invalidateAuthorization(){}};`,

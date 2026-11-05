@@ -2632,7 +2632,8 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('leaves timeout copy to the global banner and a subsequent read repaints', async () => {
+  it.each([false, true])('keeps socket recovery out of the Room error state (cached: %s)', async (cached) => {
+    if (cached) controls.cached = roomView('room-a');
     // The socket owner supplies recovery; the Room must not duplicate its
     // connection failure copy or lose the ability to paint a later answer.
     controls.roomError = new RoomViewHttpError(0, 'timeout');
@@ -2649,19 +2650,19 @@ describe('useRoomSurfaceSession', () => {
     await flushEffects();
 
     await act(async () => controls.responses[0]!.error(controls.roomError));
-    expect(current.roomSurface).toBeNull();
-    expect(current.hydrationFailed).toBe(true);
-    expect(current.hydrationError).toBe('');
+    expect(current.roomSurface?.room.id ?? null).toBe(cached ? 'room-a' : null);
+    expect(current.hydrationFailed).toBe(false);
+    expect(current.hydrationError).toBeNull();
 
-    // RETRY re-runs the read; a responding server paints the Room normally.
+    // The connection owner invalidates on network-online; no Retry tap.
     controls.roomError = null;
     controls.roomResponse = roomView('room-a');
-    await act(async () => current.retryHydration());
+    await act(async () => controls.subscriptions[0]!.emit({
+      monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'reconnect' },
+    }));
     await flushEffects();
-    expect(controls.responses).toHaveLength(2);
-    await act(async () => {
-      controls.responses[1]!.apply(await controls.responses[1]!.fetch());
-    });
+    expect(controls.responses).toHaveLength(1);
+    expect(controls.roomReads).toBeGreaterThan(1);
     expect(current.roomSurface?.room.id).toBe('room-a');
     expect(current.hydrationFailed).toBe(false);
     await act(async () => renderer.unmount());

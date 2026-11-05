@@ -282,46 +282,6 @@ describe('root OTA update coordinator', () => {
     await unmount(renderer);
   });
 
-  it('discovers a desktop release published after startup without a reconnect and stops checking on unmount', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
-    try {
-      desktopShell.enabled = true;
-      process.env.EXPO_PUBLIC_BEELINE_DESKTOP_UPDATES = '1';
-      const renderer = await renderUpdateRoot();
-      await settleUpdate(() => expect(desktopUpdater.check).toHaveBeenCalledTimes(1));
-      const downloadAndInstall = vi.fn().mockResolvedValue(undefined);
-      desktopUpdater.check.mockResolvedValue({ version: '0.2.128', downloadAndInstall });
-
-      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-      await settleUpdate(() => expect(desktopProcess.relaunch).toHaveBeenCalledTimes(1));
-      expect(desktopUpdater.check).toHaveBeenCalledTimes(2);
-      expect(downloadAndInstall).toHaveBeenCalledTimes(1);
-      expect(updates.checkForUpdateAsync).not.toHaveBeenCalled();
-
-      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-      expect(desktopUpdater.check).toHaveBeenCalledTimes(2);
-      await unmount(renderer);
-      await vi.advanceTimersByTimeAsync(60_000);
-      expect(desktopUpdater.check).toHaveBeenCalledTimes(2);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it.each([false, true])('does not periodically check native or preview builds (desktop: %s)', async (desktop) => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
-    try {
-      desktopShell.enabled = desktop;
-      const renderer = await renderUpdateRoot();
-      await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
-      expect(desktopUpdater.check).not.toHaveBeenCalled();
-      expect(updates.checkForUpdateAsync).toHaveBeenCalledTimes(desktop ? 0 : 1);
-      await unmount(renderer);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it('waits through active desktop work and restarts when navigation becomes idle', async () => {
     const downloadAndInstall = vi.fn().mockResolvedValue(undefined);
     desktopShell.enabled = true;

@@ -37,7 +37,7 @@ import {
   type HelperLifecycle,
   type HelperExitReason,
 } from './helper-lifecycle.js';
-import { activateDaemonTransport } from './daemon-api-client.js';
+import { DaemonApiClient } from './daemon-api-client.js';
 import { defaultSupervisorRoot, findAgentRuntimeConfigPaths, readRuntimeRecord, setAgentStopped } from './runtime.js';
 import { runCleanupSharedHomeCommand } from './startup-cleanup.js';
 import { runStartCommand } from './start-command.js';
@@ -207,9 +207,7 @@ async function main(): Promise<void> {
     const configPath = configFlag >= 0 ? args[configFlag + 1] : undefined;
     const roomId = roomFlag >= 0 ? args[roomFlag + 1] : undefined;
     if (!configPath || !roomId) throw new Error('corner-read-token requires --config and --room');
-    const activated = await activateDaemonTransport(resolve(configPath));
-    if (!activated) throw new Error('corner-read-token requires monolith transport');
-    const credential = await activated.client.execute('getRoomGitHubToken', { roomId });
+    const credential = await DaemonApiClient.readRepositoryCredential(resolve(configPath), roomId);
     // A caller may close its reader before this short-lived command writes.
     process.stdout.once('error', (error: NodeJS.ErrnoException) => {
       if (error.code !== 'EPIPE') throw error;

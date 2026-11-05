@@ -145,6 +145,21 @@ const DAEMON_LIVE_EVENT_TYPES = new Set<unknown>([
 
 /** Typed client for the complete named daemon operation contract. */
 export class DaemonApiClient {
+  /** Only the one-shot Git credential reader selects this exact HTTP read.
+   * It must never register a second execution owner for the parent agent. */
+  #repositoryCredentialRoom: string | undefined;
+
+  static async readRepositoryCredential(configPath: string, roomId: string, fetchImpl?: DaemonFetch): Promise<Output<'getRoomGitHubToken'>> {
+    const runtime = await readRuntimeRecord(configPath);
+    if (resolve(configPath) !== resolve(runtimeDirectory(runtime.supervisorRoot, runtime.agent.publicKey), 'runtime.json'))
+      throw new Error('refusing repository credential read outside canonical runtime path');
+    const transport = runtime.transport;
+    if (!transport?.daemonToken) throw new Error('corner-read-token requires an activated monolith transport');
+    const client = new DaemonApiClient(transport.baseUrl, transport.daemonToken, runtime.agent.publicKey, fetchImpl);
+    client.#repositoryCredentialRoom = roomId;
+    return client.execute('getRoomGitHubToken', { roomId });
+  }
+
   private readonly logUnknownLiveEvent = unknownServerEventLogger('daemon-live');
   private readonly presenceLifecycleId = randomUUID();
   /** This agent's registration on the machine's one live socket. */
@@ -429,6 +444,11 @@ export class DaemonApiClient {
     input: Input<Name>,
   ): Promise<Output<Name>> {
     if (this.registrationRefusal) throw this.registrationRefusal;
+    if (this.#repositoryCredentialRoom !== undefined) {
+      if (name !== 'getRoomGitHubToken' || (input as Input<'getRoomGitHubToken'>).roomId !== this.#repositoryCredentialRoom)
+        throw new Error('Repository credential reader cannot dispatch another operation');
+      return this.#requestHttp(name, input);
+    }
     if(name==='readCommandActivation')throw new Error('Activation context requires the command-owned machine adapter');
     const candidate = input as Record<string, unknown>;
     if (typeof candidate.agentId === 'string' && candidate.agentId !== this.agentId) {
@@ -490,10 +510,12 @@ export class DaemonApiClient {
   }
 
   /** Old servers have no declared protocol floor (HelperVersionGate is opt-in).
-   * Keep their wire adapter, and the pre-registration bootstrap, owner-private.
+   * Keep their wire adapter, bootstrap and one-shot Git credential read private.
    * Neither a selected socket failure nor an arbitrary caller can enter here. */
   async #requestHttp<Name extends keyof DaemonOperationMap>(name: Name, input: Input<Name>): Promise<Output<Name>> {
-    if (this.#channel.operationsSelected || (name !== 'getDaemonBootstrap' && !this.#channel.isOpen()))
+    const repositoryCredential = name === 'getRoomGitHubToken' && this.#repositoryCredentialRoom !== undefined &&
+      (input as Input<'getRoomGitHubToken'>).roomId === this.#repositoryCredentialRoom;
+    if (!repositoryCredential && (this.#channel.operationsSelected || (name !== 'getDaemonBootstrap' && !this.#channel.isOpen())))
       throw new Error('HTTP daemon operation requires bootstrap or a registered old server');
     const controller = new AbortController();
     const deadline = setTimeout(() => controller.abort(), REQUEST_DEADLINE_MS);

@@ -551,7 +551,7 @@ export class RoomRuntimeCoordinator {
   private readonly tokenFlights = new Map<string, Promise<RoomGitHubTokenResult>>();
   private restartRequested = false;
   /** Keeps Room and corner intakes alive across failed reads, without polling. */
-  readonly supervisor = new RoomSupervisor();
+  readonly supervisor: RoomSupervisor;
   private discoveryWakeListener?: () => void;
   private interactiveIdleListener?: () => void;
   /** One command-grant runner per daemon; Rooms and corners register their checkouts on it. */
@@ -573,6 +573,7 @@ export class RoomRuntimeCoordinator {
     },
   ) {
     if (!runtime.transport) throw new Error('thin daemon requires monolith transport');
+    this.supervisor = new RoomSupervisor(options.daemonApi);
     this.runtime = runtime;
     this.cornerStartScope = JSON.stringify([runtime.supervisorRoot, runtime.transport.baseUrl]);
     this.agent = runtimeIdentity(runtime.agent);
@@ -613,7 +614,6 @@ export class RoomRuntimeCoordinator {
     // this. Optional like the wake above: a stub API without the listener
     // still reconciles, and the per-turn currency check remains the net.
     this.options.daemonApi.setConfigChangedListener?.(() => {
-      this.supervisor.configurationChanged();
       const retryStarts = this.standingRuntimeStartFaults.size > 0;
       this.standingRuntimeStartFaults.clear();
       if (retryStarts) this.wakeDiscovery();
@@ -678,7 +678,6 @@ export class RoomRuntimeCoordinator {
   }
 
   private wakeDiscovery(): void {
-    this.supervisor.wake();
     this.discoveryWakeListener?.();
   }
 

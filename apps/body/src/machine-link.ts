@@ -59,10 +59,12 @@ export class AgentChannel {
   }>();
 
   /** Only the daemon operation owner may acquire this transport capability.
-   * Registration is already bounded by the existing intake deadline. */
+   * Sticky selection is not readiness after a loss. Registration is already
+   * bounded by the existing intake deadline. */
   async operationReady(): Promise<void> {
-    if (this.isOpen() || this.operationsSelected) return;
-    if (this.#refused || (this.#wanted && !this.#pending && this.machine.link.isOpen()))
+    if (this.isOpen()) return;
+    if (this.#refused || (this.#operationsSelected && !this.#wanted) ||
+        (this.#wanted && !this.#pending && this.machine.link.isOpen()))
       throw new Error('Machine operation registration unavailable');
     await new Promise<void>((resolve, reject) => {
       const settle = (open: boolean) => {

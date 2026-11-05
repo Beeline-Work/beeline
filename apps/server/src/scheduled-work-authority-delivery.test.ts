@@ -22,7 +22,7 @@ describe('complete Scheduled Work authority delivery source',()=>{
     await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Manager'),($2,'agent','Helper')`,[VIEWER,AGENT]);
     await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Synthetic')`,[WS]);
     await db.query(`INSERT INTO rooms(id,workspace_id,created_by,name,direct_participants) VALUES($1,$3,$4,'Public A',NULL),($2,$3,$4,'Own DM B',$5::jsonb)`,[ROOM,DM,WS,VIEWER,JSON.stringify([VIEWER,AGENT])]);
-    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$4,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member'),($1,$3,$4,'member'),($1,$3,$5,'member')`,[WS,ROOM,DM,VIEWER,AGENT]);
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$4,'owner'),($1,$2,$5,'member'),($1,$3,$4,'member'),($1,$3,$5,'member')`,[WS,ROOM,DM,VIEWER,AGENT]);
     phone=new PhoneService(db,'https://synthetic.test');live=new LiveHub();
   });
   afterEach(async()=>{for(const owner of owners.splice(0))owner.close();await db.close();});
@@ -66,7 +66,6 @@ describe('complete Scheduled Work authority delivery source',()=>{
     const restarted=deferred(),c=await owner(frame=>{if(frame.kind==='scheduled-work-authority-restart')restarted.resolve();return undefined;});
     const old=await snapshot(),segment=c.delivery.start.segment;await revoke();
     await db.query(`DELETE FROM live_journal WHERE stream_id=$1 AND sequence=$2`,[`authority:${VIEWER}`,c.delivery.start.through+1]);
-    await db.query(`DELETE FROM router_authority_reader_coverage WHERE reader=$1`,[VIEWER]);
     const sent=vi.fn(()=>undefined);await expect(c.delivery.fenceBatch(WS,[],c.delivery.start.segment,sent)).rejects.toMatchObject({reason:'retention'});
     expect(sent).not.toHaveBeenCalled();expect(c.delivery.segment).toBeUndefined();expect(c.unavailable).toHaveBeenCalledWith('retention');
     const queries=vi.spyOn(db,'query'),before=queries.mock.calls.length;

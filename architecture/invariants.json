@@ -2980,26 +2980,6 @@
           "epoch": "A durable monotonic generation invalidates pre-revocation certificates even after an access regrant."
         }
       },
-      "router_authority_reader_changes": {
-        "module": "Router authority catch-up (apps/server/src/router-projection-schema.ts)",
-        "reason": "Latest per-reader domain changes survive bounded journal rotation; current permissions cannot reconstruct missed revoked scopes.",
-        "columns": {
-          "reader": "Binds retained authority-change evidence to its original authenticated recipient.",
-          "domain": "Coalesces the latest committed change for each exact authority domain.",
-          "scope": "Retains the logical delivery target even after its former membership or source relationship disappears.",
-          "epoch": "Pins each retained change to the actual authority stream incarnation.",
-          "sequence": "Orders the latest domain change within its committed source interval after older journal rows expire."
-        }
-      },
-      "router_authority_reader_coverage": {
-        "module": "Router authority catch-up (apps/server/src/router-projection-schema.ts)",
-        "reason": "A durable coverage boundary proves when coalesced indexing began; retained latest changes alone cannot establish complete history.",
-        "columns": {
-          "reader": "Partitions the coverage proof by the authenticated authority-stream recipient.",
-          "epoch": "Prevents a coverage proof from being reused after authority stream replacement.",
-          "after_sequence": "Records the earliest covered exclusive position so missing older history still rejects catch-up."
-        }
-      },
       "router_commands": {
         "module": "Durable phone command ledger (apps/server/src/router-command-ledger.ts)",
         "reason": "Effect identities/digests must survive socket loss, server replacement and result compaction to prevent redispatch.",

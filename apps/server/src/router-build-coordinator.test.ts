@@ -4,7 +4,7 @@ import type {RouterSnapshotInput} from '@beeline/api-contract/router-protocol';
 import type {QueryResult,SqlDatabase} from './database.js';
 import {readRouterBuildTicket,RouterBuildCoordinator,type RouterBuilderBasis} from './router-build-coordinator.js';
 import type {RouterValueBuilder} from './router-projections.js';
-const input={family:'room-list' as const,workspaceId:'11111111-1111-4111-8111-111111111111'};
+const input={family:'needs-you-count' as const,workspaceId:'11111111-1111-4111-8111-111111111111'};
 const basis:RouterBuilderBasis={schema:1,databaseScope:'primary-fixture',version:'phone-dto-v1',publicOrigin:'https://example.test',clockVersion:'committed-clock-1'};
 class ReadSnapshot implements SqlDatabase{
   constructor(readonly through=1,readonly authorityEpoch='1',readonly epoch='stream-1',readonly isolation='repeatable read'){}

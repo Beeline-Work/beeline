@@ -67,7 +67,7 @@ describe('uninstalled durable Tray clock source',()=>{
 
   it('does not change committed eligibility/basis with wall time, then journals one exact elapsed transition',async()=>{
     await question();const pending=await claim(),basis=await readTrayClockBasis(db,workspace);
-    expect(basis).toMatchObject({revision:'0',ready:true});expect(await readTrayClockDue(clock)).toEqual([]);
+    expect(basis).toMatchObject({revision:'0',ready:false});expect(await readTrayClockDue(clock)).toEqual([]);
     await advance('2000-01-14T00:00:00Z');
     expect(await readTrayClockBasis(db,workspace)).toEqual(basis);
     expect((await db.query(`SELECT state FROM tray_clock_deadlines`)).rows).toEqual([{state:'pending'}]);
@@ -75,8 +75,7 @@ describe('uninstalled durable Tray clock source',()=>{
     expect((await readTrayClockBasis(db,workspace))?.revision).toBe('1');
     expect(await causes()).toEqual([expect.objectContaining({sourceTable:'tray-clock',kind:'question-age',trayReaderId:viewer,trayWorkspaceId:workspace})]);
     expect(readTrayClockCause((await causes())[0]!)).toBeTruthy();expect(await readTrayClockDue(clock)).toEqual([]);
-    expect(await readTrayClockBasis(db,elsewhere)).toMatchObject({generation:'0'.repeat(32),revision:'0',ready:true});
-    expect((await db.query(`SELECT 1 FROM tray_clock_state WHERE workspace_id=$1`,[elsewhere])).rows).toEqual([]);
+    expect(await readTrayClockBasis(db,elsewhere)).toBeUndefined();
   });
 
   it('captures the 24-hour seen edge separately and duplicate seen preserves its exact version',async()=>{

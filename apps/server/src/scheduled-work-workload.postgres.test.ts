@@ -66,7 +66,7 @@ async function fixture(db:SqlDatabase,count:number){
       creator_id text NOT NULL,title text,max_runs integer,cadence jsonb NOT NULL,message text NOT NULL,next_run_at timestamptz NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now(),workflow_slug text,run_count integer NOT NULL DEFAULT 0,workflow_run text);
     CREATE INDEX agent_schedules_room ON agent_schedules(room_id);`);
-  await db.query(AGENT_SUBSCRIPTIONS_SCHEMA);await db.query(CORNER_PERSON_STATE_SCHEMA);await db.query(SUBSCRIPTION_WEBHOOKS_SCHEMA);
+  await db.query(CORNER_PERSON_STATE_SCHEMA);await db.query(AGENT_SUBSCRIPTIONS_SCHEMA);await db.query(SUBSCRIPTION_WEBHOOKS_SCHEMA);
   await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Manager'),($2,'agent','Helper')`,[OWNER,AGENT]);
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Public managers'),($2,'Own DMs without Workspace membership')`,[WS,DM_WS]);
   for(const direct of [false,true]){
@@ -74,7 +74,7 @@ async function fixture(db:SqlDatabase,count:number){
     await db.query(`INSERT INTO rooms(id,workspace_id,name,direct_participants,created_by)
       SELECT id,$2,'Synthetic Room '||n,$3::jsonb,$4 FROM unnest($1::uuid[]) WITH ORDINALITY AS source(id,n)`,[ids,direct?DM_WS:WS,direct?JSON.stringify([OWNER,AGENT]):null,OWNER]);
     await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) SELECT $2,id,$3,'member' FROM unnest($1::uuid[]) id`,[ids,direct?DM_WS:WS,AGENT]);
-    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) SELECT $2,id,$3,'member' FROM unnest($1::uuid[]) id`,[ids,direct?DM_WS:WS,OWNER]);
+    if(direct)await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) SELECT $2,id,$3,'member' FROM unnest($1::uuid[]) id`,[ids,DM_WS,OWNER]);
     await db.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,created_at)
       SELECT task,$3,id,$4,$5,'{"kind":"interval","everyMinutes":10}','Do this synthetic task','2099-01-01','2026-01-01'
       FROM unnest($1::uuid[],$2::uuid[]) source(task,id)`,[tasks,ids,direct?DM_WS:WS,AGENT,OWNER]);
@@ -119,7 +119,7 @@ describe.skipIf(!url)('real PostgreSQL equal Scheduled Work workload',()=>{
         };
         const legacy=await measure(false),candidate=await measure(true);
         expect(candidate.value).toMatchObject({value:legacy.value});expect(candidate.wireBytes).toBeLessThanOrEqual(64*1024);
-        cold.push({cohort:direct?'ownDM-noWorkspaceMembership':'publicRoomMember',
+        cold.push({cohort:direct?'ownDM-noWorkspaceMembership':'public-manager-noTranscriptMembership',
           legacy:{...legacy,value:undefined,queries:undefined,plans:await plans(db,legacy.queries)},
           candidate:{...candidate,value:undefined,queries:undefined,plans:await plans(db,candidate.queries)},
           budgets:{statements:candidate.statements<=legacy.statements,wireBytes:candidate.wireBytes<=legacy.wireBytes}});

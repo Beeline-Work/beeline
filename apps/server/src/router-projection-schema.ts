@@ -9,30 +9,11 @@ ${liveControlNotificationSchema()}
 CREATE TABLE IF NOT EXISTS router_authority (
   scope text PRIMARY KEY, epoch bigint NOT NULL DEFAULT 1
 );
--- A coalesced durable index retains the latest change per reader/domain. It
--- lets a large committed burst catch up after the bounded event log rotates.
-CREATE TABLE IF NOT EXISTS router_authority_reader_coverage (
-  reader text PRIMARY KEY, epoch text NOT NULL, after_sequence bigint NOT NULL
-);
-CREATE TABLE IF NOT EXISTS router_authority_reader_changes (
-  reader text NOT NULL, domain text NOT NULL, scope text NOT NULL,
-  epoch text NOT NULL, sequence bigint NOT NULL, PRIMARY KEY(reader,domain)
-);
-CREATE INDEX IF NOT EXISTS router_authority_reader_changes_position ON router_authority_reader_changes(reader,sequence);
 CREATE OR REPLACE FUNCTION beeline_authority_hint(person text, logical_scope text, authority_scope text) RETURNS void AS $$
-DECLARE head record;
 BEGIN
   IF person IS NULL OR logical_scope IS NULL OR authority_scope IS NULL THEN RETURN; END IF;
   PERFORM beeline_journal('authority:'||person,jsonb_build_object('kind','authority-change',
     'scope',logical_scope,'authorityScope',authority_scope));
-  SELECT epoch,sequence INTO head FROM live_streams WHERE id='authority:'||person;
-  INSERT INTO router_authority_reader_coverage(reader,epoch,after_sequence)
-    VALUES(person,head.epoch,head.sequence-1) ON CONFLICT(reader) DO UPDATE
-    SET epoch=EXCLUDED.epoch,after_sequence=EXCLUDED.after_sequence
-    WHERE router_authority_reader_coverage.epoch<>EXCLUDED.epoch;
-  INSERT INTO router_authority_reader_changes(reader,domain,scope,epoch,sequence)
-    VALUES(person,authority_scope,logical_scope,head.epoch,head.sequence)
-    ON CONFLICT(reader,domain) DO UPDATE SET scope=EXCLUDED.scope,epoch=EXCLUDED.epoch,sequence=EXCLUDED.sequence;
   PERFORM beeline_notify_live_control(jsonb_build_object('table','router_authority','operation','UPDATE',
     'roomId','','journalStreams',jsonb_build_array('authority:'||person))::text);
 END;

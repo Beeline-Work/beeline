@@ -24,7 +24,8 @@ describe('server-authored Needs-you Room replacements',()=>{
     {...payload,count:3}, {...payload,order:['new','new']},
     {...payload,rooms:[{roomId:changed,items:[{...item('new'),workspaceId:'foreign'}]}]},
     {...payload,rooms:[{roomId:changed,items:[item('new',other)]}]},
-  ])('rejects malformed or foreign data',value=>{expect(validateNeedsRoomsPayload(value)).toBe(false);});
+    {...payload,rooms:[{roomId:changed,items:Array.from({length:31},(_,n)=>item(String(n)))}]},
+  ])('rejects malformed, foreign or over-budget data',value=>{expect(validateNeedsRoomsPayload(value)).toBe(false);});
   it('installs the count and changed cells at one group cut without another snapshot',async()=>{
     const needs={family:'needs-you' as const,workspaceId:workspace},badge={family:'needs-you-count' as const,workspaceId:workspace};
     const scopes=[{authorityScope:`reader:reader:workspace:${workspace}`,epoch:'1'},{authorityScope:`reader:reader:workspace:${workspace}:visibility`,epoch:'1'}];

@@ -127,7 +127,7 @@ export function routerSourcePlan(causes: readonly Record<string,unknown>[], view
         const target=value as Record<string,unknown>;
         if(Object.keys(target).length!==2||typeof target.roomId!=='string'||
           !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(target.roomId)||
-          !(target.readers===null||Array.isArray(target.readers)&&
+          !(target.readers===null||Array.isArray(target.readers)&&target.readers.length<=100&&
             target.readers.every(reader=>typeof reader==='string'&&reader.length<=256)))throw new RouterProjectionUnavailable('dependency');
         addScheduled(target.roomId,target.readers as readonly string[]|null);
       }

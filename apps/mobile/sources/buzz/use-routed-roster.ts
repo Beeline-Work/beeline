@@ -27,7 +27,7 @@ export function useRoutedRoster(workspaceId:string|undefined,focused:boolean){
   useEffect(()=>()=>windows.dispose(),[windows]);
   useSyncExternalStore(windows.subscribe,windows.snapshot,windows.snapshot);
   const head=root.value,query=windows.query();
-  const pages=windows.pages();
+  const pages=windows.pages().filter(page=>page.query.revision===head?.revision);
   let value=head;
   if(pages.length){
     const first=pages.find(page=>!page.query.kind)?.handle.current();
@@ -39,7 +39,7 @@ export function useRoutedRoster(workspaceId:string|undefined,focused:boolean){
       for(const page of pages){
         if(!page.query.kind)continue;
         const next=page.handle.current().value as RouterValues['workspace-roster']|null;
-        if(!next||next.revision!==value.revision)continue;
+        if(!next)continue;
         if(page.query.kind==='human'){members.push(...next.members);membersTruncated=next.membersTruncated;}
         else{agents.push(...next.agents);agentsTruncated=next.agentsTruncated;}
       }
@@ -47,7 +47,8 @@ export function useRoutedRoster(workspaceId:string|undefined,focused:boolean){
     }
   }else if(query)value=null;
   const queryLoading=pages.some(page=>['ABSENT','OPENING'].includes(page.handle.current().state));
-  const queryError=pages.map(page=>page.handle.current().error).find(Boolean)??null;
+  const queryError=pages.map(page=>page.handle.current().error).find(Boolean)??
+    (head&&windows.pages().length&&!pages.length?'Roster changed; Retry the search.':null);
   return {...root,retry:()=>{if(query&&head&&workspaceId)windows.open({family:'workspace-roster',workspaceId,
       query:{revision:head.revision,q:query}},false);else{windows.dispose();root.retry();}},value,query,loading:root.loading||queryLoading,error:root.error??queryError,
     search:(q:string)=>{
@@ -56,7 +57,7 @@ export function useRoutedRoster(workspaceId:string|undefined,focused:boolean){
       windows.open({family:'workspace-roster',workspaceId,query:{revision:head.revision,q}},false);
     },more:(kind:'human'|'agent')=>{
       if(!workspaceId||!head||!value)throw new Error('Roster is unavailable.');
-      windows.open({family:'workspace-roster',workspaceId,query:{revision:value.revision,q:query,kind,
+      windows.open({family:'workspace-roster',workspaceId,query:{revision:head.revision,q:query,kind,
         offset:kind==='human'?value.members.length:value.agents.length}},true);
     }};
 }

@@ -112,10 +112,14 @@ export async function buildTrayProjection(database: SqlDatabase, workspaceId: st
   viewerId: string, toIdentity: IdentityFormatter,clock:NeedsClockMode='wall'): Promise<RouterValues['needs-you-tray']> {
   const [needs, saved, count] = await Promise.all([
     needsYouItems(database, workspaceId, viewerId, toIdentity, false,clock),
-    readTraySavedWindow(database, { workspaceId }, viewerId, toIdentity),
+    readTraySavedWindow(database, { workspaceId }, viewerId, toIdentity).catch(error=>{
+      if(error instanceof Error&&error.message==='saved_window_budget')throw new RouterProjectionUnavailable('budget');
+      throw error;
+    }),
     countNeedsYouProjection(database, workspaceId, viewerId,clock),
   ]);
-  // A count/cell disagreement cannot certify a complete canonical projection.
+  // Legacy question selection caps its rows. Never certify that truncated
+  // result, or a count/cell disagreement, as a complete canonical projection.
   if (needs.items.length !== count) throw new RouterProjectionUnavailable('dependency');
   const value = { needs, saved };
   return value;

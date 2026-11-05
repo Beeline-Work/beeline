@@ -27,7 +27,7 @@ describe.skipIf(!url)('P3/P5 Group A phone read closure', () => {
   afterEach(async () => { await fixture?.closeServers(); });
   afterAll(async () => { await fixture?.close(); });
 
-  it('F03: unrelated messages read no roster and a committed membership automatically rebases active search windows',async()=>{
+  it('F03: sealed search windows share a server revision, unrelated messages read no roster and a committed membership retires stale windows',async()=>{
     const server=await fixture.server(fixture.a,['workspace-roster']);
     const head={family:'workspace-roster' as const,workspaceId:workspace(10)};
     await server.demand(head);
@@ -42,13 +42,10 @@ describe.skipIf(!url)('P3/P5 Group A phone read closure', () => {
     expect(server.lanes.peek(search).state).toBe('LIVE');
     await fixture.b.query(`UPDATE memberships SET role='spectator' WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,[workspace(10),peer]);
     await server.barrier();
-    await server.wait(()=>[head,search].every(input=>server.lanes.peek(input).state==='LIVE'&&
-      (server.lanes.peek(input).value as typeof value|null)?.revision!==value.revision));
-    const current=server.lanes.peek(head).value as typeof value;
-    expect(server.lanes.peek(search)).toMatchObject({state:'LIVE',value:{revision:current.revision,members:[{identity:{pubkey:reader}}]}});
-    expect(current.members.find(member=>member.identity.pubkey===peer)?.role).toBe('spectator');
-    expect(server.reads()).toBeGreaterThan(reads);
-    await expect(server.protocol.snapshot(search)).resolves.toMatchObject({value:{revision:current.revision}});
+    expect(server.lanes.peek(search)).toMatchObject({state:'PARKED',value:null});
+    expect((server.lanes.peek(head).value as typeof value).members.find(member=>member.identity.pubkey===peer)?.role).toBe('spectator');
+    expect(server.reads()).toBe(reads);
+    await expect(server.protocol.snapshot(search)).rejects.toThrow(JSON.stringify({code:'unavailable',message:'Router projection unavailable: dependency',retryable:true}));
     const enqueue=vi.fn(()=>undefined);
     await expect(fenceRouterEnqueue(fixture.a,search,reader,
       sealed.authority,enqueue)).rejects.toThrow('authority');

@@ -4,7 +4,7 @@ import type { RoomViewIdentity } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { liveControlNotificationSchema } from './postgres-live.js';
 
-const VERSION=1, PAGE=30;
+const VERSION=1, PAGE=30, MAX_BYTES=64*1024;
 /** Bound DB result bytes before assembling a 30-row page or exact-row facts.
  * PostgreSQL left counts Unicode characters, never splitting a codepoint.
  * Each SQL text is at most 1024 UTF-8 bytes; previewText additionally bounds
@@ -204,5 +204,6 @@ export async function readTraySavedWindow(db:SqlDatabase,input:Readonly<{workspa
   const value:SavedWindow={windowId:`saved1:${createHash('sha256').update(JSON.stringify([VERSION,scope.workspaceId,readerId,input.before??null])).digest('hex')}`,
     ...(input.before!==undefined?{before:input.before}:{}),rows:selected,
     ...(rows.bookmarks.length>PAGE&&selected.length?{next:selected.at(-1)!.before}:{})};
+  if(Buffer.byteLength(JSON.stringify(value))>MAX_BYTES)throw new Error('saved_window_budget');
   return value;
 }

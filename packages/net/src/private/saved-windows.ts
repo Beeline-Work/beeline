@@ -21,11 +21,11 @@ function row(value:unknown,workspace:string):value is SavedRow{
  * This validator grants no authority and decodes no cursor into a query. */
 export function validateSavedWindow(value:unknown,workspace:string):value is SavedWindow{
   try{
-    assertJsonBudget(value,Infinity);
+    assertJsonBudget(value,64*1024);
     if(typeof workspace!=='string'||!workspace||workspace.length>128||!record(value)||!keys(value,['windowId','before','rows','next'])||
         typeof value.windowId!=='string'||!/^saved1:[a-f0-9]{64}$/.test(value.windowId)||
         value.before!==undefined&&!cursor(value.before)||value.next!==undefined&&!cursor(value.next)||
-        !Array.isArray(value.rows))return false;
+        !Array.isArray(value.rows)||value.rows.length>30)return false;
     const seen=new Set<string>(),messages=new Set<string>();
     let previous:SavedRow|undefined;
     for(const entry of value.rows){
@@ -45,8 +45,8 @@ export function validateSavedWindow(value:unknown,workspace:string):value is Sav
  * The group owner must verify the complete batch's digest/current authority
  * and publish/persist all held windows plus count at one common cut. */
 export function replaceSavedWindowRows(window:SavedWindow,workspace:string,facts:readonly SavedRowPayload[]):SavedWindow{
-  assertJsonBudget(facts,Infinity);
-  if(!validateSavedWindow(window,workspace))throw new Error('Invalid Saved window');
+  assertJsonBudget(facts,1024*1024);
+  if(facts.length>256||!validateSavedWindow(window,workspace))throw new Error('Invalid Saved window');
   let rows=window.rows;
   for(const fact of facts){
     if(!record(fact)||fact.scope!==workspace)throw new Error('Invalid Saved scope');

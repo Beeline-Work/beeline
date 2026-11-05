@@ -34,8 +34,9 @@ END $$;
 INSERT INTO live_streams(id) VALUES('jobs:tray-clock-health') ON CONFLICT DO NOTHING;
 `;
 
-/** Persisted owner evidence for shared background availability. Tray reads
- * check each item's deadline independently of this owner's health. */
+/** Compose with the capture/readiness predicate in the same SELECT, with the
+ * Workspace clock aliased as clock. Time only refuses an unavailable read;
+ * it never classifies a cell or substitutes for committed clock state. */
 export const TRAY_CLOCK_OWNER_HEALTH_PREDICATE_SQL=`EXISTS(
  SELECT 1 FROM tray_clock_health health
  JOIN background_leader_owners owner ON owner.name='background'
@@ -48,7 +49,7 @@ export const TRAY_CLOCK_OWNER_HEALTH_PREDICATE_SQL=`EXISTS(
  WHERE health.id=1 AND server.renewed_at>clock_timestamp()-interval '90 seconds'
    AND beeline_background_backend_holds(owner.lock_backend_pid,owner.lock_backend_start)
 )`;
-const TRAY_CLOCK_HEALTH_PREDICATE_SQL=`${TRAY_CLOCK_OWNER_HEALTH_PREDICATE_SQL} AND NOT EXISTS(SELECT 1 FROM tray_clock_deadlines overdue
+export const TRAY_CLOCK_HEALTH_PREDICATE_SQL=`${TRAY_CLOCK_OWNER_HEALTH_PREDICATE_SQL} AND NOT EXISTS(SELECT 1 FROM tray_clock_deadlines overdue
  WHERE overdue.workspace_id=clock.workspace_id AND overdue.state='pending' AND overdue.due_at<=statement_timestamp())`;
 
 export class TrayClockHealthUnavailable extends Error{

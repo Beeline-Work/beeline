@@ -16,7 +16,7 @@ describe('mechanical sealed Saved windows',()=>{
     expect(validateSavedWindow(window([row(1),row(2,'10413792000123457')]),workspace)).toBe(false);
     expect(validateSavedWindow(window([row(2),row(1)]),workspace)).toBe(false);
     expect(validateSavedWindow(window([row(1),row(1)]),workspace)).toBe(false);
-    expect(validateSavedWindow(window(Array.from({length:31},(_,n)=>row(n))),workspace)).toBe(true);
+    expect(validateSavedWindow(window(Array.from({length:31},(_,n)=>row(n))),workspace)).toBe(false);
     const hidden=row(1);hidden.value={...hidden.value,available:false};
     expect(validateSavedWindow(window([hidden]),workspace)).toBe(false);
     const {text:_text,...pointer}=hidden.value;hidden.value=pointer;
@@ -64,11 +64,11 @@ describe('mechanical sealed Saved windows',()=>{
     expect(()=>replaceSavedWindowRows(window(),workspace,[{...remove(row(1)),scope:room}])).toThrow('Invalid Saved scope');
     expect(()=>replaceSavedWindowRows(window(),workspace,[{kind:'saved-row-remove',scope:workspace,bookmarkId:row(1).bookmarkId,messageId:'other'}])).toThrow('Saved incarnation changed');
   });
-  it('rejects accessors before reading them and accepts large complete windows',()=>{
+  it('rejects accessors before reading them and enforces logical and per-window byte bounds',()=>{
     let calls=0;const malicious={...row(1),get before(){calls++;return 'saved1.x';}};
     expect(validateSavedWindow(window([malicious]),workspace)).toBe(false);expect(calls).toBe(0);
     const oversized=row(1);oversized.value={...oversized.value,text:'x'.repeat(65536)};
-    expect(()=>replaceSavedWindowRows(window(),workspace,[replace(oversized)])).not.toThrow();
-    expect(()=>replaceSavedWindowRows(window(),workspace,Array.from({length:257},()=>remove(row(1))))).not.toThrow();
+    expect(()=>replaceSavedWindowRows(window(),workspace,[replace(oversized)])).toThrow();
+    expect(()=>replaceSavedWindowRows(window(),workspace,Array.from({length:257},()=>remove(row(1))))).toThrow('Invalid Saved window');
   });
 });

@@ -379,10 +379,9 @@ export class ReadLanes {
       const sealed=entry.request.family==='workspace-roster'&&!!entry.request.query;
       const future=sealed?undefined:this.groups.salvage(entry,snapshot?.atomicGroup??'');
       const joint=this.joint(entry);
-      const rebase=entry.request.family==='workspace-roster'&&!deny;
       const view:LaneView=deny?{...absent(),state:'REVOKED',error:ACCESS_REMOVED}:
-        {state:rebase||future&&!joint?(liveOwner(entry)?'OPENING':'INACTIVE_CACHED'):'PARKED',value:null,
-          error:rebase?null:joint?UNAVAILABLE:future?null:'Projection queue overflow; Retry.',cut:snapshot!.cut};
+        {state:future&&!joint?(liveOwner(entry)?'OPENING':'INACTIVE_CACHED'):'PARKED',value:null,
+          error:sealed?'Roster changed; Retry.':joint?UNAVAILABLE:future?null:'Projection queue overflow; Retry.',cut:snapshot!.cut};
       this.transition(entry,view,'baseline',future,true);changed.push(entry);
     }
     this.pruneQueued();
@@ -392,7 +391,6 @@ export class ReadLanes {
       else{if(!this.storage.floor)throw new Error('Authority floor storage unavailable.');await this.storage.floor(scope,epoch);}
     }
     for(const entry of changed)await this.storage?.remove(entry.key);
-    if(!deny)for(const entry of changed)if(entry.request.family==='workspace-roster'&&liveOwner(entry))this.open(entry);
   }
 
   reset(): void {

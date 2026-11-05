@@ -7,14 +7,14 @@ import {buildRoomSchedulesProjection} from './room-schedules-projection.js';
 const OWNER='a'.repeat(64),MEMBER='b'.repeat(64),AGENT='c'.repeat(64);
 const WS='11111111-1111-4111-8111-111111111111',ROOM='22222222-2222-4222-8222-222222222222',DM='33333333-3333-4333-8333-333333333333';
 const input={family:'room-scheduled-work' as const,roomId:ROOM,workspaceId:WS};
-describe('Scheduled Work read membership and independent mutation authority',()=>{
+describe('Scheduled Work manager authority independent of transcript access',()=>{
   let db:PgliteDatabase;
   beforeEach(async()=>{
     db=await migratedDatabase();await db.query(SCHEDULED_WORK_AUTHORITY_SCHEMA);await db.query(ROOM_SCHEDULES_CAPTURE_SCHEMA);
     await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'human','Member'),($3,'agent','Helper')`,[OWNER,MEMBER,AGENT]);
     await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Workspace')`,[WS]);
     await db.query(`INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Room')`,[ROOM,WS,OWNER]);
-    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$3,'owner'),($1,$2,$3,'member'),($1,NULL,$4,'member'),($1,$2,$4,'member'),($1,$2,$5,'member')`,[WS,ROOM,OWNER,MEMBER,AGENT]);
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$3,'owner'),($1,NULL,$4,'member'),($1,$2,$4,'member'),($1,$2,$5,'member')`,[WS,ROOM,OWNER,MEMBER,AGENT]);
   });
   afterEach(async()=>{await db.close();});
   const snapshot=(args=input,viewer=OWNER)=>buildRouterSnapshot(db,args,viewer,(tx,args,reader)=>buildRoomSchedulesProjection(tx,args.roomId!,reader,'https://synthetic.test'));
@@ -25,13 +25,12 @@ describe('Scheduled Work read membership and independent mutation authority',()=
     await db.query(`DELETE FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,[WS,MEMBER]);
     return {family:'room-scheduled-work' as const,roomId:DM,workspaceId:WS};
   }
-  it('allows an ordinary Room member and refuses a Workspace manager without Room membership',async()=>{
-    const value=await snapshot(input,MEMBER);
-    expect(value.value).toMatchObject({roomName:'Room',schedules:[],subscriptions:[]});
-    expect(value.authority.scopes.map(scope=>scope.authorityScope)).toEqual([scheduledManagerDomain(MEMBER,WS),scheduledMemberDomain(MEMBER,ROOM),scheduledPrincipalDomain(MEMBER),scheduledRoomDomain(ROOM)].sort());
-    await db.query(`DELETE FROM memberships WHERE room_id=$1 AND identity_id=$2`,[ROOM,OWNER]);
-    await expect(snapshot()).rejects.toMatchObject({reason:'authority'});
+  it('allows a public Room manager without transcript membership and refuses a transcript reader without manager authority',async()=>{
+    const value=await snapshot();expect(value.value).toMatchObject({roomName:'Room',schedules:[],subscriptions:[]});
+    expect(value.authority.scopes.map(scope=>scope.authorityScope)).toEqual([scheduledManagerDomain(OWNER,WS),scheduledPrincipalDomain(OWNER),scheduledRoomDomain(ROOM)].sort());
+    await expect(readRouterAuthority(db,{family:'room-head',roomId:ROOM,workspaceId:WS},OWNER)).rejects.toMatchObject({reason:'authority'});
     await expect(readRouterAuthority(db,{family:'room-head',roomId:ROOM,workspaceId:WS},MEMBER)).resolves.toBeDefined();
+    await expect(snapshot(input,MEMBER)).rejects.toMatchObject({reason:'authority'});
   });
   it('allows humans to manage their own DM without fictitious Workspace membership',async()=>{
     const args=await ownDM(),value=await snapshot(args,MEMBER);
@@ -39,11 +38,12 @@ describe('Scheduled Work read membership and independent mutation authority',()=
     expect(value.authority.scopes.some(scope=>scope.authorityScope.startsWith('reader:')||scope.authorityScope.startsWith('scheduled-work-manager:'))).toBe(false);
     await expect(readRouterAuthority(db,{family:'room-head',roomId:DM,workspaceId:WS},MEMBER)).rejects.toMatchObject({reason:'authority'});
   });
-  it('retires an old certificate after a role change while retaining Room read access',async()=>{
+  it('fences admin loss at its manager domain, preserving transcript access and accepting a later admin regrant',async()=>{
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,[WS,ROOM,OWNER]);
     const value=await snapshot();let sent=0;
     await db.query(`UPDATE memberships SET role='member' WHERE room_id IS NULL AND identity_id=$1`,[OWNER]);
     await expect(fenceRouterEnqueue(db,input,OWNER,value.authority,()=>{sent++;return undefined;})).rejects.toMatchObject({reason:'authority'});
-    const denied=await currentScheduledWorkFence(db,OWNER,WS,scheduledManagerDomain(OWNER,WS));expect(denied?.mode).toBe('advance');await expect(snapshot()).resolves.toBeDefined();
+    const denied=await currentScheduledWorkFence(db,OWNER,WS,scheduledManagerDomain(OWNER,WS));expect(denied?.mode).toBe('deny');
     await expect(readRouterAuthority(db,{family:'room-head',roomId:ROOM,workspaceId:WS},OWNER)).resolves.toBeDefined();
     await db.query(`UPDATE memberships SET role='admin' WHERE room_id IS NULL AND identity_id=$1`,[OWNER]);
     const granted=await snapshot();expect(BigInt(epoch(granted.authority,denied!.authorityScope))).toBeGreaterThan(BigInt(denied!.authority.scopes[0]!.epoch));expect(sent).toBe(0);

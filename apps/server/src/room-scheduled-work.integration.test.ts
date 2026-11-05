@@ -98,10 +98,10 @@ describe('complete negotiated Scheduled Work family',()=>{
   it('regrant after an intentionally omitted interval parks only the public group; own DM continues and explicit Retry owns its sole replacement read',async()=>{
     const c=connection();try{
       await c.start();await c.demand();await c.demand(DM);
-      await c.change(()=>db.query(`UPDATE memberships SET removed_at=now() WHERE room_id IS NULL AND identity_id=$1`,[OWNER]));
+      await c.change(()=>db.query(`UPDATE memberships SET role='member' WHERE room_id IS NULL AND identity_id=$1`,[OWNER]));
       expect(c.lanes.peek(input())).toMatchObject({state:'REVOKED',value:null});expect(c.lanes.peek(input(DM)).state).toBe('LIVE');
       await c.change(()=>db.query(`UPDATE workspaces SET name='Intervening unrelated source' WHERE id=$1`,[WS]));
-      await c.change(()=>db.query(`UPDATE memberships SET removed_at=NULL WHERE room_id IS NULL AND identity_id=$1`,[OWNER]));
+      await c.change(()=>db.query(`UPDATE memberships SET role='admin' WHERE room_id IS NULL AND identity_id=$1`,[OWNER]));
       expect(c.lanes.peek(input())).toMatchObject({state:'PARKED',value:null,error:expect.stringContaining('Retry')});expect(c.reads()).toBe(2);
       await c.change(()=>db.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at)
         VALUES($1,$2,$3,$4,$5,'{"kind":"interval","everyMinutes":10}','DM continues','2099-01-01')`,[SCHEDULE,WS,DM,AGENT,OWNER]));

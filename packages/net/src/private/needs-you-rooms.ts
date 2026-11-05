@@ -1,23 +1,26 @@
 import type { NeedsYouRoomsPayload } from '@beeline/api-contract/router-protocol';
 import type { NeedsYouItemView } from '@beeline/api-contract/phone';
 import { validateNeedsProjection } from './projection-codecs.js';
+import { jsonBytes } from './staging-bounds.js';
 
 const record=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
 export function validateNeedsRoomsPayload(value:unknown):value is NeedsYouRoomsPayload{
   if(!record(value)||value.kind!=='needs-you-rooms-replace'||typeof value.scope!=='string'||
     Object.keys(value).some(key=>!['kind','scope','rooms','order','count'].includes(key))||
-    !Array.isArray(value.rooms)||!Array.isArray(value.order)||
+    !Array.isArray(value.rooms)||value.rooms.length>128||!Array.isArray(value.order)||value.order.length>500||
     value.count!==value.order.length||
-    !value.order.every(id=>typeof id==='string'&&id.length>0&&id.length<=128)||new Set(value.order).size!==value.order.length)return false;
+    !value.order.every(id=>typeof id==='string'&&id.length>0&&id.length<=128)||new Set(value.order).size!==value.order.length||
+    jsonBytes(value)>64*1024)return false;
+  let cells=0;
   const rooms=new Set<string>();
   for(const room of value.rooms){
     if(!record(room)||Object.keys(room).some(key=>!['roomId','items'].includes(key))||
       typeof room.roomId!=='string'||rooms.has(room.roomId)||!Array.isArray(room.items)||
       !validateNeedsProjection({items:room.items})||
       !room.items.every(item=>record(item)&&item.roomId===room.roomId&&item.workspaceId===value.scope))return false;
-    rooms.add(room.roomId);
+    rooms.add(room.roomId);cells+=room.items.length;
   }
-  return true;
+  return cells<=30;
 }
 
 /** Apply only the server's exact replacements and final order. A missing row

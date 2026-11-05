@@ -12,20 +12,19 @@ type AuthorityRow={id:string;present:string|null;workspace_id:string;parent_id:s
 export type ScheduledWorkAuthority={workspaceId:string;authority:RouterAuthorityCertificate;allowed:boolean;
   denied:{scope:string;authorityScope:string};complete:boolean};
 
-/** Scheduled Work reads follow active Room membership. The legacy manager
- * domain tracks Workspace membership for public Rooms; roles govern mutations
- * separately in requireScheduledWorkManager. Own DMs retain participant checks. */
+/** Matches requireScheduledWorkManager exactly. Public Room managers need no
+ * transcript membership; humans manage their own DMs without a fictitious
+ * Workspace membership requirement. These domains confer no transcript access. */
 export async function scheduledWorkAuthorities(db:SqlDatabase,rooms:readonly string[],viewer:string):Promise<{states:ReadonlyMap<string,ScheduledWorkAuthority>;principal?:RouterAuthorityCertificate}>{
   if(!rooms.length)return {states:new Map()};
   const rows=(await db.query<AuthorityRow>(`SELECT requested.id,room.id present,room.workspace_id,room.parent_id,room.archived_at IS NOT NULL archived,
     room.direct_participants IS NOT NULL direct,COALESCE(room.direct_participants ? $2,false) participant,
     EXISTS(SELECT 1 FROM identities person WHERE person.id=$2 AND person.kind='human' AND NOT person.hidden_from_roster) human,
     EXISTS(SELECT 1 FROM memberships manager WHERE manager.workspace_id=room.workspace_id AND manager.room_id IS NULL
-      AND manager.identity_id=$2 AND manager.removed_at IS NULL ) manager,
+      AND manager.identity_id=$2 AND manager.removed_at IS NULL AND manager.role IN('owner','admin')) manager,
     EXISTS(SELECT 1 FROM memberships member WHERE member.room_id=room.id AND member.identity_id=$2 AND member.removed_at IS NULL) member,
     COALESCE((SELECT jsonb_agg(jsonb_build_object('authorityScope',scope,'epoch',epoch::text)) FROM router_authority
-      WHERE scope='scheduled-work-principal:'||$2 OR scope='scheduled-work-room:'||room.id
-        OR scope='scheduled-work-member:'||$2||':room:'||room.id OR scope=CASE
+      WHERE scope='scheduled-work-principal:'||$2 OR scope='scheduled-work-room:'||room.id OR scope=CASE
         WHEN room.direct_participants IS NULL THEN 'scheduled-work-manager:'||$2||':workspace:'||room.workspace_id
         ELSE 'scheduled-work-member:'||$2||':room:'||room.id END),'[]'::jsonb) scopes
     FROM unnest($1::uuid[]) requested(id) LEFT JOIN rooms room ON room.id=requested.id`,[rooms,viewer])).rows;
@@ -37,23 +36,17 @@ export async function scheduledWorkAuthorities(db:SqlDatabase,rooms:readonly str
     const principal=scheduledPrincipalDomain(viewer),policy=scheduledRoomDomain(row.id);
     const access=row.direct?scheduledMemberDomain(viewer,row.id):scheduledManagerDomain(viewer,row.workspace_id);
     if(!row.scopes.some(item=>item.authorityScope===principal)||!row.scopes.some(item=>item.authorityScope===policy))continue;
-    const allowed=row.human&&!row.parent_id&&!row.archived&&(row.direct?row.participant&&row.member:row.manager&&row.member);
-    const target=!row.human?principal:row.parent_id||row.archived||row.direct&&!row.participant?policy:!row.member?scheduledMemberDomain(viewer,row.id):access;
+    const allowed=row.human&&!row.parent_id&&!row.archived&&(row.direct?row.participant&&row.member:row.manager);
+    const target=!row.human?principal:row.parent_id||row.archived||row.direct&&!row.participant?policy:access;
     result.set(row.id,{workspaceId:row.workspace_id,
       authority:routerAuthority(row.scopes.map(item=>({authorityScope:item.authorityScope,epoch:item.epoch}))),
-      allowed,complete:row.scopes.length===(row.direct?3:4),denied:{scope:target===principal?viewer:target===scheduledManagerDomain(viewer,row.workspace_id)?row.workspace_id:row.id,authorityScope:target}});
+      allowed,complete:row.scopes.length===3,denied:{scope:target===principal?viewer:target===scheduledManagerDomain(viewer,row.workspace_id)?row.workspace_id:row.id,authorityScope:target}});
   }
   return {states:result,principal:principalEpoch?routerAuthority([principalEpoch]):undefined};
 }
 export async function scheduledWorkAuthority(db:SqlDatabase,room:string,viewer:string):Promise<ScheduledWorkAuthority>{
   const result=(await scheduledWorkAuthorities(db,[room],viewer)).states.get(room);
   if(!result)throw new RouterProjectionUnavailable('authority');return result;
-}
-
-/** Read admission shared by legacy and routed Scheduled Work surfaces. */
-export async function requireScheduledWorkReader(db:SqlDatabase,room:string,viewer:string):Promise<void>{
-  const authority=await scheduledWorkAuthority(db,room,viewer);
-  if(!authority.allowed||!authority.complete)throw new Error('room membership required');
 }
 
 /** Domain-specific policy, so a Workspace role loss cannot deny own-DM or
@@ -64,7 +57,7 @@ export async function currentScheduledWorkFence(db:SqlDatabase,viewer:string,sco
     allowed=Boolean((await db.query(`SELECT 1 FROM identities WHERE id=$1 AND kind='human' AND NOT hidden_from_roster`,[viewer])).rowCount);
   }else if(domain===scheduledManagerDomain(viewer,scope)){
     allowed=Boolean((await db.query(`SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
-      AND identity_id=$2 AND removed_at IS NULL`,[scope,viewer])).rowCount);
+      AND identity_id=$2 AND removed_at IS NULL AND role IN('owner','admin')`,[scope,viewer])).rowCount);
   }else if(domain===scheduledMemberDomain(viewer,scope)){
     allowed=Boolean((await db.query(`SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,[scope,viewer])).rowCount);
   }else if(domain===scheduledRoomDomain(scope)){
@@ -125,7 +118,7 @@ BEGIN
       room:=item->>'id';workspace:=item->>'workspace_id';domain:='scheduled-work-room:'||room;
       INSERT INTO router_authority(scope) VALUES(domain) ON CONFLICT(scope) DO UPDATE SET epoch=router_authority.epoch+1;
       -- Evaluate each stored OLD/NEW Room policy against its actual active
-      -- human member audience. Workspace membership does not expose somebody else's
+      -- human manager audience. Workspace admins do not manage somebody else's
       -- DM; a participant name alone does not confer DM membership. OLD policy
       -- still selects real former recipients on moves/revokes. Earlier same-TX
       -- principal/membership removals already carry their own exact fences.
@@ -133,8 +126,7 @@ BEGIN
         JOIN identities identity ON identity.id=member.identity_id AND identity.kind='human' AND NOT identity.hidden_from_roster
         WHERE member.removed_at IS NULL AND item->>'parent_id' IS NULL AND item->>'archived_at' IS NULL AND(
           (item->>'_scheduled_public')::boolean AND member.workspace_id::text=workspace
-            AND member.room_id IS NULL
-            AND EXISTS(SELECT 1 FROM memberships access WHERE access.room_id::text=room AND access.identity_id=member.identity_id AND access.removed_at IS NULL)
+            AND member.room_id IS NULL AND member.role IN('owner','admin')
           OR NOT (item->>'_scheduled_public')::boolean AND member.room_id::text=room
             AND item->'direct_participants' ? member.identity_id
         ) LOOP

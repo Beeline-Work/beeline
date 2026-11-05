@@ -29,7 +29,7 @@ describe('closed canonical Scheduled Work row-source planning',()=>{
     expect(()=>routerSourcePlan([cause({version:1,classification:'unavailable',reason})],VIEWER)).toThrow(reason);
   });
   it.each([null,{},complete([{},target]),{...complete(),extra:'unclassified'},
-    {...complete(),version:2},complete([{...target,readers:[1]}]),
+    {...complete(),version:2},complete([{...target,readers:[1]}]),complete([{...target,readers:Array(101).fill(VIEWER)}]),
     complete([{...target,roomId:'not-a-room'}]),complete([{...target,extra:true}]),complete([target,target,target])])('refuses malformed/unknown closed metadata %j',metadata=>{
     expect(()=>routerSourcePlan([cause(metadata)],VIEWER)).toThrow('dependency');
   });

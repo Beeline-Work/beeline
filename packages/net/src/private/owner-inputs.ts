@@ -11,7 +11,7 @@ export function validateOwnerInput(route: keyof typeof ownerInputs, input: unkno
 }
 export function validateTrayProjection(value:unknown,workspace:string):boolean{
   try{
-    assertJsonBudget(value,Infinity);
+    assertJsonBudget(value,64*1024);
     const tray=value as {needs?:unknown;saved?:unknown;needsError?:unknown;savedError?:unknown};
     return !!tray&&typeof tray==='object'&&!Array.isArray(tray)&&Object.keys(tray).every(key=>key==='needs'||key==='saved')&&
       validateNeedsProjection(tray.needs)&&validateSavedWindow(tray.saved,workspace);

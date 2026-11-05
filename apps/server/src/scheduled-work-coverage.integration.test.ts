@@ -18,7 +18,7 @@ describe('negotiated compact Scheduled Work complete interval',()=>{
     await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Manager'),($2,'agent','Helper')`,[VIEWER,AGENT]);
     await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Workspace')`,[WS]);
     await db.query(`INSERT INTO rooms(id,workspace_id,created_by,name,direct_participants) VALUES($1,$3,$4,'Public A',NULL),($2,$3,$4,'Own DM B',$5::jsonb)`,[ROOM,DM,WS,VIEWER,JSON.stringify([VIEWER,AGENT])]);
-    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$4,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member'),($1,$3,$4,'member'),($1,$3,$5,'member')`,[WS,ROOM,DM,VIEWER,AGENT]);
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$4,'owner'),($1,$2,$5,'member'),($1,$3,$4,'member'),($1,$3,$5,'member')`,[WS,ROOM,DM,VIEWER,AGENT]);
     await db.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at)
       VALUES($1,$2,$3,$4,$5,'{"kind":"interval","everyMinutes":10}','Initial task','2099-01-01')`,[SCHEDULE,WS,ROOM,AGENT,VIEWER]);
   });

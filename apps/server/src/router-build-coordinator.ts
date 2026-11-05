@@ -10,7 +10,6 @@ const TICKET=Symbol('router-build-ticket');
 export type RouterBuildTicket=Readonly<{[TICKET]:true;input:RouterSnapshotInput;reader:string;
   cut:RouterCut;authority:RouterAuthorityCertificate;basis:RouterBuilderBasis;trayClockVersion?:string}>;
 const transactions=new WeakMap<RouterBuildTicket,SqlDatabase>();
-const readTimes=new WeakMap<RouterBuildTicket,string>();
 
 /** This read-only transaction stays alive until build(ticket, ...) resolves.
  * The coordinator invokes the builder with this exact handle, never a newer
@@ -20,8 +19,8 @@ export async function readRouterBuildTicket(db:SqlDatabase,input:RouterSnapshotI
   if(!reader||reader.length>128||basis.schema!==1||!basis.databaseScope||basis.databaseScope.length>128||!basis.version||basis.version.length>128||
     !basis.publicOrigin||basis.publicOrigin.length>2048||!basis.clockVersion||basis.clockVersion.length>256)
     throw new RouterProjectionUnavailable('dependency');
-  const settings=(await db.query<{isolation:string;read_only:string;read_time:string}>(`SELECT current_setting('transaction_isolation') isolation,
-    current_setting('transaction_read_only') read_only,now()::text read_time`)).rows[0];
+  const settings=(await db.query<{isolation:string;read_only:string}>(`SELECT current_setting('transaction_isolation') isolation,
+    current_setting('transaction_read_only') read_only`)).rows[0];
   if(settings?.isolation!=='repeatable read'||settings.read_only!=='on')throw new RouterProjectionUnavailable('dependency');
   const resolved=await resolveRouterInput(db,input);
   const clock=options?.trayClock?await readTrayClockBasis(db,resolved.workspaceId):undefined;
@@ -32,9 +31,7 @@ export async function readRouterBuildTicket(db:SqlDatabase,input:RouterSnapshotI
     authority:Object.freeze({digest:authority.digest,scopes:Object.freeze(authority.scopes.map(scope=>Object.freeze({...scope})))}),
     cut:Object.freeze({...cut}),basis:Object.freeze({...basis,...(clock?{clockVersion:clock.clockVersion}:{})}),
     ...(clock?{trayClockVersion:clock.clockVersion}:{})});
-  transactions.set(ticket,db);
-  if(input.family.startsWith('needs-you')&&input.family!=='needs-you-saved-page')readTimes.set(ticket,settings.read_time);
-  return ticket;
+  transactions.set(ticket,db);return ticket;
 }
 
 type Settled={encoded:string;bytes:number;authority:RouterAuthorityCertificate};
@@ -43,8 +40,7 @@ export type RouterBuildCoordinatorLimits={readonly entries?:number;readonly byte
 
 /** Shared per-process reader projections, never per-socket DTO state. Exact
  * immutable identities permit staggered sockets to reuse the same canonical
- * result. LRU limits and source changes control retention. Time-sensitive Tray
- * reads also bind the database read time and bypass settled caching. */
+ * result. LRU limits and source changes, rather than time, control retention. */
 export class RouterBuildCoordinator{
   private readonly settled=new Map<string,Settled>();
   private readonly flights=new Map<string,Flight>();
@@ -62,7 +58,7 @@ export class RouterBuildCoordinator{
     const key=JSON.stringify([ticket.reader,ticket.input.family,ticket.input.workspaceId,ticket.input.agentId??ticket.input.roomId??'',
       'query'in ticket.input?ticket.input.query??null:null,
       ticket.input.family==='needs-you-saved-page'?ticket.input.before??null:null,
-      ticket.trayClockVersion??null,readTimes.get(ticket)??null,
+      ticket.trayClockVersion??null,
       ticket.cut.stream,ticket.cut.epoch,ticket.cut.through,ticket.cut.protocol,ticket.authority.digest,
       ticket.authority.scopes.map(scope=>[scope.authorityScope,scope.epoch]),
       ticket.basis.schema,ticket.basis.databaseScope,ticket.basis.version,ticket.basis.publicOrigin,ticket.basis.clockVersion]);
@@ -83,7 +79,7 @@ export class RouterBuildCoordinator{
           value,cut:ticket.cut,authority:ticket.authority,atomicGroup:routerAtomicGroup(ticket.input,ticket.reader),
           ...(ticket.trayClockVersion?{clockVersion:ticket.trayClockVersion}:{})};
         const encoded=JSON.stringify(snapshot),bytes=Buffer.byteLength(encoded)+Buffer.byteLength(key);
-        if(!readTimes.has(ticket)&&generation===this.generation&&this.flights.get(key)?.cacheable)this.remember(key,{encoded,bytes,authority:ticket.authority});
+        if(generation===this.generation&&this.flights.get(key)?.cacheable)this.remember(key,{encoded,bytes,authority:ticket.authority});
         return encoded;
       });
       flight={promise,waiters:1,generation,authority:ticket.authority,cacheable:true};this.flights.set(key,flight);

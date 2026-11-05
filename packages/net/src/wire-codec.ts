@@ -1,5 +1,5 @@
-/** Structural JSON codecs generated from contracts. Semantic authorization and
- * family-specific row/byte limits remain the negotiated server adapter's job. */
+/** Structural JSON codecs generated from contracts. Semantic authorization
+ * remains with server handlers. */
 export type WireShape =
   | { kind: 'json' | 'never' | 'undefined' | 'string' | 'number' | 'boolean' }
   | { kind: 'literal'; value: string | number | boolean | null }
@@ -10,8 +10,8 @@ export type WireShape =
   | { kind: 'object'; properties: Readonly<Record<string, { node: number; optional: boolean }>>; index?: number };
 export type Codec<T> = Readonly<{ parse(value: unknown): T }>;
 
-/** Bounded JSON preflight prevents getters, cycles, nonfinite values, exotic
- * prototypes and oversized payloads before any union backtracking can happen. */
+/** Descriptor-only JSON preflight rejects getters, cycles, nonfinite values
+ * and exotic prototypes. Explicit byte budgets also bound input validation work. */
 function walkJson(value: unknown, maxBytes: number, canonical = false): string | undefined {
   let bytes = 0;
   let nodes = 0;

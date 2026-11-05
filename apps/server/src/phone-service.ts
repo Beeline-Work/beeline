@@ -1,4 +1,3 @@
-import {requireScheduledWorkReader} from './scheduled-work-authority.js';
 import { isSubscribableEventKind } from '@beeline/api-contract/phone';
 import { setRoomEventSubscriptions, unsubscribeRoomReviewer, subscribeRoomReviewer } from './agent-subscriptions.js';
 import { ROOM_ROUTER_CTES,ROOM_ROUTER_HEAD_JOIN,roomRouterColumnsSql,roomMessageTagsSql } from './room-router-read.js';
@@ -53,7 +52,7 @@ import { recordAgentConnectedAfterNudge, recordFreeAgentGuideStarted } from './f
 import { SQUIRE_MCP_TARGET } from '@beeline/api-contract/phone';
 import { FIRST_PARTY_INTEGRATIONS } from './first-party-integrations.js';
 import { machineSquireReport, queueSquireWork, queueOwnerSquireWork, squireMachineAddress, squireMachineId, squireWorkStatus } from './squire-machine.js';
-import { webhookDetails, webhookToken, requireWebhookAdmin, requireScheduledWorkManager } from './subscription-webhooks.js';
+import { webhookDetails, webhookToken, requireWebhookAdmin, requireScheduledWorkManager, requireScheduledWorkReader } from './subscription-webhooks.js';
 import {buildRoomSchedulesProjection} from './room-schedules-projection.js';
 import { listRoomSubscriptions, deleteRoomSubscription } from './agent-subscriptions.js';
 import {
@@ -1223,6 +1222,7 @@ export class PhoneService {
       const revision=(await database.query<{epoch:string}>('SELECT epoch::text FROM router_authority WHERE scope=$1',
         [`roster:${input.workspaceId}`])).rows[0]?.epoch;
       if(!revision)throw new RouterProjectionUnavailable('dependency');
+      if(input.query&&input.query.revision!==revision)throw new RouterProjectionUnavailable('dependency');
       const value = await reader.readWorkspace(input.workspaceId, viewerId,input.query);
       return value?{...value,revision}:null;
     }

@@ -7,7 +7,7 @@ import {
 import type {SqlDatabase} from './database.js';
 import type {LiveHub} from './live.js';
 import {ROUTER_AUTHORITY_LOCK} from './router-authority-lock.js';
-import {currentAuthorityFence,readAuthorityChanges} from './router-authority-fences.js';
+import {currentAuthorityFence} from './router-authority-fences.js';
 import {currentScheduledWorkFence} from './scheduled-work-authority.js';
 import {fenceRouterBatchInTransaction,readRouterAuthority,RouterProjectionUnavailable} from './router-projections.js';
 
@@ -131,7 +131,10 @@ export class ScheduledWorkAuthorityDelivery{
     const head=await this.head(db),to=this.makePosition(head,from.segment);
     if(to.epoch!==from.epoch||to.through<from.through)throw new RouterProjectionUnavailable('retention');
     if(to.through===from.through){this.assertLive(revision);return from;}
-    const rows=await readAuthorityChanges(db,this.viewer,to.epoch,from.through,to.through);
+    const rows=(await db.query<{sequence:string;event:{kind?:unknown;scope?:unknown;authorityScope?:unknown}}>(
+      `SELECT sequence::text,event FROM live_journal WHERE stream_id=$1 AND sequence>$2 AND sequence<=$3 ORDER BY live_journal.sequence`,
+      [from.stream,from.through,to.through])).rows;
+    if(rows.length!==to.through-from.through||rows.some((row,index)=>Number(row.sequence)!==from.through+index+1))throw new RouterProjectionUnavailable('retention');
     const domains=new Map<string,string>();
     for(const {event}of rows){
       if(event.kind!=='authority-change'||typeof event.scope!=='string'||!event.scope||event.scope.length>256||

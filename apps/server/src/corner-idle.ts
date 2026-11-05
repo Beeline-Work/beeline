@@ -72,7 +72,8 @@ export function cornerIdleSql(cornerId: string): string {
         ) latest WHERE author.kind='human' AND author.id<>'${SYSTEM_IDENTITY_ID}'),
         (SELECT max(released_at) FROM corner_merge_holds WHERE corner_id=c.id),
         (SELECT max(expires_at) FROM corner_owed WHERE corner_id=c.id AND expires_at<=now()),
-        (SELECT max(ended_at) FROM (${cornerOwedAnswerTimesSql('c.id')}) answered_owed),
+        -- Local human answers are already bounded by the latest human message above.
+        (SELECT max(ended_at) FROM (${cornerOwedAnswerTimesSql('c.id', true)}) answered_owed),
         (SELECT max(ended_at) FROM (${cornerReportAnswerTimesSql('c.id')}) answered_report)
       ) at OFFSET 0) boundary
       ) snapshot`;

@@ -1,3 +1,11 @@
+const transitions = vi.hoisted(() => ({ held: false, pending: [] as Array<() => void> }));
+vi.mock('react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react')>();
+  return { ...actual, startTransition: (work: () => void) => {
+    if (transitions.held) transitions.pending.push(work);
+    else actual.startTransition(work);
+  } };
+});
 vi.mock('@expo/vector-icons', async () => {
   const R = await import('react');
   return { Ionicons: (props: any) => R.createElement('Ionicons', props) };
@@ -449,6 +457,8 @@ async function mountDeck(): Promise<ReactTestRenderer> {
 }
 
 beforeEach(() => {
+  transitions.held = false;
+  transitions.pending = [];
   // A case that never unmounts its deck must not hand its live list to the next.
   resetChatListStoresForTest();
   vi.mocked(mobileSurfaceCache.read).mockReset().mockResolvedValue(null);
@@ -486,6 +496,35 @@ afterEach(() => {
   deck.focusEffect = null;
   deck.focusEffects.clear();
   deck.blur = null;
+});
+
+it('paints saved Rooms while background transitions wait, then yields live reconciliation', async () => {
+  const saved = chatList({ id: 'm1', text: 'saved preview', createdAt: 10 });
+  const fresh = chatList({ id: 'm2', text: 'fresh preview', createdAt: 11 });
+  let reply!: (value: ChatListView) => void;
+  deck.chatsResponse = new Promise<ChatListView>((resolve) => { reply = resolve; });
+  const workspaces = { workspaces: [{ id: 'workspace', name: 'Work', role: 'member' as const, updatedAt: 1 }], viewer, truncated: false, watchFilters: [] };
+  vi.mocked(mobileSurfaceCache.read).mockImplementation(async (address) => {
+    await Promise.resolve();
+    const value = String(address).includes('/workspaces') ? workspaces : String(address).includes('/workspace/:id/chats') ? saved : null;
+    if (value) mobileSurfaceCache.publish(address, value, (() => true) as never);
+    return value;
+  });
+  transitions.held = true;
+  let renderer!: ReactTestRenderer;
+  try {
+    await act(async () => { renderer = create(React.createElement(BuzzChannels)); });
+    await vi.waitFor(() => expect(paintedRows(renderer)[0]?.latestMessage?.text).toBe('saved preview'));
+    await act(async () => reply(fresh));
+    expect(paintedRows(renderer)[0]?.latestMessage?.text).toBe('saved preview');
+    expect(transitions.pending.length).toBeGreaterThan(0);
+    await act(async () => { for (const work of transitions.pending.splice(0)) work(); });
+    expect(paintedRows(renderer)[0]?.latestMessage?.text).toBe('fresh preview');
+  } finally {
+    transitions.held = false;
+    transitions.pending = [];
+    if (renderer) await act(async () => renderer.unmount());
+  }
 });
 
 describe('Persisted Workspace bootstrap', () => {

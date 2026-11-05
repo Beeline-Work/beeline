@@ -1,8 +1,8 @@
 import type { DaemonApiClient } from './daemon-api-client.js';
 
-/** A failed intake reconnects, then reads again on the authenticated socket. */
+/** A failed intake waits for registration, then reads once on that socket. */
 export class RoomSupervisor {
-  constructor(private readonly api: Pick<DaemonApiClient, 'link' | 'onLiveOpen'>) {}
+  constructor(private readonly api: Pick<DaemonApiClient, 'onLiveOpen'>) {}
 
   async supervise(label: string, signal: AbortSignal | undefined, run: (progress: () => void) => Promise<void>): Promise<void> {
     while (!signal?.aborted) {
@@ -11,7 +11,7 @@ export class RoomSupervisor {
         return;
       } catch (error) {
         if (signal?.aborted) return;
-        console.error(`[thin-core] ${label} intake failed; reconnecting:`, error);
+        console.error(`[thin-core] ${label} intake failed; awaiting registration:`, error);
         await new Promise<void>(resolve => {
           const done = () => {
             off();
@@ -21,8 +21,6 @@ export class RoomSupervisor {
           const off = this.api.onLiveOpen(done);
           signal?.addEventListener('abort', done, { once: true });
           if (signal?.aborted) done();
-          // Other intakes may already have replaced this shared transport.
-          else if (this.api.link.state !== 'connecting') this.api.link.reconnectNow();
         });
       }
     }

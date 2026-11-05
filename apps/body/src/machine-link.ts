@@ -53,6 +53,7 @@ export class AgentChannel {
   /** Sticky selection: a reconnect cannot downgrade an operation to HTTP. */
   #operationsSelected = false;
   #operationsAvailable = false;
+  #operationsEnded = false;
   get operationsSelected(): boolean { return this.#operationsSelected; }
   readonly #turnRuntimeId = randomUUID();
   readonly #operationWaiters = new Set<(open: boolean) => void>();
@@ -62,31 +63,36 @@ export class AgentChannel {
   }>();
 
   /** Only the daemon operation owner may acquire this transport capability.
-   * Sticky selection is not readiness after a loss. Registration is already
-   * bounded by the existing intake deadline. */
-  async operationReady(): Promise<void> {
-    if (this.isOpen()) return;
-    if (this.#refused || (this.#operationsSelected && !this.#wanted) ||
-        (this.#wanted && !this.#pending && this.machine.link.isOpen()))
-      throw new Error('Machine operation registration unavailable');
-    await new Promise<void>((resolve, reject) => {
-      const settle = (open: boolean) => {
-        this.#operationWaiters.delete(settle);
-        if (open) resolve();
-        else reject(new Error('Machine operation registration unavailable'));
-      };
-      this.#operationWaiters.add(settle);
-      this.start();
-    });
+   * Unsent work waits for registration; the machine owns reconnect recovery. */
+  operationReady(): Promise<void> {
+    return new Promise((resolve, reject) => this.#whenOperationsReady(open => {
+      if (open) resolve();
+      else reject(new Error('Machine operation registration unavailable'));
+    }));
   }
 
-  /** Correlation only; command/generation authority remains in DaemonService. */
+  #whenOperationsReady(ready: (open: boolean) => void): void {
+    if (this.#operationsEnded || this.#refused) { ready(false); return; }
+    if (this.isOpen() && (!this.#operationsSelected || this.#operationsAvailable)) {
+      ready(true);
+      return;
+    }
+    const settle = (open: boolean) => {
+      this.#operationWaiters.delete(settle);
+      ready(open);
+    };
+    this.#operationWaiters.add(settle);
+    this.start();
+  }
+
+  /** Correlation only; command/generation authority remains in DaemonService.
+   * Dispatch from the registration wake itself so socket loss between the
+   * owner's readiness check and this call cannot turn unsent work UNKNOWN. */
   requestOperation<N extends keyof DaemonOperationMap>(operation: N, input: DaemonOperationMap[N]['input']): Promise<DaemonOperationMap[N]['output']> {
-    if (!this.#operationsAvailable || !this.isOpen())
-      return Promise.reject(new Error('Machine operation outcome is UNKNOWN; no HTTP fallback'));
-    const requestId = randomUUID();
-    const frame = { type: 'daemon-operation', requestId, operation, input };
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve, reject) => this.#whenOperationsReady(open => {
+      if (!open) { reject(new Error('Machine operation registration unavailable')); return; }
+      const requestId = randomUUID();
+      const frame = { type: 'daemon-operation', requestId, operation, input };
       const deadline = setTimeout(() => {
         this.#operationRequests.delete(requestId);
         reject(Object.assign(new Error('Machine operation outcome is UNKNOWN; no HTTP fallback'),
@@ -95,12 +101,15 @@ export class AgentChannel {
       deadline.unref?.();
       this.#operationRequests.set(requestId, { resolve: value => resolve(value as DaemonOperationMap[N]['output']), reject, deadline });
       if (!this.send(frame)) this.#suspendOperations();
-    });
+    }));
   }
 
   #suspendOperations(ended = false): void {
     this.#operationsAvailable = false;
-    if (ended) for (const settle of this.#operationWaiters) settle(false);
+    if (ended) {
+      this.#operationsEnded = true;
+      for (const settle of this.#operationWaiters) settle(false);
+    }
     for (const pending of this.#operationRequests.values()) {
       clearTimeout(pending.deadline);
       pending.reject(new Error('Machine operation outcome is UNKNOWN; no HTTP fallback'));
@@ -145,14 +154,15 @@ export class AgentChannel {
 
   start(): void {
     if (this.#wanted || this.#refused) return;
+    this.#operationsEnded = false;
     this.#wanted = true;
     this.machine.want(this);
   }
 
   stop(): void {
+    this.#suspendOperations(true);
     if (!this.#wanted) return;
     this.#wanted = false;
-    this.#suspendOperations(true);
     this.turn.stop();
     this.#activationSource=undefined;this.activation.stop();
     this.#usageOwnerId=undefined;this.#usageSource=undefined;
@@ -238,7 +248,8 @@ export class AgentChannel {
       this.#clearIntakeDeadline();
       if (this.#intakeHeartbeat) this.#armIntakeDeadline();
       this.#registrations += 1;
-      for (const settle of this.#operationWaiters) settle(true);
+      if (!this.#operationsSelected || this.#operationsAvailable)
+        for (const settle of [...this.#operationWaiters]) settle(true);
       this.handlers.onOpen();
       this.machine.registered();
       for (const listener of [...this.#openListeners]) {
@@ -257,11 +268,11 @@ export class AgentChannel {
     if (event.type === 'register-refused') {
       if (this.#refused) return;
       this.#pending = false;
-      this.#suspendOperations(true);
       this.#clearIntakeDeadline();
       const code = typeof event.code === 'string' ? event.code : 'refused';
       console.warn(`[machine-link] server refused agent ${this.agentId}: ${code}`);
       this.#refused = ['daemon_token_required', 'agent_removed'].includes(code);
+      this.#suspendOperations(this.#refused);
       this.handlers.onRefused?.(code);
       if (this.#refused) {
         this.#wanted = false;

@@ -670,13 +670,6 @@ export class RoomRuntimeCoordinator {
     this.interactiveIdleListener = listener;
   }
 
-  /** A failed discovery replaces its transport; registration supplies a fresh
-   * read boundary. Authority refusals require an actual access change. */
-  reconnectAfterDiscoveryFailure(error: unknown): void {
-    if (!(error instanceof DaemonApiError) || error.retryable)
-      this.options.daemonApi.link?.reconnectNow();
-  }
-
   private wakeDiscovery(): void {
     this.discoveryWakeListener?.();
   }
@@ -1016,7 +1009,7 @@ export class RoomRuntimeCoordinator {
       await mapWithConcurrency(batch, ROOM_JOIN_CONCURRENCY, (event) =>
         this.applyMembershipEvent(event).catch((error) => {
           console.error('[thin-core] live membership apply failed', error);
-          this.wakeDiscovery();
+          // A failed read resumes at the next registration or membership push.
         }),
       );
     }
@@ -1531,7 +1524,6 @@ export class RoomRuntimeCoordinator {
     }
     if (!this.options.daemonApi.liveSubscribe) {
       await this.startCorner(corner);
-      if (!this.running.has(cornerId)) this.wakeDiscovery();
       return;
     }
     this.idleCornerSubscriptions.set(cornerId, () => undefined);
@@ -1544,14 +1536,14 @@ export class RoomRuntimeCoordinator {
           // A rolling old server cannot deliver command snapshots; retain
           // the pre-lazy startup path until it can.
           this.pendingCornerCommands.add(cornerId);
-          void this.activateWatchedCorner(corner, true);
+          void this.activateWatchedCorner(corner);
         }
       },
       undefined,
       (commands) => {
         if (!commands.length) return;
         this.pendingCornerCommands.add(cornerId);
-        void this.activateWatchedCorner(corner, true);
+        void this.activateWatchedCorner(corner);
       },
     );
     this.idleCornerSubscriptions.set(cornerId, release);
@@ -1566,13 +1558,11 @@ export class RoomRuntimeCoordinator {
     this.pendingCornerCommands.delete(cornerId);
   }
 
-  private async activateWatchedCorner(corner: DesiredCorner, wakeOnFailure = false): Promise<void> {
+  private async activateWatchedCorner(corner: DesiredCorner): Promise<void> {
     if (this.stopped || !this.idleCornerSubscriptions.has(corner.cornerId)) return;
     await this.startCorner(corner);
     if (this.running.has(corner.cornerId)) {
       this.unwatchCorner(corner.cornerId);
-    } else if (wakeOnFailure) {
-      this.wakeDiscovery();
     }
   }
 
@@ -1623,7 +1613,6 @@ export class RoomRuntimeCoordinator {
       }
     } catch (error) {
       console.error(`[thin-core] scoped corner refresh failed for Room ${roomId}:`, error);
-      this.wakeDiscovery();
     }
   }
 
@@ -2088,7 +2077,6 @@ export class RoomRuntimeCoordinator {
         .then(() => this.stopped ? undefined : this.startRoom(roomId))
         .catch((error) => {
           console.error(`[thin-core] failed to restart Room ${roomId} after repository change:`, error);
-          this.wakeDiscovery();
         });
     }
     if (this.isWorkspaceIdle()) this.interactiveIdleListener?.();

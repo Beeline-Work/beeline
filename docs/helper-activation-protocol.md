@@ -9,8 +9,12 @@ A claimed durable command owns setup. Its identity includes the agent, Room,
 Workspace, command ID, generation and actual authenticated connection ID/epoch.
 Body requests `readCommandActivation` only through its existing machine socket.
 Generic daemon HTTP and generic Body operation dispatch refuse this route. An
-initial old-server cohort keeps the existing reads. A selected context parks
-after capability loss rather than falling back to HTTP.
+initial old-server cohort keeps the existing reads. A selected context waits
+for authenticated registration after socket loss, then reads on that source.
+In-flight reads survive disconnects; the next registration sends a fresh
+correlation with its current source. The existing socket heartbeat owns
+reconnection, with no activation timer or attempt cap. A definitive refusal
+still ends the read; selected contexts never fall back to HTTP.
 
 The server runs the existing configuration, Workspace roster, grant, repository
 and optional corner setup readers in one repeatable-read, read-only transaction.

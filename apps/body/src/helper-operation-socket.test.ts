@@ -4,6 +4,8 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { DaemonApiClient, type DaemonWebSocketFactory } from './daemon-api-client.js';
 import type { AgentChannel } from './machine-link.js';
 import type { HostReadBudget } from './host-read-budget.js';
+import { CommandActivationContext } from './helper-activation-context.js';
+import type { CommandActivationInput, CommandActivationSnapshot } from '@beeline/api-contract/helper-activation';
 import { LIVE_LINK_TIMING } from './live-link.js';
 
 
@@ -15,13 +17,14 @@ class Socket extends EventEmitter {
   frames: Record<string, any>[] = [];
   hold = false;
   registerReplies = true;
+  activationEpoch = 0;
   constructor(public capable: boolean) { super(); }
   receive(frame: Record<string, unknown>) {
     this.onmessage?.({data: JSON.stringify({agentId: 'agent', ...frame})});
   }
   send(raw: string) {
     const frame = JSON.parse(raw); this.frames.push(frame);
-    if (frame.type === 'register' && this.registerReplies) this.receive({type: 'registered', capabilities: this.capable ? {daemonOperationsV1: true} : {}});
+    if (frame.type === 'register' && this.registerReplies) this.receive({type: 'registered', capabilities: this.capable ? {daemonOperationsV1: true, activationContextV1: true, activationConnectionId: 'activation', activationConnectionEpoch: ++this.activationEpoch} : {}});
     if (frame.type === 'daemon-operation' && !this.hold)
       this.receive({type: 'daemon-operation-result', requestId: frame.requestId, result: {id: frame.operation, createdAt: 1}});
   }
@@ -136,4 +139,41 @@ it('sends selected machine reads even when the old HTTP read budget is full', as
   const read = api.execute('getAgentConfiguration', {agentId: 'agent'}); socket.open();
   await expect(read).resolves.toMatchObject({id: 'getAgentConfiguration'});
   expect(acquire).not.toHaveBeenCalled(); expect(fetcher).not.toHaveBeenCalled();
+});
+
+it.each(['before read', 'during read'] as const)('continues the same turn after socket loss %s of activation', async loss => {
+  const {api, socket, fetcher} = fixture();
+  const warm = api.execute('getAgentConfiguration', {agentId: 'agent'}); socket.open(); await warm;
+  const context = new CommandActivationContext({
+    scope: () => api.channel.activationScope(), selected: () => api.channel.activationContextSelected,
+    ready: () => api.waitForConnection(), read: input => api.readCommandActivation(input),
+  });
+  const identity = {agentId: 'agent', workspaceId: 'workspace', roomId: 'room', commandId: 'command', generationId: 'generation'};
+  const failures: unknown[] = [];
+  if (loss === 'before read') socket.close();
+  const turn = context.read(identity).then(async activation => {
+    expect(activation?.configuration.fastMode).toBe(false);
+    await api.execute('postRoomMessage', {roomId: 'room', requestId: 'request', generationId: 'generation', text: 'One answer'});
+  }).catch(error => { failures.push(error); });
+  if (loss === 'during read') {
+    await vi.waitFor(() => expect(socket.frames.some(frame => frame.type === 'activation-context')).toBe(true));
+    socket.close();
+  }
+  await Promise.resolve();
+  expect(failures).toEqual([]);
+  socket.open();
+  await vi.waitFor(() => expect(socket.frames.filter(frame => frame.type === 'activation-context').at(-1)?.input.source.epoch).toBe(2));
+  const request = socket.frames.filter(frame => frame.type === 'activation-context').at(-1)!;
+  const repeated = context.read(identity);
+  expect(socket.frames.filter(frame => frame.type === 'activation-context')).toHaveLength(loss === 'during read' ? 2 : 1);
+  const snapshot = (input: CommandActivationInput): CommandActivationSnapshot => ({...input, v: 1, capturedAt: Date.now()/1000,
+    authority: {generation: 'a'.repeat(32), revision: 1, commandRevision: 'b'.repeat(64)},
+    configuration: {fastMode: false, commands: [], yoloMode: false, isReviewer: false},
+    roster: {members: []}, grants: {grants: []}, repository: {resolution: 'none'}});
+  socket.receive({type: 'activation-context-result', requestId: request.requestId, result: snapshot(request.input)});
+  await turn;await repeated;
+  expect(failures).toEqual([]);
+  expect(socket.frames.filter(frame => frame.type === 'daemon-operation' && frame.operation === 'postRoomMessage')).toHaveLength(1);
+  expect(socket.frames.some(frame => frame.operation === 'postAgentTurnReceipt' && frame.input.status === 'failed')).toBe(false);
+  expect(fetcher).not.toHaveBeenCalled();
 });

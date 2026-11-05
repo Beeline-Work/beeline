@@ -21,6 +21,7 @@ test('helper operation capability has one owner, including aliases and extra met
     `channel.turn.request('claimAgentCommand', input)`,
     `channel['usage']['request']('postAgentUsage', input)`,
     `channel.activation.request(input)`,
+    `channel.operationReady()`,
     `channel.send({type:'daemon-operation', operation:'postRoomMessage', input})`,
   ]) assert.ok(inspectSource('apps/body/src/feature.ts', source).errors.some(x => x.includes('helper operation authority')), source);
   for (const [file, source] of [
@@ -33,6 +34,7 @@ test('helper operation capability has one owner, including aliases and extra met
   ]) assert.ok(inspectSource(file, source).errors.some(x => x.includes('helper operation authority')), source);
   assert.deepEqual(inspectSource('apps/body/src/daemon-api-client.ts', `class DaemonApiClient {
     execute(name,input) { return this.channel.requestOperation(name,input); }
+    waitForConnection() { return this.channel.operationReady(); }
     async #requestHttp() { return fetch('/v1/daemon/operations/getDaemonBootstrap'); }
   }`).errors, []);
 });

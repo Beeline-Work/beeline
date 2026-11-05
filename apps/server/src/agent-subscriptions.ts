@@ -49,6 +49,7 @@ DO $$ BEGIN
  END IF;
 END $$;
 ALTER TABLE agent_subscriptions ADD COLUMN IF NOT EXISTS title text;
+ALTER TABLE agent_subscriptions ADD COLUMN IF NOT EXISTS paused_at timestamptz;
 ALTER TABLE agent_subscriptions ADD COLUMN IF NOT EXISTS trigger_text text;
 ALTER TABLE agent_subscriptions ADD COLUMN IF NOT EXISTS service_app_id uuid REFERENCES workspace_apps(id) ON DELETE CASCADE;
 ALTER TABLE agent_subscriptions ADD COLUMN IF NOT EXISTS service_account_id text;
@@ -97,7 +98,7 @@ SELECT subscription.id,subscription.workspace_id,subscription.room_id,subscripti
   subscription.service_account_id,subscription.service_channel_id,subscription.service_channel_name,subscription.trigger_id,
   subscription.prompt,subscription.workflow_slug,subscription.fired_count,subscription.created_at,
   subscription.last_fired_at,subscription.title,subscription.trigger_text,subscription.webhook_token,
-  subscription.webhook_suffix,subscription.webhook_token_created_at,subscription.webhook_owner_id,subscription.inherit_to_corners,false inherited
+  subscription.webhook_suffix,subscription.webhook_token_created_at,subscription.webhook_owner_id,subscription.inherit_to_corners,false inherited,subscription.paused_at
 FROM agent_subscriptions subscription WHERE source='room'
 UNION ALL
 SELECT subscription.id,subscription.workspace_id,corner.id room_id,subscription.agent_id,
@@ -106,7 +107,7 @@ SELECT subscription.id,subscription.workspace_id,corner.id room_id,subscription.
   subscription.trigger_id,NULL::text prompt,NULL::text workflow_slug,0 fired_count,
   subscription.created_at,NULL::timestamptz last_fired_at,NULL::text title,NULL::text trigger_text,
   subscription.webhook_token,subscription.webhook_suffix,subscription.webhook_token_created_at,
-  subscription.webhook_owner_id,subscription.inherit_to_corners,true inherited
+  subscription.webhook_owner_id,subscription.inherit_to_corners,true inherited,subscription.paused_at
 FROM agent_subscriptions subscription JOIN rooms corner ON corner.parent_id=subscription.room_id
 LEFT JOIN corner_person_state state ON state.corner_id=corner.id AND state.identity_id=subscription.agent_id
 WHERE subscription.source='room' AND subscription.inherit_to_corners AND corner.archived_at IS NULL
@@ -122,11 +123,12 @@ SELECT subscription.id,subscription.workspace_id,subscription.room_id,subscripti
   subscription.service_account_id,subscription.service_channel_id,subscription.service_channel_name,subscription.trigger_id,
   subscription.prompt,subscription.workflow_slug,subscription.fired_count,subscription.created_at,
   subscription.last_fired_at,subscription.title,subscription.trigger_text,subscription.webhook_token,
-  subscription.webhook_suffix,subscription.webhook_token_created_at,subscription.webhook_owner_id,subscription.inherit_to_corners,false inherited
+  subscription.webhook_suffix,subscription.webhook_token_created_at,subscription.webhook_owner_id,subscription.inherit_to_corners,false inherited,subscription.paused_at
 FROM agent_subscriptions subscription WHERE source<>'room';
 `;
 
 type Row = {
+  paused_at?: Date | null;
   title?: string | null; trigger_text?: string | null; inherited?: boolean;
   id: string; room_id: string; agent_id: string; source: SubscriptionSource;
   event: string; repository: string | null; prompt: string | null; workflow_slug: string | null; fired_count: number;
@@ -140,6 +142,7 @@ function view(row: Row): RoomSubscriptionView {
   return {
     id: row.inherited ? `legacy:${row.room_id}:${row.agent_id}:${row.event}` : row.id, roomId: row.room_id, agentId: row.agent_id,
     source: row.source, event: row.event,
+    ...(row.paused_at ? { paused: true } : {}),
     ...(row.repository ? { repository: row.repository } : {}),
     ...(row.source === 'service' && row.event === 'new_message' ? { service: 'Slack' as const,
       channel: `#${row.service_channel_name ?? row.service_channel_id ?? 'channel'}`,
@@ -416,7 +419,7 @@ export async function fireServiceSubscriptions(db: SqlDatabase, body: Record<str
        AND app.composio_account_id=subscription.service_account_id
      JOIN memberships owner ON owner.workspace_id=room.workspace_id AND owner.room_id IS NULL
        AND owner.identity_id=app.owner_identity_id AND owner.removed_at IS NULL
-     WHERE subscription.source='service' AND subscription.event='new_message'
+     WHERE subscription.paused_at IS NULL AND subscription.source='service' AND subscription.event='new_message'
        AND subscription.trigger_id=$1 AND subscription.service_account_id=$2`,
     [triggerId, accountId],
   );
@@ -429,7 +432,7 @@ export async function fireServiceSubscriptions(db: SqlDatabase, body: Record<str
     const id = createHash('sha256').update(`subscription:${deliveryId}:${row.id}`).digest('hex');
     const inserted = await db.transaction(async (tx) => {
       const current = (await tx.query<Pick<Row, 'prompt' | 'workflow_slug'>>(
-        `SELECT prompt,workflow_slug FROM agent_subscriptions WHERE id=$1 FOR UPDATE`, [row.id],
+        `SELECT prompt,workflow_slug FROM agent_subscriptions WHERE id=$1 AND paused_at IS NULL FOR UPDATE`, [row.id],
       )).rows[0];
       if (!current) return false;
       const line = await systemLine(tx, {
@@ -478,7 +481,7 @@ export async function fireRepositorySubscriptions(
      JOIN github_installations installation ON installation.installation_id=repo.installation_id AND installation.status='active'
      JOIN memberships owner ON owner.identity_id=installation.owner_id
        AND owner.workspace_id=room.workspace_id AND owner.room_id IS NULL AND owner.removed_at IS NULL
-     WHERE subscription.source='repository' AND subscription.event=$2 AND subscription.repository=lower($3)`,
+     WHERE subscription.paused_at IS NULL AND subscription.source='repository' AND subscription.event=$2 AND subscription.repository=lower($3)`,
     [installationId, eventName, repository],
   );
   if (!rows.rowCount) return [];
@@ -502,7 +505,7 @@ export async function fireRepositorySubscriptions(
     const id = createHash('sha256').update(`subscription:${deliveryId}:${row.id}`).digest('hex');
     const inserted = await db.transaction(async (tx) => {
       const current = (await tx.query<Pick<Row, 'prompt' | 'workflow_slug'>>(
-        `SELECT prompt,workflow_slug FROM agent_subscriptions WHERE id=$1 FOR UPDATE`, [row.id],
+        `SELECT prompt,workflow_slug FROM agent_subscriptions WHERE id=$1 AND paused_at IS NULL FOR UPDATE`, [row.id],
       )).rows[0];
       if (!current) return false;
       const line = await systemLine(tx, {
@@ -526,8 +529,8 @@ export function subscriptionPromptBody(text: string, event: { kind?: string; pay
 }
 
 async function materializeCornerSubscriptions(tx: SqlDatabase, roomId: string, agentId: string): Promise<void> {
-  await tx.query(`INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,prompt,created_at,inherit_to_corners)
-    SELECT gen_random_uuid(),workspace_id,room_id,agent_id,'room',event,NULL,created_at,true
+  await tx.query(`INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,prompt,created_at,inherit_to_corners,paused_at)
+    SELECT gen_random_uuid(),workspace_id,room_id,agent_id,'room',event,NULL,created_at,true,paused_at
     FROM room_event_subscriptions WHERE room_id=$1 AND agent_id=$2 AND inherited
     ON CONFLICT DO NOTHING`, [roomId, agentId]);
   await tx.query(`INSERT INTO corner_person_state(corner_id,identity_id,subscriptions_overridden) VALUES($1,$2,true)
@@ -590,7 +593,7 @@ export async function roomEventSubscriptions(db: SqlDatabase, roomId: string, ev
     JOIN room_access member ON member.room_id=subscription.room_id AND member.identity_id=subscription.agent_id
       AND member.removed_at IS NULL
     JOIN identities agent ON agent.id=subscription.agent_id AND agent.kind='agent'
-    WHERE subscription.room_id=$1 AND ($2::text IS NULL OR subscription.event=$2)
+    WHERE subscription.room_id=$1 AND ($2::text IS NULL OR (subscription.event=$2 AND stored.paused_at IS NULL))
     ORDER BY subscription.id ${lock ? 'FOR UPDATE OF stored' : ''}`, [roomId, event ?? null])).rows;
 }
 
@@ -599,7 +602,7 @@ export async function subscriptionRooms(db: SqlDatabase, roomIds: readonly strin
     JOIN room_access member ON member.room_id=subscription.room_id AND member.identity_id=subscription.agent_id
       AND member.removed_at IS NULL
     JOIN identities agent ON agent.id=subscription.agent_id AND agent.kind='agent'
-    WHERE subscription.room_id=ANY($1::uuid[]) AND subscription.event=$2`, [roomIds, event])).rows.map(row => row.room_id);
+    WHERE subscription.paused_at IS NULL AND subscription.room_id=ANY($1::uuid[]) AND subscription.event=$2`, [roomIds, event])).rows.map(row => row.room_id);
 }
 
 /** Upgrade-only import. Old JSON is retired after copying; it never dispatches.

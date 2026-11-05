@@ -417,6 +417,7 @@ export type RoomScheduleCadence =
   | { readonly kind: 'cron'; readonly expression: string; readonly timeZone?: string }
   | { readonly kind: 'interval'; readonly everyMinutes: number; readonly startsAt?: number };
 export type RoomScheduleView = {
+  readonly paused?: boolean;
   readonly title?: string;
   readonly maxRuns?: number;
   readonly id: string;

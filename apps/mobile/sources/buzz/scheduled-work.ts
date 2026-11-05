@@ -81,6 +81,7 @@ export function scheduleTitle(schedule: RoomScheduleView): string {
 }
 
 export function scheduleTrigger(schedule: RoomScheduleView, now = new Date()): string {
+  if (schedule.paused) return 'Paused while you were away';
   const next = new Date(schedule.nextRunAt * 1000);
   if (schedule.maxRuns !== 1) return scheduleCadenceLabel(schedule.cadence, next);
   const date = new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'numeric', day: 'numeric' });
@@ -99,6 +100,7 @@ export function scheduleTrigger(schedule: RoomScheduleView, now = new Date()): s
 
 /** The detail page's Runs row: the cadence and the next firing. */
 export function scheduleRuns(schedule: RoomScheduleView): string {
+  if (schedule.paused) return 'Paused while you were away';
   return `${scheduleTrigger(schedule)} · next ${NEXT_RUN.format(
     new Date(schedule.nextRunAt * 1_000),
   )}`;
@@ -112,6 +114,7 @@ export function subscriptionTitle(subscription: RoomSubscriptionView): string {
 }
 
 export function subscriptionWhen(subscription: RoomSubscriptionView, isDirectMessage = false): string {
+  if (subscription.paused) return 'Paused while you were away';
   if (subscription.registrationStatus === 'error')
     return `Setup failed · ${subscription.when ?? subscription.event}`;
   if (subscription.registrationStatus === 'registering')

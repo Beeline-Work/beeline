@@ -185,8 +185,8 @@ export async function ingestSubscriptionWebhook(db: SqlDatabase, id: string, raw
   await ensureSystemIdentity(db);
   return db.transaction(async (tx) => {
     const row = (await tx.query<{ room_id: string; agent_id: string; prompt: string;
-      workflow_slug: string | null; webhook_token: string; webhook_owner_id: string }>(
-      `SELECT room_id,agent_id,prompt,workflow_slug,webhook_token,webhook_owner_id
+      workflow_slug: string | null; webhook_token: string; webhook_owner_id: string; paused_at: Date | null }>(
+      `SELECT room_id,agent_id,prompt,workflow_slug,webhook_token,webhook_owner_id,paused_at
        FROM agent_subscriptions WHERE id=$1 AND source='webhook' FOR UPDATE`, [id])).rows[0];
     if (!row) return { status: 404, outcome: 'not_found' };
     const record = async (outcome: WebhookCallView['outcome'], status: number, reason?: string,
@@ -207,6 +207,7 @@ export async function ingestSubscriptionWebhook(db: SqlDatabase, id: string, raw
     if (recent.rowCount >= CALLS_PER_MINUTE) return record('refused', 429, 'Too many calls');
     if (!webhookAuthenticated(openSecrets<string>(secret(), row.webhook_token), raw, headers))
       return record('refused', 401, 'Invalid token or signature');
+    if (row.paused_at) return record('refused', 409, 'Paused while you were away');
     const current = await tx.query(
       `SELECT 1 FROM rooms room
        JOIN room_access member ON member.room_id=room.id AND member.identity_id=$2 AND member.removed_at IS NULL

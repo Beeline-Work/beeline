@@ -1638,6 +1638,10 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             }
             footerNoteTestID={`corner-proposal-footer-${message.id}`}
           />
+        ) : message.awayWarning ? (
+          <TranscriptCard tier="record" testID="away-warning-card" wrapTitle
+            title="Schedules and subscriptions will pause in 1 day"
+            body={message.text} stamp={ledgerStamp(message.timestamp)} />
         ) : (message.authorIdentity?.pubkey ?? message.pubkey) === SYSTEM_IDENTITY_PUBKEY ? (
           <LedgerSystemLine
             id={message.id}

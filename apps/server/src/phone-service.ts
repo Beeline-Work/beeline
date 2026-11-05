@@ -1,3 +1,4 @@
+import { recordPersonInteraction } from './away-auto-pause.js';
 import { isSubscribableEventKind } from '@beeline/api-contract/phone';
 import { setRoomEventSubscriptions, unsubscribeRoomReviewer, subscribeRoomReviewer } from './agent-subscriptions.js';
 import { roomMessageTagsSql } from './room-router-read.js';
@@ -499,6 +500,7 @@ interface RoomReadRow {
   } | null;
 }
 interface RoomScheduleRow {
+  paused_at: Date | null;
   id: string;
   workspace_id: string;
   room_id: string;
@@ -812,6 +814,7 @@ function projectedMessage(
   };
   if (!row.card_type || !row.card) return base;
   switch (row.card_type) {
+    case 'away-warning': return { ...base, awayWarning: true };
     case 'vault-save': {
       const card = readVaultSaveCard(row.card);
       return card ? { ...base, vaultSave: card } : base;
@@ -946,6 +949,7 @@ function roomSchedule(row: RoomScheduleRow): RoomScheduleView {
     roomId: row.room_id,
     agentId: row.agent_id,
     creatorId: row.creator_id,
+    ...(row.paused_at ? { paused: true } : {}),
     title: scheduleDisplayTitle({ title: row.title, workflow: row.workflow_slug, prompt: row.message }),
     ...(row.max_runs != null ? { maxRuns: row.max_runs } : {}),
     cadence: row.cadence,
@@ -1069,7 +1073,10 @@ export class PhoneService {
     defer: (notification: () => void) => void): Promise<void> {
     if (!(this.database as CommandScopedDatabase).active) throw new Error('Tray decision requires its durable command transaction');
     if (viewerId === REVIEW_IDENTITY_ID && REVIEW_LOCKED_OPERATIONS.has(operation)) throw new Error(REVIEW_IDENTITY_MESSAGE);
-    if (operation === 'decideAgentGrant') await this.decideAgentGrant(input as Input<'decideAgentGrant'>, viewerId, defer);
+    if (operation === 'decideAgentGrant') {
+      await this.decideAgentGrant(input as Input<'decideAgentGrant'>, viewerId, defer);
+      await recordPersonInteraction(this.database, viewerId);
+    }
     else if (operation === 'decideWritePermission') await this.execute(operation, input as Input<'decideWritePermission'>, viewerId);
     else if (operation === 'skipChoice') await this.execute(operation, input as Input<'skipChoice'>, viewerId);
     else throw new Error('Unsupported Tray decision command');
@@ -4106,6 +4113,19 @@ export class PhoneService {
   }
 
   async execute<Name extends keyof PhoneOperationMap>(
+    name: Name, input: Input<Name>, viewerId: string,
+    sourceClient?: { id: string; name: string }, familyId?: string,
+    deferPostCommitObservation = false,
+  ): Promise<Output<Name>> {
+    const result = await this.executeOperation(name, input, viewerId, sourceClient, familyId, deferPostCommitObservation);
+    if (['sendRoomMessage', 'sendRoomReply', 'reactToMessage', 'answerChoice', 'skipChoice',
+      'decideApprovalCard', 'decideWritePermission', 'decideAgentGrant', 'acceptConnectorOffer',
+      'actOnRepositoryCard', 'answerStarPrompt'].includes(name))
+      await recordPersonInteraction(this.database, viewerId);
+    return result;
+  }
+
+  private async executeOperation<Name extends keyof PhoneOperationMap>(
     name: Name,
     input: Input<Name>,
     viewerId: string,
@@ -4930,6 +4950,7 @@ export class PhoneService {
       [roomId, viewerId, messageIdValue],
     )).rows[0];
     if (!result?.eligible) throw new Error('message not found');
+    await recordPersonInteraction(this.database, viewerId);
     // The committed row's PostgreSQL notification reconciles every reader
     // device, including those on this server. Publishing here duplicates it.
   }
@@ -5133,7 +5154,7 @@ export class PhoneService {
     const schedules = await this.database.query<RoomScheduleRow>(
       `SELECT schedule.id,schedule.workspace_id,schedule.room_id,schedule.agent_id,
               schedule.creator_id,schedule.cadence,schedule.message,schedule.next_run_at,
-              schedule.created_at,schedule.workflow_slug,schedule.run_count,schedule.title,schedule.max_runs,
+              schedule.created_at,schedule.workflow_slug,schedule.run_count,schedule.title,schedule.max_runs,schedule.paused_at,
               surface.parent_id surface_parent_id,surface.name surface_name
        FROM agent_schedules schedule
        JOIN rooms surface ON surface.id=schedule.room_id

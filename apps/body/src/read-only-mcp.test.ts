@@ -2287,6 +2287,19 @@ m31_it('rejects schedule run limits on create and update before calling the daem
 });
 
 
+m31_it('routes pause and resume for a schedule or subscription through the own-wake action', async () => {
+  m31_vi.stubGlobal('fetch', async (url: URL, init: RequestInit) => {
+    calls.push({ name: String(url).split('/').at(-1)!, input: JSON.parse(String(init.body)) });
+    return Response.json({ id: 'write-receipt', createdAt: 1 });
+  });
+  await m31_callAgentTool('wake', { action: 'pause', scheduleId: 'saved-schedule' }, 'pause-1');
+  await m31_callAgentTool('wake', { action: 'resume', subscriptionId: 'saved-subscription' }, 'resume-1');
+  m31_expect(calls).toEqual([
+    { name: 'setAgentWakePaused', input: { roomId: 'watcher', scheduleId: 'saved-schedule', paused: true } },
+    { name: 'setAgentWakePaused', input: { roomId: 'watcher', subscriptionId: 'saved-subscription', paused: false } },
+  ]);
+});
+
 m31_it('offers lifecycle watches in a DM without chatter or schedule events', () => {
   const tool = m31_agentToolsFor(true, true).find(t => t.name === 'wake')!;
   m31_expect(tool.description).toMatch(/lifecycle/i);

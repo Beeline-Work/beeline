@@ -198,8 +198,8 @@ export const MCP_AGENT_TOOLS: Tool[] = [
   tool('app_tool', `Discover an app's operations with app and no tool; run one with tool and args. app is a connected app id from connect status, or one of ${['vault', 'onboarding', 'workflow', 'wallet', 'avatar'].map(app => `beeline:${app}`).join(', ')}. The wallet is read-only here.`, {
     address: address(), app: { type: 'string' }, tool: { type: 'string' }, args: { type: 'object', additionalProperties: true }, query: { type: 'string' },
   }, ['address', 'app']),
-  tool('wake', 'Manage your own wake sources in a place: schedules, events and corner lifecycle watches. lifecycle watches the corner named by corner. A wake reaches you through list_mentions and your webhook. Schedules support create, list, update and delete (update and delete take scheduleId); events support create (source, event) and delete (subscriptionId); lifecycle watches support create and delete (corner).', {
-    address: address(), action: { type: 'string', enum: ['create', 'list', 'update', 'delete', 'events', 'replace_events'] },
+  tool('wake', 'Manage your own wake sources in a place: schedules, events and corner lifecycle watches. lifecycle watches the corner named by corner. A wake reaches you through list_mentions and your webhook. Schedules support create, list, update and delete (update and delete take scheduleId); events support create (source, event) and delete (subscriptionId); pause and resume take one scheduleId or subscriptionId and skip missed schedule runs; lifecycle watches support create and delete (corner).', {
+    address: address(), action: { type: 'string', enum: ['create', 'list', 'update', 'delete', 'pause', 'resume', 'events', 'replace_events'] },
     trigger: { type: 'string', enum: ['schedule', 'event', 'lifecycle'] }, corner: address('Corner to watch, for lifecycle.'),
     title: { type: 'string', maxLength: 80 }, when: { type: 'string' }, workflowName: { type: 'string' }, prompt: { type: 'string', maxLength: 2000 },
     cadence: { type: 'object', required: ['kind'], additionalProperties: false, properties: { kind: { type: 'string', enum: ['interval', 'cron'] },
@@ -631,6 +631,8 @@ export class RoomsMcpAgentTools {
     const at = addressArg(args.address);
     return this.inTurn(member, at, async (_, context) => {
       const roomId = context.roomId;
+      if (args.action === 'pause' || args.action === 'resume')
+        return exec('setAgentWakePaused', { ...context, scheduleId: args.scheduleId, subscriptionId: args.subscriptionId, paused: args.action === 'pause' });
       if (args.action === 'list') {
         const [schedules, subscriptions, watches, events] = await Promise.all([
           exec('listAgentSchedules', { roomId, selfOnly: true }), exec('listAgentSubscriptions', { roomId }),

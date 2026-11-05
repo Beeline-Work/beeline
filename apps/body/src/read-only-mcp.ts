@@ -3118,6 +3118,12 @@ async function executeAgentTool(name: string, args: JsonObject, toolCallId: stri
       if (args.trigger === 'lifecycle' && !args.address) throw new Error('lifecycle wake requires address');
       const roomId = agentScheduleRoomId();
       const deps = { ...agentScheduleDepsFromEnv(), selfOnly: true };
+      if (args.action === 'pause' || args.action === 'resume') {
+        if (args.trigger === 'lifecycle') throw new Error('pause and resume apply to schedules and subscriptions');
+        return JSON.stringify(await daemonExecute('setAgentWakePaused', { roomId,
+          scheduleId: args.scheduleId as string | undefined, subscriptionId: args.subscriptionId as string | undefined,
+          paused: args.action === 'pause' }));
+      }
       if (args.action === 'list') {
         const [schedules, subscriptions, watches, events] = await Promise.all([
           daemonExecute('listAgentSchedules', { roomId, selfOnly: true }),

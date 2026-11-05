@@ -20,18 +20,21 @@ describe.skipIf(!url)('Persisted schedule clock admission', () => {
       // Minimal physical-plan fixture; full migrated schema behavior is covered
       // by agent-schedules/postgres-live tests, not claimed by this fixture.
       await pool.query(`CREATE TABLE rooms(id uuid PRIMARY KEY,archived_at timestamptz);
-        CREATE TABLE identities(id text PRIMARY KEY,kind text);
+        CREATE TABLE identities(id text PRIMARY KEY,kind text,hidden_from_roster boolean DEFAULT false,
+          created_at timestamptz DEFAULT now(),last_app_active_at timestamptz,away_warning_at timestamptz);
+        CREATE TABLE agents(agent_id text PRIMARY KEY,owner_id text);
+        CREATE TABLE agent_subscriptions(id uuid,room_id uuid,agent_id text,paused_at timestamptz);
         CREATE TABLE memberships(room_id uuid,identity_id text,removed_at timestamptz);
         CREATE VIEW room_access AS SELECT * FROM memberships;
         CREATE TABLE agent_schedules(id uuid PRIMARY KEY,room_id uuid,agent_id text,creator_id text,
           owner_id text,workflow_slug text,human_command_message_id text,cadence jsonb,message text,
           max_runs int,run_count int DEFAULT 0,next_run_at timestamptz,updated_at timestamptz DEFAULT now(),
-          workflow_run jsonb,failed_due_at timestamptz,failed_revision timestamptz);`);
+          workflow_run jsonb,paused_at timestamptz,failed_due_at timestamptz,failed_revision timestamptz);`);
       const source = readFileSync(new URL('./database.ts', import.meta.url), 'utf8');
       const index = source.match(/CREATE INDEX IF NOT EXISTS agent_schedules_admitted_due_idx[^;]+;/)?.[0];
       expect(index).toBeTruthy(); await pool.query(index!);
       await pool.query('INSERT INTO rooms(id) VALUES($1)', [room]);
-      await pool.query("INSERT INTO identities VALUES('agent','agent'),('human','human')");
+      await pool.query("INSERT INTO identities(id,kind) VALUES('agent','agent'),('human','human')");
       await pool.query("INSERT INTO memberships VALUES($1,'agent',NULL),($1,'human',NULL)", [room]);
       await pool.query(`INSERT INTO agent_schedules(id,room_id,agent_id,creator_id,cadence,message,next_run_at,failed_due_at,failed_revision)
         SELECT gen_random_uuid(),$1,'agent','human','{"kind":"interval","everyMinutes":5}',
@@ -42,7 +45,7 @@ describe.skipIf(!url)('Persisted schedule clock admission', () => {
       let deadlineSql = '';
       const transaction = vi.fn(async () => { throw new Error('future work was dispatched'); });
       const database = { query: async (sql: string, values?: unknown[]) => {
-        if (sql.includes('delay_ms')) deadlineSql = sql;
+        if (sql.includes('ORDER BY schedule.next_run_at')) deadlineSql = sql;
         return pool.query(sql, values);
       }, transaction } as unknown as SqlDatabase;
       vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2099-01-01'));

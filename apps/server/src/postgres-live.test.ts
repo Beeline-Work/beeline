@@ -293,6 +293,21 @@ describe('Postgres live fanout', () => {
     await settle(events); expect(wake).not.toHaveBeenCalled();
     await database.query("UPDATE agent_schedules SET updated_at=updated_at+interval '1 second' WHERE id=$1", [schedule]);
     await eventually(() => wake.mock.calls.length === 1);
+    wake.mockClear();
+    await database.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)', [agent,AUTHOR]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    await database.query('UPDATE identities SET last_app_active_at=now(),away_warning_at=NULL WHERE id=$1', [AUTHOR]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    const subscription = '55555555-5555-4555-8555-555555555555';
+    await database.query(`INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,prompt)
+      VALUES($1,$2,$3,$4,'room','joined',NULL)`, [subscription,WORKSPACE,ROOM,agent]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    await database.query('UPDATE agent_subscriptions SET fired_count=fired_count+1 WHERE id=$1', [subscription]);
+    await settle(events); expect(wake).not.toHaveBeenCalled();
+    await database.query('UPDATE agent_subscriptions SET paused_at=now() WHERE id=$1', [subscription]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    await database.query('UPDATE agent_schedules SET paused_at=now() WHERE id=$1', [schedule]);
+    await eventually(() => wake.mock.calls.length === 1);
     expect(events.some(event => event.type === 'invalidate' && event.reason === 'postgres:agent_schedule_due')).toBe(false);
   });
 

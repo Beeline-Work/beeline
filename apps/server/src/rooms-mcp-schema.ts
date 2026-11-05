@@ -68,8 +68,8 @@ DO $$ BEGIN
   END IF;
 END $$;
 ALTER TABLE rooms_mcp_mentions ADD COLUMN IF NOT EXISTS rewakes integer NOT NULL DEFAULT 0;
-CREATE INDEX IF NOT EXISTS rooms_mcp_mentions_owed ON rooms_mcp_mentions(created_at)
-  WHERE cleared_at IS NULL AND rewakes<3;
+-- Retire the index used only by the deleted timed mention re-delivery.
+DROP INDEX IF EXISTS rooms_mcp_mentions_owed;
 -- A reply settles its own author's tag only after the message write succeeds,
 -- in the same transaction, regardless of which posting surface was used.
 CREATE OR REPLACE FUNCTION clear_replied_room_mention() RETURNS trigger AS $$

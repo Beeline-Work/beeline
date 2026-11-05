@@ -29,8 +29,6 @@ export const BACKGROUND_SOURCES = [
   ['institutional-curator', 'institutional_memory_items', 'updated_at,last_used_at,state,deleted_at'],
   ['institutional-curator', 'workspace_skills', 'updated_at'],
   ['unfinished-app-sign-ins', 'workspace_apps', 'authorised_at,composio_link_expires_at,sign_in_error,composio_account_id'],
-  ['owed-mentions', 'rooms_mcp_mentions', 'created_at,cleared_at,rewakes'],
-  ['owed-mentions', 'agent_commands', 'state'],
   ['mcp-member-routes', 'rooms_mcp_pending_routes', 'message_id'],
   ['media-expiry', 'objects', 'expires_at,state'],
   ['media-expiry', 'corner_brief_revisions', 'attachments'],
@@ -83,7 +81,6 @@ BEGIN
  IF family='free-agents' AND TG_TABLE_NAME<>'free_agents' AND NOT EXISTS(SELECT 1 FROM free_agents WHERE agent_id=COALESCE(item->>'agent_id',item->>'helper_agent_id')) THEN RETURN NULL;END IF;
  IF family='next-day-checkin' AND TG_TABLE_NAME='agent_commands' AND NOT EXISTS(SELECT 1 FROM next_day_checkins WHERE command_id=item->>'id' AND measured_at IS NULL) THEN RETURN NULL;END IF;
  IF family='next-day-checkin' AND TG_TABLE_NAME IN ('push_delivery_claims','push_outbox_retirements') AND NOT EXISTS(SELECT 1 FROM next_day_checkins WHERE message_id=item->>'message_id' AND measured_at IS NULL) THEN RETURN NULL;END IF;
- IF family='owed-mentions' AND TG_TABLE_NAME='agent_commands' AND NOT EXISTS(SELECT 1 FROM rooms_mcp_mentions WHERE member_id=item->>'agent_id' AND message_id=item->>'source_message_id' AND cleared_at IS NULL) THEN RETURN NULL;END IF;
  IF family IN ('corner-reviewers','corner-checks-blocked') AND TG_TABLE_NAME='agent_commands' AND NOT EXISTS(SELECT 1 FROM rooms WHERE id=(item->>'room_id')::uuid AND parent_id IS NOT NULL) THEN RETURN NULL;END IF;
  IF family='expired-command-leases' AND (item->>'turn_owner_connection_id' IS NOT NULL OR item->>'action' NOT IN ('input','resume')) THEN RETURN NULL;END IF;
  IF family='retention:live_outputs' AND item->>'kind'='presence' THEN RETURN NULL;END IF;
@@ -97,8 +94,18 @@ BEGIN
  PERFORM beeline_notify_committed_command(json_build_object('principal','background','operation','source','commandId',family)::text);
  RETURN NULL;
 END $$;
+-- Source registrations are positional. Remove the old set before recreating
+-- it so a removed family cannot retain a trigger on its former table.
+DO $$
+DECLARE source record;
+BEGIN
+ FOR source IN SELECT tgname,tgrelid::regclass AS relation FROM pg_trigger
+   WHERE NOT tgisinternal AND tgfoid='beeline_background_source()'::regprocedure
+ LOOP
+   EXECUTE format('DROP TRIGGER %I ON %s',source.tgname,source.relation);
+ END LOOP;
+END $$;
 ${sources.map(([family, table, columns], index) => `
-DROP TRIGGER IF EXISTS beeline_background_source_${index} ON ${table};
 CREATE TRIGGER beeline_background_source_${index} AFTER INSERT OR UPDATE OR DELETE ON ${table}
  FOR EACH ROW EXECUTE FUNCTION beeline_background_source('${family}','${columns}');`).join('\n')}
 `;

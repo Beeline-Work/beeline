@@ -22,10 +22,6 @@ export class CommandAwaitingConfirmation extends Error {}
 
 export class MobileCommandOwner {
   private suspended = false;
-  private readonly retries = new Map<string, ReturnType<typeof setTimeout>>();
-  private readonly failures = new Map<string, number>();
-  private activeSends = 0;
-  private readonly waiting: Array<() => void> = [];
   private readonly intents: CommandIntents;
   private readonly restored = new Set<string>();
   private readonly listeners = new Set<(record: CommandIntent) => void>();
@@ -55,51 +51,25 @@ export class MobileCommandOwner {
   }
   prepare(admitted: AdmittedCommand): Promise<CommandIntent> { return this.intents.prepare(admitted); }
   find(id: string): CommandIntent | undefined { return this.intents.view().find(record => record.id === id); }
-  suspend(): void { this.suspended = true; for (const timer of this.retries.values()) clearTimeout(timer); this.retries.clear(); this.intents.setPartition(undefined); }
+  suspend(): void { this.suspended = true; this.intents.setPartition(undefined); }
   subscribe(listener: (record: CommandIntent) => void): () => void { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   private notify(record: CommandIntent): void { for (const listener of this.listeners) listener(record); }
-  async deliver(id: string, cause: 'send' | 'reconnect' | 'automatic' = 'send'): Promise<AgentMessageWriteResult> {
+  async deliver(id: string, cause: 'send' | 'reconnect' = 'send'): Promise<AgentMessageWriteResult> {
     const record = this.find(id);
     if (!record) throw new Error('Command intent was not persisted');
-    if (record.state === 'committed') { this.clearRetry(id); return { messageId: record.id }; }
-    if (record.state === 'cancelled' || record.state === 'refused') throw new CommandAwaitingConfirmation();
-    try {
+    if (record.state === 'committed') return { messageId: record.id };
     const connection = this.socket.commandState();
     if (!connection.ready || !connection.commandDedupV1) throw new CommandAwaitingConfirmation();
-    const kind = record.state === 'prepared' ? 'initial' : cause === 'automatic' ? 'automatic' : cause === 'reconnect' ? 'reconnect' : 'retry';
+    const kind = record.state === 'prepared' ? 'initial' : cause === 'reconnect' ? 'reconnect' : 'retry';
     const next = await this.intents.dispatch(record, { kind, generation: connection.generation,
       commandDedupV1: connection.commandDedupV1, ...(kind === 'retry' ? { actionId: randomId() } : {}) } as Parameters<CommandIntents['dispatch']>[1],
-      (operation, args, command) => this.send(() => this.socket.requestCommand(operation, args, command)));
+      (operation, args, command) => this.socket.requestCommand(operation, args, command));
     this.notify(next);
     if (next.state !== 'committed') throw new CommandAwaitingConfirmation();
-    this.clearRetry(id);
     return { messageId: next.id };
-    } catch (error) { this.scheduleRetry(id); throw error; }
   }
-  private async send<T>(work: () => Promise<T>): Promise<T> {
-    if (this.activeSends >= 8) await new Promise<void>(resolve => this.waiting.push(resolve));
-    else this.activeSends++;
-    try {
-      if (this.suspended) throw new Error('Command owner suspended');
-      const state = this.socket.commandState();
-      if (!state.ready || !state.commandDedupV1) throw new CommandAwaitingConfirmation();
-      return await work();
-    } finally { const next = this.waiting.shift(); if (next) next(); else this.activeSends--; }
-  }
-  private clearRetry(id: string): void {
-    const timer = this.retries.get(id); if (timer !== undefined) clearTimeout(timer);
-    this.retries.delete(id); this.failures.delete(id);
-  }
-  private scheduleRetry(id: string): void {
-    const record = this.find(id);
-    if (this.suspended || !record || ['committed', 'cancelled', 'refused'].includes(record.state) || this.retries.has(id)) return;
-    const failures = (this.failures.get(id) ?? 0) + 1; this.failures.set(id, failures);
-    this.retries.set(id, setTimeout(() => {
-      this.retries.delete(id);
-      void this.deliver(id, 'automatic').catch(() => {});
-    }, Math.min(30_000, 500 * 2 ** Math.min(failures - 1, 6))));
-  }
-  /** Reconnect resumes durable work; transient failures also recover on backoff. */
+  /** Exactly one attempt per successfully negotiated connection generation.
+   * Failure parks; this method contains no timer and never schedules itself. */
   async negotiated(): Promise<void> {
     const connection = this.socket.commandState();
     if (!connection.ready || !connection.commandDedupV1) return;
@@ -109,13 +79,13 @@ export class MobileCommandOwner {
   }
   async cancel(id: string): Promise<void> {
     const record = this.find(id);
-    if (record) { this.notify(await this.intents.cancel(record)); this.clearRetry(id); }
+    if (record) this.notify(await this.intents.cancel(record));
   }
   async committedMessage(id: string): Promise<void> {
     const record = this.find(id);
     if (!record) return;
     const next = await this.intents.committedEffect({ origin: this.origin, principal: this.principal }, record.operation, id);
-    if (next) { this.notify(next); this.clearRetry(id); }
+    if (next) this.notify(next);
   }
 }
 export function activateCommandOwner(origin: string, principal: string, socket: Partial<CommandSocketBridge>): MobileCommandOwner {

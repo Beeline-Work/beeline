@@ -12,9 +12,9 @@ type Options<T> = {
   subscribe?: (invalidate: () => void, refresh: () => void,
     replace: (data: T) => void, recover: () => void) => Promise<() => void>;
   missLimit?: number;
-  /** Retained for callers; read failures always recover with bounded backoff. */
+  /** Failed reads wait for explicit Retry, real reconnect or a new focus. */
   retryOnChange?: boolean;
-  /** Backoff bounds for automatic recovery while observed. */
+  /** Event-driven cooldown only; never schedules a retry timer. */
   retryBackoffMs?: { initial: number; max: number };
   onError?: (cause: unknown) => void;
 };
@@ -32,7 +32,6 @@ class Resource<T> {
   misses = 0;
   version = 0;
   retryAfter = 0;
-  retryTimer?: ReturnType<typeof setTimeout>;
   stop?: () => void;
   constructor(
     readonly key: string,
@@ -44,7 +43,6 @@ class Resource<T> {
   }
   replace = (data: T) => {
     if (!this.listeners.size) return;
-    this.cancelRetry();
     this.version += 1;
     this.misses = 0;
     this.retryAfter = 0;
@@ -54,14 +52,15 @@ class Resource<T> {
   };
   invalidate = () => {
     if (!this.listeners.size) return Promise.resolve();
-    if (Date.now() < this.retryAfter) return Promise.resolve();
+    if (this.options.retryBackoffMs) {
+      if (Date.now() < this.retryAfter) return Promise.resolve();
+    } else if (this.snapshot.error) return Promise.resolve();
     this.dirty = true;
     const completed = new Promise<void>((resolve) => this.waiters.push(resolve));
     void this.read();
     return completed;
   };
   retry = () => {
-    this.cancelRetry();
     this.misses = 0;
     this.retryAfter = 0;
     this.publish({ ...this.snapshot, error: null, installMissing: false });
@@ -71,7 +70,6 @@ class Resource<T> {
   recover = () => this.snapshot.error ? this.invalidate() : Promise.resolve();
   async read() {
     if (this.flight || !this.listeners.size) return;
-    this.cancelRetry();
     this.flight = true;
     const version = this.version;
     this.dirty = false;
@@ -87,8 +85,8 @@ class Resource<T> {
       if (this.listeners.size && version === this.version) {
         this.options.onError?.(cause);
         this.misses += 1;
-        const backoff = this.options.retryBackoffMs ?? { initial: 500, max: 30_000 };
-        this.retryAfter = Date.now() + Math.min(backoff.max, backoff.initial * 2 ** Math.min(this.misses - 1, 30));
+        const backoff = this.options.retryBackoffMs;
+        if (backoff) this.retryAfter = Date.now() + Math.min(backoff.max, backoff.initial * 2 ** Math.min(this.misses - 1, 30));
         this.publish({
           ...this.snapshot,
           loading: false,
@@ -103,12 +101,13 @@ class Resource<T> {
       this.flight = false;
       if (!this.listeners.size) {
         if (resources.get(this.key) === this) resources.delete(this.key);
-      } else if (this.dirty && Date.now() >= this.retryAfter) {
+      } else if (this.dirty && !(this.options.retryOnChange === false && this.snapshot.error) &&
+          (!this.snapshot.error || this.options.subscribe) &&
+          (!this.options.retryBackoffMs || Date.now() >= this.retryAfter)) {
         this.publish({ ...this.snapshot, error: null });
         void this.read();
         return;
       }
-      if (this.listeners.size && this.misses) this.scheduleRetry();
       this.waiters.splice(0).forEach((resolve) => resolve());
     }
   }
@@ -122,7 +121,7 @@ class Resource<T> {
     };
     void Promise.resolve()
       .then(() => (active ? this.options.subscribe?.(
-        this.invalidate,
+        this.options.retryBackoffMs || this.options.retryOnChange === false ? this.invalidate : this.retry,
         this.options.retryBackoffMs ? this.invalidate : this.retry, this.replace,
         this.options.retryOnChange === false ? () => Promise.resolve() : this.recover) : undefined))
       .then((stop) => {
@@ -133,27 +132,9 @@ class Resource<T> {
         if (active) {
           this.options.onError?.(cause);
           this.stop = undefined;
-          this.misses++;
-          const backoff = this.options.retryBackoffMs ?? { initial: 500, max: 30_000 };
-          this.retryAfter = Date.now() + Math.min(backoff.max, backoff.initial * 2 ** Math.min(this.misses - 1, 30));
           this.publish({ ...this.snapshot, loading: false, error: appErrorCopy(cause) });
-          this.scheduleRetry();
         }
       });
-  }
-  cancelRetry() {
-    if (this.retryTimer !== undefined) clearTimeout(this.retryTimer);
-    this.retryTimer = undefined;
-  }
-  scheduleRetry() {
-    if (this.retryTimer !== undefined || !this.listeners.size) return;
-    const version = this.version;
-    this.retryTimer = setTimeout(() => {
-      this.retryTimer = undefined;
-      if (!this.listeners.size || version !== this.version) return;
-      if (!this.stop) this.attach();
-      void this.invalidate();
-    }, Math.max(0, this.retryAfter - Date.now()));
   }
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -165,7 +146,6 @@ class Resource<T> {
     return () => {
       this.listeners.delete(listener);
       if (!this.listeners.size) {
-        this.cancelRetry();
         this.stop?.();
         this.stop = undefined;
         this.dirty = false;
@@ -176,7 +156,6 @@ class Resource<T> {
   getSnapshot = () => this.snapshot;
   /** Drop the old account's data at once and read again as the new one. */
   reset() {
-    this.cancelRetry();
     this.version += 1;
     this.misses = 0;
     this.retryAfter = 0;

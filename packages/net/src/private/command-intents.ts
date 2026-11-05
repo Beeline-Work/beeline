@@ -19,7 +19,6 @@ export interface CommandIntentStorage {
 export type CommandAttempt = Readonly<{ generation: number; commandDedupV1: boolean }> & (
   | { readonly kind: 'initial' }
   | { readonly kind: 'reconnect' }
-  | { readonly kind: 'automatic' }
   | { readonly kind: 'retry'; readonly actionId: string }
 );
 export interface AdmittedCommand {

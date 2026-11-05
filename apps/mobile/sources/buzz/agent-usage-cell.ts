@@ -1,4 +1,5 @@
 import { readAgentUsageCellValue, type AgentUsageCell } from '@beeline/api-contract/helper-usage';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { subscribeClientReset } from '@/sync/client-reset';
 export type UsageCellView = Readonly<{ mode: 'pending' | 'legacy' | 'router'; cell: AgentUsageCell | null }>;
 type Connection = Readonly<{ generation: number; usageCellV1: boolean; origin: string; principal: string;
@@ -15,14 +16,12 @@ let profile: string | null = null;
 let profileEpoch = 0;
 let value: UsageCellView = pending;
 let flight: Promise<void> | undefined;
-let baselineReady = false;
-let pendingSource: AgentUsageCell | undefined;
 let blocked: { agentId: string; revision: number | null } | undefined;
 const notify = () => { for (const listener of listeners) listener(); };
 function cell(value: unknown): AgentUsageCell | undefined {
   const canonical = readAgentUsageCellValue(value);
   if (!canonical) return;
-  return canonical;
+  try { return utf8ToBytes(JSON.stringify(value)).byteLength <= 32 * 1024 ? canonical : undefined; } catch { return; }
 }
 function accept(raw: unknown, snapshot: boolean): void {
   const owner = connection;
@@ -38,29 +37,15 @@ function accept(raw: unknown, snapshot: boolean): void {
     }
     return;
   }
-  if (canonical.ownerId !== owner.principal || canonical.agentId !== profile) return;
-  let incoming = canonical;
-  // Once ordering history is evicted, a delayed old source event cannot grant
-  // private data. Re-entering a profile first reads its current server baseline.
-  if (!snapshot && !baselineReady) {
-    if (!pendingSource || incoming.revision > pendingSource.revision) pendingSource = incoming;
-    if (!incoming.allowed) { value = Object.freeze({ mode: 'router', cell: incoming }); notify(); }
-    return;
-  }
-  if (snapshot) {
-    baselineReady = true;
-    // Merge before notifying: a denial received during the read must never
-    // briefly expose the older allowed baseline to a synchronous observer.
-    if (pendingSource && pendingSource.revision > incoming.revision) incoming = pendingSource;
-    pendingSource = undefined;
-  }
+  if (canonical.ownerId !== owner.principal) return;
+  const incoming = canonical;
   if (!snapshot && incoming.allowed && blocked?.agentId === incoming.agentId &&
       (blocked.revision === null || incoming.revision <= blocked.revision)) return;
   const previous = fences.get(incoming.agentId);
   if (previous && (incoming.revision < previous.revision || incoming.revision === previous.revision &&
       (!snapshot || incoming.generation !== previous.generation || incoming.allowed !== previous.allowed))) return;
-  // Only the focused profile holds data or a flight. Other profiles need a
-  // new authorized baseline on selection, so retain ordering for this one only.
+  // Revocation ordering metadata is never evicted to make space for stale data.
+  if (!previous && fences.size >= 512) return;
   fences.set(incoming.agentId, { generation: incoming.generation, revision: incoming.revision, allowed: incoming.allowed });
   if (profile !== incoming.agentId) return;
   if (incoming.allowed) blocked = undefined;
@@ -72,7 +57,7 @@ function readFocused(): void {
   let pendingRead: Promise<void>;
   pendingRead = Promise.resolve().then(() => {
     if (connection !== owner || profile !== agentId || profileEpoch !== epoch) return;
-    if (baselineReady && value.mode === 'router' && value.cell?.agentId === agentId) { owner.joinedRead?.(agentId); return; }
+    if (value.mode === 'router' && value.cell?.agentId === agentId) { owner.joinedRead?.(agentId); return; }
     return owner.executeRead(agentId);
   }).then(result => {
     if (!result) return;
@@ -93,17 +78,16 @@ export function installUsageCellConnection(next: Connection): void {
   if (partition !== key) { fences.clear(); partition = key; installedGeneration = -1; }
   if (!Number.isSafeInteger(next.generation) || next.generation < 0 || next.generation <= installedGeneration) return;
   installedGeneration = next.generation;
-  connection = next; baselineReady = false; pendingSource = undefined; profileEpoch++; flight = undefined; blocked = undefined; value = next.usageCellV1 ? pending : legacy; notify(); readFocused();
+  connection = next; profileEpoch++; flight = undefined; blocked = undefined; value = next.usageCellV1 ? pending : legacy; notify(); readFocused();
 }
 export function suspendUsageCellConnection(): void {
-  connection = undefined; baselineReady = false; pendingSource = undefined; profileEpoch++; flight = undefined; value = pending; notify();
+  connection = undefined; profileEpoch++; flight = undefined; value = pending; notify();
 }
 /** Called by the existing committed navigation/work-pane owner. React effect
  * observers only subscribe; repeating the same selection cannot grant reads.
  */
 export function setUsageCellProfile(agentId: string | null): void {
   if (profile === agentId) return;
-  fences.clear(); baselineReady = false; pendingSource = undefined;
   profile = agentId; profileEpoch++; flight = undefined; blocked = undefined;
   value = connection?.usageCellV1 ? pending : connection ? legacy : pending; notify(); readFocused();
 }

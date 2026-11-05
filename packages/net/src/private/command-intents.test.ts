@@ -63,10 +63,10 @@ move12_describe('P7 durable private command owner', () => {
   move12_it('does not exhaust a cumulative retry token allowance for the same deduplicated command', async () => {
     const { intents } = owner(), record = await intents.prepare(admitted());
     const send = move12_vi.fn(async (_operation: string, _args: unknown, _command: { v: 1; id: string }) => receipt(record, 'pending'));
-    for (let index = 0; index < 1001; index++) await intents.dispatch(record, { kind: 'automatic', generation: 1, commandDedupV1: true }, send);
+    for (let index = 0; index < 1001; index++) await intents.dispatch(record, { kind: 'retry', actionId: 'same-explicit-action', generation: 1, commandDedupV1: true }, send);
     move12_expect(send).toHaveBeenCalledTimes(1001);
     move12_expect(send.mock.calls.every(call => call[2].id === record.id)).toBe(true);
-    move12_expect((await intents.dispatch(record, { kind: 'automatic', generation: 1, commandDedupV1: true }, async () => receipt(record))).state).toBe('committed');
+    move12_expect((await intents.dispatch(record, { kind: 'retry', actionId: 'same-explicit-action', generation: 1, commandDedupV1: true }, async () => receipt(record))).state).toBe('committed');
   });
   move12_it('suspends old-principal intents on logout and resumes only the same principal', async () => {
     const { intents } = owner(), record = await intents.prepare(admitted());
@@ -103,7 +103,9 @@ move12_describe('P7 durable private command owner', () => {
   });
   move12_it('queues 1,895 commands without evicting uncertainty or refusing the tail', async () => {
     const { intents } = owner();
-    for (let index = 0; index < 1895; index++) await intents.prepare({ wire: { operation: 'markRead', input: move12_canonical({ roomId: 'room', messageId: String(index) }) }, isCurrent: () => true });
+    for (let index = 0; index < 1895; index++) await intents.prepare({ wire: { operation: 'sendRoomMessage',
+      input: move12_canonical({ roomId: 'room', messageId: index.toString(16).padStart(64, '0'), text: 'x'.repeat(2048) }) }, isCurrent: () => true });
+    move12_expect(Buffer.byteLength(JSON.stringify(intents.view()))).toBeGreaterThan(2 * 1024 * 1024);
     const restored = owner().intents; restored.restore(intents.view());
     move12_expect(restored.view()).toHaveLength(1895);
   });

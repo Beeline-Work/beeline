@@ -111,9 +111,7 @@ type StoredAuthority = { authorityScope: string; epoch: string };
  * Other legacy response consumers retain their existing storage behavior.
  */
 export function routerAuthorityStorageReady(): boolean {
-  // Live lanes never restore cached groups. Their in-memory authority ledger
-  // works without optional persistence or cross-tab cache locking.
-  return true;
+  return web === null || !!web.storage && typeof navigator !== 'undefined' && typeof navigator.locks?.request === 'function';
 }
 /** The existing durable command owner has a proven single native writer.
  * Browser command cohorts remain legacy until cross-tab intent adoption. */
@@ -132,7 +130,6 @@ export function routerLaneStorage(origin: string, principal: string) {
   const fencePrefix = `${ROUTER_FENCE_PREFIX}${owner}.`;
   const floorPrefix = `${ROUTER_FLOOR_PREFIX}${owner}.`;
   const denyPrefix = `${ROUTER_DENY_PREFIX}${owner}.`;
-  let durable = !web || !!web.storage && typeof navigator !== 'undefined' && typeof navigator.locks?.request === 'function';
   const floorSeen = new Map<string, string>();
   const fenceSeen = new Map<string, string>();
   const groupKey = (key: string) => `${groupPrefix}${encodeURIComponent(key)}`;
@@ -141,41 +138,20 @@ export function routerLaneStorage(origin: string, principal: string) {
   const denyBase = (scope: string) => `${denyPrefix}${encodeURIComponent(scope)}.`;
   const transaction = <T>(work: () => T): Promise<T> => {
     if (!web) { try { return Promise.resolve(work()); } catch (error) { return Promise.reject(error); } }
-    if (!durable) { try { return Promise.resolve(work()); } catch (error) { return Promise.reject(error); } }
-    let entered = false;
-    try {
-      return navigator.locks.request(`beeline.router.authority.${owner}`, { mode: 'exclusive' }, () => {
-        entered = true; return work();
-      }).catch(error => {
-        if (entered) throw error; // A real authority/shape rejection stays a rejection.
-        durable = false; return work();
-      });
-    } catch {
-      durable = false;
-      try { return Promise.resolve(work()); } catch (error) { return Promise.reject(error); }
-    }
+    if (!routerAuthorityStorageReady()) return Promise.reject(new Error('Cross-tab authority storage is unavailable.'));
+    try { return navigator.locks.request(`beeline.router.authority.${owner}`, { mode: 'exclusive' }, work); }
+    catch (error) { return Promise.reject(error); }
   };
-  // Any storage failure disables all cached group writes for this owner.
-  // In-memory floors/denials remain authoritative for live data; unreadable
-  // durable metadata never grants permission to persist another envelope.
-  const read = (key: string): string | undefined => {
-    if (!durable) return;
-    try { return web?.storage ? web.storage.getItem(`${RESPONSE_NAMESPACE}${key}`) ?? undefined : responses.getString(key); }
-    catch { durable = false; return; }
-  };
+  // Authority storage never swallows denied reads/writes: an unreadable fence
+  // cannot be interpreted as permission to save a stale private envelope.
+  const read = (key: string) => web?.storage ? web.storage.getItem(`${RESPONSE_NAMESPACE}${key}`) ?? undefined : responses.getString(key);
   const write = (key: string, value: string) => {
-    if (!durable) return;
-    try { if (web?.storage) web.storage.setItem(`${RESPONSE_NAMESPACE}${key}`, value); else responses.set(key, value); }
-    catch { durable = false; } // No cached group is ever restored into a live lane.
+    if (web?.storage) web.storage.setItem(`${RESPONSE_NAMESPACE}${key}`, value); else responses.set(key, value);
   };
   const remove = (key: string) => {
-    if (!durable) return;
-    try { if (web?.storage) web.storage.removeItem(`${RESPONSE_NAMESPACE}${key}`); else responses.delete(key); }
-    catch { durable = false; }
+    if (web?.storage) web.storage.removeItem(`${RESPONSE_NAMESPACE}${key}`); else responses.delete(key);
   };
   const keys = (): string[] => {
-    if (!durable) return [];
-    try {
     if (!web?.storage) return responses.getAllKeys();
     const result: string[] = [];
     for (let index = 0; index < web.storage.length; index++) {
@@ -183,7 +159,6 @@ export function routerLaneStorage(origin: string, principal: string) {
       if (key?.startsWith(RESPONSE_NAMESPACE)) result.push(key.slice(RESPONSE_NAMESPACE.length));
     }
     return result;
-    } catch { durable = false; return []; }
   };
   const maximum = (map: Map<string, string>, scope: string, epoch: string) => {
     const previous = map.get(scope);
@@ -227,7 +202,7 @@ export function routerLaneStorage(origin: string, principal: string) {
     if (!value || typeof value !== 'object') throw new Error('Invalid router consistency group.');
     const envelope = value as { schema?: unknown; identity?: { origin?: unknown; principal?: unknown }; entries?: unknown };
     if (envelope.schema !== 1 || envelope.identity?.origin !== canonicalOrigin || envelope.identity?.principal !== principal ||
-        !Array.isArray(envelope.entries) || !envelope.entries.length)
+        !Array.isArray(envelope.entries) || !envelope.entries.length || envelope.entries.length > 256)
       throw new Error('Invalid router consistency group.');
     return envelope.entries.flatMap(entry => {
       const scopes = entry?.snapshot?.authority?.scopes;
@@ -278,6 +253,7 @@ export function routerLaneStorage(origin: string, principal: string) {
       let total = held.reduce((sum, candidate) => sum + new TextEncoder().encode(read(candidate) ?? '').length, 0);
       for (const candidate of held) {
         if (total <= MAX_ROUTER_READER_BYTES) break;
+        if (candidate === target) continue;
         total -= new TextEncoder().encode(read(candidate) ?? '').length; remove(candidate);
       }
     }),

@@ -483,6 +483,7 @@ export function acquireRouterSavedContinuation(workspaceId:string,before:string,
     throw new Error('Saved continuation is not held.');
   const request={family:'needs-you-saved-page',workspaceId,before} as const;
   const key=JSON.stringify([request.family,workspaceId,before]);
+  if(!slotsByKey.has(key)&&held.length>=16)throw new Error('Saved window capacity reached.');
   const handle=acquireRouterLane(request,visible,listener),slot=slotsByKey.get(key)!;
   if(slot.release&&slot.generation===focused.generation)return handle;
   try{
@@ -545,11 +546,13 @@ export function acquireRouterRoomRoster(workspaceId:string,visible:()=>boolean,l
  * can attach an observer but cannot admit a query baseline. */
 export function acquireRouterRosterQuery(input:Extract<RouterSnapshotInput,{family:'workspace-roster'}>,visible:()=>boolean,listener:()=>void){
   const focused=navigation.current(),owner=admission;
-  if(!owner||!lanes||!focused||focused.screen!=='AppShell'||focused.workspaceId&&focused.workspaceId!==input.workspaceId||
+  if(!owner||!lanes||!focused||focused.screen!=='AppShell'||focused.workspaceId!==input.workspaceId||
     routerFamilyMode('workspace-roster')!=='router'||!input.query)throw new Error('Roster action is unavailable.');
   const head=slotsByKey.get(slotKey({family:'workspace-roster',workspaceId:input.workspaceId}));
   const value=head?.release&&head.generation===focused.generation?lanes.peek(head.request).value as RouterValues['workspace-roster']|null:null;
   if(!value||value.revision!==input.query.revision)throw new Error('Roster version is no longer held.');
+  const windows=[...slots].filter(slot=>slot.request.family==='workspace-roster'&&slot.request.query&&slot.release);
+  if(!slotsByKey.has(slotKey(input))&&windows.length>=16)throw new Error('Roster window capacity reached.');
   const handle=acquireRouterLane(input,visible,listener),slot=slotsByKey.get(slotKey(input))!;
   if(slot.release&&slot.generation===focused.generation)return handle;
   try{
@@ -592,6 +595,7 @@ export function admitRouterScheduledStop(operation:'deleteRoomSchedule'|'deleteR
 export type TrayCommand = { [K in 'clearNeedsYou'|'clearNeedsYouSection'|'clearMessageBookmarks'|'setMessageBookmark'|
   'decideAgentGrant'|'decideWritePermission'|'answerChoice'|'skipChoice']:{operation:K;input:PhoneOperationMap[K]['input']}
 }['clearNeedsYou'|'clearNeedsYouSection'|'clearMessageBookmarks'|'setMessageBookmark'|'decideAgentGrant'|'decideWritePermission'|'answerChoice'|'skipChoice'];
+let trayActions:{generation:number;workspaceId:string;bookmarkRemovals:Set<string>}|undefined;
 function heldTray(workspaceId:string){
   const focused=navigation.current();
   if(!admission||!focused||focused.screen!=='Tray'||focused.workspaceId&&focused.workspaceId!==workspaceId||
@@ -611,7 +615,9 @@ function exactTrayInput(input:object,expected:Record<string,string>):boolean{
  * Unsupported decision adapters remain unavailable until their durable effect
  * proof is integrated; router selection never falls back to a legacy effect. */
 export function admitRouterTrayCommand(workspaceId:string,command:TrayCommand):AdmittedCommand{
-  const {value,owner}=heldTray(workspaceId);
+  const {focused,value,owner}=heldTray(workspaceId);
+  if(trayActions?.generation!==focused.generation||trayActions.workspaceId!==workspaceId)
+    trayActions={generation:focused.generation,workspaceId,bookmarkRemovals:new Set()};
   switch(command.operation){
     case 'clearNeedsYou':{
       if(command.input.workspaceId!==workspaceId||!value.needs.items.some(item=>item.workspaceId===workspaceId&&
@@ -630,10 +636,20 @@ export function admitRouterTrayCommand(workspaceId:string,command:TrayCommand):A
       return owner.tap('EditTray',request,pass=>owner.spend(request,pass));
     }
     case 'setMessageBookmark':{
-      // An explicit bookmark/Undo command keeps its immutable target. The
-      // server checks current Room membership; display history is no allowance.
+      const key=JSON.stringify([command.input.roomId,command.input.messageId]);
+      const saved=[...value.saved.rows,...[...slots].filter(slot=>slot.request.family==='needs-you-saved-page'&&
+        slot.request.workspaceId===workspaceId&&slot.generation===focused.generation&&slot.release).flatMap(slot=>
+          (lanes?.peek(slot.request).value as RouterValues['needs-you-saved-page']|null)?.rows??[])];
+      const visible=[...value.needs.items,...saved.map(row=>row.value)].some(item=>item.workspaceId===workspaceId&&
+        item.roomId===command.input.roomId&&item.messageId===command.input.messageId);
+      if(!visible&&!(command.input.bookmarked&&trayActions.bookmarkRemovals.has(key)))throw new Error('Saved item is unavailable.');
+      if(!command.input.bookmarked&&!trayActions.bookmarkRemovals.has(key)&&trayActions.bookmarkRemovals.size>=100)
+        throw new Error('Tray pending action capacity exceeded.');
       const request={route:'phone.setMessageBookmark' as const,input:command.input};
-      return owner.tap('EditTray',request,pass=>owner.spend(request,pass));
+      const admitted=owner.tap('EditTray',request,pass=>owner.spend(request,pass));
+      if(!command.input.bookmarked)trayActions.bookmarkRemovals.add(key);
+      else trayActions.bookmarkRemovals.delete(key);
+      return admitted;
     }
     case 'decideAgentGrant':{
       if(!value.needs.items.some(item=>item.workspaceId===workspaceId&&item.approval?.actions?.some(action=>
@@ -689,6 +705,7 @@ AppState.addEventListener('change', state => {
   } else if (state === 'active') { admission?.foregrounded(); navigation.foregrounded(); }
 });
 subscribeClientReset(() => {
+  trayActions=undefined;
   if(negotiation)scheduledAuthority?.disconnected(negotiation.generation);
   scheduledAuthority=undefined;
   instance += 1; modeKnown = false; negotiation = undefined; principal = undefined; assembly.reset();
@@ -702,8 +719,6 @@ subscribeClientReset(() => {
 
 /** Existing tool disclosure/More/Open gestures only; no mount or timer reads. */
 const toolFlights=new Map<string,Promise<PhoneOperationMap['readRoomTools']['output']>>();
-let activeToolReads=0;
-const waitingToolReads:Array<()=>void>=[];
 export function readRouterToolPage(input:PhoneOperationMap['readRoomTools']['input']):Promise<PhoneOperationMap['readRoomTools']['output']>{
   try{
   const focus=navigation.current(),connection=negotiation,owner=admission;
@@ -713,13 +728,8 @@ export function readRouterToolPage(input:PhoneOperationMap['readRoomTools']['inp
   const permit=owner.toolTap(focus.generation,focus.roomId,request,pass=>owner.spend(request,pass));
   const key=JSON.stringify([instance,principal,readerOrigin,focus.generation,connection.generation,permit.wire.input]);
   const joined=toolFlights.get(key);if(joined)return joined;
-  const flight=(async()=>{
-    if(activeToolReads>=16)await new Promise<void>(resolve=>waitingToolReads.push(resolve));else activeToolReads++;
-    try{
-      if(!permit.isCurrent()||negotiation!==connection)throw new Error('Tool output is no longer visible.');
-      return await connection.executeTools!(JSON.parse(permit.wire.input));
-    }finally{const next=waitingToolReads.shift();if(next)next();else activeToolReads--;}
-  })().then(result=>{
+  if(toolFlights.size>=16)throw new Error('Too many tool pages are opening.');
+  const flight=connection.executeTools(JSON.parse(permit.wire.input)).then(result=>{
     if(!permit.isCurrent()||negotiation!==connection)throw new Error('Tool output is no longer visible.');
     return result;
   });

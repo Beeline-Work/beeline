@@ -206,9 +206,14 @@ export function lifecycleSummary(items: readonly LifecycleItem[]): string {
     const index = order.indexOf(key);
     return index < 0 ? order.length : index;
   };
+  const namedKinds = new Set<string>();
   return [...counts.entries()]
     .sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b))
-    .map(([, { kind, state, count }]) => `${count} ${kind}${count === 1 ? '' : 's'} ${state}`)
+    .map(([, { kind, state, count }]) => {
+      const noun = namedKinds.has(kind) ? '' : ` ${kind}${count === 1 ? '' : 's'}`;
+      namedKinds.add(kind);
+      return `${count}${noun} ${state}`;
+    })
     .join(' · ');
 }
 

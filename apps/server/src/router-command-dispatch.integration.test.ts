@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migratedDatabase, type PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { createPhoneOperationDispatcher } from './phone-operations.js';
-import { phoneReadLimits } from './phone-read-limit.js';
 import { LiveHub } from './live.js';
 import type { ServerOptions } from './server.js';
 
@@ -25,7 +24,7 @@ describe('P7 dispatcher durable command adapter', () => {
   function server() {
     const live = new LiveHub(), phone = new PhoneService(db, 'https://test.invalid');
     const options = { database: db, phone, live } as ServerOptions;
-    return { dispatch: createPhoneOperationDispatcher(options, phoneReadLimits(), phone.execute), live };
+    return { dispatch: createPhoneOperationDispatcher(options,  phone.execute), live };
   }
   it('selects outcome-only Tray decisions through the real dispatcher and never invokes the legacy override or coverage builder',async()=>{
     const agent='d'.repeat(64);
@@ -77,11 +76,11 @@ describe('P7 dispatcher durable command adapter', () => {
     const args = { roomId: ROOM, messageId: MESSAGE, emoji: '👍' };
     const identity = { v: 1 as const, id: 'authority-race' };
     const original = await dispatch('reactToMessage', args, VIEWER, undefined, undefined, undefined, identity) as RouterCommandReceipt;
-    expect(original.coverage?.cut.stream).toBe(`workspace:${WORKSPACE}`);
+    expect(original).not.toHaveProperty('coverage');
     expect(original.result).toMatchObject({ id: MESSAGE });
     const accepted = vi.fn(() => undefined);
     await fenceCommandReceiptEnqueue(db, VIEWER, original, accepted);
-    expect(accepted).toHaveBeenCalledWith(original);
+    expect(accepted).toHaveBeenCalledWith({ v: 1, operation: 'reactToMessage', commandId: identity.id, state: 'committed' });
     await db.query('UPDATE memberships SET removed_at=now() WHERE identity_id=$1 AND room_id=$2', [VIEWER, ROOM]);
     const replay = await dispatch('reactToMessage', args, VIEWER, undefined, undefined, undefined, identity) as RouterCommandReceipt;
     const revoked = vi.fn(() => undefined);
@@ -91,7 +90,7 @@ describe('P7 dispatcher durable command adapter', () => {
     const regranted = vi.fn(() => undefined);
     await fenceCommandReceiptEnqueue(db, VIEWER, replay, regranted);
     expect(regranted).toHaveBeenCalledWith({ v: 1, operation: 'reactToMessage', commandId: identity.id, state: 'committed' });
-    expect(replay.coverage?.cut).toEqual(original.coverage?.cut);
+    expect(replay).not.toHaveProperty('coverage');
   });
   it('cancel before dispatch creates no durable intent or effect', async () => {
     const { dispatch } = server(), controller = new AbortController();

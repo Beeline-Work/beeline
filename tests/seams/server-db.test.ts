@@ -17,6 +17,7 @@ const observer = new Pool({ connectionString: fixtureUrl.href, max: 1 });
 let pool: Pool;
 let database: PostgresDatabase;
 
+// Fresh PostgreSQL setup runs the complete migration before the seam cases.
 beforeAll(async () => {
   await admin.query(`CREATE DATABASE ${name}`);
   const bootstrap = new PostgresDatabase(fixtureUrl.href, 2, { mode: 'migration' });
@@ -26,7 +27,7 @@ beforeAll(async () => {
     await markSchemaCurrent(bootstrap);
   } finally { await bootstrap.close(); }
   await observer.query('CREATE TABLE seam_effects(id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, value text)');
-});
+}, 60_000);
 beforeEach(async () => {
   await observer.query('TRUNCATE seam_effects');
   pool = new Pool(postgresPoolConfig(fixtureUrl.href, 2));

@@ -1,7 +1,6 @@
 import type { HelperOverlayFrame } from '@beeline/api-contract/helper-overlay';
 import type { AgentSignInLink, UsageRefreshOutcome } from '@beeline/api-contract/daemon';
 import { EventEmitter } from 'node:events';
-import { randomUUID } from 'node:crypto';
 import type { RoomViewMessage } from '@beeline/api-contract/phone';
 
 export type CommittedMessageLiveRow = {
@@ -145,14 +144,6 @@ export type LiveEvent =
 
 export class LiveHub {
   readonly #events = new EventEmitter();
-  /** Compatibility cache for standalone hubs. Production phone subscriptions
-   * use DurableLiveReplay; this cache never decides whether they resumed. */
-  readonly #history = new Map<string, {
-    epoch: string;
-    sequence: number;
-    bytes: number;
-    entries: Array<{ sequence: number; event: LiveEvent; bytes: number }>;
-  }>();
   readonly #recentOutputs = new Map<string, { text: string; latestChunk?: string; overlayKey?:string;
     source: 'local' | 'postgres'; at: number }>();
   readonly #localMessageInserts = new Map<string, number>();
@@ -293,25 +284,6 @@ export class LiveHub {
         this.#presence.delete(event.roomId);
       }
     }
-    if (event.roomId) {
-      const history = this.#history.get(event.roomId) ?? {
-        epoch: randomUUID(), sequence: 0, bytes: 0, entries: [],
-      };
-      const replayEvent = event.type === 'invalidate'
-        ? (({ committedRow: _private, ...wire }) => wire)(event)
-        : event;
-      const bytes = Buffer.byteLength(JSON.stringify(replayEvent));
-      history.sequence += 1;
-      history.entries.push({ sequence: history.sequence, event: replayEvent, bytes });
-      history.bytes += bytes;
-      while (history.entries.length > 256 || history.bytes > 128 * 1024) {
-        const removed = history.entries.shift();
-        if (removed) history.bytes -= removed.bytes;
-      }
-      this.#history.delete(event.roomId);
-      this.#history.set(event.roomId, history);
-      if (this.#history.size > 256) this.#history.delete(this.#history.keys().next().value!);
-    }
     if (event.roomId !== undefined) this.#events.emit(event.roomId, event);
     this.#events.emit('*', event);
   }
@@ -374,41 +346,6 @@ export class LiveHub {
       this.#events.off(roomId, listener);
       this.#events.off('resync', resync);
     };
-  }
-
-  /** Best-effort, bounded socket resume. A different process or an evicted
-   * history asks for the ordinary covering snapshot instead of guessing. */
-  subscribeReplay(
-    roomId: string,
-    cursor: { epoch: string; base: number; seen: readonly number[] } | undefined,
-    listener: (event: LiveEvent, sequence?: number, epoch?: string) => void,
-  ): { release: () => void; epoch: string; sequence: number; resumed: boolean;
-       replay: readonly { event: LiveEvent; sequence: number }[] } {
-    const history = this.#history.get(roomId) ?? {
-      epoch: randomUUID(), sequence: 0, bytes: 0, entries: [],
-    };
-    this.#history.delete(roomId);
-    this.#history.set(roomId, history);
-    if (this.#history.size > 256) this.#history.delete(this.#history.keys().next().value!);
-    const sequence = history.sequence;
-    const minimum = history.entries[0]?.sequence ?? sequence + 1;
-    const resumed = Boolean(cursor && cursor.epoch === history.epoch &&
-      Number.isSafeInteger(cursor.base) && cursor.base >= minimum - 1 &&
-      cursor.base <= sequence && cursor.seen.length <= 256 &&
-      cursor.seen.every((item) => Number.isSafeInteger(item) && item > cursor.base && item <= sequence));
-    const seen = new Set(resumed ? cursor!.seen : []);
-    const replay = resumed
-      ? history.entries.filter((entry) => entry.sequence > cursor!.base && !seen.has(entry.sequence))
-        .map(({ event, sequence: itemSequence }) => ({ event, sequence: itemSequence }))
-      : [];
-    // An evicted history restarts its sequence under a new epoch, so a
-    // sequence orders frames only together with its epoch.
-    const release = this.subscribe(roomId, (event) => {
-      const current = event.type === 'invalidate' && event.reason === 'resync'
-        ? undefined : this.#history.get(roomId);
-      listener(event, current?.sequence, current?.epoch);
-    });
-    return { release, epoch: history.epoch, sequence, resumed, replay };
   }
 
   subscribeResync(listener: () => void): () => void {

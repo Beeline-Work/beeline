@@ -1,3 +1,4 @@
+import { prepareTrayCommand, type PreparedTrayCommand, type TrayCommand } from '@/buzz/tray-command';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
@@ -6,17 +7,10 @@ import { Button } from '@/components/buzz/Button';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { messageJumpHref, roomHref } from '@/buzz/corner-navigation';
 import { useIsDesktop } from '@/utils/responsive';
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import {
-  AccessibilityInfo,
-  AppState,
-  FlatList,
-  Pressable,
-  Text,
-  View,
-} from 'react-native';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { AccessibilityInfo, AppState, FlatList, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect, useLocalSearchParams, useRouter, type Href } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
 import type { MessageBookmarkView, NeedsYouItemView, NeedsYouActionView } from '@beeline/api-contract/phone';
@@ -27,6 +21,7 @@ import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset';
 import { cornerHref } from '@/buzz/corner-navigation';
 import {
+  useTrayList,
   forgetTray,
   acknowledgePaintedNeedsYou,
   holdNeedsYou,
@@ -49,9 +44,6 @@ import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import brand from '@/buzz/brand.json';
 import { openExternalUrl } from '@/utils/open-external-url';
-import { useRoutedTray, prepareTrayCommand, acknowledgeRoutedTrayPaint,
-  type PreparedTrayCommand, type TrayCommand } from '@/buzz/router-tray';
-import { routerFamilyMode } from '@/buzz/router-owner';
 
 const EMPTY_NEEDS: readonly NeedsYouItemView[] = [];
 
@@ -97,8 +89,7 @@ type Target = {
 };
 
 /** A section clear held back until its own Undo window closes. */
-type PendingClear = { readonly expiresAt: number; readonly workspaceId: string;
-  readonly prepared?: PreparedTrayCommand } & (
+type PendingClear = { readonly expiresAt: number; readonly workspaceId: string; readonly prepared?: PreparedTrayCommand } & (
   | { readonly kind: 'needs'; readonly items: readonly NeedsYouItemView[] }
   | { readonly kind: 'saved'; readonly items: readonly MessageBookmarkView[]; readonly more: boolean }
 );
@@ -151,15 +142,13 @@ export default function TrayScreen() {
   const workspaceLost = Boolean(workspaceId) && lostWorkspaceId === workspaceId;
   const noWorkspace = (!routeWorkspaceId && activeWorkspaceId === null) || workspaceLost;
   const [trayFocused, setTrayFocused] = useState(false);
-  const routed = useRoutedTray(workspaceId, trayFocused);
-  const legacy = routed.mode === 'legacy';
-  const { needs, bookmarks, savedNext } = routed;
+  const { needs, bookmarks, next: savedNext } = useTrayList(workspaceId);
   const loadingSaved = useRef(false);
   const savedScroll = useRef(false);
   const [selectedTarget, setSelected] = useState<Target | null>(null);
-  const selected = (legacy || routed.value) && selectedTarget?.workspaceId === workspaceId ? selectedTarget : null;
-  const [legacyLoading, setLoading] = useState(true);
-  const loading = legacy ? legacyLoading : routed.loading || !!workspaceId && !routed.value;
+  const selected = (selectedTarget?.workspaceId === workspaceId) ? selectedTarget : null;
+  const [loadingState, setLoading] = useState(true);
+  const loading = (loadingState);
   const loadedWorkspaceRef = useRef<string | null>(null);
   const loadGenerationRef = useRef(0);
   useLatencyRouteFrame('/beeline/tray', !loading, true);
@@ -175,8 +164,8 @@ export default function TrayScreen() {
   const [inspectError, setInspectError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const focused = useRef(false);
-  const paintContext = useRef({ workspaceId, ready: false, legacy });
-  paintContext.current = { workspaceId, ready: !loading && !noWorkspace, legacy };
+  const paintContext = useRef({ workspaceId, ready: false });
+  paintContext.current = { workspaceId, ready: !loading && !noWorkspace };
   const viewableQuestions = useRef<readonly string[]>([]);
   const paintFrame = useRef<number | null>(null);
   const acknowledgePaint = useCallback(() => {
@@ -186,8 +175,7 @@ export default function TrayScreen() {
       paintFrame.current = null;
       if (!focused.current || AppState.currentState !== 'active' || !context.ready || !paintContext.current.ready ||
         context.workspaceId !== paintContext.current.workspaceId) return;
-      if (context.legacy !== paintContext.current.legacy) return;
-      void (context.legacy ? acknowledgePaintedNeedsYou : acknowledgeRoutedTrayPaint)(context.workspaceId, viewableQuestions.current)
+      void acknowledgePaintedNeedsYou(context.workspaceId, viewableQuestions.current)
         .catch(() => undefined);
     });
   }, []);
@@ -213,7 +201,7 @@ export default function TrayScreen() {
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 1 }).current;
 
   const load = useCallback(async (force = false) => {
-    if (!legacy || !workspaceId) return;
+    if ((!workspaceId)) return;
     const generation = ++loadGenerationRef.current;
     savedScroll.current = false;
     setError(null);
@@ -243,17 +231,14 @@ export default function TrayScreen() {
     if (result.status === 'fulfilled')
       loadedWorkspaceRef.current = workspaceId;
     setLoading(false);
-  }, [workspaceId, legacy]);
+  }, [workspaceId]);
 
   useEffect(() => {
     loadGenerationRef.current += 1;
     loadedWorkspaceRef.current = null;
     setError(null);
-    if (!legacy) {
-      lostWorkspaceRef.current = null;
-      setLostWorkspaceId(null);
-    }
-  }, [legacy]);
+
+  }, []);
 
   // The previous account's sections and lost Workspace do not carry over.
   useEffect(() => subscribeClientReset(() => {
@@ -268,15 +253,15 @@ export default function TrayScreen() {
     void load();
   }), [load]);
 
-  useEffect(() => legacy && workspaceId ? subscribeTrayGap(workspaceId, (reason) => {
+  useEffect(() => (workspaceId) ? subscribeTrayGap(workspaceId, (reason) => {
     if (reason === 'needs-you-gap') void loadNeedsYouList(workspaceId).catch(() => load(true));
     else if (reason === 'bookmark-gap') void loadSavedList(workspaceId).catch(() => load(true));
     else void load(true);
   }) : undefined,
-    [workspaceId, load, legacy]);
+    [workspaceId, load]);
 
   const loadMoreSaved = useCallback(async () => {
-    if(!legacy){try{routed.loadMoreSaved();}catch(cause){setError(appErrorCopy(cause));}return;}
+
     if (!workspaceId || !savedNext || loadingSaved.current) return;
     const generation = loadGenerationRef.current;
     loadingSaved.current = true;
@@ -288,15 +273,15 @@ export default function TrayScreen() {
     } finally {
       loadingSaved.current = false;
     }
-  }, [workspaceId, savedNext, legacy,routed.loadMoreSaved]);
+  }, [workspaceId, savedNext]);
 
   // A held tray paints its last projection immediately. Socket gaps signal
   // one covering read through the roomless registration above.
   useFocusEffect(
     useCallback(() => {
-      if (legacy && loadedWorkspaceRef.current !== workspaceId) void load();
+      if ((loadedWorkspaceRef.current !== workspaceId)) void load();
       return undefined;
-    }, [load, legacy]),
+    }, [load]),
   );
 
   useEffect(() => {
@@ -359,12 +344,7 @@ export default function TrayScreen() {
     ? bookmarks.some((bookmark) => bookmark.messageId === selected.messageId && !bookmark.available)
     : false;
   useEffect(() => {
-    if (!legacy && desktop && selected) {
-      setInspectRoom(null);
-      setPaneCornerId(null);
-      setInspectError('Could not open this corner.');
-      return;
-    }
+
     if (!desktop || !client || !selected || selectedUnavailable) {
       setInspectRoom(null);
       setPaneCornerId(null);
@@ -394,7 +374,7 @@ export default function TrayScreen() {
     return () => {
       cancelled = true;
     };
-  }, [client, desktop, selected, selectedUnavailable, legacy]);
+  }, [client, desktop, selected, selectedUnavailable]);
 
   const open = useCallback(
     (target: Target, via: 'bookmark' | 'needs-you') => {
@@ -429,28 +409,18 @@ export default function TrayScreen() {
   /** Tapped or dismissed: the cell leaves this tray, and every other device's. */
   const clear = useCallback(async (item: NeedsYouItemView, dismissReminder = false) => {
     const generation = clientResetGeneration();
-    if (!legacy) {
-      try {
-        await prepareTrayCommand(item.workspaceId, { operation: 'clearNeedsYou', input: {
-          workspaceId: item.workspaceId, messageId: item.messageId,
-          ...(dismissReminder ? { dismissReminder: true } : {}),
-        } })!.deliver();
-      } catch (cause) { if (generation === clientResetGeneration()) setError(appErrorCopy(cause)); }
-      return;
-    }
+
     const removal = removeNeedsYou(item.workspaceId, [item.messageId]);
     try {
-      await monolithPhoneOperation('clearNeedsYou', {
-        workspaceId: item.workspaceId,
-        messageId: item.messageId,
-        ...(dismissReminder ? { dismissReminder: true } : {}),
-      });
+      const input = { workspaceId: item.workspaceId, messageId: item.messageId, ...(dismissReminder ? { dismissReminder: true } : {}) };
+      const prepared = prepareTrayCommand({operation:'clearNeedsYou',input});
+      if (prepared) await prepared.deliver(); else await monolithPhoneOperation('clearNeedsYou', input);
       removal.settle();
     } catch (cause) {
       // A failure that lands after an account switch belongs to the previous account.
       if (removal.restore()) setError(appErrorCopy(cause));
     }
-  }, [legacy]);
+  }, []);
 
   const openNeed = useCallback(
     (item: NeedsYouItemView) => {
@@ -466,21 +436,15 @@ export default function TrayScreen() {
     const generation = clientResetGeneration();
     setError(null);
     try {
-      if (!legacy && action.kind !== 'external') {
-        const command: TrayCommand = action.kind === 'grant'
-          ? { operation: 'decideAgentGrant', input: { grantId: action.grantId, decision: action.decision } }
-          : action.kind === 'write-access'
-            ? { operation: 'decideWritePermission', input: { roomId: item.roomId,
-              permissionId: action.permissionId, requestId: action.requestId, agentId: action.agentId,
-              repository: action.repository, decision: action.decision } }
-            : action.kind === 'choice'
-              ? { operation: 'answerChoice', input: { choiceId: action.choiceId, optionId: action.optionId } }
-              : { operation: 'skipChoice', input: { choiceId: action.choiceId } };
-        await prepareTrayCommand(item.workspaceId, command)!.deliver();
-        if (generation === clientResetGeneration()) AccessibilityInfo.announceForAccessibility('Decision sent');
-        return;
-      }
-      switch (action.kind) {
+      const command: TrayCommand | undefined = action.kind === 'grant'
+        ? {operation:'decideAgentGrant',input:{grantId:action.grantId,decision:action.decision}}
+        : action.kind === 'write-access'
+          ? {operation:'decideWritePermission',input:{roomId:item.roomId,permissionId:action.permissionId,
+            requestId:action.requestId,agentId:action.agentId,repository:action.repository,decision:action.decision}}
+          : action.kind === 'skip-choice' ? {operation:'skipChoice',input:{choiceId:action.choiceId}} : undefined;
+      const prepared = command && prepareTrayCommand(command);
+      if (prepared) await prepared.deliver();
+      else switch (action.kind) {
         case 'grant':
           await monolithPhoneOperation('decideAgentGrant', { grantId: action.grantId, decision: action.decision });
           break;
@@ -500,7 +464,7 @@ export default function TrayScreen() {
           await openExternalUrl(action.url);
           return;
       }
-      if (generation !== clientResetGeneration() || routerFamilyMode('needs-you-tray') !== 'legacy') return;
+      if ((generation !== clientResetGeneration())) return;
       // Re-read on completion only: a multi-grant card may still need another decision.
       await loadNeedsYouList(item.workspaceId);
       AccessibilityInfo.announceForAccessibility('Decision sent');
@@ -508,7 +472,7 @@ export default function TrayScreen() {
       if (generation === clientResetGeneration())
         setError(appErrorCopy(cause));
     }
-  }, [legacy]);
+  }, []);
 
   const dismissNeed = useCallback(
     (item: NeedsYouItemView) => {
@@ -522,11 +486,10 @@ export default function TrayScreen() {
   const commitClear = useCallback(async (clear: PendingClear) => {
     const generation = clientResetGeneration();
     if (clear.prepared) {
-      try { await clear.prepared.deliver(); }
-      catch (cause) { if (generation === clientResetGeneration()) setError(appErrorCopy(cause)); }
+      try { await clear.prepared.deliver(); await loadNeedsYouList(clear.workspaceId); await loadSavedList(clear.workspaceId); }
+      catch(cause) { if(generation===clientResetGeneration()) setError(appErrorCopy(cause)); }
       return;
     }
-    if (!legacy || routerFamilyMode('needs-you-tray') !== 'legacy') return;
     const ids = new Set(clear.items.map((item) => item.messageId));
     if (clear.kind === 'needs') {
       const removal = removeNeedsYou(clear.workspaceId, ids);
@@ -548,7 +511,7 @@ export default function TrayScreen() {
       edit.cancel();
       setError(appErrorCopy(cause));
     }
-  }, [legacy]);
+  }, []);
 
   /** Send the held clears `which` picks, and stop holding them. */
   const flushClears = useCallback(
@@ -578,7 +541,7 @@ export default function TrayScreen() {
   // Held section clears hide their cells in the store, so the badge drops too.
   // A layout effect, so the cells never paint once more after the clear.
   useLayoutEffect(() => {
-    if (!legacy) return;
+
     const held = new Map<string, string[]>();
     for (const clear of pending) {
       if (clear.kind !== 'needs') continue;
@@ -591,7 +554,7 @@ export default function TrayScreen() {
     return () => {
       for (const id of held.keys()) holdNeedsYou(id, []);
     };
-  }, [pending, legacy]);
+  }, [pending]);
   const visibleNeeds = needs ?? EMPTY_NEEDS;
   const visibleBookmarks = useMemo(() => {
     const held = new Set(
@@ -599,8 +562,8 @@ export default function TrayScreen() {
         clear.kind === 'saved' ? clear.items.map((item) => item.messageId) : [],
       ),
     );
-    return legacy && held.size ? bookmarks.filter((item) => !held.has(item.messageId)) : bookmarks;
-  }, [bookmarks, pending, legacy]);
+    return (held.size) ? bookmarks.filter((item) => !held.has(item.messageId)) : bookmarks;
+  }, [bookmarks, pending]);
   const newestClear = pending.at(-1);
 
   /** Clear a section now, with Undo. This only dismisses approval cards from the tray. */
@@ -613,24 +576,21 @@ export default function TrayScreen() {
           ? { ...held, kind, items: visibleNeeds }
           : { ...held, kind, items: visibleBookmarks, more: !!savedNext };
       if (!clear.items.length) return;
-      let prepared: PreparedTrayCommand | undefined;
-      try {
-        if (!legacy) prepared = prepareTrayCommand(workspaceId, kind === 'needs'
-          ? { operation: 'clearNeedsYouSection', input: { workspaceId } }
-          : { operation: 'clearMessageBookmarks', input: { workspaceId } });
-      } catch (cause) { setError(appErrorCopy(cause)); return; }
-      if (prepared) void prepared.ready.catch(cause => setError(appErrorCopy(cause)));
-      pendingRef.current = [...pendingRef.current, { ...clear, prepared }];
+      const prepared = prepareTrayCommand(kind === 'needs'
+        ? {operation:'clearNeedsYouSection',input:{workspaceId}}
+        : {operation:'clearMessageBookmarks',input:{workspaceId}});
+      if(prepared) void prepared.ready.catch(cause=>setError(appErrorCopy(cause)));
+      pendingRef.current = [...pendingRef.current, {...clear,prepared}];
       setPending(pendingRef.current);
       AccessibilityInfo.announceForAccessibility(`${clearedLabel(clear)}. Undo available.`);
     },
-    [visibleBookmarks, visibleNeeds, workspaceId, savedNext, legacy],
+    [visibleBookmarks, visibleNeeds, workspaceId, savedNext],
   );
 
   /** Undo the newest held clear; an older one still in its window shows next. */
   const undoClear = useCallback(() => {
     const clear = pendingRef.current.at(-1);
-    if (clear?.prepared) void clear.prepared.cancel().catch(cause => setError(appErrorCopy(cause)));
+    if(clear?.prepared) void clear.prepared.cancel().catch(cause=>setError(appErrorCopy(cause)));
     pendingRef.current = pendingRef.current.slice(0, -1);
     setPending(pendingRef.current);
     AccessibilityInfo.announceForAccessibility('Restored');
@@ -638,24 +598,14 @@ export default function TrayScreen() {
 
   const remove = useCallback(async (bookmark: MessageBookmarkView) => {
     const generation = clientResetGeneration();
-    if (!legacy) {
-      try {
-        await prepareTrayCommand(bookmark.workspaceId, { operation: 'setMessageBookmark', input: {
-          roomId: bookmark.roomId, messageId: bookmark.messageId, bookmarked: false,
-        } })!.deliver();
-        if (generation === clientResetGeneration()) setRemoved(bookmark);
-      } catch (cause) { if (generation === clientResetGeneration()) setError(appErrorCopy(cause)); }
-      return;
-    }
+
     const edit = hideSavedItems(bookmark.workspaceId, [bookmark.messageId]);
     setRemoved(bookmark);
     AccessibilityInfo.announceForAccessibility('Bookmark removed. Undo available.');
     try {
-      await monolithPhoneOperation('setMessageBookmark', {
-        roomId: bookmark.roomId,
-        messageId: bookmark.messageId,
-        bookmarked: false,
-      });
+      const input = {roomId:bookmark.roomId,messageId:bookmark.messageId,bookmarked:false};
+      const prepared = prepareTrayCommand({operation:'setMessageBookmark',input});
+      if(prepared) await prepared.deliver(); else await monolithPhoneOperation('setMessageBookmark', input);
       edit.settle();
     } catch (cause) {
       if (generation !== clientResetGeneration()) return;
@@ -663,29 +613,19 @@ export default function TrayScreen() {
       setRemoved(null);
       setError(appErrorCopy(cause));
     }
-  }, [legacy]);
+  }, []);
 
   const undo = useCallback(async () => {
     if (!removed?.available) return;
     const bookmark = removed;
     const generation = clientResetGeneration();
-    if (!legacy) {
-      try {
-        await prepareTrayCommand(bookmark.workspaceId, { operation: 'setMessageBookmark', input: {
-          roomId: bookmark.roomId, messageId: bookmark.messageId, bookmarked: true,
-        } })!.deliver();
-        if (generation === clientResetGeneration()) setRemoved(null);
-      } catch (cause) { if (generation === clientResetGeneration()) setError(appErrorCopy(cause)); }
-      return;
-    }
+
     setRemoved(null);
     AccessibilityInfo.announceForAccessibility('Bookmark restored');
     try {
-      await monolithPhoneOperation('setMessageBookmark', {
-        roomId: bookmark.roomId,
-        messageId: bookmark.messageId,
-        bookmarked: true,
-      });
+      const input = {roomId:bookmark.roomId,messageId:bookmark.messageId,bookmarked:true};
+      const prepared = prepareTrayCommand({operation:'setMessageBookmark',input});
+      if(prepared) await prepared.deliver(); else await monolithPhoneOperation('setMessageBookmark', input);
       if (generation !== clientResetGeneration()) return;
       revealSavedItems(bookmark.workspaceId, [bookmark.messageId]);
       await loadSavedList(bookmark.workspaceId);
@@ -693,7 +633,7 @@ export default function TrayScreen() {
       if (generation !== clientResetGeneration()) return;
       setError(appErrorCopy(cause));
     }
-  }, [removed, legacy]);
+  }, [removed]);
 
   const rows = useMemo((): Row[] => {
     if (loading || workspaceLost) return [];
@@ -807,7 +747,7 @@ export default function TrayScreen() {
       onViewableItemsChanged={onViewableItemsChanged}
       viewabilityConfig={viewabilityConfig}
       onScroll={(event) => { if (event.nativeEvent.contentOffset.y > 20) savedScroll.current = true; }}
-      onEndReached={() => { if (legacy && savedScroll.current) void loadMoreSaved(); }}
+      onEndReached={() => { if ((savedScroll.current)) void loadMoreSaved(); }}
       onEndReachedThreshold={0.5}
       contentContainerStyle={{ paddingBottom: 24 + insets.bottom }}
       data={rows}
@@ -941,8 +881,8 @@ export default function TrayScreen() {
     <View style={[styles.screen, { paddingTop: desktop ? 0 : insets.top }]}>
       <PageHeader backAccessibilityLabel="Back to Rooms" eyebrow={workspaceName ?? 'Workspace'}
         onBack={desktop ? undefined : () => router.back()} prominent testID="tray-header" title="Tray" />
-      {error || routed.error || routed.savedError ? (
-        <SettingsRow title={error ?? routed.error ?? routed.savedError!} action="Retry" onPress={() => {if(legacy)void load(true);else{setError(null);routed.retry();}}}
+      {error ? (
+        <SettingsRow title={error} action="Retry" onPress={() => {void load(true);}}
           />
       ) : null}
       <View style={styles.body}>

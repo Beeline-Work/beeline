@@ -6,15 +6,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 // These fixtures exercise the negotiated legacy compatibility path. The actual
 // router owner/negotiation path has independent integration coverage.
-vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
-vi.mock('@/buzz/router-owner', () => ({
-  subscribeRouterOwner: () => () => {},
-  routerFamilyMode: () => 'legacy',
-  acquireRouterLane: () => ({ current: () => ({ state: 'ABSENT', value: null, cut: null, error: null }), release: () => {},
-    subscribe: () => () => {}, refreshVisibility: () => {} }),
-  routerLaneSnapshot: () => ({ state: 'ABSENT', value: null, cut: null, error: null }),
-  retryRouterLane: () => {}, routerOwnerListPanel: () => {},
-}));
+
+
 
 const workspaceLive = vi.hoisted(() => ({ listeners: new Set<() => void>(), deleted: false, empty: false }));
 const routerReplace = vi.hoisted(() => vi.fn());
@@ -231,7 +224,7 @@ vi.mock('@/buzz/community-storage', () => ({
 vi.mock('@/sync/transport/room-view-client', () => ({
   RoomViewClient: class {
     workspaces = workspaces;
-    chats = (_authority: unknown, workspaceId: string) => chats(workspaceId);
+    chats = (workspaceId: string) => chats(workspaceId);
     corners = corners;
   },
 }));

@@ -1,6 +1,4 @@
 import { useCallback, useSyncExternalStore } from 'react';
-import type { ChatDisplayMessage } from './room-view-presentation';
-import { mediaIdFromUrl } from './artifact';
 type Owner = { ids: ReadonlySet<string>; active: boolean };
 const owners = new Map<string, Owner>();
 const listeners = new Map<string, Set<() => void>>();
@@ -20,14 +18,6 @@ function change(owner: string, next: Owner): void {
  */
 export function observeArtifactRows(owner: string, ids: readonly string[]): void {
   change(owner, { ids: new Set(ids), active: owners.get(owner)?.active ?? false });
-}
-/** Only committed transcript DTO rows can supply visible object demand.
- * Optimistic sends, draft/turn overlays and removed rows grant no byte work.
- */
-export function artifactObjectIdsFromVisibleRows(rows: readonly ChatDisplayMessage[]): readonly string[] {
-  return [...new Set(rows.filter(row => !row.isPendingSend && !row.isAgentDraft && !row.isAgentLiveTurn && !row.deleted)
-    .flatMap(row => row.attachments ?? []).filter(attachment => !attachment.expired)
-    .flatMap(attachment => { const id = mediaIdFromUrl(attachment.url); return id ? [id] : []; }))];
 }
 export function setArtifactViewportActive(owner: string, active: boolean): void {
   change(owner, { ids: owners.get(owner)?.ids ?? new Set(), active });

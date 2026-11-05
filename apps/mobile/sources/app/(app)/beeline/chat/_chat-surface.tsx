@@ -429,7 +429,7 @@ const TAIL_PIN_THRESHOLD = 50;
 // Rows the inverted phone list draws in its first render (FlatList's
 // `initialNumToRender`). A source landing scrolls only to a row this close to
 // the newest end; the store narrows the window for one further back.
-const PHONE_FIRST_RENDER_ROWS = 10;
+const PHONE_FIRST_RENDER_ROWS = 2;
 // Open on the tail of a long transcript instead of the full history, then
 // page older messages in as the reader scrolls up.
 const INITIAL_MESSAGE_WINDOW = 30;

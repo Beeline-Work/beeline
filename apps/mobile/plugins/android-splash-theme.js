@@ -73,3 +73,24 @@ function withAndroidSplashTheme(config) {
 }
 
 module.exports = withAndroidSplashTheme;
+module.exports.applyAndroid12SplashTheme = applyAndroid12SplashTheme;
+module.exports.android12SplashThemeGaps = android12SplashThemeGaps;
+module.exports.styleItems = styleItems;
+module.exports.ANDROID_12_SPLASH_ITEMS = ANDROID_12_SPLASH_ITEMS;
+module.exports.LIGHT_SPLASH_BACKGROUND = LIGHT_SPLASH_BACKGROUND;
+module.exports.DARK_SPLASH_BACKGROUND = DARK_SPLASH_BACKGROUND;
+module.exports.EXPO_ANDROIDX_ONLY_SPLASH_STYLE = {
+  resources: {
+    style: [
+      {
+        $: { name: 'Theme.App.SplashScreen', parent: 'Theme.SplashScreen' },
+        item: [
+          { $: { name: 'windowSplashScreenBackground' }, _: '@color/splashscreen_background' },
+          { $: { name: 'windowSplashScreenAnimatedIcon' }, _: '@drawable/splashscreen_logo' },
+          { $: { name: 'postSplashScreenTheme' }, _: '@style/AppTheme' },
+          { $: { name: 'android:windowSplashScreenBehavior' }, _: 'icon_preferred' },
+        ],
+      },
+    ],
+  },
+};

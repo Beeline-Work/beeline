@@ -1,4 +1,3 @@
-import type { RouterAuthorityCertificate } from './router-protocol.js';
 
 export type MediaObjectMetadata = {
   readonly objectId:string;
@@ -7,9 +6,8 @@ export type MediaObjectMetadata = {
   readonly mimeType:string;
   readonly expiresAt:number;
 };
-/** Immutable bytes still require current authority before a cold disk restore. */
+/** Metadata returned by the ordinary authenticated file read. */
 export type MediaMetadata = MediaObjectMetadata & {
-  readonly authority:RouterAuthorityCertificate;
   readonly thumbnail?:MediaObjectMetadata;
 };
 export type MediaLink = {readonly url:string;readonly expiresIn:number};

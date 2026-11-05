@@ -6,7 +6,6 @@ import { migrate, PostgresDatabase, type SqlDatabase } from './database.js';
 import { cornerIdleSql, currentIdleReportSql } from './corner-idle.js';
 import { needsYouItems } from './needs-you.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
-import { DurableLiveReplay } from './durable-live.js';
 import { LiveHub } from './live.js';
 import { announceAgentLifecycle } from './connection-presence.js';
 
@@ -72,15 +71,15 @@ describe.skipIf(!url)('production-shaped slow-query regression', () => {
       await explain('advisory lock 4c93380abebe4682', 'SELECT pg_advisory_xact_lock(hashtext($1))', ['slow-query-proof']);
       await writer.query('ROLLBACK');
 
-      // A restart receipt can wait on this Workspace's journal, but it must
-      // release presence and its advisory lock before doing that durable work.
+      // A restart receipt can wait on its command row, but it must release
+      // presence and its advisory lock before completing that durable work.
       await database.query(`INSERT INTO agent_commands(id,room_id,agent_id,turn_request_id,action,reason,
         root_command_id,root_source_message_id,agent_depth,state,lifecycle_before)
         VALUES('restart-proof',$1,$2,'restart-proof','restart','tagged_lifecycle_restart',
           'restart-proof','restart-proof',0,'claimed','old-lifecycle')`, [room, agent]);
       const pid = (await database.query<{pid: number}>('SELECT pg_backend_pid() pid')).rows[0]!.pid;
       await writer.query('BEGIN');
-      await writer.query('UPDATE live_streams SET sequence=sequence+1 WHERE id=$1', [`workspace:${workspace}`]);
+      await writer.query("SELECT id FROM agent_commands WHERE id='restart-proof' FOR UPDATE");
       announcing = announceAgentLifecycle(database, new LiveHub(), room, agent, {lifecycleId: 'new-lifecycle'});
       void announcing.catch(() => {});
       let blocked = false;
@@ -89,7 +88,7 @@ describe.skipIf(!url)('production-shaped slow-query regression', () => {
         if (blocked) break;
         await new Promise(done => setTimeout(done, 5));
       }
-      expect(blocked, 'restart receipt reached its actual journal wait').toBe(true);
+      expect(blocked, 'restart receipt reached its command-row wait').toBe(true);
       expect((await reader.query(`SELECT body->>'lifecycleId' lifecycle FROM live_outputs
         WHERE agent_id=$1 AND kind='presence'`, [agent])).rows[0].lifecycle).toBe('new-lifecycle');
       const presenceStarted = performance.now();
@@ -109,18 +108,6 @@ describe.skipIf(!url)('production-shaped slow-query regression', () => {
       await writer.query('ROLLBACK');
       await announcing;
 
-      // An existing committed stream must be subscribable while a writer owns
-      // its journal row. ON CONFLICT alone queues behind that unrelated writer.
-      const stream = `workspace:${workspace}`;
-      await writer.query('BEGIN');
-      await writer.query('UPDATE live_streams SET sequence=sequence+1 WHERE id=$1', [stream]);
-      const readDb: SqlDatabase = { query: (sql, values) => reader.query(sql, values), transaction: async work => work(readDb) };
-      const started = performance.now();
-      const replay = new DurableLiveReplay(readDb, new LiveHub());
-      const subscription = await replay.subscribe(stream, room, undefined, () => {}, () => {}, async () => true);
-      subscription.release();
-      expect(performance.now() - started).toBeLessThan(1000);
-      await writer.query('ROLLBACK');
     } finally {
       await writer.query('ROLLBACK');
       await announcing?.catch(() => {});

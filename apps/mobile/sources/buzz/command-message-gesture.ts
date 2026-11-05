@@ -1,10 +1,9 @@
 import type { AttachmentReference } from '@beeline/buzz-client';
 import type { NostrEvent } from '@beeline/nostr';
-import type { CommandIntent } from '@beeline/net/owner';
+import { canonical, type CommandIntent } from './command-owner';
 import { getRandomBytes } from 'expo-crypto';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { activeCommandOwner } from './command-owner';
-import { admitRouterPreparedMessage } from './router-owner';
 import { preparedMessageOperation } from './prepared-message-operation';
 
 /** Existing send handler calls this in its synchronous gesture prefix when all
@@ -24,10 +23,8 @@ export function prepareRouterMessageGesture(input: { roomId: string; principal: 
   try {
     if (owner.principal !== input.principal) throw new Error('Command principal changed');
     const { operation, input: args } = preparedMessageOperation(event);
-    const admitted = operation === 'sendRoomReply'
-      ? admitRouterPreparedMessage(operation, { ...args, parentMessageId: args.parentMessageId! })
-      : admitRouterPreparedMessage(operation, args);
-    persisted = owner.prepare(admitted);
+    persisted = owner.prepare({ wire: { operation, input: canonical(args) },
+      isCurrent: () => activeCommandOwner() === owner });
   } catch (error) { persisted = Promise.reject(error); }
   // The existing async send catch consumes the failure after its paint yield.
   void persisted.catch(() => undefined);

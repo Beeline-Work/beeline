@@ -1,6 +1,6 @@
 import type { RoomToolPage, RoomToolReference, RoomViewMessage } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
-import { readRouterAuthority, RouterProjectionUnavailable } from './router-projections.js';
+import { PhoneOperationError } from './phone-operations.js';
 
 type Summary = { id: string; author_id: string; name: string; kind: 'agent' | 'human'; created_at: Date; request_id: string | null; count: number };
 const authorized = `SELECT room.id,room.workspace_id FROM rooms room
@@ -10,24 +10,13 @@ const authorized = `SELECT room.id,room.workspace_id FROM rooms room
 const isTool = `message.presentation='activity' AND message.deleted_at IS NULL AND message.durable_fact IS NULL
   AND EXISTS(SELECT 1 FROM jsonb_array_elements(message.activity) item WHERE item->>'kind'='tool')`;
 
-/** Projection of the bounded aggregate returned by the Room's single query. */
-export function projectRoomToolSummaries(rows:readonly Summary[],roomId:string):RoomViewMessage[]{
-  return rows.map(row=>{const created=new Date(row.created_at);return{ id: row.id, text: '', createdAt: Math.floor(created.getTime() / 1000), createdAtMs: created.getTime(),
-    author: { pubkey: row.author_id, kind: row.kind, name: row.name }, presentation: 'activity' as const,
-    ...(row.request_id ? { requestId: row.request_id } : {}),
-    activity: [{ kind: 'tool' as const, title: `${row.count} steps`, toolGroup: { roomId, anchor: row.id, count: row.count } }],
-  };});
-}
-export type RoomToolSummaryRow=Summary;
-
 /** Existing disclosure/Open actions own each bounded page. The optional
  * message target loads one full stored tool result, never a Room refetch. */
 export async function readRoomTools(database: SqlDatabase, input: RoomToolReference & { before?: string; messageId?: string }, reader: string): Promise<RoomToolPage> {
   return database.transaction(async db => {
     await db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
     const room = (await db.query<{ workspace_id: string }>(authorized, [input.roomId, reader])).rows[0];
-    if (!room) throw new RouterProjectionUnavailable('authority');
-    const authority = await readRouterAuthority(db, { family: 'room-head', roomId: input.roomId, workspaceId: room.workspace_id }, reader);
+    if (!room) throw new PhoneOperationError(403, { error: 'access_denied' });
     const full = input.messageId !== undefined;
     const rows = (await db.query<Summary & { activity: RoomViewMessage['activity']; more: boolean }>(`WITH anchor AS (
       SELECT id,created_at,author_id,request_id,turn_id FROM messages WHERE id=$2 AND room_id=$1 AND presentation='activity' AND deleted_at IS NULL
@@ -47,12 +36,11 @@ export async function readRoomTools(database: SqlDatabase, input: RoomToolRefere
     ) SELECT page.*,left(person.name,128) name,person.kind FROM page JOIN identities person ON person.id=page.author_id
       ORDER BY page.created_at DESC,page.id DESC`, [input.roomId, input.anchor, input.before ?? null, input.messageId ?? null])).rows;
     const page = rows.slice(0, 50);
-    const result: RoomToolPage = { roomId: input.roomId, authority, messages: page.map(row => ({
+    const result: RoomToolPage = { roomId: input.roomId, messages: page.map(row => ({
       id: row.id, text: '', createdAt: Math.floor(row.created_at.getTime() / 1000), createdAtMs: row.created_at.getTime(),
       author: { pubkey: row.author_id, kind: row.kind, name: row.name }, presentation: 'activity', activity: row.activity,
       ...(row.request_id ? { requestId: row.request_id } : {}),
     })), ...(rows.length > 50 ? { next: page.at(-1)!.id } : {}) };
-    if (Buffer.byteLength(JSON.stringify(result)) > 64 * 1024) throw new RouterProjectionUnavailable('budget');
     return result;
   });
 }

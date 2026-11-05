@@ -613,7 +613,7 @@
       "id": "apps/mobile/sources/buzz/artifact-link.ts::session-fetch",
       "file": "apps/mobile/sources/buzz/artifact-link.ts",
       "kind": "session-fetch",
-      "count": 3,
+      "count": 1,
       "compatibility": "legacy-only",
       "phase": "M4"
     },

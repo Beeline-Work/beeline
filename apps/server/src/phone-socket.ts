@@ -1,7 +1,6 @@
 import { parseRouterCommandIdentity } from '@beeline/api-contract/router-command';
 import type { WebSocket } from 'ws';
 import {
-  PHONE_SOCKET_MAX_IN_FLIGHT, PHONE_SOCKET_MAX_REQUEST_ID_LENGTH,
   type PhoneRequestFrame, type PhoneResponseFrame,
 } from '@beeline/api-contract/phone';
 import { captureServerError } from './sentry.js';
@@ -37,18 +36,13 @@ export function phoneSocketRequests(
     if (!message || typeof message !== 'object' || (message as { t?: unknown }).t !== 'req') return false;
     const request = message as Partial<PhoneRequestFrame>;
     const id = typeof request.id === 'string' ? request.id : '';
-    if (!id || id.length > PHONE_SOCKET_MAX_REQUEST_ID_LENGTH ||
-      typeof request.op !== 'string' || !/^[A-Za-z][A-Za-z0-9]{0,127}$/.test(request.op) ||
+    if (!id || typeof request.op !== 'string' ||
       !request.args || typeof request.args !== 'object' || Array.isArray(request.args)) {
-      fail(id.slice(0, PHONE_SOCKET_MAX_REQUEST_ID_LENGTH), 'invalid_request', 'Invalid phone request');
+      fail(id, 'invalid_request', 'Invalid phone request');
       return true;
     }
     if (active.has(id)) {
       fail(id, 'duplicate_id', 'Request id is already in flight');
-      return true;
-    }
-    if (active.size >= PHONE_SOCKET_MAX_IN_FLIGHT) {
-      fail(id, 'busy', 'Too many phone requests in flight', true);
       return true;
     }
     let command;

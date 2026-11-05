@@ -11,8 +11,8 @@ export class CommandScopedDatabase implements SqlDatabase {
   run<T>(database: SqlDatabase, work: () => Promise<T>): Promise<T> { return this.scope.run(database, work); }
   get active(): boolean { return this.scope.getStore() !== undefined; }
   get backgroundWork() { return this.base.backgroundWork; }
-  query<Row extends QueryResultRow = QueryResultRow>(sql: string, values?: unknown[]) {
-    return (this.scope.getStore() ?? this.base).query<Row>(sql, values);
+  query<Row extends QueryResultRow = QueryResultRow>(sql: string, values?: unknown[], preparedName?: string) {
+    return (this.scope.getStore() ?? this.base).query<Row>(sql, values, preparedName);
   }
   transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {
     return (this.scope.getStore() ?? this.base).transaction(work);

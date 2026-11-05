@@ -316,11 +316,13 @@ return [
   `${APPROVAL_FROM('write-access')}
    JOIN permission_authority permission ON permission.room_id=room.id
      AND permission.status='pending'
-   JOIN messages m ON m.room_id=room.id AND m.card_type='permission'
-     AND m.card->>'permissionId'=permission.permission_id AND m.card->>'status'='pending'
+   CROSS JOIN LATERAL (
+     SELECT * FROM messages m WHERE m.room_id=room.id AND m.card_type='permission'
+       AND m.card->>'permissionId'=permission.permission_id AND m.card->>'status'='pending'
+       AND m.deleted_at IS NULL OFFSET 0
+   ) m
    ${APPROVAL_JOINS}
-   WHERE m.deleted_at IS NULL
-     AND CASE WHEN m.card->>'purpose'='squire-spending' THEN EXISTS (
+   WHERE CASE WHEN m.card->>'purpose'='squire-spending' THEN EXISTS (
          SELECT 1 FROM agents spender
          WHERE spender.agent_id=m.card->'agent'->>'pubkey' AND spender.owner_id=$2)
        ELSE (permission.principal_id=$2 OR ${VIEWER_MANAGES_WORKSPACE}) END`,
@@ -407,7 +409,8 @@ const questionBranch=(projection:CandidateProjection)=>`
   SELECT ${candidateColumns(projection)},NULL::text approval_kind,NULL::timestamptz approval_expires_at,
     NULL::text[] pending_grant_ids,NULL::text actor_name
   FROM viewer_rooms room
-  JOIN messages m ON m.room_id=room.id
+  JOIN actionable_asks ask ON ask.room_id=room.id
+  JOIN messages m ON m.id=ask.id
   JOIN identities viewer ON viewer.id=$2
   ${projection==='cells'?'LEFT JOIN identities author ON author.id=m.author_id':''}
   LEFT JOIN needs_you_marks mark ON mark.identity_id=$2 AND mark.message_id=m.id
@@ -416,6 +419,10 @@ const questionBranch=(projection:CandidateProjection)=>`
 
 /** The same authorized candidates drive the tray and its badge. */
 const needsYouCandidates=(projection:CandidateProjection,scoped=false)=>`WITH ${viewerRoomsSql(projection==='cells'?'room.*':'room.id',scoped)},
+  actionable_asks AS MATERIALIZED (
+    SELECT m.id,m.room_id FROM messages m
+    WHERE ${askingMessageSql('m')}
+  ),
   decidable AS (
     SELECT grant_row.id::text grant_id FROM agent_grants grant_row
     WHERE grant_row.workspace_id=$1 AND grant_row.status='pending' AND grant_row.superseded_at IS NULL
@@ -518,7 +525,7 @@ export async function needsYouItems(database: SqlDatabase, workspaceId: string, 
      LEFT JOIN visible ON true
      LEFT JOIN started ON started.message_id=visible.message_id
      LEFT JOIN identities viewer ON viewer.id=$2`,
-    roomIds?[workspaceId, viewerId, markSeen,roomIds]:[workspaceId, viewerId, markSeen],
+    roomIds?[workspaceId, viewerId, markSeen,roomIds]:[workspaceId, viewerId, markSeen], 'phone-tray-needs-0',
   );
   if (!result.rows[0]?.authorized) throw new Error('workspace membership required');
   const built = result.rows.filter((row) => row.message_id &&

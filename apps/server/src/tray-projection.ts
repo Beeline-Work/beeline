@@ -63,7 +63,7 @@ export async function readMessageBookmarks(database: SqlDatabase, input: Input<'
        )
        SELECT COALESCE((SELECT jsonb_agg(to_jsonb(bookmarks) ORDER BY bookmarked_at DESC,message_id)
          FROM bookmarks),'[]'::jsonb) bookmarks FROM authorized`,
-      cursor ? [input.workspaceId, viewerId, cursor[1], cursor[2]] : [input.workspaceId, viewerId],
+      cursor ? [input.workspaceId, viewerId, cursor[1], cursor[2]] : [input.workspaceId, viewerId], 'phone-tray-saved-0',
     );
     if (!result.rows[0]) throw new Error('workspace membership required');
     const page = result.rows[0].bookmarks.slice(0, BOOKMARK_PAGE);

@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-const state = vi.hoisted(() => ({ currentState: 'active', listeners: new Set<(value: string) => void>() }));
-vi.mock('react-native', () => ({ AppState: { get currentState() { return state.currentState; },
+const state = vi.hoisted(() => ({ currentState: 'active', platform: 'android', listeners: new Set<(value: string) => void>(), network: new Set<(value: { isConnected: boolean; isInternetReachable: boolean }) => void>() }));
+vi.mock('react-native', () => ({
+  Platform: { get OS() { return state.platform; } }, NativeModules: { RNCNetInfo: {} },
+  NativeEventEmitter: class { addListener(_name: string, listener: (value: { isConnected: boolean; isInternetReachable: boolean }) => void) {
+    state.network.add(listener); return { remove: () => state.network.delete(listener) };
+  } }, AppState: { get currentState() { return state.currentState; },
   addEventListener: (_event: string, listener: (value: string) => void) => {
     state.listeners.add(listener); return { remove: () => state.listeners.delete(listener) };
   } } }));
@@ -10,7 +14,7 @@ vi.mock('@/auth/monolith-session', () => ({
   monolithSession: { authorization: async () => 'fixture-access', invalidateAuthorization: vi.fn() },
 }));
 vi.mock('react', () => ({ useSyncExternalStore: (_subscribe: unknown, snapshot: () => unknown) => snapshot() }));
-import { LiveConnection, useConnectionFailure } from './live-connection';
+import { LiveConnection, useConnectionFailure, subscribeNetworkOnline, sharedLiveConnection, resetSharedLiveConnection } from './live-connection';
 import { PhoneSocketDisconnectedError } from './phone-socket-error';
 
 class Socket {
@@ -39,17 +43,61 @@ function setup(authorization = vi.fn(async () => 'fixture-access')) {
   let changed = () => {};
   const invalidate = vi.fn();
   const connection = new LiveConnection({ authorization, invalidateAuthorization:invalidate,
-    liveUrl:()=> 'ws://fixture.invalid/v1/phone/live', subscribeIdentityChange: listener => { changed=listener; return ()=>{}; } });
+    subscribeNetworkOnline, liveUrl:()=> 'ws://fixture.invalid/v1/phone/live', subscribeIdentityChange: listener => { changed=listener; return ()=>{}; } });
   connections.push(connection);
   return {connection,authorization,invalidate,changeIdentity:()=>changed()};
 }
 const tick = () => vi.advanceTimersByTimeAsync(0);
 async function open() { await tick(); const socket=Socket.instances.at(-1)!;socket.open();return socket; }
 function appState(next: string) { state.currentState=next;for(const listener of state.listeners)listener(next); }
-beforeEach(()=>{vi.useFakeTimers();Socket.instances=[];state.currentState='active';vi.stubGlobal('WebSocket',Socket);});
-afterEach(()=>{for(const connection of connections.splice(0))connection.dispose();state.listeners.clear();vi.useRealTimers();vi.unstubAllGlobals();});
+beforeEach(()=>{vi.useFakeTimers();Socket.instances=[];state.currentState='active';state.platform='android';vi.stubGlobal('WebSocket',Socket);});
+afterEach(()=>{resetSharedLiveConnection();for(const connection of connections.splice(0))connection.dispose();state.listeners.clear();vi.useRealTimers();vi.unstubAllGlobals();});
 
 describe('the one phone socket',()=>{
+  it('the shared production owner supplies and disposes native online events',()=>{
+    expect(state.network.size).toBe(0);
+    sharedLiveConnection();expect(state.network.size).toBe(1);
+    resetSharedLiveConnection();expect(state.network.size).toBe(0);
+  });
+  it('an embedded connection only uses its supplied host dependencies',()=>{
+    const connection=new LiveConnection({authorization:async()=> 'fixture-access',
+      liveUrl:()=> 'ws://fixture.invalid/v1/phone/live',subscribeIdentityChange:()=>()=>{}});
+    connections.push(connection);expect(state.network.size).toBe(0);
+  });
+  it('publishes the first failed read without waiting through replacement attempts',async()=>{
+    const {connection}=setup();const answer=connection.request('readRoom',{roomId:'a'}).catch(error=>error);
+    const socket=await open();socket.drop();await tick();
+    expect(useConnectionFailure()).toBe(true);
+    expect(await answer).toBeInstanceOf(PhoneSocketDisconnectedError);
+    expect(Socket.instances).toHaveLength(1);
+  });
+  it('network-online invokes the open Room read immediately after a five-second outage',async()=>{
+    const {connection}=setup();let answer:Promise<unknown>|undefined;
+    await connection.register([{'#h':['a']}],()=>{answer=connection.request('readRoom',{roomId:'a'}).catch(error=>error);});
+    const socket=await open();const initial=connection.request('readRoom',{roomId:'a'});socket.reply({room:{id:'a'}});await initial;
+    socket.drop();await tick();Socket.instances.at(-1)!.fail();await tick();
+    expect(useConnectionFailure()).toBe(true);
+    await vi.advanceTimersByTimeAsync(5_000);
+    for(const listener of state.network)listener({isConnected:true,isInternetReachable:true});
+    const replacement=await open();replacement.reply({room:{id:'a'}});await answer;
+    expect(useConnectionFailure()).toBe(false);
+    expect(replacement.requests()).toHaveLength(1);
+    expect(state.network.size).toBe(1);connection.dispose();expect(state.network.size).toBe(0);
+  });
+  it('offline signals never invent failures or schedule recovery',async()=>{
+    const {connection}=setup();const read=connection.request('readRoom',{roomId:'a'});const socket=await open();socket.reply({});await read;
+    const listener=vi.fn();await connection.register([{'#h':['a']}],listener);
+    for(const network of state.network)network({isConnected:false,isInternetReachable:false});
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(useConnectionFailure()).toBe(false);expect(listener).not.toHaveBeenCalled();expect(Socket.instances).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it('browser online invokes the same read and disposal removes its listener',async()=>{
+    state.platform='web';const browser=new EventTarget();vi.stubGlobal('window',browser);
+    const {connection}=setup();const listener=vi.fn();await connection.register([{'#h':['a']}],listener);await open();
+    browser.dispatchEvent(new Event('online'));expect(listener).toHaveBeenCalledTimes(1);
+    connection.dispose();browser.dispatchEvent(new Event('online'));expect(listener).toHaveBeenCalledTimes(1);
+  });
   it('sends ordinary reads immediately and returns their answers unchanged',async()=>{
     const {connection}=setup();const answer=connection.request('readRoom',{roomId:'a'});const socket=await open();
     expect(socket.protocols).toEqual(['bearer.fixture-access']);expect(socket.requests()[0]).toMatchObject({op:'readRoom',args:{roomId:'a'}});
@@ -60,8 +108,10 @@ describe('the one phone socket',()=>{
     const socket=await open();expect(Socket.instances).toHaveLength(1);socket.reply({workspaces:[]},1);socket.reply({room:{id:'a'}});
     await expect(room).resolves.toEqual({room:{id:'a'}});await expect(workspaces).resolves.toEqual({workspaces:[]});
   });
-  it('reconnects and reads again when the socket dies during a read',async()=>{
-    const {connection}=setup();const answer=connection.request('readRoom',{roomId:'a'});const first=await open();first.drop();
+  it('settles a lost read; the next read reconnects',async()=>{
+    const {connection}=setup();const failed=connection.request('readRoom',{roomId:'a'}).catch(error=>error);const first=await open();first.drop();
+    expect(await failed).toBeInstanceOf(PhoneSocketDisconnectedError);
+    const answer=connection.request('readRoom',{roomId:'a'});
     const second=await open();expect(Socket.instances).toHaveLength(2);expect(second.requests()).toHaveLength(1);second.reply({room:{id:'a'}});
     await expect(answer).resolves.toMatchObject({room:{id:'a'}});
   });
@@ -81,10 +131,16 @@ describe('the one phone socket',()=>{
     socket.reply({messageId:'image'});await expect(send).resolves.toEqual({messageId:'image'});
     expect(Socket.instances).toHaveLength(1);
   });
-  it('counts failed native openings against the same three attempts',async()=>{
+  it('settles the first failed native opening without another attempt',async()=>{
     const {connection,invalidate}=setup();const answer=connection.request('readRoom',{roomId:'a'}).catch(error=>error);
-    for(let n=0;n<3;n++){await tick();Socket.instances[n]!.fail();}
-    expect(await answer).toBeInstanceOf(PhoneSocketDisconnectedError);expect(Socket.instances).toHaveLength(3);expect(invalidate).toHaveBeenCalledTimes(3);
+    await tick();Socket.instances[0]!.fail();
+    expect(await answer).toBeInstanceOf(PhoneSocketDisconnectedError);expect(Socket.instances).toHaveLength(1);expect(invalidate).not.toHaveBeenCalled();
+  });
+  it('invalidates authorization only for an explicit server authorization refusal',async()=>{
+    const {connection,invalidate}=setup();const read=connection.request('readRoom',{roomId:'a'}).catch(error=>error);const socket=await open();
+    socket.emit({t:'res',id:socket.requests()[0].id,ok:false,error:{code:'unauthorized',message:'Sign in again',retryable:false}});
+    expect(await read).toMatchObject({code:'unauthorized'});expect(invalidate).toHaveBeenCalledWith('fixture-access');
+    expect(socket.readyState).toBe(1);expect(Socket.instances).toHaveLength(1);expect(useConnectionFailure()).toBe(false);
   });
   it('does not repeat an authorization failure before any socket request',async()=>{
     const authorization=vi.fn(async()=>{throw Error('Authorization unavailable');});const {connection}=setup(authorization);
@@ -93,12 +149,14 @@ describe('the one phone socket',()=>{
   });
   it('ends an unanswered read at its existing deadline even if pongs arrive',async()=>{
     const {connection}=setup();const answer=connection.request('readRoom',{roomId:'a'},{timeoutMs:100}).catch(error=>error);
-    for(let n=0;n<3;n++){await open();await vi.advanceTimersByTimeAsync(100);}
-    expect((await answer).constructor.name).toBe('MonolithRequestTimeoutError');expect(Socket.instances).toHaveLength(3);
+    await open();await vi.advanceTimersByTimeAsync(100);
+    expect((await answer).constructor.name).toBe('MonolithRequestTimeoutError');expect(Socket.instances).toHaveLength(1);
   });
   it('shares a replacement after two concurrent reads fail together',async()=>{
-    const {connection}=setup();const room=connection.request('readRoom',{roomId:'a'}),list=connection.request('readWorkspaces',{});
-    const first=await open();first.drop();const replacement=await open();expect(Socket.instances).toHaveLength(2);
+    const {connection}=setup();const oldRoom=connection.request('readRoom',{roomId:'a'}).catch(error=>error),oldList=connection.request('readWorkspaces',{}).catch(error=>error);
+    const first=await open();first.drop();expect(await oldRoom).toBeInstanceOf(PhoneSocketDisconnectedError);expect(await oldList).toBeInstanceOf(PhoneSocketDisconnectedError);
+    const room=connection.request('readRoom',{roomId:'a'}),list=connection.request('readWorkspaces',{});
+    const replacement=await open();expect(Socket.instances).toHaveLength(2);
     replacement.reply({room:{id:'a'}});replacement.reply({workspaces:[]},1);await room;await list;
   });
   it('does not replay a lost write',async()=>{
@@ -120,7 +178,8 @@ describe('the one phone socket',()=>{
     socket.reply({workspaces:[]},1);await other;expect(socket.readyState).toBe(1);expect(Socket.instances).toHaveLength(1);
   });
   it('ignores a reply arriving from a replaced socket',async()=>{
-    const {connection}=setup();const answer=connection.request('readRoom',{roomId:'a'});const first=await open();first.drop();const second=await open();
+    const {connection}=setup();const lost=connection.request('readRoom',{roomId:'a'}).catch(error=>error);const first=await open();first.drop();await lost;
+    const answer=connection.request('readRoom',{roomId:'a'});const second=await open();
     first.reply({room:{id:'old'}});second.reply({room:{id:'a'}});await expect(answer).resolves.toEqual({room:{id:'a'}});
   });
   it('never opens with authorization completed after sign-out',async()=>{

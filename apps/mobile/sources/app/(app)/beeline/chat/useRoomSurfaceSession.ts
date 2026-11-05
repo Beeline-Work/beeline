@@ -1271,8 +1271,9 @@ export function useRoomSurfaceSession({
               unsubscribe = undefined;
               void mobileSurfaceCache.remove(address);
             }
-            setHydrationFailed(true);
-            setHydrationError(appErrorCopy(error, 'Could not load this Room.'));
+            const copy = appErrorCopy(error, 'Could not load this Room.');
+            setHydrationFailed(Boolean(copy));
+            setHydrationError(copy || null);
           }
         };
         readRoomRef.current = readRoom;
@@ -1283,8 +1284,9 @@ export function useRoomSurfaceSession({
         markRoomOpen('watch-ready');
       } catch (error) {
         if (cancelled) return;
-        setHydrationFailed(true);
-        setHydrationError(appErrorCopy(error, `Could not open this ${ROOM_LABEL}.`));
+        const copy = appErrorCopy(error, `Could not open this ${ROOM_LABEL}.`);
+        setHydrationFailed(Boolean(copy));
+        setHydrationError(copy || null);
       }
     })();
 

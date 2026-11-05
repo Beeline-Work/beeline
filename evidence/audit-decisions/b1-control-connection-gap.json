@@ -1,0 +1,81 @@
+{
+  "recordedAt": "2026-11-05T09:31:27.993766+00:00",
+  "state": "control connection unavailable; original writer state unconfirmed",
+  "requestedChange": "normal inter-row pause 200ms -> 20ms, inbox 023",
+  "originalExecSessionId": 36194,
+  "cleanupSqlPid": 1173283,
+  "cleanupApplicationName": "audit-b1-20261105-cleanup",
+  "lastLogWriteAt": "2026-11-05T09:18:36.918740+00:00",
+  "lastConfirmedProgress": {
+    "globalSamples": 7531,
+    "maxObservedLockWaitMs": 0,
+    "maxObservedWaitingClients": 0,
+    "acknowledgedChanges": {
+      "messages": 1934
+    },
+    "completedBatches": 1934,
+    "operatorParameters": {
+      "updatesOnly": true,
+      "batchSize": 1,
+      "normalPauseMs": 200,
+      "statementTimeoutMs": 100,
+      "pauseAfterTimeoutMs": 1000
+    },
+    "batchTimeouts": 1,
+    "timeoutsByTable": {
+      "messages": 1
+    },
+    "attemptedRows": 1935,
+    "stopRule": {
+      "cleanupBlockedClientWaitMs": 150,
+      "stopOnOtherError": true,
+      "countAndSkipStatementTimeouts": true,
+      "otherWaitsObservedOnly": true,
+      "excludedLeaderStandby": {
+        "application": "beeline_long_running",
+        "waitEvent": "advisory",
+        "query": "SELECT pg_advisory_lock($1)"
+      }
+    },
+    "cancelRequests": 1,
+    "cancelProof": {
+      "observedSleep": true,
+      "cancelled": true,
+      "errorCode": "57014",
+      "receivedWithinMs": 5,
+      "limitMs": 2000
+    },
+    "maxObservedGlobalLockWaitMs": 60000.419,
+    "maxObservedGlobalWaitingBackends": 2,
+    "maxObservedExcludedLeaderWaitMs": 59998.68,
+    "maxObservedExcludedLeaderWaiters": 1,
+    "maxCleanupOwnWaitingLocks": 0,
+    "lastSample": {
+      "blockedClients": 0,
+      "maxWaitMs": 0,
+      "globalMaxWaitMs": 0,
+      "cleanupWaitingLocks": 0
+    }
+  },
+  "lastConfirmedCumulativeCardUpdates": 27849,
+  "countsAreLowerBounds": true,
+  "lastConfirmedTimeouts": 1,
+  "controlReachedDatabase": false,
+  "writerStopConfirmed": false,
+  "currentLocksVerified": false,
+  "newWriterStarted": false,
+  "preparedNormalPauseMs": 20,
+  "preparedTests": "one-row rollback/skip and commit-accounting tests passed; embedded runner parses",
+  "controlErrors": [
+    {
+      "log": ".audit-b1-pause-change-control.log",
+      "tail": "Error: tunnel unavailable: Error contacting Fly.io API when probing \"personal\": timed out (context deadline exceeded)\n"
+    },
+    {
+      "log": ".audit-b1-control-probe.log",
+      "tail": "Error: ssh: can't build tunnel for personal: failed to run query($admin: Boolean!) { organizations(admin: $admin) { nodes { id slug rawSlug name type paidPlan billable viewerRole internalNumericId } } }: Post \"https://api.fly.io/graphql\": EOF\n\n"
+    }
+  ],
+  "nextAction": "Firstmate must verify/control SQL backend before any restart; no further worker retries after two failed control routes",
+  "b8ContractApplied": false
+}

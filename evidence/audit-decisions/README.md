@@ -2,12 +2,14 @@
 
 This batch implements the captain's accepted recommendations. The code batch
 https://github.com/Beeline-Work/beeline/pull/3447 merged after green CI. L1 is
-complete. B1 has cumulatively deleted **63,964 ledger rows** and updated **25,915
-cards**. The latest pass stopped at a **158.417 ms** cleanup-attributed client wait,
-above the approved 150 ms budget. Current remaining counts are **166,311 cards
-and 151 fields**. All **229 current skill versions** and telemetry cohorts are
-preserved. The cleanup backend is absent, holds no locks and blocks no clients.
-See `b1-nov5-150ms-stop.json`; B8 remains untouched.
+complete. B1's one-row pass has last confirmed **1,934 new card updates and one
+rolled-back timeout**; cumulative confirmed card updates are at least **27,849**,
+with 63,964 ledger deletions already complete. **The original writer's current
+state is unconfirmed** after its SSH output stalled and both Fly control routes
+failed. No second writer was launched. SQL backend **1173283**, application
+`audit-b1-20261105-cleanup`, needs firstmate verification before restart.
+See `b1-control-connection-gap.json`. The 20 ms pause variant is prepared locally;
+B8 remains untouched.
 
 | Decision | Implementation |
 | --- | --- |
@@ -416,3 +418,29 @@ Cumulative task changes are **63,964 ledger deletions and 25,915 card updates**.
 No other field updates or B8 drops have run. `b1-nov5-150ms-before.json` contains
 the baseline; `b1-nov5-150ms-stop.json` contains the actual receipt, source hashes,
 maxima and independent read-back. Further updates await firstmate's direction.
+
+## One-row pass and failed pause-change control (inboxes 022–023)
+
+Inbox 022 authorized one-row transactions with SET LOCAL statement_timeout=100ms.
+The operator selects a stable primary key, then BEGIN / SET LOCAL / UPDATE /
+COMMIT. An UPDATE statement timeout rolls back, increments its timeout count,
+pauses one second and advances to the next key. All other errors stop. Only
+committed writes are acknowledged. Composite keys and rollback/skip behavior,
+including a simulated partial write that ROLLBACK must undo, pass local PGlite
+tests. The initially retained successful-row pause was 200 ms.
+
+Inbox 023 reduced that pause to 20 ms, with everything else unchanged. The
+prepared operator and regression test now use 20 ms, but no second writer was
+started. A separate control connection was intended to cancel the old connection
+at its next read-only key-selection boundary, then verify state and restart.
+Neither control attempt reached the server: Fly API probing timed out, and a
+second explicit-address/org route failed with GraphQL EOF.
+
+The original SSH command remains open but its log has stopped advancing. Last
+confirmed receipt: **1,934 committed cards**, **1 timeout**, 1,935 attempted rows,
+zero observed cleanup-blocked clients. The PID is the actual SQL backend
+**1173283**, not protocol BackendKeyData. The last log timestamp and both control
+errors are recorded in `b1-control-connection-gap.json`. Current counts, backend
+state and current locks are **not verified**. The original pass may still be
+running; do not launch a duplicate. No further control retry was made after the
+two failed routes. B8 remains unapplied.

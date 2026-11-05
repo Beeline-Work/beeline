@@ -18,6 +18,24 @@ const ownedTurnAdapters = new Set([
 export const usesOwnedTurnAdapter = (name: string): boolean => ownedTurnAdapters.has(name);
 
 export const TURN_OWNERSHIP_SCHEMA = `
+-- Execution ownership survives transport loss; a new helper runtime replaces it.
+ALTER TABLE agent_connections ADD COLUMN IF NOT EXISTS turn_connection_id text;
+ALTER TABLE agent_connections ADD COLUMN IF NOT EXISTS turn_connection_epoch bigint;
+ALTER TABLE agent_connections ADD COLUMN IF NOT EXISTS turn_transport_id text;
+-- A pre-continuation server updates only the physical connection. Clear the
+-- optional runtime binding when that writer takes over during rollout/rollback.
+CREATE OR REPLACE FUNCTION beeline_replace_turn_transport() RETURNS trigger AS $$
+BEGIN
+  IF NEW.turn_transport_id IS DISTINCT FROM NEW.connection_id THEN
+    NEW.turn_connection_id=NULL;
+    NEW.turn_connection_epoch=NULL;
+    NEW.turn_transport_id=NULL;
+  END IF;
+  RETURN NEW;
+END; $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS beeline_replace_turn_transport ON agent_connections;
+CREATE TRIGGER beeline_replace_turn_transport BEFORE UPDATE OF connection_id ON agent_connections
+  FOR EACH ROW EXECUTE FUNCTION beeline_replace_turn_transport();
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS turn_owner_connection_id text;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS turn_owner_epoch bigint;
 DO $$ BEGIN
@@ -107,8 +125,8 @@ BEGIN
     JOIN agent_commands command ON command.id=NEW.command_id AND command.agent_id=NEW.agent_id
     JOIN agent_command_generation_owners binding ON binding.command_id=command.id AND binding.generation_id=NEW.generation_id
       AND binding.connection_id=NEW.connection_id AND binding.connection_epoch=NEW.connection_epoch
-    WHERE connection.agent_id=NEW.agent_id AND connection.connection_id=NEW.connection_id
-      AND connection.epoch=NEW.connection_epoch AND connection.released_at IS NULL
+    WHERE connection.agent_id=NEW.agent_id AND COALESCE(connection.turn_connection_id,connection.connection_id)=NEW.connection_id
+      AND COALESCE(connection.turn_connection_epoch,connection.epoch)=NEW.connection_epoch AND connection.released_at IS NULL
       AND server.renewed_at>clock_timestamp()-interval '90 seconds'
       AND (beeline_command_generation_open(command.id,NEW.generation_id) OR EXISTS(
         SELECT 1 FROM agent_command_owner_ends ended WHERE ended.command_id=command.id
@@ -133,11 +151,12 @@ CREATE OR REPLACE FUNCTION beeline_command_owner_live(
 ) RETURNS boolean AS $$
   SELECT CASE WHEN owned_connection IS NULL THEN legacy_until>observed_at
   ELSE EXISTS(
-    SELECT 1 FROM agent_connections connection JOIN live_server_instances server
+    SELECT 1 FROM agent_connections connection LEFT JOIN live_server_instances server
       ON server.instance_id=connection.instance_id
-    WHERE connection.agent_id=owned_agent AND connection.connection_id=owned_connection
-      AND connection.epoch=owned_epoch AND connection.released_at IS NULL
-      AND server.renewed_at>clock_timestamp()-interval '90 seconds'
+    WHERE connection.agent_id=owned_agent AND COALESCE(connection.turn_connection_id,connection.connection_id)=owned_connection
+      AND COALESCE(connection.turn_connection_epoch,connection.epoch)=owned_epoch
+      AND (connection.turn_connection_id IS NOT NULL OR (connection.released_at IS NULL
+        AND server.renewed_at>clock_timestamp()-interval '90 seconds'))
   ) END;
 $$ LANGUAGE sql VOLATILE;
 `;
@@ -189,8 +208,8 @@ export function commandOwnerFenceCteSql(scope: string): string {
   return `turn_owner_fence AS MATERIALIZED (
     SELECT owned_command.id command_id FROM agent_commands owned_command
     JOIN agent_connections connection ON connection.agent_id=owned_command.agent_id
-      AND connection.connection_id=owned_command.turn_owner_connection_id
-      AND connection.epoch=owned_command.turn_owner_epoch AND connection.released_at IS NULL
+      AND COALESCE(connection.turn_connection_id,connection.connection_id)=owned_command.turn_owner_connection_id
+      AND COALESCE(connection.turn_connection_epoch,connection.epoch)=owned_command.turn_owner_epoch AND connection.released_at IS NULL
     JOIN live_server_instances server ON server.instance_id=connection.instance_id
       AND server.renewed_at>clock_timestamp()-interval '90 seconds'
     WHERE ${scope} AND beeline_command_generation_open(owned_command.id,owned_command.generation_id) FOR SHARE OF connection
@@ -210,7 +229,7 @@ export async function assertCurrentTurnOwner(
     throw new Error('Turn ownership source invalid');
   const current = await database.query(`SELECT connection.agent_id FROM agent_connections connection
     JOIN live_server_instances server ON server.instance_id=connection.instance_id
-    WHERE connection.agent_id=$1 AND connection.connection_id=$2 AND connection.epoch=$3
+    WHERE connection.agent_id=$1 AND COALESCE(connection.turn_connection_id,connection.connection_id)=$2 AND COALESCE(connection.turn_connection_epoch,connection.epoch)=$3
       AND connection.released_at IS NULL AND server.renewed_at>clock_timestamp()-interval '90 seconds'
     FOR SHARE OF connection`, [agentId, source.connectionId, source.epoch]);
   if (!current.rowCount) throw new Error('Turn ownership source changed');

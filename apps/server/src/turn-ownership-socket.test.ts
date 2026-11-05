@@ -1,3 +1,5 @@
+import { DaemonApiClient } from '../../body/src/daemon-api-client.js';
+import { ConnectorAssignmentLoop } from '../../body/src/connector-assignments.js';
 import type { AddressInfo } from 'node:net';
 import { setTimeout as realTimeout, clearTimeout as realClearTimeout } from 'node:timers';
 import WebSocket from 'ws';
@@ -104,6 +106,81 @@ describe.each(['pglite', ...(postgresUrl ? ['postgres'] : [])])('P12 actual sele
       input: { roomId: room, commandId: command.id, generationId } });
     return client.next(frame => frame.type === 'turn-result' && frame.requestId === requestId, `turn result ${requestId}`);
   }
+
+  it('SOCKET-CONTINUE: completes one generation across repeated machine socket kills and keeps Squire connected', async () => {
+    const bootstrap = await connect();
+    bootstrap.socket.terminate();
+    const helperSockets: WebSocket[] = [];
+    const api = new DaemonApiClient(`http://127.0.0.1:${(server!.address() as AddressInfo).port}`,
+      'bdt_synthetic', agent, fetch, (url, protocols, options) => {
+        const socket = new WebSocket(url, protocols, options);
+        helperSockets.push(socket); sockets.push(socket); return socket;
+      });
+    const log = vi.fn();
+    const vault = vi.fn(async () => []);
+    const connector = new ConnectorAssignmentLoop({api, agentId:agent, log,
+      brokerInstalled:()=>true, readVault:vault, mcp:{call:async()=>({})}});
+    const lost = vi.fn();
+    const turn = {roomId:room,requestId:command.turn_request_id,generationId:'socket-continuation'};
+    const report = async () => {
+      await connector.runOnce();
+      await vi.waitFor(async () => expect((await daemon.execute('getConnectorStatus',
+        {agentId:agent,connectorId:`squire:${agent}`},agent)).status).toBe('connected'));
+    };
+    try {
+      await api.execute('getAgentCommands',{roomId:room});
+      await api.execute('claimAgentCommand',{roomId:room,commandId:command.id,generationId:turn.generationId});
+      const source = api.turnOwnershipScope()!;
+      api.noteOwnedTurnClaim(turn,source,lost);
+      await report();
+      const execute = daemon.execute.bind(daemon);
+      let cut: string | undefined;
+      vi.spyOn(daemon,'execute').mockImplementation(async (name,input,...rest) => {
+        const result = await execute(name,input,...rest);
+        if (name === cut) {
+          cut = undefined;
+          helperSockets.at(-1)!.terminate();
+        }
+        return result;
+      });
+      await api.runWithTurnOwnership(turn,async () => {
+        for(let drop=0;drop<3;drop++) {
+          // Kill after the control committed but before its reply can reach the
+          // helper. Registration must reconcile this same command/generation.
+          cut='claimAgentCommand';
+          await api.execute('claimAgentCommand',{roomId:room,commandId:command.id,generationId:turn.generationId});
+          expect(api.turnOwnershipScope()).toEqual(source);
+          expect(lost).not.toHaveBeenCalled();
+          expect(await expireOwnedAgentTurns(db,live,agent)).toBe(0);
+          // A lost broker report is not a new broker failure verdict.
+          cut='postConnectorVault';
+          await connector.runOnce();
+          await vi.waitFor(()=>expect(log.mock.calls.filter(([line])=>String(line).includes('machine report unavailable'))).toHaveLength(drop+1));
+          await api.execute('getAgentCommands',{roomId:room});
+          await report();
+        }
+        // A failed local observation must also retain the last connected fact.
+        vault.mockRejectedValueOnce(new Error('Squire MCP session closed'));
+        await connector.runOnce();
+        await vi.waitFor(()=>expect(log.mock.calls.some(([line])=>String(line).includes('vault observation unavailable'))).toBe(true));
+        expect((await daemon.execute('getConnectorStatus',{agentId:agent,connectorId:`squire:${agent}`},agent)).status).toBe('connected');
+        await api.execute('postRoomMessage',{...turn,text:'Finished despite seven socket drops.'});
+        cut='postAgentTurnReceipt';
+        await api.execute('postAgentTurnReceipt',{agentId:agent,...turn,status:'complete'});
+      });
+      expect(lost).not.toHaveBeenCalled();
+      expect((await db.query('SELECT state,generation_id FROM agent_commands WHERE id=$1',[command.id])).rows[0])
+        .toMatchObject({state:'complete',generation_id:turn.generationId});
+      expect((await db.query('SELECT status,generation_id FROM agent_turns WHERE request_id=$1',[turn.requestId])).rows[0])
+        .toMatchObject({status:'complete',generation_id:turn.generationId});
+      expect((await db.query('SELECT count(*)::int n FROM messages WHERE author_id=$1 AND text=$2',[agent,'Finished despite seven socket drops.'])).rows[0]).toEqual({n:1});
+      expect(helperSockets.length).toBe(8);
+      console.info('SOCKET-CONTINUE: 7 killed machine sockets; 1 command; 1 generation; 1 final reply; complete; Squire connected; 0 cancellations');
+    } catch(error) {
+      console.info(`SOCKET-CONTINUE interrupted: cancellations=${lost.mock.calls.length}; sockets=${helperSockets.length}; error=${error instanceof Error?error.message:String(error)}`);
+      throw error;
+    } finally { connector.stop(); api.closeLive(); }
+  });
 
   it('binds the actual registration, replays without row writes, and rejects freshness/legacy receipt paths', async () => {
     const client = await connect();

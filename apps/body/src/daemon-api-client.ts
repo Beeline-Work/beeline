@@ -472,9 +472,10 @@ export class DaemonApiClient {
       try {
         return await this.#channel.turn.request(name as import('@beeline/api-contract/helper-turn-ownership').HelperTurnOperation,
           input as Input<'claimAgentCommand'> | Input<'postAgentTurnReceipt'>) as Output<Name>;
-      } catch {
+      } catch (error) {
+        const status = (error as {status?:number}).status ?? 503;
         throw new DaemonApiError('Turn operation outcome is UNKNOWN; keep the same command and generation.',
-          503, true, 'turn ownership outcome unknown');
+          status, status === 408 || status === 429 || status >= 500, 'turn ownership outcome unknown');
       } finally { this.inFlight--; }
     }
     if((HELPER_USAGE_OPERATIONS as readonly string[]).includes(String(name)) &&
@@ -498,6 +499,7 @@ export class DaemonApiClient {
         return await this.#channel.requestOperation(name, input);
       } catch (error) {
         const failure = error as {status?: number; code?: string};
+        if ((!failure.code || failure.code === 'deadline_exceeded') && this.#channel.isOpen()) this.machine.reconnectNow();
         const status = failure.status ?? 503;
         if (failure.code === 'deadline_exceeded') this.timeoutCount++;
         const refusal = new DaemonApiError(error instanceof Error ? error.message : 'Machine operation outcome is UNKNOWN',

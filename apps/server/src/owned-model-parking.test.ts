@@ -70,6 +70,20 @@ describe('causal owned-model generation parking', () => {
     expect((await f.db.query('SELECT state FROM owned_model_attempts')).rows[0]?.state).toBe('unknown');
   });
 
+  it('keeps an in-flight model generation through transport loss and resumes settlement after registration',async()=>{
+    await f.db.query(`UPDATE agent_connections SET turn_connection_id=connection_id,turn_connection_epoch=epoch,
+      turn_transport_id=connection_id,released_at=clock_timestamp();
+      UPDATE live_server_instances SET renewed_at=clock_timestamp()-interval '91 seconds'`);
+    expect(await f.db.transaction(tx=>parkOwnedModelGeneration(tx,input,{kind:'source-ended'}))).toBe(false);
+    expect(await f.db.transaction(tx=>guardOwnedModelSilence(tx,input))).toBe(true);
+    expect((await f.db.query('SELECT * FROM agent_command_owner_ends')).rowCount).toBe(0);
+    expect((await f.db.query('SELECT status FROM agent_turns')).rows[0]?.status).toBe('working');
+    await f.db.query(`UPDATE agent_connections SET connection_id='next-socket',turn_transport_id='next-socket',epoch=epoch+1,released_at=NULL;
+      UPDATE live_server_instances SET renewed_at=clock_timestamp()`);
+    await attempts.settleUsage(f.actor,ONE,{tokens:2,usd:0},'succeeded',async()=>{});
+    expect((await f.db.query('SELECT state FROM owned_model_attempts')).rows).toEqual([{state:'succeeded'}]);
+  });
+
   it('actual unrelated silence while UNKNOWN is in flight creates no failure, reassignment or owner end', async () => {
     const live = new LiveHub(), events: unknown[] = []; live.publish = event => { events.push(event); };
     const result = await noteFirstSilence(f.db, live, { ...input, reason: 'synthetic unrelated silence', reasonKind: 'hiccup', stalled: true });

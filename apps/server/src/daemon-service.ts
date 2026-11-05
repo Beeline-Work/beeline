@@ -1098,9 +1098,9 @@ export class DaemonService {
           const message = result as unknown as { id: string };
           await routeAgentResult(db, command, message.id);
         } else if (name === 'postAgentTurnReceipt') {
-          if (candidate.status === 'working' && !command.turn_owner_connection_id)
-            await renewAgentCommandLease(db, command);
-          else if (
+          if (candidate.status === 'working') {
+            if (!command.turn_owner_connection_id) await renewAgentCommandLease(db, command);
+          } else if (
             candidate.status === 'failed' &&
             ((result as { hiccupRestart?: boolean; updateRequeued?: boolean }).hiccupRestart ||
               (result as { updateRequeued?: boolean }).updateRequeued)

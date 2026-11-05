@@ -1,10 +1,9 @@
 import { randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { closeSync, openSync, readFileSync } from 'node:fs';
+import {readFileSync} from 'node:fs';
 import { chmod, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
-import { spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { decodeNsec, getPublicKey } from '@beeline/nostr';
 import { DEFAULT_ACCESS_POLICY, LEGACY_ACCESS_POLICY, type AgentAccessPolicy } from './access-policy.js';
@@ -459,28 +458,4 @@ export async function runtimeDaemonPid(configPath: string): Promise<number | nul
   } catch {
     return null;
   }
-}
-
-export async function launchLabRuntimeDaemon(
-  configPath: string,
-  opts: { entrypoint?: string; execArgv?: string[]; env?: NodeJS.ProcessEnv; foreground?: boolean } = {},
-): Promise<number> {
-  const directory = dirname(configPath);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  const foreground = opts.foreground === true;
-  const output = foreground ? 'inherit' : openSync(resolve(directory, 'daemon.log'), 'a', 0o600);
-  const entrypoint = opts.entrypoint ?? process.argv[1];
-  if (!entrypoint) throw new Error('cannot resolve daemon CLI entrypoint');
-  const child = spawn(process.execPath, [...(opts.execArgv ?? []), entrypoint, 'daemon', '--config', resolve(configPath)], {
-    cwd: directory,
-    env: { ...(opts.env ?? process.env), BEELINE_LAB: '1' },
-    detached: !foreground,
-    stdio: ['ignore', output, output],
-  });
-  if (!foreground) {
-    child.unref();
-    if (typeof output === 'number') closeSync(output);
-  }
-  if (!child.pid) throw new Error('daemon process did not start');
-  return child.pid;
 }

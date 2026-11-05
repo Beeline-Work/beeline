@@ -312,6 +312,13 @@ const cases: Case[] = [
 
 
 m45_describe('phone surface readers', () => {
+  m45_it('preserves the current-card link on expired connector offers and drops invalid links', () => {
+    const replacementMessageId = 'f'.repeat(64);
+    m45_expect(m45_readConnectorOfferCardView({ ...connectorOffer, status: 'failed', replacementMessageId }))
+      .toMatchObject({ replacementMessageId });
+    m45_expect(m45_readConnectorOfferCardView({ ...connectorOffer, replacementMessageId: 42 }))
+      .not.toHaveProperty('replacementMessageId');
+  });
   m45_it('preserves approval purpose and facts while tolerating old or malformed optional metadata', () => {
     const facts = { purpose: 'Free space so the Android build can finish', machine: 'squire', touches: 'Archived build output', capabilities: 'Delete files' };
     m45_expect(m45_readAgentGrantView({ ...grant, ...facts })).toMatchObject(facts);

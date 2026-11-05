@@ -8368,6 +8368,12 @@ export class DaemonService {
         createdAt: seconds(created.created_at),
         ...(switching ? { intent: 'switch' as const, provider } : {}),
       };
+      await database.query(`UPDATE messages message SET card=jsonb_set(message.card,
+        '{replacementMessageId}',to_jsonb($3::text))
+        FROM connector_offers failed WHERE failed.room_id=$1 AND failed.connector_type=$2
+          AND failed.status='failed' AND message.room_id=failed.room_id
+          AND message.card_type='connector-offer' AND message.card->>'offerId'=failed.id::text`,
+        [input.roomId, connectorType, messageId]);
       // The addressee is reached by the card itself in the Room — a card is
       // outside `background.ts`'s push ceiling — not by a wake: this line has
       // no kind, so it starts no turn.

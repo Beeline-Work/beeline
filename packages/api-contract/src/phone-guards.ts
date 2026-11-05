@@ -662,6 +662,7 @@ export function readConnectorOfferCardView(value: unknown): ConnectorOfferCardVi
     ...field('acceptedBy', readIdentityOnly(item.acceptedBy)),
     ...field('acceptedAt', integer(item.acceptedAt) ? item.acceptedAt : undefined),
     ...field('connectorId', typeof item.connectorId === 'string' ? item.connectorId : undefined),
+    ...field('replacementMessageId', nonempty(item.replacementMessageId) ? item.replacementMessageId : undefined),
     ...field('intent', isConnectorOfferIntent(item.intent) ? item.intent : undefined),
     ...field('provider', typeof item.provider === 'string' ? item.provider : undefined),
   };

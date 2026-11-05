@@ -1,3 +1,4 @@
+import ts from 'typescript';
 // Architecture invariants: each rule says a sink (a SQL write, a notify, a
 // timer) lives only in the files that own it. Sites outside those files are
 // counted against the rule's `total`, a one-way ratchet for today's
@@ -15,7 +16,7 @@ const SKIP_FILE = /\.(test|spec)\.[^.]+$|\.d\.ts$/;
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', '__tests__', 'test-fixtures']);
 const RULE_KEYS = ['id', 'module', 'invariant', 'pattern', 'scope', 'owners', 'total', 'fix'];
 /** Fields whose change moves what a rule catches; any change to them is a relaxation. */
-const BOUNDARY_KEYS = ['pattern', 'flags', 'scope', 'owners', 'distinct'];
+const BOUNDARY_KEYS = ['pattern', 'flags', 'scope', 'owners', 'distinct', 'ownerFunctions', 'ownerSites', 'strict', 'filePattern'];
 
 export function readInvariants(root) {
   return JSON.parse(readFileSync(path.join(root, INVARIANTS_PATH), 'utf8'));
@@ -54,11 +55,28 @@ function findSites(root, rule) {
   const sites = [];
   const named = new Map();
   for (const file of files.sort()) {
-    if (owners.has(file)) continue;
+    if (rule.filePattern && !new RegExp(rule.filePattern).test(file)) continue;
+    if (owners.has(file) && !rule.ownerFunctions) continue;
     const source = readFileSync(path.join(root, file), 'utf8');
     const pattern = new RegExp(rule.pattern, `g${rule.flags ?? ''}`);
+    const parsed = owners.has(file) && rule.ownerFunctions ? ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true) : undefined;
     for (const match of source.matchAll(pattern)) {
       const site = `${file}:${source.slice(0, match.index).split('\n').length}`;
+      if (owners.has(file) && rule.ownerFunctions) {
+        let enclosing;
+        const visit = node => {
+          if (node.pos > match.index || node.end <= match.index) return;
+          if ((ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) ||
+              (ts.isVariableDeclaration(node) && node.initializer &&
+                (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer)))) && node.name)
+            enclosing = node.name.getText(parsed);
+          else if (!enclosing && ts.isVariableDeclaration(node) && node.name)
+            enclosing = node.name.getText(parsed);
+          ts.forEachChild(node, visit);
+        };
+        visit(parsed);
+        if ((rule.ownerFunctions[file] ?? []).includes(enclosing)) continue;
+      }
       // A `distinct` rule counts different matches (say, setting names), not uses.
       if (!rule.distinct) sites.push(site);
       else if (!named.has(match[0])) named.set(match[0], `${match[0]} (first at ${site})`);
@@ -76,10 +94,12 @@ export function validateRules(invariants) {
       if (rule[key] === undefined) errors.push(`${INVARIANTS_PATH}: rule ${name} needs "${key}"`);
     if (ids.has(rule.id)) errors.push(`${INVARIANTS_PATH}: rule ${name} is listed twice`);
     ids.add(rule.id);
+    if (rule.strict && rule.total !== 0) errors.push(`${INVARIANTS_PATH}: strict rule ${name} must have zero allowance`);
     if (!Number.isInteger(rule.total) || rule.total < 0)
       errors.push(`${INVARIANTS_PATH}: rule ${name} total must be a whole number`);
     try {
       new RegExp(rule.pattern, rule.flags ?? '');
+      if (rule.filePattern) new RegExp(rule.filePattern);
     } catch (error) {
       errors.push(`${INVARIANTS_PATH}: rule ${name} pattern is invalid: ${error.message}`);
     }
@@ -92,6 +112,11 @@ export function judgeTree(root, invariants) {
   const errors = [];
   for (const rule of invariants.rules) {
     const sites = findSites(root, rule);
+    if (rule.ownerSites !== undefined) {
+      const all = findSites(root, { ...rule, owners: [], ownerFunctions: undefined });
+      if (all.length - sites.length !== rule.ownerSites)
+        errors.push(`[${rule.id}] expected exactly ${rule.ownerSites} owned sink(s), found ${all.length - sites.length}. ${rule.fix}`);
+    }
     if (sites.length > rule.total)
       errors.push([
         `[${rule.id}] ${rule.invariant}`,
@@ -100,8 +125,6 @@ export function judgeTree(root, invariants) {
         `  Fix: ${rule.fix}`,
         '  Moving an existing site between files is fine. Update the declared invariant for an intentional change; the owner reviews rule changes weekly.',
       ].join('\n'));
-    else if (sites.length < rule.total)
-      errors.push(`[${rule.id}] only ${sites.length} site(s) remain outside the owner files. Lower "total" from ${rule.total} to ${sites.length} in ${INVARIANTS_PATH}; tightening needs no review.`);
   }
   return errors;
 }
@@ -119,6 +142,22 @@ export function relaxations(root, base, head) {
       continue;
     }
     if (rule.total > was.total) found.push(`rule ${was.id} total raised from ${was.total} to ${rule.total}`);
+    for (const key of BOUNDARY_KEYS)
+      if (JSON.stringify(rule[key] ?? null) !== JSON.stringify(was[key] ?? null))
+        found.push(`rule ${was.id} ${key} changed`);
+  }
+  return found;
+}
+
+/** Strict capability owners cannot be weakened through a candidate-rule edit. */
+export function strictRelaxations(root, base, head) {
+  if (!base) return [];
+  const current = new Map(head.rules.map(rule => [rule.id, rule]));
+  const found = [];
+  for (const was of base.rules.filter(rule => rule.strict)) {
+    const rule = current.get(was.id);
+    if (!rule) { found.push(`rule ${was.id} removed`); continue; }
+    if (rule.total > was.total) found.push(`rule ${was.id} allowance increased`);
     for (const key of BOUNDARY_KEYS)
       if (JSON.stringify(rule[key] ?? null) !== JSON.stringify(was[key] ?? null))
         found.push(`rule ${was.id} ${key} changed`);

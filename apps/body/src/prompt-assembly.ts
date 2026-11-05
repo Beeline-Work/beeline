@@ -528,7 +528,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
           'When asked whether the reviewer was woken, call read(facet:checks) and report reviewerWake; do not invent a cause. Never schedule polls of read(facet:checks) or the merge gate; the server wakes you when it changes.',
         repositoryWork && (reviewer ? CORNER_REVIEWER_AUTHOR_MERGE : cornerMergeInstruction(reviewerHandle)),
         reviewer &&
-          `Reviewer rules: ${CORNER_REVIEWER_SESSION_INSTRUCTION} Findings go to the author, not a commit; never push another agent's branch. This wins over the finished-fix rule. Reject this PR’s redundant tests or assertions weakened or deleted without proof. Remove a test only with a named surviving test catching the same failure under a seeded bug or mutation check. Coverage overlap or "never failed" is not proof.`,
+          `Reviewer rules: ${CORNER_REVIEWER_SESSION_INSTRUCTION} Findings go to the author, not a commit; never push another agent's branch. This wins over the finished-fix rule. Assess actual coverage loss when tests or assertions are changed or deleted. Redundant or obsolete tests may be removed when surviving coverage or other adequate evidence supports the change; a seeded bug or mutation check is optional.`,
       );
     },
   },

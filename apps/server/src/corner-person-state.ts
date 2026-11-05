@@ -1,4 +1,4 @@
-import { writeSurfaceEventSubscriptions } from './membership-join.js';
+import { ROOM_EVENT_SUBSCRIPTIONS_SCHEMA } from './agent-subscriptions.js';
 import { SUBSCRIBABLE_EVENT_KINDS } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 
@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS corner_person_state (
   corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
   event_subscriptions jsonb,
+  subscriptions_overridden boolean NOT NULL DEFAULT false,
   identity_profile jsonb,
   push_muted boolean NOT NULL DEFAULT false,
   generation bigint NOT NULL DEFAULT 1,
@@ -22,12 +23,18 @@ ALTER TABLE corner_person_state ADD COLUMN IF NOT EXISTS push_muted boolean NOT 
 ALTER TABLE corner_person_state ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
 CREATE INDEX IF NOT EXISTS corner_person_state_identity_idx ON corner_person_state(identity_id);
 
+ALTER TABLE corner_person_state ADD COLUMN IF NOT EXISTS subscriptions_overridden boolean NOT NULL DEFAULT false;
+
+${ROOM_EVENT_SUBSCRIPTIONS_SCHEMA}
+
 -- This view is read-only. Corner access projections have no stored roster row and cannot
 -- authorize themselves: even a saved preference needs a live parent member.
 CREATE OR REPLACE VIEW room_access AS
 SELECT member.id,member.workspace_id,member.room_id,member.identity_id,member.role,
   1::bigint generation,NULL::jsonb identity_profile,member.invited_by,member.joined_at,
-  member.removed_at,member.push_muted,member.event_subscriptions
+  member.removed_at,member.push_muted,
+  (SELECT COALESCE(jsonb_agg(event),'[]'::jsonb) FROM room_event_subscriptions subscription
+   WHERE subscription.room_id=member.room_id AND subscription.agent_id=member.identity_id) event_subscriptions
 FROM memberships member
 WHERE member.room_id IS NULL OR EXISTS (
   SELECT 1 FROM rooms room WHERE room.id=member.room_id AND room.parent_id IS NULL
@@ -36,9 +43,8 @@ UNION ALL
 SELECT NULL::bigint id,corner.workspace_id,corner.id room_id,parent.identity_id,
   parent.role,COALESCE(state.generation,1) generation,state.identity_profile,
   parent.invited_by,COALESCE(state.created_at,parent.joined_at) joined_at,parent.removed_at,COALESCE(state.push_muted,false) push_muted,
-  COALESCE(state.event_subscriptions,(SELECT COALESCE(jsonb_agg(kind),'[]'::jsonb)
-    FROM jsonb_array_elements_text(parent.event_subscriptions) kind
-    WHERE kind=ANY(ARRAY[${SUBSCRIBABLE_EVENT_KINDS.map((kind) => "'" + kind + "'").join(',')}]::text[]))) event_subscriptions
+  (SELECT COALESCE(jsonb_agg(event),'[]'::jsonb) FROM room_event_subscriptions subscription
+   WHERE subscription.room_id=corner.id AND subscription.agent_id=parent.identity_id) event_subscriptions
 FROM rooms corner
 JOIN memberships parent ON parent.room_id=corner.parent_id AND parent.removed_at IS NULL
 LEFT JOIN corner_person_state state ON state.corner_id=corner.id AND state.identity_id=parent.identity_id
@@ -87,16 +93,4 @@ export async function migrateCornerPersonState(database: SqlDatabase): Promise<n
     total += batch.copied;
   }
   return total;
-}
-
-/** Save an explicit preference on the appropriate surface, without creating membership. */
-export async function setRoomEventSubscriptions(
-  database: SqlDatabase,
-  roomId: string,
-  identityId: string,
-  kinds: readonly string[],
-): Promise<string[]> {
-  const result = await writeSurfaceEventSubscriptions<{ event_subscriptions: string[] }>(database, [roomId, identityId, JSON.stringify(kinds)]);
-  if (!result.rowCount) throw new Error('daemon room access denied');
-  return result.rows[0]!.event_subscriptions;
 }

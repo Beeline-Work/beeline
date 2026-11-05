@@ -35,7 +35,7 @@ export function markInitialLandingResolved(): void {
   for (const wake of pending) wake('committed');
 }
 
-export function isInitialLandingResolved(): boolean {
+function isInitialLandingResolved(): boolean {
   return resolved;
 }
 

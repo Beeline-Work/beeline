@@ -94,7 +94,7 @@ export function replaceActiveMention(
 }
 
 /** Keep one Workspace roster, ordered as current Room members followed by addable members. */
-export function sectionRoomRoster<T extends RoomRosterMember>(
+function sectionRoomRoster<T extends RoomRosterMember>(
   roster: T[],
   roomMemberPubkeys: ReadonlySet<string>,
 ): { inRoom: T[]; addable: T[] } {
@@ -144,7 +144,7 @@ export function roomRosterWindow<T>(
 }
 
 /** Slack-style participant copy: five names at most, with overflow folded into the fifth slot. */
-export function formatRoomParticipantList(names: string[]): string {
+function formatRoomParticipantList(names: string[]): string {
   if (names.length <= 5) return names.join(', ');
   return `${names.slice(0, 4).join(', ')} and ${names.length - 4} others`;
 }
@@ -167,7 +167,7 @@ export function selectedMentionAgentPubkey(
 }
 
 /** Resolve every picker-selected mention whose handle is still present in the sent text. */
-export function selectedMentionPubkeys(
+function selectedMentionPubkeys(
   text: string,
   selections: ReadonlyMap<string, string>,
 ): string[] {

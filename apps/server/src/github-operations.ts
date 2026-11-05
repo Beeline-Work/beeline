@@ -27,10 +27,8 @@ import { GITHUB_SUBJECT, systemLine, type SystemPhrase } from './system-line.js'
 import { recordPersonMergeYes, withdrawPullRequestMergeApprovals } from './corner-merge-approval.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import { currentCornerBrief, assertCornerBriefAllowsMerge } from './corner-brief.js';
-import { cancelCornerAgentCommands, lockCornerArchivalAuthority } from './corner-close.js';
+import { archiveCornerState, lockCornerArchivalAuthority } from './corner-close.js';
 import { captureServerError } from './sentry.js';
-import { deleteCornerWakeSources } from './corner-wake-cleanup.js';
-import { abandonCornerWorkflowRuns } from './workflow-runs.js';
 import {
   advanceCorner,
   blockingReview,
@@ -47,7 +45,6 @@ import {
 import { roomAgentHealth } from './agent-health.js';
 import { dispatchPromptReplay } from './prompt-replay.js';
 import { fireRepositorySubscriptions } from './agent-subscriptions.js';
-import { releaseArchivedCornerHolds } from './corner-holds.js';
 
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
 
@@ -1974,7 +1971,8 @@ export class GitHubOperations {
    * mainline check results are not Room conversation. Corner PRs use the
    * same repository events; CI stays on processCornerEvent.
    */
-  private async processRepositoryEvent(event: string, body: GitHubRecord, installationId: number, database: SqlDatabase = this.database) {
+  private async processRepositoryEvent(event: string, body: GitHubRecord, installationId: number) {
+    const database = this.database;
     if (event !== 'issues' && event !== 'pull_request') return;
     const repository = repositoryName(body);
     if (!repository) return;
@@ -2687,6 +2685,17 @@ export class GitHubOperations {
     database: SqlDatabase = this.database,
     expectedPrNumber?: number,
   ) {
+    // Match webhook order: commit the repository fact before archival takes
+    // any locks. Its message ID precedes the AFTER trigger's Workspace journal;
+    // waiting for that ID while owning the journal forms a deadlock cycle.
+    // A note failure leaves the corner open, so it cannot skip branch cleanup
+    // for an already committed archival. Already archived corners can repair it.
+    await this.processRepositoryEvent('pull_request', {
+      action: 'closed', repository: { full_name: pullRequest.repository },
+      ...(pullRequest.mergedBy ? { sender: { login: pullRequest.mergedBy } } : {}),
+      pull_request: { merged: true, title: pullRequest.title, html_url: pullRequest.url,
+        head: { ref: pullRequest.branch }, base: { ref: pullRequest.targetBranch } },
+    }, Number(target.installation_id));
     const mergeKey = `github:pull-request:merged:${pullRequest.url}`;
     let updated = false;
     let archived = false;
@@ -2732,21 +2741,10 @@ export class GitHubOperations {
       const locked = current?.locked === true;
       // Locked standing corners retain their active work and wake sources after a merge.
       if (!locked) {
-        // Command output locks commands before dispatch takes FOR SHARE on rooms.
-        // Cancel commands before updating rooms, matching that shared lock order.
-        await cancelCornerAgentCommands(database, target.corner_id);
-        const changed = await database.query(
-          `UPDATE rooms SET archived_at=now(),updated_at=now()
-           WHERE id=$1 AND archived_at IS NULL`,
-          [target.corner_id],
-        );
-        if (!changed.rowCount) return;
-        archived = true;
+        archived = await archiveCornerState(database, target.corner_id);
+        if (!archived) return;
       }
       updated = true;
-      if (!locked) await abandonCornerWorkflowRuns(database, target.corner_id);
-      if (!locked) await deleteCornerWakeSources(database, [target.corner_id]);
-      if (!locked) await releaseArchivedCornerHolds(database, [target.corner_id]);
       await database.query(
         `UPDATE corner_github_cache SET
            lifecycle=((lifecycle-'mergeQueue') -
@@ -2792,14 +2790,6 @@ export class GitHubOperations {
         kind: 'merged',
         contents: { mergeVerdict: 'merged', pullRequestUrl: pullRequest.url },
       });
-      // Direct landings and missed-webhook recovery publish the same PR event.
-      // The repository event id deduplicates this against the normal webhook.
-      await this.processRepositoryEvent('pull_request', {
-        action: 'closed', repository: { full_name: pullRequest.repository },
-        ...(pullRequest.mergedBy ? { sender: { login: pullRequest.mergedBy } } : {}),
-        pull_request: { merged: true, title: pullRequest.title, html_url: pullRequest.url,
-          head: { ref: pullRequest.branch }, base: { ref: pullRequest.targetBranch } },
-      }, Number(target.installation_id), database);
     });
     if (!updated) return;
     this.onRoomChanged?.(target.corner_id);

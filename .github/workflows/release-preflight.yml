@@ -1,22 +1,41 @@
 name: Release preflight
 on:
   workflow_dispatch:
+    inputs:
+      production:
+        description: Probe production runner
+        type: boolean
+        default: true
+      android:
+        description: Probe Android runner
+        type: boolean
+        default: true
+      ios:
+        description: Probe iOS runner
+        type: boolean
+        default: true
 permissions:
   contents: read
   actions: write
 jobs:
+  select:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.runners.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/github-script@v7
+        id: runners
+        with:
+          script: core.setOutput('matrix', JSON.stringify(require('./scripts/release-preflight.cjs').runnerMatrix(context.payload.inputs)));
   runner:
+    needs: select
+    if: needs.select.outputs.matrix != '[]'
     name: Runner probe ${{ matrix.label }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - label: production
-            runner: '["self-hosted", "beeline-prod-host"]'
-          - label: android
-            runner: '["self-hosted", "beeline-android"]'
-          - label: ios
-            runner: '["self-hosted", "macOS", "X64", "ios-builder"]'
+        include: ${{ fromJSON(needs.select.outputs.matrix) }}
     runs-on: ${{ fromJSON(matrix.runner) }}
     timeout-minutes: 4
     steps:
@@ -36,6 +55,7 @@ jobs:
         with:
           script: await require('./scripts/release-preflight.cjs').validateRunnerResults({github, context, core});
   native:
+    if: inputs.android || inputs.ios
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

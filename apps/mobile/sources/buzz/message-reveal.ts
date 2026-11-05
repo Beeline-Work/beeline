@@ -21,6 +21,6 @@ export function markMessageRevealed(messageId: string): void {
 }
 
 /** Test seam only. */
-export function resetMessageReveals(): void {
+function resetMessageReveals(): void {
   revealedMessageIds.clear();
 }

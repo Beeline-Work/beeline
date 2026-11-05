@@ -1020,7 +1020,7 @@ describe('Postgres live fanout', () => {
     );
 
 
-    await database.query(`INSERT INTO corner_person_state(corner_id,identity_id,event_subscriptions) VALUES($1,$2,'["joined"]')`,[corner,AUTHOR]);
+    await database.query(`INSERT INTO corner_person_state(corner_id,identity_id,subscriptions_overridden) VALUES($1,$2,true)`,[corner,AUTHOR]);
     await eventually(() =>
       received.some(
         (event) =>
@@ -1039,7 +1039,7 @@ describe('Postgres live fanout', () => {
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [opener]);
     await insertCornerFacts(database, { cornerId: corner, ownerAgentId: opener });
     received.length = 0;
-    await database.query(`INSERT INTO corner_person_state(corner_id,identity_id,event_subscriptions) VALUES($1,$2,'["joined"]')`,[corner,opener]);
+    await database.query(`INSERT INTO corner_person_state(corner_id,identity_id,subscriptions_overridden) VALUES($1,$2,true)`,[corner,opener]);
     await eventually(() =>
       received.some(
         (event) =>
@@ -1060,7 +1060,7 @@ describe('Postgres live fanout', () => {
     received.length = 0;
 
 
-    await database.query(`INSERT INTO corner_person_state(corner_id,identity_id,event_subscriptions) VALUES($1,$2,'[]')`,[corner,latecomer]);
+    await database.query(`INSERT INTO corner_person_state(corner_id,identity_id,subscriptions_overridden) VALUES($1,$2,true)`,[corner,latecomer]);
     await eventually(() =>
       received.some(
         (event) =>
@@ -1330,7 +1330,7 @@ describe('Postgres live fanout', () => {
     await expectNudge(() => database.query(
       `DELETE FROM corner_follows WHERE corner_id=$1 AND identity_id=$2`, [corner, reader]));
     await expectNudge(() => database.query(
-      `INSERT INTO corner_person_state(corner_id,identity_id,event_subscriptions) VALUES($1,$2,'[]')`,
+      `INSERT INTO corner_person_state(corner_id,identity_id,subscriptions_overridden) VALUES($1,$2,true)`,
       [corner,reader]));
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text) VALUES('owed-1',$1,$2,'question')`,

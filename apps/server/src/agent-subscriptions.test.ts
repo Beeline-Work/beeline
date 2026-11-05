@@ -1,12 +1,13 @@
+import type { SqlDatabase } from './database.js';
 import { randomUUID, createHmac } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { CornerAccessDatabase } from './corner-access-database.js';
-import { setRoomEventSubscriptions } from './corner-person-state.js';
+import { setRoomEventSubscriptions } from './agent-subscriptions.js';
 import { migratedDatabase } from './test-support.js';
 import {
   createAgentSubscription, deleteAgentSubscription, fireRepositorySubscriptions,
   deleteRoomSubscription, listAgentSubscriptions, listRoomSubscriptions, subscriptionPromptBody,
-  listServiceSubscriptionEvents,
+  listServiceSubscriptionEvents, migrateMembershipSubscriptions,
 } from './agent-subscriptions.js';
 import { ingestComposioDelivery } from './composio-delivery.js';
 import type { ComposioApps } from './composio-apps.js';
@@ -36,6 +37,98 @@ async function fixture() {
 }
 
 describe('agent subscriptions', () => {
+  it('uses one room/event identity for both ingress forms, retains the explicit prompt and stops through either API', async () => {
+    const db = await fixture();
+    try {
+      await setRoomEventSubscriptions(db, ROOM, AGENT, ['joined']);
+      const plain = (await listAgentSubscriptions(db, ROOM, AGENT)).subscriptions[0]!;
+      const prompted = await createAgentSubscription(db, AGENT, { roomId: ROOM, source: 'room', event: 'joined',
+        title: 'Welcome members', when: 'On someone joining', prompt: 'Welcome each new member.' });
+      expect(prompted.id).toBe(plain.id);
+      await setRoomEventSubscriptions(db, ROOM, AGENT, ['joined']);
+      expect((await listAgentSubscriptions(db, ROOM, AGENT)).subscriptions).toHaveLength(1);
+      await ensureSystemIdentity(db);
+      const eventId = 'e'.repeat(64);
+      await systemLine(db, { id: eventId, roomId: ROOM, subject: {kind:'system', id:SYSTEM_IDENTITY_ID, name:'Beeline'}, verb:'recorded', kind:'joined' });
+      await systemLine(db, { id: eventId, roomId: ROOM, subject: {kind:'system', id:SYSTEM_IDENTITY_ID, name:'Beeline'}, verb:'recorded', kind:'joined' });
+      expect((await db.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND reason='subscribed_event'`, [ROOM,AGENT])).rowCount).toBe(1);
+      expect((await db.query(`SELECT system_event FROM messages WHERE system_event->>'kind'='subscription-fired'`)).rows[0]!.system_event.subscriptionPrompt).toBe('Welcome each new member.');
+      await deleteAgentSubscription(db, ROOM, AGENT, prompted.id);
+      expect((await listAgentSubscriptions(db, ROOM, AGENT)).subscriptions).toEqual([]);
+      await createAgentSubscription(db, AGENT, { roomId: ROOM, source:'room',event:'joined',title:'Welcome members',when:'On someone joining',prompt:'Welcome again.' });
+      await setRoomEventSubscriptions(db, ROOM, AGENT, []);
+      const before = (await db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1`, [AGENT])).rowCount;
+      await systemLine(db, {roomId:ROOM,subject:{kind:'system',id:SYSTEM_IDENTITY_ID,name:'Beeline'},verb:'recorded',kind:'joined'});
+      expect((await db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1`, [AGENT])).rowCount).toBe(before);
+    } finally { await db.close(); }
+  });
+
+  it('imports old membership and corner preferences once while prompted actions retain the shared key', async () => {
+    const db = await fixture(), corner=randomUUID();
+    try {
+      await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Corner')`, [corner,WORKSPACE,ROOM]);
+      await db.query(`UPDATE memberships SET event_subscriptions='["joined","schedule-ran"]' WHERE room_id=$1 AND identity_id=$2`,[ROOM,AGENT]);
+      await db.query(`INSERT INTO corner_person_state(corner_id,identity_id,event_subscriptions) VALUES($1,$2,'[]')`,[corner,AGENT]);
+      const prompted=await createAgentSubscription(db,AGENT,{roomId:ROOM,source:'room',event:'joined',title:'Welcome members',when:'On someone joining',prompt:'Keep this action.'});
+      await migrateMembershipSubscriptions(db);
+      await migrateMembershipSubscriptions(db);
+      const subscriptions=(await listAgentSubscriptions(db,ROOM,AGENT)).subscriptions;
+      expect(subscriptions).toHaveLength(2);
+      expect(subscriptions.find(row=>row.id===prompted.id)?.prompt).toBe('Keep this action.');
+      expect((await listAgentSubscriptions(db,corner,AGENT)).subscriptions).toEqual([]);
+      expect((await db.query(`SELECT event_subscriptions FROM memberships WHERE room_id=$1 AND identity_id=$2`,[ROOM,AGENT])).rows[0]!.event_subscriptions).toEqual([]);
+    } finally {await db.close();}
+  });
+
+  it('inherits parent prompt-free subscriptions and preserves an explicit empty corner preference when stopped', async () => {
+    const db=await fixture(),corner=randomUUID();
+    try {
+      await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Corner')`,[corner,WORKSPACE,ROOM]);
+      await setRoomEventSubscriptions(db,ROOM,AGENT,['joined']);
+      await createAgentSubscription(db,AGENT,{roomId:ROOM,source:'room',event:'joined',title:'Welcome members',when:'On someone joining',prompt:'Keep this parent action.'});
+      const inherited=(await listAgentSubscriptions(db,corner,AGENT)).subscriptions[0]!;
+      expect(inherited.id).toBe(`legacy:${corner}:${AGENT}:joined`);
+      expect(inherited.prompt).toBeUndefined();
+      await deleteAgentSubscription(db,corner,AGENT,inherited.id);
+      await setRoomEventSubscriptions(db,ROOM,AGENT,['joined','schedule-ran']);
+      expect((await listAgentSubscriptions(db,corner,AGENT)).subscriptions).toEqual([]);
+      await setRoomEventSubscriptions(db,corner,AGENT,['joined']);
+      const explicit=(await listAgentSubscriptions(db,corner,AGENT)).subscriptions[0]!;
+      await deleteRoomSubscription(db,ROOM,explicit.id);
+      expect((await listAgentSubscriptions(db,corner,AGENT)).subscriptions).toEqual([]);
+    } finally {await db.close();}
+  });
+
+  it('uses one captured subscription mode per event when a prompt changes after capture', async () => {
+    const db=await fixture(),other='f'.repeat(64);
+    try {
+      await ensureSystemIdentity(db);
+      await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Other')`,[other]);
+      await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,[WORKSPACE,ROOM,other]);
+      await setRoomEventSubscriptions(db,ROOM,AGENT,['joined']);
+      await createAgentSubscription(db,other,{roomId:ROOM,source:'room',event:'joined',title:'Welcome members',when:'On someone joining',prompt:'Welcome members.'});
+      let changed=false;
+      const editAfterCapture=(database:SqlDatabase):SqlDatabase=>({
+        query:(async(sql:string,args?:unknown[])=>{
+          const result=await database.query(sql,args);
+          if(!changed && sql.includes('FROM room_event_subscriptions subscription')){
+            changed=true;
+            await database.query(`UPDATE agent_subscriptions SET prompt='A newly selected action' WHERE room_id=$1 AND agent_id=$2 AND event='joined'`,[ROOM,AGENT]);
+          }
+          return result;
+        }) as SqlDatabase['query'],
+        transaction:work=>database.transaction(tx=>work(editAfterCapture(tx))),
+      });
+      const event=await systemLine(editAfterCapture(db),{roomId:ROOM,subject:{kind:'system',id:SYSTEM_IDENTITY_ID,name:'Beeline'},verb:'recorded',kind:'joined'});
+      expect(changed).toBe(true);
+      const commands=(await db.query(`SELECT agent_id,source_message_id FROM agent_commands WHERE reason='subscribed_event' ORDER BY agent_id`)).rows;
+      expect(commands).toHaveLength(2);
+      expect(commands.filter(row=>row.agent_id===AGENT)).toEqual([{agent_id:AGENT,source_message_id:event.id}]);
+      expect(commands.filter(row=>row.agent_id===other)).toHaveLength(1);
+      expect((await db.query(`SELECT sum(event_woken)::int count FROM messages WHERE event_root_cause_id=$1`,[event.id])).rows[0]!.count).toBe(2);
+    } finally {await db.close();}
+  });
+
   it('requires a name and a trigger phrase, and returns saved words to the phone', async () => {
     const db = await fixture();
     try {

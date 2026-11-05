@@ -73,8 +73,8 @@ with the read owner. The owned preview form remains a raw read, while the legacy
 mark-seen form enters command admission; `monolith-operation.test.ts` covers both.
 
 Behavioral coverage: `command-intents.test.ts` (digest-only storage),
-`command-owner.integration.test.ts` (persist-before-send, duplicate joining, uncertain
-identity, outbox and storage failure), `command-owner.web.test.ts` (concurrent tab writers,
+`command-owner.test.ts` (persist-before-send, duplicate joining, uncertain
+identity, cold-start cancellation and storage failure), `command-owner.web.test.ts` (concurrent tab writers,
 closed-tab adoption and denied storage), `router-command-dispatch.integration.test.ts` (wallet
 admission/replacement/uncertainty, secret results and old wire),
 `tray-decision-command.integration.test.ts`, `scheduled-work-command.integration.test.ts`,

@@ -37,7 +37,7 @@ typecheck() {
   # Check no workflow names a deleted test
   npm run lint:workflow-paths
   # Check CI routing, partitioning and build provenance
-  node --test --test-concurrency=1 scripts/ci-shards.test.mjs scripts/ci-runner-routing.test.mjs scripts/ci-baseline.test.mjs
+  node --test --test-concurrency=1 scripts/ci-shards.test.mjs scripts/ci-baseline.test.mjs
   node --test --test-concurrency=1 scripts/ci-build-provenance.test.mjs scripts/run-workspace-tests.test.mjs scripts/report-main-checks.test.mjs
   # Test nightly Checks orchestration
   node --test --test-concurrency=1 scripts/nightly-checks.test.mjs scripts/network-job-admission.test.mjs

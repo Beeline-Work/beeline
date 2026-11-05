@@ -1,93 +1,62 @@
-# PROMPT CASES checks the saved behavior cases in docs/prompts/cases/ on pull
-# requests that change agent prompt text: the prompt sections, the Beeline
-# skills, the tool descriptions, or the cases and their runner. It validates
-# every case, builds each case's prompt with the real assembler and tool
-# descriptions, and requires one case per prompt section. It never calls a
-# model and needs no secret. An agent in the Room replays the cases with its
-# own model (docs/prompts/cases/README.md).
-#
-# The job uses a job-level `if:` so an unrelated pull request reports it as
-# skipped, never a workflow-level `paths` filter (that would leave the check
-# missing).
 name: Prompt cases
-
 on:
   pull_request: {}
   merge_group:
-    types: [checks_requested]
+    types:
+      - checks_requested
   workflow_dispatch: {}
-
 permissions:
   contents: read
   pull-requests: read
-
 concurrency:
   group: prompt-cases-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 jobs:
-  changes:
-    name: Detect prompt changes
-    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
-    runs-on: [self-hosted, Linux, X64, beeline-ci, beeline-ci-control]
-    timeout-minutes: 5
-    outputs:
-      prompts: ${{ steps.filter.outputs.prompts == 'true' || (github.event_name == 'merge_group' && steps.filter.outcome != 'success') }}
-    steps:
-      - uses: actions/checkout@v4
-        if: github.event_name == 'merge_group'
-        with:
-          fetch-depth: 0
-      - uses: dorny/paths-filter@v3
-        id: filter
-        continue-on-error: ${{ github.event_name == 'merge_group' }}
-        with:
-          base: ${{ github.event.merge_group.base_sha || '' }}
-          ref: ${{ github.event.merge_group.head_sha || '' }}
-          filters: |
-            prompts:
-              - 'apps/body/src/prompt-assembly.ts'
-              - 'apps/server/src/free-agents.ts'
-              - 'apps/body/src/beeline-skill.ts'
-              - 'apps/body/src/minimal-tool-surface.ts'
-              - 'apps/body/src/read-only-mcp.ts'
-              - 'apps/body/src/silent-wake.ts'
-              - 'apps/body/src/harness-capabilities.ts'
-              - 'apps/body/src/transcript-budget.ts'
-              - 'docs/prompts/cases/**'
-              - 'scripts/prompt-cases.ts'
-              - 'scripts/prompt-case-rules.ts'
-              - 'scripts/prompt-case-rules.test.ts'
-              - 'scripts/prompt-nightly.mjs'
-              - 'scripts/prompt-nightly.test.mjs'
-              - 'scripts/prompt-pr-replay.mjs'
-              - 'scripts/prompt-pr-replay.test.mjs'
-              - 'scripts/discovery-*.mjs'
-              - 'docs/prompts/discovery.md'
-              - '.github/workflows/prompt-cases.yml'
-
   prompt-cases:
     name: PROMPT CASES
-    needs: changes
-    if: >-
-      always() && (github.event_name == 'workflow_dispatch' ||
-      needs.changes.outputs.prompts == 'true')
+    if: "!cancelled()"
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          clean: ${{ !startsWith(runner.name, 'beeline-ci-squire-') }}
+      - name: Decide in this checkout
+        id: changes
+        env:
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CI_PATHS: ^apps/(body|server)/|^docs/prompts/|^scripts/(prompt|discovery)
+        run: |-
+          run=true
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && git fetch --no-tags --depth=1 origin "$CI_BASE_SHA" && git diff --name-only "$CI_BASE_SHA" HEAD > "$RUNNER_TEMP/changed-files"; then
+            run=false
+            while IFS= read -r file; do
+              if [[ "$file" =~ $CI_PATHS ]]; then run=true; break; fi
+              if [[ "$file" == docs/* || "$file" == *.md ]]; then continue; fi
+              if [[ ! "$file" =~ ^apps/(body|server|mobile)/ ]]; then run=true; break; fi
+            done < "$RUNNER_TEMP/changed-files"
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "This job runs: $run"
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+        if: steps.changes.outputs.run == 'true'
       - run: npm ci
+        if: steps.changes.outputs.run == 'true'
       - name: Build contracts and local service harness
         run: npx turbo run build --filter=@beeline/body --filter=@beeline/server
+        if: steps.changes.outputs.run == 'true'
       - name: Check the case library
         run: npm run test:prompt-cases
+        if: steps.changes.outputs.run == 'true'
       - name: Check nightly replay controls without spending model tokens
         run: npm run test:prompt-nightly
+        if: steps.changes.outputs.run == 'true'
       - name: Check PR subscription replay controls without model calls
         run: node --import tsx --test scripts/prompt-pr-replay.test.mjs
+        if: steps.changes.outputs.run == 'true'
       - name: Check capability discovery controls and real local service paths
         run: npm run test:prompt-discovery
+        if: steps.changes.outputs.run == 'true'

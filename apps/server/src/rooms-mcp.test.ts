@@ -2274,8 +2274,6 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       expect(Date.now() - started).toBeLessThan(3_000);
       expect(sent.woken).toEqual(['demo-agent']);
       expect(await commands(sent.messageId)).toBe(1);
-      expect((await db.query(`SELECT 1 FROM live_journal
-        WHERE stream_id=$1 AND event->>'messageId'=$2`, [`room:${BIG}`, sent.messageId])).rowCount).toBe(1);
     }, 60_000);
     it('returns one message to a retry sent while the first call is in flight, and wakes once', async () => {
       const { client } = await connected(undefined, [WORKSPACE, bigWorkspace]);

@@ -1,3 +1,4 @@
+import { MEMBERSHIP_AUTHORITY_SCHEMA } from './membership-authority-schema.js';
 import { committedCommandNotificationSchema } from './postgres-live.js';
 import type { ServerResponse } from 'node:http';
 import { createHash } from 'node:crypto';
@@ -10,10 +11,14 @@ import type { WorkTimers } from './background-work.js';
 /** Separate rollout floor; enable only after real-PG source/authority proofs. */
 export { networkRouterEnabled as memberStreamEnabled } from './network-router-rollout.js';
 
+/** The retained authority rows/lock below belong to this separate MCP credential
+ * stream. Ordinary phone reads neither create nor consume certificates. */
+
 /** Compact causes share the existing commit-ordered journal and listener. No
  * personalized DTO or client cache inventory is recorded in the journal. */
 export const MCP_MEMBER_STREAM_SCHEMA = `
 ${committedCommandNotificationSchema()}
+${MEMBERSHIP_AUTHORITY_SCHEMA}
 CREATE INDEX IF NOT EXISTS rooms_mcp_members_stream_member_idx ON rooms_mcp_members(member_id);
 CREATE OR REPLACE FUNCTION beeline_mcp_stream(member text, cause jsonb) RETURNS void AS $$
 BEGIN

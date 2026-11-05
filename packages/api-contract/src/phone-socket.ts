@@ -15,7 +15,3 @@ export type PhoneResponseFrame<Result = unknown> =
   | { readonly t: 'res'; readonly id: string; readonly ok: false; readonly error: {
       readonly code: string; readonly message: string; readonly retryable: boolean;
     } };
-
-export const PHONE_SOCKET_MAX_IN_FLIGHT = 32;
-export const PHONE_SOCKET_MAX_FRAME_BYTES = 64 * 1024;
-export const PHONE_SOCKET_MAX_REQUEST_ID_LENGTH = 128;

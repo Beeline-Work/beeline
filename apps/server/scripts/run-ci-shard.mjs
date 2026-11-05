@@ -15,11 +15,12 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const vitest = fileURLToPath(new URL('../../../node_modules/vitest/vitest.mjs', import.meta.url));
 // On PRs, wall-clock budgets run in the existing hosted replay gate, outside
 // the shared CPU quota. Merge/dispatch runs retain them in their hosted shards.
-const isolated = ['src/voice-room-runtime.test.ts', 'src/durable-live.integration.test.ts'];
+const isolated = ['src/voice-room-runtime.test.ts'];
 // Fresh worker processes give socket replay and completion timing independent
 // engine/clock lifetimes. Replay remains on squire; the latency budget joins
 // the existing hosted wall-clock proofs on PRs.
-const timingFiles = [isolated[0], isolated[2], isolated[3]];
+// Main removed the hosted timing suites; voice runtime still runs in its shard.
+const timingFiles = [];
 const hostedTiming = process.env.SERVER_HOSTED_TIMING || 'false';
 assert.ok(['true', 'false'].includes(hostedTiming), 'SERVER_HOSTED_TIMING must be true or false');
 assert.ok(hostedTiming === 'false' || process.env.GITHUB_EVENT_NAME === 'pull_request'

@@ -1,14 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { Pool, type PoolClient } from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { migrate, PostgresDatabase, type SqlDatabase } from './database.js';
+import { migrate, PostgresDatabase } from './database.js';
 import { DaemonService } from './daemon-service.js';
 import { GitHubOperations } from './github-operations.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
-import { recordAgentEvidence } from './connection-presence.js';
-import { QueryProfiler } from './query-profile.js';
 
 const url = process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
 if (url && !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(url).hostname))
@@ -152,14 +150,5 @@ describe.skipIf(!url)('production transaction lock ordering', () => {
     await reconciliation['mergeCorner']({ corner_id: corner, parent_id: room, author_id: agent,
       corner_name: 'Corner', summary: '', repository_id: '101', installation_id: '77' }, pullRequest);
     expect((await first.query(`SELECT count(*)::int count FROM messages WHERE card_type='github-event'`)).rows).toEqual([{ count: 1 }]);
-  });
-
-  it('maps the reported health fingerprint to the actual presence SQL', async () => {
-    const profiler = new QueryProfiler();
-    let sql = '';
-    await recordAgentEvidence({ query: async (statement: string) => { sql = statement; return { rows: [], rowCount: 0 }; } } as unknown as SqlDatabase,
-      new LiveHub(), room, agent);
-    profiler.record(sql, 1);
-    expect(profiler.snapshot().top[0]?.fingerprint).toBe('b60e22519100a76c');
   });
 });

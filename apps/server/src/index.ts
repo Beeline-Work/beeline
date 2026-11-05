@@ -1,4 +1,3 @@
-import { createNetworkRouterRuntime } from './network-router-runtime.js';
 import { requiredServerSetting as required } from './server-configuration.js';
 import { DISPLAY_DEADLINE_KEY } from './deadline-expiry-source.js';
 import { backgroundDatabaseCut } from './background-deadline-clock.js';
@@ -52,7 +51,6 @@ import { clearStalePhoneViews } from './phone-viewing.js';
 import { createFirebasePushSender } from './firebase-push.js';
 import { createApnsPushSender } from './apns-push.js';
 import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
-import { DurableLiveReplay } from './durable-live.js';
 import { objectStorageFromEnv } from './object-storage.js';
 import { ObjectService } from './object-service.js';
 import { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
@@ -87,7 +85,6 @@ import {
   freeAgentConfigFromEnv,
 } from './free-agents.js';
 import { FlyMachines } from './fly-machines.js';
-
 
 async function runReleaseMigration(): Promise<void> {
   const database = new PostgresDatabase(required('MIGRATION_DATABASE_URL'), 1, {
@@ -406,20 +403,11 @@ async function main() {
   const backgroundJobs = new BackgroundJobRunner();
   const operationOutcomes = new OperationOutcomes();
   const sentryWakeAgentId = sentryWakeAgentFromEnv();
-  const router = createNetworkRouterRuntime({
-    database, jobsDatabase, live, instanceId: connectionPresence.instanceId, publicOrigin,
-    listenerReady: () => liveListener.projectionHealth().connected,
-    wake: () => { work.wake('router-tray', 'committed-tray-source'); leader.wake(); },
-    retireOwner: connection => leader.parkOwner(connection),
-  });
   liveListener.setServerLeaseEvidence((instance, renewedAt, removed) => {
     connectionPresence.observeServerLease(instance, renewedAt, removed);
-    router?.work.observeServerLease(instance, renewedAt, removed);
   });
   const server = createBeelineServer({
-    ...(router ? { routerProjections: router.policy, mediaMetadataV1: router.mediaMetadataV1 } : {}),
     operationOutcomes,
-    replay: new DurableLiveReplay(database, live),
     roomsMcp: new RoomsMcp(new RoomsMcpOAuth(database, publicOrigin, auth, undefined, () => liveListener.projectionHealth().connected), phone, live, daemon, objectService, undefined, () => liveListener.projectionHealth().connected),
     sentryWakeAgentId,
     database,
@@ -515,7 +503,7 @@ async function main() {
     const due = await backgroundJobs.run('connector-offer-expiry', () => connectorOfferExpiry.runOnce());
     if (due.ok) return due.value;
   });
-  if (!router) work.addDeadline('choices', async () => {
+  work.addDeadline('choices', async () => {
     const due = await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
     if (due.ok) return due.value;
   });
@@ -553,8 +541,7 @@ async function main() {
   registerBackgroundDeadlineFamilies(work,repairDeadlineFamilies(jobsDatabase,{
     live,phone,mediaExpiry,institutionalMemory,institutionalAnchors,voice,voiceDeadlines,
   }),(name,run)=>backgroundJobs.run(name,run),jobsDatabase);
-  if (router) work.addDeadline('router-tray', () => router.work.run());
-  const leader = new BackgroundLeader(jobsDatabase, (newLeader, signal) => work.run(newLeader, signal), router?.work.leadership);
+  const leader = new BackgroundLeader(jobsDatabase, (newLeader, signal) => work.run(newLeader, signal));
   const wakeWork = (name: string, source = name) => { work.wake(name, source); leader.wake(); };
   const stopBackgroundSources=subscribeBackgroundFamilies(jobsDatabase,live,backgroundSourceFamilies(),name=>wakeWork(name,'committed-family-source'));
   const wakeSystemDms=()=>wakeWork('operator-system-dms','committed-system-dm');
@@ -614,8 +601,6 @@ async function main() {
   }, port, host);
   // The existing aggregate lease also covers the background owner when no
   // phone/helper socket is attached. This adds no separate renewal loop.
-  const releaseRouterLease = router ? connectionPresence.holdServerConnection() : undefined;
-  await router?.start();
   void leader.run();
   const stopOperationOutcomes = startOperationOutcomeFlush(jobsDatabase, operationOutcomes, backgroundJobs, wake => jobsDatabase.onRecovery(wake));
   const stopComputerExpiry = startComputerExpirySweep(database, live);
@@ -630,8 +615,6 @@ async function main() {
     stopAttachmentRecovery();stopAttachmentResync();stopAttachmentWake();
     stopScheduleRecovery();stopScheduleResync();stopScheduleWake();
     await leader.stop();
-    await router?.close();
-    releaseRouterLease?.();
     stopBackgroundSources();
     stopVoiceDeadlines();
     // The provider flight intentionally does not block unrelated leader jobs.

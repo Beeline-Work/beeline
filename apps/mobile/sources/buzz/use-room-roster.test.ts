@@ -3,10 +3,8 @@ import React from 'react';
 import { act, create } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isWorkspaceView, type WorkspaceView } from '@beeline/buzz-client';
-const fixture = vi.hoisted(() => ({ origin: 'https://synthetic.invalid', storage: new Map<string, string>(), read: vi.fn(), error: vi.fn(), mode: 'legacy' as 'legacy' | 'router' | 'pending', open: vi.fn(), acquire: vi.fn(), view: null as any, listeners: new Set<() => void>() }));
+const fixture = vi.hoisted(() => ({ origin: 'https://synthetic.invalid', storage: new Map<string, string>(), read: vi.fn(), error: vi.fn() }));
 vi.mock('react-native', () => ({ AppState: { currentState: 'active' } }));
-vi.mock('./router-family', () => ({ useRouterFamily: () => fixture.mode }));
-vi.mock('./router-owner', () => ({ acquireRouterLane: (...args: any[]) => fixture.acquire(...args), acquireRouterRoomRoster: (...args: any[]) => fixture.open(...args), retryRouterLane: vi.fn() }));
 vi.mock('@/auth/buzz-identity-storage', () => ({ getEffectiveRelayUrl: async () => fixture.origin }));
 vi.mock('./surface-storage', async () => {
   const { SurfaceRegistry } = await import('./surface-registry');
@@ -24,38 +22,16 @@ function dto(id = workspace): WorkspaceView {
   return { workspace: { id, name: 'Roster', visibility: 'invite-only', role: 'owner', updatedAt: 1, createdAt: 1 }, members: [{ identity, role: 'owner' }], agents: [],
     viewer: { identity, role: 'owner', permissions: { send: true, manage: true } }, watchFilters: [], peopleTotal: 1, agentTotal: 0, membersTruncated: false, agentsTruncated: false };
 }
-let tree: any, openPicker: (() => void) | undefined;const current: Array<WorkspaceView | null> = [],rendered: Array<string | null> = [];
+let tree: any;const current: Array<WorkspaceView | null> = [],rendered: Array<string | null> = [];
 function Picker({ open = false, id = workspace, index = 0, revision = 0 }: {open?: boolean;id?: string;index?: number;revision?: number;}) {
-  const owner = useRoomRoster(id, viewer, open, fixture.read, fixture.error);openPicker = owner.open;current[index] = owner.value;rendered.push(current[index]?.workspace.id ?? null);return /*#__PURE__*/React.createElement("span", null, revision);
+  const owner = useRoomRoster(id, viewer, open, fixture.read, fixture.error);current[index] = owner.value;rendered.push(current[index]?.workspace.id ?? null);return /*#__PURE__*/React.createElement("span", null, revision);
 }
 beforeEach(() => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;resetClientState();mobileSurfaceCache.clear();fixture.storage.clear();
-  fixture.origin = 'https://synthetic.invalid';fixture.mode = 'legacy';fixture.listeners.clear();fixture.view = { state: 'LIVE', value: { ...dto(), revision: '1' }, error: null, cut: null };current.length = 0;rendered.length = 0;vi.clearAllMocks();fixture.read.mockResolvedValue(dto());
-  const handle = () => ({ current: () => fixture.view, release: vi.fn(), subscribe: (wake: () => void) => {fixture.listeners.add(wake);return () => fixture.listeners.delete(wake);} });
-  fixture.acquire.mockImplementation(handle);fixture.open.mockImplementation(handle);
+  fixture.origin = 'https://synthetic.invalid';current.length = 0;rendered.length = 0;vi.clearAllMocks();fixture.read.mockResolvedValue(dto());
 });
 afterEach(() => {if (tree) act(() => tree.unmount());tree = undefined;vi.unstubAllGlobals();});
-describe('F25 actual Room picker owner with the real shared registry', () => {
-  it('negotiated picker mounts and closed renders admit nothing; only Open invokes its gesture owner and facts replace the visible DTO', async () => {
-    fixture.mode = 'router';await act(async () => {tree = create(/*#__PURE__*/React.createElement(Picker, null));});
-    for (let n = 0; n < 1000; n++) await act(async () => tree.update(/*#__PURE__*/React.createElement(Picker, { revision: n })));
-    expect(fixture.acquire).not.toHaveBeenCalled();expect(fixture.open).not.toHaveBeenCalled();expect(fixture.read).not.toHaveBeenCalled();
-    await act(async () => {openPicker!();tree.update(/*#__PURE__*/React.createElement(Picker, { open: true }));});
-    expect(fixture.open).toHaveBeenCalledTimes(1);expect(fixture.open.mock.calls[0]?.[0]).toBe(workspace);
-    expect(current[0]).toBe(fixture.view.value);expect(fixture.acquire).toHaveBeenCalledTimes(1);
-    const next = { ...fixture.view.value, revision: '2', members: [] };
-    await act(async () => {fixture.view = { ...fixture.view, value: next };for (const wake of fixture.listeners) wake();});
-    expect(current[0]).toBe(next);expect(fixture.read).not.toHaveBeenCalled();
-    await act(async () => tree.update(/*#__PURE__*/React.createElement(Picker, null)));expect(current[0]).toBeNull();
-    fixture.mode = 'pending';await act(async () => tree.update(/*#__PURE__*/React.createElement(Picker, { open: true })));expect(current[0]).toBeNull();expect(fixture.read).not.toHaveBeenCalled();
-  });
-
-  it('an unavailable held Room reports through the existing picker error state without a fallback read', async () => {
-    fixture.mode = 'router';fixture.open.mockImplementation(() => {throw new Error('Roster Workspace is not held.');});
-    await act(async () => {tree = create(/*#__PURE__*/React.createElement(Picker, null));});
-    expect(() => openPicker!()).not.toThrow();expect(fixture.error).toHaveBeenCalledTimes(1);
-    expect(fixture.read).not.toHaveBeenCalled();expect(fixture.acquire).not.toHaveBeenCalled();
-  });
+describe('Room picker cached reads', () => {
 
   it('keeps a held roster visible for bylines but 1,000 closed-picker renders perform zero Workspace reads', async () => {
     await mobileSurfaceCache.write(surfaceAddress(fixture.origin, viewer, '/workspace/:id', { workspaceId: workspace }), dto(), isWorkspaceView);

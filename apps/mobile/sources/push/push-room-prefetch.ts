@@ -1,4 +1,3 @@
-import { routerFamilyMode } from '@/buzz/router-owner';
 import { isRoomView, isChatListView } from '@beeline/buzz-client';
 import { mobileSurfaceCache, restoreStoredSurface, surfaceAddress } from '@/buzz/surface-storage';
 import type { RoomView } from '@beeline/api-contract/phone';
@@ -32,9 +31,6 @@ subscribeClientReset(() => {
 
 /** Start the push's single Room read while initial landing is still resolving. */
 export function prefetchPushRoom(responseId: string, roomId: string, messageId?: string): void {
-  // Negotiated Room heads are owned solely by destination focus. Unknown
-  // capability also waits for navigation, so cold pushes cannot race two paths.
-  if (routerFamilyMode('room-head') !== 'legacy') return;
   const config = getBuzzRuntimeConfig();
   if (pending?.responseId === responseId && pending.roomId === roomId) return;
   markRoomOpen('prefetch-start');

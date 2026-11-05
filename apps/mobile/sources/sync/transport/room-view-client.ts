@@ -1,4 +1,3 @@
-import type { ReadAuthority } from '@/buzz/read-authority';
 import { RoomViewHttpError, type RoomViewClientOptions } from '@beeline/buzz-client';
 import {
   readAgentVoiceCatalog,
@@ -37,36 +36,10 @@ import { markRoomOpen } from '@/buzz/room-open-trace';
 import { sharedLiveConnection } from './live-connection';
 import { PhoneSocketError } from './phone-socket-error';
 import type { PhoneOperationMap } from '@beeline/api-contract/phone';
-import { liveFrameEpoch } from './live-frame-epoch';
 import { stampRoomMessageRows } from '@/buzz/room-message-records';
 import { currentSurfaceStamp } from '@/buzz/surface-clock';
 
 export { RoomViewHttpError };
-
-/**
- * Identical GETs in flight at once share one request: every screen mounting
- * on the same open asks for the same Workspace, Room list or Room. A caller
- * that asks after the live socket delivered anything new starts its own read,
- * because the shared one may predate the change that frame announced.
- */
-const readsInFlight = new Map<string, { promise: Promise<unknown>; epoch: number }>();
-
-function shareRead<T>(key: string, start: () => Promise<T>): Promise<T> {
-  const epoch = liveFrameEpoch();
-  const shared = readsInFlight.get(key);
-  if (shared && shared.epoch === epoch) {
-    if (key.startsWith('["readRoom",')) markRoomOpen('wire-shared');
-    return shared.promise as Promise<T>;
-  }
-  const promise = start();
-  const entry = { promise, epoch };
-  readsInFlight.set(key, entry);
-  const release = () => {
-    if (readsInFlight.get(key) === entry) readsInFlight.delete(key);
-  };
-  promise.then(release, release);
-  return promise;
-}
 
 /** A bounded deadline fired before the server answered the phone's read. */
 export function isRoomViewTimeoutError(error: unknown): boolean {
@@ -135,8 +108,7 @@ class MonolithRoomViewClient {
   markUnread(roomId: string, messageId: string): Promise<void> { return this.request('markUnread', { roomId, messageId }).then(() => undefined); }
 
   private get<Name extends keyof PhoneOperationMap, T>(name: Name, input: PhoneOperationMap[Name]['input'], guard: Guard<T>, signal?: AbortSignal): Promise<T> {
-    if (signal) return this.checked(name, input, guard, signal);
-    return shareRead(JSON.stringify([name, input]), () => this.checked(name, input, guard));
+    return this.checked(name, input, guard, signal);
   }
   private async checked<Name extends keyof PhoneOperationMap, T>(name: Name, input: PhoneOperationMap[Name]['input'], guard: Guard<T>, signal?: AbortSignal): Promise<T> {
     const value = await this.request(name, input, signal);
@@ -147,7 +119,8 @@ class MonolithRoomViewClient {
   }
   private async request<Name extends keyof PhoneOperationMap>(name: Name, input: PhoneOperationMap[Name]['input'], signal?: AbortSignal): Promise<PhoneOperationMap[Name]['output']> {
     try {
-      const result = await sharedLiveConnection().request(name, input, { signal, timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS });
+      const result = await sharedLiveConnection().request(name, input, { signal, timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
+ });
       if (name === 'readRoom') markRoomOpen('wire-headers');
       return result;
     } catch (error) {
@@ -208,7 +181,7 @@ export class RoomViewClient {
   ) {
     return this.implementation.previewAgentVoice(workspaceId, agentId, voiceId);
   }
-  chats(_authority: ReadAuthority, id: string) {
+  chats(id: string) {
     return this.implementation.chats(id);
   }
   room(id: string) {

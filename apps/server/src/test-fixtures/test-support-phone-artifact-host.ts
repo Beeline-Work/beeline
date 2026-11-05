@@ -11,12 +11,12 @@ export async function phoneArtifactHost(principal: string, origin: string) {
   await mkdir(proof, { recursive: true });
   const directory = await mkdtemp(path.join(proof, 'phone-artifact-'));
   const stubs: Record<string, string> = {
-    'phone-proof-host': `export const host={bytes:new Map(),requests:[],fetch:async(url,options)=>{host.requests.push(url);return globalThis.fetch(url,options);}};`,
+    'phone-proof-host': `export const host={bytes:new Map(),requests:[],operation:async()=>{throw Error('Missing metadata operation')},fetch:async(url,options)=>{host.requests.push(url);return globalThis.fetch(url,options);}};`,
     'react-native': `export const Platform={OS:'android'};`,
     'auth/buzz-identity-storage': `export const loadBuzzIdentity=async()=>({publicKey:${JSON.stringify(principal)}});`,
     'auth/monolith-session': `export const monolithSession={fetch:(url,options)=>host.fetch(url,options)};`,
     'buzz/runtime-config': `export const getBuzzRuntimeConfig=()=>({monolithUrl:${JSON.stringify(origin)}});`,
-    'buzz/router-owner': `export const routerOwnerArtifactAction=()=>{};`,
+    'sync/transport/monolith-operation': `export const monolithPhoneOperation=(name,args)=>host.operation(name,args);`,
     'buzz/artifact-byte-store': `export const createArtifactByteStore=()=>({get:async key=>host.bytes.get(key)??null,set:async(key,value)=>host.bytes.set(key,value),
       remove:async key=>host.bytes.delete(key),clear:async()=>host.bytes.clear(),revoke:async()=>[],localUri:async key=>host.bytes.has(key)?'file:///synthetic/image.png':null});`,
     'modal': `export const Modal={alert(){throw Error('Unexpected modal')}};`,
@@ -26,8 +26,7 @@ export async function phoneArtifactHost(principal: string, origin: string) {
   try {
     const result = await build({
       stdin: { contents: `export {host} from 'phone-proof-host';
-        export {artifactImageSource,artifactLocalUri} from './apps/mobile/sources/buzz/artifact-link';
-        export {installMediaCacheConnection} from './apps/mobile/sources/buzz/media-cache-connection';`, resolveDir: root },
+        export {artifactImageSource,artifactLocalUri} from './apps/mobile/sources/buzz/artifact-link';;`, resolveDir: root },
       outfile, bundle: true, platform: 'node', format: 'esm', packages: 'external', metafile: true,
       plugins: [{ name: 'artifact-native-host', setup(context) {
         context.onResolve({ filter: /.*/ }, args => {

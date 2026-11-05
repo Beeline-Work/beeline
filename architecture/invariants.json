@@ -367,7 +367,7 @@
         "apps/mobile/sources"
       ],
       "owners": [],
-      "total": 19,
+      "total": 17,
       "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
     },
     {
@@ -1577,8 +1577,7 @@
           "source_room_name": "existing before the registry; weekly audit reviews",
           "source_room_kind": "existing before the registry; weekly audit reviews",
           "message_created_at": "existing before the registry; weekly audit reviews",
-          "created_at": "existing before the registry; weekly audit reviews",
-          "bookmark_id": "Server-owned incarnation distinguishes delete/recreate and ordering changes even when the bookmark natural key returns to the same value."
+          "created_at": "existing before the registry; weekly audit reviews"
         }
       },
       "messages": {
@@ -2934,16 +2933,6 @@
           "bound_at": "Retired (SENTRY-22): older images still join it during rolling deploy and rollback; drop in a contract migration."
         }
       },
-      "agent_usage_cells": {
-        "module": "Helper usage cells (apps/server/src/helper-usage.ts)",
-        "reason": "Committed full-cell generations/revisions order canonical usage across source switches and server restarts.",
-        "columns": {
-          "agent_id": "Identifies the exact agent whose canonical usage cell changed, independently of client possession.",
-          "owner_id": "Pins the authorized owner for targeted committed source delivery and final enqueue fencing.",
-          "generation": "A durable generation prevents an older account/actor source from overwriting a newly selected source.",
-          "revision": "A committed monotonic cell revision orders all full replacements within that generation."
-        }
-      },
       "agent_usage_source_heads": {
         "module": "Helper usage cells (apps/server/src/helper-usage.ts)",
         "reason": "Per-registration source heads fence replayed account/actor publications before altering the canonical usage cell.",
@@ -2973,8 +2962,8 @@
         }
       },
       "router_authority": {
-        "module": "Router authority fencing (apps/server/src/router-projection-schema.ts)",
-        "reason": "Monotonic authority epochs survive response eviction and make revoke/regrant distinguishable at final enqueue and cold restore.",
+        "module": "Membership authority (apps/server/src/membership-authority-schema.ts)",
+        "reason": "Revocation epochs protect the separate MCP credential stream at final enqueue.",
         "columns": {
           "scope": "Identifies the exact permission domain whose readers must fence older private certificates.",
           "epoch": "A durable monotonic generation invalidates pre-revocation certificates even after an access regrant."
@@ -2990,7 +2979,6 @@
           "digest": "Detects conflicting canonical arguments attempting to reuse an admitted command identity.",
           "state": "Preserves durable pending, committed or unknown outcome when a reply or provider result is lost.",
           "result": "Retains the original committed outcome for bounded replay without executing its effect again.",
-          "coverage": "Binds optional original convenience data to its actual committed cut and authority for later replay fencing.",
           "created_at": "Records durable claim admission time for audit and pending outcome diagnosis.",
           "completed_at": "Records the committed completion boundary independently of when a caller receives its reply.",
           "result_expires_at": "Bounds full result retention while preserving permanent used identity/digest tombstones."
@@ -3018,24 +3006,6 @@
           "generation_id": "Pins the effect to its immutable execution generation even if that command is requeued before COMMIT."
         }
       },
-      "owner_projection_cells": {
-        "module": "Owner display projections (apps/server/src/router-owner-source.ts)",
-        "reason": "Committed owner summary cells separate pure Workbench display from wallet/provider observation and share one owner authority stream.",
-        "columns": {
-          "owner_id": "Partitions committed display cells by authenticated owner, independent of Workspace selection.",
-          "cell": "Names the bounded server-authored summary within an owner projection.",
-          "value": "Captures the transactional summary used by pure display snapshots without invoking the wallet/provider reader."
-        }
-      },
-      "owner_wallet_projections": {
-        "module": "Wallet observations (apps/server/src/wallet.ts)",
-        "reason": "A retained actual provider observation lets pure snapshots report measured balances and their age without observing the provider again.",
-        "columns": {
-          "owner_id": "Partitions the retained observation by the wallet owner.",
-          "value": "Preserves the last actual provider result, never a fabricated fresh balance.",
-          "observed_at": "Records when the retained provider observation changed, independently of display reads."
-        }
-      },
       "agent_command_owner_ends": {
         "module": "Owned model parking (apps/server/src/owned-model-parking.ts)",
         "reason": "Immutable causal evidence fences a generation after its owner ends without inventing a provider outcome or allowing a second claim.",
@@ -3045,146 +3015,6 @@
           "model_request_id": "Records the actual model attempt when known; NULL preserves missing-journal uncertainty.",
           "ended_at": "Preserves the database time of the causal owner end for durable evidence.",
           "transaction_id": "Binds owner-end evidence to the transaction that committed its authority change."
-        }
-      },
-      "background_effect_attempts": {
-        "module": "Router lifecycle (apps/server/src/background-ownership.ts)",
-        "reason": "An immutable admitted provider attempt retains unknown outcomes across owner loss without dispatching twice.",
-        "columns": {
-          "id": "Identifies this durable record (singleton where constrained by its owning schema).",
-          "job_id": "Names the closed background provider adapter that admitted this effect.",
-          "effect_id": "Retains the immutable source effect identity to prevent redispatch.",
-          "source_claim_id": "Binds the effect to its actual source claim.",
-          "source_claim_version": "Rejects reuse after the admitted source claim changes.",
-          "provider": "Names the exact provider adapter for the canonical request.",
-          "canonical_request": "Retains immutable provider request bytes for conflict detection and outcome reconciliation.",
-          "request_digest": "Detects changed request bytes under an already-used effect identity.",
-          "instance_id": "Binds the record to the server process holding aggregate ownership.",
-          "owner_generation": "Fences this attempt against a replacement aggregate owner.",
-          "owner_nonce": "Binds this attempt to the exact aggregate ownership claim.",
-          "state": "Preserves committed lifecycle/outcome state independently of caller delivery or wall time.",
-          "outcome": "Retains the known provider result without turning an unknown attempt into a retry.",
-          "created_at": "Records the durable admission boundary for this provider attempt."
-        }
-      },
-      "background_leader_owners": {
-        "module": "Router lifecycle (apps/server/src/background-ownership.ts)",
-        "reason": "A durable owner generation binds work to the actual PostgreSQL advisory-lock backend and aggregate lease.",
-        "columns": {
-          "name": "Names the single existing background leadership domain.",
-          "instance_id": "Binds the record to the server process holding aggregate ownership.",
-          "generation": "Identifies the current ownership or readiness generation; stale work cannot borrow a replacement.",
-          "claim_nonce": "Distinguishes the exact aggregate owner claim within an instance.",
-          "lock_backend_pid": "Identifies the PostgreSQL backend that actually holds the leadership lock.",
-          "lock_backend_start": "Disambiguates a reused PostgreSQL backend PID.",
-          "acquired_at": "Records when this aggregate owner claim was installed.",
-          "released_at": "Records explicit owner retirement independently of lease expiry."
-        }
-      },
-      "tray_clock_deadlines": {
-        "module": "Router lifecycle (apps/server/src/tray-clock-source.ts)",
-        "reason": "Committed source-derived expiry state lets reads classify eligibility without wall-clock polling.",
-        "columns": {
-          "id": "Identifies this durable record (singleton where constrained by its owning schema).",
-          "source_kind": "Selects the source-owned message, seen-mark or choice lifecycle.",
-          "source_id": "Identifies the domain source row rather than a client cache or timer.",
-          "reader_id": "Scopes a reader-specific seen deadline; empty for source-wide deadlines.",
-          "incarnation": "Prevents a deleted and recreated source from accepting old expiry work.",
-          "revision": "Fences work and projections against subsequent committed source changes.",
-          "kind": "Selects the closed domain expiry handler.",
-          "workspace_id": "Binds clock authority or progress to its canonical Workspace.",
-          "room_id": "Retains the source Room for current-authority audience resolution.",
-          "due_at": "Stores the exact source-derived deadline, never a polling cadence.",
-          "state": "Preserves committed lifecycle/outcome state independently of caller delivery or wall time."
-        }
-      },
-      "tray_clock_sources": {
-        "module": "Router lifecycle (apps/server/src/tray-clock-source.ts)",
-        "reason": "Source incarnation and revision fence stale expiry work across edits, deletion and recreation.",
-        "columns": {
-          "source_kind": "Selects the source-owned message, seen-mark or choice lifecycle.",
-          "source_id": "Identifies the domain source row rather than a client cache or timer.",
-          "reader_id": "Scopes a reader-specific seen deadline; empty for source-wide deadlines.",
-          "incarnation": "Prevents a deleted and recreated source from accepting old expiry work.",
-          "revision": "Fences work and projections against subsequent committed source changes.",
-          "desired": "Retains source-derived deadline descriptors for semantic change and ABA detection.",
-          "retired": "Retains source tombstones so deletion/recreation cannot reuse an old incarnation."
-        }
-      },
-      "tray_clock_state": {
-        "module": "Router lifecycle (apps/server/src/tray-clock-source.ts)",
-        "reason": "A committed Workspace clock basis and readiness generation fence coherent Tray projections.",
-        "columns": {
-          "workspace_id": "Binds clock authority or progress to its canonical Workspace.",
-          "generation": "Identifies the current ownership or readiness generation; stale work cannot borrow a replacement.",
-          "revision": "Fences work and projections against subsequent committed source changes.",
-          "ready": "Records committed completion of source reconciliation; reads never infer it from time."
-        }
-      },
-      "tray_clock_readiness": {
-        "module": "Router lifecycle (apps/server/src/tray-clock-readiness.ts)",
-        "reason": "Bounded migration cursors survive owner replacement and prevent partial source capture from being advertised ready.",
-        "columns": {
-          "workspace_id": "Binds clock authority or progress to its canonical Workspace.",
-          "generation": "Identifies the current ownership or readiness generation; stale work cannot borrow a replacement.",
-          "phase": "Retains the current bounded reconciliation phase across owner replacement.",
-          "cursor_one": "Retains the first component of the last processed source key.",
-          "cursor_two": "Retains the second component of the last processed source key.",
-          "cursor_three": "Retains the third component of the last processed source key.",
-          "bounded": "Records whether the phase captured its immutable upper bound.",
-          "bound_one": "Retains the first component of the phase upper source-key bound.",
-          "bound_two": "Retains the second component of the phase upper source-key bound.",
-          "bound_three": "Retains the third component of the phase upper source-key bound.",
-          "fingerprint": "Binds progress to the installed source-capture schema.",
-          "room_bounded": "Records whether this phase captured the Room upper bound.",
-          "room_cursor": "Retains the last reconciled Room without a whole-Workspace rescan.",
-          "room_bound": "Retains the fixed Room upper bound for this pass.",
-          "current_room": "Preserves the Room whose bounded message pass is in progress.",
-          "message_bounded": "Records whether the current Room captured its message upper bound.",
-          "message_cursor": "Retains the last reconciled message key.",
-          "message_bound": "Retains the fixed message upper bound for the current Room pass.",
-          "current_message": "Preserves the message whose reader-specific sources are in progress.",
-          "source_epoch": "Binds acknowledged source work to its durable journal epoch.",
-          "source_through": "Retains the exact reconciled source journal position.",
-          "workspace_epoch": "Binds the readiness publication fence to its Workspace journal epoch.",
-          "workspace_through": "Retains the Workspace cut reconciled before ready publication."
-        }
-      },
-      "tray_clock_readiness_floor": {
-        "module": "Router lifecycle (apps/server/src/tray-clock-readiness.ts)",
-        "reason": "A schema fingerprint and bounded Workspace seed cursor distinguish completed capture from a new migration generation.",
-        "columns": {
-          "id": "Identifies this durable record (singleton where constrained by its owning schema).",
-          "contract_digest": "Detects changes to the clock capture contract that require new reconciliation.",
-          "fingerprint": "Binds progress to the installed source-capture schema.",
-          "seed_cursor": "Resumes bounded Workspace seeding after interruption.",
-          "seeding_done": "Distinguishes completed Workspace seeding from an empty or partial pass."
-        }
-      },
-      "tray_clock_health": {
-        "module": "Router lifecycle (apps/server/src/tray-clock-health.ts)",
-        "reason": "One aggregate owner receipt proves that source and readiness streams were reconciled before serving clock-dependent reads.",
-        "columns": {
-          "id": "Identifies this durable record (singleton where constrained by its owning schema).",
-          "instance_id": "Binds the record to the server process holding aggregate ownership.",
-          "generation": "Identifies the current ownership or readiness generation; stale work cannot borrow a replacement.",
-          "claim_nonce": "Distinguishes the exact aggregate owner claim within an instance.",
-          "lock_backend_pid": "Identifies the PostgreSQL backend that actually holds the leadership lock.",
-          "lock_backend_start": "Disambiguates a reused PostgreSQL backend PID.",
-          "source_epoch": "Binds acknowledged source work to its durable journal epoch.",
-          "source_through": "Retains the exact reconciled source journal position.",
-          "readiness_epoch": "Binds acknowledged readiness work to its durable journal epoch.",
-          "readiness_through": "Retains the exact reconciled readiness journal position."
-        }
-      },
-      "tray_clock_owner_fences": {
-        "module": "Router lifecycle (apps/server/src/tray-clock-owner.ts)",
-        "reason": "Transaction-local evidence lets a deferred commit trigger reject expiry effects after aggregate owner loss.",
-        "columns": {
-          "transaction_id": "Identifies ephemeral evidence consumed by the final commit fence.",
-          "instance_id": "Binds the record to the server process holding aggregate ownership.",
-          "generation": "Identifies the current ownership or readiness generation; stale work cannot borrow a replacement.",
-          "claim_nonce": "Distinguishes the exact aggregate owner claim within an instance."
         }
       },
       "owned_model_credentials": {
@@ -3442,26 +3272,6 @@
         "command": "Retired corner app's command; only the unique index reads it, for older images."
       },
       "manifest": {},
-      "coverage": {
-        "cut": "Stores the original committed canonical data cut; replay cannot relabel an older convenience DTO at a newer cut.",
-        "authority": "Stores the original certificate for current-permission validation before replaying private convenience data.",
-        "workspaceId": "Binds the original command convenience projection to its canonical Workspace scope.",
-        "roomId": "Binds optional Room convenience data to the exact scope whose authority must still match."
-      },
-      "value": {
-        "createdAt": "Committed binding creation time in the owner Workbench summary.",
-        "expiresAt": "Committed delegation expiry in the owner Workbench summary.",
-        "standing": "Committed standing-delegation flag in the owner Workbench summary.",
-        "workspace": "Existing source-capture JSON alias retains the changed Workspace identifier for committed scheduling causes.",
-        "room": "Existing source-capture JSON alias retains the changed Room identifier for committed scheduling causes.",
-        "roomId": "Existing scheduled-row source JSON alias preserves the Room scope across old/new capture."
-      },
-      "desired": {
-        "kind": "Selects the closed source-owned expiry handler for this descriptor.",
-        "workspace": "Binds the source deadline to its canonical Workspace.",
-        "room": "Binds the source deadline to its Room for authority and audience checks.",
-        "due": "Retains the exact source-derived UTC deadline at microsecond precision."
-      },
       "reservation": {
         "day": "Retains the quota day charged at admission even when settlement occurs on another day.",
         "reserved": "Preserves the admitted token reservation needed for exact settlement.",

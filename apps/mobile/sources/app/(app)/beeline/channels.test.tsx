@@ -20,23 +20,8 @@ import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transpo
 
 // These fixtures exercise the negotiated legacy compatibility path. The actual
 // router owner/negotiation path has independent integration coverage.
-vi.mock('@/buzz/router-family', () => ({
-  useRouterFamily: () => deck.routerMode,
-  holdRouterConnection: () => () => {},
-}));
-vi.mock('@/buzz/router-owner', () => ({
-  subscribeRouterOwner: () => () => {},
-  routerFamilyMode: () => 'legacy',
-  acquireRouterLane: () => ({
-    current: () => ({ state: 'ABSENT', value: null, cut: null, error: null }),
-    release: () => {},
-    subscribe: () => () => {},
-    refreshVisibility: () => {},
-  }),
-  routerLaneSnapshot: () => ({ state: 'ABSENT', value: null, cut: null, error: null }),
-  retryRouterLane: () => {},
-  routerOwnerListPanel: () => {},
-}));
+
+
 
 const deck = vi.hoisted(() => ({
   appState: 'active' as string,
@@ -351,7 +336,7 @@ vi.mock('@/sync/transport/room-view-client', async () => ({
         watchFilters: [],
       };
     }
-    async chats(_authority: unknown, workspaceId: string): Promise<ChatListView> {
+    async chats(workspaceId: string): Promise<ChatListView> {
       deck.chatsWorkspaces.push(workspaceId);
       deck.chatsReads += 1;
       return deck.chatsResponse as ChatListView;
@@ -533,19 +518,16 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
   beforeEach(() => {
     hotSurfaces.values.clear();
   });
-  it('opens workspace creation after a transient initial workspace timeout without showing an error', async () => {
-    deck.selectedWorkspace = null;
-    deck.workspacesResponse = { workspaces: [], viewer, truncated: false, watchFilters: [] };
-    deck.workspaceFailures = [new RoomViewHttpError(0, 'timeout')];
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(React.createElement(BuzzChannels));
-    });
-    await quiet();
-    expect(router.replace).toHaveBeenCalledWith('/beeline/community');
-    expect(deck.workspaceReads).toBe(2);
-    expect(renderer.root.findAllByProps({ action: 'Retry' })).toHaveLength(0);
-    await act(async () => renderer.unmount());
+  it('shows the shared Retry after a failed discovery and reads on Retry', async () => {
+    deck.selectedWorkspace=null;deck.workspacesResponse={workspaces:[],viewer,truncated:false,watchFilters:[]};
+    deck.workspaceFailures=[new RoomViewHttpError(0,'timeout')];
+    let renderer!:ReactTestRenderer;
+    await act(async()=>{renderer=create(React.createElement(BuzzChannels));});await quiet();
+    expect(deck.workspaceReads).toBe(1);
+    expect(router.replace).not.toHaveBeenCalledWith('/beeline/community');
+    await act(async()=>renderer.root.findByProps({testID:'room-deck-error-retry'}).props.onPress());await quiet();
+    expect(deck.workspaceReads).toBe(2);expect(router.replace).toHaveBeenCalledWith('/beeline/community');
+    await act(async()=>renderer.unmount());
   });
 
   it('demonstrates the landing through the real guarded workspace socket reader', async () => {
@@ -567,6 +549,9 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
       await act(async () => {
         renderer = create(React.createElement(BuzzChannels));
       });
+      await quiet();
+      expect(request).toHaveBeenCalledTimes(1);
+      await act(async()=>renderer.root.findByProps({testID:'room-deck-error-retry'}).props.onPress());
       await quiet();
       expect(request).toHaveBeenCalledTimes(2);
       expect(request.mock.calls.every(([operation]) => operation === 'readWorkspaces')).toBe(true);
@@ -599,7 +584,7 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
         renderer.root.findAllByProps({ testID: 'connection-status-disconnected' }),
       ).toHaveLength(0);
       await act(async () =>
-        renderer.root.findByProps({ testID: 'room-deck-reconnect' }).props.onPress(),
+        renderer.root.findByProps({ testID: 'room-deck-error-retry' }).props.onPress(),
       );
       await act(async () => {
         await vi.advanceTimersByTimeAsync(10);
@@ -617,16 +602,15 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
     deck.workspacesResponse = { workspaces: [], viewer, truncated: false, watchFilters: [] };
     deck.workspaceFailures = [
       new RoomViewHttpError(0, 'timeout'),
-      new RoomViewHttpError(0, 'timeout'),
     ];
     let renderer!: ReactTestRenderer;
     await act(async () => {
       renderer = create(React.createElement(BuzzChannels));
     });
     await quiet();
-    expect(deck.workspaceReads).toBe(2);
+    expect(deck.workspaceReads).toBe(1);
     expect(router.replace).not.toHaveBeenCalledWith('/beeline/community');
-    expect(renderer.root.findAllByProps({ action: 'Retry' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ action: 'Retry' })).toHaveLength(1);
     expect(
       renderer.root.findAllByProps({ testID: 'room-deck-unavailable' }).length,
     ).toBeGreaterThan(0);
@@ -634,18 +618,18 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
       0,
     );
     const copy = renderer.root.findAllByType('Text').map((node: any) => node.props.children);
-    expect(copy).toContain('Beeline couldn’t connect');
+    expect(copy).toContain('Couldn’t reach Beeline');
     expect(copy).toContain(
-      'Your Rooms can’t load right now. There are no saved messages on this device yet.',
+      'Check your connection and try again.',
     );
-    const reconnect = renderer.root.findByProps({ testID: 'room-deck-reconnect' });
-    expect(reconnect.props.variant).toBe('secondary');
+    const reconnect = renderer.root.findByProps({ testID: 'room-deck-error-retry' });
+    expect(reconnect.props.action).toBe('Retry');
     await act(async () => {
       reconnect.props.onPress();
     });
     await quiet();
     expect(deck.reconnects).toBe(1);
-    expect(deck.workspaceReads).toBe(3);
+    expect(deck.workspaceReads).toBe(2);
     expect(router.replace).toHaveBeenCalledWith('/beeline/community');
     await act(async () => renderer.unmount());
   });
@@ -660,7 +644,7 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
     });
     await quiet();
     expect(renderer.root.findAllByType('Text').length).toBeGreaterThan(0);
-    const retry = renderer.root.findByProps({ testID: 'room-deck-reconnect' });
+    const retry = renderer.root.findByProps({ testID: 'room-deck-error-retry' });
     await act(async () => {
       retry.props.onPress();
     });
@@ -682,8 +666,8 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
     });
     await quiet();
     expect(deck.workspaceReads).toBe(1);
-    expect(renderer.root.findAllByProps({ action: 'Retry' }).length).toBeGreaterThan(0);
-    expect(renderer.root.findAllByProps({ testID: 'room-deck-unavailable' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'room-deck-error-retry' }).length).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({ testID: 'room-deck-unavailable' }).length).toBeGreaterThan(0);
     expect(router.replace).not.toHaveBeenCalledWith('/beeline/community');
     await act(async () => renderer.unmount());
   });
@@ -833,19 +817,6 @@ describe('Deleted workspace removal', () => {
   });
 });
 
-it('hides the retained private deck when negotiated family capability becomes pending', async () => {
-  const renderer = await mountDeck();
-  expect(paintedRows(renderer).length).toBeGreaterThan(0);
-  deck.routerMode = 'router';
-  await act(async () => renderer.update(React.createElement(BuzzChannels)));
-  deck.routerMode = 'pending';
-  await act(async () => renderer.update(React.createElement(BuzzChannels)));
-  const rows = renderer.root
-    .findAll((node: any) => node.type === 'SectionList' && node.props.testID === 'room-list')
-    .flatMap((node: any) => node.props.sections.flatMap((section: any) => section.data));
-  expect(rows).toEqual([]);
-  await act(async () => renderer.unmount());
-});
 
 describe('Room list gestures', () => {
   const listIn = (renderer: ReactTestRenderer) => renderer.root.findByType('SectionList');
@@ -1425,7 +1396,7 @@ describe('Room deck live path', () => {
     });
     await vi.waitFor(() => expect(() => roomWatch()).not.toThrow());
     await act(async () =>
-      roomWatch().emit({ monolithLive: { type: 'subscribed', roomId: 'room-a', resumed: true } }),
+      roomWatch().emit({ monolithLive: { type: 'subscribed', roomId: 'room-a' } }),
     );
     await act(() => new Promise((resolve) => setTimeout(resolve, 1_700)));
     await quiet();
@@ -1434,7 +1405,7 @@ describe('Room deck live path', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('reads once when the app returns to the foreground, and never on a timer', async () => {
+  it('reads once for the foreground invalidation, and never on a timer', async () => {
     const renderer = await mountDeck();
     const readsAtRest = deck.chatsReads;
 
@@ -1450,7 +1421,7 @@ describe('Room deck live path', () => {
     await quiet();
     expect(deck.chatsReads).toBe(readsAtRest);
     await act(async () =>
-      roomWatch().emit({ monolithLive: { type: 'subscribed', roomId: 'room-a' } }),
+      roomWatch().emit({ monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'reconnect' } }),
     );
     await quiet();
     expect(deck.chatsReads).toBe(readsAtRest + 1);

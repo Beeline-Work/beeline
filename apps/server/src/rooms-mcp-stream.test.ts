@@ -18,8 +18,7 @@ class Reply extends EventEmitter {
   destroyed=false;writableEnded=false;writableLength=0;
   frames:Record<string,any>[]=[];
   writeHead(){} flushHeaders(){}
-  private buffered='';
-  write(text:string){this.buffered+=text;let end:number;while((end=this.buffered.indexOf('\n'))>=0){this.frames.push(JSON.parse(this.buffered.slice(0,end)));this.buffered=this.buffered.slice(end+1);this.emit('frame');}return true;}
+  write(text:string){this.frames.push(JSON.parse(text));this.emit('frame');return true;}
   end(){this.writableEnded=true;this.emit('close');}
   until(count:number):Promise<void>{
     if(this.frames.length>=count)return Promise.resolve();
@@ -62,7 +61,7 @@ describe.each(['pglite',...(postgresUrl?['postgres']:[])])('P12 MCP committed me
       INSERT INTO rooms_mcp_tokens(hash,client_id,identity_id,scope,expires_at) VALUES('synthetic-token','client','owner','rooms:read',now()+interval '2 days');`);
   },30000);
   afterEach(()=>{for(const reply of replies.splice(0))reply.end();vi.useRealTimers();});
-  afterAll(async()=>{await release?.();await closeDatabase?.();},30000);
+  afterAll(async()=>{await release?.();await closeDatabase?.();});
   const page=()=>vi.fn(async(transaction:SqlDatabase,after:string)=>{
     const mentions=(await transaction.query<{id:string;room_id:string;deliveryCursor:string;rewakes:number}>(
       `SELECT message_id id,room_id,'Synthetic committed message' text,seq::text "deliveryCursor",rewakes FROM rooms_mcp_mentions
@@ -112,12 +111,6 @@ describe.each(['pglite',...(postgresUrl?['postgres']:[])])('P12 MCP committed me
     await serveMcpMemberStream(db,principal,output as unknown as ServerResponse,{cursor:head,mentionCursor:'1'},read as never);
     expect(read).not.toHaveBeenCalled();expect(output.frames).toEqual([{v:1,type:'checkpoint',cursor:head,mentionCursor:'1'}]);
   });
-  it('resumes an unfinished page even when its checkpoint shares the current stream head',async()=>{
-    const head=(await db.query<{epoch:string;through:number}>(`SELECT epoch,sequence::integer through FROM live_streams WHERE id='mcp:member'`)).rows[0]!;
-    const output=reply(),read=page();
-    await serveMcpMemberStream(db,principal,output as unknown as ServerResponse,{cursor:{...head,pending:true},mentionCursor:'0'},read as never);
-    expect(read).toHaveBeenCalledTimes(1);expect(output.frames.at(-1)).toMatchObject({type:'checkpoint',cursor:head});
-  });
   it('does not publish a rolled-back source or unrelated token-use metrics',async()=>{
     const output=reply(),read=page();
     await serveMcpMemberStream(db,principal,output as unknown as ServerResponse,{mentionCursor:'1'},read as never);
@@ -128,58 +121,6 @@ describe.each(['pglite',...(postgresUrl?['postgres']:[])])('P12 MCP committed me
     await db.query(`UPDATE rooms_mcp_tokens SET calls=calls+1`);
     expect((await db.query(`SELECT sequence FROM live_streams WHERE id='mcp:member'`)).rows).toEqual(before);
     expect(output.frames).toHaveLength(1);expect(read).toHaveBeenCalledTimes(1);
-  });
-  it('pages 1,895 owed deliveries beyond 34 pages/1 MiB and resumes the durable page checkpoint',async()=>{
-    await db.query(`INSERT INTO rooms_mcp_mentions(member_id,room_id,message_id)
-      SELECT 'member',$1,'backlog-'||n FROM generate_series(1,1895) n`,[room]);
-    const read=vi.fn(async(tx:SqlDatabase,after:string)=>{
-      const rows=(await tx.query<{id:string;room_id:string;deliveryCursor:string}>(`SELECT message_id id,room_id,seq::text "deliveryCursor"
-        FROM rooms_mcp_mentions WHERE member_id='member' AND message_id LIKE 'backlog-%' AND seq>$1 ORDER BY seq LIMIT 31`,[after])).rows;
-      const mentions=rows.slice(0,30).map(row=>({...row,text:'ordinary context '.repeat(60)}));
-      return {mentions,wakes:[],nextCursor:mentions.at(-1)?.deliveryCursor??after,more:rows.length>30};
-    });
-    const output=reply();await serveMcpMemberStream(db,principal,output as unknown as ServerResponse,{mentionCursor:'0'},read);
-    expect(output.writableEnded).toBe(false);expect(read.mock.calls.length).toBeGreaterThan(34);
-    expect(output.frames.filter(frame=>frame.type==='delivery')).toHaveLength(1895);
-    expect(Buffer.byteLength(JSON.stringify(output.frames))).toBeGreaterThan(1024*1024);
-    const checkpoint=output.frames.find(frame=>frame.type==='checkpoint')!;
-    expect(checkpoint.mentionCursor).not.toBe('0');output.end();
-    const resumed=reply();await serveMcpMemberStream(db,principal,resumed as unknown as ServerResponse,
-      {cursor:checkpoint.cursor,mentionCursor:checkpoint.mentionCursor},read);
-    expect(resumed.frames.filter(frame=>frame.type==='delivery')).toHaveLength(1865);
-    expect(new Set([...output.frames.slice(0,30),...resumed.frames].filter(frame=>frame.type==='delivery').map(frame=>frame.deliveryId)).size).toBe(1895);
-    await db.query(`DELETE FROM rooms_mcp_mentions WHERE message_id LIKE 'backlog-%'`);
-  },30000);
-  it('pages private command wakes even when no mention cursor advances',async()=>{
-    await db.query(`INSERT INTO agent_commands(id,agent_id,reason,state)
-      SELECT 'backlog-wake-'||lpad(n::text,4,'0'),'member','order','pending' FROM generate_series(1,256)n`);
-    const read=async(tx:SqlDatabase,after:string,wakeAfter?:{createdAt:string;id:string})=>{
-      const rows=(await tx.query<{id:string}>(`SELECT id FROM agent_commands WHERE id LIKE 'backlog-wake-%'
-        AND ($1::text IS NULL OR id>$1) ORDER BY id LIMIT 31`,[wakeAfter?.id??null])).rows;
-      const wakes=rows.slice(0,30).map(row=>({...row,address:room,reason:'order',text:'private order',createdAt:'2026-11-01T00:00:00.000Z'})),last=wakes.at(-1);
-      return {mentions:[],wakes,nextCursor:after,more:false,moreWakes:rows.length>30,...(last?{nextWakeCursor:{createdAt:last.createdAt,id:last.id}}:{})};
-    };
-    const output=reply();await serveMcpMemberStream(db,principal,output as unknown as ServerResponse,{mentionCursor:'0'},read);
-    expect(output.writableEnded).toBe(false);expect(output.frames.filter(frame=>frame.type==='delivery')).toHaveLength(256);
-    expect(output.frames.filter(frame=>frame.type==='checkpoint')).toHaveLength(9);
-    await db.query(`DELETE FROM agent_commands WHERE id LIKE 'backlog-wake-%'`);
-  });
-  it('waits for a slow transport to drain and preserves astral Unicode across chunk boundaries',async()=>{
-    class SlowReply extends Reply{
-      writableNeedDrain=true;first=true;drains=0;
-      override write(text:string){const result=super.write(text);if(this.first){this.first=false;setImmediate(()=>{this.writableNeedDrain=false;this.drains++;this.emit('drain');});return false;}return result;}
-    }
-    const output=new SlowReply();replies.push(output);
-    // Put a surrogate pair at every possible odd boundary within a large line.
-    const text='x'+'😀'.repeat(180_000);
-    await serveMcpMemberStream(db,principal,output as unknown as ServerResponse,{mentionCursor:'0'},async()=>({mentions:[{id:'unicode',room_id:room,text,deliveryCursor:'1'}],wakes:[],nextCursor:'1',more:false}));
-    expect(output.drains).toBe(1);expect(output.writableEnded).toBe(false);expect(output.frames[0]?.mentions[0].text).toBe(text);
-  });
-  it('delivers a valid >256 KiB mention in transport chunks',async()=>{
-    const output=reply(),text='large mention '.repeat(30_000);
-    const read=async()=>({mentions:[{id:'large',room_id:room,text,deliveryCursor:'2'}],wakes:[],nextCursor:'2',more:false});
-    await serveMcpMemberStream(db,principal,output as unknown as ServerResponse,{mentionCursor:'0'},read);
-    expect(output.writableEnded).toBe(false);expect(output.frames[0]?.mentions[0].text).toBe(text);
   });
   it('ends a held stream on actual committed credential revocation without returning content',async()=>{
     const output=reply(),read=page();

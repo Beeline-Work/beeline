@@ -210,11 +210,10 @@ describe('one machine socket for every agent on a helper machine', () => {
     });
   });
 
-  it('queues a burst behind a stalled agent and retains both machine registrations', async () => {
+  it('drops only the agent that floods the socket; its sibling keeps its slot and its work', async () => {
     const stalled: Array<() => void> = [];
-    let blocked = true;
     const canReadRooms = vi.fn((ids: readonly string[], agentId: string) =>
-      agentId === AGENT_A && blocked
+      agentId === AGENT_A
         ? new Promise<Set<string>>((resolve) => stalled.push(() => resolve(new Set(ids))))
         : Promise.resolve(new Set(ids)));
     const live = new LiveHub();
@@ -229,15 +228,15 @@ describe('one machine socket for every agent on a helper machine', () => {
     const padding = 'x'.repeat(60 * 1024);
     for (let index = 0; index < 40; index++)
       client.send({ type: 'subscribe', agentId: AGENT_A, roomId: `room-a-${index}`, padding });
-    blocked=false; for (const finish of stalled.splice(0)) finish();
+    expect(await client.next((frame) => frame.type === 'unregistered' && frame.agentId === AGENT_A))
+      .toMatchObject({ code: 1013, reason: 'live admission overloaded' });
 
-    // The transport drains its queue and both agents retain their authority.
+    // Agent B is neither delayed behind A's queue nor disconnected with it.
     const subscribedAt = Date.now();
     client.send({ type: 'subscribe', agentId: AGENT_B, roomId: 'room-b' });
     await client.next((frame) => frame.type === 'subscribed' && frame.agentId === AGENT_B);
     await client.next((frame) => frame.type === 'inbox' && frame.agentId === AGENT_B);
-    expect(Date.now() - subscribedAt).toBeLessThan(5_000);
-    expect(client.frames.some(frame=>frame.type==='unregistered')).toBe(false);
+    expect(Date.now() - subscribedAt).toBeLessThan(1_000);
     const before = client.frames.length;
     live.publish({ type: 'invalidate', roomId: 'room-b', reason: 'postgres:messages', messageId: 'changed-message' });
     await client.next((frame) =>

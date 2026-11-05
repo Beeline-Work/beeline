@@ -52,5 +52,3 @@ export function helperTurnCodecs<K extends keyof typeof codecs>(operation: K): t
   if (!Object.hasOwn(codecs, operation)) throw new Error('Turn operation unavailable');
   return codecs[operation];
 }
-
-export { HelperFrameReader, sendHelperFrame } from './helper-channel.js';

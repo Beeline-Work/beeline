@@ -676,18 +676,17 @@ function briefDraft(value: unknown): Args | undefined {
  * Every wake an agent would receive as a turn: orders, reports, lifecycle and
  * scheduled wakes addressed to this member that it has not handled yet.
  */
-export async function pendingMcpWakes(db: SqlDatabase, member: string, after?: {createdAt:string;id:string}, limit=30) {
-  return (await db.query<{ id: string; room_id: string; reason: string; kind: string | null; text: string | null; created_at: Date; delivery_created_at: string; hiccup_attempts: number }>(
+export async function pendingMcpWakes(db: SqlDatabase, member: string) {
+  return (await db.query<{ id: string; room_id: string; reason: string; kind: string | null; text: string | null; created_at: Date; hiccup_attempts: number }>(
     `SELECT command.id,command.room_id,command.reason,command.private_payload->>'kind' kind,
-       left(COALESCE(command.private_payload->>'text',source.text),16000) text,command.created_at,command.created_at::text delivery_created_at,command.hiccup_attempts
+       left(COALESCE(command.private_payload->>'text',source.text),16000) text,command.created_at,command.hiccup_attempts
      FROM agent_commands command LEFT JOIN messages source ON source.id=command.source_message_id
      WHERE command.agent_id=$1 AND command.action IN ('input','resume') AND command.reason<>'mcp_call'
        AND EXISTS(SELECT 1 FROM rooms active WHERE active.id=command.room_id AND active.archived_at IS NULL)
        AND (command.state='pending' OR (command.state='claimed' AND ${commandOwnerExpiredSql('command')}))
        AND EXISTS(SELECT 1 FROM room_access member WHERE member.room_id=command.room_id
          AND member.identity_id=$1 AND member.removed_at IS NULL)
-       AND ($2::timestamptz IS NULL OR (command.created_at,command.id)>($2::timestamptz,$3::text))
-     ORDER BY command.created_at,command.id LIMIT $4`, [member,after?.createdAt??null,after?.id??null,limit])).rows
+     ORDER BY command.created_at,command.id LIMIT 30`, [member])).rows
     .map(row => ({ id: row.id, deliveryVersion: row.hiccup_attempts, address: row.room_id, reason: row.reason, ...(row.kind ? { kind: row.kind } : {}),
-      ...(row.text ? { text: row.text } : {}), createdAt: row.created_at, deliveryCreatedAt:row.delivery_created_at, next: mcpWakeNext(row.kind, row.reason) }));
+      ...(row.text ? { text: row.text } : {}), createdAt: row.created_at, next: mcpWakeNext(row.kind, row.reason) }));
 }

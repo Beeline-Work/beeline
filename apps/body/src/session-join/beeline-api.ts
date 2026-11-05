@@ -94,24 +94,16 @@ export async function finishSignIn(server: string, clientId: string, signIn: Sig
   }
   if(signIn.exchangeStarted)throw new SignInPendingError('The sign-in result is unknown; no code exchange was repeated');
   if(Date.now()>=deadlineAt)throw new SignInEndedError('The sign-in link expired after 10 minutes');
-  // Completion observation is read-only. Re-observe the same state after a
-  // broken hold; the one-use token exchange below still happens just once.
-  for (let attempt = 0; !signIn.code; attempt++) {
-    if (Date.now() >= deadlineAt) throw new SignInEndedError('The sign-in link expired after 10 minutes');
-    const waitMs = Math.max(1, Math.min(600_000, deadlineAt - Date.now()));
-    let handoff: Awaited<ReturnType<typeof postJson>> | undefined;
-    try { handoff = await postJson(`${server}/mcp/oauth/handoff`, {state:signIn.state,completionV1:true,waitMs}, {}, undefined, waitMs, true); }
-    catch (error) {
-      // A malformed local ceremony cannot become an unbounded network loop.
-      try { admitHeldMcpCompletion(`${server}/mcp/oauth/handoff`, {state:signIn.state,completionV1:true,waitMs}); }
-      catch { throw new SignInPendingError('The sign-in ceremony is unavailable'); }
-    }
-    if (handoff?.status === 200 && typeof handoff.value.code === 'string' && handoff.value.code && handoff.value.code.length <= 100) {
-      signIn.code = handoff.value.code; persist(signIn); break;
-    }
-    if (handoff && !['authorization_pending','completion_unavailable'].includes(String(handoff.value.error)) &&
-        handoff.status < 500 && handoff.status !== 429) throw new SignInEndedError('The sign-in was cancelled');
-    await new Promise(resolve => setTimeout(resolve, Math.min(3000, 250 * 2 ** Math.min(attempt, 4), Math.max(0, deadlineAt - Date.now()))));
+  if(!signIn.code){
+    let handoff:Awaited<ReturnType<typeof postJson>>;
+    const waitMs=Math.max(1,Math.min(600_000,deadlineAt-Date.now()));
+    try{handoff=await postJson(`${server}/mcp/oauth/handoff`,{state:signIn.state,completionV1:true,waitMs},{},undefined,waitMs,true);}
+    catch{throw new SignInPendingError('The sign-in completion is still pending; no observation was repeated');}
+    if(handoff.status!==200)throw new SignInPendingError('The sign-in completion is still pending; no observation was repeated');
+    if(['authorization_pending','completion_unavailable'].includes(String(handoff.value.error)))
+      throw new SignInPendingError('The sign-in completion is still pending; no observation was repeated');
+    if(typeof handoff.value.code!=='string'||!handoff.value.code||handoff.value.code.length>100)throw new SignInEndedError('The sign-in was cancelled');
+    signIn.code=handoff.value.code;persist(signIn);
   }
   // Persist uncertainty before the one-use exchange. A lost result cannot
   // silently create another token attempt on a background restart.

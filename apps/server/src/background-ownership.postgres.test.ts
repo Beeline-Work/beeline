@@ -22,7 +22,7 @@ async function fixture(){
   const scopes:Array<{owner:BackgroundOwnership;epoch:BackgroundEpoch}>=[];const held=new Set<PoolClient>();
   const acquire=async()=>{const client=await locks.connect();held.add(client);await client.query('SELECT pg_advisory_lock($1)',[BACKGROUND_LEADER_LOCK_KEY]);return client;};
   const drop=(client:PoolClient)=>{if(held.delete(client))client.release(true);};
-  return {first,second,acquire,drop,scopes,schema,close:async()=>{
+  return {first,second,acquire,drop,scopes,close:async()=>{
     for(const {owner,epoch}of scopes)owner.revoke(epoch);
     for(const client of held)client.release(true);held.clear();
     await Promise.all([first.close(),second.close(),locks.end()]);await admin.query(`DROP SCHEMA ${schema} CASCADE`);await admin.end();
@@ -30,7 +30,7 @@ async function fixture(){
 }
 
 describe.skipIf(!url)('F16 private final epoch fences, real PostgreSQL',()=>{
-  it('queues more than 128 preparations without exhausting retained handles or replaying effects',async()=>{
+  it('accepts more than 128 preparations without exhausting retained handles or replaying effects',async()=>{
     const f=await fixture();try{
       const lock=await f.acquire(),core=new BackgroundOwnership(f.first,'first'),epoch=await core.claim(lock);f.scopes.push({owner:core,epoch});
       const results=await Promise.all(Array.from({length:256},(_,index)=>core.prepareEffect(epoch,{...intent,effectId:'burst-'+index})));
@@ -43,21 +43,6 @@ describe.skipIf(!url)('F16 private final epoch fences, real PostgreSQL',()=>{
       expect(sends).toBe(256);
     }finally{await f.close();}
   },30000);
-  it('retries a DB-only rollback after contention but never repeats an entered external effect',async()=>{
-    const f=await fixture();try{
-      await f.first.query('CREATE TABLE proof_effects(id text PRIMARY KEY)');
-      const lock=await f.acquire(),core=new BackgroundOwnership(f.first,'first'),epoch=await core.claim(lock);f.scopes.push({owner:core,epoch});
-      await lock.query(`BEGIN; LOCK TABLE ${f.schema}.proof_effects IN ACCESS EXCLUSIVE MODE`);
-      let attempts=0;
-      await core.withTransaction(epoch,'schedule.fire',async db=>{
-        attempts++;try{await db.query(`INSERT INTO proof_effects VALUES('once')`);}catch(error){await lock.query('COMMIT');throw error;}
-      });
-      expect(attempts).toBe(2);expect((await f.first.query('SELECT * FROM proof_effects')).rows).toEqual([{id:'once'}]);
-      const result=await core.prepareEffect(epoch,intent);if(result.kind!=='new')throw new Error('expected fresh effect');let sends=0;
-      await expect(core.enqueue(epoch,result.attempt,()=>{sends++;throw Object.assign(new Error('uncertain handoff'),{code:'55P03'});})).rejects.toThrow('uncertain handoff');
-      expect(sends).toBe(1);expect((await core.prepareEffect(epoch,intent)).kind).toBe('existing');
-    }finally{await f.close();}
-  });
   it('binds the actual backend start identity and rejects a shared-only advisory lock',async()=>{
     const f=await fixture();
     try{

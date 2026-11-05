@@ -722,8 +722,6 @@ async function daemonExecute(name: string, input: JsonObject): Promise<JsonObjec
       ? await activeCommandContext()
       : {}),
   });
-  const safe = daemonOperationIsSafeToRepeat(name, input), delays = [250, 1000, 3000];
-  for (let attempt = 0; ; attempt++) {
   try {
       const response = await fetch(new URL(`/v1/daemon/operations/${name}`, `${baseUrl}/`), {
         method: 'POST',
@@ -736,15 +734,6 @@ async function daemonExecute(name: string, input: JsonObject): Promise<JsonObjec
         body,
       });
       if (!response.ok) {
-        if (safe && [429, 500, 502, 503, 504].includes(response.status) && attempt < delays.length) {
-          const value = response.headers.get('retry-after');
-          const seconds = value === null ? NaN : Number(value);
-          const until = value === null ? NaN : Date.parse(value);
-          const retryAfter = Number.isFinite(seconds) ? seconds * 1000 : Number.isFinite(until) ? until - Date.now() : 0;
-          await response.body?.cancel();
-          await new Promise(resolve => setTimeout(resolve, Math.max(delays[attempt]!, retryAfter)));
-          continue;
-        }
         let code = 'request_failed';
         try {
           const parsed = (await response.json()) as { error?: unknown };
@@ -763,12 +752,7 @@ async function daemonExecute(name: string, input: JsonObject): Promise<JsonObjec
       return result as JsonObject;
   } catch(error){
     if(!isDaemonNetworkFailure(error))throw error;
-    if (safe && attempt < delays.length) {
-      await new Promise(resolve => setTimeout(resolve, delays[attempt]));
-      continue;
-    }
     throw new Error(`daemon operation ${name} failed before the server answered; await a new action or recovery boundary${daemonOperationIsSafeToRepeat(name,input)?'':'; the write outcome is unknown'}`);
-  }
   }
 }
 

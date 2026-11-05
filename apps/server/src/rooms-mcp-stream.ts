@@ -94,14 +94,8 @@ BEGIN
 DROP TRIGGER IF EXISTS beeline_mcp_stream_member ON rooms_mcp_members;
 CREATE TRIGGER beeline_mcp_stream_member AFTER INSERT ON rooms_mcp_members FOR EACH ROW EXECUTE FUNCTION beeline_mcp_stream_member();
 `;
-export interface McpStreamCursor {
-  epoch: string; through: number;
-  /** The stored cut is unchanged, but its owed backlog still has more pages. */
-  pending?:true;
-}
-interface McpWakeCursor {createdAt:string;id:string}
+export interface McpStreamCursor { epoch: string; through: number }
 interface McpStreamPage {
-  nextWakeCursor?:McpWakeCursor; moreWakes?:boolean;
   mentions: readonly { id: string; room_id: string; [key: string]: unknown }[];
   wakes: readonly { id: string; address: string; [key: string]: unknown }[];
   nextCursor: string; more: boolean;
@@ -134,11 +128,10 @@ async function scopes(db: SqlDatabase, member: string, rooms: readonly string[])
  * an idle stream makes no reads, writes, empty responses or heartbeat frames. */
 export async function serveMcpMemberStream(database: SqlDatabase, principal: McpPrincipal, response: ServerResponse,
   input: { cursor?: McpStreamCursor; mentionCursor: string },
-  page: (db: SqlDatabase, after: string, wakeAfter?:McpWakeCursor) => Promise<McpStreamPage>, timers: WorkTimers = { setTimeout, clearTimeout }): Promise<void> {
+  page: (db: SqlDatabase, after: string) => Promise<McpStreamPage>, timers: WorkTimers = { setTimeout, clearTimeout }): Promise<void> {
   if (!principal.member_id || !principal.scope.split(' ').includes('rooms:read')) throw new Error('member stream unavailable');
   const member = principal.member_id, stream = `mcp:${member}`;
-  let stopped = false, running = false, dirty = true, initial = true, continuing = false, position = input.cursor, mentionCursor = input.mentionCursor;
-  let wakeAfter:McpWakeCursor|undefined, catchupCut:McpStreamCursor|undefined;
+  let stopped = false, running = false, dirty = true, initial = true, position = input.cursor, mentionCursor = input.mentionCursor;
   let expiry: ReturnType<typeof setTimeout> | undefined;
   const close = (reason?: 'expired' | 'unavailable') => {
     if (stopped) return; stopped=true; release(); if (expiry) timers.clearTimeout(expiry);
@@ -160,20 +153,23 @@ export async function serveMcpMemberStream(database: SqlDatabase, principal: Mcp
           if (!expiresAt) throw new Error('member stream credential ended');
           const head = (await db.query<{epoch:string; sequence:string}>('SELECT epoch,sequence::text FROM live_streams WHERE id=$1',[stream])).rows[0];
           if (!head) throw new Error('member stream source missing');
-          const observed = {epoch:head.epoch,through:Number(head.sequence)}, to=catchupCut??observed;
+          const to = {epoch:head.epoch,through:Number(head.sequence)};
           if (!Number.isSafeInteger(to.through)) throw new Error('member stream cursor overflow');
-          if (!continuing && !position?.pending && position?.epoch === to.epoch && position.through === to.through) {
+          if (position?.epoch === to.epoch && position.through === to.through) {
             if (!initial) return undefined;
             // Credential renewal resumes the existing delivery cursor; it does
             // not reread an unchanged application inbox.
             return {to,after:mentionCursor,encoded:[JSON.stringify({v:1,type:'checkpoint',cursor:to,mentionCursor})+'\n'],
               rooms:[],authority:digest(await scopes(db,member,[])),expiresAt};
           }
-          // The durable owed ledger is the recovery source even after journal
-          // retention/epoch changes; delivered IDs keep catch-up replay-safe.
+          if (position && position.epoch === to.epoch && position.through<to.through) {
+            const count = await db.query<{total:string}>('SELECT count(*)::text total FROM live_journal WHERE stream_id=$1 AND sequence>$2 AND sequence<=$3',[stream,position.through,to.through]);
+            if (!initial && Number(count.rows[0]?.total)!==to.through-position.through) throw new Error('member stream retention exceeded');
+          } else if (!initial && position && (position.epoch!==to.epoch || position.through>to.through)) throw new Error('member stream cursor incompatible');
           const frames: object[] = []; const roomIds = new Set<string>(); const wakeIds=new Set<string>(); let after=mentionCursor;
-          {
-            const current = await page(db,after,wakeAfter);
+          for (let pages=0; ; pages++) {
+            if (pages>=34) throw new Error('member stream initialization capacity');
+            const current = await page(db,after);
             for (const mention of current.mentions) {
               roomIds.add(mention.room_id);
               frames.push({v:1,type:'delivery',deliveryId:`mention:${mention.id}:${mention.rewakes ?? 0}`,mentions:[mention],wakes:[],mentionCursor:String(mention.deliveryCursor ?? after)});
@@ -184,49 +180,29 @@ export async function serveMcpMemberStream(database: SqlDatabase, principal: Mcp
               frames.push({v:1,type:'delivery',deliveryId:`wake:${wake.id}:${wake.deliveryVersion ?? 0}`,mentions:[],wakes:[wake],mentionCursor:current.nextCursor});
             }
             after=current.nextCursor;
-            continuing = current.more || current.moreWakes === true;
-            if(continuing)catchupCut??=to;
-            if(current.nextWakeCursor)wakeAfter=current.nextWakeCursor;
+            if (!current.more) break;
           }
-          // Only the final page claims the captured stream head. Intermediate
-          // checkpoints keep the old cut; delivered mention IDs are durable.
-          frames.push({v:1,type:'checkpoint',cursor:continuing ? {...(position ?? {epoch:to.epoch,through:0}),pending:true} : to,mentionCursor:after});
+          frames.push({v:1,type:'checkpoint',cursor:to,mentionCursor:after});
           const encoded = frames.map(frame=>JSON.stringify(frame)+'\n');
+          if (encoded.some(frame=>Buffer.byteLength(frame)>256*1024) || encoded.reduce((sum,frame)=>sum+Buffer.byteLength(frame),0)>1024*1024)
+            throw new Error('member stream batch capacity');
           const rooms=[...roomIds];
-          return {to,after,encoded,rooms,authority:digest(await scopes(db,member,rooms)),expiresAt,newer:observed.epoch!==to.epoch||observed.through!==to.through};
+          return {to,after,encoded,rooms,authority:digest(await scopes(db,member,rooms)),expiresAt};
         });
         if (!prepared || stopped) continue;
+        await database.transaction(async db=>{
+          await db.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+          await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))',[ROUTER_AUTHORITY_LOCK]);
+          if (!await currentCredential(db,principal) || digest(await scopes(db,member,prepared.rooms))!==prepared.authority)
+            throw new Error('member stream authority changed');
+          if (!stopped) for (const frame of prepared.encoded) {
+            if (response.writableLength+Buffer.byteLength(frame)>1024*1024) throw new Error('member stream backpressure capacity');
+            response.write(frame);
+          }
+        });
+        position=prepared.to; mentionCursor=prepared.after; initial=false;
         if (expiry) timers.clearTimeout(expiry);
         expiry=timers.setTimeout(()=>close('expired'),Math.max(0,prepared.expiresAt.getTime()-Date.now())); expiry.unref?.();
-        // Bound the transport queue, then reacquire the current-authority
-        // fence for each enqueue. Never hold revocation locks while awaiting I/O.
-        let frameIndex=0, offset=0;
-        while (frameIndex < prepared.encoded.length && !stopped) {
-          let writable=true;
-          await database.transaction(async db => {
-            await db.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
-            await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))',[ROUTER_AUTHORITY_LOCK]);
-            if (!await currentCredential(db,principal) || digest(await scopes(db,member,prepared.rooms)) !== prepared.authority)
-              throw new Error('member stream authority changed');
-            while (frameIndex < prepared.encoded.length && writable && !stopped) {
-              const frame=prepared.encoded[frameIndex]!;
-              let end=Math.min(frame.length,offset+32*1024);
-              const unit=frame.charCodeAt(end-1);
-              if(end<frame.length&&unit>=0xd800&&unit<=0xdbff)end--;
-              writable=response.write(frame.slice(offset,end));
-              offset=end;
-              if(offset>=frame.length){frameIndex++;offset=0;}
-            }
-          });
-          if (!writable && !stopped) await new Promise<void>(resolve => {
-            const done = () => { response.off('drain',done); response.off('close',done); resolve(); };
-            response.once('drain',done); response.once('close',done);
-            if (response.destroyed || response.writableEnded || !response.writableNeedDrain) done();
-          });
-        }
-        if (!continuing) {position=prepared.to;wakeAfter=undefined;catchupCut=undefined;if('newer' in prepared&&prepared.newer)dirty=true;}
-        mentionCursor=prepared.after; initial=false;
-        if (continuing) dirty=true;
       }
     } catch { close('unavailable'); } finally { running=false; }
   };

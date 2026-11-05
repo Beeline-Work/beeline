@@ -1,6 +1,6 @@
 import type { Mention, Wake } from './bridge.js';
 export type MemberStreamFrame = {v:1;type:'delivery';deliveryId:string;mentions:Mention[];wakes:Wake[];mentionCursor:string} |
-  {v:1;type:'checkpoint';cursor:{epoch:string;through:number;pending?:true};mentionCursor:string} |
+  {v:1;type:'checkpoint';cursor:{epoch:string;through:number};mentionCursor:string} |
   {v:1;type:'ended';reason:'expired'|'unavailable'};
 const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
 export function memberStreamFrame(value:unknown):MemberStreamFrame {

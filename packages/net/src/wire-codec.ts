@@ -12,7 +12,7 @@ export type Codec<T> = Readonly<{ parse(value: unknown): T }>;
 
 /** JSON preflight prevents getters, cycles, nonfinite values, exotic
  * prototypes and (for finite wire budgets) oversized payloads before union backtracking.
- * Chunked helper codecs use Infinity: valid aggregate size is not an allowance. */
+ * Helper codecs use Infinity: valid aggregate size is not an allowance. */
 function walkJson(value: unknown, maxBytes: number, canonical = false): string | undefined {
   let bytes = 0;
   let nodes = 0;

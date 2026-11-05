@@ -160,7 +160,7 @@ export class RoomsMcp {
         const mentionCursor=url.searchParams.get('mentions') ?? '0';
         if (!/^[0-9]{1,18}$/.test(mentionCursor)) throw new Error();
         await serveMcpMemberStream(this.oauth.database,principal,response,{cursor,mentionCursor},
-          (db,after,wakeAfter)=>this.mentionsPage(principal.member_id!,after,30,db,{wakeAfter}));
+          (db,after)=>this.mentionsPage(principal.member_id!,after,30,db));
       } catch { if (!response.headersSent) mcpJson(response,400,{error:'invalid_stream_request'}); else response.end(); }
       return true;
     }
@@ -248,7 +248,7 @@ export class RoomsMcp {
     this.live.publish({ type: 'invalidate', roomId, reason: 'phone-write', messageId });
     return result;
   }
-  private async mentionsPage(member: string, cursor: string, limit: number, db: SqlDatabase = this.oauth.database, stream?: {wakeAfter?:{createdAt:string;id:string}}) {
+  private async mentionsPage(member: string, cursor: string, limit: number, db: SqlDatabase = this.oauth.database) {
     const rows = (await db.query<{ seq: string; id: string; room_id: string; room_name: string; author_id: string; author_handle: string | null; author_name: string | null; created_at: Date; text: string; truncated: boolean }>(
       `WITH readable AS (${READABLE})
        SELECT mention.seq::text seq,m.id,m.room_id,r.name room_name,m.author_id,i.handle author_handle,i.name author_name,
@@ -261,14 +261,11 @@ export class RoomsMcp {
          AND EXISTS(SELECT 1 FROM rooms active WHERE active.id=mention.room_id AND active.archived_at IS NULL)
        ORDER BY mention.seq LIMIT $3`, [member, cursor, limit + 1])).rows;
     const page = rows.slice(0, limit);
-    const wakes=await pendingMcpWakes(db,member,stream?.wakeAfter,stream?31:30);
-    const wakePage=stream?wakes.slice(0,30):wakes,lastWake=wakePage.at(-1);
     return {
       mentions: page.map(({ seq, ...row }) => ({ ...mentionRouting(member, row.room_id, row.id), ...row, deliveryCursor: seq })),
       nextCursor: page.at(-1)?.seq ?? cursor,
       more: rows.length > limit,
-      wakes: wakePage,
-      ...(stream?{moreWakes:wakes.length>30,...(lastWake?{nextWakeCursor:{createdAt:lastWake.deliveryCreatedAt,id:lastWake.id}}:{})}:{}),
+      wakes: await pendingMcpWakes(db, member),
     };
   }
   private async call(principal: McpPrincipal, name: string, args: Record<string, unknown>): Promise<unknown> {

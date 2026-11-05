@@ -14,5 +14,3 @@ export const helperActivationCodecs=Object.freeze({
   }}),
   result:codecs.result,
 });
-
-export { HelperFrameReader, sendHelperFrame } from './helper-channel.js';

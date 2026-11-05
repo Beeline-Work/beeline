@@ -1,5 +1,3 @@
-import { BackgroundWorkQueue } from './background-work.js';
-import { retryRolledBackWork } from './background-work.js';
 import { createHash, randomUUID } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
 import type { LeaderConnection } from './background-leader.js';
@@ -114,7 +112,6 @@ export class BackgroundOwnership {
   private readonly epochs = new WeakMap<BackgroundEpoch, EpochState>();
   private readonly attempts = new WeakMap<BackgroundAttempt, AttemptState>();
   private active?: EpochState;
-  private readonly preparations = new BackgroundWorkQueue(128);
   constructor(private readonly database: SqlDatabase, readonly instanceId: string,
     private readonly monotonicNow: () => number = () => performance.now(),
     private readonly wallNow: () => number = Date.now) {
@@ -176,8 +173,7 @@ export class BackgroundOwnership {
     const state = this.epochs.get(epoch);
     if (!state) return;
     clearTimeout(state.timer); state.timer = undefined;
-    state.controller.abort(new BackgroundOwnershipLost());
-    this.preparations.cancel(new BackgroundOwnershipLost());
+    state.controller.abort();
     if (this.active === state) this.active = undefined;
   }
 
@@ -193,10 +189,6 @@ export class BackgroundOwnership {
    * locks remain held through immediate pre-commit validation. */
   async withTransaction<T>(epoch: BackgroundEpoch, job: BackgroundJobId, work: (db: SqlDatabase) => Promise<T>): Promise<T> {
     if (!['schedule.fire','systemDm.deliver','push.deliver','checkin.deliver','tray.expire','tray.readiness'].includes(job)) throw new BackgroundOwnershipLost();
-    return retryRolledBackWork(() => this.transactionOnce(epoch, job, work), epoch.signal);
-  }
-
-  private async transactionOnce<T>(epoch: BackgroundEpoch, job: BackgroundJobId, work: (db: SqlDatabase) => Promise<T>): Promise<T> {
     const state = this.state(epoch); this.requireCurrent(state);
     return this.database.transaction(async db => {
       await this.lockEpoch(db, state);
@@ -224,7 +216,7 @@ export class BackgroundOwnership {
     const digest = createHash('sha256').update(JSON.stringify([request.job, request.effectId, request.sourceClaimId,
       request.sourceClaimVersion, request.provider, request.canonicalRequest])).digest('hex');
     try {
-      const result = await this.preparations.run(() => retryRolledBackWork(() => this.transactionOnce(epoch, input.job, async db => {
+      const result = await this.withTransaction(epoch, input.job, async db => {
         const inserted = await db.query<AttemptRow>(`INSERT INTO background_effect_attempts
           (id,job_id,effect_id,source_claim_id,source_claim_version,provider,canonical_request,request_digest,
            instance_id,owner_generation,owner_nonce,state)
@@ -240,7 +232,7 @@ export class BackgroundOwnership {
           existing.source_claim_version !== request.sourceClaimVersion || existing.canonical_request !== request.canonicalRequest)
           throw new BackgroundEffectConflict();
         return { fresh: false, row: existing };
-      }), epoch.signal));
+      });
       if (!result.fresh) return { kind: 'existing', receipt: receipt(result.row) };
       this.requireCurrent(state);
       const attempt: BackgroundAttempt<J> = Object.freeze({ id: result.row.id, job: input.job,
@@ -262,7 +254,7 @@ export class BackgroundOwnership {
     if (Object.prototype.toString.call(synchronousEnqueue) === '[object AsyncFunction]' ||
       Object.prototype.toString.call(synchronousEnqueue) === '[object AsyncGeneratorFunction]')
       throw new BackgroundEnqueueContractError();
-    return this.transactionOnce(epoch, attempt.job, async db => {
+    return this.withTransaction(epoch, attempt.job, async db => {
       const row = (await db.query<AttemptRow>(`SELECT id,job_id,effect_id,state,outcome,request_digest
         FROM background_effect_attempts WHERE id=$1 AND instance_id=$2 AND owner_generation=$3 AND owner_nonce=$4 FOR UPDATE`,
       [attempt.id, this.instanceId, epoch.generation, state.nonce])).rows[0];

@@ -19,7 +19,7 @@ export interface OwnedModelFileBinding {
 }
 export interface OwnedModelFileCredential { readonly v: 1; readonly token: string; readonly expiresAt: number }
 interface CredentialFile { v: 1; binding: OwnedModelFileBinding; credential: OwnedModelFileCredential }
-interface Journal { v: 1; bindingHash: string; requests: { id: string; state: 'unknown' | 'succeeded' | 'refused' }[]; active: string | null }
+interface Journal { v: 1; bindingHash: string; requests: { id: string; state: 'unknown' | 'succeeded' }[]; active: string | null }
 interface Owner { directory: string; authPath: string; journalPath: string; binding: OwnedModelFileBinding; digest: string; bindingHash: string }
 export class OwnedModelFileRefusal extends Error {
   constructor() { super('Owned model local intent is unavailable or UNKNOWN; do not resubmit.'); }
@@ -109,7 +109,7 @@ function readJournal(owner: Owner): Journal {
   for (const entry of value.requests) {
     if (!closed(entry, 'id,state') || typeof entry.id !== 'string' ||
         !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(entry.id) ||
-        !['unknown', 'succeeded', 'refused'].includes(String(entry.state)) || ids.has(entry.id))
+        !['unknown', 'succeeded'].includes(String(entry.state)) || ids.has(entry.id))
       throw new OwnedModelFileRefusal();
     if (entry.state === 'unknown' && entry !== value.requests.at(-1)) throw new OwnedModelFileRefusal();
     ids.add(entry.id);
@@ -177,8 +177,6 @@ export class OwnedModelFiles {
       // and unlink its replacement, or recreate an absent journal after crash.
       const journal = readJournal(owner);
       if (journal.active !== null) throw new OwnedModelFileRefusal();
-      // Settled history does not consume the generation's next request. Only
-      // the active UUID can authenticate a receipt; old receipts stay inert.
       journal.requests = [];
       const requestId = randomUUID(); journal.requests.push({ id: requestId, state: 'unknown' }); journal.active = requestId;
       saveJournal(owner, journal);
@@ -188,24 +186,18 @@ export class OwnedModelFiles {
   }
   /** A response/header/SDK event alone cannot clear UNKNOWN. The only clearing
    * evidence is a request-and-credential-bound authenticated server outcome. */
-  confirmReceipt(value: unknown): boolean { return this.confirmOutcome(value, false); }
-  confirmRetryableRefusal(value: unknown): boolean { return this.confirmOutcome(value, true); }
-  private confirmOutcome(value: unknown, refusal: boolean): boolean {
+  confirmReceipt(value: unknown): boolean {
     try {
       const owner = owners.get(this); if (!owner) return false;
       const current = readCredential(owner, Date.now()), journal = readJournal(owner), latest = journal.requests.at(-1);
       if (!latest) return false;
       const receipt = readOwnedModelReceipt(value, current.credential.token, latest.id);
-      const retryable = receipt?.state === 'refused' &&
-        (receipt.evidence?.kind === 'provider-refused' && receipt.evidence.status === 429 ||
-         receipt.evidence?.kind === 'not-dispatched' && receipt.evidence.reason === 'queue');
-      if (refusal ? !retryable : receipt?.state !== 'succeeded' || receipt.evidence?.kind !== 'usage') return false;
-      const settled = refusal ? 'refused' : 'succeeded';
-      if (latest.state === settled) return true;
+      if (receipt?.state !== 'succeeded' || receipt.evidence?.kind !== 'usage') return false;
+      if (latest.state === 'succeeded') return true;
       const lock = join(owner.directory, 'requests.lock'); writeNew(lock, 'owned model terminal receipt'); directorySync(owner.directory);
       const locked = readJournal(owner), active = locked.requests.at(-1);
       if (!active || active.id !== latest.id || active.state !== 'unknown' || locked.active !== active.id) return false;
-      active.state = settled; locked.active = null; saveJournal(owner, locked);
+      active.state = 'succeeded'; locked.active = null; saveJournal(owner, locked);
       unlinkSync(lock); directorySync(owner.directory); return true;
     } catch { return false; }
   }

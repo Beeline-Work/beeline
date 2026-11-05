@@ -1,4 +1,4 @@
-import { helperUsageCodecs, HelperFrameReader, helperFrames } from '@beeline/net/helper-codecs';
+import { helperUsageCodecs } from '@beeline/net/helper-codecs';
 import { helperActivationCodecs } from '@beeline/net/helper-activation-codecs';
 import { helperTurnCodecs } from '@beeline/net/helper-turn-codecs';
 import { turnOwnershipEnabled } from './turn-ownership.js';
@@ -31,7 +31,6 @@ export const MACHINE_REGISTRATION_DEADLINE_MS = 30_000;
 /** Subprotocol a helper names to open one socket for every agent on its machine. */
 export const MACHINE_SOCKET_PROTOCOL = 'beeline.machine.1';
 
-export const MAX_LIVE_SESSION_TASKS = 8_192;
 export const MAX_LIVE_SESSION_QUEUED_BYTES = 2 * 1024 * 1024;
 export const MAX_LIVE_ROOMS_PER_SESSION = 8_192;
 export const MAX_LIVE_SUBSCRIBE_FRAME_ROOMS = 32;
@@ -106,8 +105,6 @@ export class DaemonConnectionRegistry {
 export interface DaemonSessionTransport {
   send(event: Record<string, unknown>): void;
   isOpen(): boolean;
-  pause?(): void;
-  resume?(): void;
   /** Ends this agent's session: an old socket closes; a registration is dropped. */
   drop(code: number, reason: string): void;
   /** False after the socket refused a frame for its helper version. */
@@ -125,8 +122,6 @@ export class DaemonAgentSession {
   readonly #releases = new Map<string, () => void>();
   readonly #subscriptionIntents = new Map<string, Record<string, unknown>>();
   readonly #wakeReleases: Array<() => void> = [];
-  readonly #frames = new HelperFrameReader();
-  #tasks = 0;
   #queuedBytes = 0;
   #tail = Promise.resolve();
   #closed = false;
@@ -306,8 +301,12 @@ export class DaemonAgentSession {
   /** Queue one frame behind this agent's earlier frames. */
   frame(raw: Record<string, unknown>, frameBytes: number): void {
     if (this.#closed) return;
-    if (this.#tasks >= MAX_LIVE_SESSION_TASKS || this.#queuedBytes + frameBytes > MAX_LIVE_SESSION_QUEUED_BYTES)
-      this.transport.pause?.();
+    if (this.#queuedBytes + frameBytes > MAX_LIVE_SESSION_QUEUED_BYTES) {
+      this.deps.errors.overload++;
+      this.transport.drop(1013, 'live admission overloaded');
+      this.close();
+      return;
+    }
     // Cancellation does no database work and must fence an already awaited
     // projection immediately, rather than queue behind that same projection.
     if (raw.type === 'unsubscribe' && typeof raw.roomId === 'string') {
@@ -322,7 +321,6 @@ export class DaemonAgentSession {
       if (rooms.length <= MAX_LIVE_SUBSCRIBE_FRAME_ROOMS)
         for (const room of rooms) if (typeof room === 'string' && room) this.#subscriptionIntents.set(room, raw);
     }
-    this.#tasks++;
     this.#queuedBytes += frameBytes;
     this.#tail = this.#tail.then(async () => {
       if (this.#closed || !this.transport.isOpen()) return;
@@ -349,9 +347,7 @@ export class DaemonAgentSession {
     }).finally(() => {
       for (const [roomId, intent] of this.#subscriptionIntents)
         if (intent === raw) this.#subscriptionIntents.delete(roomId);
-      this.#tasks--;
       this.#queuedBytes -= frameBytes;
-      if (this.#tasks < MAX_LIVE_SESSION_TASKS && this.#queuedBytes < MAX_LIVE_SESSION_QUEUED_BYTES) this.transport.resume?.();
     });
   }
 
@@ -359,7 +355,6 @@ export class DaemonAgentSession {
     if (this.#closed) return;
     this.#forUpdate = forUpdate;
     this.#closed = true;
-    this.#frames.clear(); this.transport.resume?.();
     this.#ownedModelCapability = undefined;
     for (const release of this.#wakeReleases.splice(0)) release();
     for (const release of this.#releases.values()) release();
@@ -380,12 +375,6 @@ export class DaemonAgentSession {
 
   async #process(item: Record<string, unknown>): Promise<void> {
     if (!this.transport.admit(item)) return;
-    if (['turn-operation-chunk', 'activation-context-chunk', 'usage-operation-chunk'].includes(String(item.type))) {
-      const complete = this.#frames.receive(item); if (!complete) return;
-      // A chunk cannot supply a different registration identity.
-      if (complete.agentId !== undefined && complete.agentId !== this.agentId) throw new Error('Helper registration mismatch');
-      item = complete;
-    }
     if (item.type === 'turn-operation') {
       const operation = item.operation;
       if (!this.turnOwnershipV1 || this.epoch === undefined || typeof item.requestId !== 'string' ||
@@ -400,7 +389,7 @@ export class DaemonAgentSession {
         const result = helperTurnCodecs(operation).result.parse(await this.deps.daemon.execute(operation, input, this.agentId, source, this.#ownedModelCapability));
         const reply = { type: 'turn-result', requestId: item.requestId, result };
         await this.deps.daemon.fenceOwnedTurnReply(this.agentId, source, input, () => {
-          if (!this.#closed && this.transport.isOpen()) for (const part of helperFrames(reply)) this.transport.send(part);
+          if (!this.#closed && this.transport.isOpen()) this.transport.send(reply);
         }, operation === 'claimAgentCommand');
       } catch {
         if (!this.#closed && this.transport.isOpen())
@@ -418,7 +407,7 @@ export class DaemonAgentSession {
         const snapshot=helperActivationCodecs.result.parse(await this.deps.daemon.readCommandActivation(input,this.agentId));
         const accepted=await fenceCommandActivationEnqueue(this.deps.database,snapshot,current=>{
           const reply={type:'activation-context-result',requestId:item.requestId,result:current};
-          if(!this.#closed&&this.transport.isOpen())for (const part of helperFrames(reply)) this.transport.send(part);
+          if(!this.#closed&&this.transport.isOpen())this.transport.send(reply);
         });
         if(!accepted)throw new Error('Activation source changed before enqueue');
       }catch{
@@ -444,7 +433,7 @@ export class DaemonAgentSession {
         const rawResult=await this.deps.daemon.execute(operation,input as unknown as DaemonOperationMap[typeof operation]['input'],this.agentId);
         const result=helperUsageCodecs(operation).result.parse(rawResult);
         const reply={type:'usage-result',requestId:item.requestId,result};
-        if(!this.#closed&&this.transport.isOpen())for (const part of helperFrames(reply)) this.transport.send(part);
+        if(!this.#closed&&this.transport.isOpen())this.transport.send(reply);
       }catch{
         if(!this.#closed&&this.transport.isOpen())this.transport.send({type:'usage-result',requestId:item.requestId,error:'usage_operation_refused'});
       }
@@ -767,7 +756,6 @@ export function serveAgentSocket(
   const session = new DaemonAgentSession(deps, principal.identityId, {
     send,
     isOpen,
-    pause: () => client.pause(), resume: () => client.resume(),
     drop: (code, reason) => {
       // A newer connection replaced this socket: it holds nothing worth a
       // graceful close, and its count was already released at upgrade.
@@ -818,7 +806,6 @@ export function serveMachineSocket(
 ): void {
   const sessions = new Map<string, DaemonAgentSession>();
   const checkpointAgents = new Set<string>();
-  const pausedAgents = new Set<string>();
   trackCheckpoint(() => {
     for (const agentId of checkpointAgents) sessions.get(agentId)?.checkpoint();
   });
@@ -895,8 +882,6 @@ export function serveMachineSocket(
         agentId,
         {
           send: (event) => send({ ...event, agentId }),
-          pause: () => { pausedAgents.add(session.connectionId); client.pause(); },
-          resume: () => { pausedAgents.delete(session.connectionId); if (!pausedAgents.size) client.resume(); },
           isOpen: (): boolean => isOpen() && sessions.get(agentId) === session,
           drop: (code, reason) => {
             if (sessions.get(agentId) !== session) return;

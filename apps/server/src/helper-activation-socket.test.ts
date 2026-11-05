@@ -1,5 +1,3 @@
-import { pendingMcpWakes } from './rooms-mcp-agent.js';
-import { HelperFrameReader } from '@beeline/net/helper-codecs';
 import { groupBPostgresDatabase } from './test-fixtures/test-support-router-group-b-postgres.js';
 import type { SqlDatabase } from './database.js';
 import type { AddressInfo } from 'node:net';
@@ -48,8 +46,7 @@ describe('actual activation registration and final socket enqueue',()=>{
       phone:{canReadRooms:async(ids:readonly string[])=>new Set(ids)} as unknown as PhoneService});
     await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));port=(server.address() as AddressInfo).port;
     socket=new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`,[MACHINE_SOCKET_PROTOCOL]);
-    const reader=new HelperFrameReader();
-    socket.on('message',raw=>{const value=reader.receive(JSON.parse(raw.toString()));if(value)frames.push(value);});
+    socket.on('message',raw=>frames.push(JSON.parse(raw.toString())));
     await new Promise<void>((resolve,reject)=>{socket.once('open',resolve);socket.once('error',reject);});
     send({type:'register',token,activationContextV1:true});await next(frame=>frame.type==='registered');
   },60000);
@@ -76,19 +73,7 @@ describe('actual activation registration and final socket enqueue',()=>{
       expect(await next(frame=>frame.requestId==='malformed-cut')).toMatchObject({error:'activation_context_refused'});expect(read).not.toHaveBeenCalled();
     }finally{read.mockRestore();}
   });
-  it('pages every owed private command with exact microsecond cursor ordering',async()=>{
-    await db.transaction(async tx=>{await tx.query('SET LOCAL statement_timeout=0');await tx.query(`INSERT INTO agent_commands
-      (id,room_id,agent_id,turn_request_id,action,reason,root_command_id,root_source_message_id,agent_depth,state,created_at)
-      SELECT 'wake-page-'||n,$1,$2,'wake-turn-'||n,'input','system','wake-page-'||n,'synthetic-source',0,'pending','2026-11-04T00:00:00.123456Z'::timestamptz
-      FROM generate_series(1,256)n`,[room,agent]);});
-    const ids:string[]=[];let after:{createdAt:string;id:string}|undefined;
-    for(;;){const page=await pendingMcpWakes(db,agent,after,31),rows=page.slice(0,30);ids.push(...rows.map(row=>row.id));
-      const last=rows.at(-1);if(page.length<=30||!last)break;after={createdAt:last.deliveryCreatedAt,id:last.id};}
-    expect(ids).toHaveLength(256);expect(new Set(ids).size).toBe(256);
-    expect(await pendingMcpWakes(db,agent)).toHaveLength(30);
-    await db.query(`DELETE FROM agent_commands WHERE id LIKE 'wake-page-%'`);
-  });
-  it('chunks actual >256 KiB command setup in a Workspace with 1,895 Rooms including archived corners',async()=>{
+  it('accepts actual >256 KiB command setup in a Workspace with 1,895 Rooms including archived corners',async()=>{
     const registered=await next(frame=>frame.type==='registered'),source={connectionId:registered.capabilities.activationConnectionId,epoch:1};
     await db.transaction(async tx=>{await tx.query('SET LOCAL statement_timeout=0');await tx.query(`INSERT INTO rooms(id,workspace_id,name,parent_id,archived_at)
       SELECT md5(n::text)::uuid,$1,'corner '||n,$2,CASE WHEN n%2=0 THEN now() ELSE NULL END FROM generate_series(1,1894)n`,[workspace,room]);});

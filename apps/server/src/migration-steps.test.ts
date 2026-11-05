@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { backfillAgentHandles, migrate, migrateData, PostgresDatabase } from './database.js';
+import { backfillAgentHandles, migrate, migrateData, MIGRATION_LOCK_TIMEOUT_MS, PostgresDatabase } from './database.js';
 import { alreadyNoOp, alreadySatisfied, normalizeDefault, lockedTables, noOpCheck, logLockHolders, normalizeTriggerDefinition, runMigrationStep, satisfiedCheck, splitMigrationStatements, triggerAlreadyCurrent, triggerPair } from './migration-steps.js';
 
 const postgresUrl = process.env.BEELINE_MIGRATION_LOCK_TEST_POSTGRES_URL;
@@ -11,33 +11,54 @@ if (postgresUrl && !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(postgre
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('release-owned migration steps', () => {
-  it.each(['40001','40P01','55P03'])('recovers a known %s rollback without repeating a completed step',async code=>{
-    vi.useFakeTimers();vi.spyOn(console,'warn').mockImplementation(()=>{});
-    const run=vi.fn().mockRejectedValueOnce(Object.assign(new Error(code),{code})).mockResolvedValue(undefined),prior=vi.fn(async()=>{});
-    await runMigrationStep('prior',prior);const result=runMigrationStep('contended',run);
-    await vi.advanceTimersByTimeAsync(100);await result;expect(run).toHaveBeenCalledTimes(2);expect(prior).toHaveBeenCalledOnce();expect(vi.getTimerCount()).toBe(0);
+  it.each(['40P01', '55P03', '57014', '42601'])('returns %s once and stays idle until another release command', async code => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const failure = Object.assign(new Error(code), { code });
+    const run = vi.fn().mockRejectedValueOnce(failure).mockResolvedValue(undefined);
+    const prior = vi.fn(async () => {});
+    await runMigrationStep('prior', prior);
+    await expect(runMigrationStep('contended', run)).rejects.toBe(failure);
+    await vi.advanceTimersByTimeAsync(86_400_000);
+    expect(run).toHaveBeenCalledOnce();
+    expect(prior).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+    // A new explicit release invocation owns this attempt.
+    await runMigrationStep('contended', run);
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(prior).toHaveBeenCalledOnce();
+    expect(MIGRATION_LOCK_TIMEOUT_MS).toBe(1_000);
   });
-  it.each(['57014','42601','ECONNRESET'])('never replays a failed/uncertain %s step',async code=>{
-    const failure=Object.assign(new Error(code),{code}),run=vi.fn().mockRejectedValue(failure);
-    await expect(runMigrationStep('uncertain',run)).rejects.toBe(failure);expect(run).toHaveBeenCalledOnce();
-  });
-  it('bounds known-rollback retries',async()=>{
-    vi.useFakeTimers();vi.spyOn(console,'warn').mockImplementation(()=>{});
-    const run=vi.fn().mockRejectedValue(Object.assign(new Error('locked'),{code:'55P03'}));
-    const result=runMigrationStep('busy',run).catch(error=>error);
-    await vi.advanceTimersByTimeAsync(2000);expect((await result).code).toBe('55P03');expect(run).toHaveBeenCalledTimes(4);
-  });
-  it.skipIf(!postgresUrl)('a real contended DDL step resumes within the same invocation after lock release',async()=>{
-    const schema=`release_proof_${randomUUID().replaceAll('-','')}`,admin=new Pool({connectionString:postgresUrl,max:1}),reader=await admin.connect();
-    const migration=new PostgresDatabase('',1,{mode:'migration',pool:new Pool({connectionString:postgresUrl,max:1,options:`-c search_path=${schema} -c lock_timeout=30ms`})});
-    try{
-      await reader.query(`CREATE SCHEMA ${schema}`);await reader.query(`CREATE TABLE ${schema}.messages(id int)`);
+
+  it.skipIf(!postgresUrl)('a real contended DDL step resumes only on an explicit invocation after lock release', async () => {
+    const schema = `release_proof_${randomUUID().replaceAll('-', '')}`;
+    const admin = new Pool({ connectionString: postgresUrl, max: 1 });
+    const reader = await admin.connect();
+    const migration = new PostgresDatabase('', 1, { mode: 'migration', pool: new Pool({
+      connectionString: postgresUrl, max: 1,
+      options: `-c search_path=${schema} -c lock_timeout=30ms`,
+    }) });
+    try {
+      await reader.query(`CREATE SCHEMA ${schema}`);
+      await reader.query(`CREATE TABLE ${schema}.messages (id int)`);
       await reader.query(`BEGIN; SELECT * FROM ${schema}.messages`);
-      let attempts=0;const run=vi.fn(async()=>{attempts++;try{await migration.query('ALTER TABLE messages ADD COLUMN delivered boolean');}
-        catch(error){if(attempts===1)await reader.query('COMMIT');throw error;}});
-      await runMigrationStep('reader contention',run);expect(run).toHaveBeenCalledTimes(2);
-      expect((await reader.query(`SELECT column_name FROM information_schema.columns WHERE table_schema=$1 AND table_name='messages'`,[schema])).rows).toContainEqual({column_name:'delivered'});
-    }finally{await reader.query('ROLLBACK');await migration.close();await reader.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);reader.release();await admin.end();}
+      const run = vi.fn(async () => { await migration.query('ALTER TABLE messages ADD COLUMN delivered boolean'); });
+      await expect(runMigrationStep('reader contention', run)).rejects.toMatchObject({ code: '55P03' });
+      expect(run).toHaveBeenCalledOnce();
+      await reader.query('COMMIT');
+      const columns = async () => (await reader.query(`SELECT column_name FROM information_schema.columns
+        WHERE table_schema=$1 AND table_name='messages'`, [schema])).rows;
+      expect(await columns()).not.toContainEqual({ column_name: 'delivered' });
+      await runMigrationStep('reader contention', run);
+      expect(run).toHaveBeenCalledTimes(2);
+      expect(await columns()).toContainEqual({ column_name: 'delivered' });
+    } finally {
+      await reader.query('ROLLBACK');
+      await migration.close();
+      await reader.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+      reader.release();
+      await admin.end();
+    }
   });
 
   it.skipIf(!postgresUrl)('R-MIGRATION-DATA stops each contended backfill and resumes only on a new release invocation', async () => {
@@ -78,12 +99,12 @@ describe('release-owned migration steps', () => {
         });
         try {
           await expect(step.run()).rejects.toMatchObject({ code: '55P03' });
-          expect(calls, step.name).toBe(4);
+          expect(calls, step.name).toBe(1);
           // A full data migration resumes from its entry point, so release
           // the lock before the next explicit invocation can reach this step.
           await holder.query('COMMIT');
           await step.run();
-          expect(calls, step.name).toBe(5);
+          expect(calls, step.name).toBe(2);
         } finally {
           querySpy.mockRestore();
           await holder.query('ROLLBACK');
@@ -156,11 +177,11 @@ describe('lock holder diagnostic', () => {
       onLockTimeout: () => logLockHolders(database, 'server schema 3/567', sql),
     })).rejects.toMatchObject({ code: '55P03' });
     const diagnostics = queries.filter((query) => query.sql.includes('pg_locks'));
-    expect(diagnostics).toHaveLength(4);
+    expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]!.values).toEqual([['identities']]);
     expect(queries.some((query) => /SET LOCAL statement_timeout/.test(query.sql))).toBe(true);
     const logged = warn.mock.calls.filter(([message]) => message === '[migration] lock holder').map(([, row]) => row);
-    expect(logged).toHaveLength(4);
+    expect(logged).toHaveLength(1);
     expect(Object.keys(logged[0] as object)).toEqual(expect.arrayContaining([
       'pid', 'state', 'wait_event', 'xact_start', 'query_start', 'application_name', 'query',
     ]));

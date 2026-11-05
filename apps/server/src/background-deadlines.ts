@@ -2,7 +2,7 @@ import { noteBlockedCornerChecks, reconcileConfiguredCornerReviewers } from './a
 import { reclaimExpiredCommandLeases } from './turn-silence-notice.js';
 import { runInstitutionalCuratorCycle } from './institutional-curator.js';
 import type { SqlDatabase } from './database.js';
-import { BackgroundWork, retryRolledBackWork } from './background-work.js';
+import { BackgroundWork } from './background-work.js';
 import { BACKGROUND_SOURCES, RETENTION_RULES, backgroundDueKey } from './background-due-source.js';
 import { subscribeCommandCompletion, subscribeCommandCompletionFamily } from './command-completion.js';
 import { cleanupUnfinishedAppSignIns } from './unfinished-app-sign-ins.js';
@@ -12,14 +12,12 @@ import type { LiveHub } from './live.js';
 import { backgroundDatabaseCut, backgroundDatabaseNow, backgroundNextDelay } from './background-deadline-clock.js';
 
 /** Time comes from the persisted obligation's database clock. Past eligibility
- * remains parked after an uncertain effect. Read-only observations and
- * atomic retention statements may retry proven rollbacks independently. */
+ * left after a refused/locked attempt is parked; it is never a failure retry. */
 
 type DueCallback = () => Promise<number | void>;
 export interface BackgroundDeadlineFamily {
   name: string;
   run: DueCallback;
-  /** Read-only deadline observation, separate from the business callback. */
   next?: (admittedAt?:string) => Promise<number | undefined>;
 }
 
@@ -32,8 +30,8 @@ export function registerBackgroundDeadlineFamilies(work: BackgroundWork,
 ): void {
   for (const family of families) work.addDeadline(family.name, async () => {
     const outcome = await execute(family.name, async()=>{
-      const cut=await retryRolledBackWork(()=>backgroundDatabaseCut(db));
-      await family.run();return family.next ? retryRolledBackWork(()=>family.next!(cut)) : undefined;
+      const cut=await backgroundDatabaseCut(db);
+      await family.run();return family.next ? family.next(cut) : undefined;
     });
     if (outcome.ok) return outcome.value;
   });
@@ -55,9 +53,9 @@ export function retentionDeadlineFamilies(db: SqlDatabase): BackgroundDeadlineFa
     return {
       name: `retention:${table}`,
       run: async () => {
-        const result = await retryRolledBackWork(()=>db.query(`DELETE FROM ${table} WHERE ctid IN (
+        const result = await db.query(`DELETE FROM ${table} WHERE ctid IN (
           SELECT ctid FROM ${table} WHERE (${predicate}) AND (${due})<=clock_timestamp()
-          LIMIT 1000 FOR UPDATE SKIP LOCKED)`));
+          LIMIT 1000 FOR UPDATE SKIP LOCKED)`);
         full = result.rowCount === 1000;
       },
       next: async cut => full ? 0 : backgroundNextDelay(db, `SELECT (${due}) due_at FROM ${table} WHERE ${predicate}`,cut),

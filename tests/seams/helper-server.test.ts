@@ -36007,6 +36007,7 @@ it.each([['server', false], ['body', false], ['server', true], ['body', true]] a
       ${fatal ? thrown : `try { ${thrown} } catch (error) { ${capture}(error); } await ${flush}();`}`;
     const result = await new Promise<{ code: number | null; error: string }>((done, reject) => {
       const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source], {
+        cwd: resolve('apps/server'),
         env: { ...process.env, SENTRY_DSN: `http://public@127.0.0.1:${port}/1`,
           BEELINE_SENTRY_DSN: `http://public@127.0.0.1:${port}/1`, SENTRY_ENVIRONMENT: 'test' },
         stdio: ['ignore', 'ignore', 'pipe'],
@@ -36057,6 +36058,7 @@ it('R-GH-403: actual PR and discussion rate limits send no Sentry event; plain 4
       await flushServerErrors();`;
     const result = await new Promise<{ code: number | null; error: string }>((done, reject) => {
       const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source], {
+        cwd: resolve('apps/server'),
         env: { ...process.env, SENTRY_DSN: `http://public@127.0.0.1:${port}/1`, SENTRY_ENVIRONMENT: 'test' },
         stdio: ['ignore', 'ignore', 'pipe'],
       });
@@ -36088,9 +36090,9 @@ it('GH-CHECK-REFUSAL: check refresh preserves permission diagnostics and blocks 
     const source = `
       import assert from 'node:assert/strict';
       import { PgliteDatabase } from './src/test-support.ts';
-      import { migrate } from './apps/server/dist/database.js';
-      import { GitHubOperations } from './apps/server/dist/github-operations.js';
-      import { captureServerError, flushServerErrors } from './apps/server/dist/sentry.js';
+      import { migrate } from './dist/database.js';
+      import { GitHubOperations } from './dist/github-operations.js';
+      import { captureServerError, flushServerErrors } from './dist/sentry.js';
       import { GitHubAppClient, GitHubHttpError } from '@beeline/auth/github';
       const db = new PgliteDatabase();
       await migrate(db);
@@ -36148,6 +36150,7 @@ it('GH-CHECK-REFUSAL: check refresh preserves permission diagnostics and blocks 
     `;
     const result = await new Promise<{ code: number | null; error: string }>((done, reject) => {
       const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source], {
+        cwd: resolve('apps/server'),
         env: { ...process.env, SENTRY_DSN: `http://public@127.0.0.1:${port}/1`, SENTRY_ENVIRONMENT: 'test' },
         stdio: ['ignore', 'ignore', 'pipe'],
       });
@@ -36228,6 +36231,7 @@ it('SENTRY-7807034373: schedule HTTP refusals stay visible without Sentry events
       process.exit(0);`;
     const result = await new Promise<{ code: number | null; error: string }>((done, reject) => {
       const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source], {
+        cwd: resolve('apps/server'),
         env: { ...process.env, SENTRY_DSN: `http://public@127.0.0.1:${port}/1`, SENTRY_ENVIRONMENT: 'test' },
         stdio: ['ignore', 'ignore', 'pipe'],
       });
@@ -36302,6 +36306,7 @@ it('R-CHECKIN-ACTIVITY: invalid final output is actionable while unexpected data
       process.exit(0);`;
     const result = await new Promise<{ code: number | null; error: string }>((done, reject) => {
       const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source], {
+        cwd: resolve('apps/server'),
         env: { ...process.env, SENTRY_DSN: `http://public@127.0.0.1:${port}/1`, SENTRY_ENVIRONMENT: 'test' },
         stdio: ['ignore', 'ignore', 'pipe'],
       });
@@ -36339,6 +36344,7 @@ it.each(['server', 'body'] as const)('R-SENTRY-REPEAT: %s sends one envelope for
     let stderr = "";
     const code = await new Promise<number | null>((done, reject) => {
       const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source], {
+        cwd: resolve('apps/server'),
         env: { ...process.env, SENTRY_DSN: `http://public@127.0.0.1:${port}/1`,
           BEELINE_SENTRY_DSN: `http://public@127.0.0.1:${port}/1` }, stdio: ['ignore', 'ignore', 'pipe'],
       });
@@ -36428,6 +36434,7 @@ it('ATTACH-CAP-1: attachment cap is a client error and unexpected failures still
       process.exit(0);`;
     const result = await new Promise<{ code: number | null; error: string }>((done, reject) => {
       const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source], {
+        cwd: resolve('apps/server'),
         env: { ...process.env, SENTRY_DSN: `http://public@127.0.0.1:${port}/1`, SENTRY_ENVIRONMENT: 'test' },
         stdio: ['ignore', 'inherit', 'pipe'],
       });
@@ -36458,18 +36465,18 @@ it('WORKFLOW-ROLE-REFUSAL / BEELINE-SENTRY-REFUSALS / APP-REFUSAL-5 / VIDEO-PREV
     const source = `
       import assert from 'node:assert/strict';
       import { createServer } from 'node:http';
-      import { reserveServiceReviewWorkspaces } from './apps/server/dist/service-review.js';
-      import { postRoomChoice } from './apps/server/dist/room-choice.js';
-      import { saveWorkflow, startWorkflow } from './apps/server/dist/workflow-runs.js';
-      import { ComposioApps } from './apps/server/dist/composio-apps.js';
+      import { reserveServiceReviewWorkspaces } from './dist/service-review.js';
+      import { postRoomChoice } from './dist/room-choice.js';
+      import { saveWorkflow, startWorkflow } from './dist/workflow-runs.js';
+      import { ComposioApps } from './dist/composio-apps.js';
       import { describedWorkflow } from './src/test-support.ts';
       import { PgliteDatabase } from './src/test-support.ts';
-      import { migrate } from './apps/server/dist/database.js';
-      import { DaemonService } from './apps/server/dist/daemon-service.js';
-      import { LiveHub } from './apps/server/dist/live.js';
-      import { createAgentCommand } from './apps/server/dist/agent-command.js';
-      import { createBeelineServer } from './apps/server/dist/server.js';
-      import { flushServerErrors } from './apps/server/dist/sentry.js';
+      import { migrate } from './dist/database.js';
+      import { DaemonService } from './dist/daemon-service.js';
+      import { LiveHub } from './dist/live.js';
+      import { createAgentCommand } from './dist/agent-command.js';
+      import { createBeelineServer } from './dist/server.js';
+      import { flushServerErrors } from './dist/sentry.js';
       const db = new PgliteDatabase();
       await migrate(db);
       const agent = 'c'.repeat(64), human = 'a'.repeat(64);
@@ -36631,6 +36638,7 @@ it('WORKFLOW-ROLE-REFUSAL / BEELINE-SENTRY-REFUSALS / APP-REFUSAL-5 / VIDEO-PREV
       process.exit(0);`;
     const result = await new Promise<{ code: number | null; error: string }>((done, reject) => {
       const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source], {
+        cwd: resolve('apps/server'),
         env: { ...process.env, SENTRY_DSN: `http://public@127.0.0.1:${port}/1`, SENTRY_ENVIRONMENT: 'test' },
         stdio: ['ignore', 'inherit', 'pipe'],
       });

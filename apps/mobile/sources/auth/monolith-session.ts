@@ -10,7 +10,6 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { markRoomOpen } from '@/buzz/room-open-trace';
 import { beginNetworkResponseTiming } from './network-response-timing';
-import { reportRequestDeadlineMissed } from '@/sync/transport/request-deadline';
 
 // Capture before OAuth leaves the landing URL; the shared first-party cookie survives it.
 loadXPixel(readWebXAttribution());
@@ -111,14 +110,6 @@ export class MonolithSession {
     private readonly secureStorage: () => Promise<MonolithSecureStorage> = monolithSecureStorage,
     _origins: readonly string[] = monolithOrigins(baseUrl),
   ) {}
-
-  /**
-   * A request past its deadline makes the shared socket suspect. HTTP keeps
-   * its configured primary origin; recovery rides the one live socket.
-   */
-  noteStalled(_input: string): void {
-    reportRequestDeadlineMissed();
-  }
 
   async exchangeGitHubTicket(ticket: string, funnel?: SigninFunnelEvent): Promise<string> {
     return this.exchangeProviderTicket('github', ticket, funnel);
@@ -437,12 +428,7 @@ export class MonolithSession {
     init: RequestInit,
     options: { timeoutMs?: number; idempotent?: boolean },
   ): Promise<Response> {
-    try {
-      return await this.perform(input, init, options.timeoutMs);
-    } catch (error) {
-      if (error instanceof MonolithRequestTimeoutError) reportRequestDeadlineMissed();
-      throw error;
-    }
+    return this.perform(input, init, options.timeoutMs);
   }
 
   private async perform(
@@ -557,7 +543,6 @@ export class MonolithSession {
       return tokens.accessToken;
     } catch (error) {
       if (timedOut) {
-        reportRequestDeadlineMissed();
         throw new MonolithRequestTimeoutError();
       }
       throw error;

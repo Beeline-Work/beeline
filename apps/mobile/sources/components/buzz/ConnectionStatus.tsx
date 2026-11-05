@@ -1,33 +1,20 @@
-import { reconnectNow, useConnectionState } from '@/sync/transport/live-connection';
-import { type ReactNode } from 'react';
-import { Text, View } from 'react-native';
+import { reconnectNow, useConnectionFailure } from '@/sync/transport/live-connection';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { IndexRow, InlineRow } from './IndexRow';
-import { BeelineMarkSpinner } from './BeelineMarkSpinner';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { IndexRow } from './IndexRow';
 
-/** One socket status line shared by the Room deck and every open Room. */
-type ConnectionStatusProps = {
-  /** Recovery content for a failed screen read while the socket remains live. */
-  connectedFallback?: ReactNode;
-};
-
-export function ConnectionStatus({ connectedFallback }: ConnectionStatusProps) {
-  const state = useConnectionState();
-  if (state === 'connected') return connectedFallback ?? null;
-  if (state === 'connecting') {
-    return <InlineRow accessibilityLiveRegion="polite" style={styles.line} testID="connection-status-connecting">
-      <BeelineMarkSpinner live />
-      <Text style={styles.copy}>Connecting…</Text>
-    </InlineRow>;
-  }
-  return <View accessibilityLiveRegion="polite" style={styles.failureInset} testID="connection-status-disconnected">
-    <IndexRow inset="flush" title="Beeline isn’t connected" description="Showing saved messages"
+/** Mounted once by the app layout. Only explicit socket request outcomes own it. */
+export function ConnectionStatus() {
+  const failed = useConnectionFailure();
+  const insets = useSafeAreaInsets();
+  if (!failed) return null;
+  return <View accessibilityLiveRegion="polite" style={[styles.banner, { paddingTop: insets.top }]} testID="connection-status-disconnected">
+    <IndexRow inset="flush" title="Beeline isn’t connected" description="Try your request again."
       action="Reconnect" onPress={reconnectNow} testID="connection-status-reconnect" />
   </View>;
 }
 
 const styles = StyleSheet.create((theme) => ({
-  failureInset: { paddingHorizontal: theme.buzz.roomList.edge },
-  line: { alignItems: 'center', gap: theme.buzz.space.sm, paddingHorizontal: theme.buzz.roomList.edge, paddingVertical: theme.buzz.space.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.buzz.border, backgroundColor: theme.buzz.bgRaised },
-  copy: { ...theme.buzz.type.meta, color: theme.buzz.textPrimary },
+  banner: { paddingHorizontal: theme.buzz.roomList.edge, backgroundColor: theme.buzz.bgRaised },
 }));

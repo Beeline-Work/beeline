@@ -11,9 +11,8 @@ import { CORNER_LABEL } from './vocabulary';
 
 /**
  * A failed corner open, said out loud. When the server never answered (the
- * request timed out or the network refused it) `CornerOpenToast` says so and
- * offers Retry, which repeats the same attempt; a server refusal is named as
- * it was given.
+ * request timed out or the network refused it), the global banner owns recovery.
+ * A server refusal keeps its own reason.
  */
 export function alertCornerOpenFailure(error: unknown, roomId: string, retry: () => void): void {
   void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -43,8 +42,8 @@ export async function openRoomListCorner(input: {
   if (!createCorner) {
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     Modal.alert(
-      'Not connected yet',
-      `A new ${CORNER_LABEL} could not be opened because the app is still connecting to the server. Try again in a moment.`,
+      `Could not open ${CORNER_LABEL}`,
+      `A new ${CORNER_LABEL} could not be opened while Rooms are loading. Try again.`,
     );
     return;
   }

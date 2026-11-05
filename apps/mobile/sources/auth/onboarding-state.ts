@@ -199,8 +199,8 @@ function isNetworkFailure(error: unknown): boolean {
  */
 export const OFFLINE_NOTICE: OnboardingNotice = {
   status: 'offline',
-  title: 'No connection',
-  message: "You're offline. Connect to Wi-Fi or mobile data, then try again.",
+  title: 'Could not finish sign-in',
+  message: "Try signing in again.",
   retryable: true,
 };
 
@@ -257,7 +257,7 @@ export function noticeForAuthError(error: unknown): OnboardingNotice {
       status: 'bind_retry',
       title: 'Sign-in interrupted',
       message:
-        'The device key is ready but could not be bound. Check the connection and retry before the proof expires.',
+        'The device key is ready but could not be bound. Try binding it again before the proof expires.',
       retryable: true,
     };
   }

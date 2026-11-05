@@ -22,7 +22,6 @@ import {
   noteRoomCornersChanged,
 } from '@/buzz/room-corner-store';
 import { subscribeClientReset } from '@/sync/client-reset';
-import { setRequestDeadlineHandler } from './request-deadline';
 
 type MissedUpdates = { type: 'missed-updates'; roomIds: string[]; streams: string[]; workspace: boolean };
 type SurfaceFilters = readonly {
@@ -45,22 +44,21 @@ type Dependencies = {
   liveUrl(): string;
   subscribeIdentityChange(listener: () => void): () => void;
 };
-export type ConnectionState = 'connecting' | 'connected' | 'disconnected';
-let connectionState: ConnectionState = 'disconnected';
+let connectionFailed = false;
 const stateListeners = new Set<() => void>();
-function setConnectionState(next: ConnectionState): void {
-  if (connectionState === next) return;
-  connectionState = next;
+function setConnectionFailure(failed: boolean): void {
+  if (connectionFailed === failed) return;
+  connectionFailed = failed;
   for (const listener of stateListeners) listener();
 }
-export function useConnectionState(): ConnectionState {
+export function useConnectionFailure(): boolean {
   return useSyncExternalStore(
     (listener) => {
       stateListeners.add(listener);
       return () => stateListeners.delete(listener);
     },
-    () => connectionState,
-    () => 'disconnected',
+    () => connectionFailed,
+    () => false,
   );
 }
 const roomIdsFromFilters = (filters: SurfaceFilters) =>
@@ -93,18 +91,14 @@ export class LiveConnection {
   // An old screen's release must not hide a new identity's view of the same Room.
   private viewEpoch = 0;
   private disposed = false;
-  private heartbeat?: ReturnType<typeof setTimeout>;
-  private pongDeadline?: ReturnType<typeof setTimeout>;
   private readonly stopAppState: () => void;
   private readonly stopIdentity: () => void;
 
   constructor(private readonly deps: Dependencies) {
-    setRequestDeadlineHandler(() => this.reportRequestDeadlineMissed());
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
-        this.checkHealth();
         this.refreshRoom();
-      } else this.clearHeartbeat();
+      }
     });
     this.stopAppState = () => subscription.remove();
     this.stopIdentity = deps.subscribeIdentityChange(() => {
@@ -152,18 +146,27 @@ export class LiveConnection {
   ): Promise<PhoneOperationMap[Name]['output']> {
     const identity = this.identity;
     const read = (PHONE_READ_OPERATIONS as readonly string[]).includes(operation);
-    for (let attempt = 0; ; attempt++) {
-      if (identity !== this.identity) throw new MonolithSessionChangedError();
-      try {
-        return (await this.sendRequest(
-          operation,
-          args,
-          options,
-        )) as PhoneOperationMap[Name]['output'];
-      } catch (error) {
-        if (!read || attempt === 2 || options.signal?.aborted || identity !== this.identity)
-          throw error;
+    let failed: boolean | undefined;
+    try {
+      for (let attempt = 0; ; attempt++) {
+        if (identity !== this.identity) throw new MonolithSessionChangedError();
+        try {
+          const result = await this.sendRequest(operation, args, options);
+          failed = false;
+          return result as PhoneOperationMap[Name]['output'];
+        } catch (error) {
+          // A refusal is an answered request. It neither closes a healthy
+          // socket nor turns a missing file or denied action into an outage.
+          if (error instanceof PhoneSocketError) { failed = false; throw error; }
+          const transportFailure = error instanceof PhoneSocketDisconnectedError ||
+            error instanceof MonolithRequestTimeoutError;
+          if (!transportFailure || options.signal?.aborted || identity !== this.identity) throw error;
+          if (!read || attempt === 2) { failed = true; throw error; }
+        }
       }
+    } finally {
+      // The sole connection-banner trigger: an explicit socket request outcome.
+      if (failed !== undefined && identity === this.identity) setConnectionFailure(failed);
     }
   }
 
@@ -202,8 +205,8 @@ export class LiveConnection {
         reject: (error) => {
           finish();
           if (
+            error instanceof MonolithRequestTimeoutError &&
             read &&
-            !(error instanceof Error && error.name === 'AbortError') &&
             (request.socket
               ? this.socket === request.socket
               : !this.socket && this.connecting !== undefined)
@@ -214,8 +217,7 @@ export class LiveConnection {
       };
       const abort = () => request.reject(this.abortError());
       const deadline = setTimeout(() => {
-        if (read) request.reject(new MonolithRequestTimeoutError());
-        else this.checkHealth();
+        request.reject(Object.assign(new MonolithRequestTimeoutError(), { socketRequest: true }));
       }, options.timeoutMs ?? 20_000);
       this.requests.set(id, request);
       options.signal?.addEventListener('abort', abort, { once: true });
@@ -254,7 +256,6 @@ export class LiveConnection {
     });
     const connection = { promise, reject };
     this.connecting = connection;
-    setConnectionState('connecting');
     void this.deps
       .authorization()
       .then((token) => {
@@ -265,17 +266,14 @@ export class LiveConnection {
         socket.onopen = () => {
           if (this.socket !== socket) return;
           this.connecting = undefined;
-          setConnectionState('connected');
           this.sendSubscribe([...this.roomReferences.keys()]);
           for (const roomId of this.viewing.keys()) this.sendViewing(roomId, true);
           this.sendPending(socket);
-          this.scheduleHeartbeat();
           for (const listener of this.connected) listener();
           resolve();
         };
         socket.onmessage = (event) => {
           if (this.socket !== socket) return;
-          this.scheduleHeartbeat();
           let frame: unknown;
           try {
             frame = JSON.parse(String(event.data));
@@ -310,7 +308,6 @@ export class LiveConnection {
       .catch((error) => {
         if (this.connecting !== connection) return;
         this.connecting = undefined;
-        setConnectionState('disconnected');
         reject(error);
       });
     return promise;
@@ -325,7 +322,6 @@ export class LiveConnection {
     if (!waitingRead && AppState.currentState === 'active') this.refreshRoom();
   }
   private dropConnection(): void {
-    this.clearHeartbeat();
     const socket = this.socket;
     this.socket = undefined;
     const connecting = this.connecting;
@@ -336,41 +332,11 @@ export class LiveConnection {
       request.reject(new PhoneSocketDisconnectedError());
     this.paintOwners.clear();
     noteCornerSocketDropped();
-    setConnectionState('disconnected');
     for (const listener of this.disconnected) listener();
   }
   reconnectNow(): void {
     if (this.socket && this.socket.readyState > 1) this.dropConnection();
     if (!this.socket) void this.ensureSocket().catch(() => undefined);
-  }
-  reportRequestDeadlineMissed(): void {
-    this.checkHealth();
-  }
-  private checkHealth(): void {
-    if (AppState.currentState !== 'active' || this.pongDeadline) return;
-    if (!this.socket) return;
-    if (!isOpen(this.socket)) {
-      if (this.socket.readyState > 1) this.socketFailed(this.socket);
-      return;
-    }
-    const socket = this.socket;
-    this.pongDeadline = setTimeout(() => this.socketFailed(socket), 5_000);
-    try {
-      socket.send('{"type":"ping"}');
-    } catch {
-      this.socketFailed(socket);
-    }
-  }
-  private scheduleHeartbeat(): void {
-    clearTimeout(this.heartbeat);
-    if (AppState.currentState !== 'active') return;
-    this.heartbeat = setTimeout(() => this.checkHealth(), 30_000);
-  }
-  private clearHeartbeat(): void {
-    clearTimeout(this.heartbeat);
-    clearTimeout(this.pongDeadline);
-    this.heartbeat = undefined;
-    this.pongDeadline = undefined;
   }
 
   view(roomId: string): () => void {
@@ -433,8 +399,6 @@ export class LiveConnection {
   private dispatch(live: LiveWireEvent | { type: 'pong' } | MissedUpdates, socket: WebSocket): void {
     switch (live.type) {
       case 'pong':
-        clearTimeout(this.pongDeadline);
-        this.pongDeadline = undefined;
         return;
       case 'sync-ok':
         return;
@@ -510,11 +474,10 @@ export function sharedLiveConnection(): LiveConnection {
   });
   return shared;
 }
-export function reportRequestDeadlineMissed(): void {
-  sharedLiveConnection().reportRequestDeadlineMissed();
-}
 export function reconnectNow(): void {
-  sharedLiveConnection().reconnectNow();
+  const connection = sharedLiveConnection();
+  connection.reconnectNow();
+  void connection.request('readWorkspaces', {}).then(() => connection.refreshRoom()).catch(() => undefined);
 }
 export function resetSharedLiveConnection(): void {
   shared?.dispose();

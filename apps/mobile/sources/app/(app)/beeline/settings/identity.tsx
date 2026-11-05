@@ -264,7 +264,7 @@ export default function BuzzIdentitySettings() {
       // Keep the friendly copy, but record the real cause for diagnosis.
       console.warn('[ACCOUNT] Delete account failed:', error);
       void reportClientError('app', error);
-      setError('Could not delete the account. Check your connection and try again.');
+      setError('Could not delete the account. Try again.');
       setDeleteBusy(false);
     }
   }, [deleteBusy, profileIdentity]);

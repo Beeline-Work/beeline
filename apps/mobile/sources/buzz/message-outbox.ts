@@ -100,7 +100,7 @@ export class MessageOutbox {
     if (!record) return;
     if (record.reason) return { kind: 'refused', text: `Not sent · ${record.reason}` };
     if (record.offlineSince !== undefined && this.now() - record.offlineSince >= OUTBOX_OFFLINE_CUTOFF_MS)
-      return { kind: 'offline', text: 'Not sent yet · no connection' };
+      return { kind: 'offline', text: 'Not sent yet' };
     return { kind: 'sending', text: 'Sending' };
   }
   /** Called by the shared connection owner on open and observed transport loss. */

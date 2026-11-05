@@ -57,7 +57,7 @@ it('R2 app startup flushes the persisted owner over the one phone operation path
     expect(owner.state(interrupted.id)?.text).toBe('Sending');
     expect(fixture.request).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(2);
-    expect(owner.state(interrupted.id)?.text).toBe('Not sent yet · no connection');
+    expect(owner.state(interrupted.id)?.text).toBe('Not sent yet');
     fixture.state = 1; fixture.connected!();
     await vi.advanceTimersByTimeAsync(0);
     expect(owner.get(interrupted.id)).toBeUndefined();
@@ -66,7 +66,7 @@ it('R2 app startup flushes the persisted owner over the one phone operation path
     fixture.connected!();
     await vi.advanceTimersByTimeAsync(0);
     expect(fixture.request).toHaveBeenCalledTimes(3);
-    console.log('R2 runtime: transient send failure; socket loss; Sending before cutoff; Not sent yet · no connection after cutoff; same id replayed once on reconnect');
+    console.log('R2 runtime: transient send failure; socket loss; Sending before cutoff; Not sent yet after cutoff; same id replayed once on reconnect');
   } finally { vi.useRealTimers(); }
   // A Room's handle is just a selector; dropping it does not own delivery.
   const refused = { ...e, id: 'b'.repeat(64) };

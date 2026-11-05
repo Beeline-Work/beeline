@@ -9,7 +9,8 @@ vi.mock('@/auth/monolith-session', () => ({
   MonolithSessionChangedError: class MonolithSessionChangedError extends Error {},
   monolithSession: { authorization: async () => 'fixture-access', invalidateAuthorization: vi.fn() },
 }));
-import { LiveConnection } from './live-connection';
+vi.mock('react', () => ({ useSyncExternalStore: (_subscribe: unknown, snapshot: () => unknown) => snapshot() }));
+import { LiveConnection, useConnectionFailure } from './live-connection';
 import { PhoneSocketDisconnectedError } from './phone-socket-error';
 
 class Socket {
@@ -64,22 +65,31 @@ describe('the one phone socket',()=>{
     const second=await open();expect(Socket.instances).toHaveLength(2);expect(second.requests()).toHaveLength(1);second.reply({room:{id:'a'}});
     await expect(answer).resolves.toMatchObject({room:{id:'a'}});
   });
-  it('stops after three server failures; Retry starts a fresh three-attempt read',async()=>{
+  it('returns a server refusal once and keeps the answered socket usable',async()=>{
     const {connection}=setup();const answer=connection.request('readRoom',{roomId:'a'}).catch(error=>error);
-    for(let n=0;n<3;n++){const socket=await open();socket.refuse();}
-    expect(await answer).toMatchObject({message:'Read unavailable'});await tick();expect(Socket.instances).toHaveLength(3);
-    const retried=connection.request('readRoom',{roomId:'a'});const socket=await open();socket.reply({room:{id:'a'}});await expect(retried).resolves.toMatchObject({room:{id:'a'}});
-    expect(Socket.instances).toHaveLength(4);
+    const socket=await open();socket.refuse();
+    expect(await answer).toMatchObject({message:'Read unavailable'});expect(socket.readyState).toBe(1);
+    const retried=connection.request('readRoom',{roomId:'a'});socket.reply({room:{id:'a'}},1);await retried;
+    expect(Socket.instances).toHaveLength(1);expect(useConnectionFailure()).toBe(false);
+  });
+  it('a rejected image metadata read cannot disconnect a send awaiting its acknowledgement',async()=>{
+    const {connection}=setup();const send=connection.request('sendRoomMessage',{roomId:'a',messageId:'image',text:''});
+    const socket=await open();const metadata=connection.request('readMediaMetadata',{objectId:'media'}).catch(error=>error);
+    socket.emit({t:'res',id:socket.requests()[1].id,ok:false,error:{code:'unknown_phone_operation',message:'unknown_phone_operation',retryable:false}});
+    expect(await metadata).toMatchObject({code:'unknown_phone_operation'});
+    expect(socket.readyState).toBe(1);expect(useConnectionFailure()).toBe(false);
+    socket.reply({messageId:'image'});await expect(send).resolves.toEqual({messageId:'image'});
+    expect(Socket.instances).toHaveLength(1);
   });
   it('counts failed native openings against the same three attempts',async()=>{
     const {connection,invalidate}=setup();const answer=connection.request('readRoom',{roomId:'a'}).catch(error=>error);
     for(let n=0;n<3;n++){await tick();Socket.instances[n]!.fail();}
     expect(await answer).toBeInstanceOf(PhoneSocketDisconnectedError);expect(Socket.instances).toHaveLength(3);expect(invalidate).toHaveBeenCalledTimes(3);
   });
-  it('counts authorization failures against the same three attempts',async()=>{
+  it('does not repeat an authorization failure before any socket request',async()=>{
     const authorization=vi.fn(async()=>{throw Error('Authorization unavailable');});const {connection}=setup(authorization);
     await expect(connection.request('readRoom',{roomId:'a'})).rejects.toThrow('Authorization unavailable');
-    expect(authorization).toHaveBeenCalledTimes(3);expect(Socket.instances).toHaveLength(0);
+    expect(authorization).toHaveBeenCalledTimes(1);expect(Socket.instances).toHaveLength(0);
   });
   it('ends an unanswered read at its existing deadline even if pongs arrive',async()=>{
     const {connection}=setup();const answer=connection.request('readRoom',{roomId:'a'},{timeoutMs:100}).catch(error=>error);
@@ -96,10 +106,13 @@ describe('the one phone socket',()=>{
     const socket=await open();socket.drop();expect(await write).toBeInstanceOf(PhoneSocketDisconnectedError);
     await vi.advanceTimersByTimeAsync(90_000);expect(Socket.instances).toHaveLength(1);expect(socket.requests()).toHaveLength(1);
   });
-  it('a healthy slow write keeps waiting for its result without replay',async()=>{
-    const {connection}=setup();const write=connection.request('reactToMessage',{roomId:'a',messageId:'m',emoji:'👍'},{timeoutMs:100});
-    const socket=await open();await vi.advanceTimersByTimeAsync(200);expect(Socket.instances).toHaveLength(1);expect(socket.requests()).toHaveLength(1);
-    socket.reply({});await write;
+  it('settles a write at its existing deadline; the next answer clears the banner',async()=>{
+    const {connection}=setup();const write=connection.request('reactToMessage',{roomId:'a',messageId:'m',emoji:'👍'},{timeoutMs:100}).catch(error=>error);
+    const socket=await open();await vi.advanceTimersByTimeAsync(100);
+    expect((await write).constructor.name).toBe('MonolithRequestTimeoutError');expect(useConnectionFailure()).toBe(true);
+    expect(Socket.instances).toHaveLength(1);expect(socket.requests()).toHaveLength(1);expect(socket.readyState).toBe(1);
+    const read=connection.request('readRoom',{roomId:'a'});socket.reply({room:{id:'a'}},1);await read;
+    expect(useConnectionFailure()).toBe(false);
   });
   it('aborts one read without closing another screen’s healthy socket',async()=>{
     const {connection}=setup();const abort=new AbortController();const cancelled=connection.request('readRoom',{roomId:'a'},{signal:abort.signal}).catch(error=>error);
@@ -139,30 +152,28 @@ describe('the one phone socket',()=>{
       if('monolithLive'in event&&event.monolithLive.type==='invalidate')read=connection.request('readRoom',{roomId:'a'});
     });const first=await open();first.drop();const replacement=await open();replacement.reply({room:{id:'a'}});await read;expect(Socket.instances).toHaveLength(2);
   });
-  it('checks foreground liveness after 30 seconds and keeps a socket that answers',async()=>{
-    const {connection}=setup();await connection.register([],()=>{});const socket=await open();await vi.advanceTimersByTimeAsync(30_000);
-    expect(socket.sent).toContain('{"type":"ping"}');expect(socket.readyState).toBe(1);expect(Socket.instances).toHaveLength(1);
+  it('idle time and missing heartbeats cannot close a socket or produce a banner',async()=>{
+    const {connection}=setup();const read=connection.request('readRoom',{roomId:'a'});const socket=await open();socket.reply({});await read;
+    socket.autoPong=false;await vi.advanceTimersByTimeAsync(3_600_000);
+    expect(socket.sent).not.toContain('{"type":"ping"}');expect(socket.readyState).toBe(1);expect(useConnectionFailure()).toBe(false);
+    socket.drop();expect(useConnectionFailure()).toBe(false);
   });
-  it('a missing heartbeat pong asks open screens to read and reconnect',async()=>{
-    const {connection}=setup();let read:Promise<unknown>|undefined;await connection.register([{'#h':['a']}],event=>{
-      if('monolithLive'in event&&event.monolithLive.type==='invalidate')read=connection.request('readRoom',{roomId:'a'});
-    });const socket=await open();socket.autoPong=false;await vi.advanceTimersByTimeAsync(35_000);const replacement=await open();replacement.reply({room:{id:'a'}});await read;
-    expect(Socket.instances).toHaveLength(2);
-  });
-  it('sends no background heartbeat and checks/read-refreshes on foreground',async()=>{
+  it('foreground asks the screen to read without speculative pings',async()=>{
     const {connection}=setup();const listener=vi.fn();await connection.register([{'#h':['a']}],listener);const socket=await open();appState('background');
     await vi.advanceTimersByTimeAsync(90_000);expect(socket.sent).not.toContain('{"type":"ping"}');appState('active');
-    expect(socket.sent).toContain('{"type":"ping"}');expect(listener).toHaveBeenCalledWith({monolithLive:{type:'invalidate',roomId:'a',reason:'reconnect'}});
+    expect(socket.sent).not.toContain('{"type":"ping"}');expect(listener).toHaveBeenCalledWith({monolithLive:{type:'invalidate',roomId:'a',reason:'reconnect'}});
   });
   it('Retry revives a socket already closed before its native close callback arrives',async()=>{
     const {connection}=setup();await connection.register([],()=>{});const first=await open();
     first.readyState=3;connection.reconnectNow();const second=await open();
     expect(second).not.toBe(first);expect(connection.diagnostics().state).toBe(1);
   });
-  it('the heartbeat detects native closure even if its callback was lost',async()=>{
-    const {connection}=setup();const listener=vi.fn();await connection.register([{'#h':['a']}],listener);
+  it('a lost native close callback is handled by the next explicit request',async()=>{
+    const {connection}=setup();const listener=vi.fn();await connection.register([],listener);
     const socket=await open();socket.readyState=3;await vi.advanceTimersByTimeAsync(30_000);
-    expect(listener).toHaveBeenCalledWith({monolithLive:{type:'invalidate',roomId:'a',reason:'reconnect'}});
+    expect(listener).not.toHaveBeenCalled();
+    const read=connection.request('readRoom',{roomId:'a'});const next=await open();next.reply({room:{id:'a'}});
+    await expect(read).resolves.toMatchObject({room:{id:'a'}});expect(next).not.toBe(socket);expect(useConnectionFailure()).toBe(false);
   });
   it('forwards a native push into the same read without another connection',async()=>{
     const {connection}=setup();const listener=vi.fn();await connection.register([{'#h':['a']}],listener);await open();connection.notePushedMessage('a');

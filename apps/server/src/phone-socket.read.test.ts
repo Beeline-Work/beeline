@@ -88,12 +88,44 @@ it('a socket killed mid-read reconnects and reads the Room again', async () => {
   expect(read).toHaveBeenCalledTimes(2); expect(sockets).toHaveLength(2);
 });
 
-it('three server errors settle the read; a later Retry reads successfully', async () => {
+it('a server error settles once without closing the socket; a later Retry reads successfully', async () => {
   const { phone } = await setup();
   const read = vi.spyOn(phone, 'readRoom').mockRejectedValue(new Error('Synthetic unavailable read'));
   await expect(connection.request('readRoom', { roomId: ROOM })).rejects.toThrow('Synthetic unavailable read');
-  expect(read).toHaveBeenCalledTimes(3); expect(sockets).toHaveLength(3);
+  expect(read).toHaveBeenCalledTimes(1); expect(sockets).toHaveLength(1);
   read.mockRestore();
   await expect(connection.request('readRoom', { roomId: ROOM })).resolves.toMatchObject({ room: { id: ROOM } });
-  expect(sockets).toHaveLength(4);
+  expect(sockets).toHaveLength(1);
+});
+
+it('an unavailable image metadata read cannot disconnect an image send before its acknowledgement', async () => {
+  const { phone } = await setup();
+  const objectId = '33333333-3333-4333-8333-333333333333';
+  const messageId = 'd'.repeat(64);
+  const attachment = { url: `https://synthetic.test/v1/media/${objectId}`, name: 'proof.jpg', mimeType: 'image/jpeg', size: 4 };
+  await db.query(`INSERT INTO objects(id,owner_id,kind,key,mime,size,sha256,state,expires_at)
+    VALUES($1,$2,'media','proof/image','image/jpeg',4,$3,'ready',now()+interval '1 day')`, [objectId, VIEWER, 'e'.repeat(64)]);
+  let entered!: () => void, release!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const original = phone.execute.bind(phone);
+  vi.spyOn(phone, 'execute').mockImplementation(async (...args) => {
+    if (args[0] === 'sendRoomMessage') { entered(); await gate; }
+    return original(...args);
+  });
+  const send = connection.request('sendRoomMessage', { roomId: ROOM, messageId, text: 'Photo', attachments: [attachment] });
+  void send.catch(() => undefined);
+  try {
+    await started;
+    // This was the production rejection that the phone turned into a socket
+    // close. It remains a terminal 404 when the media allowlist fix is present.
+    await expect(connection.request('readMediaMetadata', { objectId: '44444444-4444-4444-8444-444444444444' }))
+      .rejects.toMatchObject({ status: 404 });
+    expect(sockets).toHaveLength(1);
+    expect(sockets[0]!.readyState).toBe(WebSocket.OPEN);
+  } finally { release(); }
+  await expect(send).resolves.toMatchObject({ messageId });
+  const room = await connection.request('readRoom', { roomId: ROOM });
+  expect(room.messages).toContainEqual(expect.objectContaining({ id: messageId, attachments: [expect.objectContaining({ url: attachment.url })] }));
+  expect(sockets).toHaveLength(1);
 });

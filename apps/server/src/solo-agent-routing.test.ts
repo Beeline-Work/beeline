@@ -4,6 +4,7 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import type { SqlDatabase } from './database.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
@@ -40,7 +41,18 @@ describe('solo-agent-untagged-silence', () => {
   }
 
   it('dispatches and claims the untagged phone message once', async () => {
+    const statements: string[] = [];
+    const measured = (database: SqlDatabase, inTransaction = false): SqlDatabase => ({
+      query(sql, values, preparedName) {
+        if (inTransaction) statements.push(sql);
+        return database.query(sql, values, preparedName);
+      },
+      transaction: work => database.transaction(tx => work(measured(tx, true))),
+    });
+    phone = new PhoneService(measured(db), 'http://local.test');
     const commands = await send();
+    // Each statement is another database round trip before the send receipt.
+    expect(statements).toHaveLength(9);
     expect(commands).toHaveLength(1);
     expect(commands[0]).toMatchObject({ agent_id: AGENT, source_message_id: MESSAGE });
     await routeHumanMessage(db, MESSAGE);

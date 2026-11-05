@@ -5104,7 +5104,9 @@ export class PhoneService {
     if (!write.inserted && !write.retry) throw new Error('messageId is invalid');
     if (write.inserted) {
       const noticeAgentIds = write.author_kind === 'human' && mayRoute
-        ? await this.unansweredMentionTargets(input.roomId, author, input.text)
+        ? await this.unansweredMentionTargets(input.roomId, author, input.text, {
+          authorKind: write.author_kind, direct: write.direct, corner: write.corner,
+        })
         : [];
       const lifecycleCommand = mayRoute ? await routeHumanMessage(database, id) : undefined;
       if (!lifecycleCommand)
@@ -5949,8 +5951,11 @@ export class PhoneService {
     roomId: string,
     author: string,
     text: string,
+    source?: { authorKind: 'human' | 'agent'; direct: boolean; corner: boolean },
   ): Promise<readonly string[]> {
-    const authorKind = (
+    // A send already read these facts in its membership-fenced insert. Replies
+    // retain the lookup because they do not carry that same source context.
+    const authorKind = source?.authorKind ?? (
       await this.database.query<{ kind: 'human' | 'agent' }>(
         `SELECT kind FROM identities WHERE id=$1`,
         [author],
@@ -5962,7 +5967,7 @@ export class PhoneService {
     const noticeAgentIds = new Set(
       resolvedMembers.filter((member) => member.kind === 'agent').map((member) => member.id),
     );
-    const directAgents = await this.database.query<{ id: string }>(
+    const directAgents = source?.direct === false ? { rows: [] } : await this.database.query<{ id: string }>(
       `SELECT identity.id
        FROM rooms room
        JOIN LATERAL jsonb_array_elements_text(
@@ -5986,7 +5991,8 @@ export class PhoneService {
     if (directAgents.rows.length === 1) {
       noticeAgentIds.add(directAgents.rows[0]!.id);
     }
-    const absentCornerAgents = await this.database.query<{ id: string; handle: string }>(
+    const absentCornerAgents = !typedHandles.size || source?.corner === false
+      ? { rows: [] } : await this.database.query<{ id: string; handle: string }>(
       `SELECT identity.id,identity.handle
        FROM rooms room
        JOIN memberships workspace_membership ON workspace_membership.workspace_id=room.workspace_id

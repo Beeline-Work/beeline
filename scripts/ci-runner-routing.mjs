@@ -4,7 +4,11 @@ import assert from 'node:assert/strict';
 import { appendFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-const baseLabels = ['self-hosted', 'Linux', 'X64', 'beeline-ci'];
+// A rollout label prevents older, overcommitted listeners taking these jobs.
+const baseLabels = ['self-hosted', 'Linux', 'X64', 'beeline-ci', 'beeline-ci-balanced'];
+const poolRole = name => name === 'beeline-ci-squire-01' ? 'control'
+  : name === 'beeline-ci-squire-10' ? 'workspace'
+  : /^beeline-ci-squire-0[2-7]$/.test(name ?? '') ? 'heavy' : undefined;
 const roles = ['control', 'heavy', 'workspace'];
 const hosted = () => ['ubuntu-latest'];
 const yes = value => value === true || value === 'true';
@@ -22,11 +26,11 @@ export function routeRunners({ runners = [], flags = {}, event = 'pull_request',
   const seen = new Set();
   if (!inventoryError && ['pull_request', 'push'].includes(event)) {
     for (const runner of runners) {
-      if (!/^beeline-ci-squire-\d\d$/.test(runner.name ?? '') || runner.status !== 'online' || typeof runner.busy !== 'boolean' || seen.has(runner.name)) continue;
+      if (!poolRole(runner.name) || runner.status !== 'online' || typeof runner.busy !== 'boolean' || seen.has(runner.name)) continue;
       const labels = new Set((runner.labels ?? []).map(label => typeof label === 'string' ? label : label.name));
       if (!baseLabels.every(label => labels.has(label))) continue;
       const matches = roles.filter(role => labels.has(`beeline-ci-${role}`));
-      if (matches.length !== 1) continue;
+      if (matches.length !== 1 || matches[0] !== poolRole(runner.name)) continue;
       capacity[matches[0]]++;
       if (runner.busy) busy[matches[0]]++;
       seen.add(runner.name);
@@ -51,7 +55,7 @@ export function routeRunners({ runners = [], flags = {}, event = 'pull_request',
   };
   const server = yes(flags.serverSuite) || yes(flags.serverIntegration);
   const targets = { prepare: take('prepare', 'control') };
-  const controls = { serverSelection: event === 'pull_request' && server,
+  const controls = { serverSelection: event === 'pull_request' && yes(flags.code),
     serverSuite: server, serverIntegration: server, coverage: event === 'push',
     frameBudget: yes(flags.frameBudget), stateUpgrade: yes(flags.stateUpgrade),
     readme: yes(flags.readme), appLinks: yes(flags.appLinkAssociations) };

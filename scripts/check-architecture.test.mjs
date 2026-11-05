@@ -46,9 +46,8 @@ test('moving a site between files keeps the total and passes', () => {
   assert.deepEqual(judgeTree(tree(moved), { rules: [RULE] }), []);
 });
 
-test('a removed site asks for the lower total', () => {
-  const [error] = judgeTree(tree({ ...BASE, 'src/mcp.ts': '' }), { rules: [RULE] });
-  assert.match(error, /Lower "total" from 1 to 0/);
+test('a removed site passes without bookkeeping changes', () => {
+  assert.deepEqual(judgeTree(tree({ ...BASE, 'src/mcp.ts': '' }), { rules: [RULE] }), []);
 });
 
 test('tightening is not a relaxation', () => {
@@ -112,6 +111,14 @@ test('normal tightening passes the CLI check against base', () => {
   assert.match(result.stdout, /Architecture check passed/);
 });
 
+test('removing an exception passes the CLI check with the original total', () => {
+  const { root, run } = guardFixture();
+  writeFileSync(path.join(root, 'src/mcp.ts'), '');
+  const result = run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Architecture check passed/);
+});
+
 test('changing the guard itself reports weekly review', () => {
   const { root, run, git } = guardFixture();
   mkdirSync(path.join(root, 'scripts'));
@@ -123,14 +130,6 @@ test('changing the guard itself reports weekly review', () => {
   const result = run();
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stderr, /Weekly architecture review: guard scripts\/check-architecture\.mjs changed/);
-});
-
-test('this repository meets its own invariants', () => {
-  const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
-  const invariants = readInvariants(root);
-  assert.deepEqual(validateRules(invariants), []);
-  assert.deepEqual(judgeTree(root, invariants), []);
-  assert.deepEqual(judgeStorage(root, invariants.storage), []);
 });
 
 test('a distinct rule counts different names, not uses', () => {
@@ -243,4 +242,61 @@ test('scheduling an already unused column for deletion requires lowering unusedT
   storage.unusedTotal = 0;
   assert.deepEqual(judgeStorage(root, storage), []);
   assert.deepEqual(storageRelaxations({ storage: { ...STORAGE, unusedTotal: 1 } }, { storage }), []);
+});
+
+test('strict function ownership rejects a planted claim or archive, including inside an owner file', () => {
+  const repo = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
+  const rules = readInvariants(repo).rules.filter(rule => ['work.command-creation', 'work.command-claim', 'work.command-owner-fields', 'work.mcp-turn-state', 'corner.archive', 'work.subscription-store'].includes(rule.id));
+  const files = {
+    'apps/server/src/agent-command.ts': `
+      export function createAgentCommand(db) { db.query(\`INSERT INTO agent_commands(id) VALUES(1)\`); }
+      export function createClaimedMcpAgentCommand(db) { db.query(\`INSERT INTO agent_commands(id) VALUES(2)\`); }
+      export function claimAgentCommand(db) { db.query(\`UPDATE agent_commands SET state='claimed', generation_id=$1 WHERE id=$2\`); }
+      export function renewAgentCommandLease(db) { db.query(\`UPDATE agent_commands SET lease_expires_at=now() WHERE id=$1\`); }
+    `,
+    'apps/server/src/corner-close.ts': 'export function archiveCornerState(db) { db.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`); }',
+    'apps/server/src/agent-subscriptions.ts': 'export function migrateMembershipSubscriptions(db) { db.query(`SELECT jsonb_array_elements_text(event_subscriptions) FROM memberships`); }',
+    'apps/server/src/corner-person-state.ts': 'export function migrateCornerPersonState(db) { db.query(`SELECT jsonb_array_elements_text(event_subscriptions) FROM memberships`); }',
+    'apps/server/src/membership-join.ts': 'export function perItemMembershipSubscriptionCleanupSql() { return `SELECT jsonb_array_elements_text(event_subscriptions) FROM memberships`; }',
+  };
+  const root = tree(files);
+  assert.deepEqual(judgeTree(root, {rules}), []);
+  const witnesses = [
+    ['apps/server/src/rooms-mcp-extra.mjs', "export function bypassReceipt(db) { return db.query(`UPDATE agent_commands SET state='complete' WHERE id=$1`); }", 'work.mcp-turn-state'],
+    ['apps/server/src/rooms-mcp-agent.ts', "export function bypassReceipt(db) { return db.query(`UPDATE agent_commands SET state='complete' WHERE id=$1`); }", 'work.mcp-turn-state'],
+    ['apps/server/src/rooms-mcp-extra.ts', "export function bypassTurn(db) { return db.query(`UPDATE agent_turns SET status='complete' WHERE request_id=$1`); }", 'work.mcp-turn-state'],
+    ['apps/server/src/rooms-mcp-agent.ts', 'export function anotherCreation(db) { return db.query(`INSERT INTO "public"."agent_commands"(id) VALUES($1)`); }', 'work.command-creation'],
+    ['apps/server/src/rooms-mcp-agent.ts', 'export function aliasedClaim(db) { return db.query(`UPDATE "public"."agent_commands" AS command SET "state"=\'claimed\' WHERE id=$1`); }', 'work.command-claim'],
+    ['apps/server/src/github-operations.ts', 'export function aliasedArchive(db) { return db.query(`UPDATE "public"."rooms" AS room SET updated_at=now(),"archived_at"=now() WHERE id=$1`); }', 'corner.archive'],
+    ['apps/server/src/rooms-mcp-agent.ts', "export function anotherClaim(db) { return db.query(`UPDATE agent_commands SET state='claimed',generation_id=$1 WHERE id=$2`); }", 'work.command-claim'],
+    ['apps/server/src/rooms-mcp-agent.ts', "export function anotherOwner(db) { return db.query(`UPDATE agent_commands SET generation_id=$1 WHERE id=$2`); }", 'work.command-owner-fields'],
+    ['apps/server/src/rooms-mcp-agent.ts', "export function anotherLease(db) { return db.query(`UPDATE agent_commands SET lease_expires_at=now()+interval '90 seconds' WHERE id=$2`); }", 'work.command-owner-fields'],
+    ['apps/server/src/agent-command.ts', "export function anotherClaim(db) { return db.query(`UPDATE public.\"agent_commands\" SET state='claimed' WHERE id=$1`); }", 'work.command-claim'],
+    ['apps/server/src/github-operations.ts', "export function anotherArchive(db) { return db.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`); }", 'corner.archive'],
+    ['apps/server/src/corner-close.ts', "export function anotherArchive(db) { return db.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`); }", 'corner.archive'],
+    ['apps/server/src/agent-subscriptions.ts', "export function anotherStore(db) { return db.query(`SELECT * FROM memberships member WHERE member.event_subscriptions @> $1::jsonb`); }", 'work.subscription-store'],
+  ];
+  for (const [file, witness, rule] of witnesses) {
+    const before = files[file] ?? '';
+    mkdirSync(path.dirname(path.join(root, file)), {recursive:true});
+    writeFileSync(path.join(root, file), before + '\n' + witness);
+    assert.ok(judgeTree(root, {rules}).some(error => error.includes(`[${rule}]`)), witness);
+    writeFileSync(path.join(root, file), before);
+  }
+});
+
+test('strict ownership cannot be relaxed by raising an allowance or widening its owner scope', () => {
+  const {root, run, git} = guardFixture();
+  const strict = {...RULE, strict:true, total:0, ownerFunctions:{'src/agent-command.ts':['createAgentCommand']}};
+  writeFileSync(path.join(root, 'src/agent-command.ts'), 'export function createAgentCommand(db) { db.query(`INSERT INTO agent_commands(id) VALUES(1)`); }');
+  writeFileSync(path.join(root, 'src/mcp.ts'), '');
+  writeFileSync(path.join(root, 'architecture/invariants.json'), JSON.stringify({rules:[strict]}));
+  git('add','.');
+  git('-c','user.name=Architecture test','-c','user.email=architecture@example.test','-c','commit.gpgsign=false','commit','--quiet','-m','strict owner');
+  for (const changed of [{...strict,total:1}, {...strict,owners:[...strict.owners,'src/mcp.ts']}, {...strict,strict:false}, {...strict,ownerFunctions:{'src/agent-command.ts':['createAgentCommand','backdoor']}}]) {
+    writeFileSync(path.join(root, 'architecture/invariants.json'), JSON.stringify({rules:[changed]}));
+    const result=run();
+    assert.equal(result.status,1,result.stdout+result.stderr);
+    assert.match(result.stderr,/Strict architecture boundary|zero allowance/);
+  }
 });

@@ -80,7 +80,11 @@ runs:
     - uses: actions/cache@v4
       if: inputs.mobile == 'true' && github.job == 'typecheck'
       with:
-        path: apps/mobile/tsconfig.tsbuildinfo
+        path: |
+          apps/mobile/tsconfig.tsbuildinfo
+          apps/*/.typecheck*.tsbuildinfo
+          packages/*/.typecheck*.tsbuildinfo
+          tsconfig.scripts.tsbuildinfo
         key: ci-ts-state-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'apps/mobile/package-lock.json', 'apps/mobile/tsconfig.json') }}-${{ github.job }}-${{ github.sha }}
         restore-keys: |
           ci-ts-state-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'apps/mobile/package-lock.json', 'apps/mobile/tsconfig.json') }}-${{ github.job }}-

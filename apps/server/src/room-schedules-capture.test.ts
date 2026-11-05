@@ -1,3 +1,4 @@
+import { setRoomEventSubscriptions } from './agent-subscriptions.js';
 import {afterEach,beforeEach,describe,expect,it} from 'vitest';
 import {migratedDatabase,type PgliteDatabase} from './test-support.js';
 import {ROOM_SCHEDULES_CAPTURE_SCHEMA} from './room-schedules-capture.js';
@@ -66,16 +67,15 @@ describe('complete Scheduled Work source/clock closure',()=>{
     expect(await causes(first)).toContainEqual(expect.objectContaining({sourceRoomId:PARENT}));
     expect(await causes(second,OTHER)).toContainEqual(expect.objectContaining({sourceRoomId:OTHER_PARENT}));
   });
-  it('captures inherited membership subscriptions and per-corner overrides at the parent surface',async()=>{
+  it('captures inherited subscriptions and per-corner overrides at the parent surface',async()=>{
     const before=await head(),old=await build();
-    await db.query(`UPDATE memberships SET event_subscriptions='["joined"]' WHERE room_id=$1 AND identity_id=$2`,[PARENT,AGENT]);
+    await setRoomEventSubscriptions(db,PARENT,AGENT,['joined']);
     const changed=await build();expect(changed).not.toEqual(old);expect(await causes(before)).toContainEqual(expect.objectContaining({sourceRoomId:PARENT}));
-    const next=await head();await db.query(`INSERT INTO corner_person_state(corner_id,identity_id,event_subscriptions) VALUES($1,$2,'[]')
-      ON CONFLICT(corner_id,identity_id) DO UPDATE SET event_subscriptions='[]'`,[ROOM,AGENT]);
+    const next=await head();await setRoomEventSubscriptions(db,ROOM,AGENT,[]);
     expect(await build()).not.toEqual(changed);expect(await causes(next)).toContainEqual(expect.objectContaining({originTable:'corner_person_state',sourceRoomId:PARENT}));
   });
-  it('reviewer selection changes legacy check subscriptions and advances the owning surface',async()=>{
-    await db.query(`UPDATE memberships SET event_subscriptions='["check-passed"]' WHERE room_id=$1 AND identity_id=$2`,[PARENT,AGENT]);
+  it('reviewer selection changes check subscriptions and advances the owning surface',async()=>{
+    await setRoomEventSubscriptions(db,PARENT,AGENT,['check-passed']);
     const before=await head(),old=await build();await db.query(`UPDATE rooms SET reviewer_agent_id=$1 WHERE id=$2`,[AGENT,PARENT]);
     expect(await build()).not.toEqual(old);expect(await causes(before)).toContainEqual(expect.objectContaining({originTable:'rooms',sourceRoomId:PARENT}));
   });
@@ -92,8 +92,8 @@ describe('complete Scheduled Work source/clock closure',()=>{
     expect(await causes(second,OTHER)).toContainEqual(expect.objectContaining({sourceRoomId:OTHER_PARENT}));
   });
   it('captures both parents when an unchanged event override moves to another corner',async()=>{
-    await db.query(`UPDATE memberships SET event_subscriptions='["joined"]' WHERE identity_id=$1 AND room_id IS NOT NULL`,[AGENT]);
-    await db.query(`INSERT INTO corner_person_state(corner_id,identity_id,event_subscriptions) VALUES($1,$2,'[]')`,[ROOM,AGENT]);
+    for(const parent of [PARENT,OTHER_PARENT]) await setRoomEventSubscriptions(db,parent,AGENT,['joined']);
+    await setRoomEventSubscriptions(db,ROOM,AGENT,[]);
     const old=await build(),otherOld=await build(OTHER_PARENT),first=await head(),second=await head(OTHER);
     await db.query(`UPDATE corner_person_state SET corner_id=$1 WHERE corner_id=$2 AND identity_id=$3`,[OTHER_ROOM,ROOM,AGENT]);
     expect(await build()).not.toEqual(old);expect(await build(OTHER_PARENT)).not.toEqual(otherOld);
@@ -101,7 +101,7 @@ describe('complete Scheduled Work source/clock closure',()=>{
     expect(await causes(second,OTHER)).toContainEqual(expect.objectContaining({originTable:'corner_person_state',sourceRoomId:OTHER_PARENT}));
   });
   it('captures both parents when an unchanged reviewer override moves to another corner',async()=>{
-    await db.query(`UPDATE memberships SET event_subscriptions='["check-passed"]' WHERE identity_id=$1 AND room_id IS NOT NULL`,[AGENT]);
+    for(const parent of [PARENT,OTHER_PARENT]) await setRoomEventSubscriptions(db,parent,AGENT,['check-passed']);
     await db.query(`INSERT INTO corner_facts(corner_id,reviewer_agent_id) VALUES($1,$2)`,[ROOM,AGENT]);
     const old=await build(),otherOld=await build(OTHER_PARENT),first=await head(),second=await head(OTHER);
     await db.query(`UPDATE corner_facts SET corner_id=$1 WHERE corner_id=$2`,[OTHER_ROOM,ROOM]);

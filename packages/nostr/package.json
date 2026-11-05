@@ -14,7 +14,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit --incremental --tsBuildInfoFile .typecheck.tsbuildinfo",
     "test": "vitest run",
     "format:check": "prettier --check src package.json",
     "lint": "npm run format:check"

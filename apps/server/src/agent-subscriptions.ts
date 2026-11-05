@@ -1,9 +1,10 @@
-import { deleteMembershipSubscription } from './membership-join.js';
+import { routeSystemCommand } from './agent-command.js';
+import { retireMembershipSubscriptionLists } from './membership-join.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { cornerReviewerSql } from './corner-reviewer.js';
 import { validateScheduleTitle } from './schedule-title.js';
 import { createHash, randomUUID } from 'node:crypto';
-import { isSubscribableEventKind } from '@beeline/api-contract/phone';
+import { isSubscribableEventKind, SUBSCRIBABLE_EVENT_KINDS } from '@beeline/api-contract/phone';
 import { isRepositorySubscriptionEvent, type RoomSubscriptionView, type SubscriptionSource } from '@beeline/api-contract/phone';
 import { subscriptionActionPrompt } from '@beeline/api-contract/phone';
 import type { ComposioApps } from './composio-apps.js';
@@ -40,6 +41,13 @@ CREATE TABLE IF NOT EXISTS agent_subscriptions (
    OR (source='webhook' AND event='webhook.called')
    OR (source='service' AND service_app_id IS NOT NULL AND trigger_id IS NOT NULL))
 );
+ALTER TABLE agent_subscriptions ALTER COLUMN prompt DROP NOT NULL;
+ALTER TABLE agent_subscriptions ADD COLUMN IF NOT EXISTS inherit_to_corners boolean NOT NULL DEFAULT false;
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='agent_subscriptions_room_prompt') THEN
+  ALTER TABLE agent_subscriptions ADD CONSTRAINT agent_subscriptions_room_prompt CHECK(prompt IS NOT NULL OR source='room');
+ END IF;
+END $$;
 ALTER TABLE agent_subscriptions ADD COLUMN IF NOT EXISTS title text;
 ALTER TABLE agent_subscriptions ADD COLUMN IF NOT EXISTS trigger_text text;
 ALTER TABLE agent_subscriptions ADD COLUMN IF NOT EXISTS service_app_id uuid REFERENCES workspace_apps(id) ON DELETE CASCADE;
@@ -79,10 +87,49 @@ CREATE INDEX IF NOT EXISTS agent_subscriptions_trigger ON agent_subscriptions(tr
 CREATE INDEX IF NOT EXISTS agent_subscriptions_service_app ON agent_subscriptions(service_app_id) WHERE service_app_id IS NOT NULL;
 `;
 
+/** Install after corner_person_state; both projections derive from one action table. */
+export const ROOM_EVENT_SUBSCRIPTIONS_SCHEMA = `
+-- One actionable store. subscribe_events inheritance stays a direct event even
+-- when the same parent key has a prompt; an explicit corner preference overrides it.
+CREATE OR REPLACE VIEW room_event_subscriptions AS
+SELECT subscription.id,subscription.workspace_id,subscription.room_id,subscription.agent_id,
+  subscription.source,subscription.event,subscription.repository,subscription.service_app_id,
+  subscription.service_account_id,subscription.service_channel_id,subscription.service_channel_name,subscription.trigger_id,
+  subscription.prompt,subscription.workflow_slug,subscription.fired_count,subscription.created_at,
+  subscription.last_fired_at,subscription.title,subscription.trigger_text,subscription.webhook_token,
+  subscription.webhook_suffix,subscription.webhook_token_created_at,subscription.webhook_owner_id,subscription.inherit_to_corners,false inherited
+FROM agent_subscriptions subscription WHERE source='room'
+UNION ALL
+SELECT subscription.id,subscription.workspace_id,corner.id room_id,subscription.agent_id,
+  subscription.source,subscription.event,subscription.repository,subscription.service_app_id,
+  subscription.service_account_id,subscription.service_channel_id,subscription.service_channel_name,
+  subscription.trigger_id,NULL::text prompt,NULL::text workflow_slug,0 fired_count,
+  subscription.created_at,NULL::timestamptz last_fired_at,NULL::text title,NULL::text trigger_text,
+  subscription.webhook_token,subscription.webhook_suffix,subscription.webhook_token_created_at,
+  subscription.webhook_owner_id,subscription.inherit_to_corners,true inherited
+FROM agent_subscriptions subscription JOIN rooms corner ON corner.parent_id=subscription.room_id
+LEFT JOIN corner_person_state state ON state.corner_id=corner.id AND state.identity_id=subscription.agent_id
+WHERE subscription.source='room' AND subscription.inherit_to_corners AND corner.archived_at IS NULL
+  AND NOT COALESCE(state.subscriptions_overridden,false)
+  AND NOT EXISTS (SELECT 1 FROM agent_subscriptions own WHERE own.room_id=corner.id
+    AND own.agent_id=subscription.agent_id AND own.source='room' AND own.event=subscription.event);
+
+CREATE OR REPLACE VIEW effective_agent_subscriptions AS
+SELECT * FROM room_event_subscriptions
+UNION ALL
+SELECT subscription.id,subscription.workspace_id,subscription.room_id,subscription.agent_id,
+  subscription.source,subscription.event,subscription.repository,subscription.service_app_id,
+  subscription.service_account_id,subscription.service_channel_id,subscription.service_channel_name,subscription.trigger_id,
+  subscription.prompt,subscription.workflow_slug,subscription.fired_count,subscription.created_at,
+  subscription.last_fired_at,subscription.title,subscription.trigger_text,subscription.webhook_token,
+  subscription.webhook_suffix,subscription.webhook_token_created_at,subscription.webhook_owner_id,subscription.inherit_to_corners,false inherited
+FROM agent_subscriptions subscription WHERE source<>'room';
+`;
+
 type Row = {
-  title?: string | null; trigger_text?: string | null;
+  title?: string | null; trigger_text?: string | null; inherited?: boolean;
   id: string; room_id: string; agent_id: string; source: SubscriptionSource;
-  event: string; repository: string | null; prompt: string; workflow_slug: string | null; fired_count: number;
+  event: string; repository: string | null; prompt: string | null; workflow_slug: string | null; fired_count: number;
   service_app_id: string | null; service_account_id: string | null; service_channel_id: string | null;
   service_channel_name: string | null; trigger_id: string | null;
   provider_status?: 'registering' | 'active' | 'retiring' | 'error' | null;
@@ -91,7 +138,7 @@ type Row = {
 };
 function view(row: Row): RoomSubscriptionView {
   return {
-    id: row.id, roomId: row.room_id, agentId: row.agent_id,
+    id: row.inherited ? `legacy:${row.room_id}:${row.agent_id}:${row.event}` : row.id, roomId: row.room_id, agentId: row.agent_id,
     source: row.source, event: row.event,
     ...(row.repository ? { repository: row.repository } : {}),
     ...(row.source === 'service' && row.event === 'new_message' ? { service: 'Slack' as const,
@@ -106,42 +153,14 @@ function view(row: Row): RoomSubscriptionView {
     ...(row.title ? { title: row.title } : {}),
     ...(row.trigger_text ? { when: row.trigger_text } : {}),
     ...(row.source === 'webhook' ? { when: 'On webhook call' } : {}),
-    prompt: row.prompt, ...(row.workflow_slug ? { workflowSlug: row.workflow_slug } : {}), firedCount: row.fired_count,
+    ...(row.prompt ? { prompt: row.prompt } : {}), ...(row.workflow_slug ? { workflowSlug: row.workflow_slug } : {}), firedCount: row.fired_count,
     createdAt: Math.floor(row.created_at.getTime() / 1000),
     ...(row.last_fired_at ? { lastFiredAt: Math.floor(row.last_fired_at.getTime() / 1000) } : {}),
     ...(row.parent_id ? { corner: { id: row.room_id, name: row.room_name ?? 'Corner' } } : {}),
   };
 }
 
-type LegacyRow = {
-  room_id: string; agent_id: string; event: string; joined_at: Date;
-  parent_id: string | null; room_name: string; reviewer_agent_id: string | null;
-};
-function legacyView(row: LegacyRow): RoomSubscriptionView | undefined {
-  if (!isSubscribableEventKind(row.event) ||
-    (row.event === 'check-passed' && row.reviewer_agent_id === row.agent_id)) return undefined;
-  return {
-    id: `legacy:${row.room_id}:${row.agent_id}:${row.event}`,
-    roomId: row.room_id, agentId: row.agent_id, source: 'room', event: row.event,
-    createdAt: Math.floor(row.joined_at.getTime() / 1000),
-    ...(row.parent_id ? { corner: { id: row.room_id, name: row.room_name } } : {}),
-  };
-}
-async function legacySubscriptions(db: SqlDatabase, roomId: string, agentId?: string) {
-  const rows = await db.query<LegacyRow>(
-    `SELECT surface.id room_id,member.identity_id agent_id,kind.event,
-       member.joined_at,surface.parent_id,surface.name room_name,${cornerReviewerSql('surface')} reviewer_agent_id
-     FROM rooms surface
-     JOIN rooms parent ON parent.id=COALESCE(surface.parent_id,surface.id)
-     JOIN room_access member ON member.room_id=surface.id AND member.removed_at IS NULL
-     JOIN identities agent ON agent.id=member.identity_id AND agent.kind='agent'
-     CROSS JOIN LATERAL jsonb_array_elements_text(member.event_subscriptions) kind(event)
-     WHERE (surface.id=$1 OR ($2::text IS NULL AND surface.parent_id=$1))
-       AND ($2::text IS NULL OR member.identity_id=$2)
-       AND surface.archived_at IS NULL`, [roomId, agentId ?? null],
-  );
-  return rows.rows.flatMap((row) => legacyView(row) ?? []);
-}
+// Older phones retain these IDs; decode them only to edit the single subscription store.
 function legacyId(id: string) {
   const match = /^legacy:([0-9a-f-]{36}):([^:]+):([^:]+)$/.exec(id);
   return match ? { roomId: match[1]!, agentId: match[2]!, event: match[3]! } : undefined;
@@ -274,13 +293,16 @@ async function createAgentSubscriptionInDb(
 
 export async function listAgentSubscriptions(db: SqlDatabase, roomId: string, agentId: string) {
   const rows = await db.query<Row>(
-    `SELECT subscription.*,hook.status provider_status FROM agent_subscriptions subscription
+    `SELECT subscription.*,hook.status provider_status FROM effective_agent_subscriptions subscription
      LEFT JOIN provider_webhooks hook ON hook.id::text=subscription.trigger_id
      JOIN room_access member ON member.room_id=subscription.room_id AND member.identity_id=$2 AND member.removed_at IS NULL
+     JOIN rooms surface ON surface.id=subscription.room_id
+     JOIN rooms parent ON parent.id=COALESCE(surface.parent_id,surface.id)
      WHERE subscription.room_id=$1 AND subscription.agent_id=$2
+       AND NOT (subscription.prompt IS NULL AND subscription.event='check-passed' AND ${cornerReviewerSql('surface')} IS NOT DISTINCT FROM subscription.agent_id)
      ORDER BY subscription.created_at,subscription.id`, [roomId, agentId],
   );
-  return { subscriptions: [...rows.rows.map(view), ...await legacySubscriptions(db, roomId, agentId)] };
+  return { subscriptions: rows.rows.map(view) };
 }
 
 async function removeUnusedTrigger(db: SqlDatabase, composio: ComposioApps | undefined, triggerId: string | null) {
@@ -299,6 +321,7 @@ export async function deleteAgentSubscription(db: SqlDatabase, roomId: string, a
     await deleteRoomSubscription(db, roomId, id, composio);
     return;
   }
+  if (await removeRoomEventSubscription(db, roomId, agentId, {id})) return;
   const deleted = await db.query<{ trigger_id: string | null }>(
     `DELETE FROM agent_subscriptions subscription USING room_access member
      WHERE subscription.id=$1 AND subscription.room_id=$2 AND subscription.agent_id=$3
@@ -313,25 +336,32 @@ export async function deleteAgentSubscription(db: SqlDatabase, roomId: string, a
 export async function listRoomSubscriptions(db: SqlDatabase, roomId: string) {
   const rows = await db.query<Row>(
     `SELECT subscription.*,hook.status provider_status,surface.parent_id,surface.name room_name
-     FROM agent_subscriptions subscription
+     FROM effective_agent_subscriptions subscription
      LEFT JOIN provider_webhooks hook ON hook.id::text=subscription.trigger_id
      JOIN rooms surface ON surface.id=subscription.room_id AND surface.archived_at IS NULL
+     JOIN rooms parent ON parent.id=COALESCE(surface.parent_id,surface.id)
      JOIN room_access member ON member.room_id=subscription.room_id
        AND member.identity_id=subscription.agent_id AND member.removed_at IS NULL
-     WHERE surface.id=$1 OR surface.parent_id=$1
+     WHERE (surface.id=$1 OR surface.parent_id=$1)
+       AND NOT (subscription.prompt IS NULL AND subscription.event='check-passed' AND ${cornerReviewerSql('surface')} IS NOT DISTINCT FROM subscription.agent_id)
      ORDER BY subscription.created_at,subscription.id`, [roomId],
   );
-  return { subscriptions: [...rows.rows.map(view), ...await legacySubscriptions(db, roomId)] };
+  return { subscriptions: rows.rows.map(view) };
 }
 
 export async function deleteRoomSubscription(db: SqlDatabase, roomId: string, id: string,
   composio?: ComposioApps) {
   const legacy = legacyId(id);
   if (legacy) {
-    const updated = await deleteMembershipSubscription(db, [roomId,legacy.roomId,legacy.agentId,legacy.event]);
-    if (!updated.rowCount) throw new Error('subscription not found');
+    const surface = (await db.query(`SELECT 1 FROM rooms WHERE id=$1 AND (id=$2 OR parent_id=$2)`, [legacy.roomId, roomId])).rowCount;
+    if (!surface || !await removeRoomEventSubscription(db, legacy.roomId, legacy.agentId, {event:legacy.event}))
+      throw new Error('subscription not found');
     return;
   }
+  const roomSubscription = (await db.query<{room_id:string;agent_id:string}>(`SELECT subscription.room_id,subscription.agent_id
+    FROM agent_subscriptions subscription JOIN rooms surface ON surface.id=subscription.room_id
+    WHERE subscription.id=$1 AND source='room' AND (surface.id=$2 OR surface.parent_id=$2)`, [id,roomId])).rows[0];
+  if (roomSubscription) return deleteAgentSubscription(db, roomSubscription.room_id, roomSubscription.agent_id, id, composio);
   const deleted = await db.query<{ trigger_id: string | null }>(
     `DELETE FROM agent_subscriptions subscription USING rooms surface
      WHERE subscription.id=$1 AND surface.id=subscription.room_id
@@ -415,7 +445,7 @@ export async function fireServiceSubscriptions(db: SqlDatabase, body: Record<str
             ? { name: typeof (data.sender as Record<string, unknown>).name === 'string'
               ? ((data.sender as Record<string, unknown>).name as string).slice(0, 100) : undefined }
             : undefined },
-        subscriptionPrompt: current.prompt, subscriptionWorkflowSlug: current.workflow_slug ?? undefined,
+        subscriptionPrompt: current.prompt ?? undefined, subscriptionWorkflowSlug: current.workflow_slug ?? undefined,
       });
       if (line.inserted) await tx.query(`UPDATE agent_subscriptions
         SET last_fired_at=now(),fired_count=fired_count+1 WHERE id=$1`, [row.id]);
@@ -479,7 +509,7 @@ export async function fireRepositorySubscriptions(
         id, roomId: row.room_id, authorId: SYSTEM_IDENTITY_ID,
         ...repositorySubscriptionLine(eventName, repository, details),
         kind: 'subscription-fired', payload, wakes: [row.agent_id],
-        subscriptionPrompt: current.prompt, subscriptionWorkflowSlug: current.workflow_slug ?? undefined,
+        subscriptionPrompt: current.prompt ?? undefined, subscriptionWorkflowSlug: current.workflow_slug ?? undefined,
       });
       if (line.inserted) await tx.query(`UPDATE agent_subscriptions
         SET last_fired_at=now(),fired_count=fired_count+1 WHERE id=$1`, [row.id]);
@@ -493,4 +523,159 @@ export async function fireRepositorySubscriptions(
 export function subscriptionPromptBody(text: string, event: { kind?: string; payload?: unknown; subscriptionPrompt?: string; subscriptionWorkflowSlug?: string } | null): string {
   return event?.kind === 'subscription-fired'
     ? subscriptionActionPrompt(event) : text;
+}
+
+async function materializeCornerSubscriptions(tx: SqlDatabase, roomId: string, agentId: string): Promise<void> {
+  await tx.query(`INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,prompt,created_at,inherit_to_corners)
+    SELECT gen_random_uuid(),workspace_id,room_id,agent_id,'room',event,NULL,created_at,true
+    FROM room_event_subscriptions WHERE room_id=$1 AND agent_id=$2 AND inherited
+    ON CONFLICT DO NOTHING`, [roomId, agentId]);
+  await tx.query(`INSERT INTO corner_person_state(corner_id,identity_id,subscriptions_overridden) VALUES($1,$2,true)
+    ON CONFLICT(corner_id,identity_id) DO UPDATE SET subscriptions_overridden=true`, [roomId, agentId]);
+}
+
+/** Stop exactly one event. Materialize inherited siblings so deleting a corner
+ * override cannot reveal the same parent subscription again. */
+async function removeRoomEventSubscription(db: SqlDatabase, roomId: string, agentId: string,
+  key: {id?:string;event?:string}): Promise<boolean> {
+  return db.transaction(async tx => {
+    await tx.query("SELECT pg_advisory_xact_lock(hashtext('room-subscriptions:'||$1||':'||$2))", [roomId, agentId]);
+    const subscription=(await roomEventSubscriptions(tx,roomId)).find(row=>row.agent_id===agentId &&
+      (key.id ? row.id===key.id : row.event===key.event));
+    if(!subscription) return false;
+    const surface=(await tx.query<{parent_id:string|null;reviewer:string|null}>(
+      `SELECT room.parent_id,${cornerReviewerSql('room')} reviewer FROM rooms room
+       JOIN rooms parent ON parent.id=COALESCE(room.parent_id,room.id) WHERE room.id=$1`,[roomId])).rows[0]!;
+    if(subscription.prompt===null && subscription.event==='check-passed' && surface.reviewer===agentId)
+      throw new Error('subscription not found');
+    if(surface.parent_id) await materializeCornerSubscriptions(tx,roomId,agentId);
+    const deleted=await tx.query(`DELETE FROM agent_subscriptions WHERE room_id=$1 AND agent_id=$2
+      AND source='room' AND event=$3`,[roomId,agentId,subscription.event]);
+    return Boolean(deleted.rowCount);
+  });
+}
+
+/** Prompt-free subscribe_events is a wire adapter to the same room/event key as
+ * prompted actions. Retained events keep their explicit prompt; removed events stop. */
+export async function setRoomEventSubscriptions(db: SqlDatabase, roomId: string, agentId: string,
+  kinds: readonly string[]): Promise<string[]> {
+  return db.transaction(async tx => {
+    await tx.query("SELECT pg_advisory_xact_lock(hashtext('room-subscriptions:'||$1||':'||$2))", [roomId, agentId]);
+    const surface = (await tx.query<{ workspace_id: string; parent_id: string | null; reviewer: string | null }>(
+      `SELECT room.workspace_id,room.parent_id,${cornerReviewerSql('room')} reviewer
+       FROM rooms room JOIN rooms parent ON parent.id=COALESCE(room.parent_id,room.id)
+       JOIN room_access member ON member.room_id=room.id AND member.identity_id=$2 AND member.removed_at IS NULL
+       WHERE room.id=$1 AND room.archived_at IS NULL`, [roomId, agentId])).rows[0];
+    if (!surface) throw new Error('daemon room access denied');
+    // Reviewer duties remain described when the agent replaces its own preferences.
+    const events = [...new Set([...kinds, ...(surface.reviewer === agentId ? ['check-passed'] : [])])];
+    if (events.some(event => !isSubscribableEventKind(event))) throw new Error('invalid subscription event');
+    // Materialize the inherited preference before setting its override flag.
+    if (surface.parent_id) {
+      await materializeCornerSubscriptions(tx, roomId, agentId);
+    }
+    await tx.query(`DELETE FROM agent_subscriptions WHERE room_id=$1 AND agent_id=$2 AND source='room'
+      AND NOT event=ANY($3::text[])`, [roomId, agentId, events]);
+    for (const event of events) await tx.query(`INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,prompt,inherit_to_corners)
+      VALUES($1,$2,$3,$4,'room',$5,NULL,true)
+      ON CONFLICT(room_id,agent_id,source,event,COALESCE(repository,''),COALESCE(service_app_id::text,''),COALESCE(service_channel_id,''))
+      DO UPDATE SET inherit_to_corners=true`, [randomUUID(), surface.workspace_id, roomId, agentId, event]);
+    return events;
+  });
+}
+
+export async function roomEventSubscriptions(db: SqlDatabase, roomId: string, event?: string, lock = false) {
+  return (await db.query<Row & { inherited: boolean }>(`SELECT subscription.* FROM room_event_subscriptions subscription
+    JOIN agent_subscriptions stored ON stored.id=subscription.id
+    JOIN room_access member ON member.room_id=subscription.room_id AND member.identity_id=subscription.agent_id
+      AND member.removed_at IS NULL
+    JOIN identities agent ON agent.id=subscription.agent_id AND agent.kind='agent'
+    WHERE subscription.room_id=$1 AND ($2::text IS NULL OR subscription.event=$2)
+    ORDER BY subscription.id ${lock ? 'FOR UPDATE OF stored' : ''}`, [roomId, event ?? null])).rows;
+}
+
+export async function subscriptionRooms(db: SqlDatabase, roomIds: readonly string[], event: string): Promise<string[]> {
+  return (await db.query<{ room_id: string }>(`SELECT DISTINCT subscription.room_id FROM room_event_subscriptions subscription
+    JOIN room_access member ON member.room_id=subscription.room_id AND member.identity_id=subscription.agent_id
+      AND member.removed_at IS NULL
+    JOIN identities agent ON agent.id=subscription.agent_id AND agent.kind='agent'
+    WHERE subscription.room_id=ANY($1::uuid[]) AND subscription.event=$2`, [roomIds, event])).rows.map(row => row.room_id);
+}
+
+/** Upgrade-only import. Old JSON is retired after copying; it never dispatches.
+ * Prompted rows win the shared event key so migration cannot create a second action. */
+export async function migrateMembershipSubscriptions(db: SqlDatabase): Promise<void> {
+  await db.transaction(async tx => {
+    await tx.query(`INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,prompt,created_at,inherit_to_corners)
+      SELECT gen_random_uuid(),member.workspace_id,member.room_id,member.identity_id,'room',kind,NULL,member.joined_at,true
+      FROM memberships member JOIN rooms room ON room.id=member.room_id AND room.parent_id IS NULL AND room.archived_at IS NULL
+      CROSS JOIN LATERAL jsonb_array_elements_text(member.event_subscriptions) kind
+      WHERE kind=ANY($1::text[])
+      ON CONFLICT(room_id,agent_id,source,event,COALESCE(repository,''),COALESCE(service_app_id::text,''),COALESCE(service_channel_id,''))
+      DO UPDATE SET inherit_to_corners=true`, [[...SUBSCRIBABLE_EVENT_KINDS]]);
+    await tx.query(`INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,prompt,created_at,inherit_to_corners)
+      SELECT gen_random_uuid(),room.workspace_id,state.corner_id,state.identity_id,'room',kind,NULL,state.created_at,true
+      FROM corner_person_state state JOIN rooms room ON room.id=state.corner_id AND room.archived_at IS NULL
+      CROSS JOIN LATERAL jsonb_array_elements_text(state.event_subscriptions) kind
+      WHERE kind=ANY($1::text[])
+      ON CONFLICT(room_id,agent_id,source,event,COALESCE(repository,''),COALESCE(service_app_id::text,''),COALESCE(service_channel_id,''))
+      DO UPDATE SET inherit_to_corners=true`, [[...SUBSCRIBABLE_EVENT_KINDS]]);
+    await tx.query(`UPDATE corner_person_state SET subscriptions_overridden=true,event_subscriptions=NULL
+      WHERE event_subscriptions IS NOT NULL`);
+    // The membership writer owns even the retirement write to its old column.
+    await retireMembershipSubscriptionLists(tx);
+    await recoverRecentLeaveFacts(tx);
+  });
+}
+
+/** Upgrade-only repair for the old free-agent sweep's ten-minute window.
+ * Current producers declare left and dispatch immediately through systemLine. */
+async function recoverRecentLeaveFacts(db: SqlDatabase): Promise<void> {
+  const leaves=(await db.query<{id:string;room_id:string;agent_id:string}>(`
+    SELECT line.id,subscription.room_id,subscription.agent_id
+    FROM room_event_subscriptions subscription
+    JOIN room_access member ON member.room_id=subscription.room_id AND member.identity_id=subscription.agent_id AND member.removed_at IS NULL
+    JOIN free_agents agent ON agent.agent_id=subscription.agent_id AND agent.state<>'failed' AND agent.removed_at IS NULL
+    CROSS JOIN LATERAL (
+      SELECT message.id,message.card FROM messages message WHERE message.room_id=subscription.room_id
+        AND floor(extract(epoch FROM (message.created_at AT TIME ZONE 'UTC'))*1000)::bigint
+          >=floor(extract(epoch FROM now()-interval '10 minutes')*1000)::bigint
+        AND message.card_type IN ('member-left','member-removed') AND message.system_event->>'kind' IS NULL
+        AND message.deleted_at IS NULL
+    ) line
+    WHERE subscription.event='left' AND subscription.inherit_to_corners
+      AND line.card->>'identityId' IS DISTINCT FROM subscription.agent_id
+      AND NOT EXISTS(SELECT 1 FROM agent_commands command WHERE command.agent_id=subscription.agent_id AND command.source_message_id=line.id)
+  `)).rows;
+  for(const leave of leaves){
+    await db.query(`UPDATE messages SET system_event=system_event||'{"kind":"left"}'::jsonb WHERE id=$1`,[leave.id]);
+    await routeSystemCommand(db,{roomId:leave.room_id,sourceMessageId:leave.id,kind:'left',targets:[leave.agent_id]});
+  }
+}
+
+/** Restore the configured reviewer description without replacing independent user actions. */
+export async function subscribeConfiguredReviewers(db: SqlDatabase, [parentRoomId]: [string | null]) {
+  const rooms = (await db.query<{ id: string; reviewer_agent_id: string }>(`SELECT room.id,room.reviewer_agent_id FROM rooms room
+    JOIN memberships member ON member.room_id=room.id AND member.identity_id=room.reviewer_agent_id AND member.removed_at IS NULL
+    WHERE room.parent_id IS NULL AND room.archived_at IS NULL AND ($1::uuid IS NULL OR room.id=$1)
+      AND NOT EXISTS(SELECT 1 FROM agent_subscriptions subscription WHERE subscription.room_id=room.id
+        AND subscription.agent_id=room.reviewer_agent_id AND source='room' AND event='check-passed')`, [parentRoomId])).rows;
+  for (const room of rooms) await subscribeRoomReviewer(db, [room.id, room.reviewer_agent_id]);
+  return { rowCount: rooms.length };
+}
+export async function unsubscribeRoomReviewer(db: SqlDatabase, [room, agent]: [string, string]) {
+  // A manually prompted action remains independent of reviewer configuration.
+  await db.query(`DELETE FROM agent_subscriptions subscription USING rooms surface
+    WHERE subscription.room_id=surface.id AND (surface.id=$1 OR surface.parent_id=$1)
+      AND subscription.agent_id=$2 AND source='room' AND event='check-passed' AND prompt IS NULL`, [room, agent]);
+}
+export async function subscribeRoomReviewer(db: SqlDatabase, [room, agent]: [string, string]) {
+  // Add the policy key without replacing any concurrently created user actions.
+  await db.query(`INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,prompt,inherit_to_corners)
+    SELECT gen_random_uuid(),surface.workspace_id,surface.id,$2,'room','check-passed',NULL,true
+    FROM rooms surface JOIN room_access member ON member.room_id=surface.id AND member.identity_id=$2 AND member.removed_at IS NULL
+    LEFT JOIN corner_person_state state ON state.corner_id=surface.id AND state.identity_id=$2
+    WHERE surface.archived_at IS NULL AND (surface.id=$1 OR (surface.parent_id=$1 AND state.subscriptions_overridden))
+    ON CONFLICT(room_id,agent_id,source,event,COALESCE(repository,''),COALESCE(service_app_id::text,''),COALESCE(service_channel_id,''))
+    DO UPDATE SET inherit_to_corners=true`, [room, agent]);
 }

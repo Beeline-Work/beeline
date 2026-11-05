@@ -1,3 +1,5 @@
+import { roomEventSubscriptions } from './agent-subscriptions.js';
+import { settleAgentCommand, renewAgentCommandLease } from './agent-command.js';
 import {parkOwnedModelTerminal,OwnedModelOwnerEndRefusal} from './owned-model-parking.js';
 import { assertCurrentTurnOwner, commandOwnerExpiredSql, commandOwnerFenceCteSql, commandOwnerFenceMatchesSql, commandOwnerLiveSql, usesOwnedTurnAdapter, registerOwnedEffectFence } from './turn-ownership.js';
 import type { HelperTurnOwnershipSource } from '@beeline/api-contract/helper-turn-ownership';
@@ -41,7 +43,7 @@ import { postRepositoryOnboarding } from './repository-onboarding.js';
 import { agentUsage, notifyUsageRefreshResult, postedRefreshOutcome, saveAgentUsage } from './agent-usage.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { queueDatabaseWork } from './database-work-queue.js';
-import { setRoomEventSubscriptions } from './corner-person-state.js';
+import { setRoomEventSubscriptions } from './agent-subscriptions.js';
 import { agentMemberMetadata } from './agent-member-metadata.js';
 import { normalizeAgentAsk } from './tray-approval-ask.js';
 import { assertCornerCommandTarget, commandAddress, commandOrder, sendOrder, stopCommandedTurn, reportToCommander, hasOrderContinuation, refuseTagPastCommander, CommandRefusalError } from './commander.js';
@@ -1124,10 +1126,7 @@ export class DaemonService {
           await routeAgentResult(db, command, message.id);
         } else if (name === 'postAgentTurnReceipt') {
           if (candidate.status === 'working' && !command.turn_owner_connection_id)
-            await db.query(
-              `UPDATE agent_commands SET lease_expires_at=now()+interval '90 seconds' WHERE id=$1`,
-              [command.id],
-            );
+            await renewAgentCommandLease(db, command);
           else if (
             candidate.status === 'failed' &&
             ((result as { hiccupRestart?: boolean; updateRequeued?: boolean }).hiccupRestart ||
@@ -1149,10 +1148,7 @@ export class DaemonService {
             // Leave the original pending command for that attempt; do not ask
             // systemd to restart, and do not consume the request.
           } else {
-            await db.query(`UPDATE agent_commands SET state=$2,completed_at=now() WHERE id=$1`, [
-              command.id,
-              candidate.status === 'cancelled' ? 'cancelled' : 'complete',
-            ]);
+            await settleAgentCommand(db, command, candidate.status === 'cancelled' ? 'cancelled' : 'complete');
           }
         }
         return result;
@@ -5997,13 +5993,8 @@ export class DaemonService {
     return { kinds: await setRoomEventSubscriptions(this.database, input.roomId, agentId, kinds) };
   }
   private async listEventSubscriptions(input: Input<'listEventSubscriptions'>, agentId: string) {
-    const rows = await this.database.query<{ event_subscriptions: unknown }>(
-      `SELECT event_subscriptions FROM memberships
-       WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
-      [input.roomId, agentId],
-    );
-    const stored = rows.rows[0]?.event_subscriptions;
-    const kinds = (Array.isArray(stored) ? stored : []).filter(isSubscribableEventKind);
+    const kinds = (await roomEventSubscriptions(this.database, input.roomId))
+      .filter(row => row.agent_id === agentId).map(row => row.event).filter(isSubscribableEventKind);
     return { kinds };
   }
 
@@ -8219,10 +8210,10 @@ export class DaemonService {
     if (!(await this.composio.account(row.composio_account_id,
       row.owner_identity_id, composioToolkitForApp(row.app_key))))
       throw new Error('App account is unavailable; reconnect it');
-    const tools = await this.composio.listTools(composioToolkitForApp(row.app_key), input.query);
-    if (!tools.length && !input.query)
+    const { tools, next } = await this.composio.listTools(composioToolkitForApp(row.app_key), input.query);
+    if (!tools.length && !input.query && !next)
       throw new Error('App provider returned no tools');
-    return { tools, next: 'Use app_tool with query set to a tool slug or search phrase for matching input schemas. The compact catalog is capped at 24000 bytes; query to find tools beyond this list.' };
+    return { tools, next: next ?? 'Use app_tool with query set to a tool slug or search phrase for matching input schemas.' };
   }
 
   private deferredAppTool?: (database: SqlDatabase) => Promise<Output<'executeAppTool'>>;

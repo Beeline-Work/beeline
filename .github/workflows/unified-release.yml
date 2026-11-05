@@ -503,6 +503,38 @@ jobs:
         env:
           BEELINE_BUNDLE_COMMIT: ${{ needs.initialize.outputs.release_sha }}
           BEELINE_BUNDLE_VERSION: ${{ needs.initialize.outputs.release_version }}
+      # Exercise the exact archive that is about to be uploaded and promoted.
+      # This verifier installs existing bytes; it does not build another helper.
+      - name: Install the candidate Intel Mac archive for acceptance
+        if: matrix.platform == 'darwin-x64' && steps.shipped.outputs.shipped != 'true'
+        run: node scripts/verify-beeline-install.mjs --platform darwin-x64
+        env:
+          BEELINE_INSTALL_VERIFY_ROOT: ${{ runner.temp }}/beeline-install-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Prove storage expiry and rollback retention on macOS
+        if: matrix.platform == 'darwin-x64' && steps.shipped.outputs.shipped != 'true'
+        working-directory: apps/body
+        run: |
+          npx vitest run src/storage-bloat.regression.test.ts --maxWorkers=2 --minWorkers=1
+          npx vitest run src/helper-storage.darwin.test.ts --maxWorkers=2 --minWorkers=1
+      - name: Prove launchd crash, login-bootstrap, and terminal-exit behavior
+        if: matrix.platform == 'darwin-x64' && steps.shipped.outputs.shipped != 'true'
+        working-directory: apps/body
+        run: |
+          BEELINE_LAUNCHD_ACCEPTANCE=1 npx vitest run src/launchd.test.ts --maxWorkers=2 --minWorkers=1
+          BEELINE_LAUNCHD_ACCEPTANCE=1 npx vitest run src/launchd-acceptance.test.ts --maxWorkers=2 --minWorkers=1
+      - name: Prove pairing and a Room answer on macOS
+        if: matrix.platform == 'darwin-x64' && steps.shipped.outputs.shipped != 'true'
+        working-directory: apps/body
+        env:
+          BEELINE_LAUNCHD_USER: '0'
+          BEELINE_ACCEPTANCE_INSTALL_ROOT: ${{ runner.temp }}/beeline-install-${{ github.run_id }}-${{ github.run_attempt }}
+        run: npx vitest run src/daemon-api-client.integration.test.ts -t "takes an app grant through finish" --maxWorkers=2 --minWorkers=1
+      - name: Prove a Room answer and open_corner on macOS
+        if: matrix.platform == 'darwin-x64' && steps.shipped.outputs.shipped != 'true'
+        working-directory: apps/body
+        env:
+          BEELINE_LAUNCHD_USER: '0'
+        run: npx vitest run src/fresh-room-discovery.integration.test.ts --maxWorkers=2 --minWorkers=1
       - uses: actions/upload-artifact@v4
         if: steps.shipped.outputs.shipped != 'true'
         with:

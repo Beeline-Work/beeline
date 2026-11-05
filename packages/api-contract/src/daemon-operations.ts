@@ -490,7 +490,6 @@ export type DaemonOperationMap = {
     }
   >;
   getCornerCloseRequests: Operation<CornerCursorInput, RoomInboxResult>;
-  /** Long-poll: resolves as soon as the corner has something new, or on a bounded timeout. */
   listUntrackedCorners: Operation<RoomInput, CornerListResult>;
   getRoomRepositoryState: Operation<RoomInput, RoomRepositoryStateResult>;
   noteEmptyRoomRepository: Operation<RoomInput, WriteResult>;

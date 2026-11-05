@@ -573,7 +573,6 @@ export class DaemonService {
   /** Collects network work that must wait for the command transaction to commit. */
   private afterCommit: AfterCommit | undefined;
 
-
   async execute<Name extends keyof DaemonOperationMap>(
     name: Name,
     input: Input<Name>,

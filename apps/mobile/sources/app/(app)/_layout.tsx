@@ -53,6 +53,8 @@ export default function RootLayout() {
         <Stack.Screen
           name="index"
           options={{
+            // The saved deck is now this route; preserve its launch presentation.
+            animation: 'none',
             headerShown: false,
             headerTitle: '',
           }}

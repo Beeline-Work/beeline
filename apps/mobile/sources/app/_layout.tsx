@@ -265,6 +265,10 @@ async function loadFonts() {
   });
 }
 
+// Overlap font I/O with the first tree and local account restoration.
+const fontInitialization = loadFonts()
+  .catch((error) => console.error('Error initializing:', error));
+
 export default function RootLayout() {
   const routeSegments = useSegments();
   React.useLayoutEffect(() => { setMobileErrorRoute(routeSegments); }, [routeSegments]);
@@ -326,14 +330,13 @@ export default function RootLayout() {
     rootReady.current = { promise, resolve };
   }
   React.useEffect(() => {
-    void loadFonts()
-      .catch((error) => console.error('Error initializing:', error))
-      .finally(() => setInitialized(true));
+    void fontInitialization.finally(() => {
+      // The deck may already be laid out beneath the splash. Do not make
+      // revealing it wait for another root render and passive effect.
+      launchSplash.release();
+      setInitialized(true);
+    });
   }, []);
-
-  React.useEffect(() => {
-    if (initialized) launchSplash.release();
-  }, [initialized]);
   React.useEffect(() => {
     if (navigationRef.isReady()) {
       rootReady.current?.resolve();

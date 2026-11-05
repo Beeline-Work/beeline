@@ -2289,7 +2289,8 @@
           "room_id": "existing before the registry; weekly audit reviews",
           "status": "existing before the registry; weekly audit reviews",
           "created_at": "existing before the registry; weekly audit reviews"
-        }
+        },
+        "drop": "docs/agent-server-invariants.md#database-and-reads (retired helper calendar mirror; separate post-drain contract migration)"
       },
       "sentry_wake_issues": {
         "module": "Background work and timers",
@@ -2618,7 +2619,8 @@
           "schedule": "existing before the registry; weekly audit reviews",
           "authority_status": "existing before the registry; weekly audit reviews",
           "updated_at": "existing before the registry; weekly audit reviews"
-        }
+        },
+        "drop": "docs/agent-server-invariants.md#database-and-reads (retired helper calendar mirror; separate post-drain contract migration)"
       },
       "workflow_backfills": {
         "module": "Saved workflows",

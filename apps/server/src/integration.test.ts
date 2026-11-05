@@ -307,6 +307,8 @@ describe('monolith integration', () => {
     expect(await phone.execute('completeWelcomeCards', {}, fresh)).toEqual({ due: false });
     expect(await phone.execute('readWelcomeCards', {}, fresh)).toEqual({ due: false });
     expect(await phone.execute('readWelcomeCards', {}, HUMAN)).toEqual({ due: false });
+    await expect(phone.execute('readWelcomeCards',{},AGENT)).rejects.toThrow('human identity required');
+    await expect(phone.execute('completeWelcomeCards',{},AGENT)).rejects.toThrow('human identity required');
   });
   it('returns nonretryable refusals for retired tools and legacy watch kinds', async () => {
     const messageId = createHash('sha256').update('retired-tool-source').digest('hex');
@@ -3080,8 +3082,8 @@ describe('monolith integration', () => {
       lifecycleId: 'routing-fixture',
     });
     const activation = (await (
-      await daemonOperation('getRoomInbox', { roomId: ROOM, startAtLatest: true })
-    ).json()) as { cursor?: string; rewindIds?: string[] };
+      await daemonOperation('getRoomInbox', { roomId: ROOM })
+    ).json()) as { cursor?: string };
     expect(activation).toMatchObject({ dispatchVersion: 1 });
     const connect = async () => {
       const socket = new WebSocket(`${origin.replace('http', 'ws')}/v1/phone/live`, [
@@ -3127,7 +3129,7 @@ describe('monolith integration', () => {
     second.close();
   });
 
-  it('rewinds replay far enough to recover a row committed behind its cursor', async () => {
+  it('delivers a durable command whose source was committed behind the history cursor', async () => {
     const cursorId = 'a'.repeat(64);
     const lateId = '1'.repeat(64);
     await database.query(
@@ -3136,8 +3138,8 @@ describe('monolith integration', () => {
       [cursorId, ROOM, HUMAN],
     );
     const activation = (await (
-      await daemonOperation('getRoomInbox', { roomId: ROOM, startAtLatest: true })
-    ).json()) as { cursor: string; rewindIds: string[] };
+      await daemonOperation('getRoomInbox', { roomId: ROOM })
+    ).json()) as { cursor?: string };
     expect(activation).toMatchObject({ dispatchVersion: 1 });
 
     // This is the observable result of the T5b interleaving: transaction B's
@@ -3159,14 +3161,7 @@ describe('monolith integration', () => {
       await daemonOperation('getRoomInbox', { roomId: ROOM, after: activation.cursor })
     ).json()) as { items: Array<{ id: string }> };
     expect(strict.items).toContainEqual(expect.objectContaining({ id: lateId }));
-    const replay = (await (
-      await daemonOperation('getRoomInbox', {
-        roomId: ROOM,
-        after: activation.cursor,
-        rewind: true,
-      })
-    ).json()) as { items: Array<{ id: string }> };
-    expect(replay.items).toContainEqual(expect.objectContaining({ id: lateId }));
+
   });
 
   it('hands a corner reader the draft its turn is already writing when they subscribe', async () => {
@@ -3413,6 +3408,16 @@ describe('monolith integration', () => {
     // Nothing is dropped or duplicated across the two windows: together they
     // cover every one of the 250 rows exactly once.
     expect(new Set([...earliest, ...recent]).size).toBe(250);
+    // A future-dated row is readable without swallowing intervening history.
+    const future=rowId(251);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
+      VALUES($1,$2,$3,'future row',now()+interval '30 seconds')`,[future,ROOM,HUMAN]);
+    const futurePage=await (await daemonOperation('getRoomConversation',{roomId:ROOM,limit:5})).json() as {
+      items:{id:string}[];cursor:string;
+    };
+    expect(futurePage.items.at(-1)?.id).toBe(future);
+    expect(futurePage.cursor).toBe(`${base+250*1000},${rowId(250)}`);
+
   });
 
   it('fetches an exact Room message in bounded pages under Room membership', async () => {

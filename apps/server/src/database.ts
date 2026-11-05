@@ -92,6 +92,7 @@ import { CORNER_ATTENTION_SCHEMA } from './corner-attention.js';
 import { backfillCornerFollows, cornerFollowsSchemaSql } from './corner-follow.js';
 import { alreadyNoOp, alreadySatisfied, logLockHolders, triggerAlreadyCurrent, runMigrationStep, splitMigrationStatements } from './migration-steps.js';
 import { Pool, type PoolClient, type PoolConfig, type QueryResultRow } from 'pg';
+import { createHash } from 'node:crypto';
 import { QueryProfiler } from './query-profile.js';
 import { DatabaseBackgroundWork } from './database-background-work.js';
 
@@ -215,6 +216,7 @@ export interface SqlDatabase {
   query<Row extends QueryResultRow = QueryResultRow>(
     sql: string,
     values?: unknown[],
+    preparedName?: string,
   ): Promise<QueryResult<Row>>;
   transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T>;
   poolCounts?(): { total: number; idle: number; waiting: number };
@@ -298,6 +300,12 @@ export async function assertSchemaCurrent(database: SqlDatabase): Promise<void> 
     );
   }
 
+}
+
+/** Include final SQL so optional filters and inherited-membership rewrites cannot
+ * bind a different statement to a name already parsed on this connection. */
+function preparedQuery(name: string, text: string, values: unknown[]) {
+  return { name: `${name}-${createHash('sha256').update(text).digest('hex').slice(0, 16)}`, text, values };
 }
 
 export class PostgresDatabase implements ClosableDatabase {
@@ -439,12 +447,15 @@ export class PostgresDatabase implements ClosableDatabase {
   async query<Row extends QueryResultRow = QueryResultRow>(
     sql: string,
     values: unknown[] = [],
+    preparedName?: string,
   ): Promise<QueryResult<Row>> {
     try {
       const raw = await this.#timed(sql, async () => {
         const { client, release } = await this.#connectCheckedOut();
         try {
-          const result = values.length ? await client.query<Row>(sql, values) : await client.query<Row>(sql);
+          const result = preparedName
+            ? await client.query<Row>(preparedQuery(preparedName, sql, values))
+            : values.length ? await client.query<Row>(sql, values) : await client.query<Row>(sql);
           release();
           return result;
         } catch (error) {
@@ -533,10 +544,12 @@ export class PostgresDatabase implements ClosableDatabase {
         query: async <Row extends QueryResultRow = QueryResultRow>(
           sql: string,
           values: unknown[] = [],
+          preparedName?: string,
         ) => {
           if (expired) throw deadlineError;
           const raw = await this.#timed(sql, () => Promise.race([
-            values.length ? client.query<Row>(sql, values) : client.query<Row>(sql),
+            preparedName ? client.query<Row>(preparedQuery(preparedName, sql, values))
+              : values.length ? client.query<Row>(sql, values) : client.query<Row>(sql),
             deadline,
           ]));
           const result = Array.isArray(raw) ? raw.at(-1) : raw;
@@ -3645,6 +3658,42 @@ export async function migrate(
   await ddlScript('Helper command activation', HELPER_ACTIVATION_SCHEMA);
   await ddlScript('push outbox', PUSH_OUTBOX_SCHEMA);
   await ddlScript('Background obligation sources', BACKGROUND_DUE_SOURCE_SCHEMA);
+  await ddlScript('Retire Tray clock and unused background effects', `
+DROP TRIGGER IF EXISTS beeline_tray_clock_message_retire ON messages;
+DROP TRIGGER IF EXISTS beeline_tray_clock_message_insert ON messages;
+DROP TRIGGER IF EXISTS beeline_tray_clock_message_change ON messages;
+DROP TRIGGER IF EXISTS beeline_tray_clock_seen_retire ON needs_you_marks;
+DROP TRIGGER IF EXISTS beeline_tray_clock_seen_insert ON needs_you_marks;
+DROP TRIGGER IF EXISTS beeline_tray_clock_seen_change ON needs_you_marks;
+DROP TRIGGER IF EXISTS beeline_tray_clock_choice_retire ON room_choices;
+DROP TRIGGER IF EXISTS beeline_tray_clock_choice_insert ON room_choices;
+DROP TRIGGER IF EXISTS beeline_tray_clock_choice_change ON room_choices;
+DROP TRIGGER IF EXISTS beeline_tray_clock_room_move ON rooms;
+DROP TRIGGER IF EXISTS beeline_tray_clock_workspace_birth ON workspaces;
+DROP TABLE IF EXISTS tray_clock_deadlines, tray_clock_sources, tray_clock_state,
+  tray_clock_readiness, tray_clock_readiness_floor, tray_clock_health, tray_clock_owner_fences CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_is_open(text,text,text) CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_desired(text,text,text) CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_reconcile(text,text,text) CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_retire(text,text,text) CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_consume(text,text,bigint) CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_capture() CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_room_move() CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_lock_workspaces(uuid[]) CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_publish_basis(uuid,boolean) CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_readiness_wake(uuid) CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_require_readiness(uuid[]) CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_workspace_birth() CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_health_change() CASCADE;
+DROP FUNCTION IF EXISTS beeline_register_tray_clock_owner(text,bigint,uuid) CASCADE;
+DROP FUNCTION IF EXISTS beeline_commit_tray_clock_owner() CASCADE;
+DROP TABLE IF EXISTS background_effect_attempts, background_leader_owners CASCADE;
+DROP FUNCTION IF EXISTS beeline_background_backend_holds(integer,timestamptz) CASCADE;
+DROP INDEX IF EXISTS tray_clock_readiness_rooms_idx;
+DROP INDEX IF EXISTS tray_clock_readiness_messages_idx;
+DROP INDEX IF EXISTS tray_clock_readiness_marks_idx;
+DROP INDEX IF EXISTS tray_clock_readiness_choices_idx;
+`);
   if (!options.deferData) await migrateData(database);
 }
 

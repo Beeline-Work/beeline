@@ -7125,7 +7125,11 @@ export class DaemonService {
       ? await authorizeCommandOutput(this.database, roomId, agentId, context.requestId, context.generationId, false, false)
       : undefined);
     if (command) {
-      const requester = await this.grantRequester(command);
+      // Optional setup guidance cannot require personal-resource authority.
+      // Source-less MCP orders may run, but cannot offer onboarding or acquire
+      // a resource requester by falling back to the executing agent's owner.
+      const requester = await this.findGrantRequester(command);
+      if (!requester) return undefined;
       if (requester.kind === 'human') return requester.id;
     }
     return (await this.database.query<{ owner_id: string }>(
@@ -7134,6 +7138,13 @@ export class DaemonService {
 
   /** Root command provenance is the authority even after delegation and resumes. */
   private async grantRequester(command = this.authorizedCommand) {
+    const requester = await this.findGrantRequester(command);
+    if (!requester) throw new Error('resource requester not found: missing message or unverified command-only root');
+    return requester;
+  }
+
+  /** Missing provenance omits optional setup; effect gates use grantRequester. */
+  private async findGrantRequester(command = this.authorizedCommand) {
     if (!command) throw new Error('resource access requires an active command');
     let requester = (
       await this.database.query<{
@@ -7173,7 +7184,7 @@ export class DaemonService {
         [command.root_command_id, command.root_source_message_id, SYSTEM_IDENTITY_ID],
       )).rows[0];
     }
-    if (!requester) throw new Error('resource requester not found: missing message or unverified command-only root');
+    if (!requester) return undefined;
     // A saved workflow run's turns answer to the run's person, not the wake
     // card's author: a handoff card is written by the agent handing off, and a
     // lease failover card by the system. `workflowRunRequester` returns the

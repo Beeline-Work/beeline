@@ -506,7 +506,6 @@ export class DaemonApiClient {
         return await this.#channel.requestOperation(name, input);
       } catch (error) {
         const failure = error as {status?: number; code?: string};
-        if ((!failure.code || failure.code === 'deadline_exceeded') && this.#channel.isOpen()) this.machine.reconnectNow();
         const status = failure.status ?? 503;
         if (failure.code === 'deadline_exceeded') this.timeoutCount++;
         const refusal = new DaemonApiError(error instanceof Error ? error.message : 'Machine operation outcome is UNKNOWN',

@@ -95,7 +95,7 @@ it.each([0, 2])('restores all 12 Rooms and 12 corners after startup read loss an
   expect(fetcher).not.toHaveBeenCalled();
 });
 
-it('reconnects a failed intake read without an external wake and shares the connecting successor', async () => {
+it('keeps the machine epoch stable after N refused reads, then reads once each on the next registration', async () => {
   const { sockets, connected, fetcher } = fixture();
   const first = sockets[0]!;
   first.holdReads = true;
@@ -105,10 +105,22 @@ it('reconnects a failed intake read without an external wake and shares the conn
   for (const frame of requests)
     first.receive({ type: 'daemon-operation-result', requestId: frame.requestId, error: 'unavailable', status: 503 });
   await setImmediate();
+  expect(sockets).toHaveLength(1);
+  expect(first.frames.filter(frame => frame.operation === 'getAgentCommands')).toHaveLength(24);
+  expect(first.frames.filter(frame => frame.type === 'register')).toHaveLength(1);
+  // Refusals cannot replace the shared socket. Only its actual close admits
+  // the successor, even while all Room supervisors are waiting.
+  first.close();
   expect(sockets).toHaveLength(2);
-  sockets[1]!.open(); sockets[1]!.register();
+  sockets[1]!.open();
+  await setImmediate();
+  expect(sockets[1]!.frames.every(frame => frame.type === 'register')).toBe(true);
+  sockets[1]!.register();
   await setImmediate();
   expect(connected.size).toBe(24);
+  expect(sockets).toHaveLength(2);
+  for (const roomId of places)
+    expect(sockets[1]!.frames.filter(frame => frame.operation === 'getAgentCommands' && frame.input.roomId === roomId)).toHaveLength(1);
   expect(fetcher).not.toHaveBeenCalled();
 });
 

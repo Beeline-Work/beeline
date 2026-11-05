@@ -95,7 +95,7 @@ m44_it('answers local watchdog wakes after a failed discovery and reads again on
   try {
     await m44_vi.advanceTimersByTimeAsync(3_600_000);
     m44_expect(feed).toHaveBeenCalledTimes(60);
-    m44_expect(reconnect).toHaveBeenCalledOnce();
+    m44_expect(reconnect).not.toHaveBeenCalled();
     m44_expect(execute).toHaveBeenCalledOnce();
     wake();
     await m44_vi.advanceTimersByTimeAsync(0);

@@ -4,6 +4,7 @@ import { LiveHub } from './live.js';
 import { migratedDatabase,type PgliteDatabase } from './test-support.js';
 import { HELPER_ACTIVATION_SCHEMA } from './helper-activation-schema.js';
 import { captureCommandActivation,fenceCommandActivationEnqueue } from './helper-activation.js';
+import { FREE_AGENT_REPOSITORY_GUIDE,FREE_AGENT_TURN_GUIDE } from './free-agents.js';
 import type { CommandActivationInput } from '@beeline/api-contract/helper-activation';
 const owner='1'.repeat(64),agent='2'.repeat(64);
 const workspace='11111111-1111-4111-8111-111111111111',room='22222222-2222-4222-8222-222222222222';
@@ -73,5 +74,50 @@ describe('command-owned coherent activation context',()=>{
     expect(snapshot.grants.grants.some(grant=>grant.grantId===grantId)).toBe(true);
     await expect(daemon.execute('consumeAgentGrant',{grantId},agent)).rejects.toThrow('once grant not found');
     const delivered=vi.fn();expect(await fenceCommandActivationEnqueue(db,snapshot,delivered)).toBe(false);expect(delivered).not.toHaveBeenCalled();
+  });
+  it.each(['room','corner','repository-corner'] as const)('activates a source-less MCP delegation in a %s without authorizing resources',async place=>{
+    const roomId=place==='room'?room:place==='corner'?'44444444-4444-4444-8444-444444444444':'55555555-5555-4555-8555-555555555555';
+    if(place!=='room'){
+      await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,repository_resolution,repository_key,repository_remote)
+        VALUES($1,$2,$3,$4,$5,$6,$7)`,[roomId,workspace,room,place,place==='repository-corner'?'repository':'none',
+        place==='repository-corner'?'synthetic/project':null,place==='repository-corner'?'https://github.com/synthetic/project.git':null]);
+      await db.query(`INSERT INTO corner_facts(corner_id) VALUES($1)`,[roomId]);
+    }
+    const rootId=`mcp-root-${place}`,commandId=`mcp-delegation-${place}`,generationId=`mcp-generation-${place}`;
+    // createClaimedMcpAgentCommand's no-mention shape: no message, payload or
+    // human requester. A legitimate order inherits that root after the MCP call.
+    await db.query(`INSERT INTO agent_commands(id,room_id,agent_id,turn_request_id,action,reason,root_command_id,root_source_message_id,agent_depth,state)
+      VALUES($1,$2,$3,$1,'input','mcp_call',$1,$1,0,'complete')`,[rootId,room,agent]);
+    await db.query(`INSERT INTO agent_commands(id,room_id,agent_id,turn_request_id,action,reason,root_command_id,parent_command_id,
+      root_source_message_id,agent_depth,private_payload,state,generation_id,lease_expires_at)
+      VALUES($1,$2,$3,$1,'input','order',$4,$4,$4,1,$5::jsonb,'claimed',$6,now()+interval '1 day')`,
+      [commandId,roomId,agent,rootId,JSON.stringify({kind:'order',authorId:agent,fromRoomId:room,text:'Synthetic delegated task'}),generationId]);
+    const activation={...input,roomId,commandId,generationId};
+    const snapshot=await daemon.readCommandActivation(activation,agent);
+    expect(snapshot).toMatchObject({configuration:{soul:{instructions:'Synthetic setup'}},repository:{resolution:place==='repository-corner'?'repository':'none'}});
+    expect(snapshot.repository).not.toHaveProperty('repositoryOnboarding');
+    if(place!=='room')expect(snapshot.corner).toMatchObject({cornerId:roomId,parentRoomId:room});
+    const delivered=vi.fn();expect(await fenceCommandActivationEnqueue(db,snapshot,delivered)).toBe(true);
+    expect(delivered).toHaveBeenCalledWith(snapshot);
+    const context={roomId,requestId:commandId,generationId};
+    // The legacy setup read also succeeds, while effects still require exactly
+    // the verified requester that this command intentionally does not have.
+    expect(await daemon.execute('getRoomRepositoryState',context,agent)).not.toHaveProperty('repositoryOnboarding');
+    await expect(daemon.execute('authorizeSquireCall',context,agent)).rejects.toThrow('resource requester not found');
+    await expect(daemon.execute('postRepositoryOnboarding',{...context,kind:'repository'},agent)).rejects.toThrow('resource requester not found');
+  });
+  it('omits optional repository guidance from free-agent configuration with no verified requester',async()=>{
+    await db.query(`INSERT INTO free_agents(agent_id,workspace_id,owner_id,sealed_keys) VALUES($1,$2,$3,'synthetic')`,[agent,workspace,owner]);
+    try{
+      expect((await daemon.readCommandActivation(input,agent)).configuration.soul?.instructions).toContain(FREE_AGENT_REPOSITORY_GUIDE);
+      await db.query(`UPDATE agent_commands SET root_source_message_id=id WHERE id=$1`,[input.commandId]);
+      const snapshot=await daemon.readCommandActivation(input,agent);
+      expect(snapshot.configuration.soul?.instructions).toContain(FREE_AGENT_TURN_GUIDE);
+      expect(snapshot.configuration.soul?.instructions).not.toContain(FREE_AGENT_REPOSITORY_GUIDE);
+      expect(snapshot.repository).not.toHaveProperty('repositoryOnboarding');
+    }finally{
+      await db.query(`DELETE FROM free_agents WHERE agent_id=$1`,[agent]);
+      await db.query(`UPDATE agent_commands SET root_command_id=id,root_source_message_id='synthetic-source' WHERE id=$1`,[input.commandId]);
+    }
   });
 });

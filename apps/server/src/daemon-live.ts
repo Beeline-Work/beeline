@@ -1,11 +1,9 @@
 import { helperUsageCodecs } from '@beeline/net/helper-codecs';
 import { helperActivationCodecs } from '@beeline/net/helper-activation-codecs';
 import { helperTurnCodecs } from '@beeline/net/helper-turn-codecs';
-import { HELPER_TURN_MAX_FRAME_BYTES } from '@beeline/api-contract/helper-turn-ownership';
 import { turnOwnershipEnabled } from './turn-ownership.js';
 import { helperActivationEnabled,fenceCommandActivationEnqueue } from './helper-activation.js';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
-import { HELPER_OVERLAY_MAX_FRAME_BYTES } from '@beeline/api-contract/helper-overlay';
 import { helperUsageEnabled } from './helper-usage.js';
 import { applyHelperOverlay, helperOverlayEnabled, subscribeHelperOverlayDemand } from './helper-overlay.js';
 import { changesDaemonInbox } from './daemon-inbox-cause.js';
@@ -33,7 +31,6 @@ export const MACHINE_REGISTRATION_DEADLINE_MS = 30_000;
 /** Subprotocol a helper names to open one socket for every agent on its machine. */
 export const MACHINE_SOCKET_PROTOCOL = 'beeline.machine.1';
 
-export const MAX_LIVE_SESSION_TASKS = 8_192;
 export const MAX_LIVE_SESSION_QUEUED_BYTES = 2 * 1024 * 1024;
 export const MAX_LIVE_ROOMS_PER_SESSION = 8_192;
 export const MAX_LIVE_SUBSCRIBE_FRAME_ROOMS = 32;
@@ -128,7 +125,6 @@ export class DaemonAgentSession {
   readonly #releases = new Map<string, () => void>();
   readonly #subscriptionIntents = new Map<string, Record<string, unknown>>();
   readonly #wakeReleases: Array<() => void> = [];
-  #tasks = 0;
   #queuedBytes = 0;
   #tail = Promise.resolve();
   #closed = false;
@@ -317,11 +313,7 @@ export class DaemonAgentSession {
       void this.#operation(raw);
       return;
     }
-    if((raw.type==='overlay-update'||raw.type==='usage-operation'||raw.type==='activation-context'||raw.type==='turn-operation')&&frameBytes>HELPER_OVERLAY_MAX_FRAME_BYTES){
-      this.deps.errors.overload++;this.transport.drop(1009,'overlay frame capacity exceeded');this.close();return;
-    }
-    if (this.#tasks >= MAX_LIVE_SESSION_TASKS ||
-        this.#queuedBytes + frameBytes > MAX_LIVE_SESSION_QUEUED_BYTES) {
+    if (this.#queuedBytes + frameBytes > MAX_LIVE_SESSION_QUEUED_BYTES) {
       this.deps.errors.overload++;
       this.transport.drop(1013, 'live admission overloaded');
       this.close();
@@ -341,7 +333,6 @@ export class DaemonAgentSession {
       if (rooms.length <= MAX_LIVE_SUBSCRIBE_FRAME_ROOMS)
         for (const room of rooms) if (typeof room === 'string' && room) this.#subscriptionIntents.set(room, raw);
     }
-    this.#tasks++;
     this.#queuedBytes += frameBytes;
     this.#tail = this.#tail.then(async () => {
       if (this.#closed || !this.transport.isOpen()) return;
@@ -368,7 +359,6 @@ export class DaemonAgentSession {
     }).finally(() => {
       for (const [roomId, intent] of this.#subscriptionIntents)
         if (intent === raw) this.#subscriptionIntents.delete(roomId);
-      this.#tasks--;
       this.#queuedBytes -= frameBytes;
     });
   }
@@ -442,7 +432,6 @@ export class DaemonAgentSession {
         const source = { connectionId: this.connectionId, epoch: this.epoch };
         const result = helperTurnCodecs(operation).result.parse(await this.deps.daemon.execute(operation, input, this.agentId, source, this.#ownedModelCapability));
         const reply = { type: 'turn-result', requestId: item.requestId, result };
-        if (Buffer.byteLength(JSON.stringify(reply)) > HELPER_TURN_MAX_FRAME_BYTES) throw new Error('Turn reply capacity');
         await this.deps.daemon.fenceOwnedTurnReply(this.agentId, source, input, () => {
           if (!this.#closed && this.transport.isOpen()) this.transport.send(reply);
         }, operation === 'claimAgentCommand');
@@ -462,7 +451,6 @@ export class DaemonAgentSession {
         const snapshot=helperActivationCodecs.result.parse(await this.deps.daemon.readCommandActivation(input,this.agentId));
         const accepted=await fenceCommandActivationEnqueue(this.deps.database,snapshot,current=>{
           const reply={type:'activation-context-result',requestId:item.requestId,result:current};
-          if(Buffer.byteLength(JSON.stringify(reply))+256>HELPER_OVERLAY_MAX_FRAME_BYTES)throw new Error('Activation reply capacity');
           if(!this.#closed&&this.transport.isOpen())this.transport.send(reply);
         });
         if(!accepted)throw new Error('Activation source changed before enqueue');
@@ -489,7 +477,6 @@ export class DaemonAgentSession {
         const rawResult=await this.deps.daemon.execute(operation,input as unknown as DaemonOperationMap[typeof operation]['input'],this.agentId);
         const result=helperUsageCodecs(operation).result.parse(rawResult);
         const reply={type:'usage-result',requestId:item.requestId,result};
-        if(Buffer.byteLength(JSON.stringify(reply))>HELPER_OVERLAY_MAX_FRAME_BYTES)throw new Error('Usage reply capacity');
         if(!this.#closed&&this.transport.isOpen())this.transport.send(reply);
       }catch{
         if(!this.#closed&&this.transport.isOpen())this.transport.send({type:'usage-result',requestId:item.requestId,error:'usage_operation_refused'});

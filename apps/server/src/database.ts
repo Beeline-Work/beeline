@@ -3658,6 +3658,42 @@ export async function migrate(
   await ddlScript('Helper command activation', HELPER_ACTIVATION_SCHEMA);
   await ddlScript('push outbox', PUSH_OUTBOX_SCHEMA);
   await ddlScript('Background obligation sources', BACKGROUND_DUE_SOURCE_SCHEMA);
+  await ddlScript('Retire Tray clock and unused background effects', `
+DROP TRIGGER IF EXISTS beeline_tray_clock_message_retire ON messages;
+DROP TRIGGER IF EXISTS beeline_tray_clock_message_insert ON messages;
+DROP TRIGGER IF EXISTS beeline_tray_clock_message_change ON messages;
+DROP TRIGGER IF EXISTS beeline_tray_clock_seen_retire ON needs_you_marks;
+DROP TRIGGER IF EXISTS beeline_tray_clock_seen_insert ON needs_you_marks;
+DROP TRIGGER IF EXISTS beeline_tray_clock_seen_change ON needs_you_marks;
+DROP TRIGGER IF EXISTS beeline_tray_clock_choice_retire ON room_choices;
+DROP TRIGGER IF EXISTS beeline_tray_clock_choice_insert ON room_choices;
+DROP TRIGGER IF EXISTS beeline_tray_clock_choice_change ON room_choices;
+DROP TRIGGER IF EXISTS beeline_tray_clock_room_move ON rooms;
+DROP TRIGGER IF EXISTS beeline_tray_clock_workspace_birth ON workspaces;
+DROP TABLE IF EXISTS tray_clock_deadlines, tray_clock_sources, tray_clock_state,
+  tray_clock_readiness, tray_clock_readiness_floor, tray_clock_health, tray_clock_owner_fences CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_is_open(text,text,text) CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_desired(text,text,text) CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_reconcile(text,text,text) CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_retire(text,text,text) CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_consume(text,text,bigint) CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_capture() CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_room_move() CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_lock_workspaces(uuid[]) CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_publish_basis(uuid,boolean) CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_readiness_wake(uuid) CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_require_readiness(uuid[]) CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_workspace_birth() CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_health_change() CASCADE;
+DROP FUNCTION IF EXISTS beeline_register_tray_clock_owner(text,bigint,uuid) CASCADE;
+DROP FUNCTION IF EXISTS beeline_commit_tray_clock_owner() CASCADE;
+DROP TABLE IF EXISTS background_effect_attempts, background_leader_owners CASCADE;
+DROP FUNCTION IF EXISTS beeline_background_backend_holds(integer,timestamptz) CASCADE;
+DROP INDEX IF EXISTS tray_clock_readiness_rooms_idx;
+DROP INDEX IF EXISTS tray_clock_readiness_messages_idx;
+DROP INDEX IF EXISTS tray_clock_readiness_marks_idx;
+DROP INDEX IF EXISTS tray_clock_readiness_choices_idx;
+`);
   if (!options.deferData) await migrateData(database);
 }
 

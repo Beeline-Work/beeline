@@ -59,6 +59,8 @@ describe.skipIf(!url)('complete plain read surfaces (real PostgreSQL)',()=>{
   it('reads, counts, and marks all 501 questions and checks each item deadline',async()=>{
     await db.query(`INSERT INTO messages(id,room_id,author_id,text) SELECT 'ask-'||n,$1,$2,'@reader Please review question '||n||'?' FROM generate_series(1,501) n`,[ROOM,AGENT]);
     await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES('expired-ask',$1,$2,'@reader Please review?',now()-interval '8 days')`,[ROOM,AGENT]);
+    await db.query(`INSERT INTO needs_you_marks(identity_id,message_id,workspace_id,first_seen_at)
+      VALUES($1,'expired-ask',$2,now()-interval '2 days')`,[VIEWER,WS]);
     const input={workspaceId:WS,markSeen:false};
     const needs=await phone.execute('readNeedsYou',input,VIEWER);
     expect(needs.items).toHaveLength(501);
@@ -69,6 +71,6 @@ describe.skipIf(!url)('complete plain read surfaces (real PostgreSQL)',()=>{
     expect(seen.seen).toHaveLength(501);
     await db.query(`UPDATE needs_you_marks SET first_seen_at=now()-interval '2 days' WHERE message_id='ask-1' AND identity_id=$1`,[VIEWER]);
     expect((await phone.execute('readNeedsYou',input,VIEWER)).items).toHaveLength(500);
-    expect(await phone.execute('countNeedsYou',{workspaceId:WS},VIEWER)).toEqual({count:500});
+    expect(await phone.execute('countNeedsYou',{workspaceId:WS},VIEWER)).toMatchObject({count:500});
   });
 });

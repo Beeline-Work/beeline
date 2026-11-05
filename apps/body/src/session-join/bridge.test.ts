@@ -131,7 +131,7 @@ m41_describe('SESSION-JOIN-RULES-1: a joined session receives the Beeline rules'
     const text = m41_renderRules(codex, runner);
     m41_expect(text.startsWith('Beeline: you are @codex_w')).toBe(true);
     m41_expect(text).toContain("/node /b/usebeeline.mjs session tool <name> '<json arguments>' --as codex:/w");
-    for (const rule of ['not a plain reply', 'done:, blocked:, failed:, needs-decision:', 'one step up', 'Code work belongs in a corner',
+    for (const rule of ['not a plain reply', 'Choose the terminal status', 'server adds its status prefix', 'one step up', 'Code work belongs in a corner',
       'approve_merge on the exact head SHA', 'post short progress there']) m41_expect(text).toContain(rule);
   });
 

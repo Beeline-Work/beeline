@@ -54,6 +54,43 @@ describe('solo-agent-untagged-silence', () => {
     expect(JSON.stringify(view)).toContain('Hello back!');
   });
 
+  it.each(['sendRoomMessage','sendRoomReply'] as const)('%s keeps one receipt, command and MCP route on retry',async operation=>{
+    const parent='f'.repeat(64);
+    if(operation==='sendRoomReply')await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
+      VALUES($1,$2,$3,'Question',now()-interval '1 hour')`,[parent,ROOM,AGENT]);
+    const input={roomId:ROOM,messageId:MESSAGE,text:'Please review',
+      ...(operation==='sendRoomReply'?{parentMessageId:parent}:{})};
+    const client={id:'send-proof',name:'Proof client'};
+    const first=await phone.execute(operation,input,HUMAN,client);
+    expect(await phone.execute(operation,input,HUMAN,client)).toEqual(first);
+    expect((await db.query(`SELECT id FROM messages WHERE id=$1`,[MESSAGE])).rows).toHaveLength(1);
+    expect((await db.query(`SELECT id FROM agent_commands WHERE source_message_id=$1`,[MESSAGE])).rows).toHaveLength(1);
+    expect((await db.query(`SELECT message_id FROM rooms_mcp_pending_routes WHERE message_id=$1`,[MESSAGE])).rows).toHaveLength(1);
+    expect((await db.query(`SELECT message_id FROM room_read_marks WHERE room_id=$1 AND identity_id=$2`,[ROOM,HUMAN])).rows)
+      .toEqual([{message_id:MESSAGE}]);
+    if(operation==='sendRoomReply')expect((await db.query(`SELECT reply_to_message_id,root_message_id FROM messages WHERE id=$1`,[MESSAGE])).rows)
+      .toEqual([{reply_to_message_id:parent,root_message_id:parent}]);
+    await expect(phone.execute(operation,{...input,text:'Different content'},HUMAN,client)).rejects.toThrow('messageId is invalid');
+    expect((await db.query(`SELECT text FROM messages WHERE id=$1`,[MESSAGE])).rows).toEqual([{text:'Please review'}]);
+  });
+
+  it.each(['sendRoomMessage','sendRoomReply'] as const)('%s rolls back source, read mark and MCP route if routing fails',async operation=>{
+    const parent='f'.repeat(64);
+    if(operation==='sendRoomReply')await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
+      VALUES($1,$2,$3,'Question',now()-interval '1 hour')`,[parent,ROOM,AGENT]);
+    await db.query(`CREATE FUNCTION refuse_send_route() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'routing proof failure'; END $$;
+      CREATE TRIGGER refuse_send_route BEFORE INSERT ON agent_commands
+      FOR EACH ROW EXECUTE FUNCTION refuse_send_route();`);
+    const input={roomId:ROOM,messageId:MESSAGE,text:'Please review',
+      ...(operation==='sendRoomReply'?{parentMessageId:parent}:{})};
+    await expect(phone.execute(operation,input,HUMAN,{id:'send-proof',name:'Proof client'})).rejects.toThrow('routing proof failure');
+    expect((await db.query(`SELECT id FROM messages WHERE id=$1`,[MESSAGE])).rows).toEqual([]);
+    expect((await db.query(`SELECT id FROM agent_commands WHERE source_message_id=$1`,[MESSAGE])).rows).toEqual([]);
+    expect((await db.query(`SELECT message_id FROM room_read_marks WHERE message_id=$1`,[MESSAGE])).rows).toEqual([]);
+    expect((await db.query(`SELECT message_id FROM rooms_mcp_pending_routes WHERE message_id=$1`,[MESSAGE])).rows).toEqual([]);
+  });
+
   it.each([OTHER_HUMAN, OTHER_AGENT])('does not wake with an extra member %s', async extra => {
     await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
       VALUES($1,NULL,$3,'member'),($1,$2,$3,'member')`, [WORKSPACE, ROOM, extra]);

@@ -1,3 +1,5 @@
+import { groupBPostgresDatabase } from './test-fixtures/test-support-router-group-b-postgres.js';
+import type { SqlDatabase } from './database.js';
 import type { AddressInfo } from 'node:net';
 import WebSocket from 'ws';
 import { afterAll,beforeAll,describe,expect,it,vi } from 'vitest';
@@ -7,19 +9,22 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import type { PhoneService } from './phone-service.js';
 import { createBeelineServer } from './server.js';
-import { migratedDatabase,type PgliteDatabase } from './test-support.js';
+import { migratedDatabase } from './test-support.js';
 import { HELPER_ACTIVATION_SCHEMA } from './helper-activation-schema.js';
 import { MACHINE_SOCKET_PROTOCOL } from './daemon-live.js';
 const owner='a'.repeat(64),agent='b'.repeat(64),workspace='11111111-1111-4111-8111-111111111111',room='22222222-2222-4222-8222-222222222222';
 const identity={agentId:agent,workspaceId:workspace,roomId:room,commandId:'socket-command',generationId:'socket-generation'};
 const token='bdt_'+'s'.repeat(43);
 describe('actual activation registration and final socket enqueue',()=>{
-  let db:PgliteDatabase,daemon:DaemonService,server:ReturnType<typeof createBeelineServer>,socket:WebSocket,port:number,epoch=0;
+  let db:SqlDatabase,closeDatabase:()=>Promise<void>,daemon:DaemonService,server:ReturnType<typeof createBeelineServer>,socket:WebSocket,port:number,epoch=0;
   const frames:Array<Record<string,any>>=[];
   const next=async(predicate:(frame:Record<string,any>)=>boolean)=>{let found:Record<string,any>|undefined;await vi.waitFor(()=>{found=frames.find(predicate);expect(found).toBeDefined();});return found!;};
   const send=(frame:Record<string,unknown>)=>socket.send(JSON.stringify({agentId:agent,...frame}));
   beforeAll(async()=>{
-    vi.stubEnv('BEELINE_NETWORK_ROUTER_V1','1');db=await migratedDatabase();await db.query(HELPER_ACTIVATION_SCHEMA);
+    vi.stubEnv('BEELINE_NETWORK_ROUTER_V1','1');
+    const url=process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
+    if(url){const fixture=await groupBPostgresDatabase(url);db=fixture.database;closeDatabase=fixture.close;}
+    else{const local=await migratedDatabase();db=local;closeDatabase=()=>local.close();}await db.query(HELPER_ACTIVATION_SCHEMA);
     await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'agent','Agent')`,[owner,agent]);
     await db.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)',[agent,owner]);
     await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Activation socket')`,[workspace]);
@@ -45,7 +50,7 @@ describe('actual activation registration and final socket enqueue',()=>{
     await new Promise<void>((resolve,reject)=>{socket.once('open',resolve);socket.once('error',reject);});
     send({type:'register',token,activationContextV1:true});await next(frame=>frame.type==='registered');
   },60000);
-  afterAll(async()=>{socket?.terminate();if(server)await new Promise<void>(resolve=>server.close(()=>resolve()));if(db)await db.close();vi.unstubAllEnvs();});
+  afterAll(async()=>{socket?.terminate();if(server)await new Promise<void>(resolve=>server.close(()=>resolve()));if(db)await closeDatabase();vi.unstubAllEnvs();});
   it('refuses generic HTTP before dispatch or application queries',async()=>{
     const query=vi.spyOn(db,'query'),execute=vi.spyOn(daemon,'execute');
     try{
@@ -68,6 +73,19 @@ describe('actual activation registration and final socket enqueue',()=>{
       expect(await next(frame=>frame.requestId==='malformed-cut')).toMatchObject({error:'activation_context_refused'});expect(read).not.toHaveBeenCalled();
     }finally{read.mockRestore();}
   });
+  it('accepts actual >256 KiB command setup in a Workspace with 1,895 Rooms including archived corners',async()=>{
+    const registered=await next(frame=>frame.type==='registered'),source={connectionId:registered.capabilities.activationConnectionId,epoch:1};
+    await db.transaction(async tx=>{await tx.query('SET LOCAL statement_timeout=0');await tx.query(`INSERT INTO rooms(id,workspace_id,name,parent_id,archived_at)
+      SELECT md5(n::text)::uuid,$1,'corner '||n,$2,CASE WHEN n%2=0 THEN now() ELSE NULL END FROM generate_series(1,1894)n`,[workspace,room]);});
+    const instructions='rich setup '.repeat(30000);
+    await db.query(`UPDATE agents SET soul=$2::jsonb WHERE agent_id=$1`,[agent,JSON.stringify({name:'Agent',instructions})]);
+    send({type:'activation-context',requestId:'large-cut',input:{...identity,source}});
+    const reply=await next(frame=>frame.type==='activation-context-result'&&frame.requestId==='large-cut');
+    expect(reply.error).toBeUndefined();expect(reply.result.configuration.soul.instructions).toBe(instructions);
+    expect((await db.query('SELECT count(*)::int count FROM rooms WHERE workspace_id=$1',[workspace])).rows[0]?.count).toBe(1895);
+    expect(socket.readyState).toBe(WebSocket.OPEN);
+    await db.query(`UPDATE agents SET soul=NULL WHERE agent_id=$1`,[agent]);
+  },30000);
   it('suppresses a queued result after a real committed source mutation and keeps default-off negotiation explicit',async()=>{
     const registered=await next(frame=>frame.type==='registered'),source={connectionId:registered.capabilities.activationConnectionId,epoch:1};
     const original=daemon.readCommandActivation.bind(daemon),read=vi.spyOn(daemon,'readCommandActivation').mockImplementationOnce(async(input,id)=>{

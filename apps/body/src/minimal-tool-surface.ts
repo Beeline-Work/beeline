@@ -868,7 +868,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "report",
-    "description": "Report the assigned outcome one step up through command provenance. Status and text prefix must agree: done:, blocked:, failed:, needs-decision:. No address. Feedback is separate from assignment completion. Optional `to`: who receives this report, when the default recipient is wrong. Local proof paths are refused. First upload each proof with post_artifact, then cite its attachment filename instead of a local path.",
+    "description": "Report the assigned outcome one step up through command provenance. Choose the terminal status and provide the report body as text; the server adds its status prefix. No address. Feedback is separate from assignment completion. Optional `to`: who receives this report, when the default recipient is wrong. Local proof paths are refused. First upload each proof with post_artifact, then cite its attachment filename instead of a local path.",
     "inputSchema": {
       "type": "object",
       "required": ["status", "text"],

@@ -1545,13 +1545,7 @@ export class PhoneService {
   }
 
   async completeWelcomeCards(viewerId: string): Promise<WelcomeCardsView> {
-    const result = await this.database.query<{ welcome_cards_due: boolean | null }>(
-      `UPDATE identities SET welcome_cards_due=false WHERE id=$1 AND kind='human'
-       RETURNING welcome_cards_due`,
-      [viewerId],
-    );
-    if (!result.rows[0]) throw new Error('human identity required');
-    return { due: false };
+    return this.readWelcomeCards(viewerId);
   }
 
   async readWorkspaces(viewerId: string): Promise<WorkspaceListView> {
@@ -5040,91 +5034,75 @@ export class PhoneService {
     sourceClient?: { id: string; name: string },
     familyId?: string,
   ): Promise<Output<'sendRoomMessage'>> {
-    if (!this.routingTransaction)
-      return this.database.transaction((db) =>
-        new PhoneService(
-          db,
-          this.publicOrigin,
-          this.github,
-          this.sendPushTest,
-          this.live,
-          true,
-        ).sendMessage(input, author, sourceClient, familyId),
-      );
+    if (!this.routingTransaction && !(this.database as CommandScopedDatabase).active)
+      return this.database.transaction(db =>
+        this.withCommandTransaction(db, () => this.sendMessage(input, author, sourceClient, familyId)));
     const id = input.messageId ?? messageId();
     if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
     const attachments = JSON.stringify(input.attachments ?? []);
-    return this.database.transaction(async (database) => {
-      const write = (await database.query<{
-        inserted: boolean;
-        retry: boolean;
-        writable: boolean;
-        system_dm: boolean;
-        direct: boolean;
-        corner: boolean;
-        author_kind: 'human' | 'agent';
-        solo_agent: boolean;
-      }>(
-        `WITH access AS (
-           SELECT room.id,room.parent_id,room.direct_participants,identity.kind author_kind,
-             ${soloRoomAgentSql('room', 'identity.id')} IS NOT NULL solo_agent,
-             COALESCE(room.direct_participants ? $6,false) system_dm,
-             COALESCE(workspace_member.role<>'spectator',$3=$6) writable
-           FROM rooms room
-           JOIN memberships room_member ON room_member.room_id=COALESCE(room.parent_id,room.id)
-             AND room_member.identity_id=$3 AND room_member.removed_at IS NULL
-           LEFT JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
-             AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$3
-             AND workspace_member.removed_at IS NULL
-           JOIN identities identity ON identity.id=$3
-           WHERE room.id=$2 AND room.archived_at IS NULL AND ($3=$6 OR workspace_member.identity_id IS NOT NULL)
-           FOR SHARE OF room_member
-         ), inserted AS (
-           INSERT INTO messages(id,room_id,author_id,text,attachments,source_client)
-           SELECT $1,$2,$3,$4,$5::jsonb,$7::jsonb FROM access
-           WHERE writable AND ($3=$6 OR NOT system_dm)
-           ON CONFLICT(id) DO NOTHING
-           RETURNING id,room_id,created_at
-         ), read_mark AS (
-           INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id,updated_at)
-           SELECT room_id,$3,created_at,id,'epoch'::timestamptz FROM inserted
-           ON CONFLICT(room_id,identity_id) DO UPDATE
-             SET message_created_at=EXCLUDED.message_created_at,message_id=EXCLUDED.message_id
-           WHERE (EXCLUDED.message_created_at,EXCLUDED.message_id)>
-             (room_read_marks.message_created_at,room_read_marks.message_id)
-           RETURNING 1
-         ), pending_route AS (
-           INSERT INTO rooms_mcp_pending_routes(message_id,room_id,member_id)
-           SELECT id,room_id,$3 FROM inserted WHERE $7::jsonb IS NOT NULL
-           ON CONFLICT(message_id) DO NOTHING RETURNING 1
-         )
-         SELECT EXISTS(SELECT 1 FROM inserted) inserted,
-           EXISTS(SELECT 1 FROM messages message
-             WHERE message.id=$1 AND message.room_id=$2 AND message.author_id=$3
-               AND message.text=$4 AND message.attachments=$5::jsonb
-               AND message.reply_to_message_id IS NULL) retry,
-           access.writable,access.system_dm,
-           access.direct_participants IS NOT NULL direct,
-           access.parent_id IS NOT NULL corner,access.author_kind,access.solo_agent
-         FROM access`,
-        [id, input.roomId, author, input.text, attachments, SYSTEM_IDENTITY_ID, sourceClient ? JSON.stringify(sourceClient) : null],
-      )).rows[0];
-      if (!write) throw new Error('room access denied');
-      database = new CornerAccessDatabase(database);
-      if (!write.writable) throw new Error('spectator access is read-only (access denied)');
-      if (author !== SYSTEM_IDENTITY_ID && write.system_dm)
-        throw new Error('this is a read-only system thread; only @system may post here (access denied)');
-      const mayRoute = write.direct || write.corner || write.solo_agent || input.text.includes('@');
-      if (!write.inserted) {
-        if (!write.retry) throw new Error('messageId is invalid');
-        return {
-          messageId: id,
-          activeSteerAgentIds: mayRoute ? await this.activeSteerAgentIds(database, id) : [],
-          pendingAgentCommands: mayRoute
-            ? await this.pendingAgentCommandsForMessage(database, input.roomId, id) : [],
-          ...(await this.receiptMessage(input.roomId, author, id, database)),
-        };
-      }
+    let database = this.database;
+    const write = (await database.query<{
+      inserted: boolean;
+      retry: boolean;
+      writable: boolean;
+      system_dm: boolean;
+      direct: boolean;
+      corner: boolean;
+      author_kind: 'human' | 'agent';
+      solo_agent: boolean;
+    }>(
+      `WITH access AS (
+         SELECT room.id,room.parent_id,room.direct_participants,identity.kind author_kind,
+           ${soloRoomAgentSql('room', 'identity.id')} IS NOT NULL solo_agent,
+           COALESCE(room.direct_participants ? $6,false) system_dm,
+           COALESCE(workspace_member.role<>'spectator',$3=$6) writable
+         FROM rooms room
+         JOIN memberships room_member ON room_member.room_id=COALESCE(room.parent_id,room.id)
+           AND room_member.identity_id=$3 AND room_member.removed_at IS NULL
+         LEFT JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
+           AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$3
+           AND workspace_member.removed_at IS NULL
+         JOIN identities identity ON identity.id=$3
+         WHERE room.id=$2 AND room.archived_at IS NULL AND ($3=$6 OR workspace_member.identity_id IS NOT NULL)
+         FOR SHARE OF room_member
+       ), inserted AS (
+         INSERT INTO messages(id,room_id,author_id,text,attachments,source_client)
+         SELECT $1,$2,$3,$4,$5::jsonb,$7::jsonb FROM access
+         WHERE writable AND ($3=$6 OR NOT system_dm)
+         ON CONFLICT(id) DO NOTHING
+         RETURNING id,room_id,created_at
+       ), read_mark AS (
+         INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id,updated_at)
+         SELECT room_id,$3,created_at,id,'epoch'::timestamptz FROM inserted
+         ON CONFLICT(room_id,identity_id) DO UPDATE
+           SET message_created_at=EXCLUDED.message_created_at,message_id=EXCLUDED.message_id
+         WHERE (EXCLUDED.message_created_at,EXCLUDED.message_id)>
+           (room_read_marks.message_created_at,room_read_marks.message_id)
+         RETURNING 1
+       ), pending_route AS (
+         INSERT INTO rooms_mcp_pending_routes(message_id,room_id,member_id)
+         SELECT id,room_id,$3 FROM inserted WHERE $7::jsonb IS NOT NULL
+         ON CONFLICT(message_id) DO NOTHING RETURNING 1
+       )
+       SELECT EXISTS(SELECT 1 FROM inserted) inserted,
+         EXISTS(SELECT 1 FROM messages message
+           WHERE message.id=$1 AND message.room_id=$2 AND message.author_id=$3
+             AND message.text=$4 AND message.attachments=$5::jsonb
+             AND message.reply_to_message_id IS NULL) retry,
+         access.writable,access.system_dm,
+         access.direct_participants IS NOT NULL direct,
+         access.parent_id IS NOT NULL corner,access.author_kind,access.solo_agent
+       FROM access`,
+      [id, input.roomId, author, input.text, attachments, SYSTEM_IDENTITY_ID, sourceClient ? JSON.stringify(sourceClient) : null],
+    )).rows[0];
+    if (!write) throw new Error('room access denied');
+    database = new CornerAccessDatabase(database);
+    if (!write.writable) throw new Error('spectator access is read-only (access denied)');
+    if (author !== SYSTEM_IDENTITY_ID && write.system_dm)
+      throw new Error('this is a read-only system thread; only @system may post here (access denied)');
+    const mayRoute = write.direct || write.corner || write.solo_agent || input.text.includes('@');
+    if (!write.inserted && !write.retry) throw new Error('messageId is invalid');
+    if (write.inserted) {
       const noticeAgentIds = write.author_kind === 'human' && mayRoute
         ? await this.unansweredMentionTargets(input.roomId, author, input.text)
         : [];
@@ -5139,14 +5117,14 @@ export class PhoneService {
           text: input.text,
           ...(familyId ? { familyId } : {}),
         });
-      return {
-        messageId: id,
-        activeSteerAgentIds: mayRoute ? await this.activeSteerAgentIds(database, id) : [],
-        pendingAgentCommands: mayRoute
-          ? await this.pendingAgentCommandsForMessage(database, input.roomId, id) : [],
-        ...(await this.receiptMessage(input.roomId, author, id, database)),
-      };
-    });
+    }
+    return {
+      messageId: id,
+      activeSteerAgentIds: mayRoute ? await this.activeSteerAgentIds(database, id) : [],
+      pendingAgentCommands: mayRoute
+        ? await this.pendingAgentCommandsForMessage(database, input.roomId, id) : [],
+      ...(await this.receiptMessage(input.roomId, author, id, database)),
+    };
   }
   private async listRoomSchedules(roomId: string, viewerId: string) {
     await requireScheduledWorkReader(this.database, roomId, viewerId);
@@ -5220,17 +5198,9 @@ export class PhoneService {
     sourceClient?: { id: string; name: string },
     familyId?: string,
   ): Promise<Output<'sendRoomReply'>> {
-    if (!this.routingTransaction)
-      return this.database.transaction((db) =>
-        new PhoneService(
-          db,
-          this.publicOrigin,
-          this.github,
-          this.sendPushTest,
-          this.live,
-          true,
-        ).sendReply(input, author, sourceClient, familyId),
-      );
+    if (!this.routingTransaction && !(this.database as CommandScopedDatabase).active)
+      return this.database.transaction(db =>
+        this.withCommandTransaction(db, () => this.sendReply(input, author, sourceClient, familyId)));
     const parent = await this.database.query<{
       root_message_id: string | null;
       author_id: string;
@@ -5263,35 +5233,29 @@ export class PhoneService {
       input.parentMessageId,
       parent.rows[0].root_message_id ?? input.parentMessageId,
     ];
-    return this.database.transaction(async (database) => {
-      const inserted = await database.query(
-        `WITH inserted AS (
-         INSERT INTO messages(id,room_id,author_id,text,attachments,reply_to_message_id,root_message_id,source_client)
-         VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8::jsonb) ON CONFLICT(id) DO NOTHING
-         RETURNING id,room_id
-       ), pending_route AS (
-         INSERT INTO rooms_mcp_pending_routes(message_id,room_id,member_id)
-         SELECT id,room_id,$3 FROM inserted WHERE $8::jsonb IS NOT NULL
-         ON CONFLICT(message_id) DO NOTHING RETURNING 1
-       ) SELECT id FROM inserted`,
-        [...values, sourceClient ? JSON.stringify(sourceClient) : null],
+    const database = this.database;
+    const inserted = await database.query(
+      `WITH inserted AS (
+       INSERT INTO messages(id,room_id,author_id,text,attachments,reply_to_message_id,root_message_id,source_client)
+       VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8::jsonb) ON CONFLICT(id) DO NOTHING
+       RETURNING id,room_id
+     ), pending_route AS (
+       INSERT INTO rooms_mcp_pending_routes(message_id,room_id,member_id)
+       SELECT id,room_id,$3 FROM inserted WHERE $8::jsonb IS NOT NULL
+       ON CONFLICT(message_id) DO NOTHING RETURNING 1
+     ) SELECT id FROM inserted`,
+      [...values, sourceClient ? JSON.stringify(sourceClient) : null],
+    );
+    if (!inserted.rowCount) {
+      const retry = await database.query(
+        `SELECT 1 FROM messages
+       WHERE id=$1 AND room_id=$2 AND author_id=$3 AND (text=$4 OR $8::boolean)
+         AND (attachments=$5::jsonb OR $8::boolean)
+         AND reply_to_message_id=$6 AND root_message_id=$7`,
+        [...values, isMentionReplyInput(input)],
       );
-      if (!inserted.rowCount) {
-        const retry = await database.query(
-          `SELECT 1 FROM messages
-         WHERE id=$1 AND room_id=$2 AND author_id=$3 AND (text=$4 OR $8::boolean)
-           AND (attachments=$5::jsonb OR $8::boolean)
-           AND reply_to_message_id=$6 AND root_message_id=$7`,
-          [...values, isMentionReplyInput(input)],
-        );
-        if (!retry.rowCount) throw new Error('messageId is invalid');
-        return {
-          messageId: id,
-          activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
-          pendingAgentCommands: await this.pendingAgentCommandsForMessage(database, input.roomId, id),
-          ...(await this.receiptMessage(input.roomId, author, id, database)),
-        };
-      }
+      if (!retry.rowCount) throw new Error('messageId is invalid');
+    } else {
       await advanceAuthorReadMark(database, input.roomId, author, id);
       const lifecycleCommand = await routeHumanMessage(database, id);
       if (!lifecycleCommand)
@@ -5303,13 +5267,13 @@ export class PhoneService {
         text: input.text,
         ...(familyId ? { familyId } : {}),
       });
-      return {
-        messageId: id,
-        activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
-        pendingAgentCommands: await this.pendingAgentCommandsForMessage(database, input.roomId, id),
-        ...(await this.receiptMessage(input.roomId, author, id, database)),
-      };
-    });
+    }
+    return {
+      messageId: id,
+      activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
+      pendingAgentCommands: await this.pendingAgentCommandsForMessage(database, input.roomId, id),
+      ...(await this.receiptMessage(input.roomId, author, id, database)),
+    };
   }
 
   async liveStarPrompt(viewerId: string) {
@@ -5479,14 +5443,13 @@ export class PhoneService {
     input: Input<'readNeedsYou'>,
     viewerId: string,
   ): Promise<Output<'readNeedsYou'>> {
-    const { items } = await needsYouItems(
+    return needsYouItems(
       this.database,
       input.workspaceId,
       viewerId,
       (row) => identity(row, this.publicOrigin),
       input.markSeen !== false,
     );
-    return { items };
   }
 
   private async readTray(input: Input<'readTray'>, viewerId: string): Promise<Output<'readTray'>> {
@@ -5508,7 +5471,7 @@ export class PhoneService {
     input: Input<'countNeedsYou'>,
     viewerId: string,
   ): Promise<Output<'countNeedsYou'>> {
-    return { count: await countNeedsYouItems(this.database, input.workspaceId, viewerId) };
+    return countNeedsYouItems(this.database, input.workspaceId, viewerId);
   }
 
   /** A tap or a dismissal: the cell is handled, on every device. */
@@ -6153,9 +6116,7 @@ export class PhoneService {
     });
     // No publish here on purpose. Every phone operation carrying a `roomId`
     // already invalidates that Room (`server.ts`), which is what repaints the
-    // status line; an `agentId`-stamped `turn` invalidate would additionally be
-    // read as the agent's OWN turn narration and suppressed by `wakesCorner` —
-    // in a corner, the very reader that must hear this.
+    // status line. Helpers receive work through their command socket.
   }
   /**
    * Apply a human close or lock change using the same corner management permission.

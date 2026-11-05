@@ -30,8 +30,7 @@ import { tagsKnownIdentitySql } from './message-mentions.js';
  * A question leaves the tray when the person taps or dismisses it
  * (`needs_you_marks.cleared_at`), replies anywhere in that Room or corner
  * after it, or 24 hours after they first saw it on any device
- * (`needs_you_marks.first_seen_at`), or at the 7-day lookback if that comes
- * first (`questionLeavesAtSql`). An approval also leaves when dismissed
+ * (`needs_you_marks.first_seen_at`). An approval also leaves when dismissed
  * from the tray, decided, expired or closed; opening it does not clear it.
  */
 export const NEEDS_YOU_TRIGGER_WORDS = ['please', 'approve', 'feedback'] as const;
@@ -50,20 +49,6 @@ export function expiringCardForSql(m: string, identity: string): string {
 }
 /** Now, in the epoch milliseconds `cardExpiresAtSql` returns. */
 const NOW_MS = `(extract(epoch FROM now())*1000)::bigint`;
-/**
- * How far back a tagged message is considered at all — a deliberate bound for
- * launch and backfill, not part of the approved expiry rule. The 24-hour clock
- * only starts once a cell is seen, so without this window the first tray open
- * (or a person back after months) would pull every tagged question in the
- * Workspace's history. Inside the window, the 24-hour clock still starts only
- * on first sight.
- */
-export const NEEDS_YOU_LOOKBACK = `interval '7 days'`;
-/** A question leaves at the earlier of first-sight expiry and the lookback edge. */
-export function questionLeavesAtSql(m = 'm', mark = 'mark'): string {
-  return `LEAST(${m}.created_at+${NEEDS_YOU_LOOKBACK},
-    ${mark}.first_seen_at+interval '${NEEDS_YOU_EXPIRY_HOURS} hours')`;
-}
 const TRIGGER_WORD = new RegExp(
   `(^|[^\\p{L}\\p{N}_])(${NEEDS_YOU_TRIGGER_WORDS.join('|')})(?=$|[^\\p{L}\\p{N}_])`,
   'iu',
@@ -77,10 +62,8 @@ export function isNeedsYouAsk(text: string): boolean {
 }
 
 /**
- * `isNeedsYouAsk` in SQL, applied BEFORE the candidate limit so the limit only
- * ever counts messages that really ask. The two readings must agree
- * (`needs-you.test.ts` holds them to one table); the TypeScript twin still
- * re-checks every row the query returns.
+ * `isNeedsYouAsk` in SQL. The two readings must agree (`needs-you.test.ts`);
+ * the TypeScript twin still re-checks every row the query returns.
  */
 export function askSql(textExpr: string): string {
   return `(${textExpr} ~ '^(blocked|needs-decision|failed):[[:space:]]*[^[:space:]]'
@@ -253,11 +236,11 @@ export function questionForSql(viewerId: string): string {
   )`;
 }
 
-/** Keep the section clear's candidate rule identical to the read, without its 500-row display bound. */
+/** Unanswered questions expire only after the viewer first sees them. */
 const QUESTION_WHERE = `${questionForSql('$2')}
-  AND m.created_at>now()-${NEEDS_YOU_LOOKBACK}
-  AND ${questionLeavesAtSql()}>now()`;
-/** Clear every current question, including ones past the tray read's display limit. */
+  AND (mark.first_seen_at IS NULL OR mark.first_seen_at+interval '${NEEDS_YOU_EXPIRY_HOURS} hours'>now())`;
+
+/** Clear every current question. */
 export async function clearNeedsYouQuestions(
   database: SqlDatabase,
   workspaceId: string,
@@ -287,7 +270,7 @@ const VIEWER_MANAGES_WORKSPACE = `EXISTS (
 
 type CandidateProjection='cells'|'count'|'order';
 const candidateColumns=(projection:CandidateProjection)=>projection==='cells'?ROW_COLUMNS:
-  'm.id message_id,m.card,mark.cleared_at'+(projection==='order'?',m.created_at,mark.first_seen_at':'');
+  'm.id message_id,m.card,mark.cleared_at,mark.first_seen_at'+(projection==='order'?',m.created_at':'');
 function approvalBranches(projection:CandidateProjection):readonly string[]{
 const columns=candidateColumns(projection);
 const APPROVAL_FROM = (
@@ -295,7 +278,7 @@ const APPROVAL_FROM = (
   expiresAt = 'NULL::timestamptz',
   actorName = 'NULL::text',
 ) => `
-  SELECT ${columns},'${kind}' approval_kind,${projection!=='count'?expiresAt:'NULL::timestamptz'} approval_expires_at,
+  SELECT ${columns},'${kind}' approval_kind,${expiresAt} approval_expires_at,
     NULL::text[] pending_grant_ids,${projection==='cells'?actorName:'NULL::text'} actor_name
   FROM viewer_rooms room`;
 
@@ -347,7 +330,7 @@ return [
   // requester when it tags nobody (`addressedToPersonSql`'s reading).
   `${APPROVAL_FROM('choice', 'choice.closes_at')}
    JOIN room_choices choice ON choice.room_id=room.id AND choice.status='open'
-     AND choice.mode='question' ${("AND (choice.closes_at IS NULL OR choice.closes_at>now())")}
+     AND choice.mode='question' AND (choice.closes_at IS NULL OR choice.closes_at>now())
    JOIN messages m ON m.id=choice.message_id AND m.room_id=room.id AND m.card_type='${CHOICE_CARD_TYPE}'
    ${APPROVAL_JOINS}
    WHERE m.deleted_at IS NULL
@@ -377,7 +360,7 @@ return [
      AND CASE m.card_type
        WHEN 'agent-sign-in' THEN CASE WHEN ${expiringCardForSql('m', '$2')}
          AND m.card->>'status' IN ('starting','pending') THEN
-         (${cardExpiresAtSql('m.card')} IS NULL OR ${(`${cardExpiresAtSql('m.card')}>${NOW_MS}`)}) ELSE false END
+         (${cardExpiresAtSql('m.card')} IS NULL OR ${cardExpiresAtSql('m.card')}>${NOW_MS}) ELSE false END
        ELSE m.card->>'status'='pending'
      END`,
   // A Trusty Squire approval in the owner's @System DM. Squire decides it;
@@ -387,7 +370,7 @@ return [
    ${APPROVAL_JOINS}
    WHERE ${expiringCardForSql('m', '$2')} AND m.card->>'approvalId' IS NOT NULL
      AND m.card->>'status' IS DISTINCT FROM 'expired'
-     AND ${(`${cardExpiresAtSql('m.card')}>${NOW_MS}`)}
+     AND ${cardExpiresAtSql('m.card')}>${NOW_MS}
      AND m.card->>'sourceRoomId' ~ '^[0-9a-f-]{36}$'
      AND NOT EXISTS (
        SELECT 1 FROM messages decision
@@ -426,19 +409,19 @@ const questionBranch=(projection:CandidateProjection)=>`
   SELECT ${candidateColumns(projection)},NULL::text approval_kind,NULL::timestamptz approval_expires_at,
     NULL::text[] pending_grant_ids,NULL::text actor_name
   FROM viewer_rooms room
-  JOIN recent_asks ask ON ask.room_id=room.id
+  JOIN actionable_asks ask ON ask.room_id=room.id
   JOIN messages m ON m.id=ask.id
   JOIN identities viewer ON viewer.id=$2
   ${projection==='cells'?'LEFT JOIN identities author ON author.id=m.author_id':''}
   LEFT JOIN needs_you_marks mark ON mark.identity_id=$2 AND mark.message_id=m.id
-  WHERE ${(QUESTION_WHERE)}
-  ORDER BY m.created_at DESC,m.id DESC`;
+  WHERE ${QUESTION_WHERE}
+`;
 
 /** The same authorized candidates drive the tray and its badge. */
-const needsYouCandidates=(projection:CandidateProjection, scoped=false)=>`WITH ${viewerRoomsSql(projection==='cells'?'room.*':'room.id',scoped)},
-  recent_asks AS MATERIALIZED (
+const needsYouCandidates=(projection:CandidateProjection,scoped=false)=>`WITH ${viewerRoomsSql(projection==='cells'?'room.*':'room.id',scoped)},
+  actionable_asks AS MATERIALIZED (
     SELECT m.id,m.room_id FROM messages m
-    WHERE ${askingMessageSql('m')} AND m.created_at>now()-${NEEDS_YOU_LOOKBACK}
+    WHERE ${askingMessageSql('m')}
   ),
   decidable AS (
     SELECT grant_row.id::text grant_id FROM agent_grants grant_row
@@ -452,7 +435,6 @@ const needsYouCandidates=(projection:CandidateProjection, scoped=false)=>`WITH $
   )`;
 const NEEDS_YOU_CANDIDATES=needsYouCandidates('cells');
 const NEEDS_YOU_COUNT_CANDIDATES=needsYouCandidates('count');
-
 /** Match approvalView's subject and tray dismissal rules before counting or painting. */
 const VISIBLE_CANDIDATE = `(approval_kind IS NULL OR cleared_at IS NULL) AND CASE approval_kind
   WHEN 'grant' THEN EXISTS (
@@ -476,30 +458,33 @@ const VISIBLE_CANDIDATE = `(approval_kind IS NULL OR cleared_at IS NULL) AND CAS
   WHEN 'squire' THEN NULLIF(btrim(card->>'title'),'') IS NOT NULL
   ELSE true END`;
 
-/** Count without fetching cards or building cell DTOs. Every currently visible candidate is counted. */
+/** Count all eligible questions and approvals without building cell DTOs. */
 export async function countNeedsYouItems(
   database: SqlDatabase,
   workspaceId: string,
   viewerId: string,
-): Promise<number> {
-  const result = await database.query<{ count: string; authorized: boolean }>(
+): Promise<{ count: number; nextExpiry?: number }> {
+  const result = await database.query<{ count: string; next_expiry: number | null; authorized: boolean }>(
     `${NEEDS_YOU_COUNT_CANDIDATES}
-     SELECT count(*)::text count,${VIEWER_MEMBER} authorized
+     SELECT count(*)::text count,
+       min(extract(epoch FROM CASE WHEN approval_kind IS NULL THEN first_seen_at+interval '${NEEDS_YOU_EXPIRY_HOURS} hours'
+         ELSE approval_expires_at END)*1000)::double precision next_expiry,${VIEWER_MEMBER} authorized
      FROM candidates WHERE ${VISIBLE_CANDIDATE}`,
     [workspaceId, viewerId],
   );
   if (!result.rows[0]?.authorized) throw new Error('workspace membership required');
-  return Number(result.rows[0]?.count ?? 0);
+  const row=result.rows[0]!;
+  return {count:Number(row.count),...(row.next_expiry!==null?{nextExpiry:row.next_expiry}:{})};
 }
 
 /** The existing aggregate count boundary returns only the complete server
  * order, never unaffected Room cell bodies. Cells are read by exact scope. */
-export async function readNeedsYouOrder(database:SqlDatabase, workspaceId:string, viewerId:string){
-  const result=await database.query<{ids:string[];questions:number;authorized:boolean}>(
+export async function readNeedsYouOrder(database:SqlDatabase,workspaceId:string,viewerId:string){
+  const result=await database.query<{ids:string[];authorized:boolean}>(
     `${needsYouCandidates('order')}
      SELECT COALESCE(array_agg(message_id ORDER BY (approval_kind IS NULL),
        floor(extract(epoch FROM CASE WHEN approval_kind IS NULL THEN first_seen_at+interval '${NEEDS_YOU_EXPIRY_HOURS} hours' ELSE approval_expires_at END)) NULLS LAST,
-       floor(extract(epoch FROM created_at)*1000),message_id COLLATE "C"),'{}'::text[]) ids,count(*) FILTER(WHERE approval_kind IS NULL)::int questions,
+       floor(extract(epoch FROM created_at)*1000),message_id COLLATE "C"),'{}'::text[]) ids,
        ${VIEWER_MEMBER} authorized FROM candidates WHERE ${VISIBLE_CANDIDATE}`,[workspaceId,viewerId]);
   const row=result.rows[0];
   if(!row?.authorized)throw new Error('workspace membership required');
@@ -514,15 +499,16 @@ export async function needsYouItems(database: SqlDatabase, workspaceId: string, 
     handle: string | null;
     avatar: string | null;
     face_id: string | null;
-  }) => RoomViewIdentity, markSeen = true, roomIds?:readonly string[]
-): Promise<{ items: NeedsYouItemView[] }> {
-
+  }) => RoomViewIdentity,
+  markSeen = true,
+  roomIds?:readonly string[],
+): Promise<{ items: NeedsYouItemView[]; nextExpiry?: number }> {
   const result = await database.query<Row & {
     painted_first_seen_at: Date | null;
     viewer_handle: string | null;
     authorized: boolean;
   }>(
-    `${roomIds?needsYouCandidates('cells', true):(NEEDS_YOU_CANDIDATES)},
+    `${roomIds?needsYouCandidates('cells',true):NEEDS_YOU_CANDIDATES},
      visible AS MATERIALIZED (SELECT * FROM candidates WHERE ${VISIBLE_CANDIDATE}),
      started AS (
        ${markSeen ? `INSERT INTO needs_you_marks(identity_id,message_id,workspace_id)
@@ -599,7 +585,10 @@ export async function needsYouItems(database: SqlDatabase, workspaceId: string, 
       : {}),
     ...(approval ? { approval } : {}),
   }));
-  return { items };
+  const nextExpiry=built.reduce((next,{row})=>Math.min(next,
+    (row.approval_kind?row.approval_expires_at?.getTime():
+      row.painted_first_seen_at ? row.painted_first_seen_at.getTime()+NEEDS_YOU_EXPIRY_HOURS*3600000 : undefined)??Infinity),Infinity);
+  return { items, ...(Number.isFinite(nextExpiry)?{nextExpiry}:{}) };
 }
 
 export function needsYouExpiresAt(firstSeenAt: Date): number {
@@ -768,7 +757,7 @@ export async function markNeedsYouSeen(database: SqlDatabase, workspaceId: strin
   viewerId: string, messageIds: readonly string[]): Promise<{ seen: { messageId: string; expiresAt: number }[] }> {
   if (!Array.isArray(messageIds) ||
     messageIds.some(id => typeof id !== 'string' || !id || id.length > 256))
-    throw new Error('messageIds must contain question ids');
+    throw new Error('messageIds must contain valid question ids');
   const result = await database.query<{ message_id: string | null; first_seen_at: Date | null; authorized: boolean }>(
     `${NEEDS_YOU_CANDIDATES},
      started AS (

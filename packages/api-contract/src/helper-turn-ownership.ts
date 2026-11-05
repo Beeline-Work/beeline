@@ -6,6 +6,4 @@ export type HelperTurnOwnershipSource = {
   readonly epoch: number;
 };
 export type HelperTurnOperation = 'claimAgentCommand' | 'postAgentTurnReceipt' | 'acknowledgeAgentCommand';
-export const HELPER_TURN_MAX_FRAME_BYTES = 256 * 1024;
-export const HELPER_TURN_MAX_INFLIGHT = 16;
 export const HELPER_TURN_REQUEST_DEADLINE_MS = 30_000;

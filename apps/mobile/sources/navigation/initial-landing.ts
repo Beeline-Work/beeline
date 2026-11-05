@@ -1,22 +1,16 @@
+import { createContext } from 'react';
+
 /**
- * The one gate between the app's own first-route decision and a tapped push.
- *
- * `(app)/index.tsx` owns the landing route, and it picks it asynchronously:
- * it reads the stored identity and any initial invite, then `replace`s to the
- * Room deck, onboarding, or a join screen. A notification response that
- * navigates before that decision lands is overwritten by it — the tapped push
- * opens its Room and is thrown straight back to the deck.
- *
- * So the response waits for the landing instead of racing it. The landing is
- * resolved once per process, so a tap on an app that is already running never
- * waits: the promise is already settled. Home retries a dropped initial
- * replace until a route commits.
+ * A tapped push waits for the local account/launch-URL decision, so a late
+ * onboarding or invite redirect cannot overwrite its destination. The saved
+ * deck itself is already the initial route and never replaces itself.
+ * Resolution is once per process; later taps and Back do not wait again.
  */
 
 /**
  * Bound on the wait. The landing decision reads secure storage and, on a
  * monolith build, the session. Each wait reports a timeout; the push handler
- * retains the target while Home shows a visible retry surface.
+ * retains the target while local account restoration finishes.
  */
 export const INITIAL_LANDING_TIMEOUT_MS = 8000;
 
@@ -35,7 +29,7 @@ export function markInitialLandingResolved(): void {
   for (const wake of pending) wake('committed');
 }
 
-function isInitialLandingResolved(): boolean {
+export function isInitialLandingResolved(): boolean {
   return resolved;
 }
 
@@ -53,31 +47,6 @@ export function suppressInitialLandingNavigation(): void {
 
 export function isInitialLandingNavigationSuppressed(): boolean {
   return suppressed;
-}
-
-/** A root dispatch can be dropped before React Navigation registers its first
- * focused child, even while the container reports isReady(). Retry the
- * landing replace until Expo Router reports a committed destination. */
-export function retryInitialLandingNavigation(
-  replace: () => void,
-  isPending: () => boolean,
-  showFallback: () => void,
-): () => void {
-  let cancelled = false;
-  let attempts = 0;
-  let timer: ReturnType<typeof setTimeout>;
-  const tryReplace = () => {
-    if (cancelled || !isPending()) return;
-    replace();
-    attempts += 1;
-    if (attempts === 6) showFallback();
-    timer = setTimeout(tryReplace, attempts < 6 ? 250 : 1000);
-  };
-  tryReplace();
-  return () => {
-    cancelled = true;
-    clearTimeout(timer);
-  };
 }
 
 /** Resolves once the landing route has committed, or on timeout. */
@@ -103,4 +72,19 @@ export function resetInitialLandingForTests(): void {
   resolved = false;
   suppressed = false;
   waiters = [];
+}
+
+/** A layout notification, not a prerequisite for painting or routing. */
+export const FirstContentDrawContext = createContext<() => void>(() => {});
+
+/** Let the native layout draw before starting nonvisual work. */
+export function afterFirstFrame(run: () => void): () => void {
+  let secondFrame: number | undefined;
+  const firstFrame = requestAnimationFrame(() => {
+    secondFrame = requestAnimationFrame(run);
+  });
+  return () => {
+    cancelAnimationFrame(firstFrame);
+    if (secondFrame !== undefined) cancelAnimationFrame(secondFrame);
+  };
 }

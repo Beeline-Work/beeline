@@ -88,23 +88,12 @@ import { UpdateReadyPrompt } from '@/components/UpdateReadyPrompt';
 import { DesktopDeepLinkBridge } from '@/components/DesktopDeepLinkBridge';
 import { useIsDesktop } from '@/utils/responsive';
 import { startDesktopNotifications } from '@/push/desktop-notifications';
+import { afterFirstFrame, FirstContentDrawContext } from '@/navigation/initial-landing';
 import { startIdentityLive } from '@/buzz/identity-live';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { latencyFrameTraceEnabled, markLatencyRouteNavigation, markLatencyTouch } from '@/buzz/latency-frame-trace';
 
 const consumedNotificationResponses = createConsumedNotificationResponseStore(AsyncStorage);
-
-/** Run once after a frame has had a chance to paint, even if navigation has an active interaction. */
-function afterFirstFrame(run: () => void): () => void {
-  let secondFrame: number | undefined;
-  const firstFrame = requestAnimationFrame(() => {
-    secondFrame = requestAnimationFrame(run);
-  });
-  return () => {
-    cancelAnimationFrame(firstFrame);
-    if (secondFrame !== undefined) cancelAnimationFrame(secondFrame);
-  };
-}
 
 // Foreground OS-banner policy: while the app is active, pushes for other
 // conversations are shown and listed silently. Native background display and
@@ -276,9 +265,181 @@ async function loadFonts() {
   });
 }
 
+// Overlap font I/O with the first tree and local account restoration.
+const fontInitialization = loadFonts()
+  .catch((error) => console.error('Error initializing:', error));
+
 export default function RootLayout() {
   const routeSegments = useSegments();
   React.useLayoutEffect(() => { setMobileErrorRoute(routeSegments); }, [routeSegments]);
+  const isDesktop = useIsDesktop();
+  const [drawn, setDrawn] = React.useState(false);
+  const firstLayout = React.useRef<(() => void) | null>(null);
+  const onContentLayout = React.useCallback(() => {
+    if (!firstLayout.current) firstLayout.current = afterFirstFrame(() => setDrawn(true));
+  }, []);
+  React.useEffect(() => () => { firstLayout.current?.(); firstLayout.current = null; }, []);
+  useTauriZoom();
+  useTauriDrag();
+  const pathname = usePathname();
+  React.useEffect(() => {
+    if (pathname !== '/' && pathname !== '/beeline/channels') return afterFirstFrame(onContentLayout);
+  }, [pathname, onContentLayout]);
+  React.useEffect(() => {
+    if (latencyFrameTraceEnabled) markLatencyRouteNavigation(pathname);
+  }, [pathname]);
+  React.useEffect(() => {
+    // `router.replace` only schedules the landing transition. Resolve the
+    // notification gate after Expo Router reports the committed destination,
+    // so a cold-start replace cannot overwrite the notification navigation.
+    if (pathname !== '/') markInitialLandingResolved();
+  }, [pathname]);
+  const { theme } = useUnistyles();
+  const navigationTheme = React.useMemo(() => {
+    if (theme.dark) {
+      return {
+        ...DarkTheme,
+        colors: {
+          ...DarkTheme.colors,
+          background: theme.colors.groupped.background,
+        },
+      };
+    }
+    return {
+      ...DefaultTheme,
+      colors: {
+        ...DefaultTheme.colors,
+        background: theme.colors.groupped.background,
+      },
+    };
+  }, [theme]);
+
+  //
+  // Init sequence
+  //
+  const [initialized, setInitialized] = React.useState(false);
+  const navigationRef = useNavigationContainerRef();
+  const notificationNavigator = React.useMemo(
+    () => createNotificationNavigator(navigationRef),
+    [navigationRef],
+  );
+  const rootReady = React.useRef<{ promise: Promise<void>; resolve: () => void } | null>(null);
+  if (!rootReady.current) {
+    let resolve!: () => void;
+    const promise = new Promise<void>((wake) => { resolve = wake; });
+    rootReady.current = { promise, resolve };
+  }
+  React.useEffect(() => {
+    void fontInitialization.finally(() => {
+      // The deck may already be laid out beneath the splash. Do not make
+      // revealing it wait for another root render and passive effect.
+      launchSplash.release();
+      setInitialized(true);
+    });
+  }, []);
+  React.useEffect(() => {
+    if (navigationRef.isReady()) {
+      rootReady.current?.resolve();
+      return;
+    }
+    return navigationRef.addListener('ready', () => rootReady.current?.resolve());
+  }, [navigationRef]);
+
+  const handledNotificationIds = React.useRef<Set<string>>(new Set());
+  const handleNotificationResponse = React.useCallback(
+    async (response: TappedNotificationResponse | null) => {
+      const resumeUrl = (response?.notification?.request?.content?.data as { resumeUrl?: unknown } | undefined)?.resumeUrl;
+      if (response?.actionIdentifier === Notifications.DEFAULT_ACTION_IDENTIFIER &&
+          await routeVoiceResumeNotification(resumeUrl, async () => {
+            await rootReady.current!.promise;
+            while (await whenInitialLandingResolved() === 'timeout') { /* Wait for the landing decision's next event. */ }
+            suppressInitialLandingNavigation();
+          })) {
+        await Notifications.clearLastNotificationResponseAsync();
+        return;
+      }
+      await routeBuzzNotificationResponse(response, {
+        navigator: notificationNavigator,
+        handled: handledNotificationIds.current,
+        defaultActionIdentifier: Notifications.DEFAULT_ACTION_IDENTIFIER,
+        waitForRootReady: () => rootReady.current!.promise,
+        waitForInitialLanding: whenInitialLandingResolved,
+        suppressPendingInitialLanding: suppressInitialLandingNavigation,
+        clearLastResponse: Notifications.clearLastNotificationResponseAsync,
+        resolveTarget: resolveBuzzNotificationDestination,
+        prefetchRoom: prefetchPushRoom,
+        consumedResponses: consumedNotificationResponses,
+        log: (message) => console.warn(message),
+      });
+    },
+    [notificationNavigator],
+  );
+
+  React.useEffect(() => {
+    return startNotificationResponseEntries({
+      addResponseListener: Notifications.addNotificationResponseReceivedListener,
+      getLastResponse: Notifications.getLastNotificationResponseAsync,
+      getAppState: () => AppState.currentState,
+      consumedResponses: consumedNotificationResponses,
+      route: (response) => handleNotificationResponse(response),
+      log: (message, error) =>
+        error == null ? console.warn(message) : console.warn(message, error),
+    });
+  }, [handleNotificationResponse]);
+
+  // Track the screens
+
+  //
+  // Not inited
+  //
+
+  // Mount the navigator on the first render. The native splash stays visible
+  // until fonts settle or the splash watchdog fires, while Expo Router needs
+  // its first focused child before an imperative landing replace or push
+  // navigation can be dispatched.
+
+  let providers = (
+    <SafeAreaProvider initialMetrics={initialWindowMetrics}>
+      <KeyboardProvider preload={false}>
+        <GestureHandlerRootView
+          {...(latencyFrameTraceEnabled ? { onTouchStartCapture: markLatencyTouch } : {})}
+          style={
+            isDesktop
+              ? { flex: 1 }
+              : { flex: 1, backgroundColor: theme.colors.groupped.background }
+          }
+        >
+          <UpdateProvider active={drawn}>
+            <ThemeProvider value={navigationTheme}>
+              <StatusBarProvider />
+              {drawn && <BackgroundEffects />}
+              <StoreUpdateGate fontsReady={initialized} active={drawn}>
+              <ModalProvider>
+                <DesktopDeepLinkBridge />
+                <BrowserNavigationShortcuts />
+                  <KeyboardShortcutsProvider>
+                    <HorizontalSafeAreaWrapper>
+                      <SidebarNavigator />
+                    </HorizontalSafeAreaWrapper>
+                  </KeyboardShortcutsProvider>
+                <WarmComputerSessionHost />
+              </ModalProvider>
+              <UpdateReadyPrompt />
+              </StoreUpdateGate>
+            </ThemeProvider>
+          </UpdateProvider>
+        </GestureHandlerRootView>
+      </KeyboardProvider>
+    </SafeAreaProvider>
+  );
+  if (tracking) {
+    providers = <PostHogProvider client={tracking}>{providers}</PostHogProvider>;
+  }
+
+  return <FirstContentDrawContext.Provider value={onContentLayout}>{providers}</FirstContentDrawContext.Provider>;
+}
+
+function BackgroundEffects() {
   React.useEffect(() => {
     let disposed = false;
     let stop = () => {};
@@ -309,7 +470,6 @@ export default function RootLayout() {
   },[]);
   React.useEffect(startDesktopNotifications, []);
   React.useEffect(startIdentityLive, []);
-  const isDesktop = useIsDesktop();
   React.useEffect(() => {
     // The server's push level wins: it is read once per launch, and every
     // later change is stored and announced, so the device copy is only the
@@ -394,160 +554,7 @@ export default function RootLayout() {
     [],
   );
 
-  useTauriZoom();
-  useTauriDrag();
-  const pathname = usePathname();
-  React.useEffect(() => {
-    if (latencyFrameTraceEnabled) markLatencyRouteNavigation(pathname);
-  }, [pathname]);
-  React.useEffect(() => {
-    // `router.replace` only schedules the landing transition. Resolve the
-    // notification gate after Expo Router reports the committed destination,
-    // so a cold-start replace cannot overwrite the notification navigation.
-    if (pathname !== '/') markInitialLandingResolved();
-  }, [pathname]);
-  const { theme } = useUnistyles();
-  const navigationTheme = React.useMemo(() => {
-    if (theme.dark) {
-      return {
-        ...DarkTheme,
-        colors: {
-          ...DarkTheme.colors,
-          background: theme.colors.groupped.background,
-        },
-      };
-    }
-    return {
-      ...DefaultTheme,
-      colors: {
-        ...DefaultTheme.colors,
-        background: theme.colors.groupped.background,
-      },
-    };
-  }, [theme]);
-
-  //
-  // Init sequence
-  //
-  const [initialized, setInitialized] = React.useState(false);
-  const navigationRef = useNavigationContainerRef();
-  const notificationNavigator = React.useMemo(
-    () => createNotificationNavigator(navigationRef),
-    [navigationRef],
-  );
-  const rootReady = React.useRef<{ promise: Promise<void>; resolve: () => void } | null>(null);
-  if (!rootReady.current) {
-    let resolve!: () => void;
-    const promise = new Promise<void>((wake) => { resolve = wake; });
-    rootReady.current = { promise, resolve };
-  }
-  React.useEffect(() => {
-    void loadFonts()
-      .catch((error) => console.error('Error initializing:', error))
-      .finally(() => setInitialized(true));
-  }, []);
-
-  React.useEffect(() => {
-    if (initialized) launchSplash.release();
-  }, [initialized]);
-  React.useEffect(() => {
-    if (navigationRef.isReady()) {
-      rootReady.current?.resolve();
-      return;
-    }
-    return navigationRef.addListener('ready', () => rootReady.current?.resolve());
-  }, [navigationRef]);
-
-  const handledNotificationIds = React.useRef<Set<string>>(new Set());
-  const handleNotificationResponse = React.useCallback(
-    async (response: TappedNotificationResponse | null) => {
-      const resumeUrl = (response?.notification?.request?.content?.data as { resumeUrl?: unknown } | undefined)?.resumeUrl;
-      if (response?.actionIdentifier === Notifications.DEFAULT_ACTION_IDENTIFIER &&
-          await routeVoiceResumeNotification(resumeUrl, async () => {
-            await rootReady.current!.promise;
-            while (await whenInitialLandingResolved() === 'timeout') { /* Wait for the landing decision's next event. */ }
-            suppressInitialLandingNavigation();
-          })) {
-        await Notifications.clearLastNotificationResponseAsync();
-        return;
-      }
-      await routeBuzzNotificationResponse(response, {
-        navigator: notificationNavigator,
-        handled: handledNotificationIds.current,
-        defaultActionIdentifier: Notifications.DEFAULT_ACTION_IDENTIFIER,
-        waitForRootReady: () => rootReady.current!.promise,
-        waitForInitialLanding: whenInitialLandingResolved,
-        suppressPendingInitialLanding: suppressInitialLandingNavigation,
-        clearLastResponse: Notifications.clearLastNotificationResponseAsync,
-        resolveTarget: resolveBuzzNotificationDestination,
-        prefetchRoom: prefetchPushRoom,
-        consumedResponses: consumedNotificationResponses,
-        log: (message) => console.warn(message),
-      });
-    },
-    [notificationNavigator],
-  );
-
-  React.useEffect(() => {
-    return startNotificationResponseEntries({
-      addResponseListener: Notifications.addNotificationResponseReceivedListener,
-      getLastResponse: Notifications.getLastNotificationResponseAsync,
-      getAppState: () => AppState.currentState,
-      consumedResponses: consumedNotificationResponses,
-      route: (response) => handleNotificationResponse(response),
-      log: (message, error) =>
-        error == null ? console.warn(message) : console.warn(message, error),
-    });
-  }, [handleNotificationResponse]);
-
-  // Track the screens
+  React.useEffect(() => { void import('@/buzz/message-outbox-runtime').then(({ startMessageOutbox }) => startMessageOutbox()); }, []);
   useTrackScreens();
-
-  //
-  // Not inited
-  //
-
-  // Mount the navigator on the first render. The native splash stays visible
-  // until fonts settle or the splash watchdog fires, while Expo Router needs
-  // its first focused child before an imperative landing replace or push
-  // navigation can be dispatched.
-
-  let providers = (
-    <SafeAreaProvider initialMetrics={initialWindowMetrics}>
-      <KeyboardProvider preload={false}>
-        <GestureHandlerRootView
-          {...(latencyFrameTraceEnabled ? { onTouchStartCapture: markLatencyTouch } : {})}
-          style={
-            isDesktop
-              ? { flex: 1 }
-              : { flex: 1, backgroundColor: theme.colors.groupped.background }
-          }
-        >
-          <UpdateProvider>
-            <ThemeProvider value={navigationTheme}>
-              <StatusBarProvider />
-              <StoreUpdateGate fontsReady={initialized}>
-              <ModalProvider>
-                <DesktopDeepLinkBridge />
-                <BrowserNavigationShortcuts />
-                  <KeyboardShortcutsProvider>
-                    <HorizontalSafeAreaWrapper>
-                      <SidebarNavigator />
-                    </HorizontalSafeAreaWrapper>
-                  </KeyboardShortcutsProvider>
-                <WarmComputerSessionHost />
-              </ModalProvider>
-              <UpdateReadyPrompt />
-              </StoreUpdateGate>
-            </ThemeProvider>
-          </UpdateProvider>
-        </GestureHandlerRootView>
-      </KeyboardProvider>
-    </SafeAreaProvider>
-  );
-  if (tracking) {
-    providers = <PostHogProvider client={tracking}>{providers}</PostHogProvider>;
-  }
-
-  return providers;
+  return null;
 }

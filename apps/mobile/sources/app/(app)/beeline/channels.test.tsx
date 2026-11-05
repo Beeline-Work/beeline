@@ -33,6 +33,10 @@ import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transpo
 
 const deck = vi.hoisted(() => ({
   appState: 'active' as string,
+  pathname: '/beeline/channels',
+  initialUrl: null as string | null | Promise<string | null>,
+  naming: false,
+  holdLayouts: false,
   routerMode: 'legacy' as 'legacy' | 'router' | 'pending',
   withholdWorkspaceSnapshot: false,
   appStateListeners: [] as Array<(state: string) => void>,
@@ -68,17 +72,20 @@ const deck = vi.hoisted(() => ({
   focusEffect: null as null | (() => void | (() => void)),
   focusEffects: new Set<() => void | (() => void)>(),
   blur: null as null | (() => void),
-  storedInvite: null as string | null,
+  storedInvite: null as string | null | Promise<string | null>,
 }));
 const hotSurfaces = vi.hoisted(() => ({
   values: new Map<string, unknown>(),
+  saved: new Map<string, unknown>(),
   listeners: new Map<string, Set<() => void>>(),
 }));
 
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
-  const host = (name: string) => (props: any) =>
-    ReactModule.createElement(name, props, props.children);
+  const host = (name: string) => (props: any) => {
+    ReactModule.useEffect(() => { if (!deck.holdLayouts) props.onLayout?.(); }, [props.onLayout]);
+    return ReactModule.createElement(name, props, props.children);
+  };
   return {
     StyleSheet: {
       flatten: (style: any): any =>
@@ -135,7 +142,10 @@ vi.mock('react-native', async () => {
 
 function hostModule(...names: string[]) {
   return Object.fromEntries(
-    names.map((name) => [name, (props: any) => React.createElement(name, props, props?.children)]),
+    names.map((name) => [name, (props: any) => {
+      React.useEffect(() => { if (name === 'RoomDeckLoadingView' && !deck.holdLayouts) props.onLayout?.(); }, [props.onLayout]);
+      return React.createElement(name, props, props?.children);
+    }]),
   );
 }
 vi.mock('@/components/buzz/TrayGlyph', () => hostModule('TrayGlyph'));
@@ -165,6 +175,7 @@ vi.mock('expo-haptics', () => ({
   NotificationFeedbackType: { Success: 'success' },
 }));
 vi.mock('expo-router', () => ({
+  usePathname: () => deck.pathname,
   router: { push: vi.fn(), replace: vi.fn() },
   useLocalSearchParams: () =>
     !deck.deferWorkspaceSelection && deck.selectedWorkspace
@@ -197,6 +208,12 @@ vi.mock('@react-navigation/native', () => ({
     }, [effect]);
   },
 }));
+vi.mock('@/auth/desktop-auth-session', () => ({ initialAuthUrl: vi.fn(async () => deck.initialUrl) }));
+vi.mock('@/buzz/pending-invite', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/buzz/pending-invite')>();
+  return { ...actual, loadPendingInvite: vi.fn(async () => deck.storedInvite instanceof Promise ? deck.storedInvite : actual.loadPendingInvite()) };
+});
+vi.mock('@/buzz/person-name', () => ({ isPersonNameOnboardingPending: vi.fn(async () => deck.naming) }));
 vi.mock('@/auth/github-auth-session', () => ({ githubInstallationRedirectUri: () => '' }));
 vi.mock('@/auth/github-installation-host', () => ({
   useGitHubInstallationSession: () => ({ start: vi.fn() }),
@@ -257,6 +274,12 @@ vi.mock('@/buzz/surface-storage', () => {
   };
   return {
     mobileSurfaceCache: cache,
+    restoreStoredSurface: vi.fn((address: string, guard: (value: unknown) => boolean) => {
+      const value = cache.peek(address) ?? hotSurfaces.saved.get(address);
+      if (!guard(value)) return null;
+      cache.publish(address, value);
+      return value;
+    }),
     surfaceAddress: vi.fn((relay, viewer, endpoint, params) =>
       JSON.stringify([relay, viewer, endpoint, params]),
     ),
@@ -355,6 +378,9 @@ vi.mock('@/sync/transport/room-view-client', async () => ({
 import BuzzChannels from './channels';
 import { router } from 'expo-router';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
+import { loadPendingInvite } from '@/buzz/pending-invite';
+import { resetInitialLandingForTests, markInitialLandingResolved, suppressInitialLandingNavigation } from '@/navigation/initial-landing';
+import Index from '../index';
 import { resetClientState } from '@/sync/client-reset';
 import { saveActiveCommunityId } from '@/buzz/community-storage';
 import { mobileSurfaceCache } from '@/buzz/surface-storage';
@@ -457,6 +483,17 @@ async function mountDeck(): Promise<ReactTestRenderer> {
 }
 
 beforeEach(() => {
+  resetInitialLandingForTests();
+  deck.pathname = '/beeline/channels';
+  deck.initialUrl = null;
+  deck.naming = false;
+  deck.holdLayouts = false;
+  hotSurfaces.saved.clear();
+  hotSurfaces.values.clear();
+  vi.stubGlobal('requestAnimationFrame', (run: () => void) => setTimeout(run, 0));
+  vi.stubGlobal('cancelAnimationFrame', (id: ReturnType<typeof setTimeout>) => clearTimeout(id));
+  vi.mocked(loadBuzzIdentity).mockReset().mockResolvedValue({ publicKey: 'viewer', secretKey: new Uint8Array(32) });
+  vi.mocked(loadPendingInvite).mockClear();
   transitions.held = false;
   transitions.pending = [];
   // A case that never unmounts its deck must not hand its live list to the next.
@@ -493,9 +530,140 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   deck.focusEffect = null;
   deck.focusEffects.clear();
   deck.blur = null;
+});
+
+
+describe('Saved deck cold launch', () => {
+  const savedViewer = 'a'.repeat(64);
+  const savedWorkspace = '11111111-1111-4111-8111-111111111111';
+  function saveDeck() {
+    deck.selectedWorkspace = savedWorkspace;
+    vi.mocked(loadBuzzIdentity).mockResolvedValue({ publicKey: savedViewer, secretKey: new Uint8Array(32) });
+    const workspaces = { workspaces: [{ id: savedWorkspace, name: 'Work', role: 'member' as const, updatedAt: 1 }], viewer: { ...viewer, pubkey: savedViewer }, truncated: false, watchFilters: [] };
+    hotSurfaces.saved.set(JSON.stringify(['https://relay.test', savedViewer, '/workspaces', undefined]), workspaces);
+    const base = chatList({ id: 'c'.repeat(64), text: 'saved before effects', createdAt: 1 });
+    const saved: ChatListView = {
+      ...base,
+      workspace: { ...base.workspace, id: savedWorkspace },
+      viewer: { ...viewer, pubkey: savedViewer },
+      chats: base.chats.map(item => ({
+        ...item,
+        room: { ...item.room, id: '22222222-2222-4222-8222-222222222222', workspaceId: savedWorkspace },
+        latestMessage: { ...item.latestMessage!, author: { ...agent, pubkey: 'b'.repeat(64) } },
+      })),
+      watchFilters: [],
+    };
+    hotSurfaces.saved.set(JSON.stringify(['https://relay.test', savedViewer, '/workspace/:id/chats', { workspaceId: savedWorkspace }]), saved);
+  }
+
+  it('starts at the saved deck with synchronous scoped rows before layout, pending invite and live reads', async () => {
+    deck.pathname = '/';
+    deck.holdLayouts = true;
+    saveDeck();
+    let releaseInvite!: (value: string | null) => void;
+    deck.storedInvite = new Promise(resolve => { releaseInvite = resolve; });
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => { renderer = create(<Index />); });
+      expect(paintedRows(renderer)[0].latestMessage?.text).toBe('saved before effects');
+      expect(router.replace).not.toHaveBeenCalled();
+      expect(loadPendingInvite).not.toHaveBeenCalled();
+      expect(deck.workspaceReads).toBe(0);
+      expect(deck.chatsReads).toBe(0);
+      await act(async () => renderer.root.findByProps({ testID: 'room-list-idle' }).props.onLayout());
+      await vi.waitFor(() => expect(loadPendingInvite).toHaveBeenCalled());
+      expect(deck.chatsReads).toBe(0);
+      await act(async () => releaseInvite(null));
+      await vi.waitFor(() => expect(deck.chatsReads).toBe(1));
+    } finally { if (renderer) await act(async () => renderer.unmount()); }
+  });
+
+  it('does not let a late pending invite overwrite a Room opened after cached paint', async () => {
+    saveDeck();
+    let releaseInvite!: (value: string | null) => void;
+    deck.storedInvite = new Promise(resolve => { releaseInvite = resolve; });
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => { renderer = create(<BuzzChannels />); });
+      await vi.waitFor(() => expect(loadPendingInvite).toHaveBeenCalled());
+      await act(async () => deck.blur?.());
+      await act(async () => releaseInvite('bzi_' + 'ab'.repeat(32)));
+      expect(router.replace).not.toHaveBeenCalled();
+    } finally { if (renderer) await act(async () => renderer.unmount()); }
+  });
+
+  it('never restores another viewer cache into the signed-in deck', async () => {
+    deck.holdLayouts = true;
+    saveDeck();
+    vi.mocked(loadBuzzIdentity).mockResolvedValue({ publicKey: 'other-viewer', secretKey: new Uint8Array(32) });
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => { renderer = create(<BuzzChannels />); });
+      expect(renderer.root.findAllByProps({ testID: 'room-list' })).toHaveLength(0);
+      expect(deck.chatsReads).toBe(0);
+    } finally { if (renderer) await act(async () => renderer.unmount()); }
+  });
+
+  it.each([
+    ['https://usebeeline.app/join/bzi_' + 'ab'.repeat(32), '/join/[token]', 'token', 'bzi_' + 'ab'.repeat(32)],
+    ['beeline://review/play-review-secret-value-0001', '/review/[secret]', 'secret', 'play-review-secret-value-0001'],
+    ['beeline://review/short', '/review/[secret]', 'secret', 'short'],
+  ])('keeps the explicit launch destination authoritative: %s', async (url, pathname, key, value) => {
+    deck.pathname = '/'; deck.initialUrl = url; saveDeck();
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => { renderer = create(<Index />); });
+      expect(router.replace).toHaveBeenCalledWith({ pathname, params: { [key]: value } });
+      expect(renderer.root.findAllByProps({ testID: 'room-list' })).toHaveLength(0);
+      expect(deck.chatsReads).toBe(0);
+    } finally { if (renderer) await act(async () => renderer.unmount()); }
+  });
+
+  it.each([false, true])('keeps absent identity / unfinished naming in onboarding (naming=%s)', async naming => {
+    deck.pathname = '/'; deck.naming = naming;
+    if (!naming) vi.mocked(loadBuzzIdentity).mockResolvedValue(null);
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => { renderer = create(<Index />); });
+      expect(router.replace).toHaveBeenCalledWith('/beeline/onboarding');
+      expect(deck.chatsReads).toBe(0);
+    } finally { if (renderer) await act(async () => renderer.unmount()); }
+  });
+
+  it('keeps unfinished naming authoritative when Back reveals an already-resolved root', async () => {
+    markInitialLandingResolved();
+    deck.pathname = '/'; deck.naming = true;
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => { renderer = create(<Index />); });
+      expect(router.replace).toHaveBeenCalledWith('/beeline/onboarding');
+      expect(deck.chatsReads).toBe(0);
+    } finally { if (renderer) await act(async () => renderer.unmount()); }
+  });
+
+  it('does not overwrite a tapped push when local restoration completes late, then shows the deck on Back', async () => {
+    deck.pathname = '/'; deck.holdLayouts = true; saveDeck();
+    let restore!: (value: any) => void;
+    vi.mocked(loadBuzzIdentity).mockImplementationOnce(() => new Promise(resolve => { restore = resolve; }));
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => { renderer = create(<Index />); });
+      suppressInitialLandingNavigation();
+      deck.pathname = '/beeline/chat/pushed';
+      await act(async () => renderer.update(<Index />));
+      await act(async () => restore({ publicKey: savedViewer, secretKey: new Uint8Array(32) }));
+      expect(renderer.toJSON()).toBeNull();
+      expect(router.replace).not.toHaveBeenCalled();
+      deck.pathname = '/';
+      await act(async () => renderer.update(<Index />));
+      expect(paintedRows(renderer)[0].latestMessage?.text).toBe('saved before effects');
+      expect(router.replace).not.toHaveBeenCalled();
+    } finally { if (renderer) await act(async () => renderer.unmount()); }
+  });
 });
 
 it('paints saved Rooms while background transitions wait, then yields live reconciliation', async () => {
@@ -589,7 +757,7 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
         renderer = create(React.createElement(BuzzChannels));
       });
       await quiet();
-      expect(request).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(1));
       await act(async()=>deck.subscriptions.find(entry=>entry.filters.some((filter:any)=>filter.kinds?.includes(9000)))!.emit({monolithLive:{type:'invalidate',roomId:'',reason:'reconnect'}}));
       await quiet();
       expect(request).toHaveBeenCalledTimes(2);
@@ -694,14 +862,7 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
 
 describe('Deleted workspace removal', () => {
   it('removes a cached deleted workspace on the first read after an offline session', async () => {
-    vi.mocked(mobileSurfaceCache.read)
-      .mockResolvedValueOnce({
-        workspaces: [{ id: 'workspace', name: 'Work', role: 'member', updatedAt: 1 }],
-        viewer,
-        truncated: false,
-        watchFilters: [],
-      } as never)
-      .mockResolvedValueOnce(chatList({ id: 'cached', text: 'old room', createdAt: 1 }) as never);
+    vi.mocked(mobileSurfaceCache.read).mockResolvedValue(chatList({ id: 'cached', text: 'old room', createdAt: 1 }) as never);
     deck.workspacesResponse = { workspaces: [], viewer, truncated: false, watchFilters: [] };
     let renderer!: ReactTestRenderer;
     await act(async () => {
@@ -1364,16 +1525,10 @@ describe('Room deck live path', () => {
 
   it('makes the covering read on open even when every cached Room resumes its lane', async () => {
     // Reproduction 4.3: a stored list whose Rooms all resume never read again.
-    vi.mocked(mobileSurfaceCache.read)
-      .mockResolvedValueOnce(null)
-      .mockImplementationOnce(
-        async (address) =>
-          mobileSurfaceCache.publish(
-            address,
-            chatList({ id: 'cached', text: 'stale', createdAt: 1 }),
-            (_value): _value is ChatListView => true,
-          ) as never,
-      );
+    vi.mocked(mobileSurfaceCache.read).mockImplementation(async (address) =>
+      String(address).includes('/workspace/:id/chats')
+        ? mobileSurfaceCache.publish(address, chatList({ id: 'cached', text: 'stale', createdAt: 1 }), (_value): _value is ChatListView => true) as never
+        : null);
     deck.chatsResponse = chatList({ id: 'm9', text: 'current', createdAt: 50 });
     let renderer!: ReactTestRenderer;
     await act(async () => {
@@ -1709,6 +1864,7 @@ describe('Retained socket deck activation', () => {
     const renderer = await openDeck();
     try {
       await missChanges();
+      vi.mocked(loadBuzzIdentity).mockResolvedValue(null);
       await act(async () => resetClientState());
       await activate('active');
       await advance(180_000);

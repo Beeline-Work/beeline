@@ -2,13 +2,15 @@
 
 This batch implements the captain's accepted recommendations. The code batch
 https://github.com/Beeline-Work/beeline/pull/3447 merged after green CI. L1 is
-complete. Firstmate verified directly on Neon at 09:35Z that B1's original
-one-row writer **1173283** and observer **1173284** are alive and committing,
-with no open transaction. Per inbox 024 the original **100 ms statement cap /
-200 ms normal pause** pass is left running, the 20 ms change is skipped, and no
-second writer is allowed. The Fly log stream is delayed; last received counters
-are historical lower bounds, not current progress. Further verified progress will
-be reported around each 25,000 cards when transport recovers. B8 is untouched.
+complete. B1's original one-row pass has now exited: the SSH stream ended without
+an exit status or final counters. Independent read-back at 09:50Z found cleanup
+backend **1173283** and observer **1173284** absent, zero cleanup locks or blocked
+clients, and **160,182 cards + 151 fields** remaining. All 229 skill versions and
+both fixed telemetry cohorts remain intact. Cards fell by 6,129 from the pass's
+baseline; this net change is not an exact writer commit count. Last received
+counters acknowledge 1,971 cards and one timeout, with no final result. No second
+writer was started; continuation awaits firstmate. B8 is untouched. See
+`b1-one-row-transport-ended.json`.
 
 | Decision | Implementation |
 | --- | --- |

@@ -106,10 +106,10 @@ describe('write permission corner outcome', () => {
     expect(allowed.root.findAllByType('Svg' as never)).toHaveLength(1);
     expect(allowed.root.findAllByType('Polygon' as never)[0]!.props.fill).toBe(brand.mark);
     expect(
-      String(allowed.root.findAllByType('Text').map((node) => node.props.children)),
+      String(allowed.root.findAllByType('Text').map((node: any) => node.props.children)),
     ).not.toContain('◇');
     expect(
-      allowed.root.findAllByType('Text').map((node) => node.props.children),
+      allowed.root.findAllByType('Text').map((node: any) => node.props.children),
     ).toEqual(['Corner approved ·', 'View corner']);
     const resting = link!.props.style({ pressed: false }).filter(Boolean);
     const pressed = link!.props.style({ pressed: true }).filter(Boolean);

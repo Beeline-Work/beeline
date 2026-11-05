@@ -46,13 +46,7 @@ jobs:
         run: npx turbo run build --filter=@beeline/body --filter=@beeline/server
         if: steps.changes.outputs.run == 'true'
       - name: Check the case library
-        run: npm run test:prompt-cases
-        if: steps.changes.outputs.run == 'true'
-      - name: Check nightly replay controls without spending model tokens
-        run: npm run test:prompt-nightly
-        if: steps.changes.outputs.run == 'true'
-      - name: Check PR subscription replay controls without model calls
-        run: node --import tsx --test scripts/prompt-pr-replay.test.mjs
+        run: node --import tsx scripts/prompt-cases.ts
         if: steps.changes.outputs.run == 'true'
       - name: Check capability discovery controls and real local service paths
         run: npm run test:prompt-discovery

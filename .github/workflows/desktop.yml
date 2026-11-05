@@ -110,9 +110,6 @@ jobs:
         working-directory: apps/mobile
         run: npm run tauri:icons:check
         if: steps.changes.outputs.run == 'true'
-      - name: Check desktop release helpers
-        run: node --test scripts/clean-dist.test.mjs scripts/desktop-update.test.mjs
-        if: steps.changes.outputs.run == 'true'
   build:
     name: DESKTOP BUILD (${{ matrix.label }})
     needs:

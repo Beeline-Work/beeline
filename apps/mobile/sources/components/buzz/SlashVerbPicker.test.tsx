@@ -95,7 +95,7 @@ function find_by_test_id(renderer: ReactTestRenderer, testId: string) {
   // The pass-through host mock propagates props to children, so restrict to
   // the touchable host nodes that actually own the testID.
   return renderer.root.findAll(
-    (node) =>
+    (node: any) =>
       (node.type === 'TouchableOpacity' || node.type === 'Pressable') && node.props.testID === testId,
   );
 }
@@ -161,7 +161,7 @@ describe('SlashVerbPicker agent command palette', () => {
       );
     const stateText = (renderer: ReactTestRenderer) =>
       renderer.root.find(
-        (node) =>
+        (node: any) =>
           node.type === 'Text' && node.props.testID === 'slash-agent-command-fast-mode-state',
       ).props.children;
     const off = picker(false);
@@ -297,7 +297,7 @@ describe('SlashVerbPicker agent command palette', () => {
       }),
     );
     const noteViews = renderer.root.findAll(
-      (node) => node.type === 'View' && node.props.testID === 'slash-agent-no-commands',
+      (node: any) => node.type === 'View' && node.props.testID === 'slash-agent-no-commands',
     );
     expect(noteViews).toHaveLength(1);
     // Read `.props.children` directly — JSON.stringify on test-instance props

@@ -1191,6 +1191,7 @@ export const resetChatListStoresForTest = ChatReads.reset;
 export const loadNeedsYouList = TrayReads.loadNeedsYouList;
 export const loadSavedList = TrayReads.loadSavedList;
 export const loadTrayList = TrayReads.loadTrayList;
+/** @public The phone list-store bootstrap imports this owner operation. */
 export const seedNeedsYouList = TrayReads.seedNeedsYouList;
 export const forgetTray = TrayReads.forgetTray;
 export const removeNeedsYou = TrayReads.removeNeedsYou;

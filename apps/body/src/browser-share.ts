@@ -34,11 +34,6 @@ const SELECTED_TEXT = `(() => {
 })()`;
 const shares = new Map<string, Share>();
 
-/** Agent browser tools can await this before an action on a shared tab. */
-export function browserIsHumanControlled(pageId: string): boolean {
-  return shares.get(pageId)?.controlled ?? false;
-}
-
 function opened(socket: WebSocket): Promise<void> {
   return new Promise((resolve, reject) => {
     socket.once('open', resolve);

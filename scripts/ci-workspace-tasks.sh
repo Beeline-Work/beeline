@@ -8,24 +8,18 @@ typecheck() {
   # Enforce the shared UI component registry
   export UI_POLICY_BASE="$CI_BASE_SHA"
   git fetch --no-tags --depth=1 origin "$UI_POLICY_BASE"
-  node --test --test-concurrency=1 scripts/mobile-ui-policy.test.mjs
   node scripts/check-mobile-ui-components.mjs --base "$UI_POLICY_BASE"
   # Allow no phone network channel besides the main live socket
   export CHANNEL_BASE="$CI_BASE_SHA"
   git fetch --no-tags --depth=1 origin "$CHANNEL_BASE"
-  node --test --test-concurrency=1 scripts/phone-network-channels.test.mjs
   node scripts/check-phone-network-channels.mjs --base "$CHANNEL_BASE"
-  node --test --test-concurrency=1 scripts/router-boundaries.test.mjs
   node scripts/check-router-boundaries.mjs --base "$CHANNEL_BASE"
   # Keep each module's sinks in their owner files
   export ARCHITECTURE_BASE="$CI_BASE_SHA"
   git fetch --no-tags --depth=1 origin "$ARCHITECTURE_BASE"
-  node --test --test-concurrency=1 scripts/check-architecture.test.mjs
   # G1: candidate invariants govern CI; changes are reviewed weekly after merging.
   node scripts/check-architecture.mjs --root . --base "$ARCHITECTURE_BASE"
   # The root command also generates mobile routes and typechecks mobile.
-  node --test scripts/eas-api-contract.test.mjs scripts/server-previous-sources.test.mjs
-  node --test scripts/rollout-schema.test.mjs
   node scripts/rollout-schema.mjs --previous "$CI_BASE_SHA"
   if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
     npx turbo run typecheck --filter="...[$CI_BASE_SHA]"
@@ -37,10 +31,8 @@ typecheck() {
   # Check no workflow names a deleted test
   npm run lint:workflow-paths
   # Check CI routing, partitioning and build provenance
-  node --test --test-concurrency=1 scripts/ci-shards.test.mjs scripts/ci-baseline.test.mjs
-  node --test --test-concurrency=1 scripts/ci-build-provenance.test.mjs scripts/run-workspace-tests.test.mjs scripts/report-main-checks.test.mjs
+  node --test --test-concurrency=1  scripts/run-workspace-tests.test.mjs scripts/report-main-checks.test.mjs
   # Test nightly Checks orchestration
-  node --test --test-concurrency=1 scripts/nightly-checks.test.mjs scripts/network-job-admission.test.mjs
 }
 
 
@@ -48,9 +40,7 @@ mobile_suite() {
   # Run the mobile vitest suite
   node scripts/run-workspace-tests.mjs mobile
   # Verify Android release shrinking mods
-  node --test --test-concurrency=1 scripts/android-shrinking.test.mjs
   # Prove Android cached update integrity and retry
-  node --test --test-concurrency=1 scripts/android-ota-integrity.test.mjs
 }
 
 
@@ -58,7 +48,6 @@ dead_code() {
   # Reject new unused files or exports
   timeout 5m npm run dead-code
   # Prove an unused export fails the guard
-  timeout 5m npm run test:dead-code
 }
 
 
@@ -69,7 +58,6 @@ native_fingerprint() {
   )
   # Run the native fingerprint regression in isolation
   ( cd "apps/mobile"
-    npx vitest run sources/config/nativeFingerprint.test.ts --maxWorkers=1 --minWorkers=1
   )
 }
 

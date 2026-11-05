@@ -77,7 +77,7 @@ vi.mock('react-native-safe-area-context', () => ({
 vi.mock('qrcode', () => ({ create: vi.fn(() => ({ modules: { size: 0, get: () => 0 } })) }));
 vi.mock('react-native-svg', async () => {
   const ReactModule = await import('react');
-  const host = (name: string) => (props: unknown) => ReactModule.createElement(name, props);
+  const host = (name: string) => (props: React.Attributes) => ReactModule.createElement(name, props);
   return {
     Dimensions: { get: () => ({ width: 390, height: 844 }) },
     default: host('Svg'),
@@ -146,7 +146,7 @@ vi.mock('@/constants/Typography', () => ({
 }));
 vi.mock('@/components/buzz/MonoHull', async () => {
   const ReactModule = await import('react');
-  const host = (name: string) => (props: unknown) => ReactModule.createElement(name, props);
+  const host = (name: string) => (props: React.Attributes) => ReactModule.createElement(name, props);
   return {
     HullSurface: host('HullSurface'),
     PixelGateReveal: host('PixelGateReveal'),
@@ -155,17 +155,17 @@ vi.mock('@/components/buzz/MonoHull', async () => {
 });
 vi.mock('@/components/buzz/IdentityMark', async () => {
   const ReactModule = await import('react');
-  return { IdentityMark: (props: unknown) => ReactModule.createElement('IdentityMark', props) };
+  return { IdentityMark: (props: React.Attributes) => ReactModule.createElement('IdentityMark', props) };
 });
 vi.mock('@/components/buzz/FacePickerSheet', async () => {
   const ReactModule = await import('react');
   return {
-    FacePickerSheet: (props: unknown) => ReactModule.createElement('FacePickerSheet', props),
+    FacePickerSheet: (props: React.Attributes) => ReactModule.createElement('FacePickerSheet', props),
   };
 });
 vi.mock('@/components/buzz/BeelineMark', async () => {
   const ReactModule = await import('react');
-  return { BeelineMark: (props: unknown) => ReactModule.createElement('BeelineMark', props) };
+  return { BeelineMark: (props: React.Attributes) => ReactModule.createElement('BeelineMark', props) };
 });
 vi.mock('@/utils/open-external-url', () => ({
   openExternalUrl: vi.fn(async () => undefined),
@@ -173,27 +173,27 @@ vi.mock('@/utils/open-external-url', () => ({
 vi.mock('@/components/buzz/PushLevelSetting', async () => {
   const ReactModule = await import('react');
   return {
-    PushLevelSetting: (props: unknown) => ReactModule.createElement('PushLevelSetting', props),
+    PushLevelSetting: (props: React.Attributes) => ReactModule.createElement('PushLevelSetting', props),
   };
 });
 vi.mock('@/components/buzz/AppearanceSetting', async () => {
   const ReactModule = await import('react');
   return {
-    AppearanceSetting: (props: unknown) => ReactModule.createElement('AppearanceSetting', props),
+    AppearanceSetting: (props: React.Attributes) => ReactModule.createElement('AppearanceSetting', props),
   };
 });
 vi.mock('@/components/buzz/UiSizeSetting', async () => {
   const ReactModule = await import('react');
-  return { UiSizeSetting: (props: unknown) => ReactModule.createElement('UiSizeSetting', props) };
+  return { UiSizeSetting: (props: React.Attributes) => ReactModule.createElement('UiSizeSetting', props) };
 });
 vi.mock('@/components/buzz/SpeakingSpeedSetting', async () => {
   const ReactModule = await import('react');
-  return { SpeakingSpeedSetting: (props: unknown) => ReactModule.createElement('SpeakingSpeedSetting', props) };
+  return { SpeakingSpeedSetting: (props: React.Attributes) => ReactModule.createElement('SpeakingSpeedSetting', props) };
 });
 vi.mock('@/components/buzz/SettingsRow', async () => {
   const ReactModule = await import('react');
   return {
-    SettingsRow: (props: unknown) => ReactModule.createElement('SettingsRow', props as never),
+    SettingsRow: (props: React.Attributes) => ReactModule.createElement('SettingsRow', props as never),
   };
 });
 // Real @/unistyles boots Unistyles and MMKV-backed local settings, neither of
@@ -262,7 +262,7 @@ vi.mock('react-native-unistyles', () => ({
 }));
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
-  const host = (name: string) => (props: unknown) =>
+  const host = (name: string) => (props: React.Attributes) =>
     ReactModule.createElement(name, props as never);
   return {
     Platform: { OS: 'web', select: (choices: Record<string, unknown>) => choices.default },

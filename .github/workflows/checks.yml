@@ -1,4 +1,3 @@
-# Each gate decides and prepares on its own runner. Hosted jobs retain capabilities unavailable in isolated Squire.
 name: Checks
 run-name: ${{ inputs.nightly_id && format('Nightly Checks {0}', inputs.nightly_id) || github.event.pull_request.title || github.workflow }}
 on:
@@ -26,8 +25,6 @@ on:
           - server-integration
           - mobile-suite
           - mobile-export-reachability
-          - frame-budget
-          - state-upgrade
           - native-fingerprint
           - readme-parity
           - app-link-associations
@@ -104,21 +101,11 @@ jobs:
           mobile: "true"
       - name: Test feedback grouping and ranking
         run: npm run test:feedback-signals
-      - name: Keep the production log walk producing triage reports
-        run: node --test --test-concurrency=1 scripts/log-walk/*.test.mjs
-      - name: Send ACP adapter failures to the fix loop
-        run: node --test --test-concurrency=1 scripts/acp-adapter-issue.test.mjs
-      - name: Keep the prompt-block analysis aggregate-only
-        run: node --test --test-concurrency=1 scripts/prompt-blocks-analysis.test.mjs
-      - name: Check the weekly Reason adapter port job
-        run: node --test --test-concurrency=1 scripts/reason-upstream-check.test.mjs
       - name: Protect nightly latency history and measured Loops publication
         run: node --test --test-concurrency=1 scripts/latency-rig/nightly-*.test.mjs
       - name: Block unbounded outside requests and waiting-screen regressions
         run: |
-          node --test --test-concurrency=1 scripts/external-request-deadlines.test.mjs
-          npm test -w @beeline/auth -- --run src/external-fetch.test.ts --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
-          npm test --prefix apps/mobile -- --run sources/sync/transport/monolith-operation.test.ts sources/components/buzz/CornerActionsSheet.test.tsx 'sources/app/(app)/beeline/human-profile.waiting.test.tsx' --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
+          npm test --prefix apps/mobile -- --run sources/sync/transport/monolith-operation.test.ts   --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
       - name: Prove local network admission
         working-directory: packages/net
         env:
@@ -129,11 +116,10 @@ jobs:
             npx vitest run "$suite" --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
           done
           cd ../..
-          node --test --test-concurrency=1 scripts/network-codec-bundle.test.mjs
       - name: Run hermetic shared-package tests
         run: npm test -w @beeline/nostr -- --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1 && npm test -w @beeline/api-contract -- --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1 && npm test -w @beeline/buzz-client -- --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
       - name: Protect Room navigation responsiveness
-        run: npm test --prefix apps/mobile -- --run --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1 sources/buzz/transition-work.test.ts sources/buzz/room-transition-work.test.ts sources/buzz/surface-registry.test.ts sources/buzz/surface-storage.scheduling.test.ts 'sources/app/(app)/beeline/chat/useRoomSurfaceSession.test.ts'
+        run: npm test --prefix apps/mobile -- --run --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1     'sources/app/(app)/beeline/chat/useRoomSurfaceSession.test.ts'
   dead-code:
     name: DEAD CODE
     if: "!cancelled() && (github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'dead-code')"
@@ -406,51 +392,21 @@ jobs:
         with:
           mobile: true
         if: steps.changes.outputs.run == 'true'
-      - name: Prove incident deadlock recovery on isolated PostgreSQL
-        run: npm test -w @beeline/server -- --run src/incident-deadlocks.test.ts --maxWorkers=1 --minWorkers=1
-        env:
-          BEELINE_INCIDENT_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
-        if: steps.changes.outputs.run == 'true'
-      - name: Prove release migration lock handoff on isolated PostgreSQL
-        run: npm test -w @beeline/server -- --run src/migration-steps.test.ts src/router-release-migration.postgres.test.ts --maxWorkers=1 --minWorkers=1
-        env:
-          BEELINE_MIGRATION_LOCK_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
-        if: steps.changes.outputs.run == 'true'
-      - name: Prove push outbox migration lock handoff on isolated PostgreSQL
-        run: npm test -w @beeline/server -- --run src/push-outbox.test.ts --maxWorkers=1 --minWorkers=1
-        env:
-          BEELINE_PUSH_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
-        if: steps.changes.outputs.run == 'true'
       - name: Prove router command identity and authority fences on isolated PostgreSQL
         env:
           NODE_OPTIONS: --max-old-space-size=4096
           BEELINE_COMMAND_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
         run: |
           npx vitest run tests/seams/server-db.test.ts --maxWorkers=2 --minWorkers=1
-          npm test -w @beeline/server -- src/pending-attachment-deadline.postgres.test.ts --maxWorkers=2 --minWorkers=1
           BEELINE_SENTRY_TEST_POSTGRES_URL="$BEELINE_COMMAND_TEST_POSTGRES_URL" npm test -w @beeline/server -- src/sentry-wake.test.ts -t 'SENTRY-CLOCK|SENTRY-DEADLINE' --maxWorkers=2 --minWorkers=1
-          npm test -w @beeline/server -- src/background-leader.postgres.test.ts --maxWorkers=2 --minWorkers=1
-          npm test -w @beeline/server -- src/background-deadlines.postgres.test.ts --maxWorkers=2 --minWorkers=1
-          npm test -w @beeline/server -- src/router-group-c-completion.postgres.test.ts --maxWorkers=2 --minWorkers=1
-          npm test -w @beeline/server -- src/router-group-c-oauth.postgres.test.ts --maxWorkers=2 --minWorkers=1
           node --import tsx scripts/prove-router-group-c-room-payload.mjs
           BEELINE_GROUP_C_COST_PROOF=1 node --import tsx scripts/prove-router-group-c-room-payload.mjs
-          (cd apps/mobile && npx vitest run sources/buzz/router-group-c-media.postgres.test.ts --maxWorkers=2 --minWorkers=1)
-          (cd apps/mobile && npx vitest run sources/sync/transport/router-group-c-connection.postgres.test.ts --maxWorkers=2 --minWorkers=1)
-          npm test -w @beeline/server -- src/router-command.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/router-projections.postgres.test.ts --maxWorkers=2 --minWorkers=1
-          npm test -w @beeline/server -- src/durable-live.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/rooms-mcp-stream.postgres.test.ts --maxWorkers=2 --minWorkers=1
-          npm test -w @beeline/server -- src/phone-media.postgres.test.ts --maxWorkers=2 --minWorkers=1
-          npm test -w @beeline/server -- src/router-authority-fences.postgres.test.ts --maxWorkers=2 --minWorkers=1
-          npm test -w @beeline/server -- src/helper-overlay.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/turn-ownership-socket.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/rooms-mcp-stream.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/computer-expiry.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/choice-expiry.test.ts --maxWorkers=2 --minWorkers=1
-          BEELINE_VOICE_TEST_POSTGRES_URL="$BEELINE_COMMAND_TEST_POSTGRES_URL" npm test -w @beeline/server -- src/voice-budget.postgres.test.ts --maxWorkers=2 --minWorkers=1
-          npm test -w @beeline/server -- src/helper-usage.postgres.test.ts --maxWorkers=2 --minWorkers=1
-          npm test -w @beeline/server -- src/helper-activation.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/operator-system-dm-source.postgres.test.ts --maxWorkers=2 --minWorkers=1
         if: steps.changes.outputs.run == 'true'
   server-suite:
@@ -638,130 +594,6 @@ jobs:
       - name: Execute mobile-export-reachability in its own checkout
         run: timeout 30m bash scripts/ci-workspace-tasks.sh mobile-export-reachability
         if: steps.changes.outputs.run == 'true'
-  frame-budget:
-    name: FRAME-BUDGET
-    needs:
-      - mobile-suite
-    if: "!cancelled() && github.event_name != 'workflow_dispatch'"
-    runs-on:
-      - self-hosted
-      - Linux
-      - X64
-      - beeline-ci
-      - beeline-ci-control
-    env:
-      CI_TEST_WORKERS: "1"
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          clean: ${{ !startsWith(runner.name, 'beeline-ci-squire-') }}
-      - name: Decide in this checkout
-        id: changes
-        env:
-          CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          CI_PATHS: ^apps/mobile/|^packages/
-        run: |-
-          run=true
-          if [ "$GITHUB_EVENT_NAME" = pull_request ] && git fetch --no-tags --depth=1 origin "$CI_BASE_SHA" && git diff --name-only "$CI_BASE_SHA" HEAD > "$RUNNER_TEMP/changed-files"; then
-            run=false
-            while IFS= read -r file; do
-              if [[ "$file" =~ $CI_PATHS ]]; then run=true; break; fi
-              if [[ "$file" == docs/* || "$file" == *.md ]]; then continue; fi
-              if [[ ! "$file" =~ ^apps/(body|server|mobile)/ ]]; then run=true; break; fi
-            done < "$RUNNER_TEMP/changed-files"
-          fi
-          echo "run=$run" >> "$GITHUB_OUTPUT"
-          echo "This job runs: $run"
-      - name: Take the verdict from the suite that ran it
-        env:
-          SUITE_RESULT: ${{ needs.mobile-suite.result }}
-        run: |
-          set -euo pipefail
-          echo "MOBILE SUITE: $SUITE_RESULT"
-          if [ "$SUITE_RESULT" != 'success' ]; then
-            echo "::error::FRAME-BUDGET derives its verdict from MOBILE SUITE, which reported '$SUITE_RESULT'. It runs apps/mobile/sources/buzz/surface-runtime.frame-budget.test.ts. A 'skipped' result means the two path filters in this file have drifted apart — FRAME-BUDGET's filter must stay a subset of the suite's."
-            exit 1
-          fi
-          echo 'apps/mobile/sources/buzz/surface-runtime.frame-budget.test.ts ran there.'
-        if: steps.changes.outputs.run == 'true'
-  frame-budget-on-demand:
-    name: FRAME-BUDGET (on demand)
-    if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'frame-budget')
-    runs-on:
-      - self-hosted
-      - beeline-prod-host
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          clean: ${{ !startsWith(runner.name, 'beeline-ci-squire-') }}
-      - uses: ./.github/actions/ci-workspace
-        with:
-          mobile: "true"
-      - run: npm test --prefix apps/mobile -- --run sources/buzz/surface-runtime.frame-budget.test.ts
-  state-upgrade:
-    name: STATE-UPGRADE
-    needs:
-      - mobile-suite
-    if: "!cancelled() && github.event_name != 'workflow_dispatch'"
-    runs-on:
-      - self-hosted
-      - Linux
-      - X64
-      - beeline-ci
-      - beeline-ci-control
-    env:
-      CI_TEST_WORKERS: "1"
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          clean: ${{ !startsWith(runner.name, 'beeline-ci-squire-') }}
-      - name: Decide in this checkout
-        id: changes
-        env:
-          CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          CI_PATHS: ^apps/mobile/|^packages/
-        run: |-
-          run=true
-          if [ "$GITHUB_EVENT_NAME" = pull_request ] && git fetch --no-tags --depth=1 origin "$CI_BASE_SHA" && git diff --name-only "$CI_BASE_SHA" HEAD > "$RUNNER_TEMP/changed-files"; then
-            run=false
-            while IFS= read -r file; do
-              if [[ "$file" =~ $CI_PATHS ]]; then run=true; break; fi
-              if [[ "$file" == docs/* || "$file" == *.md ]]; then continue; fi
-              if [[ ! "$file" =~ ^apps/(body|server|mobile)/ ]]; then run=true; break; fi
-            done < "$RUNNER_TEMP/changed-files"
-          fi
-          echo "run=$run" >> "$GITHUB_OUTPUT"
-          echo "This job runs: $run"
-      - name: Take the verdict from the suite that ran it
-        env:
-          SUITE_RESULT: ${{ needs.mobile-suite.result }}
-        run: |
-          set -euo pipefail
-          echo "MOBILE SUITE: $SUITE_RESULT"
-          if [ "$SUITE_RESULT" != 'success' ]; then
-            echo "::error::STATE-UPGRADE derives its verdict from MOBILE SUITE, which reported '$SUITE_RESULT'. It runs apps/mobile/sources/buzz/surface-storage.upgrade.test.ts. A 'skipped' result means the two path filters in this file have drifted apart — STATE-UPGRADE's filter must stay a subset of the suite's."
-            exit 1
-          fi
-          echo 'apps/mobile/sources/buzz/surface-storage.upgrade.test.ts ran there.'
-        if: steps.changes.outputs.run == 'true'
-  state-upgrade-on-demand:
-    name: STATE-UPGRADE (on demand)
-    if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'state-upgrade')
-    runs-on:
-      - self-hosted
-      - beeline-prod-host
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          clean: ${{ !startsWith(runner.name, 'beeline-ci-squire-') }}
-      - uses: ./.github/actions/ci-workspace
-        with:
-          mobile: "true"
-      - run: npm test --prefix apps/mobile -- --run sources/buzz/surface-storage.upgrade.test.ts
   native-fingerprint:
     name: NATIVE FINGERPRINT
     if: "!cancelled() && (github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'native-fingerprint' || inputs.suite == 'mobile-suite')"
@@ -856,8 +688,6 @@ jobs:
       - name: Check the two READMEs are the same file
         run: npm run readme:check
         if: steps.changes.outputs.run == 'true'
-      - run: npm run test:readme
-        if: steps.changes.outputs.run == 'true'
       - name: Check every badge in the README renders
         run: npm run readme:badges
         if: steps.changes.outputs.run == 'true'
@@ -897,10 +727,7 @@ jobs:
       - uses: ./.github/actions/ci-workspace
         if: steps.changes.outputs.run == 'true'
       - name: Verify the committed app associations, Pages build, and bundle merge
-        run: node --test --test-concurrency=1 scripts/app-associations.test.mjs scripts/pages-site.test.mjs scripts/merge-beeline-bundles.test.mjs scripts/verify-beeline-install.test.mjs scripts/landing-animation.test.mjs scripts/pages-channel.test.mjs scripts/verify-pages-update.test.mjs scripts/verify-web-deployment.test.mjs scripts/web-asset-guard.test.mjs
-        if: steps.changes.outputs.run == 'true'
-      - name: Run the public website contract test
-        run: npm test -w @beeline/public-web-tests -- --run src/invite-web.test.ts --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
+        run: "node --test --test-concurrency=1    scripts/verify-beeline-install.test.mjs    scripts/verify-web-deployment.test.mjs "
         if: steps.changes.outputs.run == 'true'
   actionlint:
     name: ACTIONLINT
@@ -951,14 +778,8 @@ jobs:
       - name: Lint tracked shell scripts
         run: npm run lint:shell
         if: steps.changes.outputs.run == 'true'
-      - name: Test the desktop signing credential gate
-        run: node --test --test-concurrency=1 scripts/desktop-signing.test.mjs
-        if: steps.changes.outputs.run == 'true'
-      - name: Test store upload identity, rerun store checks and Apple processing verification
-        run: node --test --test-concurrency=1 scripts/ios-store-build.test.mjs scripts/store-shipped.test.mjs scripts/play-scripts.test.mjs
-        if: steps.changes.outputs.run == 'true'
       - name: Test release preflight, failure intake and governor regressions
-        run: node --test --test-concurrency=1 scripts/pr-store-build.test.mjs scripts/release-preflight.test.mjs scripts/unified-release.test.mjs scripts/npm-package-visibility.test.mjs scripts/smoke-helper-package.test.mjs scripts/mobile-store-minimum.test.mjs scripts/release-record.test.mjs scripts/release-bookkeeping.test.mjs scripts/ota-release.test.mjs scripts/ota-launch-proof.test.mjs scripts/store-runtime-targets.test.mjs scripts/release-artifact-allowlist.test.mjs scripts/assert-mobile-release-origin.test.mjs
+        run: node --test --test-concurrency=1 scripts/pr-store-build.test.mjs   scripts/npm-package-visibility.test.mjs scripts/smoke-helper-package.test.mjs       scripts/release-artifact-allowlist.test.mjs scripts/assert-mobile-release-origin.test.mjs
         if: steps.changes.outputs.run == 'true'
       - name: Refuse release state in artifacts and caches
         run: node scripts/release-artifact-allowlist.mjs

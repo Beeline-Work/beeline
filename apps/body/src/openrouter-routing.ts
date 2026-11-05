@@ -52,8 +52,6 @@ export const OPENROUTER_ENDPOINTS_BASE_URL = 'https://openrouter.ai/api/v1/model
 export const OPENROUTER_COMPLETIONS_URL = 'https://openrouter.ai/api/v1/chat/completions';
 export const OPENROUTER_ROUTING_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 export const OPENROUTER_ROUTING_FETCH_TIMEOUT_MS = 10_000;
-/** The answer probe is a live purchase; keep it short-lived but not per-turn. */
-export const OPENROUTER_PROBE_CACHE_TTL_MS = OPENROUTER_ROUTING_CACHE_TTL_MS;
 /** Default bound for the direct probe helper; daily qualification checks all eligible providers. */
 export const OPENROUTER_PROBE_MAX_CANDIDATES = 6;
 export const OPENROUTER_PROBE_TIMEOUT_MS = 20_000;

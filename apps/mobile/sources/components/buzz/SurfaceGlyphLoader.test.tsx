@@ -236,7 +236,7 @@ function render(element: React.ReactElement): ReactTestRenderer {
 }
 
 function dots(renderer: ReactTestRenderer) {
-  return renderer.root.findAllByType('View').filter((node) => {
+  return renderer.root.findAllByType('View').filter((node: any) => {
     const style = node.props.style;
     const resolved = Array.isArray(style) ? Object.assign({}, ...style) : style;
     return resolved?.width === 5 || resolved?.width === 7;

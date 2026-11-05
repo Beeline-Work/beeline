@@ -166,7 +166,7 @@ describe('Buzz root launch routing', () => {
     expect(
       renderer.root
         .findAllByType('Text' as any)
-        .some((node) => node.props.children === 'Secure storage unavailable'),
+        .some((node: any) => node.props.children === 'Secure storage unavailable'),
     ).toBe(true);
   });
 

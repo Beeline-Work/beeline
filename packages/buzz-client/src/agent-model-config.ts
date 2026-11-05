@@ -10,6 +10,7 @@ export const ALLOWED_AGENT_MODEL_CONFIG_CATEGORIES = [
   'reasoning_effort',
 ] as const;
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function isAllowedAgentModelConfigCategory(category: string, id?: string): boolean {
   return (
     (ALLOWED_AGENT_MODEL_CONFIG_CATEGORIES as readonly string[]).includes(category) ||

@@ -383,7 +383,7 @@ describe('Workspace Settings authority', () => {
     expect(renderer.root.findAllByProps({ testID: 'workspace-settings-denied' })).toHaveLength(0);
     expect(renderer.root.findByProps({ testID: 'workspace-settings-retry' }).props.title).toBe('Couldn’t reach Beeline');
     expect(renderer.root.findByProps({ testID: 'workspace-settings-retry' })).toBeDefined();
-    expect(renderer.root.findAllByType('Text').map((node) => node.children.join(''))).not.toContain(
+    expect(renderer.root.findAllByType('Text').map((node: any) => node.children.join(''))).not.toContain(
       'Admin access required',
     );
   });
@@ -556,14 +556,14 @@ describe('Workspace Settings authority', () => {
 
     expect(
       renderer.root.findAll(
-        (node) =>
+        (node: any) =>
           node.type === 'Pressable' &&
           node.props.testID === 'room-visibility-484556f2-archived',
       ),
     ).toHaveLength(0);
     expect(
       renderer.root.findAll(
-        (node) =>
+        (node: any) =>
           node.type === 'Pressable' && node.props.testID === 'room-visibility-9d5e2285-live',
       ),
     ).toHaveLength(1);
@@ -635,7 +635,7 @@ describe('Workspace Settings authority', () => {
 
     const renderer = await render();
 
-    expect(renderer.root.findAllByType('Text').map((node) => node.children.join(''))).toContain(
+    expect(renderer.root.findAllByType('Text').map((node: any) => node.children.join(''))).toContain(
       'Showing the first 200 Rooms.',
     );
   });
@@ -645,8 +645,8 @@ describe('Workspace Settings authority', () => {
       chatListView([room('11111111-room', 'beeline', 1), room('22222222-room', 'beeline', 2)]),
     );
 
-    const renderer = await render({ embedded, workspaceId: 'workspace-1' });
-    const visibleText = renderer.root.findAllByType('Text').map((node) => node.children.join(''));
+    const renderer = await render({ workspaceId: 'workspace-1' });
+    const visibleText = renderer.root.findAllByType('Text').map((node: any) => node.children.join(''));
 
     expect(visibleText).toContain('Created Jan 1, 1970 · 00:00:01 UTC');
     expect(visibleText).toContain('Created Jan 1, 1970 · 00:00:02 UTC');
@@ -670,7 +670,7 @@ describe('Workspace Settings authority', () => {
 
     const renderer = await render();
     const row = renderer.root.findAll(
-      (node) => node.type === 'Pressable' && node.props.testID === 'room-visibility-room-1',
+      (node: any) => node.type === 'Pressable' && node.props.testID === 'room-visibility-room-1',
     )[0]!;
     expect(row.props).toMatchObject({
       accessibilityLabel: 'Show actions for Room #atlas',
@@ -764,7 +764,7 @@ describe('Workspace Settings authority', () => {
     });
 
     expect(navigation.push).not.toHaveBeenCalled();
-    expect(renderer.root.findAllByType('Text').map((node) => node.children.join(''))).toContain(
+    expect(renderer.root.findAllByType('Text').map((node: any) => node.children.join(''))).toContain(
       'workspace admins only',
     );
   });
@@ -932,10 +932,10 @@ describe('Workspace Settings authority', () => {
   it('retires the Picture row and Danger zone heading', async () => {
     const renderer = await render();
     const titles = renderer.root
-      .findAll((node) => node.props?.title !== undefined)
-      .map((node) => node.props.title);
+      .findAll((node: any) => node.props?.title !== undefined)
+      .map((node: any) => node.props.title);
     expect(titles).not.toContain('Picture');
-    expect(renderer.root.findAllByType('Text').map((node) => node.children.join(''))).not.toContain(
+    expect(renderer.root.findAllByType('Text').map((node: any) => node.children.join(''))).not.toContain(
       'Danger zone',
     );
     expect(renderer.root.findByProps({ testID: 'workspace-delete-row' }).props.tone).toBe(
@@ -948,7 +948,7 @@ describe('Weight tier settings', () => {
   it('are gone from Workspace settings', async () => {
     const renderer = await render();
     expect(renderer.root.findAllByProps({ testID: 'weight-tier-settings' })).toHaveLength(0);
-    expect(renderer.root.findAllByType('Text').map((node) => node.children.join(''))).not.toContain(
+    expect(renderer.root.findAllByType('Text').map((node: any) => node.children.join(''))).not.toContain(
       'Weight tiers',
     );
   });

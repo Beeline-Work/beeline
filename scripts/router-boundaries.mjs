@@ -254,16 +254,6 @@ export function inspectSource(file, text) {
   if (/\.[cm]?[jt]sx?$/.test(file)) {
     const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
     if (configuredMcpDispatcher(file, source)) hits = hits.filter(hit => hit.kind !== 'import:undici');
-    const commandOwners = ['apps/mobile/sources/buzz/command-owner.ts', 'apps/mobile/sources/sync/transport/live-connection.ts'];
-    function commandAccess(node) {
-      const member = ts.isPropertyAccessExpression(node) ? node.name.text
-        : ts.isElementAccessExpression(node) && node.argumentExpression && ts.isStringLiteralLike(node.argumentExpression)
-          ? node.argumentExpression.text : undefined;
-      if (member === 'requestCommand' && !commandOwners.includes(file))
-        errors.push(`${file}: durable command executor belongs to the persisted intent owner`);
-      ts.forEachChild(node, commandAccess);
-    }
-    commandAccess(source);
     errors.push(...inspectSurfaceReadAuthority(file, text));
     inspectHelperOperations(file, source, errors);
     for (const entry of imports(file, text)) {
@@ -283,8 +273,6 @@ export function inspectSource(file, text) {
         // Closed activation codec belongs only to the owned machine socket adapters.
       } else if (target === '@beeline/net/helper-codecs' && ['apps/body/src/helper-usage-channel.ts', 'apps/server/src/daemon-live.ts'].includes(file)) {
         // Closed usage codecs belong only to the existing machine socket adapters.
-      } else if (target === '@beeline/net/owner' && ['apps/mobile/sources/buzz/command-owner.ts'].includes(file)) {
-        // Exact trusted navigation and persisted-intent owners; no feature imports.
       } else if (target?.startsWith('@beeline/net/') || target?.startsWith('packages/net/')) {
         // Add exact production owners only with their M2/M3
         // proofs rather than authorizing a directory of feature callers.

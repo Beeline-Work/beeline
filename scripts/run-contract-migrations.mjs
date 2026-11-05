@@ -3,9 +3,11 @@ import { Client } from 'pg';
 import { assertDrained, columnDrops, contractFiles, schemaProblems } from './rollout-schema.mjs';
 
 const arg = flag => process.argv[process.argv.indexOf(flag) + 1];
-for (const flag of ['--machines', '--image', '--trees'])
+for (const flag of ['--machines', '--version', '--sha', '--trees'])
   if (!process.argv.includes(flag) || !arg(flag)) throw new Error(`${flag} is required`);
-assertDrained(JSON.parse(readFileSync(arg('--machines'), 'utf8')), arg('--image'));
+await assertDrained(JSON.parse(readFileSync(arg('--machines'), 'utf8')), {
+  version: arg('--version'), sourceSha: arg('--sha'),
+});
 const { current, previous } = JSON.parse(readFileSync(arg('--trees'), 'utf8'));
 const problems = schemaProblems(current, previous);
 if (problems.length) throw new Error(problems.join('\n'));

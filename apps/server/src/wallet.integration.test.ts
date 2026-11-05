@@ -1,3 +1,4 @@
+import { phoneFetch } from '../../../tests/helpers/phone-operation.js';
 import { createAgentCommand, claimAgentCommand } from './agent-command.js';
 import { createHash, createHmac, generateKeyPairSync } from 'node:crypto';
 import { CdpWalletClient, WalletTransactionPending } from './cdp-client.js';
@@ -105,7 +106,7 @@ describe('wallet over the fake CDP seam', () => {
   });
 
   const phoneOperation = async (name: string, payload: unknown) => {
-    const response = await fetch(`${origin}/v1/phone/operations/${name}`, {
+    const response = await phoneFetch(`${origin}/v1/phone/operations/${name}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
       body: JSON.stringify(payload),
@@ -122,7 +123,7 @@ describe('wallet over the fake CDP seam', () => {
       )
     ).rows[0];
     if (pending) await claimAgentCommand(database, ROOM, HELPER, pending.id, 'wallet-generation');
-    const response = await fetch(`${origin}/v1/daemon/operations/${name}`, {
+    const response = await phoneFetch(`${origin}/v1/daemon/operations/${name}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${helperToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -186,7 +187,7 @@ describe('wallet over the fake CDP seam', () => {
       const input = { agentId: HELPER, ...harmlessTypedData };
       expect((await daemonOperation('walletSignTypedData', input)).body.outcome).toBe('signed');
       const foreignToken = (await auth.exchangeGitHubOidc('outsider')).accessToken;
-      const foreignRevoke = await fetch(`${origin}/v1/phone/operations/revokeWalletDelegation`, {
+      const foreignRevoke = await phoneFetch(`${origin}/v1/phone/operations/revokeWalletDelegation`, {
         method: 'POST', headers: { authorization: `Bearer ${foreignToken}`, 'content-type': 'application/json' },
         body: JSON.stringify({ identityId: HUMAN }),
       });
@@ -275,7 +276,7 @@ describe('wallet over the fake CDP seam', () => {
     }
     expect(sign).not.toHaveBeenCalled();
     for (const roomInput of [{}, { roomId: ROOM }]) {
-      const response = await fetch(`${origin}/v1/daemon/operations/walletSignTypedData`, {
+      const response = await phoneFetch(`${origin}/v1/daemon/operations/walletSignTypedData`, {
         method: 'POST', headers: { authorization: `Bearer ${helperToken}`, 'content-type': 'application/json' },
         body: JSON.stringify({ agentId: HELPER, ...harmlessTypedData, ...roomInput }),
       });
@@ -295,7 +296,7 @@ describe('wallet over the fake CDP seam', () => {
     expect(again.address).toBe(view.address);
 
     const emptyChats = (await (
-      await fetch(`${origin}/v1/phone/workspaces/${WORKSPACE}/chats`, {
+      await phoneFetch(`${origin}/v1/phone/workspaces/${WORKSPACE}/chats`, {
         headers: { authorization: `Bearer ${accessToken}` },
       })
     ).json()) as { chats: Array<{ directMessage?: { peer: { handle?: string } } }> };
@@ -305,7 +306,7 @@ describe('wallet over the fake CDP seam', () => {
 
     await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE, ttlHours: 24 });
     const chats = (await (
-      await fetch(`${origin}/v1/phone/workspaces/${WORKSPACE}/chats`, {
+      await phoneFetch(`${origin}/v1/phone/workspaces/${WORKSPACE}/chats`, {
         headers: { authorization: `Bearer ${accessToken}` },
       })
     ).json()) as {
@@ -344,7 +345,7 @@ describe('wallet over the fake CDP seam', () => {
       [{ workspaceId: 'not-a-uuid' }, 'valid Workspace ID required'],
       [{ workspaceId: otherWorkspace }, 'workspace membership required'],
     ] as const) {
-      const response = await fetch(`${origin}/v1/phone/operations/grantWalletDelegation`, {
+      const response = await phoneFetch(`${origin}/v1/phone/operations/grantWalletDelegation`, {
         method: 'POST',
         headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
         body: JSON.stringify(payload),
@@ -464,7 +465,7 @@ describe('wallet over the fake CDP seam', () => {
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'admin')`,
       [WORKSPACE, admin.id],
     );
-    const refused = await fetch(`${origin}/v1/phone/operations/acceptConnectorOffer`, {
+    const refused = await phoneFetch(`${origin}/v1/phone/operations/acceptConnectorOffer`, {
       method: 'POST',
       headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({ offerId }),
@@ -699,7 +700,7 @@ describe('wallet over the fake CDP seam', () => {
     const names = 'content-type x-event-id x-event-type';
     const signature = createHmac('sha256', 'fixture-only-webhook-secret')
       .update(`${timestamp}.${names}.application/json.${eventId}.${type}.${raw}`).digest('hex');
-    return fetch(`${origin}/v1/wallet/events/cdp/test`, {
+    return phoneFetch(`${origin}/v1/wallet/events/cdp/test`, {
       method: 'POST', body: raw, headers: {
         'content-type': 'application/json', 'x-event-id': eventId, 'x-event-type': type,
         'x-hook0-signature': `t=${timestamp},h=${names},v1=${signature}`,
@@ -738,7 +739,7 @@ describe('wallet over the fake CDP seam', () => {
     expect(rows[2]!.text).toContain('USDC');
     expect(rows[2]!.text).toContain('ETH');
     expect(rows[2]!.text).toContain('confirmed swap');
-    const history = await fetch(`${origin}/v1/phone/rooms/${rows[0]!.room_id}/history`, {
+    const history = await phoneFetch(`${origin}/v1/phone/rooms/${rows[0]!.room_id}/history`, {
       headers: { authorization: `Bearer ${accessToken}` },
     });
     expect(history.status).toBe(200);
@@ -986,14 +987,14 @@ describe('wallet over the fake CDP seam', () => {
   it('rejects forged provider events and phone sends into inaccessible Workspaces before sending', async () => {
     await createdWallet();
     const send = vi.spyOn(walletSource(), 'sendTransaction');
-    const response = await fetch(`${origin}/v1/phone/operations/sendFromWallet`, {
+    const response = await phoneFetch(`${origin}/v1/phone/operations/sendFromWallet`, {
       method: 'POST', headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({ workspaceId: '99999999-9999-4999-8999-999999999999',
         chain: 'base', asset: 'usdc', amount: '1', to: `0x${'7'.repeat(40)}` }),
     });
     expect(response.ok).toBe(false);
     expect(send).not.toHaveBeenCalled();
-    const forged = await fetch(`${origin}/v1/wallet/events/cdp/test`, {
+    const forged = await phoneFetch(`${origin}/v1/wallet/events/cdp/test`, {
       method: 'POST', body: '{}', headers: { 'x-hook0-signature': 'forged' },
     });
     expect(forged.status).toBe(401);

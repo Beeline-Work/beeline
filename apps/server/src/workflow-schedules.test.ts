@@ -1,3 +1,4 @@
+import { phoneFetch } from '../../../tests/helpers/phone-operation.js';
 import { randomBytes } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -464,7 +465,7 @@ it('Reproduction R1: answers a stop of an already-deleted schedule with its own 
   try {
     const port = (server.address() as AddressInfo).port;
     const stop = async (roomId: string) => {
-      const response = await fetch(`http://127.0.0.1:${port}/v1/phone/operations/deleteRoomSchedule`, {
+      const response = await phoneFetch(`http://127.0.0.1:${port}/v1/phone/operations/deleteRoomSchedule`, {
         method: 'POST',
         headers: { authorization: `Bearer ${'p'.repeat(20)}`, 'content-type': 'application/json' },
         body: JSON.stringify({ roomId, scheduleId: created.scheduleId }),

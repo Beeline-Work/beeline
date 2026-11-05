@@ -1,3 +1,4 @@
+import { phoneFetch } from '../../../tests/helpers/phone-operation.js';
 import { AddressInfo } from 'node:net';
 import WebSocket from 'ws';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -42,7 +43,7 @@ describe('server readiness', () => {
       auth: {} as TokenAuth,
       phone: {} as PhoneService,
       daemon: {} as DaemonService,
-      live: {} as LiveHub,
+      live: new LiveHub(),
       mediaMaximumBytes: 1,
       ...extra,
     });
@@ -310,10 +311,10 @@ describe('server readiness', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/health`;
 
-    const failed = await fetch(url);
+    const failed = await phoneFetch(url);
     expect(failed.status).toBe(503);
     expect(connect).toHaveBeenCalledOnce();
-    const recovered = await fetch(url);
+    const recovered = await phoneFetch(url);
     expect(recovered.status).toBe(200);
   });
 
@@ -341,14 +342,14 @@ describe('server readiness', () => {
       auth: { authenticatePhone: vi.fn().mockResolvedValue('viewer') } as unknown as TokenAuth,
       phone: { execute } as unknown as PhoneService,
       daemon: {} as DaemonService,
-      live: { publish } as unknown as LiveHub,
+      live: Object.assign(new LiveHub(), { publish }),
       mediaMaximumBytes: 1,
     });
     servers.push(server);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as AddressInfo).port;
 
-    const response = await fetch(`http://127.0.0.1:${port}/v1/phone/operations/sendRoomMessage`, {
+    const response = await phoneFetch(`http://127.0.0.1:${port}/v1/phone/operations/sendRoomMessage`, {
       method: 'POST',
       headers: { authorization: `Bearer ${'p'.repeat(20)}`, 'content-type': 'application/json' },
       body: JSON.stringify({ roomId: 'room-open', text: 'hello' }),
@@ -371,7 +372,7 @@ describe('server readiness', () => {
   });
 
   it.each(['readRoomTools', 'readMediaMetadata', 'readMediaLink', 'readMediaPlayback'])(
-    'keeps %s on the sole phone socket', async operation => {
+    'keeps selected read operation %s on the socket', async operation => {
       const query = vi.fn(), transaction = vi.fn(), execute = vi.fn();
       const response = await get(`/v1/phone/operations/${operation}`, { query, transaction }, {
         auth: { authenticatePhone: vi.fn().mockResolvedValue('viewer') } as unknown as TokenAuth,
@@ -391,14 +392,14 @@ describe('server readiness', () => {
       auth: { authenticatePhone: vi.fn().mockResolvedValue('viewer') } as unknown as TokenAuth,
       phone: { execute } as unknown as PhoneService,
       daemon: {} as DaemonService,
-      live: { publish } as unknown as LiveHub,
+      live: Object.assign(new LiveHub(), { publish }),
       mediaMaximumBytes: 1,
     });
     servers.push(server);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as AddressInfo).port;
 
-    const response = await fetch(`http://127.0.0.1:${port}/v1/phone/operations/reopenChat`, {
+    const response = await phoneFetch(`http://127.0.0.1:${port}/v1/phone/operations/reopenChat`, {
       method: 'POST',
       headers: { authorization: `Bearer ${'p'.repeat(20)}`, 'content-type': 'application/json' },
       body: JSON.stringify({ roomId: 'room-open' }),
@@ -424,7 +425,7 @@ describe('server readiness', () => {
         auth: { authenticatePhone: vi.fn().mockResolvedValue('viewer') } as unknown as TokenAuth,
         phone: { execute } as unknown as PhoneService,
         daemon: {} as DaemonService,
-        live: { publish } as unknown as LiveHub,
+        live: Object.assign(new LiveHub(), { publish }),
         mediaMaximumBytes: 1,
       });
       servers.push(server);
@@ -433,7 +434,7 @@ describe('server readiness', () => {
 
       // An open corner rereads its workflow runs on every Room invalidation;
       // a read that published one made that reread loop without end.
-      const response = await fetch(`http://127.0.0.1:${port}/v1/phone/operations/${operation}`, {
+      const response = await phoneFetch(`http://127.0.0.1:${port}/v1/phone/operations/${operation}`, {
         method: 'POST',
         headers: { authorization: `Bearer ${'p'.repeat(20)}`, 'content-type': 'application/json' },
         body: JSON.stringify({ roomId: 'room-open' }),
@@ -456,7 +457,7 @@ describe('server readiness', () => {
       auth: { authenticatePhone: vi.fn().mockResolvedValue('viewer') } as unknown as TokenAuth,
       phone: { readRoom } as unknown as PhoneService,
       daemon: {} as DaemonService,
-      live: {} as LiveHub,
+      live: new LiveHub(),
       mediaMaximumBytes: 1,
       webAppOrigins: ['https://web.beeline.test'],
     });
@@ -465,14 +466,14 @@ describe('server readiness', () => {
     const port = (server.address() as AddressInfo).port;
     const path = `http://127.0.0.1:${port}/v1/phone/rooms/22222222-2222-4222-8222-222222222222`;
 
-    const preflight = await fetch(path, {
+    const preflight = await phoneFetch(path, {
       method: 'OPTIONS',
       headers: { origin: 'https://web.beeline.test', 'access-control-request-headers': 'x-beeline-view' },
     });
     expect(preflight.status).toBe(204);
     expect(preflight.headers.get('access-control-allow-headers')).toContain('x-beeline-view');
 
-    const read = await fetch(path, {
+    const read = await phoneFetch(path, {
       headers: {
         origin: 'https://web.beeline.test',
         authorization: `Bearer ${'p'.repeat(20)}`,
@@ -495,14 +496,14 @@ describe('server readiness', () => {
       auth: {} as TokenAuth,
       phone: {} as PhoneService,
       daemon: { releaseReadiness } as unknown as DaemonService,
-      live: {} as LiveHub,
+      live: new LiveHub(),
       mediaMaximumBytes: 1,
     });
     servers.push(server);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as AddressInfo).port;
 
-    const response = await fetch(`http://127.0.0.1:${port}/v1/releases/daemon-readiness`);
+    const response = await phoneFetch(`http://127.0.0.1:${port}/v1/releases/daemon-readiness`);
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
@@ -518,7 +519,7 @@ describe('server readiness', () => {
       auth: {} as TokenAuth,
       phone: {} as PhoneService,
       daemon: {} as DaemonService,
-      live: {} as LiveHub,
+      live: new LiveHub(),
       mediaMaximumBytes: 1,
       releaseNotify: { secret: 'correct-horse', notifyReleaseDelivered } as never,
     });
@@ -531,13 +532,13 @@ describe('server readiness', () => {
       changelogUrl: 'https://x.test',
     });
 
-    const noAuth = await fetch(`http://127.0.0.1:${port}/v1/releases/notify`, {
+    const noAuth = await phoneFetch(`http://127.0.0.1:${port}/v1/releases/notify`, {
       method: 'POST',
       body,
     });
     expect(noAuth.status).toBe(403);
 
-    const wrongSecret = await fetch(`http://127.0.0.1:${port}/v1/releases/notify`, {
+    const wrongSecret = await phoneFetch(`http://127.0.0.1:${port}/v1/releases/notify`, {
       method: 'POST',
       headers: { authorization: 'Bearer wrong', 'content-type': 'application/json' },
       body,
@@ -553,7 +554,7 @@ describe('server readiness', () => {
       auth: {} as TokenAuth,
       phone: {} as PhoneService,
       daemon: {} as DaemonService,
-      live: {} as LiveHub,
+      live: new LiveHub(),
       mediaMaximumBytes: 1,
       releaseNotify: { secret: 'correct-horse', notifyReleaseDelivered } as never,
     });
@@ -561,7 +562,7 @@ describe('server readiness', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as AddressInfo).port;
 
-    const response = await fetch(`http://127.0.0.1:${port}/v1/releases/notify`, {
+    const response = await phoneFetch(`http://127.0.0.1:${port}/v1/releases/notify`, {
       method: 'POST',
       headers: { authorization: 'Bearer correct-horse', 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -584,13 +585,13 @@ describe('server readiness', () => {
       auth: {} as TokenAuth,
       phone: {} as PhoneService,
       daemon: {} as DaemonService,
-      live: {} as LiveHub,
+      live: new LiveHub(),
       mediaMaximumBytes: 1,
     });
     servers.push(unconfigured);
     await new Promise<void>((resolve) => unconfigured.listen(0, '127.0.0.1', resolve));
     const unconfiguredPort = (unconfigured.address() as AddressInfo).port;
-    const refused = await fetch(`http://127.0.0.1:${unconfiguredPort}/v1/releases/notify`, {
+    const refused = await phoneFetch(`http://127.0.0.1:${unconfiguredPort}/v1/releases/notify`, {
       method: 'POST',
       headers: { authorization: 'Bearer correct-horse', 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -639,9 +640,9 @@ describe('daemon live command push', () => {
     socket.send(JSON.stringify({ type: 'subscribe', roomId: 'room-live' }));
 
     await expect(closed).resolves.toBe(1013);
-    const response = await fetch(`http://127.0.0.1:${port}/healthz`);
+    const response = await phoneFetch(`http://127.0.0.1:${port}/healthz`);
     expect(response.status).toBe(200);
-    const health = await fetch(`http://127.0.0.1:${port}/health`);
+    const health = await phoneFetch(`http://127.0.0.1:${port}/health`);
     expect((await health.json()).live.errors.database).toBe(1);
   });
 
@@ -1182,14 +1183,14 @@ describe('daemon operation presence evidence', () => {
       } as unknown as TokenAuth,
       phone: {} as PhoneService,
       daemon: { execute } as unknown as DaemonService,
-      live: {} as LiveHub,
+      live: new LiveHub(),
       mediaMaximumBytes: 1,
     });
     servers.push(server);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as AddressInfo).port;
 
-    const response = await fetch(
+    const response = await phoneFetch(
       `http://127.0.0.1:${port}/v1/daemon/operations/loadWorkspaceSkill`,
       {
         method: 'POST',
@@ -1219,7 +1220,7 @@ describe('daemon operation presence evidence', () => {
       } as unknown as TokenAuth,
       phone: {} as PhoneService,
       daemon: { execute } as unknown as DaemonService,
-      live: {} as LiveHub,
+      live: new LiveHub(),
       connectionPresence: { evidence } as never,
       mediaMaximumBytes: 1,
     });
@@ -1227,7 +1228,7 @@ describe('daemon operation presence evidence', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as AddressInfo).port;
 
-    const response = await fetch(`http://127.0.0.1:${port}/v1/daemon/operations/getAgentCommands`, {
+    const response = await phoneFetch(`http://127.0.0.1:${port}/v1/daemon/operations/getAgentCommands`, {
       method: 'POST',
       headers: {
         authorization: `Bearer bdt_${'t'.repeat(43)}`,
@@ -2080,7 +2081,7 @@ describe('phone committed-row live delivery', () => {
     await expect(failed).resolves.toMatchObject({ t: 'res', id: 'failed-clock', ok: false, error: { code: 'unavailable' } });
     expect(socket.readyState).toBe(WebSocket.OPEN);
     expect(query).toHaveBeenCalledOnce();
-    expect((await fetch(`http://127.0.0.1:${port}/healthz`)).status).toBe(200);
+    expect((await phoneFetch(`http://127.0.0.1:${port}/healthz`)).status).toBe(200);
   });
 
   it('never subscribes or projects a committed row for an unauthorized viewer', async () => {
@@ -2325,7 +2326,7 @@ describe('live reconnect admission', () => {
       await zombieClosed[0];
       await Promise.all(zombieClosed);
       expect(zombies.every((zombie) => zombie.readyState === WebSocket.CLOSED)).toBe(true);
-      expect((await (await fetch(`http://127.0.0.1:${port}/health`)).json()).live.sockets).toBe(1);
+      expect((await (await phoneFetch(`http://127.0.0.1:${port}/health`)).json()).live.sockets).toBe(1);
 
       // Saturate the live database gate with reads that never finish.
       for (const reader of ['phone-a', 'phone-b', 'phone-c']) {
@@ -2333,7 +2334,7 @@ describe('live reconnect admission', () => {
         phone.send(JSON.stringify({ type: 'subscribe', roomId: `room-${reader}` }));
       }
       await vi.waitFor(() => expect(stalledReads).toHaveLength(2));
-      const health = await (await fetch(`http://127.0.0.1:${port}/health`)).json();
+      const health = await (await phoneFetch(`http://127.0.0.1:${port}/health`)).json();
       expect(health.live).toMatchObject({ activeDbTasks: 2, waitingDbTasks: 1 });
       const pong = new Promise<string>((resolve) => current.once('pong', (data) => resolve(data.toString())));
       current.ping('still-there');
@@ -2418,7 +2419,7 @@ describe('live reconnect admission', () => {
       }
       expect(peakInUse).toBeLessThanOrEqual(2);
       expect(peakWaiting).toBe(0);
-      const health = await fetch(`http://127.0.0.1:${port}/health`);
+      const health = await phoneFetch(`http://127.0.0.1:${port}/health`);
       expect(health.status).toBe(200);
       expect((await health.json()).database.pool.waiting).toBe(0);
     } finally {

@@ -1,6 +1,4 @@
 import { EventEmitter } from 'node:events';
-import { IncomingMessage, ServerResponse } from 'node:http';
-import { Socket } from 'node:net';
 import type { WebSocket } from 'ws';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { TokenAuth } from './auth.js';
@@ -22,7 +20,7 @@ function counts() {
   return db.query(`SELECT hour,op,status,code,release,count::int FROM operation_outcomes_hourly ORDER BY hour,release,op,status`);
 }
 
-it('C3 counts refusals and successes from real HTTP and socket handlers without binding a port', async () => {
+it('C3 counts refusals and successes from the real socket handler without binding a port', async () => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
   const outcomes = new OperationOutcomes('transport-test');
@@ -36,35 +34,23 @@ it('C3 counts refusals and successes from real HTTP and socket handlers without 
     daemon: {} as DaemonService, mediaMaximumBytes: 1,
   });
   const dispatch = dispatcher.mock.results[0]!.value as phoneOperations.PhoneOperationDispatcher;
-  async function http(op: string, args: object) {
-    const request = new IncomingMessage(new Socket());
-    request.url = `/v1/phone/operations/${op}`; request.method = 'POST';
-    request.headers = { authorization: `Bearer ${'token'.repeat(8)}` };
-    request.push(Buffer.from(JSON.stringify(args))); request.push(null);
-    const response = new ServerResponse(request);
-    return new Promise<{ status: number; body: unknown }>(resolve => {
-      vi.spyOn(response, 'end').mockImplementation((data) => {
-        resolve({ status: response.statusCode, body: JSON.parse(String(data)) }); return response;
-      });
-      server.emit('request', request, response);
-    });
-  }
   const client = Object.assign(new EventEmitter(), { readyState: 1, OPEN: 1 });
   let reply!: (frame: string) => void;
   const accept = phoneSocketRequests(client as unknown as WebSocket, viewer, dispatch,
     frame => reply(frame), () => 403);
+  let requestId = 0;
   async function socket(op: string, args: object) {
     return new Promise<unknown>(resolve => {
       reply = frame => resolve(JSON.parse(frame));
-      accept({ t: 'req', id: op, op, args });
+      accept({ t: 'req', id: String(++requestId), op, args });
     });
   }
   try {
-    expect(await http('listRoomWorkflowRuns', { roomId: room }))
-      .toEqual({ status: 403, body: { error: 'room access denied' } });
+    expect(await socket('listRoomWorkflowRuns', { roomId: room }))
+      .toMatchObject({ok:false,error:{code:'access_denied'}});
     expect(await socket('listRoomWorkflowRuns', { roomId: room }))
       .toMatchObject({ ok: false, error: { code: 'access_denied', retryable: false } });
-    expect(await http('readWorkspaces', {})).toMatchObject({ status: 200 });
+    expect(await socket('readWorkspaces', {})).toMatchObject({ok:true});
     expect(await socket('readWorkspaces', {})).toMatchObject({ ok: true });
     expect((await counts()).rows).toEqual([]);
     await outcomes.flush(db);

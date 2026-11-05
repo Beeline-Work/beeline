@@ -1,9 +1,4 @@
 import {
-  parseRouterCommandIdentity,
-  type RouterCommandIdentity,
-  type RouterCommandReceipt,
-} from '@beeline/api-contract/router-command';
-import {
   PHONE_READ_OPERATIONS,
   readSidebarPreview,
   type PhoneOperationMap,
@@ -90,7 +85,6 @@ export class LiveConnection {
   private readonly viewing = new Map<string, number>();
   private readonly connected = new Set<() => void>();
   private readonly disconnected = new Set<() => void>();
-  private readonly commandListeners = new Set<() => void>();
   private readonly paintOwners = new Map<string, Registration>();
   private requestId = 0;
   private socketEpoch = 0;
@@ -173,42 +167,16 @@ export class LiveConnection {
     }
   }
 
-  commandState(): { generation: number; commandDedupV1: boolean; ready: boolean } {
+  // Existing update/artifact observers use this connection generation.
+  commandState(): { generation: number; ready: boolean } {
     const ready = isOpen(this.socket);
-    return { generation: this.socketEpoch, commandDedupV1: ready, ready };
-  }
-  subscribeCommandCapabilities(listener: () => void): () => void {
-    this.commandListeners.add(listener);
-    return () => this.commandListeners.delete(listener);
-  }
-  requestCommand(
-    operation: string,
-    args: unknown,
-    command: RouterCommandIdentity,
-    options: RequestOptions = {},
-  ): Promise<RouterCommandReceipt> {
-    if (!isOpen(this.socket))
-      return Promise.reject(
-        new PhoneSocketError(
-          'command_unavailable',
-          'Durable commands are unavailable on this connection',
-          false,
-        ),
-      );
-    let identity: RouterCommandIdentity;
-    try {
-      identity = parseRouterCommandIdentity(command);
-    } catch (error) {
-      return Promise.reject(error);
-    }
-    return this.sendRequest(operation, args, options, identity) as Promise<RouterCommandReceipt>;
+    return { generation: this.socketEpoch, ready };
   }
 
   private sendRequest(
     operation: string,
     args: unknown,
     options: RequestOptions,
-    command?: RouterCommandIdentity,
   ): Promise<unknown> {
     if (options.signal?.aborted) return Promise.reject(this.abortError());
     const id = String(++this.requestId);
@@ -225,7 +193,6 @@ export class LiveConnection {
           id,
           op: operation,
           args,
-          ...(command ? { command } : {}),
         }),
         read,
         resolve: (value) => {
@@ -303,7 +270,6 @@ export class LiveConnection {
           for (const roomId of this.viewing.keys()) this.sendViewing(roomId, true);
           this.sendPending(socket);
           this.scheduleHeartbeat();
-          for (const listener of this.commandListeners) listener();
           for (const listener of this.connected) listener();
           resolve();
         };
@@ -371,7 +337,6 @@ export class LiveConnection {
     this.paintOwners.clear();
     noteCornerSocketDropped();
     setConnectionState('disconnected');
-    for (const listener of this.commandListeners) listener();
     for (const listener of this.disconnected) listener();
   }
   reconnectNow(): void {

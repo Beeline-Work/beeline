@@ -1,3 +1,4 @@
+import { phoneFetch } from '../../../tests/helpers/phone-operation.js';
 import { AddressInfo } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { recordSigninFunnelEvent } from './signin-funnel.js';
@@ -37,7 +38,7 @@ beforeEach(async () => {
     } as TokenAuth,
     phone: {} as PhoneService,
     daemon: {} as DaemonService,
-    live: {} as LiveHub,
+    live: new LiveHub(),
     mediaMaximumBytes: 1,
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -51,7 +52,7 @@ afterEach(async () => {
 });
 
 function get(query = '', key = 'dashboard-only-secret') {
-  return fetch(`${base}/v1/admin/dashboard${query}`, {
+  return phoneFetch(`${base}/v1/admin/dashboard${query}`, {
     headers: { authorization: `Bearer ${key}` },
   });
 }
@@ -113,12 +114,12 @@ describe('private operator dashboard', () => {
         await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Google customer')`, [identity]);
         return {identityId: identity};
       } } as TokenAuth,
-      phone: {} as PhoneService, daemon: {} as DaemonService, live: {} as LiveHub,
+      phone: {} as PhoneService, daemon: {} as DaemonService, live: new LiveHub(),
       mediaMaximumBytes: 1,
     });
     await new Promise<void>(resolve => exchange.listen(0, '127.0.0.1', resolve));
     try {
-      const response = await fetch(`http://127.0.0.1:${(exchange.address() as AddressInfo).port}/v1/auth/google/exchange`, {
+      const response = await phoneFetch(`http://127.0.0.1:${(exchange.address() as AddressInfo).port}/v1/auth/google/exchange`, {
         method: 'POST', headers: {'content-type': 'application/json'},
         body: JSON.stringify({oidcToken: 'test-proof', funnel: event}),
       });
@@ -224,13 +225,13 @@ describe('private operator dashboard', () => {
     const app = createBeelineServer({
       database: db,
       auth: { authenticatePhone: async (value: string) => (value === 'phone-key-for-dashboard-test' ? person : null) } as TokenAuth,
-      phone: {} as PhoneService, daemon: {} as DaemonService, live: {} as LiveHub,
+      phone: {} as PhoneService, daemon: {} as DaemonService, live: new LiveHub(),
       mediaMaximumBytes: 1,
     });
     await new Promise<void>(resolve => app.listen(0, '127.0.0.1', resolve));
     const appBase = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
     try {
-      const post = (data: unknown, authorization?: string) => fetch(`${appBase}/v1/funnel/events`, {
+      const post = (data: unknown, authorization?: string) => phoneFetch(`${appBase}/v1/funnel/events`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -291,7 +292,7 @@ describe('private operator dashboard', () => {
   });
   it('validates anonymous events at the HTTP boundary and rate limits without persisting personal fields', async () => {
     const input={event:'app_opened',installId:'00000000-0000-4000-8000-000000000001',attemptId:'00000000-0000-4000-8000-000000000002',platform:'android',version:'0.2.22',environment:'production',timestamp:new Date().toISOString()};
-    const send=(data:unknown,ip='funnel-proof')=>fetch(`${base}/v1/funnel/events`,{method:'POST',headers:{'content-type':'application/json','fly-client-ip':ip},body:JSON.stringify(data)});
+    const send=(data:unknown,ip='funnel-proof')=>phoneFetch(`${base}/v1/funnel/events`,{method:'POST',headers:{'content-type':'application/json','fly-client-ip':ip},body:JSON.stringify(data)});
     expect((await send({...input,email:'private@example.com'})).status).toBe(400);
     expect((await send({...input,event:'signed_in',provider:'github'})).status).toBe(401);
     expect((await send({...input,event:'workspace_created'})).status).toBe(401);
@@ -477,7 +478,7 @@ describe('private operator dashboard', () => {
 
   it('refuses missing and wrong keys before reading totals', async () => {
     const query = vi.spyOn(db, 'query');
-    expect((await fetch(`${base}/v1/admin/dashboard`)).status).toBe(403);
+    expect((await phoneFetch(`${base}/v1/admin/dashboard`)).status).toBe(403);
     expect((await get('', 'phone-key')).status).toBe(403);
     expect(query).not.toHaveBeenCalled();
   });
@@ -694,12 +695,12 @@ describe('private operator dashboard', () => {
 
   it('uses completed page and push events, not synthetic counts', async () => {
     await seed();
-    const unauthenticated = await fetch(`${base}/v1/phone/observations/page-load`, {
+    const unauthenticated = await phoneFetch(`${base}/v1/phone/observations/page-load`, {
       method: 'POST',
       body: JSON.stringify({ durationMs: 120, failed: false }),
     });
     expect(unauthenticated.status).toBe(401);
-    const accepted = await fetch(`${base}/v1/phone/observations/page-load`, {
+    const accepted = await phoneFetch(`${base}/v1/phone/observations/page-load`, {
       method: 'POST',
       headers: { authorization: 'Bearer phone-key-for-dashboard-test' },
       body: JSON.stringify({ durationMs: 120, failed: false }),
@@ -750,7 +751,7 @@ describe('private operator dashboard', () => {
   it('stores a bounded Room read network residual on the existing page observation', async () => {
     const endpoint = `${base}/v1/phone/observations/page-load`;
     const headers = { authorization: 'Bearer phone-key-for-dashboard-test' };
-    const accepted = await fetch(endpoint, {
+    const accepted = await phoneFetch(endpoint, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -771,13 +772,13 @@ describe('private operator dashboard', () => {
       `SELECT js_response_delay_ms FROM operator_function_events WHERE function_name='page_load'`,
     )).rows[0]?.js_response_delay_ms).toBe(250);
     for (const jsResponseDelayMs of [-1, 600_001, '250']) {
-      const invalid = await fetch(endpoint, { method: 'POST', headers,
+      const invalid = await phoneFetch(endpoint, { method: 'POST', headers,
         body: JSON.stringify({ durationMs: 120, failed: false,
           network: { requestToFirstByteMs: 94.5, serverProcessingMs: 13.2, jsResponseDelayMs } }),
       });
       expect(invalid.status).toBe(400);
     }
-    const rejected = await fetch(endpoint, {
+    const rejected = await phoneFetch(endpoint, {
       method: 'POST',
       headers,
       body: JSON.stringify({

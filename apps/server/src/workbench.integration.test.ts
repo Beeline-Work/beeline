@@ -1,3 +1,4 @@
+import { phoneFetch } from '../../../tests/helpers/phone-operation.js';
 import { ensureSystemDirectMessageRoom } from './system-line.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { createHash, randomUUID } from 'node:crypto';
@@ -110,7 +111,7 @@ describe('workbench connectors', () => {
   });
 
   const operation = (name: string, payload: unknown, token = accessToken) =>
-    fetch(`${origin}/v1/phone/operations/${name}`, {
+    phoneFetch(`${origin}/v1/phone/operations/${name}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify(payload),
@@ -121,7 +122,7 @@ describe('workbench connectors', () => {
     return response.status === 204 ? undefined : ((await response.json()) as unknown);
   };
   const daemonOperation = async (name: string, payload: unknown, token = helperToken) => {
-    const response = await fetch(`${origin}/v1/daemon/operations/${name}`, {
+    const response = await phoneFetch(`${origin}/v1/daemon/operations/${name}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify(payload),
@@ -349,7 +350,7 @@ describe('workbench connectors', () => {
     expect(view.companies?.rows.find(r => r.kind === 'sign-in-service')).toMatchObject({ items: [], machines: expect.arrayContaining([expect.objectContaining({ id: HELPER }), expect.objectContaining({ id: freeAgent })]) });
     const other = await phoneOperation('readWorkbench', { workspaceId: WORKSPACE }, recipientToken) as typeof view;
     expect(other.companies?.rows.some(r => r.id === 'example.co.uk')).toBe(false);
-    const response = await fetch(`${origin}/v1/company-logos/sentry`);
+    const response = await phoneFetch(`${origin}/v1/company-logos/sentry`);
     expect(response.status).toBe(200); expect(response.headers.get('content-type')).toBe('image/png'); expect((await response.arrayBuffer()).byteLength).toBeGreaterThan(0);
   });
 
@@ -819,14 +820,14 @@ describe('workbench connectors', () => {
       avatar: 'http://placeholder/v1/connectors/logo/system.svg',
     });
 
-    const logo = await fetch(`${origin}/v1/connectors/logo/trusty-squire.svg`);
+    const logo = await phoneFetch(`${origin}/v1/connectors/logo/trusty-squire.svg`);
     expect(logo.status).toBe(200);
     expect(logo.headers.get('content-type')).toBe('image/svg+xml');
     expect(await logo.text()).toContain('aria-label="Trusty Squire"');
-    const systemLogo = await fetch(`${origin}/v1/connectors/logo/system.svg`);
+    const systemLogo = await phoneFetch(`${origin}/v1/connectors/logo/system.svg`);
     expect(systemLogo.status).toBe(200);
     expect(await systemLogo.text()).toContain('aria-label="System"');
-    const googleLogo = await fetch(`${origin}/v1/connectors/logo/google.svg`);
+    const googleLogo = await phoneFetch(`${origin}/v1/connectors/logo/google.svg`);
     expect(googleLogo.status).toBe(200);
     expect(await googleLogo.text()).toContain('aria-label="Google Workspace"');
   });

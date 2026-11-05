@@ -23,24 +23,24 @@ describe('Scheduled Work durable stop adapters',()=>{
   function server(provider?:Pick<ComposioApps,'deleteWebhookTrigger'>){
     const phone=new PhoneService(db,'https://synthetic.test',undefined,undefined,undefined,false,db,undefined,undefined,undefined,provider as ComposioApps|undefined);
     const reads=vi.spyOn(phone as unknown as {readScheduledWork(...args:unknown[]):Promise<unknown>},'readScheduledWork'),live=new LiveHub();
-    const dispatch=createPhoneOperationDispatcher({database:db,phone,live} as ServerOptions,phone.execute);
+    const dispatch=createPhoneOperationDispatcher({database:db,phone,live} as ServerOptions);
     return {dispatch,reads,live};
   }
   it('a manager without transcript membership stops once across dispatchers; the committed outcome performs no projection read',async()=>{
     const first=server(),second=server(),args={roomId:ROOM,scheduleId:SCHEDULE},identity={v:1 as const,id:'stop-once'};
-    const initial=await first.dispatch('deleteRoomSchedule',args,OWNER,undefined,undefined,undefined,identity);
+    const initial=await first.dispatch('deleteRoomSchedule', args, OWNER, undefined, undefined, identity);
     expect(initial).toMatchObject({state:'committed',operation:'deleteRoomSchedule',commandId:identity.id});
     expect(initial).not.toHaveProperty('coverage');
     const publish=vi.spyOn(second.live,'publish');
-    expect(await second.dispatch('deleteRoomSchedule',args,OWNER,undefined,undefined,undefined,identity)).toEqual(initial);
+    expect(await second.dispatch('deleteRoomSchedule', args, OWNER, undefined, undefined, identity)).toEqual(initial);
     expect((await db.query(`SELECT 1 FROM agent_schedules WHERE id=$1`,[SCHEDULE])).rowCount).toBe(0);
     expect((await db.query(`SELECT 1 FROM router_commands`)).rowCount).toBe(1);
     expect(first.reads).not.toHaveBeenCalled();expect(second.reads).not.toHaveBeenCalled();expect(publish).not.toHaveBeenCalled();
-    await expect(second.dispatch('deleteRoomSchedule',{...args,scheduleId:SUB},OWNER,undefined,undefined,undefined,identity)).rejects.toMatchObject({status:409});
+    await expect(second.dispatch('deleteRoomSchedule', {...args,scheduleId:SUB}, OWNER, undefined, undefined, identity)).rejects.toMatchObject({status:409});
   });
   it('refuses a transcript-only reader atomically and preserves legacy missing-row semantics without command metadata',async()=>{
     const s=server(),args={roomId:ROOM,scheduleId:SCHEDULE};
-    await expect(s.dispatch('deleteRoomSchedule',args,READER,undefined,undefined,undefined,{v:1,id:'not-manager'})).rejects.toThrow();
+    await expect(s.dispatch('deleteRoomSchedule', args, READER, undefined, undefined, {v:1,id:'not-manager'})).rejects.toThrow();
     expect((await db.query(`SELECT 1 FROM router_commands`)).rowCount).toBe(0);
     expect((await db.query(`SELECT 1 FROM agent_schedules WHERE id=$1`,[SCHEDULE])).rowCount).toBe(1);
     await s.dispatch('deleteRoomSchedule',args,OWNER);
@@ -49,7 +49,7 @@ describe('Scheduled Work durable stop adapters',()=>{
   });
   it('a distinct desired-state stop of an already absent row commits without a read',async()=>{
     await db.query(`DELETE FROM agent_schedules WHERE id=$1`,[SCHEDULE]);const s=server();
-    expect(await s.dispatch('deleteRoomSchedule',{roomId:ROOM,scheduleId:SCHEDULE},OWNER,undefined,undefined,undefined,{v:1,id:'already-stopped'})).toMatchObject({state:'committed'});
+    expect(await s.dispatch('deleteRoomSchedule', {roomId:ROOM,scheduleId:SCHEDULE}, OWNER, undefined, undefined, {v:1,id:'already-stopped'})).toMatchObject({state:'committed'});
     expect(s.reads).not.toHaveBeenCalled();
   });
   it('provider response loss retains UNKNOWN and never dispatches provider cleanup twice or reads after the stop',async()=>{
@@ -57,9 +57,9 @@ describe('Scheduled Work durable stop adapters',()=>{
       VALUES($1,$2,$3,$4,'repository','issue.opened','synthetic/repo','React to the event','legacy-provider-trigger')`,[SUB,WS,ROOM,AGENT]);
     const cleanup=vi.fn(async()=>{throw new Error('provider response lost');}),s=server({deleteWebhookTrigger:cleanup});
     const args={roomId:ROOM,subscriptionId:SUB},identity={v:1 as const,id:'stop-provider-once'};
-    await expect(s.dispatch('deleteRoomSubscription',args,OWNER,undefined,undefined,undefined,identity)).rejects.toThrow('provider response lost');
+    await expect(s.dispatch('deleteRoomSubscription', args, OWNER, undefined, undefined, identity)).rejects.toThrow('provider response lost');
     expect((await db.query(`SELECT 1 FROM agent_subscriptions WHERE id=$1`,[SUB])).rowCount).toBe(0);
-    expect(await server({deleteWebhookTrigger:cleanup}).dispatch('deleteRoomSubscription',args,OWNER,undefined,undefined,undefined,identity)).toMatchObject({state:'unknown'});
+    expect(await server({deleteWebhookTrigger:cleanup}).dispatch('deleteRoomSubscription', args, OWNER, undefined, undefined, identity)).toMatchObject({state:'unknown'});
     expect(cleanup).toHaveBeenCalledTimes(1);expect(s.reads).not.toHaveBeenCalled();
   });
 });

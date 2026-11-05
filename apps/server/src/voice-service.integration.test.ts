@@ -1,3 +1,4 @@
+import { phoneFetch } from '../../../tests/helpers/phone-operation.js';
 import type { AddressInfo } from 'node:net';
 import WebSocket from 'ws';
 import { TokenAuth } from './auth.js';
@@ -55,7 +56,7 @@ it('stores queryable voice timing stages once per generation without transcript 
   await db.query(`DELETE FROM rooms WHERE id=$1`, [timingRoom]);
 });
 
-it('accepts Android NUL-only bodies on authenticated Room call joins', async () => {
+it('refuses the retired HTTP call join for Android and JSON bodies', async () => {
   const roomId = '66666666-6666-4666-8666-666666666666';
   await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Android join proof')`, [roomId, W]);
   for (const id of [H, A]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
@@ -69,22 +70,11 @@ it('accepts Android NUL-only bodies on authenticated Room call joins', async () 
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/phone/voice/${roomId}/join`;
   try {
-    for (const payload of ['\u0000', ' \t\u0000\r\n', '', '{}']) {
+    for (const payload of ['\u0000', '', '{}', '{', '[]', 'null']) {
       const response = await fetch(url, {
         method: 'POST', headers: { authorization: `Bearer ${accessToken}` }, body: payload,
       });
-      const result = await response.json();
-      expect({ status: response.status, error: result.error }).toEqual({ status: 200, error: undefined });
-      expect(result.call.roomId).toBe(roomId);
-      expect(result.sessionId).toEqual(expect.any(String));
-      expect((await service.current(roomId, H))?.id).toBe(result.call.id);
-      await service.leave(result.call.id, H, false, result.sessionId);
-    }
-    for (const payload of ['{', '\u0000{}', '[]', 'null']) {
-      const response = await fetch(url, {
-        method: 'POST', headers: { authorization: `Bearer ${accessToken}` }, body: payload,
-      });
-      expect(response.ok).toBe(false);
+      expect(response.status).toBe(404);
       expect(await service.current(roomId, H)).toBeNull();
     }
   } finally {
@@ -126,7 +116,7 @@ it('SOCKET-OPS-1: joins, reads, resumes and leaves a real voice session over the
     const callId = joined.result.call.id, sessionId = joined.result.sessionId;
     expect(await request('voiceCurrent', { roomId })).toMatchObject({ ok: true, result: { id: callId } });
     const state = await request('voiceState', { callId, sessionId });
-    const webState = await fetch(`${origin}/v1/phone/voice/${callId}/state?sessionId=${sessionId}`, {
+    const webState = await phoneFetch(`${origin}/v1/phone/voice/${callId}/state?sessionId=${sessionId}`, {
       headers: { authorization: `Bearer ${accessToken}` },
     });
     expect(state).toMatchObject({ ok: true, result: await webState.json() });
@@ -269,7 +259,7 @@ it('demonstrates authenticated Aura saves and WAV previews while ignoring old pr
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   async function post(path: string, body: unknown) {
-    const response = await fetch(origin + path, { method: 'POST', headers: {
+    const response = await phoneFetch(origin + path, { method: 'POST', headers: {
       authorization: `Bearer ${accessToken}`, 'content-type': 'application/json',
     }, body: JSON.stringify(body) });
     expect(response.status).toBe(path.includes('/operations/') ? 204 : 200);
@@ -375,7 +365,7 @@ it('native Stop ends a parked call and rejects tampering, expiry and successor s
   await new Promise<void>(resolve => app.listen(0, '127.0.0.1', resolve));
   try {
     const address = app.address() as { port: number };
-    const response = await fetch(`http://127.0.0.1:${address.port}/v1/phone/voice/${successor.call.id}/native-stop`, {
+    const response = await phoneFetch(`http://127.0.0.1:${address.port}/v1/phone/voice/${successor.call.id}/native-stop`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: successor.stopToken }),
     });
     expect(response.status).toBe(200);
@@ -507,14 +497,14 @@ it('demonstrates workspace exhaustion ending the whole call and refusing HTTP jo
     daemon: new DaemonService(db, live), live, voice: service, mediaMaximumBytes: 1024 });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
-    const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/phone/voice/${R}/join`, {
+    const response = await phoneFetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/phone/voice/${R}/join`, {
       method: 'POST', headers: { authorization: `Bearer ${accessToken}` },
     });
     expect(response.status).toBe(429);
     const body = await response.json();
     expect(body.error).toBe('Calls resume at 12:00 AM');
-    expect(body.budget.remainingMs).toBe(0);
-    expect(body.budget.resetAt).toBeGreaterThan(Date.now());
+    expect(body.code).toBe('voice-daily-limit');
+    expect((await service.budget.read(W)).remainingMs).toBe(0);
     expect(await service.current(R, SECOND)).toBeNull();
     expect(await service.current(otherRoom, SECOND)).toBeNull();
     const ended = (await db.query<{ text: string }>('SELECT text FROM messages WHERE card_type=$1 ORDER BY created_at DESC LIMIT 1', ['voice-call'])).rows[0];

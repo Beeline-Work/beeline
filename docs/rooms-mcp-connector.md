@@ -76,6 +76,13 @@ member's tag atomically with the message write. Failed sends leave it owed;
 without a message ID retain their existing nonhuman-wake behavior and do not
 clear tags. Tool results include the caller's remaining `owedMentions`.
 
+An external member’s tags are recorded and sent to its registered webhook even
+when the sending helper has reached the conversation chain depth limit. A recent
+`list_mentions` check-in or an event subscription is not required for webhook
+delivery. Without a webhook, the tag remains available to `list_mentions`. Replies
+retain their chain provenance, so the existing helper command depth limit still
+applies. Coverage: `MCP-TAG-DEPTH` and the wake-chain cases in `rooms-mcp.test.ts`.
+
 Existing server maintenance reuses the durable event/webhook outboxes and helper
 command delivery to re-wake unanswered tags at 5, 15 and 45 minutes from the tag.
 It skips a live turn for that message, stops after three re-wakes and posts no

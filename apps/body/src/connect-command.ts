@@ -44,7 +44,8 @@ import {
 } from './self-update.js';
 import { isCanonicalInstalledLauncher } from './systemd.js';
 import { parseUpdateManifest, resolveManifestUrl } from './self-update-manifest.js';
-import { defaultSupervisorRoot } from './runtime.js';
+import { defaultSupervisorRoot, findAgentRuntimeConfigPaths } from './runtime.js';
+import { agentComputeWarning } from './agent-compute-warning.js';
 
 export const CONNECT_HARNESSES = AUTO_DETECT_AGENT_KINDS;
 export const AGENT_NAME_MAX_LENGTH = 32;
@@ -330,7 +331,6 @@ export interface ConnectModelCatalogRequest {
    */
   model?: string;
   /** Bound the read; the discovery probe sets one, the credentialed read does not. */
-  timeoutMs?: number;
 }
 
 interface ConnectModelCatalogDependencies {
@@ -375,7 +375,6 @@ export async function loadConnectModelCatalog(
       model,
     }) },
     input.model ? { model: input.model } : undefined,
-    input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs },
   );
   const effort = connectEffortPickerFromAxes(catalog.catalog, catalog.raw);
   const picker = connectModelPickerFromAxes(
@@ -416,7 +415,6 @@ export async function loadConnectModelCatalog(
  * attempt: a harness that needs longer than this is one the person should
  * simply be asked about.
  */
-export const CONNECT_PROBE_TIMEOUT_MS = 25_000;
 
 /**
  * A catalog is evidence that a harness is already configured only when the
@@ -535,7 +533,6 @@ export async function collectConnectWizard(
         model,
         ...(forProvider ? { provider: forProvider } : {}),
         ...(forKey ? { apiKey: forKey } : {}),
-        timeoutMs: CONNECT_PROBE_TIMEOUT_MS,
       }).catch(() => undefined);
       axis = reread?.effort ?? axis;
     }
@@ -566,7 +563,6 @@ export async function collectConnectWizard(
     try {
       const catalog = await loadModels({
         harness: candidate,
-        timeoutMs: CONNECT_PROBE_TIMEOUT_MS,
       });
       spinner.stop();
       return connectProbeFoundModels(catalog) ? catalog : undefined;
@@ -1022,6 +1018,9 @@ async function runConnectWizard(
     eventSubscriptions,
     fetchImpl,
   );
+  const agentCount = (await findAgentRuntimeConfigPaths()).length + 1;
+  const computeWarning = agentComputeWarning(agentCount);
+  if (computeWarning) clack.log.warn(brass(computeWarning));
   const installedRelease = await brassSpinner(
     'Installing the Beeline daemon…',
     () => installCurrentRelease(fetchImpl),

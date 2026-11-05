@@ -1,3 +1,4 @@
+import { startAgentProcess, stopAgentProcess } from './agent-process.js';
 /**
  * Reads an ACP agent's own live model/effort catalog by briefly starting the
  * exact selected command and inspecting `session/new`'s advertised
@@ -81,16 +82,6 @@ export function filterAgentModelCatalog(
  * and the client is still stopped and the scratch directory still removed
  * when it expires. Omitted, both requests keep their own 60s defaults.
  */
-export interface ModelCatalogProbeLimits {
-  timeoutMs?: number;
-}
-
-/**
- * A whole-read deadline that never fires until `ms` have genuinely passed,
- * but also never keeps the process alive on its own account: an `unref`ed
- * timer that only ever rejects cannot be what a caller is waiting on.
- */
-
 async function withAgentModelCatalog<T>(
   agent: ModelCatalogAgent,
   agentEnv: Record<string, string>,
@@ -101,11 +92,7 @@ async function withAgentModelCatalog<T>(
     raw: AgentModelConfigOption[];
     catalog: AgentModelConfigOption[];
   }) => Promise<T>,
-  limits: ModelCatalogProbeLimits = {},
 ): Promise<T> {
-  const deadline = limits.timeoutMs === undefined ? undefined : Date.now() + limits.timeoutMs;
-  const remaining = (): number | undefined =>
-    deadline === undefined ? undefined : Math.max(1, deadline - Date.now());
   const scratchCwd = await mkdtemp(resolve(tmpdir(), 'beeline-pair-model-check-'));
   const probeEnv = modelCatalogProbeEnvironment(agent, agentEnv, scratchCwd);
   const client = new AcpClient({
@@ -121,11 +108,9 @@ async function withAgentModelCatalog<T>(
     inheritProcessEnv: true,
   });
   try {
-    await client.start(remaining() ?? 60_000);
-    const sessionTimeout = remaining();
+    await startAgentProcess(client);
     const { sessionId, raw: sessionRaw } = await client.sessionNew({
       cwd: scratchCwd,
-      ...(sessionTimeout === undefined ? {} : { timeoutMs: sessionTimeout }),
     });
     const raw = parseAdvertisedConfigOptions(
       sessionRaw,
@@ -136,7 +121,7 @@ async function withAgentModelCatalog<T>(
     const inspected = inspect({ client, sessionId, raw, catalog });
     return await inspected;
   } finally {
-    await client.stop().catch(() => undefined);
+    await stopAgentProcess(client).catch(() => undefined);
     await rm(scratchCwd, { recursive: true, force: true }).catch(() => undefined);
   }
 }
@@ -150,7 +135,6 @@ export async function fetchAgentModelCatalog(
   agent: ModelCatalogAgent,
   agentEnv: Record<string, string>,
   selection?: { model?: string; effort?: string },
-  limits: ModelCatalogProbeLimits = {},
 ): Promise<{ raw: AgentModelConfigOption[]; catalog: AgentModelConfigOption[] }> {
   return withAgentModelCatalog(
     agent,
@@ -165,7 +149,6 @@ export async function fetchAgentModelCatalog(
         selection?.model,
       ),
     }),
-    limits,
   );
 }
 

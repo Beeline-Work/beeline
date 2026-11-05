@@ -1,15 +1,5 @@
-import { performance } from 'node:perf_hooks';
 import type { InstitutionalContextSnapshot } from '@beeline/api-contract/daemon';
 import type { DaemonApiClient } from './daemon-api-client.js';
-
-/**
- * Raised alongside `INSTITUTIONAL_CONTEXT_EMBEDDING_TIMEOUT_MS` (400ms,
- * packages/api-contract/src/institutional-memory.ts): this whole-snapshot
- * budget must stay above that slice plus room for the DB queries the
- * snapshot runs after it, or the embedding call would never get to spend its
- * own full deadline before this race cuts the whole RPC off first.
- */
-export const INSTITUTIONAL_CONTEXT_TIMEOUT_MS = 500;
 
 export const EMPTY_INSTITUTIONAL_CONTEXT: InstitutionalContextSnapshot = {
   snapshotRevision: 0,
@@ -23,7 +13,7 @@ export const EMPTY_INSTITUTIONAL_CONTEXT: InstitutionalContextSnapshot = {
  * A miss must never read like "nothing relevant was ever saved" — that is
  * exactly the silence that let an agent trust a broken `search_memory` result
  * over the truth. This line is what the prompt carries instead whenever the
- * fetch below did not finish in time.
+ * fetch below failed.
  */
 export const INSTITUTIONAL_CONTEXT_MISSED_TEXT =
   'institutional memory did not load this turn; use search(scope:memory) before concluding anything is not stored.';
@@ -32,8 +22,6 @@ export type InstitutionalContextOutcome = 'served' | 'empty' | 'timed-out';
 
 export interface InstitutionalContextFetch {
   readonly promise: Promise<InstitutionalContextSnapshot>;
-  /** This process's monotonic clock, matching `awaitInstitutionalContext`'s. */
-  readonly startedAt: number;
 }
 
 /**
@@ -51,32 +39,21 @@ export function startInstitutionalContextFetch(
   api: Pick<DaemonApiClient, 'execute'>,
   roomId: string,
   enabled = true,
-  _now: () => number = () => performance.now(),
 ): InstitutionalContextFetch {
-  const startedAt = _now();
   const promise = enabled
     ? api.execute('getInstitutionalContext', { roomId })
     : Promise.resolve(EMPTY_INSTITUTIONAL_CONTEXT);
   // Deliberately unused: this only marks the promise as handled so an
   // unread miss never surfaces as an unhandled rejection.
   promise.catch(() => {});
-  return { promise, startedAt };
+  return { promise };
 }
 
-/**
- * Memory is an optional context lane. It can never delay or fail the turn:
- * this waits only for whatever budget the fetch has not already spent since
- * it started — activation usually spends all of it for free — then takes
- * whatever the fetch produced. A genuine miss is never silent: the returned
- * snapshot's `text` says so explicitly, and `outcome` distinguishes a served
- * snapshot, a legitimately empty one (nothing matched), and a timed-out one,
- * for the turn trace.
- */
+/** Wait for the requested snapshot. A rejected read carries an explicit miss
+ * into the prompt so unavailable memory never appears to be empty memory. */
 export async function awaitInstitutionalContext(
   fetch: InstitutionalContextFetch,
   log: (message: string) => void = console.warn,
-  _budgetMs = INSTITUTIONAL_CONTEXT_TIMEOUT_MS,
-  _now: () => number = () => performance.now(),
 ): Promise<InstitutionalContextSnapshot & { outcome: InstitutionalContextOutcome }> {
   try {
     const snapshot = await fetch.promise;

@@ -55,7 +55,7 @@ import { squireBrokerMeetsComputerUseMinimum, squireBrokerInstallEntry, squireHo
 import { readVault } from './connector-squire.js';
 import { StdioSquireMcpClient } from './squire-mcp-client.js';
 import { pruneDeletedRuntimes, pruneRepositoryCaches, pruneMachineStorage } from './host-disk-retention.js';
-import { SessionScheduler } from './session-scheduler.js';
+import { AgentProcesses } from './agent-process.js';
 import { refreshSystemdHelperUnit } from './native-helper.js';
 import { reclaimArchivedMemberStorage, watchStorageFacts, pruneStoppedAgentStorage, pruneEndedOwnerStorage, pruneArchivedCheckoutStorage, pruneUnusedCheckoutStorage } from './storage-owners.js';
 import { monitorHelperUsage } from './helper-usage.js';
@@ -174,7 +174,7 @@ async function serveMachineHelper(
       await pruneDeletedRuntimes(supervisorRoot, now, options);
       await pruneArchivedCheckoutStorage(supervisorRoot, options);
       await pruneUnusedCheckoutStorage(supervisorRoot, options);
-      const swept = await SessionScheduler.withIdleHostStorage(async () => {
+      const swept = await AgentProcesses.withIdleHostStorage(async () => {
         await pruneRepositoryCaches(supervisorRoot, now, options);
         await pruneMachineStorage(supervisorRoot, options);
       }, { allowLiveSessions: true });
@@ -572,10 +572,6 @@ async function serveMachineHelper(
         reason = 'failed';
       }
       if (controller.signal.aborted || slot.controller.signal.aborted) break;
-      if (reason === 'restart-requested') {
-        setState(slot, 'restarting', 'restart requested');
-        continue;
-      }
       if (reason === 'agent-removed') {
         slot.enabled = false;
         setState(slot, 'removed', 'agent removed from Beeline');

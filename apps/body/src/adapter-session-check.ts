@@ -1,3 +1,4 @@
+import { startAgentProcess, stopAgentProcess } from './agent-process.js';
 import { agentBehavior } from './agent-command.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -17,7 +18,6 @@ export async function checkAdapterSession(options: {
   command: string;
   env: Record<string, string>;
   scratchRoot?: string;
-  timeoutMs?: number;
   /** CI has no login: an auth-only refusal after session/new validates the wire contract. */
   allowUnauthenticatedSession?: boolean;
   /** Helpers prepare exactly the same credential-linked isolated home as Room sessions. */
@@ -29,7 +29,6 @@ export async function checkAdapterSession(options: {
   const homeRoot = join(cwd, 'agent-home');
   let client: AcpClient | undefined;
   let negotiated: Record<string, unknown> | undefined;
-  const timeoutMs = options.timeoutMs ?? 30_000;
   try {
     const homeOverlay = options.agentKind
       ? await prepareRoomAgentHome({
@@ -52,7 +51,7 @@ export async function checkAdapterSession(options: {
       negotiated = result;
     });
     options.onStage?.('initialize');
-    await client.start(timeoutMs);
+    await startAgentProcess(client);
     if (negotiated?.protocolVersion !== 1) {
       throw new Error(`Unsupported ACP protocolVersion: ${String(negotiated?.protocolVersion)}`);
     }
@@ -86,7 +85,6 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:r.id,result})+'\\n'); });`
             env: [],
           },
         ],
-        timeoutMs,
       });
     } catch (error) {
       // Never accept auth from initialize, schema errors mentioning auth, or
@@ -104,7 +102,7 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:r.id,result})+'\\n'); });`
     return { ...result, sessionStart: 'created' };
   } finally {
     try {
-      await client?.stop();
+      if (client) await stopAgentProcess(client);
       if (agentBehavior(options.agentKind).sharedLoginWriteBack) {
         await writeBackRoomClaudeLogin({ root: homeRoot, operatorHome: options.env.HOME });
       }

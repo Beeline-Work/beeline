@@ -839,7 +839,7 @@ export class DaemonService {
           // Commit this transaction before any generic failed/requeue effects.
           if (await parkOwnedModelTerminal(db, input as Input<'postAgentTurnReceipt'>, authenticatedAgentId, turnOwner))
             return this.writeResult() as Output<Name>;
-          if (candidate.reasonKind === 'update-interrupted') {
+          if (['update-interrupted', 'process-exited'].includes(String(candidate.reasonKind))) {
             // The helper keeps this receipt durably until it hears 200. If the
             // first 200 was lost, accept its replay after the command was
             // requeued without writing another Room line or touching the new
@@ -1403,15 +1403,16 @@ export class DaemonService {
           if (turnOwner) await assertCurrentTurnOwner(db, authenticatedAgentId, turnOwner);
           if (turnOwner) {
             const previous = await db.query<CommandRow>(`SELECT * FROM agent_commands WHERE id=$1 AND room_id=$2
-              AND agent_id=$3 AND generation_id=$4 AND action='stop' AND state='complete'
+              AND agent_id=$3 AND generation_id=$4 AND action IN ('stop','restart') AND state='complete'
               AND turn_owner_connection_id=$5 AND turn_owner_epoch=$6 FOR UPDATE`,
               [candidate.commandId, scopedRoom, authenticatedAgentId, candidate.generationId, turnOwner.connectionId, turnOwner.epoch]);
             if (previous.rowCount) return previous;
           }
           const written = await db.query<CommandRow>(
-          `UPDATE agent_commands SET state='complete',completed_at=now()
+          `UPDATE agent_commands SET state='complete',completed_at=now(),
+            restart_confirmed_at=CASE WHEN action='restart' THEN COALESCE(restart_confirmed_at,now()) ELSE restart_confirmed_at END
           WHERE id=$1 AND room_id=$2 AND agent_id=$3 AND generation_id=$4 AND (state='complete' OR (state='claimed' AND ${commandOwnerLiveSql(undefined)}))
-          AND action='stop' AND ((turn_owner_connection_id IS NULL AND $5::text IS NULL) OR
+          AND action IN ('stop','restart') AND ((turn_owner_connection_id IS NULL AND $5::text IS NULL) OR
             (turn_owner_connection_id=$5::text AND turn_owner_epoch=$6::bigint)) RETURNING *`,
           [candidate.commandId, scopedRoom, authenticatedAgentId, candidate.generationId,
             turnOwner?.connectionId ?? null, turnOwner?.epoch ?? null]);

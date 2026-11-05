@@ -67,3 +67,25 @@ it('rejects a planted phone write backdoor, including inside the HTTP server own
     assert.match(judgeTree(root, { rules: [rule] }).join('\n'), /phone\.write-door/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+// A planted second process lifecycle caller must fail the same CI guard as production.
+it('helper agent processes have one start/stop owner', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'beeline-process-boundary-'));
+  try {
+    const invariants = readInvariants(path.resolve('.'));
+    const rule = invariants.rules.find(rule => rule.id === 'helper.agent-process');
+    assert.ok(rule);
+    mkdirSync(path.join(root, 'apps/body/src'), { recursive: true });
+    const probe = path.join(root, 'apps/body/src/planted.ts');
+    for (const source of [
+      'client.startProcess();', 'client.stopProcess();',
+      'const start = client.startProcess;', 'client["stopProcess"]();',
+      'const { startProcess } = client; startProcess();',
+      'Reflect.get(client, "stopProcess")();',
+    ]) {
+      writeFileSync(probe, source);
+      const errors = judgeTree(root, { rules: [{ ...rule, ownerSites: undefined }] });
+      assert.ok(errors.some(error => error.includes('helper.agent-process')), source);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

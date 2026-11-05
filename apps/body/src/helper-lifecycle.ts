@@ -1,15 +1,13 @@
 import { captureHelperError } from './sentry.js';
 import type { EventEmitter } from 'node:events';
-import { DaemonApiError } from './daemon-api-client.js';
-import { isNetworkFailure } from './live-link.js';
 export type HelperExitReason = 'stopped' | 'update' | 'failed';
 export const HELPER_EXIT_CODES: Readonly<Record<HelperExitReason, 0 | 75>> = {
   stopped: 0,
   update: 0,
   failed: 75,
 };
-export type AgentExitReason = HelperExitReason | 'restart-requested' | 'agent-removed';
-export type QuiesceReason = 'update' | 'restart' | 'force-update';
+export type AgentExitReason = HelperExitReason | 'agent-removed';
+export type QuiesceReason = 'update' | 'force-update';
 export type HelperLifecycleState =
   { kind: 'starting' } | { kind: 'serving' } | { kind: 'stopping'; reason: HelperExitReason };
 
@@ -112,53 +110,4 @@ export function installUnhandledRejectionGuard(emitter: EventEmitter = process):
   };
   emitter.on('unhandledRejection', log);
   return () => emitter.removeListener('unhandledRejection', log);
-}
-
-/** A failure the network or an overloaded server caused, which a later try can clear. */
-export function isTransientServerFailure(error: unknown): boolean {
-  return isNetworkFailure(error) || (error instanceof DaemonApiError && error.retryable);
-}
-
-/**
- * Before READY, a transient server failure is not this release's fault. Wait
- * for the live socket to open again (asking the service manager for more start
- * time meanwhile). Only a genuinely new live open permits another attempt.
- */
-export async function retryBeforeReady<T>(
-  work: () => Promise<T>,
-  options: {
-    onLinkOpen: (listener: () => void) => () => void;
-    extendStartTimeout: (ms: number) => Promise<void>;
-    signal?: AbortSignal;
-    now?: () => number;
-    /** How much start time each extension asks for while waiting. */
-    waitSliceMs?: number;
-  },
-): Promise<T> {
-  const slice=options.waitSliceMs??60_000;
-  let epoch=0,wake:(()=>void)|undefined;
-  const off=options.onLinkOpen(()=>{epoch++;wake?.();});
-  try{
-    for(;;){
-      const attemptEpoch=epoch;
-      try{return await work();}
-      catch(error){
-        if(!isTransientServerFailure(error)||options.signal?.aborted)throw error;
-        console.warn('[thin-core] server unreachable before READY; waiting for the live socket to open:',error);
-        while(epoch===attemptEpoch && !options.signal?.aborted){
-          // The native manager receives startup status at a real failure;
-          // only a new connection open permits another attempt.
-          await options.extendStartTimeout(slice+15_000);
-          await new Promise<void>(resolve=>{
-            const done=()=>{options.signal?.removeEventListener('abort',done);resolve();};
-            wake=done;
-            options.signal?.addEventListener('abort',done,{once:true});
-            if(epoch!==attemptEpoch || options.signal?.aborted)done();
-          });
-          wake=undefined;
-        }
-        if(options.signal?.aborted)throw error;
-      }
-    }
-  }finally{off();}
 }

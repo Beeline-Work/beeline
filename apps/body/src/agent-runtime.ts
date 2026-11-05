@@ -22,7 +22,7 @@ import { ConnectorAssignmentLoop } from './connector-assignments.js';
 import { RegistryMcpHostBroker, registryMcpBrokerSocketPath } from './registry-mcp.js';
 import { BrowserShareHost, browserShareHostPath } from './browser-share-host.js';
 import { ThinDaemonCore } from './thin-core.js';
-import { AgentLifecycle, retryBeforeReady, type AgentExitReason } from './helper-lifecycle.js';
+import { AgentLifecycle, type AgentExitReason } from './helper-lifecycle.js';
 import { migrateLegacyDaemonTransport } from './legacy-daemon-migration.js';
 import { activateDaemonTransport, DaemonApiError } from './daemon-api-client.js';
 import { reportInterruptedTurns } from './force-update-journal.js';
@@ -286,11 +286,7 @@ export async function runAgentRuntime(
   let exitReason: AgentExitReason | undefined;
   try {
     // Credential activation and interruption replay precede every intake.
-    await retryBeforeReady(() => reportInterruptedTurns(runtimeDir, daemonApi, agentId), {
-      onLinkOpen: (listener) => daemonApi.onLiveOpen(listener),
-      extendStartTimeout: extendSystemdStartTimeout,
-      signal: controller.signal,
-    });
+    await reportInterruptedTurns(runtimeDir, daemonApi, agentId);
     registryMcpBroker = new RegistryMcpHostBroker(
       config.operatorHome,
       fetch,
@@ -318,27 +314,9 @@ export async function runAgentRuntime(
     );
     await browserShareHost.start();
     config.browserShareHostSocket = browserShareHost.socketPath;
-    let lifecycleRestart: Promise<void> | undefined;
     const core = new ThinDaemonCore(runtime, configPath, config, {
       daemonApi,
       onConfigChanged: refreshCatalog,
-      onRestartRequested: () => {
-        // `/restart` cancels at once, and takes over an update still waiting.
-        if (lifecycleRestart || !lifecycle.quiesce('restart')) return;
-        lifecycleRestart = (async () => {
-          const cancelled = await core.cancelActiveWorkForRestart();
-          host.progress(
-            agentId,
-            cancelled
-              ? 'restart requested; active work cancelled'
-              : 'restart requested; no active work',
-          );
-          lifecycle.stop('restart-requested');
-        })().catch((error) => {
-          console.error('[thin-core] requested restart failed:', error);
-          lifecycle.stop('restart-requested');
-        });
-      },
     });
     leaveHost = host.attach({ agentId, runtimeDir, lifecycle, core });
     daemonApi.setForceUpdateListener((minVersion) => host.requestForceUpdate(minVersion));

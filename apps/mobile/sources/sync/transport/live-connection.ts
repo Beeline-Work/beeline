@@ -42,6 +42,7 @@ type Dependencies = {
   invalidateAuthorization?(token: string): void;
   liveUrl(): string;
   subscribeIdentityChange(listener: () => void): () => void;
+  subscribeNetworkOnline?(listener: () => void): () => void;
 };
 let connectionFailed = false;
 const stateListeners = new Set<() => void>();
@@ -70,6 +71,26 @@ const roomIdsFromFilters = (filters: SurfaceFilters) =>
       .filter(Boolean),
   );
 const isOpen = (socket: WebSocket | undefined): socket is WebSocket & { readyState: 1 } => socket?.readyState === 1;
+
+/** The production native/browser host supplies online events without probes. */
+export function subscribeNetworkOnline(online: () => void): () => void {
+  if (Platform.OS === 'web') {
+    if (typeof window !== 'undefined') window.addEventListener('online', online);
+    return () => {
+      if (typeof window !== 'undefined') window.removeEventListener('online', online);
+    };
+  }
+  if (!NativeModules.RNCNetInfo) return () => {};
+  // Consume the OS event directly. NetInfo's JS reachability fallback
+  // starts HTTP probes and timers, which must not own socket recovery.
+  const network = new NativeEventEmitter(NativeModules.RNCNetInfo).addListener(
+    'netInfo.networkStatusDidChange',
+    (state: { isConnected: boolean; isInternetReachable?: boolean }) => {
+      if (state.isConnected && state.isInternetReachable !== false) online();
+    },
+  );
+  return () => network.remove();
+}
 
 /** The only phone socket. Screens call request; push listeners call their same read. */
 export class LiveConnection {
@@ -101,23 +122,7 @@ export class LiveConnection {
       }
     });
     this.stopAppState = () => subscription.remove();
-    const online = () => this.refreshRoom();
-    if (Platform.OS === 'web') {
-      if (typeof window !== 'undefined') window.addEventListener('online', online);
-      this.stopNetwork = () => {
-        if (typeof window !== 'undefined') window.removeEventListener('online', online);
-      };
-    } else if (NativeModules.RNCNetInfo) {
-      // Consume the OS event directly. NetInfo's JS reachability fallback
-      // starts HTTP probes and timers, which must not own socket recovery.
-      const network = new NativeEventEmitter(NativeModules.RNCNetInfo).addListener(
-        'netInfo.networkStatusDidChange',
-        (state: { isConnected: boolean; isInternetReachable?: boolean }) => {
-          if (state.isConnected && state.isInternetReachable !== false) online();
-        },
-      );
-      this.stopNetwork = () => network.remove();
-    } else this.stopNetwork = () => {};
+    this.stopNetwork = deps.subscribeNetworkOnline?.(() => this.refreshRoom()) ?? (() => {});
     this.stopIdentity = deps.subscribeIdentityChange(() => {
       this.identity++;
       this.viewEpoch++;
@@ -482,6 +487,7 @@ export function sharedLiveConnection(): LiveConnection {
     invalidateAuthorization: (token) => monolithSession.invalidateAuthorization(token),
     liveUrl: () => `${getBuzzRuntimeConfig().monolithUrl.replace(/^http/, 'ws')}/v1/phone/live`,
     subscribeIdentityChange: subscribeClientReset,
+    subscribeNetworkOnline,
   });
   return shared;
 }

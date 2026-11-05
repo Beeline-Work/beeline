@@ -14,7 +14,7 @@ vi.mock('@/auth/monolith-session', () => ({
   monolithSession: { authorization: async () => 'fixture-access', invalidateAuthorization: vi.fn() },
 }));
 vi.mock('react', () => ({ useSyncExternalStore: (_subscribe: unknown, snapshot: () => unknown) => snapshot() }));
-import { LiveConnection, useConnectionFailure } from './live-connection';
+import { LiveConnection, useConnectionFailure, subscribeNetworkOnline, sharedLiveConnection, resetSharedLiveConnection } from './live-connection';
 import { PhoneSocketDisconnectedError } from './phone-socket-error';
 
 class Socket {
@@ -43,7 +43,7 @@ function setup(authorization = vi.fn(async () => 'fixture-access')) {
   let changed = () => {};
   const invalidate = vi.fn();
   const connection = new LiveConnection({ authorization, invalidateAuthorization:invalidate,
-    liveUrl:()=> 'ws://fixture.invalid/v1/phone/live', subscribeIdentityChange: listener => { changed=listener; return ()=>{}; } });
+    subscribeNetworkOnline, liveUrl:()=> 'ws://fixture.invalid/v1/phone/live', subscribeIdentityChange: listener => { changed=listener; return ()=>{}; } });
   connections.push(connection);
   return {connection,authorization,invalidate,changeIdentity:()=>changed()};
 }
@@ -51,9 +51,19 @@ const tick = () => vi.advanceTimersByTimeAsync(0);
 async function open() { await tick(); const socket=Socket.instances.at(-1)!;socket.open();return socket; }
 function appState(next: string) { state.currentState=next;for(const listener of state.listeners)listener(next); }
 beforeEach(()=>{vi.useFakeTimers();Socket.instances=[];state.currentState='active';state.platform='android';vi.stubGlobal('WebSocket',Socket);});
-afterEach(()=>{for(const connection of connections.splice(0))connection.dispose();state.listeners.clear();vi.useRealTimers();vi.unstubAllGlobals();});
+afterEach(()=>{resetSharedLiveConnection();for(const connection of connections.splice(0))connection.dispose();state.listeners.clear();vi.useRealTimers();vi.unstubAllGlobals();});
 
 describe('the one phone socket',()=>{
+  it('the shared production owner supplies and disposes native online events',()=>{
+    expect(state.network.size).toBe(0);
+    sharedLiveConnection();expect(state.network.size).toBe(1);
+    resetSharedLiveConnection();expect(state.network.size).toBe(0);
+  });
+  it('an embedded connection only uses its supplied host dependencies',()=>{
+    const connection=new LiveConnection({authorization:async()=> 'fixture-access',
+      liveUrl:()=> 'ws://fixture.invalid/v1/phone/live',subscribeIdentityChange:()=>()=>{}});
+    connections.push(connection);expect(state.network.size).toBe(0);
+  });
   it('publishes the first failed read without waiting through replacement attempts',async()=>{
     const {connection}=setup();const answer=connection.request('readRoom',{roomId:'a'}).catch(error=>error);
     const socket=await open();socket.drop();await tick();

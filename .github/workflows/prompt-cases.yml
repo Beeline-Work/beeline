@@ -29,7 +29,7 @@ jobs:
   changes:
     name: Detect prompt changes
     if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, beeline-ci, beeline-ci-control]
     timeout-minutes: 5
     outputs:
       prompts: ${{ steps.filter.outputs.prompts == 'true' || (github.event_name == 'merge_group' && steps.filter.outcome != 'success') }}

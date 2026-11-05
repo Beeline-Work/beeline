@@ -6,11 +6,13 @@ complete. After the previous SSH-attached pass exited, inbox 025 authorized a
 single detached continuation: one-row transactions, a 100 ms local statement cap,
 and a 20 ms normal pause. Prior cleanup and observer sessions were verified absent
 before launch. `nohup` now writes `/tmp/b1.log` on the server; SQL cleanup backend
-**1182311** and observer **1182312** are live. First progress: 457 committed cards,
-zero timeouts/client waits; independent count: 159,605 cards remain at 09:53Z.
+**1182311** and observer **1182312** are live. At 10:17Z: 24,595 committed cards,
+11 timeout skips and zero cleanup-attributed client wait; independent count:
+135,522 cards remain.
 Cancellation proof passed in 3 ms. No duplicate writer was started. Progress will
 be checked from both the durable log and read-only counts; B8 is untouched. See
-`b1-detached-start.json` and the preceding `b1-one-row-transport-ended.json`.
+`b1-detached-progress-25k.json`, `b1-detached-start.json`, and the preceding
+`b1-one-row-transport-ended.json`.
 
 | Decision | Implementation |
 | --- | --- |

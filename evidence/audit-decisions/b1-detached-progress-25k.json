@@ -1,0 +1,95 @@
+{
+  "observedAt": "2026-11-05T10:17:23.455Z",
+  "logModifiedAt": "2026-11-05T10:17:19.129Z",
+  "proof": {
+    "connection": {
+      "directEndpoint": true,
+      "pidAuthority": "SQL pg_backend_pid()",
+      "monitoringPid": 1182311
+    },
+    "cancelProof": {
+      "observedSleep": true,
+      "cancelled": true,
+      "errorCode": "57014",
+      "receivedWithinMs": 3,
+      "limitMs": 2000
+    }
+  },
+  "progress": {
+    "globalSamples": 54163,
+    "maxObservedLockWaitMs": 0,
+    "maxObservedWaitingClients": 0,
+    "acknowledgedChanges": {
+      "messages": 24595
+    },
+    "completedBatches": 24595,
+    "operatorParameters": {
+      "updatesOnly": true,
+      "batchSize": 1,
+      "normalPauseMs": 20,
+      "statementTimeoutMs": 100,
+      "pauseAfterTimeoutMs": 1000
+    },
+    "batchTimeouts": 11,
+    "timeoutsByTable": {
+      "messages": 11
+    },
+    "attemptedRows": 24606,
+    "stopRule": {
+      "cleanupBlockedClientWaitMs": 150,
+      "stopOnOtherError": true,
+      "countAndSkipStatementTimeouts": true,
+      "otherWaitsObservedOnly": true,
+      "excludedLeaderStandby": {
+        "application": "beeline_long_running",
+        "waitEvent": "advisory",
+        "query": "SELECT pg_advisory_lock($1)"
+      }
+    },
+    "cancelRequests": 1,
+    "cancelProof": {
+      "observedSleep": true,
+      "cancelled": true,
+      "errorCode": "57014",
+      "receivedWithinMs": 3,
+      "limitMs": 2000
+    },
+    "maxObservedGlobalLockWaitMs": 60000.342,
+    "maxObservedGlobalWaitingBackends": 4,
+    "maxObservedExcludedLeaderWaitMs": 60000.267,
+    "maxObservedExcludedLeaderWaiters": 1,
+    "maxCleanupOwnWaitingLocks": 1,
+    "lastSample": {
+      "blockedClients": 0,
+      "maxWaitMs": 0,
+      "globalMaxWaitMs": 0,
+      "cleanupWaitingLocks": 0
+    }
+  },
+  "result": null,
+  "sessions": [
+    {
+      "pid": 1182311,
+      "application_name": "audit-b1-20261105-cleanup",
+      "state": "idle",
+      "wait_event_type": "Client",
+      "wait_event": "ClientRead",
+      "xact_start": null,
+      "query_start": "2026-11-05T10:17:23.040Z"
+    },
+    {
+      "pid": 1182312,
+      "application_name": "audit-b1-20261105-observer",
+      "state": "idle",
+      "wait_event_type": "Client",
+      "wait_event": "ClientRead",
+      "xact_start": null,
+      "query_start": "2026-11-05T10:17:23.066Z"
+    }
+  ],
+  "cards": {
+    "remaining": 135522
+  },
+  "authority": "firstmate inbox 025",
+  "b8ContractApplied": false
+}

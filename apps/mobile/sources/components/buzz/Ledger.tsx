@@ -368,7 +368,7 @@ function TypewriterMarkdown({
  * this gutter survives for the rows that keep the wider margin (the folded
  * tool run), where a stamp without a byline is still worth hanging.
  */
-export function LedgerMarginalia({
+function LedgerMarginalia({
   stamp,
   detail,
   testID,

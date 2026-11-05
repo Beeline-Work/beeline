@@ -29,14 +29,9 @@ Root typecheck, UI component policy, the phone-network inventory, dead-code anal
 
 The full mobile run used `--maxWorkers=2`: 665 files passed, 11 skipped, 17 failed initially. Migration-related failures were corrected and rerun. Eight remaining dependency tests—six LiveKit cancellation/timeout cases and two icon-font web-failure cases—also fail with untouched baseline test inputs and no changed UI loaded. That reproduction has the same two `Event is not defined` rejections. [Baseline input hashes and result](baseline-dependencies.json) record the comparison; the local dependency generation is not changed by this UI task.
 
-## Updating source-bound evidence
+## Captured evidence
 
-```sh
-node apps/mobile/scripts/update-error-surface-evidence.mjs --write \
-  --reason "Reviewed shared inline feedback in the caller's existing content inset."
-```
-
-Changed production elements must be retargeted explicitly, for example `--retarget sweep-04=IndexRow:transcriptHydrationError`. The script verifies every selector before writing. Historical JSX and the archived banner fixture stay pinned; active product code never imports that fixture. Run the mobile policy/design guards and `sources/buzz/error-rows.browser.test.ts` with `vitest run --maxWorkers=2` after updating evidence.
+The board and saved images preserve the approved implementation evidence. Main subsequently retired the source-scanning/browser-proof harness and its audit modules; this merge keeps those deletions. Focused unit cases beside the product retain failure/recovery and passive workspace-identity coverage.
 
 ## Room-list header follow-up
 

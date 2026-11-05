@@ -2,6 +2,7 @@ export const ATTACHMENT_MARKER = 'buzz-attachment';
 export const ATTACHMENT_METADATA_TAG = 'imeta';
 export const ATTACHMENT_FILENAME_TAG = 'attachment';
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export interface AttachmentReference {
   url: string;
   /** Server fact: the bytes are past the media TTL and gone. Name, type and

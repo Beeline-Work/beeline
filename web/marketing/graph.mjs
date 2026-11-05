@@ -60,9 +60,11 @@ export function initializeGraph(){
         const pitch = 88;
         ey = py + ph/2 + (i - (k-1)/2) * pitch;
         ex = left ? px : px + pw;
-        const sx = left ? x + half : x - half;
+        const bounds=stage.getBoundingClientRect(),tile=n.querySelector('.tile').getBoundingClientRect(),scale=bounds.width/stage.clientWidth;
+        const sx=((left?tile.right:tile.left)-bounds.left)/scale;
+        const tileY=(tile.top+tile.height/2-bounds.top)/scale;
         const chan = left ? px - 46 - (k-1-i)*16 : px + pw + 46 + i*16;
-        d = elbow(sx, y, chan, ey, ex, R);
+        d = elbow(sx, tileY, chan, ey, ex, R);
       } else {
         const above = y < py;
         const band = above ? lefts.concat(rights).filter(m=>+m.dataset.my < py) : nodeEls.filter(m=>+m.dataset.my > py);
@@ -84,7 +86,9 @@ export function initializeGraph(){
     });
   }
   layout(); draw();
-  addEventListener('resize',()=>{layout();draw();refreshActivity();});document.fonts.ready.then(()=>{layout();draw();refreshActivity();});
+  let frame;const redraw=()=>{cancelAnimationFrame(frame);frame=requestAnimationFrame(()=>{layout();draw();refreshActivity();});};
+  addEventListener('resize',redraw);document.fonts.ready.then(redraw);
+  const observer=new ResizeObserver(redraw);for(const element of [stage,screen,...nodeEls])observer.observe(element);
 
 
 // Phone connections use the actual phone scene's CSS boxes, never the desktop
@@ -94,8 +98,8 @@ function drawPhone(){
  wires.setAttribute('viewBox',`0 0 ${stage.clientWidth} ${stage.clientHeight}`);wires.innerHTML='';geo=[];
  const agents=nodeEls.filter(n=>n.classList.contains('agent')),humans=nodeEls.filter(n=>n.classList.contains('human'));
  for(const n of nodeEls){
-  const box=n.getBoundingClientRect(),above=n.classList.contains('agent'),band=above?agents:humans,index=band.indexOf(n);
-  const sx=box.left+box.width/2-bounds.left,sy=(above?box.bottom+2:box.top-2)-bounds.top;
+  const box=n.querySelector('.tile').getBoundingClientRect(),above=n.classList.contains('agent'),band=above?agents:humans,index=band.indexOf(n);
+  const sx=box.left+box.width/2-bounds.left,sy=(above?box.bottom:box.top)-bounds.top;
   const ex=room.left-bounds.left+room.width/2+(index-(band.length-1)/2)*(above?54:94),ey=(above?room.top:room.bottom)-bounds.top;
   const channel=above?ey-6-(band.length-1-index)*4:ey+8+index*4;
   const d=velbow(sx,sy,channel,ex,ey,4),path=document.createElementNS('http://www.w3.org/2000/svg','path');

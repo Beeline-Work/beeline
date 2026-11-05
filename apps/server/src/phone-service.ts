@@ -1,3 +1,5 @@
+import { isSubscribableEventKind } from '@beeline/api-contract/phone';
+import { setRoomEventSubscriptions, unsubscribeRoomReviewer, subscribeRoomReviewer } from './agent-subscriptions.js';
 import { ROOM_ROUTER_CTES,ROOM_ROUTER_HEAD_JOIN,roomRouterColumnsSql,roomMessageTagsSql } from './room-router-read.js';
 import { projectRoomToolSummaries,type RoomToolSummaryRow } from './room-tool-projection.js';
 import { buildTrayProjection, readMessageBookmarks } from './tray-projection.js';
@@ -206,27 +208,7 @@ import { retireAgentFromWorkspace, settleGrantCard } from './agent-retirement.js
 import { revokeDaemonCredentials } from './daemon-credential-lifetime.js';
 import { firstAccessibleRoomId } from './first-room.js';
 import type { FreeAgentService } from './free-agents.js';
-import {
-  ensureInvitedWorkspaceMembership,
-  restorePairedWorkspaceMembership,
-  writeIdentityRoomsEventSubscriptions,
-  removeWorkspaceMemberships,
-  joinRoomCreator,
-  unsubscribeRoomReviewer,
-  subscribeRoomReviewer,
-  removeRoomMembership,
-  restoreWorkspaceMembershipRole,
-  ensureWorkspaceMembershipRole,
-  createDirectMessageMembership,
-  redeemWorkspaceMembership,
-  removeIdentityMemberships,
-  transferWorkspaceOwnership,
-  transferRoomOwnership,
-  writeSurfacePushState,
-  joinRooms,
-  joinWorkspaceMembersToPublicRoom,
-  syncTopLevelSharedRoomRoles,
-} from './membership-join.js';
+import { ensureInvitedWorkspaceMembership, restorePairedWorkspaceMembership, removeWorkspaceMemberships, joinRoomCreator, removeRoomMembership, restoreWorkspaceMembershipRole, ensureWorkspaceMembershipRole, createDirectMessageMembership, redeemWorkspaceMembership, removeIdentityMemberships, transferWorkspaceOwnership, transferRoomOwnership, writeSurfacePushState, joinRooms, joinWorkspaceMembersToPublicRoom, syncTopLevelSharedRoomRoles } from './membership-join.js';
 import {
   lockIdentityHandleWorkspaces,
   reassignCollidingAgentHandles,
@@ -4182,11 +4164,10 @@ export class PhoneService {
           rooms: { type: 'all-live-top-level' },
           workspaceJoined: workspaceMembership.rowCount > 0,
         });
-        const subscriptions = [...new Set(input.eventSubscriptions ?? [])].filter(
-          isServerEventKind,
-        );
+        // Old helpers can advertise retired per-item kinds; those were never actionable subscriptions.
+        const subscriptions = [...new Set(input.eventSubscriptions ?? [])].filter(isSubscribableEventKind);
         if (subscriptions.length && joined.roomIds.length) {
-          await writeIdentityRoomsEventSubscriptions(database, [input.agentPubkey, joined.roomIds, JSON.stringify(subscriptions)]);
+          for (const roomId of joined.roomIds) await setRoomEventSubscriptions(database, roomId, input.agentPubkey, subscriptions);
         }
       }
       const machineId = input.machineId || input.agentPubkey;
@@ -4308,9 +4289,10 @@ export class PhoneService {
       // What this agent reacts to, in the Rooms it just joined. A subscription
       // is per Room because an event happens in a Room; `usebeeline connect
       // --subscribe joined` is what a greeter is set up with.
-      const subscriptions = [...new Set(input.eventSubscriptions ?? [])].filter(isServerEventKind);
+      // Old helpers can advertise retired per-item kinds; those were never actionable subscriptions.
+      const subscriptions = [...new Set(input.eventSubscriptions ?? [])].filter(isSubscribableEventKind);
       if (subscriptions.length && joined.roomIds.length) {
-        await writeIdentityRoomsEventSubscriptions(database, [pairing.claimed_by, joined.roomIds, JSON.stringify(subscriptions)]);
+        for (const roomId of joined.roomIds) await setRoomEventSubscriptions(database, roomId, pairing.claimed_by, subscriptions);
       }
       return { status: 'finished' };
     });
@@ -6921,18 +6903,7 @@ export class PhoneService {
           await unsubscribeRoomReviewer(database, [input.roomId, current.reviewer_agent_id]);
         if (reviewerAgentId)
           await subscribeRoomReviewer(database, [input.roomId, reviewerAgentId]);
-        if (current?.reviewer_agent_id) await database.query(
-          `UPDATE corner_person_state state SET event_subscriptions=state.event_subscriptions-'check-passed'
-           FROM rooms corner WHERE corner.id=state.corner_id AND corner.parent_id=$1
-             AND state.identity_id=$2 AND state.event_subscriptions ? 'check-passed'`,
-          [input.roomId,current.reviewer_agent_id],
-        );
-        if (reviewerAgentId) await database.query(
-          `UPDATE corner_person_state state SET event_subscriptions=state.event_subscriptions||'["check-passed"]'::jsonb
-           FROM rooms corner WHERE corner.id=state.corner_id AND corner.parent_id=$1
-             AND state.identity_id=$2 AND state.event_subscriptions IS NOT NULL
-             AND NOT state.event_subscriptions ? 'check-passed'`, [input.roomId,reviewerAgentId],
-        );
+
       }
       if (reviewerAgentId !== undefined)
         await reconcileConfiguredCornerReviewers(database, input.roomId);
@@ -7005,6 +6976,7 @@ export class PhoneService {
         roomId,
         subject: identitySubject({ id: leaver.pubkey, kind: leaver.kind, name: leaver.name }),
         verb: systemMessage("phone-service.left"),
+        kind: 'left',
         cardType: 'member-left',
         card: { identityId: viewerId },
       });
@@ -7085,6 +7057,7 @@ export class PhoneService {
         subject: identitySubject({ id: remover.pubkey, kind: remover.kind, name: remover.name }),
         verb: systemMessage("phone-service.removed"),
         object: { text: removed.name, id: removed.pubkey },
+        kind: 'left',
         cardType: 'member-removed',
         card: { identityId: input.memberId },
       });
@@ -7953,8 +7926,8 @@ export class PhoneService {
     if (offer.status === 'connecting' && offer.accepted_by !== viewerId && offer.intent !== 'reconnect')
       throw new Error('connector offer conflict: sign-in is already in progress');
     // The helper is the offering agent's machine; it must still be here to install.
-    const helper = await this.database.query(
-      `SELECT 1 FROM agents a
+    const helper = await this.database.query<{ owner_id: string; machine_id: string }>(
+      `SELECT a.owner_id,COALESCE(a.machine_id,a.agent_id) machine_id FROM agents a
        JOIN memberships m ON m.identity_id=a.agent_id AND m.workspace_id=$2
          AND m.room_id IS NULL AND m.removed_at IS NULL
        WHERE a.agent_id=$1`,
@@ -7962,10 +7935,21 @@ export class PhoneService {
     );
     if (!helper.rowCount)
       throw new Error('connector offer conflict: the offering agent has left this Workspace');
+    // Vault reports lock the agent row before its owner-projection trigger
+    // takes router authority. Acceptance used to take that authority through
+    // the offer trigger first, then wait on the same agent in queueSquireWork.
+    // Serialize these machine operations on the report/unpair lock BEFORE
+    // either transaction takes an offer, agent or projection lock.
+    const lockSquireVault = async (database: SqlDatabase) => {
+      if (connectorType === 'trusty-squire')
+        await database.query('SELECT pg_advisory_xact_lock(hashtext($1))',
+          [`squire-vault:${helper.rows[0]!.owner_id}:${helper.rows[0]!.machine_id}`]);
+    };
     const acceptor = await this.requireIdentity(viewerId);
     if (offer.intent === 'reconnect' && offer.status === 'connecting' && connectorType === 'trusty-squire') {
       if (offer.addressee_id !== viewerId) throw new Error(CONNECTOR_OFFER_AUTHORITY_MESSAGE);
       await this.database.transaction(async database => {
+        await lockSquireVault(database);
         const claimed = await database.query(`UPDATE connector_offers SET accepted_by=$2,accepted_at=COALESCE(accepted_at,now())
           WHERE id::text=$1 AND status='connecting' RETURNING id`, [input.offerId, viewerId]);
         if (!claimed.rowCount) throw new Error('connector offer conflict: already completed');
@@ -7980,6 +7964,7 @@ export class PhoneService {
         connectorId: squireMachineAddress(offer.machine_id) };
     }
     const paired = await this.database.transaction(async (database) => {
+      await lockSquireVault(database);
       await database.query('SELECT pg_advisory_xact_lock(hashtext($1))',
         [`connector-offer:${offer.room_id}:${connectorType}`]);
       if (offer.status === 'failed' && (await database.query(`SELECT 1 FROM connector_offers

@@ -83,11 +83,8 @@ delivery. Without a webhook, the tag remains available to `list_mentions`. Repli
 retain their chain provenance, so the existing helper command depth limit still
 applies. Coverage: `MCP-TAG-DEPTH` and the wake-chain cases in `rooms-mcp.test.ts`.
 
-Existing server maintenance reuses the durable event/webhook outboxes and helper
-command delivery to re-wake unanswered tags at 5, 15 and 45 minutes from the tag.
-It skips a live turn for that message, stops after three re-wakes and posts no
-Room markers or owner notes. Re-wakes advance the delivery cursor so older
-cursor clients can receive them; the reply idempotency key remains unchanged.
+A tag delivers once. An owed mention remains available as private context, but
+elapsed time never re-delivers it or reopens its completed helper command.
 ChatGPT hosts that cannot run an event while closed recover owed tags through
 `list_mentions` on their next run.
 

@@ -32,8 +32,7 @@
     "beeline": "./dist/usebeeline.mjs"
   },
   "files": [
-    "dist",
-    "README.md"
+    "dist"
   ],
   "scripts": {
     "build": "node ../../scripts/build-usebeeline-package.mjs",

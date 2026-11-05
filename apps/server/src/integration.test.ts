@@ -8511,7 +8511,7 @@ describe('monolith integration', () => {
     ).toEqual([expect.objectContaining({ woke: [AGENT], request_id: requestId })]);
   });
 
-  it('inscribes a hiccup, reopens the original command, and keeps the durable line', async () => {
+  it('silently reopens the original command after a hiccup', async () => {
     const requestId = '8'.repeat(64);
     await operation('sendRoomMessage', {
       roomId: ROOM,
@@ -8550,14 +8550,7 @@ describe('monolith integration', () => {
         [ROOM],
       );
     const first = (await lines()).rows;
-    expect(first).toEqual([
-      expect.objectContaining({
-        author_id: AGENT,
-        text: "@bee could not answer · its provider is failing; switch its model in the agent's settings. provider error 429 concurrency_limit. Resending your message.",
-        tagged_ids: [],
-        card: { requestId, agentId: AGENT, state: 'failed', silenceKind: 'hiccup' },
-      }),
-    ]);
+    expect(first).toEqual([]);
     expect(
       (
         await database.query<{ state: string; hiccup_attempts: number }>(
@@ -8567,20 +8560,14 @@ describe('monolith integration', () => {
       ).rows[0],
     ).toEqual({ state: 'pending', hiccup_attempts: 1 });
     const room = (await new PhoneService(database, origin).readRoom(ROOM, HUMAN))!;
-    expect(room.messages).toContainEqual(
-      expect.objectContaining({
-        id: first[0]!.id,
-        presentation: 'system',
-        text: "@bee could not answer · its provider is failing; switch its model in the agent's settings. provider error 429 concurrency_limit. Resending your message.",
-      }),
-    );
+    expect(room.messages.some(message => message.cardType === 'turn-failed')).toBe(false);
     await daemonOperation('postAgentTurnReceipt', {
       roomId: ROOM,
       requestId: '9'.repeat(64),
       status: 'failed',
       reason: 'ACP agent exited (code 1)',
     });
-    expect((await lines()).rows).toHaveLength(1);
+    expect((await lines()).rows).toHaveLength(0);
   });
 
   it('does not restart a standing wrong-model failure', async () => {

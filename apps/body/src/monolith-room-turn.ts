@@ -720,6 +720,7 @@ export class MonolithRoomTurnLoop {
     this.activationContext=new CommandActivationContext({
       scope:()=>options.api.channel?.activationScope?.(),
       selected:()=>options.api.channel?.activationContextSelected===true,
+      ready:()=>options.api.waitForConnection(),
       read:input=>options.api.readCommandActivation(input),
     });
     options.grantRunner?.register(options.roomId, {

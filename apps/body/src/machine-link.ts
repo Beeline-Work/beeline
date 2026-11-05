@@ -43,7 +43,7 @@ export class AgentChannel {
   readonly overlay=new HelperOverlayChannel(frame=>this.send(frame),()=>this.isOpen());
   #usageOwnerId:string|undefined;
   #usageSource:{connectionId:string;epoch:number}|undefined;
-  /** Selection survives disconnects; a missing current scope parks writes. */
+  /** Selection survives disconnects; writes wait for registration. */
   usageAccountSelected=false;
   usageAccountScope():{origin:string;ownerId:string;generation:number;source:{connectionId:string;epoch:number}}|undefined{
     return this.#usageOwnerId&&this.#usageSource&&this.isOpen()?{origin:this.machine.origin,ownerId:this.#usageOwnerId,generation:this.reconnects,source:this.#usageSource}:undefined;
@@ -152,7 +152,7 @@ export class AgentChannel {
     this.#wanted = false;
     this.#suspendOperations(true);
     this.turn.stop();
-    this.#activationSource=undefined;this.activation.suspend();
+    this.#activationSource=undefined;this.activation.stop();
     this.#usageOwnerId=undefined;this.#usageSource=undefined;
     this.usage.suspend();
     this.overlay.suspend();
@@ -217,6 +217,7 @@ export class AgentChannel {
       this.#activationSource=activationCapabilities?.activationContextV1===true&&typeof activationCapabilities.activationConnectionId==='string'&&
         Number.isSafeInteger(activationCapabilities.activationConnectionEpoch)&&Number(activationCapabilities.activationConnectionEpoch)>0
         ?{connectionId:activationCapabilities.activationConnectionId,epoch:Number(activationCapabilities.activationConnectionEpoch)}:undefined;
+      this.activation.resume(this.#activationSource);
       const usageCapabilities=event.capabilities as {usageAccountV1?:unknown;usageOwnerId?:unknown;usageConnectionId?:unknown;usageConnectionEpoch?:unknown}|undefined;
       const usageSelected=usageCapabilities?.usageAccountV1===true;
       if(usageSelected)this.usageAccountSelected=true;
@@ -257,7 +258,7 @@ export class AgentChannel {
       this.handlers.onRefused?.(code);
       if (this.#refused) {
         this.#wanted = false;
-        this.turn.stop();
+        this.turn.stop();this.activation.stop();
         // A helper with only refused agents must not keep opening sockets
         // that the server will immediately close for having no registration.
         this.machine.unwant(this);
@@ -295,7 +296,7 @@ export class AgentChannel {
     this.#suspendOperations(ended);
     if (ended) this.turn.stop();
     else this.turn.suspend();
-    this.#activationSource=undefined;this.activation.suspend();
+    this.#activationSource=undefined;if(ended)this.activation.stop();else this.activation.suspend();
     this.#usageOwnerId=undefined;this.#usageSource=undefined;
     this.usage.suspend();
     this.overlay.suspend();

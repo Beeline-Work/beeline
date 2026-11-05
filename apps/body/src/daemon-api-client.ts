@@ -416,6 +416,9 @@ export class DaemonApiClient {
     this.#channel.stop();
   }
 
+  /** Join the existing registration wake; socket loss is not a turn failure. */
+  waitForConnection(): Promise<void> { return this.#channel.operationReady(); }
+
   /** One negotiated command setup read, carried only by the existing machine
    * channel. This method bypasses generic HTTP and context argument injection. */
   async readCommandActivation(input:import('@beeline/api-contract/helper-activation').CommandActivationInput){

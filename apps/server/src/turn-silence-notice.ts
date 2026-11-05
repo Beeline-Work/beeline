@@ -4,8 +4,8 @@ import { reportToCommander } from './commander.js';
 import { closeFreeAgentTurn } from './free-agent-turn-close.js';
 import { claimAgentCommand, settleAgentCommand, type CommandRow } from './agent-command.js';
 /**
- * First silence after a delivered message: one durable Room line, and for a
- * hiccup only, reopen the original command so the helper answers it again
+ * First silence after a delivered message: reopen recoverable commands silently,
+ * and leave a durable Room line only when no automatic resend can answer
  * without another human request. Only that one turn is failed or requeued; the
  * helper process is never told to exit.
  *
@@ -433,12 +433,66 @@ async function inscribeSilence(
     [input.roomId, input.requestId, input.agentId, reason || classified.fault || null],
   );
 
+  let hiccupRestart = false;
+  let updateRequeued = false;
+  if (restart && command) {
+    const reopened = await reopenCommand(
+      database,
+      live,
+      input.roomId,
+      input.agentId,
+      command.id,
+      command.generation_id,
+      attempt,
+      isModelCapacityFault(input.reason) ? 30 * 2 ** (attempt - 1) : 0,
+    );
+    hiccupRestart = reopened;
+  } else if (classified.kind === 'update-interrupted' && command) {
+    // Presence may have already reopened this exact command while the helper
+    // was installing. Its generation-free receipt confirms the original
+    // request is pending without posting a Room failure line.
+    updateRequeued =
+      command.state === 'pending' ||
+      (await reopenCommand(
+        database,
+        live,
+        input.roomId,
+        input.agentId,
+        command.id,
+        command.generation_id,
+        command.hiccup_attempts,
+      ));
+  } else if (classified.kind === 'offline' && command?.state === 'claimed') {
+    // The helper never posted a turn. Leave the original request eligible for
+    // `beeline start` instead of completing it the way a spent hiccup is.
+    await reopenCommand(
+      database,
+      live,
+      input.roomId,
+      input.agentId,
+      command.id,
+      command.generation_id,
+      command.hiccup_attempts,
+    );
+  } else if (
+    classified.kind === 'hiccup' &&
+    !restart &&
+    command?.state === 'claimed' &&
+    input.stalled
+  ) {
+    // Stall path has no execute wrapper to complete the exhausted command.
+    await database.query(
+      `UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1 AND state='claimed'`,
+      [command.id],
+    );
+  }
+
   // Private orders still report to their commander below. A corner also
   // needs the failure on its own surface when no worker could start.
   const cornerFailure = command?.private_payload && input.generationId == null && (await database.query(
     `SELECT 1 FROM corner_facts WHERE corner_id=$1`, [input.roomId],
   )).rowCount > 0;
-  if (!command?.private_payload || cornerFailure) {
+  if (!hiccupRestart && !updateRequeued && (!command?.private_payload || cornerFailure)) {
     const recent = (
       await database.query<{ id: string; request_id: string }>(
         `SELECT id,card->>'requestId' request_id FROM messages notice WHERE room_id=$1 AND card_type='turn-failed'
@@ -476,60 +530,6 @@ async function inscribeSilence(
       summary: 'A helper repo cache is damaged and automatic repair failed',
       detail: reason,
     }).catch((error) => console.warn('[silence] repo cache feedback was not filed', error));
-  }
-
-  let hiccupRestart = false;
-  let updateRequeued = false;
-  if (restart && command) {
-    const reopened = await reopenCommand(
-      database,
-      live,
-      input.roomId,
-      input.agentId,
-      command.id,
-      command.generation_id,
-      attempt,
-      isModelCapacityFault(input.reason) ? 30 * 2 ** (attempt - 1) : 0,
-    );
-    hiccupRestart = reopened;
-  } else if (classified.kind === 'update-interrupted' && command) {
-    // Presence may have already reopened this exact command while the helper
-    // was installing. Its generation-free receipt still replaces the generic
-    // failure line and confirms that the original request is pending.
-    updateRequeued =
-      command.state === 'pending' ||
-      (await reopenCommand(
-        database,
-        live,
-        input.roomId,
-        input.agentId,
-        command.id,
-        command.generation_id,
-        command.hiccup_attempts,
-      ));
-  } else if (classified.kind === 'offline' && command?.state === 'claimed') {
-    // The helper never posted a turn. Leave the original request eligible for
-    // `beeline start` instead of completing it the way a spent hiccup is.
-    await reopenCommand(
-      database,
-      live,
-      input.roomId,
-      input.agentId,
-      command.id,
-      command.generation_id,
-      command.hiccup_attempts,
-    );
-  } else if (
-    classified.kind === 'hiccup' &&
-    !restart &&
-    command?.state === 'claimed' &&
-    input.stalled
-  ) {
-    // Stall path has no execute wrapper to complete the exhausted command.
-    await database.query(
-      `UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1 AND state='claimed'`,
-      [command.id],
-    );
   }
 
   if (givingUp && command) await database.query(

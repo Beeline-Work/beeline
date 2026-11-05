@@ -137,7 +137,8 @@ function inspectHelperOperations(file, source, errors) {
     if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
         ts.isIdentifier(node.expression) && node.expression.text === 'require') && channelModule(node.arguments[0]))
       deny(node, 'channel constructors require their static owner binding');
-    if (['requestOperation', 'operationReady'].includes(name) && !owner(node, client, 'DaemonApiClient', 'execute'))
+    if ((name === 'requestOperation' || name === 'operationReady' && !owner(node, client, 'DaemonApiClient', 'waitForConnection')) &&
+        !owner(node, client, 'DaemonApiClient', 'execute'))
       deny(node, 'belongs to DaemonApiClient.execute');
     if (ts.isPrivateIdentifier(node) && node.text === '#requestHttp' && !ts.isMethodDeclaration(node.parent) &&
         !owner(node, client, 'DaemonApiClient', 'execute')) deny(node, 'HTTP adapter cannot escape its owner');

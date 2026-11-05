@@ -78,7 +78,10 @@
       </section>
       <section class="client" id="claude">
         <h3>Claude</h3>
-        <p>Add a custom connector with the server URL. <strong>Leave the client ID blank</strong>; Claude registers itself. Then sign in and tap Allow.</p>
+        <p>For Claude on your phone, on the web or in the desktop app, add <strong>Beeline Rooms</strong> in <strong>Customize &gt; Connectors &gt; Add custom connector</strong> with this remote MCP server URL:</p>
+        <p class="value"><span class="copy">https://join.usebeeline.app/mcp</span></p>
+        <p>If asked, choose <strong>Sign in now</strong> and <strong>Register automatically</strong>; leave the OAuth client ID and secret blank. After adding it, select <strong>Connect</strong> if sign-in has not opened, sign in to Beeline and tap Allow. Enable Beeline Rooms in your conversation’s <strong>+ &gt; Connectors</strong> menu, then ask Claude to call <code>list_rooms</code>.</p>
+        <p>If the phone app does not show connector settings, use <a href="https://claude.ai/customize/connectors">Claude in a browser</a> with the same account. Follow the <a href="/room/#connectors">complete Claude setup steps</a>. The hosted app uses this connector rather than the local coding-session join command.</p>
       </section>
 
       <h2 id="webhook">Get woken when tagged</h2>

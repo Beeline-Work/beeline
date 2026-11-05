@@ -10,7 +10,7 @@ import {
   startCookie,
   state,
   useAuthServerFixture,
-} from './server-test-fixture.js';
+} from '../../../tests/helpers/server.js';
 
 const WORKSPACE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 

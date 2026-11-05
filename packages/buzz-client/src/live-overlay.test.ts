@@ -51,3 +51,32 @@ describe('live overlay verification budget', () => {
     expect(decoder.decode(event())?.kind).toBe('draft');
   });
 });
+
+import { expect as m46_expect, it as m46_it } from 'vitest';
+
+
+
+
+
+import { KIND_AGENT_DRAFT as m46_KIND_AGENT_DRAFT, TAG_AGENT_DRAFT as m46_TAG_AGENT_DRAFT } from "./kinds.js";
+import { describe as mergedDescribe46 } from 'vitest';
+mergedDescribe46("live-overlay-signature.test.ts", () => {
+
+
+m46_it('verifies the signature before publishing and never lets a forgery advance a live lane', async () => {
+  vi.resetModules();
+  vi.doUnmock('@beeline/nostr');
+  const { generateKeypair: m46_generateKeypair, signEvent: m46_signEvent } = await import('@beeline/nostr');
+  const { LiveOverlayDecoder: m46_LiveOverlayDecoder } = await import('./live-overlay.js');
+  const pair = m46_generateKeypair();
+  const signed = m46_signEvent({
+    pubkey: pair.publicKey, created_at: 1, kind: m46_KIND_AGENT_DRAFT, content: 'signed draft',
+    tags: [['t', m46_TAG_AGENT_DRAFT], ['h', 'room'], ['agent', pair.publicKey],
+      ['d', `${m46_TAG_AGENT_DRAFT}:room`], ['request', 'turn']],
+  }, pair.secretKey);
+  const decoder = new m46_LiveOverlayDecoder('room', new Set([pair.publicKey]));
+  m46_expect(decoder.decode({ ...signed, content: 'forged', created_at: 100 })).toBeNull();
+  m46_expect(decoder.decode(signed)?.kind).toBe('draft');
+  m46_expect(decoder.decode(signed)).toBeNull();
+});
+});

@@ -542,10 +542,13 @@ export function createBeelineServer(options: ServerOptions): Server {
   const invitePreview = new InvitePreviewAccess(options.database);
   const phoneViewing = new PhoneViewing(options.database, options.connectionPresence?.instanceId ?? randomUUID());
   const dispatchPhoneOperation = createPhoneOperationDispatcher(options, requestErrorStatus);
-  // HTTP retains read-only wire compatibility; only the live socket holds the write dispatcher.
-  const readPhoneOperation: PhoneHttpRead = (name, input, viewerId, familyId) => {
-    if (!(PHONE_READ_OPERATIONS as readonly string[]).includes(name) ||
-        ((name === 'readNeedsYou' || name === 'readTray') && input.markSeen !== false))
+  // Deployment/free-agent proof tools and the corner fixture controller are non-phone HTTP clients.
+  // Keep only their named commands; phone actions use the live socket.
+  const httpPhoneOperation: PhoneHttpOperation = (name, input, viewerId, familyId) => {
+    if (!(PHONE_READ_OPERATIONS as readonly string[]).includes(name) &&
+        !(NON_PHONE_HTTP_WRITES as readonly string[]).includes(name))
+      throw new PhoneOperationError(404, { error: 'not_found' });
+    if ((name === 'readNeedsYou' || name === 'readTray') && input.markSeen !== false)
       throw new PhoneOperationError(409, { error: 'phone_socket_required' });
     return dispatchPhoneOperation(name, input, viewerId, undefined, familyId);
   };
@@ -612,7 +615,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       invitePreview,
       liveHealth,
       helperVersionGate,
-      readPhoneOperation,
+      httpPhoneOperation,
     ).catch((error) => {
       const message = error instanceof Error ? error.message : 'request failed';
       const status = requestErrorStatus(error);
@@ -1505,7 +1508,10 @@ async function refuseDaemon(
   else json(response, 401, { error: 'daemon_token_required' });
 }
 
-type PhoneHttpRead = (name: (typeof PHONE_READ_OPERATIONS)[number], input: Record<string, unknown>,
+// Non-phone consumers: apps/server/scripts/verify-fly-cutover.mjs, infra/free-agent/*.mjs,
+// and apps/mobile/evidence/corner-list-live/proof-kit/control.mts. Keep this closed list.
+const NON_PHONE_HTTP_WRITES = ['createWorkspace', 'deleteWorkspace', 'sendRoomMessage', 'requestCornerClose'] as const;
+type PhoneHttpOperation = (name: (typeof PHONE_READ_OPERATIONS)[number] | (typeof NON_PHONE_HTTP_WRITES)[number], input: Record<string, unknown>,
   viewerId: string, familyId?: string) => Promise<unknown>;
 
 async function route(
@@ -1515,7 +1521,7 @@ async function route(
   invitePreview: InvitePreviewAccess,
   liveHealth: () => object,
   helperVersionGate: HelperVersionGate,
-  readPhoneOperation: PhoneHttpRead,
+  httpPhoneOperation: PhoneHttpOperation,
 ): Promise<void> {
   const url = exactPath(request.url);
   const method = request.method ?? 'GET';
@@ -2446,10 +2452,10 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     return;
   }
 
-  const operation = async (name: (typeof PHONE_READ_OPERATIONS)[number], input: Record<string, unknown>, project?: (result: unknown) => unknown) => {
+  const operation = async (name: Parameters<PhoneHttpOperation>[0], input: Record<string, unknown>, project?: (result: unknown) => unknown) => {
     if (['readRoomTools','readMediaMetadata','readMediaLink','readMediaPlayback'].includes(name))
       throw new PhoneOperationError(409, { error: 'phone_socket_required' });
-    const result = await readPhoneOperation(name, input, identityId!, phoneFamilies.get(request));
+    const result = await httpPhoneOperation(name, input, identityId!, phoneFamilies.get(request));
     if (result === undefined) { response.writeHead(204); response.end(); }
     else json(response, 200, project ? project(result) : result);
   };
@@ -2599,6 +2605,12 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     json(response, 200, await options.github.roomToken(identityId!, match[1]!));
     return;
   }
+  match = url.pathname.match(/^\/v1\/phone\/operations\/([A-Za-z][A-Za-z0-9]+)$/);
+  if (method === 'POST' && match) {
+    await operation(match[1]! as Parameters<PhoneHttpOperation>[0], await body(request));
+    return;
+  }
+
   if (method === 'POST' && url.pathname === '/v1/daemon/artifacts') {
     const agentId = await daemonIdentity(request, options);
     if (!agentId) {

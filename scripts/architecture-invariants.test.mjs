@@ -11,7 +11,7 @@ it('rejects a planted phone write backdoor, including inside the HTTP server own
   const sources = {
     'apps/mobile/sources/sync/transport/live-connection.ts': "class LiveConnection { sendRequest() { return {t:'req'}; } }",
     'apps/server/src/phone-operations.ts': 'const execute = () => { phone.execute(); phone.markRead(); phone.markUnread(); options.voice.join(); options.voice.leave(); options.voice.idle(); options.voice.resume(); options.voice.profiles.save(); options.voice.profiles.preview(); }; const effect = () => phone.stopScheduledWorkCommand();',
-    'apps/server/src/server.ts': 'const readPhoneOperation = () => dispatchPhoneOperation(); async function route() { phone.uploadMedia(); return options.voice.nativeStop(); }',
+    'apps/server/src/server.ts': 'const httpPhoneOperation = () => dispatchPhoneOperation(); async function route() { phone.uploadMedia(); return options.voice.nativeStop(); }',
     'apps/server/src/rooms-mcp.ts': 'class RoomsMcp { call() { this.phone.execute(); this.phone.execute(); } }',
   };
   try {

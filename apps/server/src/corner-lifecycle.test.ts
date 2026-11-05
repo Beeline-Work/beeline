@@ -1,3 +1,4 @@
+import { phoneFetch } from '../../../tests/helpers/phone-operation.js';
 import { cornerKindSql } from './corner-opening.js';
 import { setRoomEventSubscriptions } from './agent-subscriptions.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
@@ -3356,7 +3357,7 @@ describe('the gate stays shut (AC-8)', () => {
     }
   });
 
-  it('Demonstrated R8-HOLD and HOLD-IDS: HTTP service separates agent and person hold release', async () => {
+  it('Demonstrated R8-HOLD and HOLD-IDS: HTTP agent and socket person hold release stay separate', async () => {
     const { createBeelineServer } = await import('../dist/server.js');
     const { PhoneService: BuiltPhone } = await import('../dist/phone-service.js');
     const { DaemonService: BuiltDaemon } = await import('../dist/daemon-service.js');
@@ -3378,7 +3379,7 @@ describe('the gate stays shut (AC-8)', () => {
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     const address = server.address() as { port: number };
     const post = async (lane: 'phone' | 'daemon', operation: string, body: unknown, expectedStatus = 200) => {
-      const response = await fetch(`http://127.0.0.1:${address.port}/v1/${lane}/operations/${operation}`, {
+      const response = await (lane === 'phone' ? phoneFetch : fetch)(`http://127.0.0.1:${address.port}/v1/${lane}/operations/${operation}`, {
         method: 'POST', headers: { authorization: `Bearer ${lane === 'phone' ? token : daemonToken}`, 'content-type': 'application/json' },
         body: JSON.stringify(body),
       });

@@ -140,20 +140,20 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
     });
   }
 
-  it('removes the HTTP write doors while socket writes still commit', async () => {
+  it('refuses phone-only HTTP writes while socket writes still commit', async () => {
     const execute = vi.spyOn(phone, 'execute');
     const markRead = vi.spyOn(phone, 'markRead');
     const markUnread = vi.spyOn(phone, 'markUnread');
     const before = (await db.query('SELECT id,text,reactions FROM messages ORDER BY id')).rows;
     for (const path of [
-      '/v1/phone/operations/sendRoomMessage', '/v1/phone/operations/reactToMessage',
+      '/v1/phone/operations/sendFromWallet', '/v1/phone/operations/reactToMessage',
       '/v1/phone/operations/readNeedsYou', '/v1/phone/operations/readTray',
       `/v1/phone/rooms/${ROOM}/read`, `/v1/phone/rooms/${ROOM}/unread`,
       ...['join','leave','idle','resume'].map(action => `/v1/phone/voice/${ROOM}/${action}`),
       `/v1/phone/workspaces/${WORKSPACE}/agents/${VIEWER}/voices`,
       `/v1/phone/workspaces/${WORKSPACE}/agents/${VIEWER}/voice-preview`,
       '/v1/phone/observations/client-error', '/v1/phone/observations/page-load',
-    ]) expect([404, 405]).toContain((await http(path, { roomId: ROOM, messageId: MESSAGE, text: 'HTTP backdoor' })).status);
+    ]) expect([404, 405, 409]).toContain((await http(path, { roomId: ROOM, messageId: MESSAGE, text: 'HTTP backdoor' })).status);
     expect(execute).not.toHaveBeenCalled();
     expect(markRead).not.toHaveBeenCalled();
     expect(markUnread).not.toHaveBeenCalled();
@@ -161,6 +161,21 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
     expect(await request(await open(), 'sendRoomMessage', {
       roomId: ROOM, messageId: 'd'.repeat(64), text: 'One socket door',
     })).toMatchObject({ ok: true, result: { messageId: 'd'.repeat(64) } });
+  });
+
+  it.each([
+    ['createWorkspace', { name: 'CLI proof' }, { id: WORKSPACE, roomId: ROOM }],
+    ['deleteWorkspace', { workspaceId: WORKSPACE }, undefined],
+    ['sendRoomMessage', { roomId: ROOM, messageId: 'd'.repeat(64), text: 'CLI proof' }, { messageId: 'd'.repeat(64) }],
+    ['requestCornerClose', { roomId: ROOM }, undefined],
+  ] as const)('keeps non-phone tool HTTP operation %s on the shared dispatcher', async (operation, args, result) => {
+    const execute = vi.spyOn(phone, 'execute').mockResolvedValue(result as never);
+    const reply = await http(`/v1/phone/operations/${operation}`, args);
+    expect(reply.status).toBe(result === undefined ? 204 : 200);
+    if (result === undefined) expect(await reply.text()).toBe('');
+    else expect(await reply.json()).toEqual(result);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledWith(operation, args, VIEWER, undefined, undefined, true);
   });
 
   it('a failed Room request leaves another request and the socket usable', async () => {
@@ -348,11 +363,11 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
     ] as const) {
       const web = await http(path);
       expect(web.status, op).toBe(200);
-      expect(await request(socket, op, args)).toMatchObject({
-        t: 'res',
-        ok: true,
-        result: await web.json(),
-      });
+      const expected = await web.json();
+      expect(await request(socket, op, args)).toMatchObject({ t: 'res', ok: true, result: expected });
+      const genericRead = await http(`/v1/phone/operations/${op}`, args);
+      expect(genericRead.status, op).toBe(200);
+      expect(await genericRead.json()).toEqual(expected);
     }
     expect(publish).not.toHaveBeenCalled();
   });
@@ -480,7 +495,7 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
         ok: true,
         result: { messageId: id },
       });
-      expect((await http(`/v1/phone/operations/${op}`, args)).status).toBe(404);
+      expect((await http(`/v1/phone/operations/${op}`, args)).status).toBe(op === 'sendRoomMessage' ? 200 : 404);
       expect((await db.query(`SELECT id FROM messages WHERE id=$1`, [id])).rows).toHaveLength(1);
       expect(await request(socket, op, { ...args, text: 'Different payload' })).toMatchObject({
         ok: false,

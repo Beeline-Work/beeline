@@ -372,15 +372,15 @@ describe('server readiness', () => {
   });
 
   it.each(['readRoomTools', 'readMediaMetadata', 'readMediaLink', 'readMediaPlayback'])(
-    'refuses retired HTTP operation %s', async operation => {
+    'keeps selected read operation %s on the socket', async operation => {
       const query = vi.fn(), transaction = vi.fn(), execute = vi.fn();
       const response = await get(`/v1/phone/operations/${operation}`, { query, transaction }, {
         auth: { authenticatePhone: vi.fn().mockResolvedValue('viewer') } as unknown as TokenAuth,
         phone: { execute } as unknown as PhoneService,
       }, { method: 'POST', headers: { authorization: `Bearer ${'p'.repeat(20)}`, 'content-type': 'application/json' },
         body: JSON.stringify({ objectId: '11111111-1111-4111-8111-111111111111' }) });
-      expect(response.status).toBe(404);
-      expect(await response.json()).toEqual({ error: 'not_found' });
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({ error: 'phone_socket_required' });
       expect(execute).not.toHaveBeenCalled(); expect(query).not.toHaveBeenCalled(); expect(transaction).not.toHaveBeenCalled();
     });
 

@@ -2,8 +2,6 @@ import { captureHelperError } from './sentry.js';
 import type { EventEmitter } from 'node:events';
 import { DaemonApiError } from './daemon-api-client.js';
 import { isNetworkFailure } from './live-link.js';
-/** The process exits before the native manager's common 90-second ceiling. */
-export const HELPER_HARD_STOP_MS = 80_000;
 export type HelperExitReason = 'stopped' | 'update' | 'failed';
 export const HELPER_EXIT_CODES: Readonly<Record<HelperExitReason, 0 | 75>> = {
   stopped: 0,
@@ -67,7 +65,6 @@ export class HelperLifecycle {
   constructor(
     private readonly options: {
       controller: AbortController;
-      hardStopMs?: number;
       exitProcess?: (code: number) => void;
     },
   ) {}
@@ -149,8 +146,8 @@ export async function retryBeforeReady<T>(
         if(!isTransientServerFailure(error)||options.signal?.aborted)throw error;
         console.warn('[thin-core] server unreachable before READY; waiting for the live socket to open:',error);
         while(epoch===attemptEpoch && !options.signal?.aborted){
-          // Native manager watchdog extension is local control evidence; its
-          // timer never admits another server observation.
+          // The native manager receives startup status at a real failure;
+          // only a new connection open permits another attempt.
           await options.extendStartTimeout(slice+15_000);
           await new Promise<void>(resolve=>{
             const done=()=>{options.signal?.removeEventListener('abort',done);resolve();};

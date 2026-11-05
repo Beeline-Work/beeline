@@ -5,7 +5,6 @@ import { syncXAdReports } from './x-ad-reports.js';
 import { syncXSiteVisits } from './x-site-visits.js';
 import { dashboardFinances } from './operator-finances.js';
 import { fenceCommandReceiptEnqueue } from './router-command-coverage.js';
-import { startConnectionWork } from './background-work.js';
 import { owedMentions } from './owed-mentions.js';
 import { serveEmailImage } from './email-images.js';
 import { createPhoneOperationDispatcher, PhoneOperationError } from './phone-operations.js';
@@ -95,7 +94,7 @@ import {
   DaemonConnectionRegistry,
   type DaemonLiveDependencies,
 } from './daemon-live.js';
-import { MACHINE_SOCKET_PROTOCOL, serveAgentSocket, serveMachineSocket, machineConnectionOutput } from './machine-connection.js';
+import { MACHINE_SOCKET_PROTOCOL, serveAgentSocket, serveMachineSocket, machineConnectionOutput, enableMachineTcpKeepalive } from './machine-connection.js';
 
 export const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
 
@@ -197,10 +196,6 @@ export interface ServerOptions {
   authHandler?: (request: IncomingMessage, response: ServerResponse) => void;
   /** Exact browser origins allowed to call the bearer-authenticated HTTP API. */
   webAppOrigins?: readonly string[];
-  /** Protocol ping interval for helper sockets; tests shorten it. */
-  liveHeartbeatMs?: number;
-  /** Existing connection control owner; injectable without changing Node/pg clocks. */
-  connectionWork?: typeof startConnectionWork;
 }
 
 const appSignInReturnCookie = 'beeline_app_sign_in_return';
@@ -800,6 +795,7 @@ export function createBeelineServer(options: ServerOptions): Server {
         ? phoneLiveOutput(client, MAX_LIVE_OUTBOUND_BUFFERED_BYTES, () => { liveErrors.overload++; })
         : machineConnectionOutput(client, MAX_LIVE_OUTBOUND_BUFFERED_BYTES, () => { liveErrors.overload++; });
       if (principal.kind !== 'phone') {
+        enableMachineTcpKeepalive(_request.socket);
         watchConnectionEpochs();
         const trackSubscriptions = (count: () => number) => socketSubscriptions.set(client, count);
         client.on('close', () => socketSubscriptions.delete(client));

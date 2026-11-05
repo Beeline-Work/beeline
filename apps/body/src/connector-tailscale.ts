@@ -126,20 +126,22 @@ async function readStatus(run: TailscaleCommandRunner): Promise<TailscaleStatus 
  * no server operation runs on this cadence. */
 export function watchTailscaleSignIn(
   onConnected: () => void,
-  options: { run?: TailscaleCommandRunner; intervalMs?: number } = {},
+  options: { run?: TailscaleCommandRunner; watch?: (changed:()=>void)=>()=>void } = {},
 ): () => void {
   const run=options.run??runTailscaleCommand;
-  const child=spawn('tailscale',['debug','watch-ipn','--initial'],{stdio:['ignore','pipe','ignore']});
   let stopped=false,reading=false,dirty=false;
-  const stop=()=>{stopped=true;child.kill();};
+  const stop=()=>{stopped=true;off();};
   const probe=async()=>{
     dirty=true;if(stopped||reading)return;reading=true;
     try{do{dirty=false;const status=await readStatus(run);
       if(!stopped&&status?.BackendState==='Running'){stop();onConnected();return;}
     }while(dirty&&!stopped);}catch{/* A new local bus notification can supply the next read. */}finally{reading=false;}
   };
-  child.stdout.on('data',()=>{void probe();});
-  child.once('error',()=>{stopped=true;});
+  const off=(options.watch??(changed=>{
+    const child=spawn('tailscale',['debug','watch-ipn','--initial'],{stdio:['ignore','pipe','ignore']});
+    child.stdout.on('data',changed);child.once('error',()=>{stopped=true;});
+    return ()=>{child.kill();};
+  }))(()=>{void probe();});
   void probe();
   return stop;
 

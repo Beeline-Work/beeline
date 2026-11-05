@@ -83,7 +83,7 @@ interface AgentSlot {
  * The machine's one helper process. It hosts every paired agent on this host
  * as an in-process runtime and holds one live socket per server for all of
  * them. It owns everything that is per process: signals, the service
- * manager's watchdog, the update drain (all agents drain, then one restart),
+ * manager's process ownership, the update drain (all agents drain, then one restart),
  * and the forced update. One agent's failure restarts or stops only
  * that agent. SIGHUP rescans the paired agents, which is how pairing, `start`
  * and `stop` change what it hosts.
@@ -107,8 +107,6 @@ async function serveMachineHelper(
      */
     freeAgentIdle?: {
       idleMs: number;
-      /** Bounded startup; tests may shorten the production five-minute deadline. */
-      startupTimeoutMs?: number;
       requestSleep: (options: { refresh: boolean }) => Promise<boolean>;
     };
   } = {},
@@ -515,7 +513,7 @@ async function serveMachineHelper(
             if (!previous || previous === process.pid || slot.controller.signal.aborted) return;
             try { process.kill(previous, signal); }
             catch {
-              // Judge the handoff by verified liveness after the stop deadlines.
+              // Judge the handoff by the process exit notification.
             }
           };
           await signalOwner('SIGKILL');

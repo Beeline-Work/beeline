@@ -26,7 +26,6 @@ export class ThinDaemonCore {
     baseConfig: BodyConfig,
     options: {
       now?: () => number;
-      drainDeadlineMs?: number;
       daemonApi: DaemonApiClient;
       onRestartRequested?: () => void;
       onConfigChanged?: () => void | Promise<void>;
@@ -107,16 +106,13 @@ export class ThinDaemonCore {
   interruptForServerMinimum(): InterruptedTurn[] {
     return this.roomRuntime.interruptForServerMinimum();
   }
-  setDrainDeadlineAt(deadlineAt: number): void {
-    this.roomRuntime.setDrainDeadlineAt(deadlineAt);
-  }
+
   /**
    * `/restart` cancels active work instead of draining it: shutdown reaches its
    * deadline at once and force-cancels every busy session. Returns whether any
    * turn was running.
    */
   async cancelActiveWorkForRestart(): Promise<boolean> {
-    this.roomRuntime.setDrainDeadlineAt(Date.now());
     if (this.roomRuntime.quiesceForUpdateIfIdle()) return false;
     await this.roomRuntime.prepareForForcedUpdateRestart();
     return true;
@@ -131,7 +127,6 @@ export class ThinDaemonCore {
     } = {},
   ): Promise<'aborted' | 'agent-removed'> {
     const stop = () => {
-      this.roomRuntime.setDrainDeadlineAt(Date.now() + 45_000);
       this.roomRuntime.beginShutdown();
     };
     opts.signal?.addEventListener('abort', stop, { once: true });

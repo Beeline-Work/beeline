@@ -2,7 +2,6 @@ import { MachineRequestResults } from './machine-request-results.js';
 import { helperUsageCodecs } from '@beeline/net/helper-codecs';
 import { helperActivationCodecs } from '@beeline/net/helper-activation-codecs';
 import { helperTurnCodecs } from '@beeline/net/helper-turn-codecs';
-import { turnOwnershipEnabled } from './turn-ownership.js';
 import { helperActivationEnabled,fenceCommandActivationEnqueue } from './helper-activation.js';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { helperUsageEnabled } from './helper-usage.js';

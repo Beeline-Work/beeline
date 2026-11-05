@@ -87,12 +87,13 @@ export class LiveLink {
     };
     socket.onmessage = message => { if (this.#socket === socket) this.options.onMessage(String(message.data)); };
     socket.onerror = () => undefined;
-    socket.onclose = () => {
+    socket.onclose = event => {
       if (this.#socket !== socket) return;
       this.#socket = undefined;
       this.#state = 'disconnected';
       this.options.onClose();
       if (this.#wanted) {
+        console.info(`[live-link] machine connection closed (code=${event?.code??1006}, reason=${JSON.stringify(event?.reason??'')}); reconnecting`);
         this.#reconnects++;
         queueMicrotask(() => { if (this.#wanted && !this.#socket) this.#connect(); });
       }

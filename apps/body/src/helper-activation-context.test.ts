@@ -8,7 +8,7 @@ describe('command setup admission and reuse',()=>{
   it('joins repeated setup consumers and never writes or requests a second snapshot for the same command',async()=>{
     const scope={origin:'https://synthetic.invalid',generation:1,source:{connectionId:'source',epoch:1}};
     const read=vi.fn(async(value:CommandActivationInput)=>snapshot(value));
-    const context=new CommandActivationContext({scope:()=>scope,selected:()=>true,ready:async()=>{},read},()=>100);
+    const context=new CommandActivationContext({scope:()=>scope,machine:()=>true,ready:async()=>{},read},()=>100);
     const values=await Promise.all(Array.from({length:20},()=>context.read(input)));
     expect(new Set(values).size).toBe(1);expect(read).toHaveBeenCalledTimes(1);
     await context.read({...input,commandId:'next-command'});expect(read).toHaveBeenCalledTimes(2);
@@ -16,7 +16,7 @@ describe('command setup admission and reuse',()=>{
   it('joins refused captures until a different connection or command and never downgrades selected mode',async()=>{
     let generation=1,available=false;const read=vi.fn(async(value:CommandActivationInput)=>snapshot(value));
     read.mockRejectedValueOnce(new Error('capture unavailable'));
-    const transport:ActivationTransport={scope:()=>available?{origin:'https://synthetic.invalid',generation,source:{connectionId:'source-'+generation,epoch:generation}}:undefined,selected:()=>false,ready:async()=>{},read};
+    const transport:ActivationTransport={scope:()=>available?{origin:'https://synthetic.invalid',generation,source:{connectionId:'source-'+generation,epoch:generation}}:undefined,machine:()=>false,ready:async()=>{},read};
     const context=new CommandActivationContext(transport,()=>100);
     expect(await context.read(input)).toBeUndefined();expect(read).not.toHaveBeenCalled();
     available=true;await expect(context.read(input)).rejects.toThrow('capture unavailable');
@@ -27,7 +27,7 @@ describe('command setup admission and reuse',()=>{
   it('refuses a late old-actor result and an expired held grant without refetching',async()=>{
     let generation=1,at=100,finish!:(snapshot:CommandActivationSnapshot)=>void;
     const read=vi.fn((value:CommandActivationInput)=>generation===1?new Promise<CommandActivationSnapshot>(resolve=>{finish=resolve;}):Promise.resolve({...snapshot(value),validUntil:101}));
-    const context=new CommandActivationContext({scope:()=>({origin:'https://synthetic.invalid',generation,source:{connectionId:'source-'+generation,epoch:generation}}),selected:()=>true,ready:async()=>{},read},()=>at);
+    const context=new CommandActivationContext({scope:()=>({origin:'https://synthetic.invalid',generation,source:{connectionId:'source-'+generation,epoch:generation}}),machine:()=>true,ready:async()=>{},read},()=>at);
     const pending=context.read(input);generation=2;finish(snapshot({...input,source:{connectionId:'source-1',epoch:1}}));
     await expect(pending).rejects.toThrow('ownership changed');await context.read(input);at=102;
     await expect(context.read(input)).rejects.toThrow('expired');expect(read).toHaveBeenCalledTimes(2);

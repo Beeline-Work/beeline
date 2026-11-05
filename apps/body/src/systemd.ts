@@ -231,7 +231,7 @@ export async function extendSystemdStartTimeout(ms: number): Promise<void> {
   );
 }
 
-/** systemd notification transport; only acknowledged work-loop ticks renew the watchdog. */
+/** Native service readiness and status; process exit remains manager-owned. */
 export class SystemdNotifier implements DaemonNotifier {
   async ready(status: string): Promise<void> {
     await notify(['--ready', `--status=${status}`]);

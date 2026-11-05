@@ -533,7 +533,6 @@ export class RoomRuntimeCoordinator {
   /** Parent ownership retained so a failed corner listing never authorizes removal. */
   private readonly monolithCornerParents = new Map<string, string>();
   private readonly now: () => number;
-  private drainDeadlineAt: number | undefined;
   private workspaceRemovalConfirmations = 0;
   private readonly roomRemovalConfirmations = new Map<string, number>();
   private readonly repositoryRevisions = new Map<string, string>();
@@ -563,7 +562,6 @@ export class RoomRuntimeCoordinator {
     private readonly baseConfig: BodyConfig,
     private readonly options: {
       now?: () => number;
-      drainDeadlineMs?: number;
       daemonApi: DaemonApiClient;
       onRestartRequested?: () => void;
       onConfigChanged?: () => void | Promise<void>;
@@ -736,12 +734,6 @@ export class RoomRuntimeCoordinator {
     if (this.stopped) return;
     this.restartRequested = false;
     this.wakeDiscovery();
-  }
-
-  setDrainDeadlineAt(deadlineAt: number): void {
-    if (Number.isFinite(deadlineAt)) {
-      this.drainDeadlineAt = Math.min(this.drainDeadlineAt ?? Number.POSITIVE_INFINITY, deadlineAt);
-    }
   }
 
   async prepareForForcedUpdateRestart(): Promise<void> {

@@ -33,6 +33,13 @@ export function inspectMachineConnectionSource(file,text){
   };
   function visit(node){
     if(file.startsWith(BODY)){
+      if(ts.isIdentifier(node)&&['setTimeout','setInterval','setImmediate'].includes(node.text)&&!typeOnly(node)&&
+        !(ts.isCallExpression(node.parent)&&node.parent.expression===node&&warmCountdown(node.parent)))
+        deny(node,'helper timer references and destructured aliases are forbidden');
+      if(ts.isCallExpression(node)&&(node.expression.kind===ts.SyntaxKind.ImportKeyword||name(node.expression)==='require')&&
+        node.arguments[0]&&ts.isStringLiteralLike(node.arguments[0])&&/^(?:node:)?timers(?:\/promises)?$/.test(node.arguments[0].text))
+        deny(node,'dynamic helper timer imports are forbidden');
+
       if(ts.isImportDeclaration(node)&&/^node:timers(?:\/promises)?$|^timers(?:\/promises)?$/.test(node.moduleSpecifier.text)&&!node.importClause?.isTypeOnly)
         deny(node,'helper timers are forbidden; use the actual completion or activity event');
       if(ts.isVariableDeclaration(node)&&node.initializer&&timerAliases.has(name(node.initializer))){
@@ -66,6 +73,8 @@ export function inspectMachineConnectionSource(file,text){
       }
       if(ts.isStringLiteralLike(node)&&node.text.includes('/v1/phone/live')&&file!==MACHINE)
         deny(node,'the machine live endpoint belongs to machine-link.ts');
+      if(file===BODY+'machine-helper.ts'&&ts.isCallExpression(node)&&['send','reconnectNow','suspect'].includes(name(node.expression)))
+        deny(node,'machine lifecycle may observe or stop its connection, never send or replace it');
       if(file===LINK&&ts.isCallExpression(node)&&name(node.expression)==='#connect'){
         let closeHandler=false;
         for(let parent=node.parent;parent;parent=parent.parent)

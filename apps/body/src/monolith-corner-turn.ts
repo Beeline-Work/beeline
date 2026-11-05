@@ -675,7 +675,7 @@ export class MonolithCornerTurnLoop {
     this.options = { ...options, api: this.commandContext.bind(options.api) };
     this.activationContext=new CommandActivationContext({
       scope:()=>options.api.channel?.activationScope?.(),
-      selected:()=>Boolean(options.api.channel?.isOpen),
+      machine:()=>Boolean(options.api.channel?.isOpen),
       ready:()=>options.api.waitForConnection(),
       read:input=>options.api.readCommandActivation(input),
     });

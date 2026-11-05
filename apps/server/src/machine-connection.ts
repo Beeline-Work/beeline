@@ -1,3 +1,4 @@
+import type { Socket } from 'node:net';
 import type { WebSocket } from 'ws';
 import { HELPER_UPDATE_CLOSE_CODE, HELPER_UPDATE_CLOSE_REASON } from '@beeline/api-contract/daemon';
 import { helperVersionBelowMinimum } from './helper-version-gate.js';
@@ -318,3 +319,6 @@ export function machineConnectionOutput(client:WebSocket,limit:number,onOverload
     client.send(payload);return true;
   };
 }
+
+/** Both peers use kernel keepalive; no application ping/pong work is armed. */
+export function enableMachineTcpKeepalive(socket:Socket):void { socket.setKeepAlive(true,30_000); }

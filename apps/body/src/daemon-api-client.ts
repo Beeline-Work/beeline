@@ -126,7 +126,6 @@ export type DaemonClientMetrics = {
   readonly readQueueWaitMs: number;
 };
 
-const REQUEST_DEADLINE_MS = 30_000;
 const DAEMON_LIVE_EVENT_TYPES = new Set<unknown>([
   'share-viewer-activity',
   'vault-save',
@@ -167,13 +166,12 @@ export class DaemonApiClient {
   /** Features can observe negotiation and use the existing overlay owner, but
    * cannot obtain ordinary/turn/usage/activation request capabilities. */
   readonly channel: Readonly<Pick<AgentChannel, 'isOpen' | 'activationScope' | 'usageAccountScope' | 'overlay'>>;
-  readonly machine: MachineLink;
+  readonly #machine: MachineLink;
   private registrationRefusal?: DaemonApiError;
   private authorityRefusalListener?: (error: DaemonApiError) => void;
   private channelStateListener?: (connected: boolean, refusal?: string) => void;
   private inFlight = 0;
   private requestCount = 0;
-  private timeoutCount = 0;
   private subscriptionCount = 0;
   private operationChannelDemanded = false;
   private readonly readBudget?: HostReadBudget;
@@ -220,14 +218,14 @@ export class DaemonApiClient {
     // Test transports may supply their own admission model. The real network
     // transport always takes the machine-wide budget.
     this.readBudget = readBudget ?? (fetchImpl === fetch ? hostReadBudget : undefined);
-    this.machine =
+    this.#machine =
       machine ??
       new MachineLink({
         baseUrl,
         ...(webSocketFactory ? { factory: webSocketFactory } : {}),
         ...(linkTiming ? { timing: linkTiming } : {}),
       });
-    this.#channel = this.machine.attach(agentId, {
+    this.#channel = this.#machine.attach(agentId, {
       registration: () => ({
         token: this.daemonToken,
         lifecycleId: this.presenceLifecycleId,
@@ -261,11 +259,11 @@ export class DaemonApiClient {
   }
 
   /** Refresh the shared machine observation after an explicit local vault event. */
-  refreshMachineVault(): Promise<void> { return this.machine.refreshVault(); }
+  refreshMachineVault(): Promise<void> { return this.#machine.refreshVault(); }
 
   /** The machine socket under this agent's registration. */
   get link(): Pick<LiveLink,'state'|'isOpen'|'onOpen'|'reconnects'> {
-    return this.machine.link;
+    return this.#machine.link;
   }
 
   /** Connection material for the daemon-owned MCP proxy and corner credentials. */
@@ -283,7 +281,7 @@ export class DaemonApiClient {
       releaseVersion: helperVersion(identity.releaseVersion),
       ...(identity.sourceSha ? { sourceSha: identity.sourceSha } : {}),
     };
-    this.machine.setHelperIdentity(identity);
+    this.#machine.setHelperIdentity(identity);
   }
 
   setForceUpdateListener(listener: (minVersion: string) => void): void {
@@ -301,7 +299,7 @@ export class DaemonApiClient {
     return {
       inFlight: this.inFlight,
       requests: this.requestCount,
-      timeouts: this.timeoutCount,
+      timeouts: 0,
       reconnects: this.#channel.reconnects,
       subscriptionsSent: this.subscriptionCount,
       readQueueDepth: budget?.waiting ?? 0,
@@ -482,15 +480,13 @@ export class DaemonApiClient {
     } finally { this.inFlight--; }
   }
 
-  /** Old servers have no declared protocol floor (HelperVersionGate is opt-in).
-   * Keep their wire adapter, bootstrap and one-shot Git credential read private.
-   * Neither a selected socket failure nor an arbitrary caller can enter here. */
+  /** The explicit one-shot repository credential read cannot register another
+   * machine owner. Every ordinary runtime operation uses the live connection. */
   async #requestHttp<Name extends keyof DaemonOperationMap>(name: Name, input: Input<Name>): Promise<Output<Name>> {
     const repositoryCredential = name === 'getRoomGitHubToken' && this.#repositoryCredentialRoom !== undefined &&
       (input as Input<'getRoomGitHubToken'>).roomId === this.#repositoryCredentialRoom;
     if (!repositoryCredential)
       throw new Error('HTTP daemon operation requires bootstrap or a registered old server');
-    const controller = new AbortController();
     this.requestCount += 1;
     let release: (() => Promise<void>) | undefined;
     let admitted = false;
@@ -504,8 +500,7 @@ export class DaemonApiClient {
             operation === 'getDaemonBootstrap'
             ? 'urgent'
             : 'background',
-          Date.now() + REQUEST_DEADLINE_MS,
-          controller.signal,
+          Number.POSITIVE_INFINITY,
         );
       }
       this.inFlight += 1;
@@ -520,7 +515,6 @@ export class DaemonApiClient {
             ...helperVersionHeader(this.helperIdentity.releaseVersion),
           },
           body: JSON.stringify(input),
-          signal: controller.signal,
         },
       );
       if (!response.ok) {
@@ -534,17 +528,6 @@ export class DaemonApiClient {
     } catch (error) {
       if (error instanceof ReadBudgetFullError) {
         throw new DaemonApiError(error.message, 429, true, 'read_budget_full', 1_000);
-      }
-      if (controller.signal.aborted) {
-        this.timeoutCount += 1;
-        // An admitted request that hears nothing for its whole deadline may be
-        // riding a dead path; ask the socket. A queued one only waited here.
-        throw new DaemonApiError(
-          `monolith daemon ${String(name)} timed out`,
-          408,
-          true,
-          'deadline_exceeded',
-        );
       }
       throw error;
     } finally {

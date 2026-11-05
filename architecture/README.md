@@ -83,3 +83,15 @@ remaining exceptions and why their callers still need them.
 A scheduled Beeline agent turn (a due-time wake, not a polling loop) reviews
 the week's merged PRs. The prompt is [weekly-audit.md](weekly-audit.md). It
 opens tightening PRs on its own and reports invariant, System catalog and corner reference changes to the owner weekly.
+
+## Machine connection and helper timers
+
+`scripts/machine-connection-boundaries.mjs` runs inside the architecture check.
+The helper physical connection belongs to `apps/body/src/live-link.ts`; server
+machine output and login/version changes belong to `machine-connection.ts`.
+`machine-connection-sinks.json` pins owned sink counts and can only shrink.
+A helper cannot acquire another reconnect/close/send path. Helper timers have
+zero inventory allowance, including generated child code and timer aliases.
+The sole exception is one stay-warm countdown in `AgentProcesses.workChanged`
+in `apps/body/src/agent-process.ts`. The mutation suite plants a second
+reconnect and timer and requires both to fail; TYPECHECK runs that suite.

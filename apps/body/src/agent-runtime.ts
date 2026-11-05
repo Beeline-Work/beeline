@@ -449,6 +449,5 @@ export async function runAgentRuntime(
 /** The force-update journal entries for one hosted agent. */
 export function interruptHostedAgent(agent: HostedAgent): InterruptedTurn[] {
   agent.lifecycle.quiesce('force-update');
-  agent.core.setDrainDeadlineAt(Date.now() + 60_000);
   return agent.core.interruptForServerMinimum();
 }

@@ -137,7 +137,7 @@ it('binds an unsent usage write only after the selected socket registers again',
   const ready=new Promise<void>(resolve=>{reconnect=resolve;});
   const scope={origin:'https://usage-reconnect.invalid',ownerId:'owner',generation:2,source:{connectionId:'new-source',epoch:2}};
   const execute=m19_vi.fn(async()=>({}));
-  const api={agentId:'agent',channel:{usageAccountSelected:true,usageAccountScope:()=>open?scope:undefined},
+  const api={agentId:'agent',channel:{isOpen:()=>open,usageAccountScope:()=>open?scope:undefined},
     waitForConnection:()=>ready,execute} as unknown as m19_DaemonApiClient;
   const usage={updatedAt:100,windows:[]};
   const pending=postChangedAgentUsage(api,'agent',usage);

@@ -29,7 +29,7 @@ export interface AgentChannelHandlers {
 export class AgentChannel {
   readonly turn = new HelperTurnChannel();
   readonly overlay = new HelperOverlayChannel(frame => this.send(frame), () => this.isOpen());
-  readonly #waiters = new Set<() => void>();
+  readonly #waiters = new Set<{resolve:()=>void;reject:(error:Error)=>void}>();
   readonly #requests = new Map<string, {
     frame: Record<string, unknown>; sent: boolean;
     resolve: (value: unknown) => void; reject: (error: Error) => void;
@@ -54,7 +54,7 @@ export class AgentChannel {
   }
   async operationReady(): Promise<void> {
     if (this.isOpen()) return;
-    await new Promise<void>(resolve => { this.#waiters.add(resolve); this.start(); });
+    await new Promise<void>((resolve,reject) => { this.#waiters.add({resolve,reject}); this.start(); });
   }
   requestOperation<N extends keyof DaemonOperationMap>(operation: N, input: DaemonOperationMap[N]['input']): Promise<DaemonOperationMap[N]['output']> {
     const requestId = randomUUID();
@@ -117,7 +117,7 @@ export class AgentChannel {
         this.turn.negotiate({connectionId:c.turnConnectionId,epoch:c.turnConnectionEpoch});
       this.overlay.negotiate(c.overlayV1 === true);
       for (const pending of this.#requests.values()) this.#dispatch(pending);
-      for (const resolve of this.#waiters) resolve();
+      for (const waiter of this.#waiters) waiter.resolve();
       this.#waiters.clear();
       this.handlers.onOpen();
       this.machine.registered();
@@ -150,6 +150,8 @@ export class AgentChannel {
     this.#registered = false;
     this.overlay.suspend();
     if (ended) {
+      for(const waiter of this.#waiters)waiter.reject(new Error('Agent runtime ended'));
+      this.#waiters.clear();
       this.turn.stop();
       for (const pending of this.#requests.values()) pending.reject(new Error('Agent runtime ended'));
       this.#requests.clear();

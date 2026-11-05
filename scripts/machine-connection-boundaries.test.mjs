@@ -7,7 +7,7 @@ import { inspectMachineConnectionSource,machineConnectionSites,judgeMachineSites
 test('new helper timers fail, including aliases, promises, native deadlines, and generated child code',()=>{
   for(const source of [
     'setTimeout(tick,1)','setInterval(tick,1)','globalThis["setTimeout"](tick,1)',
-    'const later=setTimeout;later(tick,1)','socket.setTimeout(1,tick)',
+    'const later=setTimeout;later(tick,1)','const {setTimeout:later}=globalThis;later(tick,1)','schedule(setTimeout)','socket.setTimeout(1,tick)',
     'import {setTimeout as pause} from "node:timers/promises";await pause(1)',
     'await import("node:timers/promises").then(timers=>timers.setTimeout(1))',
     'await AbortSignal.timeout(1)','setImmediate(function again(){setImmediate(again)})',

@@ -43,7 +43,7 @@ export class HelperOverlayChannel implements HelperOverlayTransport {
     return true;
   }
   send(frame:HelperOverlayFrame):Promise<HelperOverlayAck>{
-    if(!this.enabled()||this.pending.size>=128)return Promise.resolve({accepted:false,reason:'unavailable'});
+    if(!this.enabled())return Promise.resolve({accepted:false,reason:'unavailable'});
     return new Promise(resolve=>{
       const requestId=randomUUID();
       const envelope={type:'overlay-update',requestId,frame};

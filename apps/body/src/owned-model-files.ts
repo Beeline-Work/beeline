@@ -7,7 +7,6 @@ import { readOwnedModelReceipt } from '@beeline/api-contract/helper-model-receip
 /** Private generation files only. No transport, provider registration, local
  * retry, runtime activation or current-authority assertion lives in this leaf. */
 export const OWNED_MODEL_FILE_MAX_BYTES = 32 * 1024;
-export const OWNED_MODEL_FILE_MAX_REQUESTS = 128;
 export interface OwnedModelFileBinding {
   readonly agentId: string;
   readonly commandId: string;
@@ -104,7 +103,7 @@ function readCredential(owner: Owner, now: number): CredentialFile {
 function readJournal(owner: Owner): Journal {
   const value: unknown = JSON.parse(readPrivate(owner.journalPath));
   if (!closed(value, 'active,bindingHash,requests,v') || value.v !== 1 || value.bindingHash !== owner.bindingHash ||
-      !Array.isArray(value.requests) || value.requests.length > OWNED_MODEL_FILE_MAX_REQUESTS ||
+      !Array.isArray(value.requests) ||
       value.active !== null && typeof value.active !== 'string') throw new OwnedModelFileRefusal();
   const ids = new Set<string>();
   for (const entry of value.requests) {
@@ -177,7 +176,8 @@ export class OwnedModelFiles {
       // Keep any failed/uncertain lock. Never guess that another process died
       // and unlink its replacement, or recreate an absent journal after crash.
       const journal = readJournal(owner);
-      if (journal.active !== null || journal.requests.length >= OWNED_MODEL_FILE_MAX_REQUESTS) throw new OwnedModelFileRefusal();
+      if (journal.active !== null) throw new OwnedModelFileRefusal();
+      journal.requests = [];
       const requestId = randomUUID(); journal.requests.push({ id: requestId, state: 'unknown' }); journal.active = requestId;
       saveJournal(owner, journal);
       unlinkSync(lock); directorySync(owner.directory);

@@ -1,3 +1,6 @@
+import { OwnedModelCredentials } from './owned-model-credential.js';
+import { claimAgentConnection } from './connection-presence.js';
+import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -22,14 +25,22 @@ vi.mock('../../body/dist/corner-branch-sync.js', () => ({ syncCornerBranch: vi.f
 const identity = identityFromKey('11'.repeat(32), 'Bee');
 const AGENT = identity.publicKey, HUMAN = '22'.repeat(32), WS = randomUUID(), ROOM = randomUUID();
 let db: PgliteDatabase, daemon: InstanceType<typeof DaemonService>, phone: InstanceType<typeof PhoneService>;
+let source:{connectionId:string;epoch:number};
+async function executeOwned<N extends keyof DaemonOperationMap>(name:N,input:DaemonOperationMap[N]['input'],agentId=AGENT):Promise<DaemonOperationMap[N]['output']>{
+  const {capability}=await daemon.negotiateOwnedModel(agentId,source,true);
+  return daemon.execute(name,input,agentId,source,capability);
+}
 beforeAll(async () => {
   db = await migratedDatabase();
   daemon = new DaemonService(db, new LiveHub());
+  daemon.setOwnedModel({ready:()=>true,credentials:new OwnedModelCredentials({currentVersion:'test',key:()=>Buffer.alloc(32,7)},()=> 'synthetic/model',()=>15*60_000)});
   phone = new PhoneService(db, 'http://test');
   await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Captain','captain'),($2,'agent','Bee','bee')`, [HUMAN, AGENT]);
   await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT,HUMAN]);
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Trace proof')`, [WS]);
   await db.query(`INSERT INTO rooms(id,workspace_id,name,created_by) VALUES($1,$2,'Trace proof',$3)`, [ROOM,WS,HUMAN]);
+  await db.query(`INSERT INTO live_server_instances(instance_id,renewed_at) VALUES('replay-helper',clock_timestamp())`);
+  source={connectionId:'replay-helper',epoch:await claimAgentConnection(db,new LiveHub(),AGENT,{}, {connectionId:'replay-helper',instanceId:'replay-helper'})};
   for (const person of [HUMAN, AGENT]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
     VALUES($1,NULL,$3,'owner'),($1,$2,$3,'member')`, [WS,ROOM,person]);
 }, 30000);
@@ -45,7 +56,7 @@ it.each([
     await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,created_by) VALUES($1,$2,$3,'Trace corner',$4)`, [roomId,WS,ROOM,HUMAN]);
     await insertCornerFacts(db, { cornerId: roomId, ownerAgentId: AGENT, workerAgentId: AGENT });
   }
-  if (limited) await db.query(`INSERT INTO free_agents(agent_id,workspace_id,owner_id,state,sealed_keys) VALUES($1,$2,$3,'running','fixture')`, [AGENT,WS,HUMAN]);
+  if (limited) await db.query(`INSERT INTO free_agents(agent_id,workspace_id,owner_id,state,sealed_keys,model_token_hash) VALUES($1,$2,$3,'running','fixture','cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc')`, [AGENT,WS,HUMAN]);
   const trigger = randomUUID();
   await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Please run the trace proof')`, [trigger,roomId,HUMAN]);
   await createAgentCommand(db, {roomId,agentId:AGENT,sourceMessageId:trigger,reason:'human_tag'});
@@ -61,14 +72,14 @@ it.each([
       if (name === 'getRoomRepositoryState') return {resolution:'none'};
       if (name === 'getRoomGitHubToken') return {token:'fixture',expiresAt:Date.now()+60000};
       if (name === 'claimAgentCommand') {
-        const command = (await daemon.execute('getAgentCommands',{roomId},AGENT)).commands.find(c=>c.id===input.commandId)!;
+        const command = (await executeOwned('getAgentCommands',{roomId},AGENT)).commands.find(c=>c.id===input.commandId)!;
         activeAuthority = {roomId,requestId:command.turnRequestId,generationId:input.generationId};
       }
       if (limited && name === 'postAgentTurnReceipt' && input.status === 'failed') {
-        await expect(daemon.execute(name, {...input, generationId:'stale'} as never, AGENT)).rejects.toThrow();
-        await expect(daemon.execute(name, {...input, reason:'runtime failure'} as never, AGENT)).rejects.toThrow();
+        await expect(executeOwned(name, {...input, generationId:'stale'} as never, AGENT)).rejects.toThrow();
+        await expect(executeOwned(name, {...input, reason:'runtime failure'} as never, AGENT)).rejects.toThrow();
       }
-      const result = await daemon.execute(name as never,input as never,AGENT);
+      const result = await executeOwned(name as never,input as never,AGENT);
       if (name === 'postAgentTurnReceipt' && input.reasonKind === 'process-exited') interrupted = true;
       else if (name === 'postAgentTurnReceipt' && input.status !== 'working') settled = true;
       return result;
@@ -89,12 +100,12 @@ it.each([
     if (crash && prompts++ === 0) throw new AcpRuntimeExitedError('refresh token expired; fixture process died');
     const calls: ToolCallEntry[] = [{id:'read',title:'read',status:'in_progress'}];
     onTools?.(calls);
-    await daemon.execute('getRoomConversation',{roomId,limit:10},AGENT);
+    await executeOwned('getRoomConversation',{roomId,limit:10},AGENT);
     calls[0]!.status='completed';
     onTools?.(calls);
     const refused = {id:'post',title:'post',status:'in_progress',content:''};
     calls.push(refused);onTools?.(calls);
-    await expect(daemon.execute('postRoomMessage',{...activeAuthority,roomId,generationId:'wrong-generation',text:'Refused write'} as never,AGENT)).rejects.toThrow();
+    await expect(executeOwned('postRoomMessage',{...activeAuthority,roomId,generationId:'wrong-generation',text:'Refused write'} as never,AGENT)).rejects.toThrow();
     refused.status='rejected';refused.content='permission denied';onTools?.(calls);
     onChunk?.('Proof completed.','Proof completed.');
     return {stopReason:limited ? 'free-agent-time-limit' : 'end_turn',agentText:'Proof completed.',updates:[],toolCalls:calls};
@@ -120,7 +131,7 @@ it.each([
       const nudge = randomUUID();
       await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Continue with the interrupted work')`, [nudge,roomId,HUMAN]);
       await createAgentCommand(db, { roomId, agentId: AGENT, sourceMessageId: nudge, reason: 'human_tag' });
-      const page = await daemon.execute('getAgentCommands', { roomId }, AGENT);
+      const page = await executeOwned('getAgentCommands', { roomId }, AGENT);
       expect(page.commands.length, `recovery snapshot ${JSON.stringify(page.commands.map(command => ({ id: command.id, reason: command.reason })))}`).toBeGreaterThan(1);
       expect(notifyCommands).toBeTypeOf('function');
       notifyCommands?.(page.commands);
@@ -166,22 +177,22 @@ async function claimedTurn() {
   await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Proof')`,[messageId,ROOM,HUMAN]);
   const command=(await createAgentCommand(db,{roomId:ROOM,agentId:AGENT,sourceMessageId:messageId,reason:'human_tag'}))!;
   const generationId=randomUUID();
-  await daemon.execute('claimAgentCommand',{roomId:ROOM,commandId:command.id,generationId},AGENT);
+  await executeOwned('claimAgentCommand',{roomId:ROOM,commandId:command.id,generationId},AGENT);
   return {roomId:ROOM,requestId:command.turn_request_id,generationId};
 }
 const emptyTrace={totalMs:12,attempts:[{attempt:1,phases:{publish:1},tools:[]}]};
 it('stores no replies and multiple replies, and never trusts supplied message ids',async()=>{
   const silent=await claimedTurn();
-  await daemon.execute('postAgentTurnReceipt',{...silent,status:'complete',completionKind:'no-reply',trace:emptyTrace},AGENT);
+  await executeOwned('postAgentTurnReceipt',{...silent,status:'complete',completionKind:'no-reply',trace:emptyTrace},AGENT);
   expect((await db.query(`SELECT reply_message_ids FROM agent_turn_traces WHERE request_id=$1`,[silent.requestId])).rows[0]!.reply_message_ids).toEqual([]);
   expect((await db.query(`SELECT trace FROM agent_turn_traces WHERE request_id=$1`,[silent.requestId])).rows[0]!.trace).toEqual(emptyTrace);
   const multiple=await claimedTurn();
-  const first=await daemon.execute('postRoomMessage',{...multiple,text:'First reply'},AGENT);
+  const first=await executeOwned('postRoomMessage',{...multiple,text:'First reply'},AGENT);
   // Historical narration can precede a final reply under the same request.
   const second={id:randomUUID()};
   await db.query(`INSERT INTO messages(id,room_id,author_id,request_id,text,presentation)
     VALUES($1,$2,$3,$4,'Earlier narration','message')`,[second.id,ROOM,AGENT,multiple.requestId]);
-  await daemon.execute('postAgentTurnReceipt',{...multiple,status:'complete',trace:{...emptyTrace,replyMessageIds:['forged']} as never},AGENT);
+  await executeOwned('postAgentTurnReceipt',{...multiple,status:'complete',trace:{...emptyTrace,replyMessageIds:['forged']} as never},AGENT);
   expect((await db.query(`SELECT reply_message_ids FROM agent_turn_traces WHERE request_id=$1`,[multiple.requestId])).rows[0]!.reply_message_ids).toEqual(expect.arrayContaining([first.id,second.id]));
 });
 
@@ -191,7 +202,7 @@ it('drops a failed diagnostic insert without failing the terminal receipt',async
   await db.query(`CREATE TRIGGER refuse_trace BEFORE INSERT ON agent_turn_traces FOR EACH ROW EXECUTE FUNCTION refuse_trace()`);
   const warning=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
   try {
-    await daemon.execute('postAgentTurnReceipt',{...turn,status:'complete',trace:emptyTrace},AGENT);
+    await executeOwned('postAgentTurnReceipt',{...turn,status:'complete',trace:emptyTrace},AGENT);
     expect((await db.query(`SELECT status FROM agent_turns WHERE request_id=$1`,[turn.requestId])).rows[0]!.status).toBe('complete');
     expect((await db.query(`SELECT 1 FROM agent_turn_traces WHERE request_id=$1`,[turn.requestId])).rowCount).toBe(0);
     expect(warning).toHaveBeenCalledWith('[turn-trace] trace dropped');
@@ -202,10 +213,10 @@ it('accepts only the stopped generation diagnostics and never restores output au
   const turn=await claimedTurn();
   await db.query(`UPDATE agent_turns SET status='cancelled' WHERE request_id=$1`,[turn.requestId]);
   await db.query(`UPDATE agent_commands SET state='cancelled' WHERE turn_request_id=$1`,[turn.requestId]);
-  await daemon.execute('postAgentTurnReceipt',{...turn,status:'cancelled',trace:emptyTrace},AGENT);
+  await executeOwned('postAgentTurnReceipt',{...turn,status:'cancelled',trace:emptyTrace},AGENT);
   expect((await db.query(`SELECT outcome FROM agent_turn_traces WHERE request_id=$1`,[turn.requestId])).rows[0]!.outcome).toBe('cancelled');
-  await expect(daemon.execute('postAgentTurnReceipt',{...turn,generationId:'stale',status:'cancelled',trace:emptyTrace},AGENT)).rejects.toThrow();
-  await expect(daemon.execute('postRoomMessage',{...turn,text:'Must stay stopped'},AGENT)).rejects.toThrow();
+  await expect(executeOwned('postAgentTurnReceipt',{...turn,generationId:'stale',status:'cancelled',trace:emptyTrace},AGENT)).rejects.toThrow();
+  await expect(executeOwned('postRoomMessage',{...turn,text:'Must stay stopped'},AGENT)).rejects.toThrow();
   expect((await db.query(`SELECT status FROM agent_turns WHERE request_id=$1`,[turn.requestId])).rows[0]!.status).toBe('cancelled');
 });
 
@@ -215,7 +226,7 @@ it('redacts pre-session diagnostics at persistence and preserves startup classif
   const reason = 'worktree failed https://private.example/path token=super-private';
   const turn = await claimedTurn();
   const trace = {totalMs:0, attempts:[], reason, reasonKind:'workspace-failure'};
-  await daemon.execute('postAgentTurnReceipt', {...turn,status:'failed',reasonKind:'workspace-failure',trace}, AGENT);
+  await executeOwned('postAgentTurnReceipt', {...turn,status:'failed',reasonKind:'workspace-failure',trace}, AGENT);
   const rows = await db.query(`SELECT outcome,trace FROM agent_turn_traces WHERE request_id=$1`, [turn.requestId]);
   expect(rows.rows).toEqual([{outcome:'failed',trace:{...trace,reason:redactReplayError(reason)}}]);
   expect((await db.query(`SELECT failures FROM agent_startup_backoff WHERE agent_id=$1`,[AGENT])).rows[0]!.failures).toBe(1);

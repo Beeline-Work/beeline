@@ -897,7 +897,7 @@ describe('free starter agents', () => {
       ...(ending === 'error' ? { errorMessage: 'Sign-in cancelled' } : { signedInAs: 'owner' }),
     }, ending === 'complete'));
     await freeAgents.sweep();
-    expect(machines.calls).toEqual([`stop ${agent.fly_machine_id}`]);
+    expect(machines.calls).toEqual([`suspend ${agent.fly_machine_id}`]);
     // The normal helper sleep path also releases after the terminal report.
     await db.query(`UPDATE free_agents SET state='running' WHERE agent_id=$1`, [agent.agent_id]);
     machines.states.set(agent.fly_machine_id!, 'started');
@@ -1034,7 +1034,7 @@ describe('free starter agents', () => {
     );
     machines.calls.length = 0;
     await freeAgents.sweep();
-    expect(machines.calls).toEqual(['stop m1']);
+    expect(machines.calls).toEqual(['suspend m1']);
     expect(await freeAgentOf(id)).toMatchObject({ state: 'sleeping' });
 
     // Thirty days with no activity: the Machine is deleted.

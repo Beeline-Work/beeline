@@ -1787,7 +1787,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(grant.consentHtml).toContain('Joins as');
     expect(grant.consentHtml).toContain('It can');
     expect(grant.consentHtml).not.toContain('Select at least one Workspace');
-    expect(grant.consentHtml).not.toMatch(/<input[^>]*type="checkbox"/);
+    expect(grant.consentHtml).not.toMatch(/<input[^>]*type="checkbox"[^>]*name="workspace_ids"/);
+    expect(grant.consentHtml).toContain('id="trust_app"');
     const result = await fetch(origin + '/mcp/oauth/consent', { method: 'POST', redirect: 'manual',
       headers: { cookie: grant.cookie, origin, 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ flow: grant.flow, decision: 'allow', trust_app: '1', workspace_selection: '1' }) });

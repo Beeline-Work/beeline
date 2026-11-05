@@ -1,3 +1,4 @@
+import * as phoneSchedules from './phone/schedules.js';
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 import {migratedDatabase,type PgliteDatabase} from './test-support.js';
 import {PhoneService} from './phone-service.js';
@@ -22,7 +23,7 @@ describe('Scheduled Work durable stop adapters',()=>{
   afterEach(async()=>{await db.close();});
   function server(provider?:Pick<ComposioApps,'deleteWebhookTrigger'>){
     const phone=new PhoneService(db,'https://synthetic.test',undefined,undefined,undefined,false,db,undefined,undefined,undefined,provider as ComposioApps|undefined);
-    const reads=vi.spyOn(phone as unknown as {readScheduledWork(...args:unknown[]):Promise<unknown>},'readScheduledWork'),live=new LiveHub();
+    const reads=vi.spyOn(phoneSchedules,'phoneReadScheduledWork').mockClear(),live=new LiveHub();
     const dispatch=createPhoneOperationDispatcher({database:db,phone,live} as ServerOptions);
     return {dispatch,reads,live};
   }

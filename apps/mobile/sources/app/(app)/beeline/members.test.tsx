@@ -1,617 +1,12 @@
-const profileLane=vi.hoisted(()=>({mode:'legacy' as 'legacy'|'pending'|'router',view:null as any,listeners:new Set<()=>void>(),acquire:vi.fn(),query:vi.fn(),retry:vi.fn()}));
-
-
-
-vi.mock('@/utils/responsive', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/utils/responsive')>()), useIsDesktop: () => false }));
-vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
-vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
-vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => undefined) }));
+import { WORKSPACE, VIEWER, OWNER, MEMBER, AGENT, state, roomView, share, modal, platform, client, phoneOperation, safeArea, chevronDirections, baseWorkspace, baseAgent, create, render, press, agentChanged, openAgentProfile, openAgentManagement, sheet, fixtureScope1 } from './members.test-support';
 import { HumanProfile } from './human-profile';
 import AgentProfileRoute from './agent-profile';
-import * as React from 'react';
-import { StyleSheet } from 'react-native';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
-import { act, create as createRenderer, type ReactTestRenderer } from 'react-test-renderer';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-
-vi.mock('@/buzz/use-surface-focus', () => ({ useSurfaceFocus: () => true }));
-
-const WORKSPACE = '11111111-1111-4111-8111-111111111111';
-const VIEWER = 'a'.repeat(64);
-const OWNER = 'b'.repeat(64);
-const MEMBER = 'c'.repeat(64);
-const AGENT = 'd'.repeat(64);
-
-const state = vi.hoisted(() => ({ workspace: null as any, agent: null as any }));
-const liveListeners = vi.hoisted(() => new Set<(event: any) => void>());
-vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({
-  register: async (_filters: unknown, listener: (event: any) => void) => {
-    liveListeners.add(listener);
-    return () => liveListeners.delete(listener);
-  },
-}) }));
-const roomView = vi.hoisted(() => ({
-  workspace: vi.fn(),
-  agent: vi.fn(),
-  workspaceMembers: vi.fn(),
-  agentVoices:vi.fn(),
-}));
-const share = vi.hoisted(() => vi.fn(async () => undefined));
-const modal = vi.hoisted(() => ({
-  confirm: vi.fn(async (_title?: string, _body?: string, _options?: { onConfirm?: () => Promise<void> }) => true),
-  prompt: vi.fn(async () => null as string | null),
-}));
-const navigation = vi.hoisted(() => ({
-  beforeRemove: null as null | ((event: any) => void),
-  dispatch: vi.fn(),
-}));
-const platform = vi.hoisted(() => ({ OS: 'ios' }));
-const routeParams = vi.hoisted(() => ({
-  communityId: '11111111-1111-4111-8111-111111111111',
-  agentId: 'd'.repeat(64),
-}));
-const client = vi.hoisted(() => ({
-  composeMessage: vi.fn(async (input: any, options: any) => ({
-    ...input,
-    options,
-    id: 'avatar-request',
-  })),
-  publishPreparedMessage: vi.fn(async (_message: any) => undefined),
-  resolveDirectMessage: vi.fn(async () => ({ channelId: 'dm-room' })),
-  surfaceSubscribe: vi.fn(async () => vi.fn()),
-  createInvite: vi.fn(async () => ({ token: `inv_${'e'.repeat(64)}` })),
-  createAgentPairingCode: vi.fn(async () => ({
-    code: '1234ABCD-5678EF90',
-    expiresAt: 2_000_000_000,
-  })),
-  addMember: vi.fn(async (_workspaceId: string, pubkey: string, role: string) => {
-    state.workspace = {
-      ...state.workspace,
-      members: state.workspace.members.map((member: any) =>
-        member.identity.pubkey === pubkey ? { ...member, role } : member,
-      ),
-    };
-  }),
-  waitUntilMemberRole: vi.fn(async () => undefined),
-  setAgentModelConfig: vi.fn(async (_workspaceId: string, _pubkey: string, input: any) => {
-    state.agent = {
-      ...state.agent,
-      selected: { ...state.agent.selected, ...input },
-      ...(typeof input.fastMode === 'boolean' ? { fastMode: input.fastMode } : {}),
-    };
-    return state.agent;
-  }),
-  refreshAgentModelCatalog: vi.fn(async () => {
-    const model = state.agent.selected?.model ?? 'sonnet';
-    state.agent = {
-      ...state.agent,
-      catalog: [
-        {
-          id: 'model',
-          category: 'model',
-          currentValue: model,
-          options: [{ id: 'sonnet' }, { id: 'opus' }],
-        },
-        {
-          id: 'effort',
-          category: 'reasoning_effort',
-          currentValue: model === 'opus' ? 'xhigh' : 'low',
-          options: model === 'opus' ? [{ id: 'medium' }, { id: 'xhigh' }] : [{ id: 'low' }],
-        },
-      ],
-    };
-  }),
-  setAgentSoul: vi.fn(async (_workspaceId: string, pubkey: string, soul: any) => {
-    state.agent = {
-      ...state.agent,
-      agent: {
-        ...state.agent.agent,
-        identity: { ...state.agent.agent.identity, name: soul.name },
-      },
-      soul: { name: soul.name, instructions: soul.soul, avatarSeed: soul.avatarSeed },
-    };
-    state.workspace = {
-      ...state.workspace,
-      agents: state.workspace.agents.map((member: any) =>
-        member.identity.pubkey === pubkey
-          ? { ...member, identity: { ...member.identity, name: soul.name } }
-          : member,
-      ),
-    };
-    return state.agent;
-  }),
-  removeAgent: vi.fn(async (_workspaceId: string, pubkey: string) => {
-    const agents = state.workspace.agents.filter(
-      (member: any) => member.identity.pubkey !== pubkey,
-    );
-    state.workspace = {
-      ...state.workspace,
-      agents,
-      agentTotal: agents.length,
-      agentsTruncated: false,
-    };
-  }),
-  removeMember: vi.fn(async (_workspaceId: string, pubkey: string) => {
-    const members = state.workspace.members.filter(
-      (member: any) => member.identity.pubkey !== pubkey,
-    );
-    state.workspace = {
-      ...state.workspace,
-      members,
-      peopleTotal: members.length,
-      membersTruncated: false,
-    };
-  }),
-}));
-
-const phoneOperation = vi.hoisted(() =>
-  vi.fn(async (name: string, input: any): Promise<any> => {
-    if (['addWorkspaceMember', 'removeWorkspaceMember'].includes(name)) return;
-    if (name === 'updateAgentWake') {
-      state.agent = { ...state.agent, wake: { url: input.url || null, keySet: Boolean(input.key) } };
-      return state.agent;
-    }
-    if (name === 'updateAgentAccessPolicy') {
-      state.agent = { ...state.agent, access: { ...state.agent.access, policy: input.policy } };
-      return state.agent;
-    }
-    if (name !== 'updateAgentYolo') throw new Error(`unexpected operation ${name}`);
-    state.agent = {
-      ...state.agent,
-      yolo: {
-        ...state.agent.yolo,
-        enabled: input.enabled,
-        setBy: { name: 'Viewer' },
-        setAt: 1_756_684_800,
-      },
-    };
-    return state.agent;
-  }),
-);
-vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
-
-vi.mock('expo-router', () => ({
-  router: { back: vi.fn(), push: vi.fn(), replace: vi.fn(), navigate: vi.fn() },
-  useLocalSearchParams: () => routeParams,
-  useNavigation: () => ({
-    addListener: (_event: string, callback: (event: any) => void) => {
-      navigation.beforeRemove = callback;
-      return () => {
-        navigation.beforeRemove = null;
-      };
-    },
-    dispatch: navigation.dispatch,
-  }),
-}));
-const safeArea = vi.hoisted(() => ({ bottom: 0 }));
-vi.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({ top: 0, bottom: safeArea.bottom }),
-}));
-vi.mock('react-native-keyboard-controller', async () => {
-  const ReactModule = await import('react');
-  return {
-    KeyboardAwareScrollView: (props: any) =>
-      ReactModule.createElement('KeyboardAwareScrollView', props, props.children),
-  };
-});
-vi.mock('react-native-gesture-handler', async () => {
-  const ReactModule = await import('react');
-  return {
-    Swipeable: (props: any) =>
-      ReactModule.createElement('Swipeable', props, props.children, props.renderRightActions?.()),
-  };
-});
-vi.mock('react-native', async () => {
-  const ReactModule = await import('react');
-  const host = (name: string) => (props: any) =>
-    ReactModule.createElement(name, props, props.children);
-  return {
-    AccessibilityInfo: { announceForAccessibility: vi.fn() }, StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style.map((part: any) => Array.isArray(part) ? Object.assign({}, ...part) : part)) : style },
-    AppState: { currentState: 'active', addEventListener: () => ({ remove: () => undefined }) },
-    Share: { share },
-    Platform: platform,
-    useWindowDimensions: () => ({ width: 390, height: 844 }),
-    ScrollView: host('ScrollView'),
-    Switch: host('Switch'),
-    Text: host('Text'),
-    TextInput: host('TextInput'),
-    TouchableOpacity: host('TouchableOpacity'),
-    Pressable: host('Pressable'),
-    Linking: { openURL: vi.fn(async () => undefined) },
-    View: host('View'),
-  };
-});
-const unistylesTheme = vi.hoisted(() => ({
-  buzz: {
-    type: {
-      hero: { fontSize: 22 },
-      body: { fontSize: 16 },
-      meta: { fontSize: 13 },
-      sectionHead: { fontSize: 10 }, sectionLabel: { fontSize: 13, lineHeight: 19, letterSpacing: 2 }, sectionCount: { fontSize: 15, lineHeight: 22 },
-      machine: { fontSize: 13 },
-    },
-    agentProfileTypography: { name: { fontSize: 28, lineHeight: 36 } },
-    space: { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, xxl: 48 },
-    transcriptCard: { identitySize: 26 },
-    roomList: { edge: 20 },
-    layout: { row: 64, sectionGap: 24 },
-    radius: 3,
-    dialogDanger: '#c4544d',
-    bgTerminal: '#000',
-    bgRaised: '#111',
-    bgPressed: '#222',
-    textMuted: '#888',
-    textPrimary: '#fff',
-    border: '#333',
-    chrome: '#aaa',
-    accent: '#d7af5f',
-    danger: '#f00',
-  },
-}));
-vi.mock('react-native-unistyles', () => ({
-  StyleSheet: {
-    hairlineWidth: 1,
-    create: (factory: any) => factory(unistylesTheme),
-  },
-  useUnistyles: () => ({ theme: unistylesTheme }),
-}));
-vi.mock('@/constants/Typography', () => ({
-  Typography: { mono: () => ({}), default: () => ({}), ledger: () => ({}) },
-}));
-vi.mock('@/auth/buzz-identity-storage', () => ({
-  getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
-  loadBuzzIdentity: vi.fn(async () => ({ publicKey: VIEWER, secretKey: new Uint8Array(32) })),
-}));
-// One shared entry per address, like the app's surface registry, so every
-// mounted Members instance reads and repaints the same projection.
-const surfaces = vi.hoisted(() => ({
-  values: new Map<string, unknown>(),
-  listeners: new Map<string, Set<() => void>>(),
-  observers: new Map<string, Set<(address: any, value: unknown, stamp: number) => void>>(),
-}));
-vi.mock('@/buzz/surface-storage', async () => {
-  const { nextSurfaceStamp } = await import('@/buzz/surface-clock');
-  const key = (address: any) => JSON.stringify(address);
-  const write = async (address: any, value: unknown) => {
-    surfaces.values.set(key(address), value);
-    const stamp = nextSurfaceStamp();
-    for (const observer of surfaces.observers.get(address.endpoint) ?? []) observer(address, value, stamp);
-    for (const listener of surfaces.listeners.get(key(address)) ?? []) listener();
-  };
-  return {
-    mobileSurfaceCache: {
-      read: vi.fn(async (address: unknown) => surfaces.values.get(key(address)) ?? null),
-      peek: vi.fn((address: unknown) => surfaces.values.get(key(address)) ?? null),
-      write: vi.fn(write),
-      fetch: vi.fn(async (address: unknown, _guard: unknown, request: () => Promise<unknown>) => {
-        const value = await request();
-        await write(address, value);
-        return value;
-      }),
-      subscribe: vi.fn((address: unknown, listener: () => void) => {
-        const listeners = surfaces.listeners.get(key(address)) ?? new Set();
-        listeners.add(listener);
-        surfaces.listeners.set(key(address), listeners);
-        return () => listeners.delete(listener);
-      }),
-      observe: vi.fn((endpoint: string, observer: (address: any, value: unknown, stamp: number) => void) => {
-        const observers = surfaces.observers.get(endpoint) ?? new Set();
-        observers.add(observer);
-        surfaces.observers.set(endpoint, observers);
-        return () => observers.delete(observer);
-      }),
-      fenceEndpoint: vi.fn(() => nextSurfaceStamp()),
-    },
-    surfaceAddress: vi.fn((relayOrigin: string, viewerPubkey: string, endpoint: string, params?: unknown) => ({
-      relayOrigin, viewerPubkey, endpoint, ...(params ? { params } : {}),
-    })),
-  };
-});
-vi.mock('@/buzz/room-view-presentation', () => ({ workspaceRailItem: (value: any) => value }));
-vi.mock('@/components/buzz/CommunityRail', async () => {
-  const ReactModule = await import('react');
-  return {
-    BuzzCommunityShell: (props: any) =>
-      ReactModule.createElement('BuzzCommunityShell', props, props.children),
-  };
-});
-vi.mock('@/components/buzz/IdentityMark', async () => {
-  const ReactModule = await import('react');
-  return { IdentityMark: (props: any) => ReactModule.createElement('IdentityMark', props) };
-});
-vi.mock('@/components/buzz/MonoHull', async () => {
-  const ReactModule = await import('react');
-  const host = (name: string) => (props: any) =>
-    ReactModule.createElement(name, props, props.children);
-  return {
-    HullSurface: host('HullSurface'),
-    PixelLoader: host('PixelLoader'),
-  };
-});
-vi.mock('@/components/buzz/Button', async () => {
-  const ReactModule = await import('react');
-  return { Button: (props: any) => ReactModule.createElement('Button', props, props.children) };
-});
-vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
-  const ReactModule = await import('react');
-  return {
-    SurfaceGlyphLoader: (props: any) => ReactModule.createElement('SurfaceGlyphLoader', props),
-  };
-});
-vi.mock('@/components/buzz/MemberPickerSheet', async () => {
-  const ReactModule = await import('react');
-  return {
-    MemberPickerSheet: (props: any) => ReactModule.createElement('MemberPickerSheet', props),
-  };
-});
-vi.mock('@/components/buzz/HullActionSheet', async () => {
-  const ReactModule = await import('react');
-  const host = (name: string) => (props: any) =>
-    ReactModule.createElement(name, props, props.children);
-  return {
-    HullActionSheetModal: (props: any) =>
-      props.visible
-        ? ReactModule.createElement('HullActionSheetModal', props, props.sticky, props.children, props.footer)
-        : null,
-    HullActionSheetRow: host('HullActionSheetRow'),
-    HullActionSheetCancel: host('HullActionSheetCancel'),
-  };
-});
-vi.mock('@/modal/ModalManager', () => ({ Modal: modal }));
-vi.mock('@/sync/transport', () => ({
-  BuzzRigTransport: class {
-    ensureClient = vi.fn(async () => client);
-    resolveDirectMessage = client.resolveDirectMessage;
-    composeMessage = client.composeMessage;
-    publishPreparedMessage = client.publishPreparedMessage;
-  },
-}));
-vi.mock('@/sync/transport/room-view-client', () => ({
-  RoomViewClient: class {
-    workspace = roomView.workspace;
-    agent = roomView.agent;
-    agentVoices=roomView.agentVoices;
-    workspaceMembers = roomView.workspaceMembers;
-  },
-}));
-vi.mock('@beeline/buzz-client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@beeline/buzz-client')>();
-  class RoomViewClient {
-    workspace = roomView.workspace;
-    agent = roomView.agent;
-    agentVoices=roomView.agentVoices;
-    workspaceMembers = roomView.workspaceMembers;
-  }
-  class SurfaceRefreshScheduler<T> {
-    constructor(
-      private readonly options: {
-        fetch: () => Promise<T>;
-        apply: (value: T) => void;
-        onError: (reason: unknown) => void;
-      },
-    ) {}
-    async startAfter(wait: Promise<unknown>) {
-      await wait;
-      try {
-        this.options.apply(await this.options.fetch());
-      } catch (reason) {
-        this.options.onError(reason);
-      }
-    }
-    force() {
-      void this.options.fetch().then(this.options.apply, this.options.onError);
-    }
-    signal() {
-      this.force();
-    }
-    dispose() {}
-  }
-  return { ...actual, RoomViewClient, SurfaceRefreshScheduler };
-});
-
-import MembersScreen from './members';
+import { act, type ReactTestRenderer } from 'react-test-renderer';
+import { describe, expect, it, vi } from 'vitest';
 import { router } from 'expo-router';
-import { ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
-/**
- * The disclosure mark is a drawn shape, so it is not part of a row's copy any
- * more. `'right'` is a closed row, `'down'` an open one, and no glyph at all
- * is a row with nothing to open.
- */
-function chevronDirections(node: { findAllByType(type: unknown): { props: never }[] }): string[] {
-  return node
-    .findAllByType(ChevronGlyph as never)
-    .map((glyph: { props: { direction?: string } }) => glyph.props.direction ?? 'right');
-}
 
-const originalConsoleError = console.error;
-beforeAll(() => {
-  (
-    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
-  ).IS_REACT_ACT_ENVIRONMENT = true;
-  vi.spyOn(console, 'error').mockImplementation((message?: unknown, ...args: unknown[]) => {
-    if (typeof message === 'string' && message.startsWith('react-test-renderer is deprecated'))
-      return;
-    originalConsoleError(message, ...args);
-  });
-});
-afterAll(() => vi.restoreAllMocks());
-
-function member(pubkey: string, name: string, role: 'owner' | 'admin' | 'member') {
-  return { identity: { pubkey, kind: 'human', name, handle: name.toLowerCase() }, role };
-}
-
-function baseWorkspace(viewerRole: 'owner' | 'admin' = 'owner') {
-  return {
-    workspace: {
-      id: WORKSPACE,
-      name: 'Builders',
-      visibility: 'invite-only',
-      role: viewerRole,
-      updatedAt: 1,
-      createdAt: 1,
-    },
-    members: [
-      member(VIEWER, 'Viewer', viewerRole),
-      member(OWNER, 'Captain', 'owner'),
-      member(MEMBER, 'Builder', 'member'),
-    ],
-    agents: [
-      {
-        identity: { pubkey: AGENT, kind: 'agent', name: 'Clara', handle: 'clara' },
-        role: 'member',
-        model: 'Sonnet',
-        owner: { pubkey: VIEWER, kind: 'human', name: 'Viewer', handle: 'viewer' },
-        presence: { status: 'online', observedAt: 1 },
-      },
-    ],
-    managerSettings: {
-      visibility: 'invite-only',
-      rooms: [{ id: '33333333-3333-4333-8333-333333333333', name: 'general', visibility: 'public', createdAt: 1 }],
-    },
-    peopleTotal: 3,
-    agentTotal: 1,
-    membersTruncated: false,
-    agentsTruncated: false,
-    viewer: {
-      identity: { pubkey: VIEWER, kind: 'human', name: 'Viewer' },
-      role: viewerRole,
-      permissions: { send: true, manage: true },
-    },
-    watchFilters: [],
-  };
-}
-
-function baseAgent() {
-  return {
-    workspaceId: WORKSPACE,
-    agent: {
-      identity: { pubkey: AGENT, kind: 'agent', name: 'Clara', handle: 'clara' },
-      role: 'member',
-    },
-    owner: { pubkey: VIEWER, kind: 'human', name: 'Viewer', handle: 'viewer' },
-    soul: { name: 'Clara', instructions: 'Keep the tests green.', avatarSeed: AGENT },
-    seededSoul: 'You are a fox. You are a hustler who has already found the angle.',
-    catalog: [
-      {
-        id: 'model',
-        category: 'model',
-        currentValue: 'sonnet',
-        options: [
-          { id: 'sonnet', name: 'Sonnet' },
-          { id: 'opus', name: 'Opus' },
-        ],
-      },
-      {
-        id: 'effort',
-        category: 'reasoning_effort',
-        currentValue: 'low',
-        options: [{ id: 'low' }, { id: 'high' }],
-      },
-      { id: 'mode', category: 'mode', options: [{ id: 'bypassPermissions' }] },
-    ],
-    selected: { model: 'sonnet', effort: 'low' },
-    yolo: { enabled: false, canChange: true },
-    access: {
-      policy: 'creator',
-      owner: { id: VIEWER, name: 'Viewer', handle: 'viewer' },
-      canChange: true,
-    },
-    watchFilters: [],
-  };
-}
-
-// Every screen unmounts before the next case, so it releases the shared
-// Workspace watch and the next case opens its own.
-const mounted: ReactTestRenderer[] = [];
-function create(element: React.ReactElement): ReactTestRenderer {
-  const renderer = createRenderer(element);
-  mounted.push(renderer);
-  return renderer;
-}
-
-async function render(): Promise<ReactTestRenderer> {
-  let renderer!: ReactTestRenderer;
-  await act(async () => {
-    renderer = create(React.createElement(MembersScreen));
-  });
-  return renderer;
-}
-
-async function press(renderer: ReactTestRenderer, testID: string): Promise<void> {
-  await act(async () => {
-    const row = renderer.root.findByProps({ testID });
-    await row.props.onPress(row.props.pubkey);
-  });
-}
-
-async function agentChanged(): Promise<void> {
-  await act(async () => {
-    for (const listener of liveListeners) listener({ monolithLive: {
-      type: 'resource-change', roomId: '', resource: 'agent', resourceId: AGENT,
-    } });
-    await Promise.resolve();
-  });
-}
-
-async function openAgentProfile(renderer: ReactTestRenderer): Promise<void> {
-  await act(async () => {
-    renderer.update(<MembersScreen profileAgentId={AGENT} workspaceIdOverride={WORKSPACE} />);
-  });
-}
-
-async function openAgentManagement(renderer: ReactTestRenderer): Promise<void> {
-  await openAgentProfile(renderer);
-  if (state.agent.access?.owner?.id === VIEWER) await press(renderer, 'edit-agent-soul');
-}
-
-beforeEach(() => {
-  act(() => {
-    for (const renderer of mounted.splice(0)) renderer.unmount();
-  });
-  liveListeners.clear();
-  surfaces.values.clear();
-  surfaces.listeners.clear();
-  vi.clearAllMocks();
-  profileLane.mode='legacy';profileLane.view=null;profileLane.listeners.clear();
-  profileLane.acquire.mockImplementation(()=>({current:()=>profileLane.view,release:()=>{},subscribe:(wake:()=>void)=>{profileLane.listeners.add(wake);return()=>profileLane.listeners.delete(wake);}}));
-  platform.OS = 'ios';
-  navigation.beforeRemove = null;
-  state.workspace = baseWorkspace();
-  state.agent = baseAgent();
-  roomView.workspace.mockImplementation(async () => state.workspace);
-  roomView.agent.mockImplementation(async () => state.agent);
-  roomView.agentVoices.mockResolvedValue({currentVoiceId:'voice-1',canChange:true,choices:[{id:'voice-1',name:'Voice one'}]});
-  roomView.workspaceMembers.mockImplementation(async () => ({
-    viewer: state.workspace.viewer,
-    members: state.workspace.members,
-    agents: state.workspace.agents,
-    grants: [
-      {
-        grantId: 'member-grant',
-        kind: 'repository',
-        target: 'beeline-work/beeline',
-        reason: 'ship the profile pass',
-        status: 'approved',
-        requestedBy: { pubkey: MEMBER, kind: 'human', name: 'Builder' },
-        decidedBy: { pubkey: VIEWER, kind: 'human', name: 'Viewer' },
-        roomId: '22222222-2222-4222-8222-222222222222',
-        roomName: 'ship-the-slab',
-        createdAt: 1_756_900_000,
-        decidedAt: 1_756_900_060,
-        auto: false,
-        agent: { pubkey: AGENT, kind: 'agent', name: 'Clara', handle: 'clara' },
-      },
-    ],
-    peopleTotal: state.workspace.peopleTotal,
-    agentTotal: state.workspace.agentTotal,
-    membersTruncated: state.workspace.membersTruncated,
-    agentsTruncated: state.workspace.agentsTruncated,
-  }));
-  client.resolveDirectMessage.mockReset().mockResolvedValue({ channelId: 'dm-room' });
-  modal.confirm.mockImplementation(async (_title?: string, _body?: string, options?: { onConfirm?: () => Promise<void> }) => { await options?.onConfirm?.(); return true; });
-  modal.prompt.mockResolvedValue(null);
-});
 
 it('saves a webhook URL and key through the owner profile, clears the draft and can clear setup', async () => {
   state.agent.wake = { url: null, keySet: false };
@@ -638,17 +33,15 @@ it('saves a webhook URL and key through the owner profile, clears the draft and 
   expect(phoneOperation).toHaveBeenLastCalledWith('updateAgentWake', { workspaceId: WORKSPACE, agentId: AGENT, url: '' });
   expect(wakeRow().props.descriptionDetail).toBe('Auth token: not set');
 });
+
 it('does not expose wake setup when the server omits owner-only wake configuration', async () => {
   const renderer = await render();
   await openAgentProfile(renderer);
   expect(renderer.root.findAll((node: any) => node.props.title === 'Webhook URL')).toHaveLength(0);
 });
-
-function sheet(renderer: ReactTestRenderer) {
-  return renderer.root.findByType('MemberPickerSheet' as any);
-}
-
 describe('Members workspace management', () => {
+const scope1 = fixtureScope1();
+
   it('lets its last member scroll clear of the system navigation bar', async () => {
     safeArea.bottom = 48;
     try {
@@ -663,6 +56,7 @@ describe('Members workspace management', () => {
       safeArea.bottom = 0;
     }
   });
+
 
   it('lets an agent profile scroll its last row clear of the system navigation bar', async () => {
     safeArea.bottom = 48;
@@ -680,6 +74,7 @@ describe('Members workspace management', () => {
     }
   });
 
+
   it('shows model on the agent row without spending the row on presence', async () => {
     const renderer = await render();
     const agentRow = renderer.root.findByProps({ testID: `agent-${AGENT}-identity` });
@@ -694,6 +89,7 @@ describe('Members workspace management', () => {
         .join(' '),
     ).not.toMatch(/online|offline/i);
   });
+
 
   it('shares a real Workspace invite directly from the PEOPLE section head +', async () => {
     const renderer = await render();
@@ -711,6 +107,7 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByProps({ testID: 'invite-agent' })).toHaveLength(0);
   });
 
+
   it('opens the pairing sheet directly from the AGENTS section head +', async () => {
     const renderer = await render();
     expect(sheet(renderer).props.visible).toBe(false);
@@ -719,6 +116,7 @@ describe('Members workspace management', () => {
     expect(sheet(renderer).props.agentConnectOnly).toBe(true);
     expect(client.createAgentPairingCode).toHaveBeenCalledWith(WORKSPACE);
   });
+
 
   it('lets a non-manager add their own agent but not invite people', async () => {
     state.workspace = {
@@ -738,6 +136,7 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByType('Button' as any)).toHaveLength(0);
   });
 
+
   it('names the action and the kind on each section head +, with a 44pt hit area', async () => {
     const renderer = await render();
     const people = renderer.root.findByProps({ testID: 'members-add-people' });
@@ -755,6 +154,7 @@ describe('Members workspace management', () => {
       expect(box.width).toBeGreaterThanOrEqual(44);
     }
   });
+
 
   it('shows People and Agents without a count when the server omits totals', async () => {
     const { peopleTotal: _people, agentTotal: _agents, ...legacy } = baseWorkspace();
@@ -786,6 +186,7 @@ describe('Members workspace management', () => {
     expect(renderer.root.findByProps({ testID: `member-${MEMBER}-identity` })).toBeDefined();
   });
 
+
   it('shows the word alone over counted section heads and no loose total (C73, C79)', async () => {
     const renderer = await render();
     expect(renderer.root.findByProps({ testID: 'members-title' }).props.children).toBe('Members');
@@ -796,6 +197,7 @@ describe('Members workspace management', () => {
     expect(texts).not.toContain(4);
     expect(texts.flat().join(' ')).not.toMatch(/⌬|ONLINE|OFFLINE|MEMBER\b/);
   });
+
 
   it('shows every handle once with a role under a human and model and owner on an agent', async () => {
     const renderer = await render();
@@ -822,6 +224,7 @@ describe('Members workspace management', () => {
     expect(chevronDirections(selfRow)).toEqual(['right']);
   });
 
+
   it('shows the connected owner on the agent profile', async () => {
     const renderer = await render();
     await openAgentManagement(renderer);
@@ -834,6 +237,7 @@ describe('Members workspace management', () => {
         .join(''),
     ).toContain('viewer');
   });
+
 
   it('omits a handleless owner from the agent row and profile', async () => {
     const owner = { pubkey: VIEWER, kind: 'human' as const, name: 'Viewer' };
@@ -854,6 +258,7 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByProps({ testID: 'agent-owner' })).toHaveLength(0);
   });
 
+
   it('opens a person profile from the roster without opening a DM', async () => {
     const renderer = await render();
     await press(renderer, `member-${MEMBER}-identity`);
@@ -865,26 +270,18 @@ describe('Members workspace management', () => {
     expect(client.resolveDirectMessage).not.toHaveBeenCalled();
   });
 
-  async function personProfile(memberId = MEMBER) {
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        <HumanProfile workspaceId={WORKSPACE} memberId={memberId} onClose={vi.fn()} />,
-      );
-    });
-    return renderer;
-  }
 
   it('opens a human profile on Android when window has no browser event API', async () => {
     platform.OS = 'android';
     vi.stubGlobal('window', {});
     try {
-      const renderer = await personProfile();
+      const renderer = await scope1.personProfile();
       expect(renderer.root.findByProps({ testID: 'human-profile' })).toBeDefined();
     } finally {
       vi.unstubAllGlobals();
     }
   });
+
 
   it('opens an agent profile on Android when window has no browser event API', async () => {
     platform.OS = 'android';
@@ -900,8 +297,9 @@ describe('Members workspace management', () => {
     }
   });
 
+
   it('Reproduction 2315-R3: rendered profile keeps live identity after saving role', async () => {
-    const renderer = await personProfile();
+    const renderer = await scope1.personProfile();
     const identities = await import('@/buzz/identity-records');
     const records = await import('@/buzz/workspace-records');
     const { nextSurfaceStamp } = await import('@/buzz/surface-clock');
@@ -920,8 +318,9 @@ describe('Members workspace management', () => {
     expect(shown.role).toBe('admin');
   });
 
+
   it('saves role edits from the human profile and supports cancel', async () => {
-    const renderer = await personProfile();
+    const renderer = await scope1.personProfile();
     expect(roomView.workspace).not.toHaveBeenCalled(); // R12c
     await press(renderer, 'edit-person-role');
     await press(renderer, 'person-role-admin');
@@ -934,6 +333,7 @@ describe('Members workspace management', () => {
     });
     expect(renderer.root.findAllByProps({ testID: 'person-role-editor' })).toHaveLength(0);
   });
+
 
   it('shows the profiled member grants as a read-only ledger row that discloses its detail', async () => {
     state.workspace = {
@@ -950,7 +350,7 @@ describe('Members workspace management', () => {
         ],
       },
     };
-    const renderer = await personProfile();
+    const renderer = await scope1.personProfile();
     const head = renderer.root.findByProps({ testID: 'member-grant-member-grant' });
     expect(head.props.title).toBe('beeline-work/beeline');
     // The agent's stated reason sits on its own line, then the provenance line.
@@ -973,6 +373,7 @@ describe('Members workspace management', () => {
     expect(phoneOperation).not.toHaveBeenCalled();
   });
 
+
   it('Reproduction 2315-R4: live socket grant event refreshes the rendered profile', async () => {
     const { LiveConnection } = await vi.importActual<any>('@/sync/transport/live-connection');
     let socket: any;
@@ -994,7 +395,7 @@ describe('Members workspace management', () => {
     (client.surfaceSubscribe as any).mockImplementation((filters: any, listener: any) => connection.register(filters, listener));
     try {
       await render();
-      const renderer = await personProfile();
+      const renderer = await scope1.personProfile();
       socket.readyState = 1;
       socket.onopen();
       const first = await roomView.workspaceMembers.mock.results[0]!.value as any;
@@ -1014,9 +415,10 @@ describe('Members workspace management', () => {
     }
   });
 
+
   it('refreshes the profile grants live with one read per relay signal, on the watch Members shares (J27)', async () => {
     const list = await render();
-    const renderer = await personProfile();
+    const renderer = await scope1.personProfile();
     // Members and the profile hold one relay watch for this Workspace: the
     // profile's grant Room joins the managed Room on the same subscription.
     const subscribes = client.surfaceSubscribe.mock.calls as unknown as [any, (event?: unknown) => void][];
@@ -1040,6 +442,7 @@ describe('Members workspace management', () => {
     list.unmount();
   });
 
+
   it('Reproduction 2315-R6: a complete refresh without the owned agent drops it from the rendered profile', async () => {
     const owned = {
       ...state.workspace.agents[0],
@@ -1051,7 +454,7 @@ describe('Members workspace management', () => {
       ...(await (base as any)(...args)), agents: [owned], agentsTruncated: false,
     }));
     const list = await render();
-    const renderer = await personProfile();
+    const renderer = await scope1.personProfile();
     const shown = () => renderer.root.findAll((node: any) =>
       node.props.title === '@clara').length;
     expect(shown()).toBeGreaterThan(0);
@@ -1064,6 +467,7 @@ describe('Members workspace management', () => {
     list.unmount();
   });
 
+
   it('keeps an owned agent a truncated profile refresh only leaves out', async () => {
     const owned = {
       ...state.workspace.agents[0],
@@ -1075,7 +479,7 @@ describe('Members workspace management', () => {
       ...(await (base as any)(...args)), agents: [owned], agentsTruncated: false,
     }));
     const list = await render();
-    const renderer = await personProfile();
+    const renderer = await scope1.personProfile();
     roomView.workspaceMembers.mockImplementation(async (...args: any[]) => ({
       ...(await (base as any)(...args)), agents: [], agentsTruncated: true,
     }));
@@ -1085,6 +489,7 @@ describe('Members workspace management', () => {
       node.props.title === '@clara').length).toBeGreaterThan(0);
     list.unmount();
   });
+
 
   it('Reproduction 2315-R7: unlinking ownership preserves the live agent identity in rendered Members', async () => {
     const owned = {
@@ -1097,7 +502,7 @@ describe('Members workspace management', () => {
       ...(await (base as any)(...args)), agents: [owned], agentsTruncated: false,
     }));
     const list = await render();
-    await personProfile();
+    await scope1.personProfile();
     const identities = await import('@/buzz/identity-records');
     const records = await import('@/buzz/workspace-records');
     const { nextSurfaceStamp } = await import('@/buzz/surface-clock');
@@ -1126,16 +531,18 @@ describe('Members workspace management', () => {
     list.unmount();
   });
 
+
   it('keeps peers and owners outside admin role edit authority', async () => {
     state.workspace = baseWorkspace('admin');
-    let renderer = await personProfile(OWNER);
+    let renderer = await scope1.personProfile(OWNER);
     expect(renderer.root.findAllByProps({ testID: 'edit-person-role' })).toHaveLength(0);
     state.workspace.members = state.workspace.members.map((m: any) =>
       m.identity.pubkey === MEMBER ? { ...m, role: 'admin' } : m,
     );
-    renderer = await personProfile();
+    renderer = await scope1.personProfile();
     expect(renderer.root.findAllByProps({ testID: 'edit-person-role' })).toHaveLength(0);
   });
+
 
   it('lists members without any Banned members roster (banning UI removed)', async () => {
     const renderer = await render();
@@ -1145,8 +552,9 @@ describe('Members workspace management', () => {
     expect(phoneOperation).not.toHaveBeenCalledWith('listWorkspaceBans', expect.anything());
   });
 
+
   it('offers role edits without any ban control (banning UI removed)', async () => {
-    const renderer = await personProfile();
+    const renderer = await scope1.personProfile();
     expect(renderer.root.findAllByProps({ testID: 'ban-person' })).toHaveLength(0);
     await press(renderer, 'edit-person-role');
     // Edit mode still renders Save; the Ban from Workspace row is gone.
@@ -1154,6 +562,7 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByProps({ testID: 'ban-person' })).toHaveLength(0);
     expect(phoneOperation).not.toHaveBeenCalledWith('banWorkspaceMember', expect.anything());
   });
+
 
   it('removes a person from the Workspace through the same compact control as agents', async () => {
     const onClose = vi.fn();
@@ -1179,13 +588,15 @@ describe('Members workspace management', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+
   it('skips the remove control when the viewer declines the confirm dialog', async () => {
     modal.confirm.mockResolvedValueOnce(false);
-    const renderer = await personProfile();
+    const renderer = await scope1.personProfile();
     await press(renderer, 'edit-person-role');
     await press(renderer, 'remove-person');
     expect(phoneOperation).not.toHaveBeenCalledWith('removeWorkspaceMember', expect.anything());
   });
+
 
   it('lets members view a human profile and message without management powers', async () => {
     state.workspace.viewer = {
@@ -1193,7 +604,7 @@ describe('Members workspace management', () => {
       role: 'member',
       permissions: { send: true, manage: false },
     };
-    const renderer = await personProfile();
+    const renderer = await scope1.personProfile();
     expect(renderer.root.findAllByProps({ testID: 'edit-person-role' })).toHaveLength(0);
     phoneOperation.mockResolvedValueOnce({ id: 'dm-room' });
     await press(renderer, 'human-profile-message');
@@ -1203,8 +614,9 @@ describe('Members workspace management', () => {
     });
   });
 
+
   it('keeps human profile mutation failures visible for retry', async () => {
-    const renderer = await personProfile();
+    const renderer = await scope1.personProfile();
     phoneOperation.mockRejectedValueOnce(new Error('network unavailable'));
     await press(renderer, 'human-profile-message');
     expect(
@@ -1213,6 +625,7 @@ describe('Members workspace management', () => {
         .some((node: any) => String(node.props.children).includes('Could not complete request')),
     ).toBe(true);
   });
+
 
   it('renders MODEL and EFFORT rows with the live catalog as a typeahead chooser', async () => {
     const renderer = await render();
@@ -1256,6 +669,7 @@ describe('Members workspace management', () => {
     expect(client.refreshAgentModelCatalog).toHaveBeenCalledWith(WORKSPACE, AGENT);
   });
 
+
   it('offers Fast mode only to the owner when the live catalog advertises it', async () => {
     state.agent.catalog.push({
       id: 'fast-mode',
@@ -1284,6 +698,7 @@ describe('Members workspace management', () => {
     await openAgentManagement(unsupported);
     expect(unsupported.root.findAllByProps({ testID: 'fast-mode-setting' })).toHaveLength(0);
   });
+
 
   it('keeps the catalog default effort atomically when selecting its live model', async () => {
     state.agent = {
@@ -1315,6 +730,7 @@ describe('Members workspace management', () => {
     });
   });
 
+
   it('shows the current selection but offers nothing without a live catalog', async () => {
     state.agent = {
       ...baseAgent(),
@@ -1340,6 +756,7 @@ describe('Members workspace management', () => {
     expect(client.setAgentModelConfig).not.toHaveBeenCalled();
   });
 
+
   it('refreshes missing effort choices from the live catalog', async () => {
     state.agent = { ...baseAgent(), catalog: [], selected: undefined };
     const renderer = await render();
@@ -1350,6 +767,7 @@ describe('Members workspace management', () => {
     expect(renderer.root.findByProps({ testID: 'model-option-effort-low' })).toBeDefined();
     expect(renderer.root.findAllByProps({ testID: 'model-option-effort-xhigh' })).toHaveLength(0);
   });
+
 
   it('shows an actionable effort refresh failure instead of doing nothing', async () => {
     state.agent = { ...baseAgent(), catalog: [], selected: { model: 'sonnet' } };
@@ -1363,6 +781,7 @@ describe('Members workspace management', () => {
     );
   });
 
+
   it('marks a persisted model that failed live startup validation', async () => {
     state.agent = { ...baseAgent(), modelUnavailable: 'model' };
     const renderer = await render();
@@ -1371,885 +790,4 @@ describe('Members workspace management', () => {
       '!',
     );
   });
-
-  it('edits the human-authored soul fields through setAgentSoul', async () => {
-    state.agent.configVersion = '123';
-    const renderer = await render();
-    await openAgentProfile(renderer);
-    expect(renderer.root.findByProps({ testID: 'generate-avatar-from-soul' })).toBeDefined();
-    await openAgentManagement(renderer);
-    await act(async () => {
-      renderer.root.findByProps({ testID: 'agent-soul-name' }).props.onChangeText('Scout');
-      renderer.root
-        .findByProps({ testID: 'agent-soul-instructions' })
-        .props.onChangeText('Look for regressions before shipping.');
-    });
-    const readsBeforeSave = roomView.agent.mock.calls.length;
-    await press(renderer, 'save-agent-soul');
-    expect(roomView.agent.mock.calls.length).toBe(readsBeforeSave);
-    await act(async () => {
-      for (const listener of liveListeners) listener({ monolithLive: {
-        type: 'resource-change', roomId: '', resource: 'agent', resourceId: AGENT,
-        version: '123',
-      } });
-    });
-    expect(roomView.agent.mock.calls.length).toBe(readsBeforeSave);
-
-    expect(client.setAgentSoul).toHaveBeenCalledWith(WORKSPACE, AGENT, {
-      name: 'Scout',
-      soul: 'Look for regressions before shipping.',
-      avatarSeed: AGENT,
-    });
-  });
-
-  it('opens the soul editor on the running soul with no seeded restore control', async () => {
-    const renderer = await render();
-    await openAgentManagement(renderer);
-    // The editor opens on what the agent is actually running under.
-    expect(renderer.root.findByProps({ testID: 'agent-soul-instructions' }).props.value).toBe(
-      'Keep the tests green.',
-    );
-    // The seeded-restore control is gone; the editor carries only cancel/save.
-    expect(renderer.root.findAllByProps({ testID: 'restore-seeded-soul' })).toHaveLength(0);
-  });
-
-  it('writes the seeded soul back when the owner pastes it in', async () => {
-    const renderer = await render();
-    await openAgentManagement(renderer);
-    await act(async () => {
-      renderer.root
-        .findByProps({ testID: 'agent-soul-instructions' })
-        .props.onChangeText(state.agent.seededSoul);
-    });
-    await press(renderer, 'save-agent-soul');
-    expect(client.setAgentSoul).toHaveBeenCalledWith(WORKSPACE, AGENT, {
-      name: 'Clara',
-      soul: state.agent.seededSoul,
-      avatarSeed: AGENT,
-    });
-  });
-
-  it('keeps the soul input on the theme text token with a themed placeholder', async () => {
-    const renderer = await render();
-    await openAgentManagement(renderer);
-    const input = renderer.root.findByProps({ testID: 'agent-soul-instructions' });
-    expect(input.props.style.color).toBe(unistylesTheme.buzz.textPrimary);
-    expect(input.props.placeholderTextColor).toBe(unistylesTheme.buzz.textMuted);
-  });
-
-  it('lets ordinary members open profiles without expanding roster rows', async () => {
-    state.workspace = {
-      ...baseWorkspace(),
-      viewer: {
-        ...baseWorkspace().viewer,
-        role: 'member',
-        permissions: { send: true, manage: false },
-      },
-    };
-    const renderer = await render();
-    const row = renderer.root.findByProps({ testID: `agent-${AGENT}-identity` });
-    expect(row.props.disabled).toBe(false);
-    expect(typeof row.props.onPress).toBe('function');
-    expect(chevronDirections(row)).toEqual(['right']);
-    await press(renderer, `agent-${AGENT}-identity`);
-    expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` })).toHaveLength(0);
-  });
-
-  it('saves the edited soul server-side first and keeps retry local on failure', async () => {
-    const renderer = await render();
-    await openAgentManagement(renderer);
-    await act(async () =>
-      renderer.root
-        .findByProps({ testID: 'agent-soul-instructions' })
-        .props.onChangeText('A deity of faraway stars'),
-    );
-    client.publishPreparedMessage.mockRejectedValueOnce(new Error('offline'));
-    await press(renderer, 'generate-avatar-from-soul');
-    expect(client.setAgentSoul).toHaveBeenCalledWith(
-      WORKSPACE,
-      AGENT,
-      expect.objectContaining({ soul: 'A deity of faraway stars' }),
-    );
-    expect(client.resolveDirectMessage).toHaveBeenCalledWith(WORKSPACE, AGENT);
-    expect(client.composeMessage).toHaveBeenCalledWith(
-      {
-        sessionId: 'dm-room',
-        text: '/draw-avatar',
-      },
-      { mentionAgent: AGENT },
-    );
-    expect(client.publishPreparedMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'avatar-request' }),
-    );
-    expect(renderer.root.findAllByProps({ testID: 'avatar-refinement-hint' })).toHaveLength(0);
-    expect(renderer.root.findByProps({ testID: 'generate-avatar-from-soul' }).props.title).toBe(
-      'Retry avatar generation',
-    );
-    expect(
-      renderer.root.findByProps({ testID: 'avatar-generation-error' }).props.children,
-    ).toBe('Could not complete request');
-  });
-
-  it('saves the soul server-side and sends only the short draw request', async () => {
-    const renderer = await render();
-    await openAgentManagement(renderer);
-    expect(renderer.root.findAllByProps({ testID: 'avatar-direction' })).toHaveLength(0);
-    await act(async () =>
-      renderer.root
-        .findByProps({ testID: 'agent-soul-instructions' })
-        .props.onChangeText('A deity of faraway stars'),
-    );
-    client.publishPreparedMessage.mockRejectedValueOnce(new Error('offline'));
-    await press(renderer, 'generate-avatar-from-soul');
-    expect(client.setAgentSoul).toHaveBeenCalledOnce();
-    expect(client.composeMessage).toHaveBeenCalledWith(
-      {
-        sessionId: 'dm-room',
-        text: '/draw-avatar',
-      },
-      { mentionAgent: AGENT },
-    );
-  });
-
-  it('does not dispatch avatar generation when confirmation is canceled', async () => {
-    const renderer = await render();
-    await openAgentManagement(renderer);
-    modal.confirm.mockResolvedValueOnce(false);
-    await press(renderer, 'generate-avatar-from-soul');
-    expect(client.composeMessage).not.toHaveBeenCalled();
-    expect(renderer.root.findByProps({ testID: 'generate-avatar-from-soul' }).props.disabled).toBe(
-      false,
-    );
-  });
-
-  it('loads older work, preserves the current page on failure, and retries', async () => {
-    state.agent = {
-      ...baseAgent(),
-      recentWork: [{ title: 'First', url: 'https://github.com/acme/repo/pull/2' }],
-      recentWorkCursor: 'cursor-1',
-    };
-    const renderer = await render();
-    await openAgentProfile(renderer);
-    roomView.agent.mockRejectedValueOnce(new Error('offline'));
-    await press(renderer, 'load-more-agent-work');
-    expect(renderer.root.findByProps({ testID: 'load-more-agent-work' }).props.label).toBe(
-      'Retry',
-    );
-    roomView.agent.mockResolvedValueOnce({
-      ...baseAgent(),
-      recentWork: [{ title: 'Older', url: 'https://github.com/acme/repo/pull/1' }],
-    });
-    await press(renderer, 'load-more-agent-work');
-    expect(roomView.agent).toHaveBeenLastCalledWith(WORKSPACE, AGENT, 'cursor-1');
-    expect(renderer.root.findAllByProps({ testID: 'load-more-agent-work' })).toHaveLength(0);
-    expect(
-      renderer.root
-        .findAllByType('Text' as any)
-        .some((node: any) => node.props.children === 'First'),
-    ).toBe(true);
-    expect(
-      renderer.root
-        .findAllByType('Text' as any)
-        .some((node: any) => node.props.children === 'Older'),
-    ).toBe(true);
-  });
-
-  it('shows the seeded soul when its owner has not written one', async () => {
-    state.agent = { ...baseAgent(), soul: undefined };
-    const renderer = await render();
-    await openAgentProfile(renderer);
-    expect(renderer.root.findByProps({ testID: 'agent-profile-soul' }).props.children).toBe(
-      state.agent.seededSoul,
-    );
-  });
-
-  it('shows ordinary members the profile and Message action without management', async () => {
-    state.workspace = {
-      ...baseWorkspace(),
-      viewer: {
-        ...baseWorkspace().viewer,
-        role: 'member',
-        permissions: { send: true, manage: false },
-      },
-    };
-    state.agent = {
-      ...baseAgent(),
-      access: { policy: 'everyone', canChange: false, owner: { id: OWNER, name: 'Captain' } },
-    };
-    const renderer = await render();
-    await openAgentProfile(renderer);
-    expect(renderer.root.findAllByProps({ testID: 'edit-agent-soul' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'generate-avatar-from-soul' })).toHaveLength(0);
-    expect(renderer.root.findByProps({ testID: 'agent-profile-soul' }).props.children).toBe(
-      state.agent.soul.instructions,
-    );
-    expect(renderer.root.findByProps({ testID: 'agent-profile-no-work' })).toBeDefined();
-    // Reproduction R1: the empty text starts on the RECENT WORK header's edge.
-    expect(
-      StyleSheet.flatten(renderer.root.findByProps({ testID: 'agent-profile-no-work' }).props.style),
-    ).toMatchObject({ paddingHorizontal: unistylesTheme.buzz.space.sm });
-    await press(renderer, 'agent-profile-message');
-    expect(client.resolveDirectMessage).toHaveBeenCalledWith(WORKSPACE, AGENT);
-  });
-
-  it('keeps a profile read failure and Retry after a successful workspace refresh', async () => {
-    roomView.agent.mockRejectedValueOnce(new Error('Connection lost'));
-    const renderer = await render();
-    await openAgentProfile(renderer);
-    expect(renderer.root.findAllByProps({ action: 'Retry' })).not.toHaveLength(0);
-    const subscriptions = client.surfaceSubscribe.mock.calls as unknown as Array<
-      [unknown, (event?: unknown) => void]
-    >;
-    const refresh = subscriptions.at(-1)![1];
-    const readsBeforeRefresh = roomView.workspace.mock.calls.length;
-    await act(async () => refresh({ monolithLive: { type: 'invalidate', roomId: '', reason: 'postgres:memberships' } }));
-    expect(roomView.workspace.mock.calls.length).toBeGreaterThan(readsBeforeRefresh);
-    const retry = renderer.root.findAllByProps({ action: 'Retry' })[0];
-    expect(retry).toBeDefined();
-    await act(async () => retry.props.onPress());
-    expect(roomView.agent).toHaveBeenCalledTimes(2);
-    expect(renderer.root.findByProps({ testID: 'agent-profile-soul' })).toBeDefined();
-  });
-
-  it('R-USAGE-6: shows a cached profile, then reads it again from the server', async () => {
-    const { mobileSurfaceCache, surfaceAddress } = await import('@/buzz/surface-storage');
-    await act(async () => mobileSurfaceCache.write(
-      surfaceAddress('https://relay.test', VIEWER, '/workspace/:id/agents/:agentId',
-        { workspaceId: WORKSPACE, agentPubkey: AGENT }),
-      { ...state.agent, soul: { ...state.agent.soul, instructions: 'Cached soul.' } },
-      (value: unknown): value is typeof state.agent => Boolean(value)));
-    const renderer = await render();
-    await openAgentProfile(renderer);
-    expect(roomView.agent).toHaveBeenCalledTimes(1);
-    expect(renderer.root.findByProps({ testID: 'agent-profile-soul' }).props.children).toBe(
-      state.agent.soul.instructions,
-    );
-  });
-
-  it('retries a failed profile read without collapsing the profile', async () => {
-    roomView.agent.mockRejectedValueOnce(new Error('Connection lost'));
-    const renderer = await render();
-    await openAgentProfile(renderer);
-    const retry = renderer.root.findAllByProps({ action: 'Retry' })[0];
-    await act(async () => retry.props.onPress());
-    expect(roomView.agent).toHaveBeenCalledTimes(2);
-    expect(renderer.root.findByProps({ testID: 'agent-profile-soul' })).toBeDefined();
-  });
-
-  it('opens the profile route from a roster identity without inline settings', async () => {
-    const renderer = await render();
-    expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` })).toHaveLength(0);
-    await press(renderer, `agent-${AGENT}-identity`);
-    expect(router.push).toHaveBeenCalledWith({
-      pathname: '/beeline/agent-profile',
-      params: { communityId: WORKSPACE, agentId: AGENT },
-    });
-    expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` })).toHaveLength(0);
-    await openAgentManagement(renderer);
-    expect(renderer.root.findByProps({ testID: `agent-${AGENT}-model-config` })).toBeDefined();
-  });
-
-  it('edits in the profile and returns to reading on Cancel', async () => {
-    const renderer = await render();
-    await openAgentManagement(renderer);
-    expect(renderer.root.findByProps({ testID: 'agent-soul-instructions' })).toBeDefined();
-    await press(renderer, 'cancel-agent-edit');
-    expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` })).toHaveLength(0);
-    expect(renderer.root.findByProps({ testID: 'agent-profile-soul' }).props.children).toBe(
-      state.agent.soul.instructions,
-    );
-    expect(renderer.root.findByProps({ testID: 'agent-profile-no-work' })).toBeDefined();
-    expect(renderer.root.findByProps({ testID: 'edit-agent-soul' })).toBeDefined();
-  });
-
-  it('keeps unsaved name and soul edits when Close is declined', async () => {
-    const renderer = await render();
-    await openAgentManagement(renderer);
-    await act(async () => {
-      renderer.root.findByProps({ testID: 'agent-soul-name' }).props.onChangeText('Scout');
-    });
-    modal.confirm.mockResolvedValueOnce(false);
-    await press(renderer, 'close-agent-profile');
-    expect(modal.confirm).toHaveBeenCalledWith(
-      'Discard agent changes?',
-      'Your name and soul edits have not been saved.',
-      { cancelText: 'Keep editing', confirmText: 'Discard', destructive: true },
-    );
-    expect(renderer.root.findByProps({ testID: 'agent-soul-name' }).props.value).toBe('Scout');
-    expect(router.back).not.toHaveBeenCalled();
-    await press(renderer, 'save-agent-soul');
-    expect(client.setAgentSoul).toHaveBeenCalledOnce();
-    await press(renderer, 'close-agent-profile');
-    expect(router.back).toHaveBeenCalledOnce();
-  });
-
-  it('guards a native back navigation while the soul draft is dirty', async () => {
-    const renderer = await render();
-    await openAgentManagement(renderer);
-    await act(async () => {
-      renderer.root
-        .findByProps({ testID: 'agent-soul-instructions' })
-        .props.onChangeText('New soul');
-    });
-    const action = { type: 'GO_BACK' };
-    const preventDefault = vi.fn();
-    modal.confirm.mockResolvedValueOnce(false);
-    await act(async () => navigation.beforeRemove?.({ preventDefault, data: { action } }));
-    expect(preventDefault).toHaveBeenCalledOnce();
-    expect(navigation.dispatch).not.toHaveBeenCalled();
-    expect(renderer.root.findByProps({ testID: 'agent-soul-instructions' }).props.value).toBe(
-      'New soul',
-    );
-    await act(async () => navigation.beforeRemove?.({ preventDefault, data: { action } }));
-    expect(navigation.dispatch).toHaveBeenCalledWith(action);
-  });
-
-  it('lets the owner open the agent to everyone, and names who to ask until they do', async () => {
-    const renderer = await render();
-    await openAgentManagement(renderer);
-
-    const toggle = renderer.root.findByProps({ testID: 'agent-access-switch' });
-    expect(toggle.props.disabled).toBe(false);
-    expect(toggle.props.value).toBe(false);
-    // The owner is named by @handle here for the same reason the Room's system
-    // lines name them that way: a display name is not an address.
-    expect(renderer.root.findByProps({ testID: 'agent-access-caption' }).props.children).toBe(
-      'Only @viewer may ask this agent; everyone else is told to ask @viewer here. ' +
-        'Only the owner can change this.',
-    );
-
-    await act(async () => {
-      await toggle.props.onValueChange(true);
-    });
-
-    expect(phoneOperation).toHaveBeenCalledWith('updateAgentAccessPolicy', {
-      workspaceId: WORKSPACE,
-      agentId: AGENT,
-      policy: 'everyone',
-    });
-    expect(renderer.root.findByProps({ testID: 'agent-access-switch' }).props.value).toBe(true);
-    expect(renderer.root.findByProps({ testID: 'agent-access-caption' }).props.children).toBe(
-      'Anyone in the Room can have Clara run commands, install software and change configuration ' +
-        'on your machine. Turn this off and only you may ask them.',
-    );
-    expect(renderer.root.findAllByProps({ testID: 'agent-access-error' })).toHaveLength(0);
-  });
-
-  it("hides another owner's agent configuration from a plain member", async () => {
-    state.workspace = {
-      ...baseWorkspace(),
-      viewer: {
-        ...baseWorkspace().viewer,
-        role: 'member',
-        permissions: { send: true, manage: false },
-      },
-    };
-    state.agent = {
-      ...baseAgent(),
-      access: {
-        policy: 'creator',
-        owner: { id: OWNER, name: 'Captain', handle: 'lunchboxfortwo' },
-        canChange: false,
-      },
-    };
-    const renderer = await render();
-    // A plain member cannot open the detail panel at all: the row is inert.
-    expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` })).toHaveLength(0);
-
-    expect(renderer.root.findAllByProps({ testID: 'agent-access-switch' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'edit-agent-soul' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'model-axis-model' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'remove-agent' })).toHaveLength(0);
-  });
-
-  it("offers an admin only Remove from Workspace for another owner's agent", async () => {
-    state.workspace = baseWorkspace('admin');
-    state.agent = {
-      ...baseAgent(),
-      access: {
-        policy: 'creator',
-        owner: { id: OWNER, name: 'Captain', handle: 'lunchboxfortwo' },
-        canChange: false,
-      },
-      yolo: { enabled: false, canChange: false },
-    };
-    const renderer = await render();
-    await openAgentManagement(renderer);
-
-    expect(renderer.root.findAllByProps({ testID: 'edit-agent-soul' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'model-axis-model' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'agent-access-switch' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'agent-yolo-switch' })).toHaveLength(0);
-    expect(
-      renderer.root
-        .findByProps({ testID: 'profile-handle' })
-        .findAllByType('Text')
-        .flatMap((node: any) => node.children)
-        .filter((child: any) => typeof child === 'string')
-        .join(''),
-    ).toContain('clara');
-    // An agent is removed, never banned: its owner could pair it back as a new agent.
-    const remove = renderer.root.findByProps({ testID: 'remove-agent' });
-    expect(remove.props.accessibilityLabel).toBe('Remove from Workspace');
-    expect(remove.props.label).toBe('Remove from Workspace');
-
-    await press(renderer, 'remove-agent');
-    expect(modal.confirm).toHaveBeenCalledWith('Remove Clara?', expect.any(String), {
-      cancelText: 'Cancel',
-      confirmText: 'Remove agent',
-      destructive: true,
-      pendingText: 'Removing…',
-      onConfirm: expect.any(Function),
-    });
-    expect(client.removeAgent).toHaveBeenCalledWith(WORKSPACE, AGENT);
-  });
-
-  it('lets the owner flip yolo and shows who set it', async () => {
-    const renderer = await render();
-    await openAgentManagement(renderer);
-
-    const toggle = renderer.root.findByProps({ testID: 'agent-yolo-switch' });
-    expect(toggle.props.disabled).toBe(false);
-    expect(toggle.props.value).toBe(false);
-    expect(toggle.props.trackColor).toEqual({ false: '#111', true: '#d7af5f' });
-    expect(renderer.root.findByProps({ testID: 'agent-yolo-caption' }).props.children).toBe(
-      'Clara acts without stopping to ask. Two things still ask you: anything that names one of ' +
-        'your credentials, and a script nobody has read.',
-    );
-    expect(renderer.root.findAllByProps({ testID: 'agent-yolo-set-by' })).toHaveLength(0);
-
-    await act(async () => {
-      await toggle.props.onValueChange(true);
-    });
-
-    expect(phoneOperation).toHaveBeenCalledWith('updateAgentYolo', {
-      workspaceId: WORKSPACE,
-      agentId: AGENT,
-      enabled: true,
-    });
-    expect(renderer.root.findByProps({ testID: 'agent-yolo-switch' }).props.value).toBe(true);
-    const setBy = renderer.root.findByProps({ testID: 'agent-yolo-set-by' }).props.children;
-    expect(setBy).toMatch(/^Set by Viewer · /);
-    expect(setBy).toContain('2025');
-    expect(renderer.root.findAllByProps({ testID: 'agent-yolo-error' })).toHaveLength(0);
-  });
-
-  it('shows an owner that public Workspace policy forces yolo off', async () => {
-    state.agent = {
-      ...baseAgent(),
-      yolo: { enabled: false, forcedOff: true, canChange: true },
-    };
-    const renderer = await render();
-    await openAgentManagement(renderer);
-
-    expect(renderer.root.findByProps({ testID: 'agent-yolo-switch' }).props).toMatchObject({
-      disabled: true,
-      value: false,
-    });
-    expect(renderer.root.findByProps({ testID: 'agent-yolo-caption' }).props.children).toBe(
-      'Yolo is forced off while this workspace is public.',
-    );
-  });
-
-  it("hides another owner's yolo setting from a plain member", async () => {
-    state.workspace = {
-      ...baseWorkspace(),
-      viewer: {
-        ...baseWorkspace().viewer,
-        role: 'member',
-        permissions: { send: true, manage: false },
-      },
-    };
-    state.agent = {
-      ...baseAgent(),
-      access: {
-        policy: 'creator',
-        owner: { id: OWNER, name: 'Captain', handle: 'lunchboxfortwo' },
-        canChange: false,
-      },
-      yolo: { enabled: true, canChange: false, setBy: { name: 'Captain' }, setAt: 1_756_684_800 },
-    };
-    const renderer = await render();
-    // A plain member cannot open the detail panel at all: the row is inert.
-    expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` })).toHaveLength(0);
-
-    expect(renderer.root.findAllByProps({ testID: 'agent-yolo-switch' })).toHaveLength(0);
-  });
-
-  describe.each([
-    ['yolo', 'updateAgentYolo'],
-    ['access', 'updateAgentAccessPolicy'],
-  ])('R4: %s toggle failure copy on the Members route', (toggle, operation) => {
-    it.each([
-      [504, 'surface_request_timed_out', 'Could not complete request'],
-      [403, 'permission_denied', 'Could not complete request'],
-      [400, 'The timeout must be shorter.', 'The timeout must be shorter.'],
-    ])('formats status %s with code %s', async (status, code, expected) => {
-      const renderer = await render();
-      await openAgentManagement(renderer);
-      phoneOperation.mockRejectedValueOnce(Object.assign(
-        new Error(`Monolith ${operation} failed (${status}): ${code}`), { status, code },
-      ));
-      await act(async () => {
-        await renderer.root.findByProps({ testID: `agent-${toggle}-switch` }).props.onValueChange(true);
-      });
-      expect(phoneOperation).toHaveBeenCalledWith(operation, expect.any(Object));
-      expect(renderer.root.findByProps({ testID: `agent-${toggle}-error` }).props.children).toBe(expected);
-      expect(renderer.root.findByProps({ testID: `agent-${toggle}-switch` }).props.value).toBe(false);
-    });
-  });
-
-  it('flips yolo optimistically and rolls back with the server message when refused', async () => {
-    const renderer = await render();
-    await openAgentManagement(renderer);
-
-    let settle!: () => void;
-    const pending = new Promise<void>((resolve) => (settle = resolve));
-    phoneOperation.mockImplementationOnce(async () => {
-      await pending;
-      throw Object.assign(new Error('Monolith updateAgentYolo failed (403)'), {
-        code: "Only the agent's owner can change this",
-      });
-    });
-    let flip!: Promise<void>;
-    await act(async () => {
-      flip = renderer.root.findByProps({ testID: 'agent-yolo-switch' }).props.onValueChange(true);
-    });
-    // Optimistic: on before the server answers.
-    expect(renderer.root.findByProps({ testID: 'agent-yolo-switch' }).props.value).toBe(true);
-    await act(async () => {
-      settle();
-      await flip;
-    });
-    // Rolled back with the server's plain message inline.
-    expect(renderer.root.findByProps({ testID: 'agent-yolo-switch' }).props.value).toBe(false);
-    expect(renderer.root.findByProps({ testID: 'agent-yolo-error' }).props.children).toBe(
-      "Only the agent's owner can change this",
-    );
-    expect(roomView.agent).toHaveBeenCalled();
-  });
-
-  it('warns about and invokes the full removeAgent host teardown path', async () => {
-    const renderer = await render();
-    await openAgentManagement(renderer);
-
-    // Management names the agent and owner before offering removal.
-    expect(
-      renderer.root
-        .findByProps({ testID: 'profile-handle' })
-        .findAllByType('Text')
-        .flatMap((node: any) => node.children)
-        .filter((child: any) => typeof child === 'string')
-        .join(''),
-    ).toContain('clara');
-    expect(
-      renderer.root
-        .findByProps({ testID: 'profile-owner' })
-        .findAllByType('Text')
-        .flatMap((node: any) => node.children)
-        .filter((child: any) => typeof child === 'string')
-        .join(''),
-    ).toContain('viewer');
-    const control = renderer.root.findByProps({ testID: 'remove-agent' });
-    expect(control.props.accessibilityLabel).toBe('Remove from Workspace');
-    expect(control.props.label).toBe('Remove from Workspace');
-    expect(control.props.variant).toBe('danger');
-    expect(control.props.fullWidth).toBe(true);
-
-    await press(renderer, 'remove-agent');
-
-    expect(modal.confirm).toHaveBeenCalledWith(
-      'Remove Clara?',
-      expect.stringMatching(
-        /every Room.*paired host.*drains active sessions.*runtime configuration/i,
-      ),
-      { cancelText: 'Cancel', confirmText: 'Remove agent', destructive: true, pendingText: 'Removing…', onConfirm: expect.any(Function) },
-    );
-    expect(client.removeAgent).toHaveBeenCalledWith(WORKSPACE, AGENT);
-  });
-
-  it('draws a removed agent nowhere: no row, no count, no open detail', async () => {
-    const renderer = await render();
-    await openAgentManagement(renderer);
-    await press(renderer, 'remove-agent');
-
-    await act(async () => {
-      renderer.update(React.createElement(MembersScreen, { key: 'roster-return' }));
-    });
-    // The server stops naming it, so the screen stops drawing it — the row,
-    // the count, and the detail the removal was performed from.
-    expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-identity` })).toHaveLength(0);
-    expect(renderer.root.findByProps({ testID: 'members-agents-head' }).props.count).toEqual(0);
-    expect(renderer.root.findAllByProps({ testID: 'remove-agent' })).toHaveLength(0);
-  });
-  it('repaints the Members list under an agent profile from the profile receipt', async () => {
-    const list = await render();
-    const row = () => list.root.findAllByProps({ testID: `agent-${AGENT}-identity` })
-      .find((node: any) => typeof node.props.name === 'string')!.props;
-    expect(row().name).toBe('Clara');
-    let profile!: ReactTestRenderer;
-    await act(async () => {
-      profile = create(<MembersScreen profileAgentId={AGENT} workspaceIdOverride={WORKSPACE} />);
-    });
-    await press(profile, 'edit-agent-soul');
-    await act(async () => {
-      profile.root.findByProps({ testID: 'agent-soul-name' }).props.onChangeText('Scout');
-    });
-    const workspaceReads = roomView.workspace.mock.calls.length;
-    await press(profile, 'save-agent-soul');
-    expect(row().name).toBe('Scout');
-    expect(roomView.workspace.mock.calls.length).toBe(workspaceReads);
-  });
-
-  it('patches a paged agent row under its profile on rename and removal (J26)', async () => {
-    const PAGED = 'f'.repeat(64);
-    const paged = {
-      identity: { pubkey: PAGED, kind: 'agent', name: 'Pip', handle: 'pip' },
-      role: 'member',
-      model: 'Sonnet',
-      owner: { pubkey: VIEWER, kind: 'human', name: 'Viewer', handle: 'viewer' },
-    };
-    state.workspace = { ...baseWorkspace(), agentTotal: 2, agentsTruncated: true };
-    state.agent = {
-      ...baseAgent(),
-      agent: { identity: paged.identity, role: 'member' },
-      soul: { name: 'Pip', instructions: 'Keep the tests green.', avatarSeed: PAGED },
-    };
-    roomView.workspaceMembers.mockImplementation(async (_workspaceId: string, query: any = {}) => ({
-      viewer: state.workspace.viewer,
-      members: query.kind === 'agent' ? [] : state.workspace.members,
-      agents: Number(query.offset ?? 0) > 0 ? [paged] : state.workspace.agents,
-      peopleTotal: state.workspace.peopleTotal,
-      agentTotal: 2,
-      membersTruncated: false,
-      agentsTruncated: false,
-    }));
-    const list = await render();
-    await press(list, 'members-load-more-agents');
-    const pagedName = () => list.root.findAllByProps({ testID: `agent-${PAGED}-identity` })
-      .find((node: any) => typeof node.props.name === 'string')?.props.name;
-    expect(pagedName()).toBe('Pip');
-
-    let profile!: ReactTestRenderer;
-    await act(async () => {
-      profile = create(<MembersScreen profileAgentId={PAGED} workspaceIdOverride={WORKSPACE} />);
-    });
-    await press(profile, 'edit-agent-soul');
-    await act(async () => {
-      profile.root.findByProps({ testID: 'agent-soul-name' }).props.onChangeText('Scout');
-    });
-    await press(profile, 'save-agent-soul');
-    expect(pagedName()).toBe('Scout');
-
-    await press(profile, 'edit-agent-soul');
-    await press(profile, 'remove-agent');
-    expect(list.root.findAllByProps({ testID: `agent-${PAGED}-identity` })).toHaveLength(0);
-    expect(list.root.findByProps({ testID: 'members-agents-head' }).props.count).toEqual(1);
-  });
-
-  it('drops an agent removed from its profile out of the Members list underneath', async () => {
-    const list = await render();
-    let profile!: ReactTestRenderer;
-    await act(async () => {
-      profile = create(<MembersScreen profileAgentId={AGENT} workspaceIdOverride={WORKSPACE} />);
-    });
-    await press(profile, 'edit-agent-soul');
-    const workspaceReads = roomView.workspace.mock.calls.length;
-    await press(profile, 'remove-agent');
-    expect(list.root.findAllByProps({ testID: `agent-${AGENT}-identity` })).toHaveLength(0);
-    expect(list.root.findByProps({ testID: 'members-agents-head' }).props.count).toEqual(0);
-    expect(roomView.workspace.mock.calls.length).toBe(workspaceReads);
-  });
-
-  it('drops an agent another session removed from a searched roster on a global membership signal (P1, G7-R2)', async () => {
-    const renderer = await render();
-    await act(async () => {
-      renderer.root.findByProps({ testID: 'members-search' }).props.onChangeText('Clara');
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-identity` })).not.toHaveLength(0);
-
-    // Another session removes Clara; the Workspace refresh no longer lists her.
-    state.workspace = { ...baseWorkspace(), agents: [], agentTotal: 0 };
-    const subscriptions = client.surfaceSubscribe.mock.calls as unknown as Array<
-      [unknown, (event?: unknown) => void]
-    >;
-    const global = subscriptions.find(([filters]) => Array.isArray(filters) && filters.length === 0);
-    expect(global).toBeDefined();
-    const reads = roomView.workspace.mock.calls.length;
-    await act(async () => (global![1] as (event: unknown) => void)({
-      monolithLive: { type: 'invalidate', roomId: '', reason: 'postgres:memberships' },
-    }));
-    expect(roomView.workspace.mock.calls.length).toBeGreaterThan(reads);
-
-    expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-identity` })).toHaveLength(0);
-  });
-
-  it('keeps a searched agent a truncated Workspace refresh only leaves out', async () => {
-    const renderer = await render();
-    await act(async () => {
-      renderer.root.findByProps({ testID: 'members-search' }).props.onChangeText('Clara');
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    state.workspace = { ...baseWorkspace(), agents: [], agentTotal: 1, agentsTruncated: true };
-    const subscriptions = client.surfaceSubscribe.mock.calls as unknown as Array<
-      [unknown, (event?: unknown) => void]
-    >;
-    await act(async () => subscriptions.at(-1)![1]({ monolithLive: { type: 'invalidate', roomId: '', reason: 'postgres:memberships' } } as never));
-
-    expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-identity` })).not.toHaveLength(0);
-  });
-
-  // The grants block was removed from this page: under yolo it read as an
-  // approval queue, not the ledger it needed to be. Grants keep recording
-  // server-side (agent_grants, including the auto marker) — see database.ts
-  // and daemon-service.ts — but this page no longer surfaces them at all.
-  it('renders no grants surface, even when the server has grants for this agent', async () => {
-    state.agent = {
-      ...baseAgent(),
-      canManageGrants: true,
-      grants: [
-        {
-          grantId: 'g-live',
-          kind: 'command',
-          target: 'fly deploy -a preview --with FLY_TOKEN',
-          reason: 'publish the preview',
-          status: 'approved',
-          requestedBy: { pubkey: MEMBER, kind: 'human', name: 'Builder' },
-          decidedBy: { pubkey: VIEWER, kind: 'human', name: 'Viewer' },
-          roomId: '22222222-2222-4222-8222-222222222222',
-        roomName: 'ship-the-slab',
-          createdAt: 1_756_900_000,
-          decidedAt: 1_756_900_060,
-          auto: true,
-        },
-      ],
-    };
-    const renderer = await render();
-    await openAgentManagement(renderer);
-
-    expect(renderer.root.findAllByProps({ testID: 'agent-grants' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'agent-grants-empty' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'agent-grant-g-live-line' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'agent-grant-g-live-revoke' })).toHaveLength(0);
-  });
-
-  it('keeps the true People total, pages the first screen, searches past it, and load-more appends', async () => {
-    const extras = Array.from({ length: 21 }, (_, index) =>
-      member(
-        `e${String(index).padStart(63, '0')}`,
-        `Zebra ${String(index).padStart(2, '0')}`,
-        'member',
-      ),
-    );
-    const allPeople = [
-      member(VIEWER, 'Viewer', 'owner'),
-      member(OWNER, 'Captain', 'owner'),
-      member(MEMBER, 'Builder', 'member'),
-      ...extras,
-    ];
-    const firstPage = allPeople.slice(0, 20);
-    const offPage = extras[20]!;
-    state.workspace = {
-      ...baseWorkspace(),
-      members: firstPage,
-      peopleTotal: allPeople.length,
-      agentTotal: 1,
-      membersTruncated: true,
-      agentsTruncated: false,
-    };
-    roomView.workspaceMembers.mockImplementation(async (_workspaceId: string, query: any = {}) => {
-      const needle = String(query.q ?? '')
-        .trim()
-        .toLowerCase();
-      const filtered = needle
-        ? allPeople.filter(
-            (item) =>
-              item.identity.name.toLowerCase().includes(needle) ||
-              item.identity.handle.includes(needle),
-          )
-        : allPeople;
-      const offset = Number(query.offset ?? 0);
-      const page = filtered.slice(offset, offset + 20);
-      return {
-        members: query.kind === 'agent' ? [] : page,
-        agents: query.kind === 'human' ? [] : state.workspace.agents,
-        peopleTotal: filtered.length,
-        agentTotal: needle ? 0 : 1,
-        membersTruncated: offset + page.length < filtered.length,
-        agentsTruncated: false,
-      };
-    });
-
-    const renderer = await render();
-    expect(renderer.root.findByProps({ testID: 'members-people-head' }).props.count).toEqual(allPeople.length);
-    expect(
-      renderer.root.findAllByProps({ testID: `member-${firstPage[0]!.identity.pubkey}-identity` })
-        .length,
-    ).toBeGreaterThan(0);
-    expect(
-      renderer.root.findAllByProps({ testID: `member-${offPage.identity.pubkey}-identity` }),
-    ).toHaveLength(0);
-
-    await act(async () => {
-      renderer.root
-        .findByProps({ testID: 'members-search' })
-        .props.onChangeText(offPage.identity.name);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(roomView.workspaceMembers).toHaveBeenCalledWith(
-      WORKSPACE,
-      expect.objectContaining({ q: offPage.identity.name }),
-    );
-    expect(
-      renderer.root.findAllByProps({ testID: `member-${offPage.identity.pubkey}-identity` }).length,
-    ).toBeGreaterThan(0);
-    expect(renderer.root.findByProps({ testID: 'members-people-head' }).props.count).toEqual(1);
-
-    await act(async () => {
-      renderer.root.findByProps({ testID: 'members-search' }).props.onChangeText('');
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    const row = (pubkey: string) =>
-      renderer.root.findAll(
-        (node: any) =>
-          node.type === 'Pressable' && node.props.testID === `member-${pubkey}-identity`,
-      );
-    const firstPageRows = firstPage.flatMap((item) => row(item.identity.pubkey)).length;
-    await press(renderer, 'members-load-more-people');
-    expect(roomView.workspaceMembers).toHaveBeenCalledWith(
-      WORKSPACE,
-      expect.objectContaining({ kind: 'human', offset: 20 }),
-    );
-    expect(row(offPage.identity.pubkey)).toHaveLength(1);
-    expect(row(VIEWER)).toHaveLength(1);
-    expect(firstPage.flatMap((item) => row(item.identity.pubkey))).toHaveLength(firstPageRows);
-    expect(renderer.root.findByProps({ testID: 'members-people-head' }).props.count).toEqual(allPeople.length);
-  });
-});
-
-it('refreshes an open profile from its plain read after a usage change', async () => {
-  const renderer = await render(); await openAgentProfile(renderer);
-  const before = roomView.agent.mock.calls.length;
-  await act(async () => { for (const listener of liveListeners) listener({ monolithLive: {
-    type: 'resource-change', roomId: '', resource: 'agent', resourceId: AGENT, usageOnly: true,
-  } }); });
-  expect(roomView.agent.mock.calls.length).toBe(before + 1);
-  await agentChanged(); expect(roomView.agent.mock.calls.length).toBe(before + 2);
-});
-
-it('the existing Refresh usage action does not follow its receipt with a full Agent read', async () => {
-  state.agent.usage = { updatedAt: 10, windows: [{ rateLimitType: 'five_hour', status: 'allowed', utilization: 0.14, updatedAt: 10 }] };
-  const renderer = await render(); await openAgentProfile(renderer);
-  const before = roomView.agent.mock.calls.length; phoneOperation.mockResolvedValueOnce({ status: 'fresh' });
-  const refresh = renderer.root.findAllByType('Button' as any).find((node: any) => node.props.accessibilityLabel === 'Refresh usage');
-  expect(refresh).toBeDefined();
-  await act(async () => { await refresh!.props.onPress(); });
-  expect(phoneOperation).toHaveBeenCalledWith('refreshAgentUsage', { workspaceId: WORKSPACE, agentId: AGENT }, expect.any(Object));
-  expect(roomView.agent.mock.calls.length).toBe(before);
 });

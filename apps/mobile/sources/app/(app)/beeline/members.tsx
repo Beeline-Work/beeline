@@ -1,3 +1,9 @@
+import { useMembersRouteState } from './useMembersRouteState';
+import { useMembersReads } from './useMembersReads';
+import { useMembersMembership } from './useMembersMembership';
+import { useMembersSoul } from './useMembersSoul';
+import { useMembersConfiguration } from './useMembersConfiguration';
+import { useMembersPresentation } from './useMembersPresentation';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { useSurfaceFocus } from '@/buzz/use-surface-focus';
 import { presentPersonInvite } from '@/components/buzz/PersonInviteSheet';
@@ -81,7 +87,7 @@ async function copyText(value: string): Promise<void> {
   await (await import('expo-clipboard')).setStringAsync(value);
 }
 
-type MembersAction =
+export type MembersAction =
   | 'invite-person'
   | 'pair-agent'
   | 'person-role'
@@ -94,11 +100,11 @@ type MembersAction =
   | 'agent-yolo'
   | 'agent-access';
 
-function first(value: string | string[] | undefined): string | undefined {
+export function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-function newerConfigVersion(candidate: string, current: string | undefined): boolean {
+export function newerConfigVersion(candidate: string, current: string | undefined): boolean {
   return (
     !current ||
     candidate.length > current.length ||
@@ -106,15 +112,15 @@ function newerConfigVersion(candidate: string, current: string | undefined): boo
   );
 }
 
-function ownerByline(
+export function ownerByline(
   owner: NonNullable<WorkspaceView['agents'][number]['owner']>,
 ): string | undefined {
   return owner.handle ? `by @${owner.handle}` : undefined;
 }
 
-type ModelAxisKind = 'model' | 'effort';
+export type ModelAxisKind = 'model' | 'effort';
 
-const MODEL_APPLIES_NOTE_MS = 4_000;
+export const MODEL_APPLIES_NOTE_MS = 4_000;
 const UNSET_VALUE = '—';
 
 function axisValue(
@@ -134,7 +140,7 @@ function axisValue(
  * one, otherwise the soul seeded from its animal. `defaultAgentPersona` remains
  * the last resort for a stack that does not index a seeded soul.
  */
-function agentSoulCopy(detail: AgentDetailView): string {
+export function agentSoulCopy(detail: AgentDetailView): string {
   return (
     detail.soul?.instructions ??
     detail.seededSoul ??
@@ -191,7 +197,7 @@ function yoloSetByLine(yolo: NonNullable<AgentDetailView['yolo']>): string | nul
  * receive the same safe reset, while re-selecting the catalog's live model
  * keeps its advertised default atomically.
  */
-function modelSelectionInput(
+export function modelSelectionInput(
   detail: AgentDetailView,
   axis: AgentModelConfigOption | undefined,
   model: string,
@@ -218,860 +224,69 @@ export default function BuzzMembers({
   profileRoomId?: string;
   onClose?: () => void;
 } = {}) {
-  const focused = useSurfaceFocus();
-  const focusedRef = useRef(focused);
-  focusedRef.current = focused;
-  useLatencyRouteFrame('/beeline/members');
-  const desktop = useIsDesktop();
-  const { theme } = useUnistyles();
-  const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{
-    communityId?: string | string[];
-    roomId?: string | string[];
-    action?: string | string[];
-  }>();
-  const navigation = useNavigation();
-  const workspaceId = workspaceIdOverride ?? first(params.communityId);
-  const requestedAction = first(params.action);
-  const [identity, setIdentity] = useState<Identity | null>(null);
-  const [relayUrl, setRelayUrl] = useState<string | null>(null);
-  const [localAgentId, setLocalAgentId] = useState<string | null>(null);
-  const workspaceAddress = useMemo(
-    () =>
-      identity && relayUrl && workspaceId
-        ? surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id', { workspaceId })
-        : null,
-    [identity?.publicKey, relayUrl, workspaceId],
-  );
-  const agentId = profileAgentId ?? localAgentId;
-  const agentAddress = useMemo(
-    () =>
-      identity && relayUrl && workspaceId && agentId
-        ? surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/agents/:agentId', {
-            workspaceId,
-            agentPubkey: agentId,
-          })
-        : null,
-    [identity?.publicKey, relayUrl, workspaceId, agentId],
-  );
+  const [
+    identity, relayUrl, recordScope, setRosterQuery, workspaceId, focused, setIdentity, setRelayUrl,
+    focusedRef, setWorkspaceError, readWorkspaceRef, agentRequestGenerationRef, retryGeneration,
+    setSelectedAgent, setEditingAgentSoul, setOpenModelAxis, setModelAppliesNote, setYoloError,
+    setAccessError, setLocalAgentId, setError, profileRetryGeneration, surface, setWorking,
+    setPickerOpen, setPairCommand, requestedActionHandledRef, requestedAction, memberQuery,
+    setRosterLoading, rosterLoading, selectedAgent, ownsSelectedAgent, editingAgentSoul,
+    allowProfileNavigationRef, nameDraft, soulDraft, agentNameDraft, agentSoulDraft, navigation,
+    pendingConfigWriteRef, applyAgentReceipt, finishConfigWrite, modelAppliesTimerRef,
+    setModelAxisError, waitingForEffortCatalogRef, canRemoveSelectedAgent, error, workspaceError,
+    working, setRetryGeneration, setProfileRetryGeneration, setAgentNameDraft, setAgentSoulDraft,
+    params, openModelAxis, modelSearchQuery, setModelSearchQuery, modelAppliesNote, modelAxisError,
+    selectedAgentOwnerByline, theme, accessError, yoloError, insets, rosterQuery, desktop,
+    setMemberQuery, pickerOpen, pairCommand,
+  ] = useMembersRouteState([
+    workspaceIdOverride, profileAgentId,
+  ]);
 
-  const cachedWorkspace=useSurfaceSnapshot((workspaceAddress),isWorkspaceView);
-  const surface=(cachedWorkspace);
+  const [
+    writeClient, readMemberPage, applyMemberPage, closeAgentSettings,
+  ] = useMembersReads([
+    identity, relayUrl, recordScope, setRosterQuery, workspaceId, focused, profileAgentId,
+    setIdentity, setRelayUrl, focusedRef, setWorkspaceError, readWorkspaceRef,
+    agentRequestGenerationRef, retryGeneration, setSelectedAgent, setEditingAgentSoul,
+    setOpenModelAxis, setModelAppliesNote, setYoloError, setAccessError, setLocalAgentId, setError,
+    profileRetryGeneration,
+  ]);
 
-  const cachedAgent = useSurfaceSnapshot((agentAddress), isAgentDetailView);
+  const [
+    messagePerson, invitePerson, loadMoreMembers, connectAgent, closePicker,
+  ] = useMembersMembership([
+    surface, workspaceId, relayUrl, setWorking, setError, writeClient, setPickerOpen,
+    setSelectedAgent, setPairCommand, focused, requestedActionHandledRef, requestedAction, identity,
+    memberQuery, setRosterQuery, setRosterLoading, readMemberPage, applyMemberPage, rosterLoading,
+    recordScope,
+  ]);
 
-  const selectedAgent = (cachedAgent);
-  const setSelectedAgent = (value: AgentDetailView | null) => {
+  const [
+    closeAgentProfile, messageSelectedAgent, requestSoulAvatar, beginAgentSoulEdit, saveAgentSoul,
+  ] = useMembersSoul([
+    identity, workspaceId, selectedAgent, ownsSelectedAgent, editingAgentSoul,
+    allowProfileNavigationRef, nameDraft, soulDraft, setEditingAgentSoul, agentNameDraft,
+    agentSoulDraft, onClose, messagePerson, profileAgentId, navigation, setError, setWorking,
+    pendingConfigWriteRef, writeClient, applyAgentReceipt, finishConfigWrite,
+  ]);
 
-    if (!value) {
-      setLocalAgentId(null);
-      return;
-    }
-    setLocalAgentId(value.agent.identity.pubkey);
-    if (identity && relayUrl && workspaceId)
-      void mobileSurfaceCache.write(
-        surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/agents/:agentId', {
-          workspaceId,
-          agentPubkey: value.agent.identity.pubkey,
-        }),
-        value,
-        isAgentDetailView,
-      );
-  };
-  useLatencyRouteFrame(
-    profileAgentId ? '/beeline/agent-profile' : '/beeline/members',
-    profileAgentId ? selectedAgent !== null : surface !== null,
-    true,
-  );
-  const [editingAgentSoul, setEditingAgentSoul] = useState(false);
-  const [agentNameDraft, setAgentNameDraft, nameDraft] = useTextDraft(
-    selectedAgent ? `agent-name:${workspaceId}:${selectedAgent.agent.identity.pubkey}` : null,
-    '',
-  );
-  const [agentSoulDraft, setAgentSoulDraft, soulDraft] = useTextDraft(
-    selectedAgent ? `agent-soul:${workspaceId}:${selectedAgent.agent.identity.pubkey}` : null,
-    '',
-  );
-  const [openModelAxis, setOpenModelAxis] = useState<ModelAxisKind | null>(null);
-  const [modelSearchQuery, setModelSearchQuery] = useTextDraft(
-    `model-search:${workspaceId}:${selectedAgent?.agent.identity.pubkey ?? ''}`,
-    '',
-  );
-  const [modelAppliesNote, setModelAppliesNote] = useState<ModelAxisKind | null>(null);
-  const [modelAxisError, setModelAxisError] = useState<ModelAxisKind | null>(null);
-  const modelAppliesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [working, setWorking] = useState<MembersAction | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
-  const [yoloError, setYoloError] = useState<string | null>(null);
-  const [accessError, setAccessError] = useState<string | null>(null);
-  const [retryGeneration, setRetryGeneration] = useState(0);
-  const [profileRetryGeneration, setProfileRetryGeneration] = useState(0);
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [pairCommand, setPairCommand] = useState<string | null>(null);
-  const [memberQuery, setMemberQuery] = useTextDraft(`member-search:${workspaceId}`, '');
-  // Search selection is local; its ordered pages and rows live in the records.
-  const [rosterQuery, setRosterQuery] = useState('');
-  const [rosterLoading, setRosterLoading] = useState(false);
-  const readWorkspaceRef = useRef<(() => Promise<void>) | null>(null);
-  const agentRequestGenerationRef = useRef(0);
-  const allowProfileNavigationRef = useRef(false);
-  const requestedActionHandledRef = useRef(false);
-  const waitingForEffortCatalogRef = useRef(false);
-  const latestConfigVersionRef = useRef<string | undefined>(undefined);
-  const pendingConfigWriteRef = useRef(false);
-  const queuedConfigVersionRef = useRef<string | undefined>(undefined);
-  latestConfigVersionRef.current = selectedAgent?.configVersion;
-  const ownsSelectedAgent = selectedAgent?.access?.owner?.id === identity?.publicKey;
-  const canRemoveSelectedAgent = (ownsSelectedAgent || Boolean(surface?.viewer.permissions.manage));
-  const recordScope =
-    identity && relayUrl && workspaceId
-      ? workspaceRecordScope(relayUrl, identity.publicKey, workspaceId)
-      : null;
-  useWorkspaceRecords(recordScope);
-  const selectedAgentOwnerByline = selectedAgent?.owner
-    ? ownerByline(selectedAgent.owner)
-    : undefined;
+  const [
+    toggleModelAxis, setModelOption, setFastMode, toggleAnswersEveryone, toggleYolo,
+    removeSelectedAgent,
+  ] = useMembersConfiguration([
+    modelAppliesTimerRef, setModelAppliesNote, selectedAgent, ownsSelectedAgent, () => modelAxes,
+    setWorking, pendingConfigWriteRef, setError, writeClient, applyAgentReceipt, setOpenModelAxis,
+    finishConfigWrite, setModelAxisError, waitingForEffortCatalogRef, setSelectedAgent,
+    setYoloError, setAccessError, canRemoveSelectedAgent, workspaceId, recordScope,
+    closeAgentSettings, profileAgentId, onClose,
+  ]);
 
-  const readAgent = async (agentPubkey: string): Promise<AgentDetailView> => {
-    const generation = agentRequestGenerationRef.current;
-    if (!focusedRef.current || AppState.currentState === 'background' || AppState.currentState === 'inactive' || !identity || !relayUrl || !workspaceId) throw new Error('Workspace connection unavailable');
-    const value = await new RoomViewClient({ baseUrl: relayUrl, identity }).agent(
-      workspaceId,
-      agentPubkey,
-    );
-    if (generation !== agentRequestGenerationRef.current) return value;
-    const address = surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/agents/:agentId', {
-      workspaceId,
-      agentPubkey,
-    });
-    await mobileSurfaceCache.write(address, value, isAgentDetailView);
-    return value;
-  };
+  const [
+    modelAxes, displayedError, busy, openRosterPerson, openRosterAgent,
+  ] = useMembersPresentation([
+    selectedAgent, error, workspaceError, working, surface, workspaceId,
+  ]);
 
-  const applyAgentReceipt = (value: AgentDetailView) => {
-    agentRequestGenerationRef.current += 1;
-    latestConfigVersionRef.current = value.configVersion;
-    const queued = queuedConfigVersionRef.current;
-    queuedConfigVersionRef.current = undefined;
-    if ((queued) && newerConfigVersion(queued, value.configVersion))
-      void readAgent(value.agent.identity.pubkey).catch(() => undefined);
-    // The one write: the Workspace records hear it and update the roster row.
-    setSelectedAgent(value);
-  };
-
-  const finishConfigWrite = (agentId: string) => {
-    pendingConfigWriteRef.current = false;
-    const queued = queuedConfigVersionRef.current;
-    queuedConfigVersionRef.current = undefined;
-    if ((queued) && newerConfigVersion(queued, latestConfigVersionRef.current))
-      void readAgent(agentId).catch(() => undefined);
-  };
-
-  useEffect(() => {
-    if ((!focused) || !selectedAgent || !identity || !relayUrl) return;
-    let cancelled = false;
-    let stop: (() => void) | undefined;
-    const agentId = selectedAgent.agent.identity.pubkey;
-    void sharedLiveConnection()
-      .register([], (event) => {
-        if (cancelled || AppState.currentState === 'background' || AppState.currentState === 'inactive' || !('monolithLive' in event)) return;
-        const live = event.monolithLive;
-        if (!(
-          (live.type === 'resource-change' &&
-            live.resource === 'agent' &&
-            (!live.resourceId || live.resourceId === agentId)) ||
-          (live.type === 'invalidate' && live.roomId === '' && live.reason === 'reconnect')
-        ))
-          return;
-        if (live.type === 'resource-change' && live.version) {
-          if (!newerConfigVersion(live.version, latestConfigVersionRef.current)) return;
-          if (pendingConfigWriteRef.current) {
-            if (newerConfigVersion(live.version, queuedConfigVersionRef.current))
-              queuedConfigVersionRef.current = live.version;
-            return;
-          }
-        }
-        void readAgent(agentId)
-          .then((detail) => {
-            if (!waitingForEffortCatalogRef.current) return;
-            const effort = effortConfigAxis(
-              detail.catalog.filter(
-                (candidate) =>
-                  isAllowedAgentModelConfigCategory(candidate.category, candidate.id) &&
-                  candidate.options.length > 0,
-              ),
-            );
-            if (effort) {
-              waitingForEffortCatalogRef.current = false;
-              setWorking(null);
-              setOpenModelAxis('effort');
-            }
-          })
-          .catch((reason) => {
-            if (!cancelled) setError(appErrorCopy(reason));
-          });
-      })
-      .then((release) => {
-        if (cancelled) release();
-        else stop = release;
-      });
-    return () => {
-      cancelled = true;
-      stop?.();
-    };
-  }, [focused, identity, relayUrl, selectedAgent?.agent.identity.pubkey]);
-
-  const writeClient = async () => {
-    if (!identity || !relayUrl) throw new Error('Workspace connection unavailable');
-    const client = await new BuzzRigTransport(identity).ensureClient();
-    return client as typeof client & {
-      refreshAgentModelCatalog(workspaceId: string, agentId: string): Promise<unknown>;
-    };
-  };
-
-  const applyMemberPage = (
-    page: Awaited<ReturnType<typeof readMemberPage>>,
-    kind: 'human' | 'agent' | undefined,
-    append: boolean,
-  ) => {
-    if (recordScope)
-      recordWorkspacePage(recordScope, page, {
-        query: page.query,
-        kind,
-        append,
-        stamp: page.stamp,
-      });
-    setRosterQuery(page.query);
-  };
-
-  const readMemberPage = async (input: {
-    q?: string;
-    kind?: 'human' | 'agent';
-    offset?: number;
-  }) => {
-    if (!identity || !relayUrl || !workspaceId) throw new Error('Workspace connection unavailable');
-    // A removal or receipt recorded while this page is in flight is newer than it.
-    const stamp = currentSurfaceStamp();
-    const page = await new RoomViewClient({ baseUrl: relayUrl, identity }).workspaceMembers(
-      workspaceId,
-      input,
-    );
-    return { ...page, query: input.q ?? '', stamp };
-  };
-
-  useEffect(() => {
-    if (!focused || !workspaceId) return;
-    let cancelled = false;
-    let stopWatch: (() => void) | undefined;
-    let readWorkspace: (() => Promise<void>) | undefined;
-    void (async () => {
-      const [nextIdentity, nextRelayUrl] = await Promise.all([
-        loadBuzzIdentity(),
-        getEffectiveRelayUrl(),
-      ]);
-      if (!nextIdentity) {
-        router.replace('/beeline/onboarding');
-        return;
-      }
-      const address = surfaceAddress(nextRelayUrl, nextIdentity.publicKey, '/workspace/:id', {
-        workspaceId,
-      });
-      const cached = await mobileSurfaceCache.read(address, isWorkspaceView);
-      if (cancelled) return;
-      if ((profileAgentId && !cached)) {
-        // A direct profile open needs both authority and detail, but one wire
-        // response writes the two existing keyed entries for later visits.
-        const profile = await monolithPhoneOperation('readAgentProfile', {
-          workspaceId,
-          agentId: profileAgentId,
-        });
-        if (cancelled) return;
-        await Promise.all([
-          mobileSurfaceCache.write(address, profile.workspace, isWorkspaceView),
-          mobileSurfaceCache.write(
-            surfaceAddress(nextRelayUrl, nextIdentity.publicKey, '/workspace/:id/agents/:agentId', {
-              workspaceId,
-              agentPubkey: profileAgentId,
-            }),
-            profile.agent,
-            isAgentDetailView,
-          ),
-        ]);
-      }
-      if (cancelled) return;
-      setIdentity((current) =>
-        current?.publicKey === nextIdentity.publicKey ? current : nextIdentity,
-      );
-      setRelayUrl(nextRelayUrl);
-
-      // Every Members instance (the list under an agent profile included)
-      // paints the one shared entry; rows and totals read the shared records,
-      // which hear every write of this entry.
-      const http = new RoomViewClient({ baseUrl: nextRelayUrl, identity: nextIdentity });
-      readWorkspace = async () => {
-        if (cancelled) return;
-        try {
-          if (!focusedRef.current) return;
-          const value = await mobileSurfaceCache.fetch(address, isWorkspaceView, () =>
-            http.workspace(workspaceId),
-          );
-          if (cancelled) return;
-
-          // Null: a newer write or an eviction overtook the read; the entry
-          // listener already painted whatever is current.
-          if (!value) return;
-          setWorkspaceError(null);
-        } catch (reason) {
-          if (!cancelled) setWorkspaceError(appErrorCopy(reason));
-        }
-      };
-      readWorkspaceRef.current = readWorkspace;
-      const watch = watchWorkspace(
-        nextIdentity,
-        nextRelayUrl,
-        workspaceId,
-        () => void readWorkspace?.(),
-        (reason) => setWorkspaceError(appErrorCopy(reason)),
-      );
-      stopWatch = watch.release;
-      await watch.ready;
-      if (cancelled) return;
-      if ((!profileAgentId)) await readWorkspace();
-    })().catch((reason) => {
-      if (!cancelled) setWorkspaceError(appErrorCopy(reason));
-    });
-    return () => {
-      cancelled = true;
-      agentRequestGenerationRef.current += 1;
-      stopWatch?.();
-      readWorkspaceRef.current = null;
-      setRosterQuery('');
-    };
-  }, [focused, retryGeneration, workspaceId, profileAgentId]);
-
-  const closeAgentSettings = () => {
-    agentRequestGenerationRef.current += 1;
-    setSelectedAgent(null);
-    setEditingAgentSoul(false);
-    setOpenModelAxis(null);
-    setModelAppliesNote(null);
-    setYoloError(null);
-    setAccessError(null);
-  };
-
-  const openAgent = async (agentPubkey: string) => {
-    if (!identity || !relayUrl || !workspaceId) return;
-    const generation = ++agentRequestGenerationRef.current;
-    setLocalAgentId(agentPubkey);
-    setOpenModelAxis(null);
-    setModelAppliesNote(null);
-    setEditingAgentSoul(false);
-    setError(null);
-    const address = surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/agents/:agentId', {
-      workspaceId,
-      agentPubkey,
-    });
-    // A cached profile shows at once; the server read below still replaces it.
-    const cached = await mobileSurfaceCache.read(address, isAgentDetailView).catch(() => undefined);
-    try {
-      if (generation !== agentRequestGenerationRef.current) return;
-      const value = await new RoomViewClient({ baseUrl: relayUrl, identity }).agent(
-        workspaceId,
-        agentPubkey,
-      );
-      if (generation !== agentRequestGenerationRef.current) return;
-      await mobileSurfaceCache.write(address, value, isAgentDetailView);
-    } catch (reason) {
-      // Keep a readable cached profile rather than replacing it with an error.
-      if (generation === agentRequestGenerationRef.current && (!cached || profileRetryGeneration > 0))
-        setError(appErrorCopy(reason));
-    }
-  };
-
-  useEffect(() => {
-    if ((!focused) || !profileAgentId || !identity || !relayUrl || !workspaceId) return;
-    void openAgent(profileAgentId);
-    return () => {
-      agentRequestGenerationRef.current += 1;
-    };
-  }, [focused, profileAgentId, identity, relayUrl, workspaceId, profileRetryGeneration]);
-
-  const invitePerson = async () => {
-    if (!surface?.viewer.permissions.manage || !workspaceId || !relayUrl) return;
-    setWorking('invite-person');
-    setError(null);
-    try {
-      const publicInviteOrigin = resolveCommunityInvitePublicOrigin(getBuzzRuntimeConfig());
-      const url = await createCommunityInviteUrl(
-        await writeClient(),
-        workspaceId,
-        publicInviteOrigin,
-      );
-      await presentPersonInvite(url);
-    } catch (reason) {
-      setError(appErrorCopy(reason, `Could not create person invite.`));
-    } finally {
-      setWorking(null);
-    }
-  };
-
-  /**
-   * Connecting a NEW agent: the app-minted code is the complete authorization
-   * for the public connect wizard, shown inside the agent-only sheet.
-   */
-  const connectAgent = async () => {
-    if (!surface || !workspaceId) return;
-    setPickerOpen(true);
-    setSelectedAgent(null);
-    setPairCommand(null);
-    setError(null);
-    setWorking('pair-agent');
-    try {
-      const pairing = await (await writeClient()).createAgentPairingCode(workspaceId);
-      setPairCommand(agentPairingCommand(pairing.code));
-    } catch (reason) {
-      setError(appErrorCopy(reason, `Could not create agent invite.`));
-    } finally {
-      setWorking(null);
-    }
-  };
-
-  const closePicker = () => {
-    setPickerOpen(false);
-    setPairCommand(null);
-  };
-
-  useEffect(() => {
-    if (!focused || !surface || requestedActionHandledRef.current) return;
-    if (requestedAction === 'invite') {
-      if (!surface.viewer.permissions.manage) return;
-      requestedActionHandledRef.current = true;
-      void invitePerson();
-    } else if (requestedAction === 'add-agent') {
-      requestedActionHandledRef.current = true;
-      void connectAgent();
-    }
-    // The route intent is consume-once. The handlers intentionally read the
-    // current authenticated surface at that moment rather than reopening on
-    // every indexed refresh.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focused, requestedAction, surface]);
-
-  useEffect(() => {
-    if ((!focused) || !identity || !relayUrl || !workspaceId) return;
-    const q = memberQuery.trim();
-    if (!q) {
-      setRosterQuery('');
-      return;
-    }
-    let cancelled = false;
-    setRosterLoading(true);
-    void readMemberPage({ q })
-      .then((page) => {
-        if (!cancelled) applyMemberPage(page, undefined, false);
-      })
-      .catch((reason) => {
-        if (!cancelled) setError(appErrorCopy(reason, `Could not search members.`));
-      })
-      .finally(() => {
-        if (!cancelled) setRosterLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-    // Search is a dedicated server read; identity/relay are the auth it needs.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focused, memberQuery, identity, relayUrl, workspaceId]);
-
-  const loadMoreMembers = async (kind: 'human' | 'agent') => {
-    if (!surface || rosterLoading) return;
-
-    const q = memberQuery.trim();
-    const page = workspacePage(recordScope, q);
-    setRosterLoading(true);
-    setError(null);
-    try {
-      const next = await readMemberPage({
-        kind,
-        offset: kind === 'human' ? (page.people?.ids.length ?? 0) : (page.agents?.ids.length ?? 0),
-        ...(q ? { q } : {}),
-      });
-      applyMemberPage(next, kind, true);
-    } catch (reason) {
-      setError(appErrorCopy(reason, `Could not load more members.`));
-    } finally {
-      setRosterLoading(false);
-    }
-  };
-
-  const messagePerson = async (pubkey: string) => {
-    if (!identity || !workspaceId || pubkey === identity.publicKey) return;
-    setWorking('message-person');
-    setError(null);
-    try {
-      const room = await new BuzzRigTransport(identity).resolveDirectMessage(workspaceId, pubkey);
-      navigateToRoom(router, room.channelId);
-    } catch (reason) {
-      setError(appErrorCopy(reason, `Could not open message.`));
-    } finally {
-      setWorking(null);
-    }
-  };
-
-  // The soul reaches the agent through the server: unsaved edits are saved
-  // first and the agent draws from its saved soul. The visible request stays
-  // a short "/draw-avatar" and never carries the soul text.
-  const requestSoulAvatar = async (soul: string) => {
-    if (!identity || !workspaceId || !selectedAgent || !ownsSelectedAgent)
-      throw new Error('Agent settings are unavailable.');
-    if (!soul.trim()) throw new Error('The soul is empty; set a soul before generating an avatar.');
-    if (editingAgentSoul && agentEditDirty && !(await saveAgentSoul()))
-      throw new Error('Could not save the soul for avatar generation.');
-    const client = new BuzzRigTransport(identity);
-    const agent = selectedAgent.agent.identity;
-    const room = await client.resolveDirectMessage(workspaceId, agent.pubkey);
-    const message = await client.composeMessage(
-      {
-        sessionId: room.channelId,
-        text: '/draw-avatar',
-      },
-      { mentionAgent: agent.pubkey },
-    );
-    await client.publishPreparedMessage(message);
-  };
-
-  const beginAgentSoulEdit = () => {
-    if (!selectedAgent || !ownsSelectedAgent) return;
-    allowProfileNavigationRef.current = false;
-    nameDraft.initialize(selectedAgent.soul?.name ?? selectedAgent.agent.identity.name);
-    soulDraft.initialize(agentSoulCopy(selectedAgent));
-    setEditingAgentSoul(true);
-  };
-
-  const agentEditDirty = Boolean(
-    editingAgentSoul &&
-    selectedAgent &&
-    (agentNameDraft !== (selectedAgent.soul?.name ?? selectedAgent.agent.identity.name) ||
-      agentSoulDraft !== agentSoulCopy(selectedAgent)),
-  );
-  const confirmDiscardAgentEdit = async (): Promise<boolean> => {
-    if (!agentEditDirty) return true;
-    const clearName = nameDraft.capture();
-    const clearSoul = soulDraft.capture();
-    const confirmed = await Modal.confirm(
-      'Discard agent changes?',
-      'Your name and soul edits have not been saved.',
-      {
-        cancelText: 'Keep editing',
-        confirmText: 'Discard',
-        destructive: true,
-      },
-    );
-    if (confirmed) {
-      clearName();
-      clearSoul();
-    }
-    return confirmed;
-  };
-  const closeAgentProfile = async () => {
-    if (!(await confirmDiscardAgentEdit())) return;
-    allowProfileNavigationRef.current = true;
-    setEditingAgentSoul(false);
-    (onClose ?? (() => router.back()))();
-  };
-  const messageSelectedAgent = async () => {
-    if (!(await confirmDiscardAgentEdit())) return;
-    allowProfileNavigationRef.current = true;
-    setEditingAgentSoul(false);
-    await messagePerson(profileAgentId!);
-    allowProfileNavigationRef.current = false;
-  };
-
-  useEffect(() => {
-    if (!profileAgentId || !agentEditDirty) return;
-    return navigation.addListener('beforeRemove', (event) => {
-      if (allowProfileNavigationRef.current) return;
-      event.preventDefault();
-      void confirmDiscardAgentEdit().then((confirmed) => {
-        if (!confirmed) return;
-        allowProfileNavigationRef.current = true;
-        setEditingAgentSoul(false);
-        navigation.dispatch(event.data.action);
-      });
-    });
-  }, [navigation, profileAgentId, agentEditDirty]);
-
-  useEffect(() => {
-    if (!profileAgentId || Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const escape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      void closeAgentProfile();
-    };
-    window.addEventListener('keydown', escape, true);
-    return () => window.removeEventListener('keydown', escape, true);
-  }, [profileAgentId, agentEditDirty, onClose]);
-
-  const saveAgentSoul = async (): Promise<boolean> => {
-    if (!selectedAgent || !ownsSelectedAgent || !workspaceId) return false;
-    const name = agentNameDraft.trim().slice(0, AGENT_NAME_MAX_LENGTH);
-    const soul = agentSoulDraft.trim();
-    if (!isReasonableAgentName(name)) {
-      setError('Agent name must be a short spoken name.');
-      return false;
-    }
-    if (!soul) {
-      setError('Agent soul instructions cannot be empty.');
-      return false;
-    }
-    const clearName = nameDraft.capture(false);
-    const clearSoul = soulDraft.capture(false);
-    setWorking('save-agent-soul');
-    pendingConfigWriteRef.current = true;
-    setError(null);
-    try {
-      const pubkey = selectedAgent.agent.identity.pubkey;
-      const client = await writeClient();
-      const receipt = await client.setAgentSoul(workspaceId, pubkey, {
-        name,
-        soul,
-        avatarSeed: selectedAgent.soul?.avatarSeed ?? pubkey,
-        ...(selectedAgent.soul?.avatar ? { avatar: selectedAgent.soul.avatar } : {}),
-      });
-      applyAgentReceipt(receipt as unknown as AgentDetailView);
-      clearName();
-      clearSoul();
-      setEditingAgentSoul(false);
-      return true;
-    } catch (reason) {
-      setError(appErrorCopy(reason, `Could not save agent settings.`));
-      return false;
-    } finally {
-      finishConfigWrite(selectedAgent.agent.identity.pubkey);
-      setWorking(null);
-    }
-  };
-
-  const showModelAppliesNote = (kind: ModelAxisKind) => {
-    if (modelAppliesTimerRef.current) clearTimeout(modelAppliesTimerRef.current);
-    setModelAppliesNote(kind);
-    modelAppliesTimerRef.current = setTimeout(() => {
-      modelAppliesTimerRef.current = null;
-      setModelAppliesNote(null);
-    }, MODEL_APPLIES_NOTE_MS);
-  };
-  useEffect(
-    () => () => {
-      if (modelAppliesTimerRef.current) clearTimeout(modelAppliesTimerRef.current);
-    },
-    [],
-  );
-
-  const setModelOption = async (kind: ModelAxisKind, choiceId: string) => {
-    if (!selectedAgent || !ownsSelectedAgent) return;
-    const axis = kind === 'model' ? modelAxes.model : modelAxes.effort;
-    const input: AgentModelConfigInput =
-      kind === 'model' ? modelSelectionInput(selectedAgent, axis, choiceId) : { effort: choiceId };
-    setWorking('model-config');
-    pendingConfigWriteRef.current = true;
-    setError(null);
-    try {
-      const pubkey = selectedAgent.agent.identity.pubkey;
-      const client = await writeClient();
-      const receipt = await client.setAgentModelConfig(selectedAgent.workspaceId, pubkey, input);
-      applyAgentReceipt(receipt as unknown as AgentDetailView);
-      setOpenModelAxis(null);
-      showModelAppliesNote(kind);
-    } catch (reason) {
-      setError(appErrorCopy(reason, `Could not set ${kind}.`));
-    } finally {
-      finishConfigWrite(selectedAgent.agent.identity.pubkey);
-      setWorking(null);
-    }
-  };
-
-  const setFastMode = async (enabled: boolean) => {
-    if (!selectedAgent || !ownsSelectedAgent || !modelAxes.fast) return;
-    setWorking('model-config');
-    pendingConfigWriteRef.current = true;
-    setError(null);
-    try {
-      const pubkey = selectedAgent.agent.identity.pubkey;
-      const client = await writeClient();
-      const receipt = await client.setAgentModelConfig(selectedAgent.workspaceId, pubkey, {
-        fastMode: enabled,
-      });
-      applyAgentReceipt(receipt as unknown as AgentDetailView);
-    } catch (reason) {
-      setError(appErrorCopy(reason, `Could not set Fast mode.`));
-    } finally {
-      finishConfigWrite(selectedAgent.agent.identity.pubkey);
-      setWorking(null);
-    }
-  };
-
-  const toggleModelAxis = async (
-    kind: ModelAxisKind,
-    open: boolean,
-    axis: AgentModelConfigOption | undefined,
-  ) => {
-    setModelAxisError(null);
-    if (open) {
-      setOpenModelAxis(null);
-      return;
-    }
-    if (axis) {
-      setOpenModelAxis(kind);
-      return;
-    }
-    if (kind !== 'effort' || !selectedAgent || !ownsSelectedAgent) return;
-
-    setWorking('model-catalog');
-    try {
-      const pubkey = selectedAgent.agent.identity.pubkey;
-      const client = await writeClient();
-      waitingForEffortCatalogRef.current = true;
-      await client.refreshAgentModelCatalog(selectedAgent.workspaceId, pubkey);
-      // The helper's catalog write has its own committed agent change event.
-    } catch {
-      waitingForEffortCatalogRef.current = false;
-      setModelAxisError('effort');
-    } finally {
-      if (!waitingForEffortCatalogRef.current) setWorking(null);
-    }
-  };
-
-  const toggleYolo = async (enabled: boolean) => {
-    const yolo = selectedAgent?.yolo;
-    if (!selectedAgent || !yolo?.canChange) return;
-    const previous = selectedAgent;
-    const pubkey = previous.agent.identity.pubkey;
-    // Optimistic: the switch settles now; the indexed read confirms or the
-    // catch below rolls back with the server's own message inline.
-    setSelectedAgent({ ...previous, yolo: { ...yolo, enabled } });
-    setWorking('agent-yolo');
-    pendingConfigWriteRef.current = true;
-    setYoloError(null);
-    try {
-      const receipt = await monolithPhoneOperation('updateAgentYolo', {
-        workspaceId: previous.workspaceId,
-        agentId: pubkey,
-        enabled,
-      });
-      applyAgentReceipt(receipt);
-    } catch (reason) {
-      setSelectedAgent(previous);
-      setYoloError(appErrorCopy(reason));
-    } finally {
-      finishConfigWrite(pubkey);
-      setWorking(null);
-    }
-  };
-
-  const toggleAnswersEveryone = async (everyone: boolean) => {
-    const access = selectedAgent?.access;
-    if (!selectedAgent || !access?.canChange) return;
-    const previous = selectedAgent;
-    const pubkey = previous.agent.identity.pubkey;
-    const policy = everyone ? 'everyone' : 'creator';
-    // Optimistic like the yolo switch: the row settles now and the indexed read
-    // confirms, or the catch rolls it back with the server's own message inline.
-    setSelectedAgent({ ...previous, access: { ...access, policy } });
-    setWorking('agent-access');
-    pendingConfigWriteRef.current = true;
-    setAccessError(null);
-    try {
-      const receipt = await monolithPhoneOperation('updateAgentAccessPolicy', {
-        workspaceId: previous.workspaceId,
-        agentId: pubkey,
-        policy,
-      });
-      applyAgentReceipt(receipt);
-    } catch (reason) {
-      setSelectedAgent(previous);
-      setAccessError(appErrorCopy(reason));
-    } finally {
-      finishConfigWrite(pubkey);
-      setWorking(null);
-    }
-  };
-
-  // An agent is removed, never banned: a ban only blocks this identity, and
-  // its owner can pair the same helper back as a new agent at any time.
-  const removeSelectedAgent = async () => {
-    if (!selectedAgent || !canRemoveSelectedAgent || !workspaceId) return;
-    const pubkey = selectedAgent.agent.identity.pubkey;
-    const name = selectedAgent.agent.identity.name;
-    await Modal.confirm(
-      `Remove ${name}?`,
-      'This removes the agent from every Room and the Workspace. The paired host then confirms that removal, drains active sessions, stops the daemon, and deletes its runtime configuration. Re-pairing is required to restore it.',
-      {
-        cancelText: 'Cancel', confirmText: 'Remove agent', destructive: true, pendingText: 'Removing…',
-        onConfirm: async () => {
-          setWorking('remove-agent');
-          setError(null);
-          try {
-            const client = await writeClient();
-            await client.removeAgent(workspaceId, pubkey);
-            if (recordScope) recordWorkspaceRemoval(recordScope, pubkey);
-            closeAgentSettings();
-            if (profileAgentId) (onClose ?? (() => router.back()))();
-            setOpenModelAxis(null);
-          } catch (reason) {
-            throw new Error(appErrorCopy(reason, 'Could not remove agent.'));
-          } finally {
-            setWorking(null);
-          }
-        },
-      },
-    );
-  };
-
-  const modelAxes = useMemo(() => {
-    const advertisedModel = selectedAgent?.catalog.find(
-      (axis) => axis.category === 'model',
-    )?.currentValue;
-    const selectedModel = selectedAgent?.selected?.model ?? selectedAgent?.runtimeSelection?.model;
-    const awaitingSelectedModelCatalog =
-      Boolean(advertisedModel) && Boolean(selectedModel) && advertisedModel !== selectedModel;
-    const live =
-      selectedAgent?.catalog.filter(
-        (axis) =>
-          isAllowedAgentModelConfigCategory(axis.category, axis.id) && axis.options.length > 0,
-      ) ?? [];
-    return {
-      model: live.find((axis) => axis.category === 'model'),
-      // Effort choices may be model-specific. After a model switch, offer
-      // nothing until the agent republishes a catalog whose current model
-      // matches the persisted human selection.
-      effort: awaitingSelectedModelCatalog ? undefined : effortConfigAxis(live),
-      fast: awaitingSelectedModelCatalog ? undefined : fastModeConfigAxis(live),
-    };
-  }, [selectedAgent]);
-
-  const displayedError = error ?? workspaceError;
-  const busy = working !== null;
-  const viewerPubkey = surface?.viewer.identity.pubkey;
-  const openRosterPerson = React.useCallback(
-    (pubkey: string) => {
-      router.push({
-        pathname: pubkey === viewerPubkey ? '/beeline/settings' : '/beeline/human-profile',
-        params: { communityId: workspaceId, memberId: pubkey },
-      } as Href);
-    },
-    [viewerPubkey, workspaceId],
-  );
-  const openRosterAgent = React.useCallback(
-    (pubkey: string) => {
-      router.push({
-        pathname: '/beeline/agent-profile',
-        params: { communityId: workspaceId, agentId: pubkey },
-      } as Href);
-    },
-    [workspaceId],
-  );
   if (profileAgentId) {
     return (
       <AgentProfileView

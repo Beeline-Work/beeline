@@ -1,24 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
-import {
-  BackgroundJobRunner,
-  createPushTestSender,
-  PushDeliveryLoop,
-} from './background.js';
-import { TokenAuth } from './auth.js';
-import { DaemonService } from './daemon-service.js';
-import { LiveHub } from './live.js';
-import { seedCornerOpening, MemoryObjectStorage, migratedDatabase, insertCornerFacts } from './test-support.js';
-import {
-  ARTIFACT_TTL_HOURS,
-  MEDIA_TTL_HOURS,
-  mediaTtlHours,
-} from './media-ttl.js';
-import { ObjectService } from './object-service.js';
-import { PhoneService } from './phone-service.js';
-import { APNS_MAX_PAYLOAD_BYTES, ApnsPushError, apnsReadClearRequest } from './apns-push.js';
-import { ensureSystemDirectMessageRoom, ensureSystemIdentity } from './system-line.js';
-import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
-import { cornerTitle, type ReadClear as ReadClearCursor } from '@beeline/api-contract/phone';
+import { describe, expect, it, vi, BackgroundJobRunner, PUSH_DELIVERY_CONCURRENCY, PushDeliveryLoop, READ_CLEAR_INTERVAL_SECONDS, READ_CLEAR_MAX_CHANNELS, migratedDatabase, PhoneService, APNS_MAX_PAYLOAD_BYTES, apnsReadClearRequest } from './background.test-support.js';
 
 describe('background advisory-lock ownership', () => {
   it('records a failed job and still runs the next independent job', async () => {
@@ -53,6 +33,9 @@ describe('background advisory-lock ownership', () => {
     });
   });
 
+
+  // Actual lock transfer, failure recovery and initial-cycle admission are
+  // exercised in background-leader.test.ts and its real PostgreSQL proof.
   it('bounds push history before resolving tags and still delivers a fresh mention', async () => {
     const db = await migratedDatabase();
     try {
@@ -136,7 +119,8 @@ describe('background advisory-lock ownership', () => {
     }
   });
 
-  it('sends every claimed candidate from one event without a retry batch', async () => {
+
+  it('sends claimed push candidates with bounded concurrency', async () => {
     const db = await migratedDatabase();
     try {
       const human = 'a'.repeat(64);
@@ -183,11 +167,12 @@ describe('background advisory-lock ownership', () => {
       expect(await new PushDeliveryLoop(db, { send }).runOnce()).toBe(12);
       expect(send).toHaveBeenCalledTimes(12);
       expect(peak).toBeGreaterThan(1);
-      expect(peak).toBe(12);
+      expect(peak).toBeLessThanOrEqual(PUSH_DELIVERY_CONCURRENCY);
     } finally {
       await db.close();
     }
   });
+
 
   it('dispatches a direct message to a Chrome subscription without Firebase configured', async () => {
     const db = await migratedDatabase();
@@ -233,6 +218,7 @@ describe('background advisory-lock ownership', () => {
       await db.close();
     }
   });
+
 
   it('persists an FCM failure without claiming a successful delivery', async () => {
     const db = await migratedDatabase();
@@ -280,6 +266,7 @@ describe('background advisory-lock ownership', () => {
       await db.close();
     }
   });
+
   it('removes an FCM-unregistered device after recording its failed delivery', async () => {
     const db = await migratedDatabase();
     try {
@@ -325,6 +312,7 @@ describe('background advisory-lock ownership', () => {
       await db.close();
     }
   });
+
   it('leaves a registered iOS device alone instead of feeding it to Firebase', async () => {
     const db = await migratedDatabase();
     try {
@@ -372,6 +360,7 @@ describe('background advisory-lock ownership', () => {
       await db.close();
     }
   });
+
   it('routes Android devices to Firebase and iOS devices to APNs', async () => {
     const db = await migratedDatabase();
     try {
@@ -417,6 +406,7 @@ describe('background advisory-lock ownership', () => {
       await db.close();
     }
   });
+
   // Audit 9.3: a Room read on another device must clear the phone's shade
   // and badge, not only a Room the phone opens itself.
   it('sends one batched silent read-clear push per iOS device when Rooms are read elsewhere', async () => {
@@ -480,9 +470,14 @@ describe('background advisory-lock ownership', () => {
         expect.objectContaining({ channelId: room }),
       ]);
 
-      // Committed reads clear immediately; no interval creates another send.
+      // Reads inside the interval wait and then go out together, once.
       await read('2'.repeat(64));
       await read('3'.repeat(64));
+      await loop.runOnce();
+      expect(clearRead).toHaveBeenCalledTimes(1);
+      await db.query(
+        `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
+      );
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(2);
       expect(clearRead.mock.calls[1]![0]).toBe(ios);
@@ -490,6 +485,9 @@ describe('background advisory-lock ownership', () => {
         [room, corner].sort(),
       );
 
+      await db.query(
+        `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
+      );
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(2);
       expect(firebaseSend).not.toHaveBeenCalled();
@@ -497,18 +495,19 @@ describe('background advisory-lock ownership', () => {
       await db.close();
     }
   });
-  // G9-R1: a push names at most 50 Rooms. Overflow,
+
+  // G9-R1: a push names at most READ_CLEAR_MAX_CHANNELS Rooms. Overflow,
   // including marks tied on their message's created_at, must go out in later pushes.
   // G9-R5: each push must also fit APNs's 4,096-byte payload limit; 50 Rooms
   // with 64-character message ids made 6,103 bytes.
-  it('clears every read Room from one event in payloads that fit APNs', async () => {
+  it('clears every read Room across throttled pushes that each fit the APNs limit', async () => {
     const db = await migratedDatabase();
     try {
       const human = 'a'.repeat(64),
         agent = 'b'.repeat(64),
         workspace = '11111111-1111-4111-8111-111111111111',
         ios = 'c0ffee'.repeat(10) + 'abcd',
-        count = 50 + 1;
+        count = READ_CLEAR_MAX_CHANNELS + 1;
       await db.query(
         `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
         [human, agent],
@@ -547,13 +546,23 @@ describe('background advisory-lock ownership', () => {
         undefined,
         { send: vi.fn().mockResolvedValue(undefined), clearRead },
       );
-      await loop.runOnce();
-      const sends = clearRead.mock.calls.length;
-      await loop.runOnce();
-      expect(clearRead).toHaveBeenCalledTimes(sends);
+      const ageThrottle = () =>
+        db.query(
+          `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
+        );
+
+      // Push until the backlog is empty; the throttle holds each next batch.
+      for (let pass = 0; pass < count; pass += 1) {
+        const before = clearRead.mock.calls.length;
+        await loop.runOnce();
+        if (clearRead.mock.calls.length === before) break;
+        await loop.runOnce();
+        expect(clearRead).toHaveBeenCalledTimes(before + 1);
+        await ageThrottle();
+      }
       expect(clearRead.mock.calls.length).toBeGreaterThan(1);
       for (const [token, reads] of clearRead.mock.calls) {
-        expect(reads.length).toBeLessThanOrEqual(50);
+        expect(reads.length).toBeLessThanOrEqual(READ_CLEAR_MAX_CHANNELS);
         const { payload } = apnsReadClearRequest(token, reads, 'app.bundle', 'jwt');
         expect(Buffer.byteLength(JSON.stringify(payload))).toBeLessThanOrEqual(
           APNS_MAX_PAYLOAD_BYTES,
@@ -568,6 +577,7 @@ describe('background advisory-lock ownership', () => {
       await db.close();
     }
   });
+
   // G9-R2: marking a Room unread moves its mark backwards. That is not a read,
   // so it must not send a silent push that dismisses the Room's notifications.
   it('sends no read-clear push when a Room is marked unread', async () => {
@@ -616,6 +626,11 @@ describe('background advisory-lock ownership', () => {
         undefined,
         { send: vi.fn().mockResolvedValue(undefined), clearRead },
       );
+      const ageThrottle = () =>
+        db.query(
+          `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
+        );
+
       await phone.markRead(room, first, human);
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(1);
@@ -626,11 +641,13 @@ describe('background advisory-lock ownership', () => {
       ]);
 
       // The mark moves back past every message; second stays in the shade.
+      await ageThrottle();
       await phone.markUnread(room, first, human);
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(1);
 
       // Reading it is a read, and clears it.
+      await ageThrottle();
       await phone.markRead(room, second, human);
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(2);
@@ -641,6 +658,7 @@ describe('background advisory-lock ownership', () => {
       await db.close();
     }
   });
+
   // G9-R3: two messages presented at the same second must not both clear when
   // only the first is read. The push names read messages in server order.
   it('names only the pushed messages at or before the read cursor, in server order', async () => {
@@ -701,1406 +719,15 @@ describe('background advisory-lock ownership', () => {
         expect.objectContaining({ channelId: room, messageId: first, readMessageIds: [zero] }),
       ]);
 
+      await db.query(
+        `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
+      );
       await read(second);
       await loop.runOnce();
       expect(clearRead).toHaveBeenLastCalledWith(ios, [
         // first and zero went in the first push, so neither is named again.
         expect.objectContaining({ channelId: room, messageId: second, readMessageIds: [] }),
       ]);
-    } finally {
-      await db.close();
-    }
-  });
-  // G9-R6: a Room with more read notifications than one push names must
-  // still clear them all. Ids left out by the per-Room cap or by the APNs
-  // size limit go in a later push; a newer unread notification stays.
-  it('clears every read notification from one event without a per-Room id cap', async () => {
-    const db = await migratedDatabase();
-    try {
-      const human = 'a'.repeat(64),
-        agent = 'b'.repeat(64),
-        workspace = '11111111-1111-4111-8111-111111111111',
-        room = '22222222-2222-4222-8222-222222222222',
-        ios = 'c0ffee'.repeat(10) + 'abcd';
-      const readIds = Array.from({ length: 20 + 2 }, (_, index) =>
-        index.toString(16).padStart(64, '0'),
-      );
-      const unread = 'f'.repeat(64);
-      await db.query(
-        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
-        [human, agent],
-      );
-      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
-      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
-        room,
-        workspace,
-      ]);
-      await db.query(
-        `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at)
-         VALUES($1,$2,'ios','physical',now()-interval '2 hours')`,
-        [ios, human],
-      );
-      for (const [index, id] of [...readIds, unread].entries()) {
-        await db.query(
-          `INSERT INTO messages(id,room_id,author_id,text,created_at)
-           VALUES($1,$2,$3,'hi',now()-interval '1 hour'+$4*interval '1 second')`,
-          [id, room, agent, index],
-        );
-        await db.query(
-          `INSERT INTO push_delivery_claims(message_id,device_token,status) VALUES($1,$2,'delivered')`,
-          [id, ios],
-        );
-      }
-      await db.query(
-        `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
-         SELECT room_id,$2,created_at,id FROM messages WHERE id=$1`,
-        [readIds.at(-1), human],
-      );
-      const clearRead = vi.fn().mockResolvedValue(undefined);
-      const loop = new PushDeliveryLoop(
-        db,
-        undefined,
-        { send: vi.fn().mockResolvedValue(undefined), clearRead },
-      );
-      for (let pass = 0; pass < 5; pass += 1) {
-        await loop.runOnce();
-      }
-      const dismissed = new Set(
-        clearRead.mock.calls.flatMap(([, reads]: [string, ReadClearCursor[]]) =>
-          reads.flatMap((read) => [read.messageId, ...read.readMessageIds]),
-        ),
-      );
-      expect(clearRead).toHaveBeenCalledOnce();
-      expect([...dismissed].sort()).toEqual([...readIds].sort());
-      expect(dismissed.has(unread)).toBe(false);
-    } finally {
-      await db.close();
-    }
-  });
-  // G9-R7: read notifications delivered hours before the read must still
-  // clear. The one-hour claim cleanup keeps an iOS or Android device's
-  // delivered claims until a read-clear push names them.
-  it('clears read notifications delivered more than an hour before the read', async () => {
-    const db = await migratedDatabase();
-    try {
-      const human = 'a'.repeat(64),
-        agent = 'b'.repeat(64),
-        workspace = '11111111-1111-4111-8111-111111111111',
-        room = '22222222-2222-4222-8222-222222222222',
-        ios = 'c0ffee'.repeat(10) + 'abcd',
-        android = 'android-token';
-      const readIds = Array.from({ length: 20 + 2 }, (_, index) =>
-        index.toString(16).padStart(64, '0'),
-      );
-      const unread = 'f'.repeat(64);
-      await db.query(
-        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
-        [human, agent],
-      );
-      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
-      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
-        room,
-        workspace,
-      ]);
-      await db.query(
-        `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at)
-         VALUES($1,$3,'ios','physical',now()-interval '3 hours'),
-               ($2,$3,'android','physical',now()-interval '3 hours')`,
-        [ios, android, human],
-      );
-      for (const [index, id] of [...readIds, unread].entries()) {
-        await db.query(
-          `INSERT INTO messages(id,room_id,author_id,text,created_at)
-           VALUES($1,$2,$3,'hi',now()-interval '2 hours'+$4*interval '1 second')`,
-          [id, room, agent, index],
-        );
-        await db.query(
-          `INSERT INTO push_delivery_claims(message_id,device_token,status,claimed_at,completed_at)
-           VALUES($1,$2,'delivered',now()-interval '2 hours',now()-interval '2 hours'),
-                 ($1,$3,'delivered',now()-interval '2 hours',now()-interval '2 hours')`,
-          [id, ios, android],
-        );
-      }
-      await db.query(
-        `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
-         SELECT room_id,$2,created_at,id FROM messages WHERE id=$1`,
-        [readIds.at(-1), human],
-      );
-      const clearRead = vi.fn().mockResolvedValue(undefined);
-      const loop = new PushDeliveryLoop(
-        db,
-        undefined,
-        { send: vi.fn().mockResolvedValue(undefined), clearRead },
-      );
-      for (let pass = 0; pass < 5; pass += 1) {
-        await loop.runOnce();
-      }
-      const dismissed = new Set(
-        clearRead.mock.calls.flatMap(([, reads]: [string, ReadClearCursor[]]) =>
-          reads.flatMap((read) => [read.messageId, ...read.readMessageIds]),
-        ),
-      );
-      expect([...dismissed].sort()).toEqual([...readIds].sort());
-      expect(dismissed.has(unread)).toBe(false);
-      expect(
-        (
-          await db.query<{ count: number }>(
-            `SELECT count(*)::int count FROM push_delivery_claims WHERE device_token=$1`,
-            [android],
-          )
-        ).rows[0]?.count,
-      ).toBe(readIds.length + 1);
-    } finally {
-      await db.close();
-    }
-  });
-  // G9-R8: a read days old whose cursor message was delivered but never
-  // named still clears it; a newer unread notification stays.
-  it('clears an unnamed cursor notification of a read days old', async () => {
-    const db = await migratedDatabase();
-    try {
-      const human = 'a'.repeat(64),
-        agent = 'b'.repeat(64),
-        workspace = '11111111-1111-4111-8111-111111111111',
-        room = '22222222-2222-4222-8222-222222222222',
-        ios = 'c0ffee'.repeat(10) + 'abcd',
-        cursor = '1'.repeat(64),
-        unread = 'f'.repeat(64);
-      await db.query(
-        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
-        [human, agent],
-      );
-      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
-      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
-        room,
-        workspace,
-      ]);
-      await db.query(
-        `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at)
-         VALUES($1,$2,'ios','physical',now()-interval '3 days')`,
-        [ios, human],
-      );
-      for (const [index, id] of [cursor, unread].entries()) {
-        await db.query(
-          `INSERT INTO messages(id,room_id,author_id,text,created_at)
-           VALUES($1,$2,$3,'hi',now()-interval '2 days 1 hour'+$4*interval '1 second')`,
-          [id, room, agent, index],
-        );
-        await db.query(
-          `INSERT INTO push_delivery_claims(message_id,device_token,status,claimed_at,completed_at)
-           VALUES($1,$2,'delivered',now()-interval '2 days 1 hour',now()-interval '2 days 1 hour')`,
-          [id, ios],
-        );
-      }
-      await db.query(
-        `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id,updated_at)
-         SELECT room_id,$2,created_at,id,now()-interval '2 days' FROM messages WHERE id=$1`,
-        [cursor, human],
-      );
-      const clearRead = vi.fn().mockResolvedValue(undefined);
-      const loop = new PushDeliveryLoop(
-        db,
-        undefined,
-        { send: vi.fn().mockResolvedValue(undefined), clearRead },
-      );
-      for (let pass = 0; pass < 3; pass += 1) {
-        await loop.runOnce();
-      }
-      const dismissed = clearRead.mock.calls.flatMap(([, reads]: [string, ReadClearCursor[]]) =>
-        reads.flatMap((read) => [read.messageId, ...read.readMessageIds]),
-      );
-      expect(dismissed).toEqual([cursor]);
-    } finally {
-      await db.close();
-    }
-  });
-  // Audit 9.3: the viewer's own message from another device advances their
-  // read mark (advanceAuthorReadMark), so it clears the notifications before
-  // it like any other read.
-  it('clears read notifications when the viewer replies from another device', async () => {
-    const db = await migratedDatabase();
-    try {
-      const human = 'a'.repeat(64),
-        agent = 'b'.repeat(64),
-        workspace = '11111111-1111-4111-8111-111111111111',
-        room = '22222222-2222-4222-8222-222222222222',
-        first = '1'.repeat(64),
-        second = '2'.repeat(64),
-        reply = '3'.repeat(64),
-        ios = 'c0ffee'.repeat(10) + 'abcd';
-      await db.query(
-        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
-        [human, agent],
-      );
-      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
-      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
-        room,
-        workspace,
-      ]);
-      await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-         ($1,NULL,$3,'owner'),($1,$2,$3,'owner'),($1,NULL,$4,'member'),($1,$2,$4,'member')`,
-        [workspace, room, human, agent],
-      );
-      await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES
-         ($1,$3,$4,'one',now()-interval '2 minutes'),($2,$3,$4,'two',now()-interval '1 minute')`,
-        [first, second, room, agent],
-      );
-      await db.query(
-        `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at)
-         VALUES($1,$2,'ios','physical',now()-interval '1 hour')`,
-        [ios, human],
-      );
-      await db.query(
-        `INSERT INTO push_delivery_claims(message_id,device_token,status) VALUES
-         ($1,$3,'delivered'),($2,$3,'delivered')`,
-        [first, second, ios],
-      );
-      const clearRead = vi.fn().mockResolvedValue(undefined);
-      const loop = new PushDeliveryLoop(
-        db,
-        undefined,
-        { send: vi.fn().mockResolvedValue(undefined), clearRead },
-      );
-      await loop.runOnce();
-      expect(clearRead).not.toHaveBeenCalled();
-
-      await new PhoneService(db, 'http://local.test').execute(
-        'sendRoomMessage',
-        { roomId: room, text: 'on it', messageId: reply },
-        human,
-      );
-      await loop.runOnce();
-      expect(clearRead).toHaveBeenCalledOnce();
-      expect(clearRead).toHaveBeenLastCalledWith(ios, [
-        { channelId: room, messageId: reply, readMessageIds: [second, first] },
-      ]);
-    } finally {
-      await db.close();
-    }
-  });
-  // Audit 9.3 Android: the same rule clears an Android phone's shade through FCM.
-  it('clears an Android device through its own sender with the same read rule', async () => {
-    const db = await migratedDatabase();
-    try {
-      const human = 'a'.repeat(64),
-        agent = 'b'.repeat(64),
-        workspace = '11111111-1111-4111-8111-111111111111',
-        room = '22222222-2222-4222-8222-222222222222',
-        other = '33333333-3333-4333-8333-333333333333',
-        first = '1'.repeat(64),
-        second = '2'.repeat(64),
-        later = '3'.repeat(64),
-        elsewhere = '4'.repeat(64),
-        android = 'android-device-token-12345678901234567890';
-      await db.query(
-        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
-        [human, agent],
-      );
-      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
-      await db.query(
-        `INSERT INTO rooms(id,workspace_id,name) VALUES($1,$3,'Room'),($2,$3,'Other')`,
-        [room, other, workspace],
-      );
-      await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES
-         ($1,$5,$7,'one',now()-interval '3 minutes'),($2,$5,$7,'two',now()-interval '2 minutes'),
-         ($3,$5,$7,'three',now()-interval '1 minute'),($4,$6,$7,'there',now()-interval '2 minutes')`,
-        [first, second, later, elsewhere, room, other, agent],
-      );
-      await db.query(
-        `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at)
-         VALUES($1,$2,'android','physical',now()-interval '1 hour')`,
-        [android, human],
-      );
-      await db.query(
-        `INSERT INTO push_delivery_claims(message_id,device_token,status)
-         SELECT id,$1,'delivered' FROM messages`,
-        [android],
-      );
-      const androidClear = vi.fn().mockResolvedValue(undefined);
-      const iosClear = vi.fn().mockResolvedValue(undefined);
-      const loop = new PushDeliveryLoop(
-        db,
-        { send: vi.fn().mockResolvedValue(undefined), clearRead: androidClear },
-        { send: vi.fn().mockResolvedValue(undefined), clearRead: iosClear },
-      );
-      await db.query(
-        `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
-         SELECT room_id,$2,created_at,id FROM messages WHERE id=$1`,
-        [second, human],
-      );
-      await loop.runOnce();
-      expect(iosClear).not.toHaveBeenCalled();
-      expect(androidClear).toHaveBeenCalledOnce();
-      expect(androidClear).toHaveBeenLastCalledWith(android, [
-        { channelId: room, messageId: second, readMessageIds: [first] },
-      ]);
-      const unnamed = await db.query<{ message_id: string }>(
-        `SELECT message_id FROM push_delivery_claims WHERE read_cleared_at IS NULL ORDER BY message_id`,
-      );
-      // The newer message and the unread Room keep their notifications.
-      expect(unnamed.rows.map((row) => row.message_id)).toEqual([later, elsewhere]);
-    } finally {
-      await db.close();
-    }
-  });
-  // A token handed to another person must not clear the last person's
-  // notifications when the new owner reads the same Room.
-  it('names only claims for messages since the device registered', async () => {
-    const db = await migratedDatabase();
-    try {
-      const human = 'a'.repeat(64),
-        agent = 'b'.repeat(64),
-        workspace = '11111111-1111-4111-8111-111111111111',
-        room = '22222222-2222-4222-8222-222222222222',
-        before = '1'.repeat(64),
-        after = '2'.repeat(64),
-        ios = 'c0ffee'.repeat(10) + 'abcd';
-      await db.query(
-        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
-        [human, agent],
-      );
-      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
-      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
-        room,
-        workspace,
-      ]);
-      await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES
-         ($1,$3,$4,'one',now()-interval '2 hours'),($2,$3,$4,'two',now()-interval '1 minute')`,
-        [before, after, room, agent],
-      );
-      await db.query(
-        `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at)
-         VALUES($1,$2,'ios','physical',now()-interval '1 hour')`,
-        [ios, human],
-      );
-      await db.query(
-        `INSERT INTO push_delivery_claims(message_id,device_token,status) VALUES
-         ($1,$3,'delivered'),($2,$3,'delivered')`,
-        [before, after, ios],
-      );
-      await db.query(
-        `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
-         SELECT room_id,$2,created_at,id FROM messages WHERE id=$1`,
-        [after, human],
-      );
-      const clearRead = vi.fn().mockResolvedValue(undefined);
-      await new PushDeliveryLoop(
-        db,
-        undefined,
-        { send: vi.fn().mockResolvedValue(undefined), clearRead },
-      ).runOnce();
-      expect(clearRead).toHaveBeenLastCalledWith(ios, [
-        { channelId: room, messageId: after, readMessageIds: [] },
-      ]);
-    } finally {
-      await db.close();
-    }
-  });
-  it('records an APNs failure once and never retries it after time or another event', async () => {
-    const db = await migratedDatabase();
-    try {
-      const human = 'a'.repeat(64),
-        agent = 'b'.repeat(64);
-      const workspace = '11111111-1111-4111-8111-111111111111';
-      const room = '22222222-2222-4222-8222-222222222222';
-      const message = '1'.repeat(64);
-      const token = 'c0ffee'.repeat(10) + 'abcd';
-      await db.query(
-        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
-        [human, agent],
-      );
-      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
-      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
-        room,
-        workspace,
-      ]);
-      await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
-        [workspace, room, human, agent],
-      );
-      await db.query(
-        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES($1,$2,'ios','physical')`,
-        [token, human],
-      );
-      const send = vi
-        .fn()
-        .mockRejectedValueOnce(new Error('APNs request timed out'))
-        .mockResolvedValue(undefined);
-      const loop = new PushDeliveryLoop(db, { send: vi.fn() }, { send });
-      await loop.runOnce();
-      await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@owner hello')`,
-        [message, room, agent],
-      );
-      expect(await loop.runOnce()).toBe(0);
-      expect((await db.query(`SELECT status,attempts FROM push_delivery_claims WHERE message_id=$1`, [message])).rows)
-        .toEqual([{ status: 'failed', attempts: 1 }]);
-      expect(await loop.runOnce()).toBe(0);
-      await db.query(`UPDATE messages SET text=text||' edited' WHERE id=$1`, [message]);
-      expect(await loop.runOnce()).toBe(0);
-      expect(send).toHaveBeenCalledOnce();
-    } finally { await db.close(); }
-  });
-  it('routes test pushes by device platform and excludes iOS without APNs configuration', async () => {
-    const db = await migratedDatabase();
-    try {
-      const human = 'a'.repeat(64),
-        android = 'android-device-token-12345678901234567890',
-        ios = 'c0ffee'.repeat(10) + 'abcd';
-      await db.query(
-        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner')`,
-        [human],
-      );
-      await db.query(
-        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES
-         ($1,$3,'android','physical'),($2,$3,'ios','physical')`,
-        [android, ios, human],
-      );
-      const firebaseSend = vi.fn().mockResolvedValue(undefined);
-      const apnsSend = vi.fn().mockResolvedValue(undefined);
-
-      await createPushTestSender(db, { send: firebaseSend }, { send: apnsSend })(human);
-      expect(firebaseSend).toHaveBeenCalledWith(android, expect.objectContaining({ type: 'test' }));
-      expect(apnsSend).toHaveBeenCalledWith(ios, expect.objectContaining({ type: 'test' }));
-
-      firebaseSend.mockClear();
-      apnsSend.mockClear();
-      await createPushTestSender(db, { send: firebaseSend })(human);
-      expect(firebaseSend).toHaveBeenCalledOnce();
-      expect(firebaseSend).toHaveBeenCalledWith(android, expect.objectContaining({ type: 'test' }));
-      expect(apnsSend).not.toHaveBeenCalled();
-    } finally {
-      await db.close();
-    }
-  });
-  it('deletes an APNs-unregistered device but retains a transiently failing one', async () => {
-    const db = await migratedDatabase();
-    try {
-      const human = 'a'.repeat(64),
-        agent = 'b'.repeat(64),
-        workspace = '11111111-1111-4111-8111-111111111111',
-        room = '22222222-2222-4222-8222-222222222222',
-        ios = 'c0ffee'.repeat(10) + 'abcd',
-        transientIos = 'decade'.repeat(10) + '1234';
-      await db.query(
-        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
-        [human, agent],
-      );
-      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
-      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
-        room,
-        workspace,
-      ]);
-      await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
-        [workspace, room, human, agent],
-      );
-      await db.query(
-        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES
-         ($1,$3,'ios','physical'),($2,$3,'ios','physical')`,
-        [ios, transientIos, human],
-      );
-      const loop = new PushDeliveryLoop(
-        db,
-        { send: vi.fn().mockResolvedValue(undefined) },
-        {
-          send: vi.fn(async (token) => {
-            if (token === ios)
-              throw new ApnsPushError(
-                'APNs request failed (410 Unregistered)',
-                410,
-                'Unregistered',
-                'unregistered',
-              );
-            throw new ApnsPushError(
-              'APNs request failed (500 InternalServerError)',
-              500,
-              'InternalServerError',
-              'retryable',
-            );
-          }),
-        },
-      );
-      await loop.runOnce();
-      await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@owner hello')`,
-        ['1'.repeat(64), room, agent],
-      );
-
-      expect(await loop.runOnce()).toBe(0);
-      expect((await db.query(`SELECT 1 FROM push_devices WHERE token=$1`, [ios])).rowCount).toBe(0);
-      expect(
-        (await db.query(`SELECT 1 FROM push_devices WHERE token=$1`, [transientIos])).rowCount,
-      ).toBe(1);
-    } finally {
-      await db.close();
-    }
-  });
-  it('delivers only new attention events to the addressed human device', async () => {
-    const db = await migratedDatabase();
-    try {
-      const human = 'a'.repeat(64),
-        otherHuman = 'b'.repeat(64),
-        agent = 'c'.repeat(64),
-        workspace = '11111111-1111-4111-8111-111111111111',
-        room = '22222222-2222-4222-8222-222222222222',
-        directRoom = '33333333-3333-4333-8333-333333333333';
-      await db.query(
-        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'human','Other','other'),($3,'agent','Bee','bee')`,
-        [human, otherHuman, agent],
-      );
-      await db.query(`UPDATE identities SET push_level='attention' WHERE kind='human'`);
-      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
-      await db.query(
-        `INSERT INTO rooms(id,workspace_id,name,direct_participants)
-         VALUES($1,$3,'Room',NULL),($2,$3,'Direct',$4::jsonb)`,
-        [room, directRoom, workspace, JSON.stringify([human, agent].sort())],
-      );
-      await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-         VALUES($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member'),
-               ($1,$6,$3,'owner'),($1,$6,$5,'member')`,
-        [workspace, room, human, otherHuman, agent, directRoom],
-      );
-      await db.query(
-        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES
-         ('owner-device-token-12345678901234567890',$1,'android','physical'),
-         ('other-device-token-12345678901234567890',$2,'android','physical')`,
-        [human, otherHuman],
-      );
-      await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text,created_at)
-         VALUES($1,$2,$3,'@owner old mention',now()-interval '1 hour')`,
-        ['0'.repeat(64), room, agent],
-      );
-      const send = vi.fn().mockResolvedValue(undefined);
-      const loop = new PushDeliveryLoop(db, { send });
-      expect(await loop.runOnce()).toBe(0);
-      await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card) VALUES
-         ($1,$2,$3,'@owner Please review','message',NULL,NULL),
-         ($4,$2,$3,'Untargeted','message',NULL,NULL),
-         ($5,$2,$6,'@owner My own mention','message',NULL,NULL),
-         ($7,$2,$3,'','activity',NULL,NULL),
-         ($8,$2,$3,'@bee opened a corner Ship push policy','card','daemon-fact',$9::jsonb),
-         ($10,$2,$3,'@bee merged Ship push policy','card','daemon-fact',$11::jsonb),
-         ($12,$13,$3,'A direct message','message',NULL,NULL),
-         ($14,$2,$3,'Muted corner answer','card','relay',$15::jsonb)`,
-        [
-          '1'.repeat(64),
-          room,
-          agent,
-          '2'.repeat(64),
-          '3'.repeat(64),
-          human,
-          '4'.repeat(64),
-          '5'.repeat(64),
-          JSON.stringify({
-            type: 'corner-open',
-            cornerId: directRoom,
-            objective: 'Ship push policy',
-          }),
-          '6'.repeat(64),
-          JSON.stringify({
-            type: 'corner-complete',
-            cornerId: directRoom,
-            objective: 'Ship push policy',
-            outcome: 'landed',
-          }),
-          '7'.repeat(64),
-          directRoom,
-          '9'.repeat(64),
-          JSON.stringify({
-            direction: 'up',
-            cornerId: directRoom,
-            anchorMessageId: '5'.repeat(64),
-          }),
-        ],
-      );
-      expect(await loop.runOnce()).toBe(2);
-      expect(send).toHaveBeenCalledTimes(2);
-      expect(await loop.runOnce()).toBe(0);
-      expect(send).toHaveBeenCalledTimes(2);
-      expect(send).toHaveBeenCalledWith(
-        'owner-device-token-12345678901234567890',
-        expect.objectContaining({ text: 'Bee: @owner Please review', title: '#Room' }),
-      );
-      expect(send).toHaveBeenCalledWith(
-        'owner-device-token-12345678901234567890',
-        expect.objectContaining({ text: 'Bee: A direct message' }),
-      );
-      // A DM is titled as the Room list names it: `@` and the peer's handle.
-      expect(
-        send.mock.calls.find(([, message]) => message.text === 'Bee: A direct message')![1],
-      ).toHaveProperty('title', '@bee');
-      expect(send).not.toHaveBeenCalledWith(
-        'other-device-token-12345678901234567890',
-        expect.objectContaining({ text: 'Untargeted' }),
-      );
-      // Ordinary corner mentions must name the corner, not its parent, in both
-      // destination fields. The phone prefers cornerId over channelId.
-      const corner = '44444444-4444-4444-8444-444444444444';
-      await db.query(
-        `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Corner')`,
-        [corner, workspace, room],
-      );
-
-      await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text)
-         VALUES($1,$2,$3,'@owner Review this corner')`,
-        ['8'.repeat(64), corner, agent],
-      );
-      expect(await loop.runOnce()).toBe(1);
-      expect(send).toHaveBeenLastCalledWith(
-        'owner-device-token-12345678901234567890',
-        expect.objectContaining({
-          messageId: '8'.repeat(64),
-          target: 'message',
-          roomId: room,
-          channelId: corner,
-          cornerId: corner,
-          title: '#Room/Corner',
-        }),
-      );
-      // G9-R9: a corner under a DM takes the same `#<parent>/<corner>` title
-      // the app gives it, not a DM peer title and not none.
-      const dmCorner = '55555555-5555-4555-8555-555555555555';
-      await db.query(
-        `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'fix-auth')`,
-        [dmCorner, workspace, directRoom],
-      );
-
-      await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text)
-         VALUES($1,$2,$3,'@owner Review this DM corner')`,
-        ['a1'.repeat(32), dmCorner, agent],
-      );
-      expect(await loop.runOnce()).toBe(1);
-      expect(send).toHaveBeenLastCalledWith(
-        'owner-device-token-12345678901234567890',
-        expect.objectContaining({
-          messageId: 'a1'.repeat(32),
-          channelId: dmCorner,
-          cornerId: dmCorner,
-          title: cornerTitle('Direct', 'fix-auth', dmCorner),
-        }),
-      );
-      expect(cornerTitle('Direct', 'fix-auth', dmCorner)).toBe('#Direct/fix-auth');
-    } finally {
-      await db.close();
-    }
-  });
-  it('names the inline action a notification can answer, and only that one', async () => {
-    const db = await migratedDatabase();
-    try {
-      const human = 'a'.repeat(64),
-        agent = 'c'.repeat(64),
-        workspace = '11111111-1111-4111-8111-111111111111',
-        agentDm = '33333333-3333-4333-8333-333333333333';
-      await db.query(
-        `INSERT INTO identities(id,kind,name,handle,push_level)
-         VALUES($1,'human','Owner','owner','attention'),($2,'agent','Wren','wren','off')`,
-        [human, agent],
-      );
-      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
-      await db.query(
-        `INSERT INTO rooms(id,workspace_id,name,direct_participants) VALUES($1,$2,'Direct',$3::jsonb)`,
-        [agentDm, workspace, JSON.stringify([human, agent].sort())],
-      );
-      await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-         VALUES($1,NULL,$2,'owner'),($1,$3,$2,'member'),($1,$3,$4,'member')`,
-        [workspace, human, agentDm, agent],
-      );
-      const systemDm = await ensureSystemDirectMessageRoom(db, workspace, human);
-      await db.query(
-        `INSERT INTO push_devices(token,identity_id,platform,environment)
-         VALUES('owner-device-token-12345678901234567890',$1,'android','physical')`,
-        [human],
-      );
-      const send = vi.fn().mockResolvedValue(undefined);
-      const loop = new PushDeliveryLoop(db, { send });
-      expect(await loop.runOnce()).toBe(0);
-      const grant = (id: string, status: string) =>
-        db.query(
-          `INSERT INTO agent_grants(id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status)
-           VALUES($1,$2,$3,'host','api.stripe.com','checking the webhook',$4,$5,$6)`,
-          [id, agent, workspace, human, agentDm, status],
-        );
-      const pending = '55555555-5555-4555-8555-555555555555',
-        second = '66666666-6666-4666-8666-666666666666',
-        settled = '77777777-7777-4777-8777-777777777777';
-      await grant(pending, 'pending');
-      await grant(second, 'pending');
-      await grant(settled, 'once');
-      const card = (grants: string[]) =>
-        JSON.stringify({
-          agent: { pubkey: agent, name: 'wren' },
-          grants: grants.map((grantId) => ({ grantId, kind: 'host', target: 'api.stripe.com' })),
-        });
-      await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card) VALUES
-         ($1,$2,$3,'@wren asked @owner for host api.stripe.com','card','grant-request',$4::jsonb),
-         ($5,$2,$3,'@wren asked @owner for host api.stripe.com and host b','card','grant-request',$6::jsonb),
-         ($7,$2,$3,'@wren asked @owner for host api.stripe.com','card','grant-request',$8::jsonb),
-         ($9,$2,$3,'Beeline 1.2 is out','system',NULL,NULL),
-         ($10,$11,$12,'are you there?','message',NULL,NULL)`,
-        [
-          '1'.repeat(64),
-          systemDm,
-          SYSTEM_IDENTITY_ID,
-          card([pending]),
-          '2'.repeat(64),
-          card([pending, second]),
-          '3'.repeat(64),
-          card([settled]),
-          '4'.repeat(64),
-          '5'.repeat(64),
-          agentDm,
-          agent,
-        ],
-      );
-      expect(await loop.runOnce()).toBe(5);
-      const sent = new Map(
-        send.mock.calls.map(([, message]) => [message.messageId as string, message.action]),
-      );
-      expect(sent.get('1'.repeat(64))).toEqual({
-        kind: 'grant',
-        grantId: pending,
-        grantKind: 'host',
-        grantTarget: 'api.stripe.com',
-        agentName: 'wren',
-      });
-      // Three buttons cannot answer two asks, and a settled ask needs none.
-      expect(sent.get('2'.repeat(64))).toBeUndefined();
-      expect(sent.get('3'.repeat(64))).toBeUndefined();
-      // The @system DM is read-only: no Reply on its lines.
-      expect(sent.get('4'.repeat(64))).toBeUndefined();
-      expect(sent.get('5'.repeat(64))).toEqual({ kind: 'reply', authorName: 'Wren' });
-    } finally {
-      await db.close();
-    }
-  });
-  it('sends a permission ask whole and stays quiet for an automatic access receipt', async () => {
-    const db = await migratedDatabase();
-    try {
-      const human = 'a'.repeat(64),
-        agent = 'c'.repeat(64),
-        workspace = '11111111-1111-4111-8111-111111111111',
-        room = '33333333-3333-4333-8333-333333333333';
-      await db.query(
-        `INSERT INTO identities(id,kind,name,handle,push_level)
-         VALUES($1,'human','Owner','owner','attention'),($2,'agent','Wren','wren','off')`,
-        [human, agent],
-      );
-      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
-      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'General')`, [
-        room,
-        workspace,
-      ]);
-      await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`,
-        [workspace, human],
-      );
-      const systemDm = await ensureSystemDirectMessageRoom(db, workspace, human);
-      await db.query(
-        `INSERT INTO push_devices(token,identity_id,platform,environment)
-         VALUES('owner-device-token-12345678901234567890',$1,'android','physical')`,
-        [human],
-      );
-      const send = vi.fn().mockResolvedValue(undefined);
-      const loop = new PushDeliveryLoop(db, { send });
-      expect(await loop.runOnce()).toBe(0);
-      const pending = '55555555-5555-4555-8555-555555555555',
-        auto = '66666666-6666-4666-8666-666666666666';
-      const target = `node scripts/check.mjs ${'--workspace apps/server '.repeat(8).trim()}`;
-      await db.query(
-        `INSERT INTO agent_grants(id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status,auto)
-         VALUES($1,$3,$4,'command',$6,'check',$5,$7,'pending',false),
-               ($2,$3,$4,'mcp','openaiDeveloperDocs','read docs',$5,$7,'approved',true)`,
-        [pending, auto, agent, workspace, human, target, room],
-      );
-      const ask = `Owner wants wren to use ${target}`;
-      expect(ask.length).toBeGreaterThan(200);
-      await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card) VALUES
-         ($1,$2,$3,$4,'card','grant-request',$5::jsonb),
-         ($6,$2,$3,'@wren was granted mcp openaiDeveloperDocs · auto-approved','system','grant-auto',$7::jsonb)`,
-        [
-          '1'.repeat(64),
-          systemDm,
-          agent,
-          ask,
-          JSON.stringify({
-            agent: { pubkey: agent, name: 'wren' },
-            grants: [{ grantId: pending, kind: 'command', target }],
-          }),
-          '2'.repeat(64),
-          JSON.stringify({ grantId: auto }),
-        ],
-      );
-      expect(await loop.runOnce()).toBe(1);
-      expect(send.mock.calls.map(([, message]) => message)).toEqual([
-        expect.objectContaining({ messageId: '1'.repeat(64), text: ask, permission: true }),
-      ]);
-    } finally {
-      await db.close();
-    }
-  });
-  it('delivers member-join pushes at Full', async () => {
-    const db = await migratedDatabase();
-    try {
-      const human = 'a'.repeat(64),
-        other = 'b'.repeat(64),
-        workspace = '11111111-1111-4111-8111-111111111111';
-      await db.query(
-        `INSERT INTO identities(id,kind,name,handle,push_level) VALUES
-         ($1,'human','Owner','owner','full'),($2,'human','Other','other','attention')`,
-        [human, other],
-      );
-      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
-      await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-         ($1,NULL,$2,'owner'),($1,NULL,$3,'member')`,
-        [workspace, human, other],
-      );
-      await db.query(
-        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES
-         ('owner-device-token-12345678901234567890',$1,'android','physical'),
-         ('other-device-token-12345678901234567890',$2,'android','physical')`,
-        [human, other],
-      );
-      const send = vi.fn().mockResolvedValue(undefined);
-      const loop = new PushDeliveryLoop(db, { send });
-      expect(await loop.runOnce()).toBe(0);
-      await db.query(
-        `INSERT INTO workspace_join_notifications(id,workspace_id,joining_identity_id,text)
-         VALUES('join-1',$1,$2,'@other joined Hive')`,
-        [workspace, other],
-      );
-      await db.query(
-        `INSERT INTO workspace_join_notification_devices(notification_id,device_token)
-         VALUES('join-1','owner-device-token-12345678901234567890'),
-                ('join-1','other-device-token-12345678901234567890')`,
-      );
-      // Member lifecycle rides Full.
-      expect(await loop.runOnce()).toBe(1);
-      expect(send).toHaveBeenCalledTimes(1);
-      expect(send).toHaveBeenCalledWith(
-        'owner-device-token-12345678901234567890',
-        expect.objectContaining({ text: '@other joined Hive' }),
-      );
-    } finally {
-      await db.close();
-    }
-  });
-  it("does not deliver another person's corner event to a Default member", async () => {
-    const db = await migratedDatabase();
-    try {
-      const human = 'a'.repeat(64),
-        other = 'b'.repeat(64),
-        agent = 'c'.repeat(64),
-        workspace = '11111111-1111-4111-8111-111111111111',
-        room = '22222222-2222-4222-8222-222222222222',
-        corner = '33333333-3333-4333-8333-333333333333';
-      await db.query(
-        `INSERT INTO identities(id,kind,name,handle) VALUES
-         ($1,'human','Owner','owner'),($2,'human','Other','other'),($3,'agent','Bee','bee')`,
-        [human, other, agent],
-      );
-      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
-      await db.query(
-        `INSERT INTO rooms(id,workspace_id,name,parent_id) VALUES
-         ($1,$3,'Room',NULL),($2,$3,'Corner',$1)`,
-        [room, corner, workspace],
-      );
-      await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-         ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member')`,
-        [workspace, room, human, other, agent],
-      );
-      await insertCornerFacts(db, { cornerId: corner, ownerAgentId: agent, commissionedBy: other });
-      await db.query(
-        `INSERT INTO push_devices(token,identity_id,platform,environment)
-         VALUES('owner-device-token-12345678901234567890',$1,'android','physical')`,
-        [human],
-      );
-      const send = vi.fn().mockResolvedValue(undefined);
-      const loop = new PushDeliveryLoop(db, { send });
-      expect(await loop.runOnce()).toBe(0);
-      await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
-         VALUES($1,$2,$3,'@bee opened a corner Other work','card','daemon-fact',$4::jsonb)`,
-        [
-          '1'.repeat(64),
-          room,
-          agent,
-          JSON.stringify({ type: 'corner-open', cornerId: corner, objective: 'Other work' }),
-        ],
-      );
-
-      expect(await loop.runOnce()).toBe(0);
-      expect(send).not.toHaveBeenCalled();
-    } finally {
-      await db.close();
-    }
-  });
-  it('keeps untagged corner completion quiet but preserves addressed wake decisions', async () => {
-    const db = await migratedDatabase();
-    try {
-      const commissioner = 'a'.repeat(64),
-        other = 'b'.repeat(64),
-        agent = 'c'.repeat(64),
-        workspace = '11111111-1111-4111-8111-111111111111',
-        room = '22222222-2222-4222-8222-222222222222',
-        corner = '33333333-3333-4333-8333-333333333333';
-      await db.query(
-        `INSERT INTO identities(id,kind,name,handle) VALUES
-         ($1,'human','Owner','owner'),($2,'human','Other','other'),($3,'agent','Bee','bee')`,
-        [commissioner, other, agent],
-      );
-      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
-      await db.query(
-        `INSERT INTO rooms(id,workspace_id,name,parent_id) VALUES
-         ($1,$3,'Room',NULL),($2,$3,'Corner',$1)`,
-        [room, corner, workspace],
-      );
-      await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-       ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member') `,
-        [workspace, room, commissioner, other, agent],
-      );
-      await insertCornerFacts(db, { cornerId: corner, ownerAgentId: agent, commissionedBy: commissioner });
-      await db.query(
-        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES
-         ('owner-device-token-12345678901234567890',$1,'android','physical'),
-         ('other-device-token-12345678901234567890',$2,'android','physical')`,
-        [commissioner, other],
-      );
-      const send = vi.fn().mockResolvedValue(undefined);
-      const loop = new PushDeliveryLoop(db, { send });
-      expect(await loop.runOnce()).toBe(0);
-      await ensureSystemIdentity(db);
-      await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card) VALUES
-         ($1,$2,$3,'GitHub merged Ship push policy','card','daemon-fact',$4::jsonb),
-         ($5,$6,$7,'@owner may need to step in','system','corner-review-deadlock',$8::jsonb),
-         ($9,$2,$3,'@bee opened a corner Ship push policy','card','daemon-fact',$10::jsonb),
-         ($11,$6,$7,'@owner may need to step in · checks still fail','system','corner-checks-blocked',$8::jsonb)`,
-        [
-          '1'.repeat(64),
-          room,
-          agent,
-          JSON.stringify({ type: 'corner-complete', cornerId: corner, outcome: 'landed' }),
-          '2'.repeat(64),
-          corner,
-          SYSTEM_IDENTITY_ID,
-          JSON.stringify({ cornerId: corner }),
-          '3'.repeat(64),
-          JSON.stringify({ type: 'corner-open', cornerId: corner }),
-          '4'.repeat(64),
-        ],
-      );
-
-      await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
-        VALUES($1,$2,$3,'Agent could not be reached','system','corner-agent-unreachable',$4::jsonb)`,
-        ['5'.repeat(64), corner, SYSTEM_IDENTITY_ID, JSON.stringify({ recipientIds: [commissioner], status: 'open' })]);
-      expect(await loop.runOnce()).toBe(1);
-      expect(send.mock.calls.map(([token, message]) => [token, message.messageId]).sort()).toEqual([
-        ['owner-device-token-12345678901234567890', '5'.repeat(64)],
-      ]);
-      expect(send).toHaveBeenCalledWith(
-        'owner-device-token-12345678901234567890',
-        expect.objectContaining({ text: 'Agent could not be reached', cornerId: corner }),
-      );
-    } finally {
-      await db.close();
-    }
-  });
-  it('sends nothing for activity in a closed corner, even a tag', async () => {
-    const db = await migratedDatabase();
-    try {
-      const owner = 'a'.repeat(64),
-        agent = 'c'.repeat(64),
-        workspace = '11111111-1111-4111-8111-111111111111',
-        room = '22222222-2222-4222-8222-222222222222',
-        open = '33333333-3333-4333-8333-333333333333',
-        closed = '44444444-4444-4444-8444-444444444444';
-      await db.query(
-        `INSERT INTO identities(id,kind,name,handle,push_level) VALUES
-         ($1,'human','Owner','owner','full'),($2,'agent','Miso','miso','off')`,
-        [owner, agent],
-      );
-      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
-      await db.query(
-        `INSERT INTO rooms(id,workspace_id,name,parent_id,archived_at) VALUES
-         ($1,$4,'Room',NULL,NULL),($2,$4,'Open',$1,NULL),($3,$4,'Closed',$1,now())`,
-        [room, open, closed, workspace],
-      );
-      await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-         ($1,$2,$3,'owner'),($1,$2,$4,'member')`,
-        [workspace, room, owner, agent],
-      );
-      await db.query(`INSERT INTO corner_facts(corner_id) VALUES($1),($2)`, [open, closed]);
-      await seedCornerOpening(db, { cornerId: open, agentId: agent, commissionedBy: owner });
-      await seedCornerOpening(db, { cornerId: closed, agentId: agent, commissionedBy: owner });
-      await db.query(
-        `INSERT INTO push_devices(token,identity_id,platform,environment)
-         VALUES('owner-device-token-12345678901234567890',$1,'android','physical')`,
-        [owner],
-      );
-      const send = vi.fn().mockResolvedValue(undefined);
-      const loop = new PushDeliveryLoop(db, { send });
-      expect(await loop.runOnce()).toBe(0);
-      await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES
-         ($1,$3,$5,'Still here after close','message'),
-         ($2,$3,$5,'@owner one more thing','message'),
-         ($4,$6,$5,'Open corner update','message')`,
-        ['1'.repeat(64), '2'.repeat(64), closed, '3'.repeat(64), agent, open],
-      );
-
-      expect(await loop.runOnce()).toBe(1);
-      expect(send.mock.calls.map(([, message]) => message.messageId)).toEqual(['3'.repeat(64)]);
-      expect(await loop.runOnce()).toBe(0);
-    } finally {
-      await db.close();
-    }
-  });
-  it('requires Full for untagged finished messages in commissioned corners', async () => {
-    const db = await migratedDatabase();
-    try {
-      const commissioner = 'a'.repeat(64),
-        other = 'b'.repeat(64),
-        agent = 'c'.repeat(64),
-        helper = 'd'.repeat(64),
-        workspace = '11111111-1111-4111-8111-111111111111',
-        room = '22222222-2222-4222-8222-222222222222',
-        noCode = '33333333-3333-4333-8333-333333333333',
-        code = '44444444-4444-4444-8444-444444444444',
-        repoRoom = '55555555-5555-4555-8555-555555555555';
-      await db.query(
-        `INSERT INTO identities(id,kind,name,handle) VALUES
-         ($1,'human','Owner','owner'),($2,'human','Other','other'),
-         ($3,'agent','Bee','bee'),($4,'agent','Helper','helper')`,
-        [commissioner, other, agent, helper],
-      );
-      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
-      await db.query(
-        `INSERT INTO rooms(id,workspace_id,name,parent_id) VALUES
-         ($1,$3,'Room',NULL),($2,$3,'Report',$1)`,
-        [room, noCode, workspace],
-      );
-      // A corner has a pull request path exactly when its parent Room has a repository.
-      await db.query(
-        `INSERT INTO rooms(id,workspace_id,name,parent_id,repository_key,repository_resolution) VALUES
-         ($1,$3,'Widgets',NULL,'owner/widgets','repository'),($2,$3,'Code',$1,NULL,'none')`,
-        [repoRoom, code, workspace],
-      );
-
-      for (const parent of [room,repoRoom]) await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-         ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member'),($1,$2,$6,'member')`,
-        [workspace,parent,commissioner,other,agent,helper],
-      );
-      await db.query(`INSERT INTO corner_facts(corner_id) VALUES($1),($2)`, [noCode, code]);
-      await seedCornerOpening(db, { cornerId: noCode, agentId: agent, commissionedBy: commissioner });
-      await seedCornerOpening(db, { cornerId: code, agentId: agent, commissionedBy: commissioner });
-      await db.query(
-        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES
-         ('owner-device-token-12345678901234567890',$1,'android','physical'),
-         ('other-device-token-12345678901234567890',$2,'android','physical')`,
-        [commissioner, other],
-      );
-      const send = vi.fn().mockResolvedValue(undefined);
-      const loop = new PushDeliveryLoop(db, { send });
-      expect(await loop.runOnce()).toBe(0);
-      const files = JSON.stringify([
-        {
-          url: 'https://example.test/report.pdf',
-          name: 'report.pdf',
-          mimeType: 'application/pdf',
-          size: 10,
-        },
-      ]);
-      const cases = {
-        deliverable: '1'.repeat(64),
-        codeLane: '2'.repeat(64),
-        noFiles: '3'.repeat(64),
-        notWorker: '4'.repeat(64),
-      } as const;
-      await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text,attachments) VALUES
-         ($1,$5,$7,'Here is the report',$9::jsonb),
-         ($2,$6,$7,'Here is a file',$9::jsonb),
-         ($3,$5,$7,'Still working','[]'::jsonb),
-         ($4,$5,$8,'A side file',$9::jsonb)`,
-        [
-          cases.deliverable,
-          cases.codeLane,
-          cases.noFiles,
-          cases.notWorker,
-          noCode,
-          code,
-          agent,
-          helper,
-          files,
-        ],
-      );
-
-      expect(await loop.runOnce()).toBe(0);
-      await db.query(`UPDATE identities SET push_level='full' WHERE id=$1`, [commissioner]);
-      expect(await loop.runOnce()).toBe(4);
-      expect(send).toHaveBeenCalledWith(
-        'owner-device-token-12345678901234567890',
-        expect.objectContaining({
-          messageId: cases.deliverable,
-          text: 'Bee: Here is the report',
-          cornerId: noCode,
-        }),
-      );
-    } finally {
-      await db.close();
-    }
-  });
-  it('pushes an open question card to the one human it addresses', async () => {
-    const db = await migratedDatabase();
-    try {
-      const owner = 'a'.repeat(64),
-        other = 'b'.repeat(64),
-        agent = 'c'.repeat(64),
-        workspace = '11111111-1111-4111-8111-111111111111',
-        room = '22222222-2222-4222-8222-222222222222';
-      await db.query(
-        `INSERT INTO identities(id,kind,name,handle) VALUES
-         ($1,'human','Owner','owner'),($2,'human','Other','other'),($3,'agent','Bee','bee')`,
-        [owner, other, agent],
-      );
-      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
-      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
-        room,
-        workspace,
-      ]);
-      await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-         ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member')`,
-        [workspace, room, owner, other, agent],
-      );
-      await db.query(
-        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES
-         ('owner-device-token-12345678901234567890',$1,'android','physical'),
-         ('other-device-token-12345678901234567890',$2,'android','physical')`,
-        [owner, other],
-      );
-      const send = vi.fn().mockResolvedValue(undefined);
-      const loop = new PushDeliveryLoop(db, { send });
-      expect(await loop.runOnce()).toBe(0);
-      const card = (fields: Record<string, unknown>) =>
-        JSON.stringify({
-          mode: 'question',
-          status: 'open',
-          requester: { pubkey: owner },
-          ...fields,
-        });
-      const cases = {
-        requester: '1'.repeat(64),
-        tagged: '2'.repeat(64),
-        several: '3'.repeat(64),
-        poll: '4'.repeat(64),
-        answered: '5'.repeat(64),
-      } as const;
-      await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card) VALUES
-         ($1,$6,$7,'Bee asked Which one','card','choice',$8::jsonb),
-         ($2,$6,$7,'Bee asked @other which one','card','choice',$9::jsonb),
-         ($3,$6,$7,'Bee asked @owner and @other','card','choice',$10::jsonb),
-         ($4,$6,$7,'Bee asked everyone','card','choice',$11::jsonb),
-         ($5,$6,$7,'Bee asked Already answered','card','choice',$12::jsonb)`,
-        [
-          cases.requester,
-          cases.tagged,
-          cases.several,
-          cases.poll,
-          cases.answered,
-          room,
-          agent,
-          card({}),
-          card({ mentionIds: [other] }),
-          card({ mentionIds: [owner, other] }),
-          JSON.stringify({ mode: 'poll', status: 'open', electorate: [owner, other] }),
-          card({ status: 'answered' }),
-        ],
-      );
-
-      expect(await loop.runOnce()).toBe(2);
-      expect(send.mock.calls.map(([token, message]) => [token, message.messageId]).sort()).toEqual([
-        ['other-device-token-12345678901234567890', cases.tagged],
-        ['owner-device-token-12345678901234567890', cases.requester],
-      ]);
-    } finally {
-      await db.close();
-    }
-  });
-  it('sends one push per recipient per agent turn', async () => {
-    const db = await migratedDatabase();
-    try {
-      const owner = 'a'.repeat(64),
-        other = 'b'.repeat(64),
-        agent = 'c'.repeat(64),
-        workspace = '11111111-1111-4111-8111-111111111111',
-        room = '22222222-2222-4222-8222-222222222222';
-      await db.query(
-        `INSERT INTO identities(id,kind,name,handle) VALUES
-         ($1,'human','Owner','owner'),($2,'human','Other','other'),($3,'agent','Bee','bee')`,
-        [owner, other, agent],
-      );
-      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
-      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
-        room,
-        workspace,
-      ]);
-      await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-         ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member')`,
-        [workspace, room, owner, other, agent],
-      );
-      await db.query(
-        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES
-         ('owner-device-token-12345678901234567890',$1,'android','physical'),
-         ('other-device-token-12345678901234567890',$2,'android','physical')`,
-        [owner, other],
-      );
-      const send = vi.fn().mockResolvedValue(undefined);
-      const loop = new PushDeliveryLoop(db, { send });
-      expect(await loop.runOnce()).toBe(0);
-      const turn = 'd'.repeat(64);
-      await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text,request_id,created_at) VALUES
-         ($1,$4,$5,'@owner first',$6,now()),
-         ($2,$4,$5,'@owner second',$6,now()+interval '1 second'),
-         ($3,$4,$5,'@owner @other third',$6,now()+interval '2 seconds')`,
-        ['1'.repeat(64), '2'.repeat(64), '3'.repeat(64), room, agent, turn],
-      );
-
-      expect(await loop.runOnce()).toBe(2);
-      expect(send.mock.calls.map(([token, message]) => [token, message.messageId]).sort()).toEqual([
-        ['other-device-token-12345678901234567890', '3'.repeat(64)],
-        ['owner-device-token-12345678901234567890', '3'.repeat(64)],
-      ]);
-      await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text,request_id) VALUES
-         ($1,$2,$3,'@owner fourth',$4),($5,$2,$3,'@owner next turn',$6)`,
-        ['4'.repeat(64), room, agent, turn, '5'.repeat(64), 'e'.repeat(64)],
-      );
-      expect(await loop.runOnce()).toBe(1);
-      expect(send).toHaveBeenLastCalledWith(
-        'owner-device-token-12345678901234567890',
-        expect.objectContaining({ messageId: '5'.repeat(64) }),
-      );
-    } finally {
-      await db.close();
-    }
-  });
-  it.each([
-    ['off', []],
-    ['attention', ['dm', 'tag', 'reply']],
-    ['full', ['dm', 'tag', 'reply', 'join', 'plain', 'request']],
-  ] as const)('selects the push candidate matrix for %s', async (level, expected) => {
-    const db = await migratedDatabase();
-    try {
-      const human = 'a'.repeat(64),
-        other = 'b'.repeat(64),
-        agent = 'c'.repeat(64),
-        workspace = '11111111-1111-4111-8111-111111111111',
-        room = '22222222-2222-4222-8222-222222222222',
-        directRoom = '33333333-3333-4333-8333-333333333333';
-      await db.query(
-        `INSERT INTO identities(id,kind,name,handle,push_level) VALUES
-         ($1,'human','Owner','owner',$4),($2,'human','Other','other','attention'),
-         ($3,'agent','Bee','bee','attention')`,
-        [human, other, agent, level],
-      );
-      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
-      await db.query(
-        `INSERT INTO rooms(id,workspace_id,name,parent_id,direct_participants) VALUES
-         ($1,$3,'Room',NULL,NULL),($2,$3,'Direct',NULL,$4::jsonb)`,
-        [room, directRoom, workspace, JSON.stringify([human, agent].sort())],
-      );
-      await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-         ($1,NULL,$3,'owner'),($1,NULL,$4,'member'),
-         ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member'),
-         ($1,$6,$3,'owner'),($1,$6,$5,'member')`,
-        [workspace, room, human, other, agent, directRoom],
-      );
-      await db.query(
-        `INSERT INTO push_devices(token,identity_id,platform,environment)
-         VALUES('owner-device-token-12345678901234567890',$1,'android','physical')`,
-        [human],
-      );
-      const send = vi.fn().mockResolvedValue(undefined);
-      const loop = new PushDeliveryLoop(db, { send });
-      expect(await loop.runOnce()).toBe(0);
-
-      const authored = '0'.repeat(64);
-      await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'My prior turn')`,
-        [authored, room, human],
-      );
-      const cases = {
-        tag: '1'.repeat(64),
-        reply: '2'.repeat(64),
-        request: '3'.repeat(64),
-        card: '4'.repeat(64),
-        plain: '5'.repeat(64),
-        dm: '6'.repeat(64),
-        join: 'join-1',
-      } as const;
-      await db.query(
-        `INSERT INTO messages
-           (id,room_id,author_id,text,presentation,reply_to_message_id,request_id,card_type,card)
-         VALUES
-           ($1,$7,$8,'@owner mention','message',NULL,NULL,NULL,NULL),
-           ($2,$7,$8,'Reply to your turn','message',$9,NULL,NULL,NULL),
-           ($3,$7,$8,'Answering your request','message',NULL,$9,NULL,NULL),
-           ($4,$7,$8,'Bee asks Owner','card',NULL,NULL,'permission',$10::jsonb),
-           ($5,$7,$8,'Plain agent message','message',NULL,NULL,NULL,NULL),
-           ($6,$11,$8,'Direct message','message',NULL,NULL,NULL,NULL)`,
-        [
-          cases.tag,
-          cases.reply,
-          cases.request,
-          cases.card,
-          cases.plain,
-          cases.dm,
-          room,
-          agent,
-          authored,
-          JSON.stringify({ status: 'pending', requester: { pubkey: human } }),
-          directRoom,
-        ],
-      );
-      await db.query(
-        `INSERT INTO workspace_join_notifications(id,workspace_id,joining_identity_id,text)
-         VALUES($1,$2,$3,'@other joined Hive')`,
-        [cases.join, workspace, other],
-      );
-      await db.query(
-        `INSERT INTO workspace_join_notification_devices(notification_id,device_token)
-         VALUES($1,'owner-device-token-12345678901234567890')`,
-        [cases.join],
-      );
-
-      await loop.runOnce();
-      const byId = new Map(Object.entries(cases).map(([name, id]) => [id, name]));
-      expect(send.mock.calls.map(([, message]) => byId.get(message.messageId)).sort()).toEqual(
-        [...expected].sort(),
-      );
     } finally {
       await db.close();
     }

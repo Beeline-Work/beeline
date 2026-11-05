@@ -1,76 +1,15 @@
-import { readRepositoryOnboardingCard } from './repository-onboarding.js';
-import { readVaultSaveCard } from './vault-save.js';
 import { readAgentUsage } from './agent-usage.js';
-import { isSystemEvent } from './system-events.js';
 import { isAgentSignInHarness, isAgentSignInKeyProvider } from './agent-sign-in.js';
-import { isAgentAccessPolicy } from './agent-access.js';
-import { readVoiceCall } from './voice.js';
-import {
-  MESSAGE_REACTION_EMOJIS,
-  ROOM_VIEW_AGENT_LIMIT,
-  ROOM_VIEW_BRIEFING_LIMIT,
-  ROOM_VIEW_CHAT_LIMIT,
-  ROOM_VIEW_MEMBER_LIMIT,
-  ROOM_VIEW_MESSAGE_LIMIT,
-  ROOM_VIEW_TOOL_ROW_LIMIT,
-  ROOM_VIEW_WORKSPACE_LIMIT,
-  WORKSPACE_MEMBER_PAGE_SIZE,
-  type AgentAccessView,
-  type AgentComposerCommand,
-  type AgentDetailView,
-  type AgentGrantView,
-  type AgentModelConfigOption,
-  type AgentModelSelection,
-  type AgentPairingAbandonView,
-  type AgentPairingClaimView,
-  type AgentPairingClaimWireView,
-  type AgentYoloView,
-  type ChatListCorner,
-  type RoomCornerSummary,
-  type ChatListItem,
-  type ChatListUnavailable,
-  type ChatListView,
-  type ChatListWorkspace,
-  type ChoiceCardView,
-  type CornerLifecycleView,
-  type CornerListItem,
-  type CornerListView,
-  type GrantRequestCardView,
-  type InviteView,
-  type MessageReactionView,
-  type MessageSearchResult,
-  type MessageSearchSnippetPart,
-  type MessageSearchView,
-  type RoomHistoryOutline,
-  type RoomHistoryOutlineDay,
-  type RoomHistoryView,
-  type RoomRepositoryResolution,
-  type RoomRepositoryView,
-  type RoomView,
-  type RoomViewActivity,
-  type RoomViewAgentTurn,
-  type RoomViewPendingAgentCommand,
-  type RoomViewHeader,
-  type RoomViewIdentity,
-  type RoomViewMember,
-  type RoomViewMessage,
-  type RoomViewer,
-  type SurfaceWatchFilter,
-  type WorkspaceAgentView,
-  type WorkspaceListView,
-  type WorkspaceManagedRoomView,
-  type WorkspaceMemberGrantView,
-  type WorkspaceMemberListView,
-  type WorkspaceView,
-} from './phone-types.js';
+import { type AgentGrantView, type ChoiceCardView, type GrantRequestCardView, type RoomViewActivity, type RoomViewHeader, type RoomViewIdentity, type RoomViewMember, type RoomViewMessage, type RoomViewer, type SurfaceWatchFilter, type WorkspaceAgentView, type WorkspaceMemberGrantView } from './phone-types.js';
 import { isAgentGrantKind, isAgentGrantStatus, isCommandGrantScript } from './agent-grants.js';
-import {
-  isConnectorOfferIntent,
-  isConnectorOfferStatus,
-  type ConnectorOfferCardView,
-} from './connector-offers.js';
+import { isConnectorOfferIntent, isConnectorOfferStatus, type ConnectorOfferCardView } from './connector-offers.js';
 import { isConnectorKind } from './workbench.js';
-import { CHOICE_LETTERS, isChoiceMode, isChoiceStatus } from './room-choices.js';
+import { CHOICE_LETTERS } from './room-choices.js';
+export { readRoomViewMessage, isRoomViewMessage } from './phone-guards-read-choice-card.js';
+export { readRoomView, isRoomView, readRoomHistoryView, readMessageSearchView, readRoomHistoryOutline, readWorkspaceListView, isWorkspaceListView, readWorkspaceView, isWorkspaceView, readWorkspaceMemberListView, isWorkspaceMemberListView, readChatListView, isChatListView, readCornerListView, isCornerListView } from './phone-guards-read-corner-lifecycle.js';
+export { readAgentDetailView, isAgentDetailView, readInviteView, isInviteView, readAgentPairingClaimWireView, readAgentPairingClaimView, readAgentPairingAbandonView, readMessageLinkView } from './phone-guards-read-agent-detail-view.js';
+
+
 
 /**
  * Phone surface readers project a known-safe view from a wire payload.
@@ -84,40 +23,52 @@ import { CHOICE_LETTERS, isChoiceMode, isChoiceStatus } from './room-choices.js'
  */
 export type SurfaceReader<T> = (value: unknown) => T | null;
 
-const HEX = /^[0-9a-f]{64}$/;
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const SHA1 = /^[0-9a-f]{40}$/i;
-const WATCH_FILTER_LIMIT = 32;
-const WATCH_FILTER_TAG_KEYS: readonly string[] = ['authors', '#h', '#d', '#p', '#t'];
-const CLOSED_VIEWER: RoomViewer = {
+
+export const HEX = /^[0-9a-f]{64}$/;
+
+export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+export const SHA1 = /^[0-9a-f]{40}$/i;
+
+export const WATCH_FILTER_LIMIT = 32;
+
+export const WATCH_FILTER_TAG_KEYS: readonly string[] = ['authors', '#h', '#d', '#p', '#t'];
+
+export const CLOSED_VIEWER: RoomViewer = {
   identity: { pubkey: '0'.repeat(64), kind: 'human', name: '' },
   role: 'member',
   permissions: { send: false, manage: false },
 };
 
-function record(value: unknown): Record<string, unknown> | null {
+
+export function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
 }
 
-function integer(value: unknown): value is number {
+
+export function integer(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) >= 0;
 }
 
-function hex64(value: unknown): value is string {
+
+export function hex64(value: unknown): value is string {
   return typeof value === 'string' && HEX.test(value);
 }
 
-function uuid(value: unknown): value is string {
+
+export function uuid(value: unknown): value is string {
   return typeof value === 'string' && UUID.test(value);
 }
 
-function nonempty(value: unknown): value is string {
+
+export function nonempty(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
-function httpUrl(value: unknown): value is string {
+
+export function httpUrl(value: unknown): value is string {
   if (typeof value !== 'string') return false;
   try {
     const protocol = new URL(value).protocol;
@@ -127,7 +78,8 @@ function httpUrl(value: unknown): value is string {
   }
 }
 
-function githubUrl(value: unknown): value is string {
+
+export function githubUrl(value: unknown): value is string {
   if (typeof value !== 'string') return false;
   try {
     const parsed = new URL(value);
@@ -137,7 +89,8 @@ function githubUrl(value: unknown): value is string {
   }
 }
 
-function field<K extends string, V>(
+
+export function field<K extends string, V>(
   key: K,
   value: V | undefined | null,
 ): { [P in K]?: Exclude<V, undefined> } {
@@ -146,13 +99,15 @@ function field<K extends string, V>(
     : ({ [key]: value } as { [P in K]: Exclude<V, undefined> });
 }
 
-function oneOf<const T extends string>(value: unknown, allowed: readonly T[]): T | undefined {
+
+export function oneOf<const T extends string>(value: unknown, allowed: readonly T[]): T | undefined {
   return typeof value === 'string' && (allowed as readonly string[]).includes(value)
     ? (value as T)
     : undefined;
 }
 
-function readList<T>(value: unknown, read: SurfaceReader<T>, limit?: number): T[] | undefined {
+
+export function readList<T>(value: unknown, read: SurfaceReader<T>, limit?: number): T[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const items: T[] = [];
   for (const entry of value) {
@@ -164,17 +119,20 @@ function readList<T>(value: unknown, read: SurfaceReader<T>, limit?: number): T[
   return items;
 }
 
-function requireList<T>(value: unknown, read: SurfaceReader<T>, limit?: number): T[] | null {
+
+export function requireList<T>(value: unknown, read: SurfaceReader<T>, limit?: number): T[] | null {
   return Array.isArray(value) ? (readList(value, read, limit) ?? []) : null;
 }
+
 
 /**
  * The server emits message rows oldest-first and already trims its own tail, so
  * a bundle whose cap is lower than the server's must keep the NEWEST rows.
  */
-function readNewestList<T>(value: unknown, read: SurfaceReader<T>, limit: number): T[] | undefined {
+export function readNewestList<T>(value: unknown, read: SurfaceReader<T>, limit: number): T[] | undefined {
   return Array.isArray(value) ? (readList(value.slice(-limit), read) ?? []) : undefined;
 }
+
 
 export function readIdentity(value: unknown): RoomViewIdentity | null {
   const item = record(value);
@@ -191,7 +149,8 @@ export function readIdentity(value: unknown): RoomViewIdentity | null {
   };
 }
 
-function readHeader(value: unknown): RoomViewHeader | null {
+
+export function readHeader(value: unknown): RoomViewHeader | null {
   const item = record(value);
   if (!item || !uuid(item.id)) return null;
   const reviewerAgentId = hex64(item.reviewerAgentId) ? item.reviewerAgentId : undefined;
@@ -211,7 +170,8 @@ function readHeader(value: unknown): RoomViewHeader | null {
   };
 }
 
-function readPresence(value: unknown): RoomViewMember['presence'] | undefined {
+
+export function readPresence(value: unknown): RoomViewMember['presence'] | undefined {
   const item = record(value);
   if (!item) return undefined;
   if (item.status !== 'online' && item.status !== 'offline') return undefined;
@@ -224,7 +184,8 @@ function readPresence(value: unknown): RoomViewMember['presence'] | undefined {
   };
 }
 
-function readMember(value: unknown): RoomViewMember | null {
+
+export function readMember(value: unknown): RoomViewMember | null {
   const item = record(value);
   const identity = readIdentity(item?.identity);
   if (!item || !identity) return null;
@@ -236,7 +197,8 @@ function readMember(value: unknown): RoomViewMember | null {
   };
 }
 
-function readWorkspaceAgent(value: unknown): WorkspaceAgentView | null {
+
+export function readWorkspaceAgent(value: unknown): WorkspaceAgentView | null {
   const member = readMember(value);
   const item = record(value);
   if (!member || !item || member.identity.kind !== 'agent') return null;
@@ -249,13 +211,15 @@ function readWorkspaceAgent(value: unknown): WorkspaceAgentView | null {
   };
 }
 
-function readPermissions(value: unknown): RoomViewer['permissions'] | undefined {
+
+export function readPermissions(value: unknown): RoomViewer['permissions'] | undefined {
   const item = record(value);
   if (!item || typeof item.send !== 'boolean' || typeof item.manage !== 'boolean') return undefined;
   return { send: item.send, manage: item.manage };
 }
 
-function readViewer(value: unknown): RoomViewer {
+
+export function readViewer(value: unknown): RoomViewer {
   const item = record(value);
   const identity = readIdentity(item?.identity);
   const permissions = readPermissions(item?.permissions);
@@ -285,11 +249,13 @@ function readViewer(value: unknown): RoomViewer {
   };
 }
 
-function readIdentityOnly(value: unknown): RoomViewIdentity | undefined {
+
+export function readIdentityOnly(value: unknown): RoomViewIdentity | undefined {
   return readIdentity(value) ?? undefined;
 }
 
-function readWatchFilter(value: unknown): SurfaceWatchFilter | null {
+
+export function readWatchFilter(value: unknown): SurfaceWatchFilter | null {
   const item = record(value);
   if (!item) return null;
   const filter: Record<string, unknown> = {};
@@ -306,11 +272,13 @@ function readWatchFilter(value: unknown): SurfaceWatchFilter | null {
   return Object.keys(filter).length > 0 ? (filter as SurfaceWatchFilter) : null;
 }
 
-function readWatchFilters(value: unknown): SurfaceWatchFilter[] {
+
+export function readWatchFilters(value: unknown): SurfaceWatchFilter[] {
   return readList(value, readWatchFilter, WATCH_FILTER_LIMIT) ?? [];
 }
 
-function readAttachment(
+
+export function readAttachment(
   value: unknown,
 ): NonNullable<RoomViewMessage['attachments']>[number] | null {
   const item = record(value);
@@ -341,7 +309,8 @@ function readAttachment(
   };
 }
 
-function readActivityRequester(
+
+export function readActivityRequester(
   value: unknown,
 ): NonNullable<RoomViewActivity['requestedBy']> | undefined {
   const item = record(value);
@@ -352,12 +321,14 @@ function readActivityRequester(
   };
 }
 
-function readToolReference(value:unknown): import('./phone-types.js').RoomToolReference|undefined {
+
+export function readToolReference(value:unknown): import('./phone-types.js').RoomToolReference|undefined {
   const item=record(value);
   return item&&typeof item.roomId==='string'&&/^[0-9a-f-]{36}$/.test(item.roomId)&&
     typeof item.anchor==='string'&&item.anchor.length>0&&item.anchor.length<=128?{roomId:item.roomId,anchor:item.anchor}:undefined;
 }
-function readActivity(value: unknown): RoomViewActivity | null {
+
+export function readActivity(value: unknown): RoomViewActivity | null {
   const item = record(value);
   if (
     !item ||
@@ -419,7 +390,8 @@ function readActivity(value: unknown): RoomViewActivity | null {
   };
 }
 
-function readPlan(value: unknown): RoomViewActivity['plan'] | undefined {
+
+export function readPlan(value: unknown): RoomViewActivity['plan'] | undefined {
   const item = record(value);
   if (!item) return undefined;
   const items = readList(item.items, (candidate) => {
@@ -444,6 +416,7 @@ function readPlan(value: unknown): RoomViewActivity['plan'] | undefined {
     ...field('objective', typeof item.objective === 'string' ? item.objective : undefined),
   };
 }
+
 
 export function readAgentGrantView(value: unknown): AgentGrantView | null {
   const item = record(value);
@@ -485,7 +458,8 @@ export function readAgentGrantView(value: unknown): AgentGrantView | null {
   };
 }
 
-function readWorkspaceMemberGrantView(value: unknown): WorkspaceMemberGrantView | null {
+
+export function readWorkspaceMemberGrantView(value: unknown): WorkspaceMemberGrantView | null {
   const item = record(value);
   const grant = readAgentGrantView(value);
   const agent = readIdentity(item?.agent);
@@ -493,7 +467,8 @@ function readWorkspaceMemberGrantView(value: unknown): WorkspaceMemberGrantView 
   return { ...grant, agent, ...field('roomName', typeof item?.roomName === 'string' ? item.roomName : undefined) };
 }
 
-function readGrantRequest(value: unknown): GrantRequestCardView | null {
+
+export function readGrantRequest(value: unknown): GrantRequestCardView | null {
   const item = record(value);
   const agent = readIdentity(item?.agent);
   const owner = readIdentity(item?.owner);
@@ -522,7 +497,8 @@ function readGrantRequest(value: unknown): GrantRequestCardView | null {
   };
 }
 
-function readAppSignInCard(value: unknown): NonNullable<RoomViewMessage['appSignIn']> | null {
+
+export function readAppSignInCard(value: unknown): NonNullable<RoomViewMessage['appSignIn']> | null {
   const item = record(value);
   if (!item || !uuid(item.appId) || typeof item.appKey !== 'string' ||
     !item.appKey || typeof item.name !== 'string' || !item.name ||
@@ -538,10 +514,13 @@ function readAppSignInCard(value: unknown): NonNullable<RoomViewMessage['appSign
       ? item.continuation : undefined) };
 }
 
-const AGENT_SIGN_IN_STATUSES = ['starting', 'pending', 'signing-in', 'signed-in', 'failed'] as const;
+
+export const AGENT_SIGN_IN_STATUSES = ['starting', 'pending', 'signing-in', 'signed-in', 'failed'] as const;
+
 const AGENT_SIGN_IN_KINDS = ['paste-code', 'device-code', 'approve-wait', 'api-key'] as const;
 
-function readAgentSignInCard(value: unknown): NonNullable<RoomViewMessage['agentSignIn']> | null {
+
+export function readAgentSignInCard(value: unknown): NonNullable<RoomViewMessage['agentSignIn']> | null {
   const item = record(value);
   const status = oneOf(item?.status, AGENT_SIGN_IN_STATUSES);
   if (!item || !hex64(item.agentId) || !hex64(item.ownerId) || !status ||
@@ -564,18 +543,21 @@ function readAgentSignInCard(value: unknown): NonNullable<RoomViewMessage['agent
   };
 }
 
-function readHumanApprovalIdentity(value: unknown): RoomViewIdentity | undefined {
+
+export function readHumanApprovalIdentity(value: unknown): RoomViewIdentity | undefined {
   const identity = readIdentity(value);
   return identity?.kind === 'human' ? identity : undefined;
 }
 
-function readApprovalFact(value: unknown): { label: string; value: string } | null {
+
+export function readApprovalFact(value: unknown): { label: string; value: string } | null {
   const item = record(value);
   return item && nonempty(item.label) && nonempty(item.value)
     ? { label: item.label, value: item.value } : null;
 }
 
-function readSquireApproval(value: unknown): NonNullable<RoomViewMessage['squireApproval']> | null {
+
+export function readSquireApproval(value: unknown): NonNullable<RoomViewMessage['squireApproval']> | null {
   const item = record(value);
   const agent = readIdentity(item?.agent);
   const linkKind = oneOf(item?.linkKind, ['approval', 'passkey', 'vouch']);
@@ -613,7 +595,8 @@ function readSquireApproval(value: unknown): NonNullable<RoomViewMessage['squire
   };
 }
 
-function readComputerSession(value: unknown): NonNullable<RoomViewMessage['computerSession']> | null {
+
+export function readComputerSession(value: unknown): NonNullable<RoomViewMessage['computerSession']> | null {
   const item = record(value);
   if (!item || typeof item.id !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(item.id) ||
     !httpUrl(item.url) || !nonempty(item.title) ||
@@ -623,6 +606,7 @@ function readComputerSession(value: unknown): NonNullable<RoomViewMessage['compu
     return null;
   return { id: item.id, url: item.url, title: item.title, status: item.status };
 }
+
 
 export function readConnectorOfferCardView(value: unknown): ConnectorOfferCardView | null {
   const item = record(value);
@@ -668,15 +652,18 @@ export function readConnectorOfferCardView(value: unknown): ConnectorOfferCardVi
   };
 }
 
+
 function isConnectorOfferCardView(value: unknown): value is ConnectorOfferCardView {
   return readConnectorOfferCardView(value) !== null;
 }
 
-function choiceLetter(value: unknown): value is (typeof CHOICE_LETTERS)[number] {
+
+export function choiceLetter(value: unknown): value is (typeof CHOICE_LETTERS)[number] {
   return typeof value === 'string' && (CHOICE_LETTERS as readonly string[]).includes(value);
 }
 
-function readChoiceOption(value: unknown): ChoiceCardView['options'][number] | null {
+
+export function readChoiceOption(value: unknown): ChoiceCardView['options'][number] | null {
   const item = record(value);
   if (!item || !choiceLetter(item.optionId) || item.letter !== item.optionId) return null;
   if (typeof item.label !== 'string' || typeof item.consequence !== 'string') return null;
@@ -700,1440 +687,12 @@ function readChoiceOption(value: unknown): ChoiceCardView['options'][number] | n
   };
 }
 
-function readChoiceVideoPreview(value: unknown): ChoiceCardView['videoPreview'] | undefined {
+
+export function readChoiceVideoPreview(value: unknown): ChoiceCardView['videoPreview'] | undefined {
   const item = record(value);
   if (!item || !uuid(item.videoObjectId) || typeof item.frameUrl !== 'string' || !/^https?:\/\//.test(item.frameUrl) ||
     typeof item.title !== 'string' || item.title.length > 100 || typeof item.description !== 'string' || item.description.length > 5000 ||
     !oneOf(item.visibility, ['public', 'unlisted', 'private'])) return undefined;
   return { videoObjectId: item.videoObjectId, frameUrl: item.frameUrl, title: item.title, description: item.description,
     visibility: item.visibility as 'public' | 'unlisted' | 'private' };
-}
-
-function readChoiceCard(value: unknown): ChoiceCardView | null {
-  const item = record(value);
-  const agent = readIdentity(item?.agent);
-  const options = readList(item?.options, readChoiceOption);
-  if (
-    !item ||
-    !uuid(item.choiceId) ||
-    !isChoiceMode(item.mode) ||
-    !isChoiceStatus(item.status) ||
-    !agent ||
-    (agent.kind !== 'agent' && !(item.mode === 'poll' && agent.kind === 'human')) ||
-    typeof item.prompt !== 'string' ||
-    !options ||
-    options.length < 2 ||
-    options.length > 4 ||
-    !Array.isArray(item.electorate) ||
-    !item.electorate.every(hex64) ||
-    !integer(item.votedCount) ||
-    !integer(item.electorateCount)
-  ) {
-    return null;
-  }
-  const responses = readList(item.responses, (candidate) => {
-    const response = record(candidate);
-    if (!response || !hex64(response.identityId) || !choiceLetter(response.optionId)) return null;
-    return { identityId: response.identityId, optionId: response.optionId };
-  });
-  return {
-    ...field('videoPreview', readChoiceVideoPreview(item.videoPreview)),
-    ...field('onboardingManual', typeof item.onboardingManual === 'boolean' ? item.onboardingManual : undefined),
-    ...field('starterOnboarding', oneOf(item.starterOnboarding, ['welcome', 'next'] as const)),
-    choiceId: item.choiceId,
-    mode: item.mode,
-    status: item.status,
-    agent,
-    prompt: item.prompt,
-    ...field('ask', typeof item.ask === 'string' ? item.ask : undefined),
-    options,
-    electorate: item.electorate,
-    votedCount: item.votedCount,
-    electorateCount: item.electorateCount,
-    responses: responses ?? [],
-    ...field('requester', readIdentityOnly(item.requester)),
-    ...field('constraint', typeof item.constraint === 'string' ? item.constraint : undefined),
-    ...field(
-      'mentionIds',
-      Array.isArray(item.mentionIds) && item.mentionIds.every(hex64) ? item.mentionIds : undefined,
-    ),
-    ...field('closesAt', integer(item.closesAt) ? item.closesAt : undefined),
-    ...field('answeredBy', readIdentityOnly(item.answeredBy)),
-    ...field(
-      'selectedOptionId',
-      choiceLetter(item.selectedOptionId) ? item.selectedOptionId : undefined,
-    ),
-    ...field('outcome', oneOf(item.outcome, ['winner', 'tie', 'no-votes'])),
-    ...field('footer', typeof item.footer === 'string' ? item.footer : undefined),
-  };
-}
-
-function readAgentCommand(value: unknown): NonNullable<RoomViewMessage['agentCommand']> | null {
-  const item = record(value);
-  const recipient = record(item?.recipient);
-  if (
-    !item ||
-    (item.kind !== 'order' && item.kind !== 'report') ||
-    typeof item.text !== 'string' ||
-    !recipient ||
-    typeof recipient.id !== 'string' ||
-    typeof recipient.name !== 'string'
-  ) {
-    return null;
-  }
-  return {
-    kind: item.kind,
-    recipient: {
-      id: recipient.id,
-      name: recipient.name,
-      ...field('handle', typeof recipient.handle === 'string' ? recipient.handle : undefined),
-    },
-    ...field('status', oneOf(item.status, ['done', 'blocked', 'needs-decision', 'failed'])),
-    text: item.text,
-  };
-}
-
-function readWalletTx(value: unknown): NonNullable<RoomViewMessage['walletTx']> | null {
-  const item = record(value);
-  if (
-    !item ||
-    (item.direction !== 'in' && item.direction !== 'out') ||
-    typeof item.amountText !== 'string' ||
-    typeof item.counterparty !== 'string' ||
-    typeof item.chain !== 'string' ||
-    typeof item.balanceAfterUsd !== 'string'
-  ) {
-    return null;
-  }
-  return {
-    direction: item.direction,
-    amountText: item.amountText,
-    counterparty: item.counterparty,
-    chain: item.chain,
-    balanceAfterUsd: item.balanceAfterUsd,
-    ...field('txUrl', typeof item.txUrl === 'string' ? item.txUrl : undefined),
-    ...field(
-      'agentName',
-      typeof item.agentName === 'string' || item.agentName === null ? item.agentName : undefined,
-    ),
-  };
-}
-
-function readWalletInsufficient(
-  value: unknown,
-): NonNullable<RoomViewMessage['walletInsufficient']> | null {
-  const item = record(value);
-  if (
-    !item ||
-    typeof item.needed !== 'string' ||
-    typeof item.asset !== 'string' ||
-    typeof item.chain !== 'string'
-  ) {
-    return null;
-  }
-  return {
-    needed: item.needed,
-    asset: item.asset,
-    chain: item.chain,
-    ...field(
-      'available',
-      typeof item.available === 'string' || item.available === null ? item.available : undefined,
-    ),
-    ...field(
-      'agentName',
-      typeof item.agentName === 'string' || item.agentName === null ? item.agentName : undefined,
-    ),
-    ...field('reason', typeof item.reason === 'string' ? item.reason : undefined),
-  };
-}
-
-function readWalletDelegation(
-  value: unknown,
-): NonNullable<RoomViewMessage['walletDelegation']> | null {
-  const item = record(value);
-  if (item?.standing === true) return { standing: true };
-  if (!item || !integer(item.expiresAt) || !integer(item.ttlHours)) return null;
-  return { expiresAt: item.expiresAt, ttlHours: item.ttlHours };
-}
-
-function readMessageCorner(value: unknown): NonNullable<RoomViewMessage['corner']> | null {
-  const item = record(value);
-  if (
-    !item ||
-    !uuid(item.id) ||
-    (item.state !== 'working' &&
-      item.state !== 'waiting' &&
-      item.state !== 'idle' &&
-      item.state !== 'review' &&
-      item.state !== 'archived')
-  ) {
-    return null;
-  }
-  return { id: item.id, state: item.state };
-}
-
-function readPermission(value: unknown): NonNullable<RoomViewMessage['permission']> | null {
-  const item = record(value);
-  const agent = readIdentity(item?.agent);
-  const requester = readIdentity(item?.requester);
-  const decider = readIdentity(item?.decider);
-  if (
-    !item ||
-    !nonempty(item.permissionId) ||
-    !nonempty(item.requestId) ||
-    !agent ||
-    agent.kind !== 'agent' ||
-    !requester ||
-    requester.kind !== 'human' ||
-    !nonempty(item.tool) ||
-    (item.status !== 'pending' &&
-      item.status !== 'allowed' &&
-      item.status !== 'denied' &&
-      item.status !== 'expired' &&
-      item.status !== 'failed')
-  ) {
-    return null;
-  }
-  return {
-    permissionId: item.permissionId,
-    requestId: item.requestId,
-    agent,
-    requester,
-    tool: item.tool,
-    status: item.status,
-    ...field('decider', decider && decider.kind === 'human' ? decider : undefined),
-    ...field('repository', typeof item.repository === 'string' ? item.repository : undefined),
-    ...field('purpose', oneOf(item.purpose, ['squire-spending'])),
-    ...field('reason', nonempty(item.reason) ? item.reason : undefined),
-    ...field('decidedAt', integer(item.decidedAt) ? item.decidedAt : undefined),
-    ...field('ownerId', nonempty(item.ownerId) ? item.ownerId : undefined),
-    ...field('cornerId', uuid(item.cornerId) ? item.cornerId : undefined),
-  };
-}
-
-function readTargetBranch(value: unknown): NonNullable<RoomViewMessage['targetBranch']> | null {
-  const item = record(value);
-  if (!item || !nonempty(item.proposalId) || typeof item.from !== 'string' || !nonempty(item.to)) {
-    return null;
-  }
-  return {
-    proposalId: item.proposalId,
-    ...field('purpose', nonempty(item.purpose) ? item.purpose : undefined),
-    ...field('status', oneOf(item.status, ['allowed', 'denied'])),
-    ...field('decidedBy', readHumanApprovalIdentity(item.decidedBy)),
-    ...field('decidedAt', integer(item.decidedAt) ? item.decidedAt : undefined),
-    from: item.from,
-    to: item.to,
-    ...field('repository', typeof item.repository === 'string' ? item.repository : undefined),
-    ...field('agent', readIdentityOnly(item.agent)),
-    ...field('requester', readIdentityOnly(item.requester)),
-  };
-}
-
-function readGithubEvent(value: unknown): NonNullable<RoomViewMessage['githubEvent']> | null {
-  const item = record(value);
-  if (
-    !item ||
-    !nonempty(item.type) ||
-    !nonempty(item.action) ||
-    typeof item.actor !== 'string' ||
-    typeof item.title !== 'string' ||
-    !githubUrl(item.url)
-  ) {
-    return null;
-  }
-  return {
-    ...field('cornerId', uuid(item.cornerId) ? item.cornerId : undefined),
-    type: item.type,
-    action: item.action,
-    actor: item.actor,
-    title: item.title,
-    url: item.url,
-    ...field('branch', typeof item.branch === 'string' ? item.branch : undefined),
-    ...field('targetBranch', typeof item.targetBranch === 'string' ? item.targetBranch : undefined),
-  };
-}
-
-function readDaemonFact(value: unknown): NonNullable<RoomViewMessage['daemonFact']> | null {
-  const item = record(value);
-  if (
-    !item ||
-    (item.type !== 'corner-complete' &&
-      item.type !== 'checks-failing' &&
-      item.type !== 'worktree-cleaned' &&
-      item.type !== 'corner-open') ||
-    !uuid(item.cornerId) ||
-    typeof item.objective !== 'string' ||
-    // The objective titles a legacy card; a person-opened corner has none and
-    // is titled by its name instead. A card must carry one of the two.
-    (!item.objective.trim() && !(typeof item.name === 'string' && item.name.trim()))
-  ) {
-    return null;
-  }
-  if (
-    item.type === 'corner-complete' &&
-    item.outcome !== 'landed' &&
-    item.outcome !== 'abandoned'
-  ) {
-    return null;
-  }
-  const pullRequest = record(item.pullRequest);
-  const projectedPull =
-    pullRequest && githubUrl(pullRequest.url)
-      ? {
-          url: pullRequest.url,
-          ...field(
-            'number',
-            Number.isSafeInteger(pullRequest.number) && Number(pullRequest.number) > 0
-              ? (pullRequest.number as number)
-              : undefined,
-          ),
-          ...field('title', typeof pullRequest.title === 'string' ? pullRequest.title : undefined),
-          ...field(
-            'targetBranch',
-            typeof pullRequest.targetBranch === 'string' ? pullRequest.targetBranch : undefined,
-          ),
-        }
-      : undefined;
-  return {
-    type: item.type,
-    cornerId: item.cornerId,
-    objective: item.objective,
-    ...field('name', typeof item.name === 'string' ? item.name : undefined),
-    ...field(
-      'sourceMessageId',
-      typeof item.sourceMessageId === 'string' && item.sourceMessageId
-        ? item.sourceMessageId
-        : undefined,
-    ),
-    ...field('outcome', oneOf(item.outcome, ['landed', 'abandoned'])),
-    ...field('pullRequest', projectedPull),
-    ...field(
-      'subgoals',
-      readList(item.subgoals, (candidate) => {
-        const entry = record(candidate);
-        if (
-          !entry ||
-          typeof entry.step !== 'string' ||
-          !entry.step.trim() ||
-          (entry.status !== 'pending' &&
-            entry.status !== 'in_progress' &&
-            entry.status !== 'completed')
-        ) {
-          return null;
-        }
-        return { step: entry.step, status: entry.status };
-      }),
-    ),
-  };
-}
-
-function readReaction(value: unknown): MessageReactionView | null {
-  const item = record(value);
-  if (
-    !item ||
-    !(MESSAGE_REACTION_EMOJIS as readonly string[]).includes(item.emoji as string) ||
-    !integer(item.count) ||
-    item.count <= 0 ||
-    typeof item.reacted !== 'boolean'
-  ) {
-    return null;
-  }
-  const members = readList(item.members, readIdentity);
-  return {
-    emoji: item.emoji as MessageReactionView['emoji'],
-    count: item.count,
-    reacted: item.reacted,
-    ...field('members', members),
-  };
-}
-
-export function readRoomViewMessage(value: unknown): RoomViewMessage | null {
-  const item = record(value);
-  const author = readIdentity(item?.author);
-  const sourceClient = record(item?.sourceClient);
-  if (!item || !hex64(item.id) || !author || !integer(item.createdAt)) return null;
-  const presentation =
-    item.presentation === 'message' ||
-    item.presentation === 'system' ||
-    item.presentation === 'activity' ||
-    item.presentation === 'card'
-      ? item.presentation
-      : 'message';
-  const reference = record(item.reference);
-  const reply = record(item.reply);
-  const projectedReference =
-    reference &&
-    uuid(reference.channelId) &&
-    reference.eventId === item.id &&
-    hex64(reference.rootId)
-      ? {
-          channelId: reference.channelId,
-          eventId: item.id,
-          rootId: reference.rootId,
-        }
-      : undefined;
-  const projectedReply =
-    reply && uuid(reply.channelId) && hex64(reply.eventId) && hex64(reply.rootId)
-      ? { channelId: reply.channelId, eventId: reply.eventId, rootId: reply.rootId }
-      : undefined;
-  return {
-    id: item.id,
-    text: typeof item.text === 'string' ? item.text : '',
-    createdAt: item.createdAt,
-    author,
-    presentation,
-    ...field('deleted', typeof item.deleted === 'boolean' ? item.deleted : undefined),
-    ...field('createdAtMs', integer(item.createdAtMs) ? item.createdAtMs : undefined),
-    ...field('version', integer(item.version) ? item.version : undefined),
-    ...field('bookmarked', typeof item.bookmarked === 'boolean' ? item.bookmarked : undefined),
-    ...field(
-      'feedbackReported',
-      typeof item.feedbackReported === 'boolean' ? item.feedbackReported : undefined,
-    ),
-    ...field('reference', projectedReference),
-    ...field('reply', projectedReply),
-    ...field('liveTurnId', typeof item.liveTurnId === 'string' ? item.liveTurnId : undefined),
-    ...field('requestId', typeof item.requestId === 'string' ? item.requestId : undefined),
-    ...field('sourceClient', sourceClient && typeof sourceClient.id === 'string' && typeof sourceClient.name === 'string' && sourceClient.name.length <= 120 ? { id: sourceClient.id, name: sourceClient.name } : undefined),
-    ...field('agentModel', typeof item.agentModel === 'string' ? item.agentModel : undefined),
-    ...field('attachments', readList(item.attachments, readAttachment)),
-    ...field(
-      'mentionPubkeys',
-      Array.isArray(item.mentionPubkeys) && item.mentionPubkeys.every(hex64)
-        ? item.mentionPubkeys
-        : undefined,
-    ),
-    ...field('reactions', readList(item.reactions, readReaction)),
-    ...field('activity', readList(item.activity, readActivity)),
-    ...field('durableFact', oneOf(item.durableFact, ['failure', 'merge', 'action'])),
-    ...field('corner', readMessageCorner(item.corner)),
-    ...field('permission', readPermission(item.permission)),
-    ...field('grantRequest', readGrantRequest(item.grantRequest)),
-    ...field('squireApproval', readSquireApproval(item.squireApproval)),
-    ...field('computerSession', readComputerSession(item.computerSession)),
-    ...field('voiceCall', readVoiceCall(item.voiceCall)),
-    ...field('connectorOffer', readConnectorOfferCardView(item.connectorOffer)),
-    ...field('vaultSave', readVaultSaveCard(item.vaultSave)),
-    ...field('appSignIn', readAppSignInCard(item.appSignIn)),
-    ...field('agentSignIn', readAgentSignInCard(item.agentSignIn)),
-    ...field('onboarding', readRepositoryOnboardingCard(item.onboarding)),
-    ...field('choice', readChoiceCard(item.choice)),
-    ...field('agentCommand', readAgentCommand(item.agentCommand)),
-    ...field('walletTx', readWalletTx(item.walletTx)),
-    ...field('walletInsufficient', readWalletInsufficient(item.walletInsufficient)),
-    ...field('walletDelegation', readWalletDelegation(item.walletDelegation)),
-    ...field('targetBranch', readTargetBranch(item.targetBranch)),
-    ...field('githubEvent', readGithubEvent(item.githubEvent)),
-    ...field('daemonFact', readDaemonFact(item.daemonFact)),
-    ...field('awayWarning', typeof item.awayWarning === 'boolean' ? item.awayWarning : undefined),
-    ...field('systemEvent', isSystemEvent(item.systemEvent) ? item.systemEvent : undefined),
-  };
-}
-
-export function isRoomViewMessage(value: unknown): value is RoomViewMessage {
-  return readRoomViewMessage(value) !== null;
-}
-
-/**
- * A compact Room read (`x-beeline-view: compact`, apps/server/src/
- * compact-room-view.ts) leaves out what the reader derives here: the
- * whole-second `createdAt` beside `createdAtMs`, and a top-level message's own
- * reference to itself in this Room. A full read passes through unchanged.
- */
-function expandCompactMessage(value: unknown, roomId: string): unknown {
-  const item = record(value);
-  if (!item) return value;
-  const createdAt =
-    item.createdAt === undefined && integer(item.createdAtMs)
-      ? Math.floor(item.createdAtMs / 1000)
-      : undefined;
-  const reference =
-    item.reference === undefined && item.presentation === 'message' && hex64(item.id)
-      ? { channelId: roomId, eventId: item.id, rootId: item.id }
-      : undefined;
-  if (createdAt === undefined && reference === undefined) return value;
-  return {
-    ...item,
-    ...(createdAt === undefined ? {} : { createdAt }),
-    ...(reference === undefined ? {} : { reference }),
-  };
-}
-
-function readScopedMessage(value: unknown, roomId: string): RoomViewMessage | null {
-  const message = readRoomViewMessage(expandCompactMessage(value, roomId));
-  if (!message) return null;
-  const reference =
-    message.reference && message.reference.channelId === roomId ? message.reference : undefined;
-  const reply = message.reply && message.reply.channelId === roomId ? message.reply : undefined;
-  const { reference: _foreignReference, reply: _foreignReply, ...rest } = message;
-  return { ...rest, ...field('reference', reference), ...field('reply', reply) };
-}
-
-function readAgentTurn(value: unknown): RoomViewAgentTurn | null {
-  const item = record(value);
-  if (
-    !item ||
-    !nonempty(item.requestId) ||
-    !hex64(item.agentPubkey) ||
-    (item.status !== 'working' &&
-      item.status !== 'complete' &&
-      item.status !== 'failed' &&
-      item.status !== 'cancelled') ||
-    !integer(item.createdAt)
-  ) {
-    return null;
-  }
-  return {
-    requestId: item.requestId,
-    agentPubkey: item.agentPubkey,
-    status: item.status,
-    createdAt: item.createdAt,
-    ...field('startedAt', integer(item.startedAt) ? item.startedAt : undefined),
-    ...field('generationId', typeof item.generationId === 'string' ? item.generationId : undefined),
-    ...field('requestedBy', typeof item.requestedBy === 'string' ? item.requestedBy : undefined),
-  };
-}
-
-function readPendingAgentCommand(value: unknown): RoomViewPendingAgentCommand | null {
-  const item = record(value);
-  if (!item || !nonempty(item.requestId) || !hex64(item.agentPubkey) || !integer(item.createdAt))
-    return null;
-  return {
-    requestId: item.requestId,
-    agentPubkey: item.agentPubkey,
-    createdAt: item.createdAt,
-  };
-}
-
-function readWorkspace(value: unknown): ChatListWorkspace | null {
-  const item = record(value);
-  if (!item || !uuid(item.id)) return null;
-  return {
-    id: item.id,
-    name: typeof item.name === 'string' ? item.name : '',
-    role: oneOf(item.role, ['owner', 'admin', 'member', 'spectator']) ?? 'member',
-    updatedAt: integer(item.updatedAt) ? item.updatedAt : 0,
-    ...field('roomCount', integer(item.roomCount) ? item.roomCount : undefined),
-    ...field('attention', typeof item.attention === 'boolean' ? item.attention : undefined),
-    ...field('visibility', oneOf(item.visibility, ['public', 'invite-only'])),
-    ...field('avatar', typeof item.avatar === 'string' ? item.avatar : undefined),
-  };
-}
-
-function readLatest(value: unknown): NonNullable<ChatListItem['latestMessage']> | null {
-  const item = record(value);
-  const author = readIdentity(item?.author);
-  // Not hex64: an automatic failure report is stored as `failure:<command>:<attempt>`
-  // and a handoff card as a UUID. Dropping the preview made an active Room read
-  // "No messages yet".
-  if (
-    !item ||
-    !nonempty(item.id) ||
-    typeof item.text !== 'string' ||
-    !integer(item.createdAt) ||
-    !author
-  ) {
-    return null;
-  }
-  return {
-    id: item.id,
-    text: item.text,
-    createdAt: item.createdAt,
-    author,
-    ...field('attachments', readList(item.attachments, readAttachment)),
-    ...field('mentionsViewer', item.mentionsViewer === true ? (true as const) : undefined),
-  };
-}
-
-function readCornerBlocker(value: unknown): import('./phone-types.js').CornerBlocker | undefined {
-  const item = record(value);
-  const kind = oneOf(item?.kind, ['message', 'merge-hold', 'report', 'ci']);
-  if (!item || !kind) return undefined;
-  return { kind,
-    ...field('url', typeof item.url === 'string' && item.url.startsWith('https://github.com/') ? item.url : undefined),
-    ...field('personId', nonempty(item.personId) ? item.personId : undefined),
-    ...field('personName', nonempty(item.personName) ? item.personName : undefined) };
-}
-
-function readChatCorner(value: unknown): ChatListCorner | null {
-  const item = record(value);
-  const state = oneOf(item?.state, ['working', 'waiting', 'idle', 'review']);
-  if (!item || !uuid(item.id) || typeof item.name !== 'string' || !state) return null;
-  return {
-    id: item.id,
-    name: item.name,
-    state,
-    ...field('mine', item.mine === true ? (true as const) : undefined),
-    ...field('reason', oneOf(item.reason, ['approve', 'connect', 'question'])),
-    ...field('blocker', readCornerBlocker(item.blocker)),
-    ...field('itemId', nonempty(item.itemId) ? item.itemId : undefined),
-    ...field('waitingSince', integer(item.waitingSince) ? item.waitingSince : undefined),
-    ...field('attention', item.attention === true ? (true as const) : undefined),
-  };
-}
-
-function readCornerSummary(value: unknown): RoomCornerSummary | undefined {
-  const item = record(value);
-  if (!item) return undefined;
-  const openCorners = readList(item.openCorners, readChatCorner);
-  const counts = [item.cornerCount, item.waitingCornerCount, item.mineCornerCount];
-  if (!openCorners || !counts.every(integer)) return undefined;
-  return {
-    cornerCount: item.cornerCount as number,
-    waitingCornerCount: item.waitingCornerCount as number,
-    mineCornerCount: item.mineCornerCount as number,
-    openCorners,
-  };
-}
-
-function readChat(value: unknown): ChatListItem | null {
-  const item = record(value);
-  const room = readHeader(item?.room);
-  if (!item || !room) return null;
-  const direct = record(item.directMessage);
-  const peer = readIdentity(direct?.peer);
-  const presence = record(direct?.presence);
-  const presenceStatus = oneOf(presence?.status, ['online', 'offline']);
-  const projectedPresence =
-    presence && presenceStatus && integer(presence.observedAt)
-      ? {
-          status: presenceStatus,
-          observedAt: presence.observedAt,
-          ...field('held', presence.held === true ? (true as const) : undefined),
-        }
-      : undefined;
-  const attentionReason = record(item.attentionReason);
-  const projectedAttentionReason =
-    attentionReason?.kind === 'approval'
-      ? {
-          kind: 'approval' as const,
-          ...field(
-            'actor',
-            typeof attentionReason.actor === 'string' && attentionReason.actor.trim()
-              ? attentionReason.actor
-              : undefined,
-          ),
-        }
-      : undefined;
-  return {
-    room,
-    ...field('unread', typeof item.unread === 'boolean' ? item.unread : undefined),
-    ...field(
-      'leaveDeletesRoom',
-      typeof item.leaveDeletesRoom === 'boolean' ? item.leaveDeletesRoom : undefined,
-    ),
-    ...field('memberCount', integer(item.memberCount) ? item.memberCount : undefined),
-    ...field('cornerCount', integer(item.cornerCount) ? item.cornerCount : undefined),
-    ...field(
-      'waitingCornerCount',
-      integer(item.waitingCornerCount) && item.waitingCornerCount >= 0
-        ? item.waitingCornerCount
-        : undefined,
-    ),
-    ...field(
-      'mineCornerCount',
-      integer(item.mineCornerCount) && item.mineCornerCount >= 0 ? item.mineCornerCount : undefined,
-    ),
-    ...field('openCorners', readList(item.openCorners, readChatCorner)),
-    ...field(
-      'agentsOffline',
-      typeof item.agentsOffline === 'boolean' ? item.agentsOffline : undefined,
-    ),
-    ...field('closed', typeof item.closed === 'boolean' ? item.closed : undefined),
-    ...field('voiceCall', readVoiceCall(item.voiceCall)),
-    ...field('latestMessage', readLatest(item.latestMessage)),
-    ...field(
-      'repositoryName',
-      typeof item.repositoryName === 'string' ? item.repositoryName : undefined,
-    ),
-    ...field('agentState', oneOf(item.agentState, ['needs-you', 'working'])),
-    ...field('attentionReason', projectedAttentionReason),
-    ...field('directMessage', peer ? { peer, ...field('presence', projectedPresence) } : undefined),
-  };
-}
-
-function readCheck(
-  value: unknown,
-): NonNullable<NonNullable<CornerLifecycleView['checksSummary']>['checks']>[number] | null {
-  const item = record(value);
-  if (
-    !item ||
-    !nonempty(item.name) ||
-    (item.status !== 'pending' &&
-      item.status !== 'passed' &&
-      item.status !== 'failed' &&
-      item.status !== 'cancelled')
-  ) {
-    return null;
-  }
-  return {
-    name: item.name,
-    status: item.status,
-    ...field('conclusion', typeof item.conclusion === 'string' ? item.conclusion : undefined),
-    ...field('url', httpUrl(item.url) ? item.url : undefined),
-  };
-}
-
-function readCornerLifecycle(value: unknown): CornerLifecycleView | null {
-  const item = record(value);
-  if (!item) return null;
-  const mergeQueue = record(item.mergeQueue);
-  const checksSummary = record(item.checksSummary);
-  const summaryStatus = oneOf(checksSummary?.status, ['passing', 'failing', 'pending', 'unknown']);
-  const projectedSummary =
-    checksSummary &&
-    summaryStatus &&
-    integer(checksSummary.total) &&
-    integer(checksSummary.updatedAt)
-      ? {
-          status: summaryStatus,
-          total: checksSummary.total,
-          failing: Array.isArray(checksSummary.failing)
-            ? checksSummary.failing.filter((entry): entry is string => typeof entry === 'string')
-            : [],
-          updatedAt: checksSummary.updatedAt,
-          checks: readList(checksSummary.checks, readCheck, 200) ?? [],
-        }
-      : undefined;
-  const pr = record(item.pr);
-  const projectedPr =
-    pr &&
-    integer(pr.number) &&
-    pr.number > 0 &&
-    githubUrl(pr.url) &&
-    nonempty(pr.title) &&
-    nonempty(pr.targetBranch) &&
-    typeof pr.headSha === 'string' &&
-    SHA1.test(pr.headSha)
-      ? {
-          number: pr.number,
-          url: pr.url,
-          title: pr.title,
-          targetBranch: pr.targetBranch,
-          headSha: pr.headSha,
-          ...field('mergeability', oneOf(pr.mergeability, ['clean', 'dirty', 'draft', 'unknown', 'other'])),
-          ...field('baseSha', typeof pr.baseSha === 'string' ? pr.baseSha : undefined),
-          ...field('mergedAt', typeof pr.mergedAt === 'string' ? pr.mergedAt : undefined),
-          ...field('mergedBy', typeof pr.mergedBy === 'string' ? pr.mergedBy : undefined),
-        }
-      : undefined;
-  return {
-    lifecycle: oneOf(item.lifecycle, ['working', 'in-review', 'unknown', 'done']) ?? 'unknown',
-    checks: oneOf(item.checks, ['passing', 'failing', 'pending', 'unknown']) ?? 'unknown',
-    ...field('mergeQueue', mergeQueue && typeof mergeQueue.headSha === 'string' && SHA1.test(mergeQueue.headSha)
-      ? { headSha: mergeQueue.headSha,
-          ...field('combinedSha', typeof mergeQueue.combinedSha === 'string' && SHA1.test(mergeQueue.combinedSha)
-            ? mergeQueue.combinedSha : undefined) } : undefined),
-    ...field('branch', typeof item.branch === 'string' ? item.branch : undefined),
-    ...field('outcome', oneOf(item.outcome, ['landed', 'abandoned'])),
-    ...field('reason', typeof item.reason === 'string' ? item.reason : undefined),
-    ...field('checksSummary', projectedSummary),
-    ...field('pr', projectedPr),
-  };
-}
-
-function readCorner(value: unknown): CornerListItem | null {
-  const item = record(value);
-  const corner = readHeader(item?.corner);
-  const lifecycle = readCornerLifecycle(item?.lifecycle) ?? {
-    lifecycle: 'unknown' as const,
-    checks: 'unknown' as const,
-  };
-  if (
-    !item ||
-    !corner ||
-    (item.state !== 'working' &&
-      item.state !== 'waiting' &&
-      item.state !== 'idle' &&
-      item.state !== 'review' &&
-      item.state !== 'archived')
-  ) {
-    return null;
-  }
-  const initiator = readIdentity(item.initiator);
-  return {
-    corner,
-    lifecycle,
-    state: item.state,
-    ...field('stateAt', integer(item.stateAt) ? item.stateAt : undefined),
-    ...field('closedAt', integer(item.closedAt) ? item.closedAt : undefined),
-    ...field('reason', oneOf(item.reason, ['approve', 'connect', 'question'])),
-    ...field('blocker', readCornerBlocker(item.blocker)),
-    ...field('itemId', nonempty(item.itemId) ? item.itemId : undefined),
-    ...field('initiator', initiator && initiator.kind === 'human' ? initiator : undefined),
-    ...field('mine', item.mine === true ? (true as const) : undefined),
-    ...field('agent', readIdentityOnly(item.agent)),
-    ...field(
-      'briefRevision',
-      integer(item.briefRevision) && item.briefRevision > 0 ? item.briefRevision : undefined,
-    ),
-    ...field('latestMessage', readLatest(item.latestMessage)),
-  };
-}
-
-function readRepository(value: unknown): RoomRepositoryView | null {
-  const item = record(value);
-  if (
-    !item ||
-    !nonempty(item.key) ||
-    !nonempty(item.name) ||
-    !nonempty(item.remote) ||
-    !nonempty(item.targetBranch) ||
-    !integer(item.updatedAt) ||
-    typeof item.githubEventsEnabled !== 'boolean'
-  ) {
-    return null;
-  }
-  return {
-    key: item.key,
-    name: item.name,
-    remote: item.remote,
-    targetBranch: item.targetBranch,
-    updatedAt: item.updatedAt,
-    githubEventsEnabled: item.githubEventsEnabled,
-    ...field(
-      'githubInstallationId',
-      integer(item.githubInstallationId) ? item.githubInstallationId : undefined,
-    ),
-    ...field(
-      'allowAutoMerge',
-      typeof item.allowAutoMerge === 'boolean' ? item.allowAutoMerge : undefined,
-    ),
-  };
-}
-
-function readRepositoryResolution(value: unknown): RoomRepositoryResolution | undefined {
-  return value === 'repository' || value === 'none' || value === 'unverified' ? value : undefined;
-}
-
-function readDirectMessage(
-  value: unknown,
-  viewerPubkey: string,
-): { readonly participants: readonly [string, string] } | undefined {
-  const item = record(value);
-  if (!item || !Array.isArray(item.participants) || item.participants.length !== 2)
-    return undefined;
-  const left = item.participants[0];
-  const right = item.participants[1];
-  if (!hex64(left) || !hex64(right)) return undefined;
-  if (left >= right || (left !== viewerPubkey && right !== viewerPubkey)) return undefined;
-  return { participants: [left, right] };
-}
-
-function readModelSelection(value: unknown): AgentModelSelection | undefined {
-  const item = record(value);
-  if (!item) return undefined;
-  return {
-    ...field('model', typeof item.model === 'string' ? item.model : undefined),
-    ...field('effort', typeof item.effort === 'string' ? item.effort : undefined),
-  };
-}
-
-function readModelOption(value: unknown): AgentModelConfigOption | null {
-  const item = record(value);
-  if (!item || !nonempty(item.id) || !nonempty(item.category)) return null;
-  const options = readList(item.options, (candidate) => {
-    const option = record(candidate);
-    if (!option || !nonempty(option.id)) return null;
-    return {
-      id: option.id,
-      ...field('name', typeof option.name === 'string' ? option.name : undefined),
-      ...field(
-        'description',
-        typeof option.description === 'string' ? option.description : undefined,
-      ),
-    };
-  });
-  if (!options) return null;
-  return {
-    id: item.id,
-    category: item.category,
-    options,
-    ...field('currentValue', typeof item.currentValue === 'string' ? item.currentValue : undefined),
-  };
-}
-
-function readComposerCommand(value: unknown): AgentComposerCommand | null {
-  const item = record(value);
-  if (!item || !nonempty(item.name)) return null;
-  return {
-    name: item.name,
-    ...field('description', nonempty(item.description) ? item.description : undefined),
-    ...field('inputHint', nonempty(item.inputHint) ? item.inputHint : undefined),
-  };
-}
-
-function readAgentYolo(value: unknown): AgentYoloView | null {
-  const item = record(value);
-  const setBy = record(item?.setBy);
-  if (!item || typeof item.enabled !== 'boolean' || typeof item.canChange !== 'boolean')
-    return null;
-  return {
-    enabled: item.enabled,
-    canChange: item.canChange,
-    ...field('forcedOff', typeof item.forcedOff === 'boolean' ? item.forcedOff : undefined),
-    ...field('setBy', setBy && typeof setBy.name === 'string' ? { name: setBy.name } : undefined),
-    ...field('setAt', integer(item.setAt) ? item.setAt : undefined),
-  };
-}
-
-function readAgentAccess(value: unknown): AgentAccessView | null {
-  const item = record(value);
-  const owner = record(item?.owner);
-  if (!item || !isAgentAccessPolicy(item.policy) || typeof item.canChange !== 'boolean')
-    return null;
-  return {
-    policy: item.policy,
-    canChange: item.canChange,
-    ...field(
-      'owner',
-      owner && typeof owner.id === 'string' && typeof owner.name === 'string'
-        ? {
-            id: owner.id,
-            name: owner.name,
-            ...field('handle', typeof owner.handle === 'string' ? owner.handle : undefined),
-          }
-        : undefined,
-    ),
-  };
-}
-
-function readManagedRoom(value: unknown): WorkspaceManagedRoomView | null {
-  const item = record(value);
-  if (
-    !item ||
-    !uuid(item.id) ||
-    typeof item.name !== 'string' ||
-    (item.visibility !== 'public' && item.visibility !== 'invite-only') ||
-    !integer(item.createdAt)
-  ) {
-    return null;
-  }
-  return {
-    id: item.id,
-    name: item.name,
-    visibility: item.visibility,
-    createdAt: item.createdAt,
-  };
-}
-
-function readCornerBrief(value: unknown): NonNullable<RoomView['cornerBrief']> | null {
-  const item = record(value);
-  if (!item || !integer(item.revision) || item.revision < 1 || typeof item.spec !== 'string')
-    return null;
-  const attachments = requireList(item.attachments, (candidate) => {
-    const file = record(candidate);
-    if (
-      !file ||
-      typeof file.title !== 'string' ||
-      typeof file.purpose !== 'string' ||
-      typeof file.required !== 'boolean' ||
-      !httpUrl(file.url)
-    )
-      return null;
-    return { title: file.title, purpose: file.purpose, required: file.required, url: file.url };
-  });
-  if (!attachments) return null;
-  const approval = record(item.approval);
-  return {
-    ...field('authorHandle', typeof item.authorHandle === 'string' ? item.authorHandle : undefined),
-    revision: item.revision,
-    spec: item.spec,
-    attachments,
-    ...field(
-      'approval',
-      approval &&
-        hex64(approval.sourceMessageId) &&
-        typeof approval.text === 'string' &&
-        typeof approval.approverName === 'string'
-        ? {
-            sourceMessageId: approval.sourceMessageId,
-            text: approval.text,
-            approverName: approval.approverName,
-          }
-        : undefined,
-    ),
-  };
-}
-
-export function readRoomView(value: unknown): RoomView | null {
-  const item = record(value);
-  const room = readHeader(item?.room);
-  if (!item || !room) return null;
-  const messages = readNewestList(
-    item.messages,
-    (candidate) => readScopedMessage(candidate, room.id),
-    ROOM_VIEW_MESSAGE_LIMIT,
-  );
-  if (!messages) return null;
-  const viewer = readViewer(item.viewer);
-  return {
-    room,
-    messages,
-    ...field(
-      'leaveDeletesRoom',
-      typeof item.leaveDeletesRoom === 'boolean' ? item.leaveDeletesRoom : undefined,
-    ),
-    members: readList(item.members, readMember, ROOM_VIEW_MEMBER_LIMIT) ?? [],
-    latestAgentTurns: readList(item.latestAgentTurns, readAgentTurn, ROOM_VIEW_AGENT_LIMIT) ?? [],
-    pendingAgentCommands:
-      readList(item.pendingAgentCommands, readPendingAgentCommand, ROOM_VIEW_AGENT_LIMIT) ?? [],
-    viewer,
-    repositoryResolution: readRepositoryResolution(item.repositoryResolution) ?? 'unverified',
-    watchFilters: readWatchFilters(item.watchFilters),
-    ...field(
-      'toolRows',
-      readNewestList(
-        item.toolRows,
-        (candidate) => readScopedMessage(candidate, room.id),
-        ROOM_VIEW_TOOL_ROW_LIMIT,
-      ),
-    ),
-    ...field('directMessage', readDirectMessage(item.directMessage, viewer.identity.pubkey)),
-    ...field('parent', readHeader(item.parent)),
-    ...field('cornerOpenerAgentId', hex64(item.cornerOpenerAgentId) ? item.cornerOpenerAgentId : undefined),
-    ...field('briefing', readList(item.briefing, readRoomViewMessage, ROOM_VIEW_BRIEFING_LIMIT)),
-    ...field('cornerPlan', readPlan(item.cornerPlan)),
-    ...field('cornerBrief', readCornerBrief(item.cornerBrief)),
-    ...field('repository', readRepository(item.repository)),
-    ...field('cornerLifecycle', readCornerLifecycle(item.cornerLifecycle)),
-    ...field('cornerLocked', typeof item.cornerLocked === 'boolean' ? item.cornerLocked : undefined),
-    ...field('cornerOwed', typeof item.cornerOwed === 'boolean' ? item.cornerOwed : undefined),
-  };
-}
-
-export function isRoomView(value: unknown): value is RoomView {
-  return readRoomView(value) !== null;
-}
-
-export function readRoomHistoryView(value: unknown): RoomHistoryView | null {
-  const item = record(value);
-  if (!item || !uuid(item.roomId)) return null;
-  const messages = readNewestList(
-    item.messages,
-    (candidate) => readScopedMessage(candidate, item.roomId as string),
-    ROOM_VIEW_MESSAGE_LIMIT,
-  );
-  // A dropped history row would let a short page claim the beginning while
-  // hiding the very message the reader was trying to load.
-  if (!messages || !Array.isArray(item.messages) || messages.length !== item.messages.length)
-    return null;
-  const before = record(item.nextBefore);
-  if (item.nextBefore !== undefined && (!before || !integer(before.createdAt) || !hex64(before.id)))
-    return null;
-  const nextBefore =
-    before && integer(before.createdAt) && hex64(before.id)
-      ? { createdAt: before.createdAt, id: before.id }
-      : undefined;
-  return { roomId: item.roomId, messages, ...field('nextBefore', nextBefore) };
-}
-
-/** A Room list search page holds at most this many results. */
-const MESSAGE_SEARCH_RESULT_LIMIT = 50;
-
-function readMessageSearchSnippetPart(value: unknown): MessageSearchSnippetPart | null {
-  const item = record(value);
-  if (!item || typeof item.text !== 'string' || typeof item.match !== 'boolean') return null;
-  return { text: item.text, match: item.match };
-}
-
-function readMessageSearchResult(value: unknown): MessageSearchResult | null {
-  const item = record(value);
-  if (
-    !item ||
-    !nonempty(item.messageId) ||
-    !uuid(item.roomId) ||
-    typeof item.roomName !== 'string' ||
-    typeof item.directMessage !== 'boolean' ||
-    typeof item.authorName !== 'string' ||
-    !integer(item.createdAt) ||
-    !Array.isArray(item.snippet)
-  )
-    return null;
-  const snippet = readList(item.snippet, readMessageSearchSnippetPart) ?? [];
-  if (snippet.length !== item.snippet.length) return null;
-  return {
-    messageId: item.messageId,
-    roomId: item.roomId,
-    roomName: item.roomName,
-    directMessage: item.directMessage,
-    authorName: item.authorName,
-    createdAt: item.createdAt,
-    snippet,
-  };
-}
-
-export function readMessageSearchView(value: unknown): MessageSearchView | null {
-  const item = record(value);
-  if (!item || !uuid(item.workspaceId) || !Array.isArray(item.results)) return null;
-  if (item.nextBefore !== undefined && !nonempty(item.nextBefore)) return null;
-  const results = readList(item.results, readMessageSearchResult, MESSAGE_SEARCH_RESULT_LIMIT) ?? [];
-  return {
-    workspaceId: item.workspaceId,
-    results,
-    ...field('nextBefore', item.nextBefore as string | undefined),
-  };
-}
-
-const OUTLINE_DAY = /^\d{4}-\d{2}-\d{2}$/;
-
-function readRoomHistoryOutlineDay(value: unknown): RoomHistoryOutlineDay | null {
-  const item = record(value);
-  const first = record(item?.first);
-  if (
-    !item ||
-    !first ||
-    typeof item.day !== 'string' ||
-    !OUTLINE_DAY.test(item.day) ||
-    !integer(item.count) ||
-    item.count < 1 ||
-    !hex64(first.id) ||
-    !integer(first.createdAt) ||
-    typeof first.authorName !== 'string'
-  )
-    return null;
-  const authorHandle = typeof first.authorHandle === 'string' ? first.authorHandle : undefined;
-  return {
-    day: item.day,
-    count: item.count,
-    first: {
-      id: first.id,
-      createdAt: first.createdAt,
-      authorName: first.authorName,
-      ...field('authorHandle', authorHandle),
-    },
-  };
-}
-
-export function readRoomHistoryOutline(value: unknown): RoomHistoryOutline | null {
-  const item = record(value);
-  if (
-    !item ||
-    !uuid(item.roomId) ||
-    !nonempty(item.timeZone) ||
-    !integer(item.total) ||
-    !Array.isArray(item.days)
-  )
-    return null;
-  // One dropped day would misplace every day marker older than it.
-  const days = readList(item.days, readRoomHistoryOutlineDay) ?? [];
-  if (days.length !== item.days.length) return null;
-  const newest = record(item.newest);
-  if (item.newest !== undefined && (!newest || !hex64(newest.id) || !integer(newest.createdAt)))
-    return null;
-  return {
-    roomId: item.roomId,
-    timeZone: item.timeZone,
-    total: item.total,
-    ...field(
-      'newest',
-      newest ? { id: newest.id as string, createdAt: newest.createdAt as number } : undefined,
-    ),
-    days,
-  };
-}
-
-export function readWorkspaceListView(value: unknown): WorkspaceListView | null {
-  const item = record(value);
-  const viewer = readIdentity(item?.viewer);
-  const workspaces = requireList(item?.workspaces, readWorkspace, ROOM_VIEW_WORKSPACE_LIMIT);
-  if (!item || !viewer || !workspaces) return null;
-  return {
-    workspaces,
-    viewer,
-    truncated: typeof item.truncated === 'boolean' ? item.truncated : false,
-    watchFilters: readWatchFilters(item.watchFilters),
-    ...field(
-      'deletedNotices',
-      readList(item.deletedNotices, (candidate) => {
-        const notice = record(candidate);
-        if (!notice || !uuid(notice.workspaceId) || typeof notice.workspaceName !== 'string') {
-          return null;
-        }
-        return { workspaceId: notice.workspaceId, workspaceName: notice.workspaceName };
-      }),
-    ),
-  };
-}
-
-export function isWorkspaceListView(value: unknown): value is WorkspaceListView {
-  return readWorkspaceListView(value) !== null;
-}
-
-export function readWorkspaceView(value: unknown): WorkspaceView | null {
-  const item = record(value);
-  const workspace = readWorkspace(item?.workspace);
-  const rawWorkspace = record(item?.workspace);
-  if (!item || !workspace) return null;
-  const managerSettings = record(item.managerSettings);
-  const projectedManager =
-    managerSettings &&
-    (managerSettings.visibility === 'public' || managerSettings.visibility === 'invite-only')
-      ? {
-          visibility: managerSettings.visibility as 'public' | 'invite-only',
-          ...field('allowFixSweep', typeof managerSettings.allowFixSweep === 'boolean' ? managerSettings.allowFixSweep : undefined),
-          ...field('rooms', readList(managerSettings.rooms, readManagedRoom, ROOM_VIEW_CHAT_LIMIT)),
-          ...field(
-            'roomsTruncated',
-            typeof managerSettings.roomsTruncated === 'boolean'
-              ? managerSettings.roomsTruncated
-              : undefined,
-          ),
-        }
-      : undefined;
-  return {
-    workspace: {
-      ...workspace,
-      createdAt: integer(rawWorkspace?.createdAt) ? Number(rawWorkspace.createdAt) : 0,
-      ...field('about', typeof rawWorkspace?.about === 'string' ? rawWorkspace.about : undefined),
-    },
-    members: readList(item.members, readMember, WORKSPACE_MEMBER_PAGE_SIZE) ?? [],
-    agents: readList(item.agents, readWorkspaceAgent, WORKSPACE_MEMBER_PAGE_SIZE) ?? [],
-    membersTruncated: typeof item.membersTruncated === 'boolean' ? item.membersTruncated : false,
-    agentsTruncated: typeof item.agentsTruncated === 'boolean' ? item.agentsTruncated : false,
-    viewer: readViewer(item.viewer),
-    watchFilters: readWatchFilters(item.watchFilters),
-    ...field('managerSettings', projectedManager),
-    ...field('peopleTotal', integer(item.peopleTotal) ? item.peopleTotal : undefined),
-    ...field('agentTotal', integer(item.agentTotal) ? item.agentTotal : undefined),
-  };
-}
-
-export function isWorkspaceView(value: unknown): value is WorkspaceView {
-  return readWorkspaceView(value) !== null;
-}
-
-export function readWorkspaceMemberListView(value: unknown): WorkspaceMemberListView | null {
-  const item = record(value);
-  if (!item) return null;
-  const members = requireList(item.members, readMember, WORKSPACE_MEMBER_PAGE_SIZE);
-  const agents = requireList(item.agents, readWorkspaceAgent, WORKSPACE_MEMBER_PAGE_SIZE);
-  if (!members || !agents) return null;
-  return {
-    members,
-    agents,
-    membersTruncated: typeof item.membersTruncated === 'boolean' ? item.membersTruncated : false,
-    agentsTruncated: typeof item.agentsTruncated === 'boolean' ? item.agentsTruncated : false,
-    ...field('viewer', item.viewer ? readViewer(item.viewer) : undefined),
-    ...field('grants', readList(item.grants, readWorkspaceMemberGrantView)),
-    ...field('peopleTotal', integer(item.peopleTotal) ? item.peopleTotal : undefined),
-    ...field('agentTotal', integer(item.agentTotal) ? item.agentTotal : undefined),
-  };
-}
-
-export function isWorkspaceMemberListView(value: unknown): value is WorkspaceMemberListView {
-  return readWorkspaceMemberListView(value) !== null;
-}
-
-export function readChatListView(value: unknown): ChatListView | null {
-  const item = record(value);
-  const workspace = readWorkspace(item?.workspace);
-  const viewer = readIdentity(item?.viewer);
-  if (!item || !workspace || !viewer) return null;
-  const chats = requireList(item.chats, readChat, ROOM_VIEW_CHAT_LIMIT);
-  if (!chats) return null;
-  return {
-    workspace,
-    chats,
-    viewer,
-    truncated: typeof item.truncated === 'boolean' ? item.truncated : false,
-    ...field(
-      'unavailable',
-      Array.isArray(item.unavailable)
-        ? item.unavailable.filter(
-            (entry): entry is ChatListUnavailable => entry === 'unread' || entry === 'corners',
-          )
-        : undefined,
-    ),
-    watchFilters: readWatchFilters(item.watchFilters),
-  };
-}
-
-/** @public The phone push-prefetch boundary consumes this guard through the client facade. */
-export function isChatListView(value: unknown): value is ChatListView {
-  return readChatListView(value) !== null;
-}
-
-export function readCornerListView(value: unknown): CornerListView | null {
-  const item = record(value);
-  const room = readHeader(item?.room);
-  if (!item || !room) return null;
-  const corners = requireList(item.corners, readCorner);
-  if (!corners) return null;
-  return {
-    room,
-    corners,
-    ...field(
-      'nextArchived',
-      typeof item.nextArchived === 'string' && item.nextArchived.length <= 128
-        ? item.nextArchived
-        : undefined,
-    ),
-    ...field('nextOpen', typeof item.nextOpen === 'string' && item.nextOpen.length <= 128
-      ? item.nextOpen : undefined),
-    ...field('summary', readCornerSummary(item.summary)),
-    viewer: readViewer(item.viewer),
-    watchFilters: readWatchFilters(item.watchFilters),
-  };
-}
-
-export function isCornerListView(value: unknown): value is CornerListView {
-  return readCornerListView(value) !== null;
-}
-
-export function readAgentDetailView(value: unknown): AgentDetailView | null {
-  const item = record(value);
-  const agent = readMember(item?.agent);
-  if (!item || !uuid(item.workspaceId) || !agent || agent.identity.kind !== 'agent') return null;
-  const catalog = readList(item.catalog, readModelOption, 100) ?? [];
-  const commands = readList(item.commands, readComposerCommand, 200) ?? [];
-  const soul = record(item.soul);
-  const projectedSoul =
-    soul && nonempty(soul.name) && nonempty(soul.instructions) && nonempty(soul.avatarSeed)
-      ? {
-          name: soul.name,
-          instructions: soul.instructions,
-          avatarSeed: soul.avatarSeed,
-          ...field('avatar', httpUrl(soul.avatar) ? soul.avatar : undefined),
-        }
-      : undefined;
-  const owner = readIdentity(item.owner);
-  const wake = record(item.wake);
-  return {
-    workspaceId: item.workspaceId,
-    agent,
-    ...field('wake', wake && (wake.url === null || httpUrl(wake.url)) && typeof wake.keySet === 'boolean'
-      ? { url: wake.url as string | null, keySet: wake.keySet } : undefined),
-    ...field('usage', readAgentUsage(item.usage)),
-    ...field('harness', typeof item.harness === 'string' ? item.harness : undefined),
-    ...field(
-      'recentWorkCursor',
-      nonempty(item.recentWorkCursor) ? item.recentWorkCursor : undefined,
-    ),
-    ...field(
-      'avatarGenerationPending',
-      typeof item.avatarGenerationPending === 'boolean' ? item.avatarGenerationPending : undefined,
-    ),
-    recentWork:
-      readList(
-        item.recentWork,
-        (value) => {
-          const work = record(value);
-          return work &&
-            nonempty(work.title) &&
-            httpUrl(work.url) &&
-            /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+$/.test(work.url)
-            ? { title: work.title, url: work.url }
-            : null;
-        },
-        20,
-      ) ?? [],
-    catalog,
-    commands,
-    watchFilters: readWatchFilters(item.watchFilters),
-    ...field('owner', owner && owner.kind === 'human' ? owner : undefined),
-    ...field('soul', projectedSoul),
-    ...field(
-      'avatarGenerationId',
-      nonempty(item.avatarGenerationId) ? item.avatarGenerationId : undefined,
-    ),
-    ...field('seededSoul', nonempty(item.seededSoul) ? item.seededSoul : undefined),
-    ...field('runtimeSelection', readModelSelection(item.runtimeSelection)),
-    ...field('selected', readModelSelection(item.selected)),
-    ...field('modelUnavailable', oneOf(item.modelUnavailable, ['model', 'effort', 'selection'])),
-    ...field('fastMode', typeof item.fastMode === 'boolean' ? item.fastMode : undefined),
-    ...field('canLogin', typeof item.canLogin === 'boolean' ? item.canLogin : undefined),
-    ...field('yolo', readAgentYolo(item.yolo)),
-    ...field('access', readAgentAccess(item.access)),
-    ...field('grants', readList(item.grants, readAgentGrantView)),
-    ...field(
-      'canManageGrants',
-      typeof item.canManageGrants === 'boolean' ? item.canManageGrants : undefined,
-    ),
-  };
-}
-
-export function isAgentDetailView(value: unknown): value is AgentDetailView {
-  return readAgentDetailView(value) !== null;
-}
-
-export function readInviteView(value: unknown): InviteView | null {
-  const item = record(value);
-  if (!item || typeof item.name !== 'string' || !integer(item.expiresAt)) return null;
-  return {
-    name: item.name,
-    expiresAt: item.expiresAt,
-    ...field('avatar', typeof item.avatar === 'string' ? item.avatar : undefined),
-    ...field(
-      'joinedWorkspaceId',
-      typeof item.joinedWorkspaceId === 'string' ? item.joinedWorkspaceId : undefined,
-    ),
-    ...field('inviter', readInviteInviter(item.inviter)),
-    ...field('memberCount', integer(item.memberCount) ? item.memberCount : undefined),
-    ...field('agentCount', integer(item.agentCount) ? item.agentCount : undefined),
-  };
-}
-
-function readInviteInviter(value: unknown): InviteView['inviter'] {
-  const item = record(value);
-  if (!item || typeof item.name !== 'string') return undefined;
-  const role = item.role;
-  const roleValue: NonNullable<InviteView['inviter']>['role'] =
-    role === 'owner' || role === 'admin' || role === 'member' || role === 'spectator'
-      ? role
-      : undefined;
-  return {
-    name: item.name,
-    ...field('handle', typeof item.handle === 'string' ? item.handle : undefined),
-    ...field('face', typeof item.face === 'string' ? item.face : undefined),
-    ...field('role', roleValue),
-  };
-}
-
-export function isInviteView(value: unknown): value is InviteView {
-  return readInviteView(value) !== null;
-}
-
-export function readAgentPairingClaimWireView(value: unknown): AgentPairingClaimWireView | null {
-  const item = record(value);
-  if (
-    !item ||
-    !uuid(item.workspaceId) ||
-    !hex64(item.pairedBy) ||
-    typeof item.joined !== 'boolean'
-  ) {
-    return null;
-  }
-  return {
-    workspaceId: item.workspaceId,
-    pairedBy: item.pairedBy,
-    joined: item.joined,
-    ...field(
-      'attachedRoomIds',
-      Array.isArray(item.attachedRoomIds)
-        ? item.attachedRoomIds.filter((roomId): roomId is string => uuid(roomId))
-        : undefined,
-    ),
-  };
-}
-
-export function readAgentPairingClaimView(value: unknown): AgentPairingClaimView | null {
-  const wire = readAgentPairingClaimWireView(value);
-  if (!wire) return null;
-  return { ...wire, attachedRoomIds: wire.attachedRoomIds ?? [] };
-}
-
-export function readAgentPairingAbandonView(value: unknown): AgentPairingAbandonView | null {
-  const item = record(value);
-  if (!item || typeof item.abandoned !== 'boolean') return null;
-  return { abandoned: item.abandoned };
-}
-
-/** A message link reveals only member-readable coordinates. */
-export function readMessageLinkView(value: unknown): { roomId: string; messageId: string; workspaceId: string } | null {
-  const item = record(value);
-  return item && typeof item.roomId === 'string' && typeof item.workspaceId === 'string'
-    && typeof item.messageId === 'string' && /^[0-9a-f]{64}$/.test(item.messageId)
-    ? { roomId: item.roomId, messageId: item.messageId, workspaceId: item.workspaceId } : null;
 }

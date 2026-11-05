@@ -79,11 +79,11 @@
     "count": 1,
     "reason": "Authenticated machine output and login/version changes."
   },
-  "apps/server/src/server.ts::createBeelineServer::terminate": {
+  "apps/server/src/server-create-beeline-server.ts::createBeelineServer::terminate": {
     "count": 1,
     "reason": "Server shutdown or phone socket output; helper frames use the machine connection owner."
   },
-  "apps/server/src/server.ts::createBeelineServer::close": {
+  "apps/server/src/server-create-beeline-server.ts::createBeelineServer::close": {
     "count": 1,
     "reason": "Server shutdown or phone socket output; helper frames use the machine connection owner."
   },

@@ -1,65 +1,16 @@
-import { HelperDaemonService } from './test-fixtures/helper-daemon.js';
-import { normalizeLegacyWorkflowRuns, saveUnsavedWorkflowRunStatus } from './migrations/workflow-cleanup.js';
-import { workflowRunIsLiveSql, workflowRunStatusUnsavedSql } from './workflow-run-saved-status.js';
-import { listRoomWorkflowRuns, readWorkflowRun } from './workflow-run-views.js';
-import { activeWorkflowRunIds } from './workflow-admin.js';
-import { DaemonService } from './daemon-service.js';
-import { LiveHub } from './live.js';
-import { describedWorkflow } from './test-support.js';
-import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { migrate, migrateData, type SqlDatabase } from './database.js';
-import { claimAgentCommand, createAgentCommand, readAgentCommands, type CommandRow } from './agent-command.js';
-import { postRoomChoice } from './room-choice.js';
-import { AgentScheduleLoop } from './agent-schedules.js';
-import { PhoneService } from './phone-service.js';
-import { FEEDBACK_TRIAGE_CONTRACT } from './feedback-triage-workflow.js';
-import { activeRunIdsForSchedule, assignWorkflowRole, backfillWorkflowSkillDescriptions, describedLegacyWorkflowContract, handoff, getWorkflowRun, cancelWorkflowRun, liveWorkflowRun, saveWorkflow, settleWorkflowGate, startWorkflow } from './workflow-runs.js';
-import { APPROVER, CONTRACT, GATED, IMPLEMENTER, LIST_CONTRACT, OUTSIDER, OWNER, REVIEWER, ROOM, RecordingDatabase, WORKER_A, WORKER_B, WORKSPACE, addAgent, adminCommand, answerGate, commandFor, database, driveToApprovalGate, listRunCard, ownerNotices, pendingCommandsFor, reachGate, reportPresence, rootMessage, runCards, startedGatedRun, startedListRun, startedRun, withoutTimeouts } from './test-fixtures/workflow-runs.js';
-
-vi.mock('node:crypto', async (importOriginal) => {
-  const crypto = await importOriginal<typeof import('node:crypto')>();
-  return { ...crypto, randomBytes: vi.fn(crypto.randomBytes) };
-});
+import { HelperDaemonService, normalizeLegacyWorkflowRuns, saveUnsavedWorkflowRunStatus, readWorkflowRun, LiveHub, describedWorkflow, SYSTEM_IDENTITY_ID, createHash, randomUUID, describe, expect, it, vi, migrate, migrateData, claimAgentCommand, createAgentCommand, readAgentCommands, postRoomChoice, AgentScheduleLoop, PhoneService, FEEDBACK_TRIAGE_CONTRACT, backfillWorkflowRunTimers, backfillWorkflowSkillDescriptions, describedLegacyWorkflowContract, handoff, getWorkflowRun, cancelWorkflowRun, saveWorkflow, settleWorkflowGate, startWorkflow, WORKFLOW_LEGACY_STEP_TIMEOUT_SECONDS, APPROVER, CONTRACT, GATED, IMPLEMENTER, LIST_CONTRACT, OUTSIDER, OWNER, REVIEWER, ROOM, RecordingDatabase, WORKER_A, WORKER_B, WORKSPACE, addAgent, adminCommand, answerGate, commandFor, database, driveToApprovalGate, fireTimer, listRunCard, ownerNotices, pendingCommandsFor, reachGate, reportPresence, rootMessage, runCards, startedGatedRun, startedListRun, startedRun, withoutTimeouts, fixtureScope1, fixtureScope7, type SqlDatabase, type CommandRow } from './workflow-runs.recovery.test-support.js';
 
 describe('backfillWorkflowSkillDescriptions', () => {
-  /** Simulates a workflow skill version saved before PR #2083 added `summary`/`does`. */
-  async function seedLegacySkillVersion(slug: string, markdown: string, extractorVersion = 'legacy-test'): Promise<string> {
-    const skillId = randomUUID();
-    await database.query(
-      `INSERT INTO workspace_skills
-         (id,workspace_id,slug,description,state,current_version,revision,source_room_id,
-          repository,target_commit,path,kind)
-       VALUES($1,$2,$3,'legacy workflow','active',1,1,$4,'','',NULL,'workflow')`,
-      [skillId, WORKSPACE, slug, ROOM],
-    );
-    await database.query(
-      `INSERT INTO workspace_skill_versions
-         (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,
-          repository,target_commit,path,extractor_version,model)
-       VALUES($1,1,$2,$3,NULL,$4,'','',NULL,$5,'n/a')`,
-      [skillId, markdown, createHash('sha256').update(markdown).digest('hex'), ['legacy-seed'], extractorVersion],
-    );
-    return skillId;
-  }
+const scope1 = fixtureScope1();
 
-  async function markdownFor(skillId: string): Promise<string> {
-    return (
-      await database.query<{ markdown: string }>(
-        `SELECT markdown FROM workspace_skill_versions WHERE skill_id=$1 AND version=1`,
-        [skillId],
-      )
-    ).rows[0]!.markdown;
-  }
 
   it('derives each custom step from its own instruction or fields and is idempotent', async () => {
     const markdown = JSON.stringify(CONTRACT);
-    const skillId = await seedLegacySkillVersion('legacy-corner', markdown);
+    const skillId = await scope1.seedLegacySkillVersion('legacy-corner', markdown);
 
     await expect(backfillWorkflowSkillDescriptions(database)).resolves.toBe(1);
 
-    const described = JSON.parse(await markdownFor(skillId));
+    const described = JSON.parse(await scope1.markdownFor(skillId));
     expect(described.summary).toBe(CONTRACT.description);
     expect(described.handoffs.implement.does).toBe('Produce summary, PR URL for implement.');
     expect(described.handoffs.human_approve.does).toBe('Ask a person for decision.');
@@ -79,22 +30,24 @@ describe('backfillWorkflowSkillDescriptions', () => {
 
     // Idempotent: a second run has nothing left to fill.
     await expect(backfillWorkflowSkillDescriptions(database)).resolves.toBe(0);
-    expect(await markdownFor(skillId)).toBe(JSON.stringify(described));
+    expect(await scope1.markdownFor(skillId)).toBe(JSON.stringify(described));
   });
+
 
   it('writes a usable summary when the description is empty', async () => {
     const blank = { ...CONTRACT, description: '   ' };
-    const skillId = await seedLegacySkillVersion('legacy-blank', JSON.stringify(blank));
+    const skillId = await scope1.seedLegacySkillVersion('legacy-blank', JSON.stringify(blank));
     await expect(backfillWorkflowSkillDescriptions(database)).resolves.toBe(1);
-    expect(JSON.parse(await markdownFor(skillId)).summary).toBe('Run the corner workflow.');
+    expect(JSON.parse(await scope1.markdownFor(skillId)).summary).toBe('Run the corner workflow.');
   });
+
 
   it('repairs every saved seeded version with authored copy and serves the repaired current version', async () => {
     const stale = JSON.parse(JSON.stringify(FEEDBACK_TRIAGE_CONTRACT));
     stale.summary = 'Summary not written yet';
     for (const [name, step] of Object.entries(stale.handoffs))
       step.does = `Step ${name}: describe what this step does`;
-    const skillId = await seedLegacySkillVersion('feedback-triage', JSON.stringify(stale), 'feedback-triage-v1');
+    const skillId = await scope1.seedLegacySkillVersion('feedback-triage', JSON.stringify(stale), 'feedback-triage-v1');
     await database.query(
       `INSERT INTO workspace_skill_versions
          (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,
@@ -135,19 +88,21 @@ describe('backfillWorkflowSkillDescriptions', () => {
     await expect(backfillWorkflowSkillDescriptions(database)).resolves.toBe(0);
   });
 
+
   it('uses a custom step hint instead of its old placeholder', async () => {
     const legacy = JSON.parse(JSON.stringify(CONTRACT));
     legacy.handoffs.implement.hint = '  Draft the change and open a pull request.  ';
     legacy.handoffs.implement.does = 'Step implement (implementer): describe what this step does';
-    const skillId = await seedLegacySkillVersion('custom-hint', JSON.stringify(legacy));
+    const skillId = await scope1.seedLegacySkillVersion('custom-hint', JSON.stringify(legacy));
     await backfillWorkflowSkillDescriptions(database);
-    expect(JSON.parse(await markdownFor(skillId)).handoffs.implement.does)
+    expect(JSON.parse(await scope1.markdownFor(skillId)).handoffs.implement.does)
       .toBe('Draft the change and open a pull request.');
   });
 
+
   it('leaves an already-described contract untouched, including its content hash', async () => {
     const markdown = JSON.stringify(describedWorkflow(CONTRACT), null, 2);
-    const skillId = await seedLegacySkillVersion('already-described', markdown);
+    const skillId = await scope1.seedLegacySkillVersion('already-described', markdown);
     const before = (
       await database.query<{ content_hash: string }>(
         `SELECT content_hash FROM workspace_skill_versions WHERE skill_id=$1 AND version=1`,
@@ -163,6 +118,7 @@ describe('backfillWorkflowSkillDescriptions', () => {
     );
     expect(after.rows[0]).toEqual({ markdown, content_hash: before });
   });
+
 
   it('is unaffected by a non-workflow skill and a deleted workflow version', async () => {
     await database.query(
@@ -190,7 +146,6 @@ describe('backfillWorkflowSkillDescriptions', () => {
     await expect(backfillWorkflowSkillDescriptions(database)).resolves.toBe(0);
   });
 });
-
 describe('attempts: stale and repeated handoffs never advance a run twice', () => {
   it('uses its own workflow wake attempt while an unrelated command stays pending', async () => {
     await database.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)', [IMPLEMENTER, OWNER]);
@@ -211,6 +166,7 @@ describe('attempts: stale and repeated handoffs never advance a run twice', () =
     expect((await getWorkflowRun(database, ROOM, runId)).state).toBe('checks');
     expect((await database.query('SELECT state FROM agent_commands WHERE id=$1', [unrelated.id])).rows).toEqual([{state:'pending'}]);
   });
+
   it('returns the same result for a repeated handoff with its attempt, writing one card', async () => {
     const { runId } = await startedRun();
     const call = { runId, outcome: 'pushed', contents: { summary: 'x', prUrl: 'y' }, attempt: 0 };
@@ -221,6 +177,7 @@ describe('attempts: stale and repeated handoffs never advance a run twice', () =
     expect(await runCards(runId)).toHaveLength(2);
   });
 
+
   it('reads a missing attempt from the wake the command answers, so a repeat changes nothing', async () => {
     const { runId } = await startedRun();
     const woken = await commandFor(IMPLEMENTER, runId);
@@ -229,6 +186,7 @@ describe('attempts: stale and repeated handoffs never advance a run twice', () =
     expect(await handoff(database, woken, call)).toEqual({ runId, state: 'checks', attempt: 1 });
     expect(await runCards(runId)).toHaveLength(2);
   });
+
 
   it('tells a stale attempt the step already advanced, with the current state, and changes nothing', async () => {
     const { runId } = await startedRun();
@@ -242,6 +200,7 @@ describe('attempts: stale and repeated handoffs never advance a run twice', () =
     expect(await runCards(runId)).toHaveLength(2);
   });
 
+
   it('does not let one wake move the same agent through successive steps by accident', async () => {
     const { runId } = await startedRun();
     // IMPLEMENTER holds both implement and checks. Its wake is attempt 0.
@@ -254,6 +213,7 @@ describe('attempts: stale and repeated handoffs never advance a run twice', () =
       .toEqual({ runId, state: 'review', attempt: 2 });
   });
 
+
   it('counts a repeated self-loop handoff once', async () => {
     const { runId } = await startedListRun();
     const call = { runId, outcome: 'retry', contents: { note: 'again' }, attempt: 0 };
@@ -263,6 +223,7 @@ describe('attempts: stale and repeated handoffs never advance a run twice', () =
     expect(cards.filter((row) => row.card.outcome === 'retry')).toHaveLength(1);
     expect(cards.at(-1)!.card).toMatchObject({ seq: 1, toState: 'work', answers: 0 });
   });
+
 
   it('keeps a live run whose agent sends no attempt and no run wake (feedback-triage shape) working, once per command', async () => {
     const { runId } = await startedRun();
@@ -277,7 +238,6 @@ describe('attempts: stale and repeated handoffs never advance a run twice', () =
     expect(await runCards(runId)).toHaveLength(2);
   });
 });
-
 describe('blocked: an agent that cannot do its step hands it on', () => {
   it('moves the step to the next eligible agent with one line naming from, to and why', async () => {
     await database.query(`UPDATE identities SET handle='wa' WHERE id=$1`, [WORKER_A]);
@@ -299,6 +259,7 @@ describe('blocked: an agent that cannot do its step hands it on', () => {
     expect(await pendingCommandsFor(WORKER_B)).toBeGreaterThan(0);
   });
 
+
   it('refuses blocked with no reason, and from an agent not holding the step', async () => {
     const { runId } = await startedListRun();
     await expect(handoff(database, await commandFor(WORKER_A), { runId, outcome: 'blocked', contents: {} }))
@@ -306,6 +267,7 @@ describe('blocked: an agent that cannot do its step hands it on', () => {
     await expect(handoff(database, await commandFor(WORKER_B), { runId, outcome: 'blocked', contents: { reason: 'x' } }))
       .rejects.toThrow('bound to the worker role, not you');
   });
+
 
   it('skips unhealthy agents, then applies timeout with every agent\'s reason once the list is used up', async () => {
     await addAgent(REVIEWER);
@@ -325,6 +287,7 @@ describe('blocked: an agent that cannot do its step hands it on', () => {
     );
   });
 
+
   it('resets the tried list on every visit through an on edge, including a loop back to the same state', async () => {
     const { runId } = await startedListRun();
     await handoff(database, await commandFor(WORKER_A), { runId, outcome: 'blocked', contents: { reason: 'busy' }, attempt: 0 });
@@ -334,6 +297,7 @@ describe('blocked: an agent that cannot do its step hands it on', () => {
     expect(revisit).toMatchObject({ toState: 'work', roleBindings: { worker: WORKER_B } });
     expect(revisit.tried).toBeUndefined();
   });
+
 
   it('does not carry one state\'s tried list into the next state held by the same role', async () => {
     await addAgent(IMPLEMENTER);
@@ -357,6 +321,7 @@ describe('blocked: an agent that cannot do its step hands it on', () => {
     });
   });
 
+
   it('exhausts a single-agent role on blocked and waits when its pinned older version has no timeout outcome', async () => {
     const { runId } = await startedListRun();
     await withoutTimeouts('list-flow', 'close');
@@ -372,7 +337,6 @@ describe('blocked: an agent that cannot do its step hands it on', () => {
     expect(notice[0]!.text).toContain('@ada blocked (cannot close)');
   });
 });
-
 describe('a result ends its turn without implicitly moving a workflow', () => {
   it('keeps the explicit workflow step after an answer and a late preceding receipt (WORKFLOW-NO-HANDOFF-1)', async () => {
     await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')`,[WORKSPACE,WORKER_A]);
@@ -413,26 +377,70 @@ describe('a result ends its turn without implicitly moving a workflow', () => {
     expect(await runCards(runId)).toHaveLength(cards.length);
   });
 });
+describe('engine step expiry', () => {
+  it('lets exactly one of a handoff and an expiry for the same attempt win, in either order', async () => {
+    const first = await startedListRun();
+    await handoff(database, await commandFor(WORKER_A), { runId: first.runId, outcome: 'done', contents: { note: 'ok' }, attempt: 0 });
+    // The handoff won: the timer it replaced is gone, and a stale one does nothing.
+    await database.query(
+      `INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,max_runs,next_run_at,workflow_run)
+       VALUES($1,$2,$3,$4,$4,'{"kind":"interval","everyMinutes":1}'::jsonb,'stale',1,now(),$5::jsonb)`,
+      [randomUUID(), WORKSPACE, ROOM, SYSTEM_IDENTITY_ID, JSON.stringify({ runId: first.runId, workflowSlug: 'list-flow', timer: 'step', attempt: 0 })],
+    );
+    expect(await new AgentScheduleLoop(database).runOnce()).toBe(0);
+    expect((await listRunCard(first.runId)).toState).toBe('close');
+    await cancelWorkflowRun(database, await commandFor(IMPLEMENTER), { runId: first.runId, reason: 'next case' });
 
-it('workflow silence creates no schedules and cannot move a step or gate', async () => {
-  const runId = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
-  expect((await database.query('SELECT id FROM agent_schedules')).rows).toEqual([]);
-  expect(await new AgentScheduleLoop(database).runOnce(new Date(Date.now() + 30 * 86400_000))).toBe(0);
-  expect((await getWorkflowRun(database, ROOM, runId)).state).toBe('work');
-  await reachGate(runId);
-  expect((await database.query('SELECT id FROM agent_schedules')).rows).toEqual([]);
-  expect(await new AgentScheduleLoop(database).runOnce(new Date(Date.now() + 30 * 86400_000))).toBe(0);
-  expect(await getWorkflowRun(database, ROOM, runId)).toMatchObject({ state: 'sign_off', status: 'live' });
+    const second = await startedListRun();
+    expect(await fireTimer(second.runId, 'step')).toBe(1);
+    // The expiry won: WORKER_A's late handoff for attempt 0 changes nothing.
+    expect(await handoff(database, await commandFor(WORKER_A), {
+      runId: second.runId, outcome: 'done', contents: { note: 'late' }, attempt: 0,
+    })).toEqual({ alreadyAdvanced: true, runId: second.runId, state: 'work', seq: 1 });
+    expect((await listRunCard(second.runId)).roleBindings.worker).toBe(WORKER_B);
+  });
+
+
+  it('fires for an agent that was removed from the Room', async () => {
+    const { runId } = await startedListRun();
+    await database.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [ROOM, WORKER_A]);
+    expect(await fireTimer(runId, 'step')).toBe(1);
+    expect((await listRunCard(runId)).roleBindings.worker).toBe(WORKER_B);
+  });
+
+
+  it('survives a restart: a new scheduler loop finds and fires the stored timer', async () => {
+    const { runId } = await startedListRun();
+    const loop = new AgentScheduleLoop(database);
+    const delay = await loop.nextDelayMs();
+    expect(delay).toBeGreaterThan(3_500_000);
+    expect(await new AgentScheduleLoop(database).runOnce(new Date(Date.now() + 3_700_000))).toBe(1);
+    expect((await listRunCard(runId)).roleBindings.worker).toBe(WORKER_B);
+  });
 });
-
 describe('gates with a timeout and a default', () => {
+  it('refuses a new save whose agent step has no timeout or whose gate has no timeout and default', async () => {
+    const command = await commandFor(WORKER_A);
+    const without = (name: string, ...keys: string[]) => ({ ...GATED, handoffs: { ...GATED.handoffs,
+      [name]: Object.fromEntries(Object.entries(GATED.handoffs[name as 'work']).filter(([key]) => !keys.includes(key))) } });
+    const described = (contract: unknown) => ({ ...(contract as object), summary: 'Work and sign off.',
+      handoffs: Object.fromEntries(Object.entries((contract as typeof GATED).handoffs).map(([name, state]) => [name, { does: `Do ${name}.`, ...state }])) });
+    const timedWork = { ...GATED.handoffs.work, on: { done: 'sign_off', timeout: 'failed' }, timeoutSeconds: 600 };
+    const compliant = { ...GATED, handoffs: { ...GATED.handoffs, work: timedWork } };
+    await expect(saveWorkflow(database, command, { contract: described(GATED) }))
+      .rejects.toThrow('handoffs.work: timeoutSeconds is required, with a "timeout" outcome in on');
+    await expect(saveWorkflow(database, command, { contract: described({ ...without('sign_off', 'default', 'timeoutSeconds'), handoffs: { ...without('sign_off', 'default', 'timeoutSeconds').handoffs, work: timedWork } }) }))
+      .rejects.toThrow('handoffs.sign_off: a gate needs timeoutSeconds and default');
+    await expect(saveWorkflow(database, command, { contract: described(compliant) })).resolves.toMatchObject({ slug: 'gated' });
+  });
 
-  it('accepts event-only gates and validates an explicit default', async () => {
+
+  it('validates timeoutSeconds and default together on new saves', async () => {
     const command = await commandFor(WORKER_A);
     const gate = GATED.handoffs.sign_off;
     const withGate = (sign_off: unknown) => describedWorkflow({ ...GATED, handoffs: { ...GATED.handoffs, sign_off } });
     await expect(saveWorkflow(database, command, { contract: withGate({ ...gate, default: undefined }) }))
-      .resolves.toBeDefined();
+      .rejects.toThrow('a gate declares timeoutSeconds and default together, or neither');
     await expect(saveWorkflow(database, command, { contract: withGate({ ...gate, default: 'later' }) }))
       .rejects.toThrow('default "later" is not an outcome in on');
     await expect(saveWorkflow(database, command, {
@@ -441,6 +449,29 @@ describe('gates with a timeout and a default', () => {
     await expect(saveWorkflow(database, command, { contract: describedWorkflow({ ...GATED, deadlineSeconds: 5 }) }))
       .rejects.toThrow('deadlineSeconds must be a whole number from 60 to 2592000');
   });
+
+
+  it('applies the default when unanswered, with exactly one notice to the person who started the run', async () => {
+    await database.query(`UPDATE identities SET handle='owner' WHERE id=$1`, [OWNER]);
+    const runId = await startedGatedRun(await commandFor(WORKER_A, await rootMessage(OWNER, '@wa run gated')));
+    await reachGate(runId);
+    expect(await fireTimer(runId, 'step')).toBe(1);
+    const read = await getWorkflowRun(database, ROOM, runId);
+    expect(read).toMatchObject({ state: 'failed', status: 'failed' });
+    expect(read.history.at(-1)).toMatchObject({
+      fromState: 'sign_off', outcome: 'stop', actorId: SYSTEM_IDENTITY_ID,
+      contents: { decision: 'stop', defaultedBy: 'system' },
+    });
+    expect(read.history.at(-1)).toBeDefined();
+    const line = (await runCards(runId)).at(-1)!.text;
+    expect(line).toBe(`the workflow applied stop · at sign_off and went to failed because nobody answered in 10 min in run ${runId.slice(0, 8)} of gated`);
+    expect(await ownerNotices(OWNER)).toEqual([
+      `The sign_off gate of gated took its default stop · nobody answered in 10 min in run ${runId.slice(0, 8)}`,
+    ]);
+    expect(await fireTimer(runId, 'step')).toBe(0);
+    expect(await ownerNotices(OWNER)).toHaveLength(1);
+  });
+
 
   it('applies the default on a person\'s Skip, with the same notice, and refuses Skip on a gate with no default', async () => {
     await database.query(`UPDATE identities SET handle='owner' WHERE id=$1`, [OWNER]);
@@ -459,6 +490,28 @@ describe('gates with a timeout and a default', () => {
     await expect(answerGate(plain.runId)).rejects.toThrow('this gate needs an answer');
   });
 
+
+  it('lets exactly one of an answer and the expiry win', async () => {
+    const answered = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+    await reachGate(answered);
+    await answerGate(answered, 'publish');
+    expect(await fireTimer(answered, 'step')).toBe(0);
+    expect((await getWorkflowRun(database, ROOM, answered)).state).toBe('land');
+
+    const expired = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+    await reachGate(expired);
+    const card = (await database.query<{ id: string; options: { optionId: string; label: string }[] }>(
+      `SELECT choice.id,choice.options FROM room_choices choice JOIN messages message ON message.id=choice.message_id
+       WHERE message.card->>'runId'=$1`, [expired],
+    )).rows[0]!;
+    expect(await fireTimer(expired, 'step')).toBe(1);
+    await expect(database.transaction((db) => settleWorkflowGate(db, {
+      choiceId: card.id, viewerId: OWNER, optionId: card.options.find((option) => option.label === 'publish')!.optionId,
+    }))).rejects.toThrow('choice conflict');
+    expect((await getWorkflowRun(database, ROOM, expired)).state).toBe('failed');
+  });
+
+
   it('refuses an answer on an old gate card after the gate was revisited', async () => {
     const runId = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
     await reachGate(runId);
@@ -473,8 +526,194 @@ describe('gates with a timeout and a default', () => {
     }))).rejects.toThrow('choice conflict: this gate already advanced');
     expect((await getWorkflowRun(database, ROOM, runId)).state).toBe('sign_off');
   });
-});
 
+
+  it('sends the notice to the Workspace admins when the owner has left the Room', async () => {
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`, [WORKSPACE, OWNER]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WORKSPACE, ROOM, OUTSIDER]);
+    const runId = await startedGatedRun(await commandFor(WORKER_A, await rootMessage(OUTSIDER, 'please run gated')));
+    expect((await runCards(runId))[0]!.card.ownerId).toBe(OUTSIDER);
+    await database.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [ROOM, OUTSIDER]);
+    await reachGate(runId);
+    await fireTimer(runId, 'step');
+    expect(await ownerNotices(OWNER)).toHaveLength(1);
+    expect(await ownerNotices(OUTSIDER)).toHaveLength(0);
+  });
+});
+describe('legacy run timer recovery', () => {
+const scope7 = fixtureScope7();
+
+
+  it('Reproduction legacy-timers: closes an overdue legacy gate once and lets the next schedule tick start a run', async () => {
+    const runId = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+    await withoutTimeouts('gated', 'sign_off');
+    await reachGate(runId);
+    await database.query(`DELETE FROM agent_schedules WHERE workflow_run->>'runId'=$1`, [runId]);
+    await database.query(
+      `UPDATE messages SET created_at=now()-interval '3 hours',card=card-'deadlineSeconds'-'seq' WHERE id=$1`, [runId],
+    );
+    const scheduleId = '30000000-0000-4000-8000-000000000005';
+    await database.query(
+      `INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,workflow_slug)
+       VALUES($1,$2,$3,$4,$5,'{"kind":"interval","everyMinutes":60}'::jsonb,'run gated',now()-interval '1 minute','gated')`,
+      [scheduleId, WORKSPACE, ROOM, WORKER_B, OWNER],
+    );
+    expect(await new AgentScheduleLoop(database).runOnce()).toBe(1);
+    const skips = (await database.query<{ text: string }>(
+      `SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%skipped a run%'`, [ROOM],
+    )).rows;
+    expect(skips).toEqual([{ text: `The gated schedule skipped a run · run ${runId} is active at step sign_off in state live for 180 min` }]);
+    expect(await new AgentScheduleLoop(database).runOnce(new Date(Date.now() + 30_000))).toBe(0);
+    expect((await getWorkflowRun(database, ROOM, runId)).status).toBe('live');
+    console.log('Reproduction legacy-timers: overdue gate stayed live without timers; schedule skipped at sign_off');
+
+    await migrateData(database);
+    const timers = (await database.query<{ timer: string }>(
+      `SELECT workflow_run->>'timer' timer FROM agent_schedules WHERE workflow_run->>'runId'=$1`, [runId],
+    )).rows;
+    expect(timers).toEqual([{ timer: 'deadline' }]);
+    expect(await new AgentScheduleLoop(database).runOnce(new Date(Date.now() + 30_000))).toBe(1);
+    const closed = await getWorkflowRun(database, ROOM, runId);
+    expect(closed).toMatchObject({ state: 'sign_off', status: 'failed' });
+    expect(closed.history.at(-1)).toMatchObject({ outcome: 'deadline', contents: { reason: 'deadline' } });
+    expect((await runCards(runId)).filter((row) => row.card.closure)).toHaveLength(1);
+    await migrateData(database);
+    expect(await new AgentScheduleLoop(database).runOnce(new Date(Date.now() + 30_000))).toBe(0);
+    expect((await runCards(runId)).filter((row) => row.card.closure)).toHaveLength(1);
+
+    await database.query(`UPDATE agent_schedules SET next_run_at=now()-interval '1 minute' WHERE id=$1`, [scheduleId]);
+    expect(await new AgentScheduleLoop(database).runOnce()).toBe(1);
+    const scheduled = (await database.query<CommandRow>(
+      `SELECT * FROM agent_commands WHERE reason='schedule' AND agent_id=$1 ORDER BY created_at DESC LIMIT 1`, [WORKER_B],
+    )).rows[0]!;
+    const fresh = await startWorkflow(database, scheduled, { name: 'gated', roleBindings: { worker: WORKER_A, approver: APPROVER } });
+    expect(fresh.runId).not.toBe(runId);
+    expect(fresh.state).toBe('work');
+    console.log('Demonstrated legacy-timers: deadline closed the gate once; the next schedule tick started a fresh run');
+  });
+
+
+  it('Reproduction orphaned-run: migrates a healthy legacy run alongside an unreadable run', async () => {
+    const orphaned = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+    await reachGate(orphaned);
+    const { runId } = await startedListRun();
+    await scope7.removeStepTimeout('list-flow', 'work');
+    await database.query(`DELETE FROM agent_schedules WHERE workflow_run->>'runId'=ANY($1::text[])`, [[orphaned, runId]]);
+    await database.query(`UPDATE messages SET card=card-'runStatus' WHERE id=ANY($1::text[])`, [[orphaned, runId]]);
+    await database.query(`DELETE FROM workspace_skills WHERE slug='gated'`);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(migrateData(database)).resolves.toBeUndefined();
+      expect(errors).toHaveBeenCalledWith(
+        `backfillWorkflowRunTimers: failed to recover run ${orphaned}`,
+        expect.objectContaining({ message: 'workflow contract version is unavailable' }),
+      );
+      const timers = await scope7.timersFor(runId);
+      expect(timers.map((row) => row.workflow_run.timer)).toEqual(['deadline', 'step']);
+      expect(await scope7.timersFor(orphaned)).toEqual([]);
+      await expect(migrateData(database)).resolves.toBeUndefined();
+      expect(await scope7.timersFor(runId)).toEqual(timers);
+      expect(await scope7.timersFor(orphaned)).toEqual([]);
+      console.log('Demonstrated orphaned-run: boot migration completed despite a missing contract; the healthy legacy run received deadline and step timers, unchanged on repeat boot');
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+
+  it('gives a legacy current attempt a full lease, fails over, and takes its declared timeout after exhaustion', async () => {
+    const { runId } = await startedListRun();
+    await scope7.removeStepTimeout('list-flow', 'work');
+    await database.query(`DELETE FROM agent_schedules WHERE workflow_run->>'runId'=$1`, [runId]);
+    await database.query(
+      `UPDATE messages SET card=card-'seq'-'deadlineSeconds'-'runStatus',created_at=now()-interval '2 hours' WHERE id=$1`, [runId],
+    );
+    await normalizeLegacyWorkflowRuns(database);
+    expect(await saveUnsavedWorkflowRunStatus(database)).toBe(1);
+    const before = Date.now();
+    expect(await backfillWorkflowRunTimers(database)).toBe(2);
+    const timers = await scope7.timersFor(runId);
+    expect(timers.map((row) => row.workflow_run)).toEqual([
+      { runId, workflowSlug: 'list-flow', timer: 'deadline' },
+      { runId, workflowSlug: 'list-flow', timer: 'step', attempt: 0 },
+    ]);
+    expect(timers[1]!.next_run_at.getTime()).toBeGreaterThanOrEqual(before + WORKFLOW_LEGACY_STEP_TIMEOUT_SECONDS * 1000);
+    // The 24 h deadline is measured from the original start, not the recovery.
+    const start = (await database.query<{ created_at: Date }>(`SELECT created_at FROM messages WHERE id=$1`, [runId])).rows[0]!;
+    expect(timers[0]!.next_run_at.getTime()).toBe(start.created_at.getTime() + 86_400_000);
+    expect(await new AgentScheduleLoop(database).runOnce(new Date(before + 30_000))).toBe(0);
+    expect(await backfillWorkflowRunTimers(database)).toBe(0);
+    expect(await scope7.timersFor(runId)).toEqual(timers);
+
+    expect(await fireTimer(runId, 'step')).toBe(1);
+    expect(await listRunCard(runId)).toMatchObject({ seq: 1, roleBindings: { worker: WORKER_B } });
+    const next = await scope7.timersFor(runId);
+    expect(next[1]!.workflow_run.attempt).toBe(1);
+    expect(next[1]!.next_run_at.getTime()).toBeGreaterThan(Date.now() + 3_500_000);
+    expect(await fireTimer(runId, 'step')).toBe(1);
+    const ended = await getWorkflowRun(database, ROOM, runId);
+    expect(ended).toMatchObject({ state: 'failed', status: 'failed' });
+    expect(ended.history.at(-1)).toMatchObject({ outcome: 'timeout' });
+    expect(await backfillWorkflowRunTimers(database)).toBe(0);
+    expect(await scope7.timersFor(runId)).toEqual([]);
+  });
+
+
+  it('arms the default for newly dispatched legacy steps and retries a step without a timeout outcome', async () => {
+    await saveWorkflow(database, await commandFor(WORKER_A), { contract: describedWorkflow(LIST_CONTRACT) });
+    await withoutTimeouts('list-flow', 'work');
+    const { runId } = await startWorkflow(database, await commandFor(WORKER_A), {
+      name: 'list-flow', roleBindings: { worker: WORKER_A, closer: APPROVER },
+    });
+    const timers = await scope7.timersFor(runId);
+    expect(timers[1]!.workflow_run).toMatchObject({ timer: 'step', attempt: 0 });
+    expect(timers[1]!.next_run_at.getTime()).toBeGreaterThan(Date.now() + 3_500_000);
+    expect(await fireTimer(runId, 'step')).toBe(1);
+    expect((await getWorkflowRun(database, ROOM, runId)).status).toBe('live');
+    expect((await scope7.timersFor(runId)).map((row) => row.workflow_run.timer)).toEqual(['deadline', 'step']);
+    expect(await fireTimer(runId, 'deadline')).toBe(1);
+    expect((await getWorkflowRun(database, ROOM, runId)).status).toBe('failed');
+  });
+
+
+  it('uses the pinned deadline, preserves existing declared timers, and takes the run lock before reading its head', async () => {
+    const runId = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+    await reachGate(runId);
+    const gateTimer = (await scope7.timersFor(runId))[1]!;
+    await database.query(`DELETE FROM agent_schedules WHERE workflow_run->>'runId'=$1 AND workflow_run->>'timer'='deadline'`, [runId]);
+    await database.query(`UPDATE messages SET created_at=now()-interval '1 hour',card=card-'deadlineSeconds' WHERE id=$1`, [runId]);
+    await saveWorkflow(database, await adminCommand(), { contract: describedWorkflow({ ...GATED, deadlineSeconds: 14_400 }) });
+    const versions = (await database.query(`SELECT markdown,content_hash FROM workspace_skill_versions ORDER BY version`)).rows;
+    const recorded = new RecordingDatabase(database);
+    expect(await backfillWorkflowRunTimers(recorded)).toBe(1);
+    const lock = recorded.calls.findIndex((call) => call.sql.includes('pg_advisory_xact_lock'));
+    const head = recorded.calls.findIndex((call) => call.sql.includes('ORDER BY (card'));
+    expect(lock).toBeGreaterThanOrEqual(0);
+    expect(head).toBeGreaterThan(lock);
+    const timers = await scope7.timersFor(runId);
+    const start = (await database.query<{ created_at: Date }>(`SELECT created_at FROM messages WHERE id=$1`, [runId])).rows[0]!;
+    expect(timers[0]!.next_run_at.getTime()).toBe(start.created_at.getTime() + 7_200_000);
+    expect(timers[1]).toEqual(gateTimer);
+    expect(await backfillWorkflowRunTimers(database)).toBe(0);
+    expect(await scope7.timersFor(runId)).toEqual(timers);
+    expect((await database.query(`SELECT markdown,content_hash FROM workspace_skill_versions ORDER BY version`)).rows).toEqual(versions);
+  });
+
+
+  it('does not arm ended or cancelled legacy runs whose start cards lacked a saved status', async () => {
+    const ended = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+    await reachGate(ended);
+    await answerGate(ended, 'publish');
+    const cancelled = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+    await cancelWorkflowRun(database, { room_id: ROOM, agent_id: OWNER } as CommandRow, { runId: cancelled, reason: 'stop' });
+    await database.query(`UPDATE messages SET card=card-'runStatus' WHERE id=ANY($1::text[])`, [[ended, cancelled]]);
+    expect(await saveUnsavedWorkflowRunStatus(database)).toBe(2);
+    expect(await backfillWorkflowRunTimers(database)).toBe(0);
+    expect(await backfillWorkflowRunTimers(database)).toBe(0);
+    expect(await scope7.timersFor(ended)).toEqual([]);
+    expect(await scope7.timersFor(cancelled)).toEqual([]);
+  });
+});
 describe('Reproduction workflow-stalls', () => {
   it('migrates an existing gate out of the ordinary choice limit', async () => {
     const runId = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
@@ -492,200 +731,61 @@ describe('Reproduction workflow-stalls', () => {
     expect((await database.query(`SELECT workflow_run_id FROM room_choices WHERE workflow_run_id=$1`, [runId])).rowCount).toBe(1);
   });
 
-  it('opens gates beside an ask_choice and another workflow gate while preserving the ordinary choice limit', async () => {
-    const ordinary = () => postRoomChoice(database, { roomId: ROOM, agentId: APPROVER,
-      mode: 'question', prompt: 'Which plan?', options: [{ label: 'First', consequence: 'Use first plan' }, { label: 'Second', consequence: 'Use second plan' }] });
-    await ordinary();
-    const runId = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+
+  it('keeps a pinned corner-only waiting state readable and closes it at its deadline', async () => {
+    await saveWorkflow(database, await commandFor(WORKER_A), { contract: describedWorkflow(GATED) });
+    const legacy = describedWorkflow(GATED) as any;
+    legacy.handoffs.work.on = { done: 'sign_off', finished: 'land', timeout: 'failed' };
+    legacy.handoffs.sign_off = { kind: 'waiting', does: 'Wait for an outside event' };
+    await database.query(`UPDATE workspace_skill_versions version SET markdown=$1
+      FROM workspace_skills skill WHERE skill.id=version.skill_id AND skill.slug='gated'`, [JSON.stringify(legacy)]);
+    const { runId } = await startWorkflow(database, await commandFor(WORKER_A), {
+      name: 'gated', roleBindings: { worker: WORKER_A, approver: APPROVER },
+    });
     await reachGate(runId);
-    await saveWorkflow(database, await commandFor(WORKER_A), { contract: describedWorkflow({ ...GATED, name: 'second-gate' }) });
-    const second = await startWorkflow(database, await commandFor(WORKER_A), {
-      name: 'second-gate', roleBindings: { worker: WORKER_A, approver: APPROVER },
-    });
-    await reachGate(second.runId);
-    expect((await database.query(`SELECT id FROM room_choices WHERE status='open' AND agent_id=$1`, [APPROVER])).rowCount).toBe(3);
-    await expect(ordinary()).rejects.toThrow('already have an open choice');
-    console.log('Demonstrated workflow-stalls-2: two gates and one ordinary choice coexist; another ordinary choice is refused');
+    expect((await getWorkflowRun(database, ROOM, runId)).state).toBe('sign_off');
+    expect(await fireTimer(runId, 'deadline')).toBe(1);
+    expect((await getWorkflowRun(database, ROOM, runId)).status).toBe('failed');
+    console.log('Demonstrated workflow-stalls-4: pinned waiting state still loads and its deadline closes the run');
   });
 
-  it('commits a completed turn even when its workflow contract is missing', async () => {
-    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')`,[WORKSPACE,WORKER_A]);
-    const { runId } = await startedListRun();
-    const command = (await database.query<CommandRow>(`SELECT * FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2`, [runId, WORKER_A])).rows[0]!;
-    const generationId = 'workflow-stalls-3';
-    const daemon = new HelperDaemonService(database, new LiveHub());
-    await daemon.execute('claimAgentCommand', { roomId: ROOM, commandId: command.id, generationId }, WORKER_A);
-    await database.query(`DELETE FROM workspace_skills WHERE slug='list-flow'`);
-    await daemon.execute('postAgentTurnReceipt', { roomId: ROOM, requestId: command.turn_request_id,
-      generationId, status: 'complete' }, WORKER_A);
-    expect((await database.query(`SELECT state FROM agent_commands WHERE id=$1`, [command.id])).rows[0]).toMatchObject({ state: 'complete' });
-    expect((await database.query(`SELECT status FROM agent_turns WHERE request_id=$1`, [command.turn_request_id])).rows[0]).toMatchObject({ status: 'complete' });
-    console.log('Demonstrated workflow-stalls-3: missing contract did not prevent the completion receipt or command completion');
-  });
 
-  it.each(['server', 'waiting', 'roleBinding', 'implicitEdges', 'externalOutcomes'])('rejects corner-only %s on save', async (field) => {
-    const contract = describedWorkflow(GATED) as any;
-    if (field === 'server') contract.handoffs.work = { kind: 'server', does: 'Run', requires: [], on: { done: 'sign_off' } };
-    if (field === 'waiting') {
-      contract.handoffs.sign_off = { kind: 'waiting', does: 'Wait' };
-      contract.handoffs.work.on = { done: 'sign_off', finished: 'land', timeout: 'failed' };
-    }
-    if (field === 'roleBinding') contract.handoffs.work.roleBinding = 'live:parent.worker_agent_id';
-    if (field === 'implicitEdges') contract.implicitEdges = ['land'];
-    if (field === 'externalOutcomes') contract.externalOutcomes = ['done'];
-    await expect(saveWorkflow(database, await commandFor(WORKER_A), { contract })).rejects.toThrow(/corner-only/);
-    console.log(`Demonstrated workflow-stalls-4: save rejected ${field}`);
-  });
-});
-
-describe('Reproduction run-status: one saved status for every reader', () => {
-  beforeEach(async () => {
-    // The app's run views also require the viewer's Workspace membership.
-    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`, [WORKSPACE, OWNER]);
-  });
-
-  async function savedStatus(runId: string): Promise<string | null> {
-    return (await database.query<{ run_status: string | null }>(
-      `SELECT card->>'runStatus' run_status FROM messages WHERE id=$1`, [runId],
-    )).rows[0]!.run_status;
-  }
-
-  /** The start card, the agent read, the app's run page and list, and every SQL live check agree. */
-  async function expectStatus(runId: string, expected: 'live' | 'done' | 'failed' | 'abandoned') {
-    const live = expected === 'live';
-    expect(await savedStatus(runId)).toBe(expected);
-    expect((await getWorkflowRun(database, ROOM, runId)).status).toBe(expected);
-    expect((await readWorkflowRun(database, { roomId: ROOM, runId }, OWNER))?.run.status).toBe(expected);
-    const listed = (await listRoomWorkflowRuns(database, ROOM, OWNER, 'gated')).workflows;
-    expect(listed.find((run) => run.runId === runId)?.status).toBe(expected);
-    expect((await liveWorkflowRun(database, ROOM, 'gated'))?.runId === runId).toBe(live);
-    expect((await activeWorkflowRunIds(database, ROOM, 'gated', OWNER)).includes(runId)).toBe(live);
-    await database.query(
-      `UPDATE messages SET card=card || jsonb_build_object('trigger',jsonb_build_object('scheduleId','status-schedule','period','p')) WHERE id=$1`,
-      [runId],
-    );
-    expect((await activeRunIdsForSchedule(database, ROOM, 'status-schedule')).includes(runId)).toBe(live);
-  }
-
-  async function everyEnding(): Promise<Record<'done' | 'failed' | 'cancelled', string>> {
-    const done = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
-    await expectStatus(done, 'live');
-    await reachGate(done);
-    await expectStatus(done, 'live');
-    await answerGate(done, 'publish');
-    await expectStatus(done, 'done');
-
-    const failed = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
-    await reachGate(failed);
-    await answerGate(failed, 'stop');
-    await expectStatus(failed, 'failed');
-
-    const cancelled = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
-    await cancelWorkflowRun(database, { room_id: ROOM, agent_id: OWNER } as CommandRow, { runId: cancelled, reason: 'stop' });
-    await expectStatus(cancelled, 'abandoned');
-    return { done, failed, cancelled };
-  }
-
-  it('saves the status at start, on each move and at every ending, and every live check agrees', async () => {
-    await everyEnding();
-    console.log('Demonstrated run-status: start, handoff, done, failed, deadline and cancel each saved one status that every reader and live check returned');
-  });
-
-  it('fills a missing or legacy saved status from the run itself and drops the retired flag', async () => {
-    const runs = await everyEnding();
-    const live = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
-    await reachGate(live);
-    const all = [...Object.values(runs), live];
-    // Legacy start cards: no saved status, or a stale `active` written by an older release.
-    await database.query(`UPDATE messages SET card=card-'runStatus' || '{"active":true}'::jsonb WHERE id=ANY($1::text[])`, [[runs.done, live]]);
-    await database.query(`UPDATE messages SET card=card || '{"active":true}'::jsonb WHERE id=$1`, [runs.failed]);
-    await database.query(`UPDATE messages SET card=card-'runStatus' WHERE id=$1`, [runs.cancelled]);
-    expect(await saveUnsavedWorkflowRunStatus(database)).toBe(4);
-    expect(await saveUnsavedWorkflowRunStatus(database)).toBe(0);
-    await expectStatus(runs.done, 'done');
-    await expectStatus(runs.failed, 'failed');
-    await expectStatus(runs.cancelled, 'abandoned');
-    await expectStatus(live, 'live');
-    expect((await database.query(`SELECT 1 FROM messages WHERE id=ANY($1::text[]) AND card ? 'active'`, [all])).rowCount).toBe(0);
-  });
-
-  it('reads live runs through a partial workflow index on the saved status or start cards', async () => {
-    await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
-    await database.query(`SET enable_seqscan=off`);
-    try {
-      const plan = async (sql: string) => JSON.stringify(
-        (await database.query<Record<string, unknown>>(`EXPLAIN (FORMAT JSON) ${sql}`)).rows[0]?.['QUERY PLAN']);
-      expect(await plan(`SELECT id FROM messages WHERE room_id='${ROOM}' AND card_type='workflow-handoff'
-        AND ${workflowRunIsLiveSql('card')} AND card->>'workflowSlug'='gated'`)).toContain('messages_workflow_run_live_idx');
-      // An unscoped status sweep can use either partial index. The new start
-      // index also contains exactly the start cards this predicate requests;
-      // the Room-scoped check above still proves the saved-live index is used.
-      expect(await plan(`SELECT id FROM messages WHERE card_type='workflow-handoff' AND id=card->>'runId'
-        AND ${workflowRunIsLiveSql('card')}`)).toMatch(/messages_workflow_run_(live|start)_idx/);
-      expect(await plan(`SELECT id FROM messages WHERE card_type='workflow-handoff'
-        AND ${workflowRunStatusUnsavedSql('card', 'id')}`)).toContain('messages_workflow_run_status_backfill_idx');
-    } finally {
-      await database.query(`SET enable_seqscan=on`);
-    }
-  });
-});
-
-describe('workflow timeout recovery reproductions', () => {
-  async function signupRun() {
-    const command = await adminCommand();
-    const contract = describedWorkflow({
-      version: 1, name: 'signup-recovery', description: 'Recover signup without a provider key',
-      roles: ['maker', 'owner'], start: 'signup_stills',
-      handoffs: {
-        signup_stills: { role: 'maker', requires: ['vault_reference'], timeoutSeconds: 60,
-          on: { ready: 'done', timeout: 'recover' } },
-        recover: { kind: 'gate', role: 'owner', requires: ['decision'],
-          on: { retry: 'signup_stills', abandon: 'failed' }, timeoutSeconds: 600, default: 'abandon' },
-        done: { kind: 'terminal', status: 'done' },
-        failed: { kind: 'terminal', status: 'failed' },
+  it('isolates a throwing timer from another timer and ordinary schedules on successive ticks', async () => {
+    const poisoned = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+    const { runId: healthy } = await startedListRun();
+    await database.query(`UPDATE agent_schedules SET next_run_at=now()-interval '1 minute'
+      WHERE workflow_run->>'timer'='deadline'`);
+    await database.query(`INSERT INTO agent_schedules
+      (id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at)
+      VALUES($1,$2,$3,$4,$5,'{"kind":"interval","everyMinutes":1}','ordinary tick',now()-interval '1 minute')`,
+      [randomUUID(), WORKSPACE, ROOM, WORKER_A, OWNER]);
+    const poisonId = (await database.query<{ id: string }>(`SELECT id FROM agent_schedules
+      WHERE workflow_run->>'runId'=$1 AND workflow_run->>'timer'='deadline'`, [poisoned])).rows[0]!.id;
+    await database.query(`UPDATE agent_schedules SET next_run_at=now()-interval '2 minutes' WHERE id=$1`, [poisonId]);
+    let throws = 0;
+    const wrap = (inner: SqlDatabase): SqlDatabase => ({
+      async query(sql, values) {
+        const result = await inner.query(sql, values);
+        if (/^DELETE FROM agent_schedules schedule\s+WHERE schedule.id=\$1/.test(sql) && values?.[0] === poisonId) {
+          throws++;
+          throw new Error('injected timer failure after claim');
+        }
+        return result as any;
       },
+      transaction: (work) => inner.transaction((tx) => work(wrap(tx))),
     });
-    await saveWorkflow(database, command, { contract });
-    return startWorkflow(database, command, {
-      name: 'signup-recovery', roleBindings: { maker: WORKER_A, owner: APPROVER },
-    });
-  }
-
-  it('Reproduction wf-1: declared timeout accepts reason without vault_reference, preserving success validation', async () => {
-    const { runId } = await signupRun();
-    const command = await commandFor(WORKER_A);
-    await expect(handoff(database, command, { runId, outcome: 'ready', contents: { reason: 'No key' } }))
-      .rejects.toThrow('vault_reference is required');
-    await expect(handoff(database, command, { runId, outcome: 'unknown', contents: { reason: 'No key' } }))
-      .rejects.toThrow('invalid outcome');
-    for (const contents of [{}, { reason: '' }, { reason: 42 }, { reason: 'x'.repeat(501) }, { reason: 'No key', extra: 'x'.repeat(16384) }, null]) {
-      await expect(handoff(database, command, { runId, outcome: 'timeout', contents })).rejects.toThrow();
-    }
-    await expect(handoff(database, command, { runId, outcome: 'timeout',
-      contents: { reason: 'Provider key does not exist' } })).resolves.toMatchObject({ state: 'recover' });
-    expect(await getWorkflowRun(database, ROOM, runId)).toMatchObject({ state: 'recover' });
-  });
-
-  it('Reproduction wf-2: directed recovery rebinds maker at owner gate without allowing agent gate answers', async () => {
-    const { runId } = await signupRun();
-    await handoff(database, await commandFor(WORKER_A), {
-      runId, outcome: 'blocked', contents: { reason: 'Provider signup exhausted' },
-    });
-    expect(await getWorkflowRun(database, ROOM, runId)).toMatchObject({ state: 'recover' });
-    const directed = await adminCommand();
-    await expect(assignWorkflowRole(database, directed, { runId, role: 'maker', targetAgentId: WORKER_B }))
-      .resolves.toMatchObject({ state: 'recover' });
-    const read = await getWorkflowRun(database, ROOM, runId);
-    expect(read).toMatchObject({ state: 'recover', boundAgentId: APPROVER });
-    await expect(assignWorkflowRole(database, directed, { runId, role: 'missing', targetAgentId: WORKER_B }))
-      .rejects.toThrow('role');
-    await expect(handoff(database, await commandFor(APPROVER), {
-      runId, outcome: 'retry', contents: { decision: 'retry' },
-    })).rejects.toThrow();
-    await answerGate(runId, 'retry');
-    expect(await getWorkflowRun(database, ROOM, runId)).toMatchObject({ state: 'signup_stills', boundAgentId: WORKER_B });
-    await expect(handoff(database, await commandFor(WORKER_B), {
-      runId, outcome: 'ready', contents: { vault_reference: 'vault://provider/key' },
-    })).resolves.toMatchObject({ status: 'done' });
+    const loop = new AgentScheduleLoop(wrap(database));
+    const now = new Date();
+    expect(await loop.runOnce(now)).toBe(2);
+    expect((await getWorkflowRun(database, ROOM, healthy)).status).toBe('failed');
+    expect(throws).toBe(1);
+    expect(await loop.runOnce(now)).toBe(0);
+    expect(throws).toBe(1);
+    expect(await loop.runOnce(new Date(now.getTime() + 61_000))).toBe(1);
+    expect(throws).toBe(1);
+    expect((await database.query(`SELECT failed_due_at=next_run_at AND failed_revision=updated_at parked
+      FROM agent_schedules WHERE id=$1`,[poisonId])).rows).toEqual([{parked:true}]);
+    expect((await database.query(`SELECT id FROM messages WHERE text='ordinary tick'`)).rowCount).toBe(2);
+    console.log('Demonstrated workflow-stalls-1: poisoned occurrence stays parked; healthy deadlines and ordinary schedules fire');
   });
 });

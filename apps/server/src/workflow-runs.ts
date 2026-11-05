@@ -1,48 +1,22 @@
-import { resourceRequester } from './resource-requester.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { WELCOME_VIDEO_SLUG } from './welcome-video-workflow.js';
-import { reserveServiceReviewWorkspaces, completeServiceReview } from './service-review.js';
 import { CommandRefusalError, ExpectedRefusalError } from './command-refusal.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
-import { workflowRunIsLiveSql } from './workflow-run-saved-status.js';
-import { humanRoomAdmin, humanRoomMember, WorkflowAuthorizationError } from './workflow-admin.js';
-import { createHash, randomBytes } from 'node:crypto';
-import {
-  shortRunId,
-  validateSavedWorkflow,
-  workflowContentsError,
-  workflowReceiptError,
-  type WorkflowReceiptInput,
-  isAgentIdentityReference,
-  WORKFLOW_BLOCKED_OUTCOME,
-  WORKFLOW_ROLE_AGENTS_MAX,
-  type WorkflowContract,
-  type WorkflowReadContract,
-  type WorkflowGateState,
-  type WorkflowHandoffState,
-  type WorkflowRoleBinding,
-  type WorkflowReadState,
-  type WorkflowRunReadResult,
-  type WorkflowReceipt,
-} from '@beeline/api-contract/daemon';
+import { workflowTimerId } from './workflow-timer-id.js';
+import { createHash } from 'node:crypto';
+import { shortRunId, type WorkflowReadContract, type WorkflowReadState, type WorkflowRunReadResult, type WorkflowReceipt } from '@beeline/api-contract/daemon';
 import { workflowRunStatus } from '@beeline/api-contract/phone';
-import { FEEDBACK_TRIAGE_CONTRACT, FEEDBACK_TRIAGE_SLUG } from './feedback-triage-workflow.js';
 import type { SystemSubject, WorkflowRunStatus } from '@beeline/api-contract/phone';
-import { bindWorkflowStepOutput } from './workflow-step-output.js';
 import type { CommandRow } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
-import { applySkillRevision, assertSkillTextSafe } from './institutional-skills.js';
-import type { AfterCommit } from './institutional-memory-embeddings.js';
 import { firstHealthyAgent, roomAgentHealth, type AgentHealthReason } from './agent-health.js';
-import { answerRoomChoice, closeRunChoices, postRoomChoice, skipRoomChoice } from './room-choice.js';
-import {
-  ensureSystemDirectMessageRoom,
-  ensureSystemIdentity,
-  identitySubject,
-  systemIdentityMention,
-  systemLine,
-} from './system-line.js';
+import { ensureSystemDirectMessageRoom, ensureSystemIdentity, systemIdentityMention, systemLine } from './system-line.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import { welcomeVideoRoleHolders, workflowGatePrompt, backfillWorkflowRunTimers, cancelWorkflowRun } from './workflow-runs-cancel-run-timers.js';
+import { handoff, settleWorkflowGate, fireWorkflowTimer, abandonCornerWorkflowRuns, liveWorkflowRun, saveWorkflow, activeRunIdsForSchedule } from './workflow-runs-repeated-result.js';
+import { startWorkflow, assignWorkflowRole, archiveWorkflow, describedLegacyWorkflowContract, backfillWorkflowSkillDescriptions, closeStaleWorkflowGateChoices } from './workflow-runs-start-workflow.js';
+
+
 
 /**
  * No run-state tables: a run is identified by its `start_workflow` message id
@@ -61,10 +35,16 @@ import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
  */
 export const WORKFLOW_HANDOFF_CARD_TYPE = 'workflow-handoff';
 
-/** One agent tried during a state visit, and why it left the step. */
-type TriedAgent = { agentId: string; reason: string };
 
-type WorkflowRunCard = {
+/** Agent steps pinned before timeouts were required still get a bounded lease. */
+export const WORKFLOW_LEGACY_STEP_TIMEOUT_SECONDS = 3600;
+
+
+/** One agent tried during a state visit, and why it left the step. */
+export type TriedAgent = { agentId: string; reason: string };
+
+
+export type WorkflowRunCard = {
   runId: string;
   seq: number;
   workflowSlug: string;
@@ -87,6 +67,7 @@ type WorkflowRunCard = {
   requesterId?: string;
   /** Start card only: the person notices go to (see `resolveRunOwner`). */
   ownerId?: string | null;
+  deadlineSeconds?: number;
   cancellation?: { reason: string; actorId: string };
   /** An engine close that is not a person's cancellation, such as a passed deadline. */
   closure?: { reason: string };
@@ -103,9 +84,11 @@ type WorkflowRunCard = {
   trigger?: { scheduleId: string; period: string };
 };
 
-type IdentityRow = { id: string; kind: 'human' | 'agent'; name: string; handle?: string | null };
 
-async function loadIdentityRow(db: SqlDatabase, id: string): Promise<IdentityRow> {
+export type IdentityRow = { id: string; kind: 'human' | 'agent'; name: string; handle?: string | null };
+
+
+export async function loadIdentityRow(db: SqlDatabase, id: string): Promise<IdentityRow> {
   const row = (
     await db.query<IdentityRow>(`SELECT id,kind,name,handle FROM identities WHERE id=$1`, [id])
   ).rows[0];
@@ -113,8 +96,9 @@ async function loadIdentityRow(db: SqlDatabase, id: string): Promise<IdentityRow
   return row;
 }
 
+
 /** How a system line names each id: `@handle`, falling back to the raw id for an unknown one. */
-async function mentionsFor(db: SqlDatabase, ids: readonly string[]): Promise<Map<string, string>> {
+export async function mentionsFor(db: SqlDatabase, ids: readonly string[]): Promise<Map<string, string>> {
   const rows = ids.length
     ? (
         await db.query<IdentityRow & { handle: string | null }>(
@@ -127,20 +111,23 @@ async function mentionsFor(db: SqlDatabase, ids: readonly string[]): Promise<Map
   return new Map(ids.map((id) => [id, names.get(id) ?? id]));
 }
 
+
 /**
  * The run's starter: the start card's resolved requester, falling back to the
  * start message's own author for runs predating that field (same fallback
  * `cancelWorkflowRun` uses for cancel authority). An agent starter is woken
  * when a role has nobody left to take it.
  */
-async function loadRunStarter(db: SqlDatabase, roomId: string, runId: string): Promise<IdentityRow> {
+export async function loadRunStarter(db: SqlDatabase, roomId: string, runId: string): Promise<IdentityRow> {
   const start = await loadRunStart(db, roomId, runId);
   return loadIdentityRow(db, start.card.requesterId ?? start.authorId);
 }
 
-type RunHead = { id: string; authorId: string; createdAt: Date; card: WorkflowRunCard };
 
-async function loadRunStart(db: SqlDatabase, roomId: string, runId: string): Promise<RunHead> {
+export type RunHead = { id: string; authorId: string; createdAt: Date; card: WorkflowRunCard };
+
+
+export async function loadRunStart(db: SqlDatabase, roomId: string, runId: string): Promise<RunHead> {
   const row = (await db.query<{ id: string; author_id: string; created_at: Date; card: WorkflowRunCard }>(
     `SELECT id,author_id,created_at,card FROM messages WHERE room_id=$1 AND id=$2 AND card_type=$3`,
     [roomId, runId, WORKFLOW_HANDOFF_CARD_TYPE],
@@ -149,7 +136,8 @@ async function loadRunStart(db: SqlDatabase, roomId: string, runId: string): Pro
   return { id: row.id, authorId: row.author_id, createdAt: row.created_at, card: row.card };
 }
 
-async function loadRunHead(
+
+export async function loadRunHead(
   db: SqlDatabase,
   roomId: string,
   runId: string,
@@ -165,7 +153,8 @@ async function loadRunHead(
   return row ? { id: row.id, authorId: row.author_id, createdAt: row.created_at, card: row.card } : undefined;
 }
 
-async function loadRun(
+
+export async function loadRun(
   db: SqlDatabase,
   roomId: string,
   runId: string,
@@ -173,8 +162,9 @@ async function loadRun(
   return (await loadRunHead(db, roomId, runId))?.card;
 }
 
+
 /** The start card's immutable list-bound-role map; `{}` for a run with no list-bound role. */
-async function loadRunRoleAgents(
+export async function loadRunRoleAgents(
   db: SqlDatabase,
   roomId: string,
   runId: string,
@@ -182,7 +172,8 @@ async function loadRunRoleAgents(
   return (await loadRunStart(db, roomId, runId)).card.roleAgents ?? {};
 }
 
-async function pickWorkflowAgent(db: SqlDatabase, roomId: string, list: string[], exclude: string[], slug?: string): Promise<string | null> {
+
+export async function pickWorkflowAgent(db: SqlDatabase, roomId: string, list: string[], exclude: string[], slug?: string): Promise<string | null> {
   if (slug !== WELCOME_VIDEO_SLUG) return firstHealthyAgent(db, roomId, list, exclude);
   const health = await roomAgentHealth(db, roomId, list);
   const free = (await db.query<{ agent_id: string }>(
@@ -193,6 +184,7 @@ async function pickWorkflowAgent(db: SqlDatabase, roomId: string, list: string[]
     (health.get(id)?.reason === 'offline' && hosted.has(id)))) ?? null;
 }
 
+
 /**
  * Resolve `role`'s binding to a concrete agent id, picking the first healthy
  * agent on its list only the FIRST time a list-bound role is dispatched —
@@ -200,7 +192,7 @@ async function pickWorkflowAgent(db: SqlDatabase, roomId: string, list: string[]
  * for the rest of the run (sticky), matching "keep the agent that took a role
  * unless it fails." Mutates `roleBindings` in place on success.
  */
-async function resolveRoleBinding(
+export async function resolveRoleBinding(
   db: SqlDatabase,
   input: {
     roomId: string;
@@ -223,12 +215,14 @@ async function resolveRoleBinding(
   return { agentId: picked };
 }
 
-const HEALTH_LABEL: Record<AgentHealthReason, string> = {
+
+export const HEALTH_LABEL: Record<AgentHealthReason, string> = {
   offline: systemMessage("workflow-runs.offline"),
 };
 
+
 /** Every agent on a role list with why it cannot take the step now. */
-async function roleReasons(
+export async function roleReasons(
   db: SqlDatabase,
   input: { roomId: string; list: readonly string[]; tried: readonly TriedAgent[]; cursor?: string },
 ): Promise<string> {
@@ -253,6 +247,7 @@ async function roleReasons(
     .join(systemMessage("workflow-runs.list-separator"));
 }
 
+
 /**
  * A role with nobody eligible is named in the run, with each listed agent's
  * reason, rather than silently stalling. The run stays parked at this state:
@@ -261,7 +256,7 @@ async function roleReasons(
  * health filter. For an agent-started run, this also wakes the starter. One
  * line per dispatch card: a repeat for the same card is a no-op.
  */
-async function noteWorkflowRoleExhausted(
+export async function noteWorkflowRoleExhausted(
   db: SqlDatabase,
   input: {
     roomId: string;
@@ -299,8 +294,9 @@ async function noteWorkflowRoleExhausted(
   });
 }
 
+
 /** The exact pinned version, independent of the slug's current/archived state. */
-async function loadPinnedContract(
+export async function loadPinnedContract(
   db: SqlDatabase,
   roomId: string,
   slug: string,
@@ -322,8 +318,9 @@ async function loadPinnedContract(
   return JSON.parse(row.markdown) as WorkflowReadContract;
 }
 
+
 /** The one writer of a run's status: decided by `workflowRunStatus` when the run moves and saved on its start card. */
-async function saveRunStatus(
+export async function saveRunStatus(
   db: SqlDatabase,
   scope: { roomId: string; runId: string; contract: WorkflowReadContract },
   state: string,
@@ -336,8 +333,9 @@ async function saveRunStatus(
   );
 }
 
+
 // The daemon authorizes this Room before lookup; never search outside it.
-async function resolveWorkflowRunId(db: SqlDatabase, roomId: string, runId: string): Promise<string> {
+export async function resolveWorkflowRunId(db: SqlDatabase, roomId: string, runId: string): Promise<string> {
   if (typeof runId !== 'string' || !runId) throw new CommandRefusalError('runId is required', 400);
   // Run IDs are 32 random bytes encoded as hex. Keep full-ID callers on the
   // existing path, including taking the write lock before reading run state.
@@ -354,6 +352,7 @@ async function resolveWorkflowRunId(db: SqlDatabase, roomId: string, runId: stri
   if (matches.length > 1) throw new CommandRefusalError(`workflow run ID prefix is ambiguous: ${matches.map(row => row.run_id).join(', ')}`, 400);
   return matches[0]!.run_id;
 }
+
 
 export async function getWorkflowRun(
   db: SqlDatabase,
@@ -405,8 +404,9 @@ export async function getWorkflowRun(
   };
 }
 
+
 /** The authenticated command's root requester; agents cannot supply a different actor. */
-async function workflowRequester(
+export async function workflowRequester(
   db: SqlDatabase,
   command: Pick<CommandRow, 'agent_id'> & { root_source_message_id?: string },
 ): Promise<string> {
@@ -418,6 +418,7 @@ async function workflowRequester(
     : undefined;
   return root?.author_id ?? command.agent_id;
 }
+
 
 /**
  * The identity a workflow turn answers to, for resource authority such as
@@ -474,6 +475,7 @@ export async function workflowRunRequester(
   return { id: input.agentId, kind: 'agent' };
 }
 
+
 /**
  * The person a run's notices go to: the person who started it. A human start
  * is that person; an agent's start answers the person whose message it
@@ -482,7 +484,7 @@ export async function workflowRunRequester(
  * hidden scheduler or system identities. `null` when no person is on record,
  * and notices then go to the Room's admins (`runNoticeRecipients`).
  */
-async function resolveRunOwner(
+export async function resolveRunOwner(
   db: SqlDatabase,
   command: Pick<CommandRow, 'agent_id'> & { root_source_message_id?: string },
 ): Promise<string | null> {
@@ -504,8 +506,9 @@ async function resolveRunOwner(
   return root.person ? root.author_id : null;
 }
 
+
 /** The run owner while they are still in the Room, otherwise the Workspace's human admins. */
-async function runNoticeRecipients(db: SqlDatabase, roomId: string, ownerId: string | null): Promise<string[]> {
+export async function runNoticeRecipients(db: SqlDatabase, roomId: string, ownerId: string | null): Promise<string[]> {
     db = new CornerAccessDatabase(db);
   if (ownerId) {
     const member = await db.query(
@@ -527,8 +530,9 @@ async function runNoticeRecipients(db: SqlDatabase, roomId: string, ownerId: str
   return admins.rows.map((row) => row.id);
 }
 
+
 /** One `@system` DM line to the run's owner (or the Room's admins); a repeat for the same key is a no-op. */
-async function noticeRunOwner(
+export async function noticeRunOwner(
   db: SqlDatabase,
   scope: RunScope,
   key: string,
@@ -548,8 +552,9 @@ async function noticeRunOwner(
   }
 }
 
+
 /** The run context every transition writer works from; built under the run lock. */
-type RunScope = {
+export type RunScope = {
   roomId: string;
   workspaceId: string;
   runId: string;
@@ -562,6 +567,7 @@ type RunScope = {
   status: WorkflowRunStatus;
   ended: boolean;
 };
+
 
 /**
  * Serializes the whole "derive current state -> validate -> write the next
@@ -578,12 +584,14 @@ export function workflowRunLockKey(runId: string): string {
   return `workflow-run:${runId}`;
 }
 
-async function lockWorkflowRun(db: SqlDatabase, runId: string): Promise<void> {
+
+export async function lockWorkflowRun(db: SqlDatabase, runId: string): Promise<void> {
   await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [workflowRunLockKey(runId)]);
 }
 
+
 /** Lock the run, then read its newest card and pinned contract. */
-async function openRun(db: SqlDatabase, roomId: string, runId: string): Promise<RunScope> {
+export async function openRun(db: SqlDatabase, roomId: string, runId: string): Promise<RunScope> {
   runId = await resolveWorkflowRunId(db, roomId, runId);
   await lockWorkflowRun(db, runId);
   const room = (
@@ -612,8 +620,9 @@ async function openRun(db: SqlDatabase, roomId: string, runId: string): Promise<
   };
 }
 
+
 /** Cancel pending wakes; an already executing turn retains its output binding. */
-async function cancelRunWakes(db: SqlDatabase, roomId: string, runId: string): Promise<void> {
+export async function cancelRunWakes(db: SqlDatabase, roomId: string, runId: string): Promise<void> {
   await db.query(
     `WITH due AS MATERIALIZED (
        SELECT command.id FROM agent_commands command
@@ -627,1455 +636,88 @@ async function cancelRunWakes(db: SqlDatabase, roomId: string, runId: string): P
   );
 }
 
-function isHandoffState(state: WorkflowReadState | undefined): state is WorkflowHandoffState {
-  return Boolean(state) && state!.kind === undefined;
-}
 
-/** The historical gate question, retained to locate pre-run-id cards. */
-export function workflowGatePrompt(contract: Pick<WorkflowReadContract, 'name'>, stateName: string): string {
-  return `${contract.name}: ${stateName}`.slice(0, 120);
-}
+export type WorkflowTimerKind = 'step' | 'deadline';
 
 /**
- * Posts the gate's ask_choice card, for every run however it was started,
- * asked by the gate role's agent and carrying the run id and attempt. A
- * A person's answer or Skip settles it through `settleWorkflowGate`.
+ * An engine timer is an `agent_schedules` row with `workflow_run` set, owned
+ * by the system identity rather than any agent, so it fires whether or not
+ * the step's agent is still in the Room and survives a restart.
+ * `AgentScheduleLoop` hands due rows to `fireWorkflowTimer`, using the
+ * timer kind and current attempt.
  */
-async function postWorkflowGate(
+export type WorkflowTimer = { runId: string; workflowSlug: string; timer: WorkflowTimerKind; attempt?: number; retryRoleList?: boolean };
+
+
+export async function scheduleRunTimer(
   db: SqlDatabase,
   input: {
     workspaceId: string;
     roomId: string;
     runId: string;
-    attempt: number;
-    contract: WorkflowReadContract;
-    roleBindings: Readonly<Record<string, string>>;
-    stateName: string;
-    state: WorkflowGateState;
-  },
-): Promise<void> {
-  const askerAgentId = input.roleBindings[input.state.role];
-  if (!askerAgentId) throw new Error(`no agent is bound to the ${input.state.role} role`);
-  const choice = await postRoomChoice(db, {
-    roomId: input.roomId,
-    agentId: askerAgentId,
-    workflowRunId: input.runId,
-    workflowOwnerId: (await loadRunStart(db, input.roomId, input.runId)).card.ownerId,
-    mode: 'question',
-    prompt: (input.state.does?.replace(/\s+/g, systemMessage("workflow-runs.space")).trim() ||
-      systemMessage("workflow-runs.choose-the-next-step-for", input.contract.name.replace(/[-_]/g, systemMessage("workflow-runs.space")))).slice(0, 120),
-    options: Object.entries(input.state.on).map(([outcome, target]) => ({
-      label: outcome,
-      consequence: (input.contract.handoffs[target]?.does?.replace(/\s+/g, systemMessage("workflow-runs.space")).trim() ||
-        systemMessage("workflow-runs.continue-to", target.replace(/[-_]/g, systemMessage("workflow-runs.space")))).slice(0, 80),
-    })),
-  });
-  await db.query(
-    `UPDATE messages SET card=card || $2::jsonb WHERE id=$1`,
-    [choice.messageId, JSON.stringify({
-      runId: input.runId,
-      workflowSlug: input.contract.name,
-      attempt: input.attempt,
-      ...(input.state.hint ? { receiptHint: input.state.hint } : {}),
-    })],
-  );
-}
-
-/** What a newly entered state needs after its card is written: a gate card or the exhausted line. */
-async function dispatchState(
-  db: SqlDatabase,
-  input: {
-    workspaceId: string;
-    roomId: string;
-    runId: string;
-    contract: WorkflowReadContract;
-    roleBindings: Record<string, string>;
-    roleAgents: Record<string, string[]>;
-    stateName: string;
-    attempt: number;
-    cardId: string;
-    exhausted: boolean;
-  },
-): Promise<void> {
-  const state = input.contract.handoffs[input.stateName]!;
-  if (state.kind === 'terminal') return;
-  if (input.exhausted) {
-    const role = (state as WorkflowHandoffState | WorkflowGateState).role;
-    await noteWorkflowRoleExhausted(db, {
-      roomId: input.roomId,
-      runId: input.runId,
-      workflowSlug: input.contract.name,
-      role,
-      afterMessageId: input.cardId,
-      list: input.roleAgents[role] ?? [],
-      tried: [],
-    });
-  } else if (state.kind === 'gate') {
-    await postWorkflowGate(db, {
-      workspaceId: input.workspaceId,
-      roomId: input.roomId,
-      runId: input.runId,
-      attempt: input.attempt,
-      contract: input.contract,
-      roleBindings: input.roleBindings,
-      stateName: input.stateName,
-      state,
-    });
-    return;
-  }
-}
-
-type CardLine = {
-  authorId: string;
-  subject: SystemSubject;
-  verb: string;
-  object?: string;
-  consequence?: string;
-};
-
-/**
- * Take one of the current state's `on` edges and dispatch the state it
- * reaches. Shared by an agent's handoff, the engine's `timeout`, a gate
- * answer, Skip and a gate default. A declared loop cap redirects the edge to
- * its escape state. Returns the new state and its attempt.
- */
-async function enterState(
-  db: SqlDatabase,
-  scope: RunScope,
-  input: {
-    outcome: string;
-    contents: unknown;
-    receiptInput?: WorkflowReceiptInput;
-    actorId: string;
-    commandId?: string;
-    /** The person's message the engine took as this exit's answer, when it was settled from chat. */
-    sourceMessageId?: string;
-    line: (toState: string) => CardLine;
-  },
-): Promise<{ state: string; attempt: number; status?: 'done' | 'failed' }> {
-  const { run, contract, stateName, roomId, runId } = scope;
-  const state = scope.state as WorkflowHandoffState | WorkflowGateState;
-  let toState = state.on[input.outcome]!;
-  const loop = isHandoffState(state) ? state.loop : undefined;
-  if (loop && loop.onEdge === input.outcome) {
-    const countRow = (
-      await db.query<{ count: string }>(
-        `SELECT count(*)::text count FROM messages
-         WHERE room_id=$1 AND card_type=$2
-           AND card->>'runId'=$3 AND card->>'fromState'=$4 AND card->>'outcome'=$5`,
-        [roomId, WORKFLOW_HANDOFF_CARD_TYPE, runId, stateName, input.outcome],
-      )
-    ).rows[0];
-    if (Number(countRow?.count ?? 0) + 1 > loop.cap) toState = loop.onExceeded;
-  }
-  const nextState = contract.handoffs[toState];
-  if (!nextState) throw new Error('workflow contract is internally inconsistent');
-  const isTerminal = nextState.kind === 'terminal';
-  const isGate = nextState.kind === 'gate';
-  await cancelRunWakes(db, roomId, runId);
-
-  // Leaving a gate or ending the run must not strand an open gate choice: it
-  // would refuse every later gate this agent asks in this Room.
-  if (state.kind === 'gate' || isTerminal) await closeRunChoices(db, roomId, runId);
-  const roleBindings = { ...run.roleBindings };
-  const roleAgents = await loadRunRoleAgents(db, roomId, runId);
-  const nextRole = isTerminal ? undefined : (nextState as WorkflowHandoffState | WorkflowGateState).role;
-  const nextResolution = nextRole
-    ? await resolveRoleBinding(db, { roomId, roleBindings, roleAgents, role: nextRole, workflowSlug: run.workflowSlug, runId })
-    : undefined;
-  const exhausted = Boolean(nextResolution && 'exhausted' in nextResolution);
-  const nextAgentId = nextResolution && !exhausted ? (nextResolution as { agentId: string }).agentId : null;
-  if ((contract.name === FEEDBACK_TRIAGE_SLUG || contract.name === 'workspace-walk') && toState === 'browse') {
-    if (!nextAgentId || nextAgentId !== roleBindings.triager)
-      throw new Error('Service review must use the scheduled triager');
-    const daily = contract.name === 'workspace-walk';
-    const window = await db.query<{ days: 1 | 14 }>(`SELECT CASE
-      WHEN extract(isodow FROM now() AT TIME ZONE 'America/New_York')=1 THEN 14 ELSE 1 END AS days`);
-    await reserveServiceReviewWorkspaces(db,nextAgentId,runId,daily,daily ? window.rows[0]!.days : 1);
-  }
-  const attempt = run.seq + 1;
-  const cardId = randomBytes(32).toString('hex');
-  const status = isTerminal ? (nextState as { status: 'done' | 'failed' }).status : undefined;
-  await ensureSystemIdentity(db);
-  await systemLine(db, {
-    id: cardId,
-    roomId,
-    ...input.line(toState),
-    kind: 'workflow-handoff',
-    ...(!isTerminal && !isGate && nextAgentId ? { wakes: [nextAgentId] } : {}),
-    presentation: 'system',
-    cardType: WORKFLOW_HANDOFF_CARD_TYPE,
-    card: {
-      runId,
-      seq: attempt,
-      workflowSlug: run.workflowSlug,
-      workflowVersion: run.workflowVersion,
-      roleBindings,
-      fromState: stateName,
-      outcome: input.outcome,
-      toState,
-      contents: input.contents,
-      receipt: { ...input.receiptInput, exit: { gate: input.outcome, actorId: input.actorId, ...(input.sourceMessageId ? { sourceMessageId: input.sourceMessageId } : {}) } },
-      answers: run.seq,
-      ...(input.commandId ? { commandId: input.commandId } : {}),
-      ...(nextState.hint ? { receiptHint: nextState.hint } : {}),
-      ...(status ? { status } : {}),
-    },
-  });
-  await saveRunStatus(db, scope, toState);
-  await dispatchState(db, {
-    workspaceId: scope.workspaceId,
-    roomId,
-    runId,
-    contract,
-    roleBindings,
-    roleAgents,
-    stateName: toState,
-    attempt,
-    cardId,
-    exhausted,
-  });
-  return { state: toState, attempt, ...(status ? { status } : {}) };
-}
-
-/**
- * Same-state reassignment: the run's `toState` does not change, only which
- * agent holds it, under a new attempt. Reused by list failover (`blocked`,
- * an expired step, a failed turn) and an explicit `assign_workflow_role`;
- * the caller decides `picked`.
- */
-async function moveRole(
-  db: SqlDatabase,
-  scope: RunScope,
-  input: { role: string; picked: string; tried: TriedAgent[]; why: string; line?: Partial<CardLine> },
-): Promise<{ state: string; attempt: number }> {
-  const { run, roomId, runId, stateName } = scope;
-  const state = scope.state as WorkflowHandoffState | WorkflowGateState;
-  const otherRole = input.role === 'checker' ? 'maker' : input.role === 'maker' ? 'checker' : undefined;
-  if (run.workflowSlug === WELCOME_VIDEO_SLUG && otherRole &&
-    (await welcomeVideoRoleHolders(db, roomId, runId, otherRole, run.roleBindings[otherRole])).includes(input.picked))
-    throw new Error('The welcome video maker and checker must not be the same agent in a run.');
-  const roleBindings = { ...run.roleBindings, [input.role]: input.picked };
-  const from = run.roleBindings[input.role];
-  const names = await mentionsFor(db, [input.picked, ...(from ? [from] : [])]);
-  await cancelRunWakes(db, roomId, runId);
-  if (state.kind === 'gate') await closeRunChoices(db, roomId, runId);
-  const attempt = run.seq + 1;
-  const cardId = randomBytes(32).toString('hex');
-  await ensureSystemIdentity(db);
-  await systemLine(db, {
-    id: cardId,
-    roomId,
-    authorId: SYSTEM_IDENTITY_ID,
-    subject: { kind: 'system', name: systemMessage("workflow-runs.the-workflow") },
-    verb: systemMessage("workflow-runs.moved"),
-    object: stateName,
-    consequence:
-      systemMessage("workflow-runs.to-because-in-run-of", from ? systemMessage("workflow-runs.from", names.get(from)) : '', names.get(input.picked), input.why, shortRunId(runId), run.workflowSlug).slice(0, 600),
-    ...input.line,
-    kind: 'workflow-handoff',
-    ...(state.kind === 'gate' ? {} : { wakes: [input.picked] }),
-    presentation: 'system',
-    cardType: WORKFLOW_HANDOFF_CARD_TYPE,
-    card: {
-      runId,
-      seq: attempt,
-      workflowSlug: run.workflowSlug,
-      workflowVersion: run.workflowVersion,
-      roleBindings,
-      toState: stateName,
-      reassigned: true,
-      answers: run.seq,
-      ...(input.tried.length ? { tried: input.tried } : {}),
-      ...(state.hint ? { receiptHint: state.hint } : {}),
-    },
-  });
-  await dispatchState(db, {
-    workspaceId: scope.workspaceId,
-    roomId,
-    runId,
-    contract: scope.contract,
-    roleBindings,
-    roleAgents: {},
-    stateName,
-    attempt,
-    cardId,
-    exhausted: false,
-  });
-  return { state: stateName, attempt };
-}
-
-/** End a live run where it stands: a person's cancellation or an engine close such as a passed deadline. */
-async function closeRun(
-  db: SqlDatabase,
-  scope: RunScope,
-  input: {
-    status: 'failed' | 'abandoned';
-    outcome: string;
-    reason: string;
-    cancellation?: { reason: string; actorId: string };
-    line: CardLine;
-  },
-): Promise<void> {
-  const { run, roomId, runId, stateName } = scope;
-  await cancelRunWakes(db, roomId, runId);
-  await closeRunChoices(db, roomId, runId);
-  await ensureSystemIdentity(db);
-  await systemLine(db, {
-    roomId,
-    ...input.line,
-    afterMessageId: runId,
-    // No event kind: a closed run is a durable record that wakes nobody.
-    presentation: 'system',
-    cardType: WORKFLOW_HANDOFF_CARD_TYPE,
-    card: {
-      runId,
-      seq: run.seq + 1,
-      workflowSlug: run.workflowSlug,
-      workflowVersion: run.workflowVersion,
-      roleBindings: run.roleBindings,
-      fromState: stateName,
-      toState: stateName,
-      outcome: input.outcome,
-      status: input.status,
-      answers: run.seq,
-      ...(input.cancellation ? { cancellation: input.cancellation } : { closure: { reason: input.reason } }),
-      contents: { reason: input.reason },
-    },
-  });
-  await saveRunStatus(db, scope, stateName, input.status);
-}
-
-/** Every agent that has held this role in the run, including earlier failovers. */
-async function welcomeVideoRoleHolders(db: SqlDatabase, roomId: string, runId: string | undefined, role: 'maker' | 'checker', current?: string): Promise<string[]> {
-  const rows = runId ? (await db.query<{ holder: string | null }>(
-    `SELECT DISTINCT card->'roleBindings'->>$4 holder FROM messages
-     WHERE room_id=$1 AND card_type=$2 AND card->>'runId'=$3`,
-    [roomId, WORKFLOW_HANDOFF_CARD_TYPE, runId, role])).rows : [];
-  return [...new Set([...rows.map(row => row.holder), current].filter((id): id is string => Boolean(id)))];
-}
-
-/** The agents a step's role may walk: its ordered list, or its one bound agent. */
-async function roleList(db: SqlDatabase, scope: RunScope, role: string): Promise<string[]> {
-  const agents = (await loadRunRoleAgents(db, scope.roomId, scope.runId))[role];
-  if (agents?.length) {
-    const otherRole = role === 'checker' ? 'maker' : role === 'maker' ? 'checker' : undefined;
-    if (scope.run.workflowSlug === WELCOME_VIDEO_SLUG && otherRole) {
-      const excluded = await welcomeVideoRoleHolders(db, scope.roomId, scope.runId, otherRole, scope.run.roleBindings[otherRole]);
-      return agents.filter(agent => !excluded.includes(agent));
-    }
-    return agents;
-  }
-  const bound = scope.run.roleBindings[role];
-  return bound ? [bound] : [];
-}
-
-/**
- * Move a handoff step past `leaving` to the next eligible agent on its role
- * list: forward only, each agent once per state visit, skipping anyone
- * unhealthy or no longer in the Room. With nobody left, `timeout` applies the
- * step's `timeout` outcome as the system (when it declares one); otherwise,
- * and always for `wait`, the run posts each agent's reason and waits.
- * Exhaustion waits for an explicit event or reassignment.
- */
-async function failOver(
-  db: SqlDatabase,
-  scope: RunScope,
-  input: { leaving?: string; why: string; whenExhausted: 'timeout' | 'wait' },
-): Promise<{ state: string; attempt: number; status?: 'done' | 'failed' }> {
-  const state = scope.state as WorkflowHandoffState;
-  const role = state.role;
-  const tried = [
-    ...(scope.run.tried ?? []).filter((entry) => entry.agentId !== input.leaving),
-    ...(input.leaving ? [{ agentId: input.leaving, reason: input.why }] : []),
-  ];
-  const list = await roleList(db, scope, role);
-  const cursor = input.leaving ?? scope.run.roleBindings[role];
-  const start = cursor && list.includes(cursor) ? list.indexOf(cursor) + 1 : 0;
-  const picked = await pickWorkflowAgent(
-    db, scope.roomId, list.slice(start), tried.map((entry) => entry.agentId), scope.run.workflowSlug,
-  );
-  if (picked) return moveRole(db, scope, { role, picked, tried, why: input.why });
-  const reasons = list.length ? await roleReasons(db, { roomId: scope.roomId, list, tried, cursor }) : '';
-  if (input.whenExhausted === 'timeout' && Object.hasOwn(state.on, 'timeout')) {
-    return enterState(db, scope, {
-      outcome: 'timeout',
-      contents: { reason: reasons || input.why },
-      actorId: SYSTEM_IDENTITY_ID,
-      line: (toState) => ({
-        authorId: SYSTEM_IDENTITY_ID,
-        subject: { kind: 'system', name: systemMessage("workflow-runs.the-workflow") },
-        verb: systemMessage("workflow-runs.applied"),
-        object: systemMessage("workflow-runs.timeout"),
-        consequence:
-          systemMessage("workflow-runs.at-and-went-to-because-nobody-on-the-role-is-left-in-run-of", scope.stateName, toState, role, reasons ? systemMessage("workflow-runs.health-reasons", reasons) : '', shortRunId(scope.runId), scope.run.workflowSlug).slice(0, 600),
-      }),
-    });
-  }
-  await noteWorkflowRoleExhausted(db, {
-    roomId: scope.roomId,
-    runId: scope.runId,
-    workflowSlug: scope.run.workflowSlug,
-    role,
-    afterMessageId: scope.head.id,
-    list,
-    tried,
-    ...(cursor ? { cursor } : {}),
-  });
-  return { state: scope.stateName, attempt: scope.run.seq };
-}
-
-/** Explicit workflow controls use the command's requester, never the executing agent's privileges. */
-async function authorizeWorkflowControl(
-  db: SqlDatabase,
-  command: CommandRow,
-  input: {
-    requesterId: string | null;
-    agentIds: string[];
-    authority: string;
-    action: string;
-    /** Any human in the Room may take this action (cancelling a run). */
-    roomMembers?: boolean;
-  },
-): Promise<string> {
-  const actorId = await workflowRequester(db, command);
-  if (input.roomMembers && (await humanRoomMember(db, command.room_id, actorId))) return actorId;
-  const roleOwners = await db.query(
-    `SELECT 1 FROM agents WHERE agent_id=ANY($1::text[]) AND owner_id=$2`,
-    [input.agentIds, actorId],
-  );
-  if (
-    actorId !== input.requesterId && !roleOwners.rowCount &&
-    !(await humanRoomAdmin(db, command.room_id, actorId))
-  ) {
-    throw new WorkflowAuthorizationError(
-      `only ${input.authority}, or a workspace admin can ${input.action}`,
-      403,
-    );
-  }
-  return actorId;
-}
-
-async function authorizeRunControl(
-  db: SqlDatabase,
-  command: CommandRow,
-  run: WorkflowRunCard,
-  action: string,
-  roomMembers = false,
-): Promise<string> {
-  const start = await loadRunStart(db, command.room_id, run.runId);
-  return authorizeWorkflowControl(db, command, {
-    requesterId: start.card.requesterId ?? start.authorId,
-    agentIds: [...Object.values(run.roleBindings), ...Object.values(start.card.roleAgents ?? {}).flat()],
-    authority: roomMembers ? 'a person in this Room, the run requester, a bound role owner' : 'the run requester, a bound role owner',
-    action,
-    roomMembers,
-  });
-}
-
-export async function cancelWorkflowRun(
-  database: SqlDatabase,
-  command: CommandRow,
-  input: { runId: string; reason: string },
-): Promise<{ runId: string; state: string; status: 'abandoned'; reason: string }> {
-  if (typeof input.runId !== 'string' || !input.runId) throw new Error('runId is required');
-  if (typeof input.reason !== 'string' || !input.reason.trim() || input.reason.length > 4000)
-    throw new Error('cancellation reason must contain 1-4000 characters');
-  return database.transaction(async (db) => {
-    const scope = await openRun(db, command.room_id, input.runId);
-    input = { ...input, runId: scope.runId };
-    const { run } = scope;
-    const actorId = await authorizeRunControl(db, command, run, 'cancel this run', true);
-    if (scope.ended) throw new Error('this workflow run has already ended');
-    const reason = input.reason.trim();
-    await closeRun(db, scope, {
-      status: 'abandoned',
-      outcome: 'cancelled',
-      reason,
-      cancellation: { reason, actorId },
-      line: {
-        authorId: SYSTEM_IDENTITY_ID,
-        subject: identitySubject(await loadIdentityRow(db, actorId)),
-        verb: systemMessage("workflow-runs.cancelled-workflow"),
-        object: run.workflowSlug,
-        consequence: systemMessage("workflow-runs.run", shortRunId(input.runId)),
-      },
-    });
-    return { runId: input.runId, state: run.toState, status: 'abandoned', reason };
-  });
-}
-
-/**
- * The attempt the command was woken for: the dispatch card it answers, or for
- * any other wake citing this run, the attempt current when that wake was
- * posted. `undefined` when the command did not come from this run at all.
- */
-async function provenanceAttempt(
-  db: SqlDatabase,
-  roomId: string,
-  runId: string,
-  sourceMessageId: string | null | undefined,
-): Promise<number | undefined> {
-  if (!sourceMessageId) return undefined;
-  const source = (
-    await db.query<{ card_type: string | null; card: WorkflowRunCard | null; created_at: Date }>(
-      `SELECT source.card_type,source.card,source.created_at FROM messages source
-       WHERE source.room_id=$2 AND source.card->>'runId'=$3
-         AND source.id=$1`,
-      [sourceMessageId, roomId, runId],
-    )
-  ).rows[0];
-  if (!source?.card || source.card.runId !== runId) return undefined;
-  if (source.card_type === WORKFLOW_HANDOFF_CARD_TYPE) return source.card.seq;
-  const prior = (
-    await db.query<{ seq: string | null }>(
-      `SELECT card->>'seq' seq FROM messages
-       WHERE room_id=$1 AND card_type=$2 AND card->>'runId'=$3 AND created_at<=$4
-       ORDER BY (card->>'seq')::int DESC NULLS LAST,created_at DESC,id DESC LIMIT 1`,
-      [roomId, WORKFLOW_HANDOFF_CARD_TYPE, runId, source.created_at],
-    )
-  ).rows[0];
-  return prior ? Number(prior.seq) : undefined;
-}
-
-/** The newest card of this run a command's own handoff wrote, if any. */
-async function cardByCommand(
-  db: SqlDatabase,
-  roomId: string,
-  runId: string,
-  commandId: string,
-): Promise<{ id: string; card: WorkflowRunCard } | undefined> {
-  return (
-    await db.query<{ id: string; card: WorkflowRunCard }>(
-      `SELECT id,card FROM messages
-       WHERE room_id=$1 AND card_type=$2 AND card->>'runId'=$3 AND card->>'commandId'=$4
-       ORDER BY (card->>'seq')::int DESC NULLS LAST LIMIT 1`,
-      [roomId, WORKFLOW_HANDOFF_CARD_TYPE, runId, commandId],
-    )
-  ).rows[0];
-}
-
-type HandoffResult =
-  | { runId: string; state: string; attempt: number; status?: 'done' | 'failed' }
-  | {
-      alreadyAdvanced: true;
-      runId: string;
-      state: string;
-      seq: number;
-      status?: 'done' | 'failed' | 'abandoned';
-    };
-
-function alreadyAdvanced(scope: RunScope): HandoffResult {
-  const { status } = scope;
-  return {
-    alreadyAdvanced: true,
-    runId: scope.runId,
-    state: scope.stateName,
-    seq: scope.run.seq,
-    ...(status !== 'live' ? { status } : {}),
-  };
-}
-
-/** The head card's own result, for an identical repeat of the handoff that wrote it. */
-function repeatedResult(scope: RunScope): HandoffResult {
-  return {
-    runId: scope.runId,
-    state: scope.stateName,
-    attempt: scope.run.seq,
-    ...(scope.run.status === 'done' || scope.run.status === 'failed' ? { status: scope.run.status } : {}),
-  };
-}
-
-export async function handoff(
-  database: SqlDatabase,
-  command: CommandRow,
-  input: {
-    runId: string;
-    outcome: string;
-    contents: unknown;
-    receipt?: WorkflowReceiptInput;
+    workflowSlug: string;
+    timer: WorkflowTimerKind;
+    seconds: number;
     attempt?: number;
+    retryRoleList?: boolean;
+    fireAt?: Date;
   },
-): Promise<HandoffResult> {
-  if (typeof input.runId !== 'string' || !input.runId) throw new Error('runId is required');
-  if (input.attempt !== undefined && (!Number.isSafeInteger(input.attempt) || input.attempt < 0))
-    throw new Error('attempt must be a whole number from the run wake');
-  return database.transaction(async (db) => {
-    // Resolve prefixes before locking, then serialize the run's state reads
-    // and writes against every other writer on the canonical ID.
-    const scope = await openRun(db, command.room_id, input.runId);
-    input = { ...input, runId: scope.runId };
-    const { run, stateName } = scope;
-    const current = run.seq;
-    let attempt =
-      input.attempt ??
-      (await provenanceAttempt(db, command.room_id, input.runId, command.source_message_id));
-    if (attempt === undefined) {
-      // No wake from this run: a bound agent's handoff acts on the current
-      // card, once per command.
-      const own = await cardByCommand(db, command.room_id, input.runId, command.id);
-      if (own) {
-        return own.id === scope.head.id && run.outcome === input.outcome
-          ? repeatedResult(scope)
-          : alreadyAdvanced(scope);
-      }
-      attempt = current;
-    }
-    if (attempt !== current) {
-      return run.answers === attempt && run.outcome === input.outcome && scope.head.authorId === command.agent_id
-        ? repeatedResult(scope)
-        : alreadyAdvanced(scope);
-    }
-    const state = scope.state;
-    if (scope.ended || !state) throw new Error('this workflow run has already ended');
-    if (state.kind === 'gate') {
-      const role = state.role;
-      const boundAgentId = run.roleBindings[role];
-      if (boundAgentId !== command.agent_id)
-        throw new Error(`this workflow state is bound to the ${role} role, not you`);
-      const answer = await gateMessageAnswer(db, command, input.runId, current, state, input.outcome);
-      if (!answer)
-        throw new Error(
-          `${stateName} is a gate; a person answers it on its card in the Room, and it cannot be handed off`,
-        );
-      await bindWorkflowStepOutput(db, command, input.runId);
-      await settleWorkflowGate(db, {
-        choiceId: answer.choiceId,
-        viewerId: answer.viewerId,
-        optionId: answer.optionId,
-        sourceMessageId: command.source_message_id ?? undefined,
-      });
-      const after = await openRun(db, command.room_id, input.runId);
-      return {
-        runId: input.runId,
-        state: after.stateName,
-        attempt: after.run.seq,
-        ...(after.run.status === 'done' || after.run.status === 'failed' ? { status: after.run.status } : {}),
-      };
-    }
-    const role = (state as WorkflowHandoffState | WorkflowGateState).role;
-    const boundAgentId = run.roleBindings[role];
-    const on = (state as WorkflowHandoffState).on;
-    const builtInBlocked =
-      input.outcome === WORKFLOW_BLOCKED_OUTCOME && isHandoffState(state) && !Object.hasOwn(on, WORKFLOW_BLOCKED_OUTCOME);
-    if (builtInBlocked) {
-      const reason = input.contents && typeof input.contents === 'object' && !Array.isArray(input.contents)
-        ? (input.contents as Record<string, unknown>).reason
-        : undefined;
-      const errors = [
-        ...(boundAgentId !== command.agent_id ? [`this workflow state is bound to the ${role} role, not you`] : []),
-        ...(typeof reason !== 'string' || !reason.trim() || reason.length > 500
-          ? ['blocked needs contents.reason: why you cannot do this step, 1-500 characters'] : []),
-      ];
-      if (errors.length) throw new ExpectedRefusalError(errors.join('; '));
-      await bindWorkflowStepOutput(db, command, input.runId);
-      const why = `${(reason as string).replace(/\s+/g, ' ').trim().slice(0, 200)}`;
-      const result = await failOver(db, scope, {
-        leaving: command.agent_id,
-        why: `blocked (${why})`,
-        whenExhausted: 'timeout',
-      });
-      return { runId: input.runId, ...result };
-    }
-    const declaredTimeout = isHandoffState(state) && input.outcome === 'timeout' && Object.hasOwn(on, 'timeout');
-    const contentsState = declaredTimeout ? { requires: ['reason'] } : state as WorkflowHandoffState;
-    const contentsError = workflowContentsError(contentsState, input.contents);
-    const timeoutReason = declaredTimeout && input.contents && typeof input.contents === 'object'
-      ? (input.contents as Record<string, unknown>).reason : undefined;
-    const timeoutError = declaredTimeout &&
-      (typeof timeoutReason !== 'string' || !timeoutReason.trim() || timeoutReason.length > 500)
-      ? 'timeout needs contents.reason: why this step timed out, 1-500 characters' : undefined;
-    const receiptError = workflowReceiptError(input.receipt);
-    const errors = [
-      ...(boundAgentId !== command.agent_id ? [`this workflow state is bound to the ${role} role, not you`] : []),
-      ...(!Object.hasOwn(on, input.outcome) ? ['invalid outcome'] : []),
-      ...(contentsError ? [contentsError] : []),
-      ...(contentsError?.startsWith('contents')
-        ? contentsState.requires
-            .filter((field) => !input.contents || typeof input.contents !== 'object' || Array.isArray(input.contents) ||
-              (input.contents as Record<string, unknown>)[field] == null)
-            .map((field) => `${field} is required`) : []),
-      ...(timeoutError ? [timeoutError] : []),
-      ...(receiptError ? [receiptError] : []),
-    ];
-    if (errors.length) {
-      const outcomes = Object.entries(on).map(([outcome, target]) => `${outcome} -> ${target}`).join(', ');
-      const blocked = isHandoffState(state) && !Object.hasOwn(on, WORKFLOW_BLOCKED_OUTCOME)
-        ? ', or blocked with contents.reason' : '';
-      throw new ExpectedRefusalError(`${errors.join('; ')}; outcome must be one of: ${outcomes}${blocked}`);
-    }
-    if (scope.contract.name === 'workspace-walk' && stateName === 'browse' && input.outcome === 'reviewed') {
-      await completeServiceReview(db,command.agent_id,input.runId,(input.contents as Record<string, unknown>).receipts);
-    }
-    await bindWorkflowStepOutput(db, command, input.runId);
-    const actor = await loadIdentityRow(db, command.agent_id);
-    const result = await enterState(db, scope, {
-      outcome: input.outcome,
-      contents: input.contents,
-      ...(input.receipt ? { receiptInput: input.receipt } : {}),
-      actorId: command.agent_id,
-      commandId: command.id,
-      line: (toState) => ({
-        authorId: command.agent_id,
-        subject: identitySubject(actor),
-        verb: systemMessage("workflow-runs.handed-off"),
-        object: toState,
-        consequence: systemMessage("workflow-runs.run-of", shortRunId(input.runId), run.workflowSlug),
-      }),
-    });
-    return { runId: input.runId, ...result };
-  });
-}
-
-/**
- * The person's message that started this turn, resolved to the gate's own
- * open choice and the option its outcome names. `undefined` when the turn
- * was not started by a person, so the gate keeps today's refusal; the
- * caller then fails closed. The person is not checked for membership here:
- * `settleWorkflowGate` runs the same human-and-current-member authority
- * check as a card answer, and a message from a non-member is refused there.
- */
-async function gateMessageAnswer(
-  db: SqlDatabase,
-  command: CommandRow,
-  runId: string,
-  attempt: number,
-  state: WorkflowGateState,
-  outcome: string,
-): Promise<{ choiceId: string; viewerId: string; optionId: string } | undefined> {
-  const author = (
-    await db.query<{ id: string; kind: string }>(
-      `SELECT identity.id,identity.kind FROM messages message
-       JOIN identities identity ON identity.id=message.author_id
-       WHERE message.id=$1 AND message.room_id=$2`,
-      [command.source_message_id, command.room_id],
-    )
-  ).rows[0];
-  if (author?.kind !== 'human') return undefined;
-  const choice = (
-    await db.query<{ id: string; options: { optionId: string; label: string }[] }>(
-      `SELECT choice.id,choice.options FROM room_choices choice
-       JOIN messages message ON message.id=choice.message_id
-       WHERE choice.room_id=$1 AND choice.workflow_run_id=$2 AND choice.status='open'
-         AND COALESCE((message.card->>'attempt')::int,-1)=$3
-       ORDER BY choice.created_at DESC,choice.id DESC LIMIT 1`,
-      [command.room_id, runId, attempt],
-    )
-  ).rows[0];
-  if (!choice) return undefined;
-  const option = choice.options.find((entry) => entry.label === outcome);
-  if (!option) {
-    const outcomes = Object.entries(state.on).map(([name, target]) => `${name} -> ${target}`).join(', ');
-    throw new Error(`outcome must be one of: ${outcomes}`);
-  }
-  return { choiceId: choice.id, viewerId: author.id, optionId: option.optionId };
-}
-
-/**
- * A person's answer or Skip on a workflow gate's card, applied under the run
- * lock as the gate's transition. `undefined` when the choice is not a
- * workflow gate, so the caller settles it as an ordinary choice. An answer
- * on a card whose gate already moved on is refused; Skip applies the gate's
- * `default` and notices the run owner, and a gate with no default refuses it.
- */
-export async function settleWorkflowGate(
-  db: SqlDatabase,
-  input: { choiceId: string; viewerId: string; optionId?: string; note?: unknown; skip?: boolean; sourceMessageId?: string },
-): Promise<{ choiceId: string; status: 'answered' | 'skipped'; roomId: string } | undefined> {
-  const gate = (
-    await db.query<{
-      room_id: string;
-      run_id: string | null;
-      attempt: string | null;
-      options: { optionId: string; label: string }[];
-    }>(
-      `SELECT choice.room_id,message.card->>'runId' run_id,message.card->>'attempt' attempt,choice.options
-       FROM room_choices choice JOIN messages message ON message.id=choice.message_id
-       WHERE choice.id::text=$1`,
-      [input.choiceId],
-    )
-  ).rows[0];
-  if (!gate?.run_id) return undefined;
-  const scope = await openRun(db, gate.room_id, gate.run_id);
-  const state = scope.state;
-  if (
-    scope.ended || state?.kind !== 'gate' ||
-    (gate.attempt === null || Number(gate.attempt) !== scope.run.seq)
-  )
-    throw new Error('choice conflict: this gate already advanced');
-  if (input.skip && !state.default) throw new Error('this gate needs an answer');
-  const label = input.skip
-    ? state.default!
-    : gate.options.find((option) => option.optionId === input.optionId)?.label;
-  if (!label || !Object.hasOwn(state.on, label)) throw new Error('choice option is invalid');
-  const settled = input.skip
-    ? await skipRoomChoice(db, { choiceId: input.choiceId, viewerId: input.viewerId }, { wake: false })
-    : await answerRoomChoice(
-        db,
-        { choiceId: input.choiceId, optionId: input.optionId!, viewerId: input.viewerId, note: input.note },
-        { wake: false },
-      );
-  const viewer = await loadIdentityRow(db, input.viewerId);
-  const note = typeof input.note === 'string' && input.note.trim() ? input.note.replace(/\s+/g, ' ').trim() : undefined;
-  const attempt = scope.run.seq;
-  await enterState(db, scope, {
-    outcome: label,
-    contents: input.skip
-      ? { decision: label, defaultedBy: input.viewerId }
-      : { decision: label, ...(note ? { note } : {}), answeredBy: input.viewerId },
-    actorId: input.viewerId,
-    ...(input.sourceMessageId ? { sourceMessageId: input.sourceMessageId } : {}),
-    line: (toState) => ({
-      authorId: input.viewerId,
-      subject: identitySubject(viewer),
-      verb: input.skip ? systemMessage("workflow-runs.skipped") : input.sourceMessageId ? systemMessage("workflow-runs.answered") : systemMessage("workflow-runs.picked"),
-      object: input.skip ? scope.stateName : label,
-      consequence: input.skip
-        ? systemMessage("workflow-runs.so-applied-and-run-went-to", label, shortRunId(scope.runId), toState)
-        : input.sourceMessageId
-          ? systemMessage("workflow-runs.by-message-at-so-run-went-to", scope.stateName, shortRunId(scope.runId), toState)
-          : systemMessage("workflow-runs.at-so-run-went-to", scope.stateName, shortRunId(scope.runId), toState),
-    }),
-  });
-  if (input.skip) {
-    await noticeRunOwner(db, scope, `gate-default:${attempt}`, {
-      subject: { kind: 'system', name: systemMessage("workflow-runs.the-gate-of", scope.stateName, scope.run.workflowSlug) },
-      verb: systemMessage("workflow-runs.took-its-default"),
-      object: label,
-      consequence: systemMessage("workflow-runs.skipped-it-in-run", systemIdentityMention({ ...viewer, handle: viewer.handle ?? null }) || viewer.name, shortRunId(scope.runId)),
-    });
-  }
-  return { choiceId: settled.choiceId, status: input.skip ? 'skipped' : 'answered', roomId: settled.roomId };
-}
-
-/** A closing corner abandons every live saved run inside it. Call within the close transaction. */
-export async function abandonCornerWorkflowRuns(db: SqlDatabase, cornerId: string): Promise<number> {
-  const live = await db.query<{ id: string }>(
-    `SELECT id FROM messages
-     WHERE room_id=$1 AND card_type='workflow-handoff' AND ${workflowRunIsLiveSql('card')}
-     ORDER BY id`,
-    [cornerId],
-  );
-  let abandoned = 0;
-  for (const { id } of live.rows) {
-    const scope = await openRun(db, cornerId, id);
-    if (scope.ended) continue;
-    await closeRun(db, scope, {
-      status: 'abandoned',
-      outcome: 'corner_closed',
-      reason: 'corner closed',
-      line: {
-        authorId: SYSTEM_IDENTITY_ID,
-        subject: { kind: 'system', name: systemMessage("workflow-runs.the-workflow") },
-        verb: systemMessage("workflow-runs.closed"),
-        object: systemMessage("workflow-runs.run-of", shortRunId(scope.runId), scope.run.workflowSlug),
-        consequence: systemMessage("workflow-runs.as-abandoned-at-because-its-corner-closed", scope.stateName),
-      },
-    });
-    abandoned += 1;
-  }
-  return abandoned;
-}
-
-/** The live run of `workflowName` in this Room, if one exists. */
-export async function liveWorkflowRun(
-  db: SqlDatabase,
-  roomId: string,
-  workflowName: string,
-): Promise<{ runId: string; state: string; status: string; startedAt: Date } | undefined> {
-  const active = (
-    await db.query<{ id: string; created_at: Date }>(
-      `SELECT id,created_at FROM messages
-       WHERE room_id=$1 AND card_type='workflow-handoff' AND ${workflowRunIsLiveSql('card')}
-         AND card->>'workflowSlug'=$2
-       ORDER BY created_at,id LIMIT 1`,
-      [roomId, workflowName],
-    )
-  ).rows[0];
-  if (!active) return undefined;
-  const run = await loadRun(db, roomId, active.id);
-  return { runId: active.id, state: run?.toState ?? systemMessage("workflow-runs.unknown"), status: run?.status ?? systemMessage("workflow-runs.live"), startedAt: active.created_at };
-}
-
-/** Serializes starts of one workflow in one Room, so the live-run check and the start card commit together. */
-function workflowStartLockKey(roomId: string, workflowName: string): string {
-  return `workflow-start:${roomId}:${workflowName}`;
-}
-
-export async function saveWorkflow(
-  database: SqlDatabase,
-  command: CommandRow,
-  input: { contract: unknown },
-  afterCommit?: AfterCommit,
-): Promise<{ slug: string; version: number }> {
-    database = new CornerAccessDatabase(database);
-  const reason = validateSavedWorkflow(input.contract);
-  if (reason !== null) throw new Error(`workflow contract is invalid: ${reason}`);
-  const contract = input.contract as WorkflowContract;
-  const room = (
-    await database.query<{ workspace_id: string }>(`SELECT workspace_id FROM rooms WHERE id=$1`, [
-      command.room_id,
-    ])
-  ).rows[0];
-  if (!room) throw new Error('workflow room not found');
-  const markdown = JSON.stringify(contract);
-  assertSkillTextSafe(contract.description, markdown);
-  return database.transaction(async (db) => {
-    const member = await db.query(
-      `SELECT 1 FROM identities identity JOIN memberships member ON member.identity_id=identity.id
-    WHERE identity.id=$1 AND identity.kind='agent' AND member.room_id=$2 AND member.removed_at IS NULL`,
-      [command.agent_id, command.room_id],
-    );
-    if (!member.rowCount)
-      throw new Error('workflow saver must be a current agent member of this Room');
-    // Anyone may save a new workflow. Saving an active one unchanged is a
-    // no-op that writes nothing. Changing or reviving an existing saved
-    // workflow changes it for the whole Workspace, so only a human Workspace
-    // admin may. The revision lock is taken first, so a concurrent creation
-    // cannot slip between this read and the write.
-    await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-      `workspace-skill:${room.workspace_id}:${contract.name}`,
-    ]);
-    const existing = (await db.query<{ unchanged: boolean; current_version: number }>(
-      `SELECT skill.state='active' AND version.markdown=$3 unchanged,skill.current_version
-       FROM workspace_skills skill
-       LEFT JOIN workspace_skill_versions version ON version.skill_id=skill.id
-         AND version.version=skill.current_version
-       WHERE skill.workspace_id=$1 AND skill.slug=$2 AND skill.kind='workflow'
-       FOR UPDATE OF skill`,
-      [room.workspace_id, contract.name, markdown],
-    )).rows[0];
-    if (existing?.unchanged) return { slug: contract.name, version: existing.current_version };
-    if (existing && !(await humanRoomAdmin(db, command.room_id, await workflowRequester(db, command))))
-      throw new WorkflowAuthorizationError('workspace admins only: only a workspace admin can change this saved workflow', 403);
-    const { skillId, version } = await applySkillRevision(
-      db,
-      {
-        workspaceId: room.workspace_id,
-        sourceRoomId: command.room_id,
-        slug: contract.name,
-        description: contract.description,
-        markdown,
-        kind: 'workflow',
-        sourceMessageIds: [command.root_source_message_id],
-      },
-      afterCommit,
-    );
-    return { slug: contract.name, version };
-  });
-}
-
-/** One agent id, or 1-WORKFLOW_ROLE_AGENTS_MAX distinct agent ids in order; `null` for anything else. */
-function roleAgentList(binding: WorkflowRoleBinding): string[] | null {
-  if (isAgentIdentityReference(binding)) return [binding];
-  if (!Array.isArray(binding)) return null;
-  if (!binding.length || binding.length > WORKFLOW_ROLE_AGENTS_MAX) return null;
-  if (!binding.every(isAgentIdentityReference)) return null;
-  return new Set(binding).size === binding.length ? [...binding] : null;
-}
-
-/** The schedule occurrence (if any) whose wake message triggered this call. */
-async function scheduleTriggerPeriod(
-  db: SqlDatabase,
-  sourceMessageId: string,
-): Promise<{ scheduleId: string; period: string } | undefined> {
-  const row = (
-    await db.query<{ schedule_id: string; scheduled_for: Date }>(
-      `SELECT schedule_id,scheduled_for FROM agent_schedule_occurrences WHERE message_id=$1`,
-      [sourceMessageId],
-    )
-  ).rows[0];
-  if (row) return { scheduleId: row.schedule_id, period: row.scheduled_for.toISOString() };
-  const wake = (await db.query<{ trigger: { scheduleId: string; period: string } | null }>(
-    `SELECT card->'trigger' trigger FROM messages WHERE id=$1`, [sourceMessageId],
-  )).rows[0];
-  return wake?.trigger?.scheduleId && wake.trigger.period ? wake.trigger : undefined;
-}
-
-/** Every still-active run id this schedule has ever started (any workflow), for `list_schedules`. */
-export async function activeRunIdsForSchedule(
-  db: SqlDatabase,
-  roomId: string,
-  scheduleId: string,
-): Promise<string[]> {
-  const active = await db.query<{ id: string }>(
-    `SELECT id FROM messages
-     WHERE room_id=$1 AND card_type='workflow-handoff' AND ${workflowRunIsLiveSql('card')}
-       AND card->'trigger'->>'scheduleId'=$2
-     ORDER BY id`,
-    [roomId, scheduleId],
-  );
-  return active.rows.map((row) => row.id);
-}
-
-/** Collect caller errors before constructing the unchanged workflow start card. */
-async function validateWorkflowBindings(
-  db: SqlDatabase,
-  roomId: string,
-  contract: WorkflowReadContract,
-  input: { roleBindings: Readonly<Record<string, WorkflowRoleBinding>> },
 ): Promise<void> {
-  const members = (await db.query<{ identity_id: string; handle: string | null; kind: string }>(
-    `SELECT member.identity_id,identity.handle,identity.kind FROM effective_memberships member
-     JOIN identities identity ON identity.id=member.identity_id
-     WHERE member.room_id=$1 AND member.removed_at IS NULL`, [roomId],
-  )).rows;
-  const agentMembers = members.filter(member => member.kind === 'agent');
-  const allowed = agentMembers.map(member => member.handle ? `@${member.handle} (${member.identity_id})` : member.identity_id);
-  const memberIds = new Set(agentMembers.map(member => member.identity_id));
-  const errors: string[] = [];
-  for (const role of contract.roles) {
-    const raw = input.roleBindings[role];
-    const entries = typeof raw === 'string' ? [raw] : Array.isArray(raw) ? raw : [];
-    const resolved = entries.map(entry => {
-      if (typeof entry !== 'string') return entry;
-      return members.find(member => member.handle?.toLowerCase() === entry.replace(/^@/, '').toLowerCase())?.identity_id ?? entry;
-    });
-    const agents = roleAgentList(resolved.length === 1 ? resolved[0] : resolved);
-    if (!agents || agents.some(id => !memberIds.has(id))) {
-      const outsiders = agents?.filter(id => !memberIds.has(id)) ?? [];
-      const reason = raw === undefined ? `role binding is missing for ${role}` : outsiders.length
-        ? `${outsiders.join(', ')} ${outsiders.length === 1 ? 'is' : 'are'} not a current agent member of this Room`
-        : `must be an agent id or a member handle, or a list of 1-${WORKFLOW_ROLE_AGENTS_MAX} distinct ones`;
-      errors.push(`${role}: given ${JSON.stringify(raw) ?? 'missing'}; ${reason}; allowed members: ${allowed.join(', ') || '(none)'}`);
-      continue;
-    }
-  }
-  for (const role of Object.keys(input.roleBindings)) {
-    if (!contract.roles.includes(role)) errors.push(`${role}: given ${JSON.stringify(input.roleBindings[role])}; unknown role; allowed roles: ${contract.roles.join(', ')}`);
-  }
-  if (errors.length) throw new CommandRefusalError(`Invalid workflow bindings:\n${errors.join('\n')}`, 400);
-}
-
-export async function startWorkflow(
-  database: SqlDatabase,
-  command: Pick<CommandRow, 'room_id' | 'agent_id'> & { reason?: string; source_message_id?: string | null; root_source_message_id?: string },
-  input: { name: string; roleBindings: Readonly<Record<string, WorkflowRoleBinding>> },
-): Promise<{ runId: string; state: string }> {
-    database = new CornerAccessDatabase(database);
-  if (typeof input.name !== 'string' || !input.name) throw new Error('workflow name is required');
-  if (!input.roleBindings || typeof input.roleBindings !== 'object') {
-    throw new Error('roleBindings is required');
-  }
-
-  return database.transaction(async (db) => {
-    // One live run of a workflow per Room, for people, agents and schedules
-    // alike: the check and the start card commit under this one lock.
-    await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-      workflowStartLockKey(command.room_id, input.name),
-    ]);
-    const live = await liveWorkflowRun(db, command.room_id, input.name);
-    if (live) {
-      throw new Error(
-        `${input.name} already has a live run ${live.runId} in this Room, at ${live.state}. Continue it or cancel it before starting another.`,
-      );
-    }
-    const room = (
-      await db.query<{ workspace_id: string }>(`SELECT workspace_id FROM rooms WHERE id=$1`, [
-        command.room_id,
-      ])
-    ).rows[0];
-    if (!room) throw new Error('workflow room not found');
-    const skill = (
-      await db.query<{ current_version: number; markdown: string }>(
-        `SELECT skill.current_version,version.markdown
-         FROM workspace_skills skill
-         JOIN workspace_skill_versions version
-           ON version.skill_id=skill.id AND version.version=skill.current_version
-         WHERE skill.workspace_id=$1 AND skill.slug=$2 AND skill.kind='workflow'
-           AND skill.state='active' AND version.source_deleted_at IS NULL`,
-        [room.workspace_id, input.name],
-      )
-    ).rows[0];
-    if (!skill) throw new Error('workflow is unavailable');
-    const contract = JSON.parse(skill.markdown) as WorkflowReadContract;
-    const trigger = command.source_message_id
-      ? await scheduleTriggerPeriod(db, command.source_message_id)
-      : undefined;
-    await validateWorkflowBindings(db, command.room_id, contract, input);
-    const missingRole = contract.roles.find((role) => !input.roleBindings[role]);
-    if (missingRole) throw new ExpectedRefusalError(`role binding is missing for ${missingRole}`);
-    const roleBindings: Record<string, string> = {};
-    const roleAgents: Record<string, string[]> = {};
-    for (const role of contract.roles) {
-      const raw = input.roleBindings[role]!;
-      const agents = roleAgentList(
-        typeof raw === 'string'
-          ? await resolveHandleBinding(db, command.room_id, raw)
-          : Array.isArray(raw)
-            ? await Promise.all(
-                raw.map((entry) => resolveHandleBinding(db, command.room_id, entry)),
-              )
-            : raw,
-      );
-      if (!agents) {
-        throw new CommandRefusalError(
-          `role binding for ${role} must be an agent id or a member handle, or a list of 1-${WORKFLOW_ROLE_AGENTS_MAX} distinct ones`,
-          400,
-        );
-      }
-      if (agents.length === 1) roleBindings[role] = agents[0]!;
-      else roleAgents[role] = agents;
-    }
-    const boundIds = [
-      ...new Set([...Object.values(roleBindings), ...Object.values(roleAgents).flat()]),
-    ];
-    if (boundIds.length) {
-      const agents = await db.query<{ identity_id: string }>(
-        `SELECT member.identity_id FROM memberships member
-         JOIN identities identity ON identity.id=member.identity_id AND identity.kind='agent'
-         WHERE member.room_id=$1 AND member.identity_id=ANY($2::text[]) AND member.removed_at IS NULL`,
-        [command.room_id, boundIds],
-      );
-      const agentSet = new Set(agents.rows.map((row) => row.identity_id));
-      const notAgent = boundIds.find((id) => !agentSet.has(id));
-      if (notAgent) {
-        throw new CommandRefusalError(`${notAgent} is not a current agent member of this Room`, 400);
-      }
-    }
-    const starter = await loadIdentityRow(db, command.agent_id);
-    const runId = randomBytes(32).toString('hex');
-    // No other writer can already hold this exact fresh, random runId, but
-    // taking the lock here anyway keeps every run-card writer in this file
-    // following the identical discipline handoff() below requires.
-    await lockWorkflowRun(db, runId);
-    const startState = contract.handoffs[contract.start]!;
-    const isGate = startState.kind === 'gate';
-    const startRole = (startState as WorkflowHandoffState | WorkflowGateState).role;
-    const resolution = await resolveRoleBinding(db, {
-      roomId: command.room_id,
-      roleBindings,
-      roleAgents,
-      role: startRole,
-      workflowSlug: contract.name,
-      runId,
-    });
-    const exhausted = 'exhausted' in resolution;
-    await systemLine(db, {
-      id: runId,
-      roomId: command.room_id,
-      authorId: command.agent_id,
-      subject: identitySubject(starter),
-      verb: systemMessage("workflow-runs.started-workflow"),
-      object: contract.name,
-      consequence: systemMessage("workflow-runs.run", shortRunId(runId)),
-      kind: 'workflow-handoff',
-      ...(!exhausted && !isGate ? { wakes: [(resolution as { agentId: string }).agentId] } : {}),
-      presentation: 'system',
-      cardType: WORKFLOW_HANDOFF_CARD_TYPE,
-      card: {
-        runId,
-        seq: 0,
-        runStatus: 'live',
-        workflowSlug: contract.name,
-        workflowVersion: skill.current_version,
-        requesterId: await workflowRequester(db, command),
-        ownerId: await resolveRunOwner(db, command),
-        startKind:
-          starter?.kind === 'human'
-            ? 'human_admin'
-            : command.reason === 'schedule'
-              ? 'schedule'
-              : 'direct',
-        roleBindings,
-        ...(Object.keys(roleAgents).length ? { roleAgents } : {}),
-        toState: contract.start,
-        ...(startState.hint ? { receiptHint: startState.hint } : {}),
-        ...(trigger ? { trigger } : {}),
-      },
-    });
-    if (command.source_message_id) await db.query(
-      `WITH linked AS (
-        UPDATE subscription_webhook_calls SET run_id=$2 WHERE wake_message_id=$1 RETURNING subscription_id
-      ) UPDATE agent_subscriptions subscription SET fired_count=subscription.fired_count
-        FROM linked WHERE subscription.id=linked.subscription_id`,
-      [command.source_message_id, runId]);
-    await dispatchState(db, {
-      workspaceId: room.workspace_id,
-      roomId: command.room_id,
-      runId,
-      contract,
-      roleBindings,
-      roleAgents,
-      stateName: contract.start,
-      attempt: 0,
-      cardId: runId,
-      exhausted,
-    });
-    return { runId, state: contract.start };
-  });
-}
-
-async function resolveHandleBinding(db: SqlDatabase, roomId: string, entry: string): Promise<string> {
-  if (typeof (entry as unknown) !== 'string') return entry;
-  if (entry.startsWith('@')) return memberIdForHandle(db, roomId, entry);
-  if (isAgentIdentityReference(entry)) return entry;
-  return (await roomMemberIdForHandle(db, roomId, entry)) ?? entry;
-}
-
-/** The identity id of a current Room member with this handle, or undefined when none has it. */
-async function roomMemberIdForHandle(
-  db: SqlDatabase,
-  roomId: string,
-  handle: string,
-): Promise<string | undefined> {
-    db = new CornerAccessDatabase(db);
-  const row = (
-    await db.query<{ identity_id: string }>(
-      `SELECT m.identity_id FROM memberships m JOIN identities i ON i.id=m.identity_id
-       WHERE m.room_id=$1 AND m.removed_at IS NULL AND lower(i.handle)=lower($2)`,
-      [roomId, handle],
-    )
-  ).rows[0];
-  return row?.identity_id;
-}
-
-/** The identity id of the current Room member with this handle (as agents see it in their member list). */
-async function memberIdForHandle(db: SqlDatabase, roomId: string, raw: string): Promise<string> {
-  const handle = raw.replace(/^@/, '');
-  const id = await roomMemberIdForHandle(db, roomId, handle);
-  if (!id) throw new CommandRefusalError(`@${handle} is not a current member of this Room`, 400);
-  return id;
-}
-
-
-/**
- * An explicit override: bind a specific agent to the current role, or any
- * declared role while waiting at a gate, list-bound or not — the recovery path when
- * nobody on a list is eligible, a woken run starter's way to rebind a stuck
- * role, or simply an explicit choice at any time. The target is not
- * health-filtered (an explicit choice overrides "healthy") and need not be on
- * any list, but must be a current agent member of the Room — not a way to
- * bind an outsider.
- */
-export async function assignWorkflowRole(
-  database: SqlDatabase,
-  command: CommandRow,
-  input: { runId: string; role: string; targetAgentId: string },
-): Promise<{ runId: string; state: string }> {
-    database = new CornerAccessDatabase(database);
-  if (typeof input.runId !== 'string' || !input.runId) throw new Error('runId is required');
-  if (typeof input.role !== 'string' || !input.role) throw new Error('role is required');
-  if (typeof input.targetAgentId !== 'string' || !input.targetAgentId) {
-    throw new Error('targetAgentId is required');
-  }
-  return database.transaction(async (db) => {
-    const scope = await openRun(db, command.room_id, input.runId);
-    await authorizeRunControl(db, command, scope.run, 'reassign this run');
-    const targetAgentId = isAgentIdentityReference(input.targetAgentId)
-      ? input.targetAgentId
-      : await memberIdForHandle(db, command.room_id, input.targetAgentId);
-    const { run, state } = scope;
-    if (scope.ended || !state) throw new Error('this workflow run has already ended');
-    const currentRole = (state as WorkflowHandoffState | WorkflowGateState).role;
-    if (!scope.contract.roles.includes(input.role)) {
-      throw new ExpectedRefusalError(`unknown workflow role: ${input.role}`);
-    }
-    if (currentRole !== input.role && state.kind !== 'gate') {
-      throw new ExpectedRefusalError(`this run is currently at the ${currentRole} role, not ${input.role}`);
-    }
-    const member = await db.query(
-      `SELECT 1 FROM memberships member
-       JOIN identities identity ON identity.id=member.identity_id AND identity.kind='agent'
-       WHERE member.room_id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL`,
-      [command.room_id, targetAgentId],
-    );
-    if (!member.rowCount) {
-      throw new ExpectedRefusalError(`${targetAgentId} is not a current agent member of this Room`);
-    }
-    const caller = await mentionsFor(db, [command.agent_id]);
-    await moveRole(db, scope, {
-      role: input.role,
-      picked: targetAgentId,
-      tried: (run.tried ?? []).filter((entry) => entry.agentId !== targetAgentId),
-      why: `${caller.get(command.agent_id)} assigned it`,
-    });
-    return { runId: run.runId, state: run.toState };
-  });
-}
-
-export async function archiveWorkflow(
-  database: SqlDatabase,
-  command: CommandRow,
-  input: { name: string },
-): Promise<{ slug: string; archived: boolean }> {
-  if (typeof input.name !== 'string' || !input.name) throw new Error('workflow name is required');
-  return database.transaction(async (db) => {
-    const room = (await db.query<{ workspace_id: string }>(
-      `SELECT workspace_id FROM rooms WHERE id=$1`, [command.room_id],
-    )).rows[0];
-    if (!room) throw new Error('workflow room not found');
-    // Archiving deletes a saved workflow for the whole Workspace, so only a
-    // human Workspace admin may do it; who saved it grants nothing.
-    const skill = (await db.query<{ id: string }>(
-      `SELECT skill.id FROM workspace_skills skill
-       WHERE skill.workspace_id=$1 AND skill.slug=$2 AND skill.kind='workflow'
-       FOR UPDATE OF skill`,
-      [room.workspace_id, input.name],
-    )).rows[0];
-    if (!skill) return { slug: input.name, archived: false };
-    const resolved = await resourceRequester(db, command);
-    const workflow = resolved && await workflowRunRequester(db, {
-      roomId: command.room_id, agentId: command.agent_id,
-      rootSourceMessageId: command.root_source_message_id,
-    });
-    const actorId = workflow?.id ?? resolved?.requester.id ?? command.agent_id;
-    if (!(await humanRoomAdmin(db, command.room_id, actorId)))
-      throw new WorkflowAuthorizationError('workspace admins only: only a workspace admin can archive this workflow', 403);
-    const result = await db.query(
-      `UPDATE workspace_skills SET state='stale',updated_at=now() WHERE id=$1 AND state='active'`,
-      [skill.id],
-    );
-    return { slug: input.name, archived: Boolean(result.rowCount) };
-  });
-}
-
-const LEGACY_STEP_PLACEHOLDER = /^Step .+: describe what this step does$/;
-
-function stepDescription(name: string, state: Record<string, unknown>): string {
-  const hint = typeof state.hint === 'string' ? state.hint.replace(/\s+/g, ' ').trim() : '';
-  if (hint && !hint.includes('describe what this step does')) return hint.slice(0, 140).trim();
-  if (state.kind === 'terminal') {
-    const endings: Record<string, string> = {
-      done: 'The workflow finished.',
-      failed: 'The workflow stopped because a step failed.',
-      abandoned: 'The workflow was closed before it finished.',
-    };
-    return endings[String(state.status)] ?? 'The workflow ended.';
-  }
-  const fields = Array.isArray(state.requires)
-    ? state.requires.filter((field): field is string => typeof field === 'string')
-        .map((field) => field.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ')
-          .replace(/\bpr\b/gi, 'PR').replace(/\burl\b/gi, 'URL'))
-    : [];
-  if (state.kind === 'gate')
-    return fields.length ? `Ask a person for ${fields.join(', ')}.`.slice(0, 140) : 'Ask a person to choose how the workflow continues.';
-  if (fields.length) return `Produce ${fields.join(', ')} for ${name.replace(/[_-]/g, ' ')}.`.slice(0, 140);
-  return `Complete ${name.replace(/[_-]/g, ' ')} and report its outcome.`.slice(0, 140);
-}
-
-function describedLegacyWorkflowState(name: string, raw: unknown, seeded?: unknown): unknown {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
-  const state = raw as Record<string, unknown>;
-  if (typeof state.does === 'string' && state.does.trim() && !LEGACY_STEP_PLACEHOLDER.test(state.does)) return state;
-  const seededDoes = seeded && typeof seeded === 'object' && !Array.isArray(seeded)
-    ? (seeded as Record<string, unknown>).does : undefined;
-  return {
-    ...state,
-    does: typeof seededDoes === 'string' && seededDoes.trim() ? seededDoes : stepDescription(name, state),
+  await ensureSystemIdentity(db);
+  const fireAt = input.fireAt ?? new Date(Date.now() + input.seconds * 1_000);
+  const cadence = {
+    kind: 'interval' as const,
+    everyMinutes: Math.max(1, Math.ceil(input.seconds / 60)),
+    startsAt: Math.floor(fireAt.getTime() / 1_000),
   };
-}
-
-/**
- * The pure half of `backfillWorkflowSkillDescriptions`: fills whichever of
- * `summary`/per-step `does` a contract is missing or previously received as
- * a placeholder, leaving every edge, role
- * binding and loop rule untouched. Every `handoffs` entry gets a `does`,
- * terminal states included: `validateSavedWorkflow` (PR #2083) requires one on
- * every state with no exception, so a contract missing it on even one
- * terminal state would still be refused the next time it is saved. Exported
- * so a caller describing a legacy contract before saving it uses the same
- * deterministic wording as the migration.
- */
-export function describedLegacyWorkflowContract(
-  contract: WorkflowReadContract,
-  seeded?: WorkflowContract,
-): WorkflowReadContract {
-  const next: Record<string, unknown> = { ...contract };
-  if (typeof next.summary !== 'string' || !(next.summary as string).trim() || next.summary === 'Summary not written yet') {
-    const description = typeof next.description === 'string' ? (next.description as string).trim() : '';
-    next.summary = seeded?.summary || description || `Run the ${contract.name} workflow.`;
-  }
-  const handoffs = next.handoffs;
-  if (handoffs && typeof handoffs === 'object' && !Array.isArray(handoffs)) {
-    next.handoffs = Object.fromEntries(
-      Object.entries(handoffs as Record<string, unknown>).map(([name, raw]) => [
-        name,
-        describedLegacyWorkflowState(name, raw, seeded?.handoffs[name]),
-      ]),
-    );
-  }
-  return next as WorkflowReadContract;
-}
-
-/**
- * `validateSavedWorkflow` (PR #2083) made a NEW save require a `summary` and
- * every state's `does`; every workflow skill version saved before that rule
- * existed has neither, and a pinned run keeps reading its exact saved
- * version forever (`loadPinnedContract`), so those old versions are never
- * re-validated on their own. Keeps `content_hash` honest (every
- * other reader treats it as `sha256(markdown)`, e.g.
- * `feedback-triage-workflow.ts`'s re-seed check). Idempotent: a version
- * already carrying useful fields round-trips to the same markdown and is left
- * untouched. Run from `migrateData()`.
- */
-export async function backfillWorkflowSkillDescriptions(database: SqlDatabase): Promise<number> {
-  const rows = await database.query<{ skill_id: string; version: number; markdown: string; slug: string; extractor_version: string }>(
-    `SELECT version.skill_id,version.version,version.markdown,version.extractor_version,skill.slug
-     FROM workspace_skill_versions version
-     JOIN workspace_skills skill ON skill.id=version.skill_id
-     WHERE skill.kind='workflow'
-     ORDER BY version.skill_id,version.version`,
+  const timer: WorkflowTimer = {
+    runId: input.runId,
+    workflowSlug: input.workflowSlug,
+    timer: input.timer,
+    ...(input.attempt !== undefined ? { attempt: input.attempt } : {}),
+    ...(input.retryRoleList ? { retryRoleList: true } : {}),
+  };
+  await db.query(
+    `INSERT INTO agent_schedules
+       (id,workspace_id,room_id,agent_id,creator_id,cadence,message,max_runs,next_run_at,workflow_run)
+     VALUES($1,$2,$3,$4,$4,$5::jsonb,$6,1,$7,$8::jsonb)
+     ON CONFLICT(id) DO UPDATE
+       SET cadence=EXCLUDED.cadence,message=EXCLUDED.message,next_run_at=EXCLUDED.next_run_at,
+           workflow_run=EXCLUDED.workflow_run,run_count=0,updated_at=now()`,
+    [
+      workflowTimerId(input.runId, input.timer),
+      input.workspaceId,
+      input.roomId,
+      SYSTEM_IDENTITY_ID,
+      JSON.stringify(cadence),
+      input.timer === 'deadline'
+        ? `workflow run ${input.runId} deadline`
+        : `workflow run ${input.runId} step timeout for attempt ${input.attempt}`,
+      fireAt,
+      JSON.stringify(timer),
+    ],
   );
-  let changed = 0;
-  for (const row of rows.rows) {
-    let contract: WorkflowReadContract;
-    try {
-      contract = JSON.parse(row.markdown) as WorkflowReadContract;
-    } catch {
-      continue;
-    }
-    const seeded = row.slug === FEEDBACK_TRIAGE_SLUG && row.extractor_version === 'feedback-triage-v1'
-      ? FEEDBACK_TRIAGE_CONTRACT : undefined;
-    const described = describedLegacyWorkflowContract(contract, seeded);
-    if (JSON.stringify(described) === JSON.stringify(contract)) continue;
-    const markdown = JSON.stringify(described);
-    await database.query(
-      `UPDATE workspace_skill_versions SET markdown=$3,content_hash=$4
-       WHERE skill_id=$1 AND version=$2`,
-      [row.skill_id, row.version, markdown, createHash('sha256').update(markdown).digest('hex')],
-    );
-    changed++;
-  }
-  if (changed)
-    console.log(`backfillWorkflowSkillDescriptions: filled summary/does on ${changed} workflow skill version(s)`);
-  return changed;
 }
 
-/**
- * `handoff()` now closes a gate's open choice itself (`closeRunChoices`,
- * `room-choice.ts`) whenever the run leaves that gate or ends, and
- * `postRoomChoice` lazily sweeps a stranded row for the asking agent before
- * its next ask. Both are forward-looking: this is the immediate, one-time
- * counterpart that closes every already-stranded row at deploy time, rather
- * than waiting on that exact agent's next ask in that Room. A choice tied to
- * a run is only legitimately still open while that run is live and
- * currently sitting at a gate state; anything else — the run has ended
- * (cancelled or terminal) or moved on to a non-gate state — means the gate
- * was left without the choice ever closing. Idempotent: a choice closed by
- * any of the three paths never matches `status='open'` again. Run from
- * `migrateData()`.
- */
-export async function closeStaleWorkflowGateChoices(database: SqlDatabase): Promise<number> {
-  const openGateChoices = await database.query<{ room_id: string; run_id: string }>(
-    `SELECT DISTINCT choice.room_id,choicemsg.card->>'runId' run_id
-     FROM room_choices choice
-     JOIN messages choicemsg ON choicemsg.id=choice.message_id
-     WHERE choice.status='open' AND choicemsg.card->>'runId' IS NOT NULL`,
-  );
-  let closed = 0;
-  for (const row of openGateChoices.rows) {
-    const run = await loadRun(database, row.room_id, row.run_id);
-    if (!run) continue;
-    const contract = await loadPinnedContract(database, row.room_id, run.workflowSlug, run.workflowVersion);
-    const state = contract?.handoffs[run.toState];
-    const stillGated = contract && state?.kind === 'gate' &&
-      workflowRunStatus(contract, run.toState, run.cancellation ? 'abandoned' : run.status) === 'live';
-    if (stillGated) continue;
-    await closeRunChoices(database, row.room_id, row.run_id);
-    closed++;
-  }
-  if (closed)
-    console.log(`closeStaleWorkflowGateChoices: closed ${closed} stale run(s)' open choice(s)`);
-  return closed;
+
+export async function cancelStepTimer(db: SqlDatabase, runId: string): Promise<void> {
+  await db.query(`DELETE FROM agent_schedules WHERE id=ANY($1::uuid[])`, [
+    [workflowTimerId(runId, 'step')],
+  ]);
 }
+export { workflowGatePrompt } from './workflow-runs-cancel-run-timers.js';
+export { backfillWorkflowRunTimers } from './workflow-runs-cancel-run-timers.js';
+export { cancelWorkflowRun } from './workflow-runs-cancel-run-timers.js';
+export { handoff } from './workflow-runs-repeated-result.js';
+export { settleWorkflowGate } from './workflow-runs-repeated-result.js';
+export { fireWorkflowTimer } from './workflow-runs-repeated-result.js';
+export { abandonCornerWorkflowRuns } from './workflow-runs-repeated-result.js';
+export { liveWorkflowRun } from './workflow-runs-repeated-result.js';
+export { saveWorkflow } from './workflow-runs-repeated-result.js';
+export { activeRunIdsForSchedule } from './workflow-runs-repeated-result.js';
+export { startWorkflow } from './workflow-runs-start-workflow.js';
+export { assignWorkflowRole } from './workflow-runs-start-workflow.js';
+export { archiveWorkflow } from './workflow-runs-start-workflow.js';
+export { describedLegacyWorkflowContract } from './workflow-runs-start-workflow.js';
+export { backfillWorkflowSkillDescriptions } from './workflow-runs-start-workflow.js';
+export { closeStaleWorkflowGateChoices } from './workflow-runs-start-workflow.js';

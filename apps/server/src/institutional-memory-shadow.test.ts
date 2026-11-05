@@ -1,150 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { migrateData } from './database.js';
-import {
-  INSTITUTIONAL_CONTEXT_HEADER,
-  tombstoneInstitutionalMemoryForMessage,
-} from './institutional-memory-shadow.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
-import { claimAgentCommand, createAgentCommand } from './agent-command.js';
-import { DaemonService } from './daemon-service.js';
-import { LiveHub } from './live.js';
-
-const WORKSPACE = '10000000-0000-4000-8000-000000000001';
-const OTHER_WORKSPACE = '10000000-0000-4000-8000-000000000002';
-const ROOM = '20000000-0000-4000-8000-000000000001';
-const DM = '20000000-0000-4000-8000-000000000002';
-const OTHER_ROOM = '20000000-0000-4000-8000-000000000003';
-const HUMAN = 'a'.repeat(64);
-const AGENT = 'b'.repeat(64);
-const OTHER_AGENT = 'c'.repeat(64);
-const OTHER_HUMAN = 'f'.repeat(64);
-const MESSAGE = 'd'.repeat(64);
-const DM_MESSAGE = 'e'.repeat(64);
-const liveConfig = { enabled: true, live: true } as const;
-
-let database: PgliteDatabase;
-
-beforeEach(async () => {
-  database = await migratedDatabase();
-  await database.query(
-    `INSERT INTO identities(id,kind,name) VALUES
-       ($1,'human','Human'),($2,'agent','Bee'),($3,'agent','Wasp')`,
-    [HUMAN, AGENT, OTHER_AGENT],
-  );
-  await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Memory')`, [WORKSPACE]);
-  await database.query(
-    `INSERT INTO agents(agent_id,owner_id,machine_id) VALUES
-       ($1,$3,'host-1'),($2,$3,'host-1')`,
-    [AGENT, OTHER_AGENT, HUMAN],
-  );
-  await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Shared')`, [
-    ROOM,
-    WORKSPACE,
-  ]);
-  await database.query(
-    `INSERT INTO rooms(id,workspace_id,name,direct_participants)
-       VALUES($1,$2,'DM',jsonb_build_array($3::text,$4::text))`,
-    [DM, WORKSPACE, HUMAN, AGENT],
-  );
-  await database.query(
-    `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-       ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,NULL,$4,'member'),
-       ($1,$5,$2,'owner'),($1,$5,$3,'member'),($1,$5,$4,'member'),
-       ($1,$6,$2,'owner'),($1,$6,$3,'member'),($1,$6,$4,'member')`,
-    [WORKSPACE, HUMAN, AGENT, OTHER_AGENT, ROOM, DM],
-  );
-  await database.query(
-    `INSERT INTO messages(id,room_id,author_id,text) VALUES
-       ($1,$2,$3,'Remember that deploy writes the marker last.'),
-       ($4,$5,$3,'Please make a mock before you build for me.')`,
-    [MESSAGE, ROOM, HUMAN, DM_MESSAGE, DM],
-  );
-  await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Other human')`, [
-    OTHER_HUMAN,
-  ]);
-  await database.query(
-    `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-       ($1,NULL,$2,'member'),($1,$3,$2,'member')`,
-    [WORKSPACE, OTHER_HUMAN, ROOM],
-  );
-  await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Other workspace')`, [
-    OTHER_WORKSPACE,
-  ]);
-  await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Unauthorized')`, [
-    OTHER_ROOM,
-    OTHER_WORKSPACE,
-  ]);
-  await database.query(
-    `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-       ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),
-       ($1,$4,$2,'owner'),($1,$4,$3,'member')`,
-    [OTHER_WORKSPACE, OTHER_HUMAN, OTHER_AGENT, OTHER_ROOM],
-  );
-  // Every Workspace starts enrolled in shadow; live tests promote it explicitly.
-  await database.query(
-    `INSERT INTO institutional_memory_workspace_rollouts(workspace_id,stage)
-     VALUES($1,'shadow'),($2,'shadow')`,
-    [WORKSPACE, OTHER_WORKSPACE],
-  );
-});
-
-afterEach(async () => {
-  await database.close();
-});
-
-function liveDaemon(): DaemonService {
-  return new DaemonService(
-    database,
-    new LiveHub(),
-    undefined,
-    undefined,
-    false,
-    undefined,
-    false,
-    undefined,
-    undefined,
-    undefined,
-    liveConfig,
-  );
-}
-
-/** Live memory is per-Workspace enrollment, never the global flag alone. */
-async function enrollLive(workspaceId = WORKSPACE): Promise<void> {
-  await database.query(
-    `UPDATE institutional_memory_workspace_rollouts SET stage='live' WHERE workspace_id=$1`,
-    [workspaceId],
-  );
-}
-
-/** Claims one live command for `agentId` answering `sourceMessageId`; returns its turn authority. */
-async function openTurn(
-  requestId: string,
-  sourceMessageId = MESSAGE,
-  agentId = AGENT,
-  roomId = ROOM,
-): Promise<{ roomId: string; requestId: string; generationId: string }> {
-  const generationId = `${requestId}-generation`;
-  const command = await createAgentCommand(database, {
-    roomId,
-    agentId,
-    sourceMessageId,
-    reason: 'human_tag',
-    turnRequestId: requestId,
-  });
-  await claimAgentCommand(database, roomId, agentId, command!.id, generationId);
-  return { roomId, requestId, generationId };
-}
-
-async function closeTurn(
-  turn: { roomId: string; requestId: string; generationId: string },
-  agentId = AGENT,
-): Promise<void> {
-  await liveDaemon().execute(
-    'postAgentTurnReceipt',
-    { ...turn, agentId, status: 'complete' },
-    agentId,
-  );
-}
+import { describe, expect, it, INSTITUTIONAL_CONTEXT_HEADER, tombstoneInstitutionalMemoryForMessage, claimAgentCommand, createAgentCommand, WORKSPACE, OTHER_WORKSPACE, ROOM, DM, OTHER_ROOM, HUMAN, AGENT, OTHER_AGENT, OTHER_HUMAN, MESSAGE, DM_MESSAGE, database, liveDaemon, enrollLive, openTurn, closeTurn, rootFixture } from './institutional-memory-shadow.test-support.js';
 
 describe('institutional memory phase-0 shadow capture', () => {
   it('keeps DM facts out of shared memory but accepts the requester profile exception', async () => {
@@ -175,7 +29,7 @@ describe('institutional memory phase-0 shadow capture', () => {
     );
     expect(
       (
-        await database.query<{ subject_identity_id: string; kind: string; audience_kind: string }>(
+        await rootFixture.database.query<{ subject_identity_id: string; kind: string; audience_kind: string }>(
           `SELECT subject_identity_id,kind,audience_kind FROM institutional_memory_items`,
         )
       ).rows,
@@ -184,6 +38,7 @@ describe('institutional memory phase-0 shadow capture', () => {
     ]);
     expect(profile.version).toBe(1);
   });
+
 
   it('rejects credential material from memory saves', async () => {
     await enrollLive();
@@ -205,8 +60,9 @@ describe('institutional memory phase-0 shadow capture', () => {
         AGENT,
       ),
     ).rejects.toThrow(/credential material/);
-    expect((await database.query(`SELECT 1 FROM institutional_memory_items`)).rowCount).toBe(0);
+    expect((await rootFixture.database.query(`SELECT 1 FROM institutional_memory_items`)).rowCount).toBe(0);
   });
+
 
   it('compounds a correction across agents for its requester while shared facts reach everyone', async () => {
     await enrollLive();
@@ -249,20 +105,20 @@ describe('institutional memory phase-0 shadow capture', () => {
 
     const nextHumanMessage = '1'.repeat(64);
     const otherHumanMessage = '2'.repeat(64);
-    await database.query(
+    await rootFixture.database.query(
       `INSERT INTO messages(id,room_id,author_id,text) VALUES
          ($1,$3,$4,'Build the next settings flow and its release with the normal process.'),
          ($2,$3,$5,'Explain how release migrations finish before implementation.')`,
       [nextHumanMessage, otherHumanMessage, ROOM, HUMAN, OTHER_HUMAN],
     );
-    const humanCommand = await createAgentCommand(database, {
+    const humanCommand = await createAgentCommand(rootFixture.database, {
       roomId: ROOM,
       agentId: OTHER_AGENT,
       sourceMessageId: nextHumanMessage,
       reason: 'human_tag',
       turnRequestId: 'next-human-turn',
     });
-    await claimAgentCommand(database, ROOM, OTHER_AGENT, humanCommand!.id, 'generation-human');
+    await claimAgentCommand(rootFixture.database, ROOM, OTHER_AGENT, humanCommand!.id, 'generation-human');
     const humanContext = await liveDaemon().execute(
       'getInstitutionalContext',
       {
@@ -289,14 +145,14 @@ describe('institutional memory phase-0 shadow capture', () => {
       OTHER_AGENT,
     );
 
-    const otherCommand = await createAgentCommand(database, {
+    const otherCommand = await createAgentCommand(rootFixture.database, {
       roomId: ROOM,
       agentId: OTHER_AGENT,
       sourceMessageId: otherHumanMessage,
       reason: 'human_tag',
       turnRequestId: 'other-human-turn',
     });
-    await claimAgentCommand(database, ROOM, OTHER_AGENT, otherCommand!.id, 'generation-other');
+    await claimAgentCommand(rootFixture.database, ROOM, OTHER_AGENT, otherCommand!.id, 'generation-other');
     const otherContext = await liveDaemon().execute(
       'getInstitutionalContext',
       {
@@ -310,11 +166,11 @@ describe('institutional memory phase-0 shadow capture', () => {
     expect(otherContext.text).toContain('schema marker last');
 
     const unauthorizedMessage = '3'.repeat(64);
-    await database.query(
+    await rootFixture.database.query(
       `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Explain the release marker.')`,
       [unauthorizedMessage, OTHER_ROOM, OTHER_HUMAN],
     );
-    const unauthorizedCommand = await createAgentCommand(database, {
+    const unauthorizedCommand = await createAgentCommand(rootFixture.database, {
       roomId: OTHER_ROOM,
       agentId: OTHER_AGENT,
       sourceMessageId: unauthorizedMessage,
@@ -322,7 +178,7 @@ describe('institutional memory phase-0 shadow capture', () => {
       turnRequestId: 'unauthorized-turn',
     });
     await claimAgentCommand(
-      database,
+      rootFixture.database,
       OTHER_ROOM,
       OTHER_AGENT,
       unauthorizedCommand!.id,
@@ -339,21 +195,22 @@ describe('institutional memory phase-0 shadow capture', () => {
     );
     expect(unauthorizedContext.text).toBe('');
     expect(
-      (await database.query(`SELECT 1 FROM institutional_context_serves WHERE mode='live'`))
+      (await rootFixture.database.query(`SELECT 1 FROM institutional_context_serves WHERE mode='live'`))
         .rowCount,
     ).toBe(3);
   });
 
+
   it('binds memory writes to the active command and enforces the item version', async () => {
     await enrollLive();
-    const command = await createAgentCommand(database, {
+    const command = await createAgentCommand(rootFixture.database, {
       roomId: ROOM,
       agentId: AGENT,
       sourceMessageId: MESSAGE,
       reason: 'human_tag',
       turnRequestId: 'proposal-turn',
     });
-    await claimAgentCommand(database, ROOM, AGENT, command!.id, 'proposal-generation');
+    await claimAgentCommand(rootFixture.database, ROOM, AGENT, command!.id, 'proposal-generation');
     const daemon = liveDaemon();
     const turn = {
       agentId: AGENT,
@@ -510,6 +367,7 @@ describe('institutional memory phase-0 shadow capture', () => {
       .forEach((line, index) => expect(line).toMatch(new RegExp(`^- \\[${index + 1}\\] .*\\.$`)));
   });
 
+
   it('routes self facts to the requester profile and third-party facts to shared memory', async () => {
     await enrollLive();
     const source = '4'.repeat(64);
@@ -517,21 +375,21 @@ describe('institutional memory phase-0 shadow capture', () => {
     const ownNextSource = '6'.repeat(64);
     const retrievalRequest = 'Remind me of my access detail.';
     expect(retrievalRequest.toLowerCase()).not.toMatch(/alex|receives|packages|thursdays/);
-    await database.query(
+    await rootFixture.database.query(
       `INSERT INTO messages(id,room_id,author_id,text) VALUES
        ($1,$3,$4,'My delivery code is blue harbor; Alex receives packages on Thursdays.'),
        ($2,$3,$5,'What is the handoff schedule?'),
        ($6,$3,$4,$7)`,
       [source, otherSource, ROOM, HUMAN, OTHER_HUMAN, ownNextSource, retrievalRequest],
     );
-    const first = await createAgentCommand(database, {
+    const first = await createAgentCommand(rootFixture.database, {
       roomId: ROOM,
       agentId: AGENT,
       sourceMessageId: source,
       reason: 'human_tag',
       turnRequestId: 'subject-first',
     });
-    await claimAgentCommand(database, ROOM, AGENT, first!.id, 'subject-first-generation');
+    await claimAgentCommand(rootFixture.database, ROOM, AGENT, first!.id, 'subject-first-generation');
     const daemon = liveDaemon();
     const base = {
       agentId: AGENT,
@@ -565,7 +423,7 @@ describe('institutional memory phase-0 shadow capture', () => {
       AGENT,
     );
     const stored = (
-      await database.query<{ id: string; kind: string; subject_identity_id: string | null }>(
+      await rootFixture.database.query<{ id: string; kind: string; subject_identity_id: string | null }>(
         `SELECT id,kind,subject_identity_id FROM institutional_memory_items WHERE id=ANY($1::uuid[])`,
         [[self.itemId, thirdParty.itemId]],
       )
@@ -591,14 +449,14 @@ describe('institutional memory phase-0 shadow capture', () => {
       },
       AGENT,
     );
-    const next = await createAgentCommand(database, {
+    const next = await createAgentCommand(rootFixture.database, {
       roomId: ROOM,
       agentId: AGENT,
       sourceMessageId: otherSource,
       reason: 'human_tag',
       turnRequestId: 'subject-other',
     });
-    await claimAgentCommand(database, ROOM, AGENT, next!.id, 'subject-other-generation');
+    await claimAgentCommand(rootFixture.database, ROOM, AGENT, next!.id, 'subject-other-generation');
     const otherContext = await daemon.execute(
       'getInstitutionalContext',
       {
@@ -634,14 +492,14 @@ describe('institutional memory phase-0 shadow capture', () => {
       },
       AGENT,
     );
-    const ownNext = await createAgentCommand(database, {
+    const ownNext = await createAgentCommand(rootFixture.database, {
       roomId: ROOM,
       agentId: AGENT,
       sourceMessageId: ownNextSource,
       reason: 'human_tag',
       turnRequestId: 'subject-own-next',
     });
-    await claimAgentCommand(database, ROOM, AGENT, ownNext!.id, 'subject-own-generation');
+    await claimAgentCommand(rootFixture.database, ROOM, AGENT, ownNext!.id, 'subject-own-generation');
     const ownContext = await daemon.execute(
       'getInstitutionalContext',
       {
@@ -664,11 +522,11 @@ describe('institutional memory phase-0 shadow capture', () => {
       AGENT,
     );
     expect(ownSearch.results.map((item) => item.id)).toContain(self.itemId);
-    await database.query(
+    await rootFixture.database.query(
       `UPDATE institutional_memory_items SET updated_at=now()-interval '10 days' WHERE id=$1`,
       [thirdParty.itemId],
     );
-    await database.query(
+    await rootFixture.database.query(
       `INSERT INTO institutional_memory_items
        (id,workspace_id,kind,canonical_key,body,source_room_id,source_message_id,
         audience_kind,confidence,version,created_by_command_id)
@@ -703,7 +561,7 @@ describe('institutional memory phase-0 shadow capture', () => {
       AGENT,
     );
     expect(beyondSnapshot.results.map((item) => item.id)).toContain(thirdParty.itemId);
-    await database.query(`UPDATE institutional_memory_items SET state='stale',body='',deleted_at=now() WHERE id=$1`, [
+    await rootFixture.database.query(`UPDATE institutional_memory_items SET state='stale',body='',deleted_at=now() WHERE id=$1`, [
       thirdParty.itemId,
     ]);
     const archived = await daemon.execute(
@@ -718,7 +576,7 @@ describe('institutional memory phase-0 shadow capture', () => {
       AGENT,
     );
     expect(archived.results).toEqual([]);
-    await database.query(`UPDATE messages SET deleted_at=now() WHERE id=$1`, [source]);
+    await rootFixture.database.query(`UPDATE messages SET deleted_at=now() WHERE id=$1`, [source]);
     const deletedSource = await daemon.execute(
       'searchInstitutionalMemory',
       {
@@ -742,14 +600,14 @@ describe('institutional memory phase-0 shadow capture', () => {
       },
       AGENT,
     );
-    const dmCommand = await createAgentCommand(database, {
+    const dmCommand = await createAgentCommand(rootFixture.database, {
       roomId: DM,
       agentId: AGENT,
       sourceMessageId: DM_MESSAGE,
       reason: 'human_tag',
       turnRequestId: 'subject-dm',
     });
-    await claimAgentCommand(database, DM, AGENT, dmCommand!.id, 'subject-dm-generation');
+    await claimAgentCommand(rootFixture.database, DM, AGENT, dmCommand!.id, 'subject-dm-generation');
     await expect(
       daemon.execute(
         'saveInstitutionalMemory',
@@ -771,10 +629,11 @@ describe('institutional memory phase-0 shadow capture', () => {
     ).rejects.toThrow(/direct-message facts/);
   });
 
+
   it('tombstones item content and derived events when a source is deleted', async () => {
     await enrollLive();
     const secondarySource = '6'.repeat(64);
-    await database.query(
+    await rootFixture.database.query(
       `INSERT INTO messages(id,room_id,author_id,text)
        VALUES($1,$2,$3,'The migration marker is the final write.')`,
       [secondarySource, ROOM, HUMAN],
@@ -797,7 +656,7 @@ describe('institutional memory phase-0 shadow capture', () => {
     );
     // A legacy review job and the fact event it derived from the same source.
     const jobId = '50000000-0000-4000-8000-000000000001';
-    await database.query(
+    await rootFixture.database.query(
       `INSERT INTO institutional_memory_jobs
          (id,workspace_id,trigger_kind,mode,source_room_id,source_message_id,source_request_id,
           requester_identity_id,source_audience_kind,idempotency_key,status,proposal)
@@ -812,7 +671,7 @@ describe('institutional memory phase-0 shadow capture', () => {
         JSON.stringify({ source: { roomId: ROOM, messageIds: [MESSAGE, secondarySource] } }),
       ],
     );
-    await database.query(
+    await rootFixture.database.query(
       `INSERT INTO institutional_memory_fact_events
          (id,workspace_id,job_id,source_room_id,source_message_id,canonical_key,body,
           classifier_version,confidence)
@@ -820,28 +679,29 @@ describe('institutional memory phase-0 shadow capture', () => {
          'The release migration writes its schema marker last.','legacy',0.95)`,
       ['50000000-0000-4000-8000-000000000002', WORKSPACE, jobId, ROOM, MESSAGE],
     );
-    await database.transaction(async (db) => {
+    await rootFixture.database.transaction(async (db) => {
       await db.query(`UPDATE messages SET deleted_at=now(),text='' WHERE id=$1`, [secondarySource]);
       await tombstoneInstitutionalMemoryForMessage(db, secondarySource);
     });
     expect(
       (
-        await database.query<{ state: string; body: string; deleted_at: Date | null }>(
+        await rootFixture.database.query<{ state: string; body: string; deleted_at: Date | null }>(
           `SELECT state,body,deleted_at FROM institutional_memory_items`,
         )
       ).rows,
     ).toMatchObject([{ state: 'stale', body: '', deleted_at: expect.any(Date) }]);
-    expect((await database.query(`SELECT 1 FROM institutional_memory_fact_events`)).rowCount).toBe(
+    expect((await rootFixture.database.query(`SELECT 1 FROM institutional_memory_fact_events`)).rowCount).toBe(
       0,
     );
     expect(
       (
-        await database.query<{ proposal: unknown; source_deleted_at: Date | null }>(
+        await rootFixture.database.query<{ proposal: unknown; source_deleted_at: Date | null }>(
           `SELECT proposal,source_deleted_at FROM institutional_memory_jobs`,
         )
       ).rows[0],
     ).toMatchObject({ proposal: null, source_deleted_at: expect.any(Date) });
   });
+
 
   it('serves only items whose keywords match the request, inside 1,000 bytes', async () => {
     await enrollLive();
@@ -927,329 +787,10 @@ describe('institutional memory phase-0 shadow capture', () => {
     expect(context.totalBytes).toBeLessThanOrEqual(1_000);
     expect(
       (
-        await database.query<{ item_ids: string[]; total_bytes: number }>(
+        await rootFixture.database.query<{ item_ids: string[]; total_bytes: number }>(
           `SELECT item_ids,total_bytes FROM institutional_context_serves WHERE mode='live'`,
         )
       ).rows,
     ).toEqual([{ item_ids: [matching.itemId], total_bytes: context.totalBytes }]);
-  });
-
-  it('saves and updates facts under distinct keys even when most words overlap', async () => {
-    await enrollLive();
-    const turn = await openTurn('duplicate-turn');
-    const daemon = liveDaemon();
-    const base = {
-      ...turn,
-      agentId: AGENT,
-      memoryKind: 'workspace_fact',
-      sourceMessageIds: [MESSAGE],
-      personAsked: false,
-      confidence: 0.9,
-    } as const;
-    const original = await daemon.execute(
-      'saveInstitutionalMemory',
-      {
-        ...base,
-        canonicalKey: 'deploy.marker',
-        body: 'Release migrations write the schema marker last.',
-        keywords: ['release', 'marker'],
-      },
-      AGENT,
-    );
-    const duplicate = {
-      ...base,
-      canonicalKey: 'deploy.marker-order',
-      body: 'Release migrations write the schema marker first.',
-      keywords: ['marker'],
-    };
-    await expect(daemon.execute('saveInstitutionalMemory', duplicate, AGENT))
-      .resolves.toMatchObject({ version: 1 });
-    expect((await database.query(
-      `SELECT body FROM institutional_memory_items WHERE canonical_key='deploy.marker-order'`,
-    )).rows).toEqual([{ body: duplicate.body }]);
-
-    // A different fact that only shares a keyword is not a duplicate.
-    await expect(
-      daemon.execute(
-        'saveInstitutionalMemory',
-        {
-          ...base,
-          canonicalKey: 'deploy.marker-location',
-          body: 'Marker files live under the ops directory.',
-          keywords: ['marker'],
-        },
-        AGENT,
-      ),
-    ).resolves.toMatchObject({ version: 1 });
-    // Exact item/version updates still work.
-    await expect(
-      daemon.execute(
-        'updateInstitutionalMemory',
-        {
-          ...turn,
-          agentId: AGENT,
-          itemId: original.itemId,
-          version: original.version,
-          body: duplicate.body,
-          keywords: ['release', 'marker'],
-          sourceMessageIds: [MESSAGE],
-          personAsked: false,
-        },
-        AGENT,
-      ),
-    ).resolves.toMatchObject({ version: 2 });
-  });
-
-  it('turns an old standing preference into an ordinary explicit fact that loads when relevant', async () => {
-    await enrollLive();
-    const text = 'Answer in short bullet points and skip the recap.';
-    const current = '30000000-0000-4000-8000-0000000005a1';
-    const previous = '30000000-0000-4000-8000-0000000005a2';
-    const taken = '30000000-0000-4000-8000-0000000005a3';
-    const otherStanding = '30000000-0000-4000-8000-0000000005a4';
-    await database.query(
-      `INSERT INTO identities(id,kind,name) VALUES($1,'human','Other') ON CONFLICT DO NOTHING`,
-      [OTHER_HUMAN],
-    );
-    const insert = (
-      id: string,
-      subject: string,
-      key: string,
-      body: string,
-      state: string,
-      version: number,
-      supersedes: string | null,
-      keywords: string[],
-    ) =>
-      database.query(
-        `INSERT INTO institutional_memory_items
-           (id,workspace_id,kind,subject_identity_id,canonical_key,body,state,source_room_id,
-            source_message_id,audience_kind,confidence,version,supersedes_id,keywords,deleted_at)
-         VALUES($1,$2,'human_profile_fact',$3,$4,$5,$6,$7,$8,'human_profile',1,$9,$10,$11::text[],
-           CASE WHEN $5='' THEN now() END)`,
-        [id, WORKSPACE, subject, key, body, state, ROOM, MESSAGE, version, supersedes, keywords],
-      );
-    await insert(previous, HUMAN, 'standing', '', 'stale', 1, null, []);
-    await insert(current, HUMAN, 'standing', text, 'active', 2, previous, []);
-    // Another person already has an item under the new key, so theirs is suffixed.
-    await insert(taken, OTHER_HUMAN, 'standing-preference', 'Prefers email.', 'active', 1, null, [
-      'email',
-    ]);
-    await insert(otherStanding, OTHER_HUMAN, 'standing', 'Use metric units.', 'active', 1, null, []);
-
-    await migrateData(database);
-    await migrateData(database);
-
-    const rows = (
-      await database.query<{
-        id: string;
-        canonical_key: string;
-        explicit_save: boolean;
-        keywords: string[];
-        state: string;
-      }>(
-        `SELECT id,canonical_key,explicit_save,keywords,state FROM institutional_memory_items
-         WHERE id=ANY($1::uuid[]) ORDER BY id`,
-        [[current, previous, taken, otherStanding]],
-      )
-    ).rows;
-    expect(rows).toEqual([
-      {
-        id: current,
-        canonical_key: 'standing-preference',
-        explicit_save: true,
-        keywords: ['answer', 'short', 'bullet', 'points', 'skip', 'recap'],
-        state: 'active',
-      },
-      {
-        id: previous,
-        canonical_key: 'standing-preference',
-        explicit_save: true,
-        keywords: [],
-        state: 'stale',
-      },
-      {
-        id: taken,
-        canonical_key: 'standing-preference',
-        explicit_save: false,
-        keywords: ['email'],
-        state: 'active',
-      },
-      {
-        id: otherStanding,
-        canonical_key: `standing-preference-${otherStanding.slice(0, 8)}`,
-        explicit_save: true,
-        keywords: ['metric', 'units'],
-        state: 'active',
-      },
-    ]);
-
-    // A request that touches it loads it like any other profile fact.
-    const bulletMessage = '7'.repeat(64);
-    await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Give me the bullet points.')`,
-      [bulletMessage, ROOM, HUMAN],
-    );
-    const daemon = liveDaemon();
-    const bulletTurn = await openTurn('standing-bullet', bulletMessage);
-    const loaded = await daemon.execute('getInstitutionalContext', bulletTurn, AGENT);
-    expect(loaded.itemIds).toEqual([current]);
-    expect(loaded.text).toContain(text);
-    expect(loaded).not.toHaveProperty('standingPreference');
-    await closeTurn(bulletTurn);
-
-    // One that does not, does not.
-    const unrelated = await openTurn('standing-unrelated');
-    const skipped = await daemon.execute('getInstitutionalContext', unrelated, AGENT);
-    expect(skipped.itemIds).not.toContain(current);
-    expect(skipped.text).not.toContain(text);
-
-    // The old key cannot come back.
-    const save = {
-      ...unrelated,
-      agentId: AGENT,
-      memoryKind: 'human_profile_fact',
-      canonicalKey: 'reply.style',
-      body: 'Answer in one paragraph.',
-      keywords: ['paragraph'],
-      sourceMessageIds: [MESSAGE],
-      personAsked: true,
-      confidence: 1,
-    } as const;
-    await expect(
-      daemon.execute('saveInstitutionalMemory', { ...save, canonicalKey: 'standing' }, AGENT),
-    ).rejects.toThrow(/retired/);
-  });
-
-  it('keeps a standing version chain under one key when the plain key is taken', async () => {
-    await enrollLive();
-    const taken = '30000000-0000-4000-8000-0000000005b1';
-    const first = 'a1000000-0000-4000-8000-0000000005b2';
-    const second = 'b2000000-0000-4000-8000-0000000005b3';
-    await database.query(
-      `INSERT INTO identities(id,kind,name) VALUES($1,'human','Other') ON CONFLICT DO NOTHING`,
-      [OTHER_HUMAN],
-    );
-    const vector = `[${Array.from({ length: 1024 }, () => '0.01').join(',')}]`;
-    const insert = (
-      id: string,
-      key: string,
-      body: string,
-      state: string,
-      version: number,
-      supersedes: string | null,
-    ) =>
-      database.query(
-        `INSERT INTO institutional_memory_items
-           (id,workspace_id,kind,subject_identity_id,canonical_key,body,state,source_room_id,
-            source_message_id,audience_kind,confidence,version,supersedes_id,keywords,
-            embedding,embedding_model,embedded_at)
-         VALUES($1,$2,'human_profile_fact',$3,$4,$5,$6,$7,$8,'human_profile',1,$9,$10,'{}',
-           $11::vector,'voyageai/voyage-4-lite',now())`,
-        [id, WORKSPACE, OTHER_HUMAN, key, body, state, ROOM, MESSAGE, version, supersedes, vector],
-      );
-    // The person already has an item under the plain key, and their standing
-    // preference has two versions with a current embedding.
-    await insert(taken, 'standing-preference', 'Prefers email.', 'active', 1, null);
-    await insert(first, 'standing', 'Use imperial units.', 'stale', 1, null);
-    await insert(second, 'standing', 'Use metric units.', 'active', 2, first);
-
-    await migrateData(database);
-    await migrateData(database);
-
-    const rows = (
-      await database.query<{
-        id: string;
-        canonical_key: string;
-        supersedes_id: string | null;
-        embedded: boolean;
-        embedding_model: string | null;
-      }>(
-        `SELECT id,canonical_key,supersedes_id,embedding IS NOT NULL AS embedded,embedding_model
-         FROM institutional_memory_items WHERE id=ANY($1::uuid[]) ORDER BY id`,
-        [[taken, first, second]],
-      )
-    ).rows;
-    const chainKey = `standing-preference-${first.slice(0, 8)}`;
-    expect(rows).toEqual([
-      {
-        id: taken,
-        canonical_key: 'standing-preference',
-        supersedes_id: null,
-        embedded: true,
-        embedding_model: 'voyageai/voyage-4-lite',
-      },
-      {
-        id: first,
-        canonical_key: chainKey,
-        supersedes_id: null,
-        embedded: false,
-        embedding_model: null,
-      },
-      {
-        id: second,
-        canonical_key: chainKey,
-        supersedes_id: first,
-        embedded: false,
-        embedding_model: null,
-      },
-    ]);
-  });
-});
-
-describe('institutional memory authority for agent-started turns', () => {
-  it('serves the per-turn snapshot for a turn started by a schedule or event wake, whose root message is agent-authored', async () => {
-    await enrollLive();
-    const humanTurn = await openTurn('human-write-turn');
-    await liveDaemon().execute(
-      'saveInstitutionalMemory',
-      {
-        ...humanTurn,
-        agentId: AGENT,
-        memoryKind: 'workspace_fact',
-        canonicalKey: 'deploy.release-marker-last',
-        body: 'The release migration writes its schema marker last.',
-        keywords: ['release', 'migration', 'marker'],
-        sourceMessageIds: [MESSAGE],
-        personAsked: false,
-        confidence: 0.95,
-      },
-      AGENT,
-    );
-
-    // A schedule, event, or workflow-handoff wake is authored by an agent,
-    // not a human; the snapshot must still serve for that turn.
-    const scheduleRoot = 'schedule-wake-root';
-    await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'daily triage sweep: check the release migration marker')`,
-      [scheduleRoot, ROOM, OTHER_AGENT],
-    );
-    const scheduleTurn = await openTurn('schedule-turn', scheduleRoot);
-    const context = await liveDaemon().execute('getInstitutionalContext', scheduleTurn, AGENT);
-    expect(context.text).toContain('schema marker last');
-  });
-
-  it('refuses the per-turn snapshot when the root message\'s Room is in another Workspace than the calling Room', async () => {
-    await enrollLive();
-    const crossRoot = 'cross-workspace-root';
-    await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'unrelated other-workspace message')`,
-      [crossRoot, OTHER_ROOM, OTHER_HUMAN],
-    );
-    const command = await createAgentCommand(database, {
-      roomId: ROOM,
-      agentId: AGENT,
-      sourceMessageId: crossRoot,
-      reason: 'test',
-      turnRequestId: 'cross-workspace-turn',
-    });
-    await claimAgentCommand(database, ROOM, AGENT, command!.id, 'cross-workspace-generation');
-    await expect(
-      liveDaemon().execute(
-        'getInstitutionalContext',
-        { roomId: ROOM, requestId: 'cross-workspace-turn', generationId: 'cross-workspace-generation' },
-        AGENT,
-      ),
-    ).rejects.toThrow(/requester authority is unavailable/);
   });
 });

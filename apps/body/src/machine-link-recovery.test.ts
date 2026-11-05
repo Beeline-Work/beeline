@@ -47,3 +47,12 @@ it('an explicit process stop or required version update leaves the connection di
   expect(updated).toHaveBeenCalledWith('v999.0.0');expect(sockets).toHaveLength(1);expect(machine.link.state).toBe('disconnected');
   machine.stop();sockets[0]!.close();await Promise.resolve();expect(sockets).toHaveLength(1);
 });
+
+it('does not register an awaiting agent again when another agent joins the same machine',()=>{
+  const {machine,sockets}=fixture();sockets[0]!.open();
+  const second=machine.attach('late-agent',{registration:()=>({token:'bdt_late'}),onOpen:()=>{},onClose:()=>{},onMessage:()=>{},onUpdateRequired:()=>{}});
+  second.start();
+  const handshakes=sockets[0]!.frames.filter(frame=>frame.type==='register-machine');
+  expect(handshakes.map(frame=>frame.agents.map((agent:{agentId:string})=>agent.agentId))).toEqual([['agent-0'],['late-agent']]);
+  expect(sockets).toHaveLength(1);
+});

@@ -183,6 +183,17 @@ describe.each(['pglite', ...(postgresUrl ? ['postgres'] : [])])('P12 actual sele
     stopLive(); queries.mockRestore();
   });
 
+  it('binds a free-agent claim to its machine while the optional model rollout is disabled', async () => {
+    await db.query(`INSERT INTO free_agents(agent_id,workspace_id,owner_id,state,sealed_keys,model_token_hash)
+      VALUES($1,$2,$3,'running','fixture',$4)`,[agent,workspace,owner,'c'.repeat(64)]);
+    expect(daemon.ownedModelReady()).toBe(false);
+    const client=await connect();
+    expect(client.registered.capabilities).toMatchObject({turnOwnershipV1:true});
+    expect(await claim(client)).toHaveProperty('result');
+    expect((await db.query('SELECT turn_owner_connection_id FROM agent_commands WHERE id=$1',[command.id])).rows[0])
+      .toMatchObject({turn_owner_connection_id:client.registered.capabilities.turnConnectionId});
+  });
+
   it('F14 scopes 1,000 irrelevant facts to zero inbox reads and sends one targeted command', async () => {
     const peer = 'c'.repeat(64);
     await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Peer')`, [peer]);

@@ -1369,7 +1369,7 @@ export class DaemonService {
             });
           if (row instanceof StaleWakeClaimRefused) return row;
           let modelCredential: Awaited<ReturnType<OwnedModelCredentials['issueInTransaction']>> | undefined;
-          if (turnOwner && (row.action === 'input' || row.action === 'resume') &&
+          if (turnOwner && this.ownedModelReady() && (row.action === 'input' || row.action === 'resume') &&
               (await db.query('SELECT 1 FROM free_agents WHERE agent_id=$1', [authenticatedAgentId])).rowCount) {
             const credentials = this.modelClaimCredentials(modelClaim, authenticatedAgentId, turnOwner);
             modelCredential = await credentials.issueInTransaction(db, { agentId: authenticatedAgentId, commandId: row.id,

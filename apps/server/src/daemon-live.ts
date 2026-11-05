@@ -120,7 +120,6 @@ export class DaemonAgentSession {
   readonly #closedSignal = new AbortController();
   #claimed = false;
   #forUpdate = false;
-  #turnOwnershipAccepted = false;
   #ownedModelCapability?: OwnedModelClaimCapability;
   readonly #projections = new Set<Promise<unknown>>();
 
@@ -130,7 +129,7 @@ export class DaemonAgentSession {
   get overlayV1():boolean{return this.presence.overlayV1===true&&helperOverlayEnabled()&&this.epoch!==undefined;}
   get activationContextV1():boolean{return this.presence.activationContextV1===true&&helperActivationEnabled()&&this.epoch!==undefined;}
   get turnContinuationV1():boolean{return this.presence.turnRuntimeId!==undefined;}
-  get turnOwnershipV1():boolean{return this.turnSource!==undefined&&this.#turnOwnershipAccepted&&Number.isSafeInteger(this.epoch)&&Number(this.epoch)>0;}
+  get turnOwnershipV1():boolean{return this.turnSource!==undefined&&Number.isSafeInteger(this.epoch)&&Number(this.epoch)>0;}
   get ownedModelV1():boolean{return this.turnOwnershipV1&&this.#ownedModelCapability!==undefined&&this.deps.daemon.ownedModelReady();}
 
   constructor(
@@ -264,11 +263,9 @@ export class DaemonAgentSession {
       }
       this.epoch = epoch;
       this.turnSource = {connectionId:this.connectionId,epoch};
-      const requested = true;
-      const model = requested ? await this.deps.daemon.negotiateOwnedModel(this.agentId,
-        this.turnSource!, this.presence.ownedModelV1 === true) : undefined;
+      const model = await this.deps.daemon.negotiateOwnedModel(this.agentId,
+        this.turnSource, this.presence.ownedModelV1 === true);
       this.#ownedModelCapability = model?.capability;
-      this.#turnOwnershipAccepted = requested && (model?.freeAgent !== true || model.capability !== undefined);
       this.deps.registry.settled(this);
       if(this.presence.usageAccountV1&&helperUsageEnabled())this.usageOwnerId=(await this.deps.database.query<{owner_id:string|null}>(
         'SELECT owner_id FROM agents WHERE agent_id=$1',[this.agentId])).rows[0]?.owner_id??undefined;

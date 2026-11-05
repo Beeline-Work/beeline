@@ -37,6 +37,7 @@ export class AgentChannel {
   readonly #openListeners = new Set<() => void>();
   #wanted = false;
   #registered = false;
+  #registrationSent = false;
   #capabilities: Record<string, unknown> = {};
   initialSnapshotsV1 = true;
   constructor(private readonly machine: MachineLink, readonly agentId: string, private readonly handlers: AgentChannelHandlers) {}
@@ -103,9 +104,11 @@ export class AgentChannel {
   reportVault(report: Omit<PostConnectorVaultInput,'agentId'>): Promise<unknown> | undefined { return this.handlers.reportVault?.(report); }
   requireUpdate(minVersion:string):void { this.machine.link.requireUpdate(minVersion); }
   registration(): Record<string,unknown> | undefined {
-    return this.#wanted && !this.#registered ? {...this.handlers.registration(),agentId:this.agentId,
+    if(!this.#wanted||this.#registered||this.#registrationSent)return;
+    this.#registrationSent=true;
+    return {...this.handlers.registration(),agentId:this.agentId,
       overlayV1:true,usageAccountV1:true,activationContextV1:true,turnOwnershipV1:true,
-      daemonOperationsV1:true} : undefined;
+      daemonOperationsV1:true,ownedModelV1:true};
   }
   receive(event:Record<string,unknown>):void {
     if (event.type === 'registered') {
@@ -148,6 +151,7 @@ export class AgentChannel {
   socketClosed(ended = false):void {
     const registered = this.#registered;
     this.#registered = false;
+    this.#registrationSent = false;
     this.overlay.suspend();
     if (ended) {
       for(const waiter of this.#waiters)waiter.reject(new Error('Agent runtime ended'));

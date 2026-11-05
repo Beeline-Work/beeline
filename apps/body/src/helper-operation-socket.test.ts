@@ -22,7 +22,7 @@ function fixture(){
   const sockets:Socket[]=[];
   const machine=new MachineLink({baseUrl:'http://synthetic.invalid',factory:()=>{const socket=new Socket();sockets.push(socket);return socket as unknown as WebSocket;}});
   const fetcher=vi.fn(async()=>{throw new Error('unexpected HTTP request');});
-  const api=new DaemonApiClient(machine.origin,'bdt_test',agentId,fetcher,undefined,undefined,undefined,machine);
+  const api=new DaemonApiClient(machine.origin,'bdt_test',agentId,fetcher,undefined,undefined,machine);
   cleanups.push(()=>machine.stop());return {api,machine,sockets,fetcher};
 }
 const flush=async()=>{for(let i=0;i<8;i++)await Promise.resolve();};

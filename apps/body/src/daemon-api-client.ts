@@ -10,7 +10,6 @@ import {
 import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { helperVersion, helperVersionHeader } from './helper-version.js';
-import { HostReadBudget, hostReadBudget, ReadBudgetFullError } from './host-read-budget.js';
 import {
   retryAfterMs,
   type LiveLink,
@@ -174,7 +173,6 @@ export class DaemonApiClient {
   private requestCount = 0;
   private subscriptionCount = 0;
   private operationChannelDemanded = false;
-  private readonly readBudget?: HostReadBudget;
   private readonly liveRooms = new Map<
     string,
     {
@@ -210,14 +208,10 @@ export class DaemonApiClient {
     readonly agentId: string,
     private readonly fetchImpl: DaemonFetch = fetch,
     webSocketFactory?: DaemonWebSocketFactory,
-    readBudget?: HostReadBudget,
     linkTiming?: Partial<LiveLinkTiming>,
     /** The process's shared machine socket; a standalone client opens its own. */
     machine?: MachineLink,
   ) {
-    // Test transports may supply their own admission model. The real network
-    // transport always takes the machine-wide budget.
-    this.readBudget = readBudget ?? (fetchImpl === fetch ? hostReadBudget : undefined);
     this.#machine =
       machine ??
       new MachineLink({
@@ -295,15 +289,14 @@ export class DaemonApiClient {
   }
 
   metrics(): DaemonClientMetrics {
-    const budget = this.readBudget?.metrics();
     return {
       inFlight: this.inFlight,
       requests: this.requestCount,
       timeouts: 0,
       reconnects: this.#channel.reconnects,
       subscriptionsSent: this.subscriptionCount,
-      readQueueDepth: budget?.waiting ?? 0,
-      readQueueWaitMs: budget?.totalWaitMs ?? 0,
+      readQueueDepth: 0,
+      readQueueWaitMs: 0,
     };
   }
 
@@ -487,23 +480,8 @@ export class DaemonApiClient {
     if (!repositoryCredential)
       throw new Error('HTTP daemon operation requires bootstrap or a registered old server');
     this.requestCount += 1;
-    let release: (() => Promise<void>) | undefined;
-    let admitted = false;
-    let output: Output<Name>;
+    this.inFlight += 1;
     try {
-      const operation = String(name);
-      if (this.readBudget && /^(get|list|read|search)/.test(operation)) {
-        release = await this.readBudget.acquire(
-          operation === 'getAgentCommands' ||
-            operation === 'getRoomInbox' ||
-            operation === 'getDaemonBootstrap'
-            ? 'urgent'
-            : 'background',
-          Number.POSITIVE_INFINITY,
-        );
-      }
-      this.inFlight += 1;
-      admitted = true;
       const response = await this.fetchImpl(
         endpoint(this.baseUrl, `/v1/daemon/operations/${String(name)}`),
         {
@@ -523,21 +501,10 @@ export class DaemonApiClient {
           this.#channel.requireUpdate(error.minVersion);
         throw error;
       }
-      output = (await response.json()) as Output<Name>;
-    } catch (error) {
-      if (error instanceof ReadBudgetFullError) {
-        throw new DaemonApiError(error.message, 429, true, 'read_budget_full', 1_000);
-      }
-      throw error;
+      return (await response.json()) as Output<Name>;
     } finally {
-      if (admitted) this.inFlight -= 1;
-      await release?.();
+      this.inFlight -= 1;
     }
-    if(name==='postAgentUsage'&&(input as {usage?:{spend?:unknown}}).usage?.spend){
-      const scope=this.#channel.usageAccountScope();
-      if(scope)invalidateUsageAccountAttachment(scope.origin,scope.ownerId,this.agentId);
-    }
-    return output;
   }
 
   private ensureLiveSocket(): void {
@@ -754,7 +721,6 @@ export async function activateDaemonTransport(
         fetchImpl,
         undefined,
         undefined,
-        undefined,
         machine,
       ),
     };
@@ -790,7 +756,6 @@ export async function activateDaemonTransport(
       result.daemonToken,
       runtime.agent.publicKey,
       fetchImpl,
-      undefined,
       undefined,
       undefined,
       machine,

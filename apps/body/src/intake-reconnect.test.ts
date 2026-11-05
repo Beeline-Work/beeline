@@ -55,7 +55,7 @@ function fixture() {
   } });
   const fetcher = vi.fn(async () => { throw new Error('unexpected HTTP fallback'); });
   const api = new DaemonApiClient('http://synthetic.invalid', 'token', agentId,
-    fetcher, undefined, undefined, undefined, machine);
+    fetcher, undefined, undefined, machine);
   const supervisor = new RoomSupervisor(api);
   const controller = new AbortController();
   const connected = new Set<string>();

@@ -42,7 +42,7 @@ async function fixture(count: number, readVault = vi.fn<() => Promise<Report>>(a
     } });
   const fetcher = vi.fn(async () => { throw new Error('unexpected HTTP'); });
   const agents = Array.from({ length: count }, (_, i) => new DaemonApiClient(
-    'http://synthetic.invalid', 'token', `agent-${i}`, fetcher, undefined, undefined, undefined, machine));
+    'http://synthetic.invalid', 'token', `agent-${i}`, fetcher, undefined, undefined, machine));
   cleanups.push(() => { for (const agent of agents) agent.closeLive(); machine.stop(); });
   const reads = agents.map(agent => agent.execute('getAgentConfiguration', { agentId: agent.agentId }));
   sockets[0]!.open();

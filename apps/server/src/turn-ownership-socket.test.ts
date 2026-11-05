@@ -125,7 +125,7 @@ describe.each(['pglite', ...(postgresUrl ? ['postgres'] : [])])('P12 actual sele
         helperSockets.push(socket); sockets.push(socket); return socket;
       } });
     const api = new DaemonApiClient(baseUrl, 'bdt_synthetic', agent, fetch,
-      undefined, undefined, undefined, machine);
+      undefined, undefined, machine);
     const lost = vi.fn();
     const turn = {roomId:room,requestId:command.turn_request_id,generationId:'socket-continuation'};
     const report = async () => {

@@ -45,7 +45,7 @@ it('DROP-24: completes every turn across repeated mid-turn drops with one reconn
       return socket;
     }});
   const fetcher=vi.fn(()=>{throw new Error('machine requests must not use HTTP');});
-  const api=new DaemonApiClient(machine.origin,'bdt_test',agentId,fetcher,undefined,undefined,undefined,machine);
+  const api=new DaemonApiClient(machine.origin,'bdt_test',agentId,fetcher,undefined,undefined,machine);
   const failures:unknown[]=[];
   const rooms=Array.from({length:24},(_,index)=>`room-${index}`);
   const subscriptions=rooms.map(room=>api.liveSubscribe(room));

@@ -108,7 +108,7 @@ export class AgentChannel {
     this.#registrationSent=true;
     return {...this.handlers.registration(),agentId:this.agentId,
       overlayV1:true,usageAccountV1:true,activationContextV1:true,turnOwnershipV1:true,
-      daemonOperationsV1:true,ownedModelV1:true};
+      daemonOperationsV1:true};
   }
   receive(event:Record<string,unknown>):void {
     if (event.type === 'registered') {

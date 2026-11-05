@@ -228,3 +228,25 @@ it('does not reuse an already queued sibling to restart a repeatedly dying proce
     await rm(root, { recursive: true, force: true });
   }
 });
+
+it('uses the pushed reconnect snapshot without asking for commands again',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'beeline-pushed-reconnect-'));
+  const controller=new AbortController();
+  let state!:(connected:boolean,capabilities:Record<string,unknown>)=>void;
+  let pushed!:(commands:readonly AgentCommand[])=>void;
+  const execute=vi.fn(async(name:string)=>name==='getAgentCommands'?{commandProtocol:1,commands:[]}:{});
+  const completed:string[]=[];
+  const running=runServerCommandIntake({
+    api:{execute,liveSubscribe:(...args:unknown[])=>{state=args[3] as typeof state;pushed=args[5] as typeof pushed;return()=>{};}} as unknown as DaemonApiClient,
+    roomId:'room',agentId:'agent',context:new CommandExecutionContext(root),signal:controller.signal,
+    stop:()=>{},run:async(item)=>{completed.push(item.id);controller.abort();},
+  });
+  try{
+    await vi.waitFor(()=>expect(state).toBeTypeOf('function'));
+    state(true,{pushIntake:true,connectionGeneration:0});state(false,{});
+    pushed([command('after-drop')]);state(true,{pushIntake:true,connectionGeneration:1});
+    await running;
+    expect(completed).toEqual(['after-drop']);
+    expect(execute.mock.calls.filter(([name])=>name==='getAgentCommands')).toHaveLength(1);
+  }finally{controller.abort();await running;await rm(root,{recursive:true,force:true});}
+});

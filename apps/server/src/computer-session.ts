@@ -425,6 +425,7 @@ export async function serveComputerSession(
     response.writeHead(307, { 'fly-replay': `instance=${row.relay_instance_id}`, 'cache-control': 'no-store' }).end();
     return;
   }
+  live.publish({type:'invalidate',roomId:row.room_id,reason:'computer-viewer-activity',targetAgentId:row.agent_id,requestId:id});
   if (row.upstream_url !== 'body:') {
     if (new URL(request.url ?? '/', 'http://beeline.local').pathname === `/s/${id}`) {
       response.writeHead(308, { location: `/s/${id}/`, 'cache-control': 'no-store' }).end();

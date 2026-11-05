@@ -159,7 +159,6 @@ export async function runServerCommandIntake(options: {
     throw new Error('server command protocol 1 is required; refusing intake');
   let busy: Promise<void> | undefined;
   let wake: ((reconcile: boolean) => void) | undefined;
-  let hasSubscribed = false;
   let subscribed = false;
   let connectionGeneration = -1;
   const blockedClaims = new Set<string>();
@@ -246,10 +245,8 @@ export async function runServerCommandIntake(options: {
         options.onError?.(new Error('server push intake is required; refusing timer-free intake'));
         return;
       }
-      // The initial GET precedes the first subscription; the server also
-      // sends a command snapshot on subscribe. Reconnects need one fresh GET.
-      if (hasSubscribed) requestReconciliation();
-      hasSubscribed = true;
+      // Registration already delivered the authoritative command snapshot.
+      // Resume intake from that push without another read.
     },
     options.presence,
     notify,

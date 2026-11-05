@@ -28,7 +28,8 @@ let db: PgliteDatabase, daemon: InstanceType<typeof DaemonService>, phone: Insta
 let source:{connectionId:string;epoch:number};
 async function executeOwned<N extends keyof DaemonOperationMap>(name:N,input:DaemonOperationMap[N]['input'],agentId=AGENT):Promise<DaemonOperationMap[N]['output']>{
   const {capability}=await daemon.negotiateOwnedModel(agentId,source,true);
-  return daemon.execute(name,input,agentId,source,capability);
+  const owned=['claimAgentCommand','acknowledgeAgentCommand','postAgentTurnReceipt'].includes(name);
+  return daemon.execute(name,input,agentId,owned?source:undefined,owned?capability:undefined);
 }
 beforeAll(async () => {
   db = await migratedDatabase();
@@ -84,6 +85,7 @@ it.each([
       else if (name === 'postAgentTurnReceipt' && input.status !== 'working') settled = true;
       return result;
     },
+    turnOwnershipScope:()=>source,
     connection:()=>({baseUrl:'http://fixture',daemonToken:'fixture',agentId:AGENT}),
   } as unknown as DaemonApiClient;
   if (crash) api.liveSubscribe = ((_room: unknown, _reply: unknown, _changed: unknown, _state: unknown, _presence: unknown, commands: typeof notifyCommands) => {

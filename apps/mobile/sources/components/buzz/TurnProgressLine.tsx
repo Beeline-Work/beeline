@@ -185,23 +185,9 @@ export function TurnSettledLine({ line, testID }: { line: string; testID?: strin
   );
 }
 
-/**
- * Where the turn line lives: in the margin the transcript already leaves below
- * its newest message, painted over it rather than added beneath it.
- *
- * Earlier rounds gave the line its own strip, which forced a choice with no
- * good side. An in-flow band takes its height out of the list, so the
- * transcript shifted every time an agent started or stopped working. Holding a
- * strip open permanently stopped the shift but left an empty band above the
- * composer in every Room, whether or not anybody was working, and needed a
- * hidden duplicate of the line mounted purely to measure it.
- *
- * Neither was necessary: the room between the newest message and the composer
- * is already the ordinary speaker-change margin plus the fixed composer-top
- * gap, and the line's box is exactly that space. Painting into reserved space
- * costs no conditional height, so there is nothing to measure and nothing for
- * the transcript to move by.
- */
+/** The phone line overlays the fixed transcript tail. Its canvas and label
+ * are lowered toward the field so the newest row (including reactions) stays
+ * above the paint and the visible air to the field border is balanced. */
 export function TurnBandSlot({
   children,
   onTopInset,

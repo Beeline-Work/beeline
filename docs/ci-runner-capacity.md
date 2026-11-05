@@ -372,18 +372,3 @@ not a completed baseline measurement.
 For a completed job while its workflow still runs, fetch its log directly with
 `gh-axi api repos/Beeline-Work/beeline/actions/jobs/JOB_ID/logs --full`.
 `gh-axi run view --log` waits for the entire workflow to finish.
-
-## 2026-11-04 queue investigation
-
-The [current measurement](ci-wall-time-2026-11-04.md) records 191 Checks runs
-and 63 job inventories sampled that day. Hosted queues reached 50.8 minutes;
-13 of the 14 materialized PR selectors since 19:00 UTC were skipped and one
-was cancelled. Superseded-head cancellation was already enabled in both the
-queued branch revision and main; it is preserved, not claimed as a new fix.
-Successful-job empirical p99 values plus two minutes set the reduced job
-timeouts. Full server shards still take up to 26.07 minutes, so the 15-minute
-target depends on real work reduction and rollout, not a timeout assertion.
-
-Use `scripts/ci-wall-time.mjs --since ISO --contains SHA --limit 10` after landing
-to collect the required ten-run cohort. The report never caches a test verdict
-or becomes a new CI/merge gate. Actual after timings remain pending.

@@ -113,7 +113,7 @@ it('parks a previously selected channel when re-registration lacks the capabilit
   expect(socket.frames.filter(frame => frame.type === 'daemon-operation')).toHaveLength(1);
 });
 
-it('uses the existing registration deadline and then stays parked without HTTP', async () => {
+it('uses the registration deadline to reconnect and resume machine operations without HTTP', async () => {
   vi.useFakeTimers();
   const {api, socket, fetcher} = fixture(); socket.registerReplies = false;
   const first = api.execute('getAgentConfiguration', {agentId: 'agent'}).catch(error => error);
@@ -122,9 +122,11 @@ it('uses the existing registration deadline and then stays parked without HTTP',
   socket.emit('ping');
   await vi.advanceTimersByTimeAsync(LIVE_LINK_TIMING.heartbeatTimeoutMs / 2);
   expect(await first).toMatchObject({message: 'Machine operation registration unavailable'});
-  await expect(api.execute('getAgentConfiguration', {agentId: 'agent'})).rejects.toThrow('registration unavailable');
+  socket.registerReplies = true;
+  socket.open();
+  await expect(api.execute('getAgentConfiguration', {agentId: 'agent'})).resolves.toMatchObject({id: 'getAgentConfiguration'});
   expect(fetcher).not.toHaveBeenCalled();
-  expect(socket.frames.filter(frame => frame.type === 'register')).toHaveLength(1);
+  expect(socket.frames.filter(frame => frame.type === 'register')).toHaveLength(2);
 });
 it('sends selected machine reads even when the old HTTP read budget is full', async () => {
   const acquire = vi.fn(async () => { throw new Error('HTTP budget full'); });

@@ -107,8 +107,6 @@ export class AgentChannel {
   /** A register frame is in flight on the current socket. */
   #pending = false;
   #refused = false;
-  #recovered = false;
-  #replacementSpent = false;
   #registrations = 0;
   #intakeHeartbeat = false;
   /** Current-server correlation is required before accepting initial data. */
@@ -160,7 +158,6 @@ export class AgentChannel {
     this.#pending = false;
     this.#initialRecoveryPending = false;
     this.initialSnapshotsV1 = false;
-    this.#recovered = false;
     this.machine.unwant(this);
   }
 
@@ -252,7 +249,7 @@ export class AgentChannel {
       this.#clearIntakeDeadline();
       const code = typeof event.code === 'string' ? event.code : 'refused';
       console.warn(`[machine-link] server refused agent ${this.agentId}: ${code}`);
-      this.#refused = ['daemon_token_required', 'agent_removed', 'too_many_agents'].includes(code);
+      this.#refused = ['daemon_token_required', 'agent_removed'].includes(code);
       this.handlers.onRefused?.(code);
       if (this.#refused) {
         this.#wanted = false;
@@ -260,14 +257,14 @@ export class AgentChannel {
         // that the server will immediately close for having no registration.
         this.machine.unwant(this);
       }
+      if (!this.#refused) this.machine.reconnectNow();
       return;
     }
     if (event.type === 'unregistered') {
       if (!this.#registered) return;
       console.warn(`[machine-link] server dropped agent ${this.agentId}: ${String(event.reason)}`);
-      const recovered=this.#recovered;
       this.#ended();
-      if(recovered && !this.#replacementSpent){this.#replacementSpent=true;this.register();}
+      this.register();
       return;
     }
     if (this.#registered && event.type === 'daemon-operation-result') {
@@ -301,7 +298,6 @@ export class AgentChannel {
     if (this.#registered) this.#ended();
     this.#initialRecoveryPending = false;
     this.initialSnapshotsV1 = false;
-    this.#recovered = false;
   }
 
   /** @internal Machine-wide frames (release notices, force-update). */
@@ -325,14 +321,10 @@ export class AgentChannel {
     this.#intakeDeadline = setTimeout(() => {
       this.#intakeDeadline = undefined;
       if (!this.#wanted) return;
-      console.warn(`[machine-link] agent ${this.agentId} ${this.#pending ? 'registration' : 'intake'} stalled; parked`);
-      // A missing registration/intake acknowledgement is not an independent
-      // recovery boundary and cannot reopen the machine repeatedly.
-      this.#pending = false;
-      if(this.#registered) {
-        this.send({ type: 'unregister' });
-        this.#ended();
-      } else this.#suspendOperations();
+      console.warn(`[machine-link] agent ${this.agentId} ${this.#pending ? 'registration' : 'intake'} stalled; reconnecting`);
+      // Reconnect and rebuild subscriptions from current server state. The
+      // timeout cannot leave a wanted agent without command intake.
+      this.machine.reconnectNow();
     }, this.machine.intakeTimeoutMs ?? LIVE_LINK_TIMING.heartbeatTimeoutMs);
     this.#intakeDeadline.unref?.();
   }
@@ -348,27 +340,22 @@ export class AgentChannel {
     this.initialSnapshotsV1 = false;
     this.#initialRecoveryPending = false;
     this.#clearIntakeDeadline();
-    this.#recovered = false;
     this.handlers.onClose();
   }
 
   /** Authentication plus current demanded-lane acknowledgements. */
   recovered(): void {
-    if(!this.isOpen() || this.#recovered)return;
+    if(!this.isOpen())return;
     this.#initialRecoveryPending=false;
     this.#clearIntakeDeadline();
     if(this.#intakeHeartbeat)this.#armIntakeDeadline();
-    this.#recovered=true;this.#replacementSpent=false;
-    this.machine.recovered();
   }
   /** One admission deadline for initial demanded data; controls cannot renew it. */
   awaitInitialRecovery(): void {
     if(!this.isOpen() || this.#initialRecoveryPending)return;
     this.#initialRecoveryPending=true;
-    this.#recovered=false;
     this.#armIntakeDeadline();
   }
-  get recoveryComplete(): boolean {return this.#recovered;}
 
 }
 
@@ -440,12 +427,6 @@ export class MachineLink {
       this.#pendingRelease = undefined;
       this.#broadcast(release);
     }
-  }
-
-  /** Reset one incident only when every owned agent has caught up. */
-  recovered(): void {
-    if([...this.#channels.values()].every(channel=>channel.isOpen() && channel.recoveryComplete))
-      this.link.markRecovered();
   }
 
   /** A later channel for the same agent (an in-process restart) replaces the earlier one. */

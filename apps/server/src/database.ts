@@ -117,7 +117,7 @@ export const ENRICHMENT_STATEMENT_TIMEOUT_MS = 750;
 export const ENRICHMENT_POOL_WAIT_TIMEOUT_MS = 500;
 export const HEALTH_STATEMENT_TIMEOUT_MS = 2_000;
 export const HEALTH_POOL_WAIT_TIMEOUT_MS = 1_000;
-export const MIGRATION_LOCK_TIMEOUT_MS = 15_000;
+export const MIGRATION_LOCK_TIMEOUT_MS = 1_000;
 /** Schema statements retry a busy table this many times (about 2 minutes). */
 export const MIGRATION_DDL_ATTEMPTS = 120;
 export const MIGRATION_STATEMENT_TIMEOUT_MS = 10 * 60_000;
@@ -2625,9 +2625,15 @@ ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS superseded_at timestamptz;
 ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS purpose text;
 ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS touches text;
 ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS capabilities text;
-ALTER TABLE agent_grants DROP CONSTRAINT IF EXISTS agent_grants_kind_check;
-ALTER TABLE agent_grants ADD CONSTRAINT agent_grants_kind_check
-  CHECK (kind IN ('path','host','secret','device','budget','command','mcp','repository','shared_asset'));
+-- Replacing an unchanged check locks this hot table on every release.
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='agent_grants'::regclass
+      AND conname='agent_grants_kind_check' AND pg_get_constraintdef(oid) LIKE '%shared_asset%') THEN
+    ALTER TABLE agent_grants DROP CONSTRAINT IF EXISTS agent_grants_kind_check;
+    ALTER TABLE agent_grants ADD CONSTRAINT agent_grants_kind_check
+      CHECK (kind IN ('path','host','secret','device','budget','command','mcp','repository','shared_asset'));
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS agent_grants_agent_idx ON agent_grants(agent_id, workspace_id, status);
 CREATE INDEX IF NOT EXISTS agent_grants_room_idx ON agent_grants(room_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS agent_grants_pending_idx ON agent_grants(workspace_id)

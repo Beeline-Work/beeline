@@ -2,19 +2,19 @@
 
 This batch implements the captain's accepted recommendations. The code batch
 https://github.com/Beeline-Work/beeline/pull/3447 merged after green CI. L1 is
-complete. Firstmate confirmed the v0.1.163 redeploy killed the Fly writer and
-cleared its sessions/locks. Inbox 026 moved the detached continuation to
-**squire**, outside the app-machine lifecycle. Preflight at 10:36Z found
-**124,414 cards + 151 fields**, all 229 versions, unchanged fixed telemetry
-cohorts, no prior sessions and zero locks. Local `nohup` process **1801406** logs
-to `.audit-b1-squire.log`; SQL writer **1191258** and observer **1191261** are
-live. Cancellation proof passed in 73 ms. The one-row / 100 ms statement cap /
-20 ms pause / timeout-skip / 150 ms cleanup-client wait rule is unchanged.
-Initial progress is slow over this connection; the first read-back at 10:38Z
-leaves **124,347 cards**, with versions and telemetry preserved. Credentials are
-retrieved into memory through Neon API and never logged, stored or put in argv.
-B8 is untouched. See `b1-squire-before.json`, `b1-squire-start.json`, and historical
-`b1-detached-missing-log.json`.
+complete. B1 is detached on **squire**, outside app-machine deploys. Inbox 027
+replaced the slow one-row pass after verifying its SQL sessions/locks were gone.
+The replacement updates **up to 25 keys per transaction**, each UPDATE capped at
+**100 ms**, with **no pause**. A timed-out batch rolls back and retries its keys
+one at a time under the same cap; individual timeouts roll back and skip. The
+150 ms cleanup-client wait and other-error stops remain. Local process
+**1892546** writes `.audit-b1-squire-batch.log`; SQL writer **1192199** and
+observer **1192200** are live. Baseline: **124,190 cards +151 fields**. Initial
+read-back at 10:42Z: **120,941 cards**, all 229 versions and fixed telemetry
+cohorts preserved. Initial logs confirm several thousand committed cards with
+zero observed cleanup-client wait. A ten-minute throughput report is pending.
+B8 is untouched. See `b1-squire-batch-before.json` and
+`b1-squire-batch-start.json`; prior operation records remain historical.
 
 | Decision | Implementation |
 | --- | --- |

@@ -1,5 +1,4 @@
 import { EmptyState } from '@/components/buzz/EmptyState';
-import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
@@ -114,7 +113,7 @@ function emptySection(
     <View style={styles.emptyBlock} testID={testID}>
     <Ionicons color={styles.emptyIcon.color} name={icon} size={22} />
     <Text style={styles.emptyTitle}>{title}</Text>
-    <ErrorBanner inline title={detail} />
+    <Text style={styles.empty}>{detail}</Text>
   </View>
   );
 }

@@ -560,7 +560,10 @@
           "connection_id": "existing before the registry; weekly audit reviews",
           "instance_id": "existing before the registry; weekly audit reviews",
           "connected_at": "existing before the registry; weekly audit reviews",
-          "released_at": "existing before the registry; weekly audit reviews"
+          "released_at": "existing before the registry; weekly audit reviews",
+          "turn_connection_id": "the machine connection that owns the agent's running turn, so a turn survives socket loss",
+          "turn_connection_epoch": "epoch of that turn-owning connection, so a stale socket cannot claim the turn",
+          "turn_transport_id": "transport that owns the running turn, so a reconnect resumes the same turn"
         }
       },
       "agent_grant_policy_revocations": {

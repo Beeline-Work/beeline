@@ -18,7 +18,7 @@ import { onboardingCookie as m3_onboardingCookie } from "./onboarding-rollout.js
 
 import { afterEach as m3_afterEach, describe as m3_describe, expect as m3_expect, it as m3_it, vi as m3_vi } from 'vitest';
 
-import { alphaTenant as m3_alphaTenant, app as m3_app, database as m3_database, startCookie as m3_startCookie, state as m3_fixture, useAuthServerFixture as m3_useAuthServerFixture } from "./server-test-fixture.js";
+import { alphaTenant as m3_alphaTenant, app as m3_app, database as m3_database, startCookie as m3_startCookie, state as m3_fixture, useAuthServerFixture as m3_useAuthServerFixture } from "../../../tests/helpers/server.js";
 import { describe as mergedDescribe3 } from 'vitest';
 mergedDescribe3("server-github-onboarding.test.ts", () => {
 

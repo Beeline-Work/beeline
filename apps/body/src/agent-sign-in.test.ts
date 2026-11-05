@@ -11,7 +11,7 @@ import {
   reportAgentSignInResult,
   type AgentSignInOptions,
 } from './agent-sign-in.js';
-import { CODEX_DEVICE_OUTPUT, CURSOR_LOGIN_OUTPUT } from './agent-sign-in.fixtures.js';
+import { CODEX_DEVICE_OUTPUT, CURSOR_LOGIN_OUTPUT } from '../../../tests/helpers/helper.js';
 
 const ATTEMPT = '00000000-0000-4000-8000-000000000001';
 const CARD = 'c'.repeat(64);
@@ -270,7 +270,7 @@ import {
   parseGrokDeviceLogin as m12_parseGrokDeviceLogin,
 } from "./agent-sign-in.js";
 
-import { CODEX_DEVICE_OUTPUT as m12_CODEX_DEVICE_OUTPUT, CURSOR_LOGIN_OUTPUT as m12_CURSOR_LOGIN_OUTPUT, GROK_DEVICE_OUTPUT as m12_GROK_DEVICE_OUTPUT } from "./agent-sign-in.fixtures.js";
+import { CODEX_DEVICE_OUTPUT as m12_CODEX_DEVICE_OUTPUT, CURSOR_LOGIN_OUTPUT as m12_CURSOR_LOGIN_OUTPUT, GROK_DEVICE_OUTPUT as m12_GROK_DEVICE_OUTPUT } from "../../../tests/helpers/helper.js";
 import { describe as mergedDescribe12 } from 'vitest';
 mergedDescribe12("agent-sign-in.contract.test.ts", () => {
 

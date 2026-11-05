@@ -5,7 +5,7 @@ import type { SigninAttemptObservation as m4_SigninAttemptObservation } from '@b
 
 import { beforeEach as m4_beforeEach, describe as m4_describe, expect as m4_expect, it as m4_it, vi as m4_vi } from 'vitest';
 
-import { alphaTenant as m4_alphaTenant, betaTenant as m4_betaTenant, app as m4_app, provider as m4_provider, store as m4_store, useAuthServerFixture as m4_useAuthServerFixture } from "./server-test-fixture.js";
+import { alphaTenant as m4_alphaTenant, betaTenant as m4_betaTenant, app as m4_app, provider as m4_provider, store as m4_store, useAuthServerFixture as m4_useAuthServerFixture } from "../../../tests/helpers/server.js";
 import { describe as mergedDescribe4 } from 'vitest';
 mergedDescribe4("server-native-google.test.ts", () => {
 
@@ -102,7 +102,7 @@ import {
   startCookie as m5_startCookie,
   useAuthServerFixture as m5_useAuthServerFixture,
   provider as m5_provider,
-} from "./server-test-fixture.js";
+} from "../../../tests/helpers/server.js";
 import { describe as mergedDescribe5 } from 'vitest';
 mergedDescribe5("server-signin-funnel.test.ts", () => {
 
@@ -198,5 +198,51 @@ m5_it('uses the verified OIDC exchange result as the callback source', async () 
   m5_expect(result.statusCode).toBe(200);
   m5_expect(m5_provider.tokenRequests).toBe(1);
   m5_expect(observe.mock.calls.at(-1)?.[0]).toMatchObject({ provider: 'google', outcome: 'success' });
+});
+});
+
+import { createHash as move0_createHash } from 'node:crypto';
+
+import { afterEach as move0_afterEach, beforeEach as move0_beforeEach, describe as move0_describe, expect as move0_expect, it as move0_it, vi as move0_vi } from 'vitest';
+
+import { app as move0_app, database as move0_database, store as move0_store, alphaTenant as move0_alphaTenant, useAuthServerFixture as move0_useAuthServerFixture } from "../../../tests/helpers/server.js";
+import { describe as movedDescribe0 } from 'vitest';
+movedDescribe0("server-held-completion.test.ts", () => {
+
+const listeners = new Map<string, Set<() => void>>();
+
+move0_useAuthServerFixture({ subscribeCompletion: (hash, wake) => {
+  const group = listeners.get(hash) ?? new Set(); listeners.set(hash, group); group.add(wake);
+  return () => { group.delete(wake); if (!group.size) listeners.delete(hash); };
+} });
+
+let stop: () => Promise<void>;
+
+move0_beforeEach(async () => {
+  stop = await move0_database.client.listen('beeline_command_completion', raw => {
+    const event = JSON.parse(raw);
+    if (event.principal === 'auth' && event.operation === 'ticket') for (const wake of listeners.get(event.commandId) ?? []) wake();
+  });
+});
+
+move0_afterEach(async () => { await stop().catch(() => undefined); listeners.clear(); });
+
+const token = 'r'.repeat(43), hash = move0_createHash('sha256').update(token).digest('hex');
+
+move0_describe('F11 held provider completion over committed PostgreSQL capture', () => {
+  move0_it.each([['github','https://github.com'],['oidc','https://accounts.google.com']])('%s waits once and completes on its actual committed ticket', async (path, issuer) => {
+    const find = move0_vi.spyOn(move0_store, 'findTicket');
+    const waiting = move0_app.inject({ method: 'POST', url: `/auth/${path}/completion`, headers: { host: move0_alphaTenant.host }, payload: { recoveryToken: token, waitMs: 1000 } });
+    // Fastify inject is a thenable; begin the actual request now.
+    const response = Promise.resolve(waiting);
+    await move0_vi.waitFor(() => move0_expect(find).toHaveBeenCalledTimes(1));
+    const now = new Date();
+    await move0_store.createTicket(hash, { challenge: 'c'.repeat(43), community: move0_alphaTenant.community,
+      issuer, audience: 'test', subject: 'synthetic-person', createdAt: now, expiresAt: new Date(now.getTime()+120_000),
+      attemptCount: 0, consumedAt: null, boundPubkey: null });
+    const result = await response;
+    move0_expect(result.statusCode).toBe(200); move0_expect(result.json()).toMatchObject({ ticket: token, provider: issuer });
+    move0_expect(find).toHaveBeenCalledTimes(2); move0_expect(listeners.size).toBe(0);
+  });
 });
 });

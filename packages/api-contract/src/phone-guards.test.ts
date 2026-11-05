@@ -973,3 +973,42 @@ m45_it('keeps the message text when a preceding phone cannot recognize a newly r
   m45_expect(m45_readRoomViewMessage({...message,systemEvent:{...event,kind:'left'}})?.systemEvent?.kind).toBe('left');
 });
 });
+
+import { describe as move9_describe, expect as move9_expect, it as move9_it } from 'vitest';
+
+import { readRoomViewMessage as move9_readRoomViewMessage } from "./phone-guards.js";
+import { describe as movedDescribe9 } from 'vitest';
+movedDescribe9("phone-guards.approvals.test.ts", () => {
+
+
+const agent = { pubkey: 'a'.repeat(64), kind: 'agent', name: 'Ruby', handle: 'ruby' };
+
+const human = { pubkey: 'b'.repeat(64), kind: 'human', name: 'Owner', handle: 'owner' };
+
+const base = { id: 'c'.repeat(64), text: 'Approval', createdAt: 1792760000, author: agent, presentation: 'card' };
+
+const squire = { agent, owner: human, tool: 'fetch_credential', title: 'Reveal a key', detail: 'Fly deploy key', approvalUrl: 'https://example.test/approval', linkKind: 'approval', action: 'reveal a key', reason: 'Deploy the preview.', reference: 'vault://owner/fly/key', facts: [{ label: 'Key', value: 'Fly deploy' }], decidedBy: human, decidedAt: 1792760240 };
+
+
+move9_describe('production approval message parsing', () => {
+  move9_it.each(['approved', 'denied', 'expired'])('preserves Squire %s state and presentation', status => {
+    const payload = { ...squire, status };
+    move9_expect(move9_readRoomViewMessage({ ...base, squireApproval: payload })?.squireApproval).toEqual(payload);
+  });
+  move9_it.each(['allowed', 'denied'])('preserves target %s decision and purpose', status => {
+    const targetBranch = { proposalId: 'proposal', from: 'main', to: 'release', agent, requester: human, purpose: 'Ship the fixes.', status, decidedBy: human, decidedAt: 1792760240 };
+    move9_expect(move9_readRoomViewMessage({ ...base, targetBranch })?.targetBranch).toEqual(targetBranch);
+  });
+  move9_it('preserves permission reason, timestamp and verified decision maker', () => {
+    const permission = { permissionId: 'permission', requestId: 'request', agent, requester: human, tool: 'edit_file', status: 'allowed', reason: 'Update README.', decider: human, decidedAt: 1792760240 };
+    move9_expect(move9_readRoomViewMessage({ ...base, permission })?.permission).toEqual(permission);
+  });
+  move9_it('omits malformed optional fields and never treats an agent as the human decider', () => {
+    const result = move9_readRoomViewMessage({ ...base, squireApproval: { ...squire, owner: agent, decidedBy: agent, decidedAt: 'yesterday', status: 'other', action: {}, reason: [], reference: 9, facts: [{ label: 'Key', value: 9 }] }, targetBranch: { proposalId: 'p', from: 'main', to: 'release', decidedBy: agent, decidedAt: NaN, purpose: {}, status: 'other' } });
+    move9_expect(result?.squireApproval).toMatchObject({ agent, tool: 'fetch_credential' });
+    for (const key of ['owner', 'decidedBy', 'decidedAt', 'status', 'action', 'reason', 'reference']) move9_expect(result?.squireApproval).not.toHaveProperty(key);
+    move9_expect(result?.squireApproval?.facts).toEqual([]);
+    for (const key of ['decidedBy', 'decidedAt', 'purpose', 'status']) move9_expect(result?.targetBranch).not.toHaveProperty(key);
+  });
+});
+});

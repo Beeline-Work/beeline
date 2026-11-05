@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { parseAcpUsage } from './acp.js';
 import { HarnessQuotaReader, quotaAxiArgs, quotaAxiLaunch, quotaAxiProvider, quotaAxiUsage } from './harness-quota.js';
-import { QUOTA_AXI_CLAUDE_REPORT, QUOTA_AXI_CODEX_CURSOR_REPORT } from './harness-quota.fixtures.js';
+import { QUOTA_AXI_CLAUDE_REPORT, QUOTA_AXI_CODEX_CURSOR_REPORT } from '../../../tests/helpers/helper.js';
 
 const now = Date.parse('2026-10-20T02:22:23.939Z') / 1000;
 
@@ -177,7 +177,7 @@ import type { AgentUsage as m18_AgentUsage } from '@beeline/api-contract/daemon'
 
 import { HarnessQuotaReader as m18_HarnessQuotaReader, QUOTA_READ_INTERVAL_MS as m18_QUOTA_READ_INTERVAL_MS, quotaAxiUsage as m18_quotaAxiUsage } from "./harness-quota.js";
 
-import { QUOTA_AXI_CLAUDE_REPORT as m18_QUOTA_AXI_CLAUDE_REPORT } from "./harness-quota.fixtures.js";
+import { QUOTA_AXI_CLAUDE_REPORT as m18_QUOTA_AXI_CLAUDE_REPORT } from "../../../tests/helpers/helper.js";
 import { describe as mergedDescribe18 } from 'vitest';
 mergedDescribe18("harness-quota.usage-truth.test.ts", () => {
 

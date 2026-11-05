@@ -171,7 +171,6 @@ export class ThinDaemonCore {
             error,
           );
           this.discoveryStatus = `monolith discovery degraded: ${error instanceof Error ? error.message : String(error)}`;
-          this.roomRuntime.reconnectAfterDiscoveryFailure(error);
         }
         if (opts.signal?.aborted) break;
         await acknowledgeProgress();

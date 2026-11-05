@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { setImmediate } from 'node:timers/promises';
 import type WebSocket from 'ws';
 import { afterEach, expect, it, vi } from 'vitest';
 import { DaemonApiClient, type DaemonWebSocketFactory } from './daemon-api-client.js';
@@ -104,15 +105,53 @@ it('retains definitive removed-agent evidence after machine selection without re
   expect(fetcher).not.toHaveBeenCalled();
 });
 
-it('parks a previously selected channel when re-registration lacks the capability', async () => {
+it.each(['socket loss', 'missing capability'] as const)('holds N Room reads across %s until operation registration returns', async loss => {
   const {api, socket, fetcher} = fixture();
   const ready = api.execute('getAgentConfiguration', {agentId: 'agent'}); socket.open(); await ready;
-  socket.capable = false;
   const internal = api.channel as AgentChannel; // Host lifecycle seam for this transport proof only.
-  internal.socketClosed();
-  internal.register();
-  await expect(api.execute('getAgentConfiguration', {agentId: 'agent'})).rejects.toThrow('UNKNOWN');
+  if (loss === 'missing capability') {
+    socket.capable = false;
+    internal.socketClosed();
+    internal.register();
+  }
+  const rooms = Array.from({length: 24}, (_, i) => `room-${i}`);
+  const settled = vi.fn();
+  const reads = rooms.map(roomId => api.execute('getAgentCommands', {roomId}));
+  const listings = rooms.map(roomId => api.execute('listRoomCorners', {roomId, activeOnly: true}));
+  const discovery = api.execute('getDaemonBootstrap', {agentId: 'agent'});
+  const all = Promise.all([...reads, ...listings, discovery]);
+  void all.then(settled, settled);
+  // Lose the socket after execute's readiness check, before its dispatch.
+  if (loss === 'socket loss') socket.close();
+  const epoch = api.metrics().reconnects;
+  await setImmediate();
+  expect(api.metrics().reconnects).toBe(epoch);
+  expect(settled).not.toHaveBeenCalled();
+  expect(socket.frames.filter(frame => frame.type === 'daemon-operation')).toHaveLength(1);
   expect(fetcher).not.toHaveBeenCalled();
+  internal.socketClosed();
+  socket.capable = true;
+  socket.open();
+  await all;
+  await setImmediate();
+  const sent = socket.frames.filter(frame => frame.type === 'daemon-operation');
+  expect(sent.filter(frame => frame.operation === 'getDaemonBootstrap')).toHaveLength(1);
+  for (const roomId of rooms) {
+    expect(sent.filter(frame => frame.operation === 'getAgentCommands' && frame.input.roomId === roomId)).toHaveLength(1);
+    expect(sent.filter(frame => frame.operation === 'listRoomCorners' && frame.input.roomId === roomId)).toHaveLength(1);
+  }
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it('rejects queued operations when the helper ends without sending them', async () => {
+  const {api, socket} = fixture();
+  const ready = api.execute('getAgentConfiguration', {agentId: 'agent'}); socket.open(); await ready;
+  const read = api.execute('getAgentCommands', {roomId: 'room'});
+  socket.close();
+  const rejected = expect(read).rejects.toThrow('registration unavailable');
+  await setImmediate();
+  api.closeLive();
+  await rejected;
   expect(socket.frames.filter(frame => frame.type === 'daemon-operation')).toHaveLength(1);
 });
 

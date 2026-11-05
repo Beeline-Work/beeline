@@ -50,6 +50,8 @@ async function fixture(count: number, readVault = vi.fn<() => Promise<Report>>(a
   await Promise.all(reads);
   const reports = () => sockets.flatMap(socket => socket.frames).filter(frame => frame.operation === 'postConnectorVault');
   await vi.waitFor(() => expect(reports()).toHaveLength(1));
+  // A sent frame precedes the report promise settling and committing its verdict.
+  await new Promise<void>(done => setImmediate(done));
   const reconnect = async () => {
     machine.reconnectNow(); sockets.at(-1)!.open();
     await new Promise<void>(done => setImmediate(done));

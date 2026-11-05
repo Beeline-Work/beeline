@@ -157,7 +157,7 @@
       "id": "apps/body/src/daemon-api-client.ts::fetch",
       "file": "apps/body/src/daemon-api-client.ts",
       "kind": "fetch",
-      "count": 3,
+      "count": 2,
       "compatibility": "legacy-only",
       "phase": "M5"
     },

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { PhoneOperationMap } from '@beeline/api-contract/phone';
-import { PHONE_OPERATION_NAMES } from './phone-service.js';
+import { PHONE_OPERATION_NAMES, type PhoneService } from './phone-service.js';
 
 /**
  * A literal mirror of every `PhoneOperationMap` key. `satisfies` fails
@@ -157,12 +156,12 @@ const ALL_PHONE_OPERATION_NAMES = {
   updateRoom: true,
   updateWorkspace: true,
   uploadMedia: true,
-} satisfies Record<keyof PhoneOperationMap, true>;
+} satisfies Record<Parameters<PhoneService['execute']>[0], true>;
 
 describe('PHONE_OPERATION_NAMES', () => {
   it('lists every PhoneOperationMap key, so server.ts can dispatch it', () => {
     const missing = Object.keys(ALL_PHONE_OPERATION_NAMES).filter(
-      (name) => !PHONE_OPERATION_NAMES.has(name as keyof PhoneOperationMap),
+      (name) => !PHONE_OPERATION_NAMES.has(name as Parameters<PhoneService['execute']>[0]),
     );
     expect(missing).toEqual([]);
   });

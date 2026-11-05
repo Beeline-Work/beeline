@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import { DEFAULT_HOSTED_CAPACITY, loadHostedCapacity, loadRunners, loadPressure, planRouting, routeRunners } from './ci-runner-routing.mjs';
 const repository = 'Beeline-Work/beeline';
 const runner = (name, role, changes = {}) => ({ name, status: 'online', busy: false,
-  labels: ['self-hosted', 'Linux', 'X64', 'beeline-ci', `beeline-ci-${role}`].map(name => ({ name })), ...changes });
+  labels: ['self-hosted', 'Linux', 'X64', 'beeline-ci', 'beeline-ci-balanced', `beeline-ci-${role}`].map(name => ({ name })), ...changes });
 const pool = () => [runner('beeline-ci-squire-01', 'control'),
-  ...Array.from({ length: 8 }, (_, i) => runner(`beeline-ci-squire-0${i + 2}`, 'heavy')),
+  ...Array.from({ length: 6 }, (_, i) => runner(`beeline-ci-squire-0${i + 2}`, 'heavy')),
   runner('beeline-ci-squire-10', 'workspace')];
 const flags = { code: 'true', serverSuite: 'true', nativeFingerprint: 'true', mobileSuite: 'true', mobileExportReachability: 'true' };
 const counts = (queued = 0, inProgress = 0) => ({ queued, inProgress });
@@ -26,32 +27,32 @@ const pressureRequest = (jobsByRun = { 3: [] }) => async path => {
 
 test('idle Squire wins ties and uses online capacity, including busy listeners', () => {
   const plan = routeRunners({ runners: pool(), flags });
-  assert.deepEqual(plan.capacity, { control: 1, heavy: 8, workspace: 1, hosted: DEFAULT_HOSTED_CAPACITY });
-  assert.deepEqual(plan.idle, { control: 1, heavy: 8, workspace: 1 });
+  assert.deepEqual(plan.capacity, { control: 1, heavy: 6, workspace: 1, hosted: DEFAULT_HOSTED_CAPACITY });
+  assert.deepEqual(plan.idle, { control: 1, heavy: 6, workspace: 1 });
   assert.ok(isSquire(plan.targets.prepare));
   assert.ok(isSquire(plan.targets.typecheck));
   assert.ok(isSquire(plan.targets.mobile));
   for (const p of active(plan).filter(p => isSquire(p.target))) {
-    assert.deepEqual(p.target, ['self-hosted', 'Linux', 'X64', 'beeline-ci', `beeline-ci-${p.role}`]);
+    assert.deepEqual(p.target, ['self-hosted', 'Linux', 'X64', 'beeline-ci', 'beeline-ci-balanced', `beeline-ci-${p.role}`]);
     assert.ok(p.squireWait <= p.hostedWait);
   }
 });
 
 test('saturated Squire with a deep queue and empty hosted pool chooses hosted', () => {
   const plan = routeRunners({ runners: pool().map(r => ({ ...r, busy: true })), flags,
-    pressure: { heavy: counts(80, 8), control: counts(10, 1), workspace: counts(10, 1) } });
+    pressure: { heavy: counts(80, 6), control: counts(10, 1), workspace: counts(10, 1) } });
   assert.deepEqual(plan.idle, { control: 0, heavy: 0, workspace: 0 });
-  assert.equal(plan.capacity.heavy, 8);
+  assert.equal(plan.capacity.heavy, 6);
   assert.ok(active(plan).every(p => !isSquire(p.target)));
 });
 
 test('deep hosted queue chooses briefly busy Squire, including control selection and verdicts', () => {
   const plan = routeRunners({ runners: pool().map(r => ({ ...r, busy: true })), flags,
-    pressure: { hosted: counts(200, 20), heavy: counts(0, 8), control: counts(0, 1), workspace: counts(0, 1) } });
+    pressure: { hosted: counts(200, 20), heavy: counts(0, 6), control: counts(0, 1), workspace: counts(0, 1) } });
   assert.ok(active(plan).every(p => isSquire(p.target)));
   assert.ok(isSquire(plan.targets.serverSelection));
   assert.ok(isSquire(plan.targets.serverSuite));
-  // API running counts and busy inventory describe the same eight jobs.
+  // API running counts and busy inventory describe the same six jobs.
   assert.equal(plan.placements.find(p => p.job === 'typecheck').squireWait, 1);
 });
 
@@ -62,10 +63,11 @@ test('one run spreads its enabled jobs and server shards across both pools', () 
   assert.deepEqual(plan.serverMatrix.map(r => r.shard), [1, 2, 3, 4, 5, 6, 7, 8]);
   const heavy = active(plan).filter(p => p.role === 'heavy');
   assert.equal(heavy[0].squireWait, 0);
-  assert.equal(heavy[1].squireWait, 1 / 8);
-  assert.equal(heavy[2].squireWait, 2 / 8);
-  assert.equal(heavy[2].target[0], 'ubuntu-latest');
-  assert.equal(heavy[3].hostedWait, heavy[2].hostedWait + 1 / DEFAULT_HOSTED_CAPACITY);
+  assert.equal(heavy[1].squireWait, 1 / 6);
+  assert.equal(heavy[2].squireWait, 1 / 6);
+  assert.equal(heavy[1].target[0], 'ubuntu-latest');
+  assert.ok(isSquire(heavy[2].target));
+  assert.equal(heavy[2].hostedWait, heavy[1].hostedWait + 1 / DEFAULT_HOSTED_CAPACITY);
 });
 
 test('busy runner inventory supplies a running-job floor when Actions has not caught up', () => {
@@ -200,4 +202,19 @@ test('planner combines separate credentials, live pressure and hosted capacity',
   assert.equal(plan.capacity.hosted, 60);
   assert.equal(plan.pressure.hosted.queued, 1);
   assert.ok(isSquire(plan.targets.typecheck));
+});
+
+// A label is a rollout boundary, not a claim that eight two-CPU listeners fit
+// inside ten CPU cores. Extra/legacy listeners cannot take balanced work.
+test('balanced listeners fit the parent quota and old/extra listeners are excluded', () => {
+  const plan = routeRunners({ runners: [...pool(), runner('beeline-ci-squire-08', 'heavy'), runner('beeline-ci-squire-09', 'heavy')], flags });
+  assert.deepEqual(plan.capacity, { control: 1, heavy: 6, workspace: 1, hosted: 20 });
+  const legacy = pool().map(r => ({ ...r, labels: r.labels.filter(label => label.name !== 'beeline-ci-balanced') }));
+  assert.ok(active(routeRunners({ runners: legacy, flags })).every(row => !isSquire(row.target)));
+  assert.ok(active(plan).filter(row => isSquire(row.target)).every(row => row.target.includes('beeline-ci-balanced')));
+});
+
+test('balanced service quotas sum to the unchanged ten-CPU parent budget', () => {
+  const quota = file => Number(readFileSync(new URL('../infra/ci/' + file, import.meta.url), 'utf8').match(/^CPUQuota=(\d+)%$/m)[1]);
+  assert.equal(6 * quota('beeline-ci@.service.d/50-budget.conf') + quota('beeline-ci@01.service.d/60-control-budget.conf') + quota('beeline-ci@10.service.d/60-workspace-budget.conf'), quota('beeline-ci.slice.d/50-budget.conf'));
 });

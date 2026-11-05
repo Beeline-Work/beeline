@@ -1,0 +1,217 @@
+{
+  "recordedAt": "2026-11-05T10:53:48.811820+00:00",
+  "authority": "firstmate inbox 027",
+  "progress": {
+    "globalSamples": 6692,
+    "maxObservedLockWaitMs": 0,
+    "maxObservedWaitingClients": 0,
+    "acknowledgedChanges": {
+      "messages": 51174
+    },
+    "completedBatches": 2598,
+    "operatorParameters": {
+      "updatesOnly": true,
+      "batchSize": 25,
+      "normalPauseMs": 0,
+      "statementTimeoutMs": 100,
+      "pauseAfterTimeoutMs": 0,
+      "retryTimedOutBatchOneAtATime": true
+    },
+    "batchTimeouts": 24,
+    "timeoutsByTable": {
+      "messages": 1
+    },
+    "attemptedRows": 51750,
+    "batchFallbacks": 23,
+    "stopRule": {
+      "cleanupBlockedClientWaitMs": 150,
+      "stopOnOtherError": true,
+      "countAndSkipStatementTimeouts": true,
+      "otherWaitsObservedOnly": true,
+      "excludedLeaderStandby": {
+        "application": "beeline_long_running",
+        "waitEvent": "advisory",
+        "query": "SELECT pg_advisory_lock($1)"
+      }
+    },
+    "cancelRequests": 1,
+    "cancelProof": {
+      "observedSleep": true,
+      "cancelled": true,
+      "errorCode": "57014",
+      "receivedWithinMs": 29,
+      "limitMs": 2000
+    },
+    "maxObservedGlobalLockWaitMs": 0,
+    "maxObservedGlobalWaitingBackends": 0,
+    "maxObservedExcludedLeaderWaitMs": 59975.102,
+    "maxObservedExcludedLeaderWaiters": 1,
+    "maxCleanupOwnWaitingLocks": 0,
+    "lastSample": {
+      "blockedClients": 0,
+      "maxWaitMs": 0,
+      "globalMaxWaitMs": 0,
+      "cleanupWaitingLocks": 0
+    }
+  },
+  "independentReadback": {
+    "server": {
+      "pid": 1193791,
+      "observed_at": "2026-11-05T10:53:35.891Z"
+    },
+    "sessions": [
+      {
+        "pid": 1192199,
+        "application_name": "audit-b1-20261105-cleanup",
+        "state": "idle",
+        "xact_start": null,
+        "query_start": "2026-11-05T10:53:35.871Z",
+        "wait_event_type": "Client",
+        "wait_event": "ClientRead"
+      },
+      {
+        "pid": 1192200,
+        "application_name": "audit-b1-20261105-observer",
+        "state": "idle",
+        "xact_start": null,
+        "query_start": "2026-11-05T10:53:35.900Z",
+        "wait_event_type": "Client",
+        "wait_event": "ClientRead"
+      }
+    ],
+    "result": {
+      "mode": "dry-run",
+      "cutoff": "2026-11-05 10:53:35.949601+00",
+      "counts": [
+        {
+          "table": "institutional_memory_outcomes",
+          "predicate": "TRUE",
+          "count": 0
+        },
+        {
+          "table": "institutional_history_searches",
+          "predicate": "TRUE",
+          "count": 0
+        },
+        {
+          "table": "workspace_skill_uses",
+          "predicate": "TRUE",
+          "count": 0
+        },
+        {
+          "table": "institutional_memory_fact_events",
+          "predicate": "TRUE",
+          "count": 0
+        },
+        {
+          "table": "institutional_review_findings",
+          "predicate": "TRUE",
+          "count": 0
+        },
+        {
+          "table": "institutional_memory_jobs",
+          "predicate": "TRUE",
+          "count": 0
+        },
+        {
+          "table": "beeline_github_webhook_deliveries",
+          "predicate": "received_at<now()-interval '30 days'",
+          "count": 0
+        },
+        {
+          "table": "beeline_github_repo_events",
+          "predicate": "received_at<now()-interval '30 days'",
+          "count": 0
+        },
+        {
+          "table": "operator_finance_snapshots",
+          "predicate": "source='entered' AND scope='fixed-plan'",
+          "count": 0
+        },
+        {
+          "table": "corner_attention_flags",
+          "count": 0,
+          "absent": true
+        },
+        {
+          "table": "service_review_rollout",
+          "predicate": "TRUE",
+          "count": 0
+        },
+        {
+          "table": "google_oauth_grants",
+          "predicate": "TRUE",
+          "count": 0
+        },
+        {
+          "table": "push_level_migration_counts",
+          "predicate": "TRUE",
+          "count": 0
+        },
+        {
+          "table": "wallet_balance_snapshots",
+          "predicate": "TRUE",
+          "count": 0
+        },
+        {
+          "table": "messages",
+          "predicate": "card_type='github-corner-note' AND (card ? 'source' OR card ? 'dedupe')",
+          "count": 73691
+        },
+        {
+          "table": "identities",
+          "predicate": "welcome_cards_due IS NOT NULL",
+          "count": 122
+        },
+        {
+          "table": "room_read_marks",
+          "predicate": "read_at IS NOT NULL",
+          "count": 4
+        },
+        {
+          "table": "needs_you_marks",
+          "predicate": "reminder_dismissed_at IS NOT NULL",
+          "count": 2
+        },
+        {
+          "table": "github_star_prompts",
+          "predicate": "reached_at IS NOT NULL OR last_win_at IS NOT NULL",
+          "count": 23
+        }
+      ],
+      "skillVersions": 229,
+      "linkedVersionsPreserved": 0,
+      "retainedTelemetry": {
+        "cutoff": "2026-11-05 10:53:35.949601+00",
+        "before": {
+          "rooms_mcp_audit": 69893,
+          "agent_turn_traces": 11810
+        },
+        "after": {
+          "rooms_mcp_audit": 69893,
+          "agent_turn_traces": 11810
+        }
+      }
+    },
+    "fk": {
+      "confdeltype": "n"
+    },
+    "locks": {
+      "prior_cleanup_locks": 0,
+      "prior_cleanup_blocked_clients": 0
+    },
+    "retainedTelemetry": {
+      "cutoff": "2026-11-05 09:09:23.470814+00",
+      "before": {
+        "rooms_mcp_audit": 68981,
+        "agent_turn_traces": 11810
+      },
+      "after": {
+        "rooms_mcp_audit": 68981,
+        "agent_turn_traces": 11810
+      }
+    }
+  },
+  "progressAndReadbackAreSeparateSamples": true,
+  "b8ContractApplied": false
+}

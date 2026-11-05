@@ -426,16 +426,3 @@ export class TrayClockReadiness{
   }
 }
 
-/** Pure lifecycle evidence accessor. A persisted ready bit alone cannot
- * survive unsupported schema changes, pending Room moves or a new generation.
- * Root must compose this floor into selection; this function never repairs. */
-export async function readTrayClockReadiness(db:SqlDatabase,workspaceId:string){
-  const row=(await db.query<{generation:string;revision:string;ready:boolean;source_epoch:string|null;source_through:string|null;
-    workspace_epoch:string|null;workspace_through:string|null}>(`SELECT clock.generation,clock.revision::text,
-    ${TRAY_CLOCK_READINESS_PREDICATE_SQL} ready,
-    progress.source_epoch,progress.source_through::text,progress.workspace_epoch,progress.workspace_through::text
-    FROM tray_clock_state clock JOIN tray_clock_readiness progress ON progress.workspace_id=clock.workspace_id
-    JOIN tray_clock_readiness_floor floor ON floor.id=1
-    WHERE clock.workspace_id=$1`,[workspaceId])).rows[0];
-  return row;
-}

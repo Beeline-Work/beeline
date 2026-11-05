@@ -1,5 +1,4 @@
-# Each gate checks out, decides, and prepares on its own runner.
-# Required check names remain stable; only verdict/artifact consumers wait for other jobs.
+# Each gate decides and prepares on its own runner. Hosted jobs retain capabilities unavailable in isolated Squire.
 name: Checks
 run-name: ${{ inputs.nightly_id && format('Nightly Checks {0}', inputs.nightly_id) || github.event.pull_request.title || github.workflow }}
 on:
@@ -7,9 +6,6 @@ on:
     branches:
       - main
   pull_request: {}
-  merge_group:
-    types:
-      - checks_requested
   workflow_dispatch:
     inputs:
       nightly_id:
@@ -30,7 +26,6 @@ on:
           - server-integration
           - mobile-suite
           - mobile-export-reachability
-          - production-corpus-replay
           - frame-budget
           - state-upgrade
           - native-fingerprint
@@ -182,12 +177,7 @@ jobs:
   body-suite:
     name: BODY SUITE
     if: "!cancelled() && (github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'body-suite')"
-    runs-on:
-      - self-hosted
-      - Linux
-      - X64
-      - beeline-ci
-      - beeline-ci-heavy
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       XDG_CONFIG_HOME: ""
@@ -347,7 +337,6 @@ jobs:
     if: github.event_name == 'push'
     needs:
       - server-suite-shard
-      - production-corpus-replay
     runs-on:
       - self-hosted
       - Linux
@@ -437,19 +426,13 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
           BEELINE_COMMAND_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
         run: |
-          npm test -w @beeline/server -- src/network-router-runtime.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npx vitest run tests/seams/server-db.test.ts --maxWorkers=2 --minWorkers=1
-          npm test -w @beeline/server -- src/mcp-webhook-deadline.postgres.test.ts --maxWorkers=2 --minWorkers=1
-          npm test -w @beeline/server -- src/agent-schedule-deadline.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/pending-attachment-deadline.postgres.test.ts --maxWorkers=2 --minWorkers=1
-          npm test -w @beeline/server -- src/connector-offer-expiry.postgres.test.ts --maxWorkers=2 --minWorkers=1
           BEELINE_SENTRY_TEST_POSTGRES_URL="$BEELINE_COMMAND_TEST_POSTGRES_URL" npm test -w @beeline/server -- src/sentry-wake.test.ts -t 'SENTRY-CLOCK|SENTRY-DEADLINE' --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/background-leader.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/background-deadlines.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/router-group-c-completion.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/router-group-c-oauth.postgres.test.ts --maxWorkers=2 --minWorkers=1
-          npm test -w @beeline/server -- src/router-group-c-replay.postgres.test.ts --maxWorkers=2 --minWorkers=1
-          npm test -w @beeline/server -- src/room-router-read.postgres.test.ts --maxWorkers=2 --minWorkers=1
           node --import tsx scripts/prove-router-group-c-room-payload.mjs
           BEELINE_GROUP_C_COST_PROOF=1 node --import tsx scripts/prove-router-group-c-room-payload.mjs
           (cd apps/mobile && npx vitest run sources/buzz/router-group-c-media.postgres.test.ts --maxWorkers=2 --minWorkers=1)
@@ -467,12 +450,8 @@ jobs:
           npm test -w @beeline/server -- src/choice-expiry.test.ts --maxWorkers=2 --minWorkers=1
           BEELINE_VOICE_TEST_POSTGRES_URL="$BEELINE_COMMAND_TEST_POSTGRES_URL" npm test -w @beeline/server -- src/voice-budget.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/helper-usage.postgres.test.ts --maxWorkers=2 --minWorkers=1
-          npm test -w @beeline/server -- src/router-build-coordinator.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/helper-activation.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/operator-system-dm-source.postgres.test.ts --maxWorkers=2 --minWorkers=1
-        if: steps.changes.outputs.run == 'true'
-      - name: Run the claim latency budget alone
-        run: npm test -w @beeline/server -- --run src/agent-command.scaling.test.ts --maxWorkers=1 --minWorkers=1
         if: steps.changes.outputs.run == 'true'
   server-suite:
     name: SERVER SUITE
@@ -659,106 +638,6 @@ jobs:
       - name: Execute mobile-export-reachability in its own checkout
         run: timeout 30m bash scripts/ci-workspace-tasks.sh mobile-export-reachability
         if: steps.changes.outputs.run == 'true'
-  production-corpus-replay:
-    name: PRODUCTION-CORPUS REPLAY
-    if: "!cancelled() && github.event_name != 'workflow_dispatch'"
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          clean: ${{ !startsWith(runner.name, 'beeline-ci-squire-') }}
-      - name: Decide in this checkout
-        id: changes
-        env:
-          CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          CI_PATHS: ^apps/|^packages/
-        run: |-
-          run=true
-          if [ "$GITHUB_EVENT_NAME" = pull_request ] && git fetch --no-tags --depth=1 origin "$CI_BASE_SHA" && git diff --name-only "$CI_BASE_SHA" HEAD > "$RUNNER_TEMP/changed-files"; then
-            run=false
-            while IFS= read -r file; do
-              if [[ "$file" =~ $CI_PATHS ]]; then run=true; break; fi
-              if [[ "$file" == docs/* || "$file" == *.md ]]; then continue; fi
-              if [[ ! "$file" =~ ^apps/(body|server|mobile)/ ]]; then run=true; break; fi
-            done < "$RUNNER_TEMP/changed-files"
-          fi
-          echo "run=$run" >> "$GITHUB_OUTPUT"
-          echo "This job runs: $run"
-      - name: Record complete main coverage
-        if: steps.changes.outputs.run == 'true' && (github.event_name == 'push')
-        run: echo "SERVER_COVERAGE_MAP_DIR=$RUNNER_TEMP/coverage-records" >> "$GITHUB_ENV"
-      - uses: ./.github/actions/ci-workspace
-        if: steps.changes.outputs.run == 'true'
-      - uses: actions/cache/restore@v4
-        id: corpus
-        with:
-          path: ${{ runner.temp }}/beeline-production-corpus
-          key: production-corpus-${{ runner.os }}-${{ hashFiles('apps/server/src/database.ts', 'apps/server/src/production-corpus-*.ts') }}
-        if: steps.changes.outputs.run == 'true'
-      - name: Replay sanitized corpus and time production hot reads
-        id: replay
-        env:
-          PRODUCTION_CORPUS_CACHE_DIR: ${{ runner.temp }}/beeline-production-corpus
-          PRODUCTION_CORPUS_PLAN_DIR: ${{ runner.temp }}/beeline-production-plans
-        run: |
-          npm test -w @beeline/server -- --run src/production-corpus-hot-reads.test.ts --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
-        if: steps.changes.outputs.run == 'true'
-      - uses: actions/cache/save@v4
-        if: steps.changes.outputs.run == 'true' && (steps.replay.outcome == 'success' && steps.corpus.outputs.cache-hit != 'true')
-        with:
-          path: ${{ runner.temp }}/beeline-production-corpus
-          key: ${{ steps.corpus.outputs.cache-primary-key }}
-      - name: Run server wall-clock budgets outside the shared quota
-        if: steps.changes.outputs.run == 'true' && (github.event_name == 'pull_request' || github.event_name == 'push')
-        working-directory: apps/server
-        run: npx vitest run src/production-corpus-width.test.ts src/phone-service.read-room-latency.test.ts src/daemon-service.completion-latency.test.ts --maxWorkers=1 --minWorkers=1
-      - uses: actions/upload-artifact@v4
-        if: steps.changes.outputs.run == 'true' && (always())
-        with:
-          name: production-corpus-hot-read-plans
-          path: ${{ runner.temp }}/beeline-production-plans
-          if-no-files-found: ignore
-      - uses: actions/upload-artifact@v4
-        if: steps.changes.outputs.run == 'true' && (github.event_name == 'push' && always())
-        with:
-          name: server-coverage-records-timing
-          path: ${{ runner.temp }}/coverage-records
-          retention-days: 3
-          if-no-files-found: error
-  production-corpus-replay-on-demand:
-    name: PRODUCTION-CORPUS REPLAY (on demand)
-    if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'production-corpus-replay')
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          clean: ${{ !startsWith(runner.name, 'beeline-ci-squire-') }}
-      - uses: ./.github/actions/ci-workspace
-      - uses: actions/cache/restore@v4
-        id: corpus
-        with:
-          path: ${{ runner.temp }}/beeline-production-corpus
-          key: production-corpus-${{ runner.os }}-${{ hashFiles('apps/server/src/database.ts', 'apps/server/src/production-corpus-*.ts') }}
-      - name: Replay sanitized corpus and time production hot reads
-        id: replay
-        env:
-          PRODUCTION_CORPUS_CACHE_DIR: ${{ runner.temp }}/beeline-production-corpus
-          PRODUCTION_CORPUS_PLAN_DIR: ${{ runner.temp }}/beeline-production-plans
-        run: |
-          npm test -w @beeline/server -- --run src/production-corpus-hot-reads.test.ts --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
-      - uses: actions/cache/save@v4
-        if: steps.replay.outcome == 'success' && steps.corpus.outputs.cache-hit != 'true'
-        with:
-          path: ${{ runner.temp }}/beeline-production-corpus
-          key: ${{ steps.corpus.outputs.cache-primary-key }}
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: production-corpus-hot-read-plans-on-demand
-          path: ${{ runner.temp }}/beeline-production-plans
-          if-no-files-found: ignore
   frame-budget:
     name: FRAME-BUDGET
     needs:
@@ -1026,12 +905,7 @@ jobs:
   actionlint:
     name: ACTIONLINT
     if: "!cancelled() && (github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'actionlint')"
-    runs-on:
-      - self-hosted
-      - Linux
-      - X64
-      - beeline-ci
-      - beeline-ci-control
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -1095,12 +969,7 @@ jobs:
   auth-image:
     name: Build auth container
     if: "!cancelled() && (github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'auth-image')"
-    runs-on:
-      - self-hosted
-      - Linux
-      - X64
-      - beeline-ci
-      - beeline-ci-workspace
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read

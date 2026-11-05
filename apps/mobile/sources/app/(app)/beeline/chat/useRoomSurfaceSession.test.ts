@@ -58,6 +58,8 @@ const controls = vi.hoisted(() => ({
   identityPromise: null as Promise<{ publicKey: string; secretKey: Uint8Array } | null> | null,
   ensureClientPromise: null as Promise<void> | null,
   outboxRestore: null as Promise<void> | null,
+  outboxListeners: new Set<() => void>(),
+  outboxStates: new Map<string, { kind: 'sending' | 'offline' | 'refused'; text: string }>(),
   viewerPubkey: 'viewer' as string | null,
   outboxFail: vi.fn(async (_eventId: string) => undefined),
   outboxGet: vi.fn((_eventId: string) => ({ status: 'pending' as const })),
@@ -240,8 +242,11 @@ vi.mock('@/buzz/surface-storage', () => ({
       await controls.outboxRestore;
     }),
     list: vi.fn(() => []),
-    subscribe: () => () => undefined,
-    state: () => undefined,
+    subscribe: (listener: () => void) => {
+      controls.outboxListeners.add(listener);
+      return () => controls.outboxListeners.delete(listener);
+    },
+    state: (id: string) => controls.outboxStates.get(id),
     acknowledgeFailures: async () => undefined,
     reconcile: vi.fn(async () => undefined),
     fail: controls.outboxFail,
@@ -501,6 +506,8 @@ beforeEach(() => {
   controls.identityPromise = null;
   controls.ensureClientPromise = null;
   controls.outboxRestore = null;
+  controls.outboxListeners.clear();
+  controls.outboxStates.clear();
   controls.viewerPubkey = 'viewer';
   controls.roomResponse = null;
   controls.roomReads = 0;
@@ -1673,6 +1680,51 @@ describe('useRoomSurfaceSession', () => {
       author: { pubkey: 'viewer', kind: 'human' as const, name: 'Viewer' } }] };
     await act(async () => controls.responses[0]!.apply(fresh));
     expect(current.roomSurface).toEqual(fresh);
+    await act(async () => renderer.unmount());
+  });
+
+  it('Send: healthy outbox bookkeeping does not rerender the Room, while failures remain visible', async () => {
+    controls.cached = roomView('room-a');
+    let current!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    controls.scopeProbe = (value: UseRoomSurfaceSessionResult) => { current = value; };
+    await act(async () => {
+      renderer = create(React.createElement(BuzzChat));
+    });
+    await flushEffects();
+    const outbox = current.outbox.current()!;
+    const record = {
+      event: { id: 'queued', pubkey: 'viewer', kind: 9, created_at: 1, content: 'Hello',
+        sig: '', tags: [['h', 'room-a']] },
+      row: { id: 'queued', createdAt: 1, text: 'Hello', presentation: 'message' as const,
+        author: { pubkey: 'viewer', kind: 'human' as const, name: 'Viewer' } },
+      status: 'pending' as 'pending' | 'failed', attempts: 0, queuedAt: 1,
+    };
+    const emit = async () => act(async () => {
+      for (const listener of controls.outboxListeners) listener();
+    });
+    vi.mocked(outbox.list).mockReturnValue([record]);
+    controls.outboxStates.set('queued', { kind: 'sending', text: 'Sending' });
+    const renders = controls.surfaceRenders;
+    await emit();
+    expect(controls.surfaceRenders).toBe(renders);
+    vi.mocked(outbox.list).mockReturnValue([]);
+    await emit();
+    expect(controls.surfaceRenders).toBe(renders);
+
+    vi.mocked(outbox.list).mockReturnValue([record]);
+    controls.outboxStates.set('queued', { kind: 'offline', text: 'Not sent yet · no connection' });
+    await emit();
+    expect(current.outbox.states?.get('queued')?.kind).toBe('offline');
+    record.status = 'failed';
+    controls.outboxStates.set('queued', { kind: 'refused', text: 'Not sent · access denied' });
+    await emit();
+    expect(current.outbox.failedIds.has('queued')).toBe(true);
+    expect(current.outbox.states?.get('queued')?.kind).toBe('refused');
+    vi.mocked(outbox.list).mockReturnValue([]);
+    await emit();
+    expect(current.outbox.states?.size).toBe(0);
+    expect(current.outbox.failedIds.size).toBe(0);
     await act(async () => renderer.unmount());
   });
 

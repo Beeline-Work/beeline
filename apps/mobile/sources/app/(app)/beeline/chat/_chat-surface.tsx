@@ -3914,7 +3914,7 @@ export function BuzzChatSurface({
       // Session cleanup may clear its ref while this send is still preparing.
       let activeOutbox = outbox.current();
       sendInFlightRef.current = true;
-      const phonePreview = !desktopTranscript && activePendingAttachments.length === 0;
+      const phonePreview = Platform.OS !== 'web' && !desktopTranscript && activePendingAttachments.length === 0;
       const updateSendStatus = () => {
         setReceivedSteer(null);
         setPendingAck(addressesAgent ? { sentAt: Date.now() } : null);
@@ -3925,7 +3925,8 @@ export function BuzzChatSurface({
       // Text feedback lands in the local overlay in this same turn. Signing,
       // transport startup and outbox persistence can all take longer than a
       // frame on a cold Android device.
-      const provisionalId = activePendingAttachments.length === 0
+      // Web uses its prepared row directly; native keeps its provisional first frame.
+      const provisionalId = Platform.OS !== 'web' && activePendingAttachments.length === 0
         ? `pending:${Date.now()}:${Math.random()}`
         : null;
       if (provisionalId) {

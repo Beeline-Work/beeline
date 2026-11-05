@@ -353,7 +353,7 @@ CREATE INDEX IF NOT EXISTS corner_private_reports_origin ON agent_commands
   ((private_payload->>'fromRoomId'),(private_payload->>'authorId'),created_at DESC,id DESC)
   WHERE private_payload->>'kind'='report';
 CREATE OR REPLACE FUNCTION clear_corner_report_blockers() RETURNS trigger LANGUAGE plpgsql AS $report$
-DECLARE scope uuid; answer_author text; answer_at timestamptz; answer_room uuid;
+DECLARE scope uuid; answer_author text; answer_at timestamptz; answer_room uuid; candidate_ids uuid[];
 BEGIN
   IF TG_TABLE_NAME='messages' THEN
     IF NEW.presentation<>'message' OR NEW.system_event IS NOT NULL OR NEW.deleted_at IS NOT NULL THEN RETURN NULL; END IF;
@@ -368,11 +368,13 @@ BEGIN
   END IF;
   -- Most Room inserts cannot answer a corner report. Resolve the small indexed
   -- candidate set before planning/evaluating the full waiting-report projection.
-  -- Materialize that same live candidate set below before deriving waits;
-  -- archived report history cannot affect an open corner.
-  IF NOT EXISTS(SELECT 1 FROM rooms report_corner WHERE ${reportScope}) THEN RETURN NULL; END IF;
+  -- Reuse those ids below instead of scanning the report history a second time.
+  -- Archived report history cannot affect an open corner.
+  SELECT array_agg(report_corner.id) INTO candidate_ids FROM rooms report_corner WHERE ${reportScope};
+  IF candidate_ids IS NULL THEN RETURN NULL; END IF;
   WITH report_corners AS MATERIALIZED (
-    SELECT * FROM rooms report_corner WHERE ${reportScope}
+    SELECT * FROM rooms report_corner WHERE report_corner.id=ANY(candidate_ids)
+      AND report_corner.parent_id IS NOT NULL AND report_corner.archived_at IS NULL
   ), answered AS MATERIALIZED (
     SELECT DISTINCT waiting.report_id,waiting.message_id,waiting.card_id
     FROM report_corners report_corner CROSS JOIN LATERAL (${cornerWaitingReportSql('report_corner')}) waiting

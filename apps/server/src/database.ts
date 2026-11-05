@@ -4001,7 +4001,12 @@ async function createIndexConcurrently(
   const state = existing.rows[0];
   if (state?.valid) return;
   if (state) await database.query(`DROP INDEX CONCURRENTLY IF EXISTS ${name}`);
-  await database.query(create);
+  // A concurrent build waits for every older transaction without blocking
+  // anyone, so the 1s migration lock timeout would only abort it on a live
+  // database. The release migration runs on one connection; statement_timeout
+  // still bounds the build.
+  await database.query('SET lock_timeout=0');
+  try { await database.query(create); } finally { await database.query('RESET lock_timeout'); }
 }
 
 /** Backfill machine_id on legacy workspace_connectors rows. */

@@ -21,7 +21,9 @@ export type CornerIdleRow = CornerStateRow & {
  * without another event, do not open a new idle episode.
  */
 export function cornerIdleSql(cornerId: string): string {
-  return `SELECT snapshot.*,
+  return `WITH live_corner AS MATERIALIZED (
+    SELECT * FROM rooms WHERE id=${cornerId} AND parent_id IS NOT NULL AND archived_at IS NULL
+  ) SELECT snapshot.*,
     NOT (archived_at IS NOT NULL OR
       NOT COALESCE(locked,false) AND (
         COALESCE(workflow_state IN ('landed','closed'),false)
@@ -54,7 +56,7 @@ export function cornerIdleSql(cornerId: string): string {
         OR (NULLIF(gh.lifecycle->'pr','null'::jsonb) IS NOT NULL AND gh.lifecycle->'checksSummary'->>'status'='unknown'
           AND gh.lifecycle->'checksSummary'->>'fetchStartedAt' IS NULL)
       ) IS TRUE suppressed
-      FROM rooms c JOIN corner_facts f ON f.corner_id=c.id
+      FROM live_corner c JOIN corner_facts f ON f.corner_id=c.id
       LEFT JOIN corner_github_cache gh ON gh.corner_id=c.id
       ${cornerWorkSql(true)} ${cornerBlockerSql()}
       LEFT JOIN LATERAL (SELECT turn.ended_at,turn.status FROM agent_turns turn
@@ -62,15 +64,18 @@ export function cornerIdleSql(cornerId: string): string {
           AND COALESCE(turn.generation_id,'') NOT LIKE 'pending:%'
         ORDER BY turn.ended_at DESC NULLS LAST,turn.created_at DESC LIMIT 1) ended ON true
       CROSS JOIN LATERAL (SELECT GREATEST(c.created_at,
-        (SELECT max(message.created_at) FROM messages message JOIN identities author ON author.id=message.author_id
-          WHERE message.room_id=c.id AND message.presentation='message' AND message.system_event IS NULL
-            AND author.kind='human' AND author.id<>'${SYSTEM_IDENTITY_ID}'),
+        (SELECT max(latest.created_at) FROM identities author CROSS JOIN LATERAL (
+          SELECT message.created_at FROM messages message
+          WHERE message.room_id=c.id AND message.author_id=author.id
+            AND message.presentation='message' AND message.system_event IS NULL
+          ORDER BY message.created_at DESC LIMIT 1
+        ) latest WHERE author.kind='human' AND author.id<>'${SYSTEM_IDENTITY_ID}'),
         (SELECT max(released_at) FROM corner_merge_holds WHERE corner_id=c.id),
         (SELECT max(expires_at) FROM corner_owed WHERE corner_id=c.id AND expires_at<=now()),
         (SELECT max(ended_at) FROM (${cornerOwedAnswerTimesSql('c.id')}) answered_owed),
         (SELECT max(ended_at) FROM (${cornerReportAnswerTimesSql('c.id')}) answered_report)
-      ) at) boundary
-      WHERE c.id=${cornerId} AND c.parent_id IS NOT NULL) snapshot`;
+      ) at OFFSET 0) boundary
+      ) snapshot`;
 }
 
 export function cornerCanReportIdle(row: CornerIdleRow): boolean {
@@ -80,8 +85,10 @@ export function cornerCanReportIdle(row: CornerIdleRow): boolean {
 /** Delivery and claim require the same idle start and absence of every idle disqualifier. */
 export function currentIdleReportSql(command: string): string {
   return `EXISTS(SELECT 1 FROM (${cornerIdleSql(`(
-    SELECT origin.id FROM rooms origin WHERE origin.id::text=COALESCE(
-      ${command}.private_payload->>'originCornerId',${command}.private_payload->>'fromRoomId'))`)}) idle
+    SELECT origin.id FROM rooms origin WHERE origin.archived_at IS NULL AND origin.id=CASE
+      WHEN COALESCE(${command}.private_payload->>'originCornerId',${command}.private_payload->>'fromRoomId')
+        ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+      THEN COALESCE(${command}.private_payload->>'originCornerId',${command}.private_payload->>'fromRoomId')::uuid END)`)}) idle
     WHERE idle.idle_since=${command}.private_payload->>'idleSince'
       AND idle.idle_eligible)`;
 }

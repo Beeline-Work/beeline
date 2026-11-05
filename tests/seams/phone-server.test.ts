@@ -48288,24 +48288,24 @@ it('F17: a committed exact call-card source reaches the held runtime participant
 describe("corner-waiting-reason", () => {
 const db = new PGlite();
 beforeAll(async () => {
-  await db.exec(`CREATE TABLE rooms(id text,parent_id text,created_by text,reviewer_agent_id text);
-    CREATE TABLE corner_facts(corner_id text,worker_agent_id text,owner_agent_id text,reviewer_agent_id text);
-    CREATE TABLE agent_commands(id text,room_id text,agent_id text,private_payload jsonb,created_at timestamp,reason text,inbox_sequence bigint);
-    CREATE TABLE messages(id text,card_type text,room_id text,author_id text,text text,card jsonb,presentation text,system_event jsonb,deleted_at timestamp,request_id text,created_at timestamp);
-    CREATE TABLE memberships(room_id text,identity_id text,removed_at timestamp);
-    CREATE TABLE room_access(room_id text,identity_id text,removed_at timestamp);
+  await db.exec(`CREATE TABLE rooms(id uuid,parent_id uuid,created_by text,reviewer_agent_id text);
+    CREATE TABLE corner_facts(corner_id uuid,worker_agent_id text,owner_agent_id text,reviewer_agent_id text);
+    CREATE TABLE agent_commands(id text,room_id uuid,agent_id text,private_payload jsonb,created_at timestamp,reason text,inbox_sequence bigint);
+    CREATE TABLE messages(id text,card_type text,room_id uuid,author_id text,text text,card jsonb,presentation text,system_event jsonb,deleted_at timestamp,request_id text,created_at timestamp);
+    CREATE TABLE memberships(room_id uuid,identity_id text,removed_at timestamp);
+    CREATE TABLE room_access(room_id uuid,identity_id text,removed_at timestamp);
     CREATE TABLE identities(id text,kind text,name text,handle text);
-    CREATE TABLE corner_owed(corner_id text,message_id text,person_id text,created_at timestamp,blocking boolean,expires_at timestamp);
-    CREATE TABLE corner_merge_holds(corner_id text,id text,actor_id text,set_at timestamp,released_at timestamp);
-    INSERT INTO rooms VALUES('corner','room','worker');
-    INSERT INTO corner_facts VALUES('corner','worker','worker');
-    INSERT INTO memberships VALUES('room','person',NULL);`);
+    CREATE TABLE corner_owed(corner_id uuid,message_id text,person_id text,created_at timestamp,blocking boolean,expires_at timestamp);
+    CREATE TABLE corner_merge_holds(corner_id uuid,id text,actor_id text,set_at timestamp,released_at timestamp);
+    INSERT INTO rooms VALUES('33333333-3333-4333-8333-333333333333','22222222-2222-4222-8222-222222222222','worker');
+    INSERT INTO corner_facts VALUES('33333333-3333-4333-8333-333333333333','worker','worker');
+    INSERT INTO memberships VALUES('22222222-2222-4222-8222-222222222222','person',NULL);`);
 });
 afterAll(() => db.close());
 
 async function reportCard(reportId = 'report') {
   await db.query(`INSERT INTO messages(id,card_type,room_id,presentation,card)
-    VALUES($1,'agent-command','corner','card','{"kind":"report"}')`,
+    VALUES($1,'agent-command','33333333-3333-4333-8333-333333333333','card','{"kind":"report"}')`,
     [createHash('sha256').update(`agent-command-card:${reportId}`).digest('hex')]);
 }
 
@@ -48317,23 +48317,23 @@ it.each([
 ])('R1: projects %s as waiting to %s from the indexed blocker', async (kind, reason) => {
   await db.exec('DELETE FROM corner_owed; DELETE FROM messages;');
   await db.query('INSERT INTO messages(id,card_type) VALUES($1,$2)', ['item', kind]);
-  await db.exec("INSERT INTO corner_owed VALUES('corner','item','person',now(),true,NULL)");
+  await db.exec("INSERT INTO corner_owed VALUES('33333333-3333-4333-8333-333333333333','item','person',now(),true,NULL)");
   const result = await db.query<{ item_id: string; reason: 'approve' | 'connect' | 'question' }>(
     `SELECT blocker.* FROM rooms c ${cornerBlockerSql()}`,
   );
   const blocker = result.rows[0]!;
-  const row = { id: 'corner', name: 'Corner', parent_id: 'room', archived_at: null,
+  const row = { id: '33333333-3333-4333-8333-333333333333', name: 'Corner', parent_id: '22222222-2222-4222-8222-222222222222', archived_at: null,
     lifecycle: null, latest_turn_status: null, blocking: true,
     waiting_item_id: blocker.item_id, waiting_reason: blocker.reason };
   expect(cornerRowState(row)).toEqual({ state: 'waiting', reason, itemId: 'item' });
-  expect(chatCornerCounts([row]).get('room')?.openCorners[0]?.state).toBe('waiting');
+  expect(chatCornerCounts([row]).get('22222222-2222-4222-8222-222222222222')?.openCorners[0]?.state).toBe('waiting');
 });
 
 it('R1: chooses the oldest blocker deterministically', async () => {
   await db.exec(`DELETE FROM corner_owed; DELETE FROM messages;
     INSERT INTO messages(id,card_type) VALUES('older','permission'),('newer','connector-offer');
-    INSERT INTO corner_owed VALUES('corner','older','person','2026-01-01',true,NULL),
-      ('corner','newer','person','2026-01-02',true,NULL);`);
+    INSERT INTO corner_owed VALUES('33333333-3333-4333-8333-333333333333','older','person','2026-01-01',true,NULL),
+      ('33333333-3333-4333-8333-333333333333','newer','person','2026-01-02',true,NULL);`);
   const result = await db.query(`SELECT blocker.* FROM rooms c ${cornerBlockerSql()}`);
   expect(result.rows[0]).toMatchObject({ item_id: 'older', reason: 'approve' });
 });
@@ -48350,8 +48350,8 @@ it('R1: an agent-commander report retains selection when a human blocker is also
   await db.exec(`DELETE FROM corner_owed; DELETE FROM agent_commands; DELETE FROM messages; DELETE FROM identities;
     INSERT INTO identities(id,kind,name) VALUES('agent','agent','Ruby'),('person','human','Lunchbox');
     INSERT INTO messages(id,card_type) VALUES('ask','choice');
-    INSERT INTO agent_commands VALUES('report','other','agent','{"kind":"report","fromRoomId":"corner","authorId":"worker","text":"blocked: choose"}','2026-01-01');
-    INSERT INTO corner_owed VALUES('corner','ask','person','2026-01-02',true,NULL);`);
+    INSERT INTO agent_commands VALUES('report','44444444-4444-4444-8444-444444444444','agent','{"kind":"report","fromRoomId":"33333333-3333-4333-8333-333333333333","authorId":"worker","text":"blocked: choose"}','2026-01-01');
+    INSERT INTO corner_owed VALUES('33333333-3333-4333-8333-333333333333','ask','person','2026-01-02',true,NULL);`);
   await reportCard();
   const oldest = (await db.query<{ item_id: string }>(
     `SELECT blocker.* FROM rooms c ${cornerBlockerSql()}`,
@@ -48377,10 +48377,10 @@ it('R1: an agent-commander report retains selection when a human blocker is also
 it('R1: holds and messageless reports resolve selection IDs to real source message targets', async () => {
   await db.exec(`DELETE FROM corner_owed; DELETE FROM messages;
     INSERT INTO identities(id,kind,name) VALUES('person','human','Lunchbox');
-    INSERT INTO room_access VALUES('corner','person',NULL);
-    INSERT INTO corner_merge_holds VALUES('corner','hold','person','2026-01-01',NULL);
+    INSERT INTO room_access VALUES('33333333-3333-4333-8333-333333333333','person',NULL);
+    INSERT INTO corner_merge_holds VALUES('33333333-3333-4333-8333-333333333333','hold','person','2026-01-01',NULL);
     DELETE FROM agent_commands;
-    INSERT INTO agent_commands VALUES('report','other','person','{"kind":"report","fromRoomId":"corner","authorId":"worker","text":"blocked: choose"}','2026-01-02');`);
+    INSERT INTO agent_commands VALUES('report','44444444-4444-4444-8444-444444444444','person','{"kind":"report","fromRoomId":"33333333-3333-4333-8333-333333333333","authorId":"worker","text":"blocked: choose"}','2026-01-02');`);
   await reportCard();
   const query = async (newest = false) => (await db.query<{
     item_id: string; kind: 'message' | 'merge-hold' | 'report'; person_name: string;
@@ -48399,14 +48399,14 @@ it('R1: holds and messageless reports resolve selection IDs to real source messa
   expect(hold.item_id).toBe('hold');
   expect(project(hold)).toEqual({ state: 'waiting', reason: 'approve',
     itemId: createHash('sha256').update('corner-hold:hold').digest('hex'), blocker: { kind: 'merge-hold', personId: 'person', personName: 'Lunchbox' } });
-  await db.exec("UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{fromRoomId}','\"corner\"')");
+  await db.exec("UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{fromRoomId}','\"33333333-3333-4333-8333-333333333333\"')");
   const newest = await query(true);
   expect(newest.item_id).toBe('report');
   expect(project(newest)).toEqual({ state: 'waiting', reason: 'question',
     itemId: createHash('sha256').update('agent-command-card:report').digest('hex'), blocker: { kind: 'report', personId: 'person', personName: 'Lunchbox' } });
   await db.exec(`DELETE FROM agent_commands;
     INSERT INTO messages(id,room_id,author_id,text,card,presentation,created_at)
-    VALUES('real-message','corner','worker','blocked: choose','{"reportToId":"person"}','message','2026-01-02')`);
+    VALUES('real-message','33333333-3333-4333-8333-333333333333','worker','blocked: choose','{"reportToId":"person"}','message','2026-01-02')`);
   expect(project(await query(true))).toMatchObject({ itemId: 'real-message', blocker: { kind: 'message' } });
 });
 
@@ -48414,7 +48414,7 @@ it('Reproduction R1: a lone merge hold shows review while checks run and waits o
   await db.exec(`DELETE FROM corner_owed; DELETE FROM agent_commands; DELETE FROM corner_merge_holds;
     DELETE FROM messages; DELETE FROM identities;
     INSERT INTO identities(id,kind,name) VALUES('agent','agent','Ruby'),('person','human','Lunchbox');
-    INSERT INTO corner_merge_holds VALUES('corner','hold','person','2026-01-01',NULL);`);
+    INSERT INTO corner_merge_holds VALUES('33333333-3333-4333-8333-333333333333','hold','person','2026-01-01',NULL);`);
   type Blocker = {
     item_id: string; kind: 'message' | 'merge-hold' | 'report'; reason: 'approve' | 'question';
     person_id: string; person_name: string;
@@ -48442,7 +48442,7 @@ it('Reproduction R1: a lone merge hold shows review while checks run and waits o
     blocker: { kind: 'merge-hold', personId: 'person', personName: 'Lunchbox' } });
 
   // A later agent-commander report still defers to pending checks beside a hold.
-  await db.exec(`INSERT INTO agent_commands VALUES('report','other','agent','{"kind":"report","fromRoomId":"corner","authorId":"worker","text":"blocked: choose"}','2026-01-02')`);
+  await db.exec(`INSERT INTO agent_commands VALUES('report','44444444-4444-4444-8444-444444444444','agent','{"kind":"report","fromRoomId":"33333333-3333-4333-8333-333333333333","authorId":"worker","text":"blocked: choose"}','2026-01-02')`);
   await reportCard();
   const report = await query();
   expect(report).toMatchObject({ item_id: 'report' });
@@ -48450,7 +48450,7 @@ it('Reproduction R1: a lone merge hold shows review while checks run and waits o
 
   // A later human question is not shadowed by the older hold.
   await db.exec(`DELETE FROM agent_commands; INSERT INTO messages(id,card_type) VALUES('ask','choice');
-    INSERT INTO corner_owed VALUES('corner','ask','person','2026-01-03',true,NULL);`);
+    INSERT INTO corner_owed VALUES('33333333-3333-4333-8333-333333333333','ask','person','2026-01-03',true,NULL);`);
   const question = await query();
   expect(question).toMatchObject({ item_id: 'ask', kind: 'message' });
   expect(project(question, pending)).toEqual({ state: 'review' });
@@ -48462,12 +48462,12 @@ it('REPORT-WAITING-DERIVED: derives only the worker wait and its commander/tagge
     DELETE FROM identities; DELETE FROM memberships; DELETE FROM room_access; DELETE FROM corner_merge_holds;
     INSERT INTO identities(id,kind,name,handle) VALUES('commander','agent','Commander','commander'),
       ('tagged','human','Tagged','tagged'),('other','human','Other','other'),('worker','agent','Worker','worker');
-    INSERT INTO room_access VALUES('corner','tagged',NULL),('corner','other',NULL);
-    INSERT INTO memberships VALUES('room','tagged',NULL),('room','other',NULL);
-    INSERT INTO agent_commands VALUES('worker-wait','other','commander',
-      '{"kind":"report","fromRoomId":"corner","authorId":"worker","text":"blocked: @tagged choose"}','2026-01-01'),
-      ('other-wait','other','other','{"kind":"report","fromRoomId":"corner","authorId":"other","text":"blocked: unrelated"}','2026-01-02'),
-      ('done','other','commander','{"kind":"report","fromRoomId":"corner","authorId":"worker","text":"done: update"}','2026-01-03');`);
+    INSERT INTO room_access VALUES('33333333-3333-4333-8333-333333333333','tagged',NULL),('33333333-3333-4333-8333-333333333333','other',NULL);
+    INSERT INTO memberships VALUES('22222222-2222-4222-8222-222222222222','tagged',NULL),('22222222-2222-4222-8222-222222222222','other',NULL);
+    INSERT INTO agent_commands VALUES('worker-wait','44444444-4444-4444-8444-444444444444','commander',
+      '{"kind":"report","fromRoomId":"33333333-3333-4333-8333-333333333333","authorId":"worker","text":"blocked: @tagged choose"}','2026-01-01'),
+      ('other-wait','44444444-4444-4444-8444-444444444444','other','{"kind":"report","fromRoomId":"33333333-3333-4333-8333-333333333333","authorId":"other","text":"blocked: unrelated"}','2026-01-02'),
+      ('done','44444444-4444-4444-8444-444444444444','commander','{"kind":"report","fromRoomId":"33333333-3333-4333-8333-333333333333","authorId":"worker","text":"done: update"}','2026-01-03');`);
   await reportCard('worker-wait');
   await reportCard('other-wait');
   const waiting = () => db.query<{ report_id: string; person_id: string }>(
@@ -48475,8 +48475,8 @@ it('REPORT-WAITING-DERIVED: derives only the worker wait and its commander/tagge
   expect((await waiting()).rows.map(row => [row.report_id,row.person_id]))
     .toEqual([['worker-wait','commander'],['worker-wait','tagged']]);
   // A newest answered wait never uncovers an older unanswered report.
-  await db.exec(`INSERT INTO agent_commands VALUES('answered','other','commander',
-    '{"kind":"report","fromRoomId":"corner","authorId":"worker","text":"needs-decision: choose","waitingAnswered":true}','2026-01-04');`);
+  await db.exec(`INSERT INTO agent_commands VALUES('answered','44444444-4444-4444-8444-444444444444','commander',
+    '{"kind":"report","fromRoomId":"33333333-3333-4333-8333-333333333333","authorId":"worker","text":"needs-decision: choose","waitingAnswered":true}','2026-01-04');`);
   await reportCard('answered');
   expect((await waiting()).rows).toHaveLength(0);
   // All readers share the same implementer fallback, including the opener.
@@ -48488,8 +48488,8 @@ it('REPORT-WAITING-DERIVED: derives only the worker wait and its commander/tagge
 
 it('REPORT-WAITING-DERIVED: automatic blocked final prose does not create an explicit wait', async () => {
   await db.exec(`DELETE FROM agent_commands; DELETE FROM messages;
-    INSERT INTO agent_commands VALUES('automatic','other','commander',
-      '{"kind":"report","fromRoomId":"corner","authorId":"worker","text":"blocked: progress note"}',now());`);
+    INSERT INTO agent_commands VALUES('automatic','44444444-4444-4444-8444-444444444444','commander',
+      '{"kind":"report","fromRoomId":"33333333-3333-4333-8333-333333333333","authorId":"worker","text":"blocked: progress note"}',now());`);
   const waiting = () => db.query(`SELECT waiting.* FROM rooms c CROSS JOIN LATERAL (${cornerWaitingReportSql('c')}) waiting`);
   expect((await waiting()).rows).toHaveLength(0);
   await reportCard('automatic');

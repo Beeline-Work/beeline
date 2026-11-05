@@ -1971,7 +1971,8 @@ export class GitHubOperations {
    * mainline check results are not Room conversation. Corner PRs use the
    * same repository events; CI stays on processCornerEvent.
    */
-  private async processRepositoryEvent(event: string, body: GitHubRecord, installationId: number, database: SqlDatabase = this.database) {
+  private async processRepositoryEvent(event: string, body: GitHubRecord, installationId: number) {
+    const database = this.database;
     if (event !== 'issues' && event !== 'pull_request') return;
     const repository = repositoryName(body);
     if (!repository) return;
@@ -2684,6 +2685,17 @@ export class GitHubOperations {
     database: SqlDatabase = this.database,
     expectedPrNumber?: number,
   ) {
+    // Match webhook order: commit the repository fact before archival takes
+    // any locks. Its message ID precedes the AFTER trigger's Workspace journal;
+    // waiting for that ID while owning the journal forms a deadlock cycle.
+    // A note failure leaves the corner open, so it cannot skip branch cleanup
+    // for an already committed archival. Already archived corners can repair it.
+    await this.processRepositoryEvent('pull_request', {
+      action: 'closed', repository: { full_name: pullRequest.repository },
+      ...(pullRequest.mergedBy ? { sender: { login: pullRequest.mergedBy } } : {}),
+      pull_request: { merged: true, title: pullRequest.title, html_url: pullRequest.url,
+        head: { ref: pullRequest.branch }, base: { ref: pullRequest.targetBranch } },
+    }, Number(target.installation_id));
     const mergeKey = `github:pull-request:merged:${pullRequest.url}`;
     let updated = false;
     let archived = false;
@@ -2778,14 +2790,6 @@ export class GitHubOperations {
         kind: 'merged',
         contents: { mergeVerdict: 'merged', pullRequestUrl: pullRequest.url },
       });
-      // Direct landings and missed-webhook recovery publish the same PR event.
-      // The repository event id deduplicates this against the normal webhook.
-      await this.processRepositoryEvent('pull_request', {
-        action: 'closed', repository: { full_name: pullRequest.repository },
-        ...(pullRequest.mergedBy ? { sender: { login: pullRequest.mergedBy } } : {}),
-        pull_request: { merged: true, title: pullRequest.title, html_url: pullRequest.url,
-          head: { ref: pullRequest.branch }, base: { ref: pullRequest.targetBranch } },
-      }, Number(target.installation_id), database);
     });
     if (!updated) return;
     this.onRoomChanged?.(target.corner_id);

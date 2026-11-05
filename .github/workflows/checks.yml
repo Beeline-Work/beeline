@@ -408,6 +408,7 @@ jobs:
           for suite in tests/seams/*.test.ts; do
             npx vitest run "$suite" --maxWorkers=2 --minWorkers=1
           done
+          npm test -w @beeline/server -- src/production-deadlocks.postgres.test.ts --maxWorkers=2 --minWorkers=1
           node --import tsx scripts/prove-router-group-c-room-payload.mjs
           BEELINE_GROUP_C_COST_PROOF=1 node --import tsx scripts/prove-router-group-c-room-payload.mjs
         if: steps.changes.outputs.run == 'true'

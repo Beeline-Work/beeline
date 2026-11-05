@@ -1,3 +1,7 @@
+import { createServer as slowQueryHttp } from 'node:http';
+import { spawn as slowQuerySpawn } from 'node:child_process';
+import { resolve as slowQueryResolve } from 'node:path';
+import type { AddressInfo as SlowQueryAddress } from 'node:net';
 vi.mock('@sentry/node', async original => ({ ...await original<typeof import('@sentry/node')>(), captureException: vi.fn(() => 'fixture-event') }));
 vi.mock('node:crypto', async original => { const actual = await original<typeof import('node:crypto')>(); return { ...actual, randomBytes: vi.fn(actual.randomBytes) }; });
 import { parkOwnedModelGeneration, parkOwnedModelTerminal, guardOwnedModelSilence } from "../../apps/server/src/owned-model-parking.js";
@@ -13292,6 +13296,25 @@ it('IDLE-DERIVED: CI completing during the post-turn grace keeps the remaining g
   expect(new Date(pending[0]!.wake_after).getTime()).toBeGreaterThan(Date.now()+20_000);
   expect(new Date(pending[0]!.wake_after).getTime()).toBeLessThanOrEqual(Date.now()+30_000);
 });
+
+it('IDLE-SCOPE: another corner’s answered report never changes this corner’s idle episode', async () => {
+  const other = '44444444-4444-4444-8444-444444444444';
+  const idleSince = async () => (await db.query<{ idle_since: string }>(cornerIdleSql('$1'), [C])).rows[0]!.idle_since;
+  const before = await idleSince();
+  await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,created_by)
+    VALUES($1,$2,$3,'Unrelated corner',$4)`, [other, WS, ROOM, COMMANDER]);
+  await insertCornerFacts(db, { cornerId: other, ownerAgentId: WORKER, workerAgentId: WORKER });
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,card,created_at)
+    VALUES($1,$2,$3,'blocked: Choose a scope.',
+      jsonb_build_object('sourceRoomId',$4::text,'reportToId',$5::text,'waitingAnswered',true),now()-interval '2 minutes')`,
+    ['e'.repeat(64), ROOM, WORKER, other, COMMANDER]);
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
+    VALUES($1,$2,$3,'Proceed with that scope.',now()-interval '1 minute')`, ['f'.repeat(64), ROOM, COMMANDER]);
+  expect(await idleSince()).toBe(before);
+  await db.query('UPDATE rooms SET archived_at=now() WHERE id=$1', [other]);
+  expect((await db.query(cornerIdleSql('$1'), [other])).rows).toEqual([]);
+  expect(await idleSince()).toBe(before);
+});
 });
 
 
@@ -19297,12 +19320,13 @@ describe('corner_owed', () => {
     expect(callsiteScans).toHaveLength(2);
     // The run state is the newest handoff card (indexed by corner and seq),
     // and a derived worker wait reads its report card by primary key and the
-    // worker's newest human report by its index. None recovers owed facts.
+    // worker's newest human report through separate origin, local-legacy and
+    // command-forwarded legacy indexes. None recovers owed facts.
     expect(messageScans.filter((scan) => scan.alias.startsWith('run_card'))).toHaveLength(2);
     expect(messageScans.filter((scan) => scan.alias === 'visible')).toHaveLength(1);
     expect(messageScans.filter((scan) => scan.alias !== 'item' && scan.alias !== 'visible' &&
       !isDispatchSource(scan.alias) && !scan.alias.startsWith('callsite') &&
-      !scan.alias.startsWith('run_card'))).toHaveLength(4);
+      !scan.alias.startsWith('run_card'))).toHaveLength(6);
   });
 });
 });
@@ -30632,10 +30656,13 @@ it('Reproduction MERGE-DEADLOCK-1: rolls back a deadlocked archival and commits 
   const retryDatabase: SqlDatabase = {
     query: db.query.bind(db),
     transaction: work => db.transaction(async tx => {
+      const previouslyArchived = await tx.query(`SELECT 1 FROM rooms WHERE id=$1 AND archived_at IS NOT NULL`, [C]);
       const result = await work(tx);
       // Fail after all writes: rollback must leave the next event fresh authority.
+      // Repository notes commit independently; observing an already archived
+      // corner in their transaction is not another archival attempt.
       const archived = await tx.query(`SELECT 1 FROM rooms WHERE id=$1 AND archived_at IS NOT NULL`, [C]);
-      if (archived.rowCount && ++attempts === 1)
+      if (!previouslyArchived.rowCount && archived.rowCount && ++attempts === 1)
         throw Object.assign(new Error('deadlock detected'), { code: '40P01' });
       return result;
     }),
@@ -30672,6 +30699,42 @@ it.each([['40P01', 1], ['XX000', 1]] as const)('returns archival %s without repl
   expect((await db.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND action='stop'`, [C])).rowCount).toBe(0);
   expect((await db.query(`SELECT 1 FROM messages WHERE card->>'type'='corner-complete'`)).rowCount).toBe(0);
   expect(app.deleteBranch).not.toHaveBeenCalled();
+});
+
+it('a repository-note failure cannot skip cleanup for a committed archival', async () => {
+  const failure = new Error('Synthetic repository note outage');
+  let noteFailures = 0;
+  const wrap = (tx: SqlDatabase): SqlDatabase => ({
+    query: async <Row extends QueryResultRow>(sql: string, values?: unknown[]) => {
+      if (sql.includes('INSERT INTO messages(') && values?.[7] === 'github-event') {
+        noteFailures++;
+        throw failure;
+      }
+      return tx.query<Row>(sql, values);
+    },
+    transaction: work => work(wrap(tx)),
+  });
+  const failing: SqlDatabase = {
+    query: db.query.bind(db),
+    transaction: work => db.transaction(tx => work(wrap(tx))),
+  };
+  const merge = (github: GitHubOperations) => github['mergeCorner']({
+    corner_id: C, parent_id: R, author_id: A, corner_name: 'Corner', summary: '',
+    repository_id: '101', installation_id: '77',
+  }, {
+    repository: 'owner/widgets', branch: event.pull_request.head.ref,
+    title: event.pull_request.title, url: event.pull_request.html_url,
+    number: 1, headSha: event.pull_request.head.sha, targetBranch: 'main', commits: 1, files: 1,
+  });
+  await expect(merge(operations(failing))).rejects.toBe(failure);
+  expect(noteFailures).toBe(1);
+  expect((await db.query(`SELECT 1 FROM rooms WHERE id=$1 AND archived_at IS NULL`, [C])).rowCount).toBe(1);
+  expect((await db.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND action='stop'`, [C])).rowCount).toBe(0);
+  expect(app.deleteBranch).not.toHaveBeenCalled();
+  await merge(operations());
+  await assertArchived();
+  expect(app.deleteBranch).toHaveBeenCalledOnce();
+  expect((await db.query(`SELECT 1 FROM messages WHERE card_type='github-event'`, [])).rowCount).toBe(1);
 });
 
 it.skipIf(!postgresUrl).each(['merge webhook', 'agent close', 'phone close'] as const)(
@@ -35987,6 +36050,7 @@ it('Reproduction SENTRY-1: a real pg pool can be closed twice without an unhandl
 
 
 describe("sentry", () => {
+
 it.each([['server', false], ['body', false], ['server', true], ['body', true]] as const)(
   'sends a thrown %s error (fatal=%s) through the real SDK and privacy filter', async (surface, fatal) => {
   const envelopes: string[] = [];
@@ -36657,6 +36721,48 @@ it('WORKFLOW-ROLE-REFUSAL / BEELINE-SENTRY-REFUSALS / APP-REFUSAL-5 / VIDEO-PREV
     ].sort());
   } finally { await new Promise<void>(r => collector.close(() => r())); }
 }, 60_000);
+
+it('SLOW-QUERY: every production query above one second reaches the real SDK with fingerprint and SQL structure', async () => {
+  const envelopes: string[] = [];
+  const collector = slowQueryHttp(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    envelopes.push(Buffer.concat(chunks).toString());
+    response.writeHead(200); response.end('{}');
+  });
+  await new Promise<void>(done => collector.listen(0, '127.0.0.1', done));
+  try {
+    const port = (collector.address() as SlowQueryAddress).port;
+    const source = `import { QueryProfiler } from ${JSON.stringify(slowQueryResolve('apps/server/src/query-profile.ts'))};
+      import { flushServerErrors } from ${JSON.stringify(slowQueryResolve('apps/server/src/sentry.ts'))};
+      const profiler = new QueryProfiler();
+      profiler.record("SELECT $1 FROM messages WHERE text='private room text'", 1000);
+      profiler.record("SELECT $1 FROM messages WHERE text='private room text'", 1001);
+      profiler.record("SELECT $1 FROM messages WHERE text='private room text'", 1002);
+      for(let i=0;i<128;i++)profiler.record('SELECT '+i,1);
+      profiler.record('UPDATE rooms SET name=$1 WHERE id=$2',1100);
+      await flushServerErrors();`;
+    const result = await new Promise<{code: number | null; error: string}>((done, reject) => {
+      const child = slowQuerySpawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source], {
+        cwd: slowQueryResolve('apps/server'),
+        env: { ...process.env, SENTRY_DSN: `http://public@127.0.0.1:${port}/1`, SENTRY_ENVIRONMENT: 'production' },
+        stdio: ['ignore', 'ignore', 'pipe'],
+      });
+      let error = ''; child.stderr.on('data', chunk => { error += String(chunk); });
+      child.on('error', reject); child.on('exit', code => done({code, error}));
+    });
+    expect(result, result.error).toMatchObject({code: 0});
+    const events = envelopes.flatMap(envelope => envelope.split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line)))
+      .filter(event => event.message?.startsWith('Slow database query'));
+    expect(events).toHaveLength(3);
+    expect(events[0].message).toContain("SELECT $1 FROM messages WHERE text='?'");
+    expect(events[2].message).toContain('UPDATE rooms SET name=$1 WHERE id=$2');
+    expect(events[0].fingerprint).toEqual(['slow-query', expect.stringMatching(/^[a-f0-9]{16}$/)]);
+    expect(events[1].fingerprint).toEqual(events[0].fingerprint);
+    expect(JSON.stringify(events)).not.toContain('private room text');
+    expect(events[0].tags).toMatchObject({surface: 'server', error_scope: 'slow_query'});
+  } finally { await new Promise<void>(done => collector.close(() => done())); }
+});
 });
 
 

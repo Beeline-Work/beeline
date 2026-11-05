@@ -1,3 +1,6 @@
+import { QueryProfiler as SlowQueryProfiler } from '../../apps/server/src/query-profile.js';
+import * as slowQueryReporting from '../../apps/server/src/sentry.js';
+import { vi as slowProfileVi } from 'vitest';
 import { OwnedModelIdentityConflict, OwnedModelUnknownPayload, canonicalOwnedModelPayload, type OwnedModelDispatchPermit, type OwnedModelReservation } from "../../apps/server/src/owned-model-attempt.js";
 import { OwnedModelUnknownGeneration } from "../../apps/server/src/owned-model-credential.js";
 import { ownedModelFixture } from "../../apps/server/src/test-fixtures/owned-model.js";
@@ -8092,4 +8095,24 @@ describe('opaque immutable owned-model credential primitive', () => {
     ]);
   });
 });
+});
+
+describe('production slow-query alerts', () => {
+it('alerts above one second even after the bounded profile map overflows', () => {
+    const captureSlowQuery = slowProfileVi.spyOn(slowQueryReporting, 'captureSlowQuery').mockImplementation(() => {});
+    const warn = slowProfileVi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const profiler = new SlowQueryProfiler();
+      for (let index = 0; index < 128; index++) profiler.record(`SELECT ${index}`, 1);
+      profiler.record('SELECT $1 FROM messages', 1000);
+      expect(captureSlowQuery).not.toHaveBeenCalled();
+      profiler.record('SELECT $1 FROM messages', 1001);
+      profiler.record('SELECT $1 FROM messages', 1200, { code: '40P01' });
+      expect(captureSlowQuery).toHaveBeenNthCalledWith(1, expect.stringMatching(/^[a-f0-9]{16}$/), 1001,
+        'SELECT $1 FROM messages', undefined);
+      expect(captureSlowQuery).toHaveBeenNthCalledWith(2, expect.any(String), 1200,
+        'SELECT $1 FROM messages', '40P01');
+      expect(profiler.snapshot().overflow).toBe(3);
+    } finally { warn.mockRestore(); captureSlowQuery.mockRestore(); }
+  });
 });

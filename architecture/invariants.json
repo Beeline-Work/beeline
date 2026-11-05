@@ -20,10 +20,12 @@
           "sendRequest"
         ],
         "apps/server/src/phone-operations.ts": [
-          "execute", "effect"
+          "execute",
+          "effect"
         ],
         "apps/server/src/server.ts": [
-          "httpPhoneOperation", "route"
+          "httpPhoneOperation",
+          "route"
         ],
         "apps/server/src/rooms-mcp.ts": [
           "call"
@@ -415,6 +417,75 @@
       "owners": [],
       "total": 4,
       "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
+    },
+    {
+      "id": "phone.connection-error-trigger",
+      "module": "Phone connection failures",
+      "invariant": "Only an explicit socket request outcome may publish the app connection error.",
+      "pattern": "\\bsetConnectionFailure\\s*\\(|\\bconnectionFailed\\s*=(?!=)(?!=)|\\bsetConnectionState\\s*\\(\\s*[\\x27\\x22]disconnected[\\x27\\x22]",
+      "scope": [
+        "apps/mobile/sources"
+      ],
+      "owners": [
+        "apps/mobile/sources/sync/transport/live-connection.ts"
+      ],
+      "ownerFunctions": {
+        "apps/mobile/sources/sync/transport/live-connection.ts": [
+          "connectionFailed",
+          "setConnectionFailure",
+          "request"
+        ]
+      },
+      "ownerSites": 4,
+      "total": 0,
+      "strict": true,
+      "fix": "Publish the outcome in LiveConnection.request. Socket lifecycle, HTTP, heartbeat and screen timers cannot set a connection error."
+    },
+    {
+      "id": "phone.connection-error-surface",
+      "module": "Phone connection failures",
+      "invariant": "Connection failure copy and the connection failure hook belong only to the app-wide banner.",
+      "pattern": "Beeline (?:isn[\\x27\u2019]t|is not) connected|Could(?:n[\\x27\u2019]t| not) reach Beeline|[Cc]heck your connection|Showing saved messages|connectionError(?:Title|Description)|\\buseConnectionFailure\\s*\\(|No connection to the server|Not connected yet|No connection(?!s)|You[\u2019']re offline",
+      "scope": [
+        "apps/mobile/sources"
+      ],
+      "owners": [
+        "apps/mobile/sources/components/buzz/ConnectionStatus.tsx",
+        "apps/mobile/sources/sync/transport/live-connection.ts"
+      ],
+      "ownerFunctions": {
+        "apps/mobile/sources/components/buzz/ConnectionStatus.tsx": [
+          "ConnectionStatus"
+        ],
+        "apps/mobile/sources/sync/transport/live-connection.ts": [
+          "useConnectionFailure"
+        ]
+      },
+      "ownerSites": 3,
+      "total": 0,
+      "strict": true,
+      "fix": "Use the one ConnectionStatus in the app layout. Keep screen errors specific to server refusals or failed actions; do not duplicate connection errors."
+    },
+    {
+      "id": "phone.connection-error-mount",
+      "module": "Phone connection failures",
+      "invariant": "The app layout mounts exactly one connection banner.",
+      "pattern": "<ConnectionStatus\\b|\\b(?:React\\.)?createElement\\s*\\(\\s*ConnectionStatus\\b",
+      "scope": [
+        "apps/mobile/sources"
+      ],
+      "owners": [
+        "apps/mobile/sources/app/(app)/_layout.tsx"
+      ],
+      "ownerFunctions": {
+        "apps/mobile/sources/app/(app)/_layout.tsx": [
+          "RootLayout"
+        ]
+      },
+      "ownerSites": 1,
+      "total": 0,
+      "strict": true,
+      "fix": "Remove the additional connection banner. The app layout owns the only mount."
     }
   ],
   "storage": {

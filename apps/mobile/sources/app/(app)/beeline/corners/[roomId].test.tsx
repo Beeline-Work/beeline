@@ -598,14 +598,11 @@ describe('Corner list live path', () => {
     list.createFailure = failure;
     await act(async () => renderer.root.findByType('RoomCornersHeader').props.onAdd());
     expect(router.push).not.toHaveBeenCalled();
-    expect(textOf(renderer.root.findByProps({ testID: 'corner-open-row-failed' }))).toBe(
-      `Corner not opened${why}`,
-    );
-    const toast = renderer.root.findByProps({ testID: 'corner-open-failed' });
-    expect(textOf(toast)).toBe("Couldn't reach Beeline");
+    expect(renderer.root.findAllByProps({ testID: 'corner-open-row-failed' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'corner-open-failed' })).toHaveLength(0);
 
     list.createFailure = null;
-    await act(async () => renderer.root.findByProps({ testID: 'corner-open-retry' }).props.onPress());
+    await act(async () => { const {cornerOpenStatus}=await import('@/buzz/corner-open-status');const status=cornerOpenStatus();if(status.status==='failed')status.retry(); });
     expect(list.createCalls).toHaveLength(2);
     expect(list.createCalls[1]![1]).toBe(list.createCalls[0]![1]);
     expect(list.createCalls[1]![4]).toBe(list.createCalls[0]![4]);

@@ -1,5 +1,6 @@
 import { installWebChunkRecovery, recoverWebChunk } from './web-chunk-recovery';
 import * as Sentry from '@sentry/react-native';
+import { isDevice } from 'expo-device';
 import { createErrorEventFilter } from '@beeline/api-contract/error-reporting';
 import { funnelScreenFromSegments } from '@beeline/api-contract/signin-funnel';
 
@@ -7,7 +8,9 @@ const filterErrorEvent = createErrorEventFilter();
 
 installWebChunkRecovery();
 
-if (process.env.EXPO_PUBLIC_SENTRY_DSN && !__DEV__) {
+// Release-mode test APKs can receive production OTAs and their embedded DSN.
+// Keep emulator/simulator crashes out even when that bundle is a production build.
+if (process.env.EXPO_PUBLIC_SENTRY_DSN && !__DEV__ && isDevice) {
   try { Sentry.init({
     dsn: process.env.EXPO_PUBLIC_SENTRY_DSN,
     environment: 'production',

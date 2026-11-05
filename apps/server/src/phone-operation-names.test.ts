@@ -1,172 +1,41 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
-import type { PhoneOperationMap } from '@beeline/api-contract/phone';
 import { PHONE_OPERATION_NAMES } from './phone-service.js';
 
-/**
- * A literal mirror of every `PhoneOperationMap` key. `satisfies` fails
- * `npm run typecheck` if a key is added to the map and not listed here,
- * and the loop below fails this test if a listed key is missing from
- * `PHONE_OPERATION_NAMES` — the guard that let #beginAppSignIn/
- * completeAppSignIn reach `server.ts`'s dispatcher without ever being
- * routable (404 unknown_phone_operation).
- */
-const ALL_PHONE_OPERATION_NAMES = {
-  readMediaMetadata: true,
-  readMediaLink: true,
-  readMediaPlayback: true,
-  readWorkspaces: true,
-  readWorkspace: true,
-  readWorkspaceMembers: true,
-  readChats: true,
-  readAgent: true,
-  resolveMessageLink: true,
-  searchMessages: true,
-  readRoom: true,
-  readHistory: true,
-  readHistoryAfter: true,
-  readHistoryAround: true,
-  readHistoryOutline: true,
-  readCorners: true,
-  markRead: true,
-  markUnread: true,
-  voiceCurrent: true,
-  voiceJoin: true,
-  voiceLeave: true,
-  voiceIdle: true,
-  voiceState: true,
-  voiceResume: true,
-  readAgentVoices: true,
-  saveAgentVoice: true,
-  previewAgentVoice: true,
-  reportPageLoad: true,
-  reportClientError: true,
-  disconnectAiClient: true,
-  acceptConnectorOffer: true,
-  addRoomMember: true,
-  addWorkspaceMember: true,
-  adoptGitHubHandle: true,
-  answerChoice: true,
-  answerStarPrompt: true,
-  approveCornerMerge: true,
-  beginAppSignIn: true,
-  beginGitHubIdentityBind: true,
-  beginGitHubInstallation: true,
-  beginGoogleSignIn: true,
-  cancelAgentTurn: true,
-  cancelGoogleSignIn: true,
-  claimAgentPairing: true,
-  claimManagedHandle: true,
-  clearNeedsYou: true,
-  clearNeedsYouSection: true,
-  clearMessageBookmarks: true,
-  closeChat: true,
-  completeAppSignIn: true,
-  completeGitHubIdentityBind: true,
-  completeWelcomeCards: true,
-  connectWorkbenchApp: true,
-  countNeedsYou: true,
-  createAgentPairingCode: true,
-  createGitHubRepository: true,
-  createHumanCorner: true,
-  createInvite: true,
-  createRoom: true,
-  createRoomPoll: true,
-  createWallet: true,
-  createWorkspace: true,
-  decideAgentGrant: true,
-  decideApprovalCard: true,
-  decideWritePermission: true,
-  deleteAccount: true,
-  deleteRoom: true,
-  deleteRoomMessage: true,
-  deleteRoomSchedule: true,
-  deleteWorkspace: true,
-  disconnectGoogleSignIn: true,
-  disconnectWorkbenchApp: true,
-  dispatchRoomWorkflow: true,
-  getAuthCapabilities: true,
-  getGitHubRepositoryAccess: true,
-  getIdentityRecovery: true,
-  getManagedIdentity: true,
-  grantWalletDelegation: true,
-  revokeWalletDelegation: true,
-  leaveRoom: true,
-  leaveWorkspace: true,
-  listGitHubRepositories: true,
-  listMessageBookmarks: true,
-  listRoomSchedules: true,
-  listRoomWorkflows: true,
-  listRoomWorkflowRuns: true,
-  openComputerSession: true,
-  pairConnector: true,
-  reactToMessage: true,
-  readConnectionDetail: true,
-  readGoogleSignIn: true,
-  readNeedsYou: true,
-  readTray: true,
-  readStarPrompt: true,
-  readWallet: true,
-  readWalletHistory: true,
-  readWebPushKey: true,
-  readWelcomeCards: true,
-  readWorkbench: true,
-  readIdentitySettings: true,
-  readAgentProfile: true,
-  readScheduledWork: true,
-  revealWebhookToken: true,
-  rotateWebhookToken: true,
-  readConnectApp: true,
-  searchWorkbenchApps: true,
-  readConnectorInstall: true,
-  readWorkflowRun: true,
-  recoverGitHubIdentity: true,
-  redeemInvite: true,
-  refreshAgentUsage: true,
-  refreshAgentModelCatalog: true,
-  registerPushDevice: true,
-  removeAgent: true,
-  removeRoomMember: true,
-  removeRoomRepository: true,
-  removeWorkspaceMember: true,
-  reopenChat: true,
-  reportMessageIssue: true,
-  reportRunningUpdate: true,
-  requestCornerClose: true,
-  setCornerLocked: true,
-  resolveDirectMessage: true,
-  resolveInvite: true,
-  revokeAgentGrant: true,
-  revokeConnectionGrants: true,
-  sendFromWallet: true,
-  sendPushTest: true,
-  sendRoomMessage: true,
-  sendRoomReply: true,
-  setMessageBookmark: true,
-  setRoomRepository: true,
-  setRoomTargetBranch: true,
-  skipChoice: true,
-  unpairConnector: true,
-  unregisterPushDevice: true,
-  updateAgentWake: true,
-  updateAgentAccessPolicy: true,
-  updateAgentModelSelection: true,
-  updateAgentSoul: true,
-  updateAgentYolo: true,
-  updateIdentityFace: true,
-  updateRoomPushState: true,
-  updateIdentitySpeakingSpeed: true,
-  updateIdentityPushLevel: true,
-  updatePersonProfile: true,
-  updateRoom: true,
-  updateWorkspace: true,
-  uploadMedia: true,
-} satisfies Record<keyof PhoneOperationMap, true>;
+/** Tests are excluded from server typecheck, so a hand-maintained `satisfies`
+ * mirror can silently miss new client operations. Read the full client contract,
+ * including imported route operations, at test runtime instead. */
+function phoneOperationNames(): string[] {
+  const path = fileURLToPath(new URL('../../../packages/api-contract/src/phone-operations.ts', import.meta.url));
+  const options: ts.CompilerOptions = {
+    module: ts.ModuleKind.NodeNext,
+    moduleResolution: ts.ModuleResolutionKind.NodeNext,
+    noLib: true,
+    types: [],
+  };
+  const host = ts.createCompilerHost(options);
+  // Keep these source reads visible to the CI source-scanner test selector.
+  host.readFile = file => {
+    try { return readFileSync(file, 'utf8'); }
+    catch { return undefined; }
+  };
+  const program = ts.createProgram([path], options, host);
+  const source = program.getSourceFile(path)!;
+  const declaration = source.statements.find(
+    (node): node is ts.TypeAliasDeclaration => ts.isTypeAliasDeclaration(node) && node.name.text === 'PhoneOperationMap',
+  );
+  if (!declaration) throw new Error('PhoneOperationMap was not found');
+  return program.getTypeChecker().getTypeAtLocation(declaration).getProperties().map(symbol => symbol.name);
+}
 
 describe('PHONE_OPERATION_NAMES', () => {
-  it('lists every PhoneOperationMap key, so server.ts can dispatch it', () => {
-    const missing = Object.keys(ALL_PHONE_OPERATION_NAMES).filter(
-      (name) => !PHONE_OPERATION_NAMES.has(name as keyof PhoneOperationMap),
-    );
-    expect(missing).toEqual([]);
+  it('admits every operation the shared phone, web and desktop client contract can send', () => {
+    const names = phoneOperationNames();
+    expect(names).toContain('readRoom');
+    expect(names).toContain('readMediaMetadata');
+    const accepted: ReadonlySet<string> = PHONE_OPERATION_NAMES;
+    expect(names.filter(name => !accepted.has(name))).toEqual([]);
   });
 });

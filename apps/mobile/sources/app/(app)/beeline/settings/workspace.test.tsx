@@ -374,7 +374,7 @@ describe('Workspace Settings authority', () => {
     const renderer = await render();
 
     expect(renderer.root.findAllByProps({ testID: 'workspace-settings-denied' })).toHaveLength(0);
-    expect(renderer.root.findByProps({ testID: 'workspace-settings-retry' }).props.title).toBe('Couldn’t reach Beeline');
+    expect(renderer.root.findByProps({ testID: 'workspace-settings-retry' }).props.title).toBe('Could not complete request');
     expect(renderer.root.findByProps({ testID: 'workspace-settings-retry' })).toBeDefined();
     expect(renderer.root.findAllByType('Text').map((node: any) => node.children.join(''))).not.toContain(
       'Admin access required',
@@ -878,7 +878,7 @@ describe('Workspace Settings authority', () => {
     expect(renderer.root.findByProps({ testID: 'workspace-delete-confirm' }).props.busy).toBe(
       false,
     );
-    expect(renderer.root.findByProps({ testID: 'workspace-delete-row' }).props.description).toBe('Couldn’t reach Beeline');
+    expect(renderer.root.findByProps({ testID: 'workspace-delete-row' }).props.description).toBe('Could not delete Workspace.');
     expect(navigation.replace).not.toHaveBeenCalledWith('/beeline/channels');
   });
 

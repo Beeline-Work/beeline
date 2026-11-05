@@ -7,6 +7,7 @@ vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () =>
 vi.mock('@/buzz/workbench-source', () => ({ getWorkbenchSource: vi.fn() }));
 import { useObservedResource, observeRoomResource } from './use-observed-resource';
 import { resetClientState } from '@/sync/client-reset';
+import { PhoneSocketDisconnectedError } from '@/sync/transport/phone-socket-error';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 const mounted: any[] = [];
 afterEach(async () => { await act(async () => mounted.splice(0).forEach(tree => tree.unmount())); vi.useRealTimers(); vi.clearAllMocks(); });
@@ -51,7 +52,7 @@ it('a failed read stays visible, stops automatic reads, and retry recovers', asy
   let current: any;
   function Reader() { current = useObservedResource<string>('error', { load }); return <span>{current.error ?? current.data}</span>; }
   await act(async () => { mount(<Reader />); });
-  expect(current.error).toBe('Couldn’t reach Beeline');
+  expect(current.error).toBe('Could not complete request');
   await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
   expect(load).toHaveBeenCalledTimes(1);
   await act(async () => current.retry());
@@ -67,7 +68,7 @@ it('R9-OBS-01: the reconnect invalidation calls the same failed read again', asy
   await act(async () => wire.listener({ monolithLive: { type: 'subscribed', roomId: 'room' } }));
   expect(load).toHaveBeenCalledTimes(1);
   await act(async () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'room', reason: 'message' } }));
-  expect(current.error).toBe('Couldn’t reach Beeline');
+  expect(current.error).toBe('Could not complete request');
   await act(async () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'room', reason: 'reconnect' } }));
   expect(load).toHaveBeenCalledTimes(3);
   expect(current.error).toBeNull();
@@ -79,11 +80,31 @@ it('R9-OBS-02: a room invalidation recovers after an error', async () => {
   let current: any;
   function Reader() { current = useObservedResource<string>('live-error', { load, subscribe: observeRoomResource('room') }); return <span>{current.error ?? current.data}</span>; }
   await act(async () => { mount(<Reader />); });
-  expect(current.error).toBe('Couldn’t reach Beeline');
+  expect(current.error).toBe('Could not complete request');
   await act(async () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'room', reason: 'message' } }));
   expect(load).toHaveBeenCalledTimes(2);
   expect(current.error).toBeNull();
   expect(current.data).toBe('current');
+});
+
+it('keeps cached data without local connection copy after a socket failure and recovers on invalidation', async () => {
+  const load = vi.fn().mockResolvedValueOnce('cached')
+    .mockRejectedValueOnce(new PhoneSocketDisconnectedError()).mockResolvedValueOnce('current');
+  let current: any;
+  function Reader() {
+    current = useObservedResource<string>('socket-failure', { load, subscribe: observeRoomResource('room') });
+    return <span>{current.data}</span>;
+  }
+  let tree: any;
+  await act(async () => { tree = mount(<Reader />); });
+  await act(async () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'room', reason: 'message' } }));
+  expect(current.data).toBe('cached');
+  expect(current.error).toBe('');
+  expect(tree.root.findByType('span').props.children).toBe('cached');
+  await act(async () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'room', reason: 'reconnect' } }));
+  expect(current.data).toBe('current');
+  expect(current.error).toBeNull();
+  expect(load).toHaveBeenCalledTimes(3);
 });
 
 it('R9-OBS-03: Retry starts its own read immediately, without waiting on an existing flight', async () => {

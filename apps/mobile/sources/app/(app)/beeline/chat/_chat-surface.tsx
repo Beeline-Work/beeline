@@ -4,10 +4,9 @@ import { useSurfaceFocus } from '@/buzz/use-surface-focus';
 import { trackDictatedMessage } from '@/buzz/dictation-timing';
 import { presentPersonInvite } from '@/components/buzz/PersonInviteSheet';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
-import { appErrorCopy, connectionErrorDescription, connectionErrorTitle } from '@/buzz/app-error-copy';
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { useDesktopParentRoom } from '@/buzz/use-desktop-parent-room';
 import { DesktopRoomListToggle } from '@/components/buzz/DesktopRoomListToggle';
-import { ConnectionStatus } from '@/components/buzz/ConnectionStatus';
 import { useDesktopLayout, setDesktopPaneOpen } from '@/buzz/desktop-layout-state';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { MonolithRequestTimeoutError } from '@/auth/monolith-session';
@@ -334,7 +333,7 @@ import {
   HullActionSheetModal,
   HullActionSheetRow,
 } from '@/components/buzz/HullActionSheet';
-import { useRoomRepositoryChoice } from '@/components/buzz/RoomRepositoryChoice';
+import { RoomActionsBackground, RoomActionsSheet, type RoomActionsSheetHandle, type RoomRepositoryOptions } from '@/components/buzz/RoomRepositoryChoice';
 import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { CornerGlyph } from '@/components/buzz/CornerGlyph';
 import { OverflowGlyph } from '@/components/buzz/OverflowGlyph';
@@ -959,7 +958,12 @@ export function BuzzChatSurface({
   } | null>(null);
   const [rosterVisible, setRosterVisible] = useState(false);
   const closeRoster = useCallback(() => setRosterVisible(false), []);
-  const [roomActionsVisible, setRoomActionsVisible] = useState(false);
+  const roomActionsRef = useRef<RoomActionsSheetHandle>(null);
+  const conversationFrameRef = useRef<View>(null);
+  const setRoomActionsVisible = useCallback(
+    (visible: boolean) => roomActionsRef.current?.setVisible(visible),
+    [],
+  );
   const [cornerActionsVisible, setCornerActionsVisible] = useState(false);
   const [dmActionsVisible, setDmActionsVisible] = useState(false);
   const [renameEditing, setRenameEditing] = useState(false);
@@ -1360,7 +1364,7 @@ export function BuzzChatSurface({
         } else {
           Modal.alert(
             'Could not open destination',
-            `Beeline could not verify access to ${referenceLabel}. Check your connection and try again.`,
+            `Beeline could not verify access to ${referenceLabel}. Try again.`,
           );
         }
       } finally {
@@ -4814,8 +4818,8 @@ export function BuzzChatSurface({
     if (!transport) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Modal.alert(
-        'Not connected yet',
-        `A new ${CORNER_LABEL} could not be opened because the app is still connecting to the server. Try again in a moment.`,
+        `Could not open ${CORNER_LABEL}`,
+        `A new ${CORNER_LABEL} could not be opened while Rooms are loading. Try again.`,
       );
       return;
     }
@@ -4861,8 +4865,8 @@ export function BuzzChatSurface({
       if (!transport) {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         Modal.alert(
-          'Not connected yet',
-          `A new ${CORNER_LABEL} could not be opened because the app is still connecting to the server. Try again in a moment.`,
+          `Could not open ${CORNER_LABEL}`,
+          `A new ${CORNER_LABEL} could not be opened while Rooms are loading. Try again.`,
         );
         return;
       }
@@ -4957,7 +4961,7 @@ export function BuzzChatSurface({
     try {
       await loadRoomRepoPicker(true);
     } catch (err) {
-      setRoomRepoError('Could not load repos. Check your connection and try again.');
+      setRoomRepoError('Could not load repos. Try again.');
     }
   }, [activeCommunityId, loadRoomRepoPicker, transport]);
 
@@ -5111,8 +5115,7 @@ export function BuzzChatSurface({
     }
   }, [clearRoomRepository, decodedId, openCornerCount, roomRepoBusy, roomRepository, transport]);
 
-  const roomRepoChoice = useRoomRepositoryChoice({
-    visible: roomActionsVisible,
+  const roomRepoOptions: RoomRepositoryOptions = {
     canManage: canManageWorkspace,
     roomName: roomSurface?.room.name ?? '',
     current: roomRepository?.binding ?? null,
@@ -5131,7 +5134,7 @@ export function BuzzChatSurface({
     onUnlink: () => void handleUnlinkRoomRepository(),
     onCancel: closeRoomActions,
     draftContext: decodedId,
-  });
+  };
 
   const handleReconnectRoomRepository = useCallback(async () => {
     if (!roomRepoAccessIssue || !transport) return;
@@ -6136,7 +6139,7 @@ export function BuzzChatSurface({
             </View>
           </View>
           <View style={styles.hydrationFailureInset}>
-            <IndexRow inset="flush" title={connectionErrorTitle} description={connectionErrorDescription} action="Retry" onPress={retryHydration} testID="room-read-error" />
+            {transcriptHydrationError && <IndexRow inset="flush" title={transcriptHydrationError} action="Retry" onPress={retryHydration} testID="room-read-error" />}
           </View>
         </View>
       );
@@ -6161,7 +6164,7 @@ export function BuzzChatSurface({
       viewerPubkey={userPubkey || undefined}
       viewerAvatarUrl={personProfileByPubkey.get(userPubkey)?.avatar}
     >
-      <View style={styles.desktopConversationFrame}>
+      <RoomActionsBackground style={styles.desktopConversationFrame} ref={conversationFrameRef}>
         <View style={styles.container}>
           {/* Header. No surface of its own — the chrome sits on the same
             obsidian as the transcript, parted only by a hairline. */}
@@ -6382,7 +6385,6 @@ export function BuzzChatSurface({
               </View>
             )}
           </View>
-          <ConnectionStatus />
 
           {!isCorner && !isDirectMessage && (() => {
             const call = workspaceChats.find(chat => chat.room.id === decodedId)?.voiceCall;
@@ -6677,7 +6679,7 @@ export function BuzzChatSurface({
                 typing in. The Room's corners door in the header is the one way
                 in; the corner's own state is read there, in the corners list,
                 and on the Room-list row. */}
-                  {transcriptHydrationFailed && <IndexRow title={connectionErrorTitle} description={connectionErrorDescription} action="Retry" onPress={retryHydration} testID="room-read-error" />}
+                  {transcriptHydrationFailed && !!transcriptHydrationError && <IndexRow title={transcriptHydrationError} action="Retry" onPress={retryHydration} testID="room-read-error" />}
                 {isReadOnlyDirectMessage ? (
                   <View style={[styles.archivedInputBar, readOnlyFooterInset]}>
                     <Text style={styles.archivedInputText}>
@@ -7024,7 +7026,7 @@ export function BuzzChatSurface({
             onClose={closeDesktopWorkPane}
           />
         )}
-      </View>
+      </RoomActionsBackground>
 
       <AttachmentPickerSheet
         visible={attachmentPickerVisible}
@@ -7201,26 +7203,20 @@ export function BuzzChatSurface({
         visible={memberManagement.rosterVisible}
       />
 
-      <HullActionSheetModal
+      <RoomActionsSheet
         accessibilityLabel={`Close ${ROOM_LABEL} actions`}
         dismissOnBackdrop={!renameBusy}
-        footer={roomRepoChoice.footer}
-        onClose={() =>
-          roomRepoChoice.listOpen ? setShowRoomRepoPicker(false) : closeRoomActions()
-        }
-        sticky={roomRepoChoice.listOpen ? undefined : roomRepoChoice.control}
-        onTitlePress={canRenameTitle && !roomRepoChoice.listOpen ? startRenameFromTitle : undefined}
+        onClose={closeRoomActions}
+        onTitlePress={canRenameTitle ? startRenameFromTitle : undefined}
         testID="room-actions-sheet"
-        title={roomRepoChoice.listOpen ? 'Choose a repo' : displayRoomName}
-        titleAccessibilityLabel={roomRepoChoice.listOpen ? undefined : `Rename ${displayRoomName}`}
+        title={displayRoomName}
+        titleAccessibilityLabel={`Rename ${displayRoomName}`}
         titleTestID="room-actions-title"
-        visible={roomActionsVisible}
+        ref={roomActionsRef}
+        repository={roomRepoOptions}
+        backgroundRef={conversationFrameRef}
       >
-        {roomRepoChoice.listOpen ? (
-          roomRepoChoice.list
-        ) : (
-          <>
-            {roomRepoChoice.row}
+        <>
             {!isCorner && canRenameTitle && renameEditing && (
               <View style={styles.roomRenameEditor} testID="rename-room-editor">
                 <Text style={styles.roomRenameLabel}>New {ROOM_LABEL.toLowerCase()} name</Text>
@@ -7327,9 +7323,8 @@ export function BuzzChatSurface({
                 <ErrorBanner inline title={renameError ?? membershipError ?? ''} />
               </View>
             )}
-          </>
-        )}
-      </HullActionSheetModal>
+        </>
+      </RoomActionsSheet>
 
       <HullActionSheetModal
         accessibilityLabel="Close conversation actions"

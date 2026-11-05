@@ -1,12 +1,12 @@
 import { HullDialogActions } from '@/components/buzz/HullDialog';
 import React, { useEffect, useState } from 'react';
-import { Text, TouchableOpacity, View } from 'react-native';
+import { Text, TouchableOpacity, View, Platform, Keyboard, type ViewProps } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { GitHubInstallationAccess } from '@beeline/buzz-client';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
 import { Typography } from '@/constants/Typography';
 import { Button } from './Button';
-import { HULL_SHEET_INSET, HullActionSheetRow } from './HullActionSheet';
+import { HULL_SHEET_INSET, HullActionSheetRow, HullActionSheetModal } from './HullActionSheet';
 import { RepoList } from './RepoList';
 import {
   RepositoryChoice,
@@ -234,3 +234,74 @@ const styles = StyleSheet.create((theme) => {
     },
   };
 });
+
+/** Existing conversation layout, also the accessibility boundary behind its sheet. */
+export function RoomActionsBackground(props: ViewProps & { ref?: React.Ref<View> }) {
+  return <View {...props} />;
+}
+
+export type RoomActionsSheetHandle = { setVisible: (visible: boolean) => void };
+export type RoomRepositoryOptions = Omit<Options, 'visible'>;
+
+type RoomActionsSheetProps = Omit<
+  React.ComponentProps<typeof HullActionSheetModal>,
+  'visible' | 'footer' | 'sticky' | 'withinScreen'
+> & {
+  ref: React.Ref<RoomActionsSheetHandle>;
+  repository: RoomRepositoryOptions;
+  backgroundRef: React.RefObject<View | null>;
+};
+
+/** Opening Room actions should render the sheet, not the transcript and composer. */
+export function RoomActionsSheet({
+  ref,
+  repository,
+  backgroundRef,
+  children,
+  ...props
+}: RoomActionsSheetProps) {
+  const [visible, setVisible] = useState(false);
+  React.useImperativeHandle(
+    ref,
+    () => ({
+      setVisible(next) {
+        // Dismiss the old field before mounting a sheet that may autofocus its editor.
+        if (next && Platform.OS === 'android') Keyboard.dismiss();
+        setVisible(next);
+      },
+    }),
+    [],
+  );
+  const choice = useRoomRepositoryChoice({ ...repository, visible });
+  React.useLayoutEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const background = backgroundRef.current;
+    background?.setNativeProps({
+      importantForAccessibility: visible ? 'no-hide-descendants' : 'auto',
+    });
+    return () => background?.setNativeProps({ importantForAccessibility: 'auto' });
+  }, [backgroundRef, visible]);
+
+  return (
+    <HullActionSheetModal
+      {...props}
+      withinScreen={Platform.OS === 'android'}
+      visible={visible}
+      footer={choice.footer}
+      sticky={choice.listOpen ? undefined : choice.control}
+      onClose={() => (choice.listOpen ? repository.setListOpen(false) : props.onClose())}
+      onTitlePress={choice.listOpen ? undefined : props.onTitlePress}
+      title={choice.listOpen ? 'Choose a repo' : props.title}
+      titleAccessibilityLabel={choice.listOpen ? undefined : props.titleAccessibilityLabel}
+    >
+      {choice.listOpen ? (
+        choice.list
+      ) : (
+        <>
+          {choice.row}
+          {children}
+        </>
+      )}
+    </HullActionSheetModal>
+  );
+}

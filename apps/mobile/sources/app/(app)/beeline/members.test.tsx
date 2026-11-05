@@ -1210,7 +1210,7 @@ describe('Members workspace management', () => {
     expect(
       renderer.root
         .findAllByType('Text' as any)
-        .some((node: any) => String(node.props.children).includes('Couldn’t reach Beeline')),
+        .some((node: any) => String(node.props.children).includes('Could not complete request')),
     ).toBe(true);
   });
 
@@ -1487,7 +1487,7 @@ describe('Members workspace management', () => {
     );
     expect(
       renderer.root.findByProps({ testID: 'avatar-generation-error' }).props.children,
-    ).toBe('Couldn’t reach Beeline');
+    ).toBe('Could not complete request');
   });
 
   it('saves the soul server-side and sends only the short draw request', async () => {
@@ -1881,7 +1881,7 @@ describe('Members workspace management', () => {
     ['access', 'updateAgentAccessPolicy'],
   ])('R4: %s toggle failure copy on the Members route', (toggle, operation) => {
     it.each([
-      [504, 'surface_request_timed_out', 'Couldn’t reach Beeline'],
+      [504, 'surface_request_timed_out', 'Could not complete request'],
       [403, 'permission_denied', 'Could not complete request'],
       [400, 'The timeout must be shorter.', 'The timeout must be shorter.'],
     ])('formats status %s with code %s', async (status, code, expected) => {

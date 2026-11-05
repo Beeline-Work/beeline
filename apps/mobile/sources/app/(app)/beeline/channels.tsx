@@ -1,5 +1,5 @@
 import { EmptyState } from '@/components/buzz/EmptyState';
-import { appErrorCopy, connectionErrorDescription, connectionErrorTitle } from '@/buzz/app-error-copy';
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { IndexRow } from '@/components/buzz/IndexRow';
 import { invalidatesWorkspaceList } from '@/buzz/workspace-list-invalidation';
 import { TrayGlyph } from '@/components/buzz/TrayGlyph';
@@ -48,7 +48,6 @@ import { DirectMessagePickerSheet } from '@/components/buzz/DirectMessagePickerS
 import { ExitGlyph } from '@/components/buzz/ExitGlyph';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
 import { Button } from '@/components/buzz/Button';
-import { ConnectionStatus } from '@/components/buzz/ConnectionStatus';
 import { reconnectNow } from '@/sync/transport/live-connection';
 import { clientResetGeneration } from '@/sync/client-reset';
 import { InlineRow } from '@/components/buzz/IndexRow';
@@ -240,11 +239,6 @@ export default function SavedRoomDeck() {
     };
   }, [rootRoute, rootLanding, retry]);
   useEffect(() => { if (session || error) markInitialLandingResolved(); }, [session, error]);
-  useEffect(() => {
-    if (session || error) return;
-    const deadline = setTimeout(() => setError(connectionErrorTitle), 35_000);
-    return () => clearTimeout(deadline);
-  }, [session, error, retry]);
   if (error) return (
     <View
       style={{ flex: 1, paddingTop: insets.top, paddingBottom: insets.bottom }}
@@ -253,10 +247,10 @@ export default function SavedRoomDeck() {
     >
       <IndexRow
         testID="room-deck-error-retry"
-        title={error === connectionErrorTitle ? connectionErrorTitle : 'Secure storage unavailable'}
-        description={error === connectionErrorTitle ? connectionErrorDescription : error}
+        title="Secure storage unavailable"
+        description={error}
         action="Retry"
-        onPress={() => { reconnectNow(); setRetry(value => value + 1); }}
+        onPress={() => setRetry(value => value + 1)}
       />
     </View>
   );
@@ -687,13 +681,6 @@ function BuzzChannels({ session }: { session: DeckSession }) {
     };
   }, [drawn, identity, relayUrl, transport, selectedId, deckVisible, refreshMissed, retryGeneration]);
 
-  // Cover local identity/selection/cache reads as well as socket RPCs. Those
-  // native promises can stall before any individual request deadline starts.
-  useEffect(() => {
-    if (chatList || error) return;
-    const deadline = setTimeout(() => setError(connectionErrorTitle), 35_000);
-    return () => clearTimeout(deadline);
-  }, [chatList, error, retryGeneration]);
 
   useFocusEffect(
     useCallback(() => {
@@ -835,7 +822,7 @@ function BuzzChannels({ session }: { session: DeckSession }) {
     try {
       await loadRepoPicker(true);
     } catch (reason) {
-      setRepoPickerError('Could not load repos. Check your connection and try again.');
+      setRepoPickerError('Could not load repos. Try again.');
     } finally {
       setRepoAccessLoading(false);
     }
@@ -1041,7 +1028,7 @@ function BuzzChannels({ session }: { session: DeckSession }) {
           {!isDesktop && <CommunitySwitcherTrigger community={activeCommunity} expanded={false} />}
         </InlineRow>
         <View style={styles.failureInset}>
-          <IndexRow inset="flush" title={connectionErrorTitle} description={connectionErrorDescription} testID="room-deck-error-retry" action="Retry"
+          <IndexRow inset="flush" title={error || 'Could not load Rooms'}  testID="room-deck-error-retry" action="Retry"
             onPress={() => { reconnectNow(); setError(null); setRetryGeneration(value => value + 1); }} />
         </View>
       </View>
@@ -1118,7 +1105,6 @@ function BuzzChannels({ session }: { session: DeckSession }) {
             counts={counts}
           />
         )}
-        <ConnectionStatus />
         {pinError && <IndexRow title={pinError} />}
         <NewRoomDialog
           draftContext={activeCommunityId ?? ''}
@@ -1170,12 +1156,12 @@ function BuzzChannels({ session }: { session: DeckSession }) {
             appearance={{ control: styles.errorBar, label: styles.error }}
           />
         )}
-        {!!error && error !== connectionErrorTitle && (
+        {!!error && (
           <View style={styles.failureInset}>
             <IndexRow
               inset="flush"
               title={error}
-              description={connectionErrorDescription}
+
               action="Retry"
               onPress={refreshNow}
             />

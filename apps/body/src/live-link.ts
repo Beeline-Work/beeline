@@ -5,10 +5,9 @@ import { isNetworkFailure } from './network-failure.js';
 
 export { isNetworkFailure };
 
-/** The helper machine's one live socket. Initial failure parks. A healthy
- * authenticated socket may get one replacement after an actual close; a brief
- * unauthenticated open cannot reset the incident. Explicit recovery admits one
- * attempt. Existing heartbeat/pong/handshake deadlines are liveness controls. */
+/** The helper machine's one live socket. Transport failures reconnect so the
+ * successor can authenticate and read current commands. Existing heartbeat,
+ * pong and handshake deadlines bound a failed connection attempt. */
 export type LiveLinkState = 'disconnected' | 'connecting' | 'open' | 'suspect' | 'update-required' | 'refused';
 
 export type LiveSocketFactory = (
@@ -59,9 +58,6 @@ export function retryAfterMs(value: string | null | undefined): number | undefin
 export class LiveLink {
   #state: LiveLinkState = 'disconnected';
   #socket: WebSocket | undefined;
-  #retryUntil = 0;
-  #replacementSpent = false;
-  #recovered = false;
   #pongDeadline: ReturnType<typeof setTimeout> | undefined;
   #heartbeatDeadline: ReturnType<typeof setTimeout> | undefined;
   #wanted = false;
@@ -69,7 +65,6 @@ export class LiveLink {
   #reconnects = 0;
   readonly #openListeners = new Set<() => void>();
   readonly #timing: LiveLinkTiming;
-  readonly #now: () => number;
 
   constructor(
     private readonly options: {
@@ -86,7 +81,6 @@ export class LiveLink {
     },
   ) {
     this.#timing = { ...LIVE_LINK_TIMING, ...options.timing };
-    this.#now = options.now ?? Date.now;
   }
 
   get state(): LiveLinkState {
@@ -112,8 +106,7 @@ export class LiveLink {
     if (this.#state === 'update-required' || this.#state === 'refused') return;
     if (this.#wanted) return;
     this.#wanted = true;
-    this.#replacementSpent = false;
-    if (!this.#socket && this.#now() >= this.#retryUntil) this.#connect();
+    if (!this.#socket) this.#connect();
   }
 
   stop(forUpdate = false): void {
@@ -126,13 +119,9 @@ export class LiveLink {
       forUpdate ? HELPER_UPDATE_CLOSE_REASON : undefined);
   }
 
-  /** A distinct external resume/path/credential/user boundary admits one try.
-   * Retry-After remains an eligibility bound; it never schedules an attempt. */
+  /** Replace the transport on an explicit resume/path/credential boundary. */
   reconnectNow(): void {
-    if (!this.#wanted || this.#state === 'update-required' || this.#state === 'refused' ||
-        this.#now() < this.#retryUntil) return;
-    this.#replacementSpent = false;
-    this.#recovered = false;
+    if (!this.#wanted || this.#state === 'update-required' || this.#state === 'refused') return;
     const socket = this.#socket;
     this.#socket = undefined;
     this.#clearTimers();
@@ -140,14 +129,6 @@ export class LiveLink {
     if (socket) this.options.onClose();
     this.#reconnects += 1;
     this.#connect();
-  }
-
-  /** Called once authentication and every currently demanded subscription are
-   * acknowledged. Transport open or duplicate frames alone never certify it. */
-  markRecovered(): void {
-    if (!this.isOpen() || this.#recovered) return;
-    this.#recovered = true;
-    this.#replacementSpent = false;
   }
 
   send(data: string): boolean {
@@ -223,7 +204,6 @@ export class LiveLink {
     });
     this.#socket = socket;
     this.#state = 'connecting';
-    this.#recovered = false;
     socket.on?.('upgrade', (response: IncomingMessage) => {
       response.socket?.setKeepAlive?.(true, this.#timing.keepAliveDelayMs);
     });
@@ -239,7 +219,6 @@ export class LiveLink {
       if (status !== 426) {
         // Any other refusal (502, 503, a proxy page) ends this attempt now;
         // without this the handshake would wait forever for a close.
-        this.#retryUntil = this.#now() + (retryAfterMs(headerValue(response.headers?.['retry-after'])) ?? 0);
         socket.terminate();
         return;
       }
@@ -296,20 +275,12 @@ export class LiveLink {
       this.#pongDeadline = undefined;
       clearTimeout(this.#heartbeatDeadline);
       this.#heartbeatDeadline = undefined;
-      const recovered = this.#recovered;
-      this.#recovered = false;
       if (this.#state !== 'update-required' && this.#state !== 'refused') this.#state = 'disconnected';
       this.options.onClose();
       if (this.#state === 'update-required' || this.#state === 'refused' || !this.#wanted) return;
-      if (!recovered || this.#replacementSpent || this.#now() < this.#retryUntil) return;
-      this.#replacementSpent = true;
       this.#reconnects += 1;
       this.#connect();
     };
   }
 
-}
-
-function headerValue(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
 }

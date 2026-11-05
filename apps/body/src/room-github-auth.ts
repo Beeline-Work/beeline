@@ -54,7 +54,10 @@ async function squire(context, name, args) {
   if (!response.ok || payload.error) throw new Error('GitHub connection could not be used');
   return unpack(payload.result);
 }
+// A sandboxed native-gh child cannot acquire the parent's machine registration.
+// Only its two managed-app tools cross this command-authorized HTTP boundary.
 async function daemon(auth, context, name, args) {
+  if (!['listAppTools', 'executeAppTool'].includes(name)) throw new Error('GitHub app operation unavailable');
   const response = await fetch(new URL('/v1/daemon/operations/' + name, auth.baseUrl), {
     method: 'POST', headers: { authorization: 'Bearer ' + auth.daemonToken,
       'content-type': 'application/json', 'x-beeline-helper-version': auth.helperVersion ?? 'v0.0.0' },

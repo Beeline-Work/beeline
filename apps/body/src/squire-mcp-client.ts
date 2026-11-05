@@ -12,8 +12,8 @@
  * daemon is the eight-brokers-at-100-percent-CPU incident. The façade reaches
  * the one host broker or reports `broker unavailable` and exits — a bounded
  * refusal while the host unit comes up, instead of another browser. It is
- * initialized once and left running for the helper's lifetime; a failed call
- * or a dead child tears the session down so the next call starts a fresh one.
+ * initialized once and left running until an explicit account reconnect or a
+ * dead child. Reconnecting never replays a pending tool call.
  * Tests may inject a command; omitting `server` on a raw npx spawn runs
  * Squire's connect CLI instead of the vault MCP.
  */
@@ -110,26 +110,35 @@ export class StdioSquireMcpClient {
   /** Tear the session down; safe to call repeatedly. */
   close(): void {
     this.closed = true;
+    this.reconnect();
+  }
+
+  /** Discard only this client's facade; an explicit connect owns the next read. */
+  reconnect(): void {
+    const child = this.child;
+    this.child = undefined;
     this.initialized = undefined;
     for (const entry of this.pending.values()) {
       clearTimeout(entry.timer);
       entry.reject(new Error('Squire MCP session closed'));
     }
     this.pending.clear();
-    if (this.options.processGroup && this.child?.pid) {
-      try { process.kill(-this.child.pid, 'SIGKILL'); } catch { this.child.kill('SIGKILL'); }
+    if (this.options.processGroup && child?.pid) {
+      try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
     } else {
-      this.child?.kill();
+      child?.kill();
     }
-    this.child = undefined;
   }
 
   private ensureSession(): Promise<void> {
     if (this.closed) throw new Error('Squire MCP client is closed');
-    this.initialized ??= this.initialize().catch((error) => {
-      this.initialized = undefined;
-      throw error;
-    });
+    if (!this.initialized) {
+      const session = this.initialize().catch((error) => {
+        if (this.initialized === session) this.initialized = undefined;
+        throw error;
+      });
+      this.initialized = session;
+    }
     return this.initialized;
   }
 
@@ -154,7 +163,9 @@ export class StdioSquireMcpClient {
     this.buffer = '';
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => this.onData(chunk));
+    child.stdout.on('data', (chunk: string) => {
+      if (this.child === child) this.onData(chunk);
+    });
     child.stderr.on('data', (chunk: string) => this.log(`squire mcp stderr: ${chunk.trim()}`));
     let exited = false;
     const fail = (code: number | null, error?: Error) => {
@@ -162,6 +173,7 @@ export class StdioSquireMcpClient {
       exited = true;
       this.log(`squire mcp exited (${String(code)})`);
       this.options.onExit?.(child.pid, code);
+      if (this.child !== child) return;
       this.initialized = undefined;
       this.child = undefined;
       for (const entry of this.pending.values()) {
@@ -177,6 +189,7 @@ export class StdioSquireMcpClient {
       capabilities: {},
       clientInfo: { name: 'beeline-helper', version: '1.0.0' },
     }).then(() => {
+      if (this.child !== child) throw new Error('Squire MCP session closed');
       this.notify('notifications/initialized');
     });
   }
@@ -255,4 +268,5 @@ export function defaultSquireMcpClient(scope: SquireAgentScope): SquireMcpClient
 /** The shape `connector-squire.ts` speaks, re-declared to avoid a cycle. */
 export interface SquireMcpClientContract {
   call(tool: string, args?: Record<string, unknown>): Promise<unknown>;
+  reconnect?(): void;
 }

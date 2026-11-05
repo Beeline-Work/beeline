@@ -130,6 +130,7 @@ export class ConnectorAssignmentLoop {
 
   constructor(options: ConnectorAssignmentLoopOptions) {
     this.agentId = options.agentId;
+    this.mcp = options.mcp;
     this.api = options.api;
     this.log = options.log ?? (() => {});
     this.install = options.install ?? installSquire;

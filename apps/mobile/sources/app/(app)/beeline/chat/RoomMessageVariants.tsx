@@ -260,6 +260,7 @@ export interface ConnectorOfferCardProps {
   ): void;
   /** Opens the Workbench page — the settled card is one of its three remaining doors. */
   onOpenWorkbench(): void;
+  onOpenReplacement(messageId: string): void;
   onDecline?(offerId: string): void;
 }
 
@@ -335,6 +336,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
   onAccept,
   onContinue,
   onOpenWorkbench,
+  onOpenReplacement,
   onDecline,
 }: ConnectorOfferCardProps) {
   const offer = message.connectorOffer!;
@@ -351,11 +353,13 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
     (pending || failed) && canAccept
       ? [
           {
-            label: failed ? 'Retry' : offer.intent === 'switch' ? 'Switch' : offer.intent === 'reconnect' ? 'Reconnect' : 'Add',
+            label: failed ? offer.replacementMessageId ? 'Open current card' : 'Retry' : offer.intent === 'switch' ? 'Switch' : offer.intent === 'reconnect' ? 'Reconnect' : 'Add',
             primary: true,
             disabled: actionId !== null,
             loading: busy,
-            onPress: () => onAccept(offer.offerId, offer.connectorType),
+            onPress: () => offer.replacementMessageId
+              ? onOpenReplacement(offer.replacementMessageId)
+              : onAccept(offer.offerId, offer.connectorType),
             testID: `connector-offer-${offer.offerId}-accept`,
           },
         ]
@@ -400,7 +404,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
             ? canAccept
               ? undefined
               : connectorOfferWaitingLine(offer)
-            : failed ? 'Connection failed. Retry to continue.' : approvalDecisionNote(offer.status === 'denied' ? 'denied' : 'allowed', offer.acceptedBy, offer.acceptedAt ?? message.timestamp, viewerPubkey)
+            : failed ? offer.replacementMessageId ? 'This card was replaced. Use the current connection card.' : 'Connection failed. Retry to continue.' : approvalDecisionNote(offer.status === 'denied' ? 'denied' : 'allowed', offer.acceptedBy, offer.acceptedAt ?? message.timestamp, viewerPubkey)
       }
       footerNoteTestID={
         connecting

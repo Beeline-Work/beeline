@@ -13022,6 +13022,41 @@ describe('monolith integration', () => {
     expect((await phone.readRoom(ROOM, HUMAN))?.messages.find(message => message.id === nextId)?.targetBranch).toMatchObject({ status: 'allowed', decidedBy: { pubkey: HUMAN }, decidedAt: expect.any(Number) });
   });
 
+  it('HOSTED-SQUIRE: expired sign-in remains actionable, retries with a fresh page and completes green', async () => {
+    await database.query(`UPDATE agents SET machine_id='expiry-machine' WHERE agent_id=$1`, [AGENT]);
+    const offer = await daemonOperation('offerConnector', { roomId: ROOM,
+      connectorType: 'trusty-squire', reason: 'Use the hosted browser' });
+    expect(offer.status).toBe(200);
+    const { offerId, messageId } = await offer.json() as { offerId: string; messageId: string };
+    const accept = await operation('acceptConnectorOffer', { offerId });
+    expect(accept.status).toBe(200);
+    const { connectorId } = await accept.json() as { connectorId: string };
+    const assignment = async () => (await (await daemonOperation('getConnectorAssignments', {})).json() as {
+      assignments: Array<{ pairingGeneration: number }> }).assignments[0]!;
+    const first = await assignment();
+    const expired = 'the Trusty Squire sign-in page expired before it was used · tap Retry to open a new one';
+    expect((await daemonOperation('postConnectorStatus', { connectorId, pairingGeneration: first.pairingGeneration,
+      steps: [{ label: 'waiting for sign-in', status: 'failed', reason: expired }], signIn: null,
+      errorMessage: expired })).status).toBe(200);
+    const read = async () => (await (await operation('readConnectorInstall', { connectorId })).json() as {
+      status: { status: string; steps: Array<{ status: string; reason?: string }>; signIn?: { url: string }; errorMessage?: string } }).status;
+    expect(await read()).toMatchObject({ status: 'error', steps: [{ status: 'failed', reason: expired }] });
+    expect((await operation('acceptConnectorOffer', { offerId })).status).toBe(200);
+    const next = await assignment();
+    expect(next.pairingGeneration).toBeGreaterThan(first.pairingGeneration);
+    expect(await read()).toMatchObject({ status: 'installing' });
+    expect(await read()).not.toHaveProperty('errorMessage');
+    expect((await daemonOperation('postConnectorStatus', { connectorId, pairingGeneration: next.pairingGeneration,
+      steps: [{ label: 'waiting for sign-in', status: 'pending' }],
+      signIn: { method: 'oauth', url: 'https://trustysquire.ai/install?token=fresh' } })).status).toBe(200);
+    expect(await read()).toMatchObject({ status: 'installing', signIn: { url: 'https://trustysquire.ai/install?token=fresh' } });
+    expect((await daemonOperation('installConnector', { connectorId, pairingGeneration: next.pairingGeneration })).status).toBe(200);
+    expect((await daemonOperation('postConnectorVault', { connections: [] })).status).toBe(200);
+    expect(await read()).toMatchObject({ status: 'connected', steps: [] });
+    expect(await read()).not.toHaveProperty('signIn');
+    expect((await phone.readRoom(ROOM, HUMAN))?.messages.find(message => message.id === messageId)?.connectorOffer?.status).toBe('accepted');
+  });
+
   it.each([['reported','trusty-squire'], ['timeout','trusty-squire'], ['reported','tailscale'], ['timeout','tailscale']] as const)('HOSTED-SQUIRE: %s %s install failure settles the phone card, resumes and retries', async (failure, connectorType) => {
     await database.query(`UPDATE agents SET machine_id='proof-machine' WHERE agent_id=$1`, [AGENT]);
     const asked = (await (await operation('sendRoomMessage', { roomId: ROOM, text: '@bee connect Trusty Squire', mentions: [AGENT] })).json()) as { messageId: string };
@@ -13067,7 +13102,15 @@ describe('monolith integration', () => {
     const fresh = await daemonOperation('offerConnector', { roomId: ROOM, requestId: asked.messageId,
       connectorType, reason: 'retry the welcome video' });
     expect(fresh.status).toBe(200);
-    expect((await fresh.json() as { offerId: string }).offerId).not.toBe(offerId);
+    const replacement = await fresh.json() as { offerId: string; messageId: string };
+    expect(replacement.offerId).not.toBe(offerId);
+    expect((await phone.readRoom(ROOM, HUMAN))?.messages.find(message => message.id === messageId)?.connectorOffer)
+      .toMatchObject({ status: 'failed', replacementMessageId: replacement.messageId });
+    // Upgrade repairs pre-existing failed cards too, without rearming an install.
+    await database.query(`UPDATE messages SET card=card-'replacementMessageId' WHERE id=$1`, [messageId]);
+    await migrate(database);
+    expect((await phone.readRoom(ROOM, HUMAN))?.messages.find(message => message.id === messageId)?.connectorOffer)
+      .toMatchObject({ status: 'failed', replacementMessageId: replacement.messageId });
     expect((await operation('acceptConnectorOffer', { offerId })).status).toBe(409);
   });
 

@@ -205,6 +205,8 @@ export type ConnectorOfferCardView = {
   readonly acceptedAt?: number;
   /** The Workbench connector row the acceptance created, for the settled card's link. */
   readonly connectorId?: string;
+  /** A failed card's current replacement in the same Room. */
+  readonly replacementMessageId?: string;
   /** `'add'` when omitted — every offer before this field existed. */
   readonly intent?: ConnectorOfferIntent;
   /** The provider a `'reconnect'` or `'switch'` offer signs in again, e.g. `'google'`. */

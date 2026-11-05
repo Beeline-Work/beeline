@@ -2890,6 +2890,15 @@ CREATE INDEX IF NOT EXISTS connector_offers_workspace_idx ON connector_offers(wo
 CREATE INDEX IF NOT EXISTS connector_offers_message_idx
   ON connector_offers(message_id) WHERE message_id IS NOT NULL;
 
+-- Existing failed cards must lead to the current card instead of a dead Retry.
+UPDATE messages message SET card=jsonb_set(message.card,'{replacementMessageId}',to_jsonb(current_offer.message_id))
+FROM connector_offers failed JOIN connector_offers current_offer
+  ON current_offer.room_id=failed.room_id AND current_offer.connector_type=failed.connector_type
+    AND current_offer.status IN ('pending','connecting') AND current_offer.created_at>failed.created_at
+WHERE failed.status='failed' AND current_offer.message_id IS NOT NULL AND message.room_id=failed.room_id
+  AND message.card_type='connector-offer' AND message.card->>'offerId'=failed.id::text
+  AND message.card->>'replacementMessageId' IS DISTINCT FROM current_offer.message_id;
+
 -- What an agent did with a connection, as reported by the helper. The ledger
 -- behind the connection detail screen; also the source for batched receipt
 -- DMs (one card per agent turn, keyed by turn_key).

@@ -5,7 +5,7 @@ import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, Platform, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import * as WebBrowser from 'expo-web-browser';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
@@ -84,6 +84,7 @@ function ConnectorSignInOverlay() {
 
   const observed = useInstallObserver(workspaceId, connectorId);
   const squire = connectorId.startsWith('squire:') || connectorName === 'Trusty Squire';
+  const external = signIn.method === 'oauth' || Platform.OS === 'web';
   // A finished Squire sign-in lands on the Trusty Squire page, where the row now reads signed in.
   const finish = useCallback(() => router.replace(roomId ? (connectorOfferCompletionRoute(roomId) as Href )
           : squire ? ({ pathname: '/beeline/settings/workbench/service', params: { workspaceId, viewerId, service: 'trusty-squire' } } as Href)
@@ -92,12 +93,13 @@ function ConnectorSignInOverlay() {
   );
   // The page has 15 seconds to load, reloads included, then says so in full.
   useEffect(() => {
-    if (pageLoaded || fallback || signIn.method === 'oauth') return;
+    if (!signIn.url || pageLoaded || fallback || external) return;
     const timer = setTimeout(() => setPageError(PAGE_LOAD_ERROR), PAGE_LOAD_TIMEOUT_MS);
     return () => clearTimeout(timer);
-  }, [signIn.url, signIn.method, pageLoaded, fallback, loadRound]);
+  }, [signIn.url, external, pageLoaded, fallback, loadRound]);
   // A stalled helper completion also ends visibly after the browser loads.
   useEffect(() => {
+    if (!signIn.url) return;
     const timer = setTimeout(() => setPageError('Sign-in has not finished. Try again.'), 120_000);
     return () => clearTimeout(timer);
   }, [signIn.url, loadRound]);
@@ -127,6 +129,7 @@ function ConnectorSignInOverlay() {
     setPageError(null);
     try {
       if (observed.data?.steps.some(step => step.status === 'failed')) {
+        setSignIn(current => ({ ...current, url: '' }));
         const offerId = first(params.offerId);
         if (offerId) await monolithPhoneOperation('acceptConnectorOffer', { offerId });
         else if (connectorId.startsWith('squire:')) await getWorkbenchSource().pairConnector({
@@ -140,7 +143,11 @@ function ConnectorSignInOverlay() {
     if (!state) return;
     if (state.connected) { finish(); return; }
     if (state.signIn) setSignIn(current => current.url === state.signIn!.url ? current : { url: state.signIn!.url, method: state.signIn!.method });
-    else if (state.steps?.some(step => step.status === 'failed')) setPageError(`Google sign-in could not start on ${machineName}. Go back and connect it again.`);
+    else if (state.steps?.some(step => step.status === 'failed')) {
+      setSignIn(current => ({ ...current, url: '' }));
+      setPageError(state.steps.find(step => step.status === 'failed')?.reason
+        ?? `Sign-in could not start on ${machineName}. Try again.`);
+    }
   }, [observed.data, finish, machineName]);
 
   const openBrowser = useCallback(async () => {
@@ -168,8 +175,8 @@ function ConnectorSignInOverlay() {
   const errorLine = failure === PAGE_LOAD_ERROR
     ? `${machineName}’s browser didn’t answer within 15 seconds. Try again, or finish sign-in in your phone’s browser.`
     : failure;
-  const streamed = signIn.method !== 'oauth';
-  const loading = streamed && !failure && !fallback && !pageLoaded;
+  const streamed = !external;
+  const loading = !failure && !fallback && (!signIn.url || (streamed && !pageLoaded));
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]} testID="signin-overlay">
       <View style={[styles.column, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }]} testID="signin-card">
@@ -181,7 +188,7 @@ function ConnectorSignInOverlay() {
               {React.createElement(WebView, { key: `${signIn.url}:${attempt}`, onLoad: () => { if (!loadFailed.current) setPageLoaded(true); }, onError: pageFailed, onHttpError: pageFailed, renderError: () => null, source: { uri: signIn.url }, style: styles.webView, javaScriptEnabled: true, domStorageEnabled: true, testID: 'signin-webview' })}
             </View>
           ) : null}
-          {!streamed && !failure ? (
+          {!streamed && !failure && signIn.url ? (
             <View style={styles.center} testID="signin-oauth-browser">
               <Text style={styles.centerLine}>{connectorName} sign-in opens in your browser. Return here after granting access.</Text>
               <Button label={`Continue with ${connectorName}`} destination="external" onPress={() => void openBrowser()} testID="signin-open-external" />

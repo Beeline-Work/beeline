@@ -57,6 +57,8 @@ import type {ConnectionGrant, ConnectorBrowserLocation, ConnectorSignIn, Connect
 /** The one Squire MCP contract this connector speaks. */
 export interface SquireMcpClient {
   call(tool: string, args?: Record<string, unknown>): Promise<unknown>;
+  /** An explicit connect has changed the account binding; the next read owns a new session. */
+  reconnect?(): void;
 }
 
 /** The one Squire connect package, tracked at the release that carries the
@@ -745,6 +747,7 @@ async function installSquireAttempt(
   // Stop only the connect ceremony this agent spawned. Squire alone decides
   // whether its profile is busy or connected in the next typed report.
   releaseSquireConnectSession(log, options.workspaceId);
+  options.mcp?.reconnect?.();
 
   // Verify the copy npx resolves BEFORE connect runs, re-resolving a stale
   // one against the release this reader is written for.
@@ -824,7 +827,8 @@ async function installSquireAttempt(
   const signIn: ConnectorSignIn | undefined =
     isOutstandingSignIn(report) && report.sign_in_url
       ? {
-          method: 'streamed-page',
+          method: location?.kind === 'virtual' || location?.kind === 'host_screen'
+            ? 'streamed-page' : 'oauth',
           url: location?.kind === 'virtual' ? location.url : report.sign_in_url,
           ...(location ? { browserLocation: location } : {}),
         }

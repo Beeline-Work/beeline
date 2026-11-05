@@ -43,6 +43,26 @@ afterEach(() => {
 });
 
 describe('StdioSquireMcpClient', () => {
+  it('reconnects on an explicit account change and ignores the retired facade exiting later', async () => {
+    const old = fakeChild({ initialize: {}, 'tools/call': {
+      isError: true, content: [{ type: 'text', text: '{"error":{"code":"reconnect_required"}}' }],
+    } });
+    const fresh = fakeChild({ initialize: {}, 'tools/call': {
+      content: [{ type: 'text', text: '{"credentials":[]}' }],
+    } });
+    const spawn = vi.fn().mockReturnValueOnce(old.child).mockReturnValueOnce(fresh.child);
+    const client = new StdioSquireMcpClient({ scope: { agentId: 'agent', roomId: 'connector' }, spawn });
+    await expect(client.call('list_credentials')).rejects.toThrow('reconnect_required');
+    expect(spawn).toHaveBeenCalledTimes(1);
+    client.reconnect();
+    expect(old.child.killed).toBe(true);
+    expect(await client.call('list_credentials')).toEqual({ credentials: [] });
+    old.child.emit('exit', 0);
+    expect(await client.call('list_credentials')).toEqual({ credentials: [] });
+    expect(spawn).toHaveBeenCalledTimes(2);
+    client.close();
+  });
+
   it('initializes once, then answers each tool call with the parsed tool result', async () => {
     const calls: string[] = [];
     const { child } = fakeChild({

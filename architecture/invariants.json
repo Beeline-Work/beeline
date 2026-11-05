@@ -3294,6 +3294,7 @@
         "sourceMessageId": "existing before the registry; weekly audit reviews",
         "appId": "existing before the registry; weekly audit reviews",
         "offerId": "existing before the registry; weekly audit reviews",
+        "replacementMessageId": "The committed replacement card keeps expired connector offers navigable across transcript reads and live deltas.",
         "toState": "existing before the registry; weekly audit reviews",
         "outcome": "existing before the registry; weekly audit reviews",
         "contents": "existing before the registry; weekly audit reviews",

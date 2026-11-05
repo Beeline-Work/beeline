@@ -349,7 +349,7 @@ export const wireShapes: readonly WireShape[] = [
   shape({"kind":"literal","value":"ended"}),
   shape({"kind":"literal","value":"live"}),
   shape({"kind":"union","choices":[6,347]}),
-  shape({"kind":"object","properties":{"offerId":{"node":1,"optional":false},"agent":{"node":203,"optional":false},"addressee":{"node":203,"optional":false},"connectorType":{"node":348,"optional":false},"connectorName":{"node":1,"optional":false},"reason":{"node":1,"optional":false},"consequence":{"node":1,"optional":false},"helper":{"node":352,"optional":false},"status":{"node":353,"optional":false},"createdAt":{"node":18,"optional":false},"acceptedBy":{"node":306,"optional":true},"acceptedAt":{"node":17,"optional":true},"connectorId":{"node":5,"optional":true},"intent":{"node":354,"optional":true},"provider":{"node":5,"optional":true}}}),
+  shape({"kind":"object","properties":{"offerId":{"node":1,"optional":false},"agent":{"node":203,"optional":false},"addressee":{"node":203,"optional":false},"connectorType":{"node":348,"optional":false},"connectorName":{"node":1,"optional":false},"reason":{"node":1,"optional":false},"consequence":{"node":1,"optional":false},"helper":{"node":352,"optional":false},"status":{"node":353,"optional":false},"createdAt":{"node":18,"optional":false},"acceptedBy":{"node":306,"optional":true},"acceptedAt":{"node":17,"optional":true},"connectorId":{"node":5,"optional":true},"replacementMessageId":{"node":5,"optional":true},"intent":{"node":354,"optional":true},"provider":{"node":5,"optional":true}}}),
   shape({"kind":"union","choices":[12,349,350,351,90,91,92,93,124]}),
   shape({"kind":"literal","value":"trusty-squire"}),
   shape({"kind":"literal","value":"wallet"}),

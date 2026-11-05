@@ -547,6 +547,8 @@ export class MonolithCornerTurnLoop {
   private client?: AcpClient;
   private claudeLoginWatch?: { close(): void };
   private sessionId?: string;
+  /** MCP subprocesses capture this generation-specific path at launch. */
+  private sessionContextPath?: string;
   /** The configuration the live session baked in; a change invalidates it. */
   private sessionFingerprint?: string;
   /** Whether CodeGraph preparation succeeded for the live session. */
@@ -903,6 +905,7 @@ export class MonolithCornerTurnLoop {
     this.stopClaudeLoginWatch();
     this.client = undefined;
     this.sessionId = undefined;
+    this.sessionContextPath = undefined;
     this.sessionFingerprint = undefined;
     this.sessionCodegraphReady = false;
     this.pinnedProviderOverride = undefined;
@@ -917,7 +920,7 @@ export class MonolithCornerTurnLoop {
    *  session whose persona, model pin, or mounted MCP set the operator has
    *  since changed, or whose harness process has exited. */
   private async sessionIsCurrent(): Promise<boolean> {
-    if (!this.client?.isAlive) return false;
+    if (!this.client?.isAlive || this.sessionContextPath !== this.commandContext.path) return false;
     return (await this.currentSessionFingerprint()) === this.sessionFingerprint;
   }
 
@@ -975,7 +978,7 @@ export class MonolithCornerTurnLoop {
 
   private async activate(trace?: TurnTrace): Promise<string> {
     if (this.options.config.agentProgramError) throw new Error(this.options.config.agentProgramError);
-    if (this.client?.isAlive && this.sessionId) {
+    if (this.client?.isAlive && this.sessionId && this.sessionContextPath === this.commandContext.path) {
       if (this.options.config.agentHomeRoot) {
         await repairRoomAgentCredentialLinks({
           root: this.options.config.agentHomeRoot,
@@ -1060,7 +1063,7 @@ export class MonolithCornerTurnLoop {
         ...hostImportedMcpDeclarations({ operatorHome, agentKind: this.options.config.agentKind }),
         ...registryHostDeclarations,
       })
-        ? { relay: await this.squireRelay.listen() }
+        ? { relay: await this.squireRelay.listen(this.commandContext.path) }
         : {}),
     };
     const resourceAuthFile = await writeSessionResourceAuth(this.options.api, this.commandContext.path);
@@ -1534,6 +1537,7 @@ export class MonolithCornerTurnLoop {
     if (opened.kind === 'created') this.warmTranscript.forgetSession();
     this.warmTranscript.rememberSession(opened.sessionId, conversationFingerprint);
     this.sessionId = opened.sessionId;
+    this.sessionContextPath = this.commandContext.path;
     this.sessionFingerprint = fingerprint;
     this.sessionCodegraphReady = codegraphReady;
     let appliedModel: string | undefined;
@@ -1668,6 +1672,7 @@ export class MonolithCornerTurnLoop {
     this.stopClaudeLoginWatch();
     this.client = undefined;
     this.sessionId = undefined;
+    this.sessionContextPath = undefined;
     this.sessionFingerprint = undefined;
     this.sessionCodegraphReady = false;
     if (client?.hasBackgroundTools) void this.retainBackgroundClient(client);

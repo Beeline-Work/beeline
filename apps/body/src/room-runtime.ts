@@ -670,14 +670,11 @@ export class RoomRuntimeCoordinator {
     this.interactiveIdleListener = listener;
   }
 
-  /**
-   * A failed reconcile makes the live socket suspect: it is pinged, and a
-   * silent one is replaced, which works with any server version. A response
-   * the server actually sent (or a full local read budget) says nothing about
-   * the socket.
-   */
-  suspectLink(error: unknown): void {
-    if (!(error instanceof DaemonApiError)) this.options.daemonApi.link?.suspect();
+  /** A failed discovery replaces its transport; registration supplies a fresh
+   * read boundary. Authority refusals require an actual access change. */
+  reconnectAfterDiscoveryFailure(error: unknown): void {
+    if (!(error instanceof DaemonApiError) || error.retryable)
+      this.options.daemonApi.link?.reconnectNow();
   }
 
   private wakeDiscovery(): void {

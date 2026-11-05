@@ -31,7 +31,8 @@ export interface AgentChannelHandlers {
  * can drop or refuse one agent without touching the others.
  */
 export class AgentChannel {
-  readonly turn = new HelperTurnChannel(frame => this.send(frame), () => this.isOpen());
+  readonly turn = new HelperTurnChannel(frame => this.send(frame), () => this.isOpen(),
+    () => this.machine.reconnectNow());
   readonly activation=new HelperActivationChannel(frame=>this.send(frame),()=>this.activationScope()!==undefined);
   #activationSource:{connectionId:string;epoch:number}|undefined;
   activationContextSelected=false;

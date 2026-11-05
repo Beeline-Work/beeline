@@ -1,8 +1,30 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { HelperTurnChannel } from './helper-turn-channel.js';
+import { HELPER_TURN_REQUEST_DEADLINE_MS } from '@beeline/api-contract/helper-turn-ownership';
 
 const source = { connectionId: 'connection', epoch: 1 };
 describe('HelperTurnChannel', () => {
+  it.each(['deadline', 'send', 'malformed', 'refused', 'disconnect'])('reconnects %s once without replaying controls or cascading socket-loss recovery', async failure => {
+    vi.useFakeTimers();
+    const frames: Record<string, unknown>[] = [];
+    const reconnect = vi.fn(() => channel.suspend());
+    const channel = new HelperTurnChannel(frame => { frames.push(frame); return failure !== 'send'; }, () => true, reconnect);
+    channel.negotiate(source);
+    const first = channel.request('acknowledgeAgentCommand', { roomId: 'room', commandId: 'one', generationId: 'generation' });
+    const results = Promise.allSettled([first]);
+    try {
+      if (failure === 'deadline') await vi.advanceTimersByTimeAsync(HELPER_TURN_REQUEST_DEADLINE_MS);
+      else if (failure === 'disconnect') channel.suspend();
+      else if (failure !== 'send') channel.receive({ type: 'turn-result', requestId: frames[0]!.requestId,
+        ...(failure === 'refused' ? { error: 'unavailable' } : { result: {} }) });
+      expect((await results)[0]!.status).toBe('rejected');
+      expect(reconnect).toHaveBeenCalledTimes(failure === 'disconnect' ? 0 : 1);
+      expect(frames).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(HELPER_TURN_REQUEST_DEADLINE_MS * 2);
+      expect(frames).toHaveLength(1);
+    } finally { channel.suspend(); vi.useRealTimers(); }
+  });
+
   it('accepts a large turn request once and >16 turn controls without replay', async () => {
     const frames: Record<string, unknown>[] = [];
     const channel = new HelperTurnChannel(frame => { frames.push(frame); return true; }, () => true);

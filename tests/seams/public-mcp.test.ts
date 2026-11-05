@@ -1,36 +1,438 @@
-import { BackgroundWork } from './background-work.js';
-import { COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion } from './command-completion.js';
-import { cornerOwnerSql } from './corner-worker.js';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createServer } from 'node:http';
-import { Webhook } from 'standardwebhooks';
-import { MCP_ORDER_WAKE_HINT, MCP_REVIEW_WAKE_HINT, MCP_WAKE_HINT, RoomsMcpEvents } from './rooms-mcp-events.js';
-import { backfillMcpMemberRoomsAndAvatars, ensureMcpMember, MCP_TAG_INSTRUCTION, postMcpWebhook } from './rooms-mcp-members.js';
-import { randomBytes, createHash, randomUUID } from 'node:crypto';
-import type { AddressInfo } from 'node:net';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { migrate } from './database.js';
-import { PgliteDatabase, assignCornerWorker, insertCornerFacts } from './test-support.js';
-import { TokenAuth, tokenHash } from './auth.js';
-import { recordSigninAttempt } from './signin-attempts.js';
-import { PhoneService } from './phone-service.js';
-import { DaemonService } from './daemon-service.js';
-import { LiveHub } from './live.js';
-import { createBeelineServer } from './server.js';
-import { BROWSER_REFUSALS, RoomsMcpOAuth } from './rooms-mcp-oauth.js';
-import { RoomsMcp } from './rooms-mcp.js';
-import { MCP_AGENT_EXCLUSIONS, MCP_AGENT_TOOLS, MCP_APP_ROUTE_OPERATIONS, pendingMcpWakes } from './rooms-mcp-agent.js';
-import { claimAgentCommand, createAgentCommand, routeHumanMessage, routeAgentResult } from './agent-command.js';
-import { cornerWorkSql } from './chat-corner-counts.js';
-import { openSecrets } from './free-agents.js';
-import { deliverMcpMemberWebhooks, runMcpWebhookDelivery } from './rooms-mcp-members.js';
-import { runMaintenance } from './background.js';
-import { PREREGISTERED_MCP_CLIENTS } from './rooms-mcp-preregistered.js';
-import { readFileSync } from 'node:fs';
-import sharp from 'sharp';
-import { MCP_STARTER_ROUTINE, FACE_SOULS } from '@beeline/api-contract/phone';
+import { pathToFileURL } from 'node:url';
+import { describe } from 'vitest';
+import { runInNewContext } from "node:vm";
+import { expect, it } from "vitest";
+import { renderMcpWorkspaceSelection, MCP_WORKSPACE_SCRIPT } from "../../apps/server/src/rooms-mcp-consent-ui.js";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { afterEach } from "vitest";
+import { RoomsMcp } from "../../apps/server/src/rooms-mcp.js";
+import { RoomsMcpOAuth } from "../../apps/server/src/rooms-mcp-oauth.js";
+import { TokenAuth } from "../../apps/server/src/auth.js";
+import type { SqlDatabase } from "../../apps/server/src/database.js";
+import { PhoneService } from "../../apps/server/src/phone-service.js";
+import { LiveHub } from "../../apps/server/src/live.js";
+import { request as httpRequest, type ClientRequest, type Server } from "node:http";
+import { afterAll, beforeAll } from "vitest";
+import { ROOMS_MCP_SCHEMA } from "../../apps/server/src/rooms-mcp-schema.js";
+import { COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion } from "../../apps/server/src/command-completion.js";
+import { migratedDatabase, PgliteDatabase } from "../../apps/server/src/test-support.js";
+import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
+import type { ServerResponse } from "node:http";
+import { Pool } from "pg";
+import { PostgresDatabase } from "../../apps/server/src/database.js";
+import { DURABLE_LIVE_SCHEMA } from "../../apps/server/src/durable-live.js";
+import { MCP_MEMBER_STREAM_SCHEMA, serveMcpMemberStream } from "../../apps/server/src/rooms-mcp-stream.js";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { groupBPostgresDatabase } from "../../apps/server/src/test-fixtures/test-support-router-group-b-postgres.js";
+import { GroupBClock } from "../../apps/server/src/test-fixtures/router-group-b-clock.js";
+import { acceptMemberDelivery } from "../../apps/body/src/session-join/bridge.js";
+import { queueInboxOnce, readState, takeInbox, updateState } from "../../apps/body/src/session-join/store.js";
+import { BackgroundWork } from "../../apps/server/src/background-work.js";
+import { cornerOwnerSql } from "../../apps/server/src/corner-worker.js";
+import { beforeEach } from "vitest";
+import { Webhook } from "standardwebhooks";
+import { MCP_ORDER_WAKE_HINT, MCP_REVIEW_WAKE_HINT, MCP_WAKE_HINT, RoomsMcpEvents } from "../../apps/server/src/rooms-mcp-events.js";
+import { backfillMcpMemberRoomsAndAvatars, ensureMcpMember, MCP_TAG_INSTRUCTION, postMcpWebhook } from "../../apps/server/src/rooms-mcp-members.js";
+import { randomBytes, createHash } from "node:crypto";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { migrate } from "../../apps/server/src/database.js";
+import { assignCornerWorker, insertCornerFacts } from "../../apps/server/src/test-support.js";
+import { tokenHash } from "../../apps/server/src/auth.js";
+import { recordSigninAttempt } from "../../apps/server/src/signin-attempts.js";
+import { DaemonService } from "../../apps/server/src/daemon-service.js";
+import { createBeelineServer } from "../../apps/server/src/server.js";
+import { BROWSER_REFUSALS } from "../../apps/server/src/rooms-mcp-oauth.js";
+import { MCP_AGENT_EXCLUSIONS, MCP_AGENT_TOOLS, MCP_APP_ROUTE_OPERATIONS, pendingMcpWakes } from "../../apps/server/src/rooms-mcp-agent.js";
+import { claimAgentCommand, createAgentCommand, routeHumanMessage, routeAgentResult } from "../../apps/server/src/agent-command.js";
+import { cornerWorkSql } from "../../apps/server/src/chat-corner-counts.js";
+import { openSecrets } from "../../apps/server/src/free-agents.js";
+import { deliverMcpMemberWebhooks, runMcpWebhookDelivery } from "../../apps/server/src/rooms-mcp-members.js";
+import { runMaintenance } from "../../apps/server/src/background.js";
+import { PREREGISTERED_MCP_CLIENTS } from "../../apps/server/src/rooms-mcp-preregistered.js";
+import { readFileSync } from "node:fs";
+import sharp from "sharp";
+import { MCP_STARTER_ROUTINE, FACE_SOULS } from "@beeline/api-contract/phone";
+import { vi } from 'vitest';
+import '../../apps/server/scripts/test-event-loop.js';
+vi.setConfig({ fakeTimers: { toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] } });
 
+
+describe("rooms-mcp-consent-ui", () => {
+describe('MCP workspace consent', () => {
+  it('defaults all eligible workspaces selected and submits stable IDs to the consent form', () => {
+    const html = renderMcpWorkspaceSelection([{ id: 'w1', name: 'Personal', publicRoomCount: 1 }, { id: 'w2', name: 'Team', publicRoomCount: 3 }]);
+    expect(html).toContain('id="workspace-heading">Workspaces</p>');
+    expect(html).not.toContain('all 2 selected');
+    expect(html.match(/ checked/g)).toHaveLength(2);
+    expect(html.match(/form="mcp-consent-form"/g)).toHaveLength(3);
+    expect(html).toContain('name="workspace_selection" value="1"');
+    expect(html).toContain('name="workspace_ids" value="w1"');
+    expect(html).toContain('1 public Room</span>');
+    expect(html).toContain('3 public Rooms</span>');
+  });
+  it('updates select-all, selection guidance and Allow without disabling Cancel', () => {
+    const listeners = new Map<string, () => void>();
+    const choices = [true, true].map((checked, index) => ({ checked, addEventListener: (_: string, listener: () => void) => listeners.set(String(index), listener) }));
+    const toggle = { hidden: true, textContent: '', addEventListener: (_: string, listener: () => void) => listeners.set('toggle', listener) };
+    const error = { hidden: true };
+    const allow = { disabled: false };
+    const form = { querySelector: (selector: string) => selector === 'button[value="allow"]' ? allow : null };
+    const nodes: Record<string, unknown> = { 'mcp-consent-form': form, 'select-all-workspaces': toggle, 'selection-error': error };
+    runInNewContext(MCP_WORKSPACE_SCRIPT, { document: { getElementById: (id: string) => nodes[id], querySelectorAll: () => choices } });
+    expect(toggle.hidden).toBe(false);
+    expect(toggle.textContent).toBe('Deselect all');
+    listeners.get('toggle')!();
+    expect(choices.every(choice => !choice.checked)).toBe(true);
+    expect(allow.disabled).toBe(true);
+    expect(error.hidden).toBe(false);
+    expect(toggle.textContent).toBe('Select all');
+    choices[0]!.checked = true;
+    listeners.get('0')!();
+    expect(allow.disabled).toBe(false);
+    expect(error.hidden).toBe(true);
+    listeners.get('toggle')!();
+    expect(choices.every(choice => choice.checked)).toBe(true);
+  });
+  it('keeps already-connected workspaces checked through deselect-all on reconnect', () => {
+    const html = renderMcpWorkspaceSelection([{ id: 'joined', name: 'Team', publicRoomCount: 1, selected: false, alreadyConnected: true }]);
+    expect(html).toContain('form="mcp-consent-form" checked disabled');
+    expect(html).toContain('already connected');
+    expect(html).toContain('type="hidden" name="workspace_ids" value="joined"');
+    const listeners = new Map<string, () => void>();
+    const choices = [{ checked: true, disabled: true }, { checked: true, disabled: false }]
+      .map(choice => ({ ...choice, addEventListener: () => {} }));
+    const toggle = { hidden: true, textContent: '', addEventListener: (_: string, fn: () => void) => listeners.set('toggle', fn) };
+    const allow = { disabled: false }, error = { hidden: true };
+    const nodes = { 'mcp-consent-form': { querySelector: () => allow }, 'select-all-workspaces': toggle, 'selection-error': error };
+    runInNewContext(MCP_WORKSPACE_SCRIPT, { document: { getElementById: (id: keyof typeof nodes) => nodes[id], querySelectorAll: () => choices } });
+    listeners.get('toggle')!();
+    expect(choices.map(choice => choice.checked)).toEqual([true, false]);
+    expect(allow.disabled).toBe(false);
+    expect(error.hidden).toBe(true);
+    listeners.get('toggle')!();
+    expect(choices.map(choice => choice.checked)).toEqual([true, true]);
+  });
+  it('preserves saved selections and safely escapes names and IDs', () => {
+    const html = renderMcpWorkspaceSelection([{ id: 'a"b', name: '<script>alert(1)</script>', publicRoomCount: 0, selected: false }]);
+    expect(html).not.toContain(' checked');
+    expect(html).toContain('value="a&quot;b"');
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(html).toContain('id="selection-error" role="status">Select at least one');
+    expect(html).not.toContain('<script>');
+  });
+  it('explains first-run creation with no picker and leaves Allow enabled', () => {
+    const html = renderMcpWorkspaceSelection([], "Robin's team");
+    expect(html).toContain('Allow will create your Workspace, Robin&#39;s team, with a public #general Room.');
+    expect(html).toContain('name="workspace_selection" value="1"');
+    expect(html).not.toContain('type="checkbox"');
+    expect(html).not.toContain('Select at least one');
+    const allow = { disabled: false };
+    runInNewContext(MCP_WORKSPACE_SCRIPT, { document: {
+      getElementById: (id: string) => id === 'mcp-consent-form' ? { querySelector: () => allow } : null,
+      querySelectorAll: () => [],
+    } });
+    expect(allow.disabled).toBe(false);
+    expect(renderMcpWorkspaceSelection([], '<script>')).toContain('&lt;script&gt;');
+  });
+  it('shows the no-selection guidance for an empty eligible list and uses static progressive enhancement', () => {
+    const html = renderMcpWorkspaceSelection([]);
+    expect(html).toContain('Select at least one Workspace');
+    expect(html).not.toContain('type="checkbox"');
+    expect(MCP_WORKSPACE_SCRIPT).toContain('allow.disabled = count === 0');
+    expect(MCP_WORKSPACE_SCRIPT).toContain("choice.addEventListener('change', update)");
+    expect(MCP_WORKSPACE_SCRIPT).not.toContain('innerHTML');
+  });
+});
+});
+
+
+describe("rooms-mcp-negotiation", () => {
+const cleanups:Array<()=>Promise<void>>=[];
+afterEach(async()=>{for(const cleanup of cleanups.splice(0))await cleanup();vi.unstubAllEnvs();});
+async function fixture(ready:boolean){
+  const query=vi.fn(async()=>{throw new Error('unexpected application read');});
+  // Keep origin/resource initialization identical to production; only the
+  // authenticated principal and admission are synthetic in this zero-read proof.
+  const oauth=new RoomsMcpOAuth({query} as unknown as SqlDatabase,'http://127.0.0.1',{} as TokenAuth);
+  vi.spyOn(oauth,'principal').mockResolvedValue({hash:'synthetic',client_id:'client',identity_id:'owner',member_id:'member',scope:'rooms:read'});
+  vi.spyOn(oauth,'take').mockResolvedValue(true);
+  vi.spyOn(oauth,'audit').mockResolvedValue(undefined);
+  const mcp=new RoomsMcp(oauth,{} as PhoneService,new LiveHub(),undefined,undefined,undefined,()=>ready);
+  const server=createServer((request,response)=>{void mcp.handle(request,response).catch(()=>{response.statusCode=500;response.end();});});
+  await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const origin=`http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  cleanups.push(async()=>{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));});
+  return {origin,query};
+}
+describe('MCP member stream server-first negotiation',()=>{
+  it.each([[undefined,false],[undefined,true],['0',false],['0',true],['1',false],['1',true]] as const)('advertises the enabled default or override with a ready listener (%s,%s)',async(setting,ready)=>{
+    vi.stubEnv('BEELINE_NETWORK_ROUTER_V1',setting);
+    const enabled=setting!=='0';
+    const {origin,query}=await fixture(ready);
+    const discovery=await fetch(origin+'/mcp',{method:'POST',headers:{authorization:'Bearer synthetic','content-type':'application/json'},
+      body:JSON.stringify({jsonrpc:'2.0',id:1,method:'server/discover',params:{}})});
+    expect(discovery.status).toBe(200);
+    expect((await discovery.json() as any).result.capabilities.memberStreamV1).toBe(enabled&&ready);
+    if(!enabled||!ready){
+      const stream=await fetch(origin+'/mcp/member-stream?mentions=0',{headers:{authorization:'Bearer synthetic'}});
+      expect(stream.status).toBe(409);expect(await stream.json()).toEqual({error:'member_stream_unavailable'});
+    }
+    expect(query).not.toHaveBeenCalled();
+  });
+});
+});
+
+
+describe("rooms-mcp-oauth-completion", () => {
+describe('actual committed MCP OAuth held completion',()=>{
+  let db:PgliteDatabase,server:Server,origin:string,ready=true,release:()=>Promise<void>;
+  const reads:string[]=[],payloads:string[]=[],requests:ClientRequest[]=[];
+  beforeAll(async()=>{
+    db=await migratedDatabase();await db.query(ROOMS_MCP_SCHEMA);
+    release=await db.client.listen(COMMAND_COMPLETION_CHANNEL,payload=>{payloads.push(payload);notifyCommandCompletion(payload);});
+    const observed:SqlDatabase={transaction:work=>db.transaction(work),query:(sql,values)=>{
+      if(sql.startsWith('SELECT code,error FROM rooms_mcp_handoffs'))reads.push(sql);return db.query(sql,values);
+    }};
+    const oauth=new RoomsMcpOAuth(observed,'http://synthetic.invalid',{} as TokenAuth,undefined,()=>ready);
+    server=createServer((request,response)=>{void oauth.handle(request,response,new URL(request.url!,'http://synthetic.invalid')).catch(()=>{response.destroy();});});
+    await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));origin=`http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  },60000);
+  afterEach(()=>{for(const request of requests.splice(0))request.destroy();vi.useRealTimers();ready=true;});
+  afterAll(async()=>{await new Promise<void>(resolve=>server.close(()=>resolve()));await release();await db.close();});
+  const post=(input:Record<string,unknown>)=>{
+    let connected!:()=>void,resolve!:(value:{status:number;body:Record<string,unknown>})=>void,reject!:(error:Error)=>void;
+    const headers=new Promise<void>(done=>{connected=done;}),done=new Promise<{status:number;body:Record<string,unknown>}>((yes,no)=>{resolve=yes;reject=no;});
+    // Node's finite test client has no SDK idle-body timer hiding this proof.
+    const request=httpRequest(origin+'/mcp/oauth/handoff',{method:'POST',headers:{'content-type':'application/json'}},response=>{
+      connected();let text='';response.on('data',chunk=>{text+=chunk;});response.on('end',()=>resolve({status:response.statusCode!,body:JSON.parse(text)}));response.on('error',reject);
+    });request.on('error',reject);request.end(JSON.stringify(input));requests.push(request);return {request,headers,done};
+  };
+  it('keeps one initial read through a ten-minute deadline and reads nothing when completion feed is unavailable',async()=>{
+    vi.useFakeTimers();const before=reads.length,waiting=post({state:'a'.repeat(43),completionV1:true,waitMs:600_000});
+    await waiting.headers;await vi.waitFor(()=>expect(reads).toHaveLength(before+1));
+    await vi.advanceTimersByTimeAsync(599_999);expect(reads).toHaveLength(before+1);
+    await vi.advanceTimersByTimeAsync(1);expect(await waiting.done).toEqual({status:200,body:{error:'authorization_pending'}});expect(reads).toHaveLength(before+1);
+    ready=false;const unavailable=await post({state:'b'.repeat(43),completionV1:true,waitMs:1}).done;
+    expect(unavailable.status).toBe(503);expect(reads).toHaveLength(before+1);
+  });
+  it('wakes only the correlated state from a real commit and replays an opt-in receipt while legacy consumption stays one-use',async()=>{
+    const state='c'.repeat(43),before=reads.length,waiting=post({state,completionV1:true,waitMs:600_000});await waiting.headers;
+    await vi.waitFor(()=>expect(reads).toHaveLength(before+1));
+    await fetch(origin+'/mcp/oauth/handoff?state='+'d'.repeat(43)+'&code=wrong');expect(reads).toHaveLength(before+1);
+    await fetch(origin+'/mcp/oauth/handoff?state='+state+'&code=synthetic-code');expect(await waiting.done).toEqual({status:200,body:{code:'synthetic-code'}});
+    expect(await post({state,completionV1:true,waitMs:1000}).done).toEqual({status:200,body:{code:'synthetic-code'}});
+    expect(await post({state}).done).toEqual({status:200,body:{code:'synthetic-code'}});
+    expect(await post({state}).done).toEqual({status:400,body:{error:'authorization_pending'}});
+    const hints=payloads.map(payload=>JSON.parse(payload)).filter(key=>key.operation==='mcp-handoff');
+    expect(hints).toHaveLength(2);expect(JSON.stringify(hints)).not.toContain(state);expect(JSON.stringify(hints)).not.toContain('synthetic-code');
+  });
+  it('bounds concurrent waits for one state and releases admission on actual cancellation',async()=>{
+    const state='e'.repeat(43),first=post({state,completionV1:true,waitMs:600_000}),second=post({state,completionV1:true,waitMs:600_000});
+    // Attach rejection consumers before destroying either actual client.
+    const firstResult=first.done.catch(()=>undefined),secondResult=second.done.catch(()=>undefined);
+    await Promise.all([first.headers,second.headers]);expect((await post({state,completionV1:true,waitMs:600_000}).done).status).toBe(429);
+    first.request.destroy(new Error('Synthetic client cancellation'));second.request.destroy(new Error('Synthetic client cancellation'));
+    await Promise.all([firstResult,secondResult]);
+    await vi.waitFor(async()=>{expect((await post({state,completionV1:true,waitMs:1}).done).status).toBe(200);});
+  });
+});
+});
+
+
+describe("rooms-mcp-stream.postgres", () => {
+const url=process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
+if(url&&!['localhost','127.0.0.1','[::1]'].includes(new URL(url).hostname))throw new Error('MCP proof requires isolated loopback PostgreSQL');
+const deferred=()=>{let resolve!:()=>void;const promise=new Promise<void>(done=>{resolve=done;});return {resolve,promise};};
+class Reply extends EventEmitter {
+  destroyed=false;writableEnded=false;writableLength=0;frames:Record<string,unknown>[]=[];
+  writeHead(){}flushHeaders(){}write(text:string){this.frames.push(JSON.parse(text));return true;}
+  end(){this.writableEnded=true;this.emit('close');}
+}
+describe.skipIf(!url)('MCP real PostgreSQL final authority contention',()=>{
+  it('blocks final enqueue behind the actual revocation writer and never releases prepared private content',async()=>{
+    const schema='mcp_'+randomUUID().replaceAll('-',''),admin=new Pool({connectionString:url,max:1});
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const config={connectionString:url,options:`-c search_path=${schema},public`,max:2};
+    const first=new PostgresDatabase('',2,{pool:new Pool(config)}),second=new PostgresDatabase('',2,{pool:new Pool(config)});
+    const room='11111111-1111-4111-8111-111111111111',workspace='22222222-2222-4222-8222-222222222222';
+    const pageEntered=deferred(),allowPage=deferred(),writerHeld=deferred(),commitWriter=deferred(),fenceEntered=deferred();
+    const output=new Reply();let revoke:Promise<void>|undefined;
+    try{
+      await first.query(`CREATE TABLE router_authority(scope text PRIMARY KEY,epoch bigint NOT NULL DEFAULT 1);
+        CREATE TABLE rooms(id uuid PRIMARY KEY,workspace_id uuid,archived_at timestamptz);
+        CREATE TABLE room_access(room_id uuid,identity_id text,removed_at timestamptz);
+        CREATE TABLE memberships(workspace_id uuid,room_id uuid,identity_id text,role text,removed_at timestamptz);
+        CREATE TABLE rooms_mcp_mentions(seq bigserial PRIMARY KEY,member_id text,room_id uuid,message_id text,cleared_at timestamptz,rewakes integer DEFAULT 0);
+        CREATE TABLE agent_commands(id text,agent_id text,reason text,state text,hiccup_attempts integer,private_payload jsonb,source_message_id text);
+        CREATE TABLE rooms_mcp_members(client_id text,owner_id text,member_id text);
+        CREATE TABLE rooms_mcp_tokens(hash text,client_id text,identity_id text,family_id text,scope text,expires_at timestamptz,revoked_at timestamptz);
+        CREATE TABLE rooms_mcp_connections(client_id text,identity_id text,scope text,revoked_at timestamptz);
+        CREATE TABLE rooms_mcp_families(id text,client_id text,identity_id text,revoked_at timestamptz);`);
+      await first.query(DURABLE_LIVE_SCHEMA);await first.query(MCP_MEMBER_STREAM_SCHEMA);
+      await first.query(`INSERT INTO rooms VALUES($1,$2,NULL)`,[room,workspace]);
+      await first.query(`INSERT INTO room_access VALUES($1,'member',NULL)`,[room]);
+      await first.query(`INSERT INTO memberships VALUES($1,NULL,'member','member',NULL)`,[workspace]);
+      await first.query(`INSERT INTO rooms_mcp_members VALUES('client','owner','member');
+        INSERT INTO rooms_mcp_connections VALUES('client','owner','rooms:read',NULL);
+        INSERT INTO rooms_mcp_tokens VALUES('synthetic-token','client','owner',NULL,'rooms:read',now()+interval '1 hour',NULL);`);
+      const observed:SqlDatabase={query:(sql,values)=>first.query(sql,values),transaction:work=>first.transaction(tx=>work({
+        transaction:nested=>tx.transaction(nested),query:(sql,values)=>{
+          const pending=tx.query(sql,values);
+          if(sql.includes('pg_advisory_xact_lock_shared'))fenceEntered.resolve();
+          return pending;
+        },
+      }))};
+      const serving=serveMcpMemberStream(observed,{hash:'synthetic-token',client_id:'client',identity_id:'owner',member_id:'member',scope:'rooms:read'},
+        output as unknown as ServerResponse,{mentionCursor:'0'},async()=>{
+          pageEntered.resolve();await allowPage.promise;
+          return {mentions:[{id:'synthetic-message',room_id:room,text:'private prepared content',deliveryCursor:'1'}],wakes:[],nextCursor:'1',more:false};
+        });
+      await pageEntered.promise;
+      revoke=second.transaction(async tx=>{
+        // Actual production BEFORE trigger obtains exclusive authority lock.
+        await tx.query(`UPDATE rooms_mcp_tokens SET revoked_at=now() WHERE hash='synthetic-token'`);
+        writerHeld.resolve();await commitWriter.promise;
+      });
+      await writerHeld.promise;allowPage.resolve();await fenceEntered.promise;
+      expect(output.frames).toEqual([]);
+      commitWriter.resolve();await revoke;await serving;
+      expect(output.frames).toEqual([{v:1,type:'ended',reason:'unavailable'}]);expect(output.writableEnded).toBe(true);
+    }finally{
+      allowPage.resolve();commitWriter.resolve();await revoke?.catch(()=>undefined);output.end();
+      await Promise.all([first.close(),second.close()]);await admin.query(`DROP SCHEMA ${schema} CASCADE`);await admin.end();
+    }
+  },15000);
+});
+});
+
+
+describe("rooms-mcp-stream", () => {
+class Reply extends EventEmitter {
+  destroyed=false;writableEnded=false;writableLength=0;
+  frames:Record<string,any>[]=[];
+  writeHead(){} flushHeaders(){}
+  write(text:string){this.frames.push(JSON.parse(text));this.emit('frame');return true;}
+  end(){this.writableEnded=true;this.emit('close');}
+  until(count:number):Promise<void>{
+    if(this.frames.length>=count)return Promise.resolve();
+    return new Promise(resolve=>{const inspect=()=>{if(this.frames.length>=count){this.off('frame',inspect);resolve();}};this.on('frame',inspect);});
+  }
+}
+const principal={hash:'synthetic-token',client_id:'client',identity_id:'owner',member_id:'member',scope:'rooms:read'};
+const room='11111111-1111-4111-8111-111111111111',workspace='22222222-2222-4222-8222-222222222222';
+
+const postgresUrl=process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
+describe.each(['pglite',...(postgresUrl?['postgres']:[])])('P12 MCP committed member stream (%s)',backend=>{
+  let db:PgliteDatabase|PostgresDatabase,release:()=>Promise<void>,closeDatabase:()=>Promise<void>;
+  const replies:Reply[]=[];
+  beforeAll(async()=>{
+    if(backend==='postgres'){
+      const fixture=await groupBPostgresDatabase(postgresUrl!,false);db=fixture.database;closeDatabase=fixture.close;
+      release=await fixture.listenToCompletions();
+    }else{
+      const local=new PgliteDatabase();db=local;closeDatabase=()=>local.close();
+      release=await local.client.listen(COMMAND_COMPLETION_CHANNEL,notifyCommandCompletion);
+    }
+    // Minimal isolated fixture still installs the actual production journal and
+    // every actual stream trigger; no test manually fabricates notifications.
+    await db.query(`CREATE TABLE router_authority(scope text PRIMARY KEY,epoch bigint NOT NULL DEFAULT 1);
+      CREATE TABLE rooms(id uuid PRIMARY KEY,workspace_id uuid,archived_at timestamptz);
+      CREATE TABLE room_access(room_id uuid,identity_id text,removed_at timestamptz);
+      CREATE TABLE memberships(workspace_id uuid,room_id uuid,identity_id text,role text,removed_at timestamptz);
+      CREATE TABLE rooms_mcp_mentions(seq bigserial PRIMARY KEY,member_id text,room_id uuid,message_id text,cleared_at timestamptz,rewakes integer DEFAULT 0);
+      CREATE TABLE agent_commands(id text,agent_id text,reason text,state text,hiccup_attempts integer,private_payload jsonb,source_message_id text);
+      CREATE TABLE rooms_mcp_members(client_id text,owner_id text,member_id text);
+      CREATE TABLE rooms_mcp_tokens(hash text,client_id text,identity_id text,family_id text,scope text,expires_at timestamptz,revoked_at timestamptz,calls integer DEFAULT 0);
+      CREATE TABLE rooms_mcp_connections(client_id text,identity_id text,scope text,revoked_at timestamptz);
+      CREATE TABLE rooms_mcp_families(id text,client_id text,identity_id text,revoked_at timestamptz);`);
+    await db.query(DURABLE_LIVE_SCHEMA);await db.query(MCP_MEMBER_STREAM_SCHEMA);
+    await db.query(`INSERT INTO rooms VALUES($1,$2,NULL)`,[room,workspace]);
+    await db.query(`INSERT INTO room_access VALUES($1,'member',NULL)`,[room]);
+    await db.query(`INSERT INTO memberships VALUES($1,NULL,'member','member',NULL)`,[workspace]);
+    await db.query(`INSERT INTO rooms_mcp_members VALUES('client','owner','member');
+      INSERT INTO rooms_mcp_connections VALUES('client','owner','rooms:read',NULL);
+      INSERT INTO rooms_mcp_tokens(hash,client_id,identity_id,scope,expires_at) VALUES('synthetic-token','client','owner','rooms:read',now()+interval '2 days');`);
+  },30000);
+  afterEach(()=>{for(const reply of replies.splice(0))reply.end();vi.useRealTimers();});
+  afterAll(async()=>{await release?.();await closeDatabase?.();});
+  const page=()=>vi.fn(async(transaction:SqlDatabase,after:string)=>{
+    const mentions=(await transaction.query<{id:string;room_id:string;deliveryCursor:string;rewakes:number}>(
+      `SELECT message_id id,room_id,'Synthetic committed message' text,seq::text "deliveryCursor",rewakes FROM rooms_mcp_mentions
+       WHERE member_id='member' AND seq>$1 AND cleared_at IS NULL ORDER BY seq`,[after])).rows;
+    return {mentions,wakes:[],nextCursor:mentions.at(-1)?.deliveryCursor??after,more:false};
+  });
+  const reply=()=>{const result=new Reply();replies.push(result);return result;};
+
+  it('has no idle reads or empty frames for a day, then captures the real committed source',async()=>{
+    vi.useFakeTimers({toFake:['Date']});const clock=new GroupBClock();
+    const output=reply(),read=page();
+    await serveMcpMemberStream(db,principal,output as unknown as ServerResponse,{mentionCursor:'0'},read as never,clock);
+    expect(output.frames).toHaveLength(1);expect(read).toHaveBeenCalledTimes(1);
+    const queries=vi.spyOn(db,'query'),transactions=vi.spyOn(db,'transaction');
+    vi.setSystemTime(Date.now()+24*60*60*1000);clock.advanceBy(24*60*60*1000);
+    expect(output.frames).toHaveLength(1);expect(read).toHaveBeenCalledTimes(1);
+    expect(queries).not.toHaveBeenCalled();expect(transactions).not.toHaveBeenCalled();
+    expect(clock.size).toBe(1); // Only the stored credential's terminal expiry.
+    queries.mockRestore();transactions.mockRestore();vi.useRealTimers();
+    const delivered=output.until(3);
+    await db.query(`INSERT INTO rooms_mcp_mentions(member_id,room_id,message_id) VALUES('member',$1,'first')`,[room]);
+    await delivered;
+    expect(output.frames[1]).toMatchObject({type:'delivery',deliveryId:'mention:first:0',mentionCursor:'1'});
+    expect(output.frames[2]).toMatchObject({type:'checkpoint',cursor:{through:1}});
+    expect(read).toHaveBeenCalledTimes(2);
+    const proofRoot=fileURLToPath(new URL("../../.beeline-proof",pathToFileURL(__filename).href));mkdirSync(proofRoot,{recursive:true});
+    const dir=mkdtempSync(join(proofRoot,'mcp-durability-')),key='codex:/synthetic/project';
+    const runner={node:'/synthetic/node',bundle:'/synthetic/beeline.js'};
+    try{
+      await updateState(dir,state=>state.sessions.push({key,agent:'codex',cwd:'/synthetic/project',name:'synthetic',
+        server:'http://127.0.0.1',clientId:'client',refreshToken:'synthetic-refresh',cursor:'0',deliveredWakes:[],joinedAt:''}));
+      const frame=output.frames[1]!;
+      // Crash after durable inbox publication but before the state/cursor write.
+      expect(queueInboxOnce(dir,key,String(frame.deliveryId),'already persisted')).toBe(true);
+      expect(readState(dir).sessions[0]?.cursor).toBe('0');
+      expect(await acceptMemberDelivery(dir,key,runner,frame)).toBe(0);
+      expect(readState(dir).sessions[0]?.streamCursor).toBeUndefined();
+      expect(takeInbox(dir,key)).toBe('already persisted');
+      expect(await acceptMemberDelivery(dir,key,runner,frame)).toBe(0);expect(takeInbox(dir,key)).toBe('');
+      await acceptMemberDelivery(dir,key,runner,output.frames[2]);
+      expect(readState(dir).sessions[0]?.streamCursor).toEqual(output.frames[2]!.cursor);
+    }finally{rmSync(dir,{recursive:true,force:true});}
+  });
+  it('resumes an unchanged committed cursor without requerying the application inbox',async()=>{
+    const head=(await db.query<{epoch:string;through:number}>(`SELECT epoch,sequence::integer through FROM live_streams WHERE id='mcp:member'`)).rows[0]!;
+    const output=reply(),read=page();
+    await serveMcpMemberStream(db,principal,output as unknown as ServerResponse,{cursor:head,mentionCursor:'1'},read as never);
+    expect(read).not.toHaveBeenCalled();expect(output.frames).toEqual([{v:1,type:'checkpoint',cursor:head,mentionCursor:'1'}]);
+  });
+  it('does not publish a rolled-back source or unrelated token-use metrics',async()=>{
+    const output=reply(),read=page();
+    await serveMcpMemberStream(db,principal,output as unknown as ServerResponse,{mentionCursor:'1'},read as never);
+    const before=(await db.query(`SELECT sequence FROM live_streams WHERE id='mcp:member'`)).rows;
+    await expect(db.transaction(async tx=>{
+      await tx.query(`INSERT INTO rooms_mcp_mentions(member_id,room_id,message_id) VALUES('member',$1,'rollback')`,[room]);throw new Error('abort');
+    })).rejects.toThrow('abort');
+    await db.query(`UPDATE rooms_mcp_tokens SET calls=calls+1`);
+    expect((await db.query(`SELECT sequence FROM live_streams WHERE id='mcp:member'`)).rows).toEqual(before);
+    expect(output.frames).toHaveLength(1);expect(read).toHaveBeenCalledTimes(1);
+  });
+  it('ends a held stream on actual committed credential revocation without returning content',async()=>{
+    const output=reply(),read=page();
+    await serveMcpMemberStream(db,principal,output as unknown as ServerResponse,{mentionCursor:'1'},read as never);
+    const ended=output.until(2);
+    await db.query(`UPDATE rooms_mcp_tokens SET revoked_at=now() WHERE hash='synthetic-token'`);
+    await ended;expect(output.frames[1]).toEqual({v:1,type:'ended',reason:'unavailable'});
+    expect(output.writableEnded).toBe(true);expect(read).toHaveBeenCalledTimes(1);
+  });
+});
+});
+
+
+describe("rooms-mcp", () => {
 const USER = tokenHash('google:mcp-demo'), OTHER = 'b'.repeat(64), AGENT = 'c'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222', PRIVATE = '33333333-3333-4333-8333-333333333333';
@@ -1055,7 +1457,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     } finally { vi.restoreAllMocks(); }
   });
   it('has a page sentence for every reason a browser step can refuse with', () => {
-    const source = readFileSync(new URL('./rooms-mcp-oauth.ts', import.meta.url), 'utf8');
+    const source = readFileSync(new URL("../../apps/server/src/rooms-mcp-oauth.ts", pathToFileURL(__filename).href), 'utf8');
     const section = (from: string, to: string) => source.slice(source.indexOf(from), source.indexOf(to, source.indexOf(from)));
     // The browser branches, plus the body reader and flow lookup they call.
     const browser = section("path === '/mcp/oauth/authorize') {", "path === '/mcp/oauth/token') {")
@@ -1988,13 +2390,13 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(posts).toEqual(['https://hooks.example/registration', 'https://hooks.example/new']);
   });
   it('publishes every preregistered client id on the public connect page', () => {
-    const page = readFileSync(new URL('../../../web/connect/index.html', import.meta.url), 'utf8');
+    const page = readFileSync(new URL("../../web/connect/index.html", pathToFileURL(__filename).href), 'utf8');
     for (const client of PREREGISTERED_MCP_CLIENTS) {
       expect(page).toContain(client.id);
       expect(page).toContain(client.name);
     }
     expect(page).toContain('https://join.usebeeline.app');
-    expect(readFileSync(new URL('../../../web/sitemap.xml', import.meta.url), 'utf8')).toContain('<loc>https://usebeeline.app/connect/</loc>');
+    expect(readFileSync(new URL("../../web/sitemap.xml", pathToFileURL(__filename).href), 'utf8')).toContain('<loc>https://usebeeline.app/connect/</loc>');
   });
   const data = (result: unknown) => JSON.parse(((result as { content: { text: string }[] }).content)[0]!.text).data;
   it('owner-unknown: identifies the approving owner before and after setup, even without Rooms', async () => {
@@ -2373,7 +2775,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
         await ok(client, 'search', { address: ROOM, scope, query: 'release migration', limit: maximum });
     });
     it('R-MCP-PARITY: exposes every agent tool except the documented exclusions', async () => {
-      const surface = await import('../../body/src/minimal-tool-surface.js');
+      const surface = await import("../../apps/body/src/minimal-tool-surface.js");
       const agentTools = new Set([
         ...surface.minimalTools(true), ...surface.minimalTools(false), surface.RUNNER_TOOL, surface.SILENT_TOOL,
         ...surface.scratchTools(true), ...surface.repositoryTools(),
@@ -2617,4 +3019,5 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       expect((await ok(client, 'read', { facet: 'brief', address: corner })).revisions?.length ?? 1).toBeGreaterThan(0);
     });
   });
+});
 });

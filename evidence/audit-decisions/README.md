@@ -2,20 +2,19 @@
 
 This batch implements the captain's accepted recommendations. The code batch
 https://github.com/Beeline-Work/beeline/pull/3447 merged after green CI. L1 is
-complete. B1 has cumulatively deleted **63,964 ledger rows** and updated **4,951
-cards**. The Nov 5 attempt stopped before any update: its first monitor sample
-found an existing global lock wait of **28,639.227 ms**, above the new 1,000 ms
-limit. No client was blocked by cleanup. Current before/after counts are unchanged:
-**187,275 cards and 151 fields** remain, with all **229 current skill versions**
-preserved. The cleanup backend is absent, with no locks or blocked clients.
-See `b1-nov5-stop.json` and the fresh `b1-nov5-restore-point.json`. B8 is untouched.
+complete. B1 has cumulatively deleted **63,964 ledger rows** and updated **12,757
+cards**. The latest pass stopped on a client blocked by cleanup, with observed
+wait **91.379 ms**, as required by inbox 020. Current remaining counts are
+**179,469 cards and 151 fields**. All **229 current skill versions** and retained
+telemetry cohorts are preserved. The cleanup backend is absent, holds no locks
+and blocks no clients. See `b1-nov5-client-stop.json`; B8 remains untouched.
 
 | Decision | Implementation |
 | --- | --- |
 | G1 | `scripts/check-architecture.mjs` reports relaxations for weekly review; candidate rules still must pass. `scripts/ci-workspace-tasks.sh` runs the candidate guard. |
 | G2 | System catalog shape and source-use guards remain; phrase changes are reviewed weekly without a wording hash approval gate. |
 | G3 | The old System fingerprint lock was already removed. The wording-hash approval gate and corner declaration lock are retired; the catalog guard and exhaustive corner reference replace them. |
-| B1 | `scripts/audit-decisions-cleanup.mjs` defaults to `BEGIN READ ONLY`, counts exact D1 classes, and rolls back. `--apply` changes the skill-version job FK to `ON DELETE SET NULL` before deleting jobs, and checks that every skill version survived. Never called by deployment. All 63,964 approved ledger rows deleted and SET NULL preserved all versions; 4,951 cards updated across the resumed passes. The release pause leaves 187,138 cards and 147 fields; firstmate owns resume authority. |
+| B1 | `scripts/audit-decisions-cleanup.mjs` defaults to `BEGIN READ ONLY`, counts exact D1 classes, and rolls back. `--apply` changes the skill-version job FK to `ON DELETE SET NULL` before deleting jobs, and checks that every skill version survived. Never called by deployment. All 63,964 approved ledger rows deleted and SET NULL preserved all versions; 12,757 cards cumulatively updated. Latest read-back leaves 179,469 cards and 151 fields; stopped on a cleanup-blocked client per inbox 020. |
 | B2 | Maintenance keeps the latest 200 tool/output activity rows per archived corner, matching `ROOM_VIEW_TOOL_ROW_LIMIT`; leaves open corners, prose and durable facts alone. Scans at most 20 archived corners and deletes at most 1,000 rows per pass; an ephemeral cursor rotates completed slices. |
 | B3 | Check-start and individual check-pass notes stop. Whole-head green, failure, conflict and merge notes remain; note IDs retain their dedupe formulas. |
 | B4 | Expired claims become terminal `uncertain` after a crashed send, or `failed` for exhausted retries. Active outbox windows survive. Uncertain rows retain an hour before deletion. Expired join devices and notifications are swept in bounded batches after the existing one-hour delivery window. |
@@ -361,3 +360,34 @@ Backend 1159477 is absent, holds zero locks and blocks zero clients.
 stop, actual SQL PID, operator-source hashes and read-back. Cumulative B1 changes
 remain 63,964 ledger deletions and 4,951 card updates. B8 remains staged and
 unapplied. Further production changes await firstmate's direction.
+
+## Nov 5 leader exception and cleanup-client stop (inbox 020)
+
+Firstmate identified the global advisory wait as the bounded leader standby and
+authorized excluding exactly application `beeline_long_running`, wait event
+`advisory`, and query `SELECT pg_advisory_lock($1)`. SQL tests prove that wrong
+applications, events, shared-advisory calls and multi-statement lookalikes are
+not exempt. The monitor still stops on any client blocked by cleanup, any other
+lock wait above 1,000 ms, or any error. Ten local checks passed.
+
+The refreshed dry run again found 187,275 cards and 151 fields, with all 229
+original composite skill keys preserved. SQL cancellation completed in 11 ms
+there and 4 ms in the apply session. The updates-only pass used three-row
+autocommitted transactions with 200 ms pauses, under the same fresh restore point.
+
+After **7,806 acknowledged card updates** the monitor observed one client blocked
+by cleanup for **91.379 ms**, which trips the explicit any-client rule. It cancelled
+the cleanup via the authoritative SQL PID and stopped without retry. Maximum
+non-exempt wait was 105.686 ms; the excluded leader wait reached 60,042.802 ms.
+No fields, FK or completed ledgers were rewritten.
+
+Read-back at 08:24:10Z confirms 179,469 cards and 151 fields remain, all ledgers
+still zero, 229 skill versions and SET NULL FK intact, and original cohorts
+**68,478 MCP-audit / 11,810 turn-trace** rows unchanged. Live totals grew to
+68,587 / 11,810. Backend 1161756 is absent, holds zero locks and blocks zero
+clients. Cumulative changes are **63,964 ledger deletes and 12,757 card updates**.
+B8 remains staged and unapplied.
+
+`b1-nov5-exception-before.json` contains the fresh baseline;
+`b1-nov5-client-stop.json` contains the actual receipt, metadata, source hashes
+and read-back. Further production updates await firstmate's direction.

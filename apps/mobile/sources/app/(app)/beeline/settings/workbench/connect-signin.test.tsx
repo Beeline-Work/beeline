@@ -13,6 +13,8 @@ vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () =>
   },
 }) }));
 const appStateListeners = vi.hoisted(() => new Set<(state: string) => void>());
+const phoneOperation = vi.hoisted(() => vi.fn(async (_name: string, _input: unknown) => ({})));
+vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
 
 const searchParams = vi.hoisted(() => ({
   workspaceId: 'workspace-1',
@@ -23,10 +25,11 @@ const searchParams = vi.hoisted(() => ({
   method: 'oauth',
   oauthReturn: undefined as string | undefined,
   appSignInSession: undefined as string | undefined,
+  offerId: undefined as string | undefined,
 }));
 const readInstallState = vi.hoisted(() => vi.fn(async () => null as null | {
   connected: boolean;
-  steps?: { label: string; status: string }[];
+  steps?: { label: string; status: string; reason?: string }[];
   signIn?: { method: 'oauth' | 'streamed'; url: string } | null;
 }));
 const cancelGoogleSignIn = vi.hoisted(() => vi.fn(async () => true));
@@ -107,6 +110,7 @@ vi.mock('@/buzz/workbench-source', () => ({
 import ConnectorSignInScreen from './connect-signin';
 import * as WebBrowser from 'expo-web-browser';
 import { router } from 'expo-router';
+import { Platform } from 'react-native';
 
 const originalConsoleError = console.error;
 
@@ -128,6 +132,11 @@ afterEach(() => {
   searchParams.url = 'https://login.tailscale.com/a/test';
   searchParams.oauthReturn = undefined;
   searchParams.appSignInSession = undefined;
+  searchParams.offerId = undefined;
+  searchParams.connectorId = 'connector-row-1';
+  searchParams.method = 'oauth';
+  Object.assign(Platform, { OS: 'android' });
+  phoneOperation.mockReset().mockResolvedValue({});
   completeAppSignIn.mockReset().mockResolvedValue({ appId: 'app-slack' });
   readInstallState.mockReset().mockResolvedValue(null);
   cancelGoogleSignIn.mockReset().mockResolvedValue(true);
@@ -141,6 +150,51 @@ afterEach(() => {
 });
 
 describe('ConnectorSignInScreen', () => {
+  it('expired-then-retry replaces the old page and only opens the fresh account sign-in', async () => {
+    searchParams.connectorId = 'squire:expired-test';
+    searchParams.connectorName = 'Trusty Squire';
+    searchParams.offerId = 'expired-offer';
+    searchParams.url = 'https://trustysquire.ai/install?token=expired';
+    readInstallState.mockResolvedValue({ connected: false, signIn: null,
+      steps: [{ label: 'waiting for sign-in', status: 'failed', reason: 'The sign-in page expired. Retry.' }] });
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => { renderer = create(<ConnectorSignInScreen />); });
+      expect(JSON.stringify(renderer.toJSON())).toContain('The sign-in page expired. Retry.');
+      expect(renderer.root.findAllByProps({ testID: 'signin-open-external' })).toHaveLength(0);
+      readInstallState.mockResolvedValue({ connected: false, steps: [],
+        signIn: { method: 'oauth', url: 'https://trustysquire.ai/install?token=fresh' } });
+      await act(async () => renderer.root.findByProps({ testID: 'signin-retry' }).props.onPress());
+      expect(phoneOperation).toHaveBeenCalledWith('acceptConnectorOffer', { offerId: 'expired-offer' });
+      await act(async () => renderer.root.findByProps({ testID: 'signin-open-external' }).props.onPress());
+      expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://trustysquire.ai/install?token=fresh');
+      expect(WebBrowser.openBrowserAsync).not.toHaveBeenCalledWith(searchParams.url);
+      readInstallState.mockResolvedValue({ connected: true, steps: [] });
+      await act(async () => {
+        for (const listener of liveListeners) listener({ monolithLive: {
+          type: 'resource-change', resource: 'install', resourceId: searchParams.connectorId,
+        } });
+      });
+      expect(router.replace).toHaveBeenCalledWith({ pathname: '/beeline/settings/workbench/service',
+        params: { workspaceId: 'workspace-1', viewerId: '', service: 'trusty-squire' } });
+    } finally { await act(async () => renderer.unmount()); }
+  });
+
+  it('web opens a streamed sign-in in the browser without waiting for an unavailable WebView', async () => {
+    Object.assign(Platform, { OS: 'web' });
+    searchParams.connectorId = 'squire:web-test';
+    searchParams.method = 'streamed-page';
+    readInstallState.mockResolvedValue({ connected: false, steps: [], signIn: { method: 'streamed', url: searchParams.url } });
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => { renderer = create(<ConnectorSignInScreen />); });
+      expect(renderer.root.findAllByProps({ testID: 'signin-webview' })).toHaveLength(0);
+      expect(renderer.root.findAllByProps({ testID: 'signin-webview-loading' })).toHaveLength(0);
+      await act(async () => renderer.root.findByProps({ testID: 'signin-open-external' }).props.onPress());
+      expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith(searchParams.url);
+    } finally { await act(async () => renderer.unmount()); }
+  });
+
   it('Reproduction squire-spinner: OAuth waits for its request owner, then offers Retry on the source refusal', async () => {
     vi.useFakeTimers();
     searchParams.connectorName = 'Trusty Squire';

@@ -4546,7 +4546,7 @@ export function BuzzChatSurface({
         }
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
-        console.warn('Connector offer acceptance failed:', err);
+        Modal.alert('Could not connect', phoneOperationFailureReason(err));
       } finally {
         setConnectorOfferActionId(null);
       }
@@ -5779,6 +5779,7 @@ export function BuzzChatSurface({
               void continueConnectorOffer(offerId, connectorType, pairedConnectorId, item.connectorOffer!.intent === 'reconnect')
             }
             onOpenWorkbench={openWorkbench}
+            onOpenReplacement={messageId => handleOpenMessageSource(decodedId, messageId)}
           />
         );
       }

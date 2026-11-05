@@ -18,30 +18,6 @@
       "phase": "M4"
     },
     {
-      "id": "apps/auth/src/server-test-fixture.ts::import:node:http",
-      "file": "apps/auth/src/server-test-fixture.ts",
-      "kind": "import:node:http",
-      "count": 1,
-      "compatibility": "legacy-only",
-      "phase": "M4"
-    },
-    {
-      "id": "apps/auth/src/server-test-fixture.ts::import:node:net",
-      "file": "apps/auth/src/server-test-fixture.ts",
-      "kind": "import:node:net",
-      "count": 1,
-      "compatibility": "legacy-only",
-      "phase": "M4"
-    },
-    {
-      "id": "apps/auth/src/server-test-fixture.ts::fetch",
-      "file": "apps/auth/src/server-test-fixture.ts",
-      "kind": "fetch",
-      "count": 1,
-      "compatibility": "legacy-only",
-      "phase": "M4"
-    },
-    {
       "id": "apps/auth/src/store.ts::import:pg",
       "file": "apps/auth/src/store.ts",
       "kind": "import:pg",
@@ -490,14 +466,6 @@
       "phase": "M5"
     },
     {
-      "id": "apps/body/src/squire-broker-link.test-support.ts::import:node:net",
-      "file": "apps/body/src/squire-broker-link.test-support.ts",
-      "kind": "import:node:net",
-      "count": 1,
-      "compatibility": "legacy-only",
-      "phase": "M5"
-    },
-    {
       "id": "apps/body/src/squire-broker-link.ts::import:node:net",
       "file": "apps/body/src/squire-broker-link.ts",
       "kind": "import:node:net",
@@ -765,14 +733,6 @@
       "id": "apps/mobile/sources/sync/transport/monolith-rig-transport.ts::session-fetch",
       "file": "apps/mobile/sources/sync/transport/monolith-rig-transport.ts",
       "kind": "session-fetch",
-      "count": 1,
-      "compatibility": "legacy-only",
-      "phase": "M4"
-    },
-    {
-      "id": "apps/mobile/sources/test/browserControlsProof.ts::computed-import",
-      "file": "apps/mobile/sources/test/browserControlsProof.ts",
-      "kind": "computed-import",
       "count": 1,
       "compatibility": "legacy-only",
       "phase": "M4"

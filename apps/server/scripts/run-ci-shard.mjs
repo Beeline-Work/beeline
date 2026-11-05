@@ -15,9 +15,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const vitest = fileURLToPath(new URL('../../../node_modules/vitest/vitest.mjs', import.meta.url));
 // On PRs, wall-clock budgets run in the existing hosted replay gate, outside
 // the shared CPU quota. Merge/dispatch runs retain them in their hosted shards.
-const isolated = ['src/production-corpus-width.test.ts', 'src/voice-room-runtime.test.ts',
-  'src/phone-service.read-room-latency.test.ts', 'src/daemon-service.completion-latency.test.ts',
-  'src/durable-live.integration.test.ts'];
+const isolated = ['src/voice-room-runtime.test.ts', 'src/durable-live.integration.test.ts'];
 // Fresh worker processes give socket replay and completion timing independent
 // engine/clock lifetimes. Replay remains on squire; the latency budget joins
 // the existing hosted wall-clock proofs on PRs.

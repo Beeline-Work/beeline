@@ -75,7 +75,7 @@ describe('command-owned coherent activation context',()=>{
     await expect(daemon.execute('consumeAgentGrant',{grantId},agent)).rejects.toThrow('once grant not found');
     const delivered=vi.fn();expect(await fenceCommandActivationEnqueue(db,snapshot,delivered)).toBe(false);expect(delivered).not.toHaveBeenCalled();
   });
-  it.each(['room','corner','repository-corner'] as const)('activates a source-less MCP delegation in a %s without authorizing resources',async place=>{
+  it.each(['room','corner','repository-corner'] as const)('activates a source-less MCP delegation in a %s with its issuing owner as requester',async place=>{
     const roomId=place==='room'?room:place==='corner'?'44444444-4444-4444-8444-444444444444':'55555555-5555-4555-8555-555555555555';
     if(place!=='room'){
       await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,repository_resolution,repository_key,repository_remote)
@@ -85,7 +85,7 @@ describe('command-owned coherent activation context',()=>{
     }
     const rootId=`mcp-root-${place}`,commandId=`mcp-delegation-${place}`,generationId=`mcp-generation-${place}`;
     // createClaimedMcpAgentCommand's no-mention shape: no message, payload or
-    // human requester. A legitimate order inherits that root after the MCP call.
+    // human message. A legitimate order inherits the issuing agent's owner.
     await db.query(`INSERT INTO agent_commands(id,room_id,agent_id,turn_request_id,action,reason,root_command_id,root_source_message_id,agent_depth,state)
       VALUES($1,$2,$3,$1,'input','mcp_call',$1,$1,0,'complete')`,[rootId,room,agent]);
     await db.query(`INSERT INTO agent_commands(id,room_id,agent_id,turn_request_id,action,reason,root_command_id,parent_command_id,
@@ -95,16 +95,14 @@ describe('command-owned coherent activation context',()=>{
     const activation={...input,roomId,commandId,generationId};
     const snapshot=await daemon.readCommandActivation(activation,agent);
     expect(snapshot).toMatchObject({configuration:{soul:{instructions:'Synthetic setup'}},repository:{resolution:place==='repository-corner'?'repository':'none'}});
-    expect(snapshot.repository).not.toHaveProperty('repositoryOnboarding');
+    expect(snapshot.repository).toHaveProperty('repositoryOnboarding',true);
     if(place!=='room')expect(snapshot.corner).toMatchObject({cornerId:roomId,parentRoomId:room});
     const delivered=vi.fn();expect(await fenceCommandActivationEnqueue(db,snapshot,delivered)).toBe(true);
     expect(delivered).toHaveBeenCalledWith(snapshot);
     const context={roomId,requestId:commandId,generationId};
-    // The legacy setup read also succeeds, while effects still require exactly
-    // the verified requester that this command intentionally does not have.
-    expect(await daemon.execute('getRoomRepositoryState',context,agent)).not.toHaveProperty('repositoryOnboarding');
-    await expect(daemon.execute('authorizeSquireCall',context,agent)).rejects.toThrow('resource requester not found');
-    await expect(daemon.execute('postRepositoryOnboarding',{...context,kind:'repository'},agent)).rejects.toThrow('resource requester not found');
+    expect(await daemon.execute('getRoomRepositoryState',context,agent)).toHaveProperty('repositoryOnboarding',true);
+    // Resolving the owner does not invent their missing Workspace membership.
+    await expect(daemon.execute('authorizeSquireCall',context,agent)).rejects.toThrow('resource owner access denied');
   });
   it('omits optional repository guidance from free-agent configuration with no verified requester',async()=>{
     await db.query(`INSERT INTO free_agents(agent_id,workspace_id,owner_id,sealed_keys) VALUES($1,$2,$3,'synthetic')`,[agent,workspace,owner]);

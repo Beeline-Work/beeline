@@ -1,3 +1,4 @@
+import { resourceRequester } from './resource-requester.js';
 import { setAgentWakePaused } from './agent-wake-pause.js';
 import { roomEventSubscriptions } from './agent-subscriptions.js';
 import { settleAgentCommand, renewAgentCommandLease } from './agent-command.js';
@@ -7134,8 +7135,8 @@ export class DaemonService {
       : undefined);
     if (command) {
       // Optional setup guidance cannot require personal-resource authority.
-      // Source-less MCP orders may run, but cannot offer onboarding or acquire
-      // a resource requester by falling back to the executing agent's owner.
+      // Verified agent orders answer to the issuing root agent's owner;
+      // missing roots never borrow the executing agent's owner.
       const requester = await this.findGrantRequester(command);
       if (!requester) return undefined;
       if (requester.kind === 'human') return requester.id;
@@ -7154,44 +7155,7 @@ export class DaemonService {
   /** Missing provenance omits optional setup; effect gates use grantRequester. */
   private async findGrantRequester(command = this.authorizedCommand) {
     if (!command) throw new Error('resource access requires an active command');
-    let requester = (
-      await this.database.query<{
-        id: string;
-        kind: 'human' | 'agent';
-        name: string;
-        handle: string | null;
-        avatar: string | null;
-      }>(
-        `SELECT identity.id,identity.kind,identity.name,identity.handle,identity.avatar
-        FROM messages message JOIN identities identity ON identity.id=message.author_id
-        WHERE message.id=$1`,
-        [command.root_source_message_id],
-      )
-    ).rows[0];
-    if (!requester) {
-      // Automatic replay orders and idle reports have no source message. Only
-      // their stored System-authored, source-less self-root can supply provenance;
-      // a delegate's payload or the executing agent's owner cannot supply it.
-      requester = (await this.database.query<{
-        id: string;
-        kind: 'human' | 'agent';
-        name: string;
-        handle: string | null;
-        avatar: string | null;
-      }>(
-        `SELECT identity.id,identity.kind,identity.name,identity.handle,identity.avatar
-         FROM agent_commands root JOIN identities identity ON identity.id=root.private_payload->>'authorId'
-         WHERE root.id=$1 AND root.id=$2 AND root.root_command_id=root.id
-           AND root.root_source_message_id=root.id
-           AND root.source_message_id IS NULL AND root.parent_command_id IS NULL
-           AND identity.id=$3
-           AND ((root.reason='order' AND root.private_payload->>'kind'='order')
-             OR (root.reason='report' AND root.private_payload->>'kind'='report'
-               AND root.private_payload->>'automatic'='true'
-               AND NULLIF(root.private_payload->>'idleSince','') IS NOT NULL))`,
-        [command.root_command_id, command.root_source_message_id, SYSTEM_IDENTITY_ID],
-      )).rows[0];
-    }
+    const requester = (await resourceRequester(this.database, command, { includeDeletedMessage: true }))?.requester;
     if (!requester) return undefined;
     // A saved workflow run's turns answer to the run's person, not the wake
     // card's author: a handoff card is written by the agent handing off, and a

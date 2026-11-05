@@ -545,10 +545,11 @@ export default function BuzzChannels() {
         paint();
         // A store another screen already read is current: it seeds the badge.
         if (chats.confirmed()) setNeedsYouSignal((signal) => signal + 1);
-        // Live list reconciliation must yield to a Room or push navigation.
-        // Its committed transcript rows are already in the scoped cache.
+        // Saved Rooms are the first usable deck; paint them immediately.
+        // Confirmed live reconciliation still yields to Room or push navigation.
         unsubscribeChats = chats.subscribe(() => {
-          startTransition(paint);
+          if (chats.confirmed() || !deckVisible()) startTransition(paint);
+          else paint();
         });
       }
       const relay = await relayPromise;

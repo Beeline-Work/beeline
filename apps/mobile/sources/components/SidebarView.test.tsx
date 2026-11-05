@@ -185,7 +185,7 @@ const theme = vi.hoisted(() => ({
   },
 }));
 vi.mock('react-native-unistyles', async () => {
-  const { completeTestTheme } = await import('@/test/test-theme');
+  const { completeTestTheme } = await import('../../../../tests/helpers/phone');
   const fullTheme = completeTestTheme(theme);
   return ({
   StyleSheet: {
@@ -923,7 +923,7 @@ describe('Room list search geometry', () => {
   it.each([false, true])('matches the filter row height, type and inset (desktop=%s)', async (desktop) => {
     const { RoomListToolbar } = await import('./buzz/RoomListToolbar');
     const { StyleSheet } = await import('react-native');
-    const { completeTestTheme } = await import('@/test/test-theme');
+    const { completeTestTheme } = await import('../../../../tests/helpers/phone');
     const hull = completeTestTheme(theme).buzz;
     const tokens = hull.roomList;
     const onQuery = vi.fn();

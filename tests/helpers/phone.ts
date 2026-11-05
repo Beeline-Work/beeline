@@ -1,7 +1,26 @@
+import { beelineThemes } from '@/buzz/groknight';
+import { obsidianTheme } from '@/theme';
+
+/** Keep isolated screen mocks complete when they override only a few tokens. */
+export function completeTestTheme(theme: { buzz?: Record<string, any>; [key: string]: any } = {}) {
+  const buzz = theme.buzz ?? {};
+  const base = beelineThemes.obsidian;
+  return {
+    ...obsidianTheme,
+    ...theme,
+    buzz: {
+      ...base,
+      ...buzz,
+      type: { ...base.type, ...buzz.type },
+      space: { ...base.space, ...buzz.space },
+      layout: { ...base.layout, ...buzz.layout },
+    },
+  };
+}
+
 vi.mock('react-native-keyboard-controller', () => ({ KeyboardAvoidingView: (props: any) => React.createElement('View', props, props.children) }));
 import React from 'react';
 import { beforeEach, vi } from 'vitest';
-import { completeTestTheme } from './test-theme';
 
 vi.mock('expo-font', () => ({ useFonts: () => [true, null] }));
 

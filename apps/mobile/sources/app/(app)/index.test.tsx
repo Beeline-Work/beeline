@@ -44,6 +44,11 @@ vi.mock('@/components/buzz/Button', async () => {
   return { Button: (props: any) => ReactModule.createElement('Button', props) };
 });
 
+vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
+  const ReactModule = await import('react');
+  return { SurfaceGlyphLoader: (props: any) => ReactModule.createElement('SurfaceGlyphLoader', props) };
+});
+
 vi.mock('@/constants/Typography', () => ({ Typography: { default: () => ({}) } }));
 
 import Home from './index';
@@ -84,6 +89,55 @@ async function renderHome() {
 }
 
 describe('Buzz root launch routing', () => {
+  it('shows the Room loader while identity restoration and its navigation handoff are pending', async () => {
+    let restore!: (identity: { publicKey: string }) => void;
+    buzzIdentityStorage.loadBuzzIdentity.mockReturnValue(new Promise(resolve => { restore = resolve; }));
+    const renderer = await renderHome();
+    const loading = () => renderer.root.findAll((node: any) =>
+      node.type === 'View' && node.props.testID === 'rooms-loader-gate');
+    try {
+      expect(loading()).toHaveLength(1);
+      expect(renderer.root.findAllByType('Text' as any).some((node: any) =>
+        node.props.children === 'LOADING ROOMS')).toBe(true);
+      expect(navigation.replace).not.toHaveBeenCalled();
+
+      await act(async () => restore({ publicKey: 'buzz-user' }));
+      expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
+      // A replace schedules navigation; the landing remains visible until the
+      // destination actually commits, including a dropped first dispatch.
+      expect(loading()).toHaveLength(1);
+    } finally {
+      await act(async () => renderer.unmount());
+    }
+  });
+
+  it('shows the Room loader while the launching URL is still being restored', async () => {
+    let restore!: (url: string | null) => void;
+    buzzIdentityStorage.loadBuzzIdentity.mockResolvedValue({ publicKey: 'buzz-user' });
+    desktopAuthSession.initialAuthUrl.mockReturnValue(new Promise(resolve => { restore = resolve; }));
+    const renderer = await renderHome();
+    try {
+      expect(renderer.root.findAll((node: any) =>
+        node.type === 'View' && node.props.testID === 'rooms-loader-gate')).toHaveLength(1);
+      expect(navigation.replace).not.toHaveBeenCalled();
+      await act(async () => restore(null));
+      expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
+    } finally {
+      await act(async () => renderer.unmount());
+    }
+  });
+
+  it('does not mount an animated landing loader under a deep-linked destination', async () => {
+    routing.pathname = '/beeline/chat/room-id';
+    const renderer = await renderHome();
+    try {
+      expect(renderer.toJSON()).toBeNull();
+      expect(navigation.replace).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => renderer.unmount());
+    }
+  });
+
   it('routes a Happy-authenticated device without a Buzz identity to onboarding', async () => {
     auth.isAuthenticated = true;
 

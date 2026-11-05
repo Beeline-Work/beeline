@@ -724,7 +724,9 @@ describe('prompt assembly guards', () => {
       expect(text).not.toContain('read(facet:checks)');
     }
     expect(dm).toContain('open_corner');
-    expect(corner).not.toContain('open_corner');
+    // The canonical inventory includes all reachable tools; this guard is
+    // about Room routing instructions, not whether corners can open children.
+    expect(corner.replace(/^Beeline tools:.*$/m, '')).not.toContain('open_corner');
     expect(room).toContain('open_corner');
   });
 

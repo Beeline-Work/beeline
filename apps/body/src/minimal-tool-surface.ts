@@ -1354,14 +1354,57 @@ export function placeBeelineApps(_cornerTurn: boolean, onboarding = false): stri
 export function minimalTools(cornerTurn: boolean): ToolDefinition[] {
   const apps = placeBeelineApps(cornerTurn).join(', ');
   return structuredClone(ORDINARY_TOOLS).map(tool =>
-    tool.name === 'app_tool' ? { ...tool, description: tool.description.replace('BEELINE_APPS', apps) } : tool);
+    providerCompatibleTool(tool.name === 'app_tool'
+      ? { ...tool, description: tool.description.replace('BEELINE_APPS', apps) } : tool));
 }
-export function repositoryTools(): ToolDefinition[] { return structuredClone(REPOSITORY_TOOLS); }
+export function repositoryTools(): ToolDefinition[] { return structuredClone(REPOSITORY_TOOLS).map(providerCompatibleTool); }
 export function scratchTools(quota: boolean): ToolDefinition[] {
  const tools = structuredClone(SCRATCH_TOOLS);
  if (!quota) {
    const properties = tools[0]!.inputSchema.properties as Record<string, { enum?: string[] }>;
    properties.action!.enum = ['write', 'image'];
  }
- return tools;
+ return tools.map(providerCompatibleTool);
+}
+
+/** Full input contract, retained independently of provider schema restrictions. */
+export function toolValidationSchema(name: string): Record<string, unknown> | undefined {
+  const schema = [...ORDINARY_TOOLS, ...REPOSITORY_TOOLS, ...SCRATCH_TOOLS].find(tool => tool.name === name)?.inputSchema;
+  return schema ? structuredClone(schema) : undefined;
+}
+
+/**
+ * Claude Code skips root combinators on deployments without its optional
+ * rewrite. All harnesses receive the same object schema; branch constraints
+ * remain visible in the description and mandatory in server-side validation.
+ * Nested schemas are left intact. Never depend on a harness feature flag.
+ */
+function providerCompatibleTool(tool: ToolDefinition): ToolDefinition {
+  const { anyOf, oneOf, allOf, ...inputSchema } = tool.inputSchema;
+  const combinations = { ...(anyOf ? { anyOf } : {}), ...(oneOf ? { oneOf } : {}), ...(allOf ? { allOf } : {}) };
+  return Object.keys(combinations).length
+    ? { ...tool, inputSchema, description: `${tool.description} Argument combinations (validated by Beeline): ${JSON.stringify(combinations)}` }
+    : tool;
+}
+
+/** The ordinary surface is stable across warm turns; optional schemas are read through app_tool. */
+export function agentToolsFor(
+  agentSurface: boolean,
+  _directMessage: boolean,
+  cornerTurn = false,
+  repositoryCorner = false,
+  commandRunnerAvailable = true,
+  institutionalMemoryEnabled = true,
+  nativeIoProven = false,
+): ToolDefinition[] {
+  if (!agentSurface) return repositoryTools();
+  const tools = minimalTools(cornerTurn).filter(tool =>
+    institutionalMemoryEnabled || !['search', 'remember'].includes(tool.name));
+  if (commandRunnerAvailable) tools.push(RUNNER_TOOL);
+  // no_reply_needed mounts on every harness: it is the only silence path, so a
+  // nonhuman wake must always be able to end without posting prose. The tool
+  // itself refuses human wakes.
+  tools.push(SILENT_TOOL);
+  if (!nativeIoProven) tools.push(...scratchTools(cornerTurn && !repositoryCorner));
+  return tools;
 }

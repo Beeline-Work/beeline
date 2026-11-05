@@ -11,7 +11,7 @@ import { boundRoomTaskBody, budgetTranscript } from './transcript-budget.js';
 import type { MachineHost } from './machine-host.js';
 import type { KvmAccess } from './kvm-device-access.js';
 import { SITUATIONAL_SKILL_NAMES } from './beeline-skill.js';
-import { placeBeelineApps } from './minimal-tool-surface.js';
+import { agentToolsFor, placeBeelineApps } from './minimal-tool-surface.js';
 
 /**
  * The ONE place Beeline prompt text is written and assembled.
@@ -77,7 +77,8 @@ const EVERYWHERE: readonly PromptSurface[] = PROMPT_SURFACES;
  * required by the largest variant. A denied /dev/kvm adds its one advice
  * line, at most the 320-byte `kvm` section budget.
  */
-export const SESSION_BUDGET_BYTES = 8_011;
+// The canonical tool inventory adds at most 600 bytes.
+export const SESSION_BUDGET_BYTES = 8_611;
 
 /**
  * Whether this session can run shell commands, and why not when it cannot.
@@ -464,11 +465,14 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
       'dm.choices': 'A pick in a DM is a preference, never authority, and polls need an electorate.',
       'core.skills': 'Agents retried refused Beeline tools or guessed at steps a beeline-* skill already covered, because nothing told them to look.',
     },
-    budgetBytes: 1_100,
+    budgetBytes: 1_700,
     layer: 'session',
     surfaces: EVERYWHERE,
-    render: ({ squireAvailable }) =>
+    render: ({ surface, squireAvailable }) =>
       paragraphs(
+        // Native IO and grant-runner tools are optional; this inventory names
+        // only the stable tools mounted by every harness.
+        `Beeline tools: ${agentToolsFor(true, surface === 'dm', CORNERS.includes(surface), surface === 'code-corner', false, true, true).map(tool => '`' + tool.name + '`').join(', ')}.`,
         "For a 📎 file, call read(facet:attachment, messageId, attachmentId) and read its path. Never fetch media URLs; on failure, say you couldn't open it.",
         'Services: use connect(mode:discover) if unclear, then connect(mode:ensure, service, reason, continuation). GitHub: connect(mode:status). Beeline App writes linked repos; no checkout: Room corner. Personal: lookups, no-App repos, person-scoped.',
         squireAvailable === true &&

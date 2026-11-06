@@ -21,7 +21,7 @@ import { ensureSystemIdentity } from './system-line.js';
  * re-creates the Workspace behind a marker no retry revisits. Arm it only on a
  * later release (docs/welcome-retirement.md step 4).
  *
- * In one transaction, under an advisory lock:
+ * In one transaction, claiming the unique release-step row:
  *   1. a recorded marker means this already ran: return quietly;
  *   2. a missing Welcome Workspace means it is already gone: record and return;
  *   3. resolve the EXACT configured Greeter id — an agent identity with an
@@ -36,7 +36,7 @@ import { ensureSystemIdentity } from './system-line.js';
  *      cascades its Rooms, memberships and everything scoped to them. No
  *      per-person deletion notices: this is a system migration, not an owner
  *      deleting a place people chose;
- *   7. write the completion marker last.
+ *   7. fill in the claimed marker's completion detail last.
  * A failure anywhere rolls the whole transaction back.
  */
 export const WELCOME_RETIREMENT_STEP = 'welcome-workspace-retirement-v1';
@@ -57,8 +57,7 @@ export class WelcomeRetirementRefusedError extends Error {
 
 async function recordMarker(database: SqlDatabase, detail: Record<string, unknown>) {
   await database.query(
-    `INSERT INTO beeline_release_steps(name,detail) VALUES($1,$2::jsonb)
-     ON CONFLICT(name) DO NOTHING`,
+    `UPDATE beeline_release_steps SET detail=$2::jsonb,completed_at=now() WHERE name=$1`,
     [WELCOME_RETIREMENT_STEP, JSON.stringify(detail)],
   );
 }
@@ -87,14 +86,14 @@ export async function retireWelcomeWorkspace(
   if (!greeterInput)
     throw new WelcomeRetirementRefusedError('the exact Greeter agent id is required');
   return database.transaction(async (database) => {
-    await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [WELCOME_RETIREMENT_STEP]);
-    const marker = (
-      await database.query<{ detail: Record<string, unknown> }>(
-        `SELECT detail FROM beeline_release_steps WHERE name=$1`,
-        [WELCOME_RETIREMENT_STEP],
-      )
-    ).rows[0];
-    if (marker) return { status: 'already-complete', detail: marker.detail };
+    const claimed = await database.query(`INSERT INTO beeline_release_steps(name) VALUES($1)
+      ON CONFLICT(name) DO NOTHING RETURNING name`, [WELCOME_RETIREMENT_STEP]);
+    if (!claimed.rowCount) {
+      const marker = (await database.query<{ detail: Record<string, unknown> }>(
+        `SELECT detail FROM beeline_release_steps WHERE name=$1`, [WELCOME_RETIREMENT_STEP],
+      )).rows[0]!;
+      return { status: 'already-complete', detail: marker.detail };
+    }
 
     const workspace = (
       await database.query<{ name: string }>(`SELECT name FROM workspaces WHERE id=$1 FOR UPDATE`, [

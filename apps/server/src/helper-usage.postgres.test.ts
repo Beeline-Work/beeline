@@ -47,7 +47,7 @@ describe.skipIf(!url)('usage real PostgreSQL publication and final owner content
       }))};
       const secondDb:SqlDatabase={query:(sql,values)=>right.query(sql,values),transaction:work=>right.transaction(tx=>work({
         transaction:nested=>tx.transaction(nested),query:(sql,values)=>{
-          const pending=tx.query(sql,values);if(sql.includes('SELECT pg_advisory_xact_lock('))contending.resolve();return pending;
+          const pending=tx.query(sql,values);if(sql.includes('INSERT INTO usage_accounts('))contending.resolve();return pending;
         },
       }))};
       original=publishUsageAccount(firstDb,first,{ownerId:owner,usage,revision,source:{connectionId:'first-source',epoch:1}});

@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto';
 
+/** Shared, parameter-free identifier for query profiles and failure diagnostics. */
+export function queryFingerprint(sql:string):string {
+  return createHash('sha256').update(sql.replace(/\s+/g,' ').trim()).digest('hex').slice(0,16);
+}
+
 export interface QueryProfile {
   readonly fingerprint: string;
   readonly calls: number;
@@ -75,10 +80,7 @@ export class QueryProfiler {
   record(sql: string, durationMs: number, error?: unknown): void {
     this.#window.recordQuery(durationMs);
     const normalizedSql = sql.replace(/\s+/g, ' ').trim();
-    const fingerprint = createHash('sha256')
-      .update(normalizedSql)
-      .digest('hex')
-      .slice(0, 16);
+    const fingerprint = queryFingerprint(normalizedSql);
     const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
     const previous = this.#profiles.get(fingerprint);
     if (!previous && this.#profiles.size >= 128) {

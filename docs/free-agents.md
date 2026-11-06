@@ -154,7 +154,7 @@ proxy pins each new agent's stored model. Beebee uses `BEELINE_FREE_AGENT_MODEL`
 forwards to `BEELINE_FREE_AGENT_MODEL_UPSTREAM` (default OpenRouter) with
 `BEELINE_FREE_AGENT_MODEL_KEY`, which may be a Squire egress grant. Before each call it
 reserves an estimated prompt plus a capped reply against the
-owner's daily allowance, under a per-owner lock. Concurrent reservations
+owner's daily allowance with atomic counter updates. Concurrent reservations
 fit the cap, and each reply is bounded to the estimated room left. Actual
 usage can exceed the prompt estimate; settlement corrects the balance. On completion it settles to the reported usage.
 A refused call is
@@ -199,8 +199,10 @@ helper retains the command claim through model retries and tool follow-ups;
 there is no post-completion grace that would authorize idle calls. Server-owned starter banter is a separate internal entry: a recent generating onboarding run must bind the agent and owner to the current Room team. It shares the same allowance, dollar budget, queue and settlement code; the HTTP endpoint retains its live-turn requirement.
 
 A per-owner UTC minute counter defaults to 30 admitted calls, including failed
-upstream attempts. Reservations take a global advisory lock before the owner
-lock. The shared UTC daily dollar budget defaults to **$25**. Each call reserves
+upstream attempts. Reservations update the owner, daily tokens and shared dollars
+in that order within one short database transaction, refunding any excess owner
+allocation when the shared budget grants less output. No network runs in that
+transaction. See `free-agent-accounting.ts`. The shared UTC daily dollar budget defaults to **$25**. Each call reserves
 its full uncached prompt and bounded output at configured fallback prices before
 contacting the model. Successful calls settle to OpenRouter `usage.cost`, or to
 configured input/output prices when cost is absent. Failed upstream calls refund
@@ -231,7 +233,7 @@ cache hints are not trusted.
 The estimated reservation cannot fall below a cold text-byte ceiling plus
 256 framing tokens minus **32,768 tokens shared across all outstanding requests
 for one owner and UTC day**. `free_agent_usage.reservation_credit` tracks that
-uncertainty under the existing global/owner advisory locks, across server
+uncertainty through the same atomic daily counter update, across server
 instances. Settlement/refunds release the credit and use exact reported usage,
 including cache misses. This bounds admission uncertainty for the supported
 text representation even when every cache prediction misses; it is not a

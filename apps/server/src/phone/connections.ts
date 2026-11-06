@@ -1,3 +1,5 @@
+import { unpairSquireMachine } from '../squire-machine.js';
+import { selectRegistryApp } from '../app-connections.js';
 import { phoneIdentity as identity } from '../phone-identity.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { waitForConnection } from '../connection-wait.js';
@@ -34,13 +36,10 @@ import { phoneSendMessage } from './messages.js';
    * Squire at the owner's approval boundary, so no ceremony link is ever
    * handed out here.
    */
-  export async function phoneConnectWorkbenchApp(ctx: PhoneContext,
-    input: Input<'connectWorkbenchApp'>,
-    viewerId: string,
-  ): Promise<Output<'connectWorkbenchApp'>> {
+  export async function phoneConnectWorkbenchApp(ctx: PhoneContext, input: Input<'connectWorkbenchApp'>, viewerId: string): Promise<Output<'connectWorkbenchApp'>> {
     const app = typeof input.app === 'string' ? input.app.trim() : '';
     if (!app || app.length > APP_INPUT_MAX_LENGTH) throw new Error('app name is required');
-    await phoneViewerWorkbenchWorkspace(ctx, viewerId);
+    await ctx.viewerWorkbenchWorkspace(viewerId);
     const identity = appIdentity(app);
     if (!identity) throw new Error('Select an app from search results');
     // An existing route belongs to the person. Search can offer a direct
@@ -61,21 +60,13 @@ import { phoneSendMessage } from './messages.js';
       if (!manifest || !manifest.remotes.some((remote) => remote.type === 'streamable-http') ||
           manifest.secretInputNames.length > 0)
         throw new Error('The official sign-in is unavailable');
-      const { matched, machineId, ws } = await phoneResolveViewerHelper(ctx,
+      const { matched, machineId, ws } = await ctx.resolveViewerHelper(
         input.helperAgentId, viewerId,
       );
-      const dm = await phoneResolveDirectMessage(ctx,
+      const dm = await ctx.resolveDirectMessage(
         { workspaceId: ws.workspace_id, participantId: matched.agent_id }, viewerId,
       );
       const row = await ctx.database.transaction(async (database) => {
-        // Serialize with automatic route selection; only this person's explicit
-        // verified MCP choice may replace a Squire API app. Keys are untouched.
-        await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`app:${viewerId}:${identity.key}`]);
-        const current = (await database.query<{ transport: string }>(
-          `SELECT transport FROM workspace_apps WHERE owner_identity_id=$1 AND app_key=$2 AND state='active' FOR UPDATE`,
-          [viewerId, identity.key],
-        )).rows[0];
-        if (current && current.transport !== 'squire-api') throw new Error('This app already has a connection');
         const connector = await armRegistryConnector(database, {
           workspaceId: ws.workspace_id,
           ownerId: viewerId,
@@ -86,26 +77,13 @@ import { phoneSendMessage } from './messages.js';
           installCommandId: null,
         });
         if (connector.versionConflict) throw new Error('This sign-in needs an update before reconnecting');
-        await database.query(
-          `UPDATE workspace_apps SET transport='registry-mcp',route='registry-mcp',connector_id=$3::uuid,
-             machine_id=$4,display_name=$5,domain=$6,state='active',updated_at=now()
-           WHERE owner_identity_id=$1 AND app_key=$2 AND transport='squire-api'`,
-          [viewerId, identity.key, connector.id, machineId, manifest.title ?? identity.key,
-            registryServerDomain(manifest.name) ?? null],
-        );
-        const app = (await database.query<{ id: string }>(
-          `SELECT id FROM workspace_apps WHERE owner_identity_id=$1 AND app_key=$2`, [viewerId, identity.key],
-        )).rows[0];
-        if (app) await database.query(
-          `INSERT INTO workspace_app_routes(id,app_id,route,transport,reason,requested_by)
-           VALUES ($1,$2,'registry-mcp','registry-mcp','person selected verified company MCP',$3)`,
-          [randomUUID(), app.id, viewerId],
-        );
+        await selectRegistryApp(database,{workspaceId:ws.workspace_id,ownerId:viewerId,appKey:identity.key,
+          connectorId:connector.id,machineId,name:manifest.title??identity.key,
+          domain:registryServerDomain(manifest.name)??null});
         return connector;
       });
       if (row.versionConflict) throw new Error('This sign-in needs an update before reconnecting');
-      await backfillRegistryApps(ctx.database, row.id);
-      if (row.created) await notifyConnectorHelper(ctx.database, row.id);
+      if (row.status==='installing') await notifyConnectorHelper(ctx.database, row.id);
       const installed = (await ctx.database.query<{ id: string }>(
         `SELECT id FROM workspace_apps WHERE owner_identity_id=$1 AND app_key=$2
            AND transport='registry-mcp' AND connector_id=$3::uuid`,
@@ -150,11 +128,11 @@ import { phoneSendMessage } from './messages.js';
       )
         throw new Error('Select an app from search results');
     }
-    const { matched, machineId, ws } = await phoneResolveViewerHelper(ctx,
+    const { matched, machineId, ws } = await ctx.resolveViewerHelper(
       input.helperAgentId,
       viewerId,
     );
-    const dm = await phoneResolveDirectMessage(ctx,
+    const dm = await ctx.resolveDirectMessage(
       { workspaceId: ws.workspace_id, participantId: matched.agent_id },
       viewerId,
     );
@@ -184,7 +162,7 @@ import { phoneSendMessage } from './messages.js';
         )
       ).rows[0];
       const verb = input.reconnect ? 'Reconnect' : 'Connect';
-      await phoneSendMessage(ctx,
+      await ctx.sendMessage(
         {
           roomId: dm.id,
           text: `${agent?.handle ? `@${agent.handle} ` : ''}${verb} ${outcome.name ?? app} in my Connectors.`,
@@ -306,16 +284,14 @@ import { phoneSendMessage } from './messages.js';
    * is otherwise the caller's; this arms the row the helper daemon derives its
    * install from and opens the status DM.
    */
-  export async function phoneArmConnectorPairing(ctx: PhoneContext,
-    database: SqlDatabase,
-    input: {
+  export async function phoneArmConnectorPairing(ctx: PhoneContext, database: SqlDatabase, input: {
       workspaceId: string;
       ownerIdentityId: string;
       connectorType: Input<'pairConnector'>['connectorType'];
       helperAgentId: string;
       machineId: string;
-    },
-  ): Promise<Output<'pairConnector'>> {
+      forceReloginProvider?: string;
+    }): Promise<Output<'pairConnector'>> {
     const adapter = connectorAdapter(input.connectorType);
     if (adapter) {
       const helperOwner = (
@@ -328,7 +304,7 @@ import { phoneSendMessage } from './messages.js';
       if (!adapter.authorize('connect', role).allowed) throw new Error(CONNECTOR_ADAPTER_DENIED);
     }
     if (input.connectorType === 'trusty-squire') {
-      await queueSquireWork(database, input.helperAgentId, { install: true });
+      await queueSquireWork(database, input.helperAgentId, { install: true, forceReloginProvider: input.forceReloginProvider });
       await grantSquireToOwnerMachineAgents(database, { workspaceId: input.workspaceId,
         ownerIdentityId: input.ownerIdentityId, machineId: input.machineId });
       const status = await squireWorkStatus(database, input.helperAgentId);
@@ -439,32 +415,16 @@ import { phoneSendMessage } from './messages.js';
 
   /** Unpair revokes everything the helper holds, then waits for its uninstall ack. */
   export async function phoneUnpairConnector(ctx: PhoneContext, input: Input<'unpairConnector'>, viewerId: string): Promise<void> {
-    await phoneAssertWorkbenchViewer(ctx, input.workspaceId, viewerId);
+    await ctx.assertWorkbenchViewer(input.workspaceId, viewerId);
     const squireMachine = squireMachineId(input.connectorId);
     if (squireMachine) {
-      await phoneResolveViewerHelper(ctx, squireMachine, viewerId).catch(() => {
+      await ctx.resolveViewerHelper(squireMachine, viewerId).catch(() => {
         throw new Error('Squire machine not found (access denied)');
       });
-      await ctx.database.transaction(async (db) => {
-        await db.query('SELECT pg_advisory_xact_lock(hashtext($1))',
-          [`squire-vault:${viewerId}:${squireMachine}`]);
-        await db.query(`DELETE FROM workspace_connections WHERE owner_identity_id=$1 AND machine_id=$2`,
-          [viewerId, squireMachine]);
-        const agents = await db.query<{ agent_id: string }>(`UPDATE agents
-          SET squire_work=jsonb_build_object('generation',COALESCE((squire_work->>'generation')::int,0)+1,
-            'disconnected',true),
-            squire_report=jsonb_build_object('status','not-added','reportedAt',extract(epoch from now()))
-          WHERE owner_id=$1 AND COALESCE(machine_id,agent_id)=$2 RETURNING agent_id`,
-          [viewerId, squireMachine]);
-        await db.query(`UPDATE agent_grants SET status='revoked'
-          WHERE kind='mcp' AND target=$3 AND status IN ('approved','once')
-            AND agent_id IN (SELECT agent_id FROM agents WHERE owner_id=$1
-              AND COALESCE(machine_id,agent_id)=$2)`, [viewerId, squireMachine, SQUIRE_MCP_TARGET]);
-        for (const agent of agents.rows) await notifyAgentConfigChange(db, agent.agent_id);
-      });
+      await unpairSquireMachine(ctx.database,viewerId,squireMachine);
       return;
     }
-    const connector = await phoneAssertOwnedConnector(ctx, input.connectorId, viewerId);
+    const connector = await ctx.assertOwnedConnector(input.connectorId, viewerId);
     // Receipts and connections are the connector's work; unpair clears them.
     await ctx.database.query(`DELETE FROM workspace_connections WHERE connector_id=$1::uuid`, [
       input.connectorId,

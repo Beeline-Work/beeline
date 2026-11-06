@@ -43,7 +43,7 @@ beforeAll(async () => {
     );
 }, 30000);
 afterAll(async () => db.close());
-it('saves an Aura owner choice ahead of soul and auto-assignment and prevents Room collisions', async () => {
+it('saves both owners’ matching voice preferences and assigns distinct spoken voices', async () => {
   expect((await profiles.catalog(w, a, h)).currentVoiceId).toBe(ids[0]);
   await expect(profiles.save(w, a, stranger, ids[1]!)).rejects.toThrow('owner');
   await expect(profiles.save(w, a, h, 'not-a-library-voice')).rejects.toThrow(
@@ -68,7 +68,11 @@ it('saves an Aura owner choice ahead of soul and auto-assignment and prevents Ro
     );
     expect(assigned.find((v) => v.id === a)?.voice).toBe(ids[1]);
     expect(new Set(assigned.map((v) => v.voice)).size).toBe(2);
-    await expect(profiles.save(w, b, h, ids[1]!)).rejects.toThrow('Another agent');
+    const saved = await Promise.all([profiles.save(w, a, h, ids[1]!),profiles.save(w, b, h, ids[1]!)]);
+    expect(saved.map(profile => profile.currentVoiceId)).toEqual([ids[1],ids[1]]);
+    const distinct = await service.agents(r,h);
+    expect(new Set(distinct.map(agent => agent.voice)).size).toBe(2);
+    expect(distinct.find(agent => agent.id===a)?.voice).toBe(ids[1]);
     await profiles.save(w, b, h, ids[2]!);
     expect((await service.agents(r, h)).find((v) => v.id === b)?.voice).toBe(ids[2]);
     await service.recordAnswer(r, a, 'Good news! We can fix it (today).');

@@ -8,12 +8,12 @@ import { OwnedModelAttempts } from './owned-model-attempt.js';
 import { OwnedModelCredentials } from './owned-model-credential.js';
 import { MODEL, MODEL_AGENT, MODEL_KEY, MODEL_ROOM, seedOwnedModelFixture } from './test-fixtures/owned-model.js';
 import { MEMBERSHIP_AUTHORITY_SCHEMA } from './membership-authority-schema.js';
-import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
 import { TURN_OWNERSHIP_SCHEMA } from './turn-ownership.js';
 import { FreeAgentService, freeAgentConfigFromEnv, sealSecrets, tokenHash } from './free-agents.js';
 import { retireAgentFromWorkspace } from './agent-retirement.js';
-import { lockDaemonCredentialLifetime } from './daemon-credential-lifetime.js';
 import { MODEL_OWNER, MODEL_WORKSPACE } from './test-fixtures/owned-model.js';
+import { FREE_AGENT_ACCOUNTING_SCHEMA, reserveAllowanceInTransaction } from './free-agent-accounting.js';
+import { DEFAULT_FREE_AGENT_LIMITS } from './free-agent-limits.js';
 import type { FreeAgentMachines } from './fly-machines.js';
 
 const url = process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
@@ -58,7 +58,7 @@ async function fixture() {
       CREATE TABLE agent_commands(id text PRIMARY KEY,room_id uuid,agent_id text,turn_request_id text,action text,reason text,
         root_command_id text,root_source_message_id text,agent_depth integer,state text,generation_id text,claimed_at timestamptz,
         lease_expires_at timestamptz,created_at timestamptz DEFAULT now());
-      CREATE TABLE agent_turns(room_id uuid,request_id text,agent_id text,status text,generation_id text);`);
+      CREATE TABLE agent_turns(room_id uuid,request_id text,agent_id text,status text,generation_id text,started_at timestamptz);`);
     // Install actual authority writer triggers and actual owned source/commit
     // predicates, rather than a fake lock in the proof's membership adapter.
     await left.query(COMMITTED_JOURNAL_SCHEMA); await left.query(MEMBERSHIP_AUTHORITY_SCHEMA); await left.query(TURN_OWNERSHIP_SCHEMA);
@@ -77,33 +77,105 @@ const reserve = async (tx: SqlDatabase) => {
 };
 
 describe.skipIf(!url)('real PostgreSQL owned model primitive contention', () => {
+  it('settles the same attempt once across two writers without a global accounting lock', async () => {
+    const f = await fixture(), entered = deferred<void>(), release = deferred<void>(), pid = deferred<number>();
+    let first: ReturnType<OwnedModelAttempts['settleUsage']> | undefined, second: ReturnType<OwnedModelAttempts['settleUsage']> | undefined;
+    try {
+      const owner = new OwnedModelAttempts(f.left,f.credentials);
+      await owner.reserve(f.actor,ONE,payload(),reserve);
+      const competitor = new OwnedModelAttempts({ query:(sql,args)=>f.right.query(sql,args),
+        transaction:work=>f.right.transaction(async tx=>{
+          pid.resolve(Number((await tx.query<{pid:number}>('SELECT pg_backend_pid() pid')).rows[0]!.pid));
+          return work(tx);
+        }) },f.credentials);
+      const settle = vi.fn(async (tx:SqlDatabase)=>{
+        await tx.query(`INSERT INTO owned_model_test_accounting(id,amount) VALUES('settlement',3)`);
+        entered.resolve();await release.promise;
+      });
+      first=owner.settleUsage(f.actor,ONE,{tokens:3,usd:0.001},'succeeded',settle);
+      await entered.promise;
+      second=competitor.settleUsage(f.actor,ONE,{tokens:3,usd:0.001},'succeeded',settle);
+      await blocked(f.admin,await pid.promise);expect(settle).toHaveBeenCalledOnce();
+      release.resolve();const [a,b]=await Promise.all([first,second]);
+      expect(a).toEqual(b);expect(a.state).toBe('succeeded');expect(settle).toHaveBeenCalledOnce();
+      expect((await f.left.query(`SELECT amount FROM owned_model_test_accounting WHERE id='settlement'`)).rows).toEqual([{amount:3}]);
+    } finally {
+      release.resolve();await Promise.allSettled([first,second].filter((work):work is NonNullable<typeof work>=>work!==undefined));
+      await f.close();
+    }
+  },20_000);
+
   it('serializes competing admissions across pools and gives only the actual committed reservation a one-use permit', async () => {
     const f = await fixture(), entered = deferred<void>(), release = deferred<void>(), pid = deferred<number>();
     let first: ReturnType<OwnedModelAttempts['reserve']> | undefined, second: ReturnType<OwnedModelAttempts['reserve']> | undefined;
     let early: unknown;
     try {
-      const owner = new OwnedModelAttempts(f.left, f.credentials);
+      const owner = new OwnedModelAttempts(observe(f.left,async sql=>{
+        if(sql.includes('INSERT INTO owned_model_attempts')){entered.resolve();await release.promise;}
+      }), f.credentials);
       const otherKeys = new OwnedModelCredentials({ currentVersion: 'test-v1', key: () => MODEL_KEY }, () => MODEL, () => 900_000);
       const otherActor = await otherKeys.authenticate(f.right, f.issued.token);
       const other = new OwnedModelAttempts(f.right, otherKeys);
-      // Resolve PID before the actual blocking global-budget lock, which is
-      // acquired before owner lock by both real admissions.
+      // The committed unique request key decides the winner. A duplicate's
+      // speculative accounting rolls back before its receipt is returned.
       const competing = new OwnedModelAttempts({ query: (sql, args) => f.right.query(sql, args), transaction: work => f.right.transaction(async tx => {
         pid.resolve(Number((await tx.query<{ pid: number }>('SELECT pg_backend_pid() pid')).rows[0]!.pid)); return work(tx);
       }) }, otherKeys);
-      const winningHook = vi.fn(async (tx: SqlDatabase) => { const value = await reserve(tx); entered.resolve(); await release.promise; return value; });
+      const winningHook = vi.fn(reserve);
       first = owner.reserve(f.actor, ONE, payload(), winningHook);
       void first.catch(error => { early = error; entered.resolve(); }); await entered.promise; if (early) throw early;
       const losingHook = vi.fn(reserve); second = competing.reserve(otherActor, ONE, payload(), losingHook);
-      await blocked(f.admin, await pid.promise); expect(losingHook).not.toHaveBeenCalled();
+      await blocked(f.admin, await pid.promise);
       release.resolve(); const admitted = await first, replayed = await second;
-      expect(replayed).toEqual({ receipt: admitted.receipt }); expect(winningHook).toHaveBeenCalledOnce(); expect(losingHook).not.toHaveBeenCalled();
+      expect(replayed).toEqual({ receipt: admitted.receipt }); expect(winningHook).toHaveBeenCalledOnce();
       expect((await f.right.query('SELECT * FROM owned_model_test_accounting')).rowCount).toBe(1);
       expect((await f.right.query('SELECT * FROM owned_model_attempts')).rowCount).toBe(1);
       const start = vi.fn(async () => 'synthetic result'); await owner.handoff(admitted.permit!, start);
       await expect(other.handoff(admitted.permit!, start)).rejects.toThrow('UNKNOWN'); expect(start).toHaveBeenCalledOnce();
     } finally { release.resolve(); await Promise.allSettled([first, second].filter((work): work is NonNullable<typeof work> => work !== undefined)); await f.close(); }
   }, 20_000);
+
+  it.each(['payload', 'exhausted allowance'] as const)('rolls back a competing admission with %s', async kind => {
+    const f = await fixture(), entered = deferred<void>(), release = deferred<void>(), submitted = deferred<void>();
+    let first: ReturnType<OwnedModelAttempts['reserve']> | undefined, second: ReturnType<OwnedModelAttempts['reserve']> | undefined;
+    try {
+      await f.left.query(`CREATE TABLE free_agent_call_rate(owner_id text PRIMARY KEY,minute bigint,calls integer);
+        CREATE TABLE free_agent_usage(owner_id text,day date,tokens bigint DEFAULT 0,reservation_credit bigint DEFAULT 0,PRIMARY KEY(owner_id,day));
+        CREATE TABLE free_agent_budget(day date PRIMARY KEY,usd numeric DEFAULT 0);
+        CREATE TABLE free_agent_events(agent_id text,kind text,detail jsonb);`);
+      await f.left.query(FREE_AGENT_ACCOUNTING_SCHEMA);
+      const hook = async (tx: SqlDatabase) => {
+        const granted = await reserveAllowanceInTransaction(tx,MODEL_OWNER,new Date('2026-11-02'),
+          {dailyTokenCap:266,lifetimeTokenCap:266},10,256,DEFAULT_FREE_AGENT_LIMITS);
+        return {reservation:{...granted,day:'2026-11-02'},payload:{...payload(),max_tokens:granted.maxOutput}};
+      };
+      const owner = new OwnedModelAttempts(observe(f.left,async sql=>{
+        if(sql.includes('INSERT INTO owned_model_attempts')){entered.resolve();await release.promise;}
+      }),f.credentials);
+      const competitor = new OwnedModelAttempts({query:(sql,args)=>f.right.query(sql,args),transaction:work=>f.right.transaction(tx=>work({
+        query:(sql,args)=>{if(sql.includes(kind==='payload'?'INSERT INTO owned_model_attempts':'INSERT INTO free_agent_call_rate')) submitted.resolve();return tx.query(sql,args);},
+        transaction:nested=>tx.transaction(nested),
+      }))},f.credentials);
+      first=owner.reserve(f.actor,ONE,payload(),kind==='payload'?reserve:hook);
+      await entered.promise;
+      second=competitor.reserve(f.actor,kind==='payload'?TWO:ONE,kind==='payload'?payload('different semantic request'):payload(),kind==='payload'?reserve:hook);
+      // Attach the rejection before releasing the winning transaction.
+      const result=second.then(value=>({value}),error=>({error}));
+      await submitted.promise;release.resolve();const admitted=await first, other=await result;
+      if(kind==='payload'){
+        expect(other).toHaveProperty('error');
+        expect((other as {error:Error}).error.message).toContain('UNKNOWN');
+        expect((await f.left.query('SELECT * FROM owned_model_test_accounting')).rowCount).toBe(1);
+      }else{
+        expect(other).toEqual({value:{receipt:admitted.receipt}});
+        expect((await f.left.query('SELECT tokens::int FROM free_agent_usage')).rows).toEqual([{tokens:266}]);
+        expect((await f.left.query('SELECT calls FROM free_agent_call_rate')).rows).toEqual([{calls:1}]);
+      }
+      expect((await f.left.query('SELECT * FROM owned_model_attempts')).rowCount).toBe(1);
+    } finally {
+      release.resolve();await Promise.allSettled([first,second].filter((work):work is NonNullable<typeof work>=>work!==undefined));await f.close();
+    }
+  },20_000);
 
   it.each(['membership', 'source', 'rotation'] as const)('serializes actual %s change through final synchronous handoff, without awaiting provider completion', async change => {
     const f = await fixture(), entered = deferred<void>(), release = deferred<void>(), pid = deferred<number>(), provider = deferred<string>();
@@ -160,14 +232,14 @@ describe.skipIf(!url)('real PostgreSQL owned model primitive contention', () => 
     let writer: Promise<unknown> | undefined, handoff: ReturnType<OwnedModelAttempts['handoff']> | undefined;
     try {
       const owner = new OwnedModelAttempts(observe(f.left, async sql => {
-        if (pause && sql.includes('pg_advisory_xact_lock_shared')) { pause = false; authorityHeld.resolve(); await releaseHandoff.promise; }
+        if (pause && sql.includes('FOR SHARE OF surface,parent,member,workspace')) { pause = false; authorityHeld.resolve(); await releaseHandoff.promise; }
       }), f.credentials);
       const admitted = await owner.reserve(f.actor, ONE, payload(), reserve), start = vi.fn(async () => 'must not enter');
       writer = f.right.transaction(async tx => {
         await tx.query('SELECT agent_id FROM free_agents WHERE agent_id=$1 FOR UPDATE', [MODEL_AGENT]);
         pid.resolve(Number((await tx.query<{ pid: number }>('SELECT pg_backend_pid() pid')).rows[0]!.pid));
         rowHeld.resolve(); await requestAuthority.promise;
-        await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [ROUTER_AUTHORITY_LOCK]);
+        await tx.query('SELECT id FROM rooms WHERE id=$1 FOR UPDATE', [MODEL_ROOM]);
       });
       void writer.catch(error => { early = error; rowHeld.resolve(); }); await rowHeld.promise; if (early) throw early;
       pause = true; handoff = owner.handoff(admitted.permit!, start);
@@ -212,9 +284,7 @@ describe.skipIf(!url)('real PostgreSQL owned model primitive contention', () => 
       const config = freeAgentConfigFromEnv({ BEELINE_FREE_AGENT_SEAL_KEY: key, FLY_FREE_AGENT_IMAGE: 'synthetic-image' }, 'https://synthetic.invalid')!;
       const service = new FreeAgentService(observe(f.right, async sql => {
         if (sql.includes('FOR UPDATE OF f')) { held.resolve(); await release.promise; }
-      }), config, machines, async (agent, tx) => {
-        await lockDaemonCredentialLifetime(tx, agent); return { exchangeToken: 'synthetic-exchange' };
-      });
+      }), config, machines, async () => ({exchangeToken:'synthetic-exchange'}));
       bootstrap = service.bootstrap(bootstrapToken); void bootstrap.catch(error => { early = error; held.resolve(); });
       await held.promise; if (early) throw early;
       const start = vi.fn(async () => 'must not enter'); await expect(owner.handoff(admitted.permit!, start)).rejects.toMatchObject({ code: '55P03' });
@@ -234,7 +304,7 @@ describe.skipIf(!url)('real PostgreSQL owned model primitive contention', () => 
         ALTER TABLE identities ADD COLUMN hidden_from_roster boolean,ADD COLUMN updated_at timestamptz;
         ALTER TABLE agents ADD COLUMN usage_snapshot jsonb,ADD COLUMN usage_account_id text,ADD COLUMN soul jsonb,
           ADD COLUMN chosen_voices jsonb,ADD COLUMN selected_model text,ADD COLUMN selected_effort text,ADD COLUMN model_catalog jsonb,
-          ADD COLUMN model_unavailable jsonb,ADD COLUMN commands jsonb,ADD COLUMN schedule_ids jsonb,ADD COLUMN squire_report jsonb,
+          ADD COLUMN model_unavailable jsonb,ADD COLUMN commands jsonb,ADD COLUMN schedule_ids jsonb,
           ADD COLUMN squire_work jsonb,ADD COLUMN yolo_mode boolean,ADD COLUMN yolo_set_by text,ADD COLUMN yolo_set_at timestamptz,
           ADD COLUMN access_policy jsonb,ADD COLUMN updated_at timestamptz;
         CREATE TABLE free_agent_events(id bigserial PRIMARY KEY,agent_id text,kind text,detail jsonb);
@@ -243,7 +313,7 @@ describe.skipIf(!url)('real PostgreSQL owned model primitive contention', () => 
         CREATE TABLE agent_schedules(agent_id text,workspace_id uuid);
         CREATE TABLE agent_grants(id text,room_id uuid,agent_id text,workspace_id uuid,status text,decided_by text,decided_at timestamptz);`);
       const owner = new OwnedModelAttempts(observe(f.left, async sql => {
-        if (pause && sql.includes('pg_advisory_xact_lock_shared')) { pause = false; authorityHeld.resolve(); await releaseHandoff.promise; }
+        if (pause && sql.includes('FOR SHARE OF surface,parent,member,workspace')) { pause = false; authorityHeld.resolve(); await releaseHandoff.promise; }
       }), f.credentials), admitted = await owner.reserve(f.actor, ONE, payload(), reserve);
       const writer = observe(f.right, async (sql, tx) => {
         if (sql.includes('UPDATE free_agents SET removed_at=')) {

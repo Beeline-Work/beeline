@@ -11,17 +11,17 @@ The recovery bootstrap migrates old installations forward to one native supervis
 Cloudflare remains the public TLS endpoint; GitHub Pages becomes the origin
 for the entire website, including `/dl` and `.well-known`.
 
-## Following nightly
+## Following next
 
 User helpers follow latest at `/dl/manifest.json`. Set
-`BEELINE_RELEASE_CHANNEL=nightly` in the native helper service environment to
-follow `/dl/nightly/manifest.json`. `BEELINE_UPDATE_MANIFEST_URL` remains the
+`BEELINE_RELEASE_CHANNEL=next` in the native helper service environment to
+follow `/dl/next/manifest.json`. `BEELINE_UPDATE_MANIFEST_URL` remains the
 highest-priority override. For the squire host's first transition, firstmate
 should set **both**:
 
 ```ini
-BEELINE_RELEASE_CHANNEL=nightly
-BEELINE_UPDATE_MANIFEST_URL=https://usebeeline.app/dl/nightly/manifest.json
+BEELINE_RELEASE_CHANNEL=next
+BEELINE_UPDATE_MANIFEST_URL=https://usebeeline.app/dl/next/manifest.json
 ```
 
 The URL override also works in the currently installed older helper, before
@@ -32,18 +32,18 @@ configuration after merge; this PR does not touch the host. Removing both
 settings returns to latest on the next ordinary update reconciliation.
 
 The rolling prereleases `helper-update-channel` (latest) and
-`helper-update-channel-nightly` retain independently validated helper bytes.
-Every Pages deployment includes both directories. A nightly helper deployment
+`helper-update-channel-next` retain independently validated helper bytes.
+Every Pages deployment includes both directories. A `next` helper deployment
 uses the last latest website component's source commit for the static website;
-it cannot publish website changes from nightly. Latest promotion validates
-and copies the current nightly bytes, preserving their original helper version
-and SHA even when a nightly carried an older helper forward. Ordinary helper
+it cannot publish website changes from `next`. Latest promotion validates
+and copies the current `next` bytes, preserving their original helper version
+and SHA even when a `next` release carried an older helper forward. Ordinary helper
 notices merely trigger a manifest check; each helper resolves its own channel.
 The new helper rechecks even when latest promotes a build already announced
-for nightly. Helpers predating this change can suppress that second notice:
+for `next`. Helpers predating this change can suppress that second notice:
 reconnect or run `npx usebeeline@latest update` once after the first latest
 promotion if necessary.
-The CLI's nightly npm tag is separate from these authoritative bundle channels;
+The CLI's `next` npm tag is separate from these authoritative bundle channels;
 `npx usebeeline@latest update` continues to recover using the configured bundle
 manifest, without waiting for an npm tag promotion.
 

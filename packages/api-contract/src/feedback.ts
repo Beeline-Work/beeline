@@ -20,8 +20,6 @@ export const FEEDBACK_DETAIL_MAX_BYTES = 4_000;
 export const FEEDBACK_ERROR_EXCERPT_MAX_BYTES = 1_000;
 export const FEEDBACK_TOOL_NAME_MAX_LENGTH = 120;
 export const FEEDBACK_PROMPT_SECTION_IDS_MAX = 64;
-/** Separate agent items per UTC day; excess reports share one daily overflow item. */
-export const FEEDBACK_AGENT_DAILY_CAP = 200;
 /** The trigger plus this many preceding message ids ride a human report. */
 export const FEEDBACK_PRECEDING_MESSAGES = 20;
 /** One Fixed DM title: a single line this long at most. */

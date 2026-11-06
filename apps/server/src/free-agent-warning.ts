@@ -1,9 +1,8 @@
 import { createHash } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
-import { recordFreeAgentEvent } from './free-agents.js';
 
 /**
- * Deliver independently of model output, serialized with owner usage settlement.
+ * Deliver independently of model output; the deterministic message ID claims delivery.
  * The plain reset-time notice goes in the room where the person is working, not
  * a separate DM, so it lands in the transcript they are already reading.
  */
@@ -15,42 +14,30 @@ export async function warnFreeAgentOwner(
   dailyTokenCap: number,
   workingRoomId: string,
 ): Promise<void> {
-  await database.transaction(async (db) => {
-    await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`free-agent-usage:${ownerId}`]);
-    // Usage totals include in-flight reservations. Only settled charges can warn.
-    const used = (await db.query<{ tokens: string }>(
-      `SELECT COALESCE(SUM((event.detail->>'tokens')::bigint),0) tokens
-       FROM free_agent_events event JOIN free_agents free ON free.agent_id=event.agent_id
-       WHERE free.owner_id=$1 AND event.kind='model_usage' AND event.detail->>'day'=$2
-         AND event.at>=($2::date::timestamp AT TIME ZONE 'UTC')
-         AND event.at<($2::date::timestamp AT TIME ZONE 'UTC')+interval '2 days'`, [ownerId, day],
-    )).rows[0];
-    if (dailyTokenCap <= 0 || !used || Number(used.tokens) < dailyTokenCap * 0.8) return;
-    const agent = (await db.query<{ workspace_id: string }>(
-      `SELECT free.workspace_id FROM free_agents free
-       WHERE free.agent_id=$1 AND free.owner_id=$2`, [agentId, ownerId],
-    )).rows[0];
-    if (!agent) return;
-    // Only warn into a room the owner belongs to; otherwise the notice is worse
-    // than silence and leaks the connect link to people it is not meant for.
-    const member = (await db.query(
-      `SELECT 1 FROM memberships m WHERE m.room_id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL`,
-      [workingRoomId, ownerId],
-    )).rowCount;
-    if (!member) return;
-    const id = createHash('sha256').update(`free-agent-warning:${ownerId}:${day}`).digest('hex');
-    if ((await db.query(`SELECT 1 FROM messages WHERE id=$1`, [id])).rowCount) return;
-    const link = `https://web.usebeeline.app/beeline/members?communityId=${encodeURIComponent(agent.workspace_id)}&action=add-agent`;
-    const text = `I've used 80% of today's free allowance. It resets at midnight UTC. Want help running and connecting your own agent on your computer or an always-on machine? Open [Members -> Add agent](${link}) to get started.`;
-    const inserted = await db.query(
-      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING id`,
-      [id, workingRoomId, agentId, text],
-    );
-    if (!inserted.rowCount) return;
-    await db.query(`DELETE FROM chat_dismissals WHERE room_id=$1 AND identity_id=$2`, [workingRoomId, ownerId]);
-    await recordFreeAgentEvent(db, agentId, 'allowance_warning', { day, ownerId, roomId: workingRoomId, messageId: id });
-    await recordFreeAgentEvent(db, agentId, 'nudge_shown', { day, ownerId, source: 'allowance_warning' });
-  });
+  if (dailyTokenCap <= 0) return;
+  const id = createHash('sha256').update(`free-agent-warning:${ownerId}:${day}`).digest('hex');
+  await database.query(`WITH candidate AS (
+    SELECT free.agent_id,free.workspace_id FROM free_agents free WHERE free.agent_id=$1 AND free.owner_id=$2
+      AND EXISTS(SELECT 1 FROM memberships WHERE room_id=$4 AND identity_id=$2 AND removed_at IS NULL)
+      AND (SELECT COALESCE(SUM((event.detail->>'tokens')::bigint),0)
+        FROM free_agent_events event JOIN free_agents agent ON agent.agent_id=event.agent_id
+        WHERE agent.owner_id=$2 AND event.kind='model_usage' AND event.detail->>'day'=$3
+          AND event.at>=($3::date::timestamp AT TIME ZONE 'UTC')
+          AND event.at<($3::date::timestamp AT TIME ZONE 'UTC')+interval '2 days')>=$5::numeric*0.8
+  ), inserted AS (
+    INSERT INTO messages(id,room_id,author_id,text)
+    SELECT $6,$4,agent_id,$7 || workspace_id::text || $8 FROM candidate
+    ON CONFLICT DO NOTHING RETURNING id,author_id
+  ), undismissed AS (
+    DELETE FROM chat_dismissals WHERE room_id=$4 AND identity_id=$2 AND EXISTS(SELECT 1 FROM inserted)
+  ) INSERT INTO free_agent_events(agent_id,kind,detail)
+    SELECT author_id,kind,jsonb_build_object('day',$3::text,'ownerId',$2::text) ||
+      CASE WHEN kind='allowance_warning' THEN jsonb_build_object('roomId',$4::text,'messageId',id)
+        ELSE jsonb_build_object('source','allowance_warning') END
+    FROM inserted CROSS JOIN (VALUES('allowance_warning'),('nudge_shown')) notices(kind)`,
+  [agentId,ownerId,day,workingRoomId,dailyTokenCap,id,
+    "I've used 80% of today's free allowance. It resets at midnight UTC. Want help running and connecting your own agent on your computer or an always-on machine? Open [Members -> Add agent](https://web.usebeeline.app/beeline/members?communityId=",
+    '&action=add-agent) to get started.']);
 }
 
 /** Pairing is a server-observed conversion; model-authored offers are not inferred. */
@@ -70,9 +57,7 @@ export async function recordAgentConnectedAfterNudge(
 
 /** A person reaching the real Add agent command is an observable guide start. */
 export async function recordFreeAgentGuideStarted(database: SqlDatabase, ownerId: string, workspaceId: string): Promise<void> {
-  await database.transaction(async db => {
-    await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`free-agent-guide:${ownerId}:${workspaceId}`]);
-    await db.query(`INSERT INTO free_agent_events(agent_id,kind,detail)
+  await database.query(`INSERT INTO free_agent_events(agent_id,kind,detail)
     SELECT free.agent_id,'guide_started',jsonb_build_object('source','add_agent_command','warningId',warning.id)
     FROM free_agents free JOIN LATERAL (
       SELECT event.id FROM free_agent_events event WHERE event.agent_id=free.agent_id
@@ -81,7 +66,7 @@ export async function recordFreeAgentGuideStarted(database: SqlDatabase, ownerId
     ) warning ON true
     WHERE free.owner_id=$1 AND free.workspace_id=$2
       AND NOT EXISTS(SELECT 1 FROM free_agent_events started WHERE started.agent_id=free.agent_id
-        AND started.kind='guide_started' AND started.detail->>'warningId'=warning.id::text)`,
+        AND started.kind='guide_started' AND started.detail->>'warningId'=warning.id::text)
+    ON CONFLICT DO NOTHING`,
     [ownerId, workspaceId]);
-  });
 }

@@ -125,7 +125,6 @@ describe('agent subscriptions', () => {
       expect(commands).toHaveLength(2);
       expect(commands.filter(row=>row.agent_id===AGENT)).toEqual([{agent_id:AGENT,source_message_id:event.id}]);
       expect(commands.filter(row=>row.agent_id===other)).toHaveLength(1);
-      expect((await db.query(`SELECT sum(event_woken)::int count FROM messages WHERE event_root_cause_id=$1`,[event.id])).rows[0]!.count).toBe(2);
     } finally {await db.close();}
   });
 

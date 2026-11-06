@@ -13,9 +13,7 @@ import {
   isSystemEventKind,
   joinSystemNames,
   shortRunId,
-  MAX_EVENT_DEPTH,
   MAX_MENTIONS_PER_EVENT,
-  MAX_TURNS_PER_ROOT,
   perItemSubscriptionRefusal,
   PER_ITEM_EVENT_KINDS,
   RESUME_KINDS,
@@ -221,9 +219,7 @@ describe('the event kinds beside the prose', () => {
     expect(RESUME_KINDS.some((kind) => CONTROL_KINDS.includes(kind))).toBe(false);
   });
 
-  it('owns the cascade bounds both the server and the helper read', () => {
-    expect(MAX_EVENT_DEPTH).toBe(4);
-    expect(MAX_TURNS_PER_ROOT).toBe(12);
+  it('owns the per-event mention shape both the server and helper read', () => {
     expect(MAX_MENTIONS_PER_EVENT).toBe(3);
   });
 

@@ -1,3 +1,5 @@
+import { claimWorkflowTransition } from './workflow-transition.js';
+import { sendSystemNotices } from './system-line.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { WELCOME_VIDEO_SLUG } from './welcome-video-workflow.js';
 import { CommandRefusalError, ExpectedRefusalError } from './command-refusal.js';
@@ -118,16 +120,16 @@ export async function loadRunStarter(db: SqlDatabase, roomId: string, runId: str
 }
 
 
-export type RunHead = { id: string; authorId: string; createdAt: Date; card: WorkflowRunCard };
+export type RunHead = { id: string; version: number; authorId: string; createdAt: Date; card: WorkflowRunCard };
 
 
 export async function loadRunStart(db: SqlDatabase, roomId: string, runId: string): Promise<RunHead> {
-  const row = (await db.query<{ id: string; author_id: string; created_at: Date; card: WorkflowRunCard }>(
-    `SELECT id,author_id,created_at,card FROM messages WHERE room_id=$1 AND id=$2 AND card_type=$3`,
+  const row = (await db.query<{ id: string; version: number; author_id: string; created_at: Date; card: WorkflowRunCard }>(
+    `SELECT id,version,author_id,created_at,card FROM messages WHERE room_id=$1 AND id=$2 AND card_type=$3`,
     [roomId, runId, WORKFLOW_HANDOFF_CARD_TYPE],
   )).rows[0];
   if (!row) throw new Error('workflow start is unavailable');
-  return { id: row.id, authorId: row.author_id, createdAt: row.created_at, card: row.card };
+  return { id: row.id, version: row.version, authorId: row.author_id, createdAt: row.created_at, card: row.card };
 }
 
 
@@ -137,14 +139,14 @@ export async function loadRunHead(
   runId: string,
 ): Promise<RunHead | undefined> {
   const row = (
-    await db.query<{ id: string; author_id: string; created_at: Date; card: WorkflowRunCard }>(
-      `SELECT id,author_id,created_at,card FROM messages
+    await db.query<{ id: string; version: number; author_id: string; created_at: Date; card: WorkflowRunCard }>(
+      `SELECT id,version,author_id,created_at,card FROM messages
        WHERE room_id=$1 AND card_type=$2 AND card->>'runId'=$3
        ORDER BY (card->>'seq')::int DESC NULLS LAST,created_at DESC,id DESC LIMIT 1`,
       [roomId, WORKFLOW_HANDOFF_CARD_TYPE, runId],
     )
   ).rows[0];
-  return row ? { id: row.id, authorId: row.author_id, createdAt: row.created_at, card: row.card } : undefined;
+  return row ? { id: row.id, version: row.version, authorId: row.author_id, createdAt: row.created_at, card: row.card } : undefined;
 }
 
 
@@ -354,8 +356,8 @@ export async function getWorkflowRun(
   runId: string,
 ): Promise<WorkflowRunReadResult> {
   runId = await resolveWorkflowRunId(db, roomId, runId);
-  const rows = (await db.query<{ id: string; author_id: string; created_at: Date; card: WorkflowRunCard }>(
-    `SELECT id,author_id,created_at,card FROM messages
+  const rows = (await db.query<{ id: string; version: number; author_id: string; created_at: Date; card: WorkflowRunCard }>(
+    `SELECT id,version,author_id,created_at,card FROM messages
      WHERE room_id=$1 AND card_type=$2 AND card->>'runId'=$3
      ORDER BY (card->>'seq')::int ASC NULLS FIRST,created_at,id`,
     [roomId, WORKFLOW_HANDOFF_CARD_TYPE, runId],
@@ -533,17 +535,10 @@ export async function noticeRunOwner(
   line: { subject: SystemSubject; verb: string; object?: string; consequence?: string },
 ): Promise<void> {
   const owner = (await loadRunStart(db, scope.roomId, scope.runId)).card.ownerId;
-  await ensureSystemIdentity(db);
-  for (const recipient of await runNoticeRecipients(db, scope.roomId, owner ?? null)) {
-    await systemLine(db, {
-      id: createHash('sha256')
-        .update(`beeline:workflow-owner-notice:v1:${scope.runId}:${key}:${recipient}`)
-        .digest('hex'),
-      roomId: await ensureSystemDirectMessageRoom(db, scope.workspaceId, recipient),
-      authorId: SYSTEM_IDENTITY_ID,
-      ...line,
-    });
-  }
+  const recipients = await runNoticeRecipients(db, scope.roomId, owner ?? null);
+  await sendSystemNotices(db,scope.workspaceId,recipients.map(identityId=>({ identityId,
+    messageId:createHash('sha256').update(`beeline:workflow-owner-notice:v1:${scope.runId}:${key}:${identityId}`).digest('hex'),
+  })),line);
 }
 
 
@@ -560,6 +555,7 @@ export type RunScope = {
   /** The status saved on the start card. */
   status: WorkflowRunStatus;
   ended: boolean;
+  claimed?: boolean;
 };
 
 
@@ -574,20 +570,15 @@ export type RunScope = {
  * transaction, before any read, matching the discipline `resolveCascade`
  * already uses for a cascade's root lock.
  */
-export function workflowRunLockKey(runId: string): string {
-  return `workflow-run:${runId}`;
-}
 
 
-export async function lockWorkflowRun(db: SqlDatabase, runId: string): Promise<void> {
-  await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [workflowRunLockKey(runId)]);
-}
+
+
 
 
 /** Lock the run, then read its newest card and pinned contract. */
 export async function openRun(db: SqlDatabase, roomId: string, runId: string): Promise<RunScope> {
   runId = await resolveWorkflowRunId(db, roomId, runId);
-  await lockWorkflowRun(db, runId);
   const room = (
     await db.query<{ workspace_id: string }>(`SELECT workspace_id FROM rooms WHERE id=$1`, [roomId])
   ).rows[0];
@@ -625,7 +616,7 @@ export async function cancelRunWakes(db: SqlDatabase, roomId: string, runId: str
          AND command.state='pending'
        FOR UPDATE OF command SKIP LOCKED
      ), cancelled AS (
-       SELECT (terminal.ended).* FROM (SELECT beeline_end_agent_turn(command.id,command.generation_id,'cancelled','workflow_attempt_advanced',NULL) ended FROM agent_commands command ,due WHERE command.id=due.id) terminal) SELECT * FROM cancelled`,
+       SELECT (terminal.ended).* FROM (SELECT beeline_end_agent_turn(command.id,command.generation_id,'cancelled','workflow_attempt_advanced',NULL) ended FROM agent_commands command ,due WHERE command.id=due.id) terminal) SELECT cancelled.* FROM cancelled`,
     [roomId, runId],
   );
 }
@@ -643,3 +634,9 @@ export { archiveWorkflow } from './workflow-runs-start-workflow.js';
 export { describedLegacyWorkflowContract } from './workflow-runs-start-workflow.js';
 export { backfillWorkflowSkillDescriptions } from './workflow-runs-start-workflow.js';
 export { closeStaleWorkflowGateChoices } from './workflow-runs-start-workflow.js';
+
+export async function claimRun(db: SqlDatabase, scope: RunScope): Promise<boolean> {
+  if (scope.claimed) return true;
+  scope.claimed = await claimWorkflowTransition(db, { ...scope.head, state: scope.stateName });
+  return scope.claimed;
+}

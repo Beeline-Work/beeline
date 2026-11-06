@@ -1,3 +1,4 @@
+import { messageColumns } from '../message-columns.js';
 import { commandOwnerFenceCteSql, commandOwnerFenceMatchesSql, commandOwnerLiveSql } from '../turn-ownership.js';
 import { cornerRequestSql } from '../corner-opening.js';
 import { mentionReplyKey, mentionReplyId } from '../owed-mentions.js';
@@ -33,12 +34,8 @@ import { daemonWriteResult } from './corner-messages.js';
       ...(row.status ? { outcome: row.status, ...(row.failure_reason ? { failureReason: row.failure_reason } : {}) } : {}) };
   }
 
-  export async function daemonPostRoomMessage(ctx: DaemonContext,
-    input: Input<'postRoomMessage'>,
-    agentId: string,
-    atomicCommandWrite = false,
-  ) {
-    if (!ctx.commandTransaction && !atomicCommandWrite) await daemonAccess(ctx, input.roomId, agentId);
+  export async function daemonPostRoomMessage(ctx: DaemonContext, input: Input<'postRoomMessage'>, agentId: string, atomicCommandWrite = false) {
+    if (!ctx.commandTransaction && !atomicCommandWrite) await ctx.access(input.roomId, agentId);
     if ('relay' in input) throw new CommandRefusalError('relay cards are retired; use order and report', 410);
     let steps = replySteps(input.steps);
     // Explicit same-address posts can already have
@@ -158,10 +155,10 @@ import { daemonWriteResult } from './corner-messages.js';
                ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,$12::jsonb,
                  (SELECT selected_model FROM agents WHERE agent_id=$3))
                ON CONFLICT(id) DO NOTHING
-               RETURNING *
+               RETURNING ${messageColumns('messages')}
              ), inserted AS (
-               SELECT * FROM new_messages UNION ALL
-               SELECT stored.* FROM messages stored WHERE stored.id=$1 AND stored.room_id=$2 AND stored.author_id=$3
+               SELECT new_messages.* FROM new_messages UNION ALL
+               SELECT ${messageColumns('stored')} FROM messages stored WHERE stored.id=$1 AND stored.room_id=$2 AND stored.author_id=$3
                  AND NOT EXISTS(SELECT 1 FROM new_messages)
              ), completed AS (
                SELECT beeline_end_agent_turn($13,$14,'complete',NULL,inserted.id) ended
@@ -188,10 +185,10 @@ import { daemonWriteResult } from './corner-messages.js';
              ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,$12::jsonb,
                (SELECT selected_model FROM agents WHERE agent_id=$3))
              ON CONFLICT(id) DO NOTHING
-             RETURNING *
+             RETURNING ${messageColumns('messages')}
            ), inserted AS (
-             SELECT * FROM new_messages UNION ALL
-             SELECT stored.* FROM messages stored WHERE stored.id=$1 AND stored.room_id=$2 AND stored.author_id=$3
+             SELECT new_messages.* FROM new_messages UNION ALL
+             SELECT ${messageColumns('stored')} FROM messages stored WHERE stored.id=$1 AND stored.room_id=$2 AND stored.author_id=$3
                AND NOT EXISTS(SELECT 1 FROM new_messages)
            )
            SELECT inserted.*,author.kind author_kind,author.name author_name,
@@ -237,7 +234,7 @@ import { daemonWriteResult } from './corner-messages.js';
                AND ${commandOwnerFenceMatchesSql('command')}
              ORDER BY command.created_at DESC,command.id DESC LIMIT 1 FOR UPDATE OF command
            ), writable AS (
-             SELECT * FROM candidate
+             SELECT candidate.* FROM candidate
              WHERE state='claimed' AND ${commandOwnerLiveSql(undefined, 'clock_timestamp()')} AND NOT turn_cancelled AND NOT no_reply
                AND (turn_owner_connection_id IS NULL OR beeline_register_owned_effect(id,agent_id,generation_id,turn_owner_connection_id,turn_owner_epoch))
            ), pending AS (
@@ -261,10 +258,10 @@ import { daemonWriteResult } from './corner-messages.js';
                  (SELECT selected_model FROM agents WHERE agent_id=$3)
                FROM writable,settled,attachment_payload
              ON CONFLICT(id) DO NOTHING
-             RETURNING *
+             RETURNING ${messageColumns('messages')}
            ), inserted AS (
-             SELECT * FROM new_messages UNION ALL
-             SELECT stored.* FROM messages stored WHERE stored.id=$1 AND stored.room_id=$2 AND stored.author_id=$3
+             SELECT new_messages.* FROM new_messages UNION ALL
+             SELECT ${messageColumns('stored')} FROM messages stored WHERE stored.id=$1 AND stored.room_id=$2 AND stored.author_id=$3
                AND NOT EXISTS(SELECT 1 FROM new_messages)
            ), completed AS (
              SELECT (ended).* FROM (SELECT beeline_end_agent_turn(writable.id,writable.generation_id,'complete',NULL,inserted.id) ended FROM writable,inserted) ended_commands
@@ -279,14 +276,14 @@ import { daemonWriteResult } from './corner-messages.js';
              FROM inserted JOIN identities author ON author.id=inserted.author_id
              CROSS JOIN completed
            ), existing_public AS (
-             SELECT message.*,author.kind author_kind,author.name author_name,
+             SELECT ${messageColumns('message')},author.kind author_kind,author.name author_name,
                author.handle author_handle,author.avatar author_avatar,author.face_id author_face,
                ${taggedIdentityIdsSql('message')} tagged_ids
              FROM candidate JOIN messages message ON message.id=candidate.result_message_id
              JOIN identities author ON author.id=message.author_id
              WHERE candidate.state='complete' AND message.text=$4
            ), committed AS (
-             SELECT * FROM inserted_public UNION ALL SELECT * FROM existing_public
+             SELECT inserted_public.* FROM inserted_public UNION ALL SELECT existing_public.* FROM existing_public
            )
            SELECT 'committed'::text outcome,to_jsonb(committed) row
            FROM committed
@@ -323,7 +320,7 @@ import { daemonWriteResult } from './corner-messages.js';
       if (result.outcome === 'authority_rejected')
         throw new Error('command output authority rejected');
       if (result.outcome === 'turn_cancelled') throw new Error('command turn cancelled');
-      if (result.outcome === 'no_reply') return daemonWriteResult(ctx);
+      if (result.outcome === 'no_reply') return ctx.writeResult();
       if (result.outcome === 'already_completed') throw new Error('command already completed');
       if (result.outcome === 'result_conflict') throw new Error('command result conflict');
       if (!result.row) throw new Error('command output authority rejected');

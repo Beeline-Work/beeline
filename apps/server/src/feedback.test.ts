@@ -35,98 +35,46 @@ describe('report_feedback (agent path)', () => {
   });
 
 
-  it('Reproduction R1: bounds daily rows and keeps the latest overflow visible to triage', async () => {
-    const first = await report({ summary: 'The grant card never resolves.' });
-    for (let index = 1; index < 200; index++) await report({ summary: `distinct problem ${index}` });
-    expect(await report({ summary: 'the GRANT card never resolves' }))
-      .toEqual({ itemId: first.itemId, duplicate: true });
-    const overflow = await report({ summary: 'overflow first', detail: 'first context' });
-    await rootFixture.database.query("UPDATE feedback_items SET status='dismissed' WHERE id=$1", [overflow.itemId]);
-    const latest = await report({ summary: 'overflow latest', detail: 'latest context', toolName: 'read' }, CORNER);
-    expect(latest.itemId).toBe(overflow.itemId);
-    expect(await items()).toHaveLength(201);
-    const visible = await rootFixture.database.query(
-      "SELECT summary,detail,occurrence_count,status,room_id,tool_name,occurrences FROM feedback_items WHERE status='new' AND id=$1",
-      [overflow.itemId],
-    );
-    expect(visible.rows).toEqual([{
-      summary: 'overflow latest', detail: 'latest context', occurrence_count: 2,
-      status: 'new', room_id: CORNER, tool_name: 'read', occurrences: [],
-    }]);
-    // A separate agent retains its own allowance.
-    expect((await report({ summary: 'another agent problem' }, ROOM, OUTSIDER)).duplicate).toBe(false);
-    // Moving yesterday's rows out of today restores the ordinary daily allowance.
-    await rootFixture.database.query("UPDATE feedback_items SET created_at=now()-interval '1 day' WHERE reporter_identity_id=$1", [AGENT]);
-    const tomorrow = await report({ summary: 'new day problem' });
-    expect(tomorrow.itemId).not.toBe(overflow.itemId);
-    expect(tomorrow.duplicate).toBe(false);
+  it('keeps distinct reports beyond the former daily quota without an overflow item',async()=>{
+    const first=await report({summary:'The grant card never resolves.'});
+    await database.query(`INSERT INTO feedback_items(id,source_kind,reporter_identity_id,workspace_id,room_id,category,summary,summary_key)
+      SELECT 'fb_seed_'||n,'agent',$1,$2,$3,'bug','Distinct issue '||n,'distinct issue '||n
+      FROM generate_series(1,199) n`,[AGENT,WORKSPACE,ROOM]);
+    const next=await report({summary:'Another failure',detail:'Original evidence'});
+    const latest=await report({summary:'Different failure',detail:'Different evidence',toolName:'read'},CORNER);
+    expect(next.duplicate).toBe(false);
+    expect(latest.duplicate).toBe(false);
+    expect(latest.itemId).not.toBe(next.itemId);
+    expect(await items()).toHaveLength(202);
+    expect(await report({summary:'the GRANT card never resolves'})).toEqual({itemId:first.itemId,duplicate:true});
+    expect((await database.query('SELECT summary,detail,occurrence_count,status FROM feedback_items WHERE id=$1',[next.itemId])).rows)
+      .toEqual([{summary:'Another failure',detail:'Original evidence',occurrence_count:1,status:'new'}]);
   });
 
 
-  it('Reproduction duplicate-cap: shares open items across agents without spending their cap', async () => {
-    const first = await report({ summary: 'Grant card never resolves', toolName: 'request_grant' });
-    const second = await report(
-      { summary: 'GRANT card never resolves.', toolName: 'request_grant' },
-      CORNER,
-      OUTSIDER,
-    );
-    expect(second).toEqual({ itemId: first.itemId, duplicate: true });
+  it('shares open items across agents while retaining every occurrence',async()=>{
+    const first=await report({summary:'Grant card never resolves',toolName:'request_grant'});
+    const second=await report({summary:'GRANT card never resolves.',toolName:'request_grant'},CORNER,OUTSIDER);
+    expect(second).toEqual({itemId:first.itemId,duplicate:true});
     expect(await items()).toHaveLength(1);
-    const counts = await rootFixture.database.query<{ occurrence_count: number; occurrences: unknown[] }>(
-      'SELECT occurrence_count,occurrences FROM feedback_items WHERE id=$1',
-      [first.itemId],
-    );
-    expect(counts.rows[0]!.occurrence_count).toBe(2);
-    expect(counts.rows[0]!.occurrences).toEqual([
-      expect.objectContaining({ agentId: OUTSIDER, roomId: CORNER, createdAt: expect.any(String) }),
+    expect(await report({summary:'Grant card never resolves',toolName:'request_grant'},CORNER,OUTSIDER)).toEqual(second);
+    const stored=(await database.query<{occurrence_count:number;occurrences:unknown[]}>(
+      'SELECT occurrence_count,occurrences FROM feedback_items WHERE id=$1',[first.itemId])).rows[0]!;
+    expect(stored.occurrence_count).toBe(3);
+    expect(stored.occurrences).toEqual([
+      expect.objectContaining({agentId:OUTSIDER,roomId:CORNER,createdAt:expect.any(String)}),
+      expect.objectContaining({agentId:OUTSIDER,roomId:CORNER,createdAt:expect.any(String)}),
     ]);
-    for (let index = 0; index < 200; index++)
-      await report({ summary: `other problem ${index}` }, ROOM, OUTSIDER);
-    await expect(report({ summary: 'past safety ceiling' }, ROOM, OUTSIDER)).resolves.toMatchObject({ duplicate: false });
-    await rootFixture.database.query(
-      "UPDATE feedback_items SET created_at=now()-interval '2 hours', occurrences='[]', occurrence_count=1 WHERE id=$1",
-      [first.itemId],
-    );
-    await expect(
-      report({ summary: 'Grant card never resolves', toolName: 'request_grant' }, CORNER, OUTSIDER),
-    ).resolves.toEqual(second);
-    expect(
-      (
-        await rootFixture.database.query<{ occurrence_count: number }>(
-          'SELECT occurrence_count FROM feedback_items WHERE id=$1',
-          [first.itemId],
-        )
-      ).rows[0]!.occurrence_count,
-    ).toBe(2);
-    console.log(
-      'Demonstrated Reproduction duplicate-cap: matching reports share one item with count 2; duplicate at cap succeeds; only new items spend cap',
-    );
   });
 
 
-  it('suppresses same-agent repeats for one hour and counts later occurrences on old open items', async () => {
-    const first = await report({ summary: 'Same issue' });
-    await report({ summary: 'Same issue' }, CORNER);
-    expect(
-      (await rootFixture.database.query('SELECT occurrence_count FROM feedback_items')).rows[0]!
-        .occurrence_count,
-    ).toBe(1);
-    await rootFixture.database.query(
-      "UPDATE feedback_items SET created_at=now()-interval '2 days' WHERE id=$1",
-      [first.itemId],
-    );
-    expect(await report({ summary: 'Same issue' }, CORNER)).toEqual({
-      itemId: first.itemId,
-      duplicate: true,
-    });
-    await report({ summary: 'Same issue' });
-    const stored = (
-      await rootFixture.database.query(
-        'SELECT occurrence_count,occurrences,last_occurrence_at FROM feedback_items',
-      )
-    ).rows[0]!;
-    expect(stored.occurrence_count).toBe(2);
-    expect(stored.occurrences).toHaveLength(1);
+  it('records immediate repeated reports from the same agent without a cooldown',async()=>{
+    const first=await report({summary:'Same issue'});
+    for(const room of [CORNER,CORNER,ROOM])
+      expect(await report({summary:'Same issue'},room)).toEqual({itemId:first.itemId,duplicate:true});
+    const stored=(await database.query('SELECT occurrence_count,occurrences,last_occurrence_at FROM feedback_items')).rows[0]!;
+    expect(stored.occurrence_count).toBe(4);
+    expect(stored.occurrences).toHaveLength(3);
     expect(stored.last_occurrence_at).toBeTruthy();
   });
 

@@ -11,10 +11,8 @@ BEGIN
     WHERE v.agent_id=review_agent AND v.run_id=review_run AND w.allow_fix_sweep=true AND NOT w.internal
       AND v.visited_at>now()-interval '1 day';
 END $$;
-CREATE OR REPLACE FUNCTION service_review_page(review_agent text,review_run text,review_workspace uuid,after_id text DEFAULT '')
-RETURNS TABLE(id text,room_id uuid,text text,activity jsonb) LANGUAGE plpgsql STABLE AS $$
-BEGIN
-  RETURN QUERY
+CREATE OR REPLACE FUNCTION service_review_content(review_agent text,review_run text,review_workspace uuid)
+RETURNS TABLE(id text,room_id uuid,text text,activity jsonb) LANGUAGE sql STABLE AS $$
     WITH target_rooms AS (
       SELECT r.id FROM rooms r JOIN workspaces w ON w.id=r.workspace_id
       WHERE w.id=review_workspace AND w.allow_fix_sweep=true AND NOT w.internal
@@ -39,16 +37,18 @@ BEGIN
       WHERE EXISTS(SELECT 1 FROM service_review_visits v WHERE v.workspace_id=review_workspace
         AND v.agent_id=review_agent AND v.run_id=review_run
         AND (t.started_at>coalesce(v.read_from,v.visited_at-interval '24 hours') AND t.started_at<=coalesce(v.read_through,v.visited_at)))
-    ) SELECT content.id,content.room_id,content.text,content.activity FROM content WHERE content.id>after_id ORDER BY content.id LIMIT 200;
-END $$;
+    ) SELECT content.id,content.room_id,content.text,content.activity FROM content;
+$$;
+CREATE OR REPLACE FUNCTION service_review_page(review_agent text,review_run text,review_workspace uuid,after_id text DEFAULT '')
+RETURNS TABLE(id text,room_id uuid,text text,activity jsonb) LANGUAGE sql STABLE AS $$
+  SELECT content.* FROM service_review_content(review_agent,review_run,review_workspace) content
+  WHERE content.id>after_id ORDER BY content.id LIMIT 200;
+$$;
 `;
 
 /** Reserve opted-in workspaces. */
-export async function reserveServiceReviewWorkspaces(database: SqlDatabase, agentId: string, runId: string, daily = false, windowDays: 1 | 14 = 1): Promise<string[]> {
-  return database.transaction(async (db) => {
-    await db.query(`SELECT pg_advisory_xact_lock(hashtext('beeline-service-review'))`);
-    if (daily) {
-      const result = await db.query<{ workspace_id: string }>(`
+export async function reserveServiceReviewWorkspaces(database: SqlDatabase, agentId: string, runId: string, windowDays: 1 | 14 = 1): Promise<string[]> {
+  const result = await database.query<{ workspace_id: string }>(`
         INSERT INTO service_review_visits(workspace_id,agent_id,run_id,read_from,read_through)
         SELECT w.id,$1,$2,
           bounds.read_from,now()
@@ -64,28 +64,9 @@ export async function reserveServiceReviewWorkspaces(database: SqlDatabase, agen
             UNION ALL
             SELECT 1 FROM agent_turns t JOIN rooms r ON r.id=t.room_id
             WHERE r.workspace_id=w.id AND t.started_at>bounds.read_from AND t.started_at<=now())
-          AND NOT EXISTS(SELECT 1 FROM service_review_visits v WHERE v.workspace_id=w.id AND v.run_id=$2)
+        ON CONFLICT(workspace_id,run_id) DO NOTHING
         RETURNING workspace_id`,[agentId,runId,windowDays]);
-      return result.rows.map(row => row.workspace_id);
-    }
-    const result = await db.query<{ workspace_id: string }>(`
-      WITH candidates AS (
-        SELECT w.id FROM workspaces w
-        WHERE w.allow_fix_sweep=true AND NOT w.internal
-          AND NOT EXISTS(SELECT 1 FROM service_review_visits v
-            WHERE v.workspace_id=w.id AND v.visited_at > now()-interval '14 days')
-        ORDER BY (w.created_at > now()-interval '7 days') DESC,
-          (SELECT count(*) FROM messages m JOIN rooms r ON r.id=m.room_id WHERE r.workspace_id=w.id
-            AND m.created_at > now()-interval '7 days') DESC,w.created_at DESC,w.id
-        LIMIT (SELECT greatest(0,5-count(*)) FROM service_review_visits
-          WHERE visited_at >= date_trunc('day',now() AT TIME ZONE 'America/New_York') AT TIME ZONE 'America/New_York')
-      )
-      INSERT INTO service_review_visits(workspace_id,agent_id,run_id,read_from,read_through)
-      SELECT id,$1,$2,coalesce((SELECT max(v.read_through) FROM service_review_visits v
-        WHERE v.workspace_id=candidates.id AND v.completed_at IS NOT NULL),
-        (SELECT min(v.read_from) FROM service_review_visits v WHERE v.workspace_id=candidates.id),now()-interval '24 hours'),now() FROM candidates RETURNING workspace_id`, [agentId,runId]);
-    return result.rows.map((row) => row.workspace_id);
-  });
+  return result.rows.map(row => row.workspace_id);
 }
 
 /** Same SQL function used by the read-only Squire path. */
@@ -102,33 +83,42 @@ export async function readServiceReviewPage(database: SqlDatabase, agentId: stri
  */
 export async function completeServiceReview(database: SqlDatabase, agentId: string, runId: string, value: unknown): Promise<void> {
   if (!Array.isArray(value)) throw new ExpectedRefusalError('workspace receipts must be an array');
-  await database.transaction(async (db) => {
-    await db.query(`SELECT pg_advisory_xact_lock(hashtext('beeline-service-review'))`);
-    const targets = await db.query<{workspace_id: string}>('SELECT * FROM service_review_targets($1,$2)',[agentId,runId]);
-    if (value.length !== targets.rows.length) throw new ExpectedRefusalError('a receipt is required for every active workspace');
-    for (const target of targets.rows) {
-      const receipts = value.filter(row => row?.workspace === target.workspace_id);
-      if (receipts.length !== 1) throw new ExpectedRefusalError('each workspace needs exactly one receipt');
-      const receipt = receipts[0];
-      let rowsRead = 0;
-      let after = '';
-      const times: string[] = [];
-      for (;;) {
-        const page = await readServiceReviewPage(db,agentId,runId,target.workspace_id,after);
-        if (!page.rows.length) break;
-        rowsRead += page.rows.length;
-        for (const row of page.rows) {
-          const activity = row.activity as { rowKind?: string; createdAt?: string };
-          if (activity?.rowKind === 'message' && activity.createdAt) times.push(new Date(activity.createdAt).toISOString());
-        }
-        after = page.rows.at(-1)!.id;
-      }
-      times.sort();
-      if (!rowsRead || receipt.rowsRead !== rowsRead || receipt.firstMessageTime !== (times[0] ?? null)
-        || receipt.lastMessageTime !== (times.at(-1) ?? null) || typeof receipt.findings !== 'string')
-        throw new ExpectedRefusalError('workspace receipt must match all rows and first/last message times');
-      await db.query(`UPDATE service_review_visits SET receipt=$4::jsonb,completed_at=now()
-        WHERE workspace_id=$1 AND agent_id=$2 AND run_id=$3`,[target.workspace_id,agentId,runId,JSON.stringify(receipt)]);
-    }
-  });
+  const result = (await database.query<{ refusal: string | null }>(`
+    WITH targets AS MATERIALIZED (
+      SELECT * FROM service_review_targets($1,$2)
+    ), supplied AS MATERIALIZED (
+      SELECT value submission FROM jsonb_array_elements($3::jsonb)
+    ), expected AS MATERIALIZED (
+      SELECT target.workspace_id,count(content.id)::int rows_read,
+        to_char(min((content.activity->>'createdAt')::timestamptz)
+          FILTER (WHERE content.activity->>'rowKind'='message') AT TIME ZONE 'UTC',
+          'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') first_time,
+        to_char(max((content.activity->>'createdAt')::timestamptz)
+          FILTER (WHERE content.activity->>'rowKind'='message') AT TIME ZONE 'UTC',
+          'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') last_time
+      FROM targets target LEFT JOIN LATERAL service_review_content($1,$2,target.workspace_id) content ON true
+      GROUP BY target.workspace_id
+    ), verdict AS MATERIALIZED (
+      SELECT CASE
+        WHEN (SELECT count(*) FROM supplied)<>(SELECT count(*) FROM targets)
+          THEN 'a receipt is required for every active workspace'
+        WHEN EXISTS (SELECT 1 FROM targets target WHERE
+          (SELECT count(*) FROM supplied WHERE submission->>'workspace'=target.workspace_id::text)<>1)
+          THEN 'each workspace needs exactly one receipt'
+        WHEN EXISTS (SELECT 1 FROM expected JOIN supplied ON submission->>'workspace'=workspace_id::text
+          WHERE rows_read=0 OR submission->'rowsRead' IS DISTINCT FROM to_jsonb(rows_read)
+            OR submission->'firstMessageTime' IS DISTINCT FROM COALESCE(to_jsonb(first_time),'null'::jsonb)
+            OR submission->'lastMessageTime' IS DISTINCT FROM COALESCE(to_jsonb(last_time),'null'::jsonb)
+            OR jsonb_typeof(submission->'findings') IS DISTINCT FROM 'string')
+          THEN 'workspace receipt must match all rows and first/last message times'
+        END refusal
+    ), saved AS (
+      UPDATE service_review_visits visit SET receipt=supplied.submission,completed_at=now()
+      FROM supplied,targets,verdict WHERE visit.workspace_id=targets.workspace_id
+        AND supplied.submission->>'workspace'=visit.workspace_id::text
+        AND visit.agent_id=$1 AND visit.run_id=$2 AND verdict.refusal IS NULL
+      RETURNING visit.workspace_id
+    ) SELECT verdict.refusal,(SELECT count(*) FROM saved) saved FROM verdict`,
+    [agentId,runId,JSON.stringify(value)])).rows[0]!;
+  if (result.refusal) throw new ExpectedRefusalError(result.refusal);
 }

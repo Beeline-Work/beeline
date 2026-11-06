@@ -1,4 +1,4 @@
-import { readFile, EventEmitter, describe, expect, it, vi, DEFAULT_WORKSPACE_ID, WELCOME_ROOM_ID, assertSchemaCurrent, DatabaseTransactionStartError, backfillAgentHandles, backfillInstitutionalMemoryRollout, backfillPerItemEventSubscriptions, MESSAGE_CURSOR_MS_SQL, migrate, APP_POOL_WAIT_TIMEOUT_MS, APP_STATEMENT_TIMEOUT_MS, ENRICHMENT_POOL_WAIT_TIMEOUT_MS, ENRICHMENT_STATEMENT_TIMEOUT_MS, postgresPoolConfig, markSchemaCurrent, migrateData, PostgresDatabase, isTransientDatabaseConnectionError, PgliteDatabase, migratedDatabase, result, poolWithQuery, fixtureScope10, fixtureScope11, fixtureScope12, fixtureScope13, fixtureScope14, fixtureScope15, fixtureScope16, fixtureScope18, fixtureScope19, fixtureScope20, type Pool, type SqlDatabase } from './test-support-database.test-support.js';
+import { readFile, EventEmitter, describe, expect, it, vi, DEFAULT_WORKSPACE_ID, WELCOME_ROOM_ID, assertSchemaCurrent, DatabaseTransactionStartError, backfillInstitutionalMemoryRollout, backfillPerItemEventSubscriptions, MESSAGE_CURSOR_MS_SQL, migrate, APP_POOL_WAIT_TIMEOUT_MS, APP_STATEMENT_TIMEOUT_MS, ENRICHMENT_POOL_WAIT_TIMEOUT_MS, ENRICHMENT_STATEMENT_TIMEOUT_MS, postgresPoolConfig, markSchemaCurrent, migrateData, PostgresDatabase, isTransientDatabaseConnectionError, PgliteDatabase, migratedDatabase, result, poolWithQuery, fixtureScope10, fixtureScope11, fixtureScope12, fixtureScope13, fixtureScope14, fixtureScope15, fixtureScope16, fixtureScope18, fixtureScope19, fixtureScope20, type Pool, type SqlDatabase } from './test-support-database.test-support.js';
 
 describe('release-owned schema readiness', () => {
 
@@ -441,7 +441,7 @@ describe('the agent handle migration', () => {
 const scope15 = fixtureScope15();
 
 
-  it('replaces unrelated and duplicate legacy handles with unique name-derived addresses', async () => {
+  it('migration preserves unrelated and duplicate existing handles', async () => {
     const human = 'a'.repeat(64);
     const goosy = 'b'.repeat(64);
     const lumen = 'c'.repeat(64);
@@ -463,20 +463,20 @@ const scope15 = fixtureScope15();
       [workspace, human, goosy, lumen, secondLumen],
     );
 
-    await expect(backfillAgentHandles(scope15.database)).resolves.toBe(3);
+    await migrate(scope15.database);
     const rows = await scope15.database.query<{ name: string; handle: string }>(
       `SELECT name,handle FROM identities WHERE kind='agent' ORDER BY id`,
     );
     expect(rows.rows).toEqual([
-      { name: 'Goosy', handle: 'goosy' },
-      { name: 'Lumen', handle: 'lumen' },
-      { name: 'Lumen', handle: 'lumen_2' },
+      { name: 'Goosy', handle: 'nora' },
+      { name: 'Lumen', handle: 'una' },
+      { name: 'Lumen', handle: 'nora' },
     ]);
-    await expect(backfillAgentHandles(scope15.database)).resolves.toBe(0);
+    await migrate(scope15.database);
   });
 
 
-  it('allocates across every Workspace the agent belongs to', async () => {
+  it('migration never renames an agent when a Workspace contains a colliding human', async () => {
     const human = 'e'.repeat(64);
     const agent = 'f'.repeat(64);
     const otherWorkspace = '22222222-2222-4222-8222-222222222222';
@@ -501,7 +501,7 @@ const scope15 = fixtureScope15();
 
     expect(
       (await scope15.database.query(`SELECT handle FROM identities WHERE id=$1`, [agent])).rows,
-    ).toEqual([{ handle: 'lumen_2' }]);
+    ).toEqual([{ handle: 'nora' }]);
   });
 });
 describe('the per-item event subscription migration', () => {

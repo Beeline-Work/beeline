@@ -2,11 +2,12 @@ import { requireUsageSource } from './helper-usage-source.js';
 import { createHash } from 'node:crypto';
 import { readAgentUsage } from '@beeline/api-contract/daemon';
 import { canonicalUsageAccountSnapshot, type UsageAccountPublicationResult, type UsageAccountReference, type UsageAccountSource } from '@beeline/api-contract/helper-usage';
-import { applyAccountRead, accountRecord } from './agent-usage.js';
+import {USAGE_ACCOUNT_READ_SCHEMA} from './usage-account-read.js';
 import type { SqlDatabase } from './database.js';
 
 export { networkRouterEnabled as helperUsageEnabled } from './network-router-rollout.js';
 export const HELPER_USAGE_SCHEMA=`
+${USAGE_ACCOUNT_READ_SCHEMA}
 ALTER TABLE usage_accounts ADD COLUMN IF NOT EXISTS source_revision text;
 ALTER TABLE usage_accounts ADD COLUMN IF NOT EXISTS revision text;
 ALTER TABLE usage_accounts ADD COLUMN IF NOT EXISTS source_at double precision;
@@ -44,7 +45,7 @@ CREATE TRIGGER beeline_usage_snapshot_owner BEFORE INSERT OR UPDATE OF usage_sna
 const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
 const revisionPattern=/^[a-f0-9]{64}$/;
 /** Publish one canonical source read in the authenticated agent's owner
- * partition. Account and owner locks fence late completions and reassignment. */
+ * partition. The native account upsert fences late completions; the agent row fences reassignment. */
 export async function publishUsageAccount(db:SqlDatabase,agentId:string,input:{usage:unknown;revision:unknown;ownerId:unknown;source:UsageAccountSource}):Promise<UsageAccountPublicationResult>{
   const usage=readAgentUsage(input.usage);
   if(!usage?.account||typeof input.ownerId!=='string'||!input.ownerId||input.ownerId.length>128||typeof input.revision!=='string'||!revisionPattern.test(input.revision)||
@@ -56,31 +57,25 @@ export async function publishUsageAccount(db:SqlDatabase,agentId:string,input:{u
     if(!agent?.owner_id||agent.owner_id!==input.ownerId)throw new Error('Usage account owner changed');
     await requireUsageSource(tx,agentId,input.source);
     const ownerId=agent.owner_id;
-    await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[
-      JSON.stringify(['usage-account-v1',ownerId,account.provider,account.key])]);
     const boundRevision=hash(JSON.stringify([ownerId,account.provider,account.key,input.revision]));
-    const existing=(await tx.query<{id:string;usage:unknown;revision:string|null;source_revision:string|null;source_at:number|null}>(
-      `SELECT id::text,usage,revision,source_revision,source_at FROM usage_accounts WHERE owner_id=$1 AND provider=$2 AND account_key=$3 FOR UPDATE`,
-      [ownerId,account.provider,account.key])).rows[0];
     const sourceAt=Math.min(usage.read?.at??usage.updatedAt,receivedAt);
-    let accountId:string,revision=boundRevision,superseded=false;
-    if(existing){
-      accountId=existing.id;
-      if(existing.source_at!==null&&sourceAt<existing.source_at){
-        if(!existing.revision)throw new Error('Usage snapshot superseded by a newer source');
-        revision=existing.revision;superseded=true;
-      }
-      else if(existing.source_revision!==input.revision){
-        const next=applyAccountRead(readAgentUsage(existing.usage),usage,receivedAt);
-        await tx.query(`UPDATE usage_accounts SET usage=$2::jsonb,source_revision=$3,revision=$4,source_at=$5,updated_at=now() WHERE id=$1::bigint`,
-          [accountId,JSON.stringify(next),input.revision,revision,sourceAt]);
-      }else revision=existing.revision??boundRevision;
-    }else{
-      const next=applyAccountRead(undefined,usage,receivedAt);
-      accountId=(await tx.query<{id:string}>(`INSERT INTO usage_accounts(owner_id,provider,account_key,usage,source_revision,revision,source_at)
-        VALUES($1,$2,$3,$4::jsonb,$5,$6,$7) RETURNING id::text`,
-        [ownerId,account.provider,account.key,JSON.stringify(accountRecord(next)),input.revision,revision,sourceAt])).rows[0]!.id;
-    }
+    const published=(await tx.query<{id:string;revision:string|null;source_at:number}>(`
+      INSERT INTO usage_accounts(owner_id,provider,account_key,usage,source_revision,revision,source_at)
+      VALUES($1,$2,$3,beeline_account_read(NULL,$4::jsonb,$8),$5,$6,$7)
+      ON CONFLICT(owner_id,provider,account_key) DO UPDATE SET
+        (usage,source_revision,revision,source_at,updated_at)=(SELECT
+          CASE WHEN newer THEN beeline_account_read(usage_accounts.usage,$4::jsonb,$8) ELSE usage_accounts.usage END,
+          CASE WHEN newer THEN excluded.source_revision ELSE usage_accounts.source_revision END,
+          CASE WHEN newer THEN excluded.revision ELSE usage_accounts.revision END,
+          CASE WHEN newer THEN excluded.source_at ELSE usage_accounts.source_at END,
+          CASE WHEN newer THEN now() ELSE usage_accounts.updated_at END
+          FROM (SELECT (usage_accounts.source_at IS NULL OR usage_accounts.source_at<=excluded.source_at)
+            AND usage_accounts.source_revision IS DISTINCT FROM excluded.source_revision newer) publication)
+      RETURNING id::text,revision,source_at`,[ownerId,account.provider,account.key,JSON.stringify(usage),
+        input.revision,boundRevision,sourceAt,receivedAt])).rows[0]!;
+    const accountId=published.id,superseded=sourceAt<Number(published.source_at);
+    if(superseded&&!published.revision) throw new Error('Usage snapshot superseded by a newer source');
+    const revision=published.revision??boundRevision;
     // Snapshot quota belongs only to the account. Keep this agent's actual
     // context and remove an old provider/key-spend snapshot on mode change.
     const prior=agent.usage_owner_id===ownerId?readAgentUsage(agent.usage_snapshot):undefined;

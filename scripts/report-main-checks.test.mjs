@@ -1,8 +1,47 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { reportMainChecks } from './report-main-checks.mjs';
 
 const run = { id: 1, name: 'Checks', event: 'push', head_branch: 'main', status: 'completed', conclusion: 'failure', head_sha: 'head', html_url: 'https://example.invalid/runs/1', run_attempt: 1 };
+
+test('R-NOISE-20: bad GitHub replies report once without replay; a later invocation files normally', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'main-checks-'));
+  try {
+    const calls = join(dir, 'calls');
+    // A local gh stand-in exercises the actual CLI, including process failures.
+    writeFileSync(join(dir, 'gh'), `#!/usr/bin/env node\nconst fs = require('node:fs');
+fs.appendFileSync(process.env.CALLS, JSON.stringify(process.argv.slice(2))+'\\n');
+const path = process.argv[5];
+if (process.env.BAD_REPLY === 'process' && path.endsWith('/issues')) { console.error('unexpected end of JSON input'); process.exit(1); }
+if (process.env.BAD_REPLY === 'json') { console.log('{'); process.exit(0); }
+if (path.endsWith('/actions/runs/1')) console.log(JSON.stringify(${JSON.stringify(run)}));
+else if (path.includes('/jobs?')) console.log(JSON.stringify({total_count:1,jobs:[{name:'SERVER SUITE',conclusion:'failure'}]}));
+else if (path.includes('/issues?')) console.log('[]');
+else { fs.readFileSync(0,'utf8'); console.log('{}'); }
+`, { mode: 0o755 });
+    const invoke = bad => spawnSync(process.execPath, [resolve('scripts/report-main-checks.mjs')], {
+      encoding: 'utf8', env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, CALLS: calls,
+        CHECKS_RUN_ID: '1', GITHUB_REPOSITORY: 'fixture/repo', GITHUB_STEP_SUMMARY: '', BAD_REPLY: bad },
+    });
+    for (const bad of ['json', 'process']) {
+      writeFileSync(calls, '');
+      const failed = invoke(bad);
+      assert.equal(failed.status, 1);
+      assert.equal(failed.stderr.trim().split('\n').length, 1, failed.stderr);
+      assert.match(failed.stderr, /Main Checks reporting failed:/);
+      assert.equal(readFileSync(calls, 'utf8').trim().split('\n').length, bad === 'process' ? 4 : 1);
+    }
+    writeFileSync(calls, '');
+    const later = invoke('');
+    assert.equal(later.status, 0, later.stderr);
+    assert.match(later.stdout, /Main Checks: SERVER SUITE failed/);
+    assert.equal(readFileSync(calls, 'utf8').trim().split('\n').length, 4);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
 
 test('main failures create the existing fix-loop issue without retrying the test', async () => {
   const mutations = [];

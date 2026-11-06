@@ -1,4 +1,3 @@
-import { MAX_TURNS_PER_ROOT } from '@beeline/api-contract/phone';
 import { setRoomEventSubscriptions } from './agent-subscriptions.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseGrantDecisionLine } from '@beeline/api-contract/agent-grants';
@@ -236,15 +235,17 @@ describe('who an event line mentions', () => {
     expect(await wokenBy(written.id)).toEqual([QUIET_AGENT]);
   });
 
-  it('counts subscribed wakes against the cascade limit and rolls back a refused fact', async () => {
+  it('posts subscribed wakes without reading or updating the retired cascade counter',async()=>{
     const cause='d'.repeat(64),attempt='e'.repeat(64);
     await database.query(`INSERT INTO messages(id,room_id,author_id,text,event_root_cause_id,event_depth,event_woken)
-      VALUES($1,$2,$3,'Cause',$1,0,$4)`,[cause,ROOM,HUMAN,MAX_TURNS_PER_ROOT-1]);
-    await expect(systemLine(database,{id:attempt,roomId:ROOM,subject:{kind:'person',id:HUMAN,name:'Ada'},
-      verb:'joined',kind:'joined',causeId:cause,wakes:[QUIET_AGENT]})).rejects.toThrow();
-    expect((await database.query(`SELECT 1 FROM messages WHERE id=$1`,[attempt])).rowCount).toBe(0);
-    expect(await wokenBy(attempt)).toEqual([]);
-    expect((await database.query(`SELECT event_woken FROM messages WHERE id=$1`,[cause])).rows[0]!.event_woken).toBe(MAX_TURNS_PER_ROOT-1);
+      VALUES($1,$2,$3,'Cause',$1,4,1000)`,[cause,ROOM,HUMAN]);
+    expect((await systemLine(database,{id:attempt,roomId:ROOM,subject:{kind:'person',id:HUMAN,name:'Ada'},
+      verb:'joined',kind:'joined',causeId:cause,wakes:[QUIET_AGENT]})).inserted).toBe(true);
+    expect((await wokenBy(attempt)).sort()).toEqual([QUIET_AGENT,GREETER].sort());
+    expect((await database.query('SELECT event_woken FROM messages WHERE id=$1',[cause])).rows)
+      .toEqual([{event_woken:1000}]);
+    expect((await database.query('SELECT event_woken FROM messages WHERE id=$1',[attempt])).rows)
+      .toEqual([{event_woken:null}]);
   });
 
   it('still writes the line when the subscriber lookup fails', async () => {

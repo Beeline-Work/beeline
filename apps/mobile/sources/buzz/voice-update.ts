@@ -11,9 +11,9 @@ async function openVoiceAppStore(): Promise<void> {
   }
 }
 
-export function showVoiceJoinError(message: string): void {
+export function showVoiceJoinError(message: string, retry?: () => void): void {
   Modal.alert('Conversation mode', message, message === VOICE_UPDATE_MESSAGE ? [
     { text: 'OK' },
     { text: 'Update', onPress: openVoiceAppStore },
-  ] : undefined);
+  ] : retry ? [{ text: 'OK' }, { text: 'Retry', onPress: retry }] : undefined);
 }

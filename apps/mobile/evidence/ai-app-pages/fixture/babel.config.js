@@ -1,0 +1,1 @@
+module.exports = {presets:['babel-preset-expo'],plugins:[['react-native-unistyles/plugin',{root:'../../../sources'}],'react-native-worklets/plugin']};

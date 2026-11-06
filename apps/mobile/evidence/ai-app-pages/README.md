@@ -7,7 +7,7 @@ Reproduction AI-APP-LOGOS / AI-APP-PAGE, on a native Android phone (emulator, 10
 
 ## How it was built
 
-1. Jellybean's fixture app (`apps/mobile/ai-app-proof`, not committed) mounts the production Connectors route and connector page through Expo Router. It replaces only the phone-operation transport, identity, community and storage modules with in-memory fixtures. Fixture: ChatGPT → Pidoong, Claude Code → Claude, Cursor → Cursor bot, Legacy app with no agent. Logo bytes come from the server's `mcpClientLogo`.
+1. The fixture app (`apps/mobile/evidence/ai-app-pages/fixture`) mounts the production Connectors route and connector page through Expo Router. It replaces only the phone-operation transport, identity, community and storage modules with in-memory fixtures. Fixture: ChatGPT → Pidoong, Claude Code → Claude, Cursor → Cursor bot, Legacy app with no agent. Logo bytes come from the server's `mcpClientLogo`.
 2. `build-android-fixture.sh <before|after> <bone|obsidian>` bundles that app with `expo export:embed`, compiles it with hermesc (bytecode 96, same as the APK), and puts it in a copy of a Beeline release APK (0.2.22, built from `da9f6c31`, an ancestor of this branch with the same native dependencies). It then zip-aligns, signs with a throwaway key and installs the APK.
 3. `capture-android.py` opens `beeline:///?viewerId=fixture-owner&workspaceId=fixture-workspace`, waits for the rows, taps ChatGPT and saves each screen.
 

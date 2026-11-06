@@ -13,11 +13,14 @@ export function normalizeError(text) {
 
 export function versionReport(row) {
   const later = Array.isArray(row.occurrences) ? row.occurrences.flatMap((item) => (
-    item && typeof item === 'object' && ('helperVersion' in item || 'harness' in item)
+    item && typeof item === 'object' && ('helperVersion' in item || 'appVersion' in item || 'harness' in item)
       ? [{
         helperVersion: item.helperVersion ?? null,
         harness: item.harness ?? null,
         harnessVersion: item.harnessVersion ?? null,
+        ...(item.sourceKind ? {itemId:item.itemId,sourceKind:item.sourceKind,
+          reporterIdentityId:item.reporterIdentityId ?? null,
+          appVersion:item.appVersion ?? null,appPlatform:item.appPlatform ?? null} : {}),
       }]
       : []
   )) : [];
@@ -42,15 +45,20 @@ function latestReleasedVersion(row) {
 }
 
 /** Original filing plus later occurrences on the delivered release. Older evidence stays on the row. */
-function latestEvidenceCount(row) {
-  if (row.source_kind === 'human') return row.app_is_latest === true ? 1 : 0;
-  let count = row.helper_is_latest === true ? 1 : 0;
+function latestEvidence(row) {
+  const evidence = reportIsLatest(row) ? [{sourceKind:row.source_kind,
+    reporterIdentityId:row.reporter_identity_id,affectedHumanIds:row.affected_human_ids ?? []}] : [];
   const released = latestReleasedVersion(row);
-  if (!released || !Array.isArray(row.occurrences)) return count;
+  if (!released || !Array.isArray(row.occurrences)) return evidence;
   for (const item of row.occurrences) {
-    if (item && typeof item === 'object' && item.helperVersion === released) count += 1;
+    if (!item || typeof item !== 'object') continue;
+    const sourceKind = item.sourceKind ?? 'agent';
+    const version = sourceKind === 'human' ? item.appVersion : item.helperVersion;
+    if (version === released) evidence.push({sourceKind,
+      reporterIdentityId:item.reporterIdentityId ?? item.agentId,
+      affectedHumanIds:item.affectedHumanIds ?? []});
   }
-  return count;
+  return evidence;
 }
 
 function reportIsLatest(row) {
@@ -76,14 +84,13 @@ export function groupFeedback(rows) {
       versionReports: [] };
     group.itemIds.push(row.id);
     group.versionReports.push(versionReport(row));
-    const count = latestEvidenceCount(row);
-    group.count += count;
-    if (row.source_kind !== 'human') group.agentCount += count;
-    // An agent's owner is not evidence that a person experienced the problem.
-    // Humans and affected people count only when this report itself is latest.
-    if (reportIsLatest(row)) {
-      if (row.source_kind === 'human') group.humans.add(row.reporter_identity_id);
-      for (const id of row.affected_human_ids ?? []) group.humans.add(id);
+    const evidence = latestEvidence(row);
+    group.count += evidence.length;
+    for (const occurrence of evidence) {
+      if (occurrence.sourceKind === 'human') group.humans.add(occurrence.reporterIdentityId);
+      else group.agentCount += 1;
+      // An agent's owner never establishes that a person experienced the problem.
+      for (const id of occurrence.affectedHumanIds) group.humans.add(id);
     }
     group.firstSeen = [group.firstSeen, createdAt].sort()[0];
     group.lastSeen = [group.lastSeen, lastAt].sort().at(-1);

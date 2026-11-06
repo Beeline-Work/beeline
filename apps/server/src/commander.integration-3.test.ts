@@ -305,18 +305,16 @@ it('WAKE-STORM: a later delegate report publishes its reply without re-answering
 });
 
 
-it('Reproduction SELF-1: self-orders in another Room and corner retain receipts without wakes', async () => {
-  const receipt = await rootFixture.daemon.execute('order', { ...authority(rootFixture.order), address: ROOM, agent: 'ruby', text: 'Continue in the Room' }, RUBY);
-  expect(receipt.accepted).toBe(true);
+it('Reproduction SELF-1: refuses self-orders in every place without accepting a receipt', async () => {
+  await expect(rootFixture.daemon.execute('order', { ...authority(rootFixture.order), address: ROOM, agent: 'ruby', text: 'Continue in the Room' }, RUBY))
+    .rejects.toThrow('an agent cannot order itself');
   expect(await commands(ROOM, RUBY)).toEqual([]);
-  expect((await rootFixture.db.query(`SELECT state FROM agent_commands WHERE id=$1`,[receipt.id])).rows).toEqual([{state:'complete'}]);
   const opened = await rootFixture.daemon.execute('createCorner', { ...authority(rootFixture.order), targetRoomId: ROOM,
     name: 'self-work', objective: 'Continue own work', implementer: 'ruby',
     brief: { spec: 'Continue own work', repositoryWork: false } }, RUBY);
-  await rootFixture.daemon.execute('order', { ...authority(rootFixture.order), address: opened.cornerId, text: 'Resume own corner' }, RUBY);
+  await expect(rootFixture.daemon.execute('order', { ...authority(rootFixture.order), address: opened.cornerId, text: 'Resume own corner' }, RUBY))
+    .rejects.toThrow('an agent cannot order itself');
   expect((await commands(opened.cornerId, RUBY)).map(c => c.reason)).toEqual(['corner_objective']);
-  await expect(rootFixture.daemon.execute('order', { ...authority(rootFixture.order), address: DM, agent: 'ruby', text: 'Recurse' }, RUBY))
-    .rejects.toThrow('current place');
 });
 
 
@@ -330,30 +328,20 @@ it('Reproduction SELF-1: cross-place self-tags never start a ping-pong chain', a
 });
 
 
-it('Reproduction SELF-1: replaying a self-order retains one completed receipt and zero wakes', async () => {
-  const input = {...authority(rootFixture.order),address:ROOM,agent:'ruby',text:'Continue elsewhere'};
-  const first = await rootFixture.daemon.execute('order',input,RUBY);
-  const replay = await rootFixture.daemon.execute('order',input,RUBY);
-  expect(replay.id).toBe(first.id);
-  expect(await commands(ROOM,RUBY)).toEqual([]);
-  expect((await rootFixture.db.query(`SELECT state FROM agent_commands WHERE id=$1`,[first.id])).rows).toEqual([{state:'complete'}]);
-});
-
-
 it('Reproduction SELF-2: own brief revisions stay quiet while external shell completions can finish silently', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
-  await rootFixture.daemon.execute('postBackgroundToolCompletion', { ...authority(turn), toolCallId: 'shell', title: 'Run tests', status: 'completed' }, WORKER);
+  await daemon.execute('postBackgroundToolCompletion', { ...authority(turn), toolCallId: 'shell', title: 'Run tests', status: 'completed' }, WORKER);
   const shell = (await commands(opened.cornerId, WORKER)).find(c => c.reason === 'corner_background_tool')!;
   await claim(shell);
-  await rootFixture.daemon.execute('markAgentTurnSilent', authority(shell), WORKER);
-  const own = await rootFixture.daemon.execute('createCorner', { ...authority(rootFixture.order), targetRoomId: ROOM,
+  await daemon.execute('markAgentTurnSilent', authority(shell), WORKER);
+  const own = await daemon.execute('createCorner', { ...authority(order), targetRoomId: ROOM,
     idempotencyKey: 'own-revision', name: 'own-revision', objective: 'Continue own work', implementer: 'ruby',
     brief: { spec: 'Continue own work', repositoryWork: false } }, RUBY);
-  await rootFixture.db.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence','{"status":"online"}'::jsonb)`, [own.cornerId, RUBY]);
-  await rootFixture.daemon.execute('reviseCornerBrief', { ...authority(rootFixture.order), cornerId: own.cornerId, expectedRevision: 1,
+  await db.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence','{"status":"online"}'::jsonb) ON CONFLICT(agent_id) WHERE kind='presence' DO UPDATE SET room_id=EXCLUDED.room_id,body=EXCLUDED.body,updated_at=now()`, [own.cornerId, RUBY]);
+  await daemon.execute('reviseCornerBrief', { ...authority(order), cornerId: own.cornerId, expectedRevision: 1,
     brief: { spec: 'Build the clarified widget', change: 'Clarify work' } }, RUBY);
   expect((await commands(own.cornerId,RUBY)).filter(c=>c.reason==='corner_brief_revision')).toEqual([]);
-  expect((await rootFixture.db.query(`SELECT state FROM agent_commands WHERE room_id=$1 AND reason='corner_brief_revision'`,[own.cornerId])).rows)
+  expect((await db.query(`SELECT state FROM agent_commands WHERE room_id=$1 AND reason='corner_brief_revision'`,[own.cornerId])).rows)
     .toEqual([{state:'complete'}]);
 
 });

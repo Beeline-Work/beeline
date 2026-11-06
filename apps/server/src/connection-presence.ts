@@ -4,7 +4,6 @@ import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { createHash, randomUUID } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
 import { LiveHub } from './live.js';
-import { lockAgentMachine } from './machine-offline.js';
 import { freeAgentReachableSql } from './free-agents.js';
 import { systemLine } from './system-line.js';
 import { notifyAgentConnection } from './postgres-live.js';
@@ -118,8 +117,6 @@ export async function claimAgentConnection(
   connection: HeldConnection,
 ): Promise<number> {
   const claimedConnection = await database.transaction(async (db) => {
-    await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`presence:${agentId}`]);
-    await lockAgentMachine(db, agentId);
     const claimed = await db.query<{ epoch: string | number }>(
       `INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id,connected_at,released_at,turn_connection_id,turn_connection_epoch,turn_transport_id)
        VALUES($1,1,$2,$3,clock_timestamp(),NULL,$4,CASE WHEN $4::text IS NOT NULL THEN 1 END,$2)
@@ -139,7 +136,7 @@ export async function claimAgentConnection(
       lease_expires_at=NULL,claimed_at=NULL,turn_owner_epoch=NULL
       WHERE agent_id=$1 AND state='claimed' AND turn_owner_connection_id IS NULL
         AND reason<>'mcp_call' AND COALESCE(generation_id,'') NOT LIKE 'mcp:%'`,[agentId]);
-    const announcement = await writeAgentAnnouncement(db, undefined, agentId, metadata, connection, true);
+    const announcement = await writeAgentAnnouncement(db, undefined, agentId, metadata, connection);
     // A free agent's Machine is serving again; the wake latency ends here.
     const freeAgent = await db.query<{ previous: string }>(
       `WITH old AS (SELECT agent_id,state FROM free_agents WHERE agent_id=$1 FOR UPDATE)
@@ -172,8 +169,6 @@ export async function releaseAgentConnection(
   forUpdate = false,
 ): Promise<boolean> {
   const released = await database.transaction(async (db) => {
-    await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`presence:${agentId}`]);
-    await lockAgentMachine(db, agentId);
     const current = await db.query<{ epoch: string | number }>(
       `UPDATE agent_connections SET released_at=clock_timestamp()
        WHERE agent_id=$1 AND connection_id=$2 AND released_at IS NULL RETURNING epoch`,
@@ -238,68 +233,32 @@ async function writeAgentAnnouncement(
   agentId: string,
   metadata: PresenceMetadata,
   connection?: HeldConnection,
-  locked = false,
 ): Promise<Announcement> {
-  const lifecycle = metadata.lifecycleId;
-  if (!locked)
-    await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`presence:${agentId}`]);
-  const previous = (
-    await db.query<{ room_id: string; body: Record<string, unknown> }>(
-      `SELECT room_id,body FROM live_outputs WHERE agent_id=$1 AND kind='presence'
-       ORDER BY updated_at DESC LIMIT 1`,
-      [agentId],
-    )
-  ).rows[0];
-  const targetRoomId =
-    previous?.room_id ??
-    roomId ??
-    (
-      await db.query<{ room_id: string }>(
-        `SELECT room_id FROM room_access
-         WHERE identity_id=$1 AND room_id IS NOT NULL AND removed_at IS NULL LIMIT 1`,
-        [agentId],
-      )
-    ).rows[0]?.room_id;
-  // An agent in no Room has no reader to show presence to.
-  if (!targetRoomId) return { changed: false, previous: previous?.body };
-  const observedAt = Math.max(
-    Math.floor(Date.now() / 1000),
-    Number(previous?.body.observedAt ?? 0) + 1,
-  );
-  const held = connection
-    ? { held: true, connectionId: connection.connectionId }
-    : {
-        ...(typeof previous?.body.held === 'boolean' ? { held: previous.body.held } : {}),
-        ...(typeof previous?.body.connectionId === 'string'
-          ? { connectionId: previous.body.connectionId }
-          : {}),
-      };
   const body = {
     status: metadata.available === false ? 'offline' : 'online',
-    observedAt,
-    evidenceNonce: randomUUID(),
-    ...(lifecycle ? { lifecycleId: lifecycle } : {}),
-    ...(metadata.releaseVersion || previous?.body.releaseVersion
-      ? { releaseVersion: metadata.releaseVersion ?? previous?.body.releaseVersion } : {}),
-    ...(metadata.sourceSha || previous?.body.sourceSha
-      ? { sourceSha: metadata.sourceSha ?? previous?.body.sourceSha } : {}),
-    ...held,
+    observedAt: Math.floor(Date.now()/1000), evidenceNonce: randomUUID(),
+    ...(metadata.lifecycleId ? {lifecycleId:metadata.lifecycleId} : {}),
+    ...(metadata.releaseVersion ? {releaseVersion:metadata.releaseVersion} : {}),
+    ...(metadata.sourceSha ? {sourceSha:metadata.sourceSha} : {}),
+    ...(connection ? {held:true,connectionId:connection.connectionId} : {}),
   };
-  if (previous)
-    await db.query(
-      `UPDATE live_outputs SET body=$3::jsonb,updated_at=clock_timestamp()
-       WHERE room_id=$1 AND agent_id=$2 AND turn_id='presence' AND kind='presence'`,
-      [previous.room_id, agentId, JSON.stringify(body)],
-    );
-  else
-    await db.query(
-      `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body,updated_at)
-       VALUES($1,$2,'presence','presence',$3::jsonb,clock_timestamp())
-       ON CONFLICT(room_id,agent_id,turn_id,kind) DO UPDATE SET
-         body=EXCLUDED.body,updated_at=EXCLUDED.updated_at`,
-      [targetRoomId, agentId, JSON.stringify(body)],
-    );
-  return { changed: true, previous: previous?.body };
+  const written = await db.query<{previous:Record<string,unknown>|null}>(`WITH previous AS MATERIALIZED (
+      SELECT room_id,body FROM live_outputs WHERE agent_id=$1 AND kind='presence' FOR UPDATE
+    ), target AS (
+      SELECT COALESCE((SELECT room_id FROM previous),$2::uuid,
+        (SELECT room_id FROM room_access WHERE identity_id=$1 AND room_id IS NOT NULL AND removed_at IS NULL LIMIT 1)) room_id
+    ), written AS (
+      INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body,updated_at)
+      SELECT target.room_id,$1,'presence','presence',$3::jsonb,clock_timestamp() FROM target WHERE room_id IS NOT NULL
+      ON CONFLICT(agent_id) WHERE kind='presence' DO UPDATE
+        SET body=jsonb_strip_nulls(jsonb_build_object('releaseVersion',live_outputs.body->'releaseVersion',
+          'sourceSha',live_outputs.body->'sourceSha','held',live_outputs.body->'held','connectionId',live_outputs.body->'connectionId'))
+          || EXCLUDED.body || jsonb_build_object('observedAt',
+          GREATEST((EXCLUDED.body->>'observedAt')::bigint,COALESCE((live_outputs.body->>'observedAt')::bigint,0)+1)),
+          updated_at=clock_timestamp()
+      RETURNING agent_id
+    ) SELECT (SELECT body FROM previous) previous FROM written`, [agentId,roomId??null,JSON.stringify(body)]);
+  return {changed:Boolean(written.rowCount),previous:written.rows[0]?.previous??undefined};
 }
 
 /** Command repair and restart receipts can wait on the Workspace journal.

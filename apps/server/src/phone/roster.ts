@@ -16,11 +16,7 @@ import { reviveDates, selectedModelLabel, projectAgentPresence } from './read-pr
   }
 
 
-  export async function phoneWorkspaceRoster(ctx: PhoneContext,
-    workspaceId: string,
-    viewerId: string,
-    query: WorkspaceMemberListQuery = {},
-  ): Promise<(WorkspaceMemberListView & {
+  export async function phoneWorkspaceRoster(ctx: PhoneContext, workspaceId: string, viewerId: string, query: WorkspaceMemberListQuery = {}): Promise<(WorkspaceMemberListView & {
     workspaceRow: {
       id: string; name: string; avatar: string | null;
       visibility: 'public' | 'invite-only'; allow_fix_sweep: boolean; created_at: Date; updated_at: Date;
@@ -31,7 +27,7 @@ import { reviveDates, selectedModelLabel, projectAgentPresence } from './read-pr
       id: string; name: string; visibility: 'public' | 'invite-only'; created_at: Date;
     }>;
   }) | null> {
-    const needle = phoneRosterSearchNeedle(ctx, query.q);
+    const needle = ctx.rosterSearchNeedle(query.q);
     const offset = Number.isSafeInteger(query.offset) && (query.offset ?? 0) > 0
       ? query.offset! : 0;
     const kind = query.kind === 'human' || query.kind === 'agent' ? query.kind : undefined;
@@ -91,12 +87,12 @@ import { reviveDates, selectedModelLabel, projectAgentPresence } from './read-pr
         (SELECT count(*)::text FROM people) people_total,
         (SELECT count(*)::text FROM agent_rows) agent_total,
         COALESCE((SELECT jsonb_agg(to_jsonb(page)) FROM (
-          SELECT * FROM people
+          SELECT people.* FROM people
           ORDER BY CASE WHEN role='owner' THEN 0 ELSE 1 END,lower(name),id
           LIMIT $6 OFFSET CASE WHEN $4='human' THEN $3 ELSE 0 END
         ) page),'[]'::jsonb) people_rows,
         COALESCE((SELECT jsonb_agg(to_jsonb(page)) FROM (
-          SELECT * FROM agent_rows ORDER BY lower(name),id
+          SELECT agent_rows.* FROM agent_rows ORDER BY lower(name),id
           LIMIT $6 OFFSET CASE WHEN $4='agent' THEN $3 ELSE 0 END
         ) page),'[]'::jsonb) agent_rows
       FROM visible_workspace JOIN viewer_row ON true`,
@@ -114,7 +110,7 @@ import { reviveDates, selectedModelLabel, projectAgentPresence } from './read-pr
       ...agentPage.slice(0, WORKSPACE_MEMBER_PAGE_SIZE),
     ];
     if ((pageRows.length)) {
-      const presence = await phoneOptionalEnrichment(ctx,
+      const presence = await ctx.optionalEnrichment(
         'member-presence',
         ctx.enrichmentDatabase.query<{
           id: string; presence_body: MemberRow['presence_body']; presence_updated_at: Date;
@@ -138,8 +134,8 @@ import { reviveDates, selectedModelLabel, projectAgentPresence } from './read-pr
         row.presence_updated_at = found?.presence_updated_at ?? null;
       }
     }
-    const people = phoneProjectMembers(ctx, pageRows.filter((row) => row.kind === 'human'), null);
-    const agents = phoneProjectWorkspaceAgents(ctx, pageRows.filter((row) => row.kind === 'agent'), agentPage);
+    const people = ctx.projectMembers(pageRows.filter((row) => row.kind === 'human'), null);
+    const agents = ctx.projectWorkspaceAgents(pageRows.filter((row) => row.kind === 'agent'), agentPage);
     return {
       workspaceRow: reviveDates(data.workspace_row, ['created_at', 'updated_at']),
       viewerIdentity: identity(data.viewer_row, ctx.publicOrigin),

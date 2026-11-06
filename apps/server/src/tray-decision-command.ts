@@ -7,8 +7,6 @@ import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
 import type { PhoneService } from './phone-service.js';
 import { InvalidCommandArguments, type RouterCommandLedger } from './router-command-ledger.js';
-import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
-import { workflowRunLockKey } from './workflow-runs.js';
 
 const OPERATIONS = ['decideAgentGrant', 'decideWritePermission', 'skipChoice'] as const;
 export type TrayDecisionOperation = typeof OPERATIONS[number];
@@ -67,24 +65,13 @@ function sameScope(a: Scope, b: Scope): boolean {
 }
 
 /** Discovery takes no row locks. Refuse a moved source rather than acquiring
- * another lifecycle lock after authority. NOWAIT/try-lock avoids waiting on
- * legacy source/run holders that may next request the authority fence. */
+ * another lifecycle lock after discovery. NOWAIT on the actual source rows
+ * refuses a conflicting decision without holding a global authority mutex. */
 async function lockDecision(database: SqlDatabase, operation: TrayDecisionOperation,
   input: Record<string, unknown>, viewer: string): Promise<Scope> {
   const planned = await scope(database, operation, input);
   if (planned.parent_id) await lockCornerLifecycle(database, planned.room_id);
-  // These are actual authority-changing writes. Taking the exclusive fence
-  // upfront also avoids two shared holders upgrading in source BEFORE triggers.
-  await database.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [ROUTER_AUTHORITY_LOCK]);
   if (!sameScope(planned, await scope(database, operation, input))) throw scopeChanged();
-  if (planned.run_id) {
-    // Stored gate run IDs are canonical, not a caller-supplied prefix lookup.
-    if (!/^[0-9a-f]{64}$/.test(planned.run_id)) throw scopeChanged();
-    const locked = (await database.query<{ locked: boolean }>(
-      'SELECT pg_try_advisory_xact_lock(hashtext($1)) locked', [workflowRunLockKey(planned.run_id)],
-    )).rows[0]?.locked;
-    if (!locked) throw busy();
-  }
   const room = (await database.query<{ archived_at: Date | null }>(
     'SELECT archived_at FROM rooms WHERE id=$1 FOR SHARE NOWAIT', [planned.room_id],
   )).rows[0];

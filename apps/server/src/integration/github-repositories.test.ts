@@ -111,7 +111,7 @@ const fixture = monolithFixture();
   });
 
 
-  it('moves colliding agents on join and preserves a human handle when their GitHub login changes', async () => {
+  it('preserves existing handles across joins and GitHub login changes', async () => {
     const directMember = 'd'.repeat(64);
     await fixture.database.query(
       `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Direct member','bee')`,
@@ -132,7 +132,7 @@ const fixture = monolithFixture();
           AGENT,
         ])
       ).rows[0]?.handle,
-    ).toBe('bee_2');
+    ).toBe('bee');
 
     const invite = (await (await fixture.operation('createInvite', { workspaceId: WORKSPACE })).json()) as {
       token: string;
@@ -148,7 +148,7 @@ const fixture = monolithFixture();
           AGENT,
         ])
       ).rows[0]?.handle,
-    ).toBe('bee_3');
+    ).toBe('bee');
 
     const renamedLogin = new TokenAuth(fixture.database, async () => ({
       subject: 'owner',
@@ -169,7 +169,7 @@ const fixture = monolithFixture();
           AGENT,
         ])
       ).rows[0]?.handle,
-    ).toBe('bee_3');
+    ).toBe('bee');
   });
 
 

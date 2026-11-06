@@ -157,34 +157,8 @@ export async function notifyConnectorHelper(
  * the target agent, so idle retained sessions retire and the next turn
  * cold-activates against the current MCP set.
  */
-export async function notifyAgentConfigChange(
-  database: Pick<SqlDatabase, 'query'>,
-  agentId: string,
-  workspaceId?: string,
-): Promise<void> {
-  const rooms = await database.query<{ room_id: string }>(
-    workspaceId
-      ? `SELECT membership.room_id FROM room_access membership
-         JOIN rooms room ON room.id=membership.room_id
-         WHERE membership.identity_id=$1 AND membership.workspace_id=$2
-           AND membership.removed_at IS NULL AND room.archived_at IS NULL`
-      : `SELECT membership.room_id FROM room_access membership
-         JOIN rooms room ON room.id=membership.room_id
-         WHERE membership.identity_id=$1
-           AND membership.removed_at IS NULL AND room.archived_at IS NULL`,
-    workspaceId ? [agentId, workspaceId] : [agentId],
-  );
-  for (const room of rooms.rows) {
-    await database.query(`SELECT pg_notify($1, $2)`, [
-      POSTGRES_LIVE_CHANNEL,
-      JSON.stringify({
-        table: 'agent_config',
-        operation: 'UPDATE',
-        roomId: room.room_id,
-        agentId,
-      }),
-    ]);
-  }
+export async function notifyAgentConfigChange(database: Pick<SqlDatabase,'query'>,agentId: string,workspaceId?: string): Promise<void> {
+  await notifyAgentConfigChanges(database,[agentId],workspaceId);
 }
 
 
@@ -549,10 +523,10 @@ export class PostgresLiveListener {
       return;
     }
     if (payload.ownerId && (payload.table === 'workspace_connectors' ||
-      payload.table === 'workspace_connections' || payload.table === 'connector_discovery_cache' || payload.table === 'wallet_bindings' || payload.table === 'agents' ||
+      payload.table === 'workspace_connections' || payload.table === 'squire_machines' || payload.table === 'connector_discovery_cache' || payload.table === 'wallet_bindings' || payload.table === 'agents' ||
       payload.table === 'agent_avatars' || payload.table === 'avatar_job' || payload.table === 'free_agent_usage')) {
       this.live.publish({ type: 'resource-change', roomId: '', ownerId: payload.ownerId,
-        resource: payload.table === 'workspace_connectors' ? 'install'
+        resource: payload.table === 'workspace_connectors' || payload.table === 'squire_machines' ? 'install'
           : payload.table === 'workspace_connections' || payload.table === 'connector_discovery_cache' || payload.table === 'wallet_bindings' ? 'workbench' : 'agent',
         ...(payload.resourceId ? { resourceId: payload.resourceId } : {}),
         ...(payload.usageOnly?{usageOnly:true as const}:{}),
@@ -782,3 +756,12 @@ export class PostgresLiveListener {
 export { postgresLiveSchema } from './postgres-live-schema.js';
 
 export { POSTGRES_LIVE_CHANNEL } from './postgres-live-notifications.js';
+
+export async function notifyAgentConfigChanges(database: Pick<SqlDatabase,'query'>,agentIds: readonly string[],workspaceId?: string): Promise<void> {
+  if(!agentIds.length) return;
+  await database.query(`SELECT pg_notify($1,jsonb_build_object('table','agent_config','operation','UPDATE',
+    'roomId',member.room_id,'agentId',member.identity_id)::text)
+    FROM room_access member JOIN rooms room ON room.id=member.room_id
+    WHERE member.identity_id=ANY($2::text[]) AND ($3::uuid IS NULL OR member.workspace_id=$3)
+      AND member.removed_at IS NULL AND room.archived_at IS NULL`,[POSTGRES_LIVE_CHANNEL,agentIds,workspaceId??null]);
+}

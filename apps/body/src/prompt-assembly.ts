@@ -247,7 +247,7 @@ export function cornerReviewerInstruction(input: {
   // the head is named in the transcript, so it is described, not guessed.
   const number = input.pullRequestNumber ?? 'N';
   const headSha = input.headSha ?? '<head sha>';
-  return `Review PR ${number} at ${headSha}${input.briefRevision ? ` against brief revision ${input.briefRevision}` : ''} with beeline-review. Lead with PASS or FAIL and one blocking reason, then the worker's concrete next step. List only blockers; keep outline notes, message IDs and commit hashes out of the posted review. Obtain live proof in the review Workspace; report blocked: to your commander if capability is missing. FAIL: order the worker at this corner's address to fix the blocker. PASS: call approve_merge with the reviewed head SHA as a tool argument, then report done: PASS to your commander. PASS lands the PR once checks are green and no hold stands. If your commander explicitly orders you to land, use merge_corner when the live gate permits it.`;
+  return `Review PR ${number} at ${headSha}${input.briefRevision ? ` against brief revision ${input.briefRevision}` : ''} with beeline-review. Lead with PASS or FAIL; finish the review and list all blockers with concrete fixes, including every blocker on the first round. For later rounds, read the entire PR, find your last FAIL for this PR and its reviewed head in this corner, and use git diff from that head to the assigned head. Fail only for unresolved prior blockers or regressions introduced since that review; newly found issues in unchanged code are notes, not blockers. Keep notes separate; omit outline ledgers, message IDs and commit hashes from the posted verdict. Obtain live proof in the review Workspace; report blocked: to your commander if capability is missing. FAIL: order the worker at this corner's address to fix all blockers. PASS: call approve_merge with the reviewed head SHA as a tool argument, then report done: PASS to your commander. PASS lands the PR once checks are green and no hold stands. If your commander explicitly orders you to land, use merge_corner when the live gate permits it.`;
 }
 
 /**
@@ -505,7 +505,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
           (githubCli === 'rest'
             ? `${push} Open it with \`gh pr create\` and read it with \`gh pr view\`; this host has no gh, so the Beeline launcher answers both over the GitHub REST API with the app token.`
             : `${push} Open the pull request with gh.`),
-        repositoryWork && '4 pushes to one PR without PASS: stop; report blocked: to commander, cause: moving target, unreliable test tool, or PR too big / racing other PRs.',
+        repositoryWork && '4 pushes to one PR without PASS: stop; report blocked: to commander with the cause. Pushes made only to repair failing checks do not count.',
         repositoryWork && 'Add tests only if they fail without your change, even for new behavior. Read tests first; extend or parameterize instead of duplicating the same failure. List skipped tests and why in PR body or handover.',
         repositoryWork ? CORNER_AUTHOR_CONTRACT : CORNER_RUNTIME_AUTHOR_CONTRACT,
         repositoryWork &&

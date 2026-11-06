@@ -473,6 +473,10 @@ const scope3 = fixtureScope3(scope2);
         try { await expect(call()).rejects.toThrow('tap Post'); }
         finally { release(); }
         await expect(first).resolves.toMatchObject({ data: { id: 'yt-1' } });
+      } else if (failure === 'id with error') {
+        await expect(call()).resolves.toEqual({ status: 'executed', data: {
+          successful: false, error: 'App tool execution failed: The channel is not properly configured.',
+        } });
       } else {
         await expect(call()).rejects.toThrow(failure === 'network loss' ? 'connection lost' : failure === 'ambiguous 503' ? '503' : 'channel is not properly configured');
         if (failure === 'clear refusal') await expect(call()).resolves.toMatchObject({ status: 'executed', data: { id: 'yt-1' } });

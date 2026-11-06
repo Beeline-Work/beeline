@@ -46,7 +46,7 @@ items stay unresolved, so a later run with a System sender reports them.
 Run the read-only query through the vaulted Neon route:
 
 ```sql
-SELECT id, source_kind, category, summary, detail, tool_name, error_excerpt, created_at, last_occurrence_at, reporter_identity_id, occurrence_count, occurrences,
+SELECT id, source_kind, category, summary, detail, tool_name, error_excerpt, prompt_section_ids, created_at, last_occurrence_at, reporter_identity_id, occurrence_count, occurrences,
        helper_version, app_version, app_platform, harness, harness_version, latest.version AS latest_released_version,
        CASE WHEN helper_version IS NULL OR latest.version IS NULL THEN NULL
             ELSE helper_version = latest.version END AS helper_is_latest,
@@ -54,7 +54,7 @@ SELECT id, source_kind, category, summary, detail, tool_name, error_excerpt, cre
             ELSE app_version = latest.version END AS app_is_latest
 FROM feedback_items
 LEFT JOIN helper_release_notifications latest ON latest.singleton
-WHERE status = 'new' AND (source_kind = 'human' OR COALESCE(last_occurrence_at, created_at) > now() - interval '24 hours')
+WHERE status = 'new'
 ORDER BY created_at;
 ```
 
@@ -88,6 +88,14 @@ how to do something here? Each such group ends in a skill fix. Name the beeline-
 skill in `apps/body/src/beeline-skill.ts` whose steps were missing or wrong for that
 session type (Room, DM or corner), and say what the steps must say instead. When
 no skill covers the situation, name the skill that should.
+
+Persist every report's assessment in `contents.dispositions`: an array of
+{itemId, disposition, reference, reason}. Use fixed only after
+`report(kind:fixed)` verifies the merged fix; duplicate names the canonical
+item id and merges its occurrences and count; linked names the existing corner
+or pull request; dismissed records why no fix is warranted. The handoff saves
+these decisions transactionally. Include every pulled item; use [] when empty.
+Do not leave assessed reports new merely because no new corner is needed.
 
 If nothing is new, hand off `nothing_new`. Otherwise hand off `ranked` with
 `problems`: all groups, each with a one-line description in your

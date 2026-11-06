@@ -1,3 +1,4 @@
+import { fenceOwnedTurnReply as enqueueOwnedTurnReply } from '../owned-turn-reply.js';
 import { OwnedModelRefusal } from '../owned-model-errors.js';
 import { assertCurrentTurnOwner, lockOwnedTurnRoomAccess } from '../turn-ownership.js';
 import type { HelperTurnOwnershipSource } from '@beeline/api-contract/helper-turn-ownership';
@@ -50,26 +51,8 @@ import { DaemonService } from '../daemon-service.js';
 
 
   /** Enqueue only the bounded control response under current access/source. */
-  export async function daemonFenceOwnedTurnReply(ctx: DaemonContext,
-    agentId: string, source: HelperTurnOwnershipSource,
-    input: { roomId: string; generationId?: string; commandId?: string; requestId?: string },
-    enqueue: () => void,
-    requireClaimed = false,
-  ): Promise<void> {
-    await ctx.database.transaction(async db => {
-      await daemonLockOwnedTurnAccess(ctx, db, input.roomId, agentId, input.commandId);
-      await assertCurrentTurnOwner(db, agentId, source);
-      const command = await db.query(`SELECT command.id FROM agent_commands command
-        WHERE command.room_id=$1 AND command.agent_id=$2
-          AND (($6::text IS NOT NULL AND command.id=$6) OR ($7::text IS NOT NULL AND command.turn_request_id=$7))
-          AND command.generation_id=$3 AND command.turn_owner_connection_id=$4 AND command.turn_owner_epoch=$5
-          AND command.state IN ('claimed','complete','cancelled') AND (NOT $8::boolean OR command.state='claimed') FOR SHARE OF command`,
-        [input.roomId, agentId, input.generationId ?? null, source.connectionId, source.epoch,
-          input.commandId ?? null, input.requestId ?? null, requireClaimed]);
-      if (!command.rowCount) throw new Error('Turn ownership changed before enqueue');
-      await assertCurrentTurnOwner(db, agentId, source);
-      enqueue();
-    });
+  export async function daemonFenceOwnedTurnReply(ctx: DaemonContext, agentId: string, source: HelperTurnOwnershipSource, input: { roomId: string; generationId?: string; commandId?: string; requestId?: string }, enqueue: () => void, requireClaimed = false): Promise<void> {
+    await enqueueOwnedTurnReply(ctx.database,agentId,source,input,enqueue,requireClaimed);
   }
 
 

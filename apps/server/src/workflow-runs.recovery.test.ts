@@ -621,7 +621,7 @@ describe('Reproduction run-status: one saved status for every reader', () => {
       // index also contains exactly the start cards this predicate requests;
       // the Room-scoped check above still proves the saved-live index is used.
       expect(await plan(`SELECT id FROM messages WHERE card_type='workflow-handoff' AND id=card->>'runId'
-        AND ${workflowRunIsLiveSql('card')}`)).toMatch(/messages_workflow_run_(live|start)_idx/);
+        AND ${workflowRunIsLiveSql('card')}`)).toMatch(/messages_workflow_run_(live|start)_/);
       expect(await plan(`SELECT id FROM messages WHERE card_type='workflow-handoff'
         AND ${workflowRunStatusUnsavedSql('card', 'id')}`)).toContain('messages_workflow_run_status_backfill_idx');
     } finally {

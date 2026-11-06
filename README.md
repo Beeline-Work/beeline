@@ -16,7 +16,11 @@
 
 Connect the coding agent you already run to a Room in the Beeline app. Tag it like a teammate. Work starts from messages, decisions and schedules you create; idle time never sends a follow-up nudge. Unfinished requests wait for it to reconnect; you see its answer or a single failure message.
 
+Repository corners prepare shared package exports before the first agent turn. Agents cannot order themselves; they continue the work in their current turn.
+
 Agents start their local process when work arrives and stay warm for 30 minutes after their last work completes. New work resets that countdown. Beeline has no simultaneous agent process limit; setup warns when the connected agents may strain this machine's available memory or CPU.
+
+App tools return pending sign-in guidance and provider tool failures as ordinary results. Sentry digests keep findings for the morning card. Nightly Checks accepts delayed starts on its Eastern date; a failed GitHub issue report is reported once without replaying the request.
 
 ## Install
 
@@ -27,7 +31,7 @@ npx usebeeline connect
 Sign in to Beeline in the [iOS](https://apps.apple.com/app/id6803948500) or [Android](https://play.google.com/store/apps/details?id=app.usebeeline) app. Enter its pairing code on your agent's machine.
 Requires Node 20.11+ and Linux x64 or macOS. [Setup details](https://github.com/Beeline-Work/beeline/blob/main/docs/getting-started.md#install).
 
-Installed helpers follow the latest release by default. The team dogfoods a separate nightly channel on Android private beta and the squire helper; an owner command promotes it to latest. [Release channels](docs/release-pipeline.md#nightly-and-latest).
+Installed helpers follow the latest release by default. The team dogfoods a separate `next` channel on Android private beta and the squire helper; an owner command promotes it to latest. [Release channels](docs/release-pipeline.md#next-and-latest).
 
 Already in a Claude Code, Codex, OpenCode, Pi, Antigravity, Gemini CLI, Hermes or ZCode session? Paste one line into it:
 
@@ -41,13 +45,15 @@ Assistants connected through [Rooms MCP](docs/rooms-mcp-connector.md) receive ta
 
 Android testing uses an emulator already running on the host machine, with the host owner's permission through the grant card. Beeline never starts or manages an emulator; if one is unavailable or permission is refused, the agent says so and continues without it.
 
+If joining Conversation mode fails, tap Retry in the error dialog to make another attempt.
+
 ## One message
 
 ```text
 @codex the corner status line wraps onto two lines on small phones. fix it and open a PR.
 ```
 
-The agent opens a corner: an isolated worktree with one branch and one objective. The Room shows the pull request, checks, and merge. Nobody left the chat. Humans rank above every agent. Within the assigned scope, instructions from above a worker’s commander count as the commander’s instructions. A corner shows Working, Review (checks, then the reviewer), Waiting when an answer or action is needed, or Idle. Findings return to the implementer; questions and reports go to the agent’s commander.
+The agent opens a corner: an isolated worktree with one branch and one objective. The Room shows the pull request, checks, and merge. Nobody left the chat. Humans rank above every agent. Within the assigned scope, instructions from above a worker’s commander count as the commander’s instructions. A corner shows Working, Review (checks, then the reviewer), Waiting when an answer or action is needed, or Idle. Findings return to the implementer; questions and reports go to the agent’s commander. A commander’s answer or order, or an answer or order from higher in the chain, clears the question wait; the worker’s own push does not.
 
 Tap a tool step in a new reply to read its saved output. Beeline removes secrets and limits each output to about 4 KB; secret-returning calls are hidden. Older replies show “No output saved”.
 

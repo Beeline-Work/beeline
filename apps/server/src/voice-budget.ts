@@ -39,33 +39,35 @@ export class VoiceBudgetStore {
   }
 
   async record(call: string, owner: string, workspace: string, intervals: readonly AudioInterval[]): Promise<VoiceBudget | null> {
-    const budget = await this.db.transaction(async db => {
-      await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`voice-budget:${workspace}`]);
-      // A stale runtime may neither spend nor remove a successor's participant.
-      const lease = await db.query(`SELECT 1 FROM voice_calls c JOIN rooms r ON r.id=c.room_id
-        WHERE c.id=$1 AND c.runtime_owner=$2 AND c.runtime_until>clock_timestamp() AND c.ended_at IS NULL
-        AND r.workspace_id=$3 FOR SHARE OF c`, [call, owner, workspace]);
-      if (!lease.rowCount) return null;
-      const now = this.now();
-      const days = new Map<number, AudioInterval[]>();
-      for (const [from, to] of intervals) {
-        if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from >= to || to > now + 1000)
-          throw new Error('Invalid voice audio interval');
-        for (let at = from; at < to;) {
-          const { start, resetAt } = voiceBudgetDay(at);
-          const end = Math.min(resetAt, to);
-          const slices = days.get(start) ?? [];
-          slices.push([at, end]); days.set(start, slices); at = end;
-        }
+    const now = this.now();
+    const days = new Map<number, AudioInterval[]>();
+    for (const [from, to] of intervals) {
+      if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from >= to || to > now + 1000)
+        throw new Error('Invalid voice audio interval');
+      for (let at = from; at < to;) {
+        const { start, resetAt } = voiceBudgetDay(at);
+        const end = Math.min(resetAt, to);
+        const slices = days.get(start) ?? [];
+        slices.push([at, end]); days.set(start, slices); at = end;
       }
-      for (const [day, slices] of [...days].sort(([a], [b]) => a - b)) {
-        const ranges = `{${slices.map(([a, b]) => `[${a},${b})`).join(',')}}`;
-        await db.query(`INSERT INTO voice_workspace_usage(workspace_id,call_id,day_start,audio) VALUES($1,$2,$3,$4::int8multirange)
-          ON CONFLICT(workspace_id,call_id,day_start) DO UPDATE SET audio=voice_workspace_usage.audio + excluded.audio`, [workspace, call, day, ranges]);
-      }
-      return this.read(workspace, db);
-    });
-    return budget;
+    }
+    const slices = [...days].sort(([a], [b]) => a - b).map(([day, ranges]) => ({
+      day, audio: `{${ranges.map(([a,b]) => `[${a},${b})`).join(',')}}`,
+    }));
+    const admitted = await this.db.query(`WITH lease AS MATERIALIZED (
+      SELECT c.id FROM voice_calls c JOIN rooms r ON r.id=c.room_id
+      WHERE c.id=$1 AND c.runtime_owner=$2 AND c.runtime_until>clock_timestamp()
+        AND c.ended_at IS NULL AND r.workspace_id=$3 FOR SHARE OF c
+    ), charged AS (
+      INSERT INTO voice_workspace_usage(workspace_id,call_id,day_start,audio)
+      SELECT $3,lease.id,slice.day,slice.audio::int8multirange FROM lease
+        CROSS JOIN jsonb_to_recordset($4::jsonb) slice(day bigint,audio text) ORDER BY slice.day
+      ON CONFLICT(workspace_id,call_id,day_start) DO UPDATE
+        SET audio=voice_workspace_usage.audio + EXCLUDED.audio RETURNING call_id
+    ) SELECT id FROM lease`, [call,owner,workspace,JSON.stringify(slices)]);
+    // Read after the charge commits: each contending writer sees all earlier
+    // committed charges, including a different call in the same Workspace.
+    return admitted.rowCount ? this.read(workspace) : null;
   }
 
   /** Usage is durable before entering this second transaction. Retain the

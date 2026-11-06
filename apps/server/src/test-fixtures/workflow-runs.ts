@@ -8,17 +8,7 @@ import { PgliteDatabase } from '../test-support.js';
 import { createAgentCommand, type CommandRow } from '../agent-command.js';
 import { handoff, getWorkflowRun, saveWorkflow, settleWorkflowGate, startWorkflow } from '../workflow-runs.js';
 
-/**
- * Records every SQL statement issued through this wrapper, in order,
- * including inside nested `transaction()` calls (PGlite's own transaction
- * primitive serializes fully on its single embedded connection, so it never
- * surfaces a `BEGIN` through the `SqlDatabase.query()` interface handoff()
- * writes against — only the statements the application code itself issues
- * are recorded here). This is how P0-1's fix is proven: not by reproducing
- * genuine concurrent Postgres connections (PGlite architecturally cannot —
- * see the concurrency describe block below), but by asserting the run lock
- * is the first thing handoff() does, before it ever reads the run's state.
- */
+/** SQL recording for ordering assertions; real backend races live in advisory-lock-replacements.postgres.test.ts. */
 type RecordedCall = { sql: string; values?: unknown[] };
 
 export class RecordingDatabase implements SqlDatabase {

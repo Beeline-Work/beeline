@@ -14,13 +14,13 @@ description: Publish this release's OTA branch for every live store runtime and 
 
 inputs:
   mode:
-    description: publish builds a nightly branch; promote only moves an existing pointer
+    description: publish builds a next branch; promote only moves an existing pointer
     default: publish
   source_sha:
     description: Source of the carried OTA branch (may predate this release)
     default: ''
   targets:
-    description: Recorded nightly platform@runtime targets for exact promotion
+    description: Recorded next platform@runtime targets for exact promotion
     default: ''
   release_sha:
     required: true
@@ -116,7 +116,7 @@ runs:
           --channel "$BETA_CHANNEL" --targets "$RUNNER_TEMP/ota/targets.json" \
           --output "$RUNNER_TEMP/ota/published.json"
         echo "OTA branch publish: $(( $(date +%s) - started ))s" >> "$GITHUB_STEP_SUMMARY"
-    - name: Restore the recorded nightly targets without querying or rebuilding stores
+    - name: Restore the recorded next targets without querying or rebuilding stores
       if: inputs.mode == 'promote'
       shell: bash
       env:
@@ -127,7 +127,7 @@ runs:
         import { writeFileSync } from 'node:fs';
         const targets = process.env.TARGETS.split(',').map(key => {
           const match = /^(android|ios)@(\d+)$/.exec(key);
-          if (!match) throw new Error(`invalid nightly OTA target: ${key}`);
+          if (!match) throw new Error(`invalid next OTA target: ${key}`);
           return { platform: match[1], runtimeVersion: match[2] };
         });
         writeFileSync(process.argv[2], JSON.stringify({ targets }));

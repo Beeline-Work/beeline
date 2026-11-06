@@ -482,7 +482,9 @@ describe('corner message attribution', () => {
     expect(await commands(B, C)).toHaveLength(0);
     expect(await commands(A, C)).toHaveLength(0);
     expect((await commands(A, R)).filter(c => c.reason === 'report')).toHaveLength(0);
-    await rootFixture.db.query(`UPDATE messages SET card=jsonb_set(card,'{waitingAnswered}','true') WHERE room_id=$1 AND card->>'reportToId' IS NOT NULL`, [C]);
+    await rootFixture.phone.execute('sendRoomMessage', {
+      roomId: C, messageId: 'e'.repeat(64), text: 'Proceed with the demonstration.',
+    }, H);
     await reconcileConfiguredCornerReviewers(rootFixture.db, R);
     expect((await commands(A, C)).filter(c => c.reason === 'corner_review_needed')).toHaveLength(1);
   });

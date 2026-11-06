@@ -77,10 +77,16 @@ export type AppRouteProbes = {
 /** The fixed route order. Probes run lazily, only as far as the order needs. */
 export async function resolveAppRoute(
   input: { readonly existing?: ExistingApp; readonly reconnect: boolean; readonly noApi: boolean;
-    readonly preferredRoute?: 'composio' | 'squire-api' },
+    readonly preferredRoute?: 'composio' | 'squire-api'; readonly appKey?: string },
   probes: AppRouteProbes,
 ): Promise<AppRouteDecision> {
   const existing = input.existing?.state === 'active' ? input.existing : undefined;
+  if (input.appKey === 'github') {
+    const backing = await probes.workbench();
+    if (backing?.transport === 'squire-api')
+      return { kind: 'route', route: 'workbench', transport: backing.transport,
+        reason: 'use the owner’s vaulted GitHub token', backing };
+  }
   // OAuth routes share the established sign-in decision below, including its wording.
   if (existing && !(existing.transport === 'squire-api' && !input.noApi &&
       await probes.composio?.() === 'supported')) {
@@ -152,7 +158,6 @@ type RegistryConnectorRow = {
   sign_in: ConnectorStatus['signIn'] | null;
   registry_handoff_attempt: string | null;
   registry_squire_relayed_attempt: string | null;
-  created: boolean;
   versionConflict?: true;
 };
 
@@ -180,82 +185,41 @@ export async function armRegistryConnector(
     readonly installCommandId: string | null;
   },
 ): Promise<RegistryConnectorRow> {
-  const { manifest } = input;
-  await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-    `registry-mcp:${input.workspaceId}:${input.ownerId}:${input.machineId}:${manifest.name}`,
-  ]);
-  const existing = (
-    await database.query<Omit<RegistryConnectorRow, 'created' | 'versionConflict'>>(
-      `SELECT id,status,registry_version,sign_in,registry_handoff_attempt,
-              registry_squire_relayed_attempt
-       FROM workspace_connectors
-       WHERE workspace_id=$1 AND owner_identity_id=$2 AND machine_id=$3
-         AND connector_type='registry-mcp' AND registry_server_name=$4
-       FOR UPDATE`,
-      [input.workspaceId, input.ownerId, input.machineId, manifest.name],
-    )
-  ).rows[0];
-  if (existing && existing.registry_version !== manifest.version)
-    return { ...existing, versionConflict: true, created: false };
-  if (existing) {
-    if (existing.status === 'error' || existing.status === 'disconnected') {
-      await database.query(
-        `UPDATE workspace_connectors SET helper_agent_id=$2,status='installing',
-           status_steps=$3::jsonb,status_error=NULL,sign_in=NULL,
-           registry_manifest=$4::jsonb,display_name=$5,website_url=$6,
-           install_agent_id=$7,install_room_id=$8,install_command_id=$9,
-           registry_handoff_attempt=NULL,registry_squire_relayed_attempt=NULL,
-           pairing_generation=pairing_generation+1,updated_at=now()
-         WHERE id=$1`,
-        [
-          existing.id,
-          input.helperAgentId,
-          REGISTRY_STEPS,
-          JSON.stringify(manifest),
-          manifest.title ?? manifest.name,
-          manifest.websiteUrl ?? null,
-          input.helperAgentId,
-          input.installRoomId,
-          input.installCommandId,
-        ],
-      );
-      return { ...existing, status: 'installing', sign_in: null, created: true };
-    }
-    return { ...existing, created: false };
-  }
-  const id = randomUUID();
-  await database.query(
-    `INSERT INTO workspace_connectors(
-       id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,
-       status,status_steps,registry_server_name,registry_version,registry_manifest,
-       display_name,website_url,install_agent_id,install_room_id,install_command_id
-     ) VALUES($1,$2,$3,'registry-mcp',$4,$5,'installing',$6::jsonb,$7,$8,$9::jsonb,$10,$11,$12,$13,$14)`,
-    [
-      id,
-      input.workspaceId,
-      input.ownerId,
-      input.helperAgentId,
-      input.machineId,
-      REGISTRY_STEPS,
-      manifest.name,
-      manifest.version,
-      JSON.stringify(manifest),
-      manifest.title ?? manifest.name,
-      manifest.websiteUrl ?? null,
-      input.helperAgentId,
-      input.installRoomId,
-      input.installCommandId,
-    ],
-  );
-  return {
-    id,
-    status: 'installing',
-    registry_version: manifest.version,
-    sign_in: null,
-    registry_handoff_attempt: null,
-    registry_squire_relayed_attempt: null,
-    created: true,
-  };
+  const {manifest}=input;
+  const row=(await database.query<RegistryConnectorRow>(`
+    INSERT INTO workspace_connectors(
+      id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,
+      status,status_steps,registry_server_name,registry_version,registry_manifest,
+      display_name,website_url,install_agent_id,install_room_id,install_command_id
+    ) VALUES($1,$2,$3,'registry-mcp',$4,$5,'installing',$6::jsonb,$7,$8,$9::jsonb,$10,$11,$4,$12,$13)
+    ON CONFLICT(workspace_id,owner_identity_id,machine_id,registry_server_name)
+      WHERE connector_type='registry-mcp' DO UPDATE
+    SET (helper_agent_id,status,status_steps,status_error,sign_in,registry_manifest,
+      display_name,website_url,install_agent_id,install_room_id,install_command_id,
+      registry_handoff_attempt,registry_squire_relayed_attempt,pairing_generation,updated_at) = (
+      SELECT
+        CASE WHEN rearm THEN excluded.helper_agent_id ELSE workspace_connectors.helper_agent_id END,
+        CASE WHEN rearm THEN 'installing' ELSE workspace_connectors.status END,
+        CASE WHEN rearm THEN excluded.status_steps ELSE workspace_connectors.status_steps END,
+        CASE WHEN rearm THEN NULL ELSE workspace_connectors.status_error END,
+        CASE WHEN rearm THEN NULL ELSE workspace_connectors.sign_in END,
+        CASE WHEN rearm THEN excluded.registry_manifest ELSE workspace_connectors.registry_manifest END,
+        CASE WHEN rearm THEN excluded.display_name ELSE workspace_connectors.display_name END,
+        CASE WHEN rearm THEN excluded.website_url ELSE workspace_connectors.website_url END,
+        CASE WHEN rearm THEN excluded.install_agent_id ELSE workspace_connectors.install_agent_id END,
+        CASE WHEN rearm THEN excluded.install_room_id ELSE workspace_connectors.install_room_id END,
+        CASE WHEN rearm THEN excluded.install_command_id ELSE workspace_connectors.install_command_id END,
+        CASE WHEN rearm THEN NULL ELSE workspace_connectors.registry_handoff_attempt END,
+        CASE WHEN rearm THEN NULL ELSE workspace_connectors.registry_squire_relayed_attempt END,
+        workspace_connectors.pairing_generation+CASE WHEN rearm THEN 1 ELSE 0 END,
+        CASE WHEN rearm THEN now() ELSE workspace_connectors.updated_at END
+      FROM (SELECT workspace_connectors.registry_version=excluded.registry_version
+        AND workspace_connectors.status IN ('error','disconnected') rearm) policy
+    ) RETURNING id,status,registry_version,sign_in,registry_handoff_attempt,registry_squire_relayed_attempt`,
+    [randomUUID(),input.workspaceId,input.ownerId,input.helperAgentId,input.machineId,
+      REGISTRY_STEPS,manifest.name,manifest.version,JSON.stringify(manifest),manifest.title??manifest.name,
+      manifest.websiteUrl??null,input.installRoomId,input.installCommandId])).rows[0]!;
+  return {...row,...(row.registry_version!==manifest.version?{versionConflict:true as const}:{})};
 }
 
 
@@ -657,4 +621,25 @@ export function nextStep(
   if (outcome.transport === 'registry-mcp')
     return `The server is preparing ${name} connection.`;
   return `The server is connecting ${name} through Trusty Squire.`;
+}
+
+export async function selectRegistryApp(database:SqlDatabase,input:{workspaceId:string;ownerId:string;appKey:string;
+  connectorId:string;machineId:string;name:string;domain:string|null}):Promise<string>{
+  const row=(await database.query<{app_id:string}>(`
+    WITH selected AS (
+      INSERT INTO workspace_apps(id,workspace_id,owner_identity_id,app_key,display_name,domain,
+        transport,route,connector_id,machine_id,state)
+      VALUES($1,$2,$3,$4,$5,$6,'registry-mcp','registry-mcp',$7,$8,'active')
+      ON CONFLICT(owner_identity_id,app_key) DO UPDATE SET transport='registry-mcp',route='registry-mcp',
+        connector_id=excluded.connector_id,machine_id=excluded.machine_id,display_name=excluded.display_name,
+        domain=excluded.domain,state='active',composio_account_id=NULL,composio_link_expires_at=NULL,
+        sign_in_error=NULL,updated_at=now()
+      WHERE workspace_apps.transport='squire-api' OR workspace_apps.state='disconnected'
+      RETURNING id
+    ) INSERT INTO workspace_app_routes(id,app_id,route,transport,reason,requested_by)
+      SELECT $9::uuid,id,'registry-mcp','registry-mcp','person selected verified company MCP',$3 FROM selected
+      RETURNING app_id`,[randomUUID(),input.workspaceId,input.ownerId,input.appKey,input.name,input.domain,
+      input.connectorId,input.machineId,randomUUID()])).rows[0];
+  if(!row) throw new Error('This app already has a connection');
+  return row.app_id;
 }

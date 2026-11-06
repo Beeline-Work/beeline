@@ -11,8 +11,8 @@ import type { CommandRow } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
 import { closeRunChoices } from './room-choice.js';
 import { identitySubject, systemLine } from './system-line.js';
-import { workflowStartLockKey, liveWorkflowRun, scheduleTriggerPeriod, validateWorkflowBindings, roleAgentList } from './workflow-runs-repeated-result.js';
-import { loadIdentityRow, lockWorkflowRun, resolveRoleBinding, WORKFLOW_HANDOFF_CARD_TYPE, workflowRequester, resolveRunOwner, openRun, mentionsFor, workflowRunRequester, loadRun, loadPinnedContract } from './workflow-runs.js';
+import { liveWorkflowRun, scheduleTriggerPeriod, validateWorkflowBindings, roleAgentList } from './workflow-runs-repeated-result.js';
+import { loadIdentityRow, resolveRoleBinding, WORKFLOW_HANDOFF_CARD_TYPE, workflowRequester, resolveRunOwner, openRun, mentionsFor, workflowRunRequester, loadRun, loadPinnedContract } from './workflow-runs.js';
 import { dispatchState, authorizeRunControl, moveRole } from './workflow-runs-cancel-run-timers.js';
 
 
@@ -29,11 +29,6 @@ export async function startWorkflow(
   }
 
   return database.transaction(async (db) => {
-    // One live run of a workflow per Room, for people, agents and schedules
-    // alike: the check and the start card commit under this one lock.
-    await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-      workflowStartLockKey(command.room_id, input.name),
-    ]);
     const live = await liveWorkflowRun(db, command.room_id, input.name);
     if (live) {
       throw new Error(
@@ -105,10 +100,6 @@ export async function startWorkflow(
     }
     const starter = await loadIdentityRow(db, command.agent_id);
     const runId = randomBytes(32).toString('hex');
-    // No other writer can already hold this exact fresh, random runId, but
-    // taking the lock here anyway keeps every run-card writer in this file
-    // following the identical discipline handoff() below requires.
-    await lockWorkflowRun(db, runId);
     const startState = contract.handoffs[contract.start]!;
     const isGate = startState.kind === 'gate';
     const startRole = (startState as WorkflowHandoffState | WorkflowGateState).role;
@@ -121,7 +112,7 @@ export async function startWorkflow(
       runId,
     });
     const exhausted = 'exhausted' in resolution;
-    await systemLine(db, {
+    const started = await systemLine(db, {
       id: runId,
       roomId: command.room_id,
       authorId: command.agent_id,
@@ -154,6 +145,10 @@ export async function startWorkflow(
         ...(trigger ? { trigger } : {}),
       },
     });
+    if (!started.inserted) {
+      const current = await liveWorkflowRun(db,command.room_id,input.name);
+      throw new Error(`${input.name} already has a live run ${current?.runId ?? ''} in this Room, at ${current?.state ?? ''}. Continue it or cancel it before starting another.`);
+    }
     if (command.source_message_id) await db.query(
       `WITH linked AS (
         UPDATE subscription_webhook_calls SET run_id=$2 WHERE wake_message_id=$1 RETURNING subscription_id

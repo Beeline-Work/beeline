@@ -1,3 +1,6 @@
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { applyFeedbackDispositions } from './feedback-dispositions.js';
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readWorkflowContract, validateSavedWorkflow } from '@beeline/api-contract/daemon';
@@ -7,6 +10,7 @@ import { migrateData } from './database.js';
 import { workflowBackfillOnce } from './migrations/workflow-cleanup.js';
 import {
   FEEDBACK_TRIAGE_CONTRACT,
+  FEEDBACK_TRIAGE_PULL_SQL,
   WORKSPACE_WALK_CONTRACT,
   backfillFeedbackSignalWalk,
   backfillWorkspaceWalkHistory,
@@ -205,7 +209,7 @@ describe('feedback-triage workflow', () => {
     }
   });
 
-  it.each(['presented', 'nothing_to_build'])('demonstrates the scheduled triage path ending at done after %s without a choice card', async outcome => {
+  it.each(['presented', 'nothing_to_build'])('Reproduction TRIAGE-DISPOSITIONS: saves assessments and finishes after %s without a choice card', async outcome => {
     await backfillFeedbackTriageWorkflow(database);
     await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('triage-start',$1,$2,'Start triage')`,
       [TRIAGE_CORNER, CREATOR]);
@@ -213,13 +217,72 @@ describe('feedback-triage workflow', () => {
     const {runId} = await startWorkflow(database, turn, {name:'feedback-triage',roleBindings:{triager:TRIAGER}});
     await handoff(database, turn, {runId, outcome:'notified', contents:{fixedPullRequests:[],skipReason:'none',unnotifiedPullRequests:[]}});
     await handoff(database, turn, {runId, attempt:1, outcome:'checked', contents:{signalChecks:[]}});
-    await handoff(database, turn, {runId, attempt:2, outcome:'ranked', contents:{problems:[]}});
+    for (const [id, status, count] of [['canonical','new',2], ['repeat','new',3], ['noise','new',1], ['fixed','resolved',1]] as const)
+      await database.query(`INSERT INTO feedback_items(id,source_kind,reporter_identity_id,workspace_id,room_id,category,summary,summary_key,status,occurrence_count)
+        VALUES($1,'agent',$2,$3,$4,'bug',$1,$1,$5,$6)`, [id,TRIAGER,WORKSPACE,ROOM,status,count]);
+    const dispositions = [
+      {itemId:'canonical',disposition:'linked',reference:'https://github.com/Beeline-Work/beeline/pull/7',reason:'Existing fix'},
+      {itemId:'repeat',disposition:'duplicate',reference:'canonical',reason:'Same cause'},
+      {itemId:'noise',disposition:'dismissed',reason:'Expected cancellation'},
+      {itemId:'fixed',disposition:'fixed',reason:'Merged fix verified'},
+    ];
+    await expect(handoff(database, turn, {runId, attempt:2, outcome:'ranked', contents:{problems:[],dispositions:[
+      dispositions[0], {itemId:'noise',disposition:'fixed',reason:'Unverified claim'},
+    ]}})).rejects.toThrow('verify the merged fix');
+    expect((await database.query('SELECT status FROM feedback_items WHERE id=$1', ['canonical'])).rows[0]).toEqual({status:'new'});
+    await handoff(database, turn, {runId, attempt:2, outcome:'ranked', contents:{problems:[],dispositions}});
+    expect((await database.query('SELECT id,status,occurrence_count FROM feedback_items ORDER BY id')).rows).toEqual([
+      {id:'canonical',status:'attached',occurrence_count:5}, {id:'fixed',status:'resolved',occurrence_count:1},
+      {id:'noise',status:'dismissed',occurrence_count:1}, {id:'repeat',status:'closed',occurrence_count:3},
+    ]);
+    // Replaying the handoff must not add the duplicate count again.
+    await handoff(database, turn, {runId, attempt:2, outcome:'ranked', contents:{problems:[],dispositions}});
+    expect((await database.query('SELECT occurrence_count FROM feedback_items WHERE id=$1', ['canonical'])).rows[0]).toEqual({occurrence_count:5});
     await handoff(database, turn, {runId, attempt:3, outcome:'checked', contents:{adapterFindings:[],adapterResults:[],skipReason:'none'}});
     await expect(handoff(database, turn, {runId, attempt:4, outcome,
       contents:{rankedProblems:[],walkRunId:'completed-morning-walk'}})).resolves.toMatchObject({state:'done',status:'done'});
     expect((await database.query(`SELECT id FROM room_choices WHERE room_id=$1`, [TRIAGE_CORNER])).rows).toEqual([]);
     const start = (await database.query<{card:{runStatus:string}}>(`SELECT card FROM messages WHERE id=$1`, [runId])).rows[0]!;
     expect(start.card.runStatus).toBe('done');
+  });
+
+  it.each(['agent', 'human'].flatMap(canonicalKind => ['agent', 'human'].flatMap(duplicateKind =>
+    ['v0.1.94', 'v0.1.90'].map(duplicateVersion => ({ canonicalKind, duplicateKind, duplicateVersion })))))
+  ('Reproduction MERGE-RANKING: retains $duplicateKind $duplicateVersion evidence on a $canonicalKind canonical report', async ({canonicalKind,duplicateKind,duplicateVersion}) => {
+    const otherPerson = 'd'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Other reporter')`, [otherPerson]);
+    await database.query(`INSERT INTO helper_release_notifications(singleton,version,sha) VALUES(true,'v0.1.94',$1)`, ['f'.repeat(40)]);
+    for (const [id,kind,reporter,version] of [
+      ['canonical',canonicalKind,canonicalKind === 'human' ? CREATOR : TRIAGER,'v0.1.94'],
+      ['repeat',duplicateKind,duplicateKind === 'human' ? otherPerson : TRIAGER,duplicateVersion],
+    ]) await database.query(`INSERT INTO feedback_items(id,source_kind,reporter_identity_id,workspace_id,room_id,category,summary,summary_key,
+      helper_version,app_version,app_platform,harness,harness_version)
+      VALUES($1,$2,$3,$4,$5,'bug','Same failure',$1,$6,$7,$8,$9,'fixture-version')`,
+      [id,kind,reporter,WORKSPACE,ROOM,kind === 'agent' ? version : null,kind === 'human' ? version : null,
+        kind === 'human' ? 'ios' : null,kind === 'agent' ? 'codex' : null]);
+    const rank = async () => {
+      const rows = (await database.query(FEEDBACK_TRIAGE_PULL_SQL)).rows;
+      const output = JSON.parse(execFileSync(process.execPath,
+        [fileURLToPath(new URL('../../../scripts/feedback-signals.mjs', import.meta.url))],
+        {input:JSON.stringify(rows),encoding:'utf8'}));
+      return {
+        count:output.groups.reduce((total: number, group: {count: number}) => total+group.count,0),
+        agentCount:output.groups.reduce((total: number, group: {agentCount: number}) => total+group.agentCount,0),
+        humanCount:output.groups.reduce((total: number, group: {humanCount: number}) => total+group.humanCount,0),
+        eligible:output.groups.some((group: {eligible: boolean}) => group.eligible),
+      };
+    };
+    const before = await rank();
+    await database.transaction(tx => applyFeedbackDispositions(tx, cornerTurn('merge-ranking'), [
+      {itemId:'repeat',disposition:'duplicate',reference:'canonical',reason:'Same cause'},
+    ]));
+    expect(await rank()).toEqual(before);
+    const occurrence = (await database.query<{occurrences: Record<string,unknown>[]}>(
+      'SELECT occurrences FROM feedback_items WHERE id=$1',['canonical'])).rows[0]!.occurrences[0]!;
+    expect(occurrence).toMatchObject({itemId:'repeat',sourceKind:duplicateKind,
+      reporterIdentityId:duplicateKind === 'human' ? otherPerson : TRIAGER,
+      helperVersion:duplicateKind === 'agent' ? duplicateVersion : null,
+      appVersion:duplicateKind === 'human' ? duplicateVersion : null,harnessVersion:'fixture-version'});
   });
 
   it('demonstrates an uncapped daily walk and rejects missing or empty receipts before completion', async () => {
@@ -441,7 +504,7 @@ describe('feedback-triage workflow', () => {
     expect(FEEDBACK_TRIAGE_STEPS).toContain('add that case as `docs/prompts/cases/<id>.json`');
     expect(FEEDBACK_TRIAGE_STEPS).toContain('the worker orders one other agent in the Room to replay every saved case on the\npull request head with its own model');
     expect(FEEDBACK_TRIAGE_STEPS).toContain('The reviewer does not pass the pull request without that table.');
-    expect(FEEDBACK_TRIAGE_CONTRACT.handoffs.pull!.requires).toEqual(['problems']);
+    expect(FEEDBACK_TRIAGE_CONTRACT.handoffs.pull!.requires).toEqual(['problems', 'dispositions']);
   });
 
   it('ends every refusal or did-not-know-how group in a beeline-* skill fix', () => {
@@ -570,7 +633,7 @@ describe('feedback-triage workflow', () => {
     ).resolves.toEqual({ runId, state: 'verify', attempt: 1 });
     // The same turn moves the next step only by naming its attempt.
     await expect(
-      handoff(database, turn, { runId, outcome: 'nothing_new', contents: { problems: [] } }),
+      handoff(database, turn, { runId, outcome: 'nothing_new', contents: { problems: [], dispositions: [] } }),
     ).resolves.toEqual({ alreadyAdvanced: true, runId, state: 'verify', seq: 1 });
     await expect(
       handoff(database, turn, { runId, outcome: 'checked', contents: { signalChecks: [] }, attempt: 1 }),

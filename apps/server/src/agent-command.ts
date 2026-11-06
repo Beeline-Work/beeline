@@ -1,3 +1,6 @@
+import { dropQueuedOrdersForStop } from './agent-command-queue.js';
+import { lockAgentCommandQueue } from './agent-command-queue.js';
+import { AGENT_COMMAND_DELEGATION_SCHEMA } from './agent-command-queue.js';
 import { advanceCorner } from './corner-lifecycle.js';
 import { endAgentTurn } from './agent-turn-end.js';
 import { cornerLifecycleSql } from './corner-github-cache.js';
@@ -16,7 +19,7 @@ import { blockingReview } from './corner-lifecycle.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import { CORNER_LIFECYCLE_CARD_TYPE } from './room-choice.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
-import { lockAgentCommandQueue, claimAgentCommand, routeAgentResult, CORNER_REVIEW_DEADLOCK_CARD_TYPE, CORNER_CHECKS_BLOCKED_CARD_TYPE, CORNER_AGENT_UNREACHABLE_CARD_TYPE, CORNER_MERGE_YES_CARD_TYPE, dropQueuedOrdersForStop, StaleWakeClaimRefused, claimMcpOrder, dismissAgentCommandWakes, releaseUnreportedMcpOrder, authorizeCommandOutput } from './agent-command-route-agent-result.js';
+import { claimAgentCommand, routeAgentResult, CORNER_REVIEW_DEADLOCK_CARD_TYPE, CORNER_CHECKS_BLOCKED_CARD_TYPE, CORNER_AGENT_UNREACHABLE_CARD_TYPE, CORNER_MERGE_YES_CARD_TYPE, StaleWakeClaimRefused, claimMcpOrder, dismissAgentCommandWakes, releaseUnreportedMcpOrder, authorizeCommandOutput } from './agent-command-route-agent-result.js';
 import { TAGGED_AGENT_LIFECYCLE_COMMANDS, TaggedAgentLifecycleCommand, parseTaggedAgentLifecycleCommand, agentSignInCardId, isTaggedLoginText, soloRoomAgentSql, routeHumanMessage } from './agent-command-create-agent-command.js';
 import { readAgentCommands, commandInbox, routeSystemCommand, queueCornerMergeConflict, reconcileCornerMergeBlockers } from './agent-command-read-agent-commands.js';
 import { reconcileConfiguredCornerReviewers } from './agent-command-reconcile-configured-corner-reviewers.js';
@@ -163,6 +166,7 @@ $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS show_dispatched_agent_work ON agent_commands;
 CREATE TRIGGER show_dispatched_agent_work AFTER INSERT OR UPDATE OF state
   ON agent_commands FOR EACH ROW EXECUTE FUNCTION show_dispatched_agent_work();
+${AGENT_COMMAND_DELEGATION_SCHEMA}
 `;
 
 /** Transport data only: orders and reports never become transcript messages. */
@@ -827,8 +831,8 @@ export { CORNER_REVIEW_DEADLOCK_CARD_TYPE } from './agent-command-route-agent-re
 export { CORNER_CHECKS_BLOCKED_CARD_TYPE } from './agent-command-route-agent-result.js';
 export { CORNER_AGENT_UNREACHABLE_CARD_TYPE } from './agent-command-route-agent-result.js';
 export { CORNER_MERGE_YES_CARD_TYPE } from './agent-command-route-agent-result.js';
-export { lockAgentCommandQueue } from './agent-command-route-agent-result.js';
-export { dropQueuedOrdersForStop } from './agent-command-route-agent-result.js';
+export { lockAgentCommandQueue } from './agent-command-queue.js';
+export { dropQueuedOrdersForStop } from './agent-command-queue.js';
 export { StaleWakeClaimRefused } from './agent-command-route-agent-result.js';
 export { claimAgentCommand } from './agent-command-route-agent-result.js';
 export { claimMcpOrder } from './agent-command-route-agent-result.js';

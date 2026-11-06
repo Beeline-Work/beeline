@@ -13,7 +13,7 @@ import type { PhoneContext } from './context.js';
 import { Input } from './types.js';
 import { phoneRequireWorkspaceMember, phoneRequireWorkspaceAgent, phoneRequireGrantAuthority, phoneRequireIdentity } from './access.js';
 import { hash, normalizeAgentName, messageId } from './values.js';
-import { phoneAvailableAgentHandle } from './pairing.js';
+
 import { effortCatalogAxis } from './read-projection.js';
 
 
@@ -30,15 +30,9 @@ import { effortCatalogAxis } from './read-projection.js';
   }
 
   export async function phoneUpdateAgentSoul(ctx: PhoneContext, input: Input<'updateAgentSoul'>, viewerId: string) {
-    await phoneRequireWorkspaceAgent(ctx, input.workspaceId, input.agentId, viewerId);
+    await ctx.requireWorkspaceAgent(input.workspaceId, input.agentId, viewerId);
     const name = normalizeAgentName(input.name);
     await ctx.database.transaction(async (database) => {
-      const handle = await phoneAvailableAgentHandle(ctx,
-        database,
-        input.workspaceId,
-        input.agentId,
-        name,
-      );
       await database.query(`UPDATE agents SET soul=$2::jsonb,updated_at=now() WHERE agent_id=$1`, [
         input.agentId,
         JSON.stringify({
@@ -49,8 +43,8 @@ import { effortCatalogAxis } from './read-projection.js';
         }),
       ]);
       await database.query(
-        `UPDATE identities SET name=$2,handle=$3,avatar=COALESCE((SELECT '/v1/agent-avatars/'||id::text FROM agent_avatars WHERE agent_id=$1),$4,avatar),updated_at=now() WHERE id=$1`,
-        [input.agentId, name, handle, input.avatar ?? null],
+        `UPDATE identities SET name=$2,avatar=COALESCE((SELECT '/v1/agent-avatars/'||id::text FROM agent_avatars WHERE agent_id=$1),$3,avatar),updated_at=now() WHERE id=$1`,
+        [input.agentId, name, input.avatar ?? null],
       );
     });
   }

@@ -15,14 +15,13 @@ person who reported that problem.
   `contradiction`, `tooling_gap`, `context_gap`, `bug`. The server attaches the
   Room, the trigger message plus up to 20 preceding message ids, and the
   request id. The Body attaches the turn's assembled prompt section ids.
-  - Each agent gets 10 new items per UTC day.
   - An exact match on category, normalized summary (case, punctuation and spacing
     ignored), and tool name returns the existing open agent item, across agents
     and at any age. Open means `new`, `filed` or `attached`.
-  - Duplicates increment `occurrence_count` without spending the cap. Their
-    agent, Room, time, trigger, request and evidence are kept in `occurrences`.
-    The original context stays on the item. A repeat from the same agent within
-    one hour returns success without another occurrence.
+  - Each report increments `occurrence_count`; later reports keep their agent,
+    Room, time, trigger, request and evidence in `occurrences`. The original
+    context stays on the item. Reports have no daily quota or repeat cooldown;
+    concurrent matches merge through the database's unique open-item key.
   - A refusal comes back to the agent as a plain result and never fails the
     turn.
   - The `work` prompt section (rule `core.feedback`) tells agents to report only when a turn
@@ -180,6 +179,27 @@ Every fix brief carries the group's `Feedback items: <ids>` line, or its
 signature (Sentry short id, `log:<pattern>`, nightly job name, release run), so
 `notify` and `verify` can find the fix again. A corner opened without that line
 leaves its reports unresolved forever.
+
+## Saved triage decisions
+
+The pull query includes every report still new, including older agent reports.
+At the pull handoff, the triager supplies `dispositions` alongside `problems`.
+Each entry names `itemId`, `disposition`, `reason`, and a `reference` when needed.
+The workflow saves the assessment with its handoff in one transaction:
+
+- `linked` records an existing corner or PR and moves the item to `attached`.
+- `duplicate` names the canonical item, adds its occurrence count and evidence
+  there, preserving the original report’s source, reporter, release versions and
+  context, and closes the duplicate row. Ranking counts agent and human evidence
+  against the delivered release even when their canonical report has another source.
+- `dismissed` records why no work is warranted.
+- `fixed` retains `resolved` after the existing merged-PR verification succeeds.
+
+The structured decision is stored in `triage_reason`; existing status values
+remain compatible with running older servers. Replayed handoffs do not merge
+counts again. Agents assess their own workspace; the existing configured System
+sender authority covers the global feedback sweep. No reporter notice is sent
+by an assessment.
 
 ## Close the loop: Fixed DMs
 

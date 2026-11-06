@@ -26,8 +26,8 @@ export async function productionReleaseDispatch(
     throw new Error('Invalid production release inputs');
   if (inputs.publish_listing !== undefined && !['true', 'false'].includes(inputs.publish_listing))
     throw new ExpectedRefusalError('publish_listing must be true or false');
-  if (inputs.channel !== undefined && !['nightly', 'latest'].includes(inputs.channel))
-    throw new ExpectedRefusalError('channel must be nightly or latest');
+  if (inputs.channel !== undefined && !['next', 'latest'].includes(inputs.channel))
+    throw new ExpectedRefusalError('channel must be next or latest');
   const auditMessageId = randomUUID();
   const dispatchedBy = await database.transaction(async db => {
     const agent = (await db.query<{ id: string; handle: string }>(
@@ -57,7 +57,7 @@ export async function productionReleaseDispatch(
     }
     const provenance = JSON.stringify({
       agentId: agent.id, handle: agent.handle, place: input.roomId,
-      humanCommandMessageId: human.id, auditMessageId, channel: inputs.channel ?? 'nightly',
+      humanCommandMessageId: human.id, auditMessageId, channel: inputs.channel ?? 'next',
     });
     await db.query(
       `INSERT INTO messages(id,room_id,author_id,text,durable_fact)

@@ -40,6 +40,11 @@ describe.skipIf(!url)('real PostgreSQL execution ownership contention', () => {
         CREATE TABLE agent_connections(agent_id text PRIMARY KEY,connection_id text,epoch bigint,instance_id text,released_at timestamptz);
         CREATE TABLE live_server_instances(instance_id text PRIMARY KEY,renewed_at timestamptz);
         CREATE TABLE ownership_effects(id text PRIMARY KEY,epoch bigint);`);
+      await left.query(`CREATE TABLE rooms(id uuid PRIMARY KEY,workspace_id uuid,parent_id uuid,archived_at timestamptz);
+        CREATE TABLE memberships(workspace_id uuid,room_id uuid,identity_id text,removed_at timestamptz);
+        INSERT INTO rooms(id,workspace_id) VALUES('${room}','22222222-2222-4222-8222-222222222222');
+        INSERT INTO memberships VALUES('22222222-2222-4222-8222-222222222222',NULL,'agent',NULL),
+          ('22222222-2222-4222-8222-222222222222','${room}','agent',NULL);`);
       await left.query(TURN_OWNERSHIP_SCHEMA);
       await left.query(`INSERT INTO live_server_instances VALUES('old-server',clock_timestamp()),('new-server',clock_timestamp());
         INSERT INTO agent_connections VALUES('agent','old-connection',1,'old-server',NULL);`);

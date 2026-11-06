@@ -4,32 +4,21 @@ import { randomBytes } from 'node:crypto';
 import { createCommunityInviteToken, isCommunityInviteToken } from '@beeline/api-contract/phone';
 import { firstAccessibleRoomId } from '../first-room.js';
 import { removeWorkspaceMemberships, restoreWorkspaceMembershipRole, ensureWorkspaceMembershipRole, createDirectMessageMembership, redeemWorkspaceMembership, joinRooms, syncTopLevelSharedRoomRoles } from '../membership-join.js';
-import { lockIdentityHandleWorkspaces, reassignCollidingAgentHandles } from '../workspace-handles.js';
 import { directMessageRoomId, ensureSystemDirectMessageRoomResult } from '../system-line.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { PhoneContext } from './context.js';
 import { Input } from './types.js';
 import { phoneRequireWorkspaceManager, phoneRequireIdentity, phoneRequireWorkspaceMember } from './access.js';
 import { WORKSPACE_ADMIN_AUTHORITY_MESSAGE, token, hash } from './values.js';
-import { phoneAvailableAgentHandle } from './pairing.js';
+
 
 
   export async function phoneAddWorkspaceMember(ctx: PhoneContext, input: Input<'addWorkspaceMember'>, viewerId: string) {
-    await phoneRequireWorkspaceManager(ctx, input.workspaceId, viewerId);
+    await ctx.requireWorkspaceManager(input.workspaceId, viewerId);
     if (input.memberId === viewerId) throw new Error('workspace managers cannot change themselves');
-    await phoneRequireIdentity(ctx, input.memberId);
-    await phoneRequireIdentity(ctx, viewerId);
+    await ctx.requireIdentity(input.memberId);
+    await ctx.requireIdentity(viewerId);
     return ctx.database.transaction(async (database) => {
-      const workspaceIds = await lockIdentityHandleWorkspaces(database, input.memberId, [
-        input.workspaceId,
-      ]);
-      const targetIdentity = (
-        await database.query<{ handle: string | null; kind: 'human' | 'agent'; name: string }>(
-          `SELECT handle,kind,name FROM identities WHERE id=$1 FOR UPDATE`,
-          [input.memberId],
-        )
-      ).rows[0];
-      if (!targetIdentity) throw new Error('identity not found');
       const roles = await database.query<{
         identity_id: string;
         role: 'owner' | 'admin' | 'member' | 'spectator';
@@ -49,26 +38,6 @@ import { phoneAvailableAgentHandle } from './pairing.js';
         (actor.role === 'admin' && (input.role === 'owner' || target?.role === 'admin'))
       ) {
         throw new Error('workspace manager cannot change a member with equal or greater authority');
-      }
-      if (targetIdentity.kind === 'human')
-        await reassignCollidingAgentHandles(
-          database,
-          input.memberId,
-          targetIdentity.handle,
-          workspaceIds,
-        );
-      else {
-        const handle = await phoneAvailableAgentHandle(ctx,
-          database,
-          input.workspaceId,
-          input.memberId,
-          targetIdentity.name,
-          Promise.resolve(workspaceIds),
-        );
-        await database.query(`UPDATE identities SET handle=$2,updated_at=now() WHERE id=$1`, [
-          input.memberId,
-          handle,
-        ]);
       }
       if (target) {
         await restoreWorkspaceMembershipRole(database, [input.workspaceId, input.memberId, input.role, viewerId]);
@@ -231,11 +200,6 @@ import { phoneAvailableAgentHandle } from './pairing.js';
     const row = result.rows[0];
     if (!row) throw new Error('invite not found');
     return ctx.database.transaction(async (database) => {
-      // Use the handle allocator's Workspace lock before locking the invite:
-      // invite creation and membership writes then share the same lock order.
-      const workspaceIds = await lockIdentityHandleWorkspaces(database, viewerId, [
-        row.workspace_id,
-      ]);
       const current = await database.query<{
         consumed_at: Date | null;
         already_joined: boolean;
@@ -269,14 +233,6 @@ import { phoneAvailableAgentHandle } from './pairing.js';
         await database.query(`UPDATE invites SET consumed_at=now() WHERE token_hash=$1`, [
           hash(input.token),
         ]);
-      const identity = (
-        await database.query<{ handle: string | null }>(
-          `SELECT handle FROM identities WHERE id=$1 FOR UPDATE`,
-          [viewerId],
-        )
-      ).rows[0];
-      if (!identity) throw new Error('identity not found');
-      await reassignCollidingAgentHandles(database, viewerId, identity.handle, workspaceIds);
       const joined = await redeemWorkspaceMembership(database, [row.workspace_id, viewerId, row.created_by]);
       await joinRooms(database, {
         workspaceId: row.workspace_id,

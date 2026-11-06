@@ -11,16 +11,17 @@ export function humanReportCornerSql(message: string): string {
 
 /** Keep forwarded reports on their origin index, with a separate legacy fallback. */
 export function cornerHumanReportsSql(cornerId: string, workerId: string): string {
-  return `SELECT message.* FROM messages message
+  const columns = 'message.id,message.room_id,message.author_id,message.text,message.card,message.presentation,message.system_event,message.deleted_at,message.request_id,message.created_at';
+  return `SELECT ${columns} FROM messages message
     WHERE message.author_id=${workerId} AND message.card->>'reportToId' IS NOT NULL
       AND message.card->>'sourceRoomId'=(${cornerId})::text
     UNION ALL
-    SELECT message.* FROM messages message
+    SELECT ${columns} FROM messages message
     WHERE message.room_id=${cornerId} AND message.author_id=${workerId}
       AND message.card->>'reportToId' IS NOT NULL AND message.card->>'sourceRoomId' IS NULL
       AND ${humanReportCornerSql('message')}=(${cornerId})::text
     UNION ALL
-    SELECT message.* FROM messages message
+    SELECT ${columns} FROM messages message
     WHERE message.author_id=${workerId}
       AND EXISTS (SELECT 1 FROM agent_commands source
         WHERE source.id=message.request_id AND source.agent_id=message.author_id
@@ -42,7 +43,7 @@ export function cornerHumanReportsSql(cornerId: string, workerId: string): strin
  * `message_id` is the display target; `card_id` also retains cross-Room report cards
  * so clearing marks both the private command and its visible record answered.
  */
-export function cornerWaitingReportSql(corner: string): string {
+export function cornerWaitingReportSql(corner: string, includeAnswered = false): string {
   return `SELECT ${corner}.id corner_id,latest.report_id,latest.message_id,latest.card_id,
     latest.return_room_id,latest.created_at,latest.commander_id,person.id person_id
   FROM corner_facts waiting_fact
@@ -81,7 +82,7 @@ export function cornerWaitingReportSql(corner: string): string {
   ) AND ${tagsKnownIdentitySql('item', 'person.id', 'person.handle', 'person.kind')})
   WHERE waiting_fact.corner_id=${corner}.id
     AND latest.text ~ '^(needs-decision|blocked):'
-    AND latest.answered IS DISTINCT FROM 'true'`;
+    ${includeAnswered ? '' : "AND latest.answered IS DISTINCT FROM 'true'"}`;
 }
 
 /**

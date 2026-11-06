@@ -7,6 +7,10 @@ import { GitHubOperations } from './github-operations.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
+import { refreshCornerAttention } from './corner-attention.js';
+import { ensureSystemIdentity } from './system-line.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import { HelperDaemonService } from './test-fixtures/helper-daemon.js';
 
 const url = process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
 if (url && !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(url).hostname))
@@ -103,6 +107,85 @@ describe.skipIf(!url)('production transaction lock ordering', () => {
     expect(results).toEqual([{ status: 'fulfilled', value: expect.anything() }, { status: 'fulfilled', value: expect.objectContaining({ status: 'connecting' }) }]);
     expect((await first.query<{ status: string }>(`SELECT squire_report->>'status' status FROM agents WHERE agent_id=$1`, [agent])).rows[0]?.status).toBe(mode === 'reconnect' ? 'error' : 'connected');
     expect((await first.query<{ install: string }>(`SELECT squire_work->>'install' install FROM agents WHERE agent_id=$1`, [agent])).rows[0]?.install).toBe('true');
+  });
+
+  it.each(['refresh', 'open'] as const)('SERVER-49/4A/45: %s does not update the shared System identity', async path => {
+    let id = randomUUID();
+    const daemon = new HelperDaemonService(first, new LiveHub());
+    const phone = new PhoneService(first, 'https://beeline.invalid');
+    const messageId = randomUUID().replaceAll('-', '').repeat(2);
+    if (path === 'refresh') {
+      await first.query(`INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Independent corner')`, [id, workspace, room, agent]);
+      await first.query('INSERT INTO corner_facts(corner_id) VALUES($1)', [id]);
+    } else {
+      await first.query(`UPDATE identities SET handle='lockhelper' WHERE id=$1`, [agent]);
+      await phone.execute('sendRoomMessage', { roomId: room, messageId, text: '@lockhelper open this corner' }, owner);
+    }
+    const command = path === 'open'
+      ? (await daemon.execute('getAgentCommands', { roomId: room }, agent)).commands.find(command => command.sourceMessageId === messageId)
+      : undefined;
+    if (command) await daemon.execute('claimAgentCommand', { roomId: room, commandId: command.id, generationId: 'lock-proof' }, agent);
+    await ensureSystemIdentity(first);
+    await observer.query('BEGIN');
+    await observer.query('SELECT id FROM identities WHERE id=$1 FOR NO KEY UPDATE', [SYSTEM_IDENTITY_ID]);
+    try {
+      await first.query("SET lock_timeout='500ms'");
+      if (path === 'refresh') expect(await refreshCornerAttention(first, id)).toEqual({ parentId: room });
+      else {
+        expect(command).toBeDefined();
+        id = (await daemon.execute('createCorner', { roomId: room, requestId: command!.turnRequestId,
+          generationId: 'lock-proof', name: 'Independent-corner', objective: 'Prove independent corner opening',
+          brief: { spec: 'Prove independent corner opening', approval: { sourceMessageId: messageId } } }, agent)).cornerId;
+      }
+      const visible = (await phone.readCorners(room, owner))?.corners.find(item => item.corner.id === id);
+      expect(visible?.state).toBe(path === 'open' ? 'working' : 'idle');
+    } finally {
+      await observer.query('ROLLBACK');
+      await first.query('RESET lock_timeout');
+    }
+  });
+
+  it('SERVER-1W: mergeability and check webhooks commit without cache-row / lifecycle inversion', async () => {
+    const id = randomUUID(), head = '2'.repeat(40);
+    await first.query(`INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Webhook corner')`, [id, workspace, room, agent]);
+    await first.query('INSERT INTO corner_facts(corner_id) VALUES($1)', [id]);
+    await first.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [id, JSON.stringify({
+      lifecycle: 'in-review', checks: 'pending', pr: { number: 2, headSha: head, targetBranch: 'main', mergeability: 'unknown', url: 'https://github.com/owner/widgets/pull/2' },
+    })]);
+    const pr = { number: 2, headSha: head, state: 'open', merged: false, mergeability: 'dirty',
+      url: 'https://github.com/owner/widgets/pull/2', baseRef: 'main' } as const;
+    const app = { installationToken: vi.fn().mockResolvedValue({ token: 'fixture' }), readPullRequest: vi.fn().mockResolvedValue(pr) } as unknown as GitHubAppClient;
+    const mergeability = new GitHubOperations(first, {} as GitHubOAuthClient, app, 'secret');
+    const checks = new GitHubOperations(second, {} as GitHubOAuthClient, app, 'secret');
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await observer.query(`CREATE FUNCTION pause_mergeability() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      IF NEW.lifecycle->'pr'->>'mergeability'='dirty' THEN PERFORM pg_advisory_xact_lock(730001,3); END IF;
+      RETURN NEW; END $$;
+      CREATE TRIGGER aa_pause_mergeability BEFORE UPDATE ON corner_github_cache FOR EACH ROW EXECUTE FUNCTION pause_mergeability();
+      SELECT pg_advisory_lock(730001,3);`);
+    const refresh = mergeability.refreshStaleMergeability(id);
+    let check: Promise<unknown> | undefined;
+    let results: PromiseSettledResult<unknown>[] = [];
+    try {
+      await waiting(observer, firstPid, observerPid);
+      check = checks.refreshCheckRollup({ corner_id: id, parent_id: room, author_id: agent, corner_name: 'Webhook corner',
+        summary: '', repository_id: '101', installation_id: '77', has_pr: true, pr_number: '2' }, 'owner/widgets',
+        { name: 'Tests', status: 'pending', headSha: head }, second, { snapshot: { token: 'fixture', pr,
+          fetchStartedAt: Date.now() / 1000, rollup: { state: 'pending', total: 1, failing: [], checks: [{ name: 'Tests', status: 'pending' }] } } });
+      void check.catch(() => {});
+      await waiting(observer, secondPid, firstPid);
+    } finally {
+      await observer.query('SELECT pg_advisory_unlock(730001,3)');
+      results = await Promise.allSettled([refresh, ...(check ? [check] : [])]);
+      await observer.query('DROP TRIGGER aa_pause_mergeability ON corner_github_cache; DROP FUNCTION pause_mergeability()');
+    }
+    const logged = [...errors.mock.calls];
+    errors.mockRestore();
+    expect(results.every(result => result.status === 'fulfilled')).toBe(true);
+    expect(logged).toEqual([]);
+    const lifecycle = await checks.lifecycle(id);
+    expect(lifecycle.pr?.mergeability).toBe('dirty');
+    expect(lifecycle.checksSummary?.total).toBe(1);
   });
 
   it('merged webhook and merge reconciliation commit one repository note without message-id / journal inversion', async () => {

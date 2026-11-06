@@ -100,7 +100,6 @@ import {
   siblingAgentMaskPaths,
   wrapAgentCommand,
 } from './bwrap-sandbox.js';
-import { prepareKvmAccess } from './kvm-device-access.js';
 import { harnessIdentityLabel, sessionNewMcpServers } from './cursor-acp-bridge.js';
 import { bodyAgentCommand, type BodyConfig } from './config.js';
 import { type DaemonApiClient } from './daemon-api-client.js';
@@ -1183,9 +1182,6 @@ export class MonolithRoomTurnLoop {
           grantedHostRoutes: mountedHostRoutes,
           extraHostRoutes: registryHostDeclarations,
           resourceAuthFile,
-          ...(this.options.config.agentEnv.PATH
-            ? { inheritedPath: this.options.config.agentEnv.PATH }
-            : {}),
           ...(this.options.config.agentKind ? { agentKind: this.options.config.agentKind } : {}),
           ...(this.options.config.operatorHome
             ? { operatorHome: this.options.config.operatorHome }
@@ -1316,8 +1312,6 @@ export class MonolithRoomTurnLoop {
         codegraphReady,
       ),
     });
-    const kvm = prepareKvmAccess(grantedDevices);
-    if ('advice' in kvm) console.error(`[body] ${kvm.advice}`);
     const spawnCommand = wrapAgentCommand({
       bwrapPath: this.options.config.bwrapPath,
       spec: {
@@ -1499,7 +1493,6 @@ export class MonolithRoomTurnLoop {
       surface: directMessage ? 'dm' : 'room',
       agentName: self?.name ?? this.agent.name,
       machineHost: await machineHost(),
-      kvm,
       ...(persona?.instructions
         ? { soul: { name: persona.name, instructions: persona.instructions } }
         : {}),

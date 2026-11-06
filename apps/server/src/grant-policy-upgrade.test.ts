@@ -93,6 +93,15 @@ describe('withdrawSupersededGrantAsks', () => {
     expect(await withdrawSupersededGrantAsks(database)).toBe(0);
   });
 
+  it('preserves host emulator consent through a server restart', async () => {
+    const id = '20000000-0000-4000-8000-000000000005';
+    await pendingAsk(id, 'host', '127.0.0.1:5037');
+    await migrate(database);
+    expect((await database.query(`SELECT status FROM agent_grants WHERE id=$1`, [id])).rows)
+      .toEqual([{ status: 'pending' }]);
+    expect(await withdrawSupersededGrantAsks(database)).toBe(0);
+  });
+
   it('R1: preserves a pending connection ask for another person’s app account', async () => {
     const other = 'd'.repeat(64);
     const app = '99999999-9999-4999-8999-999999999999';

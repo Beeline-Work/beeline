@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { HOST_EMULATOR_TARGET } from '@beeline/api-contract/agent-grants';
+import { hostEmulatorSerials } from './machine-control.js';
 import { boundToolResult } from './tool-output-budget.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { resolveGrantCommand, isNativeGrantExecutable, resolveGrantScriptExecutable } from './grant-script.js';
@@ -2056,6 +2058,8 @@ export interface AgentGrantDeps {
   scriptEnv?: NodeJS.ProcessEnv;
   /** Test seam for reading those bytes. */
   readScript?: (path: string) => Buffer;
+  /** Read-only probe of the already running host adb server. */
+  hostEmulators?: () => Promise<string[]>;
   /**
    * Where a command grant's named secrets resolve from, at ask time and for
    * `list_grants`. Defaults to the operator key store, secrets.json, then the
@@ -2192,6 +2196,29 @@ export async function requestGrant(
           'Have the operator initialize the named secret securely, or drop the --with suffix.',
       );
     }
+  }
+  if (kind === 'host' && target === HOST_EMULATOR_TARGET) {
+    const listed = await deps.execute('listAgentGrants', { roomId: deps.roomId });
+    const live = Array.isArray(listed.grants) ? listed.grants.map(asObject) : [];
+    const grant = live.find((entry) => entry.kind === kind && entry.target === target &&
+      (entry.status === 'approved' || entry.status === 'once'));
+    if (grant) {
+      let serials: string[];
+      try { serials = await (deps.hostEmulators ?? hostEmulatorSerials)(); }
+      catch { serials = []; }
+      if (!serials.length)
+        return 'Host emulator unavailable: no running host emulator is available; nothing was started. Do not use an emulator and say so in your reply.';
+      if (grant.status === 'once')
+        await deps.execute('consumeAgentGrant', { grantId: grant.grantId });
+      return `Host emulator allowed at ${target}: ${serials.map((serial) => `adb -H 127.0.0.1 -P 5037 -s ${serial}`).join('; ')}. Use this existing emulator only; the helper never starts or manages it.`;
+    }
+    const history = await deps.execute('listAgentGrantRequests', { roomId: deps.roomId });
+    const requests = Array.isArray(history.grants) ? history.grants.map(asObject) : [];
+    const previous = requests.find((entry) => !entry.agentId && entry.kind === kind && entry.target === target);
+    if (previous?.status === 'denied' || previous?.status === 'revoked')
+      return 'Host emulator permission refused: do not use an emulator and say so in your reply.';
+    if (previous?.status === 'pending')
+      return 'Host emulator permission pending: wait for the host to Allow, then call request_grant again for the existing emulator address; end your turn now without using an emulator.';
   }
   const result = await deps.execute('requestAgentGrant', {
     roomId: deps.roomId,

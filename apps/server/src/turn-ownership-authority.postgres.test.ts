@@ -80,12 +80,40 @@ describe.skipIf(!url)('native current authority on real PostgreSQL',()=>{
     const enqueue=()=>daemon.fenceOwnedTurnReply(agent,owner,{roomId:room,commandId:queued.id,generationId:'generation'},()=>frames.push('current'),true);
     try{
       await Promise.race([entered.promise,writer.then(()=>{throw new Error('Revoker did not reach its write');})]);
+      const started=performance.now();
       await expect(enqueue()).rejects.toMatchObject({code:'55P03'});expect(frames).toEqual([]);
+      expect(performance.now()-started).toBeGreaterThanOrEqual(400);
+      expect(performance.now()-started).toBeLessThan(2000);
       release.resolve();await settled;
       if(outcome==='rollback'){await enqueue();expect(frames).toEqual(['current']);}
       else{await expect(enqueue()).rejects.toThrow('source changed');expect(frames).toEqual([]);}
     }finally{release.resolve();await Promise.allSettled([writer,settled]);}
   },20_000);
+  // Reproduction MEMBERSHIP-503: normal queue serialization must not lose an owned reply.
+  it.each(['commit','enqueue'].flatMap(path=>['room','workspace'].map(scope=>({path,scope}))))(
+    'waits for a short $scope membership lock before $path and delivers the reply',async({path,scope})=>{
+    const {room,request,queued}=await command(),entered=deferred(),release=deferred();
+    const writer=second.transaction(async tx=>{
+      await tx.query(`SELECT id FROM memberships WHERE workspace_id=$1 AND identity_id=$2
+        AND ${scope==='room'?'room_id=$3':'room_id IS NULL'} FOR UPDATE`,scope==='room'?[workspace,agent,room]:[workspace,agent]);
+      entered.resolve();await release.promise;
+    });
+    const frames:string[]=[],daemon=new DaemonService(first,new LiveHub());
+    let result:Promise<PromiseSettledResult<unknown>[]>|undefined;
+    try{
+      await entered.promise;
+      const effect=path==='commit'
+        ? daemon.execute('postAgentActivity',{roomId:room,requestId:request,generationId:'generation',activity:[]},agent)
+        : daemon.fenceOwnedTurnReply(agent,owner,{roomId:room,commandId:queued.id,generationId:'generation'},()=>frames.push('reply'),true);
+      result=Promise.allSettled([effect]);
+      await new Promise(resolve=>setTimeout(resolve,100));
+      release.resolve();await writer;
+      expect((await result)[0]).toMatchObject({status:'fulfilled'});
+      if(path==='enqueue')expect(frames).toEqual(['reply']);
+      else expect((await first.query('SELECT id FROM messages WHERE room_id=$1 AND author_id=$2',[room,agent])).rowCount).toBe(1);
+      expect((await first.query('SHOW lock_timeout')).rows).toEqual([{lock_timeout:'0'}]);
+    }finally{release.resolve();await Promise.allSettled([writer,...(result?[result]:[])]);}
+  });
   it.each([false,true])('an owned message read cannot return revoked content (preceding installer: %s)',async precedingInstaller=>{
     if(precedingInstaller)await first.query(PRECEDING_OWNED_EFFECT_SCHEMA);
     const {room,request}=await command(),entered=deferred(),release=deferred();

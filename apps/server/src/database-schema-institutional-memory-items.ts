@@ -528,7 +528,6 @@ CREATE TABLE IF NOT EXISTS permission_authority (
 CREATE INDEX IF NOT EXISTS permission_authority_room_idx ON permission_authority(room_id);
 
 -- Retired: empty in production on 2026-11-02 and written by nothing on main.
-DROP TABLE IF EXISTS mission_authority;
 
 CREATE TABLE IF NOT EXISTS work_schedules (
   schedule_id text NOT NULL,
@@ -589,7 +588,6 @@ WHERE agent_schedules.id=labels.id AND agent_schedules.title IS NULL;
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS last_reported_blocking_run_id text;
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS updated_by text REFERENCES identities(id);
 -- Retired: empty in production on 2026-11-02 and written by nothing on main.
-DROP TABLE IF EXISTS workflow_owner_transfers;
 WITH resolved AS (
   SELECT schedule.id,${scheduleWorkflowSlugSql('schedule.workspace_id', 'schedule.message')} slug
   FROM agent_schedules schedule WHERE schedule.workflow_slug IS NULL

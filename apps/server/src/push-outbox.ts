@@ -11,7 +11,6 @@ CREATE TABLE IF NOT EXISTS push_outbox (
 );
 CREATE INDEX IF NOT EXISTS push_outbox_device_idx ON push_outbox(device_token);
 CREATE INDEX IF NOT EXISTS push_outbox_expiry_idx ON push_outbox(expires_at);
-DROP TABLE IF EXISTS push_outbox_retirements;
 CREATE TABLE IF NOT EXISTS push_message_context (
   message_id text PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,

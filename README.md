@@ -18,6 +18,8 @@ Connect the coding agent you already run to a Room in the Beeline app. Tag it li
 
 Agents start their local process when work arrives and stay warm for 30 minutes after their last work completes. New work resets that countdown. Beeline has no simultaneous agent process limit; setup warns when the connected agents may strain this machine's available memory or CPU.
 
+Production releases retain retired database tables and columns while older servers can still use them. Indexes build concurrently, and existing-table checks validate separately. Agents running on helpers can request releases with the same human authorization and audit receipt as other agents. [Release policy](docs/release-pipeline.md).
+
 ## Install
 
 ```sh

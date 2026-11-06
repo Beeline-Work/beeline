@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { migratedDatabase, type PgliteDatabase } from './test-support.js';
+import { migrate } from './database.js';
 import { PhoneService } from './phone-service.js';
 
 const viewer = 'a'.repeat(64), author = 'b'.repeat(64);
@@ -40,4 +41,26 @@ it('reads and clears populated canonical Tray after release migration alone', as
   await new PhoneService(db, 'https://synthetic.invalid').execute('clearMessageBookmarks', {workspaceId:workspace}, viewer);
   expect((await read()).saved!.bookmarks).toEqual([]);
   expect((await db.query('SELECT * FROM message_bookmarks')).rows).toEqual([]);
+});
+
+it('R-RELEASE-DDL: deploy builds schema indexes concurrently and validates checks separately', async () => {
+  await db.query('DROP INDEX messages_room_page_idx');
+  const query = db.query.bind(db);
+  const issued: string[] = [];
+  const spy = vi.spyOn(db, 'query').mockImplementation(async (sql, values) => {
+    issued.push(sql);
+    return query(sql, values);
+  });
+  try {
+    await migrate(db, { deferData: true });
+    const indexBuilds = issued.filter(sql => /^CREATE\s+(?:UNIQUE\s+)?INDEX\b/i.test(sql.trim()));
+    expect(indexBuilds.length).toBeGreaterThan(0);
+    expect(indexBuilds.every(sql => /\bCONCURRENTLY\b/i.test(sql))).toBe(true);
+    const checks = issued.filter(sql => /^ALTER\s+TABLE\s+\w+\s+ADD\s+CONSTRAINT\s+\w+\s+(?:CHECK|FOREIGN\s+KEY)\b/i.test(sql));
+    expect(checks.length).toBeGreaterThan(0);
+    expect(checks.every(sql => /\bNOT VALID\b/i.test(sql))).toBe(true);
+    expect(issued.some(sql => /VALIDATE CONSTRAINT/i.test(sql))).toBe(true);
+    expect(issued.filter(sql => /\bDROP\s+(?:TABLE|COLUMN)\b/i.test(sql))).toEqual([]);
+    expect(issued.some(sql => /ALTER\s+COLUMN\s+\w+\s+TYPE\b/i.test(sql))).toBe(false);
+  } finally { spy.mockRestore(); }
 });

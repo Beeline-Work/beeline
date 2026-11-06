@@ -75,7 +75,7 @@ export const MIGRATIONS = [
   `ALTER TABLE beeline_oidc_flows ADD COLUMN IF NOT EXISTS device_code_hash CHAR(64)`,
   `ALTER TABLE beeline_oidc_flows ADD COLUMN IF NOT EXISTS app_recovery_hash CHAR(64)`,
   `ALTER TABLE beeline_oidc_flows ADD COLUMN IF NOT EXISTS native_cancelled_at TIMESTAMPTZ`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS beeline_oidc_flows_app_recovery_idx
+  `CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS beeline_oidc_flows_app_recovery_idx
     ON beeline_oidc_flows (app_recovery_hash) WHERE app_recovery_hash IS NOT NULL`,
   `CREATE TABLE IF NOT EXISTS beeline_bind_tickets (
     ticket_hash CHAR(64) PRIMARY KEY,
@@ -115,7 +115,7 @@ export const MIGRATIONS = [
      AND canonical.audience='github'`,
   `UPDATE beeline_identity_links SET audience='github'
    WHERE issuer='https://github.com' AND audience<>'github'`,
-  `CREATE INDEX IF NOT EXISTS beeline_identity_links_pubkey_idx
+  `CREATE INDEX CONCURRENTLY IF NOT EXISTS beeline_identity_links_pubkey_idx
     ON beeline_identity_links (community, pubkey)`,
   `CREATE TABLE IF NOT EXISTS beeline_key_successions (
     community TEXT NOT NULL,
@@ -140,15 +140,15 @@ export const MIGRATIONS = [
      AND canonical.audience='github'`,
   `UPDATE beeline_key_successions SET audience='github'
    WHERE issuer='https://github.com' AND audience<>'github'`,
-  `CREATE INDEX IF NOT EXISTS beeline_key_successions_new_idx
+  `CREATE INDEX CONCURRENTLY IF NOT EXISTS beeline_key_successions_new_idx
     ON beeline_key_successions (community, new_pubkey)`,
   `CREATE TABLE IF NOT EXISTS beeline_nip98_replays (
     event_id CHAR(64) PRIMARY KEY,
     expires_at TIMESTAMPTZ NOT NULL
   )`,
-  `CREATE INDEX IF NOT EXISTS beeline_oidc_flows_expiry_idx ON beeline_oidc_flows (expires_at)`,
-  `CREATE INDEX IF NOT EXISTS beeline_bind_tickets_expiry_idx ON beeline_bind_tickets (expires_at)`,
-  `CREATE INDEX IF NOT EXISTS beeline_nip98_replays_expiry_idx ON beeline_nip98_replays (expires_at)`,
+  `CREATE INDEX CONCURRENTLY IF NOT EXISTS beeline_oidc_flows_expiry_idx ON beeline_oidc_flows (expires_at)`,
+  `CREATE INDEX CONCURRENTLY IF NOT EXISTS beeline_bind_tickets_expiry_idx ON beeline_bind_tickets (expires_at)`,
+  `CREATE INDEX CONCURRENTLY IF NOT EXISTS beeline_nip98_replays_expiry_idx ON beeline_nip98_replays (expires_at)`,
   `CREATE TABLE IF NOT EXISTS beeline_agent_connect_devices (
     device_code_hash CHAR(64) PRIMARY KEY,
     user_code TEXT NOT NULL UNIQUE,
@@ -171,7 +171,7 @@ export const MIGRATIONS = [
     CHECK (code_challenge ~ '^[0-9a-f]{64}$'),
     CHECK (pairing_token_hash IS NULL OR pairing_token_hash ~ '^[0-9a-f]{64}$')
   )`,
-  `CREATE INDEX IF NOT EXISTS beeline_agent_connect_devices_expiry_idx
+  `CREATE INDEX CONCURRENTLY IF NOT EXISTS beeline_agent_connect_devices_expiry_idx
     ON beeline_agent_connect_devices (expires_at)`,
   `CREATE TABLE IF NOT EXISTS beeline_agent_connect_grants (
     token_hash TEXT PRIMARY KEY CHECK (token_hash ~ '^[0-9a-f]{64}$'),
@@ -196,7 +196,7 @@ export const MIGRATIONS = [
     PRIMARY KEY (community, pubkey),
     CHECK (pubkey ~ '^[0-9a-f]{64}$')
   )`,
-  `CREATE INDEX IF NOT EXISTS beeline_identity_handles_handle_idx
+  `CREATE INDEX CONCURRENTLY IF NOT EXISTS beeline_identity_handles_handle_idx
     ON beeline_identity_handles (community, handle)`,
   `CREATE TABLE IF NOT EXISTS beeline_github_install_flows (
     state_hash CHAR(64) PRIMARY KEY,
@@ -249,7 +249,7 @@ export const MIGRATIONS = [
   `ALTER TABLE beeline_github_installations ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'`,
   `ALTER TABLE beeline_github_installations ADD COLUMN IF NOT EXISTS repository_count INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE beeline_github_installations DROP CONSTRAINT IF EXISTS beeline_github_installations_pkey`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS beeline_github_installations_owner_idx
+  `CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS beeline_github_installations_owner_idx
     ON beeline_github_installations (community, pubkey, installation_id)`,
   `CREATE TABLE IF NOT EXISTS beeline_github_repositories (
     community TEXT NOT NULL,
@@ -263,7 +263,7 @@ export const MIGRATIONS = [
     updated_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (community, installation_id, repository_id)
   )`,
-  `CREATE INDEX IF NOT EXISTS beeline_github_repositories_name_idx
+  `CREATE INDEX CONCURRENTLY IF NOT EXISTS beeline_github_repositories_name_idx
     ON beeline_github_repositories (community, lower(full_name))`,
   `CREATE TABLE IF NOT EXISTS beeline_github_repository_aliases (
     community TEXT NOT NULL,
@@ -271,7 +271,7 @@ export const MIGRATIONS = [
     full_name TEXT NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
   )`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS beeline_github_repository_aliases_idx
+  `CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS beeline_github_repository_aliases_idx
     ON beeline_github_repository_aliases (community, lower(alias_full_name))`,
   `CREATE TABLE IF NOT EXISTS beeline_github_webhook_deliveries (
     delivery_id TEXT PRIMARY KEY,
@@ -293,7 +293,7 @@ export const MIGRATIONS = [
     attempted_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (community, subject)
   )`,
-  `CREATE INDEX IF NOT EXISTS beeline_github_install_flows_expiry_idx
+  `CREATE INDEX CONCURRENTLY IF NOT EXISTS beeline_github_install_flows_expiry_idx
     ON beeline_github_install_flows (expires_at)`,
   `CREATE TABLE IF NOT EXISTS beeline_github_repo_events (
     id BIGSERIAL PRIMARY KEY,
@@ -308,9 +308,9 @@ export const MIGRATIONS = [
     summary TEXT NOT NULL,
     received_at TIMESTAMPTZ NOT NULL
   )`,
-  `CREATE INDEX IF NOT EXISTS beeline_github_repo_events_name_idx
+  `CREATE INDEX CONCURRENTLY IF NOT EXISTS beeline_github_repo_events_name_idx
     ON beeline_github_repo_events (full_name, id)`,
-  `CREATE INDEX IF NOT EXISTS beeline_github_repo_events_received_idx
+  `CREATE INDEX CONCURRENTLY IF NOT EXISTS beeline_github_repo_events_received_idx
     ON beeline_github_repo_events (received_at)`,
   `CREATE TABLE IF NOT EXISTS beeline_github_room_link_requests (
     community TEXT NOT NULL,
@@ -322,7 +322,7 @@ export const MIGRATIONS = [
     PRIMARY KEY (community, room_id),
     CHECK (requested_by ~ '^[0-9a-f]{64}$')
   )`,
-  `CREATE INDEX IF NOT EXISTS beeline_github_room_link_requests_name_idx
+  `CREATE INDEX CONCURRENTLY IF NOT EXISTS beeline_github_room_link_requests_name_idx
     ON beeline_github_room_link_requests (community, lower(full_name))
     WHERE activated_at IS NULL`,
 ] as const;

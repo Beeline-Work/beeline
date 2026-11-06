@@ -30,9 +30,10 @@ DO $$ BEGIN
   IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='agent_commands_turn_owner_pair'
     AND conrelid='agent_commands'::regclass) THEN
     ALTER TABLE agent_commands ADD CONSTRAINT agent_commands_turn_owner_pair CHECK
-      ((turn_owner_connection_id IS NULL)=(turn_owner_epoch IS NULL));
+      ((turn_owner_connection_id IS NULL)=(turn_owner_epoch IS NULL)) NOT VALID;
   END IF;
 END $$;
+ALTER TABLE agent_commands VALIDATE CONSTRAINT agent_commands_turn_owner_pair;
 CREATE INDEX IF NOT EXISTS agent_commands_turn_owner_claimed
   ON agent_commands(agent_id,turn_owner_connection_id,turn_owner_epoch)
   WHERE state='claimed' AND turn_owner_connection_id IS NOT NULL;

@@ -560,17 +560,22 @@ $corner_owed$;
 DROP TRIGGER IF EXISTS corner_owed_message_insert ON messages;
 CREATE TRIGGER corner_owed_message_insert AFTER INSERT ON messages
   FOR EACH ROW EXECUTE FUNCTION corner_owed_message_changed();
+-- Match PostgreSQL's stored expression so deploy leaves this trigger in place.
 DROP TRIGGER IF EXISTS corner_owed_message_update ON messages;
 CREATE TRIGGER corner_owed_message_update
   AFTER UPDATE OF text,card,card_type,presentation,reply_to_message_id,attachments,
     author_id,created_at,deleted_at ON messages
-  FOR EACH ROW WHEN (
-    (OLD.text,OLD.card,OLD.card_type,OLD.presentation,OLD.reply_to_message_id,
-      OLD.attachments,OLD.author_id,OLD.created_at,OLD.deleted_at)
-    IS DISTINCT FROM
-    (NEW.text,NEW.card,NEW.card_type,NEW.presentation,NEW.reply_to_message_id,
-      NEW.attachments,NEW.author_id,NEW.created_at,NEW.deleted_at)
-  ) EXECUTE FUNCTION corner_owed_message_changed();
+  FOR EACH ROW WHEN ((
+    (OLD.text IS DISTINCT FROM NEW.text)
+    OR (OLD.card IS DISTINCT FROM NEW.card)
+    OR (OLD.card_type IS DISTINCT FROM NEW.card_type)
+    OR (OLD.presentation IS DISTINCT FROM NEW.presentation)
+    OR (OLD.reply_to_message_id IS DISTINCT FROM NEW.reply_to_message_id)
+    OR (OLD.attachments IS DISTINCT FROM NEW.attachments)
+    OR (OLD.author_id IS DISTINCT FROM NEW.author_id)
+    OR (OLD.created_at IS DISTINCT FROM NEW.created_at)
+    OR (OLD.deleted_at IS DISTINCT FROM NEW.deleted_at)
+  )) EXECUTE FUNCTION corner_owed_message_changed();
 
 -- Joining or leaving a corner, or its Room (whose membership an @channel
 -- tag reads), changes what that person is owed there.

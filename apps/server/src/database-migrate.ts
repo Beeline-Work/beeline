@@ -71,7 +71,23 @@ export async function migrate(
   database: SqlDatabase,
   options: { deferData?: boolean } = {},
 ): Promise<void> {
-  const ddl = async (name: string, sql: string) => runMigrationStep(name, async () => { await database.query(sql); });
+  const ddl = async (name: string, sql: string) => runMigrationStep(name, async () => {
+    const statement = sql.replace(/^(?:\s*--[^\n]*\n)*/, '').trim();
+    const index = /^CREATE\s+(UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s+ON\b/i.exec(statement);
+    if (index) {
+      await createIndexConcurrently(database, index[2]!, statement.replace(/\bINDEX\b/i, 'INDEX CONCURRENTLY'));
+      return;
+    }
+    // Install CHECK/FK enforcement without scanning the hot table under the
+    // ALTER lock. Validation uses PostgreSQL's weaker online lock separately.
+    const constraint = /^ALTER\s+TABLE\s+(\w+)\s+ADD\s+CONSTRAINT\s+(\w+)\s+(?:CHECK|FOREIGN\s+KEY)\b/i.exec(statement);
+    if (constraint && !/\bNOT\s+VALID\b/i.test(statement)) {
+      await database.query(statement.replace(/;?\s*$/, ' NOT VALID;'));
+      await database.query(`ALTER TABLE ${constraint[1]} VALIDATE CONSTRAINT ${constraint[2]}`);
+      return;
+    }
+    await database.query(sql);
+  });
   const ddlScript = async (name: string, sql: string) => {
     const statements = splitMigrationStatements(sql);
     for (let index = 0; index < statements.length; index++) {
@@ -108,45 +124,11 @@ export async function migrate(
   await ddlScript('agent command schema', AGENT_COMMAND_SCHEMA);
   await ddlScript('turn ownership schema', TURN_OWNERSHIP_SCHEMA);
   await ddlScript('agent turn ending', AGENT_TURN_END_SCHEMA);
-  // The phone reads source rows directly. Disable old capture triggers on
-  // upgraded databases; keep stored rows available to an older server rollback.
-  await ddlScript('remove retired phone read capture', `
-    DO $$ DECLARE retired record; BEGIN
-      FOR retired IN SELECT trigger.tgname, table_schema.nspname, relation.relname
-        FROM pg_trigger trigger JOIN pg_proc function ON function.oid=trigger.tgfoid
-        JOIN pg_class relation ON relation.oid=trigger.tgrelid
-        JOIN pg_namespace table_schema ON table_schema.oid=relation.relnamespace
-        WHERE NOT trigger.tgisinternal AND table_schema.nspname=current_schema()
-          AND function.proname IN (
-        'beeline_usage_cell_source',
-        'beeline_commit_tray_clock_owner',
-        'beeline_media_authority',
-        'beeline_owner_projection_source',
-        'beeline_profile_projection_source',
-        'beeline_room_schedules_capture',
-        'beeline_roster_projection_source',
-        'beeline_router_authority_capture',
-        'beeline_router_extra_capture',
-        'beeline_router_workspace_stream',
-        'beeline_saved_source_capture',
-        'beeline_saved_window_capture',
-        'beeline_saved_window_identity',
-        'beeline_scheduled_work_authority',
-        'beeline_scheduled_work_row_source',
-        'beeline_tray_clock_capture',
-        'beeline_tray_clock_health_change',
-        'beeline_tray_clock_room_move',
-        'beeline_tray_clock_workspace_birth',
-        'beeline_tray_mutable_capture')
-      LOOP
-        EXECUTE format('DROP TRIGGER %I ON %I.%I',retired.tgname,retired.nspname,retired.relname);
-      END LOOP;
-    END $$;
-  `);
+  // The previous serving/rollback image still owns its notification capture
+  // triggers. Retire them together with their storage in a later contract release.
   await ddlScript('router command identity', ROUTER_COMMAND_SCHEMA);
   await ddlScript('retired turn recovery schema', `
     ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS startup_outcome text;
-    DROP TABLE IF EXISTS agent_startup_backoff;
     DROP TRIGGER IF EXISTS defer_startup_wake ON agent_commands;
     DROP FUNCTION IF EXISTS defer_startup_wake();
   `);
@@ -178,10 +160,6 @@ export async function migrate(
     `CREATE INDEX CONCURRENTLY free_agent_events_model_cost_at ON free_agent_events(at)
      WHERE kind='model_usage'`,
   ));
-  await ddl('retire room webhooks', `
-    DROP TABLE IF EXISTS room_webhook_idempotency, room_webhook_rates,
-      room_webhook_deliveries, room_webhook_requests, room_webhooks;
-  `);
   await ddlScript('github star prompt schema', GITHUB_STAR_PROMPT_SCHEMA);
   await ddlScript('mobile store minimum schema', MOBILE_MINIMUM_SCHEMA);
   // Bounded operator history reads use date-leading indexes rather than
@@ -250,7 +228,6 @@ export async function migrate(
      ON messages(room_id,author_id,created_at DESC,id DESC)
      WHERE presentation='activity' AND durable_fact IS NULL`,
   ));
-  await database.query('DROP INDEX IF EXISTS messages_workflow_active_trigger_idx');
   await runMigrationStep('unread cursor index', () => createIndexConcurrently(
     database, 'messages_unread_cursor_idx',
     `CREATE INDEX CONCURRENTLY messages_unread_cursor_idx
@@ -305,7 +282,6 @@ export async function migrate(
        WHERE state='active' AND deleted_at IS NULL AND embedding IS NULL`,
     ));
   // Exact distance scans stay inside one Workspace's small active set.
-  await database.query('DROP INDEX IF EXISTS institutional_memory_items_embedding_idx');
   await runMigrationStep('workspace skill embedding backfill index', () =>
     createIndexConcurrently(
       database,
@@ -314,7 +290,6 @@ export async function migrate(
        ON workspace_skills(updated_at ASC)
        WHERE state='active' AND embedding IS NULL`,
     ));
-  await database.query('DROP INDEX IF EXISTS workspace_skills_embedding_idx');
   // A corner's run state is its newest handoff card (corner-run.ts).
   await runMigrationStep('corner run card index', () => createIndexConcurrently(
     database, 'messages_corner_run_card_idx',
@@ -498,7 +473,6 @@ export async function migrate(
   await ddlScript('corner follows schema', cornerFollowsSchemaSql());
   await ddlScript('live notification schema', (await postgresLiveSchema()));
   await ddlScript('sentry eligibility source', SENTRY_WAKE_SOURCE_SCHEMA);
-  await ddlScript('Remove display deadline source', 'DROP FUNCTION IF EXISTS beeline_display_deadline_change() CASCADE;');
   await ddlScript('agent schedule due source', AGENT_SCHEDULE_SOURCE_SCHEMA);
   await ddlScript('pending attachment due source', PENDING_ATTACHMENT_SOURCE_SCHEMA);
   await ddlScript('computer expiry source', COMPUTER_EXPIRY_SCHEMA);
@@ -513,42 +487,8 @@ export async function migrate(
   await ddlScript('Helper command activation', HELPER_ACTIVATION_SCHEMA);
   await ddlScript('push outbox', PUSH_OUTBOX_SCHEMA);
   await ddlScript('Background obligation sources', BACKGROUND_DUE_SOURCE_SCHEMA);
-  await ddlScript('Retire Tray clock and unused background effects', `
-DROP TRIGGER IF EXISTS beeline_tray_clock_message_retire ON messages;
-DROP TRIGGER IF EXISTS beeline_tray_clock_message_insert ON messages;
-DROP TRIGGER IF EXISTS beeline_tray_clock_message_change ON messages;
-DROP TRIGGER IF EXISTS beeline_tray_clock_seen_retire ON needs_you_marks;
-DROP TRIGGER IF EXISTS beeline_tray_clock_seen_insert ON needs_you_marks;
-DROP TRIGGER IF EXISTS beeline_tray_clock_seen_change ON needs_you_marks;
-DROP TRIGGER IF EXISTS beeline_tray_clock_choice_retire ON room_choices;
-DROP TRIGGER IF EXISTS beeline_tray_clock_choice_insert ON room_choices;
-DROP TRIGGER IF EXISTS beeline_tray_clock_choice_change ON room_choices;
-DROP TRIGGER IF EXISTS beeline_tray_clock_room_move ON rooms;
-DROP TRIGGER IF EXISTS beeline_tray_clock_workspace_birth ON workspaces;
-DROP TABLE IF EXISTS tray_clock_deadlines, tray_clock_sources, tray_clock_state,
-  tray_clock_readiness, tray_clock_readiness_floor, tray_clock_health, tray_clock_owner_fences CASCADE;
-DROP FUNCTION IF EXISTS beeline_tray_clock_is_open(text,text,text) CASCADE;
-DROP FUNCTION IF EXISTS beeline_tray_clock_desired(text,text,text) CASCADE;
-DROP FUNCTION IF EXISTS beeline_tray_clock_reconcile(text,text,text) CASCADE;
-DROP FUNCTION IF EXISTS beeline_tray_clock_retire(text,text,text) CASCADE;
-DROP FUNCTION IF EXISTS beeline_tray_clock_consume(text,text,bigint) CASCADE;
-DROP FUNCTION IF EXISTS beeline_tray_clock_capture() CASCADE;
-DROP FUNCTION IF EXISTS beeline_tray_clock_room_move() CASCADE;
-DROP FUNCTION IF EXISTS beeline_tray_clock_lock_workspaces(uuid[]) CASCADE;
-DROP FUNCTION IF EXISTS beeline_tray_clock_publish_basis(uuid,boolean) CASCADE;
-DROP FUNCTION IF EXISTS beeline_tray_clock_readiness_wake(uuid) CASCADE;
-DROP FUNCTION IF EXISTS beeline_tray_clock_require_readiness(uuid[]) CASCADE;
-DROP FUNCTION IF EXISTS beeline_tray_clock_workspace_birth() CASCADE;
-DROP FUNCTION IF EXISTS beeline_tray_clock_health_change() CASCADE;
-DROP FUNCTION IF EXISTS beeline_register_tray_clock_owner(text,bigint,uuid) CASCADE;
-DROP FUNCTION IF EXISTS beeline_commit_tray_clock_owner() CASCADE;
-DROP TABLE IF EXISTS background_effect_attempts, background_leader_owners CASCADE;
-DROP FUNCTION IF EXISTS beeline_background_backend_holds(integer,timestamptz) CASCADE;
-DROP INDEX IF EXISTS tray_clock_readiness_rooms_idx;
-DROP INDEX IF EXISTS tray_clock_readiness_messages_idx;
-DROP INDEX IF EXISTS tray_clock_readiness_marks_idx;
-DROP INDEX IF EXISTS tray_clock_readiness_choices_idx;
-`);
+  // Retired Tray clock and background storage remains through the serving and
+  // rollback overlap. A later release owns its contract, after its readers drain.
   if (!options.deferData) await migrateData(database);
 }
 
@@ -699,13 +639,15 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     await database.query(`ALTER TABLE institutional_memory_items
       DROP CONSTRAINT IF EXISTS institutional_memory_items_state_check`);
     await database.query(`ALTER TABLE institutional_memory_items
-      ADD CONSTRAINT institutional_memory_items_state_check CHECK (state IN ('active','stale','archived'))`);
+      ADD CONSTRAINT institutional_memory_items_state_check CHECK (state IN ('active','stale','archived')) NOT VALID`);
+    await database.query(`ALTER TABLE institutional_memory_items VALIDATE CONSTRAINT institutional_memory_items_state_check`);
     await database.query(`UPDATE workspace_skills SET state='stale'
       WHERE state='archived'`);
     await database.query(`ALTER TABLE workspace_skills
       DROP CONSTRAINT IF EXISTS workspace_skills_state_check`);
     await database.query(`ALTER TABLE workspace_skills
-      ADD CONSTRAINT workspace_skills_state_check CHECK (state IN ('active','stale','archived'))`);
+      ADD CONSTRAINT workspace_skills_state_check CHECK (state IN ('active','stale','archived')) NOT VALID`);
+    await database.query(`ALTER TABLE workspace_skills VALIDATE CONSTRAINT workspace_skills_state_check`);
     await database.query(`UPDATE institutional_memory_jobs
       SET status='dead',error='curator model jobs removed',updated_at=now()
       WHERE trigger_kind='curator' AND status IN ('pending','retry','claimed')`);

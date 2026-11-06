@@ -31,9 +31,10 @@ DO $$ BEGIN
       AND conname='agent_grants_kind_check' AND pg_get_constraintdef(oid) LIKE '%shared_asset%') THEN
     ALTER TABLE agent_grants DROP CONSTRAINT IF EXISTS agent_grants_kind_check;
     ALTER TABLE agent_grants ADD CONSTRAINT agent_grants_kind_check
-      CHECK (kind IN ('path','host','secret','device','budget','command','mcp','repository','shared_asset'));
+      CHECK (kind IN ('path','host','secret','device','budget','command','mcp','repository','shared_asset')) NOT VALID;
   END IF;
 END $$;
+ALTER TABLE agent_grants VALIDATE CONSTRAINT agent_grants_kind_check;
 CREATE INDEX IF NOT EXISTS agent_grants_agent_idx ON agent_grants(agent_id, workspace_id, status);
 CREATE INDEX IF NOT EXISTS agent_grants_room_idx ON agent_grants(room_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS agent_grants_pending_idx ON agent_grants(workspace_id)
@@ -116,8 +117,6 @@ CREATE TABLE IF NOT EXISTS room_choice_votes (
 ALTER TABLE room_choice_votes ADD COLUMN IF NOT EXISTS note text;
 
 -- Retired: empty in production on 2026-11-02 and written by nothing on main.
-DROP TABLE IF EXISTS import_items;
-DROP TABLE IF EXISTS import_runs;
 
 -- Workbench: per-human connector provisioning. One row per (Workspace,
 -- owner, connector type, machine): a connection belongs to whoever
@@ -154,11 +153,6 @@ ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS pairing_generation int
 -- rows could otherwise be sent as unknown install assignments. Their old
 -- synthetic connections cascade with the connector.
 DELETE FROM workspace_connectors WHERE connector_type='composio';
-ALTER TABLE workspace_connectors DROP COLUMN IF EXISTS composio_session_id;
-ALTER TABLE workspace_connectors DROP COLUMN IF EXISTS composio_link_toolkit;
-ALTER TABLE workspace_connectors DROP COLUMN IF EXISTS composio_ready;
-ALTER TABLE workspace_connectors DROP COLUMN IF EXISTS composio_link_started_at;
-ALTER TABLE workspace_connectors DROP COLUMN IF EXISTS composio_scope;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_server_name text;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_version text;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_manifest jsonb;
@@ -543,7 +537,6 @@ CREATE INDEX IF NOT EXISTS feedback_items_issue_idx
 CREATE INDEX IF NOT EXISTS feedback_items_workspace_idx ON feedback_items(workspace_id);
 CREATE INDEX IF NOT EXISTS feedback_items_room_idx ON feedback_items(room_id) WHERE room_id IS NOT NULL;
 -- Retired: empty in production on 2026-11-02 and written by nothing on main.
-DROP TABLE IF EXISTS feedback_issue_comments;
 
 -- First-party Google Workspace consent is retired. Existing sealed grants
 -- cannot be moved to a different OAuth client, so disconnect the old rows and
@@ -623,9 +616,10 @@ DELETE FROM workspace_connectors WHERE connector_type='trusty-squire';
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='workspace_connectors_no_squire') THEN
     ALTER TABLE workspace_connectors ADD CONSTRAINT workspace_connectors_no_squire
-      CHECK (connector_type<>'trusty-squire');
+      CHECK (connector_type<>'trusty-squire') NOT VALID;
   END IF;
 END $$;
+ALTER TABLE workspace_connectors VALIDATE CONSTRAINT workspace_connectors_no_squire;
 
 ${SERVICE_REVIEW_READ_SCHEMA}
 `;

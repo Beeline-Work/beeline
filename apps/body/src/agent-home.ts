@@ -57,7 +57,7 @@ import { DRAW_AVATAR_SKILL_NAME } from './draw-avatar-skill.js';
 import { AGENT_BEHAVIORS, SHARED_CREDENTIALS, agentBehavior, type AgentKind } from './agent-command.js';
 import { BEELINE_REVIEW_SKILL_NAME, BEELINE_SPEC_SKILL_NAME, BEELINE_ONBOARDING_SKILL_NAME, BEELINE_TRIAGE_SKILL_NAME, runningBeelineReleaseId, SITUATIONAL_SKILL_NAMES } from './beeline-skill.js';
 import { type OpenRouterRoutingHomeInput } from './openrouter-routing.js';
-import { isMissingPathError, assertRealContainedDirectory, roomSessionTmpDir, roomAgentHomeEnv } from './agent-home-plan-managed-skills.js';
+import { isMissingPathError, assertRealContainedDirectory, roomSessionTmpDir, roomAgentHomeEnv, writeIsolatedHarnessFile } from './agent-home-plan-managed-skills.js';
 import { provisionAgentSkillsAndMcp } from './agent-home-provision-agent-skills-and-mcp.js';
 export { AGENT_PRIVATE_STATE_ENV } from './agent-private-state-env.js';
 
@@ -593,6 +593,9 @@ export async function prepareRoomAgentHome(
       await mkdir(path, { recursive: true, mode: 0o700 });
       await assertRealContainedDirectory(path, root);
     }
+    // Yahoo's public chart endpoint rejects curl's default User-Agent with an
+    // edge 429. Identify agent requests truthfully; explicit curl -A still wins.
+    await writeIsolatedHarnessFile(resolve(root, 'user', '.curlrc'), 'user-agent = "Beeline/1.0"\n');
     // `TMPDIR` is the short symlink `roomAgentHomeEnv` reports, so a session's
     // Unix sockets stay inside `sun_path`; the bytes live in `root/tmp`. A
     // failure here must not cost the whole isolated home, so it degrades to

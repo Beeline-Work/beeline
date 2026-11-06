@@ -108,5 +108,5 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.buzz.radius,
     zIndex: 2,
   },
-  tipText: { ...theme.buzz.type.meta, color: theme.buzz.textPrimary, whiteSpace: 'nowrap' } as any,
+  tipText: { ...theme.buzz.type.meta, color: theme.buzz.textPrimary } as any,
 }));

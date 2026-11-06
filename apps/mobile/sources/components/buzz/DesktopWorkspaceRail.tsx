@@ -434,7 +434,6 @@ const stylesheet = StyleSheet.create((theme) => {
     labelMeta: {
       ...hull.type.meta,
       color: hull.textMuted,
-      ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' } : {}),
     } as any,
     separator: { width: 32, height: 1, marginVertical: 4, backgroundColor: hull.borderStrong },
     addTile: {

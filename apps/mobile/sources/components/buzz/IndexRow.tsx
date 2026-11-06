@@ -187,9 +187,9 @@ export type IndexRowProps = {
   actionControl?: IndexRowActionControl;
   /** The trailing chevron of a row that opens something. */
   chevron?: 'right' | 'down' | 'up';
-  /** The quiet line under the title: one short phrase, two lines at most. */
+  /** The full quiet copy under the title. */
   description?: string;
-  /** A short fact kept whole before a one-line, ellipsized description tail. */
+  /** A short fact before the wrapping description. */
   descriptionLead?: string;
   /** Custom rendering for the description; `description` remains its spoken text. */
   descriptionContent?: React.ReactNode;
@@ -222,12 +222,10 @@ export type IndexRowProps = {
   /** The row's current state, on the trailing axis. Never in the title. */
   value?: string;
   valueTone?: 'danger' | 'accent';
-  /** The title keeps its full width; the trailing value ellipsizes instead. */
+  /** The title keeps its full width before the trailing value wraps. */
   wholeTitle?: boolean;
-  /** Recovery notices keep all copy visible, including at large text sizes. */
 };
 
-/** A page subtitle is one short phrase; a long one stops at two lines. */
 
 /** The reserved width of a row's trailing column (DESIGN.md → Index rows). */
 const TRAILING_COLUMN = 72;

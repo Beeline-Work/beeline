@@ -296,7 +296,7 @@ export function beelineManagedSkills(
 export function beelineReviewSkillMarkdown(releaseId: string): string {
   return `---
 name: beeline-review
-description: Review a corner's current green head against its assigned brief and report only blocking findings.
+description: Review a corner's current green head against its assigned brief and report a concise verdict.
 ---
 
 <!-- beeline-release: ${releaseId} -->
@@ -307,7 +307,9 @@ description: Review a corner's current green head against its assigned brief and
 
 Read the current server-assigned brief and every required file. Its stories, criteria, non-goals and risks define scope; the commander order and inherited human constraints win conflicts. The short objective and PR description cannot change scope.
 
-Read the whole diff before creating a checkout. Use \`gh pr view N --json headRefOid,files\` and \`gh pr diff N\`. Review only that exact head; if it moves, start again. If you wrote its code, arrange independent review through your commander rather than reviewing your own work.
+Read the whole diff on every round before creating a checkout. Use \`gh pr view N --json headRefOid,files\` and \`gh pr diff N\`. Review only that exact head; if it moves, start again. If you wrote its code, arrange independent review through your commander rather than reviewing your own work.
+
+For re-review, find your latest FAIL for this PR in the corner and its reviewed head in the review context, then run \`git diff <last-reviewed-head> <assigned-head>\`. Re-review may block only on unfixed prior blockers or regressions introduced by that delta. Missed issues in unchanged code are non-blocking notes. This limit governs every check below.
 
 For commands that need the tree, use a detached temporary worktree; never the worker's active worktree. Install an EXIT trap with \`git worktree remove --force\` and remove it on PASS, FAIL or error. The one-shot helper is \`npm run review:exact-head -- <sha> [--typecheck <pkg> …] [--] <pkg>:<glob> …\`: it installs dependencies, builds package exports, runs named checks and cleans up. Check synchronization with the target branch, types, relevant tests, docs, lint and CI. An empty CI rollup alone proves nothing: \`read(facet:checks)\` with checks="passed" and checkCount=0 is the server-confirmed green path. A missing reviewer PASS can keep mergeAllowed false while you review.
 
@@ -344,7 +346,7 @@ Block only on a behavior with no Intent match or a quoted conflicting human deci
 
 ## Report the verdict
 
-Lead with the verdict and the one blocking reason, then the concrete next step for the worker. List only blocking items. No full outline ledger, message IDs, commit hashes, command transcripts or non-blocking findings in the posted review; put details behind an evidence link when needed.
+Complete all checks before reporting. Lead with PASS or FAIL and list every eligible blocker at once, each with a concrete next step for the worker. The first review must surface all confirmed blockers. Keep non-blocking notes separate from the verdict. No full outline ledger, message IDs, commit hashes or command transcripts in the posted review; put details behind an evidence link when needed.
 
 PASS: ready to land
 Next: call merge_corner when the live gate allows it
@@ -352,7 +354,7 @@ Next: call merge_corner when the live gate allows it
 FAIL: a removed Room member can still read its transcript
 Next: fix the membership guard and repeat the authenticated read proof
 
-On FAIL, use \`order(address, text)\` at the corner's address with that concise verdict and next step. On PASS, call \`approve_merge\` with the exact reviewed head SHA as its tool argument, then report done: PASS with the result to your commander. Follow an explicit commander order to land with \`merge_corner\` when the live gate permits it. If a choice or dependency exceeds your authority, report needs-decision: or blocked: one step up. Orders go down; reports go up. Do not start a nested validation pipeline or push the worker's branch.
+On FAIL, use \`order(address, text)\` at the corner's address with all blockers and their next steps. On PASS, call \`approve_merge\` with the exact reviewed head SHA as its tool argument, then report done: PASS with the result to your commander. Follow an explicit commander order to land with \`merge_corner\` when the live gate permits it. If a choice or dependency exceeds your authority, report needs-decision: or blocked: one step up. Orders go down; reports go up. Do not start a nested validation pipeline or push the worker's branch.
 `;
 }
 

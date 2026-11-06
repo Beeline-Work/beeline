@@ -503,7 +503,9 @@ describe('monolith integration', () => {
       }
     ).id;
     const unrelatedApproval = await turnIn(unrelated);
-    const agentApproval = await turnIn(corner, AGENT);
+    const agentApproval = { messageId: createHash('sha256').update('triage-agent-approval').digest('hex') };
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Agent approval')`,
+      [agentApproval.messageId, corner, AGENT]);
     const attachments = new Map<string, { objectId: string; purpose: string; required: boolean }>();
     for (const [index, sourceRoomId] of [ROOM, cornerId, corner, unrelated].entries()) {
       const objectId = `65432109-0000-4000-8000-00000000000${index}`;
@@ -11024,7 +11026,7 @@ describe('monolith integration', () => {
     const { messageId: root } = await source.json() as { messageId: string };
     const requestId = createHash('sha256').update('grant-src-1-turn').digest('hex');
     await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Agent request')`,
-      [requestId, ROOM, AGENT]);
+      [requestId, ROOM, SYSTEM_IDENTITY_ID]);
     const command = await createAgentCommand(database, {
       roomId: ROOM, agentId: AGENT, sourceMessageId: requestId,
       turnRequestId: requestId, reason: 'fixture',
@@ -11478,9 +11480,10 @@ describe('monolith integration', () => {
       )
     ).rows[0]!;
     const delegated = createHash('sha256').update('delegated-resource-task').digest('hex');
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Delegating agent')`, [WELCOME_AGENT]);
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES($1,$2,$3,'delegated task','message')`,
-      [delegated, ROOM, AGENT],
+      [delegated, ROOM, WELCOME_AGENT],
     );
     await createAgentCommand(database, {
       roomId: ROOM,

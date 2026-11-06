@@ -9,6 +9,8 @@ import { PushDeliveryLoop } from './background.js';
 import { GitHubOperations } from './github-operations.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { createAgentCommand } from './agent-command.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import { ensureSystemIdentity } from './system-line.js';
 
 const H = 'a'.repeat(64),
   A = 'b'.repeat(64),
@@ -256,9 +258,10 @@ it('does not treat an automatic workflow card as a dispatching message', async (
     ])
   ).rows[0];
   const sourceId = randomBytes(32).toString('hex');
+  await ensureSystemIdentity(db);
   await db.query(
     `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card) VALUES($1,$2,$3,'Workflow step','card','workflow-handoff','{}')`,
-    [sourceId, DM, A],
+    [sourceId, DM, SYSTEM_IDENTITY_ID],
   );
   const command = await createAgentCommand(db, {
     roomId: DM,

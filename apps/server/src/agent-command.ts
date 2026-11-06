@@ -599,6 +599,8 @@ export async function createAgentCommand(
     /** Conversation tags retain chain depth without inheriting assignment privacy. */
     inheritPrivatePayload?: boolean;
     avatarJob?: boolean;
+    /** Explicit workflow assignee, excluding ordinary event subscribers. */
+    workflowAssignment?: boolean;
     /** A line appended to a lifecycle wake's text, fixed at dispatch. */
     wakeNote?: string;
   },
@@ -607,12 +609,15 @@ export async function createAgentCommand(
   return db.transaction(async (db) => {
   await lockAgentCommandQueue(db, input.roomId, input.agentId);
   // Membership removal serializes with dispatch; lifecycle wakes retain their opening order.
-  const member = await db.query<{ opening: CommandRow | null; source_text: string | null; source_event: { kind?: string } | null; self_authored: boolean; human_input: boolean; failing_check_wake: boolean; app_callback_url: string | null }>(
+  const member = await db.query<{ opening: CommandRow | null; source_text: string | null; source_event: { kind?: string } | null; workflow_assignment: boolean; self_authored: boolean; human_input: boolean; failing_check_wake: boolean; app_callback_url: string | null }>(
     `SELECT (SELECT to_jsonb(opened) FROM agent_commands opened
        WHERE r.parent_id IS NOT NULL AND opened.room_id=r.id AND opened.private_payload->>'kind'='order'
        ORDER BY (opened.agent_id=$2) DESC,opened.created_at DESC,opened.id DESC LIMIT 1) opening,
        (SELECT text FROM messages WHERE id=$3) source_text,
        (SELECT system_event FROM messages WHERE id=$3) source_event,
+       EXISTS (SELECT 1 FROM messages WHERE id=$3 AND card_type='workflow-handoff'
+         AND system_event->>'kind'='workflow-handoff'
+         AND COALESCE(card->>'runStatus','live')='live') workflow_assignment,
        (COALESCE($5::text=$2,false) OR COALESCE($8::text=$2,false) OR EXISTS (
          WITH RECURSIVE output AS (
            SELECT id,author_id,system_event,event_cause_id,ARRAY[id] path FROM messages WHERE id=$3
@@ -647,7 +652,11 @@ export async function createAgentCommand(
   // admit another turn, delayed wake, or app delivery for that same output.
   // Resolve the incoming source, not an inherited order's historical author:
   // an external lifecycle event still wakes a corner's self-opening worker.
-  const selfAuthored = member.rows[0]!.self_authored &&
+  // Assignments start work even when their assignee opened the corner or
+  // advanced its workflow. Ordinary output still cannot start another turn.
+  const assignment = input.reason === 'corner_objective' ||
+    input.workflowAssignment === true && member.rows[0]!.workflow_assignment;
+  const selfAuthored = !assignment && member.rows[0]!.self_authored &&
     [undefined, 'input', 'resume'].includes(input.action);
   // A green review is the reply to a block filed while checks were still pending.
   // A red head still wakes the implementer after that block: the four-push stop
@@ -1825,6 +1834,7 @@ export async function routeSystemCommand(
     sourceMessageId: string;
     kind?: string;
     targets: readonly string[];
+    assignmentTargets?: readonly string[];
     requestId?: string;
     causeId?: string;
     commandId?: string;
@@ -1934,6 +1944,7 @@ export async function routeSystemCommand(
       roomId: input.roomId,
       agentId,
       sourceMessageId: input.sourceMessageId,
+      workflowAssignment: input.assignmentTargets?.includes(agentId),
       action,
       reason:
         action === 'input'

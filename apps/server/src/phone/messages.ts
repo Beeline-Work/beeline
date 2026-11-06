@@ -15,7 +15,7 @@ import type { PhoneContext } from './context.js';
 import { Input, Output } from './types.js';
 import { phoneWithCommandTransaction } from './command-context.js';
 import { messageId, advanceAuthorReadMark } from './values.js';
-import { phoneUnansweredMentionTargets, phoneNoteUnansweredMentions, phoneActiveSteerAgentIds, phonePendingAgentCommandsForMessage, phoneReceiptMessage } from './mention-notices.js';
+import { phoneUnansweredMentionTargets, phoneNoteUnansweredMentions, phonePendingAgentCommandsForMessage, phoneReceiptMessage } from './mention-notices.js';
 import { phoneHasRoomAccess, phoneAssertRoomIsWritable, phoneRequireWorkspaceMember } from './access.js';
 import { phoneReadLiveDelta, phoneLiveStarPrompt } from './live-reads.js';
 
@@ -239,10 +239,9 @@ import { phoneReadLiveDelta, phoneLiveStarPrompt } from './live-reads.js';
     }
     return {
       messageId: id,
-      activeSteerAgentIds: mayRoute ? await phoneActiveSteerAgentIds(ctx, database, id) : [],
       pendingAgentCommands: mayRoute
         ? await phonePendingAgentCommandsForMessage(ctx, database, input.roomId, id) : [],
-      ...(await phoneReceiptMessage(ctx, input.roomId, author, id, database)),
+      ...(await phoneReceiptMessage(ctx, input.roomId, author, id, database, mayRoute)),
     };
   }
 
@@ -321,7 +320,6 @@ import { phoneReadLiveDelta, phoneLiveStarPrompt } from './live-reads.js';
     }
     return {
       messageId: id,
-      activeSteerAgentIds: await phoneActiveSteerAgentIds(ctx, database, id),
       pendingAgentCommands: await phonePendingAgentCommandsForMessage(ctx, database, input.roomId, id),
       ...(await phoneReceiptMessage(ctx, input.roomId, author, id, database)),
     };

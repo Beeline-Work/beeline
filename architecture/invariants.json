@@ -95,11 +95,10 @@
       ],
       "ownerFunctions": {
         "apps/server/src/agent-command.ts": [
-          "claimAgentCommand",
-          "renewAgentCommandLease"
+          "claimAgentCommand"
         ]
       },
-      "ownerSites": 2,
+      "ownerSites": 1,
       "strict": true,
       "total": 0,
       "fix": "Call claimAgentCommand; connected apps select orders with claimMcpOrder."
@@ -488,6 +487,86 @@
       "fix": "Remove the additional connection banner. The app layout owns the only mount."
     },
     {
+      "id": "work.command-terminal",
+      "module": "Turn lifecycle",
+      "invariant": "Only beeline_end_agent_turn changes a command or turn to a terminal state.",
+      "pattern": "(?:UPDATE\\s+(?:\"?\\w+\"?\\s*\\.\\s*)?\"?agent_commands\"?\\s+(?:(?:AS\\s+)?\"?\\w+\"?\\s+)?|INSERT\\s+INTO\\s+(?:\"?\\w+\"?\\s*\\.\\s*)?\"?agent_commands\"?\\s*\\((?:(?!;|`).)*?\\bON\\s+CONFLICT(?:(?!;|`).)*?\\bDO\\s+UPDATE\\s+)SET\\s+(?:(?!\\bWHERE\\b|;|`).)*?\\b\"?state\"?\\s*=(?!\\s*'(?:pending|claimed)')",
+      "flags": "is",
+      "scope": [
+        "apps/server/src"
+      ],
+      "owners": [
+        "apps/server/src/agent-turn-end.ts"
+      ],
+      "ownerFunctions": {
+        "apps/server/src/agent-turn-end.ts": [
+          "AGENT_TURN_END_SCHEMA"
+        ]
+      },
+      "ownerSites": 1,
+      "strict": true,
+      "total": 0,
+      "fix": "Call endAgentTurn or beeline_end_agent_turn in the caller authority transaction; connection loss returns work to pending."
+    },
+    {
+      "id": "work.turn-terminal",
+      "module": "Turn lifecycle",
+      "invariant": "Only beeline_end_agent_turn changes a command or turn to a terminal state.",
+      "pattern": "(?:UPDATE\\s+(?:\"?\\w+\"?\\s*\\.\\s*)?\"?agent_turns\"?\\s+(?:(?:AS\\s+)?\"?\\w+\"?\\s+)?|INSERT\\s+INTO\\s+(?:\"?\\w+\"?\\s*\\.\\s*)?\"?agent_turns\"?\\s*\\((?:(?!;|`).)*?\\bON\\s+CONFLICT(?:(?!;|`).)*?\\bDO\\s+UPDATE\\s+)SET\\s+(?:(?!\\bWHERE\\b|;|`).)*?\\b\"?status\"?\\s*=(?!\\s*'working')",
+      "flags": "is",
+      "scope": [
+        "apps/server/src"
+      ],
+      "owners": [
+        "apps/server/src/agent-turn-end.ts"
+      ],
+      "ownerFunctions": {
+        "apps/server/src/agent-turn-end.ts": [
+          "AGENT_TURN_END_SCHEMA"
+        ]
+      },
+      "ownerSites": 1,
+      "strict": true,
+      "total": 0,
+      "fix": "Call endAgentTurn or beeline_end_agent_turn in the caller authority transaction; connection loss returns work to pending."
+    },
+    {
+      "id": "work.terminal-turn-insert",
+      "module": "Turn lifecycle",
+      "invariant": "Turns are started as working; terminal turns are written only by beeline_end_agent_turn.",
+      "pattern": "INSERT\\s+INTO\\s+(?:\"?\\w+\"?\\s*\\.\\s*)?\"?agent_turns\"?(?=\\s|\\(|$)(?:\\s*\\([^)]*\\)\\s*(?:VALUES\\s*\\(|SELECT\\s+))?",
+      "flags": "is",
+      "scope": [
+        "apps/server/src"
+      ],
+      "owners": [],
+      "strict": true,
+      "total": 0,
+      "fix": "Insert working turns only; finish them through endAgentTurn.",
+      "insertColumnValue": {
+        "column": "status",
+        "value": "'working'"
+      }
+    },
+    {
+      "id": "work.terminal-command-insert",
+      "module": "Turn lifecycle",
+      "invariant": "Commands are created pending; only beeline_end_agent_turn writes terminal commands.",
+      "pattern": "INSERT\\s+INTO\\s+(?:\"?\\w+\"?\\s*\\.\\s*)?\"?agent_commands\"?(?=\\s|\\(|$)(?:\\s*\\([^)]*\\)\\s*(?:VALUES\\s*\\(|SELECT\\s+))?",
+      "flags": "is",
+      "scope": [
+        "apps/server/src"
+      ],
+      "owners": [],
+      "strict": true,
+      "total": 0,
+      "fix": "Insert pending commands, then claim them through claimAgentCommand; end them through endAgentTurn.",
+      "insertColumnValue": {
+        "column": "state",
+        "value": "'pending'"
+      }
+    },
+    {
       "id": "helper.agent-process",
       "module": "Helper agent processes",
       "invariant": "Only agent-process.ts calls ACP process lifecycle primitives; acp.ts defines them. Work starts processes and one warm countdown retires them.",
@@ -520,7 +599,7 @@
       "apps/server/src",
       "apps/auth/src"
     ],
-    "bootstrapTotal": 1741,
+    "bootstrapTotal": 1717,
     "unusedTotal": 181,
     "tables": {
       "agent_avatars": {
@@ -559,7 +638,10 @@
           "result_message_id": "existing before the registry; weekly audit reviews",
           "private_payload": "existing before the registry; weekly audit reviews",
           "avatar_job": "existing before the registry; weekly audit reviews",
-          "hiccup_attempts": "existing before the registry; weekly audit reviews",
+          "hiccup_attempts": {
+            "reason": "Retained without runtime use until the previous server drains during this rolling release.",
+            "drop": "Next release after turn-lifecycle cleanup: docs/agent-server-surfaces.md#turn-recovery-storage-retirement"
+          },
           "renudged_at": "existing before the registry; weekly audit reviews",
           "lifecycle_before": "existing before the registry; weekly audit reviews",
           "review_context": "existing before the registry; weekly audit reviews",
@@ -568,14 +650,29 @@
           "restart_confirmed_at": "existing before the registry; weekly audit reviews",
           "cancellation_reason": "existing before the registry; weekly audit reviews",
           "recovery_context": "existing before the registry; weekly audit reviews",
-          "wake_after": "existing before the registry; weekly audit reviews",
-          "startup_wake_after": "existing before the registry; weekly audit reviews",
-          "coalesced_context": "existing before the registry; weekly audit reviews",
-          "coalesced_attachments": "existing before the registry; weekly audit reviews",
+          "wake_after": {
+            "reason": "Retained without runtime use until the previous server drains during this rolling release.",
+            "drop": "Next release after turn-lifecycle cleanup: docs/agent-server-surfaces.md#turn-recovery-storage-retirement"
+          },
+          "coalesced_context": {
+            "reason": "Retained without runtime use until the previous server drains during this rolling release.",
+            "drop": "Next release after turn-lifecycle cleanup: docs/agent-server-surfaces.md#turn-recovery-storage-retirement"
+          },
+          "coalesced_attachments": {
+            "reason": "Retained without runtime use until the previous server drains during this rolling release.",
+            "drop": "Next release after turn-lifecycle cleanup: docs/agent-server-surfaces.md#turn-recovery-storage-retirement"
+          },
           "inbox_sequence": "existing before the registry; weekly audit reviews",
-          "created_offline": "existing before the registry; weekly audit reviews",
+          "created_offline": {
+            "reason": "Retained without runtime use until the previous server drains during this rolling release.",
+            "drop": "Next release after turn-lifecycle cleanup: docs/agent-server-surfaces.md#turn-recovery-storage-retirement"
+          },
           "turn_owner_connection_id": "Pins an owned command generation to its actual helper registration; NULL retains the installed-helper adapter.",
-          "turn_owner_epoch": "Fences an owned command against takeover of that helper registration even if other identifiers remain the same."
+          "turn_owner_epoch": "Fences an owned command against takeover of that helper registration even if other identifiers remain the same.",
+          "startup_wake_after": {
+            "reason": "Retained without runtime use until the previous server drains during this rolling release.",
+            "drop": "Next release after turn-lifecycle cleanup: docs/agent-server-surfaces.md#turn-recovery-storage-retirement"
+          }
         }
       },
       "agent_connections": {
@@ -718,16 +815,6 @@
           "failed_revision": "Records the exact failed schedule revision; a committed edit or advance permits new work without altering the authorized due time."
         }
       },
-      "agent_startup_backoff": {
-        "module": "Background work and timers",
-        "reason": "existing before the registry; weekly audit reviews",
-        "columns": {
-          "agent_id": "existing before the registry; weekly audit reviews",
-          "failures": "existing before the registry; weekly audit reviews",
-          "window_started_at": "existing before the registry; weekly audit reviews",
-          "paused_until": "existing before the registry; weekly audit reviews"
-        }
-      },
       "agent_subscriptions": {
         "module": "Background work and timers",
         "reason": "existing before the registry; weekly audit reviews",
@@ -789,8 +876,11 @@
           "tool_calls": "existing before the registry; weekly audit reviews",
           "input_tokens": "existing before the registry; weekly audit reviews",
           "output_tokens": "existing before the registry; weekly audit reviews",
-          "startup_outcome": "existing before the registry; weekly audit reviews",
-          "ended_at": "when a turn ended; set by the turn's own status change, so idle timing never reads a mutable corner span"
+          "ended_at": "when a turn ended; set by the turn's own status change, so idle timing never reads a mutable corner span",
+          "startup_outcome": {
+            "reason": "Retained without runtime use until the previous server drains during this rolling release.",
+            "drop": "Next release after turn-lifecycle cleanup: docs/agent-server-surfaces.md#turn-recovery-storage-retirement"
+          }
         }
       },
       "agents": {
@@ -813,7 +903,10 @@
           "updated_at": "existing before the registry; weekly audit reviews",
           "usage_snapshot": "existing before the registry; weekly audit reviews",
           "usage_account_id": "existing before the registry; weekly audit reviews",
-          "wake_batch_minutes": "existing before the registry; weekly audit reviews",
+          "wake_batch_minutes": {
+            "reason": "Retained without runtime use until the previous server drains during this rolling release.",
+            "drop": "Next release after turn-lifecycle cleanup: docs/agent-server-surfaces.md#turn-recovery-storage-retirement"
+          },
           "machine_id": "existing before the registry; weekly audit reviews",
           "machine_name": "existing before the registry; weekly audit reviews",
           "squire_report": "existing before the registry; weekly audit reviews",
@@ -1203,7 +1296,10 @@
           "updated_at": "existing before the registry; weekly audit reviews",
           "model": "existing before the registry; weekly audit reviews",
           "starter_role": "existing before the registry; weekly audit reviews",
-          "allowance_paused_until": "existing before the registry; weekly audit reviews"
+          "allowance_paused_until": {
+            "reason": "Retained without runtime use until the previous server drains during this rolling release.",
+            "drop": "Next release after turn-lifecycle cleanup: docs/agent-server-surfaces.md#turn-recovery-storage-retirement"
+          }
         }
       },
       "github_auth_flows": {
@@ -1889,20 +1985,6 @@
           "recipients": "existing before the registry; weekly audit reviews",
           "text": "existing before the registry; weekly audit reviews",
           "created_at": "existing before the registry; weekly audit reviews"
-        }
-      },
-      "pending_mention_notices": {
-        "module": "Work authority",
-        "reason": "existing before the registry; weekly audit reviews",
-        "columns": {
-          "room_id": "existing before the registry; weekly audit reviews",
-          "agent_id": "existing before the registry; weekly audit reviews",
-          "sender_id": "existing before the registry; weekly audit reviews",
-          "source_message_id": "existing before the registry; weekly audit reviews",
-          "reason": "existing before the registry; weekly audit reviews",
-          "due_at": "existing before the registry; weekly audit reviews",
-          "notice_id": "existing before the registry; weekly audit reviews",
-          "notified_at": "existing before the registry; weekly audit reviews"
         }
       },
       "permission_authority": {
@@ -3202,6 +3284,32 @@
           "settled_at": "Records when the first durable settlement committed so later evidence cannot renew it.",
           "created_at": "Records durable provider admission time independently of eventual settlement."
         }
+      },
+      "agent_startup_backoff": {
+        "module": "Background work and timers",
+        "reason": "Retained without runtime use until the previous server drains during this rolling release.",
+        "columns": {
+          "agent_id": "Retained without runtime use until the previous server drains during this rolling release.",
+          "failures": "Retained without runtime use until the previous server drains during this rolling release.",
+          "window_started_at": "Retained without runtime use until the previous server drains during this rolling release.",
+          "paused_until": "Retained without runtime use until the previous server drains during this rolling release."
+        },
+        "drop": "Next release after turn-lifecycle cleanup: docs/agent-server-surfaces.md#turn-recovery-storage-retirement"
+      },
+      "pending_mention_notices": {
+        "module": "Work authority",
+        "reason": "Retained without runtime use until the previous server drains during this rolling release.",
+        "columns": {
+          "room_id": "Retained without runtime use until the previous server drains during this rolling release.",
+          "agent_id": "Retained without runtime use until the previous server drains during this rolling release.",
+          "sender_id": "Retained without runtime use until the previous server drains during this rolling release.",
+          "source_message_id": "Retained without runtime use until the previous server drains during this rolling release.",
+          "reason": "Retained without runtime use until the previous server drains during this rolling release.",
+          "due_at": "Retained without runtime use until the previous server drains during this rolling release.",
+          "notice_id": "Retained without runtime use until the previous server drains during this rolling release.",
+          "notified_at": "Retained without runtime use until the previous server drains during this rolling release."
+        },
+        "drop": "Next release after turn-lifecycle cleanup: docs/agent-server-surfaces.md#turn-recovery-storage-retirement"
       }
     },
     "jsonb": {
@@ -3224,7 +3332,6 @@
         "headSha": "existing before the registry; weekly audit reviews",
         "purpose": "existing before the registry; weekly audit reviews",
         "pullRequest": "existing before the registry; weekly audit reviews",
-        "reviewerConfiguration": "existing before the registry; weekly audit reviews",
         "cornerId": "existing before the registry; weekly audit reviews"
       },
       "wake_context": {},

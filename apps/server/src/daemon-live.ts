@@ -385,7 +385,7 @@ export class DaemonAgentSession {
               return {error:'activation_source_mismatch',status:409};
             return {result:await this.deps.daemon.readCommandActivation(parsed,this.agentId)};
           }
-          const owned=['claimAgentCommand','acknowledgeAgentCommand','postAgentTurnReceipt'].includes(operation);
+          const owned=['claimAgentCommand','claimAgentTurn','acknowledgeAgentCommand','postAgentTurnReceipt','releaseAgentTurn'].includes(operation);
           return {result:await this.deps.daemon.execute(operation,input,this.agentId,
             owned ? this.turnSource : undefined,owned ? this.#ownedModelCapability : undefined)};
         } catch(error) {

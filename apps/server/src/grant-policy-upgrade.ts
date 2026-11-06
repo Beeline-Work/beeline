@@ -122,16 +122,10 @@ export async function upgradeGrantPolicy(database: SqlDatabase): Promise<void> {
           turnDisposition = 'resumed';
         } else if (command) {
           const cancelled = await db.query<{ turn_request_id: string }>(
-            `UPDATE agent_commands SET state='cancelled',completed_at=now()
-             WHERE id=$1 AND state IN ('pending','claimed') RETURNING turn_request_id`,
+            `SELECT (terminal.ended).* FROM (SELECT beeline_end_agent_turn(agent_commands.id,agent_commands.generation_id,'cancelled',NULL,NULL) ended FROM agent_commands WHERE id=$1 AND state IN ('pending','claimed')) terminal`,
             [command.id],
           );
           if (cancelled.rowCount) {
-            await db.query(
-              `UPDATE agent_turns SET status='cancelled',created_at=now()
-               WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working'`,
-              [grant.room_id, grant.agent_id, command.turn_request_id],
-            );
             turnDisposition = 'cancelled';
           } else {
             turnDisposition = 'not-active';

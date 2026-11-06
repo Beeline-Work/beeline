@@ -39,11 +39,12 @@ vi.mock('react-native-svg', async () => {
 });
 vi.mock('react-native-unistyles', async () => {
   const { typeRoles } = await import('@/buzz/groknight');
+  const { completeTestTheme } = await import('../../../../../tests/helpers/phone');
   return {
     StyleSheet: {
       hairlineWidth: 1,
       create: (factory: (theme: unknown) => unknown) =>
-        factory({
+        factory(completeTestTheme({
           buzz: {
             humanRail: '#b08a4a',
             accent: '#c49a52',
@@ -52,7 +53,7 @@ vi.mock('react-native-unistyles', async () => {
             proseRegular: 'SpaceGrotesk-Regular',
             type: typeRoles,
           },
-        }),
+        })),
     },
     useUnistyles: () => ({ theme: { buzz: { ledgerGhost: '#6c6c76' } } }),
   };

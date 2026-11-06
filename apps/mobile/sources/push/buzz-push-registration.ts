@@ -3,18 +3,12 @@ import type { Identity } from '@beeline/buzz-client';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
-import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
-import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
+import { MonolithPhoneOperationError, monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { registerWebPush, unregisterWebPush } from './web-push-registration';
 
-const REGISTRATION_TIMEOUT_MS = 7_500;
 const PUSH_ENABLED_PREFIX = '@beeline/buzz-push/enabled/';
 const PUSH_TOKEN_PREFIX = '@beeline/buzz-push/token/';
 const PUSH_REGISTRATION_PREFIX = '@beeline/buzz-push/registration/';
-
-/** Automatic foreground retries back off exponentially from this base. */
-const RETRY_BASE_MS = 30_000;
-const RETRY_MAX_MS = 10 * 60_000;
 
 export type BuzzPushRegistrationPhase =
   | 'registered'
@@ -42,15 +36,7 @@ export interface BuzzPushRegistrationResult {
  * rather than merely whether the user asked for push.
  */
 export interface BuzzPushRegistrationState extends BuzzPushRegistrationResult {
-  failedAttempts: number;
   updatedAt: number;
-}
-
-class RegistrationTimeoutError extends Error {
-  constructor(description: string) {
-    super(`${description} timed out after ${REGISTRATION_TIMEOUT_MS}ms`);
-    this.name = 'RegistrationTimeoutError';
-  }
 }
 
 function enabledKey(pubkey: string): string {
@@ -103,52 +89,8 @@ async function saveRegistrationState(
   await AsyncStorage.setItem(registrationKey(pubkey), JSON.stringify(state));
 }
 
-function nextRetryDelayMs(failedAttempts: number): number {
-  if (failedAttempts <= 1) return 0;
-  return Math.min(RETRY_BASE_MS * 2 ** (failedAttempts - 2), RETRY_MAX_MS);
-}
-
-async function withRegistrationTimeout<T>(operation: Promise<T>, description: string): Promise<T> {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      operation,
-      new Promise<never>((_, reject) => {
-        timeout = setTimeout(
-          () => reject(new RegistrationTimeoutError(description)),
-          REGISTRATION_TIMEOUT_MS,
-        );
-      }),
-    ]);
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === 'AbortError';
-}
-
-interface ClassifiedFailure {
-  phase: Exclude<BuzzPushRegistrationPhase, 'registered' | 'disabled' | 'unsupported-platform'>;
-  retryable: true;
-}
-
-function classifyRegistrationFailure(error: unknown): ClassifiedFailure {
-  if (error instanceof RegistrationTimeoutError) {
-    return { phase: 'token-timed-out', retryable: true };
-  }
-  if (isAbortError(error)) {
-    return { phase: 'registration-timed-out', retryable: true };
-  }
-  const message = error instanceof Error ? error.message : String(error);
-  if (message.includes('timed out')) {
-    return { phase: 'token-timed-out', retryable: true };
-  }
-  if (message.startsWith('gateway returned HTTP')) {
-    return { phase: 'gateway-rejected', retryable: true };
-  }
-  return { phase: 'network-failed', retryable: true };
+function classifyRegistrationFailure(error: unknown): { phase: 'gateway-rejected' | 'network-failed'; retryable: true } {
+  return { phase: error instanceof MonolithPhoneOperationError ? 'gateway-rejected' : 'network-failed', retryable: true };
 }
 
 type SupportedPushPlatform = 'android' | 'ios';
@@ -191,7 +133,7 @@ async function grantedNotificationPermission(requestWhenPossible: boolean): Prom
  * Obtain the native push token (FCM on Android, APNs on iOS) and bind it to
  * the Buzz pubkey. Registration failures do not block login; every attempt is
  * classified, logged under `[beeline-push]`, persisted for the settings UI,
- * and retried with backoff on later launches / foregrounds when {@link retryable}.
+ * and reconciled on source changes or connection recovery.
  *
  * Never logs or returns the full device push token — only a fingerprint and length.
  */
@@ -212,23 +154,7 @@ export async function registerBuzzPushNotifications(
     Platform.OS === 'web'
       ? await registerWebPush(identity, !options.automatic)
       : await attemptRegistration(identity, !options.automatic);
-  const previous = await getBuzzPushRegistrationState(identity.publicKey);
-  const state: BuzzPushRegistrationState = attempt.registered
-    ? {
-        ...attempt,
-        failedAttempts: 0,
-        updatedAt: Date.now(),
-      }
-    : {
-        ...attempt,
-        // Permission gaps are not counted against the backoff: they are cheap
-        // to re-check and must not delay a retry once the user grants access.
-        failedAttempts:
-          attempt.phase === 'permission-denied' || attempt.phase === 'unsupported-platform'
-            ? (previous?.failedAttempts ?? 0)
-            : (previous?.failedAttempts ?? 0) + 1,
-        updatedAt: Date.now(),
-      };
+  const state: BuzzPushRegistrationState = { ...attempt, updatedAt: Date.now() };
   await saveRegistrationState(identity.publicKey, state).catch((error: unknown) => {
     console.warn(
       '[beeline-push] could not persist registration state:',
@@ -254,18 +180,12 @@ async function attemptRegistration(
 
     let nativeToken: Awaited<ReturnType<typeof Notifications.getDevicePushTokenAsync>>;
     try {
-      nativeToken = await withRegistrationTimeout(
-        Notifications.getDevicePushTokenAsync(),
-        `${service} token acquisition`,
-      );
+      nativeToken = await Notifications.getDevicePushTokenAsync();
     } catch (error) {
       if (isIosPushCapabilityUnavailable(error)) {
         return { registered: false, retryable: false, phase: 'unsupported-platform' };
       }
-      const failure =
-        error instanceof RegistrationTimeoutError || errorMessage(error).includes('timed out')
-          ? { phase: 'token-timed-out' as const, retryable: true as const }
-          : { phase: 'token-failed' as const, retryable: true as const };
+      const failure = { phase: 'token-failed' as const, retryable: true as const };
       console.warn(
         `[beeline-push] token acquisition failed phase=${failure.phase}:`,
         errorMessage(error),
@@ -294,19 +214,18 @@ async function attemptRegistration(
     );
 
     try {
-      const registrationUrl = `${getBuzzRuntimeConfig().pushGatewayUrl}/registrations`;
       await monolithPhoneOperation('registerPushDevice', {
         token: nativeToken.data,
         platform,
         environment: Device.isDevice ? 'physical' : 'emulator',
       });
-      console.log(`[beeline-push] POST ${registrationUrl} -> HTTP 200`);
+      console.log('[beeline-push] registerPushDevice accepted');
       await AsyncStorage.setItem(tokenKey(identity.publicKey), nativeToken.data);
       return { registered: true, retryable: false, phase: 'registered' };
     } catch (error) {
       const failure = classifyRegistrationFailure(error);
       console.warn(
-        `[beeline-push] gateway POST failed phase=${failure.phase}:`,
+        `[beeline-push] registerPushDevice failed phase=${failure.phase}:`,
         errorMessage(error),
       );
       return {
@@ -337,11 +256,7 @@ export async function sendBuzzPushTestNotification(_identity: Identity): Promise
   await monolithPhoneOperation('sendPushTest', {});
 }
 
-/**
- * Automatic retry on app foreground: only acts when the last attempt left an
- * unregistered-but-retryable state and its backoff window has elapsed. Returns
- * null when there is nothing to retry (two storage reads, no network).
- */
+/** Reconcile a failed registration after an actual foreground or recovery event. */
 export async function retryBuzzPushRegistration(
   identity: Identity,
 ): Promise<BuzzPushRegistrationResult | null> {
@@ -349,7 +264,6 @@ export async function retryBuzzPushRegistration(
   if (!(await getBuzzPushEnabled(identity.publicKey))) return null;
   const state = await getBuzzPushRegistrationState(identity.publicKey);
   if (!state || state.registered || !state.retryable) return null;
-  if (Date.now() - state.updatedAt < nextRetryDelayMs(state.failedAttempts)) return null;
   return registerBuzzPushNotifications(identity, { automatic: true });
 }
 
@@ -369,7 +283,6 @@ export async function setBuzzPushEnabled(
     };
     await saveRegistrationState(identity.publicKey, {
       ...disabledResult,
-      failedAttempts: 0,
       updatedAt: Date.now(),
     });
     return disabledResult;
@@ -398,7 +311,6 @@ export async function setBuzzPushEnabled(
   if (!token || !platform) {
     await saveRegistrationState(identity.publicKey, {
       ...disabledResult,
-      failedAttempts: 0,
       updatedAt: Date.now(),
     });
     return disabledResult;
@@ -411,7 +323,6 @@ export async function setBuzzPushEnabled(
   await AsyncStorage.removeItem(tokenKey(identity.publicKey));
   await saveRegistrationState(identity.publicKey, {
     ...disabledResult,
-    failedAttempts: 0,
     updatedAt: Date.now(),
   });
   return disabledResult;

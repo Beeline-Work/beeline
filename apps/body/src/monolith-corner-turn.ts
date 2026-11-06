@@ -82,7 +82,7 @@ import {
   promptWithImages,
   type DeliveredAttachment,
 } from './attachment-delivery.js';
-import { isCornerStatusRestatement, isDeliberateCornerNoReply } from './reply-sanitizer.js';
+import { isCornerStatusRestatement } from './reply-sanitizer.js';
 import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { isCompletedToolCall, isPrChecksRead, toolCallFailureLine } from './tool-call-failure.js';
@@ -462,7 +462,6 @@ export interface MonolithCornerTurnOptions {
   api: DaemonApiClient;
   scheduler: AgentProcesses;
   signal?: AbortSignal;
-  pollMs?: number;
   /** Close-request recovery interval (test seam); defaults to the jittered 10 min. */
   closePollMs?: number;
   onPoll(): void;
@@ -1796,7 +1795,6 @@ export class MonolithCornerTurnLoop {
       }
       await trace.finish(outcome, reason);
     };
-    let deliberateNoReply = false;
     try {
       if (freeAgent) await this.freeContinuation.begin(this.commandContext.current?.source.body ?? trigger);
       await withTurnReceiptHeartbeat(
@@ -2348,7 +2346,6 @@ export class MonolithCornerTurnLoop {
                   return true;
                 }
                 if (!['no-reply', 'repeated-tool-call'].includes(result.stopReason)) return false;
-                deliberateNoReply = result.stopReason === 'no-reply';
                 stream.close();
                 await flushToolCalls(result.toolCalls, '', true);
                 await stream.retract();
@@ -2557,7 +2554,6 @@ export class MonolithCornerTurnLoop {
                   (saved) => spoken(durableReplyText(saved)) === durableReply,
                 ),
               );
-              deliberateNoReply = !activityTurn && (repeatedNarration || isDeliberateCornerNoReply(reply, restates));
               await trace.measure('publish', () =>
                 stream.settle(
                   repeatedNarration ? '' : durableReply,
@@ -2586,8 +2582,8 @@ export class MonolithCornerTurnLoop {
         roomId: cornerId,
         requestId,
         status: timeLimited ? 'failed' : 'complete',
+        ...(!timeLimited ? {diagnosticsOnly:true} : {}),
         ...(timeLimited ? { reason: 'free-agent-time-limit' } : {}),
-        ...(deliberateNoReply ? { completionKind: 'no-reply' as const } : {}),
         generationId: this.commandContext.generationId,
         toolCalls: trace.toolCallsTotal,
         trace: trace.replay(),
@@ -2756,7 +2752,6 @@ export class MonolithCornerTurnLoop {
         agentId: this.agent.publicKey,
         context: this.commandContext,
         signal,
-        pollMs: this.options.pollMs,
         presence: {
           ...(this.options.config.daemonReleaseVersion
             ? { releaseVersion: this.options.config.daemonReleaseVersion }

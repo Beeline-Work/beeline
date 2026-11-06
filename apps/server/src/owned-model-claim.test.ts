@@ -1,9 +1,10 @@
+import { OwnedModelUnknownGeneration } from './owned-model-errors.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAgentCommand } from './agent-command.js';
 import { DaemonService, type OwnedModelClaimCapability } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { OwnedModelAttempts } from './owned-model-attempt.js';
-import { OwnedModelUnknownGeneration } from './owned-model-credential.js';
+
 import { MODEL_AGENT, MODEL_CLAIM, MODEL_OWNER, MODEL_ROOM, MODEL_SOURCE, MODEL_WORKSPACE, ownedModelFixture } from './test-fixtures/owned-model.js';
 
 describe('actual owned-model claim transaction and secret boundary', () => {
@@ -44,7 +45,8 @@ describe('actual owned-model claim transaction and secret boundary', () => {
     await expect(daemon.execute('claimAgentCommand', { ...input(), ownedModelV1: true,
       modelCredential: { token: 'forged' } } as never, MODEL_AGENT)).rejects.toThrow('helper claim requires its machine connection owner');
     expect((await f.db.query('SELECT * FROM owned_model_credentials WHERE command_id=$1', [commandId])).rowCount).toBe(0);
-    expect((await f.db.query('SELECT turn_owner_connection_id FROM agent_commands WHERE id=$1', [commandId])).rows).toEqual([{ turn_owner_connection_id: null }]);
+    expect((await f.db.query('SELECT state,turn_owner_connection_id FROM agent_commands WHERE id=$1', [commandId])).rows)
+      .toEqual([{ state:'pending',turn_owner_connection_id:null }]);
   });
 
   it('refuses source-only or forged capability claims and rolls the real claim/working-turn creation back without events', async () => {

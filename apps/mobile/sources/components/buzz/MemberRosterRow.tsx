@@ -136,7 +136,7 @@ export const MemberRosterRow = React.memo(
         description={subtitle}
         descriptionContent={
           subtitle !== undefined && usage ? (
-            <Text numberOfLines={1} style={styles.subtitle}>
+            <Text style={styles.subtitle}>
               {subtitle}
               <Text style={usage.tone === 'danger' ? styles.danger : styles.warning}>
                 {` · ${usage.text}`}

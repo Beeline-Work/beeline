@@ -92,6 +92,8 @@ describe('mobile OTA device receipt', () => {
     const dispose = startPushRegistrationLifecycle({
       loadIdentity: async () => launchIdentity,
       subscribeIdentityChange: () => () => {},
+      subscribeTokenChange: () => () => {},
+      subscribeRecovery: () => () => {},
       subscribeForeground: (listener) => {
         foreground = listener;
         return () => {};

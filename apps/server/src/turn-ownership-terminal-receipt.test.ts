@@ -23,17 +23,11 @@ describe('owned terminal receipts and archived cleanup controls',()=>{
       VALUES($1,$2,$3,'receipt-server')`,[agent,source.connectionId,source.epoch]);
     commandId=(await createAgentCommand(db,{roomId:room,agentId:agent,sourceMessageId:input.requestId,reason:'human_mention'}))!.id;
     await daemon.execute('claimAgentCommand',{roomId:room,commandId,generationId:input.generationId},agent,source);
-    // The failed receipt's durable state: old terminal turn and immutable
-    // generation binding remain, while the command reopens without an owner.
-    await db.transaction(async tx=>{
-      await tx.query(`UPDATE agent_turns SET status='failed' WHERE room_id=$1 AND agent_id=$2 AND request_id=$3`,[room,agent,input.requestId]);
-      await tx.query(`UPDATE agent_commands SET state='pending',generation_id=NULL,
-        turn_owner_connection_id=NULL,turn_owner_epoch=NULL,lease_expires_at=NULL WHERE id=$1`,[commandId]);
-    });
+    await daemon.execute('postAgentTurnReceipt',{...input,status:'failed',reason:'provider refused'},agent,source);
   },60_000);
   afterEach(async()=>{await db?.close();});
 
-  it('confirms only the exact committed terminal requeue without writes or implicit new claim',async()=>{
+  it('confirms an exact terminal result without writes or a new claim',async()=>{
     const versions=async()=>({
       command:(await db.query(`SELECT xmin::text version,state,generation_id,turn_owner_connection_id FROM agent_commands WHERE id=$1`,[commandId])).rows,
       turn:(await db.query(`SELECT xmin::text version,status,generation_id FROM agent_turns WHERE room_id=$1 AND agent_id=$2`,[room,agent])).rows,
@@ -48,31 +42,29 @@ describe('owned terminal receipts and archived cleanup controls',()=>{
     await db.query(`UPDATE live_server_instances SET renewed_at=clock_timestamp()-interval '91 seconds' WHERE instance_id='receipt-server'`);
     await expect(daemon.fenceOwnedTurnReply(agent,source,input,()=>frames.push('must-not-confirm-expired'))).rejects.toThrow('source changed');
     await db.query(`UPDATE live_server_instances SET renewed_at=clock_timestamp() WHERE instance_id='receipt-server'`);
-    await daemon.execute('claimAgentCommand',{roomId:room,commandId,generationId:'next-generation'},agent,source);
-    await expect(daemon.fenceOwnedTurnReply(agent,source,input,()=>frames.push('must-not-confirm-new-generation'))).rejects.toThrow();
+    await expect(daemon.execute('claimAgentCommand',{roomId:room,commandId,generationId:'next-generation'},agent,source)).rejects.toThrow();
+    await expect(daemon.fenceOwnedTurnReply(agent,source,{...input,generationId:'next-generation'},()=>frames.push('must-not-confirm-new-generation'))).rejects.toThrow();
     expect(frames).toHaveLength(2);
   });
 
-  it('refuses a missing terminal fact, non-cleared pending row, or a foreign current registration',async()=>{
+  it('refuses a handed-back command or a foreign connection instead of confirming a retired recovery result',async()=>{
     const frames:string[]=[];
-    await db.query(`UPDATE agent_turns SET status='working' WHERE room_id=$1 AND agent_id=$2`,[room,agent]);
-    await expect(daemon.fenceOwnedTurnReply(agent,source,input,()=>frames.push('must-not-confirm-working'))).rejects.toThrow();
-    await db.query(`UPDATE agent_turns SET status='failed' WHERE room_id=$1 AND agent_id=$2`,[room,agent]);
-    await db.query(`UPDATE agent_commands SET state='cancelled' WHERE id=$1`,[commandId]);
-    await expect(daemon.fenceOwnedTurnReply(agent,source,input,()=>frames.push('must-not-confirm-nonpending'))).rejects.toThrow();
-    await db.query(`UPDATE agent_commands SET state='pending' WHERE id=$1`,[commandId]);
+    await db.query(`UPDATE agent_commands SET state='pending',generation_id=NULL,
+      turn_owner_connection_id=NULL,turn_owner_epoch=NULL,lease_expires_at=NULL WHERE id=$1`,[commandId]);
+    await expect(daemon.fenceOwnedTurnReply(agent,source,input,()=>frames.push('must-not-confirm-requeue'))).rejects.toThrow();
     await db.query(`UPDATE agent_connections SET connection_id='foreign-current-source',epoch=2 WHERE agent_id=$1`,[agent]);
     await expect(daemon.fenceOwnedTurnReply(agent,{connectionId:'foreign-current-source',epoch:2},input,
       ()=>frames.push('must-not-confirm-foreign-binding'))).rejects.toThrow();
     expect(frames).toEqual([]);
   });
 
-  it('admits only exact archived-corner controls under current parent and Workspace membership', async () => {
+  it('admits even day-old archived-corner controls only under current parent and Workspace membership', async () => {
     const corner = '33333333-3333-4333-8333-333333333333';
     await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Cleanup corner')`, [corner,workspace,room]);
     const work = (await createAgentCommand(db, { roomId:corner, agentId:agent, sourceMessageId:input.requestId, reason:'human_mention' }))!;
     const stop = (await createAgentCommand(db, { roomId:corner, agentId:agent, sourceMessageId:input.requestId,
       reason:'corner_close', action:'stop', turnRequestId:work.turn_request_id }))!;
+    await db.query("UPDATE agent_commands SET created_at=now()-interval '2 days' WHERE id=$1", [stop.id]);
     await db.query('UPDATE rooms SET archived_at=now() WHERE id=$1', [corner]);
     const control = { roomId:corner, commandId:stop.id, generationId:'cleanup-generation' };
     await daemon.execute('claimAgentCommand', control, agent, source);

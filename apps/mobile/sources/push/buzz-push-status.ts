@@ -24,9 +24,9 @@ export function buzzPushPhaseDetail(phase: BuzzPushRegistrationPhase): string | 
     case 'registration-timed-out':
       return 'registration request timed out';
     case 'gateway-rejected':
-      return 'push gateway refused registration';
+      return 'server refused registration';
     case 'network-failed':
-      return 'network error reaching the push gateway';
+      return 'connection unavailable';
     case 'registered':
     case 'disabled':
     case 'unsupported-platform':

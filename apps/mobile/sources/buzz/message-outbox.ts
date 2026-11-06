@@ -24,7 +24,6 @@ export class MessageOutbox {
     save(records: readonly MessageOutboxRecord[]): Promise<void>;
     send(event: NostrEvent): Promise<AgentMessageWriteResult>;
     sendWithCause?(event: NostrEvent, cause: 'send' | 'reconnect'): Promise<AgentMessageWriteResult>;
-    reconcile?(ids: ReadonlySet<string>): Promise<void>;
     rejection(error: unknown): string | undefined;
     now?: () => number;
   }) {}
@@ -81,7 +80,6 @@ export class MessageOutbox {
   }
   async remove(id: string) { this.records = this.records.filter(record => record.event.id !== id); await this.save(); }
   async reconcile(ids: ReadonlySet<string>) {
-    await this.deps.reconcile?.(ids);
     if (!this.records.some(record => ids.has(record.event.id))) return;
     this.records = this.records.filter(record => !ids.has(record.event.id)); await this.save();
   }

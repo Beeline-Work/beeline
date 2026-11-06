@@ -19,8 +19,3 @@ export function hasMessageRevealed(messageId: string): boolean {
 export function markMessageRevealed(messageId: string): void {
   revealedMessageIds.add(messageId);
 }
-
-/** Test seam only. */
-function resetMessageReveals(): void {
-  revealedMessageIds.clear();
-}

@@ -89,3 +89,60 @@ it('helper agent processes have one start/stop owner', () => {
     }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+it('rejects every planted terminal writer, even another writer inside the owner file', () => {
+  mkdirSync(path.join(process.cwd(), '.beeline-proof'), { recursive: true });
+  const root = mkdtempSync(path.join(process.cwd(), '.beeline-proof', 'turn-owner-'));
+  const rules = readInvariants(process.cwd()).rules.filter(rule =>
+    ['work.command-terminal', 'work.turn-terminal', 'work.terminal-turn-insert', 'work.terminal-command-insert'].includes(rule.id));
+  assert.equal(rules.length, 4);
+  const owner = 'apps/server/src/agent-turn-end.ts';
+  const source = "export const AGENT_TURN_END_SCHEMA = `UPDATE agent_commands SET state=outcome WHERE id=$1; UPDATE agent_turns SET status=outcome WHERE request_id=$1;`; function create() { return `INSERT INTO agent_commands(id,action,state) VALUES($1,'input','pending')`; }";
+  const write = (file, text) => {
+    mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    writeFileSync(path.join(root, file), text);
+  };
+  try {
+    write(owner, source);
+    assert.deepEqual(judgeTree(root, { rules }), []);
+    for (const sql of [
+      "INSERT INTO agent_commands SELECT * FROM terminal_commands",
+      "INSERT INTO agent_turns VALUES($1,$2,$3,'failed')",
+      "INSERT INTO agent_commands DEFAULT VALUES",
+      "INSERT INTO agent_commands(id,state) VALUES($1,'complete')",
+      "INSERT INTO agent_commands(id,state) VALUES($1,'pending') ON CONFLICT(id) DO UPDATE SET state='complete'",
+      "INSERT INTO agent_turns(room_id,request_id,agent_id,status) VALUES($1,$2,$3,'working') ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET status='failed'",
+      "INSERT INTO agent_turns(room_id,request_id,agent_id,status) VALUES($1,$2,$3,'working'),($4,$5,$6,'complete')",
+      "INSERT INTO agent_turns(room_id,request_id,agent_id,status) SELECT $1,$2,$3,'working' UNION ALL SELECT $4,$5,$6,'failed'",
+      "UPDATE agent_commands SET state='complete' WHERE id=$1",
+      "UPDATE agent_commands command SET completed_at=now(),state=$2 WHERE id=$1",
+      'UPDATE "agent_commands" AS command SET "state"=$2 WHERE id=$1',
+      "UPDATE agent_turns SET status='failed' WHERE request_id=$1",
+      'UPDATE agent_turns SET status=EXCLUDED.status WHERE request_id=$1',
+      "INSERT INTO agent_turns(room_id,request_id,agent_id,status) VALUES($1,$2,$3,'complete')",
+      'INSERT INTO agent_turns(room_id,request_id,agent_id,status) VALUES($1,$2,$3,$4)',
+      'INSERT INTO agent_turns(status,room_id,request_id,agent_id) VALUES($1,$2,$3,$4)',
+      `INSERT INTO "agent_turns"("status",room_id,request_id,agent_id) VALUES('failed',$1,$2,$3)`,
+      "INSERT INTO agent_turns(room_id,request_id,agent_id,status) SELECT room_id,request_id,agent_id,'cancelled' FROM turns",
+    ]) {
+      write('apps/server/src/backdoor.ts', `function bypass() { return \`${sql}\`; }`);
+      assert.match(judgeTree(root, { rules }).join('\n'), /work\.(?:command-terminal|turn-terminal|terminal-turn-insert|terminal-command-insert)/, sql);
+      write('apps/server/src/backdoor.ts', '');
+      write(owner, source + `\nfunction bypass() { return \`${sql}\`; }`);
+      assert.notDeepEqual(judgeTree(root, { rules }), [], sql);
+      write(owner, source);
+    }
+    write('apps/server/src/start.ts', "const start=`INSERT INTO agent_turns(room_id,request_id,agent_id,status) VALUES($1,$2,$3,'working')`; const release=`UPDATE agent_commands SET state='pending',generation_id=NULL WHERE id=$1`;");
+    assert.deepEqual(judgeTree(root, { rules }), []);
+    write(owner, source.replace('UPDATE agent_turns SET status=outcome WHERE request_id=$1;', ''));
+    assert.match(judgeTree(root, { rules }).join('\n'), /expected exactly 1 owned sink/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+it('allows removing an owner and its sink without allowing new terminal owners', async () => {
+  const { strictRelaxations } = await import('./architecture-invariants.mjs');
+  const before = { id:'owner',strict:true,total:0,owners:['owner.ts'],ownerFunctions:{'owner.ts':['claim','renew']},ownerSites:2 };
+  const tightened = {...before,ownerFunctions:{'owner.ts':['claim']},ownerSites:1};
+  assert.deepEqual(strictRelaxations('',{rules:[before]},{rules:[tightened]}),[]);
+  assert.notDeepEqual(strictRelaxations('',{rules:[tightened]},{rules:[before]}),[]);
+});

@@ -1,3 +1,4 @@
+import { subscribePhoneLiveEvents } from '@/sync/transport/phone-live-events';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import { randomUUID } from 'expo-crypto';
@@ -116,3 +117,8 @@ export async function funnelOnboarding(event: 'welcome_shown' | 'game_viewer_ope
     // Measurement must not interrupt a card, viewer or share sheet.
   }
 }
+
+subscribePhoneLiveEvents(event => {
+  if (event.type === 'operation-completed')
+    void funnelSuccessfulOperation(event.operation).catch(() => console.warn('[sign-in] Operation observation unavailable'));
+});

@@ -303,7 +303,7 @@ import { RoomUnreadControls } from '@/components/buzz/RoomUnreadControls';
 import { TranscriptScrubber } from '@/components/buzz/TranscriptScrubber';
 import { usePhoneUnderfillHistory } from '@/buzz/phone-underfill-history';
 import { createTranscriptCardMotionStore } from '@/components/buzz/transcript-card-motion-context';
-import { isAgentTurnActive, nextAgentPresenceTransitionAt, nextAgentTurnExpiryAt, activeMentionCandidates } from '@/buzz/agent-presence';
+import { isAgentTurnActive, nextAgentPresenceTransitionAt, activeMentionCandidates } from '@/buzz/agent-presence';
 import {
   sameElementRefs,
   sameMessageRefMap,
@@ -2102,16 +2102,8 @@ export function BuzzChatSurface({
   // Every agent answering right now, not just the first: two agents asked in
   // one message run two concurrent turns and each owns its own live lane.
   const rawActiveAgentTurns = useMemo(
-    () =>
-      agentTurnMarkers.filter((turn) =>
-        isAgentTurnActive(
-          turn,
-          agentPresences[turn.agentPubkey],
-          presenceNow,
-          presenceReconnectGrace[turn.agentPubkey],
-        ),
-      ),
-    [agentTurnMarkers, agentPresences, presenceNow, presenceReconnectGrace],
+    () => agentTurnMarkers.filter(isAgentTurnActive),
+    [agentTurnMarkers],
   );
   // A filter rebuilds its array on every presence tick even when it selected
   // the same receipts, and this feeds the transcript projection.
@@ -3539,13 +3531,7 @@ export function BuzzChatSurface({
     // someone was typing, which made the foreground intermittently unresponsive.
     const now = Date.now();
     const presenceDeadline = nextAgentPresenceTransitionAt(agentPresences, now);
-    const turnDeadline = nextAgentTurnExpiryAt(agentTurnMarkers, now);
-    const deadline =
-      presenceDeadline === undefined
-        ? turnDeadline
-        : turnDeadline === undefined
-          ? presenceDeadline
-          : Math.min(presenceDeadline, turnDeadline);
+    const deadline = presenceDeadline;
     if (deadline === undefined) return;
     const delay = Math.max(1, deadline - now + 1);
     const timer = setTimeout(() => setPresenceNow(Date.now()), delay);
@@ -3914,19 +3900,19 @@ export function BuzzChatSurface({
       // Session cleanup may clear its ref while this send is still preparing.
       let activeOutbox = outbox.current();
       sendInFlightRef.current = true;
-      const phonePreview = Platform.OS !== 'web' && !desktopTranscript && activePendingAttachments.length === 0;
+      const listPreview = !desktopTranscript && activePendingAttachments.length === 0;
       const updateSendStatus = () => {
         setReceivedSteer(null);
         setPendingAck(addressesAgent ? { sentAt: Date.now() } : null);
         setSending(true);
         if (desktopExperience) setDesktopDeliveryState('sending');
       };
-      if (!phonePreview) updateSendStatus();
+      if (!listPreview) updateSendStatus();
       // Text feedback lands in the local overlay in this same turn. Signing,
       // transport startup and outbox persistence can all take longer than a
       // frame on a cold Android device.
-      // Web uses its prepared row directly; native keeps its provisional first frame.
-      const provisionalId = Platform.OS !== 'web' && activePendingAttachments.length === 0
+      // Each viewport paints its provisional row before preparation.
+      const provisionalId = activePendingAttachments.length === 0
         ? `pending:${Date.now()}:${Math.random()}`
         : null;
       if (provisionalId) {
@@ -3944,7 +3930,7 @@ export function BuzzChatSurface({
           ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
           ...(preparedReply?.reference ? { replyToId: preparedReply.reference.eventId } : {}),
         } satisfies ChatDisplayMessage;
-        if (phonePreview) {
+        if (listPreview) {
           // Only the list's new cell renders now. Window resets, status and
           // the Room-wide projections wait until native layout and a frame.
           const painted = sendPreview.show(provisional);
@@ -4044,7 +4030,7 @@ export function BuzzChatSurface({
           );
         }
         if (provisionalId) {
-          if (phonePreview) sendPreview.reconcile(provisionalId, preparedEvent.id);
+          if (listPreview) sendPreview.reconcile(provisionalId, preparedEvent.id);
           else reconcileOptimistic(provisionalId, preparedEvent.id);
         }
         const optimistic = {
@@ -4145,7 +4131,7 @@ export function BuzzChatSurface({
         return true;
       } catch (err) {
         console.warn('Send failed:', err);
-        if (phonePreview && provisionalId && (!preparedEvent || !activeOutbox?.get(preparedEvent.id))) {
+        if (listPreview && provisionalId && (!preparedEvent || !activeOutbox?.get(preparedEvent.id))) {
           sendPreview.remove(preparedEvent?.id ?? provisionalId);
         }
         if (provisionalId && !preparedEvent) {
@@ -6248,7 +6234,6 @@ export function BuzzChatSurface({
               ) : (
                 <ChannelHeaderTitle
                   kind={headerTitleKind}
-                  numberOfLines={1}
                   onLongPress={canRenameTitle ? startRenameFromTitle : undefined}
                   onPress={
                     !isCorner && !isDirectMessage ? () => setRoomActionsVisible(true) : undefined

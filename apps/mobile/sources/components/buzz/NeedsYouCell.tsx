@@ -200,7 +200,7 @@ export const NeedsYouCell = React.memo(function NeedsYouCell({
         ) : item.roomKind === 'room' ? (
           <Text style={styles.sigil}>#</Text>
         ) : null}
-        <Text numberOfLines={1} style={styles.metaText}>
+        <Text style={styles.metaText}>
           {meta}
         </Text>
       </View>

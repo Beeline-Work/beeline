@@ -60,17 +60,6 @@ export function hullDialogActionsMinimumHeight() {
   );
 }
 
-function hullDialogMinimumHeight(contentHeight: number, includesBody: boolean) {
-  return (
-    hullDialogActionsMinimumHeight() +
-    HULL_DIALOG_LAYOUT.copyPaddingTop +
-    HULL_DIALOG_LAYOUT.copyPaddingBottom +
-    HULL_DIALOG_LAYOUT.titleLineHeight +
-    contentHeight +
-    (includesBody ? HULL_DIALOG_LAYOUT.bodyMarginTop + HULL_DIALOG_LAYOUT.bodyLineHeight : 0)
-  );
-}
-
 type HullFloatingSurfaceProps = Omit<React.ComponentProps<typeof HullSurface>, 'strength'>;
 
 /** The single tokenized surface base for every app-owned floating region. */

@@ -305,9 +305,6 @@ namespace ChatReads {
   }
   subscribeClientReset(resetStores);
 
-  export function acquireChatList(key: ChatListKey, consumer: ChatListConsumer): ChatListHandle {
-    return acquireWireChatList(key, consumer);
-  }
   export function liveChatList(key: ChatListKey): ChatListView | null {
 
     const store = stores.get(idOf(key));
@@ -321,7 +318,7 @@ namespace ChatReads {
     stores.get(idOf(key))?.force();
   }
 
-  function acquireWireChatList(key: ChatListKey, consumer: ChatListConsumer): ChatListHandle {
+  export function acquireChatList(key: ChatListKey, consumer: ChatListConsumer): ChatListHandle {
     const id = idOf(key);
     let store = stores.get(id);
     if (!store) {

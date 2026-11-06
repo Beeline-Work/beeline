@@ -6,6 +6,7 @@ import type { ParamListBase } from '@react-navigation/native';
 import { roomTransitionWork } from '@/buzz/room-transition-work';
 import { useLocalSearchParams } from 'expo-router';
 import { markRoomOpen } from '@/buzz/room-open-trace';
+import { RoomPresentationContext } from '@/buzz/room-presentation-context';
 import { RoomOpenTraceOverlay } from '@/components/buzz/RoomOpenTraceOverlay';
 import { BuzzChatSurface } from './_chat-surface';
 import {
@@ -80,9 +81,9 @@ function RoomVisit({
   });
 
   return (
-    <>
+    <RoomPresentationContext.Provider value={session.liveDraftStore}>
       <RoomSurface session={session} bindingsRef={bindingsRef} />
       <RoomOpenTraceOverlay />
-    </>
+    </RoomPresentationContext.Provider>
   );
 }

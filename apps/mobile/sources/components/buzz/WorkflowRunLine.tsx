@@ -219,7 +219,7 @@ function Assignee({
         size={ASSIGNEE_MARK}
         testID={`${testID}-assignee-mark`}
       />
-      <Text numberOfLines={1} style={[styles.handle, hue]} testID={`${testID}-assignee-handle`}>
+      <Text style={[styles.handle, hue]} testID={`${testID}-assignee-handle`}>
         {`@${identityHandle(actor)}`}
       </Text>
     </View>
@@ -268,7 +268,7 @@ function OpenedCorner({
       testID={`workflow-run-corner-${corner.id}`}
     >
       <CornerGlyph size={CORNER_META_SIZE} />
-      <Text numberOfLines={1} style={styles.cornerName}>
+      <Text style={styles.cornerName}>
         {named.name}
       </Text>
       <ChevronGlyph color={styles.cornerArrow.color} size={CHEVRON_ROW_SIZE} />
@@ -380,8 +380,6 @@ function StepRow({
         {does ? <Text style={styles.does} testID={`${testID}-description`}>{does}</Text> : null}
         {open && draft ? (
           <Text
-            ellipsizeMode="head"
-            numberOfLines={2}
             style={[provisionalProseStyle(), styles.live]}
             testID={`${testID}-live`}
           >

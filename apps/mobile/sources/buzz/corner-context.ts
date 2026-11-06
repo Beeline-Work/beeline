@@ -45,7 +45,7 @@ export function cornerObjectiveItems(input: {
   task?: string;
   cornerName?: string;
 }): string[] {
-  if (input.task?.trim() && roomPreviewText(input.task, Number.POSITIVE_INFINITY))
+  if (input.task?.trim() && roomPreviewText(input.task))
     return [input.task];
   const candidates = [input.planObjective];
   for (const candidate of candidates) {
@@ -56,7 +56,7 @@ export function cornerObjectiveItems(input: {
       ? lines.map((line) => line.trim().replace(/^(?:[-*+] |\d+[.)] )/, '')).filter(Boolean)
       : splitPlainObjective(candidate);
     const items = rawItems
-      .map((item) => roomPreviewText(item, Number.POSITIVE_INFINITY))
+      .map((item) => roomPreviewText(item))
       .filter(Boolean);
     if (items.length) return items;
   }

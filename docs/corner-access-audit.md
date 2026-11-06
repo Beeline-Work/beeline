@@ -18,7 +18,6 @@ The inventory below includes every production query call site referencing physic
 | [agent-voice.ts](../apps/server/src/agent-voice.ts) | `catalog`, `context`, `save` | — |
 | [auth.ts](../apps/server/src/auth.ts) | `exchangeDaemonToken`, `migrateLegacyDaemon`, `retiredDaemonAgent` | — |
 | [background.ts](../apps/server/src/background.ts) | `runUnthrottled` | — |
-| [commander-wakes.ts](../apps/server/src/commander-wakes.ts) | `flushDueCommanderWakes`, `refreshOnce` | — |
 | [commander.ts](../apps/server/src/commander.ts) | `commandAddress`, `reportToCommander`, `sendOrder`, `stopCommandedTurn` | — |
 | [computer-session.ts](../apps/server/src/computer-session.ts) | `mayViewComputer` | — |
 | [connection-presence.ts](../apps/server/src/connection-presence.ts) | `broadcastAgentPresence`, `failDelivery`, `observeOnce`, `recordAgentEvidence`, `writeAgentAnnouncement` | — |

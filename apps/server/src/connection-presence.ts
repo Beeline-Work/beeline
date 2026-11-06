@@ -1,9 +1,8 @@
+import { endAgentTurn } from './agent-turn-end.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { commandOwnerExpiredSql } from './turn-ownership.js';
 import { ServerLeaseDeadlines } from './server-lease-deadlines.js';
 import { startConnectionWork } from './background-work.js';
-import { recoverAdapterReviewsOnHelperChange } from './helper-review-recovery.js';
-import { CommanderWakeDeadlines } from './commander-wakes.js';
 import { CornerAttentionDeadlines } from './corner-attention.js';
 import { createHash, randomUUID } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
@@ -63,7 +62,6 @@ export class ConnectionPresence {
   readonly #ownedConnections=new Map<string,string>();
   readonly #serverLeaseDeadlines:ServerLeaseDeadlines;
   readonly #attention:CornerAttentionDeadlines;
-  readonly #commanderWakes:CommanderWakeDeadlines;
   readonly #release:()=>void;
   readonly #releaseResync:()=>void;
   readonly #evidence=new Map<string,Promise<void>>();
@@ -79,7 +77,6 @@ export class ConnectionPresence {
     this.instanceId=lease.instanceId??randomUUID();
     this.#leaseRenewMs=lease.renewMs??SERVER_LEASE_RENEW_MS;
     this.#attention=new CornerAttentionDeadlines(database,live,this.report);
-    this.#commanderWakes=new CommanderWakeDeadlines(database,live,this.report);
     this.#serverLeaseDeadlines=new ServerLeaseDeadlines(database,lease.expiryMs??SERVER_LEASE_EXPIRY_MS,async()=>{
       for(const agentId of await releaseStaleServerConnections(database,lease.expiryMs??SERVER_LEASE_EXPIRY_MS)){
         await expireOwnedAgentTurns(database,live,agentId);
@@ -93,7 +90,7 @@ export class ConnectionPresence {
   }
   private readonly report=(error:unknown)=>console.error('[presence] connection transition failed',error);
   async start():Promise<void>{
-    await this.recoverServerLeases();await this.#commanderWakes.start();await this.#attention.start();
+    await this.recoverServerLeases();await this.#attention.start();
   }
   /**
    * Renew one aggregate owner row while this instance holds connections.
@@ -183,7 +180,7 @@ export class ConnectionPresence {
     this.#evidence.set(agentId,work);return work;
   }
   async stop():Promise<void>{
-    this.#stopped=true;this.#leaseTimer?.();this.#attention.stop();this.#commanderWakes.stop();
+    this.#stopped=true;this.#leaseTimer?.();this.#attention.stop();
     this.#release();this.#releaseResync();await this.#leaseWrite?.catch(this.report);
     await this.#serverLeaseDeadlines.stop();await Promise.allSettled(this.#evidence.values());
   }
@@ -435,32 +432,32 @@ async function writeAgentAnnouncement(
  * Commit presence first so those waits hold neither its row nor its agent lock. */
 async function finishAgentAnnouncement(database: SqlDatabase, agentId: string,
   metadata: PresenceMetadata, announcement: Announcement): Promise<void> {
-  const helperChanged = (['releaseVersion', 'sourceSha'] as const).some(key =>
-    typeof announcement.previous?.[key] === 'string' && typeof metadata[key] === 'string' &&
-    announcement.previous[key] !== metadata[key]);
-  if (!helperChanged && (!announcement.changed || !metadata.lifecycleId)) return;
+  if (!announcement.changed || !metadata.lifecycleId) return;
   await database.transaction(async db => {
-    await recoverAdapterReviewsOnHelperChange(db, agentId, announcement.previous, metadata);
     const lifecycle = metadata.lifecycleId;
     if (!announcement.changed || !lifecycle) return;
     const restarts = await db.query<{
       id: string;
       room_id: string;
       source_message_id: string;
+      generation_id: string | null;
       handle: string | null;
       name: string;
     }>(
-      `UPDATE agent_commands command SET state='complete',completed_at=now(),restart_confirmed_at=now()
-       FROM identities identity
-       WHERE command.agent_id=$1 AND command.agent_id=identity.id
-         AND command.action='restart' AND command.state='claimed'
+      `SELECT command.id,command.generation_id,command.room_id,command.source_message_id,identity.handle,identity.name
+       FROM agent_commands command JOIN identities identity ON command.agent_id=identity.id
+       WHERE command.agent_id=$1
+         AND command.action='restart' AND (command.state='claimed' OR (command.state='pending'
+           AND EXISTS(SELECT 1 FROM agent_command_generation_owners binding WHERE binding.command_id=command.id)))
          AND command.lifecycle_before IS DISTINCT FROM $2
          AND EXISTS (SELECT 1 FROM live_outputs presence WHERE presence.agent_id=$1 AND presence.kind='presence'
            AND presence.body->>'lifecycleId'=$2)
-       RETURNING command.id,command.room_id,command.source_message_id,identity.handle,identity.name`,
+       FOR UPDATE OF command`,
       [agentId, lifecycle],
     );
-    for (const restart of restarts.rows)
+    for (const restart of restarts.rows) {
+      if (!await endAgentTurn(db,restart,'complete')) continue;
+      await db.query('UPDATE agent_commands SET restart_confirmed_at=now() WHERE id=$1',[restart.id]);
       await systemLine(db, {
         id: createHash('sha256')
           .update(`agent-restart-confirmed:${restart.id}:${lifecycle}`)
@@ -475,6 +472,7 @@ async function finishAgentAnnouncement(database: SqlDatabase, agentId: string,
         verb: systemMessage("connection-presence.reconnected-after-restart"),
         afterMessageId: restart.source_message_id,
       });
+    }
   });
 }
 

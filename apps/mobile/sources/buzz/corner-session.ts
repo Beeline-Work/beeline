@@ -3,8 +3,6 @@ import { cornerShortTitle, cornerTitle, roomTitle } from '@beeline/api-contract/
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 import type { ChatDisplayMessage, CornerProcessState } from '@/buzz/room-view-presentation';
 
-export type CornerSessionState = 'working' | 'idle' | 'done';
-
 /**
  * What the chat screen knows about the channel it is showing before its own
  * metadata read lands. `unknown` is a real state — a notification deep link or
@@ -97,28 +95,4 @@ export function resolveCornerViewAgentPubkey(
     knownMessageSignerPubkey,
     isRegisteredAgent,
   );
-}
-
-/** The edit session lifecycle is authoritative for the corner, never daemon presence. */
-function cornerSessionState(messages: readonly ChatDisplayMessage[]): CornerSessionState {
-  const latestTurn = [...messages]
-    .filter((message) => message.agentTurn)
-    .sort((left, right) => left.timestamp - right.timestamp || left.id.localeCompare(right.id))
-    .at(-1)?.agentTurn;
-  if (!latestTurn) return 'idle';
-  if (latestTurn.status === 'working') return 'working';
-  return latestTurn.status === 'complete' ? 'done' : 'idle';
-}
-function cornerProcessState(
-  messages: readonly ChatDisplayMessage[],
-): CornerProcessState | undefined {
-  return [...messages]
-    .filter((message) => message.cornerProcess)
-    .sort(
-      (a, b) =>
-        (a.cornerProcess?.sequence ?? 0) - (b.cornerProcess?.sequence ?? 0) ||
-        a.timestamp - b.timestamp ||
-        a.id.localeCompare(b.id),
-    )
-    .at(-1)?.cornerProcess?.state;
 }

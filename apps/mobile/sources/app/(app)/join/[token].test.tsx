@@ -257,7 +257,7 @@ describe('CommunityInviteJoin', () => {
   });
 
   it('keeps a parked invite when the server could not be reached, and retries it', async () => {
-    controls.invite.mockRejectedValueOnce(new HttpError(0, 'timeout'));
+    controls.invite.mockRejectedValueOnce(Object.assign(new Error('Socket request failed'), { socketRequest: true }));
     const renderer = await render();
     expect(renderer.root.findAllByProps({ testID: 'invite-unreachable' }).length).toBeGreaterThan(
       0,

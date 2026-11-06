@@ -1,6 +1,5 @@
 import { resourceRequester } from './resource-requester.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
-import { commandOwnerExpiredSql } from './turn-ownership.js';
 import { WELCOME_VIDEO_SLUG } from './welcome-video-workflow.js';
 import { reserveServiceReviewWorkspaces, completeServiceReview } from './service-review.js';
 import { CommandRefusalError, ExpectedRefusalError } from './command-refusal.js';
@@ -232,8 +231,6 @@ async function resolveRoleBinding(
 
 const HEALTH_LABEL: Record<AgentHealthReason, string> = {
   offline: systemMessage("workflow-runs.offline"),
-  'recent-failure': systemMessage("workflow-runs.recent-failure"),
-  'out-of-credit': systemMessage("workflow-runs.out-of-credit"),
 };
 
 /** Every agent on a role list with why it cannot take the step now. */
@@ -621,22 +618,17 @@ async function openRun(db: SqlDatabase, roomId: string, runId: string): Promise<
   };
 }
 
-/** Cancel pending and expired-lease wakes; an already executing turn retains its output binding. */
+/** Cancel pending wakes; an already executing turn retains its output binding. */
 async function cancelRunWakes(db: SqlDatabase, roomId: string, runId: string): Promise<void> {
   await db.query(
     `WITH due AS MATERIALIZED (
        SELECT command.id FROM agent_commands command
        JOIN messages message ON message.id=command.source_message_id
        WHERE command.room_id=$1 AND message.card->>'runId'=$2
-         AND (command.state='pending' OR (command.state='claimed' AND ${commandOwnerExpiredSql('command')}))
+         AND command.state='pending'
        FOR UPDATE OF command SKIP LOCKED
      ), cancelled AS (
-       UPDATE agent_commands command SET state='cancelled',completed_at=now(),cancellation_reason='workflow_attempt_advanced'
-       FROM due WHERE command.id=due.id
-       RETURNING command.room_id,command.agent_id,command.turn_request_id
-     ) UPDATE agent_turns turn SET status='cancelled',failure_reason='Workflow attempt advanced',created_at=now()
-       FROM cancelled WHERE turn.room_id=cancelled.room_id AND turn.agent_id=cancelled.agent_id
-         AND turn.request_id=cancelled.turn_request_id AND turn.status='working'`,
+       SELECT (terminal.ended).* FROM (SELECT beeline_end_agent_turn(command.id,command.generation_id,'cancelled','workflow_attempt_advanced',NULL) ended FROM agent_commands command ,due WHERE command.id=due.id) terminal) SELECT * FROM cancelled`,
     [roomId, runId],
   );
 }
@@ -1311,21 +1303,14 @@ async function provenanceAttempt(
   roomId: string,
   runId: string,
   sourceMessageId: string | null | undefined,
-  digestCommandId?: string,
 ): Promise<number | undefined> {
-  if (!sourceMessageId && !digestCommandId) return undefined;
+  if (!sourceMessageId) return undefined;
   const source = (
     await db.query<{ card_type: string | null; card: WorkflowRunCard | null; created_at: Date }>(
       `SELECT source.card_type,source.card,source.created_at FROM messages source
        WHERE source.room_id=$2 AND source.card->>'runId'=$3
-         AND (source.id=$1 OR EXISTS (
-           SELECT 1 FROM agent_commands absorbed
-           LEFT JOIN agent_commands parent ON parent.id=absorbed.parent_command_id
-           WHERE absorbed.room_id=$2 AND absorbed.cancellation_reason='coalesced_into:'||$4
-             AND (absorbed.source_message_id=source.id OR (absorbed.action='resume' AND parent.source_message_id=source.id))
-         ))
-       ORDER BY (source.id=$1) DESC NULLS LAST,source.created_at,source.id LIMIT 1`,
-      [sourceMessageId ?? null, roomId, runId, digestCommandId ?? null],
+         AND source.id=$1`,
+      [sourceMessageId, roomId, runId],
     )
   ).rows[0];
   if (!source?.card || source.card.runId !== runId) return undefined;
@@ -1412,7 +1397,7 @@ export async function handoff(
     const current = run.seq;
     let attempt =
       input.attempt ??
-      (await provenanceAttempt(db, command.room_id, input.runId, command.source_message_id, command.id));
+      (await provenanceAttempt(db, command.room_id, input.runId, command.source_message_id));
     if (attempt === undefined) {
       // No wake from this run: a bound agent's handoff acts on the current
       // card, once per command.
@@ -1736,51 +1721,6 @@ export async function fireWorkflowTimer(
     });
     return true;
   });
-}
-
-/**
- * A turn that answered the step's current attempt ended and the run did not
- * move: the agent did not hand off, so the step moves on as `blocked` with
- * reason no handoff. A turn woken by anything else, or by an older attempt,
- * is unrelated and changes nothing. Called from the turn's terminal
- * `complete` receipt, in a separate transaction after completion commits.
- */
-export async function failOverUnansweredTurn(
-  db: SqlDatabase,
-  input: { roomId: string; agentId: string; sourceMessageId: string },
-): Promise<void> {
-  const scope = await unansweredRun(db, input);
-  if (!scope) return;
-  await failOver(db, scope, {
-    leaving: input.agentId,
-    why: 'its turn ended with no handoff',
-    whenExhausted: 'timeout',
-  });
-}
-
-/** Both turn hooks act only on the current holder answering the current attempt. */
-async function unansweredRun(
-  db: SqlDatabase,
-  input: { roomId: string; agentId: string; sourceMessageId: string },
-): Promise<RunScope | undefined> {
-  const source = (
-    await db.query<{ run_id: string }>(
-      `SELECT card->>'runId' run_id FROM messages WHERE id=$1 AND room_id=$2 AND card->>'runId' IS NOT NULL`,
-      [input.sourceMessageId, input.roomId],
-    )
-  ).rows[0];
-  if (!source) return undefined;
-  const run = await db.query(
-    `SELECT 1 FROM messages WHERE id=$1 AND room_id=$2 AND card_type=$3`,
-    [source.run_id, input.roomId, WORKFLOW_HANDOFF_CARD_TYPE],
-  );
-  if (!run.rowCount) return undefined;
-  const scope = await openRun(db, input.roomId, source.run_id);
-  if (scope.ended || !isHandoffState(scope.state)) return undefined;
-  if (scope.run.roleBindings[scope.state.role] !== input.agentId) return undefined;
-  const attempt = await provenanceAttempt(db, input.roomId, scope.runId, input.sourceMessageId);
-  if (attempt !== scope.run.seq) return undefined;
-  return scope;
 }
 
 /** A closing corner abandons every live saved run inside it. Call within the close transaction. */
@@ -2148,34 +2088,6 @@ export async function startWorkflow(
       exhausted,
     });
     return { runId, state: contract.start };
-  });
-}
-
-/**
- * The one hook a failed/silent turn goes through to fail a workflow step over
- * to the next eligible agent on its role list. Called unconditionally from
- * `turn-silence-notice.ts`'s `noteFirstSilence`, BEFORE its own human-trigger
- * requirement — a workflow dispatch's triggering message is normally
- * agent-authored, so gating this on "a human is further up the chain" would
- * silently never fire for the ordinary case. Keyed on the attempt: the turn
- * fails over only when the wake it answered (a dispatch card, or any other
- * wake citing the run) belongs to the step's current attempt and its agent
- * still holds it. With nobody left the run names each agent's reason and
- * waits; the step timer, if any, then applies `timeout`. A no-op for a stale
- * wake or a turn that was never a workflow dispatch; it must never throw into
- * the ordinary silence-notice path.
- */
-export async function reassignFailedWorkflowRole(
-  db: SqlDatabase,
-  input: { roomId: string; requestId: string; agentId: string; reason?: string | null },
-): Promise<void> {
-  const scope = await unansweredRun(db, { ...input, sourceMessageId: input.requestId }).catch(() => undefined);
-  if (!scope) return;
-  const reason = (input.reason ?? '').replace(/\s+/g, ' ').trim().slice(0, 100);
-  await failOver(db, scope, {
-    leaving: input.agentId,
-    why: reason ? `its turn failed (${reason})` : 'its turn failed',
-    whenExhausted: 'wait',
   });
 }
 

@@ -5,6 +5,8 @@ interface PushLifecycle {
   loadIdentity(): Promise<Identity | null>;
   subscribeIdentityChange(listener: () => void): () => void;
   subscribeForeground(listener: () => void): () => void;
+  subscribeTokenChange(listener: () => void): () => void;
+  subscribeRecovery(listener: () => void): () => void;
   register(identity: Identity): Promise<BuzzPushRegistrationResult>;
   retry(identity: Identity): Promise<BuzzPushRegistrationResult | null>;
   reportUpdate(identity: Identity): Promise<unknown>;
@@ -61,10 +63,14 @@ export function startPushRegistrationLifecycle(deps: PushLifecycle): () => void 
   }
   const stopIdentity = deps.subscribeIdentityChange(() => request('register'));
   const stopForeground = deps.subscribeForeground(() => request('retry'));
+  const stopToken = deps.subscribeTokenChange(() => request('register'));
+  const stopRecovery = deps.subscribeRecovery(() => request('retry'));
   request('register');
   return () => {
     disposed = true;
     stopIdentity();
     stopForeground();
+    stopToken();
+    stopRecovery();
   };
 }

@@ -3777,7 +3777,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   await dataStep('feedback triage latest counts', () =>
     workflowBackfillOnce(database, 'feedback-triage-latest-count-v1', backfillFeedbackTriageWorkflow));
   await dataStep('welcome video workflow', () =>
-    workflowBackfillOnce(database, 'welcome-video-v1', backfillWelcomeVideoWorkflow));
+    workflowBackfillOnce(database, 'welcome-video-v2', backfillWelcomeVideoWorkflow));
   await dataStep('feedback signal walk', () =>
     workflowBackfillOnce(database, 'feedback-signal-walk-v1', backfillFeedbackSignalWalk));
   await dataStep('workspace walk history', () =>

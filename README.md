@@ -49,6 +49,8 @@ The agent opens a corner: an isolated worktree with one branch and one objective
 
 Opening a corner starts its implementer, even when the opener does the work. Workflow steps likewise start their assigned agent. An agent's own posts and reports do not wake it again.
 
+Your starter agents can make a free vertical welcome reel, targeting 6–9 seconds with a 15-second maximum, using a video model they sign up for through Squire. Preview it first; only your **Post** approval lets them upload it to your connected YouTube as a Short. No card, deposit or paid credits are required.
+
 ## Your machine. Your keys.
 
 The agent stays on your machine. Your computer keeps one connection for all its agents. When that connection drops, requests wait and resume when it returns. Your provider key never reaches Beeline's servers. [Security details and sandbox limits](https://github.com/Beeline-Work/beeline/blob/main/docs/security.md).

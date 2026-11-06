@@ -47,14 +47,18 @@ node --input-type=module - "$EVIDENCE/simulators.json" > "$EVIDENCE/device-selec
 import { readFileSync } from 'node:fs';
 const list = JSON.parse(readFileSync(process.argv[2], 'utf8'));
 const runtime = list.runtimes.filter(r => r.isAvailable && r.identifier.includes('.iOS-')).at(-1);
-const type = list.devicetypes.filter(d => d.name.startsWith('iPhone')).at(-1);
+const type = runtime?.supportedDeviceTypes?.find(d => d.name.startsWith('iPhone'));
 if (!runtime || !type) throw new Error('No installed iOS runtime/iPhone device type');
 console.log(type.identifier);
 console.log(runtime.identifier);
 JS
 type_id=$(sed -n '1p' "$EVIDENCE/device-selection.txt")
 runtime_id=$(sed -n '2p' "$EVIDENCE/device-selection.txt")
-device=$(xcrun simctl create "Beeline sign-in ${GITHUB_RUN_ID:-local}" "$type_id" "$runtime_id")
+if ! device=$(xcrun simctl create "Beeline sign-in ${GITHUB_RUN_ID:-local}" "$type_id" "$runtime_id"); then
+  device=''
+  echo "Unable to create compatible Simulator: $type_id / $runtime_id" >&2
+  exit 1
+fi
 printf '%s\n' "$device" > "$EVIDENCE/device-id.txt"
 xcrun simctl boot "$device"
 xcrun simctl bootstatus "$device" -b
@@ -83,6 +87,11 @@ record_pid=$!
 result=0
 for provider in github google; do
   date -u '+%Y-%m-%dT%H:%M:%SZ' > "$EVIDENCE/$provider-started.txt"
+  # Record deliberate system-consent cancellation separately from provider start.
+  maestro --device "$device" test --test-output-dir "$EVIDENCE/$provider-cancel" \
+    -e "PROVIDER=$provider" "$HARNESS_DIR/scripts/ios-signin/cancel.yaml" \
+    > "$EVIDENCE/$provider-cancel-maestro.log" 2>&1 || result=1
+  xcrun simctl terminate "$device" app.usebeeline.mobile || true
   # One provider's failure must not suppress capture of the other.
   maestro --device "$device" test --test-output-dir "$EVIDENCE/$provider" \
     -e "PROVIDER=$provider" "$HARNESS_DIR/scripts/ios-signin/provider.yaml" \

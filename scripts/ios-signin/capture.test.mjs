@@ -30,3 +30,21 @@ test('missing CocoaPods is named before prebuild or simulator work starts', () =
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('Simulator selection uses runtime compatibility rather than the final legacy iPhone type', async () => {
+  const { readFileSync } = await import('node:fs');
+  const capture = readFileSync(resolve('scripts/ios-signin/capture.sh'), 'utf8');
+  const selection = capture.match(/<<'JS'\n([\s\S]*?)\nJS/)[1];
+  const root = mkdtempSync(join(tmpdir(), 'signin-device-'));
+  try {
+    const supported = { name: 'iPhone 17 Pro', identifier: 'supported-iphone' };
+    const runtime = { isAvailable: true, identifier: 'com.apple.iOS-26', supportedDeviceTypes: [supported] };
+    const fixture = join(root, 'simulators.json');
+    writeFileSync(fixture, JSON.stringify({ runtimes: [runtime], devicetypes: [supported, { name: 'iPhone 6s Plus', identifier: 'incompatible-iphone' }] }));
+    const result = spawnSync(process.execPath, ['--input-type=module', '-', fixture], { input: selection, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, 'supported-iphone\ncom.apple.iOS-26\n');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

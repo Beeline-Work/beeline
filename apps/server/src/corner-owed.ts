@@ -1,6 +1,7 @@
 import { cornerImplementerSql, cornerOwnerSql } from './corner-worker.js';
 import { cornerCommissionerSql } from './corner-opening.js';
 import { cornerWaitingReportSql, humanReportCornerSql, cornerHumanReportsSql } from './corner-waiting-report.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { CHOICE_CARD_TYPE } from '@beeline/api-contract/phone';
 import {
   CORNER_AGENT_UNREACHABLE_CARD_TYPE,
@@ -393,12 +394,16 @@ RETURNS boolean LANGUAGE sql STABLE AS $authority$
     SELECT parent.* FROM agent_commands parent JOIN chain child ON parent.id=child.parent_command_id
   ) SELECT responder IS DISTINCT FROM (SELECT ${cornerImplementerSql('authority_fact', 'authority_corner')}
     FROM rooms authority_corner JOIN corner_facts authority_fact ON authority_fact.corner_id=authority_corner.id
-    WHERE authority_corner.id=question_corner) AND EXISTS (
+    WHERE authority_corner.id=question_corner) AND responder<>'${SYSTEM_IDENTITY_ID}' AND (
+    EXISTS (SELECT 1 FROM identities person JOIN room_access member ON member.identity_id=person.id
+      WHERE person.id=responder AND person.kind='human' AND member.removed_at IS NULL
+        AND member.room_id IN (question_corner,(SELECT parent_id FROM rooms WHERE id=question_corner)))
+    OR (EXISTS (SELECT 1 FROM identities agent WHERE agent.id=responder AND agent.kind='agent') AND EXISTS (
     SELECT 1 FROM chain LEFT JOIN messages source ON source.id=chain.root_source_message_id
     LEFT JOIN messages direct ON direct.id=chain.source_message_id
     WHERE chain.private_payload->>'authorId'=responder
       OR source.author_id=responder OR direct.author_id=responder
-  )
+  )))
 $authority$;
 CREATE OR REPLACE FUNCTION clear_corner_question_blockers() RETURNS trigger LANGUAGE plpgsql AS $question$
 DECLARE answer_corner uuid; responder text; answered_at timestamptz;

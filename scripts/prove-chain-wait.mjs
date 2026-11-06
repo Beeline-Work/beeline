@@ -10,16 +10,18 @@ const db = new PgliteDatabase();
 const ws = '11111111-1111-4111-8111-111111111111';
 const room = '22222222-2222-4222-8222-222222222222';
 const corner = '33333333-3333-4333-8333-333333333333';
+const humanMember = 'e'.repeat(64);
 const human = 'a'.repeat(64), commander = 'b'.repeat(64), worker = 'c'.repeat(64), peer = 'd'.repeat(64);
 try {
   await migrate(db);
   await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES
     ($1,'human','Owner','owner'),($2,'agent','Commander','commander'),
     ($3,'agent','Worker','worker'),($4,'agent','Peer','peer')`, [human,commander,worker,peer]);
+  await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Room member','human-member')`, [humanMember]);
   await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$4),($2,$4),($3,$4)`, [commander,worker,peer,human]);
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'CHAIN-WAIT proof')`, [ws]);
   await db.query(`INSERT INTO rooms(id,workspace_id,name,created_by) VALUES($1,$2,'Room',$3)`, [room,ws,human]);
-  for (const identity of [human,commander,worker,peer]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+  for (const identity of [human,commander,worker,peer,humanMember]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
     VALUES($1,NULL,$2,'owner'),($1,$3,$2,'member')`, [ws,identity,room]);
   await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,created_by) VALUES($1,$2,$3,'Corner',$4)`, [corner,ws,room,commander]);
   await insertCornerFacts(db, { cornerId: corner, ownerAgentId: worker, commissionedBy: human });
@@ -43,7 +45,13 @@ try {
   assert.equal(await state(),'waiting');
   await db.query(`UPDATE corner_github_cache SET lifecycle='{"pr":{"headSha":"proof-head"},"checks":"pending"}'::jsonb WHERE corner_id=$1`, [corner]);
   assert.equal(await state(),'waiting');
-  await order('superior-direct-order',human);
+  await order('superior-direct-order',humanMember);
   assert.notEqual(await state(),'waiting');
-  console.log('Reproduction CHAIN-WAIT demonstrated: phone corner list clears after commander/superior orders; peer replies and worker pushes preserve Waiting.');
+  await order('commander-resumes',commander);
+  await question('worker-followup');
+  assert.equal(await state(),'waiting');
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation)
+    VALUES('human-member-answer',$1,$2,'Proceed','message')`, [corner,humanMember]);
+  assert.notEqual(await state(),'waiting');
+  console.log('Reproduction CHAIN-WAIT demonstrated: phone corner list clears after commander orders and human member orders/replies; peer replies and worker pushes preserve Waiting.');
 } finally { await db.close(); }

@@ -1054,6 +1054,7 @@ export class GitHubAppClient {
     // already hold queued runs the rollup has not listed. An empty suite is
     // only the placeholder GitHub opens for an installed app. A required
     // check still has to come from the GitHub App branch protection names.
+    let total = contexts.totalCount;
     let pending = await this.hasUnfinishedChecks(accessToken, fullName, headSha);
     if (!pending && state === 'passed') {
       const missing = await this.missingRequiredChecks(
@@ -1061,13 +1062,14 @@ export class GitHubAppClient {
       );
       if (missing.length) {
         pending = true;
+        total += missing.length;
         for (const name of missing) checks.push({ name, status: 'pending' });
       }
     }
     return {
       state: pending ? 'pending' : state,
       pendingRegistrations: pending,
-      total: contexts.totalCount,
+      total,
       failing: checks.filter((check) => check.status === 'failed').map((check) => check.name),
       checks,
     };

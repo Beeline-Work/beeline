@@ -124,18 +124,6 @@ export type SetEventSubscriptionsInput = RoomInput & {
   readonly kinds: readonly string[];
 };
 export type EventSubscriptionsResult = { readonly kinds: readonly ServerEventKind[] };
-export type WakeDeliveryResult = { readonly delivery: 'immediate' | `batch:${number}` };
-
-/** Zero means immediate; batch windows use positive whole minutes. */
-export function wakeBatchMinutes(delivery: unknown): number {
-  if (delivery === 'immediate') return 0;
-  if (typeof delivery === 'string' && /^batch:[1-9][0-9]*$/.test(delivery)) {
-    const minutes = Number(delivery.slice(6));
-    if (Number.isSafeInteger(minutes) && minutes <= 2147483647) return minutes;
-  }
-  throw new Error('delivery must be immediate or batch:<positive whole minutes> (at most 2147483647)');
-}
-
 /**
  * One event this agent emits into the Room it is answering in.
  *
@@ -173,8 +161,6 @@ export type AgentCommand = {
   readonly source: RoomInboxResult['items'][number];
   /** Superseded wakes, quoted as history; only source authorizes this turn. */
   readonly recoveryContext?: string;
-  /** Additional durably recorded inbox wakes in arrival order, within this Room/corner. */
-  readonly coalescedContext?: string;
 };
 export type CommandClaimInput = RoomInput & {
   readonly commandId: string;
@@ -321,8 +307,10 @@ export type DaemonOperationMap = {
     RoomInput,
     { readonly commandProtocol: 1; readonly commands: readonly AgentCommand[] }
   >;
-  claimAgentCommand: Operation<CommandClaimInput, WriteResult & { readonly modelCredential?: OwnedModelCredential; readonly recoveryContext?: string; readonly coalescedContext?: string; readonly source?: RoomInboxResult['items'][number]; readonly activitySource?: { readonly body: string; readonly systemEvent: SystemEvent } }>;
+  claimAgentCommand: Operation<CommandClaimInput, WriteResult & { readonly modelCredential?: OwnedModelCredential; readonly recoveryContext?: string; readonly activitySource?: { readonly body: string; readonly systemEvent: SystemEvent } }>;
+  claimAgentTurn: Operation<CommandClaimInput, WriteResult & { readonly commands: readonly AgentCommand[]; readonly modelCredential?: OwnedModelCredential; readonly recoveryContext?: string; readonly activitySource?: { readonly body: string; readonly systemEvent: SystemEvent } }>;
   acknowledgeAgentCommand: Operation<CommandClaimInput, WriteResult>;
+  releaseAgentTurn: Operation<RoomInput & { readonly generationId: string }, WriteResult & { readonly commands: readonly AgentCommand[] }>;
   getDaemonBootstrap: Operation<DaemonBootstrapInput, DaemonBootstrapResult>;
   getWorkspaceRoster: Operation<WorkspaceRosterInput, WorkspaceRosterResult>;
   getOwedMentions: Operation<Record<string, never>, { readonly owedMentions: readonly { readonly roomId: string; readonly messageId: string; readonly memberId: string; readonly replyRule: string; readonly idempotencyKey: string }[] }>;
@@ -354,8 +342,6 @@ export type DaemonOperationMap = {
   getMissionAuthority: Operation<MissionAuthorityInput, AuthorityDecisionResult>;
   createAgentSchedule: Operation<CreateAgentScheduleInput, AgentScheduleResult>;
   setEventSubscriptions: Operation<SetEventSubscriptionsInput, EventSubscriptionsResult>;
-  setWakeDelivery: Operation<RoomInput & WakeDeliveryResult, WakeDeliveryResult>;
-  getWakeDelivery: Operation<RoomInput, WakeDeliveryResult>;
   createAgentSubscription: Operation<RoomInput & { source: SubscriptionSource; event: string; repository?: string;
     channelId?: string; channelName?: string; title?: string; when?: string; prompt: string; workflowName?: string }, RoomSubscriptionView>;
   listServiceSubscriptionEvents: Operation<RoomInput, SubscriptionEventCatalog>;
@@ -1237,11 +1223,6 @@ export type RequestCompletionResult = {
 export type WriteResult = {
   readonly id: string;
   readonly createdAt: number;
-  /** Set on a failed hiccup receipt the helper should exit so systemd restarts it. */
-  readonly hiccupRestart?: boolean;
-  readonly hiccupAttempt?: number;
-  /** The interrupted command was requeued for the updated helper; no process restart is needed. */
-  readonly updateRequeued?: boolean;
   /** Whether the terminal failure reached its recorded commander; false preserves the failed turn. */
   readonly failureReportDelivered?: boolean;
 };
@@ -1285,6 +1266,8 @@ export type RetractLiveOutputInput = TurnOutputAuthority &
     readonly kind: 'draft' | 'thought';
   };
 export type PostTurnReceiptInput = AgentRoomInput & {
+  /** Invocation diagnostics and usage only; an unanswered command stays claimed. */
+  readonly diagnosticsOnly?: boolean;
   /** Current owner ends model-dependent work without claiming provider failure
    * or delivery. An unreadable private journal ends only owner authority, not provider outcome. */
   readonly modelOwnerEnd?: Readonly<{ requestId: string } | { journalUnavailable: true }>;

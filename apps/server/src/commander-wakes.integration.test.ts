@@ -1,4 +1,3 @@
-import { flushDueCommanderWakes } from './commander-wakes.js';
 import { releaseAgentConnection } from './connection-presence.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { advanceCorner } from './corner-lifecycle.js';
@@ -42,7 +41,6 @@ afterAll(async () => db.close());
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 beforeEach(async () => {
   ready = false; held = false; checks.mockClear(); vi.mocked(captureServerError).mockClear();
-  await db.query('UPDATE agents SET wake_batch_minutes=0');
   await db.query(`DELETE FROM agent_commands`);
   await db.query(`DELETE FROM workspaces`);
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Review command proof')`, [WS]);
@@ -84,11 +82,6 @@ async function event(id: string, body: string) {
         fromRoomId: ROOM }, parent, retainDepth: true });
   });
 }
-async function expireWindow(database = db) {
-  await database.query(`UPDATE agent_commands SET wake_after=now()-interval '1 second' WHERE wake_after IS NOT NULL`);
-  await flushDueCommanderWakes(database);
-}
-const batch = () => daemon.execute('setWakeDelivery', { roomId: DM, delivery: 'batch:1' }, RUBY);
 it.each([
   ['delivery', 'blocked'], ['cached claim', 'blocked'],
   ['delivery', 'needs_decision'], ['cached claim', 'needs_decision'],
@@ -139,29 +132,24 @@ it('STALE-ANSWERED-REPORT: preserves a report already being handled', async () =
 });
 it.each([
   ['delivery', false], ['cached claim', false], ['delivery', true], ['cached claim', true],
-] as const)('STALE-ANSWERED-REPORT: preserves other digest work at %s (blocker absorbed: %s)', async (path, absorbed) => {
+] as const)('STALE-ANSWERED-REPORT: preserves unrelated work at %s (event first: %s)', async (path, eventFirst) => {
   const opened = await open(false), turn = await worker(opened.cornerId);
-  await batch();
   let other!: Awaited<ReturnType<typeof event>>;
-  if (absorbed) other = await event(randomBytes(32).toString('hex'), 'A separate event still needs handling');
+  if (eventFirst) other = await event(randomBytes(32).toString('hex'), 'A separate event still needs handling');
   await daemon.execute('report', { ...authority(turn), status: 'blocked', text: 'blocked: publish job is running' }, WORKER);
-  if (!absorbed) other = await event(randomBytes(32).toString('hex'), 'A separate event still needs handling');
-  await expireWindow();
-  const digest = (await commands(DM, RUBY)).find(command => command.reason === (absorbed ? 'watched_corner' : 'report'))!;
-  expect(digest.coalescedContext).toContain(absorbed ? 'blocked: publish job is running' : 'A separate event still needs handling');
+  if (!eventFirst) other = await event(randomBytes(32).toString('hex'), 'A separate event still needs handling');
+  const queued = await commands(DM, RUBY);
+  const blocker = queued.find(command => command.reason === 'report')!;
+  expect(queued.find(command => command.id === other!.id)?.source.body).toBe('A separate event still needs handling');
   await daemon.execute('postRoomMessage', { ...authority(order), text: 'done: publish verified' }, RUBY);
-  if (path === 'cached claim') {
-    if (absorbed) {
-      const refreshed = await claim(digest);
-      expect(refreshed.source?.body).toBe('A separate event still needs handling');
-      expect(JSON.stringify(refreshed)).not.toContain('blocked: publish job is running');
-      return;
-    }
-    await expect(claim(digest)).rejects.toThrow('command claim conflict');
-  }
+  if (path === 'cached claim') await expect(claim(blocker)).rejects.toThrow('command claim conflict');
   const remaining = await commands(DM, RUBY);
   expect(remaining.map(command => command.id)).toContain(other!.id);
+  expect(remaining.map(command => command.id)).not.toContain(blocker.id);
   expect(JSON.stringify(remaining)).not.toContain('blocked: publish job is running');
+  await claim(remaining.find(command => command.id === other!.id)!);
+  expect((await db.query('SELECT state FROM agent_commands WHERE id=$1', [blocker.id])).rows)
+    .toEqual([{ state: 'cancelled' }]);
 });
 it('Reproduction FR-report: rejects corner progress disguised as done before a PR is ready', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
@@ -198,7 +186,7 @@ it.each([true, false])('DONE-PR-1: report resolves an unregistered PR (exists: %
       expect((await commands(DM, RUBY)).find(c => c.reason === 'report')?.source.body).toBe('done: widget delivered');
       expect((await db.query(`SELECT lifecycle->'pr'->>'number' number FROM corner_facts WHERE corner_id=$1`, [opened.cornerId])).rows[0]?.number).toBe('42');
       expect(app.readPullRequest).toHaveBeenCalledTimes(1);
-      await send();
+      await expect(send()).rejects.toThrow('authority rejected');
       expect(app.openPullRequestsForBranch).toHaveBeenCalledTimes(1);
       expect(app.readPullRequest).toHaveBeenCalledTimes(1);
     } else {
@@ -212,8 +200,7 @@ it.each([true, false])('DONE-PR-1: report resolves an unregistered PR (exists: %
 it.each(['Delivered', 'blocked: Delivered'])('uses the validated report status for %s', async text => {
   const input={...authority(order),status:'done' as const,text};
   const first=await daemon.execute('report',input,RUBY);
-  const retry=await daemon.execute('report',input,RUBY);
-  expect(retry.id).toBe(first.id);
+  await expect(daemon.execute('report',input,RUBY)).rejects.toThrow('authority rejected');
   expect((await db.query(`SELECT text FROM messages WHERE id=$1`,[first.id])).rows).toEqual([{text:'done: Delivered'}]);
 });
 it.each([undefined,'working'])('rejects a nonterminal report status %s', async status => {
@@ -260,15 +247,12 @@ it('R-GH-RETRY-REPORT: a GitHub outage cannot refuse or delay a finished-step re
   expect((await commands(DM, RUBY)).find(c => c.reason === 'report')?.source.body).toBe(text);
 });
 
-it('accepts done with live merge-ready checks, and batches its commander wake', async () => {
+it('delivers done immediately with live merge-ready checks', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
-  await batch();
   ready = true;
   await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_build_object('pr',jsonb_build_object('number',42,'headSha',$2::text)) WHERE corner_id=$1`, [opened.cornerId, '9'.repeat(40)]);
   await daemon.execute('report', { ...authority(turn), status: 'done', text: 'done: ready to merge' }, WORKER);
   expect(checks).not.toHaveBeenCalled();
-  expect((await commands(DM, RUBY)).some(c => c.reason === 'report')).toBe(false);
-  await expireWindow();
   expect((await commands(DM, RUBY)).find(c => c.reason === 'report')?.source.body).toBe('done: ready to merge');
 });
 it('accepts done for a committed merged PR without requiring another GitHub read', async () => {
@@ -276,12 +260,10 @@ it('accepts done for a committed merged PR without requiring another GitHub read
   await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_build_object('pr',jsonb_build_object('number',42,'mergeCommitSha',$2::text)) WHERE corner_id=$1`, [opened.cornerId, '8'.repeat(40)]);
   await daemon.execute('report', { ...authority(turn), status: 'done', text: 'done: PR merged' }, WORKER);
   expect(checks).not.toHaveBeenCalled();
-  await expireWindow();
   expect((await commands(DM, RUBY)).find(c => c.reason === 'report')?.source.body).toBe('done: PR merged');
 });
 it('allows completed non-PR deliverables and agent DM orders', async () => {
   const opened = await open(false), turn = await worker(opened.cornerId);
-  await batch();
   await daemon.execute('report', { ...authority(turn), status: 'done', text: 'done: non-PR artifact delivered' }, WORKER);
   const workerDM = randomUUID();
   await db.query(`INSERT INTO rooms(id,workspace_id,name,direct_participants) VALUES($1,$2,'Ruby and Worker',jsonb_build_array($3::text,$4::text))`, [workerDM, WS, RUBY, WORKER]);
@@ -291,54 +273,34 @@ it('allows completed non-PR deliverables and agent DM orders', async () => {
   await claim(research);
   await daemon.execute('report', { ...authority(research), status: 'done', text: 'done: research delivered' }, WORKER);
   expect(checks).not.toHaveBeenCalled();
-  await expireWindow();
   const reports = (await commands(DM, RUBY)).filter(c => c.reason === 'report');
-  expect(reports).toHaveLength(1);
+  expect(reports).toHaveLength(2);
   expect(JSON.stringify(reports)).toContain('research delivered');
   expect(JSON.stringify(reports)).toContain('artifact delivered');
 });
-it('Reproduction FR-batch: merges two lifecycle events five seconds apart into one durable wake', async () => {
-  await batch();
+it('keeps lifecycle events independent across a server restart', async () => {
   const first = await event('merge-1', 'Watched corner one: merged');
-  await db.query(`UPDATE agent_commands SET created_at=now()-interval '5 seconds',wake_after=now()+interval '55 seconds' WHERE id=$1`, [first!.id]);
   const second = await event('merge-2', 'Watched corner two: merged');
-  expect((await commands(DM, RUBY)).filter(c => c.reason === 'watched_corner')).toHaveLength(0);
-  expect(second!.wake_after).toEqual((await db.query<CommandRow>('SELECT * FROM agent_commands WHERE id=$1', [first!.id])).rows[0]!.wake_after);
-  await expect(claim({ ...order, id: first!.id })).rejects.toThrow('command claim conflict');
   const restarted = PgliteDatabase.fromSnapshot(await db.snapshot());
   try {
-    await expireWindow(restarted);
     const wakes = (await readAgentCommands(restarted, DM, RUBY)).commands.filter(c => c.reason === 'watched_corner');
-    expect(wakes).toHaveLength(1);
-    expect(JSON.stringify(wakes)).toContain('corner one: merged');
-    expect(JSON.stringify(wakes)).toContain('corner two: merged');
-    await flushDueCommanderWakes(restarted);
-    expect((await readAgentCommands(restarted, DM, RUBY)).commands.filter(c => c.reason === 'watched_corner')).toHaveLength(1);
+    expect(wakes.map(command => command.id)).toEqual([first!.id, second!.id]);
+    expect(wakes.map(command => command.source.body)).toEqual(['Watched corner one: merged', 'Watched corner two: merged']);
   } finally { await restarted.close(); }
-  console.info('Demonstrated FR-batch: two merges five seconds apart produce one wake after restart, with both events retained');
 });
-it.each(['blocked', 'failed', 'needs_decision'] as const)('%s reports share the opted-in inbox window with lifecycle facts', async status => {
+it.each(['blocked', 'failed', 'needs_decision'] as const)('delivers %s reports independently of lifecycle facts', async status => {
   const opened = await open(), turn = await worker(opened.cornerId);
-  await batch();
   await event('merge-1', 'Watched corner one: merged');
   const text = `${status.replace('_', '-')}: urgent result`;
   await daemon.execute('report', { ...authority(turn), status, text }, WORKER);
-  expect((await commands(DM, RUBY)).filter(c => c.id !== order.id)).toHaveLength(0);
-  await expireWindow();
   const pending = (await commands(DM, RUBY)).filter(c => c.id !== order.id);
-  expect(pending).toHaveLength(1);
-  expect(pending[0]!.source.body).toContain('corner one: merged');
-  expect(pending[0]!.coalescedContext).toContain(text);
-  console.info(`Demonstrated inbox report: ${status} follows the agent's batch:1 setting and shares its lifecycle digest`);
+  expect(pending).toHaveLength(2);
+  expect(pending.map(command => command.source.body)).toEqual(expect.arrayContaining(['Watched corner one: merged', text]));
 });
-it('a human message bypasses the opted-in window without releasing queued commander facts early', async () => {
-  await batch();
+it('delivers a human message and lifecycle fact as separate commands', async () => {
   await event('merge-1', 'Watched corner one: merged');
   await phone.execute('sendRoomMessage', { roomId: DM, messageId: randomBytes(32).toString('hex'), text: 'Change the endpoint' }, HUMAN);
   const pending = (await commands(DM, RUBY)).filter(c => c.id !== order.id);
-  expect(pending).toHaveLength(1);
-  expect(pending[0]!.source.body).toBe('Change the endpoint');
-  expect(pending[0]!.coalescedContext).toBeUndefined();
-  await expireWindow();
-  expect((await commands(DM, RUBY)).some(command => command.source.body.includes('corner one: merged'))).toBe(true);
+  expect(pending).toHaveLength(2);
+  expect(pending.map(command => command.source.body)).toEqual(expect.arrayContaining(['Watched corner one: merged', 'Change the endpoint']));
 });

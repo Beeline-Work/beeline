@@ -1,21 +1,6 @@
 import { systemMessage } from './system-message-catalog.js';
-/**
- * First-silence vocabulary for a turn that did not answer.
- *
- * The Room line is phrased by the server through the one system-line grammar
- * (`<subject> <verb> · <consequence>`). This module owns the fault classes,
- * the approved remedies, the hiccup restart budget, and the 200-character cap.
- * Cost scales with messages that went unanswered, never with fleet size.
- */
-import {
-  AGENT_SIGN_IN_SERVICE_LABELS,
-  agentSignInUsesKey,
-  type AgentSignInHarness,
-} from './agent-sign-in.js';
-import { MAX_EVENT_CONSEQUENCE_LENGTH, SYSTEM_LINE_SEPARATOR } from './system-events.js';
-
-export const TURN_SILENCE_LINE_MAX = 200;
-export const HICCUP_ATTEMPT_LIMIT = 3;
+/** Failed-receipt classification shared with the helper. Classification carries
+ * diagnostics only; it never decides retry, expiry or notice policy. */
 
 export const TURN_SILENCE_KINDS = [
   'hiccup',
@@ -63,11 +48,6 @@ export type ClassifiedTurnSilence = {
   readonly repo?: string;
 };
 
-export type TurnSilencePhrase = {
-  readonly verb: string;
-  readonly consequence: string;
-};
-
 export function receiptKindToSilenceKind(kind: TurnReceiptReasonKind | undefined): TurnSilenceKind {
   if (kind === 'model-selection-unavailable' || kind === 'wrong-model') return 'wrong-model';
   if (kind && (TURN_SILENCE_KINDS as readonly string[]).includes(kind)) return kind;
@@ -85,14 +65,7 @@ function firstMatch(value: string, pattern: RegExp): string | undefined {
   return captured || undefined;
 }
 
-/**
- * The one definition of "this text looks like a credential/auth problem" —
- * shared by the free-text classifier below and by a caller (`model-config.ts`)
- * that must recognize the SAME shape before it ever becomes a distilled
- * turn-failure reason, so a transient 401 (a harness's own OAuth token mid
- * refresh) can be retried as a hiccup instead of skipping straight to a
- * standing not-signed-in verdict.
- */
+/** Identify credential-shaped diagnostics before a failed receipt is distilled. */
 export function isAuthShapedFault(text: string): boolean {
   return (
     /authentication required/i.test(text) ||
@@ -121,24 +94,8 @@ export function isContextOverflowFault(text: string): boolean {
 }
 
 /**
- * A rate limit, timeout, or outage from the model's provider
- * (`provider error 429: …`, `provider error 503: …`). Restarts may clear it,
- * so it stays a hiccup, but its line points the person at the model picker.
- */
-function isProviderOutageFault(text: string): boolean {
-  return /\bprovider error (?:408|429|5\d\d)\b/i.test(text);
-}
-
-/** The helper reached a checkout another session still holds. The order waits; the helper is not offline. */
-export function isCheckoutBusyFault(text: string): boolean {
-  return /corner checkout is in use/i.test(text);
-}
-
-const PROVIDER_OUTAGE_POINTER = systemMessage("turn-silence.its-provider-is-failing-switch-its-model-in-the-agent-s-settings");
-
-/**
  * Classify a distilled helper reason. `reasonKind` from a current helper wins;
- * text matching covers old helpers and the 90s stall path (no receipt).
+ * text matching classifies diagnostic reasons that lack a kind.
  */
 export function classifyTurnSilence(
   reason: string | null | undefined,
@@ -250,36 +207,9 @@ function repoFromReason(text: string): string {
   return firstMatch(text, REPO_FROM_URL) ?? firstMatch(text, REPO_FROM_SLUG) ?? systemMessage("turn-silence.the-repository");
 }
 
-/** A hung harness gets one fresh attempt; ordinary transient faults keep their budget. */
-export function hiccupAttemptLimit(fault?: string): number {
-  return fault?.startsWith('turn_backstop:') ? 2 : HICCUP_ATTEMPT_LIMIT;
-}
-
-export function shouldRestartHiccup(kind: TurnSilenceKind, nextAttempt: number, fault?: string): boolean {
-  return kind === 'hiccup' && nextAttempt > 0 && nextAttempt < hiccupAttemptLimit(fault);
-}
-
-/**
- * A hiccup that has exhausted its restart budget AND still looks auth-shaped
- * is escalated to the authentication notice instead of the generic
- * "stopped retrying" line. The notice cannot infer whether a credential
- * expired or a transient refresh race persisted. Only called once restarting is
- * over (`!shouldRestartHiccup(...)`); an auth-shaped fault mid-retry stays a
- * quiet hiccup so it never reports a standing failure prematurely.
- */
-export function escalateExhaustedHiccup(classified: ClassifiedTurnSilence): ClassifiedTurnSilence {
-  if (classified.kind !== 'hiccup') return classified;
-  if (!isAuthShapedFault(classified.fault ?? '')) return classified;
-  return { kind: 'not-signed-in' };
-}
-
 /** The helper's one plain line for a repo cache it could not repair after a crash. */
 export function repositoryCacheDamagedFault(cache: string, machine: string): string {
   return `The repo cache ${cache} on ${machine} is damaged and automatic repair failed. The machine's owner needs to repair it`;
-}
-
-export function isRepositoryCacheDamagedFault(text: string): boolean {
-  return /\bThe repo cache \S+ on .+ is damaged and automatic repair failed\b/.test(text);
 }
 
 /** Corner-start configuration that cannot recover without a human/config change. */
@@ -289,138 +219,4 @@ export function isStandingWorkspaceConfigurationFault(text: string): boolean {
     /incomplete repository binding/i.test(text) ||
     /no authoritative objective fact/i.test(text)
   );
-}
-
-/**
- * A generation-less failed receipt is bound to a still-pending command. Standing
- * conditions complete it; a transient clone/checkout/network (or hiccup that
- * cannot restart because nothing was claimed) leaves it pending so the next
- * startCorner can answer the original request without a helper-process restart.
- */
-export function shouldCompletePendingFailedCommand(kind: TurnSilenceKind, reason = ''): boolean {
-  if (kind === 'hiccup' || kind === 'offline' || kind === 'update-interrupted' || kind === 'process-exited') return false;
-  if (kind === 'workspace-failure') return isStandingWorkspaceConfigurationFault(reason);
-  return true;
-}
-
-function fitsSilenceLine(name: string, verb: string, consequence: string): boolean {
-  const head = `${name} ${verb}${SYSTEM_LINE_SEPARATOR}`;
-  return (
-    head.length + consequence.length <= TURN_SILENCE_LINE_MAX &&
-    consequence.length <= MAX_EVENT_CONSEQUENCE_LENGTH
-  );
-}
-
-function capLine(name: string, verb: string, consequence: string): TurnSilencePhrase {
-  const head = `${name} ${verb}${SYSTEM_LINE_SEPARATOR}`;
-  const budget = Math.max(24, TURN_SILENCE_LINE_MAX - head.length);
-  const clipped =
-    consequence.length > budget ? systemMessage("turn-silence.clipped-consequence", consequence.slice(0, Math.max(1, budget - 1))) : consequence;
-  const bounded =
-    clipped.length > MAX_EVENT_CONSEQUENCE_LENGTH
-      ? systemMessage("turn-silence.clipped-consequence", clipped.slice(0, MAX_EVENT_CONSEQUENCE_LENGTH - 1))
-      : clipped;
-  return { verb, consequence: bounded };
-}
-
-export function phraseTurnSilence(
-  name: string,
-  classified: ClassifiedTurnSilence,
-  options: {
-    readonly givingUp?: boolean;
-    readonly restarting?: boolean;
-    /** The agent's harness signs in from a Room, so its owner can send `@handle login`. */
-    readonly login?: { readonly handle: string; readonly harness: AgentSignInHarness };
-  } = {},
-): TurnSilencePhrase {
-  const agent = name.trim() || 'The agent';
-  switch (classified.kind) {
-    case 'wrong-model':
-      return capLine(
-        agent,
-        systemMessage("turn-silence.could-not-answer"),
-        systemMessage("turn-silence.the-selected-model-isn-t-available-pick-another-in-the-agent-s-se"),
-      );
-    case 'allowance-spent': {
-      const until = classified.allowanceUntil?.trim();
-      return capLine(
-        agent,
-        systemMessage("turn-silence.could-not-answer"),
-        until
-          ? systemMessage("turn-silence.the-provider-allowance-is-spent-until-top-up-or-move-the-agent-to", until)
-          : systemMessage("turn-silence.the-provider-allowance-is-spent-top-up-or-move-the-agent-to-anoth"),
-      );
-    }
-    case 'not-signed-in': {
-      if (!options.login)
-        return capLine(
-          agent,
-          systemMessage("turn-silence.could-not-answer"),
-          systemMessage("turn-silence.the-helper-could-not-authenticate-with-the-provider-check-its-log"),
-        );
-      // The action leads: a phone shows two lines before More, so the
-      // command a person sends sits first and the machine fallback after it.
-      // A long name or handle drops the fallback, never the command.
-      const { handle, harness } = options.login;
-      const verb = agentSignInUsesKey(harness)
-        ? systemMessage("turn-silence.needs-a-new-provider-key")
-        : systemMessage("turn-silence.needs-a-sign-in", AGENT_SIGN_IN_SERVICE_LABELS[harness]);
-      const command = systemMessage("turn-silence.send-login-here", handle);
-      const full = systemMessage("turn-silence.if-that-fails-its-owner-can-run-beeline-connect-on-its-machine", command);
-      return capLine(agent, verb, fitsSilenceLine(agent, verb, full) ? full : command);
-    }
-    case 'workspace-failure':
-      return capLine(
-        agent,
-        systemMessage("turn-silence.could-not-answer"),
-        systemMessage("turn-silence.the-helper-couldn-t-get-a-working-copy-of-check-the-repository-is", classified.repo ?? systemMessage("turn-silence.the-repository")),
-      );
-    case 'helper-out-of-date':
-      return capLine(
-        agent,
-        systemMessage("turn-silence.could-not-answer"),
-        systemMessage("turn-silence.the-helper-is-out-of-date-run-beeline-start-on-the-helper-s-machi"),
-      );
-    case 'update-interrupted':
-      return capLine(agent, systemMessage("turn-silence.was-interrupted-by-an-update"), systemMessage("turn-silence.the-request-is-queued-to-resume"));
-    case 'process-exited':
-      return capLine(agent, systemMessage("turn-silence.could-not-answer"), systemMessage("turn-silence.the-request-is-queued-to-resume"));
-    case 'offline':
-      return capLine(
-        agent,
-        systemMessage("turn-silence.is-offline"),
-        systemMessage("turn-silence.the-helper-is-unreachable-if-it-stays-offline-run-beeline-start-o"),
-      );
-    case 'context-overflow':
-      return capLine(
-        agent,
-        systemMessage("turn-silence.could-not-answer"),
-        systemMessage("turn-silence.the-request-no-longer-fits-the-model-s-context-window-start-a-new"),
-      );
-    case 'resource-limit':
-      return capLine(
-        agent,
-        systemMessage("turn-silence.could-not-answer"),
-        systemMessage("turn-silence.the-session-likely-hit-its-memory-limit-run-fewer-tools-at-once-o"),
-      );
-    case 'hiccup': {
-      const fault = (classified.fault ?? systemMessage("turn-silence.the-turn-stalled")).replace(/\s+/g, systemMessage("turn-silence.space")).trim();
-      if (isCheckoutBusyFault(fault)) return capLine(agent, systemMessage("turn-silence.is-waiting"), fault);
-      const remedy = options.givingUp
-        ? (hiccupAttemptLimit(classified.fault) === 2
-          ? systemMessage("turn-silence.stopped-retrying-after-two-tries")
-          : systemMessage("turn-silence.stopped-retrying-after-three-tries"))
-        : options.restarting === false
-          ? undefined
-          : systemMessage("turn-silence.resending-your-message");
-      const detail = remedy ? systemMessage("turn-silence.fault-and-remedy", fault, remedy) : systemMessage("turn-silence.fault-sentence", fault);
-      // The helper already moved the turn across the pinned providers; what is
-      // left to the person is the model itself. The pointer leads, because a
-      // phone shows only the first two lines of this row.
-      if (isProviderOutageFault(fault)) {
-        return capLine(agent, systemMessage("turn-silence.could-not-answer"), systemMessage("turn-silence.provider-fault", PROVIDER_OUTAGE_POINTER, detail));
-      }
-      return capLine(agent, systemMessage("turn-silence.could-not-answer"), detail);
-    }
-  }
 }

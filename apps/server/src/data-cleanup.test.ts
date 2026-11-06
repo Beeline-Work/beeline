@@ -6,7 +6,6 @@ import { compactPushClaims, compactWebhookDeliveries } from './database.js';
 import {
   cancelArchivedCornerAssignments,
   cancelCornerAgentCommands,
-  cancelStaleClosedCornerStops,
 } from './corner-close.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
@@ -154,10 +153,12 @@ describe('release data cleanup', () => {
     for (const action of ['input', 'resume', 'restart', 'stop'])
       await db.query(`INSERT INTO agent_commands
         (id,room_id,agent_id,source_message_id,turn_request_id,action,reason,
-          root_command_id,root_source_message_id,agent_depth)
-        VALUES($1,$2,$3,'source','turn',$4,'test',$1,'source',0)`,
+          root_command_id,root_source_message_id,agent_depth,state,generation_id)
+        VALUES($1,$2,$3,'source','turn',$4,'test',$1,'source',0,
+          CASE WHEN $4='input' THEN 'claimed' ELSE 'pending' END,
+          CASE WHEN $4='input' THEN 'stale-helper-generation' ELSE NULL END)`,
         [`command-${action}`, CORNER, AGENT, action]);
-    // Replace dispatch's optimistic row with the stale helper generation.
+    // The working row belongs to the claimed input; the other controls never started.
     await db.query(`INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
       VALUES($1,'turn',$2,'working','stale-helper-generation')
       ON CONFLICT(room_id,request_id,agent_id) DO UPDATE
@@ -196,25 +197,6 @@ describe('release data cleanup', () => {
       { id: 'queued', state: 'cancelled' },
       { id: 'running', state: 'cancelled' },
     ]);
-  });
-
-  it('settles day-old stops left pending in archived corners and keeps recent ones deliverable', async () => {
-    await db.query(`INSERT INTO identities(id,kind,name) VALUES
-      ($1,'human','Human'),($2,'agent','Agent')`, [HUMAN, AGENT]);
-    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Space')`, [WORKSPACE]);
-    await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [ROOM, WORKSPACE]);
-    await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,archived_at)
-      VALUES($1,$2,$3,'Closed',now())`, [CORNER, WORKSPACE, ROOM]);
-    await db.query(`INSERT INTO messages(id,room_id,author_id,text)
-      VALUES('source',$1,$2,'work'),('later',$1,$2,'more')`, [CORNER, HUMAN]);
-    await db.query(`INSERT INTO agent_commands
-      (id,room_id,agent_id,source_message_id,turn_request_id,action,reason,
-        root_command_id,root_source_message_id,agent_depth,created_at)
-      VALUES('old-stop',$1,$2,'source','old','stop','corner_close','old-stop','source',0,now()-interval '2 days'),
-        ('new-stop',$1,$2,'later','new','stop','corner_close','new-stop','later',0,now())`, [CORNER, AGENT]);
-    await expect(cancelStaleClosedCornerStops(db)).resolves.toBe(1);
-    expect((await db.query(`SELECT id,state FROM agent_commands WHERE room_id=$1 ORDER BY id`, [CORNER])).rows)
-      .toEqual([{ id: 'new-stop', state: 'pending' }, { id: 'old-stop', state: 'cancelled' }]);
   });
 
   it('expires terminal claims while retaining mobile read-clear claims for a week', async () => {

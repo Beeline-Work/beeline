@@ -42,7 +42,6 @@ import { fileURLToPath } from 'node:url';
 import {
   cornerTextRefusal,
   normalizeCornerText,
-  wakeBatchMinutes,
   ARTIFACT_MIME_BY_EXTENSION,
   ARTIFACT_MIME_TYPES,
   INSTITUTIONAL_SEARCH_QUERY_MAX_CHARACTERS,
@@ -614,15 +613,23 @@ function requiredEnv(name: string): string {
   return value;
 }
 
+const commandRequest = new AsyncLocalStorage<string | undefined>();
+
 async function activeCommandContext(): Promise<{
   roomId: string;
   requestId: string;
   generationId: string;
+  taskId?: string;
 }> {
-  const { promptSectionIds: _sections, commandReason: _reason, startedAt: _startedAt, ...value } = await readTurnContextFile();
-  if (!value.roomId || !value.requestId || !value.generationId)
-    throw new Error('no active server command');
-  return value as { roomId: string; requestId: string; generationId: string };
+  const value = await readTurnContextFile();
+  const requestId = commandRequest.getStore() ?? value.requestId;
+  const commands = value.commands as {requestId:string;commandReason:string;taskId:string}[] | undefined;
+  if (!value.roomId || !requestId || !value.generationId ||
+      (commands?.length && !commands.some(command => command.requestId === requestId)))
+    throw new Error('no active server command for requestId');
+  const taskId = commands?.find(command => command.requestId === requestId)?.taskId ?? value.taskId;
+  return {roomId:String(value.roomId),requestId:String(requestId),generationId:String(value.generationId),
+    ...(typeof taskId === 'string' ? {taskId} : {})};
 }
 
 async function readTurnContextFile(): Promise<Record<string, unknown>> {
@@ -1943,15 +1950,6 @@ export async function subscribeEvents(
   return describeSubscriptions(result, 'You now react to');
 }
 
-export async function setWakeDelivery(
-  args: JsonObject,
-  deps: AgentScheduleDeps = agentScheduleDepsFromEnv(),
-): Promise<string> {
-  wakeBatchMinutes(args.delivery);
-  const result = await deps.execute('setWakeDelivery', { roomId: deps.roomId, delivery: args.delivery });
-  return `Your whole wake inbox is ${String(result.delivery)}; human messages arrive immediately. Digests stay within each Room or corner.`;
-}
-
 export async function listEventSubscriptions(
   deps: AgentScheduleDeps = agentScheduleDepsFromEnv(),
 ): Promise<string> {
@@ -2926,16 +2924,24 @@ function validateToolInput(tool: ToolDefinition, args: JsonObject): void {
 
 // MCP requests may run concurrently. Register artifact work before the first
 // await so an immediately following report cannot overtake its upload/queue.
-let turnArtifacts: { key: string; uploads: { name: string; result: Promise<string> }[] } | undefined;
+let artifactGeneration: unknown;
+const turnArtifacts = new Map<string, { uploads: { name: string; result: Promise<string> }[] }>();
 
 export async function callAgentTool(name: string, args: JsonObject, toolCallId: string): Promise<string> {
+  const {requestId,...input}=args;
+  if(requestId!==undefined && (typeof requestId!=='string'||!requestId.length)) throw new Error('invalid claimed requestId');
+  return commandRequest.run(requestId as string|undefined,
+    () => callCommandTool(name, input, toolCallId));
+}
+async function callCommandTool(name: string, args: JsonObject, toolCallId: string): Promise<string> {
   if (name !== 'post_artifact' && name !== 'report' && name !== 'post') return executeAgentTool(name, args, toolCallId);
   const contextFile = process.env.BEELINE_TURN_CONTEXT_FILE;
   const context = contextFile ? JSON.parse(readFileSync(contextFile, 'utf8')) as Record<string, unknown> : {};
   const key = JSON.stringify([process.env.BEELINE_DAEMON_BASE_URL, process.env.BEELINE_DAEMON_ROOM_ID,
-    context.roomId, context.requestId, context.generationId]);
-  if (turnArtifacts?.key !== key) turnArtifacts = { key, uploads: [] };
-  const artifacts = turnArtifacts;
+    context.roomId, commandRequest.getStore() ?? context.requestId, context.generationId]);
+  if (artifactGeneration !== context.generationId) { turnArtifacts.clear(); artifactGeneration = context.generationId; }
+  const artifacts = turnArtifacts.get(key) ?? {uploads: []};
+  turnArtifacts.set(key, artifacts);
   if (name === 'post_artifact') {
     const upload = executeAgentTool(name, args, toolCallId);
     const artifactName = typeof args.title === 'string' && args.title.trim()
@@ -3534,13 +3540,14 @@ async function executeAgentOperation(
       return JSON.stringify(await daemonExecute('stopAgentTurn', { address: args.address as string, agent: args.agent as string | undefined }));
     case 'no_reply_needed': {
       await activeCommandContext();
-      const { commandReason } = await readTurnContextFile();
+      const context = await readTurnContextFile();
+      const selected = (context.commands as {requestId:string;commandReason:string}[] | undefined)?.find(command => command.requestId === commandRequest.getStore());
+      const commandReason = selected?.commandReason ?? context.commandReason;
       if (!args.messageId && !nonhumanSilentWake(commandReason)) throw new Error('no_reply_needed requires a nonhuman report, order, lifecycle, scheduler or system wake. Call post({text: <your reply>}), then end the turn.');
       await daemonExecute('markAgentTurnSilent', { ...(args.messageId ? { messageId: args.messageId } : {}) });
-      // The helper drains in-flight activity and drafts before its terminal receipt.
-      // Completing here revokes authority while those writes are still running.
+      // The server ends only this request. End the invocation after delivering
+      // its tool result; intake returns every unanswered request to pending.
       const path = requiredEnv('BEELINE_TURN_CONTEXT_FILE');
-      const context = await readTurnContextFile();
       writeFileSync(path, JSON.stringify({ ...context, terminalReason: 'no-reply' }), { mode: 0o600 });
       return JSON.stringify({ acknowledged: true });
     }

@@ -212,7 +212,6 @@
         "scripts/room-deck-unavailable-proof.tsx",
         // label-sweep-proof.browser.test.ts bundles this browser entry by path through esbuild.
         "scripts/label-sweep-components-proof.tsx",
-        "scripts/ui-repair-audit/prepare.mjs",
         "scripts/render-waveform-proof.mjs",
         // Documented browser proof bundles the real webhook subscription screen.
         "scripts/render-subscription-webhook-proof.mjs",
@@ -222,8 +221,6 @@
         "scripts/viewer-dock-keyboard-native.tsx",
         // Gradle bundles the viewer composer screenshot fixture via entryFile.
         "scripts/viewer-composer-polish-native.tsx",
-        // The native status fixture is bundled through Gradle's entryFile override.
-        "scripts/status-band-native-entry.js",
         "scripts/unread-controls-native-proof.tsx",
         "scripts/operation-deadline-native-proof.tsx",
         "scripts/unread-dot-clear-proof.tsx",
@@ -270,18 +267,10 @@
         "scripts/pr-accordion-proof.tsx",
         // Gradle bundles this native screenshot fixture through its entryFile override.
         "scripts/corner-pr-cards-native-proof.tsx",
-        // Screenshot capture bundles these entries by path through esbuild and Gradle.
-        "scripts/capture-corner-line-web.mjs",
-        "scripts/corner-line-{native,web}-proof.tsx",
-        // The lifecycle glyph runbook invokes capture by path; esbuild and Gradle select these entries.
-        "scripts/capture-lifecycle-glyph-web.mjs",
-        "scripts/lifecycle-glyph-{native,web}-proof.tsx",
         "scripts/transcript-events-native-proof.tsx",
         // Browser bundling and the temporary Metro main select these proof entries by path.
         "scripts/disclosure-rows-{browser,native}-proof.tsx",
         "scripts/transcript-dividers-{browser,native}-proof.tsx",
-        // The Android swipe regression runbook loads this temporary native app entry.
-        "scripts/message-swipe-native-proof.tsx",
         "scripts/lifecycle-rows-a-native-proof.tsx",
         "scripts/ci-accordion-proof.tsx",
         "scripts/tray-empty-proof.tsx",

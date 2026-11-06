@@ -257,8 +257,6 @@ new case must pass, no passing case may regress, and overall pass rate must not
 drop. Browser cases stay explicitly skipped until a separately authorized replay
 can exercise them. Structural validation alone does not prove model behavior.
 
-`npm run test:prompt-nightly` tests controls without spending model tokens.
-
 ## Two-model result (schema version 3)
 
 Top-level `baseline`, `control` and `candidate` rows pool both models; each row

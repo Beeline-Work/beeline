@@ -144,38 +144,6 @@ the App Store Connect API, so they are intentionally absent from `eas credential
 Keep their absolute paths and password only in gitignored `credentials.json`; never
 commit that file or its credential material.
 
-## On-device Maestro smoke tests
-
-The mobile harness uses [Maestro](https://maestro.mobile.dev/) against the existing
-`emulator-5554` Android emulator. It is intentionally a separate CLI rather than a
-JavaScript test dependency: Maestro drives the installed release APK through Android
-accessibility/test IDs, so it exercises the actual device bridge, monolith writes,
-and server-indexed reads.
-
-Install Maestro once if it is not already on `PATH`:
-
-```sh
-curl -Ls "https://get.maestro.mobile.dev" | bash
-```
-
-Then, from this directory, run:
-
-```sh
-npm run e2e
-```
-
-`e2e` uses the selected Android device and verifies its running update before
-opening the app. Set `BEELINE_REVIEW_SECRET` for an existing review identity;
-`scripts/maestro-room.mjs` reads its Workspace and Room through the authenticated
-monolith API. The flow signs in through the existing review link and opens that
-Room's transcript. It creates no fixture accounts, Rooms or messages.
-
-For a source-only flow iteration after a successful build, reuse the current APK:
-
-```sh
-MAESTRO_SKIP_BUILD=1 npm run e2e
-```
-
 ## Expo web (headless-verifiable surface)
 
 ```sh

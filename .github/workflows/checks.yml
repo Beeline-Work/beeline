@@ -25,6 +25,7 @@ on:
           - server-integration
           - mobile-suite
           - mobile-export-reachability
+          - production-corpus-replay
           - native-fingerprint
           - app-link-associations
           - actionlint
@@ -317,6 +318,7 @@ jobs:
     if: github.event_name == 'push'
     needs:
       - server-suite-shard
+      - production-corpus-replay
     runs-on:
       - self-hosted
       - Linux
@@ -527,6 +529,127 @@ jobs:
       - name: Execute mobile-export-reachability in its own checkout
         run: timeout 30m bash scripts/ci-workspace-tasks.sh mobile-export-reachability
         if: steps.changes.outputs.run == 'true'
+  # Required check. Its decision matches the server shards', which leave the
+  # wall-clock budgets to this job on PRs and main pushes (SERVER_HOSTED_TIMING).
+  production-corpus-replay:
+    name: PRODUCTION-CORPUS REPLAY
+    if: "!cancelled() && (github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'production-corpus-replay')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: ${{ !startsWith(runner.name, 'beeline-ci-squire-') }}
+      - name: Decide in this checkout
+        id: changes
+        env:
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CI_PATHS: ^apps/|^packages/
+        run: |-
+          run=true
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && git fetch --no-tags --depth=1 origin "$CI_BASE_SHA" && git diff --name-only "$CI_BASE_SHA" HEAD > "$RUNNER_TEMP/changed-files"; then
+            run=false
+            while IFS= read -r file; do
+              if [[ "$file" =~ $CI_PATHS ]]; then run=true; break; fi
+              if [[ "$file" == docs/* || "$file" == *.md ]]; then continue; fi
+              if [[ ! "$file" =~ ^apps/(body|server|mobile)/ ]]; then run=true; break; fi
+            done < "$RUNNER_TEMP/changed-files"
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "This job runs: $run"
+      - name: Record complete main coverage
+        if: steps.changes.outputs.run == 'true' && github.event_name == 'push'
+        run: echo "SERVER_COVERAGE_MAP_DIR=$RUNNER_TEMP/coverage-records" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/ci-workspace
+        if: steps.changes.outputs.run == 'true'
+      - uses: actions/cache/restore@v4
+        id: corpus
+        if: steps.changes.outputs.run == 'true'
+        with:
+          path: ${{ runner.temp }}/beeline-production-corpus
+          key: production-corpus-${{ runner.os }}-${{ hashFiles('apps/server/src/database.ts', 'apps/server/src/production-corpus-*.ts') }}
+      - name: Replay sanitized corpus and time production hot reads
+        id: replay
+        if: steps.changes.outputs.run == 'true'
+        env:
+          PRODUCTION_CORPUS_CACHE_DIR: ${{ runner.temp }}/beeline-production-corpus
+          PRODUCTION_CORPUS_PLAN_DIR: ${{ runner.temp }}/beeline-production-plans
+        run: npm test -w @beeline/server -- --run src/production-corpus-hot-reads.test.ts --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
+      # Publish the expensive corpus before artifact upload or later cleanup.
+      - uses: actions/cache/save@v4
+        if: steps.changes.outputs.run == 'true' && steps.replay.outcome == 'success' && steps.corpus.outputs.cache-hit != 'true'
+        with:
+          path: ${{ runner.temp }}/beeline-production-corpus
+          key: ${{ steps.corpus.outputs.cache-primary-key }}
+      - name: Run server wall-clock budgets outside the shared quota
+        if: steps.changes.outputs.run == 'true' && (github.event_name == 'pull_request' || github.event_name == 'push')
+        working-directory: apps/server
+        run: npx vitest run src/production-corpus-width.test.ts src/phone-service.read-room-latency.test.ts src/daemon-service.completion-latency.test.ts --maxWorkers=1 --minWorkers=1
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.changes.outputs.run == 'true'
+        with:
+          name: production-corpus-hot-read-plans
+          path: ${{ runner.temp }}/beeline-production-plans
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.changes.outputs.run == 'true' && github.event_name == 'push'
+        with:
+          name: server-coverage-records-timing
+          path: ${{ runner.temp }}/coverage-records
+          retention-days: 3
+          if-no-files-found: error
+  # Required check. MOBILE SUITE always selects surface-runtime.frame-budget.test.ts
+  # (CI_FRAME_BUDGET in its selection step); this job takes its verdict from that run.
+  frame-budget:
+    name: FRAME-BUDGET
+    needs:
+      - mobile-suite
+    if: "!cancelled() && (github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'mobile-suite')"
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - beeline-ci
+      - beeline-ci-control
+    timeout-minutes: 5
+    steps:
+      - name: Take the verdict from the suite that ran it
+        env:
+          SUITE_RESULT: ${{ needs.mobile-suite.result }}
+        run: |
+          set -euo pipefail
+          echo "MOBILE SUITE: $SUITE_RESULT"
+          if [ "$SUITE_RESULT" != 'success' ]; then
+            echo "::error::FRAME-BUDGET derives its verdict from MOBILE SUITE, which reported '$SUITE_RESULT'. MOBILE SUITE runs apps/mobile/sources/buzz/surface-runtime.frame-budget.test.ts."
+            exit 1
+          fi
+          echo 'apps/mobile/sources/buzz/surface-runtime.frame-budget.test.ts ran in MOBILE SUITE when its change decision selected the suite.'
+  # Required check. MOBILE SUITE always selects surface-storage.upgrade.test.ts
+  # (CI_STATE_UPGRADE in its selection step); this job takes its verdict from that run.
+  state-upgrade:
+    name: STATE-UPGRADE
+    needs:
+      - mobile-suite
+    if: "!cancelled() && (github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'mobile-suite')"
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - beeline-ci
+      - beeline-ci-control
+    timeout-minutes: 5
+    steps:
+      - name: Take the verdict from the suite that ran it
+        env:
+          SUITE_RESULT: ${{ needs.mobile-suite.result }}
+        run: |
+          set -euo pipefail
+          echo "MOBILE SUITE: $SUITE_RESULT"
+          if [ "$SUITE_RESULT" != 'success' ]; then
+            echo "::error::STATE-UPGRADE derives its verdict from MOBILE SUITE, which reported '$SUITE_RESULT'. MOBILE SUITE runs apps/mobile/sources/buzz/surface-storage.upgrade.test.ts."
+            exit 1
+          fi
+          echo 'apps/mobile/sources/buzz/surface-storage.upgrade.test.ts ran in MOBILE SUITE when its change decision selected the suite.'
   native-fingerprint:
     name: NATIVE FINGERPRINT
     if: "!cancelled() && (github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'native-fingerprint' || inputs.suite == 'mobile-suite')"
@@ -669,13 +792,13 @@ jobs:
         run: npm run lint:shell
         if: steps.changes.outputs.run == 'true'
       - name: Test release preflight, failure intake and governor regressions
-        run: node --test --test-concurrency=1 scripts/unified-release.test.mjs scripts/pr-store-build.test.mjs   scripts/npm-package-visibility.test.mjs scripts/smoke-helper-package.test.mjs       scripts/release-artifact-allowlist.test.mjs scripts/assert-mobile-release-origin.test.mjs scripts/rollout-schema.test.mjs
+        run: node --test --test-concurrency=1 scripts/unified-release.test.mjs scripts/pr-store-build.test.mjs scripts/ota-launch-proof.test.mjs scripts/npm-package-visibility.test.mjs scripts/smoke-helper-package.test.mjs       scripts/release-artifact-allowlist.test.mjs scripts/assert-mobile-release-origin.test.mjs scripts/rollout-schema.test.mjs
         if: steps.changes.outputs.run == 'true'
       - name: Refuse release state in artifacts and caches
         run: node scripts/release-artifact-allowlist.mjs
         if: steps.changes.outputs.run == 'true'
-      - name: Check no workflow names a deleted test
-        run: npm run lint:workflow-paths
+      - name: Check no script, workflow, unit or skill names a deleted file
+        run: npm run lint:referenced-paths
         if: steps.changes.outputs.run == 'true'
   auth-image:
     name: Build auth container

@@ -49,7 +49,6 @@ export const COMPONENT_PATH_RULES = [
   { exact: 'apps/mobile/scripts/store-runtime-targets.mjs', components: ['mobile-ota'] },
   { exact: 'apps/mobile/store/native-runtime-builds.json', components: ['mobile-ota'] },
   { exact: 'scripts/read-store-runtimes.mjs', components: ['mobile-ota'] },
-  { exact: 'apps/mobile/scripts/ota-canary.sh', components: ['mobile-ota'] },
   { exact: 'apps/mobile/app.config.js', components: ['mobile-ota', 'mobile-native', 'desktop', 'website'] },
   { exact: 'apps/mobile/package.json', components: ['mobile-ota', 'mobile-native', 'desktop', 'website'] },
   { exact: 'apps/mobile/package-lock.json', components: ['mobile-ota', 'mobile-native', 'desktop', 'website'] },

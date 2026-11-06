@@ -612,8 +612,7 @@ in the connection, never in the rig, repository or capture environment:
    through the approved first-party connection. Its `sha` is mandatory. On HTTP
    409, read the latest contents, regenerate the body, and retry (at most three
    writes); never resend a stale body or replace unrelated concurrent edits.
-   `publishInsights(transport, verdict)` implements this protocol for a sealed
-   transport; the CLI only prepares the request and has no network credentials.
+   The CLI only prepares the request and has no network credentials.
 4. Save the successful publication receipt with the run; a publication failure
    must be reported and retried from fresh contents, including on a passing night.
    This does not change the measurement verdict or baseline. Publish only final

@@ -539,7 +539,7 @@ async function main() {
   const voiceDeadlines=new BackgroundRecordDeadlines('voice-call-recovery',work,()=>leader.wake());
   const stopVoiceDeadlines=voiceDeadlines.subscribe();
   registerBackgroundDeadlineFamilies(work,repairDeadlineFamilies(jobsDatabase,{
-    live,phone,mediaExpiry,institutionalMemory,institutionalAnchors,voice,voiceDeadlines,
+    live,mediaExpiry,institutionalMemory,institutionalAnchors,voice,voiceDeadlines,
   }),(name,run)=>backgroundJobs.run(name,run),jobsDatabase);
   const leader = new BackgroundLeader(jobsDatabase, (newLeader, signal) => work.run(newLeader, signal));
   const wakeWork = (name: string, source = name) => { work.wake(name, source); leader.wake(); };

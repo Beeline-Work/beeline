@@ -1,10 +1,11 @@
+import { OWNED_MODEL_UNKNOWN_GENERATION_MESSAGE } from './owned-model-errors.js';
 import { randomUUID } from 'node:crypto';
 import { Pool, type QueryResultRow } from 'pg';
 import { describe, expect, it, vi } from 'vitest';
 import { PostgresDatabase, type SqlDatabase } from './database.js';
 import { COMMITTED_JOURNAL_SCHEMA } from './committed-journal-schema.js';
 import { OwnedModelAttempts } from './owned-model-attempt.js';
-import { OwnedModelCredentials, OWNED_MODEL_UNKNOWN_GENERATION_MESSAGE } from './owned-model-credential.js';
+import { OwnedModelCredentials } from './owned-model-credential.js';
 import { MODEL, MODEL_AGENT, MODEL_KEY, MODEL_ROOM, seedOwnedModelFixture } from './test-fixtures/owned-model.js';
 import { MEMBERSHIP_AUTHORITY_SCHEMA } from './membership-authority-schema.js';
 import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';

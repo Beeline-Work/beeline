@@ -15,7 +15,6 @@ import { LiveHub } from './live.js';
 import { backfillArchivedCornerCleanup } from './corner-cleanup-backfill.js';
 import { deleteArchivedCornerBranch } from './corner-branch-cleanup.js';
 import { systemLine } from './system-line.js';
-import { flushDueCommanderWakes } from './commander-wakes.js';
 import { addressedToPersonSql } from './corner-owed.js';
 import { GitHubHttpError, type GitHubAppClient, type GitHubOAuthClient } from '@beeline/auth/github';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
@@ -28,15 +27,7 @@ import {
   confirmCornerMergeAuthority,
   deleteStoredCornerWorkflows,
 } from './corner-lifecycle.js';
-import {
-  createAgentCommand,
-  repairReviewerCornerMembership,
-  queueCornerMergeConflict,
-  reconcileCornerMergeBlockers,
-  noteBlockedCornerChecks,
-  CORNER_CHECKS_BLOCKED_CARD_TYPE,
-  type CommandRow,
-} from './agent-command.js';
+import { createAgentCommand, repairReviewerCornerMembership, queueCornerMergeConflict, reconcileCornerMergeBlockers, CORNER_CHECKS_BLOCKED_CARD_TYPE, type CommandRow } from './agent-command.js';
 import { CORNER_LIFECYCLE_CARD_TYPE } from './room-choice.js';
 import { cornerImplementerSql, cornerOwnerSql } from './corner-worker.js';
 import { cornerRunStateSql } from './corner-run.js';
@@ -211,7 +202,7 @@ beforeEach(async () => {
   await db.query(`UPDATE memberships SET removed_at=NULL`);
   await db.query(`UPDATE rooms SET reviewer_agent_id=NULL WHERE id=$1`, [R]);
   await db.query(`DELETE FROM live_outputs`);
-  await db.query(`UPDATE agents SET yolo_mode=true,wake_batch_minutes=0`);
+  await db.query(`UPDATE agents SET yolo_mode=true`);
   githubRollupState = 'pending';
   githubHead = '';
   githubApp.readPullRequestQueue.mockReset();
@@ -1144,46 +1135,16 @@ async function inReview(number = 7, headSha = SHA): Promise<string> {
   return cornerId;
 }
 
-it.each(['immediate', 'batch:5'] as const)('review dispatch stays immediate unless the reviewer opts into %s', async delivery => {
-  await daemon.execute('setWakeDelivery', { roomId: R, delivery: 'batch:8' }, A);
-  await daemon.execute('setWakeDelivery', { roomId: R, delivery }, B);
+it('review dispatch is immediate and leaves unrelated reviewer work independent', async () => {
   const cornerId = await inReview();
   expect(await currentState(cornerId)).toBe('review');
-  const recorded = (await db.query<CommandRow>(`SELECT * FROM agent_commands WHERE room_id=$1
-    AND agent_id=$2 AND reason='subscribed_event' ORDER BY inbox_sequence`, [cornerId, B])).rows;
-  expect(recorded).toHaveLength(1);
-  expect(Boolean(recorded[0]!.wake_after)).toBe(delivery !== 'immediate');
-  expect((await commands(B, cornerId)).length).toBe(delivery === 'immediate' ? 1 : 0);
-  // The lifecycle and gate read facts at once, independently of command delivery.
+  expect(await commands(B, cornerId)).toHaveLength(1);
   expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ approved: false, open: false });
-  if (delivery !== 'immediate') {
-    await db.query("UPDATE agent_commands SET wake_after=now() WHERE room_id=$1 AND agent_id=$2", [cornerId, B]);
-    await flushDueCommanderWakes(db);
-    expect(await commands(B, cornerId)).toHaveLength(1);
-  }
-  console.info(`Demonstrated inbox-review: worker batch:8 does not delay review dispatch or gate facts; reviewer ${delivery} controls only its own turn delivery`);
-});
-
-it('an absorbed review wake holds the whole digest until the worker releases its lease', async () => {
-  await daemon.execute('setWakeDelivery', { roomId: R, delivery: 'batch:5' }, B);
-  const cornerId = await open('owner/widgets');
-  await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
-  const opening = (await commands(A, cornerId))[0]!;
-  await claim(opening);
-  const first = await createAgentCommand(db, { roomId: cornerId, agentId: B, sourceMessageId: null,
+  const other = await createAgentCommand(db, { roomId: cornerId, agentId: B, sourceMessageId: null,
     reason: 'corner_brief', privatePayload: { text: 'Unrelated reviewer fact', authorId: A, fromRoomId: R, kind: 'lifecycle' } });
-  await greenHead(cornerId, 7, SHA);
-  await db.query('UPDATE agent_commands SET wake_after=now() WHERE room_id=$1 AND agent_id=$2', [cornerId, B]);
-  await flushDueCommanderWakes(db);
-  expect(await commands(B, cornerId)).toHaveLength(0);
-  await expect(daemon.execute('claimAgentCommand', { roomId: cornerId, commandId: first!.id, generationId: 'held-review' }, B))
-    .rejects.toThrow('command claim conflict');
-  await terminalResult(opening, 'Work is ready.');
-  const digest = (await commands(B, cornerId)).find(command => command.id === first!.id)!;
-  expect(digest.source.body).toBe('Unrelated reviewer fact');
-  expect(digest.coalescedContext).toContain('check-passed');
-  await claim(digest);
-  console.info('Demonstrated inbox-review-gate: absorbed review holds the entire digest and rejects a cached claim during the worker lease; release permits one digest');
+  const pending = await commands(B, cornerId);
+  expect(pending).toHaveLength(2);
+  expect(pending.find(command => command.id === other!.id)?.source.body).toBe('Unrelated reviewer fact');
 });
 
 function approve(cornerId: string, headSha = SHA, agentId = B) {
@@ -1908,70 +1869,6 @@ describe('Reproduction CI-1: a red head wakes the implementer before checks fini
     expect(people.rowCount).toBe(0);
   });
 
-  it('wakes the implementer when a check stays pending for an hour', async () => {
-    const cornerId = await redWhileRunning();
-    const blocked = () => db.query<{ text: string }>(
-      `SELECT text FROM messages WHERE room_id=$1 AND card_type=$2`, [cornerId, CORNER_CHECKS_BLOCKED_CARD_TYPE]);
-    // The implementer's own turn has ended; nothing else will wake it.
-    await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE room_id=$1`, [cornerId]);
-    expect(await noteBlockedCornerChecks(db)).toBe(0);
-    await db.query(
-      `UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checksSummary,updatedAt}',
-         to_jsonb(extract(epoch FROM now()-interval '61 minutes')::bigint)) WHERE corner_id=$1`,
-      [cornerId],
-    );
-    expect(await noteBlockedCornerChecks(db)).toBe(1);
-    expect(await noteBlockedCornerChecks(db)).toBe(0);
-    expect((await blocked()).rows).toEqual([]);
-    expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_check')).toHaveLength(2);
-    await db.query(`UPDATE agent_commands SET state='complete',completed_at=now()-interval '3 minutes' WHERE room_id=$1`, [cornerId]);
-    expect(await noteBlockedCornerChecks(db)).toBe(0);
-    expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_check')).toHaveLength(2);
-
-  });
-
-  it('Reproduction R1: does not restart a completed fix with no push', async () => {
-    const cornerId = await redWhileRunning();
-    githubApp.readCommitCheckRollup.mockResolvedValueOnce(finished);
-    await checkRun(cornerId, 'Server suite', 'success');
-    for (let round = 0; round < 2; round++) {
-      await db.query(`UPDATE agent_commands SET state='complete',completed_at=now()-interval '3 minutes'
-        WHERE room_id=$1`, [cornerId]);
-      expect(await noteBlockedCornerChecks(db)).toBe(0);
-      expect(await noteBlockedCornerChecks(db)).toBe(0);
-    }
-    expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_check')).toHaveLength(2);
-    const people = await db.query(`SELECT 1 FROM messages m JOIN identities person ON person.id=$2
-      WHERE m.room_id=$1 AND m.presentation='system'
-        AND ${addressedToPersonSql('m', 'person.id', 'person.handle', 'person.kind')}`, [cornerId, H]);
-    expect(people.rowCount).toBe(0);
-  });
-
-  it('keeps a promised rerun pending, then wakes for repeated same-job failures on the same head', async () => {
-    const cornerId = await redWhileRunning();
-    githubApp.readCommitCheckRollup.mockResolvedValueOnce(finished);
-    await checkRun(cornerId, 'Server suite', 'success');
-    let wakes = 2;
-    for (let round = 0; round < 3; round++) {
-      await db.query(`UPDATE agent_commands SET state='complete',completed_at=now()-interval '3 minutes'
-        WHERE room_id=$1`, [cornerId]);
-      githubApp.readCommitCheckRollup.mockResolvedValueOnce({
-        state: 'pending', total: 2, failing: [],
-        checks: [{ name: 'Body suite', status: 'pending' }, { name: 'Server suite', status: 'passed' }],
-      });
-      await checkRun(cornerId, 'Body suite', 'pending');
-      expect(await noteBlockedCornerChecks(db)).toBe(0);
-      githubApp.readCommitCheckRollup.mockResolvedValueOnce(finished);
-      await checkRun(cornerId, 'Body suite', 'failure');
-      wakes++;
-      expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_check')).toHaveLength(wakes);
-      githubApp.readCommitCheckRollup.mockResolvedValueOnce(finished);
-      await checkRun(cornerId, 'Body suite', 'failure');
-      expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_check')).toHaveLength(wakes);
-      expect(await currentState(cornerId)).toBe('implement');
-    }
-  });
-
   it('recognizes a completed rerun by its new job URL when the start webhook was missed', async () => {
     const cornerId = await redWhileRunning();
     const withJob = (job: number) => ({ ...finished, checks: [
@@ -1988,7 +1885,7 @@ describe('Reproduction CI-1: a red head wakes the implementer before checks fini
     expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_check')).toHaveLength(3);
   });
 
-  it('addresses the requester when the implementing agent cannot receive the checks wake', async () => {
+  it('keeps an undeliverable checks fact without a reachability notice', async () => {
     const cornerId = await open('owner/widgets');
     await fallback(cornerId);
     await assignCornerWorker(db, cornerId, F);
@@ -1998,20 +1895,8 @@ describe('Reproduction CI-1: a red head wakes the implementer before checks fini
       roomId: cornerId, authorId: H, subject: { kind: 'github', name: 'GitHub' },
       verb: 'finished checks on', kind: 'check-failed', payload: { followup: true },
     });
-    expect((await commands(A, R)).some(c => c.reason === 'report' && c.source.body.startsWith('blocked:'))).toBe(true);
+    expect((await commands(A, R)).some(c => c.reason === 'report' && c.source.body.startsWith('blocked:'))).toBe(false);
     expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%needs to restore agent access%'`, [cornerId])).rowCount).toBe(0);
-  });
-
-  it('addresses the requester only after an agent wake remains unclaimed through normal delivery retries', async () => {
-    const cornerId = await redWhileRunning();
-    expect(await noteBlockedCornerChecks(db)).toBe(0);
-    await db.query(`UPDATE agent_commands SET created_at=now()-interval '3 minutes' WHERE room_id=$1`, [cornerId]);
-    await noteBlockedCornerChecks(db);
-    expect((await commands(A, R)).some(c => c.reason === 'report' && c.source.body.startsWith('blocked:'))).toBe(true);
-    const [recovered] = await commands(A, cornerId);
-    await claim(recovered!);
-    expect((await db.query(`SELECT 1 FROM corner_owed WHERE corner_id=$1 AND person_id=$2`,
-      [cornerId, H])).rowCount).toBe(0);
   });
 
   it('resumes a historical CI escalation with the next failed check', async () => {
@@ -3396,7 +3281,7 @@ describe('the gate stays shut (AC-8)', () => {
       let holdId = (await post('daemon', 'getPrChecksStatus', { cornerId })).holds[0].id;
       const objective = (await post('daemon', 'getAgentCommands', { roomId: cornerId })).commands
         .find((command: AgentCommand) => command.reason === 'corner_objective');
-      await post('daemon', 'claimAgentCommand', { roomId: cornerId, commandId: objective.id, generationId: 'g1' });
+      await daemon.execute('claimAgentCommand',{roomId:cornerId,commandId:objective.id,generationId:'g1'},A);
       await post('daemon', 'setCornerHold', { cornerId, roomId: cornerId,
         requestId: objective.turnRequestId, generationId: 'g1', releaseHoldId: holdId });
       expect((await db.query(`SELECT released_by FROM corner_merge_holds WHERE id=$1`, [holdId])).rows[0]).toEqual({ released_by: A });
@@ -3420,7 +3305,7 @@ describe('the gate stays shut (AC-8)', () => {
       expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
       await post('phone', 'sendRoomMessage', { roomId: cornerId, messageId: randomBytes(32).toString('hex'), text: '@hoots release the hold' });
       const direct = (await post('daemon', 'getAgentCommands', { roomId: cornerId })).commands.at(-1);
-      await post('daemon', 'claimAgentCommand', { roomId: cornerId, commandId: direct.id, generationId: 'g2' });
+      await daemon.execute('claimAgentCommand',{roomId:cornerId,commandId:direct.id,generationId:'g2'},A);
       await post('daemon', 'setCornerHold', { cornerId, roomId: cornerId, requestId: direct.turnRequestId,
         generationId: 'g2', releaseHoldId: holdId }, 503);
       expect((await post('daemon', 'getPrChecksStatus', { cornerId })).held).toBe(true);

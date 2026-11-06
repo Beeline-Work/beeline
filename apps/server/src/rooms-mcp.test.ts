@@ -1542,48 +1542,6 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const mentions = await client.callTool({ name: 'list_mentions', arguments: {} });
     expect(JSON.stringify(mentions)).toContain(result.id);
   });
-  it.each(['human tag', 'DM', 'agent tag'])('MCP-WAKE-1: %s wakes only the webhook', async path => {
-    const { client, grant, member } = await connected();
-    await db.query(`UPDATE rooms_mcp_clients SET callback_url='https://hooks.example/wake' WHERE id=$1`, [grant.clientId]);
-    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
-    let roomId = ROOM;
-    if (path === 'DM') {
-      roomId = (await phone.execute('resolveDirectMessage', { workspaceId: WORKSPACE, participantId: member }, USER)).id;
-    }
-    const text = path === 'DM' ? 'reply pong please' : `@${handle} reply pong please`;
-    const sent = await phone.execute('sendRoomMessage', { roomId, text }, path === 'agent tag' ? AGENT : USER);
-    if (path === 'agent tag') {
-      const routed = await routeAgentResult(db, undefined, sent.messageId, { roomId, agentId: AGENT });
-      expect(routed.woken).toEqual([handle]);
-      expect(routed.notWoken).toEqual([]);
-      await routeAgentResult(db, undefined, sent.messageId, { roomId, agentId: AGENT });
-    } else await routeHumanMessage(db, sent.messageId);
-    expect((await db.query('SELECT 1 FROM rooms_mcp_webhook_outbox WHERE member_id=$1 AND message_id=$2', [member, sent.messageId])).rowCount).toBe(1);
-    expect((await db.query('SELECT 1 FROM agent_commands WHERE agent_id=$1', [member])).rowCount).toBe(0);
-    const reply = await client.callTool({ name: 'send_message', arguments: { room: roomId, text: 'pong' } });
-    expect(reply.isError).not.toBe(true);
-    await phone.flushPendingMentionNotices(Date.now() + 120_000);
-    const view = await phone.readRoom(roomId, USER);
-    expect(JSON.stringify(view)).toContain('pong');
-    expect(JSON.stringify(view)).not.toContain('helper is offline');
-    expect(view.pendingAgentCommands?.some(command => command.agentPubkey === member)).toBe(false);
-    expect(view.latestAgentTurns.some(turn => turn.agentPubkey === member && turn.status === 'working')).toBe(false);
-    expect((await db.query('SELECT 1 FROM pending_mention_notices WHERE agent_id=$1', [member])).rowCount).toBe(0);
-  });
-  it.each(['human tag', 'DM', 'agent tag'])('keeps an MCP member without a webhook silent on %s', async path => {
-    const { member } = await connected();
-    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
-    const roomId = path === 'DM' ? (await phone.execute('resolveDirectMessage', { workspaceId: WORKSPACE, participantId: member }, USER)).id : ROOM;
-    const sent = await phone.execute('sendRoomMessage', { roomId, text: path === 'DM' ? 'hello' : `@${handle} hello` }, path === 'agent tag' ? AGENT : USER);
-    if (path === 'agent tag') expect((await routeAgentResult(db, undefined, sent.messageId, { roomId, agentId: AGENT })).woken).toEqual([]);
-    const own = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} self` }, member);
-    const routed = await routeAgentResult(db, undefined, own.messageId, { roomId: ROOM, agentId: member });
-    expect(routed.woken).toEqual([]);
-    await phone.flushPendingMentionNotices(Date.now() + 120_000);
-    expect((await db.query('SELECT 1 FROM agent_commands WHERE agent_id=$1', [member])).rowCount).toBe(0);
-    expect((await db.query('SELECT 1 FROM rooms_mcp_webhook_outbox WHERE member_id=$1', [member])).rowCount).toBe(0);
-    expect((await db.query('SELECT 1 FROM pending_mention_notices WHERE source_message_id=$1', [sent.messageId])).rowCount).toBe(0);
-  });
   it('returns the webhook member in send_message woken without creating its command', async () => {
     const sender = await connected();
     const target = await connected();
@@ -2472,9 +2430,11 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       const ids = () => ok(client, 'list_mentions', {}).then(page => (page.wakes as { id: string }[]).map(item => item.id));
       expect(await ids()).toEqual(expect.arrayContaining([second.id, order.id]));
       expect(await ids()).not.toContain(first.id);
-      // A wake whose claim expired is still listed, so it can be cleared.
+      // Elapsed time never steals a claimed wake from its owner.
       await db.query(`UPDATE agent_commands SET state='claimed',lease_expires_at=now()-interval '1 minute' WHERE id=$1`, [second.id]);
-      expect(await ids()).toContain(second.id);
+      expect(await ids()).not.toContain(second.id);
+      expect(await ok(client, 'no_reply_needed', { address: ROOM })).toEqual({ cleared: 0 });
+      await db.query(`UPDATE agent_commands SET state='pending',generation_id=NULL,lease_expires_at=NULL WHERE id=$1`, [second.id]);
       expect(await ok(client, 'no_reply_needed', { address: ROOM })).toEqual({ cleared: 1 });
       expect(await ids()).toEqual([order.id]);
     });
@@ -2683,7 +2643,9 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       await db.query(`UPDATE agent_commands SET state='claimed',generation_id='helper-generation',lease_expires_at=now()+interval '1 minute' WHERE id=$1`, [orders[0]!.id]);
       expect((await call(client, 'post', { address: first, commandId: orders[0]!.id, text: 'another active lease' })).error).toBe(true);
       await db.query(`UPDATE agent_commands SET lease_expires_at=now()-interval '1 second' WHERE id=$1`, [orders[0]!.id]);
-      await ok(client, 'post', { address: first, commandId: orders[0]!.id, progress: true, text: 'Recovered lease' });
+      expect((await call(client, 'post', { address: first, commandId: orders[0]!.id, progress: true, text: 'Expired clocks cannot steal work' })).error).toBe(true);
+      await db.query(`UPDATE agent_commands SET state='pending',generation_id=NULL,lease_expires_at=NULL WHERE id=$1`, [orders[0]!.id]);
+      await ok(client, 'post', { address: first, commandId: orders[0]!.id, progress: true, text: 'Explicitly returned work' });
       expect((await db.query<{ generation_id: string }>(`SELECT generation_id FROM agent_commands WHERE id=$1`, [orders[0]!.id])).rows[0]!.generation_id).toMatch(/^mcp:/);
       await ok(client, 'report', { address: first, commandId: orders[0]!.id, status: 'done', text: 'done: first' });
       await ok(client, 'report', { address: second, commandId: orders[1]!.id, status: 'done', text: 'done: second' });

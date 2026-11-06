@@ -159,7 +159,6 @@ it('WAKE-STORM: a human wake publishes its report-status reply as written', asyn
     [command.turnRequestId, A])).rows[0]?.completion_kind).toBeFalsy();
 });
 
-// Claim must fold even when no queue read happened during the busy turn.
 async function queuedHumanTags(roomId = R) {
   const started = await send('@hoots Long task', roomId);
   const busy = (await commands(A, roomId)).find(c => c.sourceMessageId === started.messageId)!;
@@ -167,159 +166,64 @@ async function queuedHumanTags(roomId = R) {
   const messages = [];
   for (const text of ['First question', 'Follow-up question', 'Last detail'])
     messages.push(await send(`@hoots ${text}`, roomId));
-  // Complete directly: asking getAgentCommands while busy already coalesces
-  // some traffic and would conceal the claim-time gap this reproduces.
   await result(busy, 'Long task finished');
   return messages;
 }
-
-it.each([R, C])('QUEUED-TAGS-REPEAT: claims three queued human tags as one turn in %s', async roomId => {
+it.each([R, C])('QUEUED-TAGS-REPEAT: each queued human tag needs its own answer in %s', async roomId => {
   const messages = await queuedHumanTags(roomId);
   const snapshot = await commands(A, roomId);
-  expect(snapshot).toHaveLength(3);
-  await expect(claim(snapshot[2]!)).rejects.toThrow('claim conflict');
-  const head = snapshot[0]!;
-  const claimed = await daemon.execute('claimAgentCommand',
-    { roomId, commandId: head.id, generationId: 'combined' }, A, await helperOwner(A));
-  expect(head.sourceMessageId).toBe(messages[0]!.messageId);
-  const prompt = head.sourceMessageId + head.source.body + claimed.coalescedContext;
-  for (const message of messages) expect(prompt).toContain(message.messageId);
-  const later = claimed.coalescedContext!.split('\n').map(line => JSON.parse(line));
-  expect(later.map(item => item.sourceMessageId)).toEqual(messages.slice(1).map(message => message.messageId));
-  expect(later.map(item => item.body)).toEqual(['@hoots Follow-up question', '@hoots Last detail']);
-  // A cached snapshot and a lost claim response cannot produce another turn.
-  const retry = await daemon.execute('claimAgentCommand',
-    { roomId, commandId: head.id, generationId: 'combined' }, A, await helperOwner(A));
-  expect(retry.coalescedContext).toBe(claimed.coalescedContext);
-  await result(head, 'One answer covers all three', 'combined');
-  expect(await commands(A, roomId)).toEqual([]);
-  for (const folded of snapshot.slice(1)) await expect(claim(folded)).rejects.toThrow();
-  const view = await phone.readRoom(roomId, H);
-  expect(view!.pendingAgentCommands).toEqual([]);
-  expect(view!.latestAgentTurns!.some(turn => turn.agentPubkey === A && turn.status === 'working')).toBe(false);
+  expect(snapshot.map(command => command.sourceMessageId)).toEqual(messages.map(message => message.messageId));
+  for (const [index, command] of snapshot.entries()) {
+    await claim(command);
+    await result(command, `Answer ${index}`);
+    expect((await commands(A, roomId)).map(row => row.id)).toEqual(snapshot.slice(index + 1).map(row => row.id));
+  }
+  expect((await phone.readRoom(roomId, H))!.pendingAgentCommands).toEqual([]);
 });
-
-it.each([0, 1, 2])('QUEUED-TAGS-REPEAT: Stop message %s cancels the combined turn', async stopIndex => {
+it.each([0, 1, 2])('QUEUED-TAGS-REPEAT: Stop message %s preserves the other requests', async stopIndex => {
   const messages = await queuedHumanTags();
   const snapshot = await commands();
-  const head = snapshot[0]!;
-  await claim(head);
+  const stopped = snapshot[stopIndex]!;
+  await claim(stopped);
   await phone.execute('cancelAgentTurn', { roomId: R, agentId: A, requestId: messages[stopIndex]!.messageId }, H);
-  await expect(result(head, 'Must never publish')).rejects.toThrow();
-  expect((await commands()).filter(c => c.action === 'input')).toEqual([]);
-  expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND agent_id=$2 AND request_id=$3`,
-    [R, A, head.turnRequestId])).rows[0]!.status).toBe('cancelled');
+  await expect(result(stopped, 'Must never publish')).rejects.toThrow();
+  expect((await commands()).filter(command => command.action === 'input').map(command => command.id)).toEqual(snapshot.filter(command => command.id !== stopped.id).map(command => command.id));
 });
-
-it.runIf(Boolean(stopProofPostgresUrl))('QUEUED-TAGS-REPEAT: Stop crossing a claim cannot lose its folded target', async () => {
-  // Idle dispatch paints optimistic turns before helper pickup; Stop can
-  // therefore race the first claim through any queued message's handle.
-  const messages = [];
-  for (const detail of ['First question', 'Follow-up question', 'Last detail'])
-    messages.push(await send(`@hoots ${detail}`));
-  const [head] = await commands();
-  let reached!: () => void, release!: () => void, claimStarted!: () => void;
-  const aliasRead = new Promise<void>(resolve => { reached = resolve; });
-  const resume = new Promise<void>(resolve => { release = resolve; });
-  const started = new Promise<void>(resolve => { claimStarted = resolve; });
-  const wrapStop = (database: SqlDatabase): SqlDatabase => ({
-    query: async (sql, values) => {
-      const result = await database.query(sql, values);
-      if (sql.includes('SELECT head.turn_request_id FROM agent_commands source')) {
-        reached();
-        await resume;
-      }
-      return result;
-    },
-    transaction: work => database.transaction(transaction => work(wrapStop(transaction))),
-  });
-  const wrapClaim = (database: SqlDatabase): SqlDatabase => ({
-    query: (sql, values) => {
-      if (sql.includes('pg_advisory_xact_lock')) claimStarted();
-      return database.query(sql, values);
-    },
-    transaction: work => database.transaction(transaction => work(wrapClaim(transaction))),
-  });
-  const stop = new PhoneService(wrapStop(db), 'http://test').execute('cancelAgentTurn',
-    { roomId: R, agentId: A, requestId: messages[1]!.messageId }, H);
-  // Observe rejections immediately, including on the unfixed implementation.
-  const outcome = stop.then(() => undefined, error => error);
-  let claimAttempt: Promise<{ coalescedContext?: string }> | undefined;
-  try {
-    await aliasRead;
-    claimAttempt = new DaemonService(wrapClaim(db), live).execute('claimAgentCommand',
-      { roomId: R, commandId: head!.id, generationId: 'crossing-claim' }, A, await helperOwner(A));
-    await started;
-    const fence = await db.transaction(transaction => transaction.query<{ available: boolean }>(
-      `SELECT pg_try_advisory_xact_lock(hashtext($1)) available`, [`agent-command-queue:${R}:${A}`]));
-    // Before the fix, commit the fold while Stop still holds its stale alias
-    // result. With the fix, the shared lock forces Stop to settle first.
-    if (fence.rows[0]!.available) await claimAttempt;
-    release();
-    expect(await outcome).toBeUndefined();
-    const claimed = await claimAttempt;
-    expect(claimed.coalescedContext).not.toContain(messages[1]!.messageId);
-    expect(claimed.coalescedContext).toContain(messages[2]!.messageId);
-    await result(head!, 'Answers the remaining queued messages', 'crossing-claim');
-    expect((await commands()).filter(command => command.action === 'input')).toEqual([]);
-  } finally {
-    release();
-    await Promise.allSettled([stop, ...(claimAttempt ? [claimAttempt] : [])]);
-  }
-});
-
-it.each(['deleted', 'stopped'])('QUEUED-TAGS-REPEAT: reclaim drops a %s folded source', async kind => {
+it.each(['deleted', 'stopped'])('QUEUED-TAGS-REPEAT: reconnect preserves unrelated work after a source is %s', async kind => {
   const messages = await queuedHumanTags();
-  const [head] = await commands();
-  await claim(head!);
+  const snapshot = await commands();
+  await claim(snapshot[0]!);
   if (kind === 'deleted')
-    await db.query(`UPDATE messages SET deleted_at=now() WHERE id=$1`, [messages[1]!.messageId]);
-  else
-    await db.query(`UPDATE agent_commands SET cancellation_reason='stop' WHERE source_message_id=$1`, [messages[1]!.messageId]);
-  await disconnectHelper();await helperOwner(A);
-  const reclaimed = await daemon.execute('claimAgentCommand',
-    { roomId: R, commandId: head!.id, generationId: 'reclaimed' }, A, await helperOwner(A));
-  expect(reclaimed.coalescedContext).not.toContain(messages[1]!.messageId);
-  expect(reclaimed.coalescedContext).toContain(messages[2]!.messageId);
-  await result(head!, 'Remaining details answered', 'reclaimed');
-  expect(await commands()).toEqual([]);
+    await db.query('UPDATE messages SET deleted_at=now() WHERE id=$1', [messages[1]!.messageId]);
+  else await phone.execute('cancelAgentTurn', { roomId: R, agentId: A, requestId: messages[1]!.messageId }, H);
+  await disconnectHelper();
+  await helperOwner(A);
+  await claim(snapshot[0]!, 'reclaimed');
+  await result(snapshot[0]!, 'First answer', 'reclaimed');
+  expect((await commands()).filter(command => command.action === 'input').map(command => command.sourceMessageId)).toEqual([messages[2]!.messageId]);
 });
-
-it('QUEUED-TAGS-REPEAT: attachments on folded messages reach the combined source', async () => {
+it('QUEUED-TAGS-REPEAT: each source retains only its own attachments', async () => {
   const messages = await queuedHumanTags();
   const files = messages.map((_, index) => ({ url: `https://files.example.test/file-${index}.txt`,
     name: `file-${index}.txt`, mimeType: 'text/plain', size: index + 1 }));
   for (const [index, message] of messages.entries())
-    await db.query(`UPDATE messages SET attachments=$2::jsonb WHERE id=$1`, [message.messageId, JSON.stringify([files[index]])]);
-  const [head] = await commands();
-  const claimed = await daemon.execute('claimAgentCommand',
-    { roomId: R, commandId: head!.id, generationId: 'files' }, A, await helperOwner(A));
-  expect(claimed.source!.attachments).toEqual(files);
+    await db.query('UPDATE messages SET attachments=$2::jsonb WHERE id=$1', [message.messageId, JSON.stringify([files[index]])]);
+  const snapshot = await commands();
+  for (const [index, command] of snapshot.entries()) {
+    expect(command.source.attachments).toEqual([files[index]]);
+    await claim(command);
+    await result(command, `File ${index} answered`);
+  }
 });
 
-it('QUEUED-TAGS-REPEAT: skips deleted and stopped sources and preserves unrelated commands', async () => {
-  const messages = await queuedHumanTags();
-  await db.query(`UPDATE messages SET deleted_at=now() WHERE id=$1`, [messages[1]!.messageId]);
-  await db.query(`UPDATE agent_commands SET state='cancelled',cancellation_reason='stop' WHERE source_message_id=$1`,
-    [messages[2]!.messageId]);
-  await phone.execute('sendRoomMessage', { roomId: R, text: '@hoots Another person' }, P);
-  const order = await createAgentCommand(db, { roomId: R, agentId: A, sourceMessageId: null, reason: 'order',
-    privatePayload: { kind: 'order', authorId: B, fromRoomId: R, text: 'Separate assignment' } });
-  const head = (await commands()).find(c => c.sourceMessageId === messages[0]!.messageId)!;
-  const claimed = await daemon.execute('claimAgentCommand', { roomId: R, commandId: head.id, generationId: 'g1' }, A, await helperOwner(A));
-  expect(claimed.coalescedContext).toBeUndefined();
-  expect((await db.query(`SELECT state FROM agent_commands WHERE id=$1`, [order!.id])).rows[0]!.state).toBe('pending');
-  expect((await commands()).some(c => c.source.authorId === P)).toBe(true);
-  expect((await commands()).some(c => c.sourceMessageId === messages[1]!.messageId)).toBe(false);
-});
-
-it('Reproduction cold-beebee-first-reply: paints every mentioned agent before helper pickup', async () => {
+it('Reproduction cold-beebee-first-reply: shows every queued agent, then only its claimed turn as working', async () => {
   await send('@hoots @goosy Hello');
   const before = await phone.readRoom(R, H);
-  expect(before?.latestAgentTurns).toEqual(expect.arrayContaining([
-    expect.objectContaining({ agentPubkey: A, status: 'working' }),
-    expect.objectContaining({ agentPubkey: B, status: 'working' }),
+  expect(before?.pendingAgentCommands).toEqual(expect.arrayContaining([
+    expect.objectContaining({ agentPubkey: A }),
+    expect.objectContaining({ agentPubkey: B }),
   ]));
+  expect(before?.latestAgentTurns?.filter(turn => turn.status === 'working')).toEqual([]);
   const pending = await db.query(`SELECT state FROM agent_commands WHERE agent_id IN ($1,$2)`, [A,B]);
   expect(pending.rows).toEqual([{ state: 'pending' }, { state: 'pending' }]);
   await db.query(`UPDATE agent_turns SET started_at=now()-interval '17 minutes' WHERE agent_id=$1`, [A]);
@@ -331,6 +235,7 @@ it('Reproduction cold-beebee-first-reply: paints every mentioned agent before he
   expect(after?.latestAgentTurns?.filter(turn => turn.agentPubkey === A)).toEqual([
     expect.objectContaining({ status: 'working', generationId: 'real-helper' }),
   ]);
+  expect(after?.pendingAgentCommands).toEqual([expect.objectContaining({ agentPubkey: B })]);
 });
 
 async function queueStopOrders() {
@@ -452,150 +357,14 @@ it.runIf(Boolean(stopProofPostgresUrl))('Stop holds the claim fence through the 
   }
 });
 
-it('runs only the newest of three overdue pings, preserving the earlier text as history', async () => {
-  await send('@hoots First request');
-  await send('@hoots Are you there?');
-  await send('@hoots Please answer this latest request');
-  await db.query(`UPDATE agent_commands SET created_at=created_at-interval '2 minutes'`);
-  const pending = await commands();
-  expect(pending).toHaveLength(1);
-  expect(pending[0]!.source.body).toBe('@hoots Please answer this latest request');
-  expect(pending[0]!.recoveryContext).toContain('@hoots First request');
-  expect(pending[0]!.recoveryContext).toContain('@hoots Are you there?');
-  const cancelled = await db.query<{ cancellation_reason: string }>(
-    `SELECT cancellation_reason FROM agent_commands WHERE state='cancelled'`,
-  );
-  expect(cancelled.rows).toEqual(Array(2).fill({ cancellation_reason: `superseded_on_return:${pending[0]!.id}` }));
-  await claim(pending[0]!);
-  await result(pending[0]!, 'Back now');
-  expect(await commands()).toHaveLength(0);
-});
-
-it('keeps one latest wake in each Room when returning', async () => {
-  for (const room of [R, C]) {
-    await send('@hoots First ping', room);
-    await send('@hoots Latest ping', room);
-  }
-  await db.query(`UPDATE agent_commands SET created_at=created_at-interval '2 minutes'`);
-  for (const room of [R, C]) {
-    const pending = await commands(A, room);
-    expect(pending).toHaveLength(1);
-    expect(pending[0]!.source.body).toBe('@hoots Latest ping');
-    expect(pending[0]!.recoveryContext).toContain('@hoots First ping');
-    await claim(pending[0]!);
-    await result(pending[0]!, 'Back in this Room');
-  }
-});
-
-it('supersedes an expired claimed wake as well as pending pings on return', async () => {
-  await send('@hoots Request before the helper exited');
-  const [abandoned] = await commands();
-  await claim(abandoned!);
-  await disconnectHelper(A);
-  await send('@hoots First offline ping');
-  await send('@hoots Latest offline ping');
-  await db.query(`UPDATE agent_commands SET created_at=created_at-interval '2 minutes',
-    lease_expires_at=CASE WHEN state='claimed' THEN now()-interval '1 second' ELSE lease_expires_at END`);
-  const pending = await commands();
-  expect(pending).toHaveLength(1);
-  expect(pending[0]!.source.body).toBe('@hoots Latest offline ping');
-  expect(pending[0]!.recoveryContext).toContain('Request before the helper exited');
-  expect(pending[0]!.recoveryContext).toContain('First offline ping');
-  expect(pending[0]!.recoveryContext!.split('\n')).toHaveLength(2);
-  await expect(claim(abandoned!, 'returned-helper')).rejects.toThrow();
-  await expect(result(abandoned!, 'Late output')).rejects.toThrow();
-  expect((await db.query(`SELECT status FROM agent_turns WHERE request_id=$1`,
-    [abandoned!.turnRequestId])).rows).toEqual([{ status: 'cancelled' }]);
-  await claim(pending[0]!, 'returned-helper');
-  await result(pending[0]!, 'Back now', 'returned-helper');
-});
-
-it('refuses a stale helper snapshot at claim and supplies the survivor its current history', async () => {
-  await send('@hoots First request');
-  await send('@hoots Latest request');
-  const snapshot = await commands();
-  await db.query(`UPDATE agent_commands SET created_at=created_at-interval '2 minutes'`);
-  await expect(claim(snapshot[0]!)).rejects.toThrow();
-  const claimed = await daemon.execute('claimAgentCommand', {
-    roomId: R, commandId: snapshot[1]!.id, generationId: 'returned-helper',
-  }, A, await helperOwner(A));
-  expect(claimed.recoveryContext).toContain('@hoots First request');
-  expect((await db.query(`SELECT 1 FROM agent_commands WHERE state='cancelled'`)).rowCount).toBe(1);
-});
-
-it('keeps the surviving resume claimable when superseded resumes share its turn', async () => {
-  await send('@hoots Start the turn');
-  const [parent] = await commands();
-  await claim(parent!);
-  await disconnectHelper();
-  for (const text of ['Earlier decision', 'Latest decision']) {
-    const source = id();
-    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`, [source, R, H, text]);
-    await createAgentCommand(db, {
-      roomId: R, agentId: A, sourceMessageId: source, action: 'resume', reason: 'resume',
-      turnRequestId: parent!.turnRequestId,
-    });
-  }
-  await db.query(`UPDATE agent_commands SET created_at=created_at-interval '2 minutes'`);
-  const pending = await commands();
-  expect(pending).toHaveLength(1);
-  expect(pending[0]!.source.body).toBe('Latest decision');
-  await claim(pending[0]!, 'returned-helper');
-  await result(pending[0]!, 'Resumed once', 'returned-helper');
-});
-
-it('folds fresh online follow-ups at claim and preserves them during a live turn', async () => {
-  await send('@hoots First request');
-  await send('@hoots Second request');
-  await send('@hoots Third request');
+it('preserves each fresh follow-up while another request is being answered', async () => {
+  for (const text of ['First request', 'Second request', 'Third request']) await send(`@hoots ${text}`);
   const pending = await commands();
   expect(pending).toHaveLength(3);
   await claim(pending[0]!);
-  await db.query(`UPDATE agent_commands SET created_at=created_at-interval '2 minutes' WHERE state='pending'`);
-  expect(await commands()).toHaveLength(0);
-  const head = (await db.query(`SELECT coalesced_context FROM agent_commands WHERE id=$1`, [pending[0]!.id])).rows[0]!;
-  expect(head.coalesced_context).toContain('Second request');
-  expect(head.coalesced_context).toContain('Third request');
-  await result(pending[0]!, 'Finished all requests');
-  expect(await commands()).toHaveLength(0);
-});
-
-it('coalesces recent offline pings on a new live connection, without waiting ninety seconds', async () => {
-  await db.query(`INSERT INTO live_server_instances(instance_id) VALUES('return-test') ON CONFLICT DO NOTHING`);
-  await db.query(`INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id,released_at)
-    VALUES($1,1,'return-test','return-test',NULL)`, [A]);
-  // A crashed helper can leave a still-valid takeover lease behind.
-  await send('@hoots Task before the helper exited');
-  const [abandoned] = await commands();
-  await claim(abandoned!);
-  await disconnectHelper(A);
-  await send('@hoots First offline ping');
-  await send('@hoots Last offline ping');
-  await db.query(`UPDATE agent_connections SET connected_at=clock_timestamp(),released_at=NULL WHERE agent_id=$1`, [A]);
-  const pending = await commands();
-  expect(pending).toHaveLength(1);
-  expect(pending[0]!.source.body).toBe('@hoots Last offline ping');
-});
-
-it('keeps an online long-running turn and its follow-ups after the takeover lease expires', async () => {
-  await db.query(`INSERT INTO live_server_instances(instance_id) VALUES('long-turn') ON CONFLICT DO NOTHING`);
-  await db.query(`INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id)
-    VALUES($1,1,'long-turn','long-turn')`, [A]);
-  await send('@hoots Long-running task');
-  const [working] = await commands();
-  await claim(working!);
-  await send('@hoots First follow-up');
-  await send('@hoots Second follow-up');
-  await db.query(`UPDATE agent_commands SET created_at=created_at-interval '2 minutes',
-    lease_expires_at=CASE WHEN state='claimed' THEN now()-interval '1 second' ELSE lease_expires_at END`);
-  expect(await commands()).toHaveLength(2);
-  expect((await db.query(`SELECT 1 FROM agent_commands WHERE state='claimed'`)).rowCount).toBe(1);
-  expect((await db.query(`SELECT 1 FROM agent_commands WHERE state='cancelled'`)).rowCount).toBe(0);
-  // The live helper renews its own generation with its next working receipt.
-  await daemon.execute('postAgentTurnReceipt', { roomId: R, agentId: A,
-    requestId: working!.turnRequestId, generationId: 'g1', status: 'working' }, A, await helperOwner(A));
-  await result(working!, 'Finished the long task');
-  expect(await commands()).toHaveLength(2);
+  expect((await commands()).map(command => command.id)).toEqual(pending.slice(1).map(command => command.id));
+  await result(pending[0]!, 'First answer');
+  expect((await commands()).map(command => command.source.body)).toEqual(['@hoots Second request', '@hoots Third request']);
 });
 
 it('keeps rapid online follow-ups across a brief socket reconnect', async () => {
@@ -607,18 +376,6 @@ it('keeps rapid online follow-ups across a brief socket reconnect', async () => 
   await send('@hoots Third online request');
   await db.query(`UPDATE agent_connections SET connected_at=clock_timestamp() WHERE agent_id=$1`, [A]);
   expect(await commands()).toHaveLength(3);
-});
-
-it('carries accumulated history through a second offline return', async () => {
-  await send('@hoots Original request');
-  await send('@hoots Second request');
-  await db.query(`UPDATE agent_commands SET created_at=created_at-interval '2 minutes'`);
-  expect(await commands()).toHaveLength(1);
-  await send('@hoots Third request');
-  const [newest] = await commands();
-  expect(newest!.source.body).toBe('@hoots Third request');
-  expect(newest!.recoveryContext).toContain('@hoots Original request');
-  expect(newest!.recoveryContext).toContain('@hoots Second request');
 });
 
 it('bootstrap identifies only pending member surfaces, including the corner parent', async () => {
@@ -670,9 +427,9 @@ it('Reproduction R2: an order accepted while the helper is offline runs when it 
     privatePayload: { kind: 'order', text: 'Do the work', authorId: B, fromRoomId: R },
   });
   const stored = (await db.query<{ state: string; created_offline: boolean; claimed_at: Date | null; renudged_at: Date | null }>(
-    `SELECT state,created_offline,claimed_at,renudged_at FROM agent_commands WHERE id=$1`, [command!.id],
+    `SELECT state,claimed_at,renudged_at FROM agent_commands WHERE id=$1`, [command!.id],
   )).rows[0];
-  expect(stored).toMatchObject({ state: 'pending', created_offline: true, claimed_at: null, renudged_at: null });
+  expect(stored).toMatchObject({ state: 'pending', claimed_at: null, renudged_at: null });
   expect(await renudgeStrandedPendingCommands(db, A)).toBe(0);
   await claimAgentConnection(db, live, A, { lifecycleId: 'back' }, { connectionId: 'r2-back', instanceId: 'r2-offline' });
   expect((await db.query<{ renudged_at: Date | null }>(
@@ -699,8 +456,7 @@ it('re-nudges an order while the helper is claimed in a different room', async (
   await db.query(`UPDATE agent_commands SET state='claimed',lease_expires_at=now()+interval '90 seconds'
     WHERE source_message_id=$1`, [busy.messageId]);
   expect(await renudgeStrandedPendingCommands(db, A)).toBe(1);
-  await db.query(`UPDATE agent_commands SET wake_after=now()+interval '1 hour',renudged_at=NULL WHERE id=$1`, [order!.id]);
-  expect(await renudgeStrandedPendingCommands(db, A)).toBe(0);
+  expect(await renudgeStrandedPendingCommands(db, A)).toBe(1);
 });
 async function claim(c: AgentCommand, generationId = 'g1') {
   const source=await helperOwner(c.agentId);
@@ -1194,29 +950,6 @@ it('deduplicates human writes, claims and final results', async () => {
   expect(two.id).toBe(one.id);
   expect(await commands(B)).toHaveLength(1);
 });
-it('redelivers the same expired command, rejects late generation and keeps successor output', async () => {
-  await send('@hoots');
-  const [c] = await commands();
-  await claim(c!);
-  await db.query(
-    `UPDATE agent_commands SET lease_expires_at=now()-interval '1 second' WHERE id=$1`,
-    [c!.id],
-  );
-  await disconnectHelper();await helperOwner(A);
-  expect((await commands())[0]?.id).toBe(c!.id);
-  await claim(c!, 'g2');
-  await expect(result(c!, 'Late')).rejects.toThrow('authority');
-  await result(c!, 'Current', 'g2');
-  await expect(result(c!, 'Late')).rejects.toThrow('authority');
-});
-it('keeps a connected owner live without freshness receipts and refuses heartbeat writes',async()=>{
-  await send('@hoots');const [command]=await commands();await claim(command!);
-  await db.query(`UPDATE agent_turns SET created_at=now()-interval '10 minutes' WHERE request_id=$1`,[command!.turnRequestId]);
-  const before=(await db.query('SELECT created_at FROM agent_turns WHERE request_id=$1',[command!.turnRequestId])).rows;
-  await expect(daemon.execute('postAgentTurnReceipt',{roomId:R,agentId:A,requestId:command!.turnRequestId,generationId:'g1',status:'working',heartbeat:true},A,await helperOwner(A))).rejects.toThrow('freshness');
-  expect((await db.query('SELECT created_at FROM agent_turns WHERE request_id=$1',[command!.turnRequestId])).rows).toEqual(before);
-  expect(await commands()).toEqual([]);await result(command!,'Still owned after ten minutes');
-});
 it('rejects unknown, wrong agent, cross-Room, completed and cancelled turn output without side effects', async () => {
   await send('@hoots');
   const [c] = await commands();
@@ -1605,12 +1338,8 @@ it('holds the green review wake while the corner worker still holds a live turn'
   ).resolves.toBe(1);
   expect((await readAgentCommands(db,C,A)).commands).toHaveLength(0);
 
-  // Only its actual disconnect releases the worker's ownership.
-  await disconnectHelper(B);
-  await db.query(
-    `UPDATE agent_commands SET lease_expires_at=now()-interval '1 minute' WHERE room_id=$1 AND agent_id=$2`,
-    [C, B],
-  );
+  // Only the worker result releases the review wake.
+  await daemon.execute('postAgentTurnReceipt',{roomId:C,requestId:workerCommand!.turnRequestId,generationId:'gw',status:'complete'},B,await helperOwner(B));
   expect(await commands(A, C)).toHaveLength(1);
 
   // This suite shares one store, so leave none of the above behind.
@@ -2095,6 +1824,14 @@ it('restarts the turn clock when a parked turn resumes after a long approval wai
   expect(await turn()).toMatchObject({ status: 'working' });
   expect((await turn()).age_hours).toBeLessThan(1);
 
+  // and a receipt on a turn that is still working keeps its start.
+  await parkFor57Hours();
+  await daemon.execute(
+    'postAgentTurnReceipt',
+    { roomId: R, agentId: A, requestId: c!.turnRequestId, generationId: 'after-approval', status: 'working' },
+    A, await helperOwner(A),
+  );
+  expect((await turn()).age_hours).toBeGreaterThan(56);
 });
 it('rolls the command claim back when a cancelled turn cannot become working', async () => {
   await send('@hoots');
@@ -2511,6 +2248,7 @@ it('stores an ambiguous agent tag as prose without dispatching either candidate'
     ).toBeUndefined();
   });
 
+
 it('excludes concurrent avatar jobs across rooms and refuses non-owner generation', async () => {
   const outcomes = await Promise.allSettled([
     send('@hoots /draw-avatar', R),
@@ -2652,18 +2390,7 @@ it.each([
     activity: [{ ...activity[0]!, output: 'different output' }] }, A)).rejects.toThrow('conflicts');
 });
 
-it('stuck-turn-1: a completion receipt closes a working turn even when its command already completed', async () => {
-  await send('@hoots complete the work', C);
-  const [command] = await commands(A, C);
-  await claim(command!);
-  await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1`, [command!.id]);
-  await daemon.execute('postAgentTurnReceipt', {roomId:C, requestId:command!.turnRequestId,
-    generationId:'g1',status:'complete'}, A, await helperOwner(A));
-  expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
-    [C,command!.turnRequestId,A])).rows).toEqual([{status:'complete'}]);
-});
-
-it('Reproduction stuck-turn-1: superseded review output completes its command and closes its turn together', async () => {
+it('superseded review output cancels its command and turn through the terminal owner', async () => {
   const corner = '44444444-4444-4444-8444-444444444444';
   await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'stuck-turn-proof')`, [corner,W,R]);
   await insertCornerFacts(db, { cornerId: corner, ownerAgentId: A, lifecycle: '{"lifecycle":"working"}' });
@@ -2676,16 +2403,15 @@ it('Reproduction stuck-turn-1: superseded review output completes its command an
   expect(await state()).toBe('working');
   await result(command!, '@hoots Review output for the old head');
   expect((await db.query(`SELECT state FROM agent_commands WHERE id=$1`, [command!.id])).rows)
-    .toEqual([{state:'complete'}]);
+    .toEqual([{state:'cancelled'}]);
   expect((await db.query(`SELECT status,failure_reason FROM agent_turns
     WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`, [corner,command!.turnRequestId,A])).rows)
-    .toEqual([{status:'failed',failure_reason:'the review command was superseded'}]);
+    .toEqual([{status:'cancelled',failure_reason:'superseded_review'}]);
   expect(await state()).not.toBe('working');
-  await daemon.execute('postAgentTurnReceipt', {roomId:corner,requestId:command!.turnRequestId,
-    generationId:'g1',status:'complete'}, A, await helperOwner(A));
+  await expect(daemon.execute('postAgentTurnReceipt', {roomId:corner,requestId:command!.turnRequestId,
+    generationId:'g1',status:'complete'}, A, await helperOwner(A))).rejects.toThrow();
   expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
-    [corner,command!.turnRequestId,A])).rows).toEqual([{status:'failed'}]);
-  console.log('Demonstrated stuck-turn-1: superseded review end → command complete, turn failed, phone corner no longer working; receipt replay preserves failure');
+    [corner,command!.turnRequestId,A])).rows).toEqual([{status:'cancelled'}]);
 });
 
 
@@ -2713,69 +2439,6 @@ it.each(['no_reply_needed', 'mcp__beeline-agent__no_reply_needed', 'mcp__beeline
   const next = await createAgentCommand(db, { roomId: C, agentId: A, sourceMessageId: null, reason: 'system' });
   expect((await commands(A, C)).some(c => c.id === next!.id)).toBe(true);
 });
-
-// Redacted production metadata: exact ordering, parent links, outcomes and tool titles;
-// no person, agent, message identifiers or private task text are retained.
-it.each(['production', 'ordinary-background-job'])('Reproduction wake-storm-83 (%s): reminder/tool sequence stops and tells the original person once', async variant => {
-  await db.query(`INSERT INTO free_agents(agent_id,workspace_id,owner_id,sealed_keys,state,model_token_hash) VALUES($1,$2,$3,'fixture','running','cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc') ON CONFLICT DO NOTHING`, [A,W,H]);
-  const replay = JSON.parse(readFileSync(new URL('./fixtures/wake-storm-83.json', import.meta.url), 'utf8')) as {
-    reason: string; parent: number; status: 'complete' | 'failed'; completionKind: 'no-reply' | null;
-    toolCalls: number | null; reply?: string; title?: string; toolCallId?: string; toolStatus?: 'completed' | 'failed';
-  }[];
-  expect(replay).toHaveLength(83);
-  expect(replay.filter(event => event.reason === 'corner_background_tool')).toHaveLength(80);
-  expect(replay.at(-1)!.status).toBe('failed');
-  const root = await send('Make the README useful');
-  const opening = await createAgentCommand(db, { roomId: C, agentId: A, sourceMessageId: null,
-    reason: 'corner_objective', scheduledHumanCommandMessageId: root.messageId,
-    privatePayload: { kind: 'order', authorId: H, fromRoomId: R, text: 'Make the README useful' } });
-  await db.query("UPDATE agent_commands SET state='complete' WHERE id=$1", [opening!.id]);
-  const replayed = new Map<number, AgentCommand>();
-  let turns = 0;
-  for (const [index, event] of replay.entries()) {
-    if (event.reason === 'report') {
-      const queued = await createAgentCommand(db, { roomId: C, agentId: A, sourceMessageId: null,
-        parent: opening!, retainDepth: true, reason: 'report',
-        privatePayload: { kind: 'report', authorId: B, fromRoomId: C, automatic: true,
-          text: 'blocked: Corner is idle. Resume it, set a hold, or close it.' } });
-      if (queued) replayed.set(index, (await commands(A, C)).find(c => c.id === queued.id)!);
-    }
-    const command = replayed.get(index);
-    if (!command || !(await commands(A, C)).some(c => c.id === command.id)) continue;
-    await claim(command, `replay-${index}`);
-    turns++;
-    const turn = { roomId: C, requestId: command.turnRequestId, generationId: `replay-${index}` };
-    if (event.completionKind && variant === 'production') await daemon.execute('markAgentTurnSilent', turn, A);
-    // The recorded tool result dispatched its child before the parent's terminal receipt.
-    for (const [childIndex, child] of replay.entries()) {
-      if (child.parent !== index) continue;
-      await daemon.execute('postBackgroundToolCompletion', { ...turn, toolCallId: child.toolCallId!,
-        title: variant === 'production' ? child.title! : 'Read status', status: child.toolStatus! }, A);
-      const queued = (await commands(A, C)).find(c => c.reason === 'corner_background_tool' && ![...replayed.values()].some(old => old.id === c.id));
-      if (queued) replayed.set(childIndex, queued);
-    }
-    if (event.completionKind && variant !== 'production') await daemon.execute('markAgentTurnSilent', turn, A);
-    if (event.reply) await daemon.execute('postCornerMessage', { ...turn, cornerId: C, text: event.reply }, A);
-    await daemon.execute('postAgentTurnReceipt', { ...turn, status: event.status,
-      ...(event.completionKind ? { completionKind: event.completionKind } : {}), toolCalls: event.toolCalls ?? undefined }, A, await helperOwner(A));
-    await db.query("UPDATE agent_commands SET state='complete' WHERE id=$1 AND state='claimed'", [command.id]);
-  }
-  expect(turns).toBe(3);
-  expect((await db.query(`SELECT 1 FROM agent_turns turn JOIN agent_commands command
-    ON command.room_id=turn.room_id AND command.agent_id=turn.agent_id AND command.turn_request_id=turn.request_id
-    WHERE command.cancellation_reason='silent_wake_limit' AND turn.status='working'`)).rows).toEqual([]);
-  expect((await commands(A, C)).filter(c => ['report','corner_background_tool'].includes(c.reason))).toEqual([]);
-  const noticeIds = (await db.query<{id:string}>(`SELECT id FROM messages WHERE room_id=$1 AND card->>'silentWakeLimit'='true' AND card->>'requestId'=$2`, [R,root.messageId])).rows.map(m => m.id);
-  expect(noticeIds).toHaveLength(1);
-  const notices = (await phone.readRoom(R, H))!.messages.filter(m => noticeIds.includes(m.id));
-  expect(notices).toHaveLength(1);
-  expect(notices[0]!.text).toContain('could not answer');
-  expect(notices[0]!.text).toContain('continue');
-  const fresh = await send('@hoots Continue the README work', C);
-  expect((await commands(A,C)).some(c => c.sourceMessageId === fresh.messageId)).toBe(true);
-  console.log(`Demonstrated wake-storm-83: replayed production sequence; (${turns}) turns, one visible notice, fresh human request accepted`);
-  await db.query('DELETE FROM free_agents WHERE agent_id=$1', [A]);
-}, 60_000);
 
 // Command-only roots are server-authored private work, never synthetic messages.
 it.each(['replay', 'idle'] as const)('command-only requester: System %s survives a cold repository read and delegation', async kind => {

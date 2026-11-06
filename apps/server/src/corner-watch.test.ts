@@ -1,4 +1,3 @@
-import { flushDueCommanderWakes } from './commander-wakes.js';
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
 import { PgliteDatabase, migratedDatabase, recordCornerRun, insertCornerFacts } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
@@ -67,8 +66,8 @@ const emit = (kind: CornerWatchKind = 'merged') =>
     durableFact: 'merge',
   });
 const mature = async () => {
-  await db.query(`UPDATE agent_commands SET wake_after=now() WHERE wake_after IS NOT NULL`);
-  await flushDueCommanderWakes(db);
+
+
 };
 const wakes = async () => { await mature(); return (await readAgentCommands(db, A, W)).commands; };
 

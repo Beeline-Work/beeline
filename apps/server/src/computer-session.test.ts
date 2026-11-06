@@ -16,7 +16,7 @@ import { LiveHub } from './live.js';
 import { systemLine } from './system-line.js';
 import { createAgentCommand, claimAgentCommand, readAgentCommands } from './agent-command.js';
 import { DaemonService } from './daemon-service.js';
-import { noteFirstSilence } from './turn-silence-notice.js';
+
 import { backfillComputerObservations } from './system-line.js';
 import { PhoneService } from './phone-service.js';
 import type { TokenAuth } from './auth.js';
@@ -712,7 +712,7 @@ describe('computer session handoff', () => {
     }
   }, 60_000);
 
-  it('coalesces each share into one latest observation, behind human requests, with silent failures', async () => {
+  it('coalesces each share into one latest observation, behind human requests, with silent completion', async () => {
     const share = await createComputerSession(database, live, {
       roomId: ROOM, agentId: AGENT, sessionId: 'activity-burst', upstreamUrl: 'body:',
     });
@@ -755,9 +755,8 @@ describe('computer session handoff', () => {
     await database.query(`UPDATE agent_commands SET state='complete' WHERE id=$1`, [anotherHuman!.id]);
     expect((await readAgentCommands(database, ROOM, AGENT)).commands.filter((c) =>
       (c.source.systemEvent?.payload as { sessionId?: string })?.sessionId === share.id)).toHaveLength(1);
-    const silence = await noteFirstSilence(database, live, { roomId: ROOM, agentId: AGENT,
-      requestId: snapshot.turnRequestId, generationId: 'activity-generation', reason: 'harness returned no text' });
-    expect(silence).toMatchObject({ hiccupRestart: false, updateRequeued: false });
+    await daemon.execute('postAgentTurnReceipt',{roomId:ROOM,requestId:snapshot.turnRequestId,
+      generationId:'activity-generation',status:'complete',completionKind:'no-reply'},AGENT,helperSource);
     expect((await database.query(`SELECT id FROM messages WHERE room_id=$1 AND card_type='turn-failed'
       AND card->>'requestId'=$2`, [ROOM, snapshot.turnRequestId])).rowCount).toBe(0);
     await endComputerSession(database, live, (await getComputerSession(database, share.id))!);

@@ -16,7 +16,7 @@ const SKIP_FILE = /\.(test|spec)\.[^.]+$|\.d\.ts$/;
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', '__tests__', 'test-fixtures']);
 const RULE_KEYS = ['id', 'module', 'invariant', 'pattern', 'scope', 'owners', 'total', 'fix'];
 /** Fields whose change moves what a rule catches; any change to them is a relaxation. */
-const BOUNDARY_KEYS = ['pattern', 'flags', 'scope', 'owners', 'distinct', 'ownerFunctions', 'ownerSites', 'strict', 'filePattern'];
+const BOUNDARY_KEYS = ['pattern', 'flags', 'scope', 'owners', 'distinct', 'ownerFunctions', 'ownerSites', 'strict', 'filePattern', 'insertColumnValue'];
 
 export function readInvariants(root) {
   return JSON.parse(readFileSync(path.join(root, INVARIANTS_PATH), 'utf8'));
@@ -47,6 +47,76 @@ function walk(root, relative, out) {
   }
 }
 
+/** Split SQL expressions without treating nested calls, quoted values or
+ * template interpolations as column separators. Unknown expressions fail closed.
+ */
+function sqlItems(source) {
+  const items=[];let start=0,depth=0,index=0;
+  while(index<source.length) {
+    const char=source[index];
+    if(source.startsWith('${',index)) {
+      let braces=1;index+=2;
+      while(index<source.length&&braces) {if(source[index]==='{')braces++;if(source[index]==='}')braces--;index++;}
+      continue;
+    }
+    if(char==="'"||char==='"') {
+      const quote=char;index++;
+      while(index<source.length) {
+        if(source[index++]===quote) {if(source[index]===quote)index++;else break;}
+      }
+      continue;
+    }
+    if(char==='(')depth++;
+    if(char===')') {if(!depth)break;depth--;}
+    if(!depth&&(char===';'||char==='`'||(!index||!/[\w]/.test(source[index-1]))&&/^(?:FROM|ON|RETURNING)\b/i.test(source.slice(index))))break;
+    if(!depth&&char===',') {items.push(source.slice(start,index).trim());start=index+1;}
+    index++;
+  }
+  items.push(source.slice(start,index).trim());items.end=index;return items;
+}
+
+/** Find another top-level SELECT arm before this INSERT's enclosing query ends. */
+function unionSelectTail(source) {
+  let depth=0,index=0;
+  while(index<source.length) {
+    const char=source[index];
+    if(char==="'"||char==='"') {
+      const quote=char;index++;
+      while(index<source.length) {if(source[index++]===quote) {if(source[index]===quote)index++;else break;}}
+      continue;
+    }
+    if(char==='(')depth++;
+    if(char===')') {if(!depth)return;depth--;}
+    if(!depth) {
+      if(char===';'||char==='`')return;
+      const next=/^UNION(?:\s+ALL)?\s+SELECT\s+/i.exec(source.slice(index));
+      if(next)return source.slice(index+next[0].length);
+    }
+    index++;
+  }
+}
+
+function hasLiteralInsertValue(source, match, contract) {
+  const columns=sqlItems(match[0].slice(match[0].indexOf('(')+1));
+  const ordinal=columns.findIndex(column=>column.replaceAll('"','').toLowerCase()===contract.column);
+  if (ordinal<0) return false;
+  let tail=source.slice(match.index+match[0].length);
+  while (true) {
+    const values=sqlItems(tail);
+    if (values[ordinal]!==contract.value) return false;
+    tail=tail.slice(values.end);
+    if (/VALUES\s*\($/i.test(match[0])) {
+      const next=/^\)\s*,\s*\(/.exec(tail);
+      if (!next) return true;
+      tail=tail.slice(next[0].length);
+    } else {
+      const next=unionSelectTail(tail);
+      if (next===undefined) return true;
+      tail=next;
+    }
+  }
+}
+
 /** Every match of a rule outside its owner files, as `file:line`. */
 function findSites(root, rule) {
   const files = [];
@@ -61,6 +131,7 @@ function findSites(root, rule) {
     const pattern = new RegExp(rule.pattern, `g${rule.flags ?? ''}`);
     const parsed = owners.has(file) && rule.ownerFunctions ? ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true) : undefined;
     for (const match of source.matchAll(pattern)) {
+      if(rule.insertColumnValue&&hasLiteralInsertValue(source,match,rule.insertColumnValue))continue;
       const site = `${file}:${source.slice(0, match.index).split('\n').length}`;
       if (owners.has(file) && rule.ownerFunctions) {
         let enclosing;
@@ -149,6 +220,14 @@ export function relaxations(root, base, head) {
   return found;
 }
 
+function tighterBoundary(key, before, after) {
+  if (key === 'ownerSites') return Number.isInteger(after) && after < before;
+  if (key === 'owners') return after.every(owner => before.includes(owner));
+  if (key === 'ownerFunctions' && before && after)
+    return Object.entries(after).every(([file, names]) => names.every(name => before[file]?.includes(name)));
+  return false;
+}
+
 /** Strict capability owners cannot be weakened through a candidate-rule edit. */
 export function strictRelaxations(root, base, head) {
   if (!base) return [];
@@ -159,7 +238,7 @@ export function strictRelaxations(root, base, head) {
     if (!rule) { found.push(`rule ${was.id} removed`); continue; }
     if (rule.total > was.total) found.push(`rule ${was.id} allowance increased`);
     for (const key of BOUNDARY_KEYS)
-      if (JSON.stringify(rule[key] ?? null) !== JSON.stringify(was[key] ?? null))
+      if (JSON.stringify(rule[key] ?? null) !== JSON.stringify(was[key] ?? null) && !tighterBoundary(key, was[key], rule[key]))
         found.push(`rule ${was.id} ${key} changed`);
   }
   return found;

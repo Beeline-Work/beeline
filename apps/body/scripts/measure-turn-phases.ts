@@ -232,7 +232,6 @@ async function runRig(options: {
     scheduler,
     health: { poll: () => undefined },
     signal: abort.signal,
-    pollMs: 200,
     ...(options.fakePrompt
       ? {
           createAcpClient: (clientOptions: ConstructorParameters<typeof AcpClient>[0]) => {

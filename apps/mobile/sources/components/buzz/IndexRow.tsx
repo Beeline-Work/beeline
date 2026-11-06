@@ -225,7 +225,6 @@ export type IndexRowProps = {
   /** The title keeps its full width; the trailing value ellipsizes instead. */
   wholeTitle?: boolean;
   /** Recovery notices keep all copy visible, including at large text sizes. */
-  wrap?: boolean;
 };
 
 /** A page subtitle is one short phrase; a long one stops at two lines. */
@@ -292,7 +291,6 @@ export function IndexRow({
   value,
   valueTone,
   wholeTitle = false,
-  wrap = false,
 }: IndexRowProps) {
   const inheritedInset = React.useContext(IndexRowInsetContext);
   const inset = ownInset ?? inheritedInset;

@@ -1,8 +1,3 @@
-import React from 'react';
-import Svg, { Circle, Polygon } from 'react-native-svg';
-import { DECORATIVE_GLYPH_PROPS } from './decorative-glyph';
-import brand from '@/buzz/brand.json';
-
 /**
  * Header chrome shares a 24 viewBox with RoomGlyph. 1.75 is the FAB chrome
  * stroke in that viewBox; at the 16px size this was tuned for it paints
@@ -10,7 +5,7 @@ import brand from '@/buzz/brand.json';
  * keeps that painted weight by scaling the viewBox stroke down — a stroke
  * left at 1.75 would paint ~2.04px and read heavy.
  */
-export const MEMBERS_GLYPH_STROKE_WIDTH = 1.75;
+const MEMBERS_GLYPH_STROKE_WIDTH = 1.75;
 /** The size `MEMBERS_GLYPH_STROKE_WIDTH` was tuned to paint ~1.17px at. */
 export const CHROME_STROKE_REF_SIZE = 16;
 

@@ -6,7 +6,7 @@ import { compactNeedsYouCount } from '@/buzz/needs-you';
 import Svg, { Path } from 'react-native-svg';
 import { DECORATIVE_GLYPH_PROPS } from './decorative-glyph';
 import brand from '@/buzz/brand.json';
-import { chromeStrokeWidth } from './MembersGlyph';
+import { chromeStrokeWidth } from '@/buzz/chrome-geometry';
 
 /** The open box, then the tray's lip: a floor with a dip where things land. */
 const BOX = 'M4.5 5.5h15v13h-15z';

@@ -23,19 +23,19 @@ export const GLOBAL_SHORTCUTS: ReadonlyArray<{
     { id: 'settings', key: ',', code: 'Comma', keyLabel: ',' },
 ];
 
+function acceptsAppShortcut(event: KeyboardShortcutEvent, browserSafe: boolean): boolean {
+    return !event.isComposing
+        && !event.getModifierState?.('AltGraph')
+        && event.altKey === browserSafe
+        && !event.shiftKey
+        && (event.metaKey || event.ctrlKey);
+}
+
 export function getGlobalShortcutId(
     event: KeyboardShortcutEvent,
     browserSafe = false,
 ): GlobalShortcutId | null {
-    if (
-        event.isComposing
-        || event.getModifierState?.('AltGraph')
-        || event.altKey !== browserSafe
-        || event.shiftKey
-        || (!event.metaKey && !event.ctrlKey)
-    ) {
-        return null;
-    }
+    if (!acceptsAppShortcut(event, browserSafe)) return null;
 
     return GLOBAL_SHORTCUTS.find((shortcut) => event.code
         ? shortcut.code === event.code
@@ -47,15 +47,7 @@ export function getRecentSessionShortcutIndex(
     event: KeyboardShortcutEvent,
     browserSafe = false,
 ): number | null {
-    if (
-        event.isComposing
-        || event.getModifierState?.('AltGraph')
-        || event.altKey !== browserSafe
-        || event.shiftKey
-        || (!event.metaKey && !event.ctrlKey)
-    ) {
-        return null;
-    }
+    if (!acceptsAppShortcut(event, browserSafe)) return null;
 
     const codeMatch = event.code?.match(/^(?:Digit|Numpad)([1-9])$/);
     if (codeMatch) {

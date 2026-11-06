@@ -162,7 +162,6 @@ vi.mock('@/components/buzz/DirectMessagePickerSheet', () => hostModule('DirectMe
 vi.mock('@/components/buzz/ExitGlyph', () => hostModule('ExitGlyph'));
 vi.mock('@/components/buzz/MemberRosterRow', () => hostModule('MemberRosterRow'));
 vi.mock('@/components/buzz/MemberPickerSheet', () => hostModule('MemberPickerSheet'));
-vi.mock('@/components/buzz/MembersGlyph', () => hostModule('MembersGlyph'));
 vi.mock('@/components/buzz/Button', () => hostModule('Button'));
 vi.mock('@/components/buzz/NewRoomDialog', () => hostModule('NewRoomDialog'));
 vi.mock('@/components/buzz/RoomDeckComposeMenu', () => hostModule('RoomDeckComposeMenu'));

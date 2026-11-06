@@ -39,6 +39,10 @@ it cannot publish website changes from nightly. Latest promotion validates
 and copies the current nightly bytes, preserving their original helper version
 and SHA even when a nightly carried an older helper forward. Ordinary helper
 notices merely trigger a manifest check; each helper resolves its own channel.
+The new helper rechecks even when latest promotes a build already announced
+for nightly. Helpers predating this change can suppress that second notice:
+reconnect or run `npx usebeeline@latest update` once after the first latest
+promotion if necessary.
 The CLI's nightly npm tag is separate from these authoritative bundle channels;
 `npx usebeeline@latest update` continues to recover using the configured bundle
 manifest, without waiting for an npm tag promotion.

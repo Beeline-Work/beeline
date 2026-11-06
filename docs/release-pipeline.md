@@ -16,7 +16,7 @@ or schedule change runs merely by installing this implementation.
 | --- | --- | --- |
 | Server | Deploy the shared production server; preserve compatibility with the previous app | Carry the already deployed server |
 | Phone OTA | Publish an immutable `release-<version>` branch and point `nightly` at it | Point `production` at that exact branch, with its recorded runtime targets; no rebundle |
-| Android native | Only explicit `store_track=beta`; same app id/signing, `nightly-ci` OTA channel | Only explicit `store_track=production`; production OTA channel |
+| Android native | Only explicit `store_track=beta`; same app id/signing, build-time `nightly-ci` profile with nightly OTA channel | Only explicit `store_track=production`; production OTA channel |
 | iOS native | No build | Only explicit `store_track=production` |
 | Helpers | Build changed bundles, publish `/dl/nightly/manifest.json`; leave latest untouched | Copy the exact nightly bundle bytes to `/dl/manifest.json`; no native helper rebuild |
 | Desktop and website | Carry latest | Build from the promoted nightly commit |
@@ -42,6 +42,17 @@ latest rejects the beta track. Runtime-pin changes alone never add a native
 build. Play listing uploads remain locked unless explicitly commanded by the
 owner. iOS production submits the verified build to App Review with automatic
 release after approval, through the existing store submission path.
+
+The Android job injects `nightly-ci` (`extends: production-ci`, `channel:
+nightly`) into its temporary EAS build workspace immediately before building.
+Committed `eas.json`, app config, plugins, native files, fingerprint policy and
+runtime pins remain identical to main. No profile environment override is used.
+Pinned `eas-cli 22.2.0` maps the selected build profile channel to the Android
+job's `updates.channel`; pinned `@expo/build-tools 22.0.0` writes that channel
+to the generated Android manifest's `expo-channel-name` header, replacing the
+production header only in the build workspace. The installed `expo-updates 55.0.26` also supports the
+header-only runtime override without an anti-bricking flag, but this workflow
+uses build-time selection and needs no app setting.
 
 One-time rollout after merge (firstmate, on the owner's command): dispatch
 `channel=nightly, store_track=beta` to replace the Play private beta binary with

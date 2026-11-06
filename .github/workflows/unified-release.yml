@@ -870,7 +870,7 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           EAS_SKIP_AUTO_FINGERPRINT: "1"
-          ANDROID_BUILD_PROFILE: ${{ needs.initialize.outputs.channel == 'nightly' && 'nightly-ci' || 'production-ci' }}
+          RELEASE_CHANNEL: ${{ needs.initialize.outputs.channel }}
           EXPO_PUBLIC_BUZZY_MONOLITH_URL: https://server.usebeeline.app
         run: |
           set -euo pipefail
@@ -887,7 +887,10 @@ jobs:
           echo "Android SDK: $ANDROID_HOME on $(hostname)"
           export PATH="$ANDROID_HOME/platform-tools:$PATH"
           bash ../../scripts/npm-ci-timed.sh
-          "$EAS_CLI_PATH" build --local --platform android --profile "$ANDROID_BUILD_PROFILE" --non-interactive --output "$RUNNER_TEMP/beeline.aab"
+          # Keep the committed eas.json (and both native fingerprints) identical
+          # to production. Only this build workspace receives the nightly alias.
+          android_profile=$(node ../../scripts/android-release-channel.mjs eas.json "$RELEASE_CHANNEL")
+          "$EAS_CLI_PATH" build --local --platform android --profile "$android_profile" --non-interactive --output "$RUNNER_TEMP/beeline.aab"
           test -s "$RUNNER_TEMP/beeline.aab" || { echo 'local EAS build did not produce a non-empty aab' >&2; exit 1; }
           node ../../scripts/assert-mobile-release-origin.mjs "$RUNNER_TEMP/beeline.aab"
           unzip -p "$RUNNER_TEMP/beeline.aab" BUNDLE-METADATA/com.android.tools.build.obfuscation/proguard.map > "$RUNNER_TEMP/mapping.txt"

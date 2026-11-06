@@ -50,6 +50,7 @@ export const COMPONENT_PATH_RULES = [
   { exact: 'apps/mobile/scripts/store-runtime-targets.mjs', components: ['mobile-ota'] },
   { exact: 'apps/mobile/store/native-runtime-builds.json', components: ['mobile-ota'] },
   { exact: 'scripts/read-store-runtimes.mjs', components: ['mobile-ota'] },
+  { exact: 'scripts/android-release-channel.mjs', components: ['mobile-native'] },
   { exact: 'apps/mobile/app.config.js', components: ['mobile-ota', 'mobile-native', 'desktop', 'website'] },
   { exact: 'apps/mobile/package.json', components: ['mobile-ota', 'mobile-native', 'desktop', 'website'] },
   { exact: 'apps/mobile/package-lock.json', components: ['mobile-ota', 'mobile-native', 'desktop', 'website'] },
@@ -336,7 +337,7 @@ export function artifactReference(component, { version, sourceSha }) {
 
 // What a carried component still serves: the server image, the phone OTA
 // branch and its targets. Rollbacks read these from the newest release.
-const CARRIED_FACTS = ['imageRef', 'previousImageRef', 'otaBranch', 'previousOtaBranch', 'otaTargets'];
+const CARRIED_FACTS = ['imageRef', 'previousImageRef', 'otaBranch', 'previousOtaBranch', 'otaTargets', 'storeTrack'];
 
 function previousComponent(previous, component) {
   const legacyName = component === 'helper' ? 'daemon' : component === 'mobile-ota' ? 'app' : component;
@@ -383,7 +384,23 @@ export function initializeRelease({ version, sourceSha, previous, selectedCompon
     if (baseline?.storeRuntime) state.storeRuntime = structuredClone(baseline.storeRuntime);
     state.channel = channel;
     if (nightly) state.promotedFrom = nightly.version;
+    const track = channel === 'nightly' ? 'beta' : 'production';
+    const native = state.components['mobile-native'];
+    // A production binary and a beta binary of the same source have different
+    // OTA subscriptions. One cannot satisfy an explicit request for the other.
+    if (selectedComponents.includes('mobile-native') && FINAL_STATES.has(native.state) && native.storeTrack !== track) {
+      state.components['mobile-native'] = { state: 'pending', selected: true, version, sourceSha,
+        artifactRef: artifactReference('mobile-native', { version, sourceSha }) };
+      state.state = 'planned';
+      state.startedAt = startedAt;
+      state.delivery = { state: 'pending' };
+      state.plan.selected = RELEASE_COMPONENTS.filter(c => pendingComponents(state)[c]);
+      state.plan.carried = RELEASE_COMPONENTS.filter(c => !state.plan.selected.includes(c));
+      state.plan.nativePlatforms = runtimePin?.changed ? runtimePin.changedPlatforms : ['android', 'ios'];
+    }
     if (channel === 'nightly') state.plan.nativePlatforms = ['android'];
+    if (state.state !== 'delivered') for (const component of state.plan.carried)
+      state.components[component] = previousComponent(state, component);
     return state;
   }
   validateReleaseIdentity(version, sourceSha);
@@ -580,6 +597,7 @@ function parseJsonOutput(value, label) {
  */
 export function applyJobFacts(state, needs, { previous, runtimePins = {} } = {}) {
   currentRelease(state);
+  if (state.state === 'delivered') return state;
   const server = state.components.server;
   const serverOutputs = needs?.server?.outputs ?? {};
   if (server.selected && server.state === 'checked') {
@@ -617,6 +635,8 @@ export function applyJobFacts(state, needs, { previous, runtimePins = {} } = {})
     Object.assign(state.components.helper, { version: outputs.helper_version, sourceSha: outputs.helper_sha,
       artifactRef: `daemon-artifact-${outputs.helper_version}-${outputs.helper_sha}` });
   }
+  if (state.channel && state.components['mobile-native'].selected && state.components['mobile-native'].state === 'checked')
+    state.components['mobile-native'].storeTrack = state.channel === 'nightly' ? 'beta' : 'production';
   // Store builds this release uploaded become known OTA runtimes once live.
   const builds = [...(state.storeRuntime?.builds ?? previous?.storeRuntime?.builds ?? [])];
   for (const [platform, job, key] of [['android', 'mobile_native_android', 'version_code'], ['ios', 'mobile_native_ios', 'build_number']]) {

@@ -11,6 +11,7 @@ import { latestPublished, assignReleaseVersion } from './release-record.mjs';
 import { pagesChannelTag, publishPagesChannel, downloadPagesChannel } from './pages-channel.mjs';
 import { buildPagesSite } from './pages-site.mjs';
 import { readStores } from './read-store-runtimes.mjs';
+import { androidReleaseProfile } from './android-release-channel.mjs';
 import { computeTargets } from '../apps/mobile/scripts/ota-release.mjs';
 
 const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
@@ -125,10 +126,12 @@ test('workflow reuses native beta and OTA legs, skipping helper compilation duri
     assert.equal(action.with.promote, 'false');
     assert.match(action.with.mode, /latest.*promote/);
   }
-  const profile = JSON.parse(readFileSync('apps/mobile/eas.json')).build['nightly-ci'];
+  const config = JSON.parse(readFileSync('apps/mobile/eas.json'));
+  assert.equal(config.build['nightly-ci'], undefined);
+  const profile = androidReleaseProfile(config, 'nightly').config.build['nightly-ci'];
   assert.equal(profile.extends, 'production-ci');
   assert.equal(profile.channel, 'nightly');
-  assert.equal(profile.env.EXPO_UPDATES_CHANNEL, 'nightly');
+  assert.equal(profile.env, undefined);
   const ota = parse(readFileSync('.github/actions/mobile-ota-leg/action.yml', 'utf8'));
   assert.equal(ota.runs.steps.find(s => s.id === 'publish').if, "inputs.mode == 'publish'");
   assert.match(workflow.jobs.release_result.steps.find(s => s.name?.startsWith('Publish the nightly record')).run, /--prerelease --latest=false/);
@@ -263,4 +266,61 @@ else { console.error('unexpected command: ' + args[0]); process.exit(1); }
   assert.equal(readFileSync(pointer, 'utf8'), branch);
   const commands = readFileSync(calls, 'utf8').trim().split('\n').map(line => JSON.parse(line)[0]);
   assert.deepEqual(commands, ['update:list', 'channel:view', 'channel:edit', 'channel:view']);
+}));
+
+test('an explicit store build cannot reuse a binary subscribed to the other OTA channel', () => {
+  const nightly = nightlyRecord();
+  nightly.components['mobile-native'].storeTrack = 'beta';
+  const latest = initializeRelease({ version: nightly.version, sourceSha: sha, previous: delivered(), nightly,
+    channel: 'latest', selectedComponents: channelComponents([], { channel: 'latest' }) });
+  latest.state = 'delivered';
+  for (const entry of Object.values(latest.components)) if (entry.selected) entry.state = 'checked';
+  latest.components['mobile-native'].storeTrack = 'beta';
+  const native = initializeRelease({ version: latest.version, sourceSha: sha, previous: latest, nightly,
+    channel: 'latest', selectedComponents: channelComponents([], { channel: 'latest', storeTrack: 'production' }) });
+  assert.equal(native.state, 'planned');
+  assert.equal(native.components['mobile-native'].state, 'pending');
+  assert.deepEqual(native.plan.selected, ['mobile-native']);
+  assert.deepEqual(native.plan.nativePlatforms, ['android', 'ios']);
+  const needs = { initialize: { outputs: { run_mobile_native: 'true', native_android: 'true', native_ios: 'true' } },
+    mobile_native_android: { result: 'success', outputs: { version_code: '100' } },
+    mobile_native_ios: { result: 'success', outputs: { build_number: '100' } } };
+  applyComponentCheckpoints(native, checkpointsFromJobs(needs, { version: native.version, sourceSha: sha, releaseId: 'fixture' }));
+  applyJobFacts(native, needs, { previous: latest, runtimePins: { android: '1', ios: '2' } });
+  assert.equal(native.components['mobile-native'].storeTrack, 'production');
+  assert.equal(native.components.server.selected, false);
+  const beta = initializeRelease({ version: nightly.version, sourceSha: sha, previous: nightly,
+    channel: 'nightly', selectedComponents: channelComponents(['mobile-native'], { storeTrack: 'beta' }) });
+  assert.equal(beta.state, 'delivered'); // This beta identity already shipped.
+  beta.components['mobile-native'].storeTrack = 'production';
+  const missingBeta = initializeRelease({ version: nightly.version, sourceSha: sha, previous: beta,
+    channel: 'nightly', selectedComponents: channelComponents(['mobile-native'], { storeTrack: 'beta' }) });
+  assert.equal(missingBeta.components['mobile-native'].state, 'pending');
+  assert.deepEqual(missingBeta.plan.nativePlatforms, ['android']);
+});
+
+test('a delivered no-op needs no outputs from skipped jobs', () => {
+  const previous = nightlyRecord();
+  const state = initializeRelease({ version: previous.version, sourceSha: sha, previous, channel: 'nightly', selectedComponents: ['server'] });
+  assert.equal(state.state, 'delivered');
+  assert.equal(applyJobFacts(state, {}, { previous }), state);
+});
+
+
+
+
+test('Android channel injection is temporary and leaves production config bytes unchanged', () => fixture(directory => {
+  const file = join(directory, 'eas.json');
+  const productionBytes = readFileSync('apps/mobile/eas.json');
+  writeFileSync(file, productionBytes);
+  const selected = execFileSync(process.execPath, ['scripts/android-release-channel.mjs', file, 'latest'], { encoding: 'utf8' }).trim();
+  assert.equal(selected, 'production-ci');
+  assert.deepEqual(readFileSync(file), productionBytes);
+  const nightly = execFileSync(process.execPath, ['scripts/android-release-channel.mjs', file, 'nightly'], { encoding: 'utf8' }).trim();
+  assert.equal(nightly, 'nightly-ci');
+  const temporary = JSON.parse(readFileSync(file));
+  assert.deepEqual(temporary.build['nightly-ci'], { extends: 'production-ci', channel: 'nightly' });
+  delete temporary.build['nightly-ci'];
+  assert.deepEqual(temporary, JSON.parse(productionBytes));
+  assert.equal(JSON.parse(productionBytes).build['nightly-ci'], undefined);
 }));

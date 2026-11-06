@@ -529,7 +529,7 @@ it.each(['agent', 'human'] as const)('REPORT-WAITING-DERIVED: %s report quiets w
     if (event.table === 'corner_state') changes.push(event.roomId);
   }) : undefined;
   try {
-    for (const input of ['return-room-answer', 'commander-order', 'new-head'] as const) {
+    for (const input of ['return-room-answer', 'commander-order'] as const) {
       const automatic = await createAgentCommand(db, { id: `automatic-${input}`, roomId: C, agentId: WORKER,
         sourceMessageId: null, reason: 'corner_lifecycle',
         privatePayload: { kind: 'lifecycle', authorId: SYSTEM_IDENTITY_ID, fromRoomId: C, text: 'Continue automatically' } });
@@ -563,8 +563,6 @@ it.each(['agent', 'human'] as const)('REPORT-WAITING-DERIVED: %s report quiets w
           sourceMessageId: null, reason: 'order', privatePayload: { kind: 'order', authorId: recipient, fromRoomId: ROOM, text: 'Proceed' } });
         await db.query(`UPDATE agent_commands SET state='complete' WHERE id=$1`, [next!.id]);
         await db.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1 AND request_id=$2`, [C,next!.turn_request_id]);
-      } else {
-        await db.query(`UPDATE corner_github_cache SET lifecycle='{"pr":{"headSha":"new-head"},"checks":"failing"}'::jsonb WHERE corner_id=$1`, [C]);
       }
       expect(await cornerReportWaiting(db, C)).toBe(false);
       if (unlisten) expect(changes).toContain(C);
@@ -640,4 +638,48 @@ it('IDLE-SCOPE: another corner’s answered report never changes this corner’s
   await db.query('UPDATE rooms SET archived_at=now() WHERE id=$1', [other]);
   expect((await db.query(cornerIdleSql('$1'), [other])).rows).toEqual([]);
   expect(await idleSince()).toBe(before);
+});
+
+
+it.each(['commander-order', 'commander-question-order', 'human-order', 'superior-agent-order', 'brief-revision', 'unrelated-answer', 'worker-push'] as const)(
+  'Reproduction CHAIN-WAIT: question followed by %s', async input => {
+    if (input === 'superior-agent-order') {
+      await createAgentCommand(db, { id: 'higher-command', roomId: ROOM, agentId: COMMANDER,
+        sourceMessageId: null, reason: 'order', privatePayload: { kind: 'order', authorId: REVIEWER, fromRoomId: ROOM, text: 'Direct the worker' } });
+      await db.query(`UPDATE agent_commands SET parent_command_id='higher-command' WHERE room_id=$1 AND reason='corner_objective'`, [C]);
+    }
+    await post('chain-question', 'needs-decision: @owner Which scope?', input === 'commander-question-order' ? COMMANDER : WORKER);
+    expect(await state()).toBe('waiting');
+    if (['commander-order', 'commander-question-order', 'human-order', 'superior-agent-order', 'brief-revision'].includes(input)) {
+      if (input === 'commander-order') await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation)
+        VALUES('parent-answer',$1,$2,'Use the narrow scope','message')`, [ROOM,HUMAN]);
+      if (input === 'brief-revision') {
+        await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation)
+          VALUES('revision-source',$1,$2,'Approved revised scope','message')`, [ROOM,COMMANDER]);
+        await createAgentCommand(db, { id: 'chain-answer-order', roomId: C, agentId: WORKER,
+          sourceMessageId: 'revision-source', reason: 'corner_brief_revision' });
+      } else await createAgentCommand(db, { id: 'chain-answer-order', roomId: C, agentId: WORKER,
+        sourceMessageId: null, reason: 'order', privatePayload: { kind: 'order',
+          authorId: input === 'human-order' ? HUMAN : input === 'superior-agent-order' ? REVIEWER : COMMANDER,
+          fromRoomId: ROOM, text: 'Proceed with the narrow scope' } });
+    } else if (input === 'unrelated-answer') {
+      await post('peer-answer', 'Proceed', REVIEWER);
+    }
+    await db.query(`UPDATE corner_github_cache SET lifecycle='{"pr":{"headSha":"chain-head"},"checks":"pending"}'::jsonb WHERE corner_id=$1`, [C]);
+    await state();
+    const row = (await phone.readCorners(ROOM, HUMAN))!.corners[0]!;
+    if (['commander-order', 'commander-question-order', 'human-order', 'superior-agent-order', 'brief-revision'].includes(input)) expect(row.state).not.toBe('waiting');
+    else expect(row.state).toBe('waiting');
+  });
+
+
+it.each(['human-order', 'worker-push'] as const)('Reproduction CHAIN-WAIT: explicit report followed by %s', async input => {
+  const { reportToCommander } = await import('./commander.js');
+  await reportToCommander(db, C, WORKER, 'needs-decision: Which scope?');
+  expect(await state()).toBe('waiting');
+  if (input === 'human-order') await createAgentCommand(db, { id: 'superior-order', roomId: C, agentId: WORKER,
+    sourceMessageId: null, reason: 'order', privatePayload: { kind: 'order', authorId: HUMAN, fromRoomId: ROOM, text: 'Proceed' } });
+  await db.query(`UPDATE corner_github_cache SET lifecycle='{"pr":{"headSha":"report-head"},"checks":"pending"}'::jsonb WHERE corner_id=$1`, [C]);
+  if (input === 'worker-push') expect(await state()).toBe('waiting');
+  else expect(await state()).not.toBe('waiting');
 });

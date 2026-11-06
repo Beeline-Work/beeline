@@ -370,7 +370,7 @@ describe('start_workflow', () => {
     expect(card.rows[0]?.card.roleBindings.reviewer).toBe(REVIEWER);
   });
 
-  it.each([IMPLEMENTER, REVIEWER])('retains run guidance and wakes only another start-role agent (%s)', async target => {
+  it.each([IMPLEMENTER, REVIEWER])('retains run guidance and wakes the start-role assignee once (%s)', async target => {
     const command = await commandFor(IMPLEMENTER);
     await saveWorkflow(database, command, { contract: describedWorkflow(CONTRACT)});
     const started = await startWorkflow(database, command, {
@@ -378,7 +378,7 @@ describe('start_workflow', () => {
       roleBindings: { implementer: target, reviewer: REVIEWER, approver: APPROVER },
     });
     expect(started.state).toBe('implement');
-    expect(await pendingCommandsFor(target)).toBe(target === IMPLEMENTER ? 0 : 1);
+    expect(await pendingCommandsFor(target)).toBe(1);
     const card = await database.query<{ card_type: string; text: string; card: { runId: string } }>(
       `SELECT card_type,text,card FROM messages WHERE id=$1`,
       [started.runId],
@@ -389,15 +389,11 @@ describe('start_workflow', () => {
     expect(card.rows[0]?.card.runId).toBe(started.runId);
     const inbox = await readAgentCommands(database, ROOM, target);
     const woken = inbox.commands.find((c) => c.sourceMessageId === started.runId);
-    if (target === IMPLEMENTER) {
-      expect(woken).toBeUndefined();
-      expect((await database.query(`SELECT state FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2`,
-        [started.runId,target])).rows).toEqual([{state:'complete'}]);
-    } else {
-      expect(woken?.source.body).toContain(
-        `You are in run ${started.runId} of corner. Continue this run; do not start a new one.`,
-      );
-    }
+    expect((await database.query(`SELECT state FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2`,
+      [started.runId,target])).rows).toEqual([{state:'pending'}]);
+    expect(woken?.source.body).toContain(
+      `You are in run ${started.runId} of corner. Continue this run; do not start a new one.`,
+    );
   });
 
   it('rejects start_workflow from an agent currently acting inside a live run of the same workflow, naming the run id and state', async () => {

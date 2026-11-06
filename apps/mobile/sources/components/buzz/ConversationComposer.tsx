@@ -386,11 +386,11 @@ function ConversationComposerContent({
           {reply && (
             <View style={styles.reply} testID="reply-composer-banner">
               <View style={styles.replyCopy}>
-                <Text style={styles.replyLabel}>
+                <Text numberOfLines={1} style={styles.replyLabel}>
                   <Text style={styles.replyGlyph}>↩</Text> Replying to{' '}
                   <Text style={styles.replyHandle}>@{reply.handle}</Text>
                 </Text>
-                <Text style={styles.replyPreview}>
+                <Text numberOfLines={1} ellipsizeMode="tail" style={styles.replyPreview}>
                   {reply.preview}
                 </Text>
               </View>
@@ -409,11 +409,12 @@ function ConversationComposerContent({
               testID={`pending-chat-attachment-${index}`}
             >
               <View style={styles.attachmentCopy}>
-                  <Text style={styles.attachmentName}>
+                  <Text numberOfLines={1} ellipsizeMode="tail" style={styles.attachmentName}>
                     {attachment.name}
                   </Text>
                   <InlineRow style={styles.attachmentInfo}>
                     <Text
+                      numberOfLines={1}
                       style={styles.attachmentMeta}
                       testID={`pending-chat-attachment-meta-${index}`}
                     >
@@ -494,6 +495,7 @@ function ConversationComposerContent({
               accessibilityElementsHidden
               importantForAccessibility="no-hide-descendants"
               pointerEvents="none"
+              numberOfLines={1}
               onTextLayout={measureTextBody}
               style={[styles.textMeasurement, Platform.OS === 'android' && styles.inputAndroid]}
               testID={`${testIDPrefix}-text-measurement`}
@@ -570,7 +572,7 @@ function ConversationComposerContent({
             <View style={styles.waveformOverlay}>
               {/* The leading tags stay in view, as text, while the take is recorded. */}
               {tagSplit.tags.length > 0 ? (
-                <Text style={styles.dictationTags} testID={`${testIDPrefix}-dictation-tags`}>
+                <Text numberOfLines={1} style={styles.dictationTags} testID={`${testIDPrefix}-dictation-tags`}>
                   {tagSplit.prefix.trimEnd()}
                 </Text>
               ) : null}

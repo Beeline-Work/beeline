@@ -144,7 +144,7 @@ export default function ConnectorServiceScreen() {
             // A signed-in computer opens its own sheet; every other one connects in one tap.
             ? <SettingsRow appBoard key={item.id} title={item.name} description={item.statusText ?? signedInLine(item)}
               descriptionContent={<InlineRow style={styles.signedIn}><View style={styles.signedInDot} testID={`squire-computer-${item.id}-dot`} />
-                <Text style={styles.signedInText}>{item.statusText && item.statusText !== 'Google signed in' && !item.signedInAs ? item.statusText : signedInLine(item)}</Text></InlineRow>}
+                <Text numberOfLines={1} style={styles.signedInText}>{item.statusText && item.statusText !== 'Google signed in' && !item.signedInAs ? item.statusText : signedInLine(item)}</Text></InlineRow>}
               chevron="right" onPress={() => setMachine(item)} testID={`squire-computer-${item.id}`} />
             : <SettingsRow appBoard key={item.id} title={item.name} description="Google sign-in needed"
               action="Connect" onPress={() => reconnectMachine(item.id)} testID={`squire-computer-${item.id}`} />)}

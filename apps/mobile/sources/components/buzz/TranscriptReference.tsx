@@ -12,8 +12,8 @@ export function TranscriptReference({ children, viewer = false, onPress, accessi
   const { theme } = useUnistyles();
   const contents = viewer ? <View style={styles.viewerLine}>
     <ConversationGlyph size={14} color={theme.buzz.accent} />
-    <Text style={[styles.text, styles.viewerText]}>{children}</Text>
-  </View> : <Text style={styles.text}>{children}</Text>;
+    <Text numberOfLines={1} style={[styles.text, styles.viewerText]}>{children}</Text>
+  </View> : <Text numberOfLines={2} style={styles.text}>{children}</Text>;
   return onPress ? <Pressable accessibilityRole="button" accessibilityLabel={accessibilityLabel}
     onPress={onPress} style={styles.reference} testID={testID}>{contents}</Pressable>
     : <View style={styles.reference} testID={testID}>{contents}</View>;

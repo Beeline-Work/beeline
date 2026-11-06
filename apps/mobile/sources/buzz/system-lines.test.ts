@@ -117,11 +117,11 @@ it('keeps a corner opened from a message out of a folded lifecycle run', () => {
 });
 
 
-it('renders the whole webhook caller message, including Unicode, without changing the saved event body', () => {
+it('caps only webhook caller previews, including Unicode, without changing the saved event body', () => {
   const message = '🙂'.repeat(1000);
   const event = { subject: { kind: 'system' as const, name: 'Beeline' }, verb: 'received',
     kind: 'subscription-fired' as const, payload: { source: 'webhook', body: message } };
-  expect(webhookCallerMessage(event)).toBe(message);
+  expect(webhookCallerMessage(event)).toBe('🙂'.repeat(279) + '…');
   expect(event.payload.body).toBe(message);
   expect(webhookCallerMessage({ ...event, payload: { source: 'service', body: message } })).toBeUndefined();
   expect(webhookCallerMessage({ ...event, payload: { source: 'webhook', body: 'short' } })).toBe('short');

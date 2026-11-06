@@ -14,7 +14,7 @@ import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { isCompletedToolCall, isPrChecksRead, toolCallFailureLine } from './tool-call-failure.js';
 import { captureConnectionUsage } from './connector-runner.js';
-import { distillTurnFailureReason, redactTurnError } from './turn-failure-reason.js';
+import { distillTurnFailureReason, turnErrorDetail } from './turn-failure-reason.js';
 import { allocatedDirectoryBytes, scratchBudgetMessage, scratchGrowthExceedsBudget } from './scratch-lifecycle.js';
 import { awaitInstitutionalContext, startInstitutionalContextFetch } from './institutional-context.js';
 import { approvedDeviceGrant, deviceGrantResumePrompt } from './monolith-room-turn.js';
@@ -565,7 +565,7 @@ import { MonolithCornerTurnLoop, isCornerReviewTurn, DaemonActivity, toolCallKey
                           generationId: backgroundGeneration,
                           toolCallId: call.id, title: call.title ?? call.id,
                           status: call.status === 'failed' ? 'failed' : 'completed',
-                        }).catch((error) => console.error('[corner] background tool wake failed', redactTurnError(error)));
+                        }).catch((error) => console.error('[corner] background tool wake failed', turnErrorDetail(error)));
                       },
                     )),
                   );

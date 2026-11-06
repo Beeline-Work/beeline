@@ -61,6 +61,10 @@ function roomOutboxHandle(owner: MessageOutbox, roomId: string) {
     remove: owner.remove.bind(owner),
     reconcile: owner.reconcile.bind(owner),
     send: owner.send.bind(owner),
+    retry: (ids: readonly string[]) => {
+      const roomIds = new Set(owner.list(roomId).map(record => record.event.id));
+      return owner.retry(ids.filter(id => roomIds.has(id)));
+    },
     state: owner.state.bind(owner),
     acknowledgeFailures: () => owner.acknowledgeFailures(roomId),
     subscribe: owner.subscribe,

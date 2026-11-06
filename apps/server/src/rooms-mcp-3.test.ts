@@ -1,4 +1,5 @@
 import { phoneFetch, describe, expect, it, vi, MCP_ORDER_WAKE_HINT, MCP_REVIEW_WAKE_HINT, backfillMcpMemberRoomsAndAvatars, ensureMcpMember, randomBytes, createHash, randomUUID, Client, StreamableHTTPClientTransport, tokenHash, MCP_AGENT_EXCLUSIONS, MCP_APP_ROUTE_OPERATIONS, createAgentCommand, routeHumanMessage, routeAgentResult, openSecrets, deliverMcpMemberWebhooks, PREREGISTERED_MCP_CLIENTS, readFileSync, sharp, FACE_SOULS, USER, OTHER, AGENT, WORKSPACE, ROOM, PRIVATE, CORNER, opaque, fixtureScope1, fixtureScope2, fixtureScope3 } from './test-support-rooms-mcp.test-support.js';
+import { bundledMcpLogo } from './rooms-mcp-logos.js';
 
 describe('Rooms connector HTTP OAuth and MCP', () => {
 const scope1 = fixtureScope1();
@@ -223,6 +224,43 @@ const scope1 = fixtureScope1();
     expect(await avatar()).toBe(chosen);
   });
 
+  it('Reproduction AI-APP-LOGOS: Connectors and default agent pictures show each app logo, never a letter', async () => {
+    const apps = [
+      ['ChatGPT', 'https://chatgpt.com/connector_platform_oauth_redirect', 'ChatGPT'],
+      ['Claude Code', 'http://127.0.0.1:9876/callback', 'Claude Code'],
+      ['Cursor', 'https://cursor.com/callback', 'Grok Bot'],
+      ['Some App', 'https://example.com/cb', 'Grok Bot'],
+    ] as const;
+    const ids: string[] = [];
+    for (const [name, redirect] of apps) {
+      const { client_id } = await (await scope1.post('/mcp/oauth/register', { client_name: name, redirect_uris: [redirect] })).json() as { client_id: string };
+      // Production ChatGPT and Cursor rows were registered before their mapping and kept no logo.
+      await scope1.db.query('UPDATE rooms_mcp_clients SET logo=NULL WHERE id=$1', [client_id]);
+      const grant = await scope1.authorize('rooms:read rooms:write', 'allow', client_id, redirect);
+      expect((await scope1.exchange(grant, { redirect_uri: redirect })).status).toBe(200);
+      ids.push(client_id);
+    }
+    const view = await scope1.phone.readWorkbench({ workspaceId: WORKSPACE }, USER);
+    const marks = await Promise.all(apps.map(([, , logo]) => bundledMcpLogo(logo)));
+    expect(new Set(marks).size).toBe(3);
+    const pictures: Buffer[] = [];
+    for (const [index, clientId] of ids.entries()) {
+      const member = (await scope1.db.query<{ member_id: string; name: string; bytes: Buffer; source: string }>(
+        `SELECT m.member_id,i.name,a.bytes,a.drawing->>'source' source FROM rooms_mcp_members m JOIN identities i ON i.id=m.member_id
+         JOIN agent_avatars a ON a.agent_id=m.member_id WHERE m.client_id=$1 AND m.owner_id=$2`, [clientId, USER])).rows[0]!;
+      const row = view.companies!.rows.find(r => r.roomsClientId === clientId)!;
+      expect(row.logo).toEqual({ kind: 'image', uri: marks[index], plate: 'light' });
+      expect(row.subtitle).toBe(`Connected as ${member.name}`);
+      expect(view.aiClients!.find(c => c.clientId === clientId)?.agent).toMatchObject({ id: member.member_id, name: member.name,
+        avatar: expect.stringMatching(/\/v1\/agent-avatars\/[0-9a-f-]{36}$/) });
+      expect(member.source).toBe('client-logo');
+      pictures.push(Buffer.from(member.bytes));
+    }
+    expect(view.companies!.rows.filter(r => r.roomsClientId).some(r => r.logo.kind === 'monogram')).toBe(false);
+    // The agent's default picture is its app's logo: Cursor and unknown apps share the bot face.
+    expect(pictures[2]!.equals(pictures[3]!)).toBe(true);
+    expect(pictures[0]!.equals(pictures[1]!) || pictures[0]!.equals(pictures[2]!) || pictures[1]!.equals(pictures[2]!)).toBe(false);
+  });
   it('R1: pushes the asking agent’s exact back-tag instructions per tag to the webhook a member set, with its sealed bearer secret', async () => {
     await deliverMcpMemberWebhooks(scope1.db, async () => new Response('', { status: 200 }));
     const { client, member } = await scope1.connected();

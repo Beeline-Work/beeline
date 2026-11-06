@@ -5,6 +5,8 @@
 name: Publish the current helper channel on Pages
 description: Preserve exact release bytes outside Git and deploy the complete static site
 inputs:
+  channel:
+    default: latest
   bundle_dir:
     description: Verified daemon artifact directory; empty reuses the durable channel
     default: ''
@@ -18,37 +20,51 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Load the durable channel for a website-only deployment
-      if: inputs.bundle_dir == ''
-      uses: actions/github-script@v7
-      env:
-        CHANNEL_DIR: ${{ runner.temp }}/pages-channel
-      with:
-        script: |
-          const { downloadPagesChannel } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/pages-channel.mjs`);
-          await downloadPagesChannel({ github, repo: context.repo, directory: process.env.CHANNEL_DIR });
-    - name: Assemble Pages with the exact helper artifact
-      shell: bash
-      env:
-        BUNDLE_DIR: ${{ inputs.bundle_dir || format('{0}/pages-channel', runner.temp) }}
-        RELEASE_SHA: ${{ inputs.release_sha }}
-        RELEASE_VERSION: ${{ inputs.release_version }}
-      run: >-
-        node scripts/pages-site.mjs build --bundle-dir "$BUNDLE_DIR"
-        --output-dir "$RUNNER_TEMP/usebeeline-pages"
-        --sha "$RELEASE_SHA" --version "$RELEASE_VERSION"
-    - name: Persist the release channel outside Actions artifact retention
+    - name: Persist the selected helper channel outside Actions retention
       if: inputs.bundle_dir != ''
       uses: actions/github-script@v7
       env:
         BUNDLE_DIR: ${{ inputs.bundle_dir }}
         RELEASE_SHA: ${{ inputs.release_sha }}
         RELEASE_VERSION: ${{ inputs.release_version }}
+        CHANNEL: ${{ inputs.channel }}
       with:
         script: |
           const { publishPagesChannel } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/pages-channel.mjs`);
           await publishPagesChannel({ github, repo: context.repo, directory: process.env.BUNDLE_DIR,
-            expectedSha: process.env.RELEASE_SHA, expectedVersion: process.env.RELEASE_VERSION });
+            channel: process.env.CHANNEL, expectedSha: process.env.RELEASE_SHA, expectedVersion: process.env.RELEASE_VERSION });
+    - name: Load both helper channels so a Pages deploy preserves the other one
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const { downloadPagesChannel } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/pages-channel.mjs`);
+          await downloadPagesChannel({ github, repo: context.repo, directory: `${process.env.RUNNER_TEMP}/pages-latest` });
+          // Only a missing release tag is allowed before the first nightly;
+          // missing/corrupt assets in an existing channel still fail closed.
+          await downloadPagesChannel({ github, repo: context.repo, channel: 'nightly', allowMissing: true,
+            directory: `${process.env.RUNNER_TEMP}/pages-nightly` });
+    - name: Preserve the last latest website during a nightly helper deployment
+      if: inputs.channel == 'nightly'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        node scripts/release-record.mjs previous --output "$RUNNER_TEMP/pages-stable-release.json"
+        website_sha=$(node -p 'require(process.argv[1]).components.website.sourceSha' "$RUNNER_TEMP/pages-stable-release.json")
+        git fetch --no-tags origin "$website_sha"
+        mkdir -p "$RUNNER_TEMP/pages-stable-source"
+        git archive "$website_sha" web | tar -x -C "$RUNNER_TEMP/pages-stable-source"
+    - name: Assemble Pages with both exact helper artifacts
+      shell: bash
+      env:
+        CHANNEL: ${{ inputs.channel }}
+      run: |
+        set -euo pipefail
+        args=(build --bundle-dir "$RUNNER_TEMP/pages-latest" --output-dir "$RUNNER_TEMP/usebeeline-pages")
+        if [ -f "$RUNNER_TEMP/pages-nightly/manifest.json" ]; then args+=(--nightly-bundle-dir "$RUNNER_TEMP/pages-nightly"); fi
+        if [ "$CHANNEL" = nightly ]; then args+=(--source-dir "$RUNNER_TEMP/pages-stable-source/web"); fi
+        node scripts/pages-site.mjs "${args[@]}"
     - uses: actions/configure-pages@v5
     # One release run can deploy Pages from both the website and helper legs,
     # so each leg uploads under its own artifact name.
@@ -70,6 +86,6 @@ runs:
       run: >-
         node scripts/verify-pages-update.mjs
         --manifest-url "$MANIFEST_URL"
-        --expected-manifest "$RUNNER_TEMP/usebeeline-pages/dl/manifest.json"
+        --expected-manifest "${{ inputs.bundle_dir }}/manifest.json"
         --work-dir "$RUNNER_TEMP/pages-update-proof"
         --attempts 20

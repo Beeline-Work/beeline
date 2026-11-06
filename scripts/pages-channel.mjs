@@ -6,13 +6,23 @@ import { join } from 'node:path';
 import { validateBundleDirectory } from './pages-site.mjs';
 
 export const CHANNEL_TAG = 'helper-update-channel';
+export function pagesChannelTag(channel = 'latest') {
+  if (!['latest', 'nightly'].includes(channel)) throw new Error(`invalid helper channel: ${channel}`);
+  return channel === 'latest' ? CHANNEL_TAG : `${CHANNEL_TAG}-nightly`;
+}
 // The Mac input hashes beside the published bundles let the next release
 // carry an unchanged Mac bundle forward instead of rebuilding it.
 export const MAC_INPUT_FILES = ['mac-helper-inputs-darwin-arm64.json', 'mac-helper-inputs-darwin-x64.json'];
 
 /** @public Pages and helper release actions import these from github-script. */
-export async function downloadPagesChannel({ github, repo, directory }) {
-  const { data: release } = await github.rest.repos.getReleaseByTag({ ...repo, tag: CHANNEL_TAG });
+export async function downloadPagesChannel({ github, repo, directory, channel = 'latest', allowMissing = false }) {
+  let release;
+  try {
+    ({ data: release } = await github.rest.repos.getReleaseByTag({ ...repo, tag: pagesChannelTag(channel) }));
+  } catch (error) {
+    if (allowMissing && error.status === 404) return null;
+    throw error;
+  }
   async function download(name) {
     const asset = release.assets.find((entry) => entry.name === name);
     if (!asset)
@@ -55,6 +65,7 @@ export async function publishPagesChannel({
   directory,
   expectedSha,
   expectedVersion,
+  channel = 'latest',
 }) {
   const { manifest, files } = await validateBundleDirectory(directory, {
     expectedSha,
@@ -62,14 +73,14 @@ export async function publishPagesChannel({
   });
   let release;
   try {
-    ({ data: release } = await github.rest.repos.getReleaseByTag({ ...repo, tag: CHANNEL_TAG }));
+    ({ data: release } = await github.rest.repos.getReleaseByTag({ ...repo, tag: pagesChannelTag(channel) }));
   } catch (error) {
     if (error.status !== 404) throw error;
     ({ data: release } = await github.rest.repos.createRelease({
       ...repo,
-      tag_name: CHANNEL_TAG,
+      tag_name: pagesChannelTag(channel),
       target_commitish: manifest.sourceCommit,
-      name: 'Current helper update channel',
+      name: `Current helper ${channel} update channel`,
       prerelease: true,
       make_latest: 'false',
       body: 'Rolling input for usebeeline.app/dl Pages deployments. Managed by the daemon release leg; do not edit assets by hand.',

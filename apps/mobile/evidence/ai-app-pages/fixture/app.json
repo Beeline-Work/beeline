@@ -1,0 +1,1 @@
+{"expo": {"name": "AI app proof", "slug": "ai-app-proof", "scheme": "aiproof", "web": {"bundler": "metro"}, "plugins": ["expo-router"]}}

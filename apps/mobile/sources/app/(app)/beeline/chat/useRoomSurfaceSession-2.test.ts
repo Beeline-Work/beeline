@@ -385,7 +385,7 @@ describe('useRoomSurfaceSession', () => {
   });
 
 
-  it('Send: healthy outbox bookkeeping does not rerender the Room, while failures remain visible', async () => {
+  it('Send: pending state reaches the Room once, unchanged bookkeeping stays quiet, and failures remain visible', async () => {
     controls.cached = roomView('room-a');
     let current!: UseRoomSurfaceSessionResult;
     let renderer!: ReactTestRenderer;
@@ -409,10 +409,14 @@ describe('useRoomSurfaceSession', () => {
     controls.outboxStates.set('queued', { kind: 'sending', text: 'Sending' });
     const renders = controls.surfaceRenders;
     await emit();
-    expect(controls.surfaceRenders).toBe(renders);
+    expect(current.outbox.states.get('queued')?.kind).toBe('sending');
+    const pendingRenders = controls.surfaceRenders;
+    await emit();
+    expect(controls.surfaceRenders).toBe(pendingRenders);
+    expect(pendingRenders).toBeGreaterThan(renders);
     vi.mocked(outbox.list).mockReturnValue([]);
     await emit();
-    expect(controls.surfaceRenders).toBe(renders);
+    expect(current.outbox.states.size).toBe(0);
 
     vi.mocked(outbox.list).mockReturnValue([record]);
     controls.outboxStates.set('queued', { kind: 'offline', text: 'Not sent yet · no connection' });

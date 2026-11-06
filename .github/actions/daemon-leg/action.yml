@@ -9,6 +9,8 @@ name: Beeline daemon release leg
 description: Collect verified native artifacts or publish them and prove the deployed update
 
 inputs:
+  channel:
+    default: latest
   phase:
     description: collect | promote
     required: true
@@ -59,6 +61,7 @@ runs:
       if: inputs.phase == 'promote'
       uses: ./.github/actions/pages-leg
       with:
+        channel: ${{ inputs.channel }}
         bundle_dir: ${{ runner.temp }}/daemon-release
         release_sha: ${{ inputs.release_sha }}
         release_version: ${{ inputs.release_version }}

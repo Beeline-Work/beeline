@@ -1,10 +1,12 @@
 // The machine's one session bridge: for every joined session it waits on Beeline for tags and wakes, and hands each
 // to the session's app by the fastest way the app has. It needs no public address: it only calls out to Beeline.
 import { sessionAgentBehavior } from '../agent-command.js';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync, watch } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
-import { join } from 'node:path';
+import { basename, join, resolve } from 'node:path';
+import { withKernelLock } from '../kernel-lock.js';
+import { waitForProcessExit } from '../process-exit.js';
 import { externalAgentRules } from '@beeline/api-contract/phone';
 import { accessToken, callTool, memberStream } from './beeline-api.js';
 import { memberStreamFrame } from './stream-frame.js';
@@ -13,7 +15,7 @@ import { codexQueue, turnRunning } from './codex.js';
 import { postToClaude } from './claude.js';
 import { hasClaudeMcp } from './claude-mcp.js';
 import { findSession, liveSessions, machineSources, type LiveSession, type Sources } from './sessions.js';
-import { pidAlive, queueInbox, queueInboxOnce, readState, takeInbox, updateState, type JoinedSession } from './store.js';
+import { pidAlive, queueInbox, queueInboxOnce, readState, takeInbox, updateState, withLock, type JoinedSession } from './store.js';
 
 export interface Mention { memberId?: string; replyRule?: string; id: string; room_id: string; room_name?: string; author_handle?: string | null; author_name?: string | null; text: string }
 export interface Wake { id: string; address: string; reason: string; kind?: string; text?: string; createdAt: string; next?: string }
@@ -273,6 +275,7 @@ export async function runBridge(dir: string, runner: Runner): Promise<void> {
   let localDirty=true,wake:(()=>void)|undefined;
   const changed=()=>{localDirty=true;wake?.();};
   serveTools(dir);
+  writeFileSync(join(dir, 'bridge-owner.json'), JSON.stringify({ pid: process.pid, digest: bundleDigest(runner) }), { mode: 0o600 });
   const localWatch=watch(dir,{recursive:true},(_event,name)=>{
     const path=String(name??'');
     if(path==='state.json'||path.startsWith('hooks/')||path.startsWith('inbox/')||path.startsWith('deliveries/'))changed();
@@ -352,11 +355,72 @@ export function bridgeRunning(dir: string): boolean {
   } catch { return false; }
 }
 
-/** Starts the bridge in the background unless one runs. It outlives the command that started it. */
-export function ensureBridge(dir: string, runner: Runner, env: NodeJS.ProcessEnv = process.env): void {
-  if (bridgeRunning(dir)) return;
-  const out = openSync(join(dir, 'bridge.log'), 'a', 0o600);
-  const child = spawn(runner.node, [runner.bundle, 'session', 'bridge'], { detached: true, stdio: ['ignore', out, out], env });
-  child.unref();
-  closeSync(out);
+function bundleDigest(runner: Runner): string {
+  return createHash('sha256').update(readFileSync(runner.bundle)).digest('hex');
+}
+
+function bridgeOwner(dir: string): { pid: number; digest: string } | undefined {
+  try { return JSON.parse(readFileSync(join(dir, 'bridge-owner.json'), 'utf8')); } catch { return undefined; }
+}
+
+/** A stale private pid file must never authorize signalling an unrelated process. */
+function isBridgeProcess(pid: number): boolean {
+  try {
+    if (process.platform === 'linux') {
+      const args = readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean);
+      return args.length === 4 && /^node(?:\.exe)?$/.test(basename(args[0]!)) &&
+        /^(?:beeline|usebeeline\.mjs|recovery-cli\.mjs)$/.test(basename(args[1]!)) && args[2] === 'session' && args[3] === 'bridge';
+    }
+    const args = execFileSync('ps', ['-ww', '-p', String(pid), '-o', 'args='], { encoding: 'utf8' }).trim();
+    return /(?:^|\/)node\s+.*\/(?:beeline|usebeeline\.mjs|recovery-cli\.mjs) session bridge$/.test(args);
+  } catch { return false; }
+}
+
+/** Upgrade the detached bridge too: a live PID alone says nothing about its loaded protocol.
+ * Serialize handoffs, wait on process exit/readiness events, and preserve the durable member cursor. */
+export async function ensureBridge(dir: string, runner: Runner, env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  await withKernelLock(`beeline-session-bridge:${resolve(dir)}`, async () => {
+    const digest = bundleDigest(runner);
+    const pidFile = join(dir, 'bridge.pid');
+    if (bridgeRunning(dir)) {
+      const pid = Number(readFileSync(pidFile, 'utf8'));
+      if (!isBridgeProcess(pid)) throw new Error('Beeline bridge PID belongs to an unrecognized process; refusing takeover');
+      const owner = bridgeOwner(dir);
+      if (owner?.pid === pid && owner.digest === digest) return;
+      log(dir, `replacing stale bridge ${pid}`);
+      // Let a credential refresh/cursor commit finish before ending its owner.
+      await withLock(dir, async () => {
+        try { process.kill(pid, 'SIGTERM'); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
+        await waitForProcessExit(pid);
+      });
+      // Installed legacy bridges may not have a signal cleanup handler.
+      if (existsSync(pidFile) && Number(readFileSync(pidFile, 'utf8')) === pid) rmSync(pidFile);
+    }
+    const out = openSync(join(dir, 'bridge.log'), 'a', 0o600);
+    const child = spawn(runner.node, [runner.bundle, 'session', 'bridge'], { detached: true, stdio: ['ignore', out, out], env });
+    closeSync(out);
+    child.unref();
+    await new Promise<void>((done, fail) => {
+      const finish = (error?: Error) => {
+        watcher.close(); child.removeListener('error', failed); child.removeListener('exit', exited);
+        if (error) fail(error); else done();
+      };
+      const inspect = () => { const owner = bridgeOwner(dir); if (owner && owner.pid === child.pid && owner.digest === digest) finish(); };
+      const failed = (error: Error) => finish(error);
+      const exited = () => finish(new Error('Beeline bridge exited before readiness; see bridge.log'));
+      const watcher = watch(dir, (_event, name) => { if (String(name) === 'bridge-owner.json') inspect(); });
+      child.once('error', failed); child.once('exit', exited); inspect();
+    });
+  });
+}
+
+/** Helper startup is the installed-release event for sessions joined through an older npx bundle. */
+export async function refreshJoinedSessionBridge(bundle: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  const { stateDir } = await import('./store.js');
+  const dir = stateDir(env);
+  if (!readState(dir).sessions.length) return;
+  const stable = join(dir, 'usebeeline.mjs');
+  writeFileSync(stable + '.tmp', readFileSync(bundle), { mode: 0o600 });
+  renameSync(stable + '.tmp', stable);
+  await ensureBridge(dir, { node: process.execPath, bundle: stable }, env);
 }

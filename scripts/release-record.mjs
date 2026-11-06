@@ -7,6 +7,7 @@
 // builds this pipeline uploaded. The next release reads the newest published
 // release; rollbacks read it to find where to return. No Actions artifact,
 // cache or run lookup carries state between jobs or runs.
+import { releaseChannel, promotionSource } from './release-channel.mjs';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -45,14 +46,14 @@ export function versionedReleases(releases) {
  * order, not version order: the repository also holds an older v0.2.x line
  * from August that the current v0.1.x line must not be compared against.
  */
-export function publishedReleases(releases) {
+export function publishedReleases(releases, channel = 'latest') {
   return releases
-    .filter((release) => VERSION.test(release.tag_name ?? '') && !release.draft && !release.prerelease)
+    .filter((release) => VERSION.test(release.tag_name ?? '') && !release.draft && (channel === 'nightly' || !release.prerelease))
     .sort((left, right) => String(right.published_at ?? '').localeCompare(String(left.published_at ?? '')));
 }
 
-export function latestPublished(releases) {
-  return publishedReleases(releases)[0] ?? null;
+export function latestPublished(releases, channel = 'latest') {
+  return publishedReleases(releases, channel)[0] ?? null;
 }
 
 /**
@@ -88,7 +89,7 @@ export function migrationRecord({ version, sourceSha, desktopVersion }) {
  *   commit; a published release of another commit refuses it, and an
  *   abandoned draft of another commit is passed over for a fresh version.
  */
-export function assignReleaseVersion({ releases, previous, sha, requestedVersion = '' }) {
+export function assignReleaseVersion({ releases, previous, sha, requestedVersion = '', reusePublished = true }) {
   if (!SHA.test(sha ?? '')) fail(`invalid release sha: ${sha}`);
   const versioned = versionedReleases(releases);
   const reserved = new Set(versioned.map((release) => release.tag_name));
@@ -102,7 +103,7 @@ export function assignReleaseVersion({ releases, previous, sha, requestedVersion
     }
     console.error(`::warning::${requestedVersion} is an abandoned draft of ${commitOf(existing) ?? 'another commit'}; assigning a fresh version instead`);
   }
-  if (previous?.sourceSha === sha) return { version: previous.version, reason: 'already-published' };
+  if (reusePublished && previous?.sourceSha === sha) return { version: previous.version, reason: 'already-published' };
   const floor = previous?.version ?? 'v0.0.0';
   const draft = versioned.find((release) =>
     release.draft && commitOf(release) === sha && compareVersions(release.tag_name, floor) > 0);
@@ -181,8 +182,8 @@ function commitOfTag(repository, tag) {
 }
 
 /** The newest published release's record, or a migration record for it. */
-export function readPublishedRecord(repository, releases = listReleases(repository)) {
-  const release = latestPublished(releases);
+export function readPublishedRecord(repository, releases = listReleases(repository), channel = 'latest') {
+  const release = latestPublished(releases, channel);
   if (!release) return null;
   const bytes = downloadAsset(repository, release, RELEASE_RECORD_ASSET);
   if (bytes) {
@@ -223,16 +224,29 @@ function main(argv) {
     const releases = listReleases(repository).map((release) =>
       (!release.draft && release.tag_name === args.requested && VERSION.test(release.tag_name))
         ? { ...release, sourceSha: commitOfTag(repository, release.tag_name) } : release);
-    const previous = readPublishedRecord(repository, releases);
+    const channel = releaseChannel(args.channel);
+    if (channel === 'nightly' && args.requested && releases.some(release =>
+      release.tag_name === args.requested && !release.draft && !release.prerelease))
+      fail('nightly cannot reuse a published latest identity');
+    const previous = readPublishedRecord(repository, releases, channel);
+    let sha = args.sha;
+    let promotion;
+    if (channel === 'latest') {
+      const nightly = readPublishedRecord(repository, releases, 'nightly');
+      promotion = promotionSource(nightly, sha);
+      if (args.requested && args.requested !== promotion.version) fail('latest must use the nightly version');
+      write(args.nightly, nightly);
+      sha = promotion.sourceSha;
+    }
     if (previous) write(args.previous, previous);
-    const { version, reason } = assignReleaseVersion({ releases, previous, sha: args.sha, requestedVersion: args.requested ?? '' });
+    const { version, reason } = assignReleaseVersion({ releases, previous, sha, requestedVersion: promotion?.version ?? args.requested ?? '', reusePublished: channel !== 'nightly' || previous?.channel === 'nightly' });
     const draft = versionedReleases(releases).find((release) => release.tag_name === version);
-    console.error(`release identity ${version}@${args.sha}: ${reason}${previous ? ` (previous ${previous.version}${previous.migrated ? ', migrated' : ''})` : ''}`);
-    process.stdout.write(`version=${version}\nreason=${reason}\nhas_release=${draft ? 'true' : 'false'}\n`);
+    console.error(`release identity ${version}@${sha}: ${reason}${previous ? ` (previous ${previous.version}${previous.migrated ? ', migrated' : ''})` : ''}`);
+    process.stdout.write(`version=${version}\nrelease_sha=${sha}\nreason=${reason}\nhas_release=${draft ? 'true' : 'false'}\n`);
     return;
   }
   if (command === 'previous') {
-    const record = readPublishedRecord(repository);
+    const record = readPublishedRecord(repository, undefined, args.channel ?? 'latest');
     if (!record) fail('no published release exists');
     write(args.output, record);
     process.stdout.write(`version=${record.version}\n`);
@@ -241,7 +255,7 @@ function main(argv) {
   if (command === 'for-run') {
     // The record a given release run published, if it published one.
     const runId = Number(args['run-id']);
-    for (const release of publishedReleases(listReleases(repository)).slice(0, 10)) {
+    for (const release of publishedReleases(listReleases(repository), 'nightly').slice(0, 10)) {
       const bytes = downloadAsset(repository, release, RELEASE_RECORD_ASSET);
       const record = bytes ? JSON.parse(bytes.toString('utf8')) : null;
       if (record?.runId === runId) {

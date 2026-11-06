@@ -1,0 +1,42 @@
+// Drives row -> info page -> Status sheet -> Disconnect in headless Chrome over CDP.
+// usage: node check-web-flow.mjs <cdp-port> <base-url> <bone|obsidian> <screenshot-dir>
+import fs from 'node:fs';
+const [port, base, theme, out] = process.argv.slice(2);
+const tabs = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
+const ws = new WebSocket(tabs.find(t => t.type === 'page').webSocketDebuggerUrl);
+await new Promise(r => ws.onopen = r);
+let id = 0; const pending = new Map();
+ws.onmessage = e => { const m = JSON.parse(e.data); if (m.id) { pending.get(m.id)?.(m); pending.delete(m.id); } };
+const cmd = (method, params = {}) => new Promise((res, rej) => { pending.set(++id, m => m.error ? rej(Error(JSON.stringify(m.error))) : res(m.result)); ws.send(JSON.stringify({ id, method, params })); });
+const ev = async x => { const r = await cmd('Runtime.evaluate', { expression: x, returnByValue: true, awaitPromise: true }); if (r.exceptionDetails) throw Error(JSON.stringify(r.exceptionDetails)); return r.result.value; };
+const text = () => ev('document.body.innerText.toLowerCase()');
+const waitText = async (want, present = true) => { for (let n = 0; n < 150; n++) { const t = await text().catch(() => ''); if (t.includes(want.toLowerCase()) === present) return t; await new Promise(r => setTimeout(r, 100)); } throw Error(`timeout waiting for ${present ? '' : 'absence of '}${want}\n---\n${await text()}`); };
+const tap = async label => {
+  const box = await ev(`(()=>{const w=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);let n;const hits=[];while(n=w.nextNode()){if(n.textContent.trim()===${JSON.stringify(label)}){const r=n.parentElement.getBoundingClientRect();if(r.width&&r.height)hits.push({x:r.x+r.width/2,y:r.y+r.height/2});}}return hits[hits.length-1]||null})()`);
+  if (!box) throw Error('no element ' + label);
+  for (const type of ['mousePressed', 'mouseReleased']) await cmd('Input.dispatchMouseEvent', { type, x: box.x, y: box.y, button: 'left', clickCount: 1, pointerType: 'mouse' });
+};
+const shot = async name => { await new Promise(r => setTimeout(r, 400)); const r = await cmd('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(`${out}/${name}.png`, Buffer.from(r.data, 'base64')); };
+await cmd('Emulation.setDeviceMetricsOverride', { width: 412, height: 915, deviceScaleFactor: 2, mobile: true });
+await cmd('Page.navigate', { url: `${base}/?viewerId=fixture-owner&workspaceId=fixture-workspace&theme=${theme}` });
+const list = await waitText('ChatGPT');
+const res = { theme, list: { hasConnectedAs: /connected as/.test(list), readsAndPosts: list.includes('reads and posts') } };
+await shot(`web-head-${theme}-list`);
+await tap('ChatGPT');
+const info = await waitText('What it can do');
+res.info = { sheetOpenOnRowTap: info.includes('disconnect'), hasAgent: info.includes('pidoong'), dates: (info.match(/connected [a-z]{3} \d+ · last used [^\n]+/) || [null])[0] };
+await shot(`web-head-${theme}-info`);
+await tap('Connected');
+await waitText('Disconnect');
+res.status = { sheetHasDisconnect: true };
+await shot(`web-head-${theme}-status`);
+await tap('Disconnect');
+const after = await waitText('What it can do', false);
+await new Promise(r => setTimeout(r, 500));
+const final = await text();
+res.disconnected = { backOnConnectors: final.includes('claude code'), chatgptGone: !final.includes('chatgpt') };
+await shot(`web-head-${theme}-disconnected`);
+console.log(JSON.stringify(res));
+const ok = res.list.hasConnectedAs && !res.list.readsAndPosts && !res.info.sheetOpenOnRowTap && res.info.hasAgent && !!res.info.dates && res.disconnected.backOnConnectors && res.disconnected.chatgptGone;
+console.log(ok ? 'PASS' : 'FAIL');
+ws.close(); process.exit(ok ? 0 : 1);

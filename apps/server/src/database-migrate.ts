@@ -612,6 +612,9 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     workflowBackfillOnce(database, 'rooms-mcp-member-public-rooms-v1', backfillMcpMemberRoomsAndAvatars));
   await dataStep('rooms MCP app default pictures', () =>
     workflowBackfillOnce(database, 'rooms-mcp-app-default-pictures-v2', backfillMcpMemberRoomsAndAvatars));
+  // ChatGPT moves from Dots to the OpenAI mark; Cursor and apps without a logo get the bot face.
+  await dataStep('rooms MCP app logo pictures', () =>
+    workflowBackfillOnce(database, 'rooms-mcp-app-default-pictures-v3', backfillMcpMemberRoomsAndAvatars));
   await dataStep('stored corner workflows', () => deleteStoredCornerWorkflows(database));
   await dataStep('corner lifecycle runs', () => backfillCornerLifecycleRuns(database));
   await dataStep('feedback triage workflow', () =>

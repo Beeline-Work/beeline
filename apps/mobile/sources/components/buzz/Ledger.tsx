@@ -878,14 +878,14 @@ export const styles = StyleSheet.create((theme) => ({
   },
   // Your own turn: plain body, regular weight, primary tone — never bolded,
   // never enlarged, never inset. The byline carries the ownership signal.
-  steerText: {
+  steerText: (pending: boolean) => ({
     fontFamily: theme.buzz.proseRegular,
     minWidth: 0,
     width: '100%',
-    color: theme.buzz.ledgerBright,
+    color: pending ? theme.buzz.textMuted : theme.buzz.ledgerBright,
     fontSize: theme.buzz.proseSize,
     lineHeight: theme.buzz.proseLineHeight,
-  },
+  }),
   roomUpdate: {
     position: 'relative',
     width: '100%',

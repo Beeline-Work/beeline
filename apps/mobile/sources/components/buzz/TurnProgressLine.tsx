@@ -5,6 +5,7 @@ import { BeelineMarkSpinner, MARK_CELL } from './BeelineMarkSpinner';
 import { ribbon } from '@/buzz/beeline-glyph';
 import { HullLivePulse } from './MonoHull';
 import { Button } from './Button';
+import { InlineRow } from './IndexRow';
 import { SPINNER_STEP_MS, elapsedSeconds, formatWorkingCounter } from '@/buzz/turn-clock';
 import {
   TURN_LINE_BAR_MARGIN_BOTTOM,
@@ -177,23 +178,33 @@ const TurnProgressLineBody = React.memo(function TurnProgressLineBody({
  * wall-clock "done" stamp. Static — no breath, no counter, the completed mark
  * — because the turn is over; the screen clears it after a few seconds.
  */
-export function TurnSettledLine({ line, testID, inset = true, leading = false }: {
+export function TurnSettledLine({ line, testID, inset = true, leading = false, leadingGlyph = true, action }: {
   line: string;
   testID?: string;
   inset?: boolean;
   /** The external-send variant shares the thinking mark's optical alignment. */
   leading?: boolean;
+  leadingGlyph?: boolean;
+  action?: { label: string; onPress(): void };
 }) {
   return (
     <View accessibilityLabel={line} accessibilityLiveRegion={leading ? 'polite' : undefined} style={inset ? styles.bar : [styles.bar, styles.insetBar]} testID={testID}>
-      <View style={styles.row}>
-        <View style={leading ? [styles.glyphCell, styles.leadingGlyph] : styles.glyphCell} testID={testID ? `${testID}-glyph` : undefined}>
+      <InlineRow style={[styles.row, action && !leadingGlyph && styles.actionRow]}>
+        {leadingGlyph ? <View style={leading ? [styles.glyphCell, styles.leadingGlyph] : styles.glyphCell} testID={testID ? `${testID}-glyph` : undefined}>
           <BeelineMarkSpinner />
-        </View>
+        </View> : null}
         <Text numberOfLines={1} ellipsizeMode="tail" style={styles.label}>
           {line}
         </Text>
-      </View>
+        {action ? <>
+          <Text style={styles.counter}> · </Text>
+          <Button size="inline" variant="quiet" label={action.label}
+            appearance={{ control: styles.statusAction, label: styles.counter }}
+            onTouchEnd={event => event.stopPropagation()}
+            onPress={event => { event.stopPropagation(); action.onPress(); }}
+            testID={testID ? `${testID}-retry` : undefined} />
+        </> : null}
+      </InlineRow>
     </View>
   );
 }
@@ -250,6 +261,8 @@ const styles = StyleSheet.create((theme) => {
       paddingHorizontal: groknight.space.md,
     },
     insetBar: { paddingHorizontal: 0 },
+    actionRow: { gap: 0 },
+    statusAction: { minHeight: TURN_LINE_ROW_MIN_HEIGHT, justifyContent: 'center' },
     row: {
       minHeight: TURN_LINE_ROW_MIN_HEIGHT,
       minWidth: 0,

@@ -39,6 +39,16 @@ uses the existing opening-commander route. Corner activity rules are unchanged.
 
 One bridge process per machine user (`bridge.ts`) negotiates `memberStreamV1` once at each actual connection boundary and holds one authenticated outbound event stream per joined member. It stores stable delivery identities in the private inbox before advancing a durable checkpoint, then hands each new tag or wake to the session:
 
+The detached bridge has its own loaded-bundle identity; a live PID does not prove
+that it speaks the current protocol. Installed helper startup adopts existing
+joins into its current recovery bundle, and join/SessionStart also check bridge
+identity. A stale bridge finishes any state write or credential refresh before
+replacement. The successor preserves the member cursor and inbox, so its first
+stream connection catches up undelivered mentions. Claude's in-session MCP
+receiver wakes on the durable state commit as well as legacy inbox writes;
+its own failure requeue does not create another delivery attempt. Regressions:
+`apps/body/src/session-join/bridge-upgrade.test.ts`.
+
 | App | Channel | Idle session |
 | --- | --- | --- |
 | Claude Code | In-session Beeline MCP server posts a `user` frame with the session's own messaging token; bridge socket fallback for an already-open session | Starts a turn |

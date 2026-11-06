@@ -23,13 +23,20 @@ and reviews without a usable verdict return ownership to the implementer once,
 scoped to the reviewed PR and head; they never automatically repeat that review.
 Reports retain their current order-author return route.
 
+Pending approval grants also keep their recorded `room_id` corner in
+Waiting/user_action, even when the approval card lives in the owner's private
+System DM and cites a message from another Room. The machine reads only the
+pending grant identity; the card and its resource details stay private. An
+owner's decision resumes the requester through the existing grant-decision
+delivery; that committed command event also moves the corner out of Waiting.
+
 Committed changes to commands, receipts, GitHub facts, waits and holds enter the
 same runtime. Server startup and listener resync replay recorded facts without
 reading GitHub or starting a timer. State and effect receipts commit with their
 commands. Reads render the stored machine state. Existing hidden lifecycle cards
 remain inert history during the expand release; no new cards are written.
 
-Coverage: `corner-machine.test.ts`, `corner-state.test.ts`,
+Coverage: `corner-machine.test.ts`, `corner-lifecycle-event-replay.test.ts`, `corner-state.test.ts`,
 `corner-state.exhaustive.test.ts`, `corner-state-reference.test.ts`,
 `corner-review-dispatch.test.ts` and `corner-attention.integration.test.ts`.
 `node --test scripts/corner-machine-boundary.test.mjs` plants violations of the

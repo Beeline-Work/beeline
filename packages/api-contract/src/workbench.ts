@@ -195,6 +195,8 @@ export type SquireMachineReport = {
 export type AiClientConnection = {
   readonly clientId: string; readonly name: string; readonly scopes: readonly string[];
   readonly connectedAt: number; readonly lastUsedAt: number | null; readonly logo?: string;
+  /** The member the app acts as. Absent on older servers and on connections made before members. */
+  readonly agent?: { readonly id: string; readonly name: string; readonly handle?: string; readonly avatar?: string };
 };
 
 export type WorkbenchView = {

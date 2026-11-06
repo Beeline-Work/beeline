@@ -1,0 +1,1 @@
+export const watchActiveCommunityId=(_id,cb)=>{cb('fixture-workspace');return ()=>{}}; export const loadActiveCommunityId=async()=> 'fixture-workspace';

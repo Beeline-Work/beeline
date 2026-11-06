@@ -157,7 +157,6 @@ async function stopDarwinProcesses(roots: string[]): Promise<number> {
       if (!current || current.birth !== row.birth || current.command !== row.command || !await attributed(row.pid)) break;
       try { process.kill(row.pid, signal); if (signal === 'SIGTERM') stopped++; }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
-      if (signal === 'SIGTERM') await new Promise(done => setTimeout(done, 500));
     }
   }
   return stopped;

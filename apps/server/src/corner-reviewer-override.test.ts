@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { PgliteDatabase, migratedDatabase, insertCornerFacts, seedCornerOpening } from './test-support.js';
 import { PhoneService } from './phone-service.js';
-import { DaemonService } from './daemon-service.js';
+import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';
 import { GitHubOperations } from './github-operations.js';
 import { LiveHub } from './live.js';
 import { cornerMergeGate, advanceCorner } from './corner-lifecycle.js';

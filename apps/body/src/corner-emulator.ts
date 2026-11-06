@@ -1,3 +1,4 @@
+import { waitForProcessExit } from './process-exit.js';
 /**
  * One Android emulator per corner, owned by the helper rather than the turn.
  *
@@ -20,7 +21,7 @@
  * start reuses that device instead of leasing a second one. The emulator stops when the corner closes or archives,
  * and on helper start when the corner is confirmed gone.
  */
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { createServer, createConnection, type Server } from 'node:net';
 import { chmod, mkdir, open, readdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -276,17 +277,9 @@ async function killProcessGroup(pid: number): Promise<void> {
     try { process.kill(-pid, name); } catch { /* group already gone */ }
     try { process.kill(pid, name); } catch { /* already gone */ }
   };
-  const gone = async () => {
-    for (let i = 0; i < 25; i++) {
-      if (!processAlive(pid)) return true;
-      await new Promise((done) => setTimeout(done, 100));
-    }
-    return !processAlive(pid);
-  };
-  signal('SIGTERM');
-  if (await gone()) return;
   signal('SIGKILL');
-  await gone();
+  await waitForProcessExit(pid);
+
 }
 
 function disconnectAdb(record: KeptCornerEmulator): void {
@@ -420,20 +413,17 @@ async function waitUntilBooted(
 ): Promise<boolean> {
   const adb = env.ANDROID_HOME ? resolve(env.ANDROID_HOME, 'platform-tools/adb') : '';
   if (!adb || !existsSync(adb)) return processAlive(pid);
-  const deadline = Date.now() + BOOT_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    if (!processAlive(pid)) return false;
-    try {
-      const state = execFileSync(adb, ['-s', serial, 'get-state'], {
-        env, timeout: 5_000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
-      }).trim();
-      if (state === 'device') return true;
-    } catch {
-      // The device is not registered yet. The emulator retries its adb server.
-    }
-    await new Promise((done) => setTimeout(done, 1_000));
-  }
-  return false;
+  const controller=new AbortController();
+  try {
+    return await Promise.race([
+      new Promise<boolean>((resolveWait)=>{
+        const child=execFile(adb,['-s',serial,'wait-for-device'],{env,signal:controller.signal},error=>resolveWait(!error));
+        child.once('error',()=>resolveWait(false));
+      }),
+      waitForProcessExit(pid,controller.signal).then(()=>false),
+    ]);
+  } finally { controller.abort(); }
+
 }
 
 function recordFromLease(

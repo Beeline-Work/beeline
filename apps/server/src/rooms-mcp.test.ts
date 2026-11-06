@@ -17,7 +17,7 @@ import { ObjectService } from './object-service.js';
 import { TokenAuth, tokenHash } from './auth.js';
 import { recordSigninAttempt } from './signin-attempts.js';
 import { PhoneService } from './phone-service.js';
-import { DaemonService } from './daemon-service.js';
+import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';
 import { LiveHub } from './live.js';
 import { createBeelineServer } from './server.js';
 import { BROWSER_REFUSALS, RoomsMcpOAuth } from './rooms-mcp-oauth.js';

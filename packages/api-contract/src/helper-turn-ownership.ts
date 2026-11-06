@@ -5,5 +5,3 @@ export type HelperTurnOwnershipSource = {
   readonly connectionId: string;
   readonly epoch: number;
 };
-export type HelperTurnOperation = 'claimAgentCommand' | 'postAgentTurnReceipt' | 'acknowledgeAgentCommand';
-export const HELPER_TURN_REQUEST_DEADLINE_MS = 30_000;

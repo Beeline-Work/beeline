@@ -47,7 +47,7 @@ export async function recordStartupWakeOutcome(db: SqlDatabase, input: {
   roomId: string; requestId: string; generationId?: string; status: string;
   toolCalls?: number; trace?: unknown; reasonKind?: string;
 }, agentId: string): Promise<void> {
-  if (!['failed','complete'].includes(input.status) || input.reasonKind === 'update-interrupted') return;
+  if (!['failed','complete'].includes(input.status) || ['update-interrupted', 'process-exited'].includes(input.reasonKind ?? '')) return;
   await db.query(`INSERT INTO agent_startup_backoff(agent_id) VALUES($1) ON CONFLICT DO NOTHING`, [agentId]);
   await db.query(`SELECT agent_id FROM agent_startup_backoff WHERE agent_id=$1 FOR UPDATE`, [agentId]);
   const fresh = await db.query(`UPDATE agent_turns SET startup_outcome=$4

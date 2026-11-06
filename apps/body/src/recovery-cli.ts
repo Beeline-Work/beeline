@@ -126,7 +126,7 @@ async function main(): Promise<void> {
     const index = args.indexOf('--manifest-url');
     const url = index >= 0 ? args[index + 1]! : resolveManifestUrl();
     if (args.includes('--check')) {
-      const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+      const response = await fetch(url, { signal: undefined });
       if (!response.ok) throw new Error(`manifest fetch failed: HTTP ${response.status}`);
       const bundle = parseUpdateManifest(await response.text(), hostPlatformKey()).bundle;
       console.log(compareBundleIdentity(await readInstalledBundleIdentity(layout), bundle));
@@ -234,7 +234,7 @@ async function main(): Promise<void> {
 }
 async function convergeDependencies(
   layout: ReturnType<typeof discoveredBeelineInstallLayout>,
-  deadlineAt: number,
+  _deadlineAt: number,
 ): Promise<void> {
   const entry = await resolveBundleEntrypoint(layout.libDir);
   if (!entry) throw new Error('dependency phase has no selected body');
@@ -243,23 +243,10 @@ async function convergeDependencies(
       env: { ...process.env, BEELINE_LIB_DIR: layout.libDir, BEELINE_INTERNAL_RECOVERY: '1' },
       stdio: 'inherit',
     });
-    const timer = setTimeout(
-      () => {
-        child.kill('SIGKILL');
-        reject(
-          new Error(
-            'dependency convergence exceeded the command deadline; helper remains supervised',
-          ),
-        );
-      },
-      Math.max(1, deadlineAt - Date.now()),
-    );
     child.once('error', (error) => {
-      clearTimeout(timer);
       reject(error);
     });
     child.once('exit', (code) => {
-      clearTimeout(timer);
       code === 0
         ? done()
         : reject(new Error(`dependency convergence exited ${code}; helper remains supervised`));

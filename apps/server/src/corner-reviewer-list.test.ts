@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { workflowRunLockKey } from './workflow-runs.js';
 import { PgliteDatabase, assignCornerWorker, insertCornerFacts } from './test-support.js';
 import { PhoneService } from './phone-service.js';
-import { DaemonService } from './daemon-service.js';
+import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';
 import { LiveHub } from './live.js';
 import { systemLine } from './system-line.js';
 import { routeSystemCommand } from './agent-command.js';

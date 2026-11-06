@@ -486,6 +486,33 @@
       "total": 0,
       "strict": true,
       "fix": "Remove the additional connection banner. The app layout owns the only mount."
+    },
+    {
+      "id": "helper.agent-process",
+      "module": "Helper agent processes",
+      "invariant": "Only agent-process.ts calls ACP process lifecycle primitives; acp.ts defines them. Work starts processes and one warm countdown retires them.",
+      "pattern": "\\b(?:startProcess|stopProcess)\\b",
+      "scope": [
+        "apps/body/src"
+      ],
+      "owners": [
+        "apps/body/src/agent-process.ts",
+        "apps/body/src/acp.ts"
+      ],
+      "ownerFunctions": {
+        "apps/body/src/agent-process.ts": [
+          "startAgentProcess",
+          "stopAgentProcess"
+        ],
+        "apps/body/src/acp.ts": [
+          "startProcess",
+          "stopProcess"
+        ]
+      },
+      "ownerSites": 5,
+      "strict": true,
+      "total": 0,
+      "fix": "Use startAgentProcess/stopAgentProcess in apps/body/src/agent-process.ts. Do not add another ACP process lifecycle caller."
     }
   ],
   "storage": {

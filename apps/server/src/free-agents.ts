@@ -924,7 +924,7 @@ export class FreeAgentService {
     return (await import('./background-deadline-clock.js')).backgroundNextDelay(this.database,
       `SELECT GREATEST(f.last_activity_at,COALESCE(f.wake_requested_at,f.created_at),
          (SELECT max(completed_at) FROM agent_commands WHERE agent_id=f.agent_id))
-         +make_interval(secs=>${this.config.reapIdleMs / 1000}) due_at
+         +make_interval(secs=>${Math.min(this.config.reapIdleMs,this.config.idleSeconds*1000) / 1000}) due_at
        FROM free_agents f WHERE f.removed_at IS NULL AND f.fly_machine_id IS NOT NULL AND f.state IN ('running','waking')
          AND NOT ${connectorWorkSql('f.agent_id')}
          AND NOT EXISTS(SELECT 1 FROM agent_commands WHERE agent_id=f.agent_id AND state IN ('pending','claimed'))
@@ -1042,14 +1042,12 @@ export class FreeAgentService {
              OR (command.cancellation_reason IS DISTINCT FROM 'free-agent-time-limit'
                AND command.completed_at>clock_timestamp()-make_interval(secs => $1::double precision / 1000))))
        RETURNING f.agent_id,f.fly_machine_id`,
-      [this.config.reapIdleMs],
+      [Math.min(this.config.reapIdleMs,this.config.idleSeconds*1000)],
     );
     for (const row of idle.rows) {
       acted++;
       await recordFreeAgentEvent(this.database, row.agent_id, 'reaped_idle');
-      await this.machines.stop(row.fly_machine_id).catch((error) =>
-        this.log(`stop ${row.agent_id.slice(0, 12)}: ${String(error)}`),
-      );
+      await this.#sleepMachine(row.agent_id,row.fly_machine_id,'suspend');
     }
     const expired = await this.database.query<{ agent_id: string; fly_machine_id: string }>(
       `SELECT f.agent_id,f.fly_machine_id FROM free_agents f

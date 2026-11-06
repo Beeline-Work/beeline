@@ -1,3 +1,4 @@
+import { claimAgentConnection } from './connection-presence.js';
 import { createServer } from 'node:http';
 import { createHmac, randomUUID } from 'node:crypto';
 import { AddressInfo } from 'node:net';
@@ -5,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket, WebSocketServer } from 'ws';
 import { findChromiumPage, shareChromiumPage, waitForComputerHandback } from '../../body/src/browser-share.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
@@ -80,18 +81,22 @@ describe('computer session handoff', () => {
     void serveComputerSession(request, response, database, live, id);
   });
   let origin: string;
+  let helperSource:{connectionId:string;epoch:number};
 
   beforeAll(async () => {
     await migrate(database);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Human'),($2,'agent','Agent'),($3,'human','Other')`, [HUMAN, AGENT, OTHER]);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','System')`, [SYSTEM_IDENTITY_ID]);
     await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, HUMAN]);
+    await database.query(`INSERT INTO live_server_instances(instance_id,renewed_at) VALUES('computer-helper',clock_timestamp())`);
+    helperSource={connectionId:'computer-helper',epoch:await claimAgentConnection(database,live,AGENT,{}, {connectionId:'computer-helper',instanceId:'computer-helper'})};
     await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Computer')`, [WORKSPACE]);
     await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [ROOM, WORKSPACE]);
     await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WORKSPACE, ROOM, AGENT]);
     await database.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner')`, [WORKSPACE, HUMAN]);
     await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`, [WORKSPACE, ROOM, HUMAN]);
     await database.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'member')`, [WORKSPACE, OTHER]);
+    await database.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'member')`, [WORKSPACE, AGENT]);
     await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WORKSPACE, ROOM, OTHER]);
     server.on('upgrade', (request, socket, head) => {
       const url = new URL(request.url ?? '/', 'http://beeline.local');
@@ -106,6 +111,7 @@ describe('computer session handoff', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   }, 60_000);
+  beforeEach(async()=>{await database.query(`UPDATE live_server_instances SET renewed_at=clock_timestamp() WHERE instance_id='computer-helper'`);});
   afterAll(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await database.close();
@@ -539,10 +545,10 @@ describe('computer session handoff', () => {
             api: {
               execute: (name: string, input: unknown) => name === 'getAgentCommands'
                 ? Promise.resolve({ commandProtocol: 1, commands: [command] })
-                : daemon.execute(name as 'claimAgentCommand', input as { roomId: string; commandId: string; generationId: string }, AGENT),
+                : daemon.execute(name as 'claimAgentCommand', input as { roomId: string; commandId: string; generationId: string }, AGENT, helperSource),
               liveSubscribe: () => () => {},
             } as unknown as DaemonApiClient,
-            roomId, agentId: AGENT, signal: abort.signal,
+            roomId, agentId: AGENT, signal: abort.signal, onError:error=>{throw error;},
             context: new CommandExecutionContext(contextDir), stop: async () => {},
             run: async delivered => {
               finalInput = assembleTurnPrompt({ surface: 'room', task: {
@@ -735,7 +741,7 @@ describe('computer session handoff', () => {
     await expect(claimAgentCommand(database, ROOM, AGENT, snapshot.id, 'activity-generation')).rejects.toThrow('command claim conflict');
     await database.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1`, [human!.id]);
     const daemon = new DaemonService(database, live, origin);
-    const claimed = await daemon.execute('claimAgentCommand', { roomId: ROOM, commandId: snapshot.id, generationId: 'activity-generation' }, AGENT);
+    const claimed = await daemon.execute('claimAgentCommand', { roomId: ROOM, commandId: snapshot.id, generationId: 'activity-generation' }, AGENT, helperSource);
     expect(claimed.activitySource).toMatchObject({ body: 'A person used the shared browser navigation',
       systemEvent: { payload: { sessionId: share.id, activity: 'navigation' } } });
     expect(claimed.recoveryContext).toBe('A person used the shared browser viewer-opened\nA person used the shared browser pointer\nA person used the shared browser navigation');
@@ -745,7 +751,7 @@ describe('computer session handoff', () => {
     const anotherHumanId = '8'.repeat(64);
     await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Another request')`, [anotherHumanId, ROOM, HUMAN]);
     const anotherHuman = await createAgentCommand(database, { roomId: ROOM, agentId: AGENT, sourceMessageId: anotherHumanId, reason: 'human_tag' });
-    await expect(claimAgentCommand(database, ROOM, AGENT, snapshot.id, 'activity-generation')).resolves.toMatchObject({ id: snapshot.id });
+    await expect(claimAgentCommand(database, ROOM, AGENT, snapshot.id, 'activity-generation',helperSource)).resolves.toMatchObject({ id: snapshot.id });
     await database.query(`UPDATE agent_commands SET state='complete' WHERE id=$1`, [anotherHuman!.id]);
     expect((await readAgentCommands(database, ROOM, AGENT)).commands.filter((c) =>
       (c.source.systemEvent?.payload as { sessionId?: string })?.sessionId === share.id)).toHaveLength(1);
@@ -876,15 +882,11 @@ describe('computer session handoff', () => {
     }
   });
 
-  it('ends an unanswered Squire handoff wait at the upstream share expiry', async () => {
-    const share = await createComputerSession(database, live, {
-      roomId: ROOM, agentId: AGENT, sessionId: 'squire-expiry', upstreamUrl: 'body:',
-    });
-    const answer = await waitForComputerHandback({
-      serverBaseUrl: origin, shareId: share.id, daemonToken: 'test-token', expiresAt: Date.now() + 100,
-    });
-    expect(answer).toEqual({ type: 'ended', note: 'Squire live share expired', events: [] });
-    await endComputerSession(database, live, (await getComputerSession(database, share.id))!);
+  it('waits without a helper expiry timer until the server ends the share', async () => {
+    const share=await createComputerSession(database,live,{roomId:ROOM,agentId:AGENT,sessionId:'squire-expiry',upstreamUrl:'body:'});
+    const pending=waitForComputerHandback({serverBaseUrl:origin,shareId:share.id,daemonToken:'test-token',expiresAt:Date.now()+100});
+    await endComputerSession(database,live,(await getComputerSession(database,share.id))!);
+    expect(await pending).toEqual({type:'ended',events:[]});
   });
 
   it('delivers a screenshot when Chromium accepts screencast but emits no frames', async () => {

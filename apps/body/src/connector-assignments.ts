@@ -212,7 +212,7 @@ export class ConnectorAssignmentLoop {
         });
         // A subscriber can stop during registration. The server then queues
         // removal once it has the provider id; drain after this job leaves inFlight.
-        if (assignment.operation === 'register') setImmediate(() => this.wake());
+        if (assignment.operation === 'register') this.wake();
       } catch (error) {
         this.log(`provider webhook ${assignment.service} ${assignment.operation} failed: ${describe(error)}`);
         await this.api.execute('completeProviderWebhookAssignment', {

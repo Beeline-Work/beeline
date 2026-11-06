@@ -1337,6 +1337,7 @@ export type PostTurnReceiptInput = AgentRoomInput & {
     | 'workspace-failure'
     | 'helper-out-of-date'
     | 'update-interrupted'
+    | 'process-exited'
     | 'offline'
     | 'context-overflow'
     | 'resource-limit'

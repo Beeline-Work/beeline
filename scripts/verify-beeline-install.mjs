@@ -408,6 +408,7 @@ async function main() {
     // installed helper. Dummy provider values are sufficient because
     // session/new does not make a model request.
     const { AcpClient } = await import(resolve(repoRoot, 'apps', 'body', 'dist', 'acp.js'));
+    const { startAgentProcess, stopAgentProcess } = await import(resolve(repoRoot, 'apps', 'body', 'dist', 'agent-process.js'));
     const acp = new AcpClient({
       agentBinary: resolve(binDir, 'buzz-agent'),
       agentEnv: {
@@ -426,7 +427,7 @@ async function main() {
     acp.on('stderr', (chunk) => {
       acpStderr = `${acpStderr}${chunk}`.slice(-4_000);
     });
-    await acp.start();
+    await startAgentProcess(acp);
     let readonlySession;
     try {
       readonlySession = await acp.sessionNew({
@@ -446,7 +447,7 @@ async function main() {
         `installed read-only ACP session did not start: ${error instanceof Error ? error.message : String(error)}${acpStderr ? `\n${acpStderr}` : ''}`,
       );
     } finally {
-      await acp.stop();
+      await stopAgentProcess(acp);
     }
     if (!readonlySession?.sessionId) fail('installed read-only ACP session returned no sessionId');
 

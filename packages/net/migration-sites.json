@@ -157,7 +157,7 @@
       "id": "apps/body/src/daemon-api-client.ts::fetch",
       "file": "apps/body/src/daemon-api-client.ts",
       "kind": "fetch",
-      "count": 3,
+      "count": 2,
       "compatibility": "legacy-only",
       "phase": "M5"
     },
@@ -205,7 +205,7 @@
       "id": "apps/body/src/institutional-context.ts::fetch",
       "file": "apps/body/src/institutional-context.ts",
       "kind": "fetch",
-      "count": 2,
+      "count": 1,
       "compatibility": "legacy-only",
       "phase": "M5"
     },
@@ -234,33 +234,9 @@
       "phase": "M5"
     },
     {
-      "id": "apps/body/src/live-link.ts::import:ws",
-      "file": "apps/body/src/live-link.ts",
-      "kind": "import:ws",
-      "count": 1,
-      "compatibility": "legacy-only",
-      "phase": "M5"
-    },
-    {
       "id": "apps/body/src/machine-control.ts::import:node:net",
       "file": "apps/body/src/machine-control.ts",
       "kind": "import:node:net",
-      "count": 1,
-      "compatibility": "legacy-only",
-      "phase": "M5"
-    },
-    {
-      "id": "apps/body/src/machine-link.ts::import:ws",
-      "file": "apps/body/src/machine-link.ts",
-      "kind": "import:ws",
-      "count": 1,
-      "compatibility": "legacy-only",
-      "phase": "M5"
-    },
-    {
-      "id": "apps/body/src/machine-link.ts::websocket",
-      "file": "apps/body/src/machine-link.ts",
-      "kind": "websocket",
       "count": 1,
       "compatibility": "legacy-only",
       "phase": "M5"

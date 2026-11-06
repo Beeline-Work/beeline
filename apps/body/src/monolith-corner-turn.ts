@@ -46,7 +46,6 @@ import { type DaemonAttachment, type DaemonOperationMap } from '@beeline/api-con
 import {
   AcpClient,
   openAcpConversation,
-  AcpTurnBackstopError,
   isPureRetryNarration,
   type McpServerWire,
   type PromptResult,
@@ -95,7 +94,7 @@ import { registryMcpHostBindPaths, registryMcpHostDeclarations } from './registr
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import { installPiTurnBudget } from './pi-turn-budget.js';
 import { syncCornerBranch } from './corner-branch-sync.js';
-import { beelineAgentMcpServer, readOnlyMcpServer, sessionGrantedResources, writeSessionResourceAuth, recordSessionModelFallback, tracedSessionLifecycle } from './room-session.js';
+import { beelineAgentMcpServer, readOnlyMcpServer, sessionGrantedResources, writeSessionResourceAuth, recordSessionModelFallback, tracedAgentProcessLifecycle } from './room-session.js';
 import { allocatedDirectoryBytes, scratchBudgetMessage, scratchGrowthExceedsBudget } from './scratch-lifecycle.js';
 import { awaitInstitutionalContext, startInstitutionalContextFetch } from './institutional-context.js';
 import {
@@ -114,7 +113,6 @@ import { harnessIdentityLabel, sessionNewMcpServers } from './cursor-acp-bridge.
 import {
   approvedDeviceGrant,
   deviceGrantResumePrompt,
-  ROOM_PROMPT_BACKSTOP_MS,
 } from './monolith-room-turn.js';
 import { bodyAgentCommand, type BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
@@ -152,7 +150,7 @@ import {
   type PromptSurface,
   type SessionPromptContext,
 } from './prompt-assembly.js';
-import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
+import { AgentProcesses, startAgentProcess, stopAgentProcess, isAgentProcessExit, type AgentProcessLifecycle } from './agent-process.js';
 import { WarmTranscript } from './warm-transcript.js';
 import { harnessSupportsNativeSessionResume, harnessEnforcement } from './harness-capabilities.js';
 import { PromptSectionBaseline } from './prompt-section-baseline.js';
@@ -462,7 +460,7 @@ export interface MonolithCornerTurnOptions {
   runtime: AgentRuntimeRecord;
   config: BodyConfig;
   api: DaemonApiClient;
-  scheduler: SessionScheduler;
+  scheduler: AgentProcesses;
   signal?: AbortSignal;
   pollMs?: number;
   /** Close-request recovery interval (test seam); defaults to the jittered 10 min. */
@@ -471,7 +469,7 @@ export interface MonolithCornerTurnOptions {
   onSubscriptionState?: (connected: boolean) => void;
   onIntakeError?: (error: unknown) => void;
   onCloseRequested(): Promise<void>;
-  onRestartRequested?: () => void;
+  onRestartRequested?: () => Promise<void>;
   canStartTurn?: () => boolean;
   /** Keeps this corner's intake alive across failed reads. */
   supervisor?: RoomSupervisor;
@@ -506,17 +504,14 @@ export class MonolithCornerTurnLoop {
     const finish = async () => {
       if (stopping) return;
       stopping = true;
-      clearTimeout(timer);
       client.off('session/update', check);
       client.off('exit', exited);
       this.options.signal?.removeEventListener('abort', exited);
-      try { await client.stop(); }
-      finally { this.retiredClients.delete(client); resolveDone(); }
+      try { await stopAgentProcess(client); }
+      finally { this.retiredClients.delete(client); this.options.scheduler.workChanged(this.options.cornerId); resolveDone(); }
     };
     const check = () => { if (!client.hasBackgroundTools) void finish().catch(console.error); };
     const exited = () => { void finish().catch(console.error); };
-    const timer = setTimeout(() => { void finish().catch(console.error); }, 2 * 60 * 60 * 1000);
-    timer.unref();
     this.retiredClients.set(client, { done, check, stop: exited });
     client.on('session/update', check);
     client.once('exit', exited);
@@ -599,6 +594,7 @@ export class MonolithCornerTurnLoop {
   private cornerGitHubCli: CornerGitHubCli = 'host';
   private busy = false;
   private forcedStop = false;
+  private branchSyncController?:AbortController;
   private activityTail = Promise.resolve();
   /** The model selected for the live ACP session, independent of later settings edits. */
   private sessionModel: string | null = null;
@@ -677,7 +673,7 @@ export class MonolithCornerTurnLoop {
     this.options = { ...options, api: this.commandContext.bind(options.api) };
     this.activationContext=new CommandActivationContext({
       scope:()=>options.api.channel?.activationScope?.(),
-      selected:()=>options.api.channel?.activationContextSelected===true,
+      machine:()=>Boolean(options.api.channel?.isOpen),
       ready:()=>options.api.waitForConnection(),
       read:input=>options.api.readCommandActivation(input),
     });
@@ -723,11 +719,12 @@ export class MonolithCornerTurnLoop {
   }
 
   refreshPersonaForSoulUpdate(): Promise<void> {
-    return this.options.scheduler.suspend(this.options.cornerId);
+    return this.options.scheduler.stop(this.options.cornerId);
   }
 
   async prepareForForcedUpdateRestart(): Promise<void> {
     this.forcedStop = true;
+    this.branchSyncController?.abort();
   }
 
   interruptedTurn(): InterruptedTurn | undefined {
@@ -738,6 +735,7 @@ export class MonolithCornerTurnLoop {
 
   interruptForServerMinimum(): InterruptedTurn | undefined {
     this.forcedStop = true;
+    this.branchSyncController?.abort();
     const current = this.currentTurn;
     if (!current) return undefined;
     // The idle lease starts after active work, including a handover interruption.
@@ -753,7 +751,7 @@ export class MonolithCornerTurnLoop {
 
   async forceRecoverRoom(): Promise<void> {
     if (this.client && this.sessionId) this.client.sessionCancel(this.sessionId);
-    await this.options.scheduler.forceSuspend(this.options.cornerId);
+    await this.options.scheduler.stop(this.options.cornerId, true);
   }
 
   /**
@@ -770,15 +768,15 @@ export class MonolithCornerTurnLoop {
     while (this.stoppedTurns.size > 500)
       this.stoppedTurns.delete(this.stoppedTurns.values().next().value!);
     if (this.currentTurn?.requestId !== requestId) return;
+    this.branchSyncController?.abort();
     if (this.client && this.sessionId) this.client.sessionCancel(this.sessionId);
   }
 
   private commandActivation(){
-    if(!this.options.api.channel?.activationContextSelected&&!this.options.api.channel?.activationScope?.())return Promise.resolve(undefined);
+    if(!this.options.api.channel?.isOpen)return Promise.resolve(undefined);
     const command=this.commandContext?.current;
     if(!command){
-      if(this.options.api.channel?.activationContextSelected)return Promise.reject(new Error('Activation requires a claimed command'));
-      return Promise.resolve(undefined);
+      return Promise.reject(new Error('Activation requires a claimed command'));
     }
     return this.activationContext.read({agentId:this.agent.publicKey,workspaceId:this.options.workspaceId,
       roomId:this.options.cornerId,commandId:command.id,generationId:this.commandContext.generationId});
@@ -915,7 +913,7 @@ export class MonolithCornerTurnLoop {
     const cancelled = this.closePushed || this.forcedStop || this.options.signal?.aborted ||
       (this.currentTurn && this.stoppedTurns.has(this.currentTurn.requestId));
     if (client?.hasBackgroundTools && !cancelled && !stopBackground) void this.retainBackgroundClient(client);
-    else if (client) await client.stop();
+    else if (client) await stopAgentProcess(client);
   }
 
   /** See `MonolithRoomTurnLoop.sessionIsCurrent`: retention never keeps a
@@ -1386,7 +1384,7 @@ export class MonolithCornerTurnLoop {
     this.client = (this.options.createAcpClient ?? ((value) => new AcpClient(value)))(
       clientOptions,
     );
-    await this.client.start();
+    await startAgentProcess(this.client);
     if (assets) await markWorkspaceLayoutLive(assets);
     this.watchClaudeLogin();
     const codegraphReady = await prepareCodegraphIndex(
@@ -1617,12 +1615,25 @@ export class MonolithCornerTurnLoop {
     }
   }
 
-  /** The scheduler seam: `queue-wait` closes when a slot buys a session. */
-  private lifecycle(trace?: TurnTrace): SessionLifecycle {
+  /** Queue timing ends when this conversation starts or reuses its process. */
+  private lifecycle(trace?: TurnTrace): AgentProcessLifecycle {
     return {
-      ...tracedSessionLifecycle(() => this.activate(trace), () => this.sessionIsCurrent(), trace),
+      ...tracedAgentProcessLifecycle(() => this.activate(trace), () => this.sessionIsCurrent(), trace),
       hasBackgroundWork: () => Boolean(this.client?.hasBackgroundTools || this.retiredClients.size),
-      suspend: () => this.discardSession(true),
+      stop: async (force = false) => {
+        if (force) await Promise.all([...this.retiredClients.values()].map(retired => {
+          retired.stop();
+          return retired.done;
+        }));
+        await this.discardSession(true, force);
+      },
+      isRunning: () => Boolean(this.client?.isAlive || this.retiredClients.size),
+      onWorkChanged: listener => {
+        const client = this.client;
+        client?.on('session/update', listener);
+        client?.on('exit', listener);
+        return () => { client?.off('session/update', listener); client?.off('exit', listener); };
+      },
     };
   }
 
@@ -1678,7 +1689,7 @@ export class MonolithCornerTurnLoop {
     this.sessionFingerprint = undefined;
     this.sessionCodegraphReady = false;
     if (client?.hasBackgroundTools) void this.retainBackgroundClient(client);
-    else if (client) await client.stop();
+    else if (client) await stopAgentProcess(client);
     this.pinnedProviderOverride = next;
     await (trace ? trace.measure('activation', () => this.activate(trace)) : this.activate());
     return next;
@@ -1758,11 +1769,9 @@ export class MonolithCornerTurnLoop {
     // Best-effort read of this turn's search_memory call/miss counters before
     // the trace writes — bounded so a slow or unreachable server never delays
     // the turn's own completion over a diagnostic.
-    let statsStartedAt = 0;
     let statsPromise: Promise<{ searchCalls: number; searchMisses: number } | undefined> | undefined;
     const startTraceStats = (): void => {
       if (statsPromise) return;
-      statsStartedAt = Date.now();
       statsPromise = api.execute('getInstitutionalMemoryTurnStats', {
         roomId: cornerId,
         agentId: this.agent.publicKey,
@@ -1774,21 +1783,14 @@ export class MonolithCornerTurnLoop {
       reason?: string,
     ): Promise<void> => {
       try {
-        const remaining = Math.max(0, 800 - (Date.now() - statsStartedAt));
-        let timer: NodeJS.Timeout | undefined;
-        const stats = statsPromise && remaining > 0
-          ? await Promise.race([
-              statsPromise,
-              new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), remaining); }),
-            ]).finally(() => { if (timer) clearTimeout(timer); })
-          : undefined;
+        const stats=await statsPromise;
         if (stats) trace.noteSearchMemoryStats(stats.searchCalls, stats.searchMisses);
       } catch {
         // Losing this measurement must never affect the turn.
       }
       if (outcome === 'cancelled') {
         await api.execute('postAgentTurnReceipt', {
-          agentId: this.agent.publicKey, roomId: cornerId, requestId: requestId,
+          agentId: this.agent.publicKey, roomId: cornerId, requestId,
           generationId: traceGenerationId, status: 'cancelled', trace: trace.replay(),
         }).catch(() => console.warn('[turn-trace] trace dropped'));
       }
@@ -2232,7 +2234,6 @@ export class MonolithCornerTurnLoop {
                     promptClient.sessionPrompt(
                       this.sessionId!,
                       promptWithImages(prompt, attachmentImageBlocks(delivered, this.acceptsImages())),
-                      ROOM_PROMPT_BACKSTOP_MS,
                       (delta, full, currentRun, runs) => {
                         trace.firstModelOutput();
                         if (runs) {
@@ -2294,7 +2295,7 @@ export class MonolithCornerTurnLoop {
                 try {
                   return await runPromptAttempt(await activePrompt());
                 } catch (error) {
-                  if (!isExpiredHarnessLoginError(error)) throw error;
+                  if (isAgentProcessExit(error) || !isExpiredHarnessLoginError(error)) throw error;
                   if (loginRetryUsed) {
                     return {
                       stopReason: 'login-required',
@@ -2320,7 +2321,7 @@ export class MonolithCornerTurnLoop {
                   try {
                     return await runPromptAttempt(await activePrompt());
                   } catch (retryError) {
-                    if (!isExpiredHarnessLoginError(retryError)) throw retryError;
+                    if (isAgentProcessExit(retryError) || !isExpiredHarnessLoginError(retryError)) throw retryError;
                     return {
                       stopReason: 'login-required',
                       updates: [],
@@ -2568,7 +2569,6 @@ export class MonolithCornerTurnLoop {
                 ),
               );
             },
-            { priority: 'interactive', roomKey: this.options.parentRoomId },
           ));
         },
         (error) => console.error(`[thin-core] corner ${cornerId} receipt heartbeat failed:`, error),
@@ -2607,13 +2607,23 @@ export class MonolithCornerTurnLoop {
         void finishTrace('cancelled').catch(() => undefined);
         return;
       }
+      if (isAgentProcessExit(error)) {
+        await this.discardSession(true);
+        await api.execute('postAgentTurnReceipt', {
+          agentId: this.agent.publicKey, roomId: cornerId, requestId,
+          status: 'failed', generationId: this.commandContext.generationId,
+          reason: 'agent process exited', reasonKind: 'process-exited',
+          trace: trace.replay(),
+        }).catch(receiptError => console.error('[body] process interruption receipt failed:', receiptError));
+        void finishTrace('failed', 'agent process exited').catch(() => undefined);
+        throw error;
+      }
       if (error instanceof OwnedModelOutcomeUnknown) {
         await this.discardSession(false, true);
         await api.execute('postAgentTurnReceipt', ownedModelEndReceipt(error, { agentId: this.agent.publicKey,
           roomId: cornerId, requestId, generationId: this.commandContext.generationId }));
         throw error;
       }
-      if (error instanceof AcpTurnBackstopError) await this.discardSession();
       const reason = distillTurnFailureReason(error);
       startTraceStats();
       await api.execute('postAgentTurnReceipt', {
@@ -2709,13 +2719,8 @@ export class MonolithCornerTurnLoop {
     const token=(await this.options.api.execute('getRoomGitHubToken',{roomId:this.options.parentRoomId})).token;
     if (!token) throw new Error('corner repository credential lookup returned no token');
     const stop = new AbortController();
-    let watchStop: NodeJS.Timeout | undefined;
-    const checkStop = () => {
-      if (this.forcedStop || (this.currentTurn && this.stoppedTurns.has(this.currentTurn.requestId)))
-        stop.abort();
-      else watchStop = setTimeout(checkStop, 25);
-    };
-    checkStop();
+    this.branchSyncController=stop;
+    if(this.forcedStop||(this.currentTurn&&this.stoppedTurns.has(this.currentTurn.requestId)))stop.abort();
     try {
       if (this.reviewerCheckout) {
         if ((await execFileAsync('git', ['-C', this.options.worktreePath, 'status', '--porcelain'])).stdout.trim())
@@ -2738,7 +2743,7 @@ export class MonolithCornerTurnLoop {
         this.branchSyncNotice = `${error.message}. Resolve this private checkout's local work against origin/${repository.featureBranch} before publishing.`;
       });
     } finally {
-      clearTimeout(watchStop);
+      if(this.branchSyncController===stop)this.branchSyncController=undefined;
     }
   }
 
@@ -2829,7 +2834,7 @@ export class MonolithCornerTurnLoop {
     } finally {
       this.squireRelay.close();
       this.options.grantRunner?.unregister(cornerId);
-      await this.options.scheduler.suspend(cornerId);
+      await this.options.scheduler.stop(cornerId);
       this.options.scheduler.forget(cornerId);
       // A harvest writes into host-wide state, so it finishes or is discarded
       // with this corner — never left running against a reaped worktree.

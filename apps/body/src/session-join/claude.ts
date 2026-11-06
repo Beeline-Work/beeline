@@ -49,15 +49,13 @@ export function chosenName(session: ClaudeSession): string | undefined {
   return ['user', 'peer', 'hook'].includes(session.nameSource ?? '') ? session.name : undefined;
 }
 
-export function postToClaude(socket: ClaudeSocket, text: string, timeoutMs = 5000): Promise<void> {
+export function postToClaude(socket: ClaudeSocket, text: string, _timeoutMs = 5000): Promise<void> {
   return new Promise((resolve, reject) => {
     const connection = createConnection(socket.path);
-    const timer = setTimeout(() => { connection.destroy(); reject(new Error('Claude Code inbox did not answer')); }, timeoutMs);
-    connection.once('error', error => { clearTimeout(timer); reject(error); });
+    connection.once('error', error => { reject(error); });
     connection.once('connect', () => {
       if (socket.token) connection.write(JSON.stringify({ type: 'auth', token: socket.token }) + '\n');
       connection.end(JSON.stringify({ type: 'user', message: { role: 'user', content: text } }) + '\n', () => {
-        clearTimeout(timer);
         resolve();
       });
     });

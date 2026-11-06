@@ -170,7 +170,7 @@ export async function runUpdateCommand(args: string[]): Promise<void> {
   console.log(`[beeline] installed bundle: ${describeIdentity(installed)}`);
 
   if (checkOnly) {
-    const raw = await fetch(manifestUrl, { signal: AbortSignal.timeout(30_000) }).then(
+    const raw = await fetch(manifestUrl, { signal: undefined }).then(
       (response) => {
         if (!response.ok) throw new Error(`manifest fetch failed: HTTP ${response.status}`);
         return response.text();

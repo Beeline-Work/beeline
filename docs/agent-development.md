@@ -20,6 +20,8 @@ Paths and commands below are relative to the repository root. Read these invaria
 - Write corner evidence under `.beeline-proof/` and publish evidence needed after close. The manifest labels provenance only: a confirmed archived corner deletes all per-corner data, including proof, dirty work and unpushed commits, after stopping attributable processes. Open/unknown corner lifecycle never authorizes archive deletion.
 - After building the body, `node scripts/prove-archived-output.mjs` demonstrates `ARCHIVED-OUTPUT-1` through the built storage report and archive sweep in a throwaway checkout, including a live child and dirty source.
 
+- **Direct helper workflow fixtures register a machine owner.** Use `HelperDaemonService` in `apps/server/src/test-fixtures/helper-daemon.ts` for direct-service corner workflows; it registers real connection ownership for claims and carries the recorded source on receipts. Transport and ownership-forgery tests use the production service and supply their own wire source.
+
 - **Test database teardown releases the engine.** `PgliteDatabase.close()` in `apps/server/src/test-support.ts` drains background work, closes PostgreSQL, then drops the PGlite engine reference. Vitest 2 instance spies retain old services and wrappers; keeping a closed engine attached retains its WASM heap. Coverage: `test-support.test.ts`.
 
 - **Dead code is baseline-gated.** After building workspace `dist/`, `npm run dead-code` runs Knip against `knip-baseline.json`; only run `dead-code:baseline` for an intentional API addition. Expo Router entries are declared in `knip.jsonc`.

@@ -1,3 +1,4 @@
+import { isAgentProcessExit } from './agent-process.js';
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { writeFileSync } from 'node:fs';
@@ -5,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { redactReplayError, isAgentCommand, type AgentCommand } from '@beeline/api-contract/daemon';
 import { DaemonApiError, type DaemonApiClient } from './daemon-api-client.js';
-import { isStandingRuntimeFault, retryNotBefore } from './retry-barrier.js';
+import { isStandingRuntimeFault } from './runtime-start-fault.js';
 import { isNetworkFailure } from './live-link.js';
 
 /** Session-local output context. No transcript or sender policy enters this boundary. */
@@ -125,7 +126,7 @@ export async function runServerCommandIntake(options: {
   presence?: { releaseVersion?: string; sourceSha?: string; available?: boolean };
   run: (command: AgentCommand) => Promise<void>;
   stop: (requestId: string) => void;
-  restart?: (command: AgentCommand) => void;
+  restart?: (command: AgentCommand) => Promise<void> | void;
   canStartTurn?: () => boolean;
   onWake?: (wake: (() => void) | undefined) => void;
   onRecovery?: (recover: (() => void) | undefined) => void;
@@ -158,24 +159,21 @@ export async function runServerCommandIntake(options: {
     throw new Error('server command protocol 1 is required; refusing intake');
   let busy: Promise<void> | undefined;
   let wake: ((reconcile: boolean) => void) | undefined;
-  let hasSubscribed = false;
   let subscribed = false;
   let connectionGeneration = -1;
   const blockedClaims = new Set<string>();
   let reconciliation: Promise<void> | undefined;
   let reconciliationError: unknown;
   let stopped = false;
-  let retryAt = 0;
   let standingFailure = false;
+  let exitedCommand: string | undefined;
+  let readingAfterExit = false;
+  let workArrival = 0;
   let configurationVersion = 0;
-  const canStartTurn = () => !standingFailure && Date.now() >= retryAt && options.canStartTurn?.() !== false;
+  const canStartTurn = () => !exitedCommand && !readingAfterExit && !standingFailure && options.canStartTurn?.() !== false;
   const parkFailure = (error: unknown, sameConfiguration: boolean) => {
     if (sameConfiguration && isStandingRuntimeFault(error)) standingFailure = true;
-    const reset = retryNotBefore(error);
-    if (reset === undefined) return;
-    retryAt = Math.max(retryAt, reset);
-    // Retry-After is an earliest eligible bound, never a timer admission.
-    // A new configuration/connection/command boundary must wake parked work.
+
   };
   const pending = new Map(first.commands.map((command) => [command.id, command]));
   const claimed = new Set<string>();
@@ -183,21 +181,42 @@ export async function runServerCommandIntake(options: {
   // turn it failed). Hold that snapshot until the local run ends, then claim it
   // again in this same process.
   const requeued = new Map<string, AgentCommand>();
-  const notify = (commands: readonly AgentCommand[] = []) => {
+  const readAfterExit = () => {
+    exitedCommand = undefined;
+    readingAfterExit = true;
+    pending.clear();
+    // Release the failed claim before accepting its server replacement.
+    void Promise.resolve(busy).then(() => requestReconciliation(true))
+      .finally(() => { readingAfterExit = false; notify(); });
+  };
+  const notify = (commands: readonly AgentCommand[] = [], recoverySnapshot = false) => {
+    const newWork = !recoverySnapshot && commands.some(command =>
+      command.id !== exitedCommand && !pending.has(command.id) && !claimed.has(command.id) &&
+      (command.action === 'input' || command.action === 'resume'));
+    if (newWork) workArrival++;
+    if (exitedCommand && newWork) {
+      // Only a new message/order/schedule admits this read. A replay of the
+      // crashed command or an already queued sibling cannot restart it.
+      readAfterExit();
+      return;
+    }
     for (const command of commands) {
       if (claimed.has(command.id)) requeued.set(command.id, command);
       else pending.set(command.id, command);
     }
     wake?.(false);
   };
-  const requestReconciliation = () => {
-    if (reconciliation) return;
+  const requestReconciliation = (fresh = false): Promise<void> => {
+    if (reconciliation) return fresh ? reconciliation.then(() => requestReconciliation(true)) : reconciliation;
     reconciliation = api
       .execute('getAgentCommands', { roomId })
       .then((page) => {
         if (page.commandProtocol !== 1)
           throw new Error('server command protocol changed; refusing intake');
-        if (!stopped) notify(page.commands);
+        const arrived = fresh ? [...pending.values()].filter(command =>
+          !page.commands.some(current => current.id === command.id)) : [];
+        if (fresh) pending.clear();
+        if (!stopped) notify([...page.commands, ...arrived], fresh);
       })
       .catch((error: unknown) => {
         reconciliationError = error;
@@ -206,6 +225,7 @@ export async function runServerCommandIntake(options: {
       .finally(() => {
         reconciliation = undefined;
       });
+    return reconciliation;
   };
   options.onWake?.(notify);
   options.onRecovery?.(() => { configurationVersion++; standingFailure = false; blockedClaims.clear(); notify(); });
@@ -225,10 +245,8 @@ export async function runServerCommandIntake(options: {
         options.onError?.(new Error('server push intake is required; refusing timer-free intake'));
         return;
       }
-      // The initial GET precedes the first subscription; the server also
-      // sends a command snapshot on subscribe. Reconnects need one fresh GET.
-      if (hasSubscribed) requestReconciliation();
-      hasSubscribed = true;
+      // Registration already delivered the authoritative command snapshot.
+      // Resume intake from that push without another read.
     },
     options.presence,
     notify,
@@ -259,6 +277,7 @@ export async function runServerCommandIntake(options: {
         // busy-check can land inside just as easily as it could land inside
         // context.enter()'s own I/O afterward (C112).
         const startingTurn = command.action !== 'restart' && command.action !== 'stop';
+        const arrivalAtStart = workArrival;
         if (startingTurn) options.onClaiming?.(command);
         let claimSucceeded = false;
         const claimOwner = api.turnOwnershipScope?.();
@@ -309,7 +328,6 @@ export async function runServerCommandIntake(options: {
                 if (!(error instanceof DaemonApiError && error.status === 409)) options.onError?.(error);
                 break;
               }
-              retryAt=Math.max(retryAt,retryNotBefore(error)??0);
               blockedClaims.add(command.id);
               pending.set(command.id, command);
               options.onError?.(error);
@@ -328,9 +346,10 @@ export async function runServerCommandIntake(options: {
         if (!claimSucceeded) continue;
         if (command.action === 'restart') {
           if (!options.restart) throw new Error('restart command is not supported by this helper');
-          // Leave the command claimed. A genuinely new process lifecycle completes
-          // it on announce; acknowledging before exit could falsely report success.
-          options.restart(command);
+          await options.restart(command);
+          await api.execute('acknowledgeAgentCommand', {
+            roomId, commandId: command.id, generationId: context.generationId,
+          });
         } else if (command.action === 'stop') {
           options.stop(command.turnRequestId);
           await api.execute('acknowledgeAgentCommand', {
@@ -346,7 +365,7 @@ export async function runServerCommandIntake(options: {
             // A push or reconciliation may have read pending state before our
             // claim committed. Only the current server queue proves a requeue.
             let current: readonly AgentCommand[] = [];
-            if (sawSnapshot && !signal?.aborted) {
+            if (sawSnapshot && !exitedCommand && !readingAfterExit && !signal?.aborted) {
               try {
                 const page = await api.execute('getAgentCommands', { roomId });
                 if (page.commandProtocol !== 1) throw new Error('server command protocol changed');
@@ -391,6 +410,12 @@ export async function runServerCommandIntake(options: {
               return options.run(command);
             })
             .catch((error) => {
+              if (isAgentProcessExit(error)) {
+                exitedCommand = command.id;
+                pending.delete(command.id);
+                requeued.delete(command.id);
+                if (workArrival > arrivalAtStart) readAfterExit();
+              }
               parkFailure(error, configuration === configurationVersion);
               options.onError?.(error);
             })

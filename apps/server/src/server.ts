@@ -5,7 +5,6 @@ import { syncXAdReports } from './x-ad-reports.js';
 import { syncXSiteVisits } from './x-site-visits.js';
 import { dashboardFinances } from './operator-finances.js';
 import { fenceCommandReceiptEnqueue } from './router-command-coverage.js';
-import { startConnectionWork } from './background-work.js';
 import { owedMentions } from './owed-mentions.js';
 import { serveEmailImage } from './email-images.js';
 import { createPhoneOperationDispatcher, PhoneOperationError } from './phone-operations.js';
@@ -93,12 +92,9 @@ import {
 import { HelperVersionGate, helperVersionBelowMinimum } from './helper-version-gate.js';
 import {
   DaemonConnectionRegistry,
-  LIVE_HEARTBEAT_MS,
-  MACHINE_SOCKET_PROTOCOL,
-  serveAgentSocket,
-  serveMachineSocket,
   type DaemonLiveDependencies,
 } from './daemon-live.js';
+import { MACHINE_SOCKET_PROTOCOL, serveAgentSocket, serveMachineSocket, machineConnectionOutput, enableMachineTcpKeepalive } from './machine-connection.js';
 
 export const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
 
@@ -200,10 +196,6 @@ export interface ServerOptions {
   authHandler?: (request: IncomingMessage, response: ServerResponse) => void;
   /** Exact browser origins allowed to call the bearer-authenticated HTTP API. */
   webAppOrigins?: readonly string[];
-  /** Protocol ping interval for helper sockets; tests shorten it. */
-  liveHeartbeatMs?: number;
-  /** Existing connection control owner; injectable without changing Node/pg clocks. */
-  connectionWork?: typeof startConnectionWork;
 }
 
 const appSignInReturnCookie = 'beeline_app_sign_in_return';
@@ -532,13 +524,6 @@ export function createBeelineServer(options: ServerOptions): Server {
         daemonRegistry.observeEpoch(event.agentId, event.epoch);
     });
   };
-  // Protocol-level heartbeat for every helper socket. A ping is a control
-  // frame: no database work, no read, no Room event. A socket that has not
-  // answered the previous ping by the next tick is dead and is terminated;
-  // the helper drops a socket that stops pinging it and reconnects.
-  const heartbeatMs = options.liveHeartbeatMs ?? LIVE_HEARTBEAT_MS;
-  const heartbeatStops = new Map<WebSocket, () => void>();
-  const intakeCheckpoints = new Map<WebSocket, () => void>();
   const invitePreview = new InvitePreviewAccess(options.database);
   const phoneViewing = new PhoneViewing(options.database, options.connectionPresence?.instanceId ?? randomUUID());
   const dispatchPhoneOperation = createPhoneOperationDispatcher(options, requestErrorStatus);
@@ -640,8 +625,6 @@ export function createBeelineServer(options: ServerOptions): Server {
     // Connections stay held across a restart: helpers reconnect to a running
     // instance, and this instance's lease releases whatever never returns.
     shuttingDown = true;
-    for (const stopHeartbeat of heartbeatStops.values()) stopHeartbeat();
-    heartbeatStops.clear();
     releaseConnectionEpochs?.();
     for (const client of webSockets.clients) client.terminate();
     webSockets.close();
@@ -810,45 +793,12 @@ export function createBeelineServer(options: ServerOptions): Server {
     ) => {
       const sendLive = principal.kind === 'phone'
         ? phoneLiveOutput(client, MAX_LIVE_OUTBOUND_BUFFERED_BYTES, () => { liveErrors.overload++; })
-        : (payload: string):boolean => {
-        if (client.readyState !== client.OPEN) return false;
-        if (client.bufferedAmount + Buffer.byteLength(payload) > MAX_LIVE_OUTBOUND_BUFFERED_BYTES) {
-          liveErrors.overload++;
-          client.close(1013, 'live backpressure');
-          return false;
-        }
-        client.send(payload);
-        return true;
-      };
+        : machineConnectionOutput(client, MAX_LIVE_OUTBOUND_BUFFERED_BYTES, () => { liveErrors.overload++; });
       if (principal.kind !== 'phone') {
+        enableMachineTcpKeepalive(_request.socket);
         watchConnectionEpochs();
-        let answered = true;
-        const stopHeartbeat = (options.connectionWork ?? startConnectionWork)(() => {
-          if (!answered) {
-            liveCounters.heartbeatTerminations++;
-            stopHeartbeat();
-            heartbeatStops.delete(client);
-            intakeCheckpoints.delete(client);
-            client.terminate();
-            return;
-          }
-          answered = false;
-          try {
-            client.ping();
-            intakeCheckpoints.get(client)?.();
-          } catch {
-            // A socket that cannot queue a ping misses the next tick.
-          }
-        }, heartbeatMs);
-        heartbeatStops.set(client, stopHeartbeat);
-        client.on('pong', () => { answered = true; });
         const trackSubscriptions = (count: () => number) => socketSubscriptions.set(client, count);
-        client.on('close', () => {
-          stopHeartbeat();
-          heartbeatStops.delete(client);
-          intakeCheckpoints.delete(client);
-          socketSubscriptions.delete(client);
-        });
+        client.on('close', () => socketSubscriptions.delete(client));
         if (principal.kind === 'machine')
           serveMachineSocket(
             daemonLive,
@@ -856,8 +806,6 @@ export function createBeelineServer(options: ServerOptions): Server {
             principal,
             sendLive,
             trackSubscriptions,
-            heartbeatMs,
-            checkpoint => intakeCheckpoints.set(client, checkpoint),
           );
         else serveAgentSocket(daemonLive, client, principal, sendLive, trackSubscriptions);
         return;

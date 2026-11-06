@@ -3,10 +3,9 @@ import { setAgentWakePaused } from './agent-wake-pause.js';
 import { roomEventSubscriptions } from './agent-subscriptions.js';
 import { settleAgentCommand, renewAgentCommandLease } from './agent-command.js';
 import {parkOwnedModelTerminal,OwnedModelOwnerEndRefusal} from './owned-model-parking.js';
-import { assertCurrentTurnOwner, commandOwnerExpiredSql, commandOwnerFenceCteSql, commandOwnerFenceMatchesSql, commandOwnerLiveSql, usesOwnedTurnAdapter, registerOwnedEffectFence } from './turn-ownership.js';
+import { assertCurrentTurnOwner, commandOwnerExpiredSql, commandOwnerFenceCteSql, commandOwnerFenceMatchesSql, commandOwnerLiveSql, usesOwnedTurnAdapter, registerOwnedEffectFence, lockOwnedTurnRoomAccess } from './turn-ownership.js';
 import type { HelperTurnOwnershipSource } from '@beeline/api-contract/helper-turn-ownership';
 import { OwnedModelCredentials, OwnedModelRefusal, OwnedModelUnknownGeneration, isOwnedModelUnknownGenerationError } from './owned-model-credential.js';
-import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
 import { attachUsageAccount, helperUsageEnabled, publishUsageAccount } from './helper-usage.js';
 import type { CommandActivationInput } from '@beeline/api-contract/helper-activation';
 import { captureCommandActivation, helperActivationEnabled } from './helper-activation.js';
@@ -466,15 +465,8 @@ export class DaemonService {
 
   /** Actual owned database effects share the existing authority writer fence
    * before acquiring source/command rows. No provider runs under this lock. */
-  private async lockOwnedTurnAccess(database: SqlDatabase, roomId: string, agentId: string): Promise<void> {
-    await database.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', [ROUTER_AUTHORITY_LOCK]);
-    const access = await database.query(`SELECT 1 FROM room_access member JOIN rooms room ON room.id=member.room_id
-      JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
-        AND workspace_member.room_id IS NULL AND workspace_member.identity_id=member.identity_id
-        AND workspace_member.removed_at IS NULL
-      WHERE member.room_id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL AND room.archived_at IS NULL`,
-      [roomId, agentId]);
-    if (!access.rowCount) throw new AccessDeniedError();
+  private async lockOwnedTurnAccess(database: SqlDatabase, roomId: string, agentId: string, controlId?: string): Promise<void> {
+    if (!await lockOwnedTurnRoomAccess(database, roomId, agentId, controlId)) throw new AccessDeniedError();
   }
 
   /** Enqueue only the bounded control response under current access/source. */
@@ -485,10 +477,8 @@ export class DaemonService {
     requireClaimed = false,
   ): Promise<void> {
     await this.database.transaction(async db => {
-      await this.lockOwnedTurnAccess(db, input.roomId, agentId);
+      await this.lockOwnedTurnAccess(db, input.roomId, agentId, input.commandId);
       await assertCurrentTurnOwner(db, agentId, source);
-      const scoped = new DaemonService(db, this.live);
-      await scoped.access(input.roomId, agentId, input.requestId);
       const command = await db.query(`SELECT command.id FROM agent_commands command
         WHERE command.room_id=$1 AND command.agent_id=$2
           AND (($6::text IS NOT NULL AND command.id=$6) OR ($7::text IS NOT NULL AND command.turn_request_id=$7))
@@ -839,7 +829,7 @@ export class DaemonService {
           // Commit this transaction before any generic failed/requeue effects.
           if (await parkOwnedModelTerminal(db, input as Input<'postAgentTurnReceipt'>, authenticatedAgentId, turnOwner))
             return this.writeResult() as Output<Name>;
-          if (candidate.reasonKind === 'update-interrupted') {
+          if (['update-interrupted', 'process-exited'].includes(String(candidate.reasonKind))) {
             // The helper keeps this receipt durably until it hears 200. If the
             // first 200 was lost, accept its replay after the command was
             // requeued without writing another Room line or touching the new
@@ -858,30 +848,6 @@ export class DaemonService {
             if (alreadyRequeued.rowCount)
               return this.writeResult({ updateRequeued: true }) as Output<Name>;
           }
-        }
-        if (
-          name === 'postAgentTurnReceipt' &&
-          candidate.status === 'working' &&
-          !candidate.heartbeat
-        ) {
-          // Old helpers claim the projected command through their first receipt.
-          const pending = (
-            await db.query<{ id: string }>(
-              `SELECT id FROM agent_commands
-            WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 AND action IN ('input','resume')
-            AND state IN ('pending','claimed') ORDER BY created_at DESC LIMIT 1`,
-              [scopedRoom, authenticatedAgentId, requestId],
-            )
-          ).rows[0];
-          if (pending)
-            await claimAgentCommand(
-              db,
-              scopedRoom,
-              authenticatedAgentId,
-              pending.id,
-              String(candidate.generationId ?? ''),
-              turnOwner,
-            );
         }
         // A stopped generation may upload diagnostics only. It cannot publish,
         // renew its lease, or change the requester's terminal cancellation.
@@ -1122,9 +1088,9 @@ export class DaemonService {
           const message = result as unknown as { id: string };
           await routeAgentResult(db, command, message.id);
         } else if (name === 'postAgentTurnReceipt') {
-          if (candidate.status === 'working' && !command.turn_owner_connection_id)
-            await renewAgentCommandLease(db, command);
-          else if (
+          if (candidate.status === 'working') {
+            if (!command.turn_owner_connection_id) await renewAgentCommandLease(db, command);
+          } else if (
             candidate.status === 'failed' &&
             ((result as { hiccupRestart?: boolean; updateRequeued?: boolean }).hiccupRestart ||
               (result as { updateRequeued?: boolean }).updateRequeued)
@@ -1380,8 +1346,9 @@ export class DaemonService {
           authenticatedAgentId,
         ))) as Output<Name>;
       case 'claimAgentCommand': {
+        if(!turnOwner)throw new Error('helper claim requires its machine connection owner');
         const claimed = await queueDatabaseWork(this.database, `turn:${scopedRoom}:${authenticatedAgentId}`, () => this.database.transaction(async (db) => {
-          if (ownedIntent) await this.lockOwnedTurnAccess(db, scopedRoom!, authenticatedAgentId);
+          if (ownedIntent) await this.lockOwnedTurnAccess(db, scopedRoom!, authenticatedAgentId, String(candidate.commandId));
           const row = await claimAgentCommand(db, scopedRoom!, authenticatedAgentId,
             String(candidate.commandId), typeof candidate.generationId === 'string' ? candidate.generationId : '', turnOwner)
             .catch((error: unknown) => {
@@ -1392,7 +1359,7 @@ export class DaemonService {
             });
           if (row instanceof StaleWakeClaimRefused) return row;
           let modelCredential: Awaited<ReturnType<OwnedModelCredentials['issueInTransaction']>> | undefined;
-          if (turnOwner && (row.action === 'input' || row.action === 'resume') &&
+          if (turnOwner && this.ownedModelReady() && (row.action === 'input' || row.action === 'resume') &&
               (await db.query('SELECT 1 FROM free_agents WHERE agent_id=$1', [authenticatedAgentId])).rowCount) {
             const credentials = this.modelClaimCredentials(modelClaim, authenticatedAgentId, turnOwner);
             modelCredential = await credentials.issueInTransaction(db, { agentId: authenticatedAgentId, commandId: row.id,
@@ -1422,19 +1389,20 @@ export class DaemonService {
       }
       case 'acknowledgeAgentCommand': {
         const acknowledged = await this.database.transaction(async db => {
-          if (ownedIntent) await this.lockOwnedTurnAccess(db, scopedRoom!, authenticatedAgentId);
+          if (ownedIntent) await this.lockOwnedTurnAccess(db, scopedRoom!, authenticatedAgentId, String(candidate.commandId));
           if (turnOwner) await assertCurrentTurnOwner(db, authenticatedAgentId, turnOwner);
           if (turnOwner) {
             const previous = await db.query<CommandRow>(`SELECT * FROM agent_commands WHERE id=$1 AND room_id=$2
-              AND agent_id=$3 AND generation_id=$4 AND action='stop' AND state='complete'
+              AND agent_id=$3 AND generation_id=$4 AND action IN ('stop','restart') AND state='complete'
               AND turn_owner_connection_id=$5 AND turn_owner_epoch=$6 FOR UPDATE`,
               [candidate.commandId, scopedRoom, authenticatedAgentId, candidate.generationId, turnOwner.connectionId, turnOwner.epoch]);
             if (previous.rowCount) return previous;
           }
           const written = await db.query<CommandRow>(
-          `UPDATE agent_commands SET state='complete',completed_at=now()
+          `UPDATE agent_commands SET state='complete',completed_at=now(),
+            restart_confirmed_at=CASE WHEN action='restart' THEN COALESCE(restart_confirmed_at,now()) ELSE restart_confirmed_at END
           WHERE id=$1 AND room_id=$2 AND agent_id=$3 AND generation_id=$4 AND (state='complete' OR (state='claimed' AND ${commandOwnerLiveSql(undefined)}))
-          AND action='stop' AND ((turn_owner_connection_id IS NULL AND $5::text IS NULL) OR
+          AND action IN ('stop','restart') AND ((turn_owner_connection_id IS NULL AND $5::text IS NULL) OR
             (turn_owner_connection_id=$5::text AND turn_owner_epoch=$6::bigint)) RETURNING *`,
           [candidate.commandId, scopedRoom, authenticatedAgentId, candidate.generationId,
             turnOwner?.connectionId ?? null, turnOwner?.epoch ?? null]);

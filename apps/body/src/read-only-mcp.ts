@@ -2371,7 +2371,7 @@ export function connectorOfferDepsFromEnv(): ConnectorOfferDeps {
       headers: { authorization: `Bearer ${relayToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({ ...context, method: 'tools/call',
         params: { name: tool, arguments: args } }),
-      signal: AbortSignal.timeout(120_000),
+      signal: undefined,
     });
     const body = await response.json().catch((error) => {
       if (!response.ok) throw new Error(`Squire relay HTTP ${response.status}`);
@@ -2458,7 +2458,7 @@ async function squireShareEndpoint(sessionId: string): Promise<{ url: string; ex
       headers: { authorization: `Bearer ${relayToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({ ...await activeCommandContext(), method: 'tools/call',
         params: { name: 'operate_share', arguments: { session_id: sessionId } } }),
-      signal: AbortSignal.timeout(30_000),
+      signal: undefined,
     });
     // Only an unparseable body is tolerated; a timeout while reading it is not.
     body = await response.json().catch((error: unknown) => {
@@ -4015,7 +4015,7 @@ export async function withToolOwedContext(work: () => Promise<string>) {
       if (!toolOwedStorage.getStore()?.owedMentions) {
         try {
           const response = await fetch(new URL('/v1/daemon/owed-mentions', requiredEnv('BEELINE_DAEMON_BASE_URL')), {
-            signal: AbortSignal.timeout(5_000),
+            signal: undefined,
             headers: { authorization: `Bearer ${requiredEnv('BEELINE_DAEMON_TOKEN')}` },
           });
           if (response.ok) {

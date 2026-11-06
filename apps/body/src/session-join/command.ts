@@ -212,7 +212,6 @@ async function finishJoinOwned(file: string, env: NodeJS.ProcessEnv): Promise<vo
       if (transcript && permissionMode(transcript) === 'bypassPermissions') {
         await acceptClaudeInbound(env);
         // Claude watches settings with a debounce. Let it see consent before posting the first message.
-        await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
     await updateState(dir, state => {
@@ -337,7 +336,7 @@ async function session(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
   if (sub === 'leave') {
     const joined = own(rest, env);
     await fetch(`${joined.server}/mcp/oauth/revoke`, { method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ client_id: joined.clientId, token: joined.refreshToken }), signal: AbortSignal.timeout(15_000) }).catch(() => undefined);
+      body: JSON.stringify({ client_id: joined.clientId, token: joined.refreshToken }), signal: undefined }).catch(() => undefined);
     const left = await updateState(dir, state => {
       state.sessions = state.sessions.filter(s => s.key !== joined.key);
       return state.sessions;
@@ -351,13 +350,12 @@ async function session(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
   throw new Error('Usage: usebeeline join | usebeeline session reply|read|tool|status|leave');
 }
 
-function readStdin(limitMs: number): Promise<string> {
+function readStdin(_limitMs: number): Promise<string> {
   return new Promise(resolve => {
     let text = '';
-    const timer = setTimeout(() => resolve(text), limitMs);
     process.stdin.setEncoding('utf8');
     process.stdin.on('data', chunk => { text += chunk; });
-    process.stdin.on('end', () => { clearTimeout(timer); resolve(text); });
+    process.stdin.on('end', () => { resolve(text); });
   });
 }
 

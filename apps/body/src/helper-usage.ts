@@ -128,16 +128,14 @@ export function monitorHelperUsage(supervisorRoot: string): {
       if (!controller.signal.aborted) console.warn('[helper] usage process sample unavailable');
     } finally { sampling = false; }
   };
-  const timer = setInterval(() => { void tick(); }, 5 * 60_000);
-  timer.unref();
   void tick();
   return {
-    cleanup: entry => { cleanupActions++; freedBytes += entry.freedBytes; },
+    cleanup: entry => { cleanupActions++; freedBytes += entry.freedBytes; void tick(); },
     observe: states => {
       for (const state of states) {
         if (lifecycle.get(state.roomId) !== true) lifecycle.set(state.roomId, state.archived);
       }
     },
-    stop: () => { clearInterval(timer); controller.abort(); },
+    stop: () => { controller.abort(); },
   };
 }

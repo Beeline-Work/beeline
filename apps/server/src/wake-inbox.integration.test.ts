@@ -3,7 +3,7 @@ import { setImmediate as yieldToDatabase } from 'node:timers/promises';
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { type SqlDatabase } from './database.js';
 import { PgliteDatabase, migratedDatabase, insertCornerFacts } from './test-support.js';
-import { DaemonService } from './daemon-service.js';
+import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';
 import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
 import { AgentScheduleLoop } from './agent-schedules.js';

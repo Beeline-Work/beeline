@@ -52,7 +52,7 @@ async function startRoom(workspaceId: string) {
   } as AgentRuntimeRecord, resolve(root, 'agent.json'), { workspaceRoot: root } as BodyConfig, {
     daemonApi: {
       execute, readCommandActivation,
-      channel: { activationContextSelected: true,
+      channel: { isOpen: () => true,
         activationScope: () => ({ origin: 'https://server.example', source, generation: 1 }) },
     } as unknown as DaemonApiClient,
   });

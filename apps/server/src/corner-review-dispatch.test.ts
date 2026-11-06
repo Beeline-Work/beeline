@@ -12,7 +12,7 @@ import { assembleTurnPrompt, cornerReviewerInstruction } from '../../body/src/pr
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { seedCornerOpening, PgliteDatabase, migratedDatabase, assignCornerWorker, insertCornerFacts } from './test-support.js';
 import { PhoneService } from './phone-service.js';
-import { DaemonService } from './daemon-service.js';
+import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';
 import { announceAgentLifecycle } from './connection-presence.js';
 import { LiveHub } from './live.js';
 import { PushDeliveryLoop, MediaExpiryLoop } from './background.js';
@@ -475,15 +475,14 @@ describe('corner message attribution', () => {
     await result(review!, '@hoots FAIL: repair this head.');
     const [repair] = await commands(A, C);
     await claim(repair!);
-    // GitHub moves before the synchronize webhook. Exercise the daemon's
-    // provider-refresh seam; the provider implementation has its own fixture.
-    const refreshed = vi.fn(async () => {
-      await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`, [C, '2'.repeat(40)]);
-    });
+    // The push fact is committed before the handoff; ordinary replies use it
+    // without another provider read. Webhook refresh has separate coverage.
+    await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`, [C, '2'.repeat(40)]);
+    const refreshed = vi.fn();
     Object.assign(daemon, { github: { refreshCornerReviewHead: refreshed } });
     await result(repair!, '@goosy The fix is pushed; please review.');
+    expect(refreshed).not.toHaveBeenCalled();
     const next = (await commands(B, C)).find(c => c.reason === 'agent_tag');
-    expect(refreshed).toHaveBeenCalledWith(C);
     expect(next?.source.body).toContain(`Current handoff target: PR #83 at ${'2'.repeat(40)}`);
     const target = (await db.query<{ context: { headSha: string } }>('SELECT review_context context FROM agent_commands WHERE id=$1', [next!.id])).rows[0]?.context;
     expect(target?.headSha).toBe('2'.repeat(40));
@@ -1763,7 +1762,7 @@ lines.on('line', line => {
     await greenHead(3095,'3b3560e14d96e58a52466785a01440846bd13394');
     const [review] = await commands(B,C);
     expect(review).toBeDefined();
-    await adapter.start();
+    await adapter.startProcess();
     const {sessionId} = await adapter.sessionNew({cwd:directory});
     for (const attempt of [1,2]) {
       const generation = `adapter-${attempt}`;
@@ -1789,7 +1788,7 @@ lines.on('line', line => {
         expect(saved).toMatchObject({state:'complete',hiccup_attempts:1});
       }
     }
-  } finally { await adapter.stop(); await rm(directory,{recursive:true,force:true}); }
+  } finally { await adapter.stopProcess(); await rm(directory,{recursive:true,force:true}); }
 });
 
 it('Reproduction capacity-1: capacity returned as final text and a complete receipt retries the original review', async () => {

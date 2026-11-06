@@ -3,7 +3,7 @@ import type { CommandActivationInput,CommandActivationSnapshot,CommandActivation
 export interface ActivationTransport {
   /** Independent negotiated source; capability loss cannot select legacy. */
   scope():{origin:string;source:CommandActivationSource;generation:number}|undefined;
-  selected():boolean;
+  machine():boolean;
   ready():Promise<void>;
   read(input:CommandActivationInput):Promise<CommandActivationSnapshot>;
 }
@@ -12,18 +12,16 @@ export interface ActivationTransport {
  * Repeated setup helpers join both success and failure. No payload is persisted
  * in the command context file, runtime journal or provider cache. */
 export class CommandActivationContext {
-  private selected=false;
   private held?:{key:string;commandKey:string;pending:boolean;scope:NonNullable<ReturnType<ActivationTransport['scope']>>;result:Promise<CommandActivationSnapshot>};
   constructor(private readonly transport:ActivationTransport,private readonly now=()=>Date.now()/1000){}
   async read(input:Omit<CommandActivationInput,'source'>):Promise<CommandActivationSnapshot|undefined>{
     let scope=this.transport.scope();
     if(!scope){
-      if(!this.selected&&!this.transport.selected())return undefined;
+      if(!this.transport.machine())return undefined;
       await this.transport.ready();
       scope=this.transport.scope();
       if(!scope)throw new Error('Activation capability unavailable');
     }
-    this.selected=true;
     const keyFor=(value:typeof scope)=>JSON.stringify([value.origin,value.generation,value.source,input.agentId,input.workspaceId,input.roomId,input.commandId,input.generationId]);
     const key=keyFor(scope),commandKey=JSON.stringify([input.agentId,input.workspaceId,input.roomId,input.commandId,input.generationId]);
     if(this.held?.key!==key&&!(this.held?.pending&&this.held.commandKey===commandKey&&this.held.scope.origin===scope.origin)){

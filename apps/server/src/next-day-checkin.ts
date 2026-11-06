@@ -205,7 +205,7 @@ export class NextDayCheckin {
         if (skip) {
           await this.db.query(`UPDATE next_day_checkins SET skip_reason=$2 WHERE identity_id=$1 AND sent_at IS NULL`,
             [row.identity_id,skip]);
-          await this.db.query(`UPDATE agent_commands SET state='cancelled',completed_at=now() WHERE id=$1 AND state IN ('pending','claimed')`, [row.command_id]);
+          await this.db.query(`SELECT (terminal.ended).* FROM (SELECT beeline_end_agent_turn(agent_commands.id,agent_commands.generation_id,'cancelled',NULL,NULL) ended FROM agent_commands WHERE id=$1 AND state IN ('pending','claimed')) terminal`, [row.command_id]);
         }
         continue;
       }

@@ -84,7 +84,7 @@ export function VaultSaveCard({
           body: JSON.stringify({ cardId, roomId, values: submitted }),
           signal: controller.signal,
         },
-        { timeoutMs: 75_000, idempotent: false },
+        { timeoutMs: 75_000 },
       );
       const result = (await response.json()) as { status?: string; card?: unknown };
       const savedCard = readVaultSaveCard(result.card);

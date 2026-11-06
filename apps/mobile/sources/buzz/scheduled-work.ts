@@ -216,22 +216,21 @@ function holdScheduledWork(roomId: string, address: SurfaceCacheAddress): { firs
  * Only focused consumers retain a live observer. A new visible residency
  * makes one covering read; retained/unmounted screens make no requests.
  */
-export function useScheduledWork(roomId: string | undefined,legacyTargetValid=true) {
+export function useScheduledWork(roomId: string | undefined) {
   const focused = useSurfaceFocus();
   const request = useCallback(() => monolithPhoneOperation('readScheduledWork', { roomId: roomId! }), [roomId]);
   const { value, address, loading, error, setError, refresh } = useSharedSurface(
-    '/room/:id/scheduled-work', roomId&&legacyTargetValid ? { roomId } : undefined, isScheduledWork, request, (Boolean(roomId)&&legacyTargetValid&&focused), true);
+    '/room/:id/scheduled-work', roomId ? { roomId } : undefined, isScheduledWork, request, (Boolean(roomId)&&focused));
   useEffect(() => {
     if ((!focused) || !roomId || !address) return;
     const owner = holdScheduledWork(roomId, address);
-    if (owner.first && AppState.currentState === 'active') void refresh();
     return owner.release;
   }, [address, roomId, focused, refresh]);
   const selected=(value);
   const work = useMemo<ScheduledWork | null>(() => selected && ({roomName:selected.roomName,isDirectMessage:selected.isDirectMessage===true,
     agentNames:new Map(selected.agentNames),schedules:selected.schedules,subscriptions:selected.subscriptions}),[selected]);
   return { work,loading:(loading&&!value),
-    error:roomId&&((legacyTargetValid))?((error)):'Schedules target is missing.',
+    error:roomId ? error:'Schedules target is missing.',
     setError,retry:()=>{if((focused)&&AppState.currentState==='active')void refresh();} };
 }
 

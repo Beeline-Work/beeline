@@ -21,6 +21,4 @@ Email attempts are committed before HTTP and never retried. A crash or unknown p
 
 `next_day_checkin_candidates` retains the first-message time and due time. `next_day_checkins` holds the unique identity claim, Room, agent, command, committed message, send time, skip reason, email attempt/outcome and push outcomes. The existing anonymous onboarding ledger receives `next_day_checkin_sent`; exposure and channels are also directly countable from the check-in row. Push statuses come from the normal delivery claims, observed until completion or the one-hour delivery window expires. A push provider acceptance or email API success does not establish that a person read it.
 
-Run `npm run prove:next-day-checkin`. This exercises the built services: phone send → due clock → public command delivery and claim → helper reply → phone Room read → normal push delivery → captured Resend HTTP request. PGlite substitutes for PostgreSQL, a deterministic helper reply substitutes for a live model, and local provider captures substitute for APNs and Resend. Production proof follows release. This is a feature, not a defect report.
-
-The proof writes [the email HTML](evidence/next-day-checkin/email.html) and [captured results](evidence/next-day-checkin/proof.json). Acceptance tests live in `apps/server/src/next-day-checkin.test.ts`.
+Recorded proof: [the email HTML](evidence/next-day-checkin/email.html) and [captured results](evidence/next-day-checkin/proof.json). Acceptance tests live in `apps/server/src/next-day-checkin.test.ts`.

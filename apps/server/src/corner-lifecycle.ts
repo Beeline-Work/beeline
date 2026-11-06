@@ -8,13 +8,12 @@ import { isZeroCheckCommander } from './corner-merge-approval.js';
 import { reportToCommander } from './commander.js';
 import type { activeCornerHolds } from './corner-holds.js';
 import { createHash } from 'node:crypto';
-import { classifyTurnSilence, isAuthShapedFault, type CornerLifecycleContract, type WorkflowTerminalState } from '@beeline/api-contract/daemon';
+import { type CornerLifecycleContract, type WorkflowTerminalState } from '@beeline/api-contract/daemon';
 import { cornerRunFromLifecycle, type CornerLifecycleView } from '@beeline/api-contract/phone';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
 import {
   createAgentCommand,
-  noteCornerAgentUnreachable,
   refuseVerdictedReviewerWake,
   repairReviewerCornerMembership,
   type CommandRow,
@@ -728,7 +727,6 @@ async function checksReported(
         roomId: cornerId, agentId: corner.worker_agent_id,
         sourceMessageId: event.sourceMessageId, reason: 'corner_check',
       });
-      if (!command) await noteCornerAgentUnreachable(db, cornerId, corner.worker_agent_id, event.sourceMessageId, undefined, 'corner_check wake could not be queued');
       return command ? OK : no('the implementer cannot be woken');
     }
     if (repeat) return no(`${plan.outcome} already holds on this head`);
@@ -748,7 +746,6 @@ async function checksReported(
       reason: 'corner_check',
     });
     if (!command) {
-      await noteCornerAgentUnreachable(db, cornerId, corner.worker_agent_id, event.sourceMessageId, undefined, 'corner_check wake could not be queued');
       return no('the implementer cannot be woken');
     }
   } else if (plan.outcome === 'passing' && !plan.approved && !(await blockingReview(db, cornerId, headSha))) {
@@ -833,8 +830,8 @@ async function noteReviewDispatchFailure(
 /**
  * Repair a green review state whose reviewer wake is missing or failed. Any
  * active reviewer command since the run's newest card counts. A completed
- * verdict without PASS returns findings to the implementer. Empty completions
- * retry on the same head up to the per-head cap; they are never verdicts.
+ * verdict without PASS returns findings to the implementer. A completion
+ * without a verdict is reported once; it never creates another review turn.
  * A report filed while the gate was still pending is not that review, so it
  * does not swallow the one wake for this head.
  */
@@ -893,12 +890,17 @@ async function ensureReviewDispatch(
     return noteReviewBlocked(db, cornerId, corner, `${pr.headSha}:${ended}`,
       reason, false);
   }
-  const attempts = (await db.query<{ count: number }>(
-    `SELECT count(*)::int count FROM agent_commands WHERE room_id=$1
-       AND review_context->>'headSha'=$2 AND review_context->>'purpose' IS NULL
-       AND review_context->'pullRequest'=$3::jsonb
-       AND action='input' AND state='complete'`, [cornerId,pr.headSha,JSON.stringify(pr.number)])).rows[0]!.count;
-  if (attempts >= 3) return noteMissingReviewVerdict(db, cornerId, corner, pr.headSha);
+  const completedReview = (await db.query<{failed:boolean;implementer_working:boolean}>(`SELECT EXISTS(
+      SELECT 1 FROM agent_turns turn WHERE turn.room_id=command.room_id AND turn.agent_id=command.agent_id
+        AND turn.request_id=command.turn_request_id AND turn.generation_id=command.generation_id
+        AND turn.status='failed') failed, EXISTS(SELECT 1 FROM agent_commands worker
+      WHERE worker.room_id=$1 AND worker.agent_id=$4 AND worker.action='input'
+        AND worker.state IN ('pending','claimed')) implementer_working
+    FROM agent_commands command WHERE room_id=$1
+    AND review_context->>'headSha'=$2 AND review_context->>'purpose' IS NULL
+    AND review_context->'pullRequest'=$3::jsonb AND action='input' AND state='complete'
+    ORDER BY completed_at DESC LIMIT 1`, [cornerId,pr.headSha,JSON.stringify(pr.number),corner.worker_agent_id])).rows[0];
+  if (completedReview) return completedReview.failed || completedReview.implementer_working ? OK : noteMissingReviewVerdict(db, cornerId, corner, pr.headSha);
   const sourceId = transition.lastCardId ?? (
     await db.query<{ id: string }>(
       `SELECT id FROM messages WHERE room_id=$1 AND card_type=$2
@@ -913,7 +915,6 @@ async function ensureReviewDispatch(
     return noteReviewBlocked(db, cornerId, corner, pr.headSha,
       systemMessage("corner-lifecycle.the-configured-reviewer-is-unreachable-or-unhealthy"), false);
   }
-  if (await reviewerStandingFailure(db, reviewerAgentId)) return OK;
   // A fresh source lets a recovered review wake follow an earlier completed
   // command from the same check fact. The lifecycle card remains the run state.
   const source = await systemLine(db, {
@@ -934,10 +935,6 @@ async function ensureReviewDispatch(
     console.error(`[corner-lifecycle] ${cornerId}: ${reason}`);
     return noteReviewBlocked(db, cornerId, corner, pr.headSha, reason);
   }
-  if (attempts && queued.command) await db.query(
-    `UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{text}',
-       to_jsonb((private_payload->>'text')||E'\n'||$2::text)) WHERE id=$1`,
-    [queued.command.id, `The prior review ended without a verdict. Retry (${attempts}) on the same head; deliver PASS or actionable findings.`]);
   return { ok: true, wake: { queued: true, agentId: reviewerAgentId } };
 }
 
@@ -992,7 +989,7 @@ export async function blockingReview(
            AND repair.private_payload->>'text' ~* $4 LIMIT 1) repair_verdict ON true
        WHERE command.room_id=$1 AND command.action='input'
          AND (command.state='complete' AND turn.status='complete'
-           OR command.report_outcome IN ('failed','blocked') OR repair_verdict.delivered)
+           OR COALESCE(command.private_payload->>'reportedOutcome',command.report_outcome) IN ('failed','blocked') OR repair_verdict.delivered)
          AND (EXISTS (SELECT 1 FROM messages verdict
            WHERE verdict.room_id=command.room_id AND verdict.author_id=command.agent_id
              AND (verdict.id=command.result_message_id OR verdict.request_id=command.turn_request_id
@@ -1013,7 +1010,7 @@ export async function blockingReview(
             ORDER BY (card->>'seq')::int DESC LIMIT 1))=$2
          AND (command.review_context IS NULL OR command.review_context->'pullRequest'=(
            SELECT lifecycle->'pr'->'number' FROM corner_github_cache WHERE corner_id=$1))
-         AND (command.report_outcome IN ('failed','blocked') OR repair_verdict.delivered OR NOT EXISTS (
+         AND (COALESCE(command.private_payload->>'reportedOutcome',command.report_outcome) IN ('failed','blocked') OR repair_verdict.delivered OR NOT EXISTS (
            SELECT 1 FROM messages card WHERE card.room_id=$1 AND card.card_type=$3
              AND card.card->>'runId'=$1::text AND card.card->>'fromState'='review'
              AND card.created_at>command.created_at
@@ -1040,16 +1037,14 @@ async function queueReviewerCommand(
     `SELECT CASE WHEN lifecycle->'pr'->>'headSha' IS NOT NULL AND lifecycle->'pr'->>'number' IS NOT NULL
        THEN jsonb_build_object('cornerId',corner_id,'headSha',lifecycle->'pr'->>'headSha',
        'pullRequest',lifecycle->'pr'->'number','briefRevision',$2::int,
-       'checks',${reviewChecksSql},'reviewerConfiguration',(${reviewerConfigurationSql('$3')})) ELSE NULL END context
-     FROM corner_github_cache WHERE corner_id=$1`, [input.roomId, brief?.revision ?? 0, input.agentId],
+       'checks',${reviewChecksSql}) ELSE NULL END context
+     FROM corner_github_cache WHERE corner_id=$1`, [input.roomId, brief?.revision ?? 0],
   )).rows[0]?.context;
   const headSha = typeof context?.headSha === 'string' ? context.headSha : undefined;
   const rawPull = context?.pullRequest;
   const pullRequest = typeof rawPull === 'number' ? rawPull
     : typeof rawPull === 'string' && /^\d+$/.test(rawPull) ? Number(rawPull) : null;
-  // Same return as a standing failure: a verdicted head is not a lost wake.
-  if (await reviewerStandingFailure(db, input.agentId) ||
-      (headSha !== undefined && await refuseVerdictedReviewerWake(db, input.roomId, input.agentId, headSha, pullRequest)))
+  if (headSha !== undefined && await refuseVerdictedReviewerWake(db, input.roomId, input.agentId, headSha, pullRequest))
     return { blocked: true };
   const prior = (await db.query<{ text: string }>(
     `SELECT result.text FROM agent_commands command JOIN messages result ON result.id=command.result_message_id
@@ -1078,39 +1073,6 @@ async function queueReviewerCommand(
     await db.query('RELEASE SAVEPOINT corner_reviewer_dispatch');
     return { error: error instanceof Error ? error.message.slice(0, 160) : systemMessage("corner-lifecycle.unknown-dispatch-error") };
   }
-}
-
-/** Only real recovery facts clear standing provider failures; elapsed time and
- * a new PR/check event cannot repair credentials or a missing model. */
-function reviewerConfigurationSql(agent: string): string {
-  return `SELECT jsonb_build_object('harness',harness,'model',selected_model,'effort',selected_effort,
-    'unavailable',model_unavailable,'signIn',(SELECT card->>'attemptId' FROM messages
-      WHERE card_type='agent-sign-in' AND card->>'agentId'=${agent} AND card->>'status'='signed-in'
-      ORDER BY created_at DESC,id DESC LIMIT 1))
-    FROM agents WHERE agent_id=${agent}`;
-}
-
-async function reviewerStandingFailure(db: SqlDatabase, agentId: string): Promise<boolean> {
-  const failed = (await db.query<{ id: string; reason: string | null; kind: string | null }>(
-    `SELECT command.id,turn.failure_reason reason,command.review_context->>'failureKind' kind FROM agent_commands command
-     JOIN agent_turns turn ON turn.room_id=command.room_id AND turn.agent_id=command.agent_id
-       AND turn.request_id=command.turn_request_id
-     WHERE command.agent_id=$1 AND command.review_context IS NOT NULL AND turn.status='failed'
-       AND NOT command.review_context ? 'helperRecoveredAt'
-       AND (command.review_context->'reviewerConfiguration' IS NULL
-         OR command.review_context->'reviewerConfiguration'=(${reviewerConfigurationSql('$1')}))
-       AND NOT EXISTS (SELECT 1 FROM agent_turns recovered WHERE recovered.agent_id=$1
-         AND recovered.status='complete' AND recovered.created_at>turn.created_at)
-     ORDER BY turn.created_at DESC LIMIT 1`, [agentId],
-  )).rows[0];
-  if (!failed) return false;
-  // Legacy dispatches lack the snapshot. Capture it once, so a subsequent
-  // sign-in or model change can recover them without a retry timer.
-  await db.query(`UPDATE agent_commands SET review_context=review_context ||
-    jsonb_build_object('reviewerConfiguration',(${reviewerConfigurationSql('$2')}))
-    WHERE id=$1 AND NOT review_context ? 'reviewerConfiguration'`, [failed.id,agentId]);
-  return isAuthShapedFault(failed.reason ?? '') ||
-    ['wrong-model','allowance-spent','not-signed-in','helper-out-of-date'].includes(failed.kind ?? classifyTurnSilence(failed.reason).kind);
 }
 
 /** A reviewer is configured and is not the implementer it would review. */
@@ -1244,7 +1206,6 @@ async function wake(
 ): Promise<RevisionWake> {
   if (await cornerReportWaiting(db, cornerId)) return { queued: false, reason: 'The corner is waiting for an answer' };
   const command = await createAgentCommand(db, { roomId: cornerId, agentId, sourceMessageId, reason });
-  if (!command) await noteCornerAgentUnreachable(db, cornerId, agentId, sourceMessageId, undefined, `${reason} wake could not be queued`);
   return command ? { queued: true, agentId } : { queued: false, reason: 'The implementer cannot be woken' };
 }
 

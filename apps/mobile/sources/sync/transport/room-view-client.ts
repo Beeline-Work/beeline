@@ -124,7 +124,6 @@ class MonolithRoomViewClient {
       if (name === 'readRoom') markRoomOpen('wire-headers');
       return result;
     } catch (error) {
-      if (error instanceof MonolithRequestTimeoutError) throw new RoomViewHttpError(0, 'timeout');
       if (error instanceof PhoneSocketError) throw new RoomViewHttpError(error.status, error.code);
       throw error;
     }

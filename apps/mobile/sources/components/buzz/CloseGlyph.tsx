@@ -4,7 +4,7 @@ import Svg, { Line } from 'react-native-svg';
 import { StyleSheet } from 'react-native-unistyles';
 import { Button } from './Button';
 import { DECORATIVE_GLYPH_PROPS } from './decorative-glyph';
-import { chromeStrokeWidth } from './MembersGlyph';
+import { chromeStrokeWidth } from '@/buzz/chrome-geometry';
 
 /** The one size every close and remove control draws its cross at. */
 export const CLOSE_GLYPH_SIZE = 16;

@@ -32,9 +32,7 @@ owned by their existing operations.
 
 A corner is repository work exactly when its parent Room has a repository: it receives a
 feature branch, token and worktree. Otherwise it works in scratch and delivers artifacts.
-Run `npm run prove:command-grammar` for an isolated review Workspace proof through the built
-MCP tools, authenticated HTTP, PostgreSQL notifications, live helper sockets and phone reads.
-The proof launches no harness or production helper. Deploy the server before the updated helper.
+Deploy the server before the updated helper.
 
 When an imported MCP server is added or removed from the selected harness's operator
 configuration, the helper replaces its retained Room or corner session before the next turn.

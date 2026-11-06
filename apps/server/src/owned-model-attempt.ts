@@ -1,10 +1,11 @@
+import { OwnedModelRefusal, OwnedModelUnknownGeneration, OWNED_MODEL_UNKNOWN_GENERATION_MESSAGE } from './owned-model-errors.js';
 import type { OwnedModelAttemptReceipt } from '@beeline/api-contract/helper-model';
 export type { OwnedModelAttemptReceipt } from '@beeline/api-contract/helper-model';
 import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { CommandRefusalError } from './command-refusal.js';
 import type { SqlDatabase } from './database.js';
-import { OwnedModelCredentials, OwnedModelRefusal, OwnedModelUnknownGeneration, OWNED_MODEL_UNKNOWN_GENERATION_MESSAGE, type AuthenticatedOwnedModel, type OwnedModelBinding } from './owned-model-credential.js';
+import type { OwnedModelCredentials, AuthenticatedOwnedModel, OwnedModelBinding } from './owned-model-credential.js';
 import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
 import { assertCurrentTurnOwner } from './turn-ownership.js';
 
@@ -163,7 +164,7 @@ export class OwnedModelAttempts {
       await accountingLocks(database, owned.ownerId);
       // Serializes reservation COMMIT with a new claim generation. Otherwise
       // its UNKNOWN could appear just after a new credential was issued.
-      await database.query('SELECT id FROM agent_commands WHERE id=$1 FOR SHARE NOWAIT', [owned.commandId]);
+      await this.credentials.lockInvocation(database, actor);
       await this.credentials.assertCurrent(database, actor);
       const old = (await database.query<Row>('SELECT * FROM owned_model_attempts WHERE credential_id=$1 AND model_request_id=$2 FOR UPDATE', [owned.id, id])).rows[0];
       if (old) {
@@ -207,7 +208,7 @@ export class OwnedModelAttempts {
       await this.database.transaction(async database => {
         await database.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', [ROUTER_AUTHORITY_LOCK]);
         await assertCurrentTurnOwner(database, owned.agentId, { connectionId: owned.connectionId, epoch: owned.connectionEpoch });
-        await database.query('SELECT id FROM agent_commands WHERE id=$1 FOR SHARE NOWAIT', [owned.commandId]);
+        await this.credentials.lockInvocation(database, pending.actor);
         await database.query('SELECT agent_id FROM free_agents WHERE agent_id=$1 FOR SHARE NOWAIT', [owned.agentId]);
         await database.query('SELECT agent_id FROM agents WHERE agent_id=$1 FOR SHARE NOWAIT', [owned.agentId]);
         await database.query('SELECT id FROM owned_model_credentials WHERE id=$1 FOR SHARE NOWAIT', [owned.id]);

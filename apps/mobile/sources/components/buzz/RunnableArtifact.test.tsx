@@ -25,7 +25,7 @@ vi.mock('react-native', () => ({
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: {
     create: (fn: (theme: unknown) => unknown) =>
-      fn({ buzz: { roomList: { edge: 20 }, space: { md: 16 }, type: { body: {} }, textSecondary: 'text' } }),
+      fn({ buzz: { roomList: { edge: 20 }, space: { md: 16 }, type: { body: {}, meta: {} }, textSecondary: 'text', ledgerQuiet: 'quiet', bgBase: 'base' } }),
   },
 }));
 
@@ -105,6 +105,22 @@ describe('runnable viewer boundary', () => {
     expect(tree.root.findByType(IndexRow).props.description).toContain('Stopped.');
     await act(async () => tree.unmount());
   });
+  it('shows Loading… over the mounted game until the native page load ends', async () => {
+    state.os = 'android';
+    let tree: any;
+    act(() => {
+      tree = create(<RunnableArtifact attachment={attachment} />);
+    });
+    expect(tree.root.findByProps({ testID: 'runnable-artifact-loading' }).findByType('Text').props.children).toBe('Loading…');
+    expect(tree.root.findAllByType('WebView')).toHaveLength(0);
+    await act(async () => {});
+    const game = tree.root.findByType('WebView');
+    expect(tree.root.findByProps({ testID: 'runnable-artifact-loading' }).findByType('Text').props.children).toBe('Loading…');
+    await act(async () => game.props.onLoadEnd());
+    expect(tree.root.findAllByProps({ testID: 'runnable-artifact-loading' })).toHaveLength(0);
+    expect(tree.root.findByType('WebView')).toBe(game);
+    await act(async () => tree.unmount());
+  });
   it('keeps a running game mounted when trusted parent controls rerender', async () => {
     state.os = 'android';
     state.requests = 0;
@@ -132,7 +148,9 @@ describe('runnable viewer boundary', () => {
     expect(props.referrerPolicy).toBe('no-referrer');
     expect(props.allow).toContain("microphone 'none'");
     const target = { style: { visibility: '' }, contentWindow: { postMessage: vi.fn() } };
+    expect(tree.root.findByProps({ testID: 'runnable-artifact-loading' }).findByType('Text').props.children).toBe('Loading…');
     await act(async () => props.onLoad({ currentTarget: target }));
+    expect(tree.root.findAllByProps({ testID: 'runnable-artifact-loading' })).toHaveLength(0);
     expect(target.contentWindow.postMessage).toHaveBeenCalledWith('beeline-start-game', '*');
     expect(tree.root.findAllByType('iframe')).toHaveLength(1);
     await act(async () => props.onLoad({ currentTarget: target }));
@@ -143,6 +161,7 @@ describe('runnable viewer boundary', () => {
     );
     await act(async () => tree.root.findByType('Button').props.onPress());
     const reopened = tree.root.findByType('iframe');
+    expect(tree.root.findAllByProps({ testID: 'runnable-artifact-loading' }).length).toBeGreaterThan(0);
     await act(async () => reopened.props.onLoad({ currentTarget: target }));
     expect(tree.root.findAllByType('iframe')).toHaveLength(1);
     expect(target.contentWindow.postMessage).toHaveBeenCalledTimes(2);

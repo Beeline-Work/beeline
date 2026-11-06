@@ -310,11 +310,6 @@ vi.mock('@/components/buzz/CornerGlyph', async () => {
 vi.mock('@/components/buzz/IdentityMark', () => ({
   IdentityMark: (props: any) => React.createElement('IdentityMark', props),
 }));
-vi.mock('@/components/buzz/MembersGlyph', () => ({
-  MEMBERS_GLYPH_STROKE_WIDTH: 1.25,
-  chromeStrokeWidth: () => 1.25,
-  MembersGlyph: (props: any) => React.createElement('MembersGlyph', props),
-}));
 vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
   const ReactModule = await import('react');
   return {

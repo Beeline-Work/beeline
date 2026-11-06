@@ -1,0 +1,18 @@
+# Release proof: the sign-in surface renders for a signed-out identity.
+#
+# The app's onboarding redirects a signed-in user straight to the room list,
+# so this flow is run by scripts/release-proof.mjs against a THROWAWAY
+# secondary Android user (fresh install, no session) that the runner creates,
+# pre-launches, and removes afterwards. It carries no launchApp step: the
+# runner has already started the app for that user.
+#
+# Never script the GitHub sign-in itself — the flow only proves the sign-in
+# surface renders with its call to action.
+appId: app.usebeeline
+name: signed-out
+---
+- assertVisible:
+    id: onboarding-wordmark
+- assertVisible:
+    id: onboarding-tagline
+- assertVisible: "Continue with GitHub"

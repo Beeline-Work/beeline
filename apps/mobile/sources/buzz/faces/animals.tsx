@@ -28,9 +28,6 @@ import { Circle, Ellipse, G, Line, Path, Polygon, Rect } from 'react-native-svg'
 import { FACE_IDS, type FaceId } from './index';
 
 export { FACE_IDS, type FaceId } from './index';
-
-// Brand-locked colours — the same constants Speakeasy's marks hard-code.
-const BRASS = '#E5A645';
 export const BONE = '#F2E9D8';
 export const INK = '#14091A';
 

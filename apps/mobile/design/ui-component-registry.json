@@ -223,7 +223,6 @@
     "components/buzz/MemberPickerSheet.tsx": ["MemberPickerSheet"],
     "components/buzz/MemberRosterRow.tsx": ["MemberRosterRow"],
     "components/buzz/MembersAgentsGlyph.tsx": ["MembersAgentsGlyph"],
-    "components/buzz/MembersGlyph.tsx": ["APEX_X", "MembersGlyph"],
     "components/buzz/MentionSuggestionMenu.tsx": ["ChannelSuggestionMenu", "MentionSuggestionMenu"],
     "components/buzz/MessageReactionRoster.tsx": ["MessageReactionRoster", "ReactionMembers"],
     "components/buzz/MessageReactionStrip.tsx": ["MessageReactionStrip"],

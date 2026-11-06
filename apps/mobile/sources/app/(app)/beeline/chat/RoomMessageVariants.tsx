@@ -44,10 +44,8 @@ import { shouldShowReplyReference } from '@/buzz/reply-reference';
 import {
   draftRequestId,
   provisionalDraftKey,
-  rememberProvisionalDraft,
-  takeProvisionalDraft,
 } from '@/buzz/draft-settle';
-import { liveDraftDrainStore } from '@/buzz/live-draft-drain';
+import { RoomPresentationContext } from '@/buzz/room-presentation-context';
 import { splitLedgerText } from '@/buzz/ledger-text';
 import { currentViewerConversation, subscribeViewerConversation, viewerContextLabel, splitViewerContext } from '@/buzz/viewer-conversation';
 import { parseConnectorReceipt, type ConnectorReceipt } from '@/buzz/connector-receipt';
@@ -95,18 +93,6 @@ import { forwardedMessageParts } from '@/buzz/message-forward';
 import { agentMessageJsonMarkdown } from '@/buzz/agent-message-json';
 
 type WriteDecision = 'allow' | 'deny';
-
-function cardMeta(text: string): React.ReactNode {
-  return text.split(/(@[a-z0-9_-]+)/gi).map((part, index) =>
-    part.startsWith('@') ? (
-      <TranscriptCardHandle key={`${part}-${index}`} meta>
-        {part}
-      </TranscriptCardHandle>
-    ) : (
-      part
-    ),
-  );
-}
 
 export interface WritePermissionCardProps {
   message: ChatDisplayMessage;
@@ -1259,6 +1245,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   announcementFeed = false,
   desktopLayout = false,
 }: OrdinaryLedgerMessageProps) {
+  const liveDraftDrainStore = React.useContext(RoomPresentationContext);
   const artifactVisible = useArtifactRowVisible(message.id, Boolean(message.attachments?.some(attachment => !attachment.expired)));
   const replyAvailable = canBeginReply(message, codeRoomId ?? message.reference?.channelId ?? '');
   const isOwn = message.isUser;
@@ -1380,15 +1367,15 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
         ? liveDraftDrainStore.getReceived(message.agentMessageDraftKey)
         : '');
     if (!text) return;
-    rememberProvisionalDraft(provisionalDraftKey(message.pubkey, draftKey), text);
-  }, [draftKey, message.agentMessageDraft, message.agentMessageDraftKey, message.pubkey]);
+    liveDraftDrainStore.rememberProvisionalDraft(provisionalDraftKey(message.pubkey, draftKey), text);
+  }, [draftKey, liveDraftDrainStore, message.agentMessageDraft, message.agentMessageDraftKey, message.pubkey]);
   // Spent once per settled reply, and decided once per mounted row: a
   // re-render mid-transition must not restart or cancel the dissolve.
   const settleRef = useRef<string | undefined>(undefined);
   if (settleRef.current === undefined) {
     settleRef.current =
       isAgent && message.requestId && message.pubkey && !message.isAgentActivity
-        ? (takeProvisionalDraft(provisionalDraftKey(message.pubkey, message.requestId)) ?? '')
+        ? (liveDraftDrainStore.takeProvisionalDraft(provisionalDraftKey(message.pubkey, message.requestId)) ?? '')
         : '';
   }
   const settleFrom = settleRef.current || undefined;

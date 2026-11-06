@@ -39,15 +39,6 @@ let roomReadNetwork: { requestToFirstByteMs: number; serverProcessingMs: number;
 let successfulPagesSinceReport = 0;
 const SUCCESS_SAMPLE_RATE = 8;
 
-/** The successful Room GET's wire timing, kept locally until the existing page observation. */
-function recordRoomReadNetworkTiming(
-  roomId: string,
-  timing: { requestToFirstByteMs: number; serverProcessingMs: number; jsResponseDelayMs?: number },
-): void {
-  if (pageStartedAt !== null && !pageReported && pageRoomId === roomId)
-    roomReadNetwork = timing;
-}
-
 function observePage(durationMs: number, failed: boolean): void {
   // Preserve the mainline one-in-eight success sample; failures report at once.
   // The matched wire timings ride the same observation, never another request.

@@ -45,8 +45,3 @@ export function releaseOpenBuzzChannelId(channelId: string | null | undefined): 
 export function getOpenBuzzChannelId(): string | null {
   return openChannelStack.length > 0 ? openChannelStack[openChannelStack.length - 1] : null;
 }
-
-/** Test-only reset. */
-function resetOpenBuzzChannelIdsForTests(): void {
-  openChannelStack.length = 0;
-}

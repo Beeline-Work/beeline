@@ -92,6 +92,54 @@ describe('GitHub phone operations', () => {
     return { room, corners, headSha, app, payload };
   }
 
+  it.each(['parent Room', 'corner override'] as const)(
+    'REVIEW-DISPATCH-BOUNDARY: green checks wake the %s reviewer exactly once inside the corner', async assignment => {
+      const { room, corners, headSha, app, payload } = await checksFixture();
+      const corner = corners[0]!;
+      const worker = 'c'.repeat(64), override = 'd'.repeat(64);
+      await database.query(`INSERT INTO identities(id,kind,name) VALUES
+        ($1,'agent','Implementer'),($2,'agent','Independent reviewer')`, [worker, override]);
+      await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$3),($2,$3)`,
+        [worker, override, HUMAN]);
+      await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+        SELECT workspace_id,id,who,'member' FROM rooms CROSS JOIN unnest($2::text[]) who WHERE id=$1`,
+        [room, [worker, override]]);
+      await seedCornerOpening(database, { cornerId: corner, agentId: worker });
+      if (assignment === 'corner override')
+        await database.query('UPDATE corner_facts SET reviewer_agent_id=$2 WHERE corner_id=$1', [corner, override]);
+      await database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"')
+        WHERE corner_id=$1`, [corner]);
+      const operations = new GitHubOperations(database, {} as GitHubOAuthClient,
+        app as unknown as GitHubAppClient, 'secret');
+      const rollup = vi.fn<GitHubAppClient['readCommitCheckRollup']>();
+      Object.assign(app, { readCommitCheckRollup: rollup });
+      const reviews = () => database.query(`SELECT room_id,agent_id,reason,review_context FROM agent_commands
+        WHERE review_context->>'purpose' IS NULL AND review_context->>'headSha'=$1`, [headSha]);
+
+      // A completed individual job is not a green head while another job is queued.
+      rollup.mockResolvedValue({ state: 'pending', total: 2, failing: [],
+        checks: [{ name: 'lint', status: 'passed' }, { name: 'tests', status: 'pending' }] });
+      await operations.processWebhook('check_run', payload);
+      expect((await reviews()).rows).toEqual([]);
+      expect((await database.query(`SELECT 1 FROM messages WHERE room_id=$1
+        AND system_event->>'kind'='check-passed'`, [corner])).rows).toEqual([]);
+
+      rollup.mockResolvedValue({ state: 'passed', total: 2, failing: [],
+        checks: [{ name: 'lint', status: 'passed' }, { name: 'tests', status: 'passed' }] });
+      for (let delivery = 0; delivery < 2; delivery++) {
+        await operations.processWebhook('check_run', payload);
+        await operations.processWebhook('workflow_run', { action: 'completed', installation: { id: 77 },
+          repository: { full_name: 'owner/widgets' }, workflow_run: {
+            head_branch: 'feature/corner-333333330001', head_sha: headSha, status: 'completed', conclusion: 'success',
+          } });
+      }
+      expect((await reviews()).rows).toEqual([expect.objectContaining({
+        room_id: corner, agent_id: assignment === 'corner override' ? override : REVIEWER,
+        review_context: expect.objectContaining({ headSha, cornerId: corner, pullRequest: 1 }),
+      })]);
+      expect((await database.query('SELECT 1 FROM agent_commands WHERE room_id=$1', [room])).rows).toEqual([]);
+    });
+
   it('OBJECTIVE-BRIEF: GitHub events read the latest brief objective instead of corner facts', async () => {
     const { corners, app, payload } = await checksFixture();
     await database.query(`INSERT INTO corner_brief_revisions(corner_id,revision,spec,objective,author_id,source_room_id)

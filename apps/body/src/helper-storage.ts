@@ -152,21 +152,6 @@ function processPathIndex(values: string[]): (root: string) => boolean {
   };
 }
 
-/** The machine lease owns a private instance before the emulator opens files.
- * Even a stale or unreadable lease defers cleanup; its owner handles retirement. */
-async function emulatorLeased(root: string, leaseRoot?: string): Promise<boolean> {
-  if (!leaseRoot) return false;
-  let entries: string[];
-  try { entries = await readdir(leaseRoot); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
-  for (const entry of entries) {
-    if (!entry.endsWith('.lease')) continue;
-    const text = await readFile(resolve(leaseRoot, entry), 'utf8');
-    if (!text || text.includes(`${root}/`) || root === resolve(leaseRoot, '..', '..') || root === resolve(leaseRoot, '..', '..', '..')) return true;
-  }
-  return false;
-}
-
 /** Durable conversation stores are kept as objects, including SQLite sidecars.
  * Their indexes/maps are part of resumption, not disposable caches. */
 const HISTORY_TREES = [
@@ -199,7 +184,6 @@ const HOME_DISPOSABLE = [
   'user/.m2/repository', 'user/.cargo/registry', 'user/.cargo/git',
   'user/.rustup/downloads', 'user/.rustup/tmp', 'user/.rustup/toolchains',
   'user/.local/share/pnpm/store', 'user/.yarn/cache', 'user/.node-gyp',
-  'android-instances', 'user/.android/avd', 'user/.android/cache',
   // prepareRoomAgentHome -> provisionManagedSkillsDir rebuilds these exact
   // managed trees on activation. Ambient/operator skill trees are untouched.
   'claude/skills', 'codex/skills', 'grok/skills', 'pi/skills', 'cursor/skills', 'opencode/skills',
@@ -268,11 +252,10 @@ function disposalObjects(root: string, archived: boolean, tree: Map<string, Tree
       // A known state/config ancestor may itself be an operator alias. The
       // no-follow inventory cannot see its protected descendants.
       if (!info.directory && containers.has(path)) continue;
-      const splitInstances = /(?:user\/\.android\/avd|android-instances)$/.test(rel);
-      if (info.directory && disposable.includes(path) && !splitInstances) {
+      if (info.directory && disposable.includes(path)) {
         if (!containsProtected(path)) objects.push(path);
         else visit(path);
-      } else if (info.directory && (containers.has(path) || splitInstances)) visit(path);
+      } else if (info.directory && containers.has(path)) visit(path);
       else if (!containsProtected(path)) objects.push(path);
       else if (info.directory) visit(path);
     }
@@ -341,7 +324,6 @@ export async function reclaimHelperStorage(input: {
   inUse?: (root: string) => Promise<boolean>;
   dryRun?: boolean;
   operatorHome?: string;
-  emulatorLeaseRoot?: string;
   log?: (entry: StorageReclaimEntry) => void;
   unknown?: (roomId: string, path: string) => void;
   now?: number;
@@ -379,14 +361,13 @@ export async function reclaimHelperStorage(input: {
         entries.push(...await input.removeArchived(room.name));
         return;
       }
-      if (await ownerInUse() || await emulatorLeased(root, input.emulatorLeaseRoot)) return;
+      if (await ownerInUse()) return;
       if (!input.dryRun && !await settleClaudeLogin(root, input.operatorHome ?? homedir())) return;
       const tree = await storageTree(root, input.progress);
       const grouped = new Map<string, string[]>();
       const candidates = disposalObjects(root, state.archived, tree);
       for (const path of state.archived ? candidates : candidates.flatMap(path => tree.get(path)?.directory ? unusedStorageObjects(path, tree, input.now ?? Date.now()) : [path])) {
-        const databaseKey = path.replace(/\.(sqlite|db)(?:-wal|-shm)$/, '.$1');
-        const key = /\/avd\/[^/]+\.ini$/.test(databaseKey) ? databaseKey.replace(/\.ini$/, '.avd') : databaseKey;
+        const key = path.replace(/\.(sqlite|db)(?:-wal|-shm)$/, '.$1');
         const paths = grouped.get(key) ?? [];
         paths.push(path);
         grouped.set(key, paths);
@@ -410,7 +391,7 @@ export async function reclaimHelperStorage(input: {
         }
         const allocatedBytes = [...before.values()].reduce((sum, inode) => sum + inode.blocks, 0);
         // Recheck orphan activity after the potentially long filesystem walk.
-        if (await ownerInUse() || await emulatorLeased(root, input.emulatorLeaseRoot)) return;
+        if (await ownerInUse()) return;
         let freedBytes = 0;
         if (!input.dryRun) for (const objectPath of objectPaths) await removeStoragePath(objectPath, tree);
         // Only a successfully removed object contributes. Charge a shared
@@ -491,7 +472,6 @@ export interface WholeStorageOptions {
   now?: number;
   inUse?: (path: string) => Promise<boolean>;
   operatorHome?: string;
-  emulatorLeaseRoot?: string;
   log?: (entry: StorageReclaimEntry) => void;
   beforeRemove?: () => Promise<boolean>;
   onError?: (path: string, error: unknown) => void;
@@ -515,7 +495,7 @@ export async function reclaimWholeStorageObject(
     if (Date.now() - capturedAt >= 1_000) { processUse = await capturePrivateProcessUse(options.progress); capturedAt = Date.now(); }
     return processUse(path);
   });
-  if ((!options.expireFiles && await inUse(root)) || await mounted(root) || await emulatorLeased(root, options.emulatorLeaseRoot)) return [];
+  if ((!options.expireFiles && await inUse(root)) || await mounted(root)) return [];
   const tree = await storageTree(root, options.progress).catch(error => {
     options.onError?.(root, error);
     return undefined;
@@ -534,7 +514,7 @@ export async function reclaimWholeStorageObject(
   const entries: StorageReclaimEntry[] = [];
   const links = new Map<string, number>();
   for (const path of ended ? wholeObjectsExceptSquire(root, tree) : options.expireFiles ? unusedStorageObjects(root, tree, options.now ?? Date.now()) : [root]) {
-    if (await inUse(options.expireFiles ? path : root) || await mounted(path) || await emulatorLeased(root, options.emulatorLeaseRoot)) {
+    if (await inUse(options.expireFiles ? path : root) || await mounted(path)) {
       if (options.expireFiles) continue;
       break;
     }

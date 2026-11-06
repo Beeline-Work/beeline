@@ -4,10 +4,6 @@ import { resolve } from 'node:path';
 export const SHARED_ASSET_FREE_FLOOR_BYTES = 2 * 1024 ** 3;
 export const PRIVATE_RECOVERY_RESERVE_BYTES = 128 * 1024 ** 2;
 
-export class SharedAssetCapacityError extends Error {
-  constructor() { super('insufficient free space for Workspace shared assets'); }
-}
-
 export function privateRecoveryReservePath(supervisorRoot: string): string {
   return resolve(supervisorRoot, 'beeline/helper/private-recovery-reserve');
 }

@@ -34,7 +34,7 @@ describe('push status presentation', () => {
     );
     expect(
       pushStatusLabel('OS permission: allowed', true, state({ phase: 'gateway-rejected' })),
-    ).toBe('push gateway refused registration — will retry');
+    ).toBe('server refused registration — will retry');
     expect(
       pushStatusLabel(
         'OS permission: allowed',
@@ -48,7 +48,7 @@ describe('push status presentation', () => {
         true,
         state({ phase: 'network-failed', message: 'offline' }),
       ),
-    ).toBe('network error reaching the push gateway — will retry');
+    ).toBe('connection unavailable — will retry');
   });
 
   it('explicitly names successful registration and keeps unknown registration distinct', () => {

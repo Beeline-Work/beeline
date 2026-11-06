@@ -9,7 +9,7 @@ vi.mock('react-native-keyboard-controller', async () => { const R = await import
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const TOKEN = `inv_${'b'.repeat(64)}`;
 const controls = vi.hoisted(() => ({
@@ -115,12 +115,16 @@ beforeAll(() => {
 });
 afterAll(() => vi.restoreAllMocks());
 
+const mounted: ReactTestRenderer[] = [];
+afterEach(async () => { await act(async () => { for (const tree of mounted.splice(0)) tree.unmount(); }); });
+
 async function render(): Promise<ReactTestRenderer> {
   let renderer!: ReactTestRenderer;
   await act(async () => {
     renderer = create(React.createElement(WorkspaceChoice));
   });
   await act(async () => undefined);
+  mounted.push(renderer);
   return renderer;
 }
 const find = (renderer: ReactTestRenderer, testID: string) =>

@@ -1,6 +1,7 @@
+import { ContentTarget } from '@/components/buzz/IndexRow';
 import { Button } from '@/components/buzz/Button';
 import React from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { WorkflowRunSummaryView } from '@beeline/api-contract/phone';
 import { pushTextWithAutoLinks } from '@/components/markdown/parseMarkdownSpans';
@@ -146,7 +147,7 @@ function WorkflowLine({
 }) {
   const label = runLabel(run);
   return (
-    <Pressable
+    <ContentTarget
       accessibilityLabel={`Open workflow, ${label}`}
       accessibilityRole="link"
       onPress={onPress}
@@ -157,7 +158,7 @@ function WorkflowLine({
       <Text numberOfLines={1} style={styles.workflowCopy} testID={`${testID}-copy`}>
         {label}
       </Text>
-    </Pressable>
+    </ContentTarget>
   );
 }
 

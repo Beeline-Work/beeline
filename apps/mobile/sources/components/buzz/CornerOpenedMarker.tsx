@@ -5,40 +5,6 @@ import { RepositoryLifecycleRow } from './PrLifecycleCard';
 import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { lifecycleItem } from '@/buzz/pr-lifecycle';
 
-/** The corner's current state, anchored beneath the message that requested it. */
-function CornerOpenedMarker({
-  title,
-  closed = false,
-  onOpen,
-  testID,
-}: {
-  title: string;
-  /** The corner has since closed; the line still opens it, read-only. */
-  closed?: boolean;
-  onOpen: () => void;
-  testID?: string;
-}) {
-  return (
-    <View>
-      <RepositoryLifecycleRow
-        testID={testID}
-        item={{
-          id: testID ?? title,
-          title,
-          state: closed ? 'Closed' : 'Opened',
-          kind: 'corner',
-          kindLine: 'corner',
-          cornerId: title,
-          actor: '',
-          updatedBy: '',
-        }}
-        onOpenCorner={onOpen}
-        onOpenUrl={() => undefined}
-      />
-    </View>
-  );
-}
-
 /** Each requested corner keeps its own visible line and stable key. */
 export function CornerOpenedMarkers({
   message,

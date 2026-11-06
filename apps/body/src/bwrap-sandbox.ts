@@ -63,9 +63,8 @@
  *                        enumerate any of them.
  *   --dev /dev           a minimal private /dev (the ro-bind above would
  *                        otherwise hand the child a read-only /dev/null).
- *                        Host `/dev/kvm` and approved `device` grants are
- *                        bound into it with `--dev-bind-try`, so an emulator
- *                        gets hardware acceleration and an absent node is
+ *                        Approved `device` grants are
+ *                        bound into it with `--dev-bind-try`, so an absent node is
  *                        skipped. A device carries only the access this
  *                        account already has on the host.
  *   --proc /proc         a private /proc for the new namespace.
@@ -386,7 +385,7 @@ export interface SandboxMountPlan {
   masks: MaskedPath[];
   /** Ordered mounts which must exist and may never silently degrade. */
   requiredMounts?: Array<{ source: string; target: string; mode: 'bind' | 'ro-bind' }>;
-  /** Host device nodes bound into the private `/dev` beyond {@link DEFAULT_SANDBOX_DEVICES}. */
+  /** Approved host device nodes bound into the private `/dev`. */
   devices?: string[];
 }
 
@@ -437,9 +436,6 @@ export interface SandboxSessionSpec {
     isolatedCategories?: readonly SharedAssetCategory[];
   };
 }
-
-/** Host device nodes every session reaches through its private `/dev`. */
-export const DEFAULT_SANDBOX_DEVICES = ['/dev/kvm'] as const;
 
 /**
  * The device nodes an approved `device` grant mounts on the agent's next
@@ -580,7 +576,7 @@ export function sandboxMountPlan(spec: SandboxSessionSpec): SandboxMountPlan {
     if (shared.packageHome) {
       add(source('package-cache', 'cache/cargo/registry'), 'bind', resolve(shared.packageHome, '.cargo/registry'));
     }
-    for (const name of ['tools', 'avd-base']) add(resolve(assetRoot, name), 'ro-bind');
+    add(resolve(assetRoot, 'tools'), 'ro-bind');
   }
   for (const tree of spec.dependencyPaths ?? []) {
     // npm --package-lock-only unlinks its private hidden lockfile. Keep that
@@ -660,7 +656,7 @@ export function buildBwrapArgv(input: {
     '/dev',
   ];
   // `--dev-bind-try`: a host without the node still spawns the session.
-  for (const device of new Set([...DEFAULT_SANDBOX_DEVICES, ...(input.plan.devices ?? [])])) {
+  for (const device of new Set(input.plan.devices ?? [])) {
     args.push('--dev-bind-try', device, device);
   }
   args.push('--proc', '/proc', '--tmpfs', '/tmp');

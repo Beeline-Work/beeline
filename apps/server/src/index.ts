@@ -21,7 +21,7 @@ process.on('unhandledRejection', error => {
   console.error('[unhandled-rejection]', error instanceof Error ? error.name : 'Unknown rejection');
 });
 import { sentryTelegramFromEnv } from './sentry-telegram.js';
-import { runSentryWakeDeadline, sentryWakeAgentFromEnv } from './sentry-wake.js';
+import { runSentryWakes, sentryWakeAgentFromEnv } from './sentry-wake.js';
 import { randomUUID } from 'node:crypto';
 import { assertSchemaCurrent, markSchemaCurrent, migrate, migrateData, PostgresDatabase } from './database.js';
 import { runMigrationStep } from './migration-steps.js';
@@ -371,7 +371,7 @@ async function main() {
   });
   const speechTranscriber = speechTranscriberFromEnv();
   const voiceConfig = voiceConfigFromEnv();
-  const voice = voiceConfig ? new VoiceService(database, live, { ...voiceConfig, objects: objectService }) : undefined;
+  const voice = voiceConfig ? new VoiceService(database, live, { ...voiceConfig, objects: objectService, publicOrigin }) : undefined;
   const freeAgentConfig = freeAgentConfigFromEnv(process.env, publicOrigin);
   const freeAgents = freeAgentConfig && process.env.FLY_FREE_AGENT_API_TOKEN
     ? new FreeAgentService(
@@ -495,9 +495,9 @@ async function main() {
     const due = await backgroundJobs.run('schedule-next-due', () => schedules.nextDelayMs());
     if (due.ok) return due.value;
   });
+  // Event-only owner: Sentry ingestion/recovery never returns a timer deadline.
   work.addDeadline('sentry', async () => {
-    const due = await backgroundJobs.run('sentry-wakes', () => runSentryWakeDeadline(jobsDatabase, sentryWakeAgentId));
-    if (due.ok) return due.value;
+    await backgroundJobs.run('sentry-wakes', () => runSentryWakes(jobsDatabase, sentryWakeAgentId));
   });
   work.addDeadline('connector-offer-expiry', async () => {
     const due = await backgroundJobs.run('connector-offer-expiry', () => connectorOfferExpiry.runOnce());
@@ -539,7 +539,7 @@ async function main() {
   const voiceDeadlines=new BackgroundRecordDeadlines('voice-call-recovery',work,()=>leader.wake());
   const stopVoiceDeadlines=voiceDeadlines.subscribe();
   registerBackgroundDeadlineFamilies(work,repairDeadlineFamilies(jobsDatabase,{
-    live,phone,mediaExpiry,institutionalMemory,institutionalAnchors,voice,voiceDeadlines,
+    live,mediaExpiry,institutionalMemory,institutionalAnchors,voice,voiceDeadlines,
   }),(name,run)=>backgroundJobs.run(name,run),jobsDatabase);
   const leader = new BackgroundLeader(jobsDatabase, (newLeader, signal) => work.run(newLeader, signal));
   const wakeWork = (name: string, source = name) => { work.wake(name, source); leader.wake(); };

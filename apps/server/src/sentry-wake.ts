@@ -121,11 +121,8 @@ export async function flushSentryWakes(db: SqlDatabase, agentId = sentryWakeAgen
       `SELECT pg_try_advisory_xact_lock(hashtext($1)) acquired`,
       [`commander-wakes:${TRIAGE}:${agentId}`]);
     if (!dispatch.rows[0]?.acquired) return false;
-    const state = await tx.query<{ wake_due: boolean }>(`SELECT
-      (last_wake_at IS NULL OR last_wake_at<=now()-interval '5 minutes') wake_due
-      FROM sentry_wake_state WHERE singleton FOR UPDATE SKIP LOCKED`);
+    const state = await tx.query(`SELECT singleton FROM sentry_wake_state WHERE singleton FOR UPDATE SKIP LOCKED`);
     if (!state.rows[0]) return false;
-    if (!state.rows[0].wake_due) return true;
     const issues = await tx.query<{ issue_id: string; level: string; title: string; permalink: string; event_count: string }>(
       `SELECT issue_id,level,title,permalink,event_count FROM sentry_wake_issues
        WHERE pending ORDER BY last_seen,issue_id,event_type`);
@@ -145,22 +142,13 @@ export async function flushSentryWakes(db: SqlDatabase, agentId = sentryWakeAgen
   }); } catch (error) {
     if ((error as { code?: string } | null)?.code !== '55P03') throw error;
     // FK/trigger locks can still be busy after the dispatch reservation.
-    // Rollback retains the batch and clock; no failed-observation retry is due.
+    // Rollback retains the batch; no failed-observation retry is due.
     console.warn('[sentry-wake] dispatch deferred while database rows are busy');
     return false;
   }
 }
 
-/** Remaining duration comes from the same database clock as batch admission. */
-export async function nextSentryWakeDelayMs(db: SqlDatabase): Promise<number | null> {
-  const row = (await db.query<{ delay_ms: number }>(`SELECT greatest(0,ceil(extract(epoch FROM
-    (COALESCE(last_wake_at+interval '5 minutes',clock_timestamp())-clock_timestamp()))*1000))::float8 delay_ms
-    FROM sentry_wake_state WHERE singleton AND EXISTS(SELECT 1 FROM sentry_wake_issues WHERE pending)`)).rows[0];
-  return row?.delay_ms ?? null;
-}
-
-/** One admitted owner pass; refused/failed work never supplies a retry clock. */
-export async function runSentryWakeDeadline(db: SqlDatabase, agentId = sentryWakeAgentFromEnv()): Promise<number | undefined> {
-  if (!await flushSentryWakes(db, agentId)) return undefined;
-  return (await nextSentryWakeDelayMs(db)) ?? undefined;
+/** One event-admitted pass. Sentry delivery never supplies a retry or batch clock. */
+export async function runSentryWakes(db: SqlDatabase, agentId = sentryWakeAgentFromEnv()): Promise<void> {
+  await flushSentryWakes(db, agentId);
 }

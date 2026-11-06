@@ -9,7 +9,7 @@ import React, {
 } from 'react';
 import { FlatList, View, type FlatListProps } from 'react-native';
 import type { ChatDisplayMessage } from './room-view-presentation';
-import { scheduleAnimationFrame } from './host-scheduler';
+import { yieldToNextPaint } from './host-scheduler';
 
 type PendingSend = { message: ChatDisplayMessage; key: string; painted: boolean };
 
@@ -57,16 +57,14 @@ export class RoomSendPreview {
     const current = this.value;
     if (!current || current.message.id !== id || current.painted || this.layoutScheduled) return;
     this.layoutScheduled = true;
-    const finish = () =>
-      setTimeout(() => {
-        if (this.value?.key !== current.key) return;
-        this.value = { ...this.value, painted: true };
-        this.publish();
-        const resolve = this.finish;
-        this.finish = undefined;
-        resolve?.();
-      }, 0);
-    if (scheduleAnimationFrame(finish) === false) finish();
+    void yieldToNextPaint().then(() => {
+      if (this.value?.key !== current.key) return;
+      this.value = { ...this.value, painted: true };
+      this.publish();
+      const resolve = this.finish;
+      this.finish = undefined;
+      resolve?.();
+    });
   }
 
   reconcile(from: string, to: string): void {

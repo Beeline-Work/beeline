@@ -175,6 +175,7 @@ const phoneOperations = {
 } as const satisfies Record<keyof PhoneOperationMap, true>;
 const daemonOperations = {
   acknowledgeAgentCommand: true,
+  releaseAgentTurn: true,
   answerUsageRefresh: true,
   approveCornerMerge: true,
   archiveCorner: true,
@@ -188,6 +189,7 @@ const daemonOperations = {
   beginRegistryMcpOAuth: true,
   cancelWorkflowRun: true,
   claimAgentCommand: true,
+  claimAgentTurn: true,
   claimRegistryMcpOAuthCode: true,
   closeCornerPullRequest: true,
   completeProviderWebhookAssignment: true,
@@ -241,7 +243,6 @@ const daemonOperations = {
   getRoomRepositoryState: true,
   getRoomTargetBranch: true,
   getTargetAgentAuthority: true,
-  getWakeDelivery: true,
   getWalletToolBalance: true,
   getWalletToolChains: true,
   getWalletToolHistory: true,
@@ -336,7 +337,6 @@ const daemonOperations = {
   sendOperatorSystemDm: true,
   setCornerHold: true,
   setEventSubscriptions: true,
-  setWakeDelivery: true,
   startWorkflow: true,
   stopAgentTurn: true,
   updateAgentSchedule: true,

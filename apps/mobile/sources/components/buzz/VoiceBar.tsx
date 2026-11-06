@@ -22,7 +22,7 @@ export function VoiceAgentStrip({ voice }: { voice: VoiceCallState }) {
         {voice.speaker === agent.pubkey && <HullLivePulse style={styles.speakingPulse}>
           <View style={styles.speakingFrame} testID={`voice-speaking-frame-${agent.pubkey}`} />
         </HullLivePulse>}
-        <IdentityMark kind="agent" seed={agent.pubkey} face={agent.face} name={agent.name} size={32} />
+        <IdentityMark kind="agent" seed={agent.pubkey} face={agent.face} avatarUrl={agent.avatar} name={agent.name} size={32} />
         {voice.target === agent.pubkey && <View style={styles.pinBadge} testID={`voice-pin-${agent.pubkey}`}><PinGlyph size={12} color={theme.buzz.bgBase} /></View>}
       </View>} />
       <Text numberOfLines={1} style={[styles.name, voice.target === agent.pubkey && styles.pinnedName]}>{agent.name}</Text>

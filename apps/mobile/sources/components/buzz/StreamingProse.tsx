@@ -1,6 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useContext, useEffect, useState } from 'react';
 import { Text, type TextStyle } from 'react-native';
-import { liveDraftDrainStore, type LiveDraftDrainStore } from '@/buzz/live-draft-drain';
+import { type LiveDraftDrainStore } from '@/buzz/live-draft-drain';
+
+import { RoomPresentationContext } from '@/buzz/room-presentation-context';
 
 type StreamingProseProps = {
   textStyle: TextStyle;
@@ -29,10 +31,12 @@ type StreamingProseProps = {
 export function StreamingProse({
   markdown,
   streamKey,
-  store = liveDraftDrainStore,
+  store: suppliedStore,
   textStyle,
   testID,
 }: StreamingProseProps) {
+  const visitStore = useContext(RoomPresentationContext);
+  const store = suppliedStore ?? visitStore;
   if (!streamKey) {
     return (
       <Text selectable style={textStyle} testID={testID}>

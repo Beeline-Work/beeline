@@ -152,6 +152,22 @@ describe('the one phone socket',()=>{
     await open();await vi.advanceTimersByTimeAsync(100);
     expect((await answer).constructor.name).toBe('MonolithRequestTimeoutError');expect(Socket.instances).toHaveLength(1);
   });
+  it('a read deadline leaves an in-flight voice join on the same socket to receive its answer', async () => {
+    const { connection } = setup();
+    const read = connection.request('readRoom', { roomId: 'a' }, { timeoutMs: 100 }).catch(error => error);
+    const socket = await open();
+    const join = connection.request('voiceJoin', { roomId: 'a' }).catch(error => error);
+    await vi.advanceTimersByTimeAsync(100);
+    expect((await read).constructor.name).toBe('MonolithRequestTimeoutError');
+    expect(socket.readyState).toBe(1);
+    expect(useConnectionFailure()).toBe(true);
+    const result = { call: { id: 'call' }, sessionId: 'session' };
+    socket.reply(result, 1);
+    expect(await join).toEqual(result);
+    expect(useConnectionFailure()).toBe(false);
+    expect(socket.requests().map(frame => frame.op)).toEqual(['readRoom', 'voiceJoin']);
+    expect(Socket.instances).toHaveLength(1);
+  });
   it('shares a replacement after two concurrent reads fail together',async()=>{
     const {connection}=setup();const oldRoom=connection.request('readRoom',{roomId:'a'}).catch(error=>error),oldList=connection.request('readWorkspaces',{}).catch(error=>error);
     const first=await open();first.drop();expect(await oldRoom).toBeInstanceOf(PhoneSocketDisconnectedError);expect(await oldList).toBeInstanceOf(PhoneSocketDisconnectedError);

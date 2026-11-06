@@ -468,9 +468,9 @@ Stop only the emulator and fixture processes owned by this wake.
 The host runner is built but **not installed**. Switch only if any of the next
 three scheduled nights (November 2–4, 2026) fails for a non-app reason. It fetches
 and detaches exact main in `<state-dir>/checkout`, installs root/mobile dependencies
-only when their lockfile hashes change, leases one emulator, bind-tests unused
+only when their lockfile hashes change, uses an operator-selected running host emulator, bind-tests unused
 ports, and runs the same `nightly-run.sh`. It reports a held capture, verdict or
-emulator lane as blocked (exit 2), leaving the holder alone. Stale `host.lock` or
+unavailable emulator as blocked (exit 2). Stale `host.lock` or
 `nightly.lock` directories require verifying that no writer remains before removal.
 
 Before enabling it, replace agent capture schedule `390f36c4-454d-475a-a789-0d3561bcdc92`
@@ -491,16 +491,13 @@ PATH=/absolute/node/bin:/absolute/beeline/bin:/absolute/android-sdk/platform-too
 LATENCY_RIG_STATE=/absolute/private/latency-rig-speedy
 LATENCY_RIG_RUNNER=/absolute/repository/scripts/latency-rig/nightly-host.sh
 ANDROID_HOME=/absolute/android-sdk
-BEELINE_ANDROID_EMULATOR_BINARY=/absolute/android-sdk/emulator/emulator
-BEELINE_ANDROID_BASE_AVD_HOME=/absolute/avd-metadata-containing-se_api35
-BEELINE_ANDROID_LEASE_ROOT=/absolute/private/latency-rig-speedy/emulator-leases
-BEELINE_ANDROID_INSTANCE_ROOT=/absolute/private/latency-rig-speedy/emulator-instances
+LATENCY_RIG_DEVICE=emulator-5554
 ```
 
 Include the host JDK/toolchain environment and optional prepared
 `GRADLE_RO_DEP_CACHE` described above. Use the existing persistent rig state to
 retain baseline history. Requires the local-run prerequisites plus `git`, `npm`,
-`beeline`, `adb`, `ss`, `flock`, `setsid` and `pkill`. Install only after the
+`adb`, `ss`, `flock`, `setsid` and `pkill`. Install only after the
 schedule switch:
 
 ```sh
@@ -615,8 +612,7 @@ in the connection, never in the rig, repository or capture environment:
    through the approved first-party connection. Its `sha` is mandatory. On HTTP
    409, read the latest contents, regenerate the body, and retry (at most three
    writes); never resend a stale body or replace unrelated concurrent edits.
-   `publishInsights(transport, verdict)` implements this protocol for a sealed
-   transport; the CLI only prepares the request and has no network credentials.
+   The CLI only prepares the request and has no network credentials.
 4. Save the successful publication receipt with the run; a publication failure
    must be reported and retried from fresh contents, including on a passing night.
    This does not change the measurement verdict or baseline. Publish only final

@@ -21,11 +21,6 @@ import {
   type RoomRepositoryStateResult,
 } from '@beeline/api-contract/daemon';
 import { GrantCommandRunner, GrantRunnerServer, type GrantRunnerEndpoint } from './grant-runner.js';
-import {
-  reapKeptCornerEmulators,
-  stopKeptCornerEmulator,
-  type CornerClosedDecision,
-} from './corner-emulator.js';
 import { ConnectorUsageRecorder } from './connector-runner.js';
 import { MonolithCornerTurnLoop } from './monolith-corner-turn.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
@@ -464,8 +459,6 @@ export class RoomRuntimeCoordinator {
   private readonly surfaceHealth = new SurfaceHealth();
   /** Close/reconcile leftovers retried until local and remote refs are gone. */
   private readonly pendingCornerReaps = new Map<string, CornerWorktree>();
-  /** Last logged emulator reaper decision per corner, so reconcile does not repeat it. */
-  private readonly emulatorReapDecisions = new Map<string, string>();
   /** Idle corners listen for durable commands without obtaining a token or checkout. */
   private readonly idleCornerSubscriptions = new Map<string, () => void>();
   private readonly pendingCornerCommands = new Set<string>();
@@ -521,7 +514,6 @@ export class RoomRuntimeCoordinator {
   /** Runtime refusals wait for a server configuration/sign-in change. */
   private readonly standingRuntimeStartFaults = new Set<string>();
   /** Per corner, the requests whose start failure has already been said out loud. */
-  private readonly reportedCornerStartFailures = new Map<string, Set<string>>();
   /** Standing workspace-configuration faults: the config that failed, and how. */
   private readonly standingCornerStartFaults = new Map<string, { configKey: string; error: unknown }>();
   private readonly scheduler: AgentProcesses;
@@ -937,7 +929,6 @@ export class RoomRuntimeCoordinator {
         if (this.stopped) return;
         await this.sweepArchivedCornerWorktrees(request.archived, new Set([...attemptedReaps, ...this.desiredChannels]));
         if (this.stopped) return;
-        await this.reapClosedCornerEmulators(this.desiredChannels);
         if (this.stopped) return;
         await this.sweepRoomPrivateStorage(request.states);
       }
@@ -1008,11 +999,6 @@ export class RoomRuntimeCoordinator {
       this.unwatchCorner(roomId);
       this.surfaceHealth.remove(roomId);
       if (!this.running.has(roomId)) this.monolithCornerParents.delete(roomId);
-      await stopKeptCornerEmulator(
-        this.runtime.supervisorRoot, roomId, `corner archived event; stopped by agent ${this.agent.publicKey}`,
-      ).catch((error) => {
-        console.error(`[thin-core] corner ${roomId} emulator stop failed:`, error);
-      });
       return;
     }
     this.roomRemovalConfirmations.delete(roomId);
@@ -1274,7 +1260,6 @@ export class RoomRuntimeCoordinator {
       }
       if (previousStanding) {
         this.standingCornerStartFaults.delete(corner.cornerId);
-        this.reportedCornerStartFailures.delete(corner.cornerId);
       }
       if (repository.resolution === 'unverified') {
         throw new Error('corner parent Room repository state is not verified yet');
@@ -1433,7 +1418,6 @@ export class RoomRuntimeCoordinator {
         ...(!repositoryBacked ? { scratch: { path: workspacePath, cornerId: corner.cornerId } } : {}),
       });
       this.standingCornerStartFaults.delete(corner.cornerId);
-      this.reportedCornerStartFailures.delete(corner.cornerId);
       console.log(
         worktree
           ? `[thin-core] serving corner ${corner.cornerId} on ${featureBranch} at ${workspacePath}`
@@ -1613,51 +1597,35 @@ export class RoomRuntimeCoordinator {
     }
   }
 
-  /**
-   * An agent addressed in a corner it then could not restore must not be
-   * silent about it.
-   *
-   * The corner never starts, so no turn ever runs. Report against the actual
-   * pending command — never a fabricated generation — so the server can
-   * authorize the failed receipt and inscribe the Room line. Every pending
-   * request is told once, so a person who asks again while the corner still
-   * cannot start sees the failure under the new message too. Standing
-   * workspace-configuration faults are not retried until that configuration
-   * changes; clone/network failures keep retrying.
-   */
+  /** A real startup failure is a result of an owned command, never an
+   * unclaimed receipt. Terminal commands disappear from the pending queue. */
   private async reportCornerStartFailure(cornerId: string, error: unknown): Promise<boolean> {
+    const api = this.options.daemonApi;
+    const generationId = randomUUID();
+    let claimed = false;
     try {
-      const { commands } = await this.options.daemonApi.execute('getAgentCommands', {
-        roomId: cornerId,
+      const pending = (await api.execute('getAgentCommands', {roomId:cornerId})).commands
+        .find(command => command.action === 'input' || command.action === 'resume');
+      if (!pending) return false;
+      const result = await api.execute('claimAgentTurn', {
+        roomId:cornerId,commandId:pending.id,generationId,
       });
-      const requests = new Set(
-        commands
-          .filter((command) => command.action === 'input' || command.action === 'resume')
-          .map((command) => command.turnRequestId),
-      );
-      if (!requests.size) return false;
-      const reported = this.reportedCornerStartFailures.get(cornerId) ?? new Set<string>();
-      this.reportedCornerStartFailures.set(cornerId, reported);
+      claimed = true;
       const diagnostic = error && typeof error === 'object' && 'stderr' in error &&
         typeof error.stderr === 'string' && error.stderr.trim() ? error.stderr : error;
       const reason = distillTurnFailureReason(diagnostic);
-      for (const requestId of requests) {
-        if (reported.has(requestId)) continue;
-        await this.options.daemonApi.execute('postAgentTurnReceipt', {
-          agentId: this.agent.publicKey,
-          roomId: cornerId,
-          requestId,
-          status: 'failed',
-          reason: reason.text,
-          reasonKind: 'workspace-failure',
-          trace: { totalMs: 0, attempts: [], reason: redactReplayError(reason.text), reasonKind: 'workspace-failure' },
-        });
-        reported.add(requestId);
-      }
+      for (const command of result.commands) await api.execute('postAgentTurnReceipt', {
+        agentId:this.agent.publicKey,roomId:cornerId,requestId:command.turnRequestId,generationId,
+        status:'failed',reason:reason.text,reasonKind:'workspace-failure',
+        trace:{totalMs:0,attempts:[],reason:redactReplayError(reason.text),reasonKind:'workspace-failure'},
+      });
       return true;
     } catch (reportError) {
       console.error(`[thin-core] corner ${cornerId} start-failure report failed:`, reportError);
       return false;
+    } finally {
+      if (claimed) await api.execute('releaseAgentTurn', {roomId:cornerId,generationId})
+        .catch(reportError => console.error(`[thin-core] corner ${cornerId} claim release failed:`,reportError));
     }
   }
 
@@ -1801,43 +1769,6 @@ export class RoomRuntimeCoordinator {
   }
 
   /**
-   * Helper start and each reconcile: an emulator whose corner is not open
-   * here stays until the server says the corner is archived. Every runtime
-   * on the host scans the same records, so any refusal (403, 404, 410) or
-   * failed lookup keeps it: one agent's partial view cannot stop another
-   * agent's live corner. The server answers a corner the caller cannot
-   * reach with 403, never with a deletion signal.
-   */
-  private async reapClosedCornerEmulators(liveCornerIds: ReadonlySet<string>): Promise<void> {
-    const agentId = this.agent.publicKey;
-    await reapKeptCornerEmulators(this.runtime.supervisorRoot, liveCornerIds, async (cornerId) => {
-      let decision: CornerClosedDecision;
-      try {
-        const restore = await this.options.daemonApi.execute('getCornerRestoreState', { cornerId });
-        decision = restore.archived === true
-          ? { closed: true, reason: `corner archived; reaped by agent ${agentId}` }
-          : { closed: false, reason: restore.archived === false ? 'corner open' : 'archive state not reported' };
-      } catch (error) {
-        decision = {
-          closed: false,
-          reason: error instanceof DaemonApiError
-            ? `lookup refused (${error.status})`
-            : `lookup failed: ${error instanceof Error ? error.message : String(error)}`,
-        };
-      }
-      // Reconcile repeats every decision; log only when one changes.
-      if (this.emulatorReapDecisions.get(cornerId) !== decision.reason) {
-        this.emulatorReapDecisions.set(cornerId, decision.reason);
-        console.log(`[thin-core] corner emulator reaper: corner=${cornerId} agent=${agentId} ` +
-          `${decision.closed ? 'stop' : 'keep'}: ${decision.reason}`);
-      }
-      return decision;
-    }).catch((error) => {
-      console.error('[thin-core] corner emulator reap failed:', error);
-    });
-  }
-
-  /**
    * Startup/reconcile recovery for worktrees no current process remembers.
    * Archived server state names the exact corner; local discovery is limited
    * to that exact directory and the host's bare-repository cache.
@@ -1954,7 +1885,6 @@ export class RoomRuntimeCoordinator {
       relatedRoots: roomId => [resolve(this.runtime.supervisorRoot, 'beeline/corners', roomId),
         ...owners.filter(owner => owner.roomId === roomId).map(owner => resolve(this.runtime.supervisorRoot, 'beeline', owner.kind, owner.itemId))],
       operatorHome: this.baseConfig.operatorHome,
-      emulatorLeaseRoot: resolve(workspaceAssetRoot(this.runtime.supervisorRoot, this.runtime.communityId), 'cache/android-leases'),
       withIdleRoom: async (roomId, task) => {
         if (this.stopped || this.startingRooms.has(roomId) || this.startingCorners.has(roomId) ||
             this.running.get(roomId)?.body.isBusy() ||

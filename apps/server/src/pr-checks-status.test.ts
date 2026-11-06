@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
+import { transformSync } from 'esbuild';
 import { cornerFeatureBranch } from './corner-branch.js';
 import { spawn } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
@@ -440,12 +443,34 @@ describe('PR-scoped check gate', () => {
     expect(await gate()).toMatchObject({ checks: 'pending', stage: 'checking', mergeAllowed: false });
   });
 
-  it('Reproduction EMPTY-SUITE-1: a missing required check stays pending', async () => {
-    suiteStatus = 'queued';
-    suiteRuns = 0;
+  it.each([0, 25])('Reproduction R1: counts missing required checks after %i reported successes', async count => {
     associatedPulls = [{ state: 'open', base: { ref: 'main' } }];
-    requiredContexts = ['TYPECHECK'];
-    expect(await gate()).toMatchObject({ checks: 'pending', stage: 'checking', mergeAllowed: false });
+    requiredContexts = ['PRODUCTION-CORPUS REPLAY', 'FRAME-BUDGET', 'STATE-UPGRADE'];
+    rollupContexts = {
+      totalCount: count,
+      nodes: Array.from({ length: count }, (_, i) => ({
+        __typename: 'CheckRun', name: `check-${i}`, status: 'COMPLETED', conclusion: 'SUCCESS',
+      })),
+    };
+    const rollup = await app.readCommitCheckRollup('room-token', 'owner/widgets', SHA);
+    expect(rollup).toMatchObject({ state: 'pending', total: count + 3 });
+    expect(await gate()).toMatchObject({
+      checks: 'pending', checkCount: count + 3, mergeAllowed: false,
+      checkStates: { passed: count, pending: 3 },
+    });
+    const formatter = transformSync(readFileSync(new globalThis.URL('../../mobile/sources/buzz/corner-status-line.ts', import.meta.url), 'utf8'), {
+      loader: 'ts', format: 'cjs', tsconfigRaw: {},
+    });
+    const module = { exports: {} };
+    runInNewContext(formatter.code, { module, exports: module.exports });
+    const { cornerStatusLine } = module.exports as typeof import('../../mobile/sources/buzz/corner-status-line.js');
+    const line = cornerStatusLine({
+      checks: 'pending',
+      pr: { number: 3958, url: URL, headSha: SHA },
+      checksSummary: { status: 'pending', total: rollup.total, checks: rollup.checks, failing: [] },
+    } as import('@beeline/api-contract/phone').CornerLifecycleView, false);
+    console.info(`Reproduction R1: ${line}`);
+    expect(line).toBe(`PR #3958 · ${count}/${count + 3} tests passed · running`);
   });
 
   it.each(['workflow', 'suite'])('CHECK-HEAD-1: a completed job webhook cannot dispatch review with a queued %s', async registration => {

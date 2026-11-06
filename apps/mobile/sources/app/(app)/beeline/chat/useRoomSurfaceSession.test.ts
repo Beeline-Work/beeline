@@ -2636,7 +2636,7 @@ describe('useRoomSurfaceSession', () => {
     if (cached) controls.cached = roomView('room-a');
     // The socket owner supplies recovery; the Room must not duplicate its
     // connection failure copy or lose the ability to paint a later answer.
-    controls.roomError = new RoomViewHttpError(0, 'timeout');
+    controls.roomError = Object.assign(new Error('The socket closed before its answer'), { socketRequest: true });
     let current!: UseRoomSurfaceSessionResult;
     let renderer!: ReactTestRenderer;
     await act(async () => {

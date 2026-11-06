@@ -88,10 +88,12 @@ class HotReadDatabase implements SqlDatabase {
   async query<Row extends QueryResultRow = QueryResultRow>(
     sql: string,
     values: unknown[] = [],
+    preparedName?: string,
   ): Promise<QueryResult<Row>> {
     const match = matchers.find(([, matches]) => matches(sql));
     if (match && !this.results.has(match[0])) {
-      const measurement = explainHotRead(this.database, match[0], sql, values).then((result) => {
+      // A read the server sends as a named statement is timed the same way.
+      const measurement = explainHotRead(this.database, match[0], sql, values, 5, preparedName).then((result) => {
         this.results.set(match[0], result);
       });
       this.pending.add(measurement);
@@ -101,7 +103,7 @@ class HotReadDatabase implements SqlDatabase {
         this.pending.delete(measurement);
       }
     }
-    return this.database.query<Row>(sql, values);
+    return this.database.query<Row>(sql, values, preparedName);
   }
 
   transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {

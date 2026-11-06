@@ -101,28 +101,53 @@ export function assertHotRead(result: HotReadResult): void {
   );
 }
 
+function sqlLiteral(value: unknown): string {
+  if (value === null || value === undefined) return 'NULL';
+  if (typeof value === 'number' || typeof value === 'bigint') return String(value);
+  if (typeof value === 'boolean') return value ? 'TRUE' : 'FALSE';
+  const text =
+    value instanceof Date
+      ? value.toISOString()
+      : Array.isArray(value)
+        ? `{${value.map((item) => (item === null ? 'NULL' : `"${String(item).replace(/["\\]/g, '\\$&')}"`)).join(',')}}`
+        : typeof value === 'string'
+          ? value
+          : JSON.stringify(value);
+  return `'${text.replace(/'/g, "''")}'`;
+}
+
 export async function explainHotRead(
   database: SqlDatabase,
   name: HotReadName,
   sql: string,
   values: readonly unknown[],
   sampleCount = 5,
+  preparedName?: string,
 ): Promise<HotReadResult> {
-  // Warm the PGlite query path once so cold planning and initialization do not
-  // become a latency sample. Both corpus shapes still gate all five timed reads.
-  await database.query<QueryResultRow>(
-    `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${sql}`,
-    [...values],
-  );
+  // The server sends a named read as a server-side prepared statement, so its
+  // plan is cached on the connection. Time that statement, not a fresh parse.
+  const statement = preparedName ? `hot_read_${preparedName.replace(/\W/g, '_')}` : undefined;
+  // EXPLAIN EXECUTE takes no bind parameters; each literal is coerced to the
+  // type the prepared statement declared for that position.
+  const literals = values.map(sqlLiteral).join(',');
+  const explain = statement
+    ? `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) EXECUTE ${statement}${values.length ? `(${literals})` : ''}`
+    : `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${sql}`;
+  const bound = statement ? [] : [...values];
+  if (statement) await database.query(`PREPARE ${statement} AS ${sql}`);
   const samples: ExplainSample[] = [];
-  for (let sample = 0; sample < sampleCount; sample += 1) {
-    const startedAt = performance.now();
-    const explained = await database.query<QueryResultRow>(
-      `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${sql}`,
-      [...values],
-    );
-    const wallMs = performance.now() - startedAt;
-    samples.push({ plan: explained.rows[0]?.['QUERY PLAN'], wallMs });
+  try {
+    // Warm the query path once so cold planning and initialization do not
+    // become a latency sample. Both corpus shapes still gate all five timed reads.
+    await database.query<QueryResultRow>(explain, bound);
+    for (let sample = 0; sample < sampleCount; sample += 1) {
+      const startedAt = performance.now();
+      const explained = await database.query<QueryResultRow>(explain, bound);
+      const wallMs = performance.now() - startedAt;
+      samples.push({ plan: explained.rows[0]?.['QUERY PLAN'], wallMs });
+    }
+  } finally {
+    if (statement) await database.query(`DEALLOCATE ${statement}`);
   }
   const ordered = samples.map(({ wallMs }) => wallMs).sort((left, right) => left - right);
   const p95Index = Math.max(0, Math.ceil(ordered.length * 0.95) - 1);

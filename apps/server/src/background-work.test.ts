@@ -79,14 +79,17 @@ describe('semantic deadline jobs',()=>{
 describe('owned timer chains', () => {
   it('keeps connection cadence and cancels the next tick when its owner closes', async () => {
     vi.useFakeTimers();
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
     try {
       // Other worker activity may own timers while this connection closes.
       const unrelated = setTimeout(() => {}, 60_000);
-      const unrelatedCount = vi.getTimerCount();
+      let nextTick: ReturnType<typeof setTimeout> | undefined;
       const run = vi.fn();
       const stop = startConnectionWork(() => {
         run();
         if (run.mock.calls.length === 2) {
+          nextTick = setTimeoutSpy.mock.results.at(-1)!.value;
           stop();
         }
       }, 1000);
@@ -94,11 +97,17 @@ describe('owned timer chains', () => {
       expect(run).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(2001);
       expect(run).toHaveBeenCalledTimes(2);
-      expect(vi.getTimerCount()).toBe(unrelatedCount);
+      expect(nextTick).toBeDefined();
+      expect(clearTimeoutSpy).toHaveBeenCalledWith(nextTick);
+      expect(clearTimeoutSpy).not.toHaveBeenCalledWith(unrelated);
       await vi.advanceTimersByTimeAsync(10_000);
       expect(run).toHaveBeenCalledTimes(2);
       clearTimeout(unrelated);
-    } finally { vi.useRealTimers(); }
+    } finally {
+      setTimeoutSpy.mockRestore();
+      clearTimeoutSpy.mockRestore();
+      vi.useRealTimers();
+    }
   });
 
   it('runs startup work immediately and uses the next queue deadline', async () => {

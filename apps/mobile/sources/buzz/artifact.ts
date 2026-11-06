@@ -73,8 +73,8 @@ export function mediaIdFromUrl(url: string): string | null {
   return match ? (match[1] ?? null) : null;
 }
 
-/** Defence in depth behind the script-off WebView: no network, no frames, inline styles and data images only. */
-export const ARTIFACT_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-src 'none'";
+/** Defence in depth behind the script-off WebView: no network, no frames, inline styles, data images and data fonts only. */
+export const ARTIFACT_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'; frame-src 'none'";
 
 export const ARTIFACT_MAX_PREVIEW_HEIGHT = 220;
 

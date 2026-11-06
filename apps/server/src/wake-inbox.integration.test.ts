@@ -299,6 +299,7 @@ it('reports a digest to each actual orderer even when an unrelated lifecycle fac
   const secondAgent = 'd'.repeat(64);
   await db.query("INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Second','second') ON CONFLICT DO NOTHING", [secondAgent]);
   await db.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$2) ON CONFLICT DO NOTHING', [secondAgent, HUMAN]);
+  await db.query("INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')", [WS, secondAgent]);
   await db.query("INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member'),($1,$4,$3,'member')", [WS, ROOM, secondAgent, OTHER]);
   await phone.execute('sendRoomMessage', { roomId: OTHER, messageId: id(), text: '@second Lead another task' }, HUMAN);
   const secondCommand = (await inbox(db, OTHER, secondAgent))[0]!;

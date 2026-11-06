@@ -13,7 +13,7 @@ import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { roomReplySteps } from './room-turn-steps.js';
 import { toolCallFailureLine } from './tool-call-failure.js';
-import { distillTurnFailureReason, redactToolDetail } from './turn-failure-reason.js';
+import { distillTurnFailureReason } from './turn-failure-reason.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
 import { isAgentProcessExit } from './agent-process.js';
 import { MonolithRoomTurnLoop, ActiveTurn, inboxItemPromptBody, transcriptMessagePrompt, resumePrompt, inboxItemAuthorName, roomMessagePrompt, approvedDeviceGrant, deviceGrantResumePrompt, openCornerToolCall, openedACorner, pendingCardKind } from './monolith-room-turn.js';
@@ -357,7 +357,7 @@ import { MonolithRoomTurnLoop, ActiveTurn, inboxItemPromptBody, transcriptMessag
                 stream.close();
                 await ctx.discardSession();
                 const tool = result.toolCalls.at(-1)?.title;
-                throw new Error(`unreported_order: ${result.stopReason}${tool ? ` (${redactToolDetail(tool)})` : ''}; requested work is unconfirmed`);
+                throw new Error(`unreported_order: ${result.stopReason}${tool ? ` (${tool})` : ''}; requested work is unconfirmed`);
               }
               if (result.stopReason === 'free-agent-time-limit') {
                 stream.close();
@@ -469,7 +469,7 @@ import { MonolithRoomTurnLoop, ActiveTurn, inboxItemPromptBody, transcriptMessag
               }
               if (openCornerCall) {
                 console.log(
-                  `[thin-core] monolith Room ${ctx.options.roomId} tool call: ${redactToolDetail(openCornerCall.title ?? '')} (${openCornerCall.status ?? 'no status'})`,
+                  `[thin-core] monolith Room ${ctx.options.roomId} tool call: ${openCornerCall.title ?? ''} (${openCornerCall.status ?? 'no status'})`,
                 );
                 if (cornerOpened) ctx.options.onCornerOpened?.();
               }

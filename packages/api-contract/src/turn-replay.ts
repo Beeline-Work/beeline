@@ -13,22 +13,19 @@ export interface TurnReplay {
   attempts: { attempt: number; phases: Record<string, number>; tools: ReplayToolCall[] }[];
 }
 
-/** Redact before truncating so a cut token cannot escape detection. */
+/** Match tool identity, never credential-shaped content. */
+export function isCredentialFetchToolName(value: unknown): boolean {
+  return typeof value === 'string' && /(?:^|[._:/-])fetch_credential$/.test(value);
+}
+
+/** Bound diagnostic text without scanning its contents. */
 export function redactReplayError(value: string): string {
-  return value
-    .replace(/(["']?)\b(?:token|secret|password|api[_-]?key|authorization|cookie)\1\s*[:=]\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,}\]]+)/gi, '[SECRET]')
-    .replace(/https?:\/\/[^\s<>"']+/gi, '[URL]')
-    .replace(/[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[EMAIL]')
-    .replace(/\b(?:Bearer\s+\S+|(?:token|secret|password|api[_-]?key|authorization|cookie)\s*[:=]\s*\S+)/gi, '[SECRET]')
-    .replace(/\b[A-Za-z0-9_+\/-]{24,}(?:\.[A-Za-z0-9_+\/-]+)*={0,2}/g, '[TOKEN]')
-    .replace(/\b(?:sk-|gh[pousr]_|github_pat_)[A-Za-z0-9_-]+/g, '[TOKEN]')
-    .replace(/\s+/g, ' ').trim().slice(0, 160);
+  return value.replace(/\s+/g, ' ').trim().slice(0, 160);
 }
 
 /** ACP titles can contain command lines: never persist a descriptive title. */
 export function replayToolName(value: unknown): string {
-  return typeof value === 'string' && /^[A-Za-z_][A-Za-z0-9_.:-]{0,119}$/.test(value)
-    && !/^(?:sk-|gh[pousr]_|github_pat_)/.test(value) ? value : 'unknown';
+  return typeof value === 'string' && /^[A-Za-z_][A-Za-z0-9_.:-]{0,119}$/.test(value) ? value : 'unknown';
 }
 const PHASES = ['queue-wait', 'activation', 'context-fetch', 'first-model-output', 'model-stream', 'tool-work', 'publish'];
 const duration = (value: unknown): number => typeof value === 'number' && Number.isFinite(value) && value >= 0
@@ -54,7 +51,7 @@ export function sanitizeTurnReplay(input: unknown): TurnReplay | undefined {
         durationMs: duration(tool?.durationMs),
         ...(typeof tool?.outputBytes === 'number' && Number.isSafeInteger(tool.outputBytes) && tool.outputBytes >= 0
           ? { outputBytes: tool.outputBytes } : {}),
-        ...(typeof tool?.error === 'string' ? { error: redactReplayError(tool.error) } : {}),
+        ...(typeof tool?.error === 'string' ? { error: isCredentialFetchToolName(tool.name) ? '[REDACTED]' : redactReplayError(tool.error) } : {}),
       })),
     })),
   };

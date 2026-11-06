@@ -32,7 +32,7 @@ import { runtimeIdentity } from './runtime.js';
 import { type PromptSurface } from './prompt-assembly.js';
 import { TurnTrace, type TurnTraceSink } from './turn-trace.js';
 import { isCompletedToolCall } from './tool-call-failure.js';
-import { redactTurnError } from './turn-failure-reason.js';
+import { turnErrorDetail } from './turn-failure-reason.js';
 import { AgentProcesses, type AgentProcessLifecycle } from './agent-process.js';
 import { WarmTranscript } from './warm-transcript.js';
 import { PromptSectionBaseline } from './prompt-section-baseline.js';
@@ -204,19 +204,19 @@ requestReconciliation(): void { return monolithRoomTurnLoopRequestReconciliation
           .then(() => { this.approvalDecisionFailures.delete(decision.requestId); })
           .catch((error: unknown) => {
             this.approvalDecisionFailures.set(decision.requestId, error);
-            console.error('[thin-core] Squire approval decision publication failed:', redactTurnError(error));
+            console.error('[thin-core] Squire approval decision publication failed:', turnErrorDetail(error));
           });
         this.approvalDecisionWrites.add(write);
         void write.finally(() => this.approvalDecisionWrites.delete(write));
       },
       (sessionId) => {
         options.api.execute('endComputerSession', { roomId: options.roomId, sessionId })
-          .catch((error: unknown) => console.error('[thin-core] Squire session end publication failed:', redactTurnError(error)));
+          .catch((error: unknown) => console.error('[thin-core] Squire session end publication failed:', turnErrorDetail(error)));
       },
       async (lease) => (await options.api.execute('refreshComputerSession', { roomId: options.roomId, ...lease })).live,
       (url, siteUrl) => {
         options.api.execute('forgetSquireSignIn', { url, ...(siteUrl ? { siteUrl } : {}) })
-          .catch((error: unknown) => console.error('[thin-core] Squire sign-in removal failed:', redactTurnError(error)));
+          .catch((error: unknown) => console.error('[thin-core] Squire sign-in removal failed:', turnErrorDetail(error)));
       },
       async (service) => {
         const view = await this.options.api.execute('readAgentWorkbench', { roomId: options.roomId });

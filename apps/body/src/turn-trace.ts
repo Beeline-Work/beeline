@@ -1,3 +1,4 @@
+import { maskCredentialResult } from './mask-credential-result.js';
 import { redactReplayError, replayToolName, sanitizeTurnReplay, type ReplayToolCall, type TurnReplay } from '@beeline/api-contract/daemon';
 import type { ToolCallEntry } from './acp.js';
 import { isFailedToolCall, toolCallText } from './tool-call-failure.js';
@@ -317,6 +318,7 @@ export class TurnTrace {
   toolCalls(calls: readonly ToolCallEntry[]): void {
     const attempt = this.current;
     calls.forEach((call, index) => {
+      call = maskCredentialResult(call);
       const id = call.id ?? `#${index}`;
       const title = replayToolName(call.title);
       const input = call.rawInput && typeof call.rawInput === 'object'

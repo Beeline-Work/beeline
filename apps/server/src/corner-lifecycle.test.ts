@@ -253,7 +253,7 @@ async function currentState(cornerId: string): Promise<string | undefined> {
 async function commissioned(roomId: string, agentId = A): Promise<AgentCommand> {
   await phone.execute(
     'sendRoomMessage',
-    { roomId, messageId: randomBytes(32).toString('hex'), text: `@hoots please do this` },
+    { roomId, messageId: randomBytes(32).toString('hex'), text: `@${agentId === B ? 'goosy' : 'hoots'} please do this` },
     H,
   );
   const command = (await daemon.execute('getAgentCommands', { roomId }, agentId)).commands.at(-1);
@@ -268,8 +268,8 @@ function brief(sourceMessageId: string) {
   };
 }
 
-async function open(repository?: string, hold?: boolean): Promise<string> {
-  const command = await commissioned(R);
+async function open(repository?: string, hold?: boolean, commander = A): Promise<string> {
+  const command = await commissioned(R, commander);
   const { cornerId } = await daemon.execute(
     'createCorner',
     {
@@ -278,11 +278,12 @@ async function open(repository?: string, hold?: boolean): Promise<string> {
       generationId: 'g1',
       name: 'Ship-widget',
       objective: 'Ship the widget end to end',
+      ...(commander !== A ? { implementer: 'hoots' } : {}),
 
       ...(repository ? { repository, targetBranch: 'main' } : {}),
       brief: brief(command.sourceMessageId),
     },
-    A,
+    commander,
   );
   // Legacy agent-set holds remain releasable after the citation requirement.
   if (hold) await db.query(`INSERT INTO corner_merge_holds(corner_id,actor_id,set_by_agent_id,standing)
@@ -757,12 +758,12 @@ describe('checks dispatch (rows 6-8)', () => {
   });
 
   it('an explicit decision report goes privately to the commander, without a human tag', async () => {
-    const cornerId = await open('owner/widgets');
+    const cornerId = await open('owner/widgets', false, B);
     const [work] = await commands(A, cornerId);
     await claim(work!);
     await daemon.execute('report', { status: 'needs_decision', roomId: cornerId, requestId: work!.turnRequestId,
       generationId: 'g1', text: 'needs-decision: decide whether to continue' }, A);
-    expect((await commands(A, R)).some(c => c.reason === 'report' && c.source.body.includes('needs-decision:'))).toBe(true);
+    expect((await commands(B, R)).some(c => c.reason === 'report' && c.source.body.includes('needs-decision:'))).toBe(true);
     expect((await db.query(`SELECT 1 FROM messages WHERE text='needs-decision: decide whether to continue'`)).rowCount).toBe(0);
   });
 
@@ -3181,7 +3182,7 @@ describe('the gate stays shut (AC-8)', () => {
   it('Reproduction consent-root: an agent-rooted wake cannot release a human hold', async () => {
     const cornerId = await open('owner/widgets', true);
     const holdId = (await db.query(`SELECT id FROM corner_merge_holds WHERE corner_id=$1`, [cornerId])).rows[0]!.id;
-    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('hold-agent-wake',$1,$2,'Wake')`, [R, A]);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('hold-agent-wake',$1,$2,'Wake')`, [R, B]);
     const created = await createAgentCommand(db, { roomId: R, agentId: A, sourceMessageId: 'hold-agent-wake', reason: 'subscribed_event', inheritPrivatePayload: false });
     const command = (await commands(A, R)).find(command => command.id === created!.id)!;
     await claim(command);

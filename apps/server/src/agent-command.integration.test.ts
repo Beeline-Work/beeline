@@ -1645,11 +1645,11 @@ it('records its own corner objective without a second wake or resetting the auth
     },
     A,
   );
-  expect(await commands(A, opened.cornerId)).toEqual([]);
+  expect((await commands(A, opened.cornerId)).map(c => c.reason)).toEqual(['corner_objective']);
   expect((await db.query(`SELECT reason,root_command_id,parent_command_id,agent_depth,state,
     private_payload->>'objective' objective FROM agent_commands WHERE room_id=$1 AND reason='corner_objective'`,
     [opened.cornerId])).rows).toEqual([{reason:'corner_objective',root_command_id:c!.id,
-      parent_command_id:c!.id,agent_depth:c!.agentDepth,state:'complete',objective:'Do this task'}]);
+      parent_command_id:c!.id,agent_depth:c!.agentDepth,state:'pending',objective:'Do this task'}]);
   // B is a member (it can read the corner and answer when tagged) but the
   // objective is not its work: no intake command.
   expect(await commands(B, opened.cornerId)).toEqual([]);

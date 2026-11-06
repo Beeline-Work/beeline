@@ -4,7 +4,7 @@ import type { ObjectService } from './object-service.js';
 
 export const RUNNABLE_MIME = 'application/vnd.beeline.game+html';
 export const RUNNABLE_CSP =
-  "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; base-uri 'none'; form-action 'none'; sandbox allow-scripts";
+  "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; base-uri 'none'; form-action 'none'; sandbox allow-scripts";
 
 /** Arm the parent's load guard before any authored code or handlers can run. */
 function embeddedDocument(bytes: Uint8Array): string {

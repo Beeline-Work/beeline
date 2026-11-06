@@ -162,7 +162,7 @@ export async function daemonExecuteOperation<Name extends keyof DaemonOperationM
       case 'getDaemonBootstrap':
         return (await daemonBootstrap(ctx, authenticatedAgentId)) as Output<Name>;
       case 'getWorkspaceRoster':
-        return (await daemonWorkspaceRoster(ctx, 
+        return (await daemonWorkspaceRoster(ctx,
           input as Input<'getWorkspaceRoster'>,
           authenticatedAgentId,
         )) as Output<Name>;
@@ -171,13 +171,13 @@ export async function daemonExecuteOperation<Name extends keyof DaemonOperationM
       case 'getRoomInbox':
       case 'getRoomConversation':
       case 'getCornerCloseRequests':
-        return (await daemonInbox(ctx, 
+        return (await daemonInbox(ctx,
           name,
           input as Input<'getRoomConversation'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'getRoomMessage':
-        return (await daemonRoomMessage(ctx, 
+        return (await daemonRoomMessage(ctx,
           input as Input<'getRoomMessage'>,
           authenticatedAgentId,
         )) as Output<Name>;
@@ -199,23 +199,23 @@ export async function daemonExecuteOperation<Name extends keyof DaemonOperationM
         return await daemonInbox(ctx, 'getRoomConversation', { roomId: target.id, limit: candidate.limit as number | undefined }, authenticatedAgentId) as Output<Name>;
       }
       case 'getRoomAuthority':
-        return (await daemonRoomAuthority(ctx, 
+        return (await daemonRoomAuthority(ctx,
           input as Input<'getRoomAuthority'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'getPermissionAuthority':
-        return (await daemonPermissionAuthority(ctx, 
+        return (await daemonPermissionAuthority(ctx,
           input as Input<'getPermissionAuthority'>,
         )) as Output<Name>;
       case 'getMissionAuthority':
         return (await daemonMissionAuthority(ctx)) as Output<Name>;
       case 'getWorkScheduleAuthority':
-        return (await daemonScheduleAuthority(ctx, 
+        return (await daemonScheduleAuthority(ctx,
           input as Input<'getWorkScheduleAuthority'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'createAgentSchedule':
-        return (await daemonCreateAgentSchedule(ctx, 
+        return (await daemonCreateAgentSchedule(ctx,
           input as Input<'createAgentSchedule'>,
           authenticatedAgentId,
         )) as Output<Name>;
@@ -244,22 +244,22 @@ export async function daemonExecuteOperation<Name extends keyof DaemonOperationM
         return daemonWriteResult(ctx) as Output<Name>;
       }
       case 'setEventSubscriptions':
-        return (await daemonSetEventSubscriptions(ctx, 
+        return (await daemonSetEventSubscriptions(ctx,
           input as Input<'setEventSubscriptions'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'watchCorner':
-        return (await daemonWatchCorner(ctx, 
+        return (await daemonWatchCorner(ctx,
           input as Input<'watchCorner'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'listEventSubscriptions':
-        return (await daemonListEventSubscriptions(ctx, 
+        return (await daemonListEventSubscriptions(ctx,
           input as Input<'listEventSubscriptions'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postRoomEvent':
-        return (await daemonPostRoomEvent(ctx, 
+        return (await daemonPostRoomEvent(ctx,
           input as Input<'postRoomEvent'>,
           authenticatedAgentId,
         )) as Output<Name>;
@@ -268,33 +268,33 @@ export async function daemonExecuteOperation<Name extends keyof DaemonOperationM
           `SELECT corner_id address,kinds FROM corner_watches WHERE watcher_room_id=$1 AND agent_id=$2 ORDER BY corner_id`,
           [(input as Input<'listAgentWatches'>).roomId, authenticatedAgentId])).rows } as Output<Name>;
       case 'listAgentSchedules':
-        return (await daemonListAgentSchedules(ctx, 
+        return (await daemonListAgentSchedules(ctx,
           input as Input<'listAgentSchedules'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'deleteAgentSchedule':
-        return (await daemonDeleteAgentSchedule(ctx, 
+        return (await daemonDeleteAgentSchedule(ctx,
           input as Input<'deleteAgentSchedule'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'updateAgentSchedule':
-        return (await daemonUpdateAgentSchedule(ctx, 
+        return (await daemonUpdateAgentSchedule(ctx,
           input as Input<'updateAgentSchedule'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'getAgentToolMandate':
-        return (await daemonMandate(ctx, 
+        return (await daemonMandate(ctx,
           input as Input<'getAgentToolMandate'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'getTargetAgentAuthority':
-        return (await daemonTargetAuthority(ctx, 
+        return (await daemonTargetAuthority(ctx,
           input as Input<'getTargetAgentAuthority'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'listRoomCorners':
       case 'listUntrackedCorners':
-        return (await daemonCorners(ctx, 
+        return (await daemonCorners(ctx,
           (input as Input<'listRoomCorners'>).roomId,
           authenticatedAgentId,
           (input as Input<'listRoomCorners'>).activeOnly === true,
@@ -308,14 +308,14 @@ export async function daemonExecuteOperation<Name extends keyof DaemonOperationM
         return { rooms: rooms.rows.map(({ parentRoomId, ...room }) => ({ ...room, ...(parentRoomId ? { parentRoomId } : {}) })) } as Output<Name>;
       }
       case 'listReachableCorners':
-        return (await daemonCorners(ctx, 
+        return (await daemonCorners(ctx,
           (input as Input<'listReachableCorners'>).roomId,
           authenticatedAgentId,
           (input as Input<'listReachableCorners'>).activeOnly ?? false,
           true,
         )) as Output<Name>;
       case 'listRoomMembers':
-        return (await daemonRoomMembers(ctx, 
+        return (await daemonRoomMembers(ctx,
           (input as Input<'listRoomMembers'>).roomId,
         )) as Output<Name>;
       case 'readCornerPullRequest': {
@@ -326,7 +326,7 @@ export async function daemonExecuteOperation<Name extends keyof DaemonOperationM
         return (await ctx.readPullRequest(cornerId)) as Output<Name>;
       }
       case 'postCornerMessage':
-        return (await daemonPostCornerMessage(ctx, 
+        return (await daemonPostCornerMessage(ctx,
           input as Input<'postCornerMessage'>,
           authenticatedAgentId,
         )) as Output<Name>;
@@ -334,38 +334,38 @@ export async function daemonExecuteOperation<Name extends keyof DaemonOperationM
         if (!ctx.prChecksStatus) throw new Error('GitHub PR checks service unavailable');
         return (await ctx.prChecksStatus(input as Input<'getPrChecksStatus'>)) as Output<Name>;
       case 'approveCornerMerge':
-        return (await daemonApproveCornerMerge(ctx, 
+        return (await daemonApproveCornerMerge(ctx,
           input as Input<'approveCornerMerge'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'closeCornerPullRequest':
-        return (await daemonCloseCornerPullRequest(ctx, 
+        return (await daemonCloseCornerPullRequest(ctx,
           input as Input<'closeCornerPullRequest'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'mergeCorner':
-        return (await daemonMergeCorner(ctx, 
+        return (await daemonMergeCorner(ctx,
           input as Input<'mergeCorner'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'getCornerRestoreState':
-        return (await daemonCornerRestore(ctx, 
+        return (await daemonCornerRestore(ctx,
           (input as Input<'getCornerRestoreState'>).cornerId,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'listCornerBriefRevisions':
-        return (await daemonListCornerBriefRevisions(ctx, 
+        return (await daemonListCornerBriefRevisions(ctx,
           input as Input<'listCornerBriefRevisions'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'reviseCornerBrief':
-        return (await daemonReviseCornerBrief(ctx, 
+        return (await daemonReviseCornerBrief(ctx,
           input as Input<'reviseCornerBrief'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'getRoomRepositoryState': {
         const owner = await daemonRepositoryOnboardingRequester(ctx, authenticatedAgentId, scopedRoom, candidate);
-        return { ...(await daemonRepository(ctx, 
+        return { ...(await daemonRepository(ctx,
           (input as Input<'getRoomRepositoryState'>).roomId,
           authenticatedAgentId,
         )), ...(owner ? { repositoryOnboarding: true } : {}) } as Output<Name>;
@@ -381,27 +381,27 @@ export async function daemonExecuteOperation<Name extends keyof DaemonOperationM
       case 'getRoomGitHubToken':
         return getRoomGitHubTokenOperation(ctx, name, input, authenticatedAgentId, turnOwner, modelClaim, candidate, scopedRoom, ownedIntent);
       case 'getRoomTargetBranch':
-        return (await daemonTargetBranch(ctx, 
+        return (await daemonTargetBranch(ctx,
           (input as Input<'getRoomTargetBranch'>).roomId,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'getIdentitySuccession':
-        return (await daemonIdentitySuccession(ctx, 
+        return (await daemonIdentitySuccession(ctx,
           (input as Input<'getIdentitySuccession'>).identityId,
         )) as Output<Name>;
       case 'getAgentConfiguration':
-        return (await daemonConfiguration(ctx, 
+        return (await daemonConfiguration(ctx,
           authenticatedAgentId,
           (input as Input<'getAgentConfiguration'>).roomId,
           candidate,
         )) as Output<Name>;
       case 'getAgentPresence':
-        return (await daemonPresence(ctx, 
+        return (await daemonPresence(ctx,
           input as Input<'getAgentPresence'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'getRequestCompletion':
-        return (await daemonCompletion(ctx, 
+        return (await daemonCompletion(ctx,
           input as Input<'getRequestCompletion'>,
           authenticatedAgentId,
         )) as Output<Name>;
@@ -409,46 +409,46 @@ export async function daemonExecuteOperation<Name extends keyof DaemonOperationM
       case 'postRoomMessage':
         return markAgentTurnSilentOperation(ctx, name, input, authenticatedAgentId, turnOwner, modelClaim, candidate, scopedRoom, ownedIntent);
       case 'reactToRoomMessage':
-        return (await daemonReactToRoomMessage(ctx, 
+        return (await daemonReactToRoomMessage(ctx,
           input as Input<'reactToRoomMessage'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postAgentAttachment':
-        return (await daemonPostAgentAttachment(ctx, 
+        return (await daemonPostAgentAttachment(ctx,
           input as Input<'postAgentAttachment'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postAgentDraft':
-        return (await daemonLiveOutput(ctx, 
+        return (await daemonLiveOutput(ctx,
           'draft',
           input as Input<'postAgentDraft'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postAgentThought':
-        return (await daemonLiveOutput(ctx, 
+        return (await daemonLiveOutput(ctx,
           'thought',
           input as Input<'postAgentThought'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'retractAgentLiveOutput':
-        return (await daemonRetract(ctx, 
+        return (await daemonRetract(ctx,
           input as Input<'retractAgentLiveOutput'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postAgentTurnReceipt':
-        return (await daemonTurnReceipt(ctx, 
+        return (await daemonTurnReceipt(ctx,
           input as Input<'postAgentTurnReceipt'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postBackgroundToolCompletion':
         return postBackgroundToolCompletionOperation(ctx, name, input, authenticatedAgentId, turnOwner, modelClaim, candidate, scopedRoom, ownedIntent);
       case 'postAgentActivity':
-        return (await daemonActivity(ctx, 
+        return (await daemonActivity(ctx,
           input as Input<'postAgentActivity'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postSquireApproval':
-        return (await daemonSquireApproval(ctx, 
+        return (await daemonSquireApproval(ctx,
           input as Input<'postSquireApproval'>,
           authenticatedAgentId,
         )) as Output<Name>;
@@ -470,27 +470,27 @@ export async function daemonExecuteOperation<Name extends keyof DaemonOperationM
           ...input as Input<'refreshComputerSession'>, agentId: authenticatedAgentId,
         })) as Output<Name>;
       case 'postSquireLoginWall':
-        return (await daemonSquireLoginWall(ctx, 
+        return (await daemonSquireLoginWall(ctx,
           input as Input<'postSquireLoginWall'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postSquireApprovalDecision':
-        return (await daemonSquireApprovalDecision(ctx, 
+        return (await daemonSquireApprovalDecision(ctx,
           input as Input<'postSquireApprovalDecision'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postPermissionRequest':
-        return (await daemonPermissionRequest(ctx, 
+        return (await daemonPermissionRequest(ctx,
           input as Input<'postPermissionRequest'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postPermissionExecution':
-        return (await daemonPermissionExecution(ctx, 
+        return (await daemonPermissionExecution(ctx,
           input as Input<'postPermissionExecution'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postAgentToolMandate':
-        return (await daemonPostMandate(ctx, 
+        return (await daemonPostMandate(ctx,
           input as Input<'postAgentToolMandate'>,
           authenticatedAgentId,
         )) as Output<Name>;
@@ -505,7 +505,7 @@ export async function daemonExecuteOperation<Name extends keyof DaemonOperationM
         return { drawing: row?.drawing ?? null, soul: row?.soul ?? null } as Output<Name>;
       }
       case 'postAgentAvatar':
-        return (await daemonAgentAvatar(ctx, 
+        return (await daemonAgentAvatar(ctx,
           input as Input<'postAgentAvatar'>,
           authenticatedAgentId,
         )) as Output<Name>;
@@ -537,17 +537,17 @@ export async function daemonExecuteOperation<Name extends keyof DaemonOperationM
         return undefined as Output<Name>;
       }
       case 'postAgentCommands':
-        return (await daemonCommands(ctx, 
+        return (await daemonCommands(ctx,
           input as Input<'postAgentCommands'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postAgentModelCatalog':
-        return (await daemonModelCatalog(ctx, 
+        return (await daemonModelCatalog(ctx,
           input as Input<'postAgentModelCatalog'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postAgentMachineReport':
-        return (await daemonMachineReport(ctx, 
+        return (await daemonMachineReport(ctx,
           input as Input<'postAgentMachineReport'>,
           authenticatedAgentId,
         )) as Output<Name>;
@@ -588,12 +588,12 @@ export async function daemonExecuteOperation<Name extends keyof DaemonOperationM
         )) as Output<Name>;
       }
       case 'installConnector':
-        return (await daemonConnectorInstall(ctx, 
+        return (await daemonConnectorInstall(ctx,
           input as Input<'installConnector'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postConnectorStatus':
-        return (await daemonConnectorStatusReport(ctx, 
+        return (await daemonConnectorStatusReport(ctx,
           input as Input<'postConnectorStatus'>,
           authenticatedAgentId,
         )) as Output<Name>;
@@ -605,54 +605,54 @@ export async function daemonExecuteOperation<Name extends keyof DaemonOperationM
         return daemonWriteResult(ctx) as Output<Name>;
       }
       case 'postConnectorVault':
-        return (await daemonConnectorVaultReport(ctx, 
+        return (await daemonConnectorVaultReport(ctx,
           input as Input<'postConnectorVault'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'getConnectorStatus':
-        return (await daemonConnectorStatusView(ctx, 
+        return (await daemonConnectorStatusView(ctx,
           authenticatedAgentId,
           (input as Input<'getConnectorStatus'>).connectorId,
         )) as Output<Name>;
       case 'getConnectorVaultList':
         return (await daemonConnectorVaultList(ctx, authenticatedAgentId)) as Output<Name>;
       case 'getConnectionDetail':
-        return (await daemonConnectionDetail(ctx, 
+        return (await daemonConnectionDetail(ctx,
           input as Input<'getConnectionDetail'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'revokeConnectionGrants':
-        return (await daemonConnectionGrantRevoke(ctx, 
+        return (await daemonConnectionGrantRevoke(ctx,
           input as Input<'revokeConnectionGrants'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postConnectionUsage':
-        return (await daemonConnectionUsage(ctx, 
+        return (await daemonConnectionUsage(ctx,
           input as Input<'postConnectionUsage'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postCornerRemoteState':
-        return (await daemonCornerRemote(ctx, 
+        return (await daemonCornerRemote(ctx,
           input as Input<'postCornerRemoteState'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postCornerPlan':
-        return (await daemonCornerPlan(ctx, 
+        return (await daemonCornerPlan(ctx,
           input as Input<'postCornerPlan'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'renameCorner':
-        return (await daemonRenameCorner(ctx, 
+        return (await daemonRenameCorner(ctx,
           input as Input<'renameCorner'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postTargetBranchProposal':
-        return (await daemonTargetProposal(ctx, 
+        return (await daemonTargetProposal(ctx,
           input as Input<'postTargetBranchProposal'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'requestAgentGrant':
-        return (await daemonRequestAgentGrant(ctx, 
+        return (await daemonRequestAgentGrant(ctx,
           input as Input<'requestAgentGrant'>,
           authenticatedAgentId,
         )) as Output<Name>;
@@ -679,27 +679,27 @@ export async function daemonExecuteOperation<Name extends keyof DaemonOperationM
       case 'postRepositoryOnboarding':
         return postRepositoryOnboardingOperation(ctx, name, input, authenticatedAgentId, turnOwner, modelClaim, candidate, scopedRoom, ownedIntent);
       case 'askRoomChoice':
-        return (await daemonAskRoomChoice(ctx, 
+        return (await daemonAskRoomChoice(ctx,
           input as Input<'askRoomChoice'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'openRoomPoll':
-        return (await daemonOpenRoomPoll(ctx, 
+        return (await daemonOpenRoomPoll(ctx,
           input as Input<'openRoomPoll'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'listAgentGrants':
-        return (await daemonListAgentGrants(ctx, 
+        return (await daemonListAgentGrants(ctx,
           authenticatedAgentId,
           (input as Input<'listAgentGrants'>).roomId,
         )) as Output<Name>;
       case 'consumeAgentGrant':
-        return (await daemonConsumeAgentGrant(ctx, 
+        return (await daemonConsumeAgentGrant(ctx,
           input as Input<'consumeAgentGrant'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'listAgentGrantRequests':
-        return (await daemonListAgentGrantRequests(ctx, 
+        return (await daemonListAgentGrantRequests(ctx,
           authenticatedAgentId,
           (input as Input<'listAgentGrantRequests'>).roomId,
         )) as Output<Name>;
@@ -715,7 +715,7 @@ export async function daemonExecuteOperation<Name extends keyof DaemonOperationM
         } as Output<Name>;
       }
       case 'authorizeResourceCall':
-        return (await daemonAuthorizeResource(ctx, 
+        return (await daemonAuthorizeResource(ctx,
           input as Input<'authorizeResourceCall'>,
           authenticatedAgentId,
         )) as Output<Name>;
@@ -725,12 +725,12 @@ export async function daemonExecuteOperation<Name extends keyof DaemonOperationM
         // is checked above; corner entry itself needs no grant or card.
         return { allowed: true } as Output<Name>;
       case 'authorizeSquireCall':
-        return (await daemonAuthorizeSquireCall(ctx, 
+        return (await daemonAuthorizeSquireCall(ctx,
           input as Input<'authorizeSquireCall'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'readAgentWorkbench':
-        return (await daemonAgentWorkbench(ctx, 
+        return (await daemonAgentWorkbench(ctx,
           input as Input<'readAgentWorkbench'>,
           authenticatedAgentId,
         )) as Output<Name>;
@@ -739,12 +739,12 @@ export async function daemonExecuteOperation<Name extends keyof DaemonOperationM
       case 'findConnectors':
         return findConnectorsOperation(ctx, name, input, authenticatedAgentId, turnOwner, modelClaim, candidate, scopedRoom, ownedIntent);
       case 'connectMcpServer':
-        return (await daemonConnectMcpServer(ctx, 
+        return (await daemonConnectMcpServer(ctx,
           input as Input<'connectMcpServer'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'connectApp':
-        return (await daemonConnectAppFrontDoor(ctx, 
+        return (await daemonConnectAppFrontDoor(ctx,
           input as Input<'connectApp'>,
           authenticatedAgentId,
         )) as Output<Name>;
@@ -759,7 +759,7 @@ export async function daemonExecuteOperation<Name extends keyof DaemonOperationM
       case 'postVaultSaveCard':
         return postVaultSaveCardOperation(ctx, name, input, authenticatedAgentId, turnOwner, modelClaim, candidate, scopedRoom, ownedIntent);
       case 'offerConnector':
-        return (await daemonOfferConnector(ctx, 
+        return (await daemonOfferConnector(ctx,
           input as Input<'offerConnector'>,
           authenticatedAgentId,
         )) as Output<Name>;
@@ -768,17 +768,17 @@ export async function daemonExecuteOperation<Name extends keyof DaemonOperationM
       case 'orderCornerMerge':
         return orderCornerMergeOperation(ctx, name, input, authenticatedAgentId, turnOwner, modelClaim, candidate, scopedRoom, ownedIntent);
       case 'createCorner':
-        return (await daemonCreateCorner(ctx, 
+        return (await daemonCreateCorner(ctx,
           input as Input<'createCorner'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'archiveCorner':
-        return (await daemonArchiveCorner(ctx, 
+        return (await daemonArchiveCorner(ctx,
           input as Input<'archiveCorner'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'ensureAgentMembership':
-        return (await daemonEnsureMembership(ctx, 
+        return (await daemonEnsureMembership(ctx,
           input as Input<'ensureAgentMembership'>,
           authenticatedAgentId,
         )) as Output<Name>;
@@ -870,4 +870,3 @@ export async function daemonExecuteOperation<Name extends keyof DaemonOperationM
         throw new CommandRefusalError(`unsupported daemon operation: ${String(name)}; use order and report`, 410);
     }
 }
-

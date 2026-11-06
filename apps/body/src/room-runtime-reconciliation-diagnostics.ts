@@ -342,7 +342,7 @@ import { RoomRuntimeCoordinator, WorkspaceMembershipStatus, REMOVAL_CONFIRMATION
    * One sweep runs at a time; discovery coalesces its latest facts for the next
    * pass and updates the active set immediately, including during a slow reap.
    * Maintenance yields do not acknowledge a blocked foreground discovery. */
-  export function roomRuntimeCoordinatorScheduleStorageMaintenance(ctx: RoomRuntimeCoordinator, 
+  export function roomRuntimeCoordinatorScheduleStorageMaintenance(ctx: RoomRuntimeCoordinator,
     archived: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>,
     desired: ReadonlySet<string>,
     states: readonly StorageRoomState[],
@@ -601,7 +601,7 @@ import { RoomRuntimeCoordinator, WorkspaceMembershipStatus, REMOVAL_CONFIRMATION
    * short-lived GitHub token for checkout and the Room's external GitHub
    * operations. Filesystem writes remain governed by the Room sandbox.
    */
-  export async function roomRuntimeCoordinatorMaterializeRoomCheckout(ctx: RoomRuntimeCoordinator, 
+  export async function roomRuntimeCoordinatorMaterializeRoomCheckout(ctx: RoomRuntimeCoordinator,
     roomId: string,
     repository?: RoomRepositoryStateResult,
   ): Promise<string> {

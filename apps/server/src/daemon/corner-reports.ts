@@ -115,7 +115,7 @@ import { daemonCheckReviewerAuthors } from './corner-reads.js';
     return result;
   }
 
-  export async function daemonWatchCorner(ctx: DaemonContext, 
+  export async function daemonWatchCorner(ctx: DaemonContext,
     input: Input<'watchCorner'>,
     agentId: string,
   ): Promise<Output<'watchCorner'>> {
@@ -206,7 +206,7 @@ import { daemonCheckReviewerAuthors } from './corner-reads.js';
 
   /** Closed-corner evidence follows the same audience checks as message reads.
    * Keep approval-message scope separate from attachment reuse. */
-  export async function daemonBriefAttachmentRooms(ctx: DaemonContext, 
+  export async function daemonBriefAttachmentRooms(ctx: DaemonContext,
     db: SqlDatabase,
     sourceRoomIds: readonly string[],
     cornerId: string,

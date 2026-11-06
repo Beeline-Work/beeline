@@ -378,7 +378,7 @@ import { daemonWriteResult } from './corner-messages.js';
   }
 
 
-  export async function daemonWriteRoomChoice(ctx: DaemonContext, 
+  export async function daemonWriteRoomChoice(ctx: DaemonContext,
     input: Parameters<typeof postRoomChoice>[1],
   ): Promise<Awaited<ReturnType<typeof postRoomChoice>>> {
     if (ctx.commandTransaction) return postRoomChoice(ctx.database, input);
@@ -576,7 +576,7 @@ import { daemonWriteResult } from './corner-messages.js';
 
 
   /** An agent may use its own owner's resources; wallet retains its separate consent gate. */
-  export async function daemonAuthorizeScopedGrant(ctx: DaemonContext, 
+  export async function daemonAuthorizeScopedGrant(ctx: DaemonContext,
     input: Input<'authorizeSquireCall'> & { readonly consume?: boolean },
     agentId: string,
     kind: 'mcp',
@@ -633,7 +633,7 @@ import { daemonWriteResult } from './corner-messages.js';
       )
     ).rows[0];
     if (pending) return { allowed: false, grantId: pending.id, status: 'pending' as const };
-    const asked = await daemonRequestAgentGrant(ctx, 
+    const asked = await daemonRequestAgentGrant(ctx,
       {
         ...input,
         kind,

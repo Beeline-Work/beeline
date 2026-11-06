@@ -29,7 +29,7 @@ import { phoneOptionalEnrichment } from './optional-enrichment.js';
    * list comes a page at a time, newest closure first; `archivedBefore` is the
    * `nextArchived` cursor of the page before.
    */
-  export async function phoneReadCorners(ctx: PhoneContext, 
+  export async function phoneReadCorners(ctx: PhoneContext,
     roomId: string,
     viewerId: string,
     roomViewFamilyOrder = false,
@@ -55,7 +55,7 @@ import { phoneOptionalEnrichment } from './optional-enrichment.js';
    * same statement, so a live frame's list and counts share one snapshot.
    * `deck` is null when the Room is a corner or archived.
    */
-  export async function phoneLoadCorners(ctx: PhoneContext, 
+  export async function phoneLoadCorners(ctx: PhoneContext,
     roomId: string,
     viewerId: string,
     {
@@ -342,7 +342,7 @@ import { phoneOptionalEnrichment } from './optional-enrichment.js';
     }
     const repositoryId = row.room.repository_key?.match(/^github:(\d+)$/)?.[1];
     const [cursor, presence, tags, autoMerge] = await Promise.all([
-      phoneOptionalEnrichment(ctx, 
+      phoneOptionalEnrichment(ctx,
         'read-cursor',
         ctx.enrichmentDatabase.query<{
           read_cursor: NonNullable<RoomView['viewer']['readCursor']>;
@@ -351,7 +351,7 @@ import { phoneOptionalEnrichment } from './optional-enrichment.js';
           viewerId,
         ], 'phone-room-1'),
       ),
-      phoneOptionalEnrichment(ctx, 
+      phoneOptionalEnrichment(ctx,
         'presence',
         ctx.enrichmentDatabase.query<{
           id: string;
@@ -370,7 +370,7 @@ import { phoneOptionalEnrichment } from './optional-enrichment.js';
           [roomId], 'phone-room-2',
         ),
       ),
-      phoneOptionalEnrichment(ctx, 
+      phoneOptionalEnrichment(ctx,
         'message-tags',
         ctx.enrichmentDatabase.query<{ id: string; tagged_ids: string[] }>(
           `SELECT m.id,${roomMessageTagsSql('m')} tagged_ids
@@ -379,7 +379,7 @@ import { phoneOptionalEnrichment } from './optional-enrichment.js';
         ),
       ),
       repositoryId
-        ? phoneOptionalEnrichment(ctx, 
+        ? phoneOptionalEnrichment(ctx,
             'repository-auto-merge',
             ctx.enrichmentDatabase
               .query<{ allow_auto_merge: boolean | null }>(
@@ -410,7 +410,7 @@ import { phoneOptionalEnrichment } from './optional-enrichment.js';
 
 
   /** One independently failing statement for facts that do not authorize a corner read. */
-  export async function phoneCornerRoomEnrichment(ctx: PhoneContext, 
+  export async function phoneCornerRoomEnrichment(ctx: PhoneContext,
     room: RoomReadRow['room'],
     rows: RoomReadRow,
     messageResult: { messages: RoomViewMessage[]; toolRows: RoomViewMessage[] },
@@ -451,7 +451,7 @@ import { phoneOptionalEnrichment } from './optional-enrichment.js';
     }
     const repositoryId =
       (rows.corner?.parent ?? room).repository_key?.match(/^github:(\d+)$/)?.[1] ?? null;
-    const result = await phoneOptionalEnrichment(ctx, 
+    const result = await phoneOptionalEnrichment(ctx,
       'corner-room',
       ctx.enrichmentDatabase.query<{
         presence: Array<{
@@ -533,7 +533,7 @@ import { phoneOptionalEnrichment } from './optional-enrichment.js';
   }
 
 
-  export function phoneCornerRowsSql(ctx: PhoneContext, 
+  export function phoneCornerRowsSql(ctx: PhoneContext,
     roomViewFamilyOrder = false,
     archived = false,
     before?: ArchivedCornerCursor,

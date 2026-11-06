@@ -33,7 +33,7 @@ import { daemonWriteResult } from './corner-messages.js';
       ...(row.status ? { outcome: row.status, ...(row.failure_reason ? { failureReason: row.failure_reason } : {}) } : {}) };
   }
 
-  export async function daemonPostRoomMessage(ctx: DaemonContext, 
+  export async function daemonPostRoomMessage(ctx: DaemonContext,
     input: Input<'postRoomMessage'>,
     agentId: string,
     atomicCommandWrite = false,
@@ -471,7 +471,7 @@ import { daemonWriteResult } from './corner-messages.js';
     return daemonWriteResult(ctx);
   }
 
-  export async function daemonLiveOutput(ctx: DaemonContext, 
+  export async function daemonLiveOutput(ctx: DaemonContext,
     kind: 'draft' | 'thought',
     input: Input<'postAgentDraft'>,
     agentId: string,

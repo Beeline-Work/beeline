@@ -111,7 +111,7 @@ import { phoneReadLiveDelta, phoneLiveStarPrompt } from './live-reads.js';
   }
 
 
-  export async function phoneUploadMedia(ctx: PhoneContext, 
+  export async function phoneUploadMedia(ctx: PhoneContext,
     viewerId: string,
     bytes: Uint8Array,
     mimeType: string,
@@ -148,7 +148,7 @@ import { phoneReadLiveDelta, phoneLiveStarPrompt } from './live-reads.js';
     else await work();
   }
 
-  export async function phoneSendMessage(ctx: PhoneContext, 
+  export async function phoneSendMessage(ctx: PhoneContext,
     input: Input<'sendRoomMessage'>,
     author: string,
     sourceClient?: { id: string; name: string },
@@ -246,7 +246,7 @@ import { phoneReadLiveDelta, phoneLiveStarPrompt } from './live-reads.js';
     };
   }
 
-  export async function phoneSendReply(ctx: PhoneContext, 
+  export async function phoneSendReply(ctx: PhoneContext,
     input: Input<'sendRoomReply'>,
     author: string,
     sourceClient?: { id: string; name: string },
@@ -368,7 +368,7 @@ import { phoneReadLiveDelta, phoneLiveStarPrompt } from './live-reads.js';
   }
 
 
-  export async function phoneDeleteRoomMessage(ctx: PhoneContext, 
+  export async function phoneDeleteRoomMessage(ctx: PhoneContext,
     input: Input<'deleteRoomMessage'>,
     viewerId: string,
   ): Promise<RoomViewMessage | null> {
@@ -414,7 +414,7 @@ import { phoneReadLiveDelta, phoneLiveStarPrompt } from './live-reads.js';
   }
 
 
-  export async function phoneSetMessageBookmark(ctx: PhoneContext, 
+  export async function phoneSetMessageBookmark(ctx: PhoneContext,
     input: Input<'setMessageBookmark'>,
     viewerId: string,
   ): Promise<Output<'setMessageBookmark'>> {
@@ -470,7 +470,7 @@ import { phoneReadLiveDelta, phoneLiveStarPrompt } from './live-reads.js';
   }
 
 
-  export async function phoneClearMessageBookmarks(ctx: PhoneContext, 
+  export async function phoneClearMessageBookmarks(ctx: PhoneContext,
     input: Input<'clearMessageBookmarks'>,
     viewerId: string,
   ): Promise<void> {

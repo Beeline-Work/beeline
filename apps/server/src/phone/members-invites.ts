@@ -58,7 +58,7 @@ import { phoneAvailableAgentHandle } from './pairing.js';
           workspaceIds,
         );
       else {
-        const handle = await phoneAvailableAgentHandle(ctx, 
+        const handle = await phoneAvailableAgentHandle(ctx,
           database,
           input.workspaceId,
           input.memberId,

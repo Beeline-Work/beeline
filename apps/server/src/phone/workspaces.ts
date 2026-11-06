@@ -126,7 +126,7 @@ import { phoneProjectMemberGrantRows } from './agent-reads.js';
   }
 
 
-  export async function phoneReadWorkspaceMembers(ctx: PhoneContext, 
+  export async function phoneReadWorkspaceMembers(ctx: PhoneContext,
     workspaceId: string,
     viewerId: string,
     query: WorkspaceMemberListQuery = {},

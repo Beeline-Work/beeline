@@ -273,7 +273,7 @@ import { daemonRequestAgentGrant, daemonGrantRequester, daemonConsumeAgentGrant 
 
 
   /** Shared app routing for connect and its hidden one-release alias. */
-  export async function daemonConnectAppFrontDoor(ctx: DaemonContext, 
+  export async function daemonConnectAppFrontDoor(ctx: DaemonContext,
     input: Input<'connectApp'>,
     agentId: string,
   ): Promise<Output<'connectApp'>> {

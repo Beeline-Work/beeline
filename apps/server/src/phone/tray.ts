@@ -14,7 +14,7 @@ import { messageId } from './values.js';
    * cell starts its 24-hour clock once, for every device; a clock already
    * running is left alone.
    */
-  export async function phoneReadNeedsYou(ctx: PhoneContext, 
+  export async function phoneReadNeedsYou(ctx: PhoneContext,
     input: Input<'readNeedsYou'>,
     viewerId: string,
   ): Promise<Output<'readNeedsYou'>> {
@@ -44,7 +44,7 @@ import { messageId } from './values.js';
   }
 
 
-  export async function phoneCountNeedsYou(ctx: PhoneContext, 
+  export async function phoneCountNeedsYou(ctx: PhoneContext,
     input: Input<'countNeedsYou'>,
     viewerId: string,
   ): Promise<Output<'countNeedsYou'>> {
@@ -73,7 +73,7 @@ import { messageId } from './values.js';
   }
 
 
-  export async function phoneClearNeedsYouSection(ctx: PhoneContext, 
+  export async function phoneClearNeedsYouSection(ctx: PhoneContext,
     input: Input<'clearNeedsYouSection'>,
     viewerId: string,
   ): Promise<void> {
@@ -98,7 +98,7 @@ import { messageId } from './values.js';
   }
 
 
-  export async function phoneListMessageBookmarks(ctx: PhoneContext, 
+  export async function phoneListMessageBookmarks(ctx: PhoneContext,
     input: Input<'listMessageBookmarks'>,
     viewerId: string,
   ): Promise<Output<'listMessageBookmarks'>> {

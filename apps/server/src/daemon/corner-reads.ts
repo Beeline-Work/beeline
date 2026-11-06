@@ -161,7 +161,7 @@ import { daemonIdentity, daemonAccess } from './access.js';
     };
   }
 
-  export async function daemonListCornerBriefRevisions(ctx: DaemonContext, 
+  export async function daemonListCornerBriefRevisions(ctx: DaemonContext,
     input: Input<'listCornerBriefRevisions'>,
     agentId: string,
   ) {
@@ -234,7 +234,7 @@ import { daemonIdentity, daemonAccess } from './access.js';
    * Membership is checked by `access` before dispatch; the close itself and
    * the lifecycle update live in `GitHubOperations.closeCornerPullRequest`.
    */
-  export async function daemonCloseCornerPullRequest(ctx: DaemonContext, 
+  export async function daemonCloseCornerPullRequest(ctx: DaemonContext,
     input: Input<'closeCornerPullRequest'>,
     agentId: string,
   ): Promise<Output<'closeCornerPullRequest'>> {

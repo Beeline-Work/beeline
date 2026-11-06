@@ -368,7 +368,7 @@ async repinNextProvider(trace?: TurnTrace, reason?: string): Promise<string | un
 /** One turn's stopwatch; writes only when the daemon configured a trace directory. */
 beginTurnTrace(requestId: string): TurnTrace { return monolithCornerTurnLoopBeginTurnTrace(this, requestId); }
 async withCheckout<T>(work: () => Promise<T>): Promise<T> { return monolithCornerTurnLoopWithCheckout(this, work); }
-async prompt(requestId: string, trigger: string, attachments: readonly DaemonAttachment[] = [], requestedById?: string, 
+async prompt(requestId: string, trigger: string, attachments: readonly DaemonAttachment[] = [], requestedById?: string,
 /** Server system lines this turn answers; a reply that only restates them is dropped. */
 restates?: readonly string[], sourceMessageId?: string): Promise<void> { return monolithCornerTurnLoopPrompt(this, requestId, trigger, attachments, requestedById, restates, sourceMessageId); }
 /**

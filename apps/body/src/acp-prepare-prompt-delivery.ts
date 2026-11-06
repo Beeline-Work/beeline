@@ -34,7 +34,7 @@ import { AcpClient, isPiAcpHarness, flattenHarnessCause, AcpRuntimeExitedError, 
    * is a likely memory-limit hit, while an unscoped SIGKILL uses the daemon
    * cgroup's OOM counter to distinguish it from a deliberate kill.
    */
-  export async function acpClientHandleChildExit(ctx: AcpClient, 
+  export async function acpClientHandleChildExit(ctx: AcpClient,
     code: number | null,
     signal: NodeJS.Signals | null,
   ): Promise<void> {
@@ -201,7 +201,7 @@ import { AcpClient, isPiAcpHarness, flattenHarnessCause, AcpRuntimeExitedError, 
   }
 
 
-  export async function acpClientApplySessionMode(ctx: AcpClient, 
+  export async function acpClientApplySessionMode(ctx: AcpClient,
     sessionId: string,
     raw: Record<string, unknown>,
     mode: SessionMode | undefined,
@@ -256,7 +256,7 @@ import { AcpClient, isPiAcpHarness, flattenHarnessCause, AcpRuntimeExitedError, 
   }
 
 
-  export async function acpClientSessionPrompt(ctx: AcpClient, 
+  export async function acpClientSessionPrompt(ctx: AcpClient,
     sessionId: string,
     text: string | readonly AcpPromptBlock[],
     onChunk?: AcpTextChunkHandler,

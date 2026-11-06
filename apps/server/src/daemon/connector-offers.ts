@@ -52,7 +52,7 @@ import { daemonOfferContext } from './workbench.js';
 
 
   /** Exact Registry selection, owner+machine row creation, and optional one-link fallback. */
-  export async function daemonConnectMcpServer(ctx: DaemonContext, 
+  export async function daemonConnectMcpServer(ctx: DaemonContext,
     input: Input<'connectMcpServer'>,
     agentId: string,
   ): Promise<Output<'connectMcpServer'>> {
@@ -162,7 +162,7 @@ import { daemonOfferContext } from './workbench.js';
    * (`acceptConnectorOffer`), so Squire's connect opens its sign-in page even
    * while the bound session is still valid.
    */
-  export async function daemonOfferConnector(ctx: DaemonContext, 
+  export async function daemonOfferConnector(ctx: DaemonContext,
     input: Input<'offerConnector'>,
     agentId: string,
     unified = false,

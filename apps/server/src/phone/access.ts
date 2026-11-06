@@ -128,7 +128,7 @@ import { AGENT_OWNER_AUTHORITY_MESSAGE, WORKSPACE_ADMIN_AUTHORITY_MESSAGE } from
     if (result.rows[0].owner_id !== viewerId) throw new Error(AGENT_OWNER_AUTHORITY_MESSAGE);
   }
 
-  export async function phoneRequireWorkspaceAgentRemover(ctx: PhoneContext, 
+  export async function phoneRequireWorkspaceAgentRemover(ctx: PhoneContext,
     workspaceId: string,
     agentId: string,
     viewerId: string,
@@ -224,7 +224,7 @@ import { AGENT_OWNER_AUTHORITY_MESSAGE, WORKSPACE_ADMIN_AUTHORITY_MESSAGE } from
     if (!row.rowCount) throw new Error(WORKSPACE_ADMIN_AUTHORITY_MESSAGE);
   }
 
-  export async function phoneRequireTopLevelChatMember(ctx: PhoneContext, 
+  export async function phoneRequireTopLevelChatMember(ctx: PhoneContext,
     roomId: string,
     identityId: string,
     database = ctx.database,
@@ -260,7 +260,7 @@ import { AGENT_OWNER_AUTHORITY_MESSAGE, WORKSPACE_ADMIN_AUTHORITY_MESSAGE } from
     return room;
   }
 
-  export async function phoneRequireWorkspaceManager(ctx: PhoneContext, 
+  export async function phoneRequireWorkspaceManager(ctx: PhoneContext,
     workspaceId: string,
     identityId: string,
     database = ctx.database,
@@ -274,7 +274,7 @@ import { AGENT_OWNER_AUTHORITY_MESSAGE, WORKSPACE_ADMIN_AUTHORITY_MESSAGE } from
 
   /** Owner-only: stricter than requireWorkspaceManager (owner|admin), for the
    *  one action an admin may never take — deleting the whole workspace. */
-  export async function phoneRequireWorkspaceOwner(ctx: PhoneContext, 
+  export async function phoneRequireWorkspaceOwner(ctx: PhoneContext,
     workspaceId: string,
     identityId: string,
     database = ctx.database,

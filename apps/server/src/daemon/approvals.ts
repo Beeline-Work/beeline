@@ -204,7 +204,7 @@ import { daemonWriteResult } from './corner-messages.js';
    * 'squire-approval-decided'` and `wakes: [agentId]`, so the agent's paused
    * turn resumes the same way a decided grant resumes it.
    */
-  export async function daemonSquireApprovalDecision(ctx: DaemonContext, 
+  export async function daemonSquireApprovalDecision(ctx: DaemonContext,
     input: Input<'postSquireApprovalDecision'>,
     agentId: string,
   ): Promise<Output<'postSquireApprovalDecision'>> {
@@ -270,7 +270,7 @@ import { daemonWriteResult } from './corner-messages.js';
 
 
   /** Only an expired shared Google session needs an owner-facing reconnect. */
-  export async function daemonSquireLoginWall(ctx: DaemonContext, 
+  export async function daemonSquireLoginWall(ctx: DaemonContext,
     input: Input<'postSquireLoginWall'>,
     agentId: string,
   ): Promise<Output<'postSquireLoginWall'>> {

@@ -58,7 +58,7 @@ import { roomSchedule } from './read-projection.js';
     return run;
   }
 
-  export async function phoneDeleteRoomSchedule(ctx: PhoneContext, 
+  export async function phoneDeleteRoomSchedule(ctx: PhoneContext,
     input: Input<'deleteRoomSchedule'>,
     viewerId: string,
   ): Promise<void> {

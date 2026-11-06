@@ -53,7 +53,7 @@ import { AccessDeniedError, id } from './values.js';
    * the review handoff asks its own question only for them, and an ordinary
    * Room reply — the hottest write in the product — pays nothing for it.
    */
-  export async function daemonAccess(ctx: DaemonContext, 
+  export async function daemonAccess(ctx: DaemonContext,
     roomId: string,
     agentId: string,
     requestId?: unknown,

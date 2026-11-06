@@ -150,7 +150,7 @@ import { id, Input, Output } from './values.js';
    * helper's machine already has. Names only — a connection is listed by
    * service and label, never by anything the vault holds.
    */
-  export async function daemonAgentWorkbench(ctx: DaemonContext, 
+  export async function daemonAgentWorkbench(ctx: DaemonContext,
     input: Input<'readAgentWorkbench'>,
     agentId: string,
   ): Promise<Output<'readAgentWorkbench'>> {
@@ -321,7 +321,7 @@ import { id, Input, Output } from './values.js';
   }
 
 
-  export async function daemonSearchMcpRegistry(ctx: DaemonContext, 
+  export async function daemonSearchMcpRegistry(ctx: DaemonContext,
     input: Input<'searchMcpRegistry'>,
   ): Promise<Output<'searchMcpRegistry'>> {
     const query = typeof input.query === 'string' ? input.query.trim() : '';

@@ -16,7 +16,7 @@ import { RoomRuntimeCoordinator, roomCheckoutRemote, execFileAsync, DesiredCorne
 
 
 
-  export async function roomRuntimeCoordinatorRefreshRoomCheckout(ctx: RoomRuntimeCoordinator, 
+  export async function roomRuntimeCoordinatorRefreshRoomCheckout(ctx: RoomRuntimeCoordinator,
     roomId: string,
   ): Promise<{ cwd: string; branch?: string; commit?: string; githubToken?: string }> {
     try {
@@ -305,7 +305,7 @@ import { RoomRuntimeCoordinator, roomCheckoutRemote, execFileAsync, DesiredCorne
   }
 
 
-  export async function roomRuntimeCoordinatorCornerRepositoryToken(ctx: RoomRuntimeCoordinator, 
+  export async function roomRuntimeCoordinatorCornerRepositoryToken(ctx: RoomRuntimeCoordinator,
     roomId: string,
   ): Promise<{ token: string; expiresAt: number }> {
     try {
@@ -495,7 +495,7 @@ import { RoomRuntimeCoordinator, roomCheckoutRemote, execFileAsync, DesiredCorne
   }
 
 
-  export async function roomRuntimeCoordinatorRefuseArchiveCleanup(ctx: RoomRuntimeCoordinator, 
+  export async function roomRuntimeCoordinatorRefuseArchiveCleanup(ctx: RoomRuntimeCoordinator,
     cornerId: string,
     error: DaemonApiError,
   ): Promise<void> {

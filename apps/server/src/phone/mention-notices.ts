@@ -39,7 +39,7 @@ import { phoneProjectPendingAgentCommands } from './message-enrichment.js';
     return commands.rows.map((command) => command.agent_id);
   }
 
-  export async function phonePendingAgentCommandsForMessage(ctx: PhoneContext, 
+  export async function phonePendingAgentCommandsForMessage(ctx: PhoneContext,
     database: SqlDatabase,
     roomId: string,
     messageIdValue: string,
@@ -88,7 +88,7 @@ import { phoneProjectPendingAgentCommands } from './message-enrichment.js';
    * consequence, so it is stamped strictly past that message's second and can
    * never render above it (see `orderingFloor` in `system-line.ts`).
    */
-  export async function phoneNoteUnansweredMentions(ctx: PhoneContext, 
+  export async function phoneNoteUnansweredMentions(ctx: PhoneContext,
     roomId: string,
     senderId: string,
     agentIds: readonly string[],
@@ -148,7 +148,7 @@ import { phoneProjectPendingAgentCommands } from './message-enrichment.js';
   }
 
 
-  export async function phoneWriteMentionNotice(ctx: PhoneContext, 
+  export async function phoneWriteMentionNotice(ctx: PhoneContext,
     database: SqlDatabase,
     input: {
       readonly roomId: string;
@@ -176,7 +176,7 @@ import { phoneProjectPendingAgentCommands } from './message-enrichment.js';
   }
 
 
-  export function phoneUnansweredMentionPhrase(ctx: PhoneContext, 
+  export function phoneUnansweredMentionPhrase(ctx: PhoneContext,
     agent: {
       agent_id: string;
       agent_name: string;
@@ -243,7 +243,7 @@ import { phoneProjectPendingAgentCommands } from './message-enrichment.js';
    * corner it has not joined is unreachable in a way the writer should hear
    * about, and a tag alone would say nothing.
    */
-  export async function phoneUnansweredMentionTargets(ctx: PhoneContext, 
+  export async function phoneUnansweredMentionTargets(ctx: PhoneContext,
     roomId: string,
     author: string,
     text: string,

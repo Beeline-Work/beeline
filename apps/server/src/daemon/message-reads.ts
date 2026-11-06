@@ -212,7 +212,7 @@ import { daemonReach } from './corner-messages.js';
 
 
   /** Each ready attachment's stored sha256, so a helper can skip re-downloading bytes it holds. */
-  export async function daemonWithStoredDigests(ctx: DaemonContext, 
+  export async function daemonWithStoredDigests(ctx: DaemonContext,
     attachments: readonly DaemonAttachment[],
   ): Promise<DaemonAttachment[]> {
     const ids = attachments.flatMap((attachment) => mediaIdFromUrl(attachment.url) ?? []);
@@ -233,7 +233,7 @@ import { daemonReach } from './corner-messages.js';
 
 
   /** Media ids these attachments name whose bytes are past the TTL (`media-ttl.ts`). */
-  export async function daemonExpiredMediaIds(ctx: DaemonContext, 
+  export async function daemonExpiredMediaIds(ctx: DaemonContext,
     attachments: readonly DaemonAttachment[],
   ): Promise<ReadonlySet<string>> {
     const ids = new Set<string>();

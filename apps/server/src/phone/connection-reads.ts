@@ -9,7 +9,7 @@ import { seconds } from './values.js';
 
 
 
-  export async function phoneReadConnectionDetail(ctx: PhoneContext, 
+  export async function phoneReadConnectionDetail(ctx: PhoneContext,
     input: Input<'readConnectionDetail'>,
     viewerId: string,
   ): Promise<Output<'readConnectionDetail'>> {
@@ -113,7 +113,7 @@ import { seconds } from './values.js';
   }
 
 
-  export async function phoneRevokeConnectionGrants(ctx: PhoneContext, 
+  export async function phoneRevokeConnectionGrants(ctx: PhoneContext,
     input: Input<'revokeConnectionGrants'>,
     viewerId: string,
   ): Promise<Output<'revokeConnectionGrants'>> {

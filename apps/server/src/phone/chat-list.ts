@@ -127,7 +127,7 @@ import { unix } from './values.js';
       reviveDates(row, ['created_at', 'updated_at', 'archived_at', 'latest_created_at',
         'peer_presence_updated_at', 'peer_activity_at'])) };
     const roomIds = rooms.rows.map((room) => room.id);
-    const enrichment = await phoneOptionalEnrichment(ctx, 
+    const enrichment = await phoneOptionalEnrichment(ctx,
       'chat-enrichment',
       ctx.enrichmentDatabase.query<{
         presence: Array<{ room_id: string; peer_presence_body: Record<string, unknown> | null;

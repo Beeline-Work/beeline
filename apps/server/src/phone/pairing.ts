@@ -123,7 +123,7 @@ import { hash, unix, normalizeAgentName, CONNECT_RENAME_WINDOW_MS } from './valu
           )
         ).rows[0];
         if (!agent) return null;
-        const handle = await phoneAvailableAgentHandle(ctx, 
+        const handle = await phoneAvailableAgentHandle(ctx,
           database,
           pairing.workspace_id,
           agentId,
@@ -165,7 +165,7 @@ import { hash, unix, normalizeAgentName, CONNECT_RENAME_WINDOW_MS } from './valu
    * always inside the caller's transaction, under the Workspace row lock, so
    * two agents connecting at once cannot both take the fox.
    */
-  export async function phoneWornSeededIdentity(ctx: PhoneContext, 
+  export async function phoneWornSeededIdentity(ctx: PhoneContext,
     database: SqlDatabase,
     workspaceId: string,
     exceptIdentityId: string,
@@ -192,7 +192,7 @@ import { hash, unix, normalizeAgentName, CONNECT_RENAME_WINDOW_MS } from './valu
   }
 
 
-  export async function phoneAvailableAgentHandle(ctx: PhoneContext, 
+  export async function phoneAvailableAgentHandle(ctx: PhoneContext,
     database: SqlDatabase,
     workspaceId: string,
     exceptIdentityId: string,
@@ -216,7 +216,7 @@ import { hash, unix, normalizeAgentName, CONNECT_RENAME_WINDOW_MS } from './valu
     );
   }
 
-  export async function phoneClaimAgentConnectPairing(ctx: PhoneContext, 
+  export async function phoneClaimAgentConnectPairing(ctx: PhoneContext,
     input: {
       code: string;
       agentPubkey: string;
@@ -281,7 +281,7 @@ import { hash, unix, normalizeAgentName, CONNECT_RENAME_WINDOW_MS } from './valu
         takenFaces: worn.faces,
         takenNames: worn.names,
       });
-      const handle = await phoneAvailableAgentHandle(ctx, 
+      const handle = await phoneAvailableAgentHandle(ctx,
         database,
         pairing.workspace_id,
         input.agentPubkey,
@@ -412,7 +412,7 @@ import { hash, unix, normalizeAgentName, CONNECT_RENAME_WINDOW_MS } from './valu
       if (!pairing?.claimed_by || !pairing.claimed_at) return { status: 'not_found' };
       if (Date.now() - pairing.claimed_at.getTime() > CONNECT_RENAME_WINDOW_MS)
         return { status: 'expired' };
-      const handle = await phoneAvailableAgentHandle(ctx, 
+      const handle = await phoneAvailableAgentHandle(ctx,
         database,
         pairing.workspace_id,
         pairing.claimed_by,

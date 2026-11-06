@@ -45,7 +45,7 @@ import { unix, roomFilters, SLOW_ROOM_READ_MS, messageId } from './values.js';
       : undefined;
     const latestAgentTurns = phoneProjectAgentTurns(ctx, rows.turns);
     const pendingAgentCommands = phoneProjectPendingAgentCommands(ctx, rows.pending_commands);
-    const initialMessageResult = phoneProjectRoomMessages(ctx, 
+    const initialMessageResult = phoneProjectRoomMessages(ctx,
       rows.transcript,
       rows.activity,
       corner?.tools ?? [],
@@ -82,7 +82,7 @@ import { unix, roomFilters, SLOW_ROOM_READ_MS, messageId } from './values.js';
     }
     const allMembers = phoneProjectMembers(ctx, rows.members, roomId);
     const messageResult = enrichment
-      ? phoneProjectRoomMessages(ctx, 
+      ? phoneProjectRoomMessages(ctx,
           rows.transcript,
           rows.activity,
           corner?.tools ?? [],

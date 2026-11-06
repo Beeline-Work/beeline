@@ -16,7 +16,7 @@ import { reviveDates } from './read-projection.js';
 
 
 
-  export async function phoneReadAgent(ctx: PhoneContext, 
+  export async function phoneReadAgent(ctx: PhoneContext,
     workspaceId: string,
     agentId: string,
     viewerId: string,

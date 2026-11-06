@@ -75,7 +75,7 @@ import { phoneReadWorkbench } from './workbench-reads.js';
   }
 
 
-  export async function phoneSearchWorkbenchApps(ctx: PhoneContext, 
+  export async function phoneSearchWorkbenchApps(ctx: PhoneContext,
     input: Input<'searchWorkbenchApps'>,
     viewerId: string,
   ): Promise<Output<'searchWorkbenchApps'>> {

@@ -34,7 +34,7 @@ import { phoneSendMessage } from './messages.js';
    * Squire at the owner's approval boundary, so no ceremony link is ever
    * handed out here.
    */
-  export async function phoneConnectWorkbenchApp(ctx: PhoneContext, 
+  export async function phoneConnectWorkbenchApp(ctx: PhoneContext,
     input: Input<'connectWorkbenchApp'>,
     viewerId: string,
   ): Promise<Output<'connectWorkbenchApp'>> {
@@ -61,10 +61,10 @@ import { phoneSendMessage } from './messages.js';
       if (!manifest || !manifest.remotes.some((remote) => remote.type === 'streamable-http') ||
           manifest.secretInputNames.length > 0)
         throw new Error('The official sign-in is unavailable');
-      const { matched, machineId, ws } = await phoneResolveViewerHelper(ctx, 
+      const { matched, machineId, ws } = await phoneResolveViewerHelper(ctx,
         input.helperAgentId, viewerId,
       );
-      const dm = await phoneResolveDirectMessage(ctx, 
+      const dm = await phoneResolveDirectMessage(ctx,
         { workspaceId: ws.workspace_id, participantId: matched.agent_id }, viewerId,
       );
       const row = await ctx.database.transaction(async (database) => {
@@ -150,11 +150,11 @@ import { phoneSendMessage } from './messages.js';
       )
         throw new Error('Select an app from search results');
     }
-    const { matched, machineId, ws } = await phoneResolveViewerHelper(ctx, 
+    const { matched, machineId, ws } = await phoneResolveViewerHelper(ctx,
       input.helperAgentId,
       viewerId,
     );
-    const dm = await phoneResolveDirectMessage(ctx, 
+    const dm = await phoneResolveDirectMessage(ctx,
       { workspaceId: ws.workspace_id, participantId: matched.agent_id },
       viewerId,
     );
@@ -184,7 +184,7 @@ import { phoneSendMessage } from './messages.js';
         )
       ).rows[0];
       const verb = input.reconnect ? 'Reconnect' : 'Connect';
-      await phoneSendMessage(ctx, 
+      await phoneSendMessage(ctx,
         {
           roomId: dm.id,
           text: `${agent?.handle ? `@${agent.handle} ` : ''}${verb} ${outcome.name ?? app} in my Connectors.`,
@@ -258,7 +258,7 @@ import { phoneSendMessage } from './messages.js';
   }
 
 
-  export async function phoneDisconnectWorkbenchApp(ctx: PhoneContext, 
+  export async function phoneDisconnectWorkbenchApp(ctx: PhoneContext,
     input: Input<'disconnectWorkbenchApp'>,
     viewerId: string,
   ): Promise<void> {
@@ -275,13 +275,13 @@ import { phoneSendMessage } from './messages.js';
   }
 
 
-  export async function phonePairConnector(ctx: PhoneContext, 
+  export async function phonePairConnector(ctx: PhoneContext,
     input: Input<'pairConnector'>,
     viewerId: string,
   ): Promise<Output<'pairConnector'>> {
     if (!isConnectableConnector(input.connectorType))
       throw new Error(`${connectorDisplayName(input.connectorType)} is not connectable yet`);
-    const { matched, machineId, ws } = await phoneResolveViewerHelper(ctx, 
+    const { matched, machineId, ws } = await phoneResolveViewerHelper(ctx,
       input.helperAgentId,
       viewerId,
     );
@@ -306,7 +306,7 @@ import { phoneSendMessage } from './messages.js';
    * is otherwise the caller's; this arms the row the helper daemon derives its
    * install from and opens the status DM.
    */
-  export async function phoneArmConnectorPairing(ctx: PhoneContext, 
+  export async function phoneArmConnectorPairing(ctx: PhoneContext,
     database: SqlDatabase,
     input: {
       workspaceId: string;

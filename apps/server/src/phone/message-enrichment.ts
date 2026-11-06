@@ -16,7 +16,7 @@ import { projectedMessage, messageOrder } from './read-projection.js';
    * ready object rows. Two queries per read, both over indexed id sets: expiry
    * is a fact the sweep wrote, and card facts live on the `objects` row.
    */
-  export async function phoneAttachmentFacts(ctx: PhoneContext, 
+  export async function phoneAttachmentFacts(ctx: PhoneContext,
     ...groups: readonly (readonly RoomViewMessage[])[]
   ): Promise<AttachmentFacts> {
     const ids = new Set<string>();
@@ -118,7 +118,7 @@ import { projectedMessage, messageOrder } from './read-projection.js';
 
   export async function phoneEnrichMessageTags(ctx: PhoneContext, rows: MessageRow[]): Promise<void> {
     if (!rows.length) return;
-    const tags = await phoneOptionalEnrichment(ctx, 
+    const tags = await phoneOptionalEnrichment(ctx,
       'message-tags',
       ctx.enrichmentDatabase.query<{ id: string; tagged_ids: string[] }>(
         `SELECT m.id,${taggedIdentityIdsSql('m')} tagged_ids
@@ -148,7 +148,7 @@ import { projectedMessage, messageOrder } from './read-projection.js';
       .slice(0, ROOM_VIEW_AGENT_LIMIT);
   }
 
-  export function phoneProjectPendingAgentCommands(ctx: PhoneContext, 
+  export function phoneProjectPendingAgentCommands(ctx: PhoneContext,
     commands: readonly { agent_id: string; turn_request_id: string; created_at: Date | string }[],
   ): NonNullable<RoomView['pendingAgentCommands']> {
     return commands
@@ -161,7 +161,7 @@ import { projectedMessage, messageOrder } from './read-projection.js';
         left.agentPubkey.localeCompare(right.agentPubkey));
   }
 
-  export async function phoneEnrichMessageBookmarks(ctx: PhoneContext, 
+  export async function phoneEnrichMessageBookmarks(ctx: PhoneContext,
     rows: readonly MessageRow[],
     viewerId: string,
   ): Promise<void> {
@@ -184,7 +184,7 @@ import { projectedMessage, messageOrder } from './read-projection.js';
     }
   }
 
-  export function phoneProjectRoomMessages(ctx: PhoneContext, 
+  export function phoneProjectRoomMessages(ctx: PhoneContext,
     transcriptRows: readonly MessageRow[],
     liveRows: readonly MessageRow[],
     cornerActivityRows: readonly MessageRow[],

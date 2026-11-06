@@ -214,7 +214,7 @@ import { daemonExpiredMediaIds } from './message-reads.js';
           : [roomId],
     );
     const page = newestPage ? rows.rows : rows.rows.slice(0, limit);
-    const expiredMedia = await daemonExpiredMediaIds(ctx, 
+    const expiredMedia = await daemonExpiredMediaIds(ctx,
       page.flatMap((row) => row.attachments ?? []),
     );
     const savedNarration =

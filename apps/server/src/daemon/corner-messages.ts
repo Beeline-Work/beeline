@@ -113,7 +113,7 @@ import { Input, id, seconds, AccessDeniedError, Output } from './values.js';
 
 
   /** Adds one fixed-vocabulary reaction without turning a retried tool call into an unreact. */
-  export async function daemonReactToRoomMessage(ctx: DaemonContext, 
+  export async function daemonReactToRoomMessage(ctx: DaemonContext,
     input: Input<'reactToRoomMessage'>,
     agentId: string,
   ): Promise<Output<'reactToRoomMessage'>> {

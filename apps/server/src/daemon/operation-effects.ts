@@ -93,7 +93,7 @@ export async function saveInstitutionalMemoryOperation<Name extends keyof Daemon
           command,
           input as Input<'reportInstitutionalMemoryUsed'>,
         )) as Output<Name>;
-      
+
 }
 
 export async function searchInstitutionalMemoryOperation<Name extends keyof DaemonOperationMap>(ctx: DaemonContext, name: Name, input: Input<Name>, authenticatedAgentId: string, turnOwner: HelperTurnOwnershipSource | undefined, modelClaim: OwnedModelClaimCapability | undefined, candidate: Record<string, unknown>, scopedRoom: string | undefined, ownedIntent: boolean): Promise<Output<Name>> {
@@ -179,7 +179,7 @@ export async function claimAgentCommandOperation<Name extends keyof DaemonOperat
           ...(claimed.row.recovery_context ? { recoveryContext: claimed.row.recovery_context } : {}),
           ...(claimed.activity ? { activitySource: { body: claimed.activity.text, systemEvent: claimed.activity.system_event } } : {}),
         } as Output<Name>;
-      
+
 }
 
 export async function releaseAgentTurnOperation<Name extends keyof DaemonOperationMap>(ctx: DaemonContext, name: Name, input: Input<Name>, authenticatedAgentId: string, turnOwner: HelperTurnOwnershipSource | undefined, modelClaim: OwnedModelClaimCapability | undefined, candidate: Record<string, unknown>, scopedRoom: string | undefined, ownedIntent: boolean): Promise<Output<Name>> {
@@ -197,7 +197,7 @@ export async function releaseAgentTurnOperation<Name extends keyof DaemonOperati
         });
         ctx.live.publish({type:'invalidate',roomId:scopedRoom!,reason:'turn',agentId:authenticatedAgentId});
         return {...daemonWriteResult(ctx), commands: released.commands} as Output<Name>;
-      
+
 }
 
 export async function acknowledgeAgentCommandOperation<Name extends keyof DaemonOperationMap>(ctx: DaemonContext, name: Name, input: Input<Name>, authenticatedAgentId: string, turnOwner: HelperTurnOwnershipSource | undefined, modelClaim: OwnedModelClaimCapability | undefined, candidate: Record<string, unknown>, scopedRoom: string | undefined, ownedIntent: boolean): Promise<Output<Name>> {
@@ -225,7 +225,7 @@ export async function acknowledgeAgentCommandOperation<Name extends keyof Daemon
         });
         if (!acknowledged.rowCount) throw new Error('command acknowledgement conflict');
         return daemonWriteResult(ctx) as Output<Name>;
-      
+
 }
 
 export async function noteEmptyRoomRepositoryOperation<Name extends keyof DaemonOperationMap>(ctx: DaemonContext, name: Name, input: Input<Name>, authenticatedAgentId: string, turnOwner: HelperTurnOwnershipSource | undefined, modelClaim: OwnedModelClaimCapability | undefined, candidate: Record<string, unknown>, scopedRoom: string | undefined, ownedIntent: boolean): Promise<Output<Name>> {
@@ -243,7 +243,7 @@ export async function noteEmptyRoomRepositoryOperation<Name extends keyof Daemon
           verb: systemMessage("daemon-service.has-no-commits-yet-push-a-first-commit-and-i-ll-pick-it-up"),
         });
         return { id: line.id, createdAt: seconds(new Date()) } as Output<Name>;
-      
+
 }
 
 export async function getRoomGitHubTokenOperation<Name extends keyof DaemonOperationMap>(ctx: DaemonContext, name: Name, input: Input<Name>, authenticatedAgentId: string, turnOwner: HelperTurnOwnershipSource | undefined, modelClaim: OwnedModelClaimCapability | undefined, candidate: Record<string, unknown>, scopedRoom: string | undefined, ownedIntent: boolean): Promise<Output<Name>> {
@@ -273,7 +273,7 @@ export async function getRoomGitHubTokenOperation<Name extends keyof DaemonOpera
           }
           throw error;
         }
-      
+
 }
 
 export async function markAgentTurnSilentOperation<Name extends keyof DaemonOperationMap>(ctx: DaemonContext, name: Name, input: Input<Name>, authenticatedAgentId: string, turnOwner: HelperTurnOwnershipSource | undefined, modelClaim: OwnedModelClaimCapability | undefined, candidate: Record<string, unknown>, scopedRoom: string | undefined, ownedIntent: boolean): Promise<Output<Name>> {
@@ -305,7 +305,7 @@ export async function markAgentTurnSilentOperation<Name extends keyof DaemonOper
           input = { roomId: command.room_id, requestId: command.turn_request_id!,
             generationId: command.generation_id!, text: '' } as Input<Name>;
         }
-        const output = await daemonPostRoomMessage(ctx, 
+        const output = await daemonPostRoomMessage(ctx,
           input as Input<'postRoomMessage'>,
           authenticatedAgentId,
         );
@@ -318,7 +318,7 @@ export async function markAgentTurnSilentOperation<Name extends keyof DaemonOper
           return daemonWriteResult(ctx) as Output<Name>;
         }
         return output as Output<Name>;
-      
+
 }
 
 export async function postBackgroundToolCompletionOperation<Name extends keyof DaemonOperationMap>(ctx: DaemonContext, name: Name, input: Input<Name>, authenticatedAgentId: string, turnOwner: HelperTurnOwnershipSource | undefined, modelClaim: OwnedModelClaimCapability | undefined, candidate: Record<string, unknown>, scopedRoom: string | undefined, ownedIntent: boolean): Promise<Output<Name>> {
@@ -355,7 +355,7 @@ export async function postBackgroundToolCompletionOperation<Name extends keyof D
           } });
           return daemonWriteResult(ctx);
         }) as Output<Name>;
-      
+
 }
 
 export async function endComputerSessionOperation<Name extends keyof DaemonOperationMap>(ctx: DaemonContext, name: Name, input: Input<Name>, authenticatedAgentId: string, turnOwner: HelperTurnOwnershipSource | undefined, modelClaim: OwnedModelClaimCapability | undefined, candidate: Record<string, unknown>, scopedRoom: string | undefined, ownedIntent: boolean): Promise<Output<Name>> {
@@ -370,7 +370,7 @@ export async function endComputerSessionOperation<Name extends keyof DaemonOpera
           if (row) await endComputerSession(ctx.database, ctx.live, row);
         }
         return daemonWriteResult(ctx) as Output<Name>;
-      
+
 }
 
 export async function createLinkSpendRequestOperation<Name extends keyof DaemonOperationMap>(ctx: DaemonContext, name: Name, input: Input<Name>, authenticatedAgentId: string, turnOwner: HelperTurnOwnershipSource | undefined, modelClaim: OwnedModelClaimCapability | undefined, candidate: Record<string, unknown>, scopedRoom: string | undefined, ownedIntent: boolean): Promise<Output<Name>> {
@@ -386,7 +386,7 @@ export async function createLinkSpendRequestOperation<Name extends keyof DaemonO
           owner.owner_id, created.id, created.approval_url);
         return { id: created.id, status: created.status,
           ...(created.approval_url ? { approvalUrl: created.approval_url } : {}) } as Output<Name>;
-      
+
 }
 
 export async function retrieveLinkSpendRequestOperation<Name extends keyof DaemonOperationMap>(ctx: DaemonContext, name: Name, input: Input<Name>, authenticatedAgentId: string, turnOwner: HelperTurnOwnershipSource | undefined, modelClaim: OwnedModelClaimCapability | undefined, candidate: Record<string, unknown>, scopedRoom: string | undefined, ownedIntent: boolean): Promise<Output<Name>> {
@@ -415,7 +415,7 @@ export async function retrieveLinkSpendRequestOperation<Name extends keyof Daemo
           ...(result.shared_payment_token ? { sharedPaymentToken: {
             id: result.shared_payment_token.id,
             validUntil: result.shared_payment_token.valid_until } } : {}) } as Output<Name>;
-      
+
 }
 
 export async function postStarterWelcomeOperation<Name extends keyof DaemonOperationMap>(ctx: DaemonContext, name: Name, input: Input<Name>, authenticatedAgentId: string, turnOwner: HelperTurnOwnershipSource | undefined, modelClaim: OwnedModelClaimCapability | undefined, candidate: Record<string, unknown>, scopedRoom: string | undefined, ownedIntent: boolean): Promise<Output<Name>> {
@@ -436,7 +436,7 @@ export async function postStarterWelcomeOperation<Name extends keyof DaemonOpera
         const result = { status: 'started' as const };
         ctx.live.publish({ type: 'invalidate', roomId: request.roomId, reason: 'message' });
         return result as Output<Name>;
-      
+
 }
 
 export async function postRepositoryOnboardingOperation<Name extends keyof DaemonOperationMap>(ctx: DaemonContext, name: Name, input: Input<Name>, authenticatedAgentId: string, turnOwner: HelperTurnOwnershipSource | undefined, modelClaim: OwnedModelClaimCapability | undefined, candidate: Record<string, unknown>, scopedRoom: string | undefined, ownedIntent: boolean): Promise<Output<Name>> {
@@ -454,7 +454,7 @@ export async function postRepositoryOnboardingOperation<Name extends keyof Daemo
         }));
         ctx.live.publish({ type: 'invalidate', roomId: request.roomId, reason: 'message', agentId: authenticatedAgentId });
         return card as Output<Name>;
-      
+
 }
 
 export async function findConnectorsOperation<Name extends keyof DaemonOperationMap>(ctx: DaemonContext, name: Name, input: Input<Name>, authenticatedAgentId: string, turnOwner: HelperTurnOwnershipSource | undefined, modelClaim: OwnedModelClaimCapability | undefined, candidate: Record<string, unknown>, scopedRoom: string | undefined, ownedIntent: boolean): Promise<Output<Name>> {
@@ -486,7 +486,7 @@ export async function findConnectorsOperation<Name extends keyof DaemonOperation
         });
         for (const entry of view.firstPartyIntegrations ?? []) status.set(entry.key, entry.status);
         return index.search(query, status, personal) as Output<Name>;
-      
+
 }
 
 export async function postVaultSaveCardOperation<Name extends keyof DaemonOperationMap>(ctx: DaemonContext, name: Name, input: Input<Name>, authenticatedAgentId: string, turnOwner: HelperTurnOwnershipSource | undefined, modelClaim: OwnedModelClaimCapability | undefined, candidate: Record<string, unknown>, scopedRoom: string | undefined, ownedIntent: boolean): Promise<Output<Name>> {
@@ -502,7 +502,7 @@ export async function postVaultSaveCardOperation<Name extends keyof DaemonOperat
           consequence: metadata.purpose, presentation: 'card', cardType: 'vault-save',
           card: { ...card, originCommandId: ctx.authorizedCommand!.id } as unknown as Record<string, unknown> });
         return { id: line.id, createdAt: seconds(new Date()) } as Output<Name>;
-      
+
 }
 
 export async function setCornerHoldOperation<Name extends keyof DaemonOperationMap>(ctx: DaemonContext, name: Name, input: Input<Name>, authenticatedAgentId: string, turnOwner: HelperTurnOwnershipSource | undefined, modelClaim: OwnedModelClaimCapability | undefined, candidate: Record<string, unknown>, scopedRoom: string | undefined, ownedIntent: boolean): Promise<Output<Name>> {
@@ -527,7 +527,7 @@ export async function setCornerHoldOperation<Name extends keyof DaemonOperationM
         if (ctx.afterCommit) ctx.afterCommit(reconcile);
         else await reconcile();
         return result as Output<Name>;
-      
+
 }
 
 export async function orderCornerMergeOperation<Name extends keyof DaemonOperationMap>(ctx: DaemonContext, name: Name, input: Input<Name>, authenticatedAgentId: string, turnOwner: HelperTurnOwnershipSource | undefined, modelClaim: OwnedModelClaimCapability | undefined, candidate: Record<string, unknown>, scopedRoom: string | undefined, ownedIntent: boolean): Promise<Output<Name>> {
@@ -551,6 +551,5 @@ export async function orderCornerMergeOperation<Name extends keyof DaemonOperati
         // Recording consent is a separate action from landing. The caller uses
         // merge_corner for the single agent-facing landing action.
         return { roomId: yes.roomId, headSha: yes.headSha } as Output<Name>;
-      
-}
 
+}

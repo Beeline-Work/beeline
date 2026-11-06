@@ -53,7 +53,7 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
 
 
 
-  export async function phoneExecuteOperation<Name extends keyof PhoneOperationMap>(ctx: PhoneContext, 
+  export async function phoneExecuteOperation<Name extends keyof PhoneOperationMap>(ctx: PhoneContext,
     name: Name,
     input: Input<Name>,
     viewerId: string,
@@ -109,7 +109,7 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
         return await listRoomSubscriptions(ctx.database, roomId) as Output<Name>;
       }
       case 'readScheduledWork':
-        return (await phoneReadScheduledWork(ctx, 
+        return (await phoneReadScheduledWork(ctx,
           (input as Input<'readScheduledWork'>).roomId, viewerId,
         )) as Output<Name>;
       case 'deleteRoomSubscription': {
@@ -159,7 +159,7 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
           familyId,
         )) as Output<Name>;
       case 'setMessageBookmark':
-        return (await phoneSetMessageBookmark(ctx, 
+        return (await phoneSetMessageBookmark(ctx,
           input as Input<'setMessageBookmark'>,
           viewerId,
         )) as Output<Name>;
@@ -167,7 +167,7 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
         await phoneClearMessageBookmarks(ctx, input as Input<'clearMessageBookmarks'>, viewerId);
         return undefined as Output<Name>;
       case 'listMessageBookmarks':
-        return (await phoneListMessageBookmarks(ctx, 
+        return (await phoneListMessageBookmarks(ctx,
           input as Input<'listMessageBookmarks'>,
           viewerId,
         )) as Output<Name>;
@@ -176,7 +176,7 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
       case 'readTray':
         return (await phoneReadTray(ctx, input as Input<'readTray'>, viewerId)) as Output<Name>;
       case 'countNeedsYou':
-        return (await phoneCountNeedsYou(ctx, 
+        return (await phoneCountNeedsYou(ctx,
           input as Input<'countNeedsYou'>,
           viewerId,
         )) as Output<Name>;
@@ -191,7 +191,7 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
         await phoneClearNeedsYouSection(ctx, input as Input<'clearNeedsYouSection'>, viewerId);
         return undefined as Output<Name>;
       case 'listRoomSchedules':
-        return (await phoneListRoomSchedules(ctx, 
+        return (await phoneListRoomSchedules(ctx,
           (input as Input<'listRoomSchedules'>).roomId,
           viewerId,
         )) as Output<Name>;
@@ -199,7 +199,7 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
         await phoneDeleteRoomSchedule(ctx, input as Input<'deleteRoomSchedule'>, viewerId);
         return undefined as Output<Name>;
       case 'listRoomWorkflowRuns':
-        return (await phoneListRoomWorkflowRuns(ctx, 
+        return (await phoneListRoomWorkflowRuns(ctx,
           (input as Input<'listRoomWorkflowRuns'>).roomId,
           viewerId,
         )) as Output<Name>;
@@ -256,7 +256,7 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
         )) as Output<Name>;
       }
       case 'readWorkflowRun':
-        return (await phoneReadWorkflowRun(ctx, 
+        return (await phoneReadWorkflowRun(ctx,
           input as Input<'readWorkflowRun'>,
           viewerId,
         )) as Output<Name>;
@@ -264,7 +264,7 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
         await phoneCancelAgentTurn(ctx, input as Input<'cancelAgentTurn'>, viewerId);
         return undefined as Output<Name>;
       case 'createHumanCorner':
-        return (await phoneCreateHumanCorner(ctx, 
+        return (await phoneCreateHumanCorner(ctx,
           input as Input<'createHumanCorner'>,
           viewerId,
         )) as Output<Name>;
@@ -286,27 +286,27 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
       case 'decideApprovalCard':
         return await phoneDecideApprovalCard(ctx, input as Input<'decideApprovalCard'>, viewerId) as Output<Name>;
       case 'decideWritePermission':
-        return (await phoneDecidePermission(ctx, 
+        return (await phoneDecidePermission(ctx,
           input as Input<'decideWritePermission'>,
           viewerId,
         )) as Output<Name>;
       case 'decideAgentGrant':
-        return (await phoneDecideAgentGrant(ctx, 
+        return (await phoneDecideAgentGrant(ctx,
           input as Input<'decideAgentGrant'>,
           viewerId,
         )) as Output<Name>;
       case 'revokeAgentGrant':
-        return (await phoneRevokeAgentGrant(ctx, 
+        return (await phoneRevokeAgentGrant(ctx,
           input as Input<'revokeAgentGrant'>,
           viewerId,
         )) as Output<Name>;
       case 'acceptConnectorOffer':
-        return (await phoneAcceptConnectorOffer(ctx, 
+        return (await phoneAcceptConnectorOffer(ctx,
           input as Input<'acceptConnectorOffer'>,
           viewerId,
         )) as Output<Name>;
       case 'createRoomPoll':
-        return (await phoneCreateRoomPoll(ctx, 
+        return (await phoneCreateRoomPoll(ctx,
           input as Input<'createRoomPoll'>,
           viewerId,
         )) as Output<Name>;
@@ -317,7 +317,7 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
       case 'skipChoice':
         return (await phoneSkipChoice(ctx, input as Input<'skipChoice'>, viewerId)) as Output<Name>;
       case 'createWorkspace':
-        return (await phoneCreateWorkspace(ctx, 
+        return (await phoneCreateWorkspace(ctx,
           input as Input<'createWorkspace'>,
           viewerId,
         )) as Output<Name>;
@@ -331,7 +331,7 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
         await phoneDeleteWorkspace(ctx, input as Input<'deleteWorkspace'>, viewerId);
         return undefined as Output<Name>;
       case 'addWorkspaceMember':
-        return (await phoneAddWorkspaceMember(ctx, 
+        return (await phoneAddWorkspaceMember(ctx,
           input as Input<'addWorkspaceMember'>,
           viewerId,
         )) as Output<Name>;
@@ -356,7 +356,7 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
         await phoneReopenChat(ctx, (input as Input<'reopenChat'>).roomId, viewerId);
         return undefined as Output<Name>;
       case 'addRoomMember':
-        return (await phoneAddRoomMember(ctx, 
+        return (await phoneAddRoomMember(ctx,
           input as Input<'addRoomMember'>,
           viewerId,
         )) as Output<Name>;
@@ -364,7 +364,7 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
         await phoneRemoveRoomMember(ctx, input as Input<'removeRoomMember'>, viewerId);
         return undefined as Output<Name>;
       case 'resolveDirectMessage':
-        return (await phoneResolveDirectMessage(ctx, 
+        return (await phoneResolveDirectMessage(ctx,
           input as Input<'resolveDirectMessage'>,
           viewerId,
         )) as Output<Name>;
@@ -378,12 +378,12 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
       case 'redeemInvite':
         return (await phoneRedeemInvite(ctx, input as Input<'redeemInvite'>, viewerId)) as Output<Name>;
       case 'createAgentPairingCode':
-        return (await phoneCreatePairing(ctx, 
+        return (await phoneCreatePairing(ctx,
           input as Input<'createAgentPairingCode'>,
           viewerId,
         )) as Output<Name>;
       case 'claimAgentPairing': {
-        const result = await phoneClaimAgentPairing(ctx, 
+        const result = await phoneClaimAgentPairing(ctx,
           (input as Input<'claimAgentPairing'>).code,
           viewerId,
         );
@@ -407,7 +407,7 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
         await phoneRefreshAgentModelCatalog(ctx, input as Input<'refreshAgentModelCatalog'>, viewerId);
         return undefined as Output<Name>;
       case 'completeAgentSignIn':
-        return (await phoneCompleteAgentSignIn(ctx, 
+        return (await phoneCompleteAgentSignIn(ctx,
           input as Input<'completeAgentSignIn'>,
           viewerId,
         )) as Output<Name>;
@@ -449,7 +449,7 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
         await phoneRemoveAgent(ctx, input as Input<'removeAgent'>, viewerId);
         return undefined as Output<Name>;
       case 'updatePersonProfile':
-        return (await phoneUpdateProfile(ctx, 
+        return (await phoneUpdateProfile(ctx,
           input as Input<'updatePersonProfile'>,
           viewerId,
         )) as Output<Name>;
@@ -457,7 +457,7 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
         await phoneUpdateFace(ctx, input as Input<'updateIdentityFace'>, viewerId);
         return undefined as Output<Name>;
       case 'updateRoomPushState':
-        return (await phoneUpdateRoomPushState(ctx, 
+        return (await phoneUpdateRoomPushState(ctx,
           input as Input<'updateRoomPushState'>,
           viewerId,
         )) as Output<Name>;
@@ -470,17 +470,17 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
         return await phoneManagedIdentity(ctx, viewerId) as Output<Name>;
       }
       case 'updateIdentityPushLevel':
-        return (await phoneUpdatePushLevel(ctx, 
+        return (await phoneUpdatePushLevel(ctx,
           input as Input<'updateIdentityPushLevel'>,
           viewerId,
         )) as Output<Name>;
       case 'setRoomRepository':
-        return (await phoneSetRepository(ctx, 
+        return (await phoneSetRepository(ctx,
           input as Input<'setRoomRepository'>,
           viewerId,
         )) as Output<Name>;
       case 'setRoomTargetBranch':
-        return (await phoneSetTargetBranch(ctx, 
+        return (await phoneSetTargetBranch(ctx,
           input as Input<'setRoomTargetBranch'>,
           viewerId,
         )) as Output<Name>;
@@ -488,7 +488,7 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
         await phoneRemoveRepositoryBinding(ctx, input as Input<'removeRoomRepository'>, viewerId);
         return undefined as Output<Name>;
       case 'listRoomWorkflows':
-        await phoneRequireHumanRoomWorkspaceManager(ctx, 
+        await phoneRequireHumanRoomWorkspaceManager(ctx,
           (input as Input<'listRoomWorkflows'>).roomId,
           viewerId,
         );
@@ -496,7 +496,7 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
           (input as Input<'listRoomWorkflows'>).roomId,
         )) as Output<Name>;
       case 'dispatchRoomWorkflow':
-        await phoneRequireHumanRoomWorkspaceManager(ctx, 
+        await phoneRequireHumanRoomWorkspaceManager(ctx,
           (input as Input<'dispatchRoomWorkflow'>).roomId,
           viewerId,
         );
@@ -562,12 +562,12 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
         return githubReconnectNeeded ? { ...result, githubReconnectNeeded } : result;
       }
       case 'getGitHubRepositoryAccess':
-        return (await phoneRepositoryAccess(ctx, 
+        return (await phoneRepositoryAccess(ctx,
           (input as Input<'getGitHubRepositoryAccess'>).fullName,
           viewerId,
         )) as Output<Name>;
       case 'registerPushDevice':
-        return (await phoneRegisterPush(ctx, 
+        return (await phoneRegisterPush(ctx,
           input as Input<'registerPushDevice'>,
           viewerId,
         )) as Output<Name>;
@@ -589,7 +589,7 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
         return undefined as Output<Name>;
       }
       case 'readWorkbench':
-        return (await phoneReadWorkbench(ctx, 
+        return (await phoneReadWorkbench(ctx,
           input as Input<'readWorkbench'>,
           viewerId,
         )) as Output<Name>;
@@ -601,12 +601,12 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
         })) } as Output<Name>;
       }
       case 'searchWorkbenchApps':
-        return (await phoneSearchWorkbenchApps(ctx, 
+        return (await phoneSearchWorkbenchApps(ctx,
           input as Input<'searchWorkbenchApps'>,
           viewerId,
         )) as Output<Name>;
       case 'pairConnector':
-        return (await phonePairConnector(ctx, 
+        return (await phonePairConnector(ctx,
           input as Input<'pairConnector'>,
           viewerId,
         )) as Output<Name>;
@@ -634,7 +634,7 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
         await phoneUnpairConnector(ctx, input as Input<'unpairConnector'>, viewerId);
         return undefined as Output<Name>;
       case 'connectWorkbenchApp':
-        return (await phoneConnectWorkbenchApp(ctx, 
+        return (await phoneConnectWorkbenchApp(ctx,
           input as Input<'connectWorkbenchApp'>,
           viewerId,
         )) as Output<Name>;
@@ -700,7 +700,7 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
       case 'completeAppSignIn':
         await phoneViewerWorkbenchWorkspace(ctx, viewerId);
         if (!ctx.composio) throw new Error('App sign-in is unavailable');
-        return (await phoneCompleteAppSignIn(ctx, 
+        return (await phoneCompleteAppSignIn(ctx,
           (input as Input<'completeAppSignIn'>).sessionUri,
           (input as Input<'completeAppSignIn'>).appId,
           viewerId,
@@ -726,7 +726,7 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
         return await readWallet(ctx.database,viewerId,binding.workspace_id) as Output<Name>;
       }
       case 'sendFromWallet':
-        await phoneRequireWorkspaceMember(ctx, 
+        await phoneRequireWorkspaceMember(ctx,
           (input as Input<'sendFromWallet'>).workspaceId,
           viewerId,
         );
@@ -739,7 +739,7 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
       case 'grantWalletDelegation':
         // The wallet is human-owned, but its receipt must stay in a Workspace
         // where that human is currently a member.
-        await phoneRequireWorkspaceMember(ctx, 
+        await phoneRequireWorkspaceMember(ctx,
           (input as Input<'grantWalletDelegation'>).workspaceId,
           viewerId,
         );
@@ -764,17 +764,17 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
         } as Output<Name>;
       }
       case 'readConnectorInstall':
-        return (await phoneReadConnectorInstall(ctx, 
+        return (await phoneReadConnectorInstall(ctx,
           input as Input<'readConnectorInstall'>,
           viewerId,
         )) as Output<Name>;
       case 'readConnectionDetail':
-        return (await phoneReadConnectionDetail(ctx, 
+        return (await phoneReadConnectionDetail(ctx,
           input as Input<'readConnectionDetail'>,
           viewerId,
         )) as Output<Name>;
       case 'revokeConnectionGrants':
-        return (await phoneRevokeConnectionGrants(ctx, 
+        return (await phoneRevokeConnectionGrants(ctx,
           input as Input<'revokeConnectionGrants'>,
           viewerId,
         )) as Output<Name>;
@@ -814,7 +814,7 @@ import { phoneReadConnectionDetail, phoneRevokeConnectionGrants } from './connec
         )) as Output<Name>;
       case 'uploadMedia': {
         const media = input as Input<'uploadMedia'>;
-        return (await phoneUploadMedia(ctx, 
+        return (await phoneUploadMedia(ctx,
           viewerId,
           media.bytes,
           media.mimeType,

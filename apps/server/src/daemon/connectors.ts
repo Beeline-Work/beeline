@@ -137,7 +137,7 @@ import { Output, id, Input, registrySubject } from './values.js';
    * written, not merged: the run that reaches `connected` printed no
    * ceremony, so whatever tunnel an earlier run published dies with it.
    */
-  export async function daemonConnectorInstall(ctx: DaemonContext, 
+  export async function daemonConnectorInstall(ctx: DaemonContext,
     input: Input<'installConnector'>,
     agentId: string,
   ): Promise<Output<'installConnector'>> {
@@ -297,7 +297,7 @@ import { Output, id, Input, registrySubject } from './values.js';
    * 1: a pre-generation helper can still report against the first pairing and
    * cannot match a later one.
    */
-  export async function daemonConnectorStatusReport(ctx: DaemonContext, 
+  export async function daemonConnectorStatusReport(ctx: DaemonContext,
     input: Input<'postConnectorStatus'>,
     agentId: string,
   ): Promise<Output<'postConnectorStatus'>> {
@@ -361,7 +361,7 @@ import { Output, id, Input, registrySubject } from './values.js';
    * twice — the line id is derived from the attempt, so repeat reports
    * collide and write nothing.
    */
-  export async function daemonResumeRegistrySignIn(ctx: DaemonContext, 
+  export async function daemonResumeRegistrySignIn(ctx: DaemonContext,
     row: { id: string; registry_server_name: string | null },
     signIn: NonNullable<Input<'postConnectorStatus'>['signIn']>,
   ): Promise<void> {
@@ -422,7 +422,7 @@ import { Output, id, Input, registrySubject } from './values.js';
    * they can click it. Workbench still holds the same signIn; this is the
    * owner-visible half when the node needs sign-in instead of failing.
    */
-  export async function daemonNotifyTailscaleSignIn(ctx: DaemonContext, 
+  export async function daemonNotifyTailscaleSignIn(ctx: DaemonContext,
     connectorId: string,
     url: string,
     agentId: string,
@@ -462,7 +462,7 @@ import { Output, id, Input, registrySubject } from './values.js';
    * A failed probe preserves cached keys; successful metadata stays scoped
    * to the machine owner. Squire has no persisted connector row.
    */
-  export async function daemonConnectorVaultReport(ctx: DaemonContext, 
+  export async function daemonConnectorVaultReport(ctx: DaemonContext,
     input: Input<'postConnectorVault'>,
     agentId: string,
   ): Promise<Output<'postConnectorVault'>> {
@@ -503,7 +503,7 @@ import { Output, id, Input, registrySubject } from './values.js';
    * `connectorId` names WHICH row — a helper carrying the four Google rows
    * beside its Squire row would otherwise read whichever came first.
    */
-  export async function daemonConnectorStatusView(ctx: DaemonContext, 
+  export async function daemonConnectorStatusView(ctx: DaemonContext,
     agentId: string,
     connectorId?: string,
   ): Promise<Output<'getConnectorStatus'>> {
@@ -619,7 +619,7 @@ import { Output, id, Input, registrySubject } from './values.js';
 
 
   /** Cached detail for one connection the helper serves. */
-  export async function daemonConnectionDetail(ctx: DaemonContext, 
+  export async function daemonConnectionDetail(ctx: DaemonContext,
     input: Input<'getConnectionDetail'>,
     agentId: string,
   ): Promise<Output<'getConnectionDetail'>> {
@@ -700,7 +700,7 @@ import { Output, id, Input, registrySubject } from './values.js';
 
 
   /** Helper confirmation that the provider dropped the grants. */
-  export async function daemonConnectionGrantRevoke(ctx: DaemonContext, 
+  export async function daemonConnectionGrantRevoke(ctx: DaemonContext,
     input: Input<'revokeConnectionGrants'>,
     agentId: string,
   ): Promise<Output<'revokeConnectionGrants'>> {
@@ -755,7 +755,7 @@ import { Output, id, Input, registrySubject } from './values.js';
   }
 
 
-  export async function daemonConnectionUsage(ctx: DaemonContext, 
+  export async function daemonConnectionUsage(ctx: DaemonContext,
     input: Input<'postConnectionUsage'>,
     agentId: string,
   ): Promise<Output<'postConnectionUsage'>> {

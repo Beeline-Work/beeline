@@ -18,7 +18,7 @@ import { seconds } from './values.js';
 
 
 
-  export async function phoneReadConnectorInstall(ctx: PhoneContext, 
+  export async function phoneReadConnectorInstall(ctx: PhoneContext,
     input: Input<'readConnectorInstall'>,
     viewerId: string,
   ): Promise<Output<'readConnectorInstall'>> {
@@ -82,7 +82,7 @@ import { seconds } from './values.js';
    * per workspace. Read both halves by owner. `input.workspaceId` is accepted
    * and ignored for wire compatibility with clients that still send it.
    */
-  export async function phoneReadWorkbench(ctx: PhoneContext, 
+  export async function phoneReadWorkbench(ctx: PhoneContext,
     input: Input<'readWorkbench'>,
     viewerId: string,
   ): Promise<Output<'readWorkbench'>> {

@@ -28,7 +28,7 @@ import { daemonExecuteOperation } from './operations.js';
 
 
 
-  export async function daemonExecute<Name extends keyof DaemonOperationMap>(ctx: DaemonContext, 
+  export async function daemonExecute<Name extends keyof DaemonOperationMap>(ctx: DaemonContext,
     name: Name,
     input: Input<Name>,
     authenticatedAgentId: string,
@@ -236,7 +236,7 @@ import { daemonExecuteOperation } from './operations.js';
         [scopedRoom, authenticatedAgentId, candidate.requestId, candidate.generationId],
       )).rowCount
     ) {
-      const output = await queueDatabaseWork(ctx.database, `turn:${scopedRoom}:${authenticatedAgentId}`, () => daemonPostRoomMessage(ctx, 
+      const output = await queueDatabaseWork(ctx.database, `turn:${scopedRoom}:${authenticatedAgentId}`, () => daemonPostRoomMessage(ctx,
         input as Input<'postRoomMessage'>,
         authenticatedAgentId,
         true,
@@ -497,7 +497,7 @@ import { daemonExecuteOperation } from './operations.js';
         });
       }
       if (name === 'postRoomMessage' && candidate.relay === undefined && isCorner) {
-        await daemonReconcileZeroCheckWorkerCompletion(ctx, 
+        await daemonReconcileZeroCheckWorkerCompletion(ctx,
           scopedRoom!,
           authenticatedAgentId,
         );
@@ -507,7 +507,7 @@ import { daemonExecuteOperation } from './operations.js';
       return output;
     }
     if (walletCall && ctx.commandTransaction) {
-      const permission = await daemonAuthorizeScopedGrant(ctx, 
+      const permission = await daemonAuthorizeScopedGrant(ctx,
         input as Input<'authorizeSquireCall'>,
         authenticatedAgentId,
         'mcp',

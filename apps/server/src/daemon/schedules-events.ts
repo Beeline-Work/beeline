@@ -19,7 +19,7 @@ import { daemonWriteResult } from './corner-messages.js';
   /** Agent-driven schedules (beeline-agent create_schedule) run through the
    *  same agent_schedules loop as manager-created schedules, with the agent as
    *  both creator and beneficiary. */
-  export async function daemonCreateAgentSchedule(ctx: DaemonContext, 
+  export async function daemonCreateAgentSchedule(ctx: DaemonContext,
     input: Input<'createAgentSchedule'>,
     agentId: string,
     transaction?: SqlDatabase,
@@ -92,7 +92,7 @@ import { daemonWriteResult } from './corner-messages.js';
     return { scheduleId, nextRunAt: Math.floor(nextRunAt.getTime() / 1_000) };
   }
 
-  export async function daemonRecordScheduleAuthorization(ctx: DaemonContext, 
+  export async function daemonRecordScheduleAuthorization(ctx: DaemonContext,
     db: SqlDatabase, scheduleId: string, roomId: string, agentId: string, requestId: unknown, generationId: unknown,
   ): Promise<void> {
     // Only a server-validated human-rooted turn may authorize the saved task.
@@ -318,7 +318,7 @@ import { daemonWriteResult } from './corner-messages.js';
    * the schedule's Room. A turn with no such person (a scheduled wake, or no
    * active command) is refused.
    */
-  export async function daemonRequireScheduleAdmin(ctx: DaemonContext, 
+  export async function daemonRequireScheduleAdmin(ctx: DaemonContext,
     db: SqlDatabase,
     scheduleRoomId: string,
     input: { roomId: string; requestId?: unknown; generationId?: unknown },
@@ -376,7 +376,7 @@ import { daemonWriteResult } from './corner-messages.js';
    * an edit cannot put words in anybody's mouth; a person's schedule is not
    * editable here.
    */
-  export async function daemonUpdateAgentSchedule(ctx: DaemonContext, 
+  export async function daemonUpdateAgentSchedule(ctx: DaemonContext,
     input: Input<'updateAgentSchedule'>,
     agentId: string,
     transaction?: SqlDatabase,

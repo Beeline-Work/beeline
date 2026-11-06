@@ -26,7 +26,7 @@ import { phoneViewerWorkbenchWorkspace } from './workbench-catalog.js';
    * A `'switch'` offer re-arms the same row with `force_relogin_provider`, so
    * Squire's connect signs in again even while the bound session is valid.
    */
-  export async function phoneAcceptConnectorOffer(ctx: PhoneContext, 
+  export async function phoneAcceptConnectorOffer(ctx: PhoneContext,
     input: Input<'acceptConnectorOffer'>,
     viewerId: string,
   ): Promise<Output<'acceptConnectorOffer'>> {
@@ -170,7 +170,7 @@ import { phoneViewerWorkbenchWorkspace } from './workbench-catalog.js';
    * them. The card settles here and wakes the offering agent; there is no
    * helper ceremony to wait on.
    */
-  export async function phoneAcceptWalletOffer(ctx: PhoneContext, 
+  export async function phoneAcceptWalletOffer(ctx: PhoneContext,
     offer: {
       id: string;
       workspace_id: string;
@@ -219,7 +219,7 @@ import { phoneViewerWorkbenchWorkspace } from './workbench-catalog.js';
    * carries the Workbench row id, but it cannot claim the tool was added until
    * the helper's connected report settles it.
    */
-  export async function phoneMarkConnectorOfferConnecting(ctx: PhoneContext, 
+  export async function phoneMarkConnectorOfferConnecting(ctx: PhoneContext,
     database: SqlDatabase,
     input: {
       roomId: string;

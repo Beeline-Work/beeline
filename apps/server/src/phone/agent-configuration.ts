@@ -33,7 +33,7 @@ import { effortCatalogAxis } from './read-projection.js';
     await phoneRequireWorkspaceAgent(ctx, input.workspaceId, input.agentId, viewerId);
     const name = normalizeAgentName(input.name);
     await ctx.database.transaction(async (database) => {
-      const handle = await phoneAvailableAgentHandle(ctx, 
+      const handle = await phoneAvailableAgentHandle(ctx,
         database,
         input.workspaceId,
         input.agentId,
@@ -188,7 +188,7 @@ import { effortCatalogAxis } from './read-projection.js';
     return completeAgentSignInCard(ctx.database, ctx.live, input, viewerId);
   }
 
-  export async function phoneRefreshAgentModelCatalog(ctx: PhoneContext, 
+  export async function phoneRefreshAgentModelCatalog(ctx: PhoneContext,
     input: Input<'refreshAgentModelCatalog'>,
     viewerId: string,
   ) {

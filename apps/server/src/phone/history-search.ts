@@ -20,7 +20,7 @@ import { phoneDecorateMessageCards } from './message-decoration.js';
    * `before` is the previous page's last message id. A read that runs past
    * MESSAGE_SEARCH_STATEMENT_TIMEOUT throws MessageSearchTooBroadError.
    */
-  export async function phoneSearchMessages(ctx: PhoneContext, 
+  export async function phoneSearchMessages(ctx: PhoneContext,
     workspaceId: string,
     viewerId: string,
     query: string,
@@ -108,7 +108,7 @@ import { phoneDecorateMessageCards } from './message-decoration.js';
   }
 
 
-  export async function phoneReadHistoryAround(ctx: PhoneContext, 
+  export async function phoneReadHistoryAround(ctx: PhoneContext,
     roomId: string,
     viewerId: string,
     targetId: string,
@@ -159,7 +159,7 @@ import { phoneDecorateMessageCards } from './message-decoration.js';
   }
 
 
-  export async function phoneReadHistoryAfter(ctx: PhoneContext, 
+  export async function phoneReadHistoryAfter(ctx: PhoneContext,
     roomId: string,
     viewerId: string,
     afterId: string,
@@ -204,7 +204,7 @@ import { phoneDecorateMessageCards } from './message-decoration.js';
   }
 
 
-  export async function phoneReadHistory(ctx: PhoneContext, 
+  export async function phoneReadHistory(ctx: PhoneContext,
     roomId: string,
     viewerId: string,
     before?: { createdAt: number; id: string },
@@ -264,7 +264,7 @@ import { phoneDecorateMessageCards } from './message-decoration.js';
    * can place the transcript scrubber and a marker for every day against the
    * whole history. `timeZone` is an IANA name the route has already checked.
    */
-  export async function phoneReadHistoryOutline(ctx: PhoneContext, 
+  export async function phoneReadHistoryOutline(ctx: PhoneContext,
     roomId: string,
     viewerId: string,
     timeZone: string,

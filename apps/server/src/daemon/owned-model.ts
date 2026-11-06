@@ -50,7 +50,7 @@ import { DaemonService } from '../daemon-service.js';
 
 
   /** Enqueue only the bounded control response under current access/source. */
-  export async function daemonFenceOwnedTurnReply(ctx: DaemonContext, 
+  export async function daemonFenceOwnedTurnReply(ctx: DaemonContext,
     agentId: string, source: HelperTurnOwnershipSource,
     input: { roomId: string; generationId?: string; commandId?: string; requestId?: string },
     enqueue: () => void,

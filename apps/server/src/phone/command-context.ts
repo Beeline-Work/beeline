@@ -21,7 +21,7 @@ import { phoneExecute } from './execute.js';
 
 
   /** Give every newly created Workspace a free starter agent. */
-  export function phoneSetFreeAgents(ctx: PhoneContext, 
+  export function phoneSetFreeAgents(ctx: PhoneContext,
     freeAgents: Pick<FreeAgentService, 'createInWorkspace' | 'kick' | 'remove' | 'cleanupRemoved'>,
   ): void {
     ctx.freeAgents = freeAgents;

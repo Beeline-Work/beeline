@@ -21,7 +21,7 @@ import { Output } from './values.js';
    * and found no conflict; a conflict, a verdict still computing, or a failed
    * read stays pending.
    */
-  export async function daemonReconcileZeroCheckWorkerCompletion(ctx: DaemonContext, 
+  export async function daemonReconcileZeroCheckWorkerCompletion(ctx: DaemonContext,
     cornerId: string,
     workerAgentId: string,
   ): Promise<void> {

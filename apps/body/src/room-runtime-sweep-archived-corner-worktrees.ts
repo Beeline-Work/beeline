@@ -15,7 +15,7 @@ import { RoomRuntimeCoordinator, localCornerWorktreeIds, CornerWorktree, CornerS
    * Archived server state names the exact corner; local discovery is limited
    * to that exact directory and the host's bare-repository cache.
    */
-  export async function roomRuntimeCoordinatorSweepArchivedCornerWorktrees(ctx: RoomRuntimeCoordinator, 
+  export async function roomRuntimeCoordinatorSweepArchivedCornerWorktrees(ctx: RoomRuntimeCoordinator,
     _corners: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>,
     desired: ReadonlySet<string> = new Set(),
   ): Promise<void> {

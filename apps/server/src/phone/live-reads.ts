@@ -31,7 +31,7 @@ import { phoneListRoomWorkflowRuns } from './schedules.js';
    * socket subscription performed the Room access check; cross-process hints
    * still use readLiveDelta, which rechecks current membership. Attachments
    * get the same decoration as readLiveDeltas, read once per committed row. */
-  export async function phoneProjectCommittedLiveDelta(ctx: PhoneContext, 
+  export async function phoneProjectCommittedLiveDelta(ctx: PhoneContext,
     roomId: string,
     committed: { type: 'message'; row: CommittedMessageLiveRow },
     viewerId?: string,
@@ -59,7 +59,7 @@ import { phoneListRoomWorkflowRuns } from './schedules.js';
   /** One committed row for the live paint path, behind the same two membership
    * bounds as a full Room read. A missing/hidden row falls back to the ordinary
    * reconciliation read at the caller. */
-  export async function phoneReadLiveDelta(ctx: PhoneContext, 
+  export async function phoneReadLiveDelta(ctx: PhoneContext,
     roomId: string,
     viewerId: string,
     target:
@@ -73,7 +73,7 @@ import { phoneListRoomWorkflowRuns } from './schedules.js';
   /** Resolve one committed row for every viewer listening on this process.
    * The authorized set and the base row come from one statement, so adding
    * sockets does not multiply row reads or trust a stale subscribe grant. */
-  export async function phoneReadLiveDeltas(ctx: PhoneContext, 
+  export async function phoneReadLiveDeltas(ctx: PhoneContext,
     roomId: string,
     viewerIds: readonly string[],
     target:
@@ -454,7 +454,7 @@ import { phoneListRoomWorkflowRuns } from './schedules.js';
 
 
   /** Project only the parent deck fields a child-corner status changes. */
-  export async function phoneLiveChatCornerStatus(ctx: PhoneContext, 
+  export async function phoneLiveChatCornerStatus(ctx: PhoneContext,
     parentRoomId: string,
     viewerId: string,
   ): Promise<{

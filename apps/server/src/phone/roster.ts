@@ -16,7 +16,7 @@ import { reviveDates, selectedModelLabel, projectAgentPresence } from './read-pr
   }
 
 
-  export async function phoneWorkspaceRoster(ctx: PhoneContext, 
+  export async function phoneWorkspaceRoster(ctx: PhoneContext,
     workspaceId: string,
     viewerId: string,
     query: WorkspaceMemberListQuery = {},
@@ -114,7 +114,7 @@ import { reviveDates, selectedModelLabel, projectAgentPresence } from './read-pr
       ...agentPage.slice(0, WORKSPACE_MEMBER_PAGE_SIZE),
     ];
     if ((pageRows.length)) {
-      const presence = await phoneOptionalEnrichment(ctx, 
+      const presence = await phoneOptionalEnrichment(ctx,
         'member-presence',
         ctx.enrichmentDatabase.query<{
           id: string; presence_body: MemberRow['presence_body']; presence_updated_at: Date;
@@ -174,7 +174,7 @@ import { reviveDates, selectedModelLabel, projectAgentPresence } from './read-pr
   }
 
 
-  export async function phoneMembers(ctx: PhoneContext, 
+  export async function phoneMembers(ctx: PhoneContext,
     workspaceId: string,
     roomId: string | null,
     memberId?: string,
@@ -194,7 +194,7 @@ import { reviveDates, selectedModelLabel, projectAgentPresence } from './read-pr
          AND ($3::text IS NULL OR i.id=$3)`,
       [workspaceId, roomId, memberId ?? null],
     );
-    const presence = await phoneOptionalEnrichment(ctx, 
+    const presence = await phoneOptionalEnrichment(ctx,
       'member-presence',
       ctx.enrichmentDatabase.query<{
         id: string;

@@ -27,7 +27,7 @@ import { MonolithCornerTurnLoop, isCornerReviewTurn, DaemonActivity, toolCallKey
 
 
 
-  export async function monolithCornerTurnLoopPrompt(ctx: MonolithCornerTurnLoop, 
+  export async function monolithCornerTurnLoopPrompt(ctx: MonolithCornerTurnLoop,
     requestId: string,
     trigger: string,
     attachments: readonly DaemonAttachment[] = [],

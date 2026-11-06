@@ -349,7 +349,7 @@ function targetsCommand(options) {
   memory.previouslyLive = [...(memory.previouslyLive ?? []), ...(status.previouslyLive ?? [])];
   const { targets, previouslyLive } = computeTargets({
     memory, stores: status.stores, pins: readPinnedRuntimeVersion(process.cwd()),
-    includeAllAndroidLive: process.env.BEELINE_RELEASE_CHANNEL === 'nightly',
+    includeAllAndroidLive: process.env.BEELINE_RELEASE_CHANNEL === 'next',
   });
   console.log(`ota_targets=${targets.map(targetKey).join(',')}`);
   const result = { targets, storeRuntime: { builds: status.builds ?? memory.builds ?? [], previouslyLive } };

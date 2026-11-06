@@ -375,16 +375,16 @@ function desktopVersionForRelease(previous) {
 // A rerun of an identity plans exactly what a first attempt would: there is
 // no attempt file. Each leg asks its own system whether its output already
 // shipped and skips what did.
-export function initializeRelease({ version, sourceSha, previous, selectedComponents = RELEASE_COMPONENTS, runtimePin, startedAt = now(), channel, nightly, freshIdentity = false }) {
+export function initializeRelease({ version, sourceSha, previous, selectedComponents = RELEASE_COMPONENTS, runtimePin, startedAt = now(), channel, next, freshIdentity = false }) {
   if (channel) {
     releaseChannel(channel);
-    if (channel === 'latest') promotionSource(nightly, sourceSha);
-    const baseline = channelBaseline(previous, nightly);
+    if (channel === 'latest') promotionSource(next, sourceSha);
+    const baseline = channelBaseline(previous, next);
     const state = initializeRelease({ version, sourceSha, previous: baseline, selectedComponents, runtimePin, startedAt, freshIdentity: previous?.version !== version });
     if (baseline?.storeRuntime) state.storeRuntime = structuredClone(baseline.storeRuntime);
     state.channel = channel;
-    if (nightly) state.promotedFrom = nightly.version;
-    const track = channel === 'nightly' ? 'beta' : 'production';
+    if (next) state.promotedFrom = next.version;
+    const track = channel === 'next' ? 'beta' : 'production';
     const native = state.components['mobile-native'];
     // A production binary and a beta binary of the same source have different
     // OTA subscriptions. One cannot satisfy an explicit request for the other.
@@ -398,7 +398,7 @@ export function initializeRelease({ version, sourceSha, previous, selectedCompon
       state.plan.carried = RELEASE_COMPONENTS.filter(c => !state.plan.selected.includes(c));
       state.plan.nativePlatforms = runtimePin?.changed ? runtimePin.changedPlatforms : ['android', 'ios'];
     }
-    if (channel === 'nightly') state.plan.nativePlatforms = ['android'];
+    if (channel === 'next') state.plan.nativePlatforms = ['android'];
     if (state.state !== 'delivered') for (const component of state.plan.carried)
       state.components[component] = previousComponent(state, component);
     return state;
@@ -535,7 +535,7 @@ export function releasePlanSummary(state) {
   currentRelease(state);
   return {
     identity: `${state.version}@${state.sourceSha}`,
-    ...(state.channel ? { channel: state.channel, helper: state.channel === 'latest' ? 'promote nightly bytes' : 'build when changed' } : {}),
+    ...(state.channel ? { channel: state.channel, helper: state.channel === 'latest' ? 'promote next bytes' : 'build when changed' } : {}),
     selected: state.plan.selected,
     carried: Object.fromEntries(state.plan.carried.map((component) => {
       const entry = componentEntry(state, component);
@@ -636,7 +636,7 @@ export function applyJobFacts(state, needs, { previous, runtimePins = {} } = {})
       artifactRef: `daemon-artifact-${outputs.helper_version}-${outputs.helper_sha}` });
   }
   if (state.channel && state.components['mobile-native'].selected && state.components['mobile-native'].state === 'checked')
-    state.components['mobile-native'].storeTrack = state.channel === 'nightly' ? 'beta' : 'production';
+    state.components['mobile-native'].storeTrack = state.channel === 'next' ? 'beta' : 'production';
   // Store builds this release uploaded become known OTA runtimes once live.
   const builds = [...(state.storeRuntime?.builds ?? previous?.storeRuntime?.builds ?? [])];
   for (const [platform, job, key] of [['android', 'mobile_native_android', 'version_code'], ['ios', 'mobile_native_ios', 'build_number']]) {
@@ -665,11 +665,11 @@ export function compactState(state) {
 }
 
 /** One line per output; public JSON uses punctuation-safe transport. */
-export function planOutputs(state, previous, nightly) {
+export function planOutputs(state, previous, next) {
   const plan = state.plan;
   const lines = [
     ...(state.channel ? [`channel=${state.channel}`] : []),
-    ...(nightly ? Object.entries(promotionSource(nightly, state.sourceSha)).filter(([key]) => key !== 'sourceSha' && key !== 'version').map(([key, value]) =>
+    ...(next ? Object.entries(promotionSource(next, state.sourceSha)).filter(([key]) => key !== 'sourceSha' && key !== 'version').map(([key, value]) =>
       `${({ otaBranch: 'ota_branch', otaSha: 'ota_sha', otaVersion: 'ota_version', otaTargets: 'ota_targets', helperSha: 'helper_sha', helperVersion: 'helper_version' })[key]}=${Array.isArray(value) ? value.join(',') : value}`) : []),
     `has_previous=${Boolean(previous)}`,
     `previous_version=${previous?.version ?? ''}`,
@@ -696,7 +696,7 @@ export function planOutputs(state, previous, nightly) {
 /** Rebuild finalization state from scalar intent and the published baseline.
  * No encoded state blob crosses the runner's secret-filtered output boundary.
  */
-export function restoreReleasePlan({ version, sourceSha, plan, previous, nightly, startedAt }) {
+export function restoreReleasePlan({ version, sourceSha, plan, previous, next, startedAt }) {
   const flag = (key) => {
     if (!['true', 'false'].includes(plan?.[key])) fail(`invalid or missing plan flag: ${key}`);
     return plan[key] === 'true';
@@ -728,7 +728,7 @@ export function restoreReleasePlan({ version, sourceSha, plan, previous, nightly
   if (typeof plan.plan_selection !== 'string' || !plan.plan_selection) fail('missing plan selection');
   selectReleaseComponents([], { selection: plan.plan_selection }); // Validate the original audit selection.
   const noOp = flag('no_op');
-  const state = initializeRelease({ version, sourceSha, previous, selectedComponents, startedAt, channel: plan.channel, nightly });
+  const state = initializeRelease({ version, sourceSha, previous, selectedComponents, startedAt, channel: plan.channel, next });
   if ((state.state === 'delivered') !== noOp) fail('plan no-op identity mismatch');
   if (state.components.desktop.desktopVersion !== plan.desktop_version) fail('plan desktop version mismatch');
   if (!noOp) {
@@ -830,13 +830,13 @@ async function main(argv) {
     const selection = args.selection ?? 'auto';
     const runtimePin = previous ? runtimePinChangeFromPublishedInputs(previous, args.sha) : undefined;
     const channel = releaseChannel(args.channel);
-    const nightly = args.nightly ? readJson(args.nightly) : undefined;
+    const next = args.next ? readJson(args.next) : undefined;
     const selectOptions = { selection, storeTrack: args['store-track'] ?? 'none' };
     const selected = componentPaths
       ? selectReleaseComponentsFromPublishedInputs(componentPaths, selectOptions)
       : selectReleaseComponents(paths, selectOptions);
     const selectedComponents = channelComponents(selected, { channel, storeTrack: selectOptions.storeTrack });
-    const state = initializeRelease({ ...identityFromOptions(args), previous, selectedComponents, runtimePin, channel, nightly });
+    const state = initializeRelease({ ...identityFromOptions(args), previous, selectedComponents, runtimePin, channel, next });
     state.plan.paths = paths;
     if (componentPaths) state.plan.componentPaths = componentPaths;
     state.plan.selection = selection;
@@ -848,7 +848,7 @@ async function main(argv) {
     writeJson(args.state, state);
     if (args.summary) writeJson(args.summary, releasePlanSummary(state));
     else console.log(JSON.stringify(releasePlanSummary(state)));
-    if (args.outputs) appendFileSync(args.outputs, planOutputs(state, previous, nightly));
+    if (args.outputs) appendFileSync(args.outputs, planOutputs(state, previous, next));
     return;
   }
   if (command === 'restore-job-state') {
@@ -860,7 +860,7 @@ async function main(argv) {
       if (!Number.isSafeInteger(epoch) || epoch <= 0) fail('invalid dispatch clock');
       const state = restoreReleasePlan({
         version: process.env.RELEASE_VERSION, sourceSha: process.env.RELEASE_SHA,
-        plan: needs.initialize?.outputs, previous, nightly: args.nightly ? readJson(args.nightly) : undefined, startedAt: new Date(epoch * 1000).toISOString(),
+        plan: needs.initialize?.outputs, previous, next: args.next ? readJson(args.next) : undefined, startedAt: new Date(epoch * 1000).toISOString(),
       });
       writeJson(args.state, state);
     } catch (error) {

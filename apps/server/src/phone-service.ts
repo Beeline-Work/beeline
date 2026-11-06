@@ -1,3 +1,4 @@
+import { directMessageRoomId } from './system-line.js';
 import { CommandScopedDatabase } from './command-scoped-database.js';
 import type { TrayDecisionOperation } from './tray-decision-command.js';
 import { createWorkspace } from './workspace-creation.js';
@@ -14,7 +15,6 @@ import type { CommittedMessageLiveRow, LiveEvent, LiveHub } from './live.js';
 import { HistoryOutlineCache } from './history-outline-cache.js';
 import type { GitHubOperations } from './github-operations.js';
 import type { FreeAgentService } from './free-agents.js';
-import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
 import { McpRegistryClient } from './mcp-registry.js';
 import type { ObjectService } from './object-service.js';
 import { listRoomWorkflowRuns, readWorkflowRun } from './workflow-run-views.js';
@@ -30,7 +30,7 @@ import { phoneReadRoom, phoneResolveMessageLink } from './phone/room-read.js';
 import { phoneSearchMessages, phoneReadHistoryAround, phoneReadHistoryAfter, phoneReadHistory, phoneReadHistoryOutline, phoneCountHistoryOutline } from './phone/history-search.js';
 import { phoneReadCorners, phoneLoadCorners, phoneRoomRows, phoneCornerRoomEnrichment, phoneProjectRoomEnrichment, phoneCornerRowsSql, phoneProjectCorners } from './phone/corner-reads.js';
 import { phoneReadAgent, phoneProjectAgentGrants, phoneProjectMemberGrantRows } from './phone/agent-reads.js';
-import { phoneReadInvite, phoneLockPairingIssuer, phoneClaimAgentPairing, phoneWornSeededIdentity, phoneAvailableAgentHandle, phoneClaimAgentConnectPairing, phoneRenameConnectedAgent, phoneFinishAgentConnectPairing } from './phone/pairing.js';
+import { phoneReadInvite, phoneLockPairingIssuer, phoneClaimAgentPairing, phoneWornSeededIdentity, phoneClaimAgentConnectPairing, phoneRenameConnectedAgent, phoneFinishAgentConnectPairing } from './phone/pairing.js';
 import { phoneExecute } from './phone/execute.js';
 import { phoneExecuteOperation } from './phone/operations.js';
 import { phoneMarkRead, phoneMarkUnread, phoneUploadMedia, phoneObserveSentMessage, phoneSendMessage, phoneSendReply, phoneReactToMessage, phoneDeleteRoomMessage, phoneSetMessageBookmark, phoneClearMessageBookmarks } from './phone/messages.js';
@@ -247,7 +247,6 @@ export class PhoneService {
     faces: string[];
     names: string[];
 }> { return phoneWornSeededIdentity(this, database, workspaceId, exceptIdentityId); }
-  async availableAgentHandle(database: SqlDatabase, workspaceId: string, exceptIdentityId: string, name: string, lockedWorkspaces = lockIdentityHandleWorkspaces(database, exceptIdentityId, [workspaceId])): Promise<string> { return phoneAvailableAgentHandle(this, database, workspaceId, exceptIdentityId, name, lockedWorkspaces); }
   async claimAgentConnectPairing(input: {
     code: string;
     agentPubkey: string;

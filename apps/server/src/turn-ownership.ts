@@ -1,10 +1,24 @@
 import type { HelperTurnOwnershipSource } from '@beeline/api-contract/helper-turn-ownership';
 import type { SqlDatabase } from './database.js';
 import { OWNED_MODEL_OWNER_END_SCHEMA } from './owned-model-parking.js';
-import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
 
 /** Independent rollout gate. Legacy rows and helpers retain their receipt adapter. */
 export { networkRouterEnabled as turnOwnershipEnabled } from './network-router-rollout.js';
+
+/** Actual access rows are retained only at the final commit check or
+ * synchronous transport enqueue. Earlier authorization is a read. */
+export function ownedRoomAccessSql(room:string,agent:string,control:string,retain=false):string {
+  return `SELECT 1 FROM rooms room JOIN rooms parent ON parent.id=COALESCE(room.parent_id,room.id)
+    JOIN memberships member ON member.room_id=parent.id AND member.identity_id=${agent} AND member.removed_at IS NULL
+    JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
+      AND workspace_member.room_id IS NULL AND workspace_member.identity_id=member.identity_id
+      AND workspace_member.removed_at IS NULL
+    WHERE room.id=${room} AND (room.archived_at IS NULL OR (room.parent_id IS NOT NULL AND EXISTS(SELECT 1 FROM agent_commands control
+      WHERE control.id=${control} AND control.room_id=room.id AND control.agent_id=${agent}
+        AND control.action IN ('stop','restart'))))
+    ${retain?'FOR SHARE OF room,parent,member,workspace_member NOWAIT':''}`;
+}
+
 export const TURN_OWNERSHIP_SCHEMA = `
 -- Execution ownership survives transport loss; a new helper runtime replaces it.
 ALTER TABLE agent_connections ADD COLUMN IF NOT EXISTS turn_connection_id text;
@@ -148,6 +162,25 @@ CREATE OR REPLACE FUNCTION beeline_command_owner_live(
         AND server.renewed_at>clock_timestamp()-interval '90 seconds'))
   ) END;
 $$ LANGUAGE sql VOLATILE;
+-- This additive checkpoint survives a preceding installer replacing the
+-- owner-binding callback while new readers still serve during rollback.
+CREATE OR REPLACE FUNCTION beeline_commit_owned_access() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NOT EXISTS(SELECT 1 FROM agent_commands command
+    WHERE command.id=NEW.command_id AND command.agent_id=NEW.agent_id
+      AND EXISTS(${ownedRoomAccessSql('command.room_id','command.agent_id','command.id',true)})) THEN
+    RAISE EXCEPTION 'owned effect authority expired before commit' USING ERRCODE='23514';
+  END IF;
+  RETURN NULL;
+END; $$;
+DO $$ BEGIN
+  IF NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='turn_owned_effect_fences'::regclass
+    AND tgname='beeline_commit_owned_access') THEN
+    CREATE CONSTRAINT TRIGGER beeline_commit_owned_access AFTER INSERT ON turn_owned_effect_fences
+      DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION beeline_commit_owned_access();
+  END IF;
+END $$;
+
 `;
 
 function prefix(alias?: string): string {
@@ -236,20 +269,10 @@ export async function registerOwnedEffectFence(database: SqlDatabase, command: {
   ]);
 }
 
-/** Archived corners retain only their exact queued cleanup controls. The
- * current parent and Workspace membership still share the authority fence. */
+/** Archived corners retain only their exact queued cleanup controls. */
 export async function lockOwnedTurnRoomAccess(
   database: SqlDatabase, roomId: string, agentId: string, controlId?: string,
 ): Promise<boolean> {
-  await database.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', [ROUTER_AUTHORITY_LOCK]);
-  const access = await database.query(`SELECT 1 FROM rooms room JOIN room_access member
-    ON member.room_id=CASE WHEN room.archived_at IS NULL THEN room.id ELSE room.parent_id END
-    JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
-      AND workspace_member.room_id IS NULL AND workspace_member.identity_id=member.identity_id
-      AND workspace_member.removed_at IS NULL
-    WHERE room.id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL
-      AND (room.archived_at IS NULL OR EXISTS(SELECT 1 FROM agent_commands control
-        WHERE control.id=$3 AND control.room_id=room.id AND control.agent_id=$2
-          AND control.action IN ('stop','restart')))`, [roomId, agentId, controlId ?? null]);
+  const access = await database.query(ownedRoomAccessSql('$1','$2','$3'), [roomId,agentId,controlId??null]);
   return Boolean(access.rowCount);
 }

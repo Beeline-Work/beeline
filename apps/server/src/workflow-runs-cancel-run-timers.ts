@@ -1,3 +1,5 @@
+import { claimRun } from './workflow-runs.js';
+import { CommandRefusalError } from './command-refusal.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { WELCOME_VIDEO_SLUG } from './welcome-video-workflow.js';
 import { reserveServiceReviewWorkspaces } from './service-review.js';
@@ -165,6 +167,7 @@ export async function enterState(
   if (!nextState) throw new Error('workflow contract is internally inconsistent');
   const isTerminal = nextState.kind === 'terminal';
   const isGate = nextState.kind === 'gate';
+  if (!await claimRun(db, scope)) return { state: scope.stateName, attempt: scope.run.seq };
   await cancelRunWakes(db, roomId, runId);
 
   // Leaving a gate or ending the run must not strand an open gate choice: it
@@ -184,7 +187,7 @@ export async function enterState(
     const daily = contract.name === 'workspace-walk';
     const window = await db.query<{ days: 1 | 14 }>(`SELECT CASE
       WHEN extract(isodow FROM now() AT TIME ZONE 'America/New_York')=1 THEN 14 ELSE 1 END AS days`);
-    await reserveServiceReviewWorkspaces(db,nextAgentId,runId,daily,daily ? window.rows[0]!.days : 1);
+    await reserveServiceReviewWorkspaces(db,nextAgentId,runId,daily ? window.rows[0]!.days : 1);
   }
   const attempt = run.seq + 1;
   const cardId = randomBytes(32).toString('hex');
@@ -252,6 +255,7 @@ export async function moveRole(
   const roleBindings = { ...run.roleBindings, [input.role]: input.picked };
   const from = run.roleBindings[input.role];
   const names = await mentionsFor(db, [input.picked, ...(from ? [from] : [])]);
+  if (!await claimRun(db, scope)) return { state: scope.stateName, attempt: scope.run.seq };
   await cancelRunWakes(db, roomId, runId);
   if (state.kind === 'gate') await closeRunChoices(db, roomId, runId);
   const attempt = run.seq + 1;
@@ -311,8 +315,9 @@ export async function closeRun(
     cancellation?: { reason: string; actorId: string };
     line: CardLine;
   },
-): Promise<void> {
+): Promise<boolean> {
   const { run, roomId, runId, stateName } = scope;
+  if (!await claimRun(db, scope)) return false;
   await cancelRunWakes(db, roomId, runId);
   await closeRunChoices(db, roomId, runId);
   await ensureSystemIdentity(db);
@@ -339,6 +344,7 @@ export async function closeRun(
     },
   });
   await saveRunStatus(db, scope, stateName, input.status);
+  return true;
 }
 
 
@@ -410,6 +416,7 @@ export async function failOver(
       }),
     });
   }
+  if (!await claimRun(db, scope)) return { state: scope.stateName, attempt: scope.run.seq };
   await noteWorkflowRoleExhausted(db, {
     roomId: scope.roomId,
     runId: scope.runId,
@@ -489,7 +496,7 @@ export async function cancelWorkflowRun(
     const actorId = await authorizeRunControl(db, command, run, 'cancel this run', true);
     if (scope.ended) throw new Error('this workflow run has already ended');
     const reason = input.reason.trim();
-    await closeRun(db, scope, {
+    const closed = await closeRun(db, scope, {
       status: 'abandoned',
       outcome: 'cancelled',
       reason,
@@ -502,6 +509,7 @@ export async function cancelWorkflowRun(
         consequence: systemMessage("workflow-runs.run", shortRunId(input.runId)),
       },
     });
+    if (!closed) throw new CommandRefusalError('workflow already advanced; no cancellation was applied',409);
     return { runId: input.runId, state: run.toState, status: 'abandoned', reason };
   });
 }

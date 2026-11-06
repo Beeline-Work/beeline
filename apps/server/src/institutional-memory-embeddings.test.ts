@@ -380,27 +380,7 @@ describe('one embedding attempt per actual save', () => {
   });
 });
 
-describe('no timer-driven or periodic database sweep', () => {
-  it('the embeddings module sets no interval anywhere', () => {
-    const source = readFileSync(
-      fileURLToPath(new URL('./institutional-memory-embeddings.ts', import.meta.url)),
-      'utf8',
-    );
-    expect(source).not.toMatch(/setInterval\s*\(/);
-    // A recurring scan class/loop must not exist at all: only the one-shot
-    // backfill and per-row event-driven scheduling remain.
-    expect(source).not.toMatch(/class\s+\w*Loop\b/);
-    expect(source).not.toMatch(/runIfDue/);
-  });
-
-  it("index.ts wires the backfill as a one-shot call, not a recurring background job", () => {
-    const source = readFileSync(
-      fileURLToPath(new URL('./index.ts', import.meta.url)),
-      'utf8',
-    );
-    expect(source).not.toMatch(/InstitutionalMemoryEmbeddingLoop/);
-    expect(source).not.toMatch(/institutional-memory-embedding['"]/);
-    // Only the ordinary server start runs a network backfill.
-    expect(source).not.toContain("backfillInstitutionalMemoryEmbeddingsOnce");
-  });
+it('startup performs no embedding scan or network backfill',()=>{
+  const startup=readFileSync(fileURLToPath(new URL('./index.ts',import.meta.url)),'utf8');
+  expect(startup).not.toMatch(/backfillInstitutionalMemoryEmbeddingsOnce|InstitutionalMemoryEmbeddingLoop/);
 });

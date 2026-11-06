@@ -291,9 +291,11 @@ describe('Reproduction run-id-prefix: authenticated run lookup and control', () 
     const foreignWorkspace = randomUUID(), foreignRoom = randomUUID();
     await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hidden')`, [foreignWorkspace]);
     await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Hidden')`, [foreignRoom, foreignWorkspace]);
+    // Ended runs still participate in prefix lookup; only one run may be live.
     for (const [id, room] of [[second, ROOM], [hidden, foreignRoom]]) await db.query(
       `INSERT INTO messages(id,room_id,author_id,card_type,card,text)
-       SELECT $1,$2,author_id,card_type,jsonb_set(card,'{runId}',to_jsonb($1::text)),text FROM messages WHERE id=$3`,
+       SELECT $1,$2,author_id,card_type,card || jsonb_build_object('runId',$1::text,'runStatus','done','toState','done','status','done'),text
+       FROM messages WHERE id=$3`,
       [id, room, runId]);
     const context = await turn(REQUESTER);
     for (const operation of ['getWorkflowRun', 'handoff', 'cancelWorkflowRun', 'assignWorkflowRole']) {

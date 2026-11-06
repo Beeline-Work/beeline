@@ -1,5 +1,4 @@
 import { type PushLevel } from '@beeline/api-contract/phone';
-import { lockIdentityHandleWorkspaces, reassignCollidingAgentHandles } from '../workspace-handles.js';
 import type { PhoneContext } from './context.js';
 import { Input, RoomRow } from './types.js';
 import { phoneRequireRoomWorkspaceManager, phoneRequireIdentity } from './access.js';
@@ -67,7 +66,7 @@ import { unix } from './values.js';
   }
 
   export async function phoneRoomRepository(ctx: PhoneContext, roomId: string) {
-    const row = (await ctx.database.query<RoomRow>(`SELECT * FROM rooms WHERE id=$1`, [roomId]))
+    const row = (await ctx.database.query<RoomRow>(`SELECT rooms.* FROM rooms WHERE id=$1`, [roomId]))
       .rows[0];
     if (!row?.repository_key || !row.repository_remote)
       throw new Error('room repository not configured');
@@ -144,19 +143,11 @@ import { unix } from './values.js';
     if (['channel', 'system', 'play-review', 'review', 'scheduler'].includes(handle))
       throw new Error('invalid reserved handle');
     await ctx.database.transaction(async (database) => {
-      await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-        'workspace-handle-allocation',
-      ]);
-      const workspaceIds = await lockIdentityHandleWorkspaces(database, viewerId);
-      await reassignCollidingAgentHandles(database, viewerId, handle, workspaceIds);
       const claimed = await database.query(
-        `UPDATE identities AS identity SET handle=$2,updated_at=now()
-         WHERE identity.id=$1 AND NOT EXISTS(
-           SELECT 1 FROM identities AS other
-           WHERE other.id<>$1 AND other.kind='human' AND lower(other.handle)=lower($2)
-         )`,
-        [viewerId, handle],
-      );
+        `WITH target AS MATERIALIZED (SELECT id FROM identities WHERE id=$1 FOR UPDATE),
+         chosen AS MATERIALIZED (SELECT beeline_identity_handle($1,$2,true) handle FROM target)
+         UPDATE identities SET handle=chosen.handle,updated_at=now() FROM chosen
+         WHERE identities.id=$1 AND chosen.handle=$2`,[viewerId,handle]);
       if (claimed.rowCount === 0) throw new Error('managed handle is already claimed');
     });
   }

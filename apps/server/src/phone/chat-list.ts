@@ -1,3 +1,4 @@
+import { messageColumns } from '../message-columns.js';
 import { assetUrl, phoneIdentity as identity, type PhoneIdentityRow as IdentityRow } from '../phone-identity.js';
 import type { ChatListView, ChatListItem, RoomViewMessage } from '@beeline/api-contract/phone';
 import { chatActivityAt } from '@beeline/api-contract/phone';
@@ -101,7 +102,7 @@ import { unix } from './values.js';
       FROM rooms r
       JOIN memberships member ON member.room_id=COALESCE(r.parent_id,r.id) AND member.identity_id=$2 AND member.removed_at IS NULL
       LEFT JOIN LATERAL (
-        SELECT * FROM messages message
+        SELECT ${messageColumns('message')} FROM messages message
         WHERE message.room_id=r.id AND ${visibleChatMessageSql('message')}
         ORDER BY created_at DESC,id DESC LIMIT 1
       ) lm ON true
@@ -127,7 +128,7 @@ import { unix } from './values.js';
       reviveDates(row, ['created_at', 'updated_at', 'archived_at', 'latest_created_at',
         'peer_presence_updated_at', 'peer_activity_at'])) };
     const roomIds = rooms.rows.map((room) => room.id);
-    const enrichment = await phoneOptionalEnrichment(ctx,
+    const enrichment = await ctx.optionalEnrichment(
       'chat-enrichment',
       ctx.enrichmentDatabase.query<{
         presence: Array<{ room_id: string; peer_presence_body: Record<string, unknown> | null;
@@ -300,8 +301,8 @@ import { unix } from './values.js';
                     },
                     ctx.publicOrigin,
                   ),
-                  ...(phoneDirectMessagePresence(ctx, row)
-                    ? { presence: phoneDirectMessagePresence(ctx, row)! }
+                  ...(ctx.directMessagePresence(row)
+                    ? { presence: ctx.directMessagePresence(row)! }
                     : {}),
                 },
               }

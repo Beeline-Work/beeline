@@ -310,9 +310,9 @@ ALTER TABLE agents ADD COLUMN IF NOT EXISTS model_unavailable text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS fast_mode boolean NOT NULL DEFAULT false;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS machine_id text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS machine_name text;
--- Broker facts are machine reports, not connector lifecycle records.
+-- Retired broker-copy column is retained until the later contract release.
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS squire_report jsonb;
--- Outstanding helper work and its progress; never the broker's status.
+-- Agent-local pending operations and session observations. Installation state lives in squire_machines.
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS squire_work jsonb NOT NULL DEFAULT '{}'::jsonb;
 -- The harness is posted alongside the model catalog on every activation
 -- (same cadence as selected_model). custom_tags is retained but unused:
@@ -472,18 +472,12 @@ CREATE TRIGGER messages_search_document_trg
 -- was that frozen list, and it drifted: a handle renamed, a member removed, or a
 -- person joining after the fact left stored ids that no longer matched the words
 -- anybody could see. Deriving on read is the only way the two can never disagree.
--- Where an event line came from. The cause is the message that triggered the
--- turn that emitted it; the root is the first line of that whole cascade, and
--- the depth is how far this line sits from it. Columns rather than more json
--- because the loop guard COUNTS over the root and the partial index is what
--- makes that count cheap; nothing outside a cascade carries them.
+-- Kinded events retain their committed cause, first root and causal distance.
+-- These trace fields are derived by the server.
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS event_cause_id text;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS event_root_cause_id text;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS event_depth integer;
--- How many turns this line woke, which is what the cascade budget spends. It is
--- a COUNT and never a list: wake targets were the one thing the retired column
--- below held that no text could be read back for, because a system line
--- addresses agents by subscription rather than by anything in its sentence.
+-- Retired cascade counter: serving and rollback compatibility until the contract release.
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS event_woken integer;
 -- The model that produced an agent's durable reply, stamped at generation time
 -- on the server (from the author's agents.selected_model, the daemon-posted

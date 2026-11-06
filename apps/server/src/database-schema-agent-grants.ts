@@ -523,9 +523,6 @@ DO $$ BEGIN
     GRANT SELECT ON helper_release_notifications TO beeline_feedback_reader;
   END IF;
 END $$;
-CREATE INDEX IF NOT EXISTS feedback_items_open_match_idx
-  ON feedback_items(category, summary_key, tool_name)
-  WHERE source_kind='agent' AND status IN ('new','filed','attached');
 -- One human report per message, whether it came from a tag or the action.
 CREATE UNIQUE INDEX IF NOT EXISTS feedback_items_human_message_idx
   ON feedback_items(trigger_message_id) WHERE source_kind='human';
@@ -599,12 +596,6 @@ UPDATE workspace_apps a SET authorised_at=a.created_at WHERE a.authorised_at IS 
 
 UPDATE workspace_apps app SET machine_id=COALESCE(k.machine_id,k.helper_agent_id)
 FROM workspace_connectors k WHERE app.connector_id=k.id AND k.connector_type='trusty-squire';
-UPDATE agents a SET squire_work=jsonb_build_object('generation',k.pairing_generation,
-  'install',true,'steps',k.status_steps,'signIn',k.sign_in,
-  'forceReloginProvider',k.force_relogin_provider,'ops',k.pending_ops)
-FROM workspace_connectors k WHERE k.helper_agent_id=a.agent_id
-  AND k.connector_type='trusty-squire' AND k.status='installing' AND k.owner_identity_id=a.owner_id
-  AND NOT COALESCE((a.squire_work->>'install')::boolean,false);
 UPDATE messages m SET card=jsonb_set(card,'{connectorId}',to_jsonb('squire:' || COALESCE(k.machine_id,k.helper_agent_id)))
 FROM connector_offers offer JOIN workspace_connectors k ON k.id=offer.connector_id
 WHERE m.card_type='connector-offer' AND m.card->>'offerId'=offer.id::text AND k.connector_type='trusty-squire';

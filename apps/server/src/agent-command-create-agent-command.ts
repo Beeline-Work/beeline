@@ -1,3 +1,5 @@
+import { dropQueuedOrdersForStop } from './agent-command-queue.js';
+import { lockAgentCommandQueue } from './agent-command-queue.js';
 import { endAgentTurn } from './agent-turn-end.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { commandOwnerLiveSql } from './turn-ownership.js';
@@ -10,7 +12,7 @@ import type { SqlDatabase } from './database.js';
 import { hasSystemReportMention, taggedIdentityIdsSql, typedMentionHandles } from './message-mentions.js';
 import { systemLine } from './system-line.js';
 import { AgentCommandInput, CommandRow, createAgentCommand } from './agent-command.js';
-import { lockAgentCommandQueue, dropQueuedOrdersForStop } from './agent-command-route-agent-result.js';
+
 
 
 export const TAGGED_AGENT_LIFECYCLE_COMMANDS = [
@@ -109,7 +111,7 @@ export async function routeTaggedLifecycleCommand(
        ) presence ON true
        WHERE agent.agent_id=$1
          AND NOT EXISTS(SELECT 1 FROM rooms_mcp_members WHERE member_id=agent.agent_id)
-       FOR SHARE OF agent,target_member,sender`,
+       FOR SHARE OF agent,sender`,
       [source.tagged_ids[0], source.room_id, source.author_id],
     )
   ).rows[0];
@@ -306,20 +308,6 @@ export async function routeTaggedLifecycleCommand(
     return true;
   }
 
-  await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
-    `agent-restart:${target.agent_id}`,
-  ]);
-  const existingRestart = (
-    await db.query<{ id: string }>(
-      `SELECT id FROM agent_commands WHERE agent_id=$1 AND action='restart'
-       AND state IN ('pending','claimed') ORDER BY created_at DESC LIMIT 1`,
-      [target.agent_id],
-    )
-  ).rows[0];
-  if (existingRestart) {
-    await line(systemMessage("agent-command.already-has-a-restart-in-progress"));
-    return true;
-  }
   const restart = await createAgentCommand(db, {
     roomId: source.room_id,
     agentId: target.agent_id,
@@ -327,11 +315,11 @@ export async function routeTaggedLifecycleCommand(
     action: 'restart',
     reason: 'tagged_lifecycle_restart',
   });
-  if (restart)
-    await db.query(`UPDATE agent_commands SET lifecycle_before=$2 WHERE id=$1`, [
-      restart.id,
-      target.lifecycle_id,
-    ]);
+  if (!restart) {
+    await line(systemMessage("agent-command.already-has-a-restart-in-progress"));
+    return true;
+  }
+  await db.query(`UPDATE agent_commands SET lifecycle_before=$2 WHERE id=$1`, [restart.id,target.lifecycle_id]);
   await line(
     systemMessage("agent-command.queued-a-restart"),
     active ? systemMessage("agent-command.running-turn-will-drain-first") : systemMessage("agent-command.helper-will-reconnect-to-confirm"),

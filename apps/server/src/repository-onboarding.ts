@@ -1,5 +1,6 @@
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
-import { randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
+import { CommandRefusalError } from './command-refusal.js';
 import type { RepositoryOnboardingCard, RepositoryStarter } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import type { GitHubOperations } from './github-operations.js';
@@ -68,37 +69,43 @@ export async function postRepositoryOnboarding(database: SqlDatabase, github: Gi
      AND account_type='User' AND repository_selection='all' ORDER BY installation_id LIMIT 1`, [input.requesterId])).rows[0];
   const kind = input.kind === 'starters' && room.repository_name ? 'starters' : 'repository';
   if (kind === 'starters' && !github) throw new Error('GitHub is not configured');
-  await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`,
-    [`repository-card:${input.roomId}:${input.requesterId}:${kind}`]);
-  const previous = (await database.query<{ id: string; card: { defaultName: string } }>(
-    `SELECT id,card FROM messages WHERE room_id=$1 AND author_id=$2 AND card_type='repository-onboarding'
-     AND card->>'kind'=$3 AND card->>'status'='open' AND card->>'requesterId'=$4
-     ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`,
-    [input.roomId, input.agentId, kind, input.requesterId],
-  )).rows[0];
-  const id = previous?.id ?? randomBytes(32).toString('hex');
-  const card: RepositoryOnboardingCard = {
-    id, ...input, ...(room.owner_handle ? { ownerHandle: room.owner_handle } : {}), githubLinked: room.github_linked, kind, status: 'open', canLink: room.can_link,
-    state: room.repository_name ? 'repo_linked' : installation ? 'no_repo_linked' : 'install_missing',
-    ...(room.repository_name ? { repository: room.repository_name } : {}),
-    defaultName: previous?.card.defaultName ?? `new-project-${id.slice(0, 6)}`,
-    ...(installation ? { installationId: Number(installation.installation_id) } : {}),
-    repositories: repositories.map(r => ({ id: Number(r.repository_id), fullName: r.full_name,
-      installationId: Number(r.installation_id), defaultBranch: r.default_branch, current: r.full_name === room.repository_name })),
-    starters: kind === 'starters' ? repositoryStarters(await github!.onboardingSignals(input.roomId)) : [],
-  };
-  // Repeated agent calls replace an unanswered card rather than leaving stale actions live.
-  await database.query(`UPDATE messages SET card=jsonb_set(card,'{status}','"settled"')
-    WHERE room_id=$1 AND id<>$2 AND card_type='repository-onboarding' AND card->>'kind'=$3 AND card->>'status'='open' AND card->>'requesterId'=$4`,
-    [input.roomId, id, kind, input.requesterId]);
-  if (previous) {
-    await database.query(`UPDATE messages SET card=$2::jsonb,version=version+1 WHERE id=$1`, [id, JSON.stringify(card)]);
+  const starters = kind === 'starters' ? repositoryStarters(await github!.onboardingSignals(input.roomId)) : [];
+  return database.transaction(async database => {
+    const previous = (await database.query<{ id: string; author_id: string; card: RepositoryOnboardingCard }>(
+      `SELECT id,author_id,card FROM messages WHERE room_id=$1 AND card_type='repository-onboarding'
+       AND card->>'kind'=$2 AND card->>'requesterId'=$3
+       ORDER BY created_at DESC,id DESC LIMIT 1`, [input.roomId,kind,input.requesterId])).rows[0];
+    const reuse = previous?.card.status === 'open' && previous.author_id === input.agentId;
+    // Calls observing the same predecessor choose the same next primary key.
+    // A competing author cannot overwrite that winner or reopen a settled card.
+    const id = reuse ? previous.id : createHash('sha256').update(JSON.stringify([
+      'repository-onboarding',input.roomId,input.requesterId,kind,previous?.id ?? null])).digest('hex');
+    const card: RepositoryOnboardingCard = {
+      id, ...input, ...(room.owner_handle ? { ownerHandle: room.owner_handle } : {}), githubLinked: room.github_linked, kind, status: 'open', canLink: room.can_link,
+      state: room.repository_name ? 'repo_linked' : installation ? 'no_repo_linked' : 'install_missing',
+      ...(room.repository_name ? { repository: room.repository_name } : {}),
+      defaultName: reuse ? previous.card.defaultName : `new-project-${id.slice(0, 6)}`,
+      ...(installation ? { installationId: Number(installation.installation_id) } : {}),
+      repositories: repositories.map(r => ({ id: Number(r.repository_id), fullName: r.full_name,
+        installationId: Number(r.installation_id), defaultBranch: r.default_branch, current: r.full_name === room.repository_name })),
+      starters,
+    };
+    await systemLine(database, { id, roomId: input.roomId, authorId: input.agentId,
+      ...(previous ? {afterMessageId:previous.id} : {}),
+      subject: { id: input.agentId, kind: 'agent', name: room.name },
+      verb: kind === 'starters' ? systemMessage("repository-onboarding.suggested-work") : systemMessage("repository-onboarding.offered-a-repository"),
+      object: room.repository_name ?? systemMessage("repository-onboarding.choose-or-create-a-repository"), presentation: 'card',
+      cardType: 'repository-onboarding', card: card as unknown as Record<string, unknown> });
+    const applied = await database.query(`WITH applied AS (
+      UPDATE messages SET card=$2::jsonb WHERE id=$1 AND author_id=$3
+        AND card_type='repository-onboarding' AND card->>'status'='open' RETURNING id
+    ), superseded AS (
+      UPDATE messages SET card=jsonb_set(card,'{status}','"settled"')
+      WHERE room_id=$4 AND id<>$1 AND card_type='repository-onboarding'
+        AND card->>'kind'=$5 AND card->>'status'='open' AND card->>'requesterId'=$6
+        AND EXISTS(SELECT 1 FROM applied)
+    ) SELECT id FROM applied`,[id,JSON.stringify(card),input.agentId,input.roomId,kind,input.requesterId]);
+    if (!applied.rowCount) throw new CommandRefusalError('Repository card changed; no card was posted',409);
     return card;
-  }
-  await systemLine(database, { id, roomId: input.roomId, authorId: input.agentId,
-    subject: { id: input.agentId, kind: 'agent', name: room.name },
-    verb: kind === 'starters' ? systemMessage("repository-onboarding.suggested-work") : systemMessage("repository-onboarding.offered-a-repository"),
-    object: room.repository_name ?? systemMessage("repository-onboarding.choose-or-create-a-repository"), presentation: 'card',
-    cardType: 'repository-onboarding', card: card as unknown as Record<string, unknown> });
-  return card;
+  });
 }

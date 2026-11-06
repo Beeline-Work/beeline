@@ -1,7 +1,7 @@
 import { authStoreRelayCommunityIdForRoom, authStoreMigrate, authStoreCreateFlow, authStoreContinueFlow, authStoreInsertFlow, authStoreConsumeFlow, authStoreIdentityLinkForSubject, authStoreLatestWorkspaceForMember, authStoreCreateAgentConnectDevice, authStoreFindAgentConnectDeviceByUserCode, authStoreFindAgentConnectDevice, authStoreApproveAgentConnectDevice, authStoreConsumeAgentConnectDevice, authStoreCreateTicket, authStoreCreateRecoveryTicket, authStoreCancelRecoveryTicket, authStoreFindTicket, authStoreRecordFailedTicketAttempt, authStoreConsumeTicketForPhone, authStoreConsumeTicketAndLink, authStoreRecoverConsumedTicketLink, authStoreClaimNip98Event } from './store-relay-community-id-for-room.js';
 import { authStoreLinksForPubkey, authStoreResolveCurrentPubkey, authStoreSameIdentity, authStoreSuccessionPredecessors, authStoreGithubSubjectForPubkey, authStoreCreateGitHubInstallFlow, authStorePeekGitHubInstallFlow, authStoreConsumeGitHubInstallFlow, authStoreSaveGitHubInstallation, authStoreUpsertGitHubInstallation, authStoreGithubActiveInstallationCoversAccount, authStoreGithubInstallationForPubkey, authStoreReplaceGitHubRepositories, authStoreReplaceGitHubInstallationSnapshot, authStoreReplaceGitHubRepositoriesInTransaction, authStoreUpsertGitHubRepository, authStoreApplyGitHubRepositoryChanges, authStoreMarkGitHubInstallationStatus, authStoreGithubRepositoriesForPubkey, authStoreGithubRepositoryAlias, authStoreSaveGitHubRepositoryAlias, authStoreStoredGitHubRepositoryIdForName, authStoreGitHubRepositoryAccessRow, authStoreGithubRepositoryAccess, authStoreRecordGitHubRoomLinkRequest, authStoreActivateGitHubRoomLinks, authStoreClaimGitHubWebhookDelivery } from './store-links-for-pubkey.js';
 import { authStoreReleaseGitHubWebhookDelivery, authStoreSaveGitHubRepoEvents, authStoreGithubRepoEvents, authStoreLatestGitHubRepoEventId, authStoreSaveGitHubUserToken, authStoreGithubUserCredential, authStoreGithubUserToken, authStoreMarkGitHubUserTokenStale, authStoreClearGitHubUserTokenStale, authStoreGithubUserTokenStaleAt, authStoreClaimGitHubInstallationReconciliation, authStoreProvisionGitHubIdentity, authStoreManagedIdentity, authStoreAdoptGitHubHandle, authStoreClose } from './store-release-git-hub-webhook-delivery.js';
-import { Pool, type PoolClient, type QueryResultRow } from 'pg';
+import type { QueryResultRow } from 'pg';
 
 /** How long a stored repository event remains fetchable by a late daemon. */
 export const GITHUB_REPO_EVENT_RETENTION_MS = 7 * 24 * 60 * 60_000;
@@ -18,40 +18,6 @@ export interface SqlExecutor {
 export interface TransactionalDatabase extends SqlExecutor {
   transaction<T>(work: (transaction: SqlExecutor) => Promise<T>): Promise<T>;
   close(): Promise<void>;
-}
-
-export class PostgresDatabase implements TransactionalDatabase {
-  readonly #pool: Pool;
-
-  constructor(connectionString: string) {
-    this.#pool = new Pool({ connectionString, max: 10 });
-  }
-
-  async query<Row extends QueryResultRow>(
-    sql: string,
-    values: unknown[] = [],
-  ): Promise<SqlResult<Row>> {
-    return this.#pool.query<Row>(sql, values);
-  }
-
-  async transaction<T>(work: (transaction: SqlExecutor) => Promise<T>): Promise<T> {
-    const client: PoolClient = await this.#pool.connect();
-    try {
-      await client.query('BEGIN');
-      const result = await work(client);
-      await client.query('COMMIT');
-      return result;
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-
-  async close(): Promise<void> {
-    await this.#pool.end();
-  }
 }
 
 export const MIGRATIONS = [

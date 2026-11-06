@@ -1,3 +1,6 @@
+import { SQUIRE_MACHINE_SCHEMA } from './squire-machine.js';
+import { backfillSquireMachines } from './squire-machine.js';
+import { IDENTITY_HANDLE_SCHEMA } from './identity-handles.js';
 import { OWNED_MODEL_CREDENTIAL_SCHEMA } from './owned-model-credential.js';
 import { OWNED_MODEL_ATTEMPT_SCHEMA } from './owned-model-attempt.js';
 import { SENTRY_WAKE_SOURCE_SCHEMA } from './sentry-wake-source.js';
@@ -63,7 +66,7 @@ import { CORNER_ATTENTION_SCHEMA } from './corner-attention.js';
 import { backfillCornerFollows, cornerFollowsSchemaSql } from './corner-follow.js';
 import { alreadyNoOp, alreadySatisfied, triggerAlreadyCurrent, runMigrationStep, splitMigrationStatements } from './migration-steps.js';
 import { SqlDatabase, SCHEMA, MESSAGE_CURSOR_MS_SQL } from './database.js';
-import { createIndexConcurrently, backfillMessageSearchDocuments, backfillSquireApprovalExpiry, compactWebhookDeliveries, compactPushClaims, backfillCornerOwed, backfillSystemEventKinds, backfillPerItemEventSubscriptions, backfillInstitutionalMemoryRollout, retireStandingPreferences, backfillAgentHandles, backfillConnectorMachineId } from './database-backfill-squire-approval-expiry.js';
+import { createIndexConcurrently, backfillMessageSearchDocuments, backfillSquireApprovalExpiry, compactWebhookDeliveries, compactPushClaims, backfillCornerOwed, backfillSystemEventKinds, backfillPerItemEventSubscriptions, backfillInstitutionalMemoryRollout, retireStandingPreferences, backfillConnectorMachineId } from './database-backfill-squire-approval-expiry.js';
 
 
 
@@ -122,6 +125,11 @@ export async function migrate(
     `ALTER TABLE wallet_bindings ADD COLUMN IF NOT EXISTS delegation_standing boolean NOT NULL DEFAULT false`,
   );
   await ddlScript('agent command schema', AGENT_COMMAND_SCHEMA);
+  await runMigrationStep('one active helper restart', () => createIndexConcurrently(
+    database,'agent_commands_one_restart',
+    `CREATE UNIQUE INDEX CONCURRENTLY agent_commands_one_restart ON agent_commands(agent_id)
+      WHERE action='restart' AND state IN ('pending','claimed')`,
+  ));
   await ddlScript('turn ownership schema', TURN_OWNERSHIP_SCHEMA);
   await ddlScript('agent turn ending', AGENT_TURN_END_SCHEMA);
   // The previous serving/rollback image still owns its notification capture
@@ -133,6 +141,51 @@ export async function migrate(
     DROP FUNCTION IF EXISTS defer_startup_wake();
   `);
   await ddlScript('free agents schema', FREE_AGENTS_SCHEMA);
+  await ddlScript('machine Squire source', SQUIRE_MACHINE_SCHEMA);
+  await ddlScript('stable identity handles', IDENTITY_HANDLE_SCHEMA);
+  await runMigrationStep('one pending app sign-in card',()=>createIndexConcurrently(database,
+    'messages_pending_app_sign_in_unique',`CREATE UNIQUE INDEX CONCURRENTLY messages_pending_app_sign_in_unique
+      ON messages(room_id,(card->>'appId'),(card->>'ownerId')) NULLS NOT DISTINCT
+      WHERE card_type='app-sign-in' AND card->>'status'='pending'`));
+  await runMigrationStep('one Luna per workspace',()=>createIndexConcurrently(database,
+    'free_agents_workspace_luna_unique',`CREATE UNIQUE INDEX CONCURRENTLY free_agents_workspace_luna_unique
+      ON free_agents(workspace_id) WHERE starter_role='luna'`));
+  await runMigrationStep('one presence per agent', async()=>{
+    await database.query(`DELETE FROM live_outputs presence USING (
+      SELECT room_id,agent_id,turn_id,row_number() OVER(PARTITION BY agent_id ORDER BY updated_at DESC,room_id,turn_id) position
+      FROM live_outputs WHERE kind='presence') duplicate
+      WHERE presence.kind='presence' AND presence.room_id=duplicate.room_id
+        AND presence.agent_id=duplicate.agent_id AND presence.turn_id=duplicate.turn_id AND duplicate.position>1`);
+    await createIndexConcurrently(database,'live_outputs_one_presence',
+      `CREATE UNIQUE INDEX CONCURRENTLY live_outputs_one_presence ON live_outputs(agent_id) WHERE kind='presence'`);
+  });
+  await runMigrationStep('identity handle lookup',()=>createIndexConcurrently(database,
+    'identities_handle_lookup',`CREATE INDEX CONCURRENTLY identities_handle_lookup ON identities(lower(handle))`));
+  await runMigrationStep('one GitHub account per identity',()=>createIndexConcurrently(database,
+    'identity_github_owner_unique',`CREATE UNIQUE INDEX CONCURRENTLY identity_github_owner_unique
+      ON identity_external_links(identity_id) WHERE provider='github'`));
+  await runMigrationStep('one Google account per identity',()=>createIndexConcurrently(database,
+    'identity_google_owner_unique',`CREATE UNIQUE INDEX CONCURRENTLY identity_google_owner_unique
+      ON identity_external_links(identity_id) WHERE provider='google'`));
+  await runMigrationStep('unique service review reservation', () => createIndexConcurrently(
+    database,'service_review_visits_workspace_run_unique',
+    `CREATE UNIQUE INDEX CONCURRENTLY service_review_visits_workspace_run_unique
+      ON service_review_visits(workspace_id,run_id)`,
+  ));
+  await runMigrationStep('unique open feedback match', () => createIndexConcurrently(
+    database,'feedback_items_open_match_unique',
+    `CREATE UNIQUE INDEX CONCURRENTLY feedback_items_open_match_unique
+      ON feedback_items(category,summary_key,tool_name) NULLS NOT DISTINCT
+      WHERE source_kind='agent' AND status IN ('new','filed','attached')`,
+  ));
+  await runMigrationStep('retire nonunique feedback match', async () => {
+    await database.query('DROP INDEX CONCURRENTLY IF EXISTS feedback_items_open_match_idx');
+  });
+  await runMigrationStep('unique warning guide start', () => createIndexConcurrently(
+    database, 'free_agent_guide_warning',
+    `CREATE UNIQUE INDEX CONCURRENTLY free_agent_guide_warning
+     ON free_agent_events(agent_id,(detail->>'warningId')) WHERE kind='guide_started'`,
+  ));
   await ddlScript('owned model credentials', OWNED_MODEL_CREDENTIAL_SCHEMA);
   await ddlScript('owned model attempts', OWNED_MODEL_ATTEMPT_SCHEMA);
   await ddlScript('starter onboarding schema', STARTER_ONBOARDING_SCHEMA);
@@ -339,6 +392,12 @@ export async function migrate(
      ON messages(reply_to_message_id) WHERE reply_to_message_id IS NOT NULL`,
   ));
   // Every live-run check reads the start card's saved status through this index.
+  await runMigrationStep('unique live workflow run', () => createIndexConcurrently(
+    database, 'messages_workflow_run_live_unique',
+    `CREATE UNIQUE INDEX CONCURRENTLY messages_workflow_run_live_unique
+     ON messages(room_id,(card->>'workflowSlug'))
+     WHERE card_type='workflow-handoff' AND id=card->>'runId' AND ${workflowRunIsLiveSql('card')}`,
+  ));
   await runMigrationStep('workflow run live index', () => createIndexConcurrently(
     database, 'messages_workflow_run_live_idx',
     `CREATE INDEX CONCURRENTLY messages_workflow_run_live_idx
@@ -481,6 +540,7 @@ export async function migrate(
   await ddlScript('server lease deadlines', SERVER_LEASE_DEADLINE_SCHEMA);
   await ddlScript('X signup delivery deadlines', X_SIGNUP_DELIVERY_SCHEMA);
   await ddlScript('command completion notifications', commandCompletionSchema());
+  await runMigrationStep('normalize machine Squire state', () => backfillSquireMachines(database));
   await ddlScript('MCP member stream', MCP_MEMBER_STREAM_SCHEMA);
   await ddlScript('Helper overlay demand', HELPER_OVERLAY_SCHEMA);
   await ddlScript('Helper usage ownership', HELPER_USAGE_SCHEMA);
@@ -652,7 +712,6 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
       SET status='dead',error='curator model jobs removed',updated_at=now()
       WHERE trigger_kind='curator' AND status IN ('pending','retry','claimed')`);
   });
-  await backfillAgentHandles(database);
   await dataStep('connector machine IDs', () => backfillConnectorMachineId(database));
   await dataStep('registry apps', () => backfillRegistryApps(database));
   await dataStep('grant policy', () => upgradeGrantPolicy(database));

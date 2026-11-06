@@ -9,7 +9,7 @@ import {
     obsidianTheme,
 } from './theme';
 import * as SystemUI from 'expo-system-ui';
-import * as NavigationBar from 'expo-navigation-bar';
+import { setAndroidNavigationBarStyle } from './buzz/android-navigation-bar';
 import { LAYOUT_BREAKPOINTS } from './utils/layoutClass';
 import type { LocalSettings } from './sync/localSettings';
 import { loadLocalSettings } from './sync/persistence';
@@ -79,7 +79,7 @@ function applyRootBackground(themeName: AppThemeName): void {
     UnistylesRuntime.setRootViewBackgroundColor(rootColor);
     void SystemUI.setBackgroundColorAsync(rootColor);
     if (Platform.OS === 'android') {
-        NavigationBar.setStyle(navigationBarStyleForTheme(themeName));
+        void setAndroidNavigationBarStyle(navigationBarStyleForTheme(themeName));
     }
 }
 

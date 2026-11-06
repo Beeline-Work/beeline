@@ -292,6 +292,20 @@ export function restoreRoomMembership<Row extends QueryResultRow = QueryResultRo
   );
 }
 
+/** Compose an internal relation of workspace_id, room_id and identity_id into
+ * a batch restore. The relation is server SQL, never caller input. */
+export function restoreRoomMembershipsSql(relation: string): string {
+  return `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+    SELECT workspace_id,room_id,identity_id,'member' FROM ${relation}
+    ON CONFLICT(room_id,identity_id) WHERE room_id IS NOT NULL DO UPDATE SET removed_at=NULL RETURNING room_id`;
+}
+
+export function restoreRoomMemberships(database: Pick<SqlDatabase,'query'>,
+  workspaceId: string, roomId: string, identityIds: readonly string[]) {
+  return database.query(restoreRoomMembershipsSql('(SELECT $1::uuid workspace_id,$2::uuid room_id,unnest($3::text[]) identity_id) members'),
+    [workspaceId,roomId,identityIds]);
+}
+
 export function ensureRoomMembership<Row extends QueryResultRow = QueryResultRow>(
   database: Pick<SqlDatabase, 'query'>, values: [workspaceId: string, roomId: string, identityId: string],
 ) {

@@ -528,12 +528,22 @@ export function subscriptionPromptBody(text: string, event: { kind?: string; pay
     ? subscriptionActionPrompt(event) : text;
 }
 
+/** A whole-set preference spans several normalized event rows. Hold its real
+ * membership through the batch so another replacement reads the committed set. */
+async function subscriptionMember(tx:SqlDatabase,roomId:string,agentId:string){
+  return (await tx.query<{workspace_id:string;parent_id:string|null;archived_at:Date|null;reviewer:string|null}>(
+    `SELECT room.workspace_id,room.parent_id,room.archived_at,${cornerReviewerSql('room')} reviewer
+     FROM rooms room JOIN rooms parent ON parent.id=COALESCE(room.parent_id,room.id)
+     JOIN memberships member ON member.room_id=COALESCE(room.parent_id,room.id)
+       AND member.identity_id=$2 AND member.removed_at IS NULL
+     WHERE room.id=$1 FOR UPDATE OF member`,[roomId,agentId])).rows[0];
+}
+
 async function materializeCornerSubscriptions(tx: SqlDatabase, roomId: string, agentId: string): Promise<void> {
-  await tx.query(`INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,prompt,created_at,inherit_to_corners,paused_at)
+  await tx.query(`WITH copied AS (INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,prompt,created_at,inherit_to_corners,paused_at)
     SELECT gen_random_uuid(),workspace_id,room_id,agent_id,'room',event,NULL,created_at,true,paused_at
     FROM room_event_subscriptions WHERE room_id=$1 AND agent_id=$2 AND inherited
-    ON CONFLICT DO NOTHING`, [roomId, agentId]);
-  await tx.query(`INSERT INTO corner_person_state(corner_id,identity_id,subscriptions_overridden) VALUES($1,$2,true)
+    ON CONFLICT DO NOTHING RETURNING id) INSERT INTO corner_person_state(corner_id,identity_id,subscriptions_overridden) VALUES($1,$2,true)
     ON CONFLICT(corner_id,identity_id) DO UPDATE SET subscriptions_overridden=true`, [roomId, agentId]);
 }
 
@@ -542,13 +552,11 @@ async function materializeCornerSubscriptions(tx: SqlDatabase, roomId: string, a
 async function removeRoomEventSubscription(db: SqlDatabase, roomId: string, agentId: string,
   key: {id?:string;event?:string}): Promise<boolean> {
   return db.transaction(async tx => {
-    await tx.query("SELECT pg_advisory_xact_lock(hashtext('room-subscriptions:'||$1||':'||$2))", [roomId, agentId]);
+    const surface=await subscriptionMember(tx,roomId,agentId);
+    if(!surface) return false;
     const subscription=(await roomEventSubscriptions(tx,roomId)).find(row=>row.agent_id===agentId &&
       (key.id ? row.id===key.id : row.event===key.event));
     if(!subscription) return false;
-    const surface=(await tx.query<{parent_id:string|null;reviewer:string|null}>(
-      `SELECT room.parent_id,${cornerReviewerSql('room')} reviewer FROM rooms room
-       JOIN rooms parent ON parent.id=COALESCE(room.parent_id,room.id) WHERE room.id=$1`,[roomId])).rows[0]!;
     if(subscription.prompt===null && subscription.event==='check-passed' && surface.reviewer===agentId)
       throw new Error('subscription not found');
     if(surface.parent_id) await materializeCornerSubscriptions(tx,roomId,agentId);
@@ -563,13 +571,8 @@ async function removeRoomEventSubscription(db: SqlDatabase, roomId: string, agen
 export async function setRoomEventSubscriptions(db: SqlDatabase, roomId: string, agentId: string,
   kinds: readonly string[]): Promise<string[]> {
   return db.transaction(async tx => {
-    await tx.query("SELECT pg_advisory_xact_lock(hashtext('room-subscriptions:'||$1||':'||$2))", [roomId, agentId]);
-    const surface = (await tx.query<{ workspace_id: string; parent_id: string | null; reviewer: string | null }>(
-      `SELECT room.workspace_id,room.parent_id,${cornerReviewerSql('room')} reviewer
-       FROM rooms room JOIN rooms parent ON parent.id=COALESCE(room.parent_id,room.id)
-       JOIN room_access member ON member.room_id=room.id AND member.identity_id=$2 AND member.removed_at IS NULL
-       WHERE room.id=$1 AND room.archived_at IS NULL`, [roomId, agentId])).rows[0];
-    if (!surface) throw new Error('daemon room access denied');
+    const surface=await subscriptionMember(tx,roomId,agentId);
+    if(!surface || surface.archived_at) throw new Error('daemon room access denied');
     // Reviewer duties remain described when the agent replaces its own preferences.
     const events = [...new Set([...kinds, ...(surface.reviewer === agentId ? ['check-passed'] : [])])];
     if (events.some(event => !isSubscribableEventKind(event))) throw new Error('invalid subscription event');
@@ -577,12 +580,13 @@ export async function setRoomEventSubscriptions(db: SqlDatabase, roomId: string,
     if (surface.parent_id) {
       await materializeCornerSubscriptions(tx, roomId, agentId);
     }
-    await tx.query(`DELETE FROM agent_subscriptions WHERE room_id=$1 AND agent_id=$2 AND source='room'
-      AND NOT event=ANY($3::text[])`, [roomId, agentId, events]);
-    for (const event of events) await tx.query(`INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,prompt,inherit_to_corners)
-      VALUES($1,$2,$3,$4,'room',$5,NULL,true)
+    await tx.query(`WITH deleted AS (
+      DELETE FROM agent_subscriptions WHERE room_id=$1 AND agent_id=$2 AND source='room'
+        AND NOT event=ANY($3::text[]) RETURNING id
+    ) INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,prompt,inherit_to_corners)
+      SELECT gen_random_uuid(),$4,$1,$2,'room',event,NULL,true FROM unnest($3::text[]) event ORDER BY event
       ON CONFLICT(room_id,agent_id,source,event,COALESCE(repository,''),COALESCE(service_app_id::text,''),COALESCE(service_channel_id,''))
-      DO UPDATE SET inherit_to_corners=true`, [randomUUID(), surface.workspace_id, roomId, agentId, event]);
+      DO UPDATE SET inherit_to_corners=true`, [roomId,agentId,events,surface.workspace_id]);
     return events;
   });
 }
@@ -658,13 +662,29 @@ async function recoverRecentLeaveFacts(db: SqlDatabase): Promise<void> {
 
 /** Restore the configured reviewer description without replacing independent user actions. */
 export async function subscribeConfiguredReviewers(db: SqlDatabase, [parentRoomId]: [string | null]) {
-  const rooms = (await db.query<{ id: string; reviewer_agent_id: string }>(`SELECT room.id,room.reviewer_agent_id FROM rooms room
-    JOIN memberships member ON member.room_id=room.id AND member.identity_id=room.reviewer_agent_id AND member.removed_at IS NULL
-    WHERE room.parent_id IS NULL AND room.archived_at IS NULL AND ($1::uuid IS NULL OR room.id=$1)
-      AND NOT EXISTS(SELECT 1 FROM agent_subscriptions subscription WHERE subscription.room_id=room.id
-        AND subscription.agent_id=room.reviewer_agent_id AND source='room' AND event='check-passed')`, [parentRoomId])).rows;
-  for (const room of rooms) await subscribeRoomReviewer(db, [room.id, room.reviewer_agent_id]);
-  return { rowCount: rooms.length };
+  const result=await db.query<{parents:string}>(`
+    WITH configured AS MATERIALIZED (
+      SELECT room.id,room.workspace_id,room.reviewer_agent_id FROM rooms room
+      JOIN memberships member ON member.room_id=COALESCE(room.parent_id,room.id)
+        AND member.identity_id=room.reviewer_agent_id AND member.removed_at IS NULL
+      WHERE room.parent_id IS NULL AND room.archived_at IS NULL AND ($1::uuid IS NULL OR room.id=$1)
+        AND NOT EXISTS(SELECT 1 FROM agent_subscriptions subscription WHERE subscription.room_id=room.id
+          AND subscription.agent_id=room.reviewer_agent_id AND source='room' AND event='check-passed')
+    ), targets AS (
+      SELECT id,workspace_id,reviewer_agent_id FROM configured
+      UNION ALL
+      SELECT corner.id,corner.workspace_id,parent.reviewer_agent_id FROM configured parent
+      JOIN rooms corner ON corner.parent_id=parent.id AND corner.archived_at IS NULL
+      JOIN corner_person_state state ON state.corner_id=corner.id AND state.identity_id=parent.reviewer_agent_id
+        AND state.subscriptions_overridden
+    ), written AS (
+      INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,prompt,inherit_to_corners)
+      SELECT gen_random_uuid(),workspace_id,id,reviewer_agent_id,'room','check-passed',NULL,true FROM targets ORDER BY id,reviewer_agent_id
+      ON CONFLICT(room_id,agent_id,source,event,COALESCE(repository,''),COALESCE(service_app_id::text,''),COALESCE(service_channel_id,''))
+      DO UPDATE SET inherit_to_corners=true WHERE agent_subscriptions.inherit_to_corners IS DISTINCT FROM true
+      RETURNING room_id
+    ) SELECT count(*)::text parents FROM written JOIN configured ON configured.id=written.room_id`,[parentRoomId]);
+  return {rowCount:Number(result.rows[0]?.parents??0)};
 }
 export async function unsubscribeRoomReviewer(db: SqlDatabase, [room, agent]: [string, string]) {
   // A manually prompted action remains independent of reviewer configuration.
@@ -679,6 +699,7 @@ export async function subscribeRoomReviewer(db: SqlDatabase, [room, agent]: [str
     FROM rooms surface JOIN room_access member ON member.room_id=surface.id AND member.identity_id=$2 AND member.removed_at IS NULL
     LEFT JOIN corner_person_state state ON state.corner_id=surface.id AND state.identity_id=$2
     WHERE surface.archived_at IS NULL AND (surface.id=$1 OR (surface.parent_id=$1 AND state.subscriptions_overridden))
+    ORDER BY surface.id
     ON CONFLICT(room_id,agent_id,source,event,COALESCE(repository,''),COALESCE(service_app_id::text,''),COALESCE(service_channel_id,''))
     DO UPDATE SET inherit_to_corners=true`, [room, agent]);
 }

@@ -564,7 +564,7 @@ describe('free starter agents', () => {
   });
 
   it('keeps the Beebee name and de-duplicates its handle against existing members', async () => {
-    await db.query(`UPDATE identities SET handle='beebee' WHERE id=$1`, [OWNER]);
+    await phone.execute('updatePersonProfile',{handle:'beebee'},OWNER);
     const { id } = await createWorkspace();
     const agent = await freeAgentOf(id);
     const identity = (await db.query<{ name: string; handle: string }>(

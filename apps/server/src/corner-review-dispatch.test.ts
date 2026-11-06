@@ -1,4 +1,4 @@
-
+import { cornerImplementerSql } from './corner-worker.js';
 import { INSTITUTIONAL_MEMORY_ON } from './institutional-memory-shadow.js';
 import { readFileSync } from 'node:fs';
 import { cornerRunStateSql } from './corner-run.js';
@@ -1503,7 +1503,7 @@ it.each(['complete','failed'] as const)('Reproduction review-1: a delivered repa
 });
 
 it('committed-event recovery: startup green, lost command and reviewer completion share one timer-free runtime', async () => {
-  const { CornerAttentionDeadlines } = await import('./corner-attention.js');
+  const { CornerMachineEvents } = await import('./corner-attention.js');
   const { POSTGRES_LIVE_CHANNEL } = await import('./postgres-live.js');
   await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
   const headSha = '6'.repeat(40);
@@ -1512,13 +1512,14 @@ it('committed-event recovery: startup green, lost command and reviewer completio
     JSON.stringify({ lifecycle: 'in-review', checks: 'passing', pr: { number: 98, headSha, url: 'https://github.com/acme/repo/pull/98' } })]);
   const live = new LiveHub();
   const errors: unknown[] = [];
-  const machine = new CornerAttentionDeadlines(db, live, error => errors.push(error));
+  const machine = new CornerMachineEvents(db, live, error => errors.push(error));
   const release = await db.client.listen(POSTGRES_LIVE_CHANNEL, payload => {
     const event = JSON.parse(payload);
     if (event.table === 'corner_state') live.publish({ type: 'invalidate', roomId: event.roomId, reason: 'postgres:corner_state' });
   });
   try {
-    await machine.start();
+    live.resync();
+    await vi.waitFor(async () => expect(await commands(B, C)).toHaveLength(1));
     const [lost] = await commands(B, C);
     expect(lost).toBeDefined();
     expect(await commands(B, R)).toEqual([]);
@@ -1539,16 +1540,36 @@ it('committed-event recovery: startup green, lost command and reviewer completio
     expect((await commands(A, C)).filter(command => command.reason === 'corner_review_needed')).toHaveLength(1);
     expect(await commands(B, C)).toEqual([]);
     expect(errors).toEqual([]);
-    machine.stop();
+    await machine.stop();
     // A preceding image closed the Room while this listener was down.
     await db.query('UPDATE rooms SET archived_at=now() WHERE id=$1', [C]);
-    const recovery = new CornerAttentionDeadlines(db, live, error => errors.push(error));
+    const recovery = new CornerMachineEvents(db, live, error => errors.push(error));
     try {
       await recovery.start();
       expect((await db.query(`SELECT machine->>'state' state FROM corner_facts WHERE corner_id=$1`, [C])).rows).toEqual([{state:'archived'}]);
-    } finally { recovery.stop(); }
+    } finally { await recovery.stop(); }
   } finally {
-    machine.stop();
+    await machine.stop();
     await release();
   }
+});
+
+it('event recovery drains its startup scan before shutdown', async () => {
+  const { CornerMachineEvents } = await import('./corner-attention.js');
+  let release!: () => void, entered!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const scan = new Promise<void>(resolve => { entered = resolve; });
+  const query = db.query.bind(db), errors: unknown[] = [];
+  const runtime = new CornerMachineEvents({
+    query: async (sql, values) => {
+      if (sql.includes('LEFT JOIN corner_facts fact ON fact.corner_id=corner.id')) { entered(); await gate; }
+      return query(sql, values);
+    }, transaction: work => db.transaction(work),
+  }, new LiveHub(), error => errors.push(error));
+  const recovery = runtime.start(); await scan;
+  let stopped = false;
+  const stopping = runtime.stop().then(() => { stopped = true; });
+  await Promise.resolve(); expect(stopped).toBe(false);
+  release(); await Promise.all([recovery, stopping]);
+  expect(errors).toEqual([]);
 });

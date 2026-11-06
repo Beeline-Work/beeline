@@ -135,10 +135,11 @@ export async function runCornerAttention(db: SqlDatabase): Promise<void> {
 }
 
 /** Event adapter for the corner machine. Coalesces committed facts; never schedules a timer. */
-export class CornerAttentionDeadlines {
+export class CornerMachineEvents {
   private release: () => void;
   private resync: () => void;
   private stopped = false;
+  private recovery?: Promise<void>;
   private readonly refreshing = new Map<string, { again: boolean; done: Promise<void> }>();
   constructor(
     private db: SqlDatabase,
@@ -153,11 +154,14 @@ export class CornerAttentionDeadlines {
       void this.start().catch(report);
     });
   }
-  async start(): Promise<void> {
-    const rows = (
-      await this.db.query<{ id: string }>(CORNER_RECOVERY_SQL)
-    ).rows;
-    for (const row of rows) await this.refresh(row.id);
+  start(): Promise<void> {
+    if (this.stopped) return Promise.resolve();
+    return this.recovery ??= (async () => {
+      try {
+        const rows = (await this.db.query<{ id: string }>(CORNER_RECOVERY_SQL)).rows;
+        for (const row of rows) await this.refresh(row.id);
+      } finally { this.recovery = undefined; }
+    })();
   }
   async refresh(id: string): Promise<void> {
     if (this.stopped) return;
@@ -178,9 +182,10 @@ export class CornerAttentionDeadlines {
     try { await state.done; } finally { this.refreshing.delete(id); }
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     this.stopped = true;
     this.release();
     this.resync();
+    await Promise.allSettled([this.recovery, ...[...this.refreshing.values()].map(state => state.done)]);
   }
 }

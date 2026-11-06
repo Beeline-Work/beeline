@@ -1,6 +1,5 @@
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { workflowRunStatus, type WorkflowReadContract } from '@beeline/api-contract/phone';
-import { workflowTimerId } from '../workflow-timer-id.js';
 import { workflowRunStatusUnsavedSql } from '../workflow-run-saved-status.js';
 import type { SqlDatabase } from '../database.js';
 
@@ -41,26 +40,7 @@ export async function normalizeLegacyWorkflowRuns(database: SqlDatabase): Promis
         ORDER BY (head.card->>'seq')::int DESC,head.created_at DESC,head.id DESC LIMIT 1))
       FROM room_choices choice WHERE choice.message_id=gate.id AND gate.card->>'runId' IS NOT NULL
         AND NOT gate.card ? 'attempt'`);
-    const timers = await db.query<{ id: string; room_id: string; workflow_run: { runId: string; timer?: string; attempt?: number } }>(
-      `SELECT id,room_id,workflow_run FROM agent_schedules WHERE workflow_run IS NOT NULL
-        AND (NOT workflow_run ? 'timer' OR (workflow_run->>'timer'='step' AND NOT workflow_run ? 'attempt'))`,
-    );
-    for (const timer of timers.rows) {
-      const current = (await db.query<{ seq: number }>(
-        `SELECT (card->>'seq')::int seq FROM messages WHERE room_id=$1 AND card_type='workflow-handoff'
-          AND card->>'runId'=$2 ORDER BY (card->>'seq')::int DESC,created_at DESC,id DESC LIMIT 1`,
-        [timer.room_id, timer.workflow_run.runId],
-      )).rows[0];
-      if (!current) continue;
-      const id = workflowTimerId(timer.workflow_run.runId, 'step');
-      // If a newer timer already exists it owns the lease; remove only the old duplicate.
-      if (timer.id !== id && (await db.query(`SELECT 1 FROM agent_schedules WHERE id=$1`, [id])).rowCount) {
-        await db.query(`DELETE FROM agent_schedules WHERE id=$1`, [timer.id]);
-        continue;
-      }
-      await db.query(`UPDATE agent_schedules SET id=$2,workflow_run=workflow_run ||
-        jsonb_build_object('timer','step','attempt',$3::int) WHERE id=$1`, [timer.id, id, current.seq]);
-    }
+
   });
 }
 

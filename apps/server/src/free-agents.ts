@@ -36,7 +36,6 @@ CREATE TABLE IF NOT EXISTS free_agents (
   sealed_keys text NOT NULL,
   bootstrap_hash text,
   model_token_hash text,
-  last_activity_at timestamptz NOT NULL DEFAULT now(),
   wake_requested_at timestamptz,
   provision_started_at timestamptz,
   provision_attempts integer NOT NULL DEFAULT 0,
@@ -56,6 +55,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS free_agents_bootstrap_hash ON free_agents(boot
   WHERE bootstrap_hash IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS free_agents_model_token_hash ON free_agents(model_token_hash)
   WHERE model_token_hash IS NOT NULL;
+ALTER TABLE free_agents DROP COLUMN IF EXISTS last_activity_at;
 CREATE INDEX IF NOT EXISTS free_agents_owner ON free_agents(owner_id);
 CREATE INDEX IF NOT EXISTS free_agents_workspace ON free_agents(workspace_id);
 CREATE TABLE IF NOT EXISTS free_agent_usage (
@@ -83,8 +83,6 @@ CREATE TABLE IF NOT EXISTS free_agent_events (
 );
 CREATE INDEX IF NOT EXISTS free_agent_events_agent ON free_agent_events(agent_id, at);
 `;
-
-/** How often the background leader sweeps free agents at most. */
 
 export const FREE_AGENT_HARNESS = 'pi';
 
@@ -427,8 +425,6 @@ export async function addFreeAgentToWorkspace(
   return agentId;
 }
 
-
-
 export async function recordFreeAgentEvent(
   database: Pick<SqlDatabase, 'query'>,
   agentId: string,
@@ -521,7 +517,7 @@ const START_LIMIT_SQL = `WITH last_connect AS (
   FROM last_connect, last_stop`;
 
 /** Wake reasons recorded for the latency measurement. */
-type WakeCause = 'command' | 'connector' | 'sweep' | 'provisioned';
+type WakeCause = 'command' | 'connector' | 'provisioned';
 
 /**
  * Runtime half of free agents: provisioning, waking, sleeping, bootstrap and
@@ -700,7 +696,7 @@ export class FreeAgentService {
       }
       await db.query(
         `UPDATE free_agents SET state='waking',wake_requested_at=clock_timestamp(),
-           last_activity_at=now(),updated_at=now() WHERE agent_id=$1`,
+           updated_at=now() WHERE agent_id=$1`,
         [agentId],
       );
       await recordFreeAgentEvent(db, agentId, 'wake_requested', { cause, previous: due.previous });
@@ -735,7 +731,7 @@ export class FreeAgentService {
         );
         return this.provision(agentId);
       }
-      // `started` already, or mid-transition: the sweep retries after the fence.
+      // `started` already, or mid-transition: the next lifecycle event can observe it.
       if (state !== 'started' || (error instanceof FlyApiError && error.operation !== 'start')) throw error;
     }
     return true;
@@ -824,7 +820,6 @@ export class FreeAgentService {
 
   async #sleepMachine(agentId: string, machineId: string, mode: 'suspend' | 'refresh'): Promise<void> {
     // Let the helper's response leave the Machine before it freezes.
-    await new Promise((resolve) => setTimeout(resolve, 250));
     try {
       if (await this.machines.refresh(machineId, this.config.image, mode === 'refresh')) {
         // The new boot connects and uses this same idle-sleep path once the
@@ -840,8 +835,8 @@ export class FreeAgentService {
     } catch (error) {
       this.log(`agent ${agentId.slice(0, 12)} sleep failed: ${String(error)}`);
     }
-    // A wake that arrived while Fly was suspending would otherwise wait for the sweep.
-    this.kick(agentId, 'sweep');
+    // A wake that arrived while Fly was suspending must be handled by this completion event.
+    this.kick(agentId, 'command');
   }
 
   /**
@@ -902,122 +897,6 @@ export class FreeAgentService {
     });
   }
 
-  /**
-   * Leader sweep: retry provisioning, start agents with an overdue wake, put
-   * forgotten running Machines to sleep, and delete Machines idle for the
-   * retention window. Returns how many agents it acted on.
-   */
-  async nextDelayMs(admittedAt?:string): Promise<number | undefined> {
-    return (await import('./background-deadline-clock.js')).backgroundNextDelay(this.database,
-      `SELECT GREATEST(f.last_activity_at,COALESCE(f.wake_requested_at,f.created_at),
-         (SELECT max(completed_at) FROM agent_commands WHERE agent_id=f.agent_id))
-         +make_interval(secs=>${Math.min(this.config.reapIdleMs,this.config.idleSeconds*1000) / 1000}) due_at
-       FROM free_agents f WHERE f.removed_at IS NULL AND f.fly_machine_id IS NOT NULL AND f.state IN ('running','waking')
-         AND NOT ${connectorWorkSql('f.agent_id')}
-         AND NOT EXISTS(SELECT 1 FROM agent_commands WHERE agent_id=f.agent_id AND state IN ('pending','claimed'))
-       UNION ALL SELECT GREATEST(f.last_activity_at,(SELECT max(created_at) FROM agent_commands WHERE agent_id=f.agent_id))
-         +make_interval(secs=>${this.config.deleteAfterMs / 1000}) FROM free_agents f
-         WHERE f.removed_at IS NULL AND f.fly_machine_id IS NOT NULL AND f.state IN ('sleeping','stopped')
-           AND NOT ${connectorWorkSql('f.agent_id')}
-           AND NOT EXISTS(SELECT 1 FROM agent_commands WHERE agent_id=f.agent_id AND state IN ('pending','claimed'))
-       UNION ALL SELECT provision_started_at+interval '2 minutes' FROM free_agents
-         WHERE provision_started_at IS NOT NULL AND provision_error IS NULL AND removal_cleaned_at IS NULL`,admittedAt);
-  }
-
-  async sweep(): Promise<number> {
-    let acted = 0;
-    const removed = await this.database.query<{ agent_id: string }>(
-      `SELECT agent_id FROM free_agents WHERE removed_at IS NOT NULL AND removal_cleaned_at IS NULL
-       ORDER BY removed_at LIMIT 20`,
-    );
-    for (const row of removed.rows) {
-      acted++;
-      await this.cleanupRemoved(row.agent_id).catch(error =>
-        this.log(`remove ${row.agent_id.slice(0, 12)}: ${String(error)}`),
-      );
-    }
-    const provision = await this.database.query<{ agent_id: string }>(
-      `SELECT agent_id FROM free_agents
-       WHERE removed_at IS NULL AND fly_machine_id IS NULL AND state='provisioning' AND provision_attempts<5
-         AND (${connectorWorkSql('free_agents.agent_id')} OR EXISTS (SELECT 1 FROM agent_commands command WHERE command.agent_id=free_agents.agent_id
-           AND command.state='pending' ))
-         AND (provision_started_at IS NULL OR provision_started_at<clock_timestamp()-interval '2 minutes')
-       ORDER BY created_at LIMIT 20`,
-    );
-    for (const row of provision.rows) {
-      acted++;
-      await this.provision(row.agent_id).catch((error) =>
-        this.log(`provision ${row.agent_id.slice(0, 12)}: ${String(error)}`),
-      );
-    }
-    const wakes = await this.database.query<{ agent_id: string }>(
-      `SELECT f.agent_id FROM free_agents f
-       WHERE (f.fly_machine_id IS NOT NULL OR f.state='destroyed') AND f.state<>'failed' AND f.removed_at IS NULL
-         AND (${connectorWorkSql('f.agent_id')} OR EXISTS (SELECT 1 FROM agent_commands command
-           WHERE command.agent_id=f.agent_id AND command.state='pending'))
-         AND NOT EXISTS (SELECT 1 FROM agent_connections connection
-           JOIN live_server_instances server ON server.instance_id=connection.instance_id
-           WHERE connection.agent_id=f.agent_id AND connection.released_at IS NULL
-             AND server.renewed_at>clock_timestamp()-interval '90 seconds'
-             AND f.state='running')
-       LIMIT 50`,
-    );
-    for (const row of wakes.rows) {
-      acted++;
-      await this.#advance(row.agent_id, 'sweep').catch((error) =>
-        this.log(`wake ${row.agent_id.slice(0, 12)}: ${String(error)}`),
-      );
-    }
-    const idle = await this.database.query<{ agent_id: string; fly_machine_id: string }>(
-      `UPDATE free_agents f SET state='sleeping',updated_at=now()
-       WHERE f.removed_at IS NULL AND f.fly_machine_id IS NOT NULL AND f.state IN ('running','waking')
-         AND f.last_activity_at<clock_timestamp()-make_interval(secs => $1::double precision / 1000)
-         AND COALESCE(f.wake_requested_at,f.created_at)<clock_timestamp()-make_interval(secs => $1::double precision / 1000)
-         AND NOT ${connectorWorkSql('f.agent_id')}
-         AND NOT EXISTS (SELECT 1 FROM agent_commands command
-           WHERE command.agent_id=f.agent_id AND (command.state IN ('pending','claimed')
-             OR (command.cancellation_reason IS DISTINCT FROM 'free-agent-time-limit'
-               AND command.completed_at>clock_timestamp()-make_interval(secs => $1::double precision / 1000))))
-       RETURNING f.agent_id,f.fly_machine_id`,
-      [Math.min(this.config.reapIdleMs,this.config.idleSeconds*1000)],
-    );
-    for (const row of idle.rows) {
-      acted++;
-      await recordFreeAgentEvent(this.database, row.agent_id, 'reaped_idle');
-      await this.#sleepMachine(row.agent_id,row.fly_machine_id,'suspend');
-    }
-    const expired = await this.database.query<{ agent_id: string; fly_machine_id: string }>(
-      `SELECT f.agent_id,f.fly_machine_id FROM free_agents f
-       WHERE f.removed_at IS NULL AND f.fly_machine_id IS NOT NULL AND f.state IN ('sleeping','stopped')
-         AND f.last_activity_at<clock_timestamp()-make_interval(secs => $1::double precision / 1000)
-         AND NOT ${connectorWorkSql('f.agent_id')}
-         AND NOT EXISTS (SELECT 1 FROM agent_commands command
-           WHERE command.agent_id=f.agent_id
-             AND (command.state IN ('pending','claimed')
-               OR command.created_at>clock_timestamp()-make_interval(secs => $1::double precision / 1000)))
-       LIMIT 20`,
-      [this.config.deleteAfterMs],
-    );
-    for (const row of expired.rows) {
-      acted++;
-      try {
-        await this.machines.destroy(row.fly_machine_id);
-        await this.database.query(
-          `UPDATE free_agents SET fly_machine_id=NULL,state='destroyed',bootstrap_hash=NULL,
-             provision_attempts=0,provision_started_at=NULL,updated_at=now()
-           WHERE agent_id=$1 AND fly_machine_id=$2 AND removed_at IS NULL`,
-          [row.agent_id, row.fly_machine_id],
-        );
-        await recordFreeAgentEvent(this.database, row.agent_id, 'deleted_idle', {
-          machineId: row.fly_machine_id,
-        });
-      } catch (error) {
-        this.log(`delete ${row.agent_id.slice(0, 12)}: ${String(error)}`);
-      }
-    }
-    return acted;
-  }
-
   /** Called only after removal commits; Fly failure cannot fail the Members action. */
   remove(agentId: string): void {
     void this.cleanupRemoved(agentId).catch(error =>
@@ -1047,7 +926,7 @@ export class FreeAgentService {
     return true;
   }
 
-  /** Committed work wakes the Machine; the sweep recovers missed notifications. */
+  /** Committed work wakes the Machine; the source event is the only wake. */
   subscribeToWakes(live: LiveHub): () => void {
     return live.subscribeAll((event) => {
       if (event.type !== 'invalidate' || !event.targetAgentId) return;

@@ -46,7 +46,7 @@ export class SpeechTranscriber {
       method: 'POST',
       headers: { authorization: `Bearer ${this.apiKey}` },
       body: form,
-      signal: AbortSignal.timeout(GROQ_TIMEOUT_MS),
+
     });
     if (!response.ok) throw new Error(`groq transcription failed (${response.status})`);
     const value = (await response.json()) as { text?: unknown };

@@ -21,7 +21,6 @@ it.skipIf(!postgresUrl)(
         options: `-c search_path=${schema},public -c statement_timeout=30000`,
       }),
       mode: 'migration',
-      transactionDeadlineMs: 30_000,
     });
     try {
       await migrate(db, { deferData: true });

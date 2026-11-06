@@ -21,15 +21,14 @@ describe.skipIf(!url)('Persisted schedule clock admission', () => {
       // by agent-schedules/postgres-live tests, not claimed by this fixture.
       await pool.query(`CREATE TABLE rooms(id uuid PRIMARY KEY,archived_at timestamptz);
         CREATE TABLE identities(id text PRIMARY KEY,kind text,hidden_from_roster boolean DEFAULT false,
-          created_at timestamptz DEFAULT now(),last_app_active_at timestamptz,away_warning_at timestamptz);
+          created_at timestamptz DEFAULT now());
         CREATE TABLE agents(agent_id text PRIMARY KEY,owner_id text);
-        CREATE TABLE agent_subscriptions(id uuid,room_id uuid,agent_id text,paused_at timestamptz);
         CREATE TABLE memberships(room_id uuid,identity_id text,removed_at timestamptz);
         CREATE VIEW room_access AS SELECT * FROM memberships;
         CREATE TABLE agent_schedules(id uuid PRIMARY KEY,room_id uuid,agent_id text,creator_id text,
           owner_id text,workflow_slug text,human_command_message_id text,cadence jsonb,message text,
           max_runs int,run_count int DEFAULT 0,next_run_at timestamptz,updated_at timestamptz DEFAULT now(),
-          workflow_run jsonb,paused_at timestamptz,failed_due_at timestamptz,failed_revision timestamptz);`);
+          paused_at timestamptz,failed_due_at timestamptz,failed_revision timestamptz);`);
       const source = readFileSync(new URL('./database.ts', import.meta.url), 'utf8');
       const index = source.match(/CREATE INDEX IF NOT EXISTS agent_schedules_admitted_due_idx[^;]+;/)?.[0];
       expect(index).toBeTruthy(); await pool.query(index!);
@@ -41,7 +40,7 @@ describe.skipIf(!url)('Persisted schedule clock admission', () => {
           'Synthetic',now()-interval '1 day',now()-interval '1 day',now() FROM generate_series(1,10000)`, [room]);
       await pool.query(`INSERT INTO agent_schedules(id,room_id,agent_id,creator_id,cadence,message,next_run_at)
         VALUES(gen_random_uuid(),$1,'agent','human','{"kind":"interval","everyMinutes":5}','Future',now()+interval '1 hour')`, [room]);
-      await pool.query('ANALYZE agent_schedules');
+      await pool.query('ANALYZE agent_schedules; ANALYZE rooms; ANALYZE identities; ANALYZE memberships');
       let deadlineSql = '';
       const transaction = vi.fn(async () => { throw new Error('future work was dispatched'); });
       const database = { query: async (sql: string, values?: unknown[]) => {

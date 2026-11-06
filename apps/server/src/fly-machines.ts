@@ -144,8 +144,7 @@ export class FlyMachines implements FreeAgentMachines {
 
   async waitFor(id: string, state: 'suspended' | 'stopped', timeoutSeconds: number, instanceId?: string): Promise<void> {
     const instance = instanceId ? `&instance_id=${encodeURIComponent(instanceId)}` : '';
-    await this.#request('wait', `/${id}/wait?state=${state}&timeout=${timeoutSeconds}${instance}`, 'GET', undefined,
-      (timeoutSeconds + 5) * 1000);
+    await this.#request('wait', `/${id}/wait?state=${state}&timeout=${timeoutSeconds}${instance}`, 'GET');
   }
 
   async state(id: string): Promise<string | undefined> {
@@ -162,7 +161,6 @@ export class FlyMachines implements FreeAgentMachines {
     path: string,
     method: string,
     body?: unknown,
-    timeoutMs = 30_000,
   ): Promise<T> {
     const response = await this.fetchImpl(`${this.#base}${path}`, {
       method,
@@ -171,7 +169,7 @@ export class FlyMachines implements FreeAgentMachines {
         ...(body === undefined ? {} : { 'content-type': 'application/json' }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal: AbortSignal.timeout(timeoutMs),
+
     });
     const text = await response.text();
     if (!response.ok) throw new FlyApiError(response.status, text, operation);

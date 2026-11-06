@@ -14,38 +14,29 @@ export interface VoiceRequest {
 /** A detected resume can reopen a conversational request while its reply plays. */
 export class VoiceRequestAssembler {
   private readonly requests = new Map<string, VoiceRequest>();
-  private readonly contactTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly contacts = new Map<string, number>();
   private readonly failed = new Map<string, Map<string, VoiceRequest>>();
-  private readonly addresses = new Map<string, { agentId: string; until: number; timer: ReturnType<typeof setTimeout> }>();
+  private readonly addresses = new Map<string, { agentId: string; until: number }>();
 
-  private clearContactTimer(human: string) {
-    clearTimeout(this.contactTimers.get(human));
-    this.contactTimers.delete(human);
-  }
+  private clearContact(human: string) { this.contacts.delete(human); }
   waitForContact(human: string, request: VoiceRequest) {
-    this.clearContactTimer(human);
-    const timer = setTimeout(() => {
-      if (this.requests.get(human) === request) this.cancel(human, 'contact draft expired');
-    }, 10_000);
-    timer.unref();
-    this.contactTimers.set(human, timer);
+    if (this.requests.get(human) === request) this.contacts.set(human, performance.now() + 10_000);
   }
   private expire(human: string) {
+    const contactUntil = this.contacts.get(human);
+    if (contactUntil !== undefined && contactUntil <= performance.now()) this.cancel(human, 'contact draft expired');
     const address = this.addresses.get(human);
     if (address && address.until <= performance.now()) {
-      clearTimeout(address.timer);
       this.addresses.delete(human);
     }
   }
   address(human: string, agentId: string) {
     this.clearAddress(human);
-    const timer = setTimeout(() => this.expire(human), 3000);
-    timer.unref();
-    this.addresses.set(human, { agentId, until: performance.now() + 3000, timer });
+    this.addresses.set(human, { agentId, until: performance.now() + 3000 });
   }
   speaking(human: string) {
     const request = this.requests.get(human);
-    if (request && this.contactTimers.has(human)) this.waitForContact(human, request);
+    if (request && this.contacts.has(human)) this.waitForContact(human, request);
     this.expire(human);
     const address = this.addresses.get(human);
     if (address) this.address(human, address.agentId);
@@ -55,7 +46,6 @@ export class VoiceRequestAssembler {
     return this.addresses.get(human)?.agentId;
   }
   clearAddress(human: string) {
-    clearTimeout(this.addresses.get(human)?.timer);
     this.addresses.delete(human);
   }
   pause(human: string) {
@@ -77,9 +67,9 @@ export class VoiceRequestAssembler {
     if (current && current.state !== 'retryable') return;
     return current ?? [...(this.failed.get(human)?.values() ?? [])].at(-1);
   }
-  current(human: string) { return this.requests.get(human); }
+  current(human: string) { this.expire(human); return this.requests.get(human); }
   begin(human: string, text: string): { request: VoiceRequest; previous?: VoiceRequest } {
-    this.clearContactTimer(human);
+    this.clearContact(human);
     const previous = this.requests.get(human);
     const continuation = previous && ['assembling', 'classifying', 'replying'].includes(previous.state) ? previous : undefined;
     continuation?.classification.abort('superseded');
@@ -94,7 +84,7 @@ export class VoiceRequestAssembler {
     return { request, previous: continuation };
   }
   finish(human: string, request: VoiceRequest) {
-    if (this.requests.get(human) === request) this.clearContactTimer(human);
+    if (this.requests.get(human) === request) this.clearContact(human);
     request.state = 'finished';
     this.failed.get(human)?.delete(request.id);
     if (!this.failed.get(human)?.size) this.failed.delete(human);
@@ -104,7 +94,7 @@ export class VoiceRequestAssembler {
     }
   }
   cancel(human: string, reason = 'superseded') {
-    this.clearContactTimer(human);
+    this.clearContact(human);
     const request = this.requests.get(human);
     if (request) {
       request.classification.abort(reason); this.requests.delete(human);

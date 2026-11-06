@@ -28,8 +28,8 @@ describe.skipIf(!url)('MCP real PostgreSQL final authority contention',()=>{
         CREATE TABLE rooms(id uuid PRIMARY KEY,workspace_id uuid,archived_at timestamptz);
         CREATE TABLE room_access(room_id uuid,identity_id text,removed_at timestamptz);
         CREATE TABLE memberships(workspace_id uuid,room_id uuid,identity_id text,role text,removed_at timestamptz);
-        CREATE TABLE rooms_mcp_mentions(seq bigserial PRIMARY KEY,member_id text,room_id uuid,message_id text,cleared_at timestamptz,rewakes integer DEFAULT 0);
-        CREATE TABLE agent_commands(id text,agent_id text,reason text,state text,private_payload jsonb,source_message_id text);
+        CREATE TABLE rooms_mcp_mentions(seq bigserial PRIMARY KEY,member_id text,room_id uuid,message_id text,cleared_at timestamptz);
+        CREATE TABLE agent_commands(id text,agent_id text,reason text,state text,hiccup_attempts integer,private_payload jsonb,source_message_id text);
         CREATE TABLE rooms_mcp_members(client_id text,owner_id text,member_id text);
         CREATE TABLE rooms_mcp_tokens(hash text,client_id text,identity_id text,family_id text,scope text,expires_at timestamptz,revoked_at timestamptz);
         CREATE TABLE rooms_mcp_connections(client_id text,identity_id text,scope text,revoked_at timestamptz);

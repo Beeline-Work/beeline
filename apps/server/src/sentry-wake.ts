@@ -16,8 +16,7 @@ export function sentryWakeAgentFromEnv(env: NodeJS.ProcessEnv = process.env): st
 const TRIAGE = SENTRY_TRIAGE_ROOM;
 export const SENTRY_WAKE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS sentry_wake_state (
- singleton boolean PRIMARY KEY DEFAULT true CHECK(singleton),
- last_wake_at timestamptz
+ singleton boolean PRIMARY KEY DEFAULT true CHECK(singleton)
 );
 INSERT INTO sentry_wake_state(singleton) VALUES(true) ON CONFLICT DO NOTHING;
 CREATE TABLE IF NOT EXISTS sentry_wake_issues (
@@ -34,11 +33,11 @@ CREATE TABLE IF NOT EXISTS sentry_wake_issues (
  pending boolean NOT NULL DEFAULT true,
  PRIMARY KEY(issue_id,event_type)
 );
-ALTER TABLE sentry_wake_state ADD COLUMN IF NOT EXISTS last_daily_wake_at timestamptz NOT NULL DEFAULT now();
-ALTER TABLE sentry_wake_issues ADD COLUMN IF NOT EXISTS last_digested_at timestamptz;
-ALTER TABLE sentry_wake_issues ADD COLUMN IF NOT EXISTS last_digested_level text;
-ALTER TABLE sentry_wake_issues ADD COLUMN IF NOT EXISTS urgent boolean NOT NULL DEFAULT false;
-UPDATE sentry_wake_issues SET urgent=true WHERE level='fatal' AND NOT urgent;
+ALTER TABLE sentry_wake_state DROP COLUMN IF EXISTS last_wake_at;
+ALTER TABLE sentry_wake_state DROP COLUMN IF EXISTS last_daily_wake_at;
+ALTER TABLE sentry_wake_issues DROP COLUMN IF EXISTS last_digested_at;
+ALTER TABLE sentry_wake_issues DROP COLUMN IF EXISTS last_digested_level;
+ALTER TABLE sentry_wake_issues DROP COLUMN IF EXISTS urgent;
 CREATE INDEX IF NOT EXISTS sentry_wake_pending ON sentry_wake_issues(last_seen) WHERE pending;
 `;
 
@@ -80,18 +79,11 @@ export async function receiveSentryWake(db: SqlDatabase, raw: Buffer,
     // The singleton lock also orders ingestion against a batch being committed.
     await tx.query(`SELECT singleton FROM sentry_wake_state WHERE singleton FOR UPDATE`);
     const level = text(issue.level ?? event.level, 20) || 'error';
-    const previous = (await tx.query<{ level: string; recent: boolean }>(`SELECT
-      last_digested_level AS level,last_digested_at>now()-interval '6 hours' AS recent
-      FROM sentry_wake_issues WHERE issue_id=$1 AND last_digested_at IS NOT NULL
-      ORDER BY last_digested_at DESC LIMIT 1`, [issueId])).rows[0];
-    const regression = eventType === 'issue.regression' ||
-      (eventType === 'issue.unresolved' && issue.substatus === 'regressed');
-    const pending = !previous?.recent || previous.level !== level || regression;
     await tx.query(`INSERT INTO sentry_wake_issues
-      (issue_id,event_type,title,level,culprit,permalink,first_seen,last_seen,event_count,delivery_hash,urgent,pending)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+      (issue_id,event_type,title,level,culprit,permalink,first_seen,last_seen,event_count,delivery_hash,pending)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true)
       ON CONFLICT(issue_id,event_type) DO UPDATE SET
-        title=EXCLUDED.title,level=EXCLUDED.level,culprit=EXCLUDED.culprit,urgent=EXCLUDED.urgent,
+        title=EXCLUDED.title,level=EXCLUDED.level,culprit=EXCLUDED.culprit,
         first_seen=LEAST(sentry_wake_issues.first_seen,EXCLUDED.first_seen),
         last_seen=EXCLUDED.last_seen,event_count=GREATEST(sentry_wake_issues.event_count,EXCLUDED.event_count),
         delivery_hash=EXCLUDED.delivery_hash,pending=sentry_wake_issues.pending OR EXCLUDED.pending
@@ -99,12 +91,7 @@ export async function receiveSentryWake(db: SqlDatabase, raw: Buffer,
         AND sentry_wake_issues.last_seen<=EXCLUDED.last_seen`,
     [issueId,eventType,title,level,redactDiagnostic(text(issue.culprit ?? event.culprit)),
       `https://beeline-bt.sentry.io/issues/${issueId}/`, timestamp(issue.firstSeen ?? event.datetime, now),
-      timestamp(issue.lastSeen ?? event.datetime, now),count,createHash('sha256').update(raw).digest('hex'),
-      issue.level === 'fatal' || event.level === 'fatal' || issue.isUnhandled === true ||
-      event.unhandled === true || object(event.tags).handled === 'no' ||
-      (Array.isArray(event.tags) && event.tags.some(tag => Array.isArray(tag) && tag[0] === 'handled' && tag[1] === 'no')) ||
-      (Array.isArray(object(event.exception).values) && (object(event.exception).values as unknown[]).some(
-        value => object(object(value).mechanism).handled === false)),pending]);
+      timestamp(issue.lastSeen ?? event.datetime, now),count,createHash('sha256').update(raw).digest('hex')]);
     await notifySentryWake(tx);
   });
   await flushSentryWakes(db, agentId);
@@ -115,14 +102,7 @@ export async function receiveSentryWake(db: SqlDatabase, raw: Buffer,
  * False parks an empty, unauthorized or busy batch; it creates no retry deadline. */
 export async function flushSentryWakes(db: SqlDatabase, agentId = sentryWakeAgentFromEnv()): Promise<boolean> {
   try { return await db.transaction(async tx => {
-    // Reserve dispatch before the singleton without holding a connection behind
-    // another writer. Contention parks until an actual source/recovery event.
-    const dispatch = await tx.query<{ acquired: boolean }>(
-      `SELECT pg_try_advisory_xact_lock(hashtext($1)) acquired`,
-      [`commander-wakes:${TRIAGE}:${agentId}`]);
-    if (!dispatch.rows[0]?.acquired) return false;
-    const state = await tx.query(`SELECT singleton FROM sentry_wake_state WHERE singleton FOR UPDATE SKIP LOCKED`);
-    if (!state.rows[0]) return false;
+    await tx.query(`SELECT singleton FROM sentry_wake_state WHERE singleton FOR UPDATE`);
     const issues = await tx.query<{ issue_id: string; level: string; title: string; permalink: string; event_count: string }>(
       `SELECT issue_id,level,title,permalink,event_count FROM sentry_wake_issues
        WHERE pending ORDER BY last_seen,issue_id,event_type`);
@@ -136,8 +116,7 @@ export async function flushSentryWakes(db: SqlDatabase, agentId = sentryWakeAgen
         text: `${quoteOutsideData('Sentry digest', digest)}\n\nInvestigate these Sentry issues. Post one short visible summary line in this triage corner for every digest, naming each Sentry short ID (look it up from the linked issue if needed) and its action: dismissed, existing corner, or new corner. When a code fix is warranted, open and own a fix corner with yourself as implementer and Speedy as reviewer, linking the Sentry issue id and URL in its brief. Follow existing corner authority and merge rules. When a fix corner you opened from a digest reports blocked: or needs-decision:, handle the report here as its commander: try other vault keys, tools, or a narrower scope; decide, re-order the fix corner, or close it with evidence. Do not forward the report to your own Room session. Only when a human must act (sign-in, payment, approval, or a product decision), post the exact blocker in the issues-triage corner (a914716f-cd6c-4663-b42a-6e1044dc2bb9) and tag the Workspace owner @lunchboxfortwo.` },
     });
     if (!command) return false;
-    await tx.query(`UPDATE sentry_wake_issues SET pending=false,last_digested_at=clock_timestamp(),last_digested_level=level WHERE pending`);
-    await tx.query(`UPDATE sentry_wake_state SET last_wake_at=clock_timestamp() WHERE singleton`);
+    await tx.query(`UPDATE sentry_wake_issues SET pending=false WHERE pending`);
     return true;
   }); } catch (error) {
     if ((error as { code?: string } | null)?.code !== '55P03') throw error;
@@ -146,9 +125,4 @@ export async function flushSentryWakes(db: SqlDatabase, agentId = sentryWakeAgen
     console.warn('[sentry-wake] dispatch deferred while database rows are busy');
     return false;
   }
-}
-
-/** One event-admitted pass. Sentry delivery never supplies a retry or batch clock. */
-export async function runSentryWakes(db: SqlDatabase, agentId = sentryWakeAgentFromEnv()): Promise<void> {
-  await flushSentryWakes(db, agentId);
 }

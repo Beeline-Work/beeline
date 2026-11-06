@@ -9,7 +9,6 @@ import { reportToCommander } from './commander.js';
 import { setRoomEventSubscriptions } from './agent-subscriptions.js';
 import { systemLine } from './system-line.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
-import { refreshCornerAttention } from './corner-attention.js';
 import { describedWorkflow } from './test-support.js';
 import { saveWorkflow, startWorkflow } from './workflow-runs.js';
 
@@ -87,7 +86,6 @@ it('SELF-OUTPUT: its own corner assignment queues once; posts and reports queue 
   expect(
     await reportToCommander(db, cornerId, AGENT, 'done: mock ready', opening, 'self-report-proof'),
   ).toMatchObject({ delivered: true });
-  await refreshCornerAttention(db, cornerId); // Production's immediate System idle report.
   expect(
     (
       await db.query(
@@ -96,7 +94,7 @@ it('SELF-OUTPUT: its own corner assignment queues once; posts and reports queue 
         [cornerId],
       )
     ).rows,
-  ).toEqual([{ state: 'complete', source_agent: AGENT }]);
+  ).toEqual([]); // No idle-alert work is manufactured after the report.
   expect(
     (await daemon.execute('getAgentCommands', { roomId: ROOM }, AGENT)).commands.map((c) => c.id),
   ).not.toContain('self-report-proof');

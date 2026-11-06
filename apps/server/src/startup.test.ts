@@ -23,7 +23,6 @@ describe('server startup containment', () => {
       },
       0,
       '127.0.0.1',
-      25,
       report,
     );
 
@@ -35,24 +34,5 @@ describe('server startup containment', () => {
     );
   });
 
-  it('listens after a hung presence recovery reaches its bound', async () => {
-    const server = createServer((_request, response) => response.end('ok'));
-    servers.push(server);
-    const report = vi.fn();
 
-    await listenAfterBestEffortRecovery(
-      server,
-      () => new Promise(() => {}),
-      0,
-      '127.0.0.1',
-      5,
-      report,
-    );
-
-    expect(server.listening).toBe(true);
-    expect(report).toHaveBeenCalledWith(
-      '[startup] presence recovery unavailable; continuing',
-      'timed out after 5ms',
-    );
-  });
 });

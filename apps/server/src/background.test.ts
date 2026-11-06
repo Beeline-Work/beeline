@@ -2,13 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   BackgroundJobRunner,
   createPushTestSender,
-  MediaExpiryLoop,
-  PUSH_DELIVERY_CONCURRENCY,
   PushDeliveryLoop,
-  READ_CLEAR_INTERVAL_SECONDS,
-  READ_CLEAR_MAX_CHANNELS,
-  READ_CLEAR_MAX_MESSAGE_IDS,
-  runMaintenance,
 } from './background.js';
 import { TokenAuth } from './auth.js';
 import { DaemonService } from './daemon-service.js';
@@ -16,7 +10,6 @@ import { LiveHub } from './live.js';
 import { seedCornerOpening, MemoryObjectStorage, migratedDatabase, insertCornerFacts } from './test-support.js';
 import {
   ARTIFACT_TTL_HOURS,
-  MEDIA_SWEEP_INTERVAL_MS,
   MEDIA_TTL_HOURS,
   mediaTtlHours,
 } from './media-ttl.js';
@@ -60,8 +53,6 @@ describe('background advisory-lock ownership', () => {
     });
   });
 
-  // Actual lock transfer, failure recovery and initial-cycle admission are
-  // exercised in background-leader.test.ts and its real PostgreSQL proof.
   it('bounds push history before resolving tags and still delivers a fresh mention', async () => {
     const db = await migratedDatabase();
     try {
@@ -145,7 +136,7 @@ describe('background advisory-lock ownership', () => {
     }
   });
 
-  it('sends claimed push candidates with bounded concurrency', async () => {
+  it('sends every claimed candidate from one event without a retry batch', async () => {
     const db = await migratedDatabase();
     try {
       const human = 'a'.repeat(64);
@@ -192,7 +183,7 @@ describe('background advisory-lock ownership', () => {
       expect(await new PushDeliveryLoop(db, { send }).runOnce()).toBe(12);
       expect(send).toHaveBeenCalledTimes(12);
       expect(peak).toBeGreaterThan(1);
-      expect(peak).toBeLessThanOrEqual(PUSH_DELIVERY_CONCURRENCY);
+      expect(peak).toBe(12);
     } finally {
       await db.close();
     }
@@ -489,14 +480,9 @@ describe('background advisory-lock ownership', () => {
         expect.objectContaining({ channelId: room }),
       ]);
 
-      // Reads inside the interval wait and then go out together, once.
+      // Committed reads clear immediately; no interval creates another send.
       await read('2'.repeat(64));
       await read('3'.repeat(64));
-      await loop.runOnce();
-      expect(clearRead).toHaveBeenCalledTimes(1);
-      await db.query(
-        `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
-      );
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(2);
       expect(clearRead.mock.calls[1]![0]).toBe(ios);
@@ -504,9 +490,6 @@ describe('background advisory-lock ownership', () => {
         [room, corner].sort(),
       );
 
-      await db.query(
-        `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
-      );
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(2);
       expect(firebaseSend).not.toHaveBeenCalled();
@@ -514,18 +497,18 @@ describe('background advisory-lock ownership', () => {
       await db.close();
     }
   });
-  // G9-R1: a push names at most READ_CLEAR_MAX_CHANNELS Rooms. Overflow,
+  // G9-R1: a push names at most 50 Rooms. Overflow,
   // including marks tied on their message's created_at, must go out in later pushes.
   // G9-R5: each push must also fit APNs's 4,096-byte payload limit; 50 Rooms
   // with 64-character message ids made 6,103 bytes.
-  it('clears every read Room across throttled pushes that each fit the APNs limit', async () => {
+  it('clears every read Room from one event in payloads that fit APNs', async () => {
     const db = await migratedDatabase();
     try {
       const human = 'a'.repeat(64),
         agent = 'b'.repeat(64),
         workspace = '11111111-1111-4111-8111-111111111111',
         ios = 'c0ffee'.repeat(10) + 'abcd',
-        count = READ_CLEAR_MAX_CHANNELS + 1;
+        count = 50 + 1;
       await db.query(
         `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
         [human, agent],
@@ -564,23 +547,13 @@ describe('background advisory-lock ownership', () => {
         undefined,
         { send: vi.fn().mockResolvedValue(undefined), clearRead },
       );
-      const ageThrottle = () =>
-        db.query(
-          `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
-        );
-
-      // Push until the backlog is empty; the throttle holds each next batch.
-      for (let pass = 0; pass < count; pass += 1) {
-        const before = clearRead.mock.calls.length;
-        await loop.runOnce();
-        if (clearRead.mock.calls.length === before) break;
-        await loop.runOnce();
-        expect(clearRead).toHaveBeenCalledTimes(before + 1);
-        await ageThrottle();
-      }
+      await loop.runOnce();
+      const sends = clearRead.mock.calls.length;
+      await loop.runOnce();
+      expect(clearRead).toHaveBeenCalledTimes(sends);
       expect(clearRead.mock.calls.length).toBeGreaterThan(1);
       for (const [token, reads] of clearRead.mock.calls) {
-        expect(reads.length).toBeLessThanOrEqual(READ_CLEAR_MAX_CHANNELS);
+        expect(reads.length).toBeLessThanOrEqual(50);
         const { payload } = apnsReadClearRequest(token, reads, 'app.bundle', 'jwt');
         expect(Buffer.byteLength(JSON.stringify(payload))).toBeLessThanOrEqual(
           APNS_MAX_PAYLOAD_BYTES,
@@ -643,11 +616,6 @@ describe('background advisory-lock ownership', () => {
         undefined,
         { send: vi.fn().mockResolvedValue(undefined), clearRead },
       );
-      const ageThrottle = () =>
-        db.query(
-          `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
-        );
-
       await phone.markRead(room, first, human);
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(1);
@@ -658,13 +626,11 @@ describe('background advisory-lock ownership', () => {
       ]);
 
       // The mark moves back past every message; second stays in the shade.
-      await ageThrottle();
       await phone.markUnread(room, first, human);
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(1);
 
       // Reading it is a read, and clears it.
-      await ageThrottle();
       await phone.markRead(room, second, human);
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(2);
@@ -735,9 +701,6 @@ describe('background advisory-lock ownership', () => {
         expect.objectContaining({ channelId: room, messageId: first, readMessageIds: [zero] }),
       ]);
 
-      await db.query(
-        `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
-      );
       await read(second);
       await loop.runOnce();
       expect(clearRead).toHaveBeenLastCalledWith(ios, [
@@ -751,7 +714,7 @@ describe('background advisory-lock ownership', () => {
   // G9-R6: a Room with more read notifications than one push names must
   // still clear them all. Ids left out by the per-Room cap or by the APNs
   // size limit go in a later push; a newer unread notification stays.
-  it('clears every read notification past the per-Room id cap in later pushes', async () => {
+  it('clears every read notification from one event without a per-Room id cap', async () => {
     const db = await migratedDatabase();
     try {
       const human = 'a'.repeat(64),
@@ -759,7 +722,7 @@ describe('background advisory-lock ownership', () => {
         workspace = '11111111-1111-4111-8111-111111111111',
         room = '22222222-2222-4222-8222-222222222222',
         ios = 'c0ffee'.repeat(10) + 'abcd';
-      const readIds = Array.from({ length: READ_CLEAR_MAX_MESSAGE_IDS + 2 }, (_, index) =>
+      const readIds = Array.from({ length: 20 + 2 }, (_, index) =>
         index.toString(16).padStart(64, '0'),
       );
       const unread = 'f'.repeat(64);
@@ -801,16 +764,13 @@ describe('background advisory-lock ownership', () => {
       );
       for (let pass = 0; pass < 5; pass += 1) {
         await loop.runOnce();
-        await db.query(
-          `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
-        );
       }
       const dismissed = new Set(
         clearRead.mock.calls.flatMap(([, reads]: [string, ReadClearCursor[]]) =>
           reads.flatMap((read) => [read.messageId, ...read.readMessageIds]),
         ),
       );
-      expect(clearRead.mock.calls.length).toBeGreaterThan(1);
+      expect(clearRead).toHaveBeenCalledOnce();
       expect([...dismissed].sort()).toEqual([...readIds].sort());
       expect(dismissed.has(unread)).toBe(false);
     } finally {
@@ -829,7 +789,7 @@ describe('background advisory-lock ownership', () => {
         room = '22222222-2222-4222-8222-222222222222',
         ios = 'c0ffee'.repeat(10) + 'abcd',
         android = 'android-token';
-      const readIds = Array.from({ length: READ_CLEAR_MAX_MESSAGE_IDS + 2 }, (_, index) =>
+      const readIds = Array.from({ length: 20 + 2 }, (_, index) =>
         index.toString(16).padStart(64, '0'),
       );
       const unread = 'f'.repeat(64);
@@ -874,9 +834,6 @@ describe('background advisory-lock ownership', () => {
       );
       for (let pass = 0; pass < 5; pass += 1) {
         await loop.runOnce();
-        await db.query(
-          `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
-        );
       }
       const dismissed = new Set(
         clearRead.mock.calls.flatMap(([, reads]: [string, ReadClearCursor[]]) =>
@@ -948,9 +905,6 @@ describe('background advisory-lock ownership', () => {
       );
       for (let pass = 0; pass < 3; pass += 1) {
         await loop.runOnce();
-        await db.query(
-          `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
-        );
       }
       const dismissed = clearRead.mock.calls.flatMap(([, reads]: [string, ReadClearCursor[]]) =>
         reads.flatMap((read) => [read.messageId, ...read.readMessageIds]),
@@ -1146,7 +1100,7 @@ describe('background advisory-lock ownership', () => {
       await db.close();
     }
   });
-  it('retries an APNs timeout durably and records acceptance on the same message claim', async () => {
+  it('records an APNs failure once and never retries it after time or another event', async () => {
     const db = await migratedDatabase();
     try {
       const human = 'a'.repeat(64),
@@ -1183,76 +1137,13 @@ describe('background advisory-lock ownership', () => {
         [message, room, agent],
       );
       expect(await loop.runOnce()).toBe(0);
-      expect(
-        (
-          await db.query<{ status: string; attempts: number }>(
-            `SELECT status,attempts FROM push_delivery_claims WHERE message_id=$1`,
-            [message],
-          )
-        ).rows[0],
-      ).toEqual({ status: 'retryable', attempts: 1 });
+      expect((await db.query(`SELECT status,attempts FROM push_delivery_claims WHERE message_id=$1`, [message])).rows)
+        .toEqual([{ status: 'failed', attempts: 1 }]);
       expect(await loop.runOnce()).toBe(0);
-      expect(send).toHaveBeenCalledTimes(1);
-      await db.query(
-        `UPDATE push_delivery_claims SET next_retry_at=now()-interval '1 second' WHERE message_id=$1`,
-        [message],
-      );
-      expect(await loop.runOnce()).toBe(1);
-      expect(send).toHaveBeenCalledTimes(2);
-      expect(
-        (
-          await db.query<{ status: string; attempts: number }>(
-            `SELECT status,attempts FROM push_delivery_claims WHERE message_id=$1`,
-            [message],
-          )
-        ).rows[0],
-      ).toEqual({ status: 'delivered', attempts: 2 });
-
-      const connectionMessage = '3'.repeat(64);
-      send.mockRejectedValueOnce(
-        Object.assign(new Error('connection reset'), { code: 'ECONNRESET' }),
-      );
-      await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@owner again')`,
-        [connectionMessage, room, agent],
-      );
+      await db.query(`UPDATE messages SET text=text||' edited' WHERE id=$1`, [message]);
       expect(await loop.runOnce()).toBe(0);
-      expect(
-        (
-          await db.query<{ status: string }>(
-            `SELECT status FROM push_delivery_claims WHERE message_id=$1`,
-            [connectionMessage],
-          )
-        ).rows[0]?.status,
-      ).toBe('retryable');
-
-      // A persistent outage has a bounded retry budget and cannot spin forever.
-      const exhaustedMessage = '2'.repeat(64);
-      send.mockRejectedValue(new Error('APNs request timed out'));
-      await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@owner still here')`,
-        [exhaustedMessage, room, agent],
-      );
-      for (let attempt = 1; attempt <= 3; attempt += 1) {
-        expect(await loop.runOnce()).toBe(0);
-        const claim = (
-          await db.query<{ status: string; attempts: number }>(
-            `SELECT status,attempts FROM push_delivery_claims WHERE message_id=$1`,
-            [exhaustedMessage],
-          )
-        ).rows[0];
-        expect(claim).toEqual({ status: attempt < 3 ? 'retryable' : 'failed', attempts: attempt });
-        if (attempt < 3)
-          await db.query(
-            `UPDATE push_delivery_claims SET next_retry_at=now()-interval '1 second' WHERE message_id=$1`,
-            [exhaustedMessage],
-          );
-      }
-      expect(await loop.runOnce()).toBe(0);
-      expect(send).toHaveBeenCalledTimes(6);
-    } finally {
-      await db.close();
-    }
+      expect(send).toHaveBeenCalledOnce();
+    } finally { await db.close(); }
   });
   it('routes test pushes by device platform and excludes iOS without APNs configuration', async () => {
     const db = await migratedDatabase();
@@ -2210,160 +2101,6 @@ describe('background advisory-lock ownership', () => {
       expect(send.mock.calls.map(([, message]) => byId.get(message.messageId)).sort()).toEqual(
         [...expected].sort(),
       );
-    } finally {
-      await db.close();
-    }
-  });
-  it('sweeps expired access tokens while retaining device sessions, including rows from a rolled-back server', async () => {
-    const db = await migratedDatabase();
-    try {
-      let now = new Date('2026-09-01T00:00:00Z');
-      const auth = new TokenAuth(db, async () => ({ subject: 'maintenance-owner', login: 'owner', name: 'Owner' }), () => now);
-      const tokens = await auth.exchangeGitHubOidc('proof');
-      await db.query('UPDATE phone_sessions SET expires_at=$1', [new Date('2026-09-30T00:00:00Z')]);
-      await runMaintenance(db);
-      expect((await db.query('SELECT 1 FROM phone_access_tokens')).rowCount).toBe(0);
-      expect((await db.query('SELECT 1 FROM phone_sessions')).rowCount).toBe(1);
-      now = new Date();
-      const renewed = await auth.refresh(tokens.refreshToken);
-      expect(await auth.authenticatePhone(renewed!.accessToken)).toBe(tokens.identityId);
-    } finally { await db.close(); }
-  });
-
-  it('ASSIGNMENT-RETAINED: keeps a corner\'s assignment commands past the 30-day command sweep', async () => {
-    const db = await migratedDatabase();
-    try {
-      const agent = 'b'.repeat(64),
-        workspace = '11111111-1111-4111-8111-111111111111',
-        room = '22222222-2222-4222-8222-222222222222',
-        corner = '33333333-3333-4333-8333-333333333333';
-      await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Bee','bee')`, [agent]);
-      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
-      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [room, workspace]);
-      await db.query(`INSERT INTO rooms(id,workspace_id,name,parent_id) VALUES($1,$2,'Corner',$3)`, [corner, workspace, room]);
-      for (const [id, roomId, reason] of [['open', corner, 'corner_objective'], ['tag', corner, 'human_tag'],
-        ['check', corner, 'corner_check'], ['room-tag', room, 'human_tag']])
-        await db.query(`INSERT INTO agent_commands(id,room_id,agent_id,turn_request_id,action,reason,root_command_id,
-            root_source_message_id,agent_depth,state,completed_at)
-          VALUES($1,$2,$3,$1,'input',$4,$1,$1,0,'complete',now()-interval '40 days')`, [id, roomId, agent, reason]);
-      await runMaintenance(db);
-      expect((await db.query(`SELECT id FROM agent_commands ORDER BY id`)).rows).toEqual([{ id: 'open' }, { id: 'tag' }]);
-    } finally { await db.close(); }
-  });
-
-  it('retains imported historical presence while expiring ordinary live output', async () => {
-    const db = await migratedDatabase();
-    try {
-      const human = 'a'.repeat(64),
-        agent = 'b'.repeat(64),
-        workspace = '11111111-1111-4111-8111-111111111111',
-        room = '22222222-2222-4222-8222-222222222222';
-      await db.query(
-        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
-        [human, agent],
-      );
-      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
-      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
-        room,
-        workspace,
-      ]);
-      await db.query(
-        `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body,updated_at)
-         VALUES($1,$2,'legacy','presence','{"status":"online","observedAt":1}',to_timestamp(1)),
-               ($1,$2,'expired-turn','draft','{}',to_timestamp(1))`,
-        [room, agent],
-      );
-      await runMaintenance(db);
-      expect(
-        (await db.query<{ turn_id: string }>(`SELECT turn_id FROM live_outputs`)).rows,
-      ).toEqual([{ turn_id: 'legacy' }]);
-    } finally {
-      await db.close();
-    }
-  });
-});
-
-describe('media TTL sweep', () => {
-  const owner = 'c'.repeat(64);
-  const fresh = '33333333-3333-4333-8333-333333333333';
-  const stale = '44444444-4444-4444-8444-444444444444';
-
-  async function seed() {
-    const db = await migratedDatabase();
-    await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner')`, [owner]);
-    const storage = new MemoryObjectStorage();
-    await storage.putObject(`media/${owner}/${'a'.repeat(64)}`, Buffer.from([0]), 'image/png');
-    await storage.putObject(`media/${owner}/${'b'.repeat(64)}`, Buffer.from([1]), 'image/png');
-    await db.query(
-      `INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,created_at,expires_at)
-       VALUES($1,$3,'media',$6,'image/png','fresh.png',1,$4,'ready',now()-interval '23 hours',now()+interval '1 hour'),
-             ($2,$3,'media',$7,'image/png','stale.png',1,$5,'ready',now()-interval '25 hours',now()-interval '1 hour')`,
-      [
-        fresh,
-        stale,
-        owner,
-        'a'.repeat(64),
-        'b'.repeat(64),
-        `media/${owner}/${'a'.repeat(64)}`,
-        `media/${owner}/${'b'.repeat(64)}`,
-      ],
-    );
-    const service = new ObjectService(db, storage.asStorage(), 'http://x');
-    return { db, storage, service };
-  }
-
-  it('deletes only objects past expires_at and tombstones exactly what it deleted', async () => {
-    const { db, storage, service } = await seed();
-    try {
-      expect(MEDIA_TTL_HOURS).toBe(24);
-      expect(ARTIFACT_TTL_HOURS).toBe(168);
-      expect(
-        await new MediaExpiryLoop(db, 24, 0, { storage: storage.asStorage(), service }).runOnce(),
-      ).toBe(1);
-      expect((await db.query<{ id: string }>(`SELECT id::text id FROM objects`)).rows).toEqual([
-        { id: fresh },
-      ]);
-      expect(
-        (await db.query<{ id: string }>(`SELECT id::text id FROM object_expirations`)).rows,
-      ).toEqual([{ id: stale }]);
-    } finally {
-      await db.close();
-    }
-  });
-
-  it('sweeps hourly, not on every one-second background cycle', async () => {
-    const { db, storage, service } = await seed();
-    try {
-      const loop = new MediaExpiryLoop(db, 24, MEDIA_SWEEP_INTERVAL_MS, {
-        storage: storage.asStorage(),
-        service,
-      });
-      const started = Date.now();
-      expect(await loop.runOnce(started)).toBe(1);
-      // The still-live row is past expires_at by the time an hour goes by, and
-      // is still there because the second cycle never ran a DELETE.
-      await db.query(`UPDATE objects SET expires_at=now()-interval '1 minute'`);
-      expect(await loop.runOnce(started + MEDIA_SWEEP_INTERVAL_MS - 1)).toBe(0);
-      expect((await db.query(`SELECT id FROM objects`)).rows).toHaveLength(1);
-      expect(await loop.runOnce(started + MEDIA_SWEEP_INTERVAL_MS)).toBe(1);
-      expect((await db.query(`SELECT id FROM objects`)).rows).toHaveLength(0);
-    } finally {
-      await db.close();
-    }
-  });
-
-  it('takes one env override for the window and ignores an unusable value', async () => {
-    expect(mediaTtlHours({} as NodeJS.ProcessEnv)).toBe(MEDIA_TTL_HOURS);
-    expect(mediaTtlHours({ MEDIA_TTL_HOURS: 'soon' } as NodeJS.ProcessEnv)).toBe(MEDIA_TTL_HOURS);
-    expect(mediaTtlHours({ MEDIA_TTL_HOURS: '0' } as NodeJS.ProcessEnv)).toBe(MEDIA_TTL_HOURS);
-    expect(mediaTtlHours({ MEDIA_TTL_HOURS: '72' } as NodeJS.ProcessEnv)).toBe(72);
-    const { db, storage, service } = await seed();
-    try {
-      await db.query(`UPDATE objects SET expires_at=now()+interval '48 hours'`);
-      expect(
-        await new MediaExpiryLoop(db, 72, 0, { storage: storage.asStorage(), service }).runOnce(),
-      ).toBe(0);
-      expect((await db.query(`SELECT id FROM objects`)).rows).toHaveLength(2);
     } finally {
       await db.close();
     }

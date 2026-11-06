@@ -1,6 +1,5 @@
 import { OWNED_MODEL_CREDENTIAL_SCHEMA } from './owned-model-credential.js';
 import { OWNED_MODEL_ATTEMPT_SCHEMA } from './owned-model-attempt.js';
-import { DISPLAY_DEADLINE_SOURCE_SCHEMA } from './deadline-expiry-source.js';
 import { SENTRY_WAKE_SOURCE_SCHEMA } from './sentry-wake-source.js';
 import { CONNECTOR_OFFER_EXPIRY_SCHEMA } from './connector-offer-expiry.js';
 import { PENDING_ATTACHMENT_SOURCE_SCHEMA } from './pending-attachment-source.js';
@@ -68,7 +67,7 @@ import { PER_ITEM_EVENT_KINDS, uniqueAgentHandle } from '@beeline/api-contract/p
 import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
 import { CORNER_GITHUB_CACHE_MIRROR_SQL, backfillCornerLifecycleRuns, deleteStoredCornerWorkflows } from './corner-lifecycle.js';
 import { backfillFeedbackTriageWorkflow, backfillFeedbackSignalWalk, backfillWorkspaceWalkHistory } from './feedback-triage-workflow.js';
-import { backfillWorkflowRunTimers, backfillWorkflowSkillDescriptions, closeStaleWorkflowGateChoices } from './workflow-runs.js';
+import { backfillWorkflowSkillDescriptions, closeStaleWorkflowGateChoices } from './workflow-runs.js';
 import { upgradeGrantPolicy, withdrawSupersededGrantAsks } from './grant-policy-upgrade.js';
 import { backfillRegistryApps } from './app-connections.js';
 import {
@@ -102,14 +101,7 @@ export const ENRICHMENT_POOL_WAIT_TIMEOUT_MS = 500;
 export const HEALTH_STATEMENT_TIMEOUT_MS = 2_000;
 export const HEALTH_POOL_WAIT_TIMEOUT_MS = 1_000;
 export const MIGRATION_LOCK_TIMEOUT_MS = 1_000;
-/** Schema statements retry a busy table this many times (about 2 minutes). */
-export const MIGRATION_DDL_ATTEMPTS = 120;
 export const MIGRATION_STATEMENT_TIMEOUT_MS = 10 * 60_000;
-export const APP_TRANSACTION_DEADLINE_MS = 30_000;
-export const ENRICHMENT_TRANSACTION_DEADLINE_MS = 3_000;
-export const HEALTH_TRANSACTION_DEADLINE_MS = 5_000;
-export const JOB_TRANSACTION_DEADLINE_MS = 5 * 60_000;
-export const MIGRATION_TRANSACTION_DEADLINE_MS = 10 * 60_000;
 export const APP_DATABASE_NAME = 'beeline_app';
 export const ENRICHMENT_DATABASE_NAME = 'beeline_enrichment';
 export const LONG_RUNNING_DATABASE_NAME = 'beeline_long_running';
@@ -200,7 +192,6 @@ export class DatabaseTransactionStartError extends Error {
 export interface PostgresDatabaseOptions {
   pool?: Pool;
   /** Deterministic test override; production uses the pool class limit. */
-  transactionDeadlineMs?: number;
 }
 
 export interface QueryResult<Row> {
@@ -228,7 +219,6 @@ export interface SqlDatabase {
   queryProfiles?(): ReturnType<QueryProfiler['snapshot']>;
   queryWindow?(): ReturnType<QueryProfiler['window']>;
   oldestActiveTransactionAgeMs?(): number | null;
-  transactionDeadlineCount?(): number;
   /** Fires once after an app-pool failure is followed by a successful read.
    * Live subscribers use it to retry discovery without closing their socket. */
   onRecovery?(listener: () => void): () => void;
@@ -310,9 +300,7 @@ export class PostgresDatabase implements ClosableDatabase {
   readonly #pool: Pool;
   #closePromise?: Promise<void>;
   readonly #profiler = new QueryProfiler();
-  readonly #transactionDeadlineMs: number;
   readonly #transactions = new Map<number, number>();
-  #transactionDeadlines = 0;
   /** Start time of every query this process currently has in flight, keyed by
    *  a monotonic ticket so identical concurrent statements cannot collide. */
   readonly #inFlight = new Map<number, number>();
@@ -402,14 +390,6 @@ export class PostgresDatabase implements ClosableDatabase {
     this.#pool =
       options.pool ??
       new Pool(postgresPoolConfig(connectionString, maximumConnections, options.mode));
-    this.#transactionDeadlineMs = options.transactionDeadlineMs ??
-      (options.mode === 'enrichment' ? ENRICHMENT_TRANSACTION_DEADLINE_MS
-        : options.mode === 'diagnostics' ? HEALTH_TRANSACTION_DEADLINE_MS
-        : options.mode === 'long-running' ? JOB_TRANSACTION_DEADLINE_MS
-        : options.mode === 'migration' ? MIGRATION_TRANSACTION_DEADLINE_MS
-        : APP_TRANSACTION_DEADLINE_MS);
-    if (!Number.isSafeInteger(this.#transactionDeadlineMs) || this.#transactionDeadlineMs < 1)
-      throw new Error('invalid transaction deadline');
     this.#pool.on('error', (error) => {
       console.error('postgres idle client error', error);
     });
@@ -435,10 +415,6 @@ export class PostgresDatabase implements ClosableDatabase {
     for (const startedAt of this.#transactions.values())
       if (oldest === undefined || startedAt < oldest) oldest = startedAt;
     return oldest === undefined ? null : Date.now() - oldest;
-  }
-
-  transactionDeadlineCount(): number {
-    return this.#transactionDeadlines;
   }
 
   async query<Row extends QueryResultRow = QueryResultRow>(
@@ -512,12 +488,6 @@ export class PostgresDatabase implements ClosableDatabase {
   }
 
   async transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {
-    // Capture the caller now. Creating this inside the timer loses the user/job
-    // path and leaves Sentry with only processTimers when the deadline fires.
-    const deadlineError = Object.assign(new Error('database transaction deadline exceeded'), {
-      code: '57014',
-    });
-    Error.captureStackTrace(deadlineError, this.transaction);
     const { client, release } = await this.#beginTransaction().catch((error: unknown) => {
       this.#noteFailure(error);
       if (isTransientDatabaseConnectionError(error)) throw new DatabaseTransactionStartError(error);
@@ -525,16 +495,6 @@ export class PostgresDatabase implements ClosableDatabase {
     });
     const ticket = this.#nextTicket++;
     this.#transactions.set(ticket, Date.now());
-    let expired = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const deadline = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => {
-        expired = true;
-        this.#transactionDeadlines++;
-        release(deadlineError);
-        reject(deadlineError);
-      }, this.#transactionDeadlineMs);
-    });
     let releaseError: Error | undefined;
     try {
       const database: SqlDatabase = {
@@ -543,12 +503,9 @@ export class PostgresDatabase implements ClosableDatabase {
           values: unknown[] = [],
           preparedName?: string,
         ) => {
-          if (expired) throw deadlineError;
-          const raw = await this.#timed(sql, () => Promise.race([
+          const raw = await this.#timed(sql, () =>
             preparedName ? client.query<Row>(preparedQuery(preparedName, sql, values))
-              : values.length ? client.query<Row>(sql, values) : client.query<Row>(sql),
-            deadline,
-          ]));
+              : values.length ? client.query<Row>(sql, values) : client.query<Row>(sql));
           const result = Array.isArray(raw) ? raw.at(-1) : raw;
           return {
             rows: result?.rows ?? [],
@@ -558,17 +515,16 @@ export class PostgresDatabase implements ClosableDatabase {
         transaction: async <Result>(nested: (database: SqlDatabase) => Promise<Result>) =>
           nested(database),
       };
-      const result = await Promise.race([work(database), deadline]);
-      await Promise.race([client.query('COMMIT'), deadline]);
+      const result = await work(database);
+      await client.query('COMMIT');
       this.#noteSuccess();
       return result;
     } catch (error) {
       this.#noteFailure(error);
-      if (expired) throw error;
       if (isTransientDatabaseConnectionError(error))
         releaseError = error instanceof Error ? error : new Error('transaction connection failed');
       try {
-        await Promise.race([client.query('ROLLBACK'), deadline]);
+        await client.query('ROLLBACK');
       } catch (rollbackError) {
         // The original error is more useful than a rollback failure on a dead connection.
         releaseError =
@@ -576,7 +532,6 @@ export class PostgresDatabase implements ClosableDatabase {
       }
       throw error;
     } finally {
-      if (timer) clearTimeout(timer);
       this.#transactions.delete(ticket);
       release(releaseError);
     }
@@ -681,8 +636,9 @@ CREATE TABLE IF NOT EXISTS identities (
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS hidden_from_roster boolean NOT NULL DEFAULT false;
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS face_id text NULL;
 -- Start existing people's inactivity clock at rollout; account age is not app inactivity.
-ALTER TABLE identities ADD COLUMN IF NOT EXISTS last_app_active_at timestamptz DEFAULT now();
-ALTER TABLE identities ADD COLUMN IF NOT EXISTS away_warning_at timestamptz;
+DROP TRIGGER IF EXISTS beeline_agent_schedule_due ON identities;
+ALTER TABLE identities DROP COLUMN IF EXISTS last_app_active_at;
+ALTER TABLE identities DROP COLUMN IF EXISTS away_warning_at;
 -- Null excludes every identity present at rollout. New humans inherit true;
 -- completion changes it to false and follows the account across devices.
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS welcome_cards_due boolean;
@@ -975,7 +931,7 @@ ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_by text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_at timestamptz;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS model_unavailable text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS fast_mode boolean NOT NULL DEFAULT false;
-ALTER TABLE agents ADD COLUMN IF NOT EXISTS wake_batch_minutes integer NOT NULL DEFAULT 0 CHECK (wake_batch_minutes >= 0);
+ALTER TABLE agents DROP COLUMN IF EXISTS wake_batch_minutes;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS machine_id text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS machine_name text;
 -- Broker facts are machine reports, not connector lifecycle records.
@@ -1096,27 +1052,7 @@ CREATE TABLE IF NOT EXISTS needs_you_marks (
 -- cascade-delete.
 CREATE INDEX IF NOT EXISTS needs_you_marks_message_idx ON needs_you_marks(message_id);
 CREATE INDEX IF NOT EXISTS needs_you_marks_workspace_idx ON needs_you_marks(workspace_id);
--- Inert until the next release drains servers that still use this schema.
-CREATE TABLE IF NOT EXISTS pending_mention_notices (
-  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
-  agent_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
-  sender_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
-  source_message_id text NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-  reason text NOT NULL,
-  due_at timestamptz NOT NULL,
-  notice_id text,
-  notified_at timestamptz,
-  PRIMARY KEY(room_id, agent_id, source_message_id, reason)
-);
-CREATE INDEX IF NOT EXISTS pending_mention_notices_due_idx
-  ON pending_mention_notices(due_at) WHERE notified_at IS NULL;
-CREATE INDEX IF NOT EXISTS pending_mention_notices_notice_idx
-  ON pending_mention_notices(notice_id) WHERE notice_id IS NOT NULL;
--- source_message_id cascades from messages but is only the third column of
--- the primary key, so deleting a message made Postgres sequentially scan
--- this table to find rows to cascade-delete.
-CREATE INDEX IF NOT EXISTS pending_mention_notices_source_message_idx
-  ON pending_mention_notices(source_message_id);
+DROP TABLE IF EXISTS pending_mention_notices;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS agent_hop_count integer NOT NULL DEFAULT 0;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS system_event jsonb;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
@@ -1880,6 +1816,7 @@ CREATE TABLE IF NOT EXISTS agent_schedules (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+DROP TRIGGER IF EXISTS beeline_agent_schedule_due ON agent_schedules;
 ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS creator_agent_id text REFERENCES identities(id);
 ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS owner_agent_id text REFERENCES identities(id);
 ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS ownership_initialized boolean NOT NULL DEFAULT false;
@@ -1918,6 +1855,8 @@ CREATE INDEX IF NOT EXISTS agent_schedules_workspace_idx ON agent_schedules(work
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS max_runs integer;
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS run_count integer NOT NULL DEFAULT 0;
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS workflow_run jsonb;
+DELETE FROM agent_schedules WHERE workflow_run IS NOT NULL;
+ALTER TABLE agent_schedules DROP COLUMN workflow_run;
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS owner_id text REFERENCES identities(id);
 
 CREATE TABLE IF NOT EXISTS agent_schedule_occurrences (
@@ -2293,15 +2232,7 @@ ALTER TABLE push_devices ALTER COLUMN registered_at SET DEFAULT now();
 ALTER TABLE push_devices ALTER COLUMN registered_at SET NOT NULL;
 CREATE INDEX IF NOT EXISTS push_devices_identity_idx ON push_devices(identity_id);
 
--- One row per iOS device: when it was last sent a silent shade clear
--- (PushDeliveryLoop.sendReadClears).
-CREATE TABLE IF NOT EXISTS push_read_clears (
-  device_token text PRIMARY KEY REFERENCES push_devices(token) ON DELETE CASCADE,
-  sent_at timestamptz NOT NULL DEFAULT now()
-);
--- Retired: neither read nor written, and empty in production on 2026-11-02.
-ALTER TABLE push_read_clears DROP COLUMN IF EXISTS cleared_through;
-ALTER TABLE push_read_clears DROP COLUMN IF EXISTS cleared_through_room;
+DROP TABLE IF EXISTS push_read_clears;
 -- No longer read or written; it stays for rolling-update compatibility.
 ALTER TABLE room_read_marks ADD COLUMN IF NOT EXISTS read_at timestamptz;
 CREATE INDEX IF NOT EXISTS room_read_marks_identity_read_idx
@@ -2384,7 +2315,8 @@ CREATE TABLE IF NOT EXISTS push_delivery_claims (
   PRIMARY KEY (message_id, device_token)
 );
 ALTER TABLE push_delivery_claims ADD COLUMN IF NOT EXISTS attempts integer NOT NULL DEFAULT 1;
-ALTER TABLE push_delivery_claims ADD COLUMN IF NOT EXISTS next_retry_at timestamptz;
+DROP TRIGGER IF EXISTS retry_push_outbox ON push_delivery_claims;
+ALTER TABLE push_delivery_claims DROP COLUMN IF EXISTS next_retry_at;
 -- When a read-clear push named this delivered message (sendReadClears). Read
 -- messages a push left out stay NULL and go in a later push.
 ALTER TABLE push_delivery_claims ADD COLUMN IF NOT EXISTS read_cleared_at timestamptz;
@@ -2396,10 +2328,11 @@ CREATE TABLE IF NOT EXISTS x_ad_signups (
   captured_at timestamptz NOT NULL, created_at timestamptz NOT NULL,
   conversion_id text NOT NULL UNIQUE, event_id text,
   sent_at timestamptz, attempts integer NOT NULL DEFAULT 0,
-  next_attempt_at timestamptz NOT NULL DEFAULT now(), delivery_failed boolean NOT NULL DEFAULT false
+  delivery_failed boolean NOT NULL DEFAULT false
 );
 CREATE INDEX IF NOT EXISTS x_ad_signups_date ON x_ad_signups(created_at);
-CREATE INDEX IF NOT EXISTS x_ad_signups_pending ON x_ad_signups(next_attempt_at) WHERE sent_at IS NULL;
+ALTER TABLE x_ad_signups DROP COLUMN IF EXISTS next_attempt_at CASCADE;
+CREATE INDEX IF NOT EXISTS x_ad_signups_pending ON x_ad_signups(created_at) WHERE sent_at IS NULL AND attempts=0;
 CREATE TABLE IF NOT EXISTS x_ad_daily (
   day date NOT NULL, level text NOT NULL CHECK(level IN ('campaign','ad_group','ad')),
   entity_id text NOT NULL, name text NOT NULL, campaign_id text, ad_group_id text,
@@ -3205,22 +3138,7 @@ export async function migrate(
   database: SqlDatabase,
   options: { deferData?: boolean } = {},
 ): Promise<void> {
-  // A schema change needs its table to itself for an instant. On a live app
-  // that table is rarely idle for the whole lock timeout, so wait in line and
-  // try again rather than failing the release on the first busy moment.
-  const ddl = async (name: string, sql: string) => {
-    for (let attempt = 1; ; attempt++) {
-      try {
-        return await runMigrationStep(name, async () => { await database.query(sql); }, {
-          onLockTimeout: attempt === 1 ? () => logLockHolders(database, name, sql) : undefined,
-        });
-      } catch (error) {
-        const code = (error as { code?: unknown } | null)?.code;
-        if ((code !== '55P03' && code !== '40P01') || attempt >= MIGRATION_DDL_ATTEMPTS) throw error;
-        await new Promise((resolve) => setTimeout(resolve, 250 + Math.floor(Math.random() * 1250)));
-      }
-    }
-  };
+  const ddl = async (name: string, sql: string) => runMigrationStep(name, async () => { await database.query(sql); });
   const ddlScript = async (name: string, sql: string) => {
     const statements = splitMigrationStatements(sql);
     for (let index = 0; index < statements.length; index++) {
@@ -3294,13 +3212,8 @@ export async function migrate(
   `);
   await ddlScript('router command identity', ROUTER_COMMAND_SCHEMA);
   await ddlScript('retired turn recovery schema', `
-    CREATE TABLE IF NOT EXISTS agent_startup_backoff (
-      agent_id text PRIMARY KEY REFERENCES agents(agent_id) ON DELETE CASCADE,
-      failures integer NOT NULL DEFAULT 0,
-      window_started_at timestamptz NOT NULL DEFAULT now(),
-      paused_until timestamptz
-    );
-    ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS startup_outcome text;
+    DROP TABLE IF EXISTS agent_startup_backoff;
+    ALTER TABLE agent_turns DROP COLUMN IF EXISTS startup_outcome;
     DROP TRIGGER IF EXISTS defer_startup_wake ON agent_commands;
     DROP FUNCTION IF EXISTS defer_startup_wake();
   `);
@@ -3314,11 +3227,6 @@ export async function migrate(
      WHERE presentation='message' AND system_event IS NULL`,
   ));
   await ddlScript('next day checkin schema', NEXT_DAY_CHECKIN_SCHEMA);
-  await runMigrationStep('pending command re-nudge index', () => createIndexConcurrently(
-    database, 'agent_commands_pending_renudge',
-    `CREATE INDEX CONCURRENTLY agent_commands_pending_renudge ON agent_commands(created_at)
-     WHERE state='pending' AND action='input' AND renudged_at IS NULL`,
-  ));
   await runMigrationStep('room pending command index', () => createIndexConcurrently(
     database, 'agent_commands_room_pending_status',
     `CREATE INDEX CONCURRENTLY agent_commands_room_pending_status
@@ -3657,7 +3565,7 @@ export async function migrate(
   await ddlScript('corner follows schema', cornerFollowsSchemaSql());
   await ddlScript('live notification schema', (await postgresLiveSchema()));
   await ddlScript('sentry eligibility source', SENTRY_WAKE_SOURCE_SCHEMA);
-  await ddlScript('display deadline source', DISPLAY_DEADLINE_SOURCE_SCHEMA);
+  await ddlScript('Remove display deadline source', 'DROP FUNCTION IF EXISTS beeline_display_deadline_change() CASCADE;');
   await ddlScript('agent schedule due source', AGENT_SCHEDULE_SOURCE_SCHEMA);
   await ddlScript('pending attachment due source', PENDING_ATTACHMENT_SOURCE_SCHEMA);
   await ddlScript('computer expiry source', COMPUTER_EXPIRY_SCHEMA);
@@ -3794,7 +3702,6 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   await dataStep('abandoned workflow endings', () =>
     workflowBackfillOnce(database, 'abandoned-workflow-endings-v1', reportAbandonedWorkflowEndings));
   // A timer lost after any release stalls its run; re-arm missing ones every boot.
-  await dataStep('workflow run timers', () => backfillWorkflowRunTimers(database));
   const syncedRoomRoles = await dataStep('top-level Room roles', () =>
     syncTopLevelSharedRoomRoles(database));
   console.log(`syncTopLevelSharedRoomRoles: updated ${syncedRoomRoles} stale Room role(s)`);

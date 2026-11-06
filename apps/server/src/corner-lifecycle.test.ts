@@ -1061,14 +1061,15 @@ describe('landing and closing from any state (finding 3, implicit edges)', () =>
     }) });
     const { runId } = await startWorkflow(db, starter, { name: 'corner-chore', roleBindings: { worker: A } });
     expect((await getWorkflowRun(db, cornerId, runId)).status).toBe('live');
+    expect((await db.query(`SELECT 1 FROM agent_schedules WHERE room_id=$1`, [cornerId])).rowCount).toBe(0);
     await phone.execute('requestCornerClose', { roomId: cornerId }, H);
     expect((await getWorkflowRun(db, cornerId, runId)).status).toBe('abandoned');
     expect(await liveWorkflowRun(db, cornerId, 'corner-chore')).toBeUndefined();
-    expect((await db.query(`SELECT 1 FROM agent_schedules WHERE workflow_run->>'runId'=$1`, [runId])).rowCount).toBe(0);
-    console.log('Demonstrated corner-close-run: closing the corner saved the saved workflow run inside it as abandoned and removed its timers');
+    expect((await db.query(`SELECT 1 FROM agent_schedules WHERE room_id=$1`, [cornerId])).rowCount).toBe(0);
+    console.log('Demonstrated corner-close-run: closing the corner abandoned the saved workflow run without creating a schedule timer');
   });
 
-  it('a GitHub merge abandons a live saved workflow run and its timers inside the corner', async () => {
+  it('a GitHub merge abandons a live saved workflow run without schedule timers inside the corner', async () => {
     const cornerId = await inReview();
     const starter = { room_id: cornerId, agent_id: A } as CommandRow;
     await saveWorkflow(db, starter, { contract: describedWorkflow({
@@ -1081,10 +1082,11 @@ describe('landing and closing from any state (finding 3, implicit edges)', () =>
     }) });
     const { runId } = await startWorkflow(db, starter, { name: 'corner-chore', roleBindings: { worker: A } });
     expect((await getWorkflowRun(db, cornerId, runId)).status).toBe('live');
+    expect((await db.query(`SELECT 1 FROM agent_schedules WHERE room_id=$1`, [cornerId])).rowCount).toBe(0);
     await mergedWebhook(cornerId, 7, SHA);
     expect((await getWorkflowRun(db, cornerId, runId)).status).toBe('abandoned');
     expect(await liveWorkflowRun(db, cornerId, 'corner-chore')).toBeUndefined();
-    expect((await db.query(`SELECT 1 FROM agent_schedules WHERE workflow_run->>'runId'=$1`, [runId])).rowCount).toBe(0);
+    expect((await db.query(`SELECT 1 FROM agent_schedules WHERE room_id=$1`, [cornerId])).rowCount).toBe(0);
     expect(await currentState(cornerId)).toBe('landed');
     await mergedWebhook(cornerId, 7, SHA);
     expect((await getWorkflowRun(db, cornerId, runId)).status).toBe('abandoned');

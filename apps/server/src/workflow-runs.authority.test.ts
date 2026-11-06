@@ -12,7 +12,7 @@ import { AgentScheduleLoop } from './agent-schedules.js';
 import { PhoneService } from './phone-service.js';
 import { SCHEDULE_SCHEDULER_ID } from '@beeline/api-contract/scheduled-prompts';
 import { archiveWorkflow, assignWorkflowRole, handoff, getWorkflowRun, cancelWorkflowRun, saveWorkflow, startWorkflow } from './workflow-runs.js';
-import { APPROVER, CONTRACT, GATED, IMPLEMENTER, LIST_CONTRACT, OUTSIDER, OWNER, REVIEWER, ROOM, WORKER_A, WORKER_B, WORKSPACE, adminCommand, answerGate, commandFor, createSchedule, database, fireTimer, listRunCard, ownerNotices, pendingCommandsFor, reachGate, reportPresence, rootMessage, runCards, scheduleOccurrence, startedGatedRun, startedListRun, startedRun } from './test-fixtures/workflow-runs.js';
+import { APPROVER, CONTRACT, GATED, IMPLEMENTER, LIST_CONTRACT, OUTSIDER, OWNER, REVIEWER, ROOM, WORKER_A, WORKER_B, WORKSPACE, adminCommand, answerGate, commandFor, createSchedule, database, listRunCard, ownerNotices, pendingCommandsFor, reachGate, reportPresence, rootMessage, runCards, scheduleOccurrence, startedGatedRun, startedListRun, startedRun } from './test-fixtures/workflow-runs.js';
 
 vi.mock('node:crypto', async (importOriginal) => {
   const crypto = await importOriginal<typeof import('node:crypto')>();
@@ -107,55 +107,6 @@ describe('list roles', () => {
     });
     expect(looped.state).toBe('work');
     expect((await listRunCard(runId)).roleBindings.worker).toBe(WORKER_A);
-  });
-
-  it('moves an expired step to the next agent on the list even if the current agent never answers', async () => {
-    const { runId } = await startedListRun();
-    const oldWake = (await readAgentCommands(database, ROOM, WORKER_A)).commands[0]!;
-    // The step timer belongs to the run and names the attempt it times.
-    const schedule = await database.query<{ agent_id: string; attempt: string }>(
-      `SELECT agent_id,workflow_run->>'attempt' attempt FROM agent_schedules WHERE room_id=$1 AND workflow_run->>'timer'='step'`,
-      [ROOM],
-    );
-    expect(schedule.rows).toEqual([{ agent_id: SYSTEM_IDENTITY_ID, attempt: '0' }]);
-    await database.query(
-      `UPDATE agent_schedules SET next_run_at=now()-interval '1 minute' WHERE room_id=$1 AND workflow_run->>'timer'='step'`,
-      [ROOM],
-    );
-    expect(await new AgentScheduleLoop(database).runOnce()).toBe(1);
-    const card = await listRunCard(runId) as Awaited<ReturnType<typeof listRunCard>> & { tried?: unknown };
-    expect(card).toMatchObject({ seq: 1, reassigned: true, roleBindings: { worker: WORKER_B } });
-    expect(card.tried).toEqual([{ agentId: WORKER_A, reason: 'its lease expired' }]);
-    expect(await pendingCommandsFor(WORKER_B)).toBe(1);
-    // The silent agent's pending dispatch is cancelled: it cannot act on the old attempt.
-    expect(await pendingCommandsFor(WORKER_A)).toBe(0);
-    await expect(database.transaction(db => claimAgentCommand(db, ROOM, WORKER_A, oldWake.id, 'late-helper')))
-      .rejects.toThrow('command claim conflict');
-  });
-
-  it('keeps a pending workflow wake until the declared workflow timer advances its attempt', async () => {
-    await startedListRun();
-    const wake = (await readAgentCommands(database, ROOM, WORKER_A)).commands[0]!;
-    await database.query(`UPDATE agent_schedules SET next_run_at=now()-interval '1 minute'
-      WHERE room_id=$1 AND workflow_run->>'timer'='step'`, [ROOM]);
-    expect((await readAgentCommands(database, ROOM, WORKER_A)).commands.map(command => command.id)).toContain(wake.id);
-    await new AgentScheduleLoop(database).runOnce();
-    expect((await database.query(`SELECT state FROM agent_commands WHERE id=$1`, [wake.id])).rows[0])
-      .toEqual({ state: 'cancelled' });
-  });
-
-  it('keeps unrelated pending work when a workflow timer advances', async () => {
-    const source = randomBytes(32).toString('hex');
-    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'An old request')`,
-      [source, ROOM, OWNER]);
-    const old = (await createAgentCommand(database, {
-      roomId: ROOM, agentId: WORKER_A, sourceMessageId: source, reason: 'human_tag',
-    }))!;
-    await startedListRun();
-    await database.query(`UPDATE agent_schedules SET next_run_at=now()-interval '1 minute'
-      WHERE room_id=$1 AND workflow_run->>'timer'='step'`, [ROOM]);
-    await new AgentScheduleLoop(database).runOnce();
-    expect((await readAgentCommands(database, ROOM, WORKER_A)).commands.map(command => command.id)).toContain(old.id);
   });
 
   it('asks a human when nobody on the list is healthy, leaving the run parked with no agent dispatched', async () => {
@@ -370,7 +321,7 @@ describe('agent workflow run reads and cancellation', () => {
     await saveWorkflow(database, command, { contract: describedWorkflow(contract) });
     const { runId } = await startWorkflow(database, command, { name: 'corner', roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER } });
     await cancelWorkflowRun(database, command, { runId, reason: 'Stop' });
-    expect((await database.query(`SELECT 1 FROM agent_schedules WHERE workflow_run->>'runId'=$1`, [runId])).rowCount).toBe(0);
+    expect((await database.query(`SELECT 1 FROM agent_schedules WHERE id::text=$1`, [runId])).rowCount).toBe(0);
     expect(await new AgentScheduleLoop(database).runOnce(new Date(Date.now() + 120000))).toBe(0);
   });
 });
@@ -416,25 +367,6 @@ describe('run owner', () => {
     const tray = await phone.execute('readNeedsYou', { workspaceId: WORKSPACE }, OWNER);
     expect(tray.items.some(item => item.messageId === gate.id)).toBe(true);
     console.info('Demonstrated scheduled-gate: self-created schedule → gate addressed to owner → waiting corner and Needs You card');
-  });
-
-  it('is null for an older agent-made schedule with no recorded owner, so notices go to admins', async () => {
-    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`, [WORKSPACE, OWNER]);
-    await saveWorkflow(database, await commandFor(WORKER_A), { contract: describedWorkflow(GATED) });
-    await database.query(
-      `INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,workflow_slug)
-       VALUES($1,$2,$3,$4,$4,'{"kind":"interval","everyMinutes":60}'::jsonb,'run gated',now()-interval '1 minute','gated')`,
-      [SCHEDULE, WORKSPACE, ROOM, WORKER_A],
-    );
-    await new AgentScheduleLoop(database).runOnce();
-    const scheduled = (await database.query<CommandRow>(
-      `SELECT * FROM agent_commands WHERE reason='schedule' AND agent_id=$1`, [WORKER_A],
-    )).rows[0]!;
-    const { runId } = await startWorkflow(database, scheduled, { name: 'gated', roleBindings: { worker: WORKER_A, approver: APPROVER } });
-    expect((await runCards(runId))[0]!.card.ownerId).toBeNull();
-    await reachGate(runId);
-    await fireTimer(runId, 'step');
-    expect(await ownerNotices(OWNER)).toHaveLength(1);
   });
 });
 
@@ -492,7 +424,7 @@ describe('one live run per workflow per Room', () => {
     );
     const snapshot = async () => ({
       cards: await runCards(runId),
-      timers: (await database.query(`SELECT * FROM agent_schedules WHERE workflow_run->>'runId'=$1 ORDER BY id`, [runId])).rows,
+      timers: (await database.query(`SELECT * FROM agent_schedules WHERE id::text=$1 ORDER BY id`, [runId])).rows,
     });
     const before = await snapshot();
     const commands = await pendingCommandsFor(WORKER_B);
@@ -529,47 +461,5 @@ describe('one live run per workflow per Room', () => {
       `SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%skipped a run%'`, [ROOM],
     )).rows;
     expect(skips).toEqual([{ text: `The gated schedule skipped a run · run ${runId} is active at step work in state live for 0 min` }]);
-  });
-});
-
-describe('run deadline', () => {
-  it('closes the run as failed with the reason and lets the next run start', async () => {
-    const runId = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
-    expect(await fireTimer(runId, 'deadline')).toBe(1);
-    const read = await getWorkflowRun(database, ROOM, runId);
-    expect(read).toMatchObject({ state: 'work', status: 'failed', allowedOutcomes: {} });
-    expect(read.history.at(-1)).toMatchObject({ outcome: 'deadline', status: 'failed', contents: { reason: 'deadline' } });
-    expect((await runCards(runId)).at(-1)!.text).toBe(
-      `the workflow closed run ${runId.slice(0, 8)} of gated · as failed at work because it passed its deadline of 2 h`,
-    );
-    expect((await database.query(`SELECT 1 FROM agent_schedules WHERE workflow_run->>'runId'=$1`, [runId])).rowCount).toBe(0);
-    expect((await database.query(`SELECT 1 FROM agent_commands command JOIN messages message ON message.id=command.source_message_id WHERE command.state='pending' AND message.card->>'runId'=$1`, [runId])).rowCount).toBe(0);
-    await expect(startWorkflow(database, { room_id: ROOM, agent_id: OWNER }, {
-      name: 'gated', roleBindings: { worker: WORKER_A, approver: APPROVER },
-    })).resolves.toMatchObject({ state: 'work' });
-  });
-
-  it('fires while the run is parked at a gate and closes its card', async () => {
-    const runId = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
-    await reachGate(runId);
-    expect(await fireTimer(runId, 'deadline')).toBe(1);
-    expect((await getWorkflowRun(database, ROOM, runId)).status).toBe('failed');
-    const choice = (await database.query<{ status: string }>(
-      `SELECT choice.status FROM room_choices choice JOIN messages message ON message.id=choice.message_id WHERE message.card->>'runId'=$1`, [runId],
-    )).rows;
-    expect(choice).toEqual([{ status: 'closed' }]);
-  });
-
-  it('lets exactly one of the deadline and a handoff win', async () => {
-    const closed = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
-    await fireTimer(closed, 'deadline');
-    expect(await handoff(database, await commandFor(WORKER_A), { runId: closed, outcome: 'done', contents: { note: 'late' }, attempt: 0 }))
-      .toEqual({ alreadyAdvanced: true, runId: closed, state: 'work', seq: 1, status: 'failed' });
-
-    const finished = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
-    await reachGate(finished);
-    await answerGate(finished, 'publish');
-    expect(await fireTimer(finished, 'deadline')).toBe(0);
-    expect((await getWorkflowRun(database, ROOM, finished)).status).toBe('done');
   });
 });

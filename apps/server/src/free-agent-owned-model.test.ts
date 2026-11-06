@@ -69,6 +69,36 @@ describe('actual owned model endpoint and actual quota adapter', () => {
     for (const secret of ['SYNTHETIC_PRIVATE_HISTORY', 'SYNTHETIC_PRIVATE_ANSWER', 'SYNTHETIC_SERVER_PROVIDER_KEY', f.issued.token]) expect(stored).not.toContain(secret);
   });
 
+  it('ends an owned stream on its first chunk past expiry without a timer retry', async () => {
+    const originalNow = Date.now;
+    let wall = originalNow();
+    vi.spyOn(Date, 'now').mockImplementation(() => wall);
+    options.config.limits = { ...DEFAULT_FREE_AGENT_LIMITS, maxTurnMs: 1000 };
+    let part = 0;
+    reply = () => new Response(new ReadableStream({
+      pull(controller) {
+        if (part++ === 0) controller.enqueue(new TextEncoder().encode('data: '+JSON.stringify({ choices: [{ delta: { content: 'AUTHORIZED_CHUNK' } }] })+'\n\n'));
+        else {
+          wall += 1001;
+          controller.enqueue(new TextEncoder().encode('data: '+JSON.stringify({ choices: [{ delta: { content: 'EXPIRED_CHUNK' } }] })+'\n\n'));
+          controller.close();
+        }
+      },
+    }, { highWaterMark: 0 }), { headers: { 'content-type': 'text/event-stream' } });
+    let received = '';
+    try {
+      const response = await call({ ...input, stream: true });
+      const reader = response.body!.getReader(), decoder = new TextDecoder();
+      try { for (;;) { const next = await reader.read(); if (next.done) break; received += decoder.decode(next.value); } }
+      catch { /* Expiry closes the stream before the provider's next frame. */ }
+    } catch { /* The transport may observe the close before its first packet. */ }
+    finally { vi.mocked(Date.now).mockRestore(); }
+    expect(received).not.toContain('EXPIRED_CHUNK');
+    expect(calls).toHaveLength(1);
+    expect((await f.db.query(`SELECT state FROM owned_model_attempts`)).rows).toEqual([{ state: 'unknown' }]);
+    expect(Number((await counters()).usage[0]?.tokens)).toBeGreaterThan(0);
+  });
+
   it('retains actual allowance on lost transport and refuses same-ID and new-UUID retries without duplicate accounting', async () => {
     reply = () => Promise.reject(new Error('SYNTHETIC_PRIVATE_PROVIDER_FAILURE'));
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
@@ -213,13 +243,32 @@ describe('actual owned model endpoint and actual quota adapter', () => {
       } }); return { result, second };
     }).then(({ result, second }) => { if (second) secondCommitted.resolve(); return result; }) };
     reply = () => { firstEntered.resolve(); return provider.promise; };
-    const first = call().then(async response => { await response.text(); }); await firstEntered.promise;
+    const first = call().then(async response => { await response.text(); }).catch(() => {}); await firstEntered.promise;
     const second = call({ ...input, messages: [{ role: 'user', content: 'another synthetic tool result' }] }, TWO);
     await secondCommitted.promise;
     await f.db.query('UPDATE memberships SET removed_at=clock_timestamp() WHERE room_id=$1', [MODEL_ROOM]);
     provider.resolve(success()); await first;
     const refused = await second; expect(await refused.json()).toMatchObject({ receipt: { requestId: TWO, state: 'refused', evidence: { kind: 'not-dispatched' } } });
-    expect(calls).toHaveLength(1); expect(Number((await counters()).usage[0]?.tokens)).toBe(13);
+    expect(calls).toHaveLength(1);
+    const initial = (await f.db.query<{ state: string; reservation: { reserved: number } }>(
+      'SELECT state,reservation FROM owned_model_attempts WHERE model_request_id=$1', [ONE])).rows[0]!;
+    expect(initial.state).toBe('unknown');
+    expect(Number((await counters()).usage[0]?.tokens)).toBe(initial.reservation.reserved);
+  });
+
+  it('stops on the first chunk after authorization is revoked, without a timer', async () => {
+    reply = () => new Response(new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        await f.db.query('UPDATE owned_model_credentials SET revoked_at=clock_timestamp()');
+        controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"EXPIRED_PRIVATE_CHUNK"}}]}\n\n'));
+        controller.close();
+      },
+    }), { headers: { 'content-type': 'text/event-stream' } });
+    let received = '';
+    try { const response = await call({ ...input, stream: true }); received = await response.text(); } catch {}
+    expect(received).not.toContain('EXPIRED_PRIVATE_CHUNK');
+    expect(calls).toHaveLength(1);
+    expect((await f.db.query('SELECT state FROM owned_model_attempts WHERE model_request_id=$1', [ONE])).rows[0]).toEqual({ state: 'unknown' });
   });
 
   it('refuses default-off and every malformed owned namespace before legacy lookup or model metadata work', async () => {

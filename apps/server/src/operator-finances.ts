@@ -58,7 +58,7 @@ export function createOperatorFinances(
   let cached: { expires: number; value: Awaited<ReturnType<typeof collect>> } | undefined;
   let pending: Promise<Awaited<ReturnType<typeof collect>>> | undefined;
   async function json(url: string, key: string): Promise<unknown> {
-    const response = await fetchImpl(url, { redirect: 'error', signal: AbortSignal.timeout(5000),
+    const response = await fetchImpl(url, { redirect: 'error',
       headers: { Authorization: `Bearer ${key}` } });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return response.json();

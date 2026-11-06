@@ -162,7 +162,6 @@ export class AgentVoiceService {
 export async function renderVoiceAudio(speech: VoiceSpeech, text: string, voiceId: string): Promise<AgentVoicePreview> {
   // Existing PCM synthesis, capped at eight seconds; no key or arbitrary URL reaches the phone.
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12000);
   const chunks: Buffer[] = [];
   let length = 0;
   const cap = VOICE_SAMPLE_RATE * 2 * 8;
@@ -181,7 +180,6 @@ export async function renderVoiceAudio(speech: VoiceSpeech, text: string, voiceI
       }
     }
   } finally {
-    clearTimeout(timer);
     controller.abort();
   }
   if (!length) throw Error('Voice preview unavailable');

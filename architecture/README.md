@@ -25,9 +25,13 @@ live in `agent_subscriptions`; legacy JSON may be read only by named upgrade
 functions. `membership-join.ts` owns
 membership SQL and its conflict policies; callers pass their current transaction
 and retain access checks. `postgres-live.ts` owns named notifiers and SQL
-expressions for atomic CTE/trigger notifications. `background-work.ts` drives
-instance-local jobs by their queue deadlines and owns cancellable timeout chains
-for live connections. Their close handlers cancel the chain.
+expressions for atomic CTE/trigger notifications. `background-work.ts` drains work authorized by committed events. The strict
+`timers.server-timeout` rule has zero exceptions outside the named
+`apps/server/src/owner-schedule-clock.ts` module, whose only job is firing
+owner-created schedules. There are no connection timer chains, retry clocks,
+retention sweeps or expiry wake loops. `scripts/server-timers.test.mjs` plants
+forbidden calls and verifies the real architecture check rejects them.
+
 
 ## Storage registry (bloat inside a module)
 

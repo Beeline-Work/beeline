@@ -248,10 +248,6 @@ export class ApnsPushProvider implements PushSender {
         body += chunk;
       });
       stream.on('error', fail);
-      stream.setTimeout(APNS_REQUEST_TIMEOUT_MS, () => {
-        stream.close(http2Constants.NGHTTP2_CANCEL);
-        fail(new Error('APNs request timed out'));
-      });
       stream.on('end', () => {
         if (settled) return;
         settled = true;

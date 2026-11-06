@@ -1,7 +1,4 @@
-import { ROOM_VIEW_TOOL_ROW_LIMIT } from '@beeline/api-contract/phone';
-import { cleanupUnfinishedAppSignIns } from './unfinished-app-sign-ins.js';
 import { captureServerError } from './sentry.js';
-import { retryMcpMemberRoutes } from './rooms-mcp-members.js';
 import { DatabaseTransactionStartError, type SqlDatabase } from './database.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import {
@@ -14,36 +11,12 @@ import {
   type PushActionPayload,
   type ReadClear,
 } from '@beeline/api-contract/phone';
-import { ARTIFACT_TTL_HOURS, MEDIA_SWEEP_INTERVAL_MS, mediaTtlHours } from './media-ttl.js';
-import type { ObjectStorage } from './object-storage.js';
 import { apnsReadClearBatch } from './apns-push.js';
 import { firebaseReadClearBatch } from './firebase-push.js';
-import { EXPIRE_PUSH_CLAIMS_SQL, TERMINAL_PUSH_CLAIMS_SQL } from './push-claim-cleanup.js';
-import type { ObjectService } from './object-service.js';
 import { cornerFactsSql, cornerRowState, type CornerStateRow } from './chat-corner-counts.js';
 import { addressedToPersonSql } from './corner-owed.js';
 import { pushDirectAttentionSql } from './push-attention.js';
 import { SERVER_LEASE_EXPIRY_MS } from './connection-presence.js';
-
-const PUSH_MAX_ATTEMPTS = 3;
-/** Bound concurrent device sends after serial claim/suppress. APNS can take
- * up to APNS_REQUEST_TIMEOUT_MS per token; serializing 100 candidates on the
- * sole background leader otherwise stalls attention delivery. */
-export const PUSH_DELIVERY_CONCURRENCY = 8;
-
-function isRetryableApnsFailure(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  if (error.message === 'APNs request timed out') return true;
-  if ('classification' in error) return error.classification === 'retryable';
-  const code = 'code' in error ? error.code : undefined;
-  return [
-    'ECONNRESET',
-    'ETIMEDOUT',
-    'ERR_HTTP2_STREAM_CANCEL',
-    'ERR_HTTP2_GOAWAY_SESSION',
-    'ERR_HTTP2_INVALID_SESSION',
-  ].includes(String(code));
-}
 
 /** What a person can do from the notification itself; see `push-actions.ts`. */
 export type PushAction = PushActionPayload;
@@ -84,13 +57,6 @@ export interface PushSender {
   /** iOS and Android: a silent push that clears these conversations from the shade. */
   clearRead?(token: string, reads: readonly ReadClear[]): Promise<void>;
 }
-
-/** Minimum gap between read-clear pushes to one device. */
-export const READ_CLEAR_INTERVAL_SECONDS = 30;
-/** Channels per push, oldest read mark first. */
-export const READ_CLEAR_MAX_CHANNELS = 50;
-/** Message ids per channel, newest first. */
-export const READ_CLEAR_MAX_MESSAGE_IDS = 20;
 
 const PUSH_TITLE_LENGTH = 40;
 const PUSH_TITLE_ROOM_LENGTH = 16;
@@ -188,9 +154,6 @@ function earlierTurnPushSql(message: string, deviceToken: string): string {
 }
 
 export class PushDeliveryLoop {
-  #repeatBatch = false;
-  #lastBacklogCheck = Number.NEGATIVE_INFINITY;
-
   constructor(
     private readonly database: SqlDatabase,
     private readonly sender: PushSender | undefined,
@@ -198,42 +161,8 @@ export class PushDeliveryLoop {
     private readonly webSender?: PushSender,
   ) {}
 
-  async nextDueAt(): Promise<Date | null> {
-    const due = await this.database.query<{ not_before: Date }>(
-      `SELECT not_before FROM push_outbox ORDER BY not_before,message_id,device_token LIMIT 1`);
-    return due.rows[0]?.not_before ?? null;
-  }
-
-  async nextDelayMs(admittedAt?:string): Promise<number | undefined> {
-    if(this.#repeatBatch)return 0;
-    const platforms = [this.iosSender?.clearRead ? 'ios' : '', this.sender?.clearRead ? 'android' : ''];
-    const row = (await this.database.query<{delay_ms:number|null}>(`SELECT ceil(extract(epoch FROM (min(due_at)-clock_timestamp()))*1000)::float8 delay_ms FROM (
-      SELECT not_before due_at FROM push_outbox
-      UNION ALL SELECT clear.sent_at+interval '${READ_CLEAR_INTERVAL_SECONDS} seconds'
-      FROM push_read_clears clear JOIN push_devices device ON device.token=clear.device_token
-      WHERE device.platform=ANY($1::text[]) AND EXISTS(
-        SELECT 1 FROM push_delivery_claims claim JOIN messages message ON message.id=claim.message_id
-        JOIN room_read_marks mark ON mark.identity_id=device.identity_id AND mark.room_id=message.room_id
-        WHERE claim.device_token=device.token AND claim.status='delivered' AND claim.read_cleared_at IS NULL
-          AND (message.created_at,message.id)<=(mark.message_created_at,mark.message_id))
-    ) due WHERE due_at>COALESCE($2::timestamptz,clock_timestamp())`, [platforms,admittedAt??null])).rows[0];
-    return row?.delay_ms == null ? undefined : Math.max(0,Number(row.delay_ms));
-  }
-
   async runOnce(): Promise<number> {
-    let delivered = 0;
-    if (Date.now() - this.#lastBacklogCheck >= 60_000) {
-      this.#lastBacklogCheck = Date.now();
-      const backlog = await this.database.query(`SELECT 1 FROM push_outbox
-        WHERE not_before<=now() LIMIT 1001`);
-      if (backlog.rows.length > 1000) captureServerError(new Error('Push outbox backlog exceeds 1000 due rows'),
-        { background_job: 'push', signal: 'push-outbox-backlog' });
-    }
-    // Yield to other jobs even during a sustained incoming stream.
-    for (let batch = 0; batch < 10; batch++) {
-      delivered += await this.runUnthrottled();
-      if (!this.#repeatBatch) break;
-    }
+    const delivered = await this.runUnthrottled();
     await this.sendReadClears();
     return delivered;
   }
@@ -258,7 +187,6 @@ export class PushDeliveryLoop {
       // Registered-device claims beyond any cap remain due for a later push.
       `SELECT device.token,device.platform,batch.channel_ids,batch.message_ids,batch.read_message_ids
        FROM push_devices device
-       LEFT JOIN push_read_clears clear ON clear.device_token=device.token
        CROSS JOIN LATERAL (
          SELECT array_agg(pending.room_id ORDER BY pending.message_created_at,pending.room_id) channel_ids,
            array_agg(pending.message_id ORDER BY pending.message_created_at,pending.room_id) message_ids,
@@ -277,7 +205,6 @@ export class PushDeliveryLoop {
                    AND message.room_id=mark.room_id AND message.created_at>=device.registered_at
                    AND (message.created_at,message.id)<(mark.message_created_at,mark.message_id)
                  ORDER BY message.created_at DESC,message.id DESC
-                 LIMIT ${READ_CLEAR_MAX_MESSAGE_IDS}
                ) pushed
              ),'[]'::jsonb) read_ids
            FROM room_read_marks mark
@@ -290,44 +217,39 @@ export class PushDeliveryLoop {
                  AND message.room_id=mark.room_id AND message.created_at>=device.registered_at
                  AND (message.created_at,message.id)<=(mark.message_created_at,mark.message_id))
            ORDER BY mark.message_created_at,mark.room_id::text
-           LIMIT ${READ_CLEAR_MAX_CHANNELS}
          ) pending
        ) batch
        WHERE device.platform=ANY($1::text[]) AND batch.channel_ids IS NOT NULL
-         AND COALESCE(clear.sent_at,'-infinity'::timestamptz)
-           <now()-interval '${READ_CLEAR_INTERVAL_SECONDS} seconds'
-       LIMIT 100`,
+`,
       [enabled],
     );
     for (const row of due.rows) {
       const { sender, batch } = platforms[row.platform];
       if (!sender?.clearRead) continue;
-      const reads = batch(
-        row.channel_ids.map((channelId, index) => ({
-          channelId,
-          messageId: row.message_ids[index]!,
-          readMessageIds: JSON.parse(row.read_message_ids[index]!) as string[],
-        })),
-      );
-      try {
-        await sender.clearRead(row.token, reads);
-        await this.database.query(
-          `UPDATE push_delivery_claims SET read_cleared_at=now()
-           WHERE device_token=$1 AND message_id=ANY($2::text[])`,
-          [row.token, reads.flatMap((read) => [read.messageId, ...read.readMessageIds])],
-        );
-      } catch (error) {
-        if (isUnregisteredPushToken(error)) {
-          await this.database.query(`DELETE FROM push_devices WHERE token=$1`, [row.token]);
-          continue;
+      let pending = row.channel_ids.map((channelId, index) => ({
+        channelId, messageId: row.message_ids[index]!,
+        readMessageIds: JSON.parse(row.read_message_ids[index]!) as string[],
+      }));
+      while (pending.length) {
+        const reads = batch(pending);
+        try {
+          await sender.clearRead(row.token, reads);
+          await this.database.query(
+            `UPDATE push_delivery_claims SET read_cleared_at=now()
+             WHERE device_token=$1 AND message_id=ANY($2::text[])`,
+            [row.token, reads.flatMap(read => [read.messageId, ...read.readMessageIds])]);
+        } catch (error) {
+          if (isUnregisteredPushToken(error)) await this.database.query(`DELETE FROM push_devices WHERE token=$1`, [row.token]);
+          break;
         }
-        // Unnamed claims retry after the interval.
+        const sent = new Map(reads.map(read => [read.channelId, new Set([read.messageId, ...read.readMessageIds])]));
+        pending = pending.flatMap(read => {
+          const ids = sent.get(read.channelId);
+          if (!ids) return [read];
+          const remaining = read.readMessageIds.filter(id => !ids.has(id));
+          return remaining.length ? [{ ...read, readMessageIds: remaining }] : [];
+        });
       }
-      await this.database.query(
-        `INSERT INTO push_read_clears(device_token,sent_at) VALUES($1,now())
-         ON CONFLICT(device_token) DO UPDATE SET sent_at=EXCLUDED.sent_at`,
-        [row.token],
-      );
     }
   }
 
@@ -337,41 +259,10 @@ export class PushDeliveryLoop {
     await this.database.query(
       `INSERT INTO push_delivery_floors(id) VALUES('message-delivery') ON CONFLICT(id) DO NOTHING`,
     );
-    // Candidate messages expire after an hour. A terminal claim outside that
-    // window cannot suppress a future push.
-    // Retain mobile claims for read-clear for at most a week.
-    await this.database.query(EXPIRE_PUSH_CLAIMS_SQL, [1000]);
-    await this.database.query(TERMINAL_PUSH_CLAIMS_SQL, [1000]);
-    await this.database.query(`DELETE FROM push_outbox_retirements WHERE (message_id,device_token) IN (
-      SELECT message_id,device_token FROM push_outbox_retirements
-      WHERE retired_at<now()-interval '1 hour' ORDER BY retired_at LIMIT 1000 FOR UPDATE SKIP LOCKED)`);
-    await this.database.query(`DELETE FROM push_message_context WHERE message_id IN (
-      SELECT message_id FROM push_message_context WHERE expires_at<=now()
-      ORDER BY expires_at LIMIT 1000 FOR UPDATE SKIP LOCKED)`);
-    const expired = await this.database.query(`WITH retired AS (
-      DELETE FROM push_outbox WHERE (message_id,device_token) IN (
-        SELECT message_id,device_token FROM push_outbox WHERE expires_at<=now()
-        ORDER BY expires_at LIMIT 1000 FOR UPDATE SKIP LOCKED)
-      RETURNING message_id,device_token
-    ), recorded AS (
-      INSERT INTO push_outbox_retirements(message_id,device_token,reason)
-      SELECT message_id,device_token,'expired' FROM retired
-      ON CONFLICT(message_id,device_token) DO UPDATE SET reason=EXCLUDED.reason,retired_at=now()
-    ) SELECT * FROM retired`);
-    const due = await this.database.query<{ message_id: string; device_token: string; expires_at: Date; lease_until: string }>(`
-      WITH due AS (
-        SELECT message_id,device_token FROM push_outbox
-        WHERE not_before<=now() AND expires_at>now() ORDER BY not_before,message_id,device_token
-        LIMIT 100 FOR UPDATE SKIP LOCKED
-      )
-      UPDATE push_outbox queue SET not_before=now()+interval '30 seconds'
-      FROM due WHERE queue.message_id=due.message_id AND queue.device_token=due.device_token
-      RETURNING queue.message_id,queue.device_token,queue.expires_at,queue.not_before::text lease_until
+    const due = await this.database.query<{ message_id: string; device_token: string; expires_at: Date }>(`
+      DELETE FROM push_outbox RETURNING message_id,device_token,expires_at
     `);
-    if (due.rows.length === 0) {
-      this.#repeatBatch = (expired.rowCount ?? 0) === 1000;
-      return 0;
-    }
+    if (!due.rows.length) return 0;
     const candidates = await this.database.transaction(async tx => {
       // Do not depend on connection defaults or the separate global JIT fix.
       await tx.query('SET LOCAL jit=off');
@@ -429,9 +320,7 @@ export class PushDeliveryLoop {
           AND NOT EXISTS (
             SELECT 1 FROM push_delivery_claims claim
             WHERE claim.message_id=m.id AND claim.device_token=d.token
-              AND NOT ((claim.status='retryable' AND claim.next_retry_at<=now()
-                AND claim.attempts<${PUSH_MAX_ATTEMPTS}) OR (claim.status='claimed'
-                AND claim.claimed_at<now()-interval '1 minute' AND claim.attempts<${PUSH_MAX_ATTEMPTS}))
+
           )
           AND NOT ${earlierTurnPushSql('m', 'd.token')}
           -- A completed turn's decision/tag metadata qualifies its final prose,
@@ -568,17 +457,16 @@ export class PushDeliveryLoop {
           AND device.platform IN (${[this.sender && "'android'", this.iosSender && "'ios'", this.webSender && "'web'"].filter(Boolean).join(',') || "'none'"})
         LEFT JOIN push_delivery_claims claim
           ON claim.message_id=candidate.message_id AND claim.device_token=candidate.token
-        WHERE claim.message_id IS NULL OR (claim.status='retryable'
-          AND claim.next_retry_at<=now() AND claim.attempts<${PUSH_MAX_ATTEMPTS})
+        WHERE claim.message_id IS NULL
           OR (claim.status='claimed' AND claim.claimed_at<now()-interval '1 minute'
-            AND claim.attempts<${PUSH_MAX_ATTEMPTS})
+            AND claim.attempts<1)
         ORDER BY candidate.message_id,candidate.token
       )
       SELECT message_id,workspace_id,room_id,channel_id,corner_id,target,
         notification_type,text,token,identity_id,platform,
         action,grant_id,grant_kind,grant_target,grant_agent_name,author_name,collapse_id,
         direct_attention,room_name,corner_name,dm_peer
-      FROM unclaimed ORDER BY created_at,message_id LIMIT 100
+      FROM unclaimed ORDER BY created_at,message_id
     `, [JSON.stringify(due.rows)]);
     });
     const cornerIds = [...new Set(candidates.rows.flatMap((row) => row.corner_id ? [row.corner_id] : []))];
@@ -660,12 +548,7 @@ export class PushDeliveryLoop {
                    )
                  ))
                )
-             ON CONFLICT(message_id,device_token) DO UPDATE
-               SET status='claimed',attempts=claim.attempts+1,claimed_at=now(),
-                 completed_at=NULL,error=NULL,next_retry_at=NULL
-               WHERE ((claim.status='retryable' AND claim.next_retry_at<=now())
-                 OR (claim.status='claimed' AND claim.claimed_at<now()-interval '1 minute'))
-                 AND claim.attempts<${PUSH_MAX_ATTEMPTS}`,
+             ON CONFLICT(message_id,device_token) DO NOTHING`,
             [
               candidate.message_id,
               candidate.token,
@@ -724,15 +607,10 @@ export class PushDeliveryLoop {
     }
     const expiryByKey = new Map(due.rows.map(row => [JSON.stringify([row.message_id,row.device_token]), new Date(row.expires_at).getTime()]));
     const slotSends = new Map<string, Promise<void>>();
-    let nextClaim = 0;
     const workerResults = await Promise.all(
-      Array.from(
-        { length: Math.min(PUSH_DELIVERY_CONCURRENCY, claimedDeliveries.length) },
-        async () => {
+      claimedDeliveries.map(async ({ candidate, message }) => {
           let localDelivered = 0;
-          while (nextClaim < claimedDeliveries.length) {
-            const index = nextClaim++;
-            const { candidate, message } = claimedDeliveries[index]!;
+
             try {
               const sender =
                 candidate.platform === 'ios'
@@ -761,17 +639,12 @@ export class PushDeliveryLoop {
             } catch (error) {
               await this.database.query(
                 `UPDATE push_delivery_claims
-                 SET status=CASE WHEN $4::boolean AND attempts<${PUSH_MAX_ATTEMPTS}
-                   THEN 'retryable' ELSE 'failed' END,
-                   completed_at=now(),error=$3,
-                   next_retry_at=CASE WHEN $4::boolean AND attempts<${PUSH_MAX_ATTEMPTS}
-                     THEN now()+(interval '15 seconds' * power(2,attempts-1)) ELSE NULL END
+                 SET status='failed',completed_at=now(),error=$3
                  WHERE message_id=$1 AND device_token=$2`,
                 [
                   candidate.message_id,
                   candidate.token,
                   error instanceof Error ? error.message : String(error),
-                  candidate.platform === 'ios' && isRetryableApnsFailure(error),
                 ],
               );
               if (isUnregisteredPushToken(error))
@@ -779,67 +652,10 @@ export class PushDeliveryLoop {
                   candidate.token,
                 ]);
             }
-          }
           return localDelivered;
-        },
-      ),
+        }),
     );
     delivered = workerResults.reduce((sum, count) => sum + count, 0);
-    // Terminal claims are authoritative during rolling cutover as well as retries.
-    await this.database.query(`WITH retired AS (DELETE FROM push_outbox queue
-      USING jsonb_to_recordset($1::jsonb) due(message_id text,device_token text)
-      WHERE queue.message_id=due.message_id AND queue.device_token=due.device_token
-        AND (queue.expires_at<=now() OR (
-          NOT EXISTS (SELECT 1 FROM jsonb_to_recordset($2::jsonb) candidate(message_id text,token text)
-            WHERE candidate.message_id=queue.message_id AND candidate.token=queue.device_token)
-          -- Preserve only work that can become eligible without a message write.
-          AND NOT EXISTS (SELECT 1 FROM push_devices device JOIN identities recipient ON recipient.id=device.identity_id
-            WHERE device.token=queue.device_token AND (recipient.push_level='off'
-              OR (recipient.push_level='attention' AND (
-                EXISTS (SELECT 1 FROM messages m WHERE m.id=queue.message_id
-                  AND m.presentation='message' AND m.card_type IS NULL)
-                OR EXISTS (SELECT 1 FROM workspace_join_notifications notification
-                  WHERE notification.id=queue.message_id)))
-              OR NOT (device.platform=ANY($3::text[]))))
-          AND NOT EXISTS (SELECT 1 FROM push_delivery_claims claim
-            WHERE claim.message_id=queue.message_id AND claim.device_token=queue.device_token
-              AND claim.status IN ('retryable','claimed'))
-          AND NOT EXISTS (SELECT 1 FROM messages m JOIN agent_turns turn
-            ON turn.room_id=m.room_id AND turn.agent_id=m.author_id AND turn.request_id=m.request_id
-            WHERE m.id=queue.message_id AND turn.status='working')
-        ) OR EXISTS (
-          SELECT 1 FROM push_delivery_claims claim WHERE claim.message_id=queue.message_id
-            AND claim.device_token=queue.device_token AND claim.status IN ('delivered','failed','suppressed','uncertain')))
-      RETURNING queue.message_id,queue.device_token,queue.expires_at)
-      INSERT INTO push_outbox_retirements(message_id,device_token,reason)
-      SELECT message_id,device_token,
-        CASE WHEN expires_at<=now() THEN 'expired' ELSE 'ineligible' END FROM retired
-      WHERE NOT EXISTS (SELECT 1 FROM push_delivery_claims claim
-        WHERE claim.message_id=retired.message_id AND claim.device_token=retired.device_token
-          AND claim.status IN ('delivered','failed','suppressed','uncertain'))
-      ON CONFLICT(message_id,device_token) DO UPDATE SET reason=EXCLUDED.reason,retired_at=now()`,
-      [JSON.stringify(due.rows), JSON.stringify(candidates.rows),
-        [this.sender && 'android', this.iosSender && 'ios', this.webSender && 'web'].filter(Boolean)]);
-    await this.database.query(`UPDATE push_outbox queue SET not_before=COALESCE(
-        (SELECT CASE WHEN claim.status='claimed' THEN claim.claimed_at+interval '1 minute' ELSE claim.next_retry_at END FROM push_delivery_claims claim
-         WHERE claim.message_id=queue.message_id AND claim.device_token=queue.device_token
-           AND claim.status IN ('retryable','claimed')),
-        CASE WHEN NOT EXISTS (
-          SELECT 1 FROM jsonb_to_recordset($2::jsonb) candidate(message_id text,token text)
-          WHERE candidate.message_id=queue.message_id AND candidate.token=queue.device_token)
-          AND EXISTS (SELECT 1 FROM push_devices device JOIN identities recipient ON recipient.id=device.identity_id
-            WHERE device.token=queue.device_token AND recipient.push_level IN ('off','attention')
-              AND device.platform=ANY($3::text[]))
-        -- Preference changes already reset not_before in the write transaction.
-        -- Retain these rows without repeatedly competing with deliverable pushes.
-        THEN queue.expires_at ELSE now()+interval '1 minute' END)
-      FROM jsonb_to_recordset($1::jsonb) due(message_id text,device_token text,lease_until timestamptz)
-      WHERE queue.message_id=due.message_id AND queue.device_token=due.device_token
-        -- A concurrent preference/turn write owns its new deadline.
-        AND queue.not_before=due.lease_until`,
-      [JSON.stringify(due.rows), JSON.stringify(candidates.rows),
-        [this.sender && 'android', this.iosSender && 'ios', this.webSender && 'web'].filter(Boolean)]);
-    this.#repeatBatch = due.rows.length === 100 || (expired.rowCount ?? 0) === 1000;
     return delivered;
   }
 }
@@ -872,185 +688,6 @@ function pushActionFor(candidate: {
   return {};
 }
 
-/**
- * The hourly object sweep. Attachment bytes are the one row class large enough
- * that keeping them forever is a storage decision rather than a bookkeeping
- * one, so they get a TTL (`media-ttl.ts`) and nothing else does: the messages
- * that reference them are untouched and keep their attachment metadata.
- *
- * It rides the one-second background cycle like every other job and throttles
- * itself, because a TTL measured in hours does not need a per-second DELETE.
- * The interval is in memory only: a restart re-sweeps at most one extra time,
- * and the sweep is idempotent.
- */
-export class MediaExpiryLoop {
-  #lastSweep = Number.NEGATIVE_INFINITY;
-
-  constructor(
-    private readonly database: SqlDatabase,
-    private readonly ttlHours = mediaTtlHours(),
-    private readonly intervalMs = MEDIA_SWEEP_INTERVAL_MS,
-    private readonly objects?: {
-      storage: ObjectStorage;
-      /** Read-side facts (`readMediaObject`/`mediaLink`) need storage too; the
-       *  sweep only uses `deleteObject`, batched and idempotent. */
-      service: ObjectService;
-    },
-    private readonly artifactTtlHours = ARTIFACT_TTL_HOURS,
-  ) {}
-
-  /** Objects deleted by this call; 0 when the sweep was throttled or found nothing. */
-  async runOnce(now = Date.now()): Promise<number> {
-    if (now - this.#lastSweep < this.intervalMs) return 0;
-    this.#lastSweep = now;
-    return this.sweepObjects();
-  }
-
-  /** Exact deadline owner bypasses the former hourly observation throttle. */
-  async runDeadline(): Promise<void> { await this.sweepObjects(); }
-
-  async nextDelayMs(admittedAt?:string): Promise<number | undefined> {
-    if (!this.objects) return;
-    return (await import('./background-deadline-clock.js')).backgroundNextDelay(this.database,
-      `SELECT LEAST(expires_at,CASE WHEN state='pending' THEN created_at+interval '1 hour' END) due_at FROM objects
-       WHERE NOT EXISTS(SELECT 1 FROM corner_brief_revisions brief JOIN rooms corner ON corner.id=brief.corner_id AND corner.archived_at IS NULL
-         CROSS JOIN LATERAL jsonb_array_elements(brief.attachments) file WHERE file->>'objectId'=objects.id::text)`,admittedAt);
-  }
-
-  /**
-   * The object half of the sweep. Storage is deleted first, then the row and
-   * the tombstone land together, so a crashed sweep at worst leaves a row
-   * whose object is already gone — the next pass re-deletes (a 404 is
-   * success) and finishes the row. Pending orphans older than an hour are
-   * reaped the same way; a tombstone is only written for objects that were
-   * once readable.
-   */
-  private async sweepObjects(): Promise<number> {
-    if (!this.objects) return 0;
-    const candidates = await this.database.query<{
-      id: string;
-      key: string;
-      kind: 'media' | 'artifact';
-      state: string;
-    }>(
-      `SELECT id::text id,key,kind,state FROM objects
-       WHERE (expires_at < now()
-          OR (state='pending' AND created_at < now() - interval '1 hour')
-         ) AND NOT EXISTS (
-           SELECT 1 FROM corner_brief_revisions brief
-           JOIN rooms corner ON corner.id=brief.corner_id AND corner.archived_at IS NULL
-           CROSS JOIN LATERAL jsonb_array_elements(brief.attachments) file
-           WHERE file->>'objectId'=objects.id::text
-         )
-       LIMIT 100`,
-    );
-    let deleted = 0;
-    for (const object of candidates.rows) {
-      try {
-        const removed = await this.database.transaction(async (db) => {
-          // A brief's attachment validation takes a share lock on this same
-          // object. Recheck after taking the write lock so an assignment that
-          // committed since the candidate scan keeps its bytes.
-          const current = (
-            await db.query<{ key: string; kind: 'media' | 'artifact'; state: string }>(
-              `SELECT key,kind,state FROM objects WHERE id=$1 FOR UPDATE`,
-              [object.id],
-            )
-          ).rows[0];
-          if (!current) return false;
-          const pinned = await db.query(
-            `SELECT 1 FROM corner_brief_revisions brief
-             JOIN rooms corner ON corner.id=brief.corner_id AND corner.archived_at IS NULL
-             CROSS JOIN LATERAL jsonb_array_elements(brief.attachments) file
-             WHERE file->>'objectId'=$1 LIMIT 1`,
-            [object.id],
-          );
-          if (pinned.rowCount) return false;
-          await this.objects!.storage.deleteObject(current.key);
-          if (current.state === 'ready')
-            await db.query(
-              `INSERT INTO object_expirations(id,retention_hours) VALUES ($1,$2)
-               ON CONFLICT(id) DO NOTHING`,
-              [object.id, current.kind === 'artifact' ? this.artifactTtlHours : this.ttlHours],
-            );
-          await db.query(`DELETE FROM objects WHERE id=$1`, [object.id]);
-          return true;
-        });
-        if (removed) deleted += 1;
-      } catch (error) {
-        console.warn(
-          '[media-ttl] object delete failed, will retry next sweep',
-          object.id,
-          error instanceof Error ? error.message : error,
-        );
-        continue;
-      }
-    }
-    return deleted;
-  }
-}
-
-// Ephemeral scan cursor: restart/leader changes only revisit already-clean corners.
-let archivedToolCursor: string | null = null;
-/** Keep the same tool/output window the phone reads; prose and durable facts survive. */
-export async function pruneArchivedToolActivity(database: SqlDatabase): Promise<void> {
-  const corners = (await database.query<{ id: string }>(`SELECT id FROM rooms
-    WHERE parent_id IS NOT NULL AND archived_at IS NOT NULL
-      AND ($1::uuid IS NULL OR id>$1::uuid) ORDER BY id LIMIT 20`, [archivedToolCursor])).rows;
-  if (!corners.length) { archivedToolCursor = null; return; }
-  const deleted = await database.query(`DELETE FROM messages WHERE id IN (
-    SELECT old.id FROM rooms corner CROSS JOIN LATERAL (
-      SELECT message.id FROM messages message
-      WHERE message.room_id=corner.id AND message.presentation='activity'
-        AND message.durable_fact IS NULL AND EXISTS (
-          SELECT 1 FROM jsonb_array_elements(message.activity) item
-          WHERE item->>'kind' IN ('tool','output'))
-      ORDER BY message.created_at DESC,message.id DESC
-      OFFSET ${ROOM_VIEW_TOOL_ROW_LIMIT} LIMIT 1000
-    ) old WHERE corner.id=ANY($1::uuid[]) AND corner.archived_at IS NOT NULL
-    LIMIT 1000
-  ) RETURNING id`, [corners.map(corner => corner.id)]);
-  // Drain this slice before advancing, so a large corner does not wait a full scan.
-  if (deleted.rows.length < 1000) archivedToolCursor = corners.at(-1)!.id;
-}
-
-export async function runMaintenance(database: SqlDatabase): Promise<void> {
-  await pruneArchivedToolActivity(database);
-  await cleanupUnfinishedAppSignIns(database, true);
-  // Legacy routing repair remains separate from committed delivery ownership.
-  try { await retryMcpMemberRoutes(database); } catch (error) { captureServerError(error); }
-  // Each autocommitted batch fits the jobs pool budget; later cycles finish backlogs.
-  const expired = [
-    ['agent_turn_traces', "created_at<now()-interval '30 days'"],
-    ['room_push_views', 'expires_at<now()'],
-    ['workspace_join_notification_devices', "notification_id IN (SELECT id FROM workspace_join_notifications WHERE created_at<now()-interval '1 hour')"],
-    ['workspace_join_notifications', "created_at<now()-interval '1 hour'"],
-    // A corner's assignment commands are its worker, owner and opening provenance
-    // (corner-worker.ts): they stay for the corner's life.
-    ['agent_commands', "state IN ('complete','cancelled') AND completed_at<now()-interval '30 days' AND NOT (reason IN ('corner_objective','human_tag') AND room_id IN (SELECT id FROM rooms WHERE parent_id IS NOT NULL))"],
-    ['phone_access_tokens', 'expires_at<now()'],
-    ['rooms_mcp_event_deliveries', "delivered_at<now()-interval '7 days'"],
-    ['rooms_mcp_event_subscriptions', "expires_at<now()-interval '7 days'"],
-    ['rooms_mcp_flows', 'expires_at<now()'],
-    ['rooms_mcp_codes', 'expires_at<now()'],
-    ['rooms_mcp_handoffs', 'expires_at<now()'],
-    ['rooms_mcp_tokens', 'expires_at<now()'],
-    ['rooms_mcp_families', "revoked_at<now()-interval '30 days'"],
-    ['rooms_mcp_connections', "revoked_at<now()-interval '30 days'"],
-    ['rooms_mcp_audit', "created_at<now()-interval '30 days'"],
-    ['rooms_mcp_pending_routes', "created_at<now()-interval '7 days'"],
-    ['rooms_mcp_admission', "window_at<now()-interval '1 day'"],
-    ['rooms_mcp_clients', "created_at<now()-interval '30 days' AND NOT preregistered AND NOT EXISTS(SELECT 1 FROM rooms_mcp_connections WHERE client_id=rooms_mcp_clients.id) AND NOT EXISTS(SELECT 1 FROM rooms_mcp_tokens WHERE client_id=rooms_mcp_clients.id) AND NOT EXISTS(SELECT 1 FROM rooms_mcp_flows WHERE client_id=rooms_mcp_clients.id) AND NOT EXISTS(SELECT 1 FROM rooms_mcp_codes WHERE client_id=rooms_mcp_clients.id)"],
-    ['live_outputs', "updated_at<now()-interval '2 hours' AND kind<>'presence'"],
-    ['github_auth_flows', "expires_at<now()-interval '1 day'"],
-    ['daemon_token_exchanges', "expires_at<now()-interval '1 day'"],
-  ] as const;
-  for (const [table, predicate] of expired) {
-    await database.query(`DELETE FROM ${table} WHERE ctid IN (
-      SELECT ctid FROM ${table} WHERE ${predicate} LIMIT 1000 FOR UPDATE SKIP LOCKED)`);
-  }
-}
-
 export interface BackgroundJobHealth {
   lastSuccessAt: number | null;
   lastErrorAt: number | null;
@@ -1058,7 +695,7 @@ export interface BackgroundJobHealth {
   consecutiveFailures: number;
 }
 
-/** One advisory leader, independent failure boundaries for each job class. */
+/** Independent failure reporting for committed event jobs. */
 export class BackgroundJobRunner {
   readonly #health = new Map<string, BackgroundJobHealth>();
 

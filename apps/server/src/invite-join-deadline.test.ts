@@ -21,7 +21,6 @@ it('redeems an invite with historical corners without scanning unrelated message
           options: `-c search_path=${schema},public -c statement_timeout=30000`,
         }),
         mode: 'migration',
-        transactionDeadlineMs: 30_000,
       })
     : new PgliteDatabase();
   try {

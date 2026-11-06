@@ -1,23 +1,5 @@
 import { helperOverlayDemand, helperOverlayEnabled } from './helper-overlay.js';
 import type { SqlDatabase } from './database.js';
-import { SERVER_LEASE_EXPIRY_MS } from './connection-presence.js';
-
-/** Remove socket views left by an earlier process on this machine or a dead peer. */
-export async function clearStalePhoneViews(database: Pick<SqlDatabase, 'query'>, instanceId: string): Promise<void> {
-  await database.query(
-    `DELETE FROM room_push_views view
-     WHERE view.instance_id IS NOT NULL AND (
-       view.instance_id=$1
-       OR split_part(view.instance_id,':',1)=split_part($1,':',1)
-       OR NOT EXISTS (
-         SELECT 1 FROM live_server_instances server
-         WHERE server.instance_id=view.instance_id
-           AND server.renewed_at>clock_timestamp()-make_interval(secs=>$2::double precision/1000)
-       )
-     )`,
-    [instanceId, SERVER_LEASE_EXPIRY_MS],
-  );
-}
 
 /**
  * Which Rooms each phone live socket is viewing, for the push gate

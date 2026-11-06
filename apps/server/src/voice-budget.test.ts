@@ -170,9 +170,8 @@ it('owns no timer or database observation while audio is empty, then commits one
     vi.advanceTimersByTime(60_000);
     await meter.flush();expect(record).not.toHaveBeenCalled();expect(vi.getTimerCount()).toBe(0);
     clock+=100;expect(meter.audio(100)).toBe(100);
-    expect(vi.getTimerCount()).toBe(1);
-    vi.advanceTimersByTime(249);expect(record).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(1);
+    expect(vi.getTimerCount()).toBe(0);
+    await Promise.resolve();
     expect(record).toHaveBeenCalledOnce();expect(record.mock.calls[0]).toEqual(['idle-call','owner','workspace',[[START,START+100]]]);
     // The deadline must start the write before flush joins its completion.
     await meter.flush();
@@ -266,14 +265,14 @@ it('a fence failure after synchronous enqueue never restores or replays the deli
   }finally{fence.mockRestore();await meter.close();vi.useRealTimers();}
 });
 
-it('actual PCM owns at most four scheduled accounting commits per second, with no empty followup', async () => {
+it('actual PCM commits from audio events without scheduled accounting or empty followup', async () => {
   vi.useFakeTimers();const initial={remainingMs:180_000,resetAt:START+86_400_000,timeZone:'UTC'};
   const record=vi.fn(async()=>initial);const store={limitMs:180_000,record,
     fence:async(_call:string,_owner:string,enqueue:()=>void)=>{enqueue();return true;}} as unknown as VoiceBudgetStore;
   let clock=START;const meter=new VoiceAudioMeter(store,'call','owner','workspace',initial,()=>{},()=>{},()=>clock);
   try{
     for(let i=0;i<50;i++){clock+=20;meter.capture(new Int16Array(320),clock,()=>{});await vi.advanceTimersByTimeAsync(20);}
-    expect(record.mock.calls.length).toBeLessThanOrEqual(4);
+    expect(record).toHaveBeenCalledTimes(50);
     await vi.advanceTimersByTimeAsync(1000);const complete=record.mock.calls.length;
     await vi.advanceTimersByTimeAsync(86_400_000);expect(record).toHaveBeenCalledTimes(complete);expect(vi.getTimerCount()).toBe(0);
   }finally{await meter.close();vi.useRealTimers();}

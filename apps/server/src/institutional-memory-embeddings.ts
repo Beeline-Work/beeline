@@ -22,20 +22,15 @@
  * NO POLLING: there is no timer that scans the database for unembedded rows.
  * A save schedules its OWN row's embed (`scheduleEmbedInstitutionalMemoryItem`
  * / `scheduleEmbedWorkspaceSkillVersion`), attempted once for that save.
- * The remaining scan is `backfillInstitutionalMemoryEmbeddingsOnce`, run exactly once at server start (see `index.ts`) to catch
- * rows saved before this feature shipped, or whose save-time embedding failed. It never re-runs on its own.
  */
 import {
   INSTITUTIONAL_MEMORY_EMBEDDING_DIMENSIONS,
   INSTITUTIONAL_MEMORY_EMBEDDING_ENV_VAR,
   INSTITUTIONAL_MEMORY_EMBEDDING_MODEL,
 } from '@beeline/api-contract/daemon';
-import type { QueryResultRow } from 'pg';
 import type { SqlDatabase } from './database.js';
 
 export const OPENROUTER_EMBEDDINGS_URL = 'https://openrouter.ai/api/v1/embeddings';
-export const EMBEDDING_FETCH_TIMEOUT_MS = 10_000;
-export const EMBEDDING_BACKFILL_BATCH = 20;
 
 export function memoryEnvLimit(name: string, fallback: number): number {
   const value = Number(process.env[name]);
@@ -93,7 +88,6 @@ async function callOpenRouterEmbeddings(
   options: {
     env?: NodeJS.ProcessEnv;
     fetchImpl?: typeof fetch;
-    timeoutMs?: number;
     signal?: AbortSignal;
   } = {},
 ): Promise<(readonly number[] | undefined)[] | undefined> {
@@ -114,7 +108,7 @@ async function callOpenRouterEmbeddings(
         dimensions: INSTITUTIONAL_MEMORY_EMBEDDING_DIMENSIONS,
         input_type: inputType,
       }),
-      signal: options.signal ?? AbortSignal.timeout(options.timeoutMs ?? EMBEDDING_FETCH_TIMEOUT_MS),
+      signal: options.signal ?? undefined,
     });
     if (!response.ok) {
       noteEmbeddingFailure(`HTTP ${response.status}`, inputType);
@@ -142,7 +136,7 @@ async function callOpenRouterEmbeddings(
 
 /** The production embedder: one text, via OpenRouter, best-effort. */
 export function createDefaultEmbedFn(
-  options: { env?: NodeJS.ProcessEnv; fetchImpl?: typeof fetch; timeoutMs?: number } = {},
+  options: { env?: NodeJS.ProcessEnv; fetchImpl?: typeof fetch } = {},
 ): EmbedFn {
   return async (text, inputType, signal) => {
     const env = options.env ?? process.env;
@@ -154,8 +148,7 @@ export function createDefaultEmbedFn(
     const ms = performance.now() - startedAt;
     const vector = result?.[0];
     if (!vector) {
-      const timedOut = ms >= (options.timeoutMs ?? EMBEDDING_FETCH_TIMEOUT_MS) - 5;
-      return { outcome: timedOut ? 'timed-out' : 'error', ms };
+      return { outcome: 'error', ms };
     }
     return { vector, outcome: 'served', ms };
   };
@@ -163,35 +156,9 @@ export function createDefaultEmbedFn(
 
 /** The production batch embedder: many texts, one HTTP call, via OpenRouter. */
 export function createDefaultEmbedBatchFn(
-  options: { env?: NodeJS.ProcessEnv; fetchImpl?: typeof fetch; timeoutMs?: number } = {},
+  options: { env?: NodeJS.ProcessEnv; fetchImpl?: typeof fetch } = {},
 ): EmbedBatchFn {
   return (texts, inputType) => callOpenRouterEmbeddings(texts, inputType, options);
-}
-
-/** A snapshot-scoped embedder that never spends more than `timeoutMs` of the
- *  caller's own budget: past that, it reports `timed-out` and the caller
- *  falls back to keyword-only candidates for this turn. */
-export function withDeadline(embed: EmbedFn, timeoutMs: number): EmbedFn {
-  return async (text, inputType, parentSignal) => {
-    const startedAt = performance.now();
-    const controller = new AbortController();
-    const onAbort = () => controller.abort(parentSignal?.reason);
-    parentSignal?.addEventListener('abort', onAbort, { once: true });
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    timer.unref?.();
-    try {
-      return await Promise.race([
-        embed(text, inputType, controller.signal),
-        new Promise<EmbedResult>((resolve) => {
-          controller.signal.addEventListener('abort', () =>
-            resolve({ outcome: 'timed-out', ms: performance.now() - startedAt }), { once: true });
-        }),
-      ]);
-    } finally {
-      clearTimeout(timer);
-      parentSignal?.removeEventListener('abort', onAbort);
-    }
-  };
 }
 
 /**
@@ -330,206 +297,4 @@ export function scheduleEmbedWorkspaceSkillVersion(
   if (!embedBatch && embeddingDisabled()) return;
   const batch = embedBatch ?? createDefaultEmbedBatchFn();
   void embedOneWorkspaceSkillVersion(database, skillId, batch).catch(() => false);
-}
-
-export interface EmbeddingBackfillCounts {
-  itemsEmbedded: number;
-  itemsAttempted: number;
-  itemsFailed: number;
-  skillsEmbedded: number;
-  skillsAttempted: number;
-  skillsFailed: number;
-  /** True when another pass (this process or another machine) held the lock. */
-  skipped?: boolean;
-}
-
-const EMPTY_BACKFILL_COUNTS = {
-  itemsEmbedded: 0,
-  itemsAttempted: 0,
-  itemsFailed: 0,
-  skillsEmbedded: 0,
-  skillsAttempted: 0,
-  skillsFailed: 0,
-} as const;
-
-const EMBEDDING_BACKFILL_LOCK = `hashtext('institutional-memory-embedding-backfill')`;
-let embeddingBackfillRunning = false;
-
-/** A pooled session (`pg.PoolClient`) that can hold a session-level advisory lock. */
-interface BackfillSession {
-  query(sql: string, values?: unknown[]): Promise<{ rows: unknown[]; rowCount: number | null }>;
-  release(error?: Error | boolean): void;
-}
-
-function sessionDatabase(session: BackfillSession, database: SqlDatabase): SqlDatabase {
-  return {
-    query: async <Row extends QueryResultRow>(sql: string, values?: unknown[]) => {
-      const result = await session.query(sql, values);
-      return { rows: result.rows as Row[], rowCount: result.rowCount ?? result.rows.length };
-    },
-    transaction: (work) => database.transaction(work),
-  };
-}
-
-/**
- * The ONE-TIME startup sweep: embeds every active row missing a current
- * embedding, a batch at a time, until none remain, then returns. Call this
- * exactly once, right after `migrate()` at server start (see `index.ts`) —
- * never on an interval, never again afterward. It exists only to cover rows
- * saved before this feature shipped, or whose save-time embedding failed; every row saved from here on embeds itself on save.
- *
- * A session advisory lock on one dedicated connection makes it single-machine.
- * Each batch's reads and writes autocommit on that connection, so no
- * transaction or row lock is held while the embedder is on the network, and a
- * failure keeps the batches already written.
- */
-export async function backfillInstitutionalMemoryEmbeddingsOnce(
-  database: SqlDatabase & { connectDedicated?(): Promise<BackfillSession> },
-  embedBatch: EmbedBatchFn = createDefaultEmbedBatchFn(),
-  batchSize = EMBEDDING_BACKFILL_BATCH,
-): Promise<EmbeddingBackfillCounts> {
-  if (embeddingBackfillRunning) return { ...EMPTY_BACKFILL_COUNTS, skipped: true };
-  embeddingBackfillRunning = true;
-  let session: BackfillSession | undefined;
-  let sessionError: Error | undefined;
-  try {
-    session = database.connectDedicated ? await database.connectDedicated() : undefined;
-    const locked = session ? sessionDatabase(session, database) : database;
-    const acquired = (await locked.query<{ acquired: boolean }>(
-      `SELECT pg_try_advisory_lock(${EMBEDDING_BACKFILL_LOCK}) acquired`,
-    )).rows[0]?.acquired;
-    if (!acquired) return { ...EMPTY_BACKFILL_COUNTS, skipped: true };
-    try {
-      const attemptedItems: string[] = [];
-      const attemptedSkills: string[] = [];
-      let itemsEmbedded = 0;
-      let skillsEmbedded = 0;
-      let failedBatches = 0;
-      for (;;) {
-        const batch = await backfillInstitutionalMemoryItemsBatch(
-          locked, embedBatch, batchSize, attemptedItems);
-        attemptedItems.push(...batch.ids);
-        itemsEmbedded += batch.embedded;
-        if (!batch.ids.length) break;
-        failedBatches = batch.embedded === 0 ? failedBatches + 1 : 0;
-        if (failedBatches >= 3) break;
-      }
-      failedBatches = 0;
-      for (;;) {
-        const batch = await backfillWorkspaceSkillsBatch(
-          locked, embedBatch, batchSize, attemptedSkills);
-        attemptedSkills.push(...batch.ids);
-        skillsEmbedded += batch.embedded;
-        if (!batch.ids.length) break;
-        failedBatches = batch.embedded === 0 ? failedBatches + 1 : 0;
-        if (failedBatches >= 3) break;
-      }
-      return {
-        itemsEmbedded,
-        itemsAttempted: attemptedItems.length,
-        itemsFailed: attemptedItems.length - itemsEmbedded,
-        skillsEmbedded,
-        skillsAttempted: attemptedSkills.length,
-        skillsFailed: attemptedSkills.length - skillsEmbedded,
-      };
-    } finally {
-      try {
-        await locked.query(`SELECT pg_advisory_unlock(${EMBEDDING_BACKFILL_LOCK})`);
-      } catch (error) {
-        // Destroying the connection releases its session lock.
-        sessionError = error instanceof Error ? error : new Error(String(error));
-      }
-    }
-  } finally {
-    session?.release(sessionError ?? false);
-    embeddingBackfillRunning = false;
-  }
-}
-
-async function backfillInstitutionalMemoryItemsBatch(
-  database: SqlDatabase,
-  embedBatch: EmbedBatchFn,
-  batchSize: number,
-  attempted: readonly string[],
-): Promise<{ ids: string[]; embedded: number }> {
-  const rows = (
-    await database.query<{ id: string; canonical_key: string; body: string; version: number }>(
-      `SELECT id,canonical_key,body,version FROM institutional_memory_items
-       WHERE state='active' AND deleted_at IS NULL
-         AND (embedding IS NULL OR embedding_model IS DISTINCT FROM $1)
-         AND NOT (id=ANY($3::uuid[]))
-       ORDER BY updated_at ASC LIMIT $2`,
-      [INSTITUTIONAL_MEMORY_EMBEDDING_MODEL, batchSize, attempted],
-    )
-  ).rows;
-  if (!rows.length) return { ids: [], embedded: 0 };
-  const vectors = await embedBatch(
-    rows.map((row) => `${row.canonical_key}: ${row.body}`),
-    'document',
-  );
-  if (!vectors) return { ids: rows.map((row) => row.id), embedded: 0 };
-  let embedded = 0;
-  for (const [index, row] of rows.entries()) {
-    const vector = vectors[index];
-    if (!vector) continue;
-    await database.query(
-      `UPDATE institutional_memory_items
-       SET embedding=$2::vector,embedding_model=$3,embedded_at=now()
-       WHERE id=$1 AND version=$4 AND state='active' AND deleted_at IS NULL`,
-      [row.id, pgvectorLiteral(vector), INSTITUTIONAL_MEMORY_EMBEDDING_MODEL, row.version],
-    );
-    embedded += 1;
-  }
-  return { ids: rows.map((row) => row.id), embedded };
-}
-
-async function backfillWorkspaceSkillsBatch(
-  database: SqlDatabase,
-  embedBatch: EmbedBatchFn,
-  batchSize: number,
-  attempted: readonly string[],
-): Promise<{ ids: string[]; embedded: number }> {
-  const rows = (
-    await database.query<{
-      id: string;
-      slug: string;
-      description: string;
-      current_version: number;
-      markdown: string;
-    }>(
-      `SELECT skill.id,skill.slug,skill.description,skill.current_version,
-              COALESCE(version.markdown,'') markdown
-       FROM workspace_skills skill
-       LEFT JOIN workspace_skill_versions version
-         ON version.skill_id=skill.id AND version.version=skill.current_version
-       WHERE skill.state='active'
-         AND (skill.embedding IS NULL OR skill.embedding_model IS DISTINCT FROM $1
-              OR skill.embedding_version IS DISTINCT FROM skill.current_version)
-         AND NOT (skill.id=ANY($3::uuid[]))
-       ORDER BY skill.updated_at ASC LIMIT $2`,
-      [INSTITUTIONAL_MEMORY_EMBEDDING_MODEL, batchSize, attempted],
-    )
-  ).rows;
-  if (!rows.length) return { ids: [], embedded: 0 };
-  const vectors = await embedBatch(
-    rows.map(
-      (row) =>
-        `${row.slug.replace(/-/g, ' ')}: ${row.description}\n${row.markdown.slice(0, 600)}`,
-    ),
-    'document',
-  );
-  if (!vectors) return { ids: rows.map((row) => row.id), embedded: 0 };
-  let embedded = 0;
-  for (const [index, row] of rows.entries()) {
-    const vector = vectors[index];
-    if (!vector) continue;
-    await database.query(
-      `UPDATE workspace_skills
-       SET embedding=$2::vector,embedding_model=$3,embedding_version=$4,embedded_at=now()
-       WHERE id=$1 AND current_version=$4 AND state='active'`,
-      [row.id, pgvectorLiteral(vector), INSTITUTIONAL_MEMORY_EMBEDDING_MODEL, row.current_version],
-    );
-    embedded += 1;
-  }
-  return { ids: rows.map((row) => row.id), embedded };
 }

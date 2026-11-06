@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
-import { claimAgentConnection, releaseAgentConnection, releaseStaleServerConnections } from './connection-presence.js';
+import { claimAgentConnection, releaseAgentConnection } from './connection-presence.js';
 import { PushDeliveryLoop } from './background.js';
 import { LiveHub } from './live.js';
 
@@ -91,17 +91,6 @@ describe('machine disconnect notices', () => {
     expect(await releaseAgentConnection(db, live, AGENTS[0]!, 'old')).toBe(false);
     expect(await notices()).toHaveLength(0);
     await releaseAgentConnection(db, live, AGENTS[0]!, 'new');
-    expect(await notices()).toHaveLength(0);
-  });
-
-  it('keeps another machine separate and handles the existing expired-server disconnect path', async () => {
-    await db.query(`UPDATE agents SET machine_id='machine-squire',machine_name='squire' WHERE agent_id=$1`, [AGENTS[2]]);
-    await claim(AGENTS[0]!, 'chad', 'dead-server');
-    await claim(AGENTS[2]!, 'squire', 'healthy-server');
-    await db.query(`INSERT INTO live_server_instances(instance_id,renewed_at) VALUES('healthy-server',clock_timestamp())`);
-    await releaseStaleServerConnections(db, 90_000);
-    expect(await notices()).toHaveLength(0);
-    await releaseStaleServerConnections(db, 90_000);
     expect(await notices()).toHaveLength(0);
   });
 });

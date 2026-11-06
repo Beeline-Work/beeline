@@ -1,6 +1,6 @@
-import { X_SIGNUP_DELIVERY_TABLE, SERVER_LEASE_EVIDENCE_TABLE, AGENT_SIGN_IN_TABLE, decodeAgentSignInNotification, USAGE_REFRESH_TABLE, USAGE_REFRESH_RESULT_TABLE, decodeUsageRefreshResult, MCP_WEBHOOK_TABLE } from './postgres-live-notifications.js';
+import { X_SIGNUP_DELIVERY_TABLE, AGENT_SIGN_IN_TABLE, decodeAgentSignInNotification, USAGE_REFRESH_TABLE, USAGE_REFRESH_RESULT_TABLE, decodeUsageRefreshResult, MCP_WEBHOOK_TABLE } from './postgres-live-notifications.js';
 import { readHelperOverlayFrame } from '@beeline/api-contract/helper-overlay';
-import { notifyCommandCompletion, recoverCommandCompletions } from './command-completion.js';
+import { notifyCommandCompletion } from './command-completion.js';
 import { COMMAND_COMPLETION_CHANNEL, POSTGRES_LIVE_CHANNEL } from './postgres-live-notifications.js';
 import { Client } from 'pg';
 import type { UsageRefreshOutcome } from '@beeline/api-contract/daemon';
@@ -77,9 +77,6 @@ export function notifyAgentConfigRoom(database: Pick<SqlDatabase, 'query'>, room
 /** SQL expressions keep notification and its source write in the same statement. */
 export function notifyCornerStateSql(room: 'NEW.room_id' | 'corner'): string {
   return `pg_notify('${POSTGRES_LIVE_CHANNEL}',json_build_object('table','corner_state','operation','UPDATE','roomId',${room})::text)`;
-}
-export function notifyDeadlineNoticesSql(): string {
-  return 'count(pg_notify($5,payload::text))';
 }
 export function notifyMcpWakesSql(channel: string): string {
   return `count(pg_notify(${channel}, jsonb_build_object(
@@ -693,9 +690,6 @@ export class PostgresLiveListener {
   private pushWake?: () => void;
   private xSignupDeliveryWake?:()=>void;
   setXSignupDeliveryWake(wake:()=>void):void {this.xSignupDeliveryWake=wake;}
-  private serverLeaseEvidence?: (instance:string,renewedAt:number,removed:boolean)=>void;
-  setServerLeaseEvidence(observe:(instance:string,renewedAt:number,removed:boolean)=>void):void { this.serverLeaseEvidence=observe; }
-
   setPushWake(wake: () => void): void { this.pushWake = wake; }
   private owedWake?: (source: 'sentry' | 'owed') => void;
   setOwedWake(wake: (source: 'sentry' | 'owed') => void): void { this.owedWake = wake; }
@@ -705,7 +699,6 @@ export class PostgresLiveListener {
   private stopped = false;
   private running?: Promise<void>;
   private reconnectPending = false;
-  private replacementAllowed = true;
   private resumeConnection?: () => void;
   private disconnectActive?: () => void;
   private stopRecovery?: () => void;
@@ -715,7 +708,6 @@ export class PostgresLiveListener {
   private activeProjections = 0;
   private readonly activeProjectionSince = new Map<number, number>();
   private nextProjectionTicket = 0;
-  private droppedProjections = 0;
   private deliveredProjections = 0;
   private failedProjections = 0;
   private lastNotificationAt: number | null = null;
@@ -723,42 +715,6 @@ export class PostgresLiveListener {
   private lastDeliveryAgeMs: number | null = null;
   private maxDeliveryAgeMs = 0;
   private readonly deliveryAgeBuckets = [0, 0, 0, 0, 0, 0];
-  private needsProjectionResync = false;
-  private readonly registryDue = new Map<string, { connectorId: string; dueAt: number }>();
-  private registryDueTimer?: NodeJS.Timeout;
-
-  private scheduleRegistryDue(): void {
-    if (this.registryDueTimer) clearTimeout(this.registryDueTimer);
-    this.registryDueTimer = undefined;
-    if (this.stopped || !this.registryDue.size) return;
-    let dueAt = Number.POSITIVE_INFINITY;
-    for (const attempt of this.registryDue.values()) dueAt = Math.min(dueAt, attempt.dueAt);
-    this.registryDueTimer = setTimeout(() => {
-      this.registryDueTimer = undefined;
-      const now = Date.now();
-      for (const [state, attempt] of this.registryDue) {
-        if (attempt.dueAt > now) continue;
-        this.registryDue.delete(state);
-        void notifyConnectorHelper(this.database, attempt.connectorId).catch((error) =>
-          console.error('[live-listener] registry expiry notification failed', error));
-      }
-      this.scheduleRegistryDue();
-    }, Math.max(0, dueAt - Date.now()));
-    this.registryDueTimer.unref?.();
-  }
-
-  private async restoreRegistryDue(): Promise<void> {
-    const rows = await this.database.query<{
-      state: string; connector_id: string; expires_at: Date;
-    }>(`SELECT state,connector_id,expires_at FROM registry_mcp_oauth_attempts WHERE code IS NULL`);
-    this.registryDue.clear();
-    for (const row of rows.rows) {
-      const dueAt = row.expires_at.getTime();
-      if (dueAt <= Date.now()) await notifyConnectorHelper(this.database, row.connector_id);
-      else this.registryDue.set(row.state, { connectorId: row.connector_id, dueAt });
-    }
-    this.scheduleRegistryDue();
-  }
 
   constructor(
     private readonly database: SqlDatabase,
@@ -777,7 +733,7 @@ export class PostgresLiveListener {
         ? null : Math.max(0, Date.now() - oldestActive),
       oldestQueuedAgeMs: this.projectionQueue[0]
         ? Math.max(0, Date.now() - this.projectionQueue[0].queuedAt) : null,
-      dropped: this.droppedProjections,
+      dropped: 0,
       delivered: this.deliveredProjections,
       failed: this.failedProjections,
       lastNotificationAt: this.lastNotificationAt,
@@ -786,7 +742,7 @@ export class PostgresLiveListener {
       maxDeliveryAgeMs: this.maxDeliveryAgeMs,
       /** Cumulative receipt-to-projection ages <=10, 50, 100, 500, 2000 ms, then above. */
       deliveryAgeBuckets: [...this.deliveryAgeBuckets],
-      resyncPending: this.needsProjectionResync,
+      resyncPending: false,
     };
   }
 
@@ -795,16 +751,9 @@ export class PostgresLiveListener {
     this.lastNotificationAt = Date.now();
     const payload = decodePayload(raw);
     if (!payload) return;
-    // A committed cause proves traffic on this incarnation; an opened socket
-    // alone never replenishes the one replacement allowance.
-    this.replacementAllowed = true;
     if (payload.journalStreams?.length) this.live.journalChanged(payload.journalStreams);
     if (payload.table === 'router_source' || payload.table === 'router_authority') return;
     if(payload.table===X_SIGNUP_DELIVERY_TABLE){this.xSignupDeliveryWake?.();return;}
-    if(payload.table===SERVER_LEASE_EVIDENCE_TABLE){
-      if(payload.instanceId && payload.renewedAt!==undefined)this.serverLeaseEvidence?.(payload.instanceId,payload.renewedAt,payload.removed===true);
-      return;
-    }
     if (payload.table === 'sentry_wake_state') {
       this.owedWake?.('sentry');
       return;
@@ -863,17 +812,12 @@ export class PostgresLiveListener {
       const queued = this.projectionQueue.find((item) => item.key === key);
       if (queued) { queued.raw = raw; return; }
     }
-    if (this.projectionQueue.length >= 512) {
-      this.droppedProjections++;
-      this.needsProjectionResync = true;
-      return;
-    }
     this.projectionQueue.push({ raw, queuedAt: Date.now(), ...(key ? { key } : {}) });
     this.drainProjections();
   }
 
   private drainProjections(): void {
-    while (!this.stopped && this.activeProjections < 2 && this.projectionQueue.length) {
+    while (!this.stopped && this.projectionQueue.length) {
       const next = this.projectionQueue.shift()!;
       this.activeProjections++;
       const ticket = this.nextProjectionTicket++;
@@ -894,10 +838,7 @@ export class PostgresLiveListener {
         this.activeProjectionSince.delete(ticket);
         this.activeProjections--;
         if (this.projectionQueue.length) this.drainProjections();
-        else if (!this.stopped && this.activeProjections === 0 && this.needsProjectionResync) {
-          this.needsProjectionResync = false;
-          this.live.resync();
-        }
+
       });
     }
   }
@@ -919,7 +860,6 @@ export class PostgresLiveListener {
     if (!this.running) {
       this.stopRecovery = this.database.onRecovery?.(() => {
         if (this.stopped) return;
-        this.replacementAllowed = true;
         if (!this.connected) this.requestConnection();
       });
       this.running = this.runConnections();
@@ -940,8 +880,7 @@ export class PostgresLiveListener {
       const disconnected = new Promise<void>((resolve) => {
         disconnect = () => {
           if(released)return;released=true;
-          if (this.connected && this.replacementAllowed && !this.stopped) {
-            this.replacementAllowed = false;
+          if (this.connected && !this.stopped) {
             this.requestConnection();
           }
           this.connected=false;
@@ -976,13 +915,8 @@ export class PostgresLiveListener {
         await client.query(`LISTEN ${COMMAND_COMPLETION_CHANNEL}`);
         if (this.stopped) return;
         if (released) throw new Error('LISTEN connection ended during acquisition');
-        recoverCommandCompletions();
-        this.xSignupDeliveryWake?.();
         this.connected = true;
         console.log('[live-listener] connected');
-        // A reconnect may have missed committed writes while LISTEN was down.
-        this.pushWake?.();
-        await this.restoreRegistryDue();
         if (this.stopped) return;
         if (released) throw new Error('LISTEN connection ended during acquisition');
         this.live.resync();
@@ -1013,7 +947,6 @@ export class PostgresLiveListener {
     this.disconnectActive?.();
     this.resumeConnection?.();
     this.projectionQueue.length = 0;
-    if (this.registryDueTimer) clearTimeout(this.registryDueTimer);
     await this.active?.end().catch(() => undefined);
     await this.running;
   }
@@ -1156,26 +1089,13 @@ export class PostgresLiveListener {
       return;
     }
     if (payload.table === 'registry_mcp_oauth_attempts') {
-      if (payload.registryState) {
-        if (payload.registryDueAt && payload.registryConnectorId &&
-            payload.registryDueAt > Date.now())
-          this.registryDue.set(payload.registryState, {
-            connectorId: payload.registryConnectorId, dueAt: payload.registryDueAt });
-        else {
-          this.registryDue.delete(payload.registryState);
-          if (payload.registryDueAt && payload.registryConnectorId)
-            await notifyConnectorHelper(this.database, payload.registryConnectorId);
-        }
-        this.scheduleRegistryDue();
-      }
+      if (payload.registryConnectorId) await notifyConnectorHelper(this.database, payload.registryConnectorId);
       return;
     }
     if (PARENT_ONLY_TABLES.has(payload.table)) {
       if (payload.cornerParentId)
         this.live.publish({ type: 'invalidate', roomId: payload.cornerParentId,
           reason: 'corner-status' });
-      // A new owed item may expire before the leader's next cycle.
-      if (payload.table === 'corner_owed') this.owedWake?.('owed');
       return;
     }
     if (payload.table === 'github_installations' || payload.table === 'github_repositories') {

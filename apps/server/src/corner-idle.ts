@@ -3,17 +3,7 @@ import { cornerOwedAnswerTimesSql, cornerReportAnswerTimesSql } from './corner-o
 import { cornerRunOutcomeSql, cornerRunStateSql } from './corner-run.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
-import { cornerBlockerSql, cornerRowState, cornerScheduledWaitSql, cornerWorkSql,
-  type CornerStateRow } from './chat-corner-counts.js';
-
-export type CornerIdleRow = CornerStateRow & {
-  id: string;
-  name: string;
-  parent_id: string;
-  /** Epoch seconds kept as text to preserve PostgreSQL's microsecond precision. */
-  idle_since: string;
-  suppressed: boolean;
-};
+import { cornerBlockerSql, cornerScheduledWaitSql, cornerWorkSql } from './chat-corner-counts.js';
 
 /**
  * One source for attention, delivery and claim. No mutable episode state.
@@ -74,10 +64,6 @@ export function cornerIdleSql(cornerId: string): string {
         (SELECT max(ended_at) FROM (${cornerReportAnswerTimesSql('c.id')}) answered_report)
       ) at OFFSET 0) boundary
       ) snapshot`;
-}
-
-export function cornerCanReportIdle(row: CornerIdleRow): boolean {
-  return !row.suppressed && !row.worker_active && !row.reviewer_active && cornerRowState(row).state === 'idle';
 }
 
 /** Delivery and claim require the same idle start and absence of every idle disqualifier. */

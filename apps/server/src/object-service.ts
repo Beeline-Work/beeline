@@ -369,7 +369,7 @@ export class ObjectService {
 
   /**
    * One `headObject`, one size comparison, then the flip. Anything else stays
-   * pending with a reason, and the sweep reaps it after an hour.
+   * pending with a reason until an explicit operation changes it.
    */
   async finalizeUpload(
     agentId: string,

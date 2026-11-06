@@ -11,7 +11,6 @@ const { DaemonService } = await import(process.env.BEELINE_REPLAY_BUILT_PROOF ? 
 const { PhoneService } = await import(process.env.BEELINE_REPLAY_BUILT_PROOF ? '../dist/phone-service.js' : './phone-service.js');
 import { LiveHub } from './live.js';
 import { createAgentCommand } from './agent-command.js';
-import { runMaintenance } from './background.js';
 import { AcpClient, AcpRuntimeExitedError, type ToolCallEntry } from '../../body/src/acp.js';
 import type { TurnReplay } from '@beeline/api-contract/daemon';
 const { MonolithRoomTurnLoop } = await import(process.env.BEELINE_REPLAY_BUILT_PROOF ? '../../body/dist/monolith-room-turn.js' : '../../body/src/monolith-room-turn.js');
@@ -160,14 +159,6 @@ it.each([
 
   }
 },30000);
-
-it('expires diagnostics and cascades with their room',async()=>{
-  await db.query(`UPDATE agent_turn_traces SET created_at=now()-interval '31 days' WHERE room_id=$1`,[ROOM]);
-  await runMaintenance(db);
-  expect((await db.query(`SELECT 1 FROM agent_turn_traces WHERE room_id=$1`,[ROOM])).rowCount).toBe(0);
-  await db.query(`DELETE FROM rooms WHERE parent_id=$1`,[ROOM]);
-  expect((await db.query(`SELECT 1 FROM agent_turn_traces`)).rowCount).toBe(0);
-});
 
 async function claimedTurn() {
   const messageId=randomUUID();

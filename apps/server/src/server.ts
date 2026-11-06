@@ -811,6 +811,7 @@ export function createBeelineServer(options: ServerOptions): Server {
         return;
       }
       const releaseServerConnection = options.connectionPresence?.holdServerConnection();
+      client.on('message', () => { void options.connectionPresence?.renewLease(); });
       client.once('close', () => releaseServerConnection?.());
       client.once('error', () => releaseServerConnection?.());
       options.live.humanConnected(principal.identityId);
@@ -1770,9 +1771,6 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
             : {}),
         ...(options.database.oldestActiveTransactionAgeMs
           ? { oldestActiveTransactionAgeMs: options.database.oldestActiveTransactionAgeMs() }
-          : {}),
-        ...(options.database.transactionDeadlineCount
-          ? { transactionDeadlines: options.database.transactionDeadlineCount() }
           : {}),
       },
       live: liveHealth(),

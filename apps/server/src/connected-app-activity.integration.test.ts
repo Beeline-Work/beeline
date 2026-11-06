@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { migratedDatabase, type PgliteDatabase } from './test-support.js';
-import { createAgentCommand } from './agent-command.js';
+import { claimAgentCommand, createAgentCommand } from './agent-command.js';
 import { clearConnectedAppPlaceholders } from './migrations/connected-app-turns.js';
 import { PhoneService } from './phone-service.js';
-import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';
+import { DaemonService } from './daemon-service.js';
 import { RoomsMcpAgentTools } from './rooms-mcp-agent.js';
 import { LiveHub } from './live.js';
 
@@ -86,8 +86,8 @@ it('R1: three reports about one unhandled decision retain only the newest text',
 
 it('R1: status, sender, origin and recipient distinguish new reports; claimed work survives', async () => {
   const claimed = await report('needs-decision: active decision');
-  await daemon.execute('claimAgentCommand', { roomId: R, commandId: claimed!.id, generationId: 'picked-up' }, APP);
-  expect(await working(APP)).toEqual([expect.objectContaining({ generationId: 'picked-up' })]);
+  await db.transaction(tx => claimAgentCommand(tx, R, APP, claimed!.id, 'mcp:picked-up'));
+  expect(await working(APP)).toEqual([expect.objectContaining({ generationId: 'mcp:picked-up' })]);
   await report('needs-decision: newer context');
   await report('blocked: different status');
   await report('needs-decision: different sender', APP, MACHINE);
@@ -113,7 +113,7 @@ it('R1: release cleanup removes legacy app placeholders and preserves real and m
 
 it('R1: expired claims can be superseded, while handled reports and machine queues retain their history', async () => {
   const expired = await report('needs-decision: old context');
-  await daemon.execute('claimAgentCommand', { roomId: R, commandId: expired!.id, generationId: 'expired' }, APP);
+  await db.transaction(tx => claimAgentCommand(tx, R, APP, expired!.id, 'mcp:expired'));
   await db.query(`UPDATE agent_commands SET lease_expires_at=now()-interval '1 second' WHERE id=$1`, [expired!.id]);
   const current = await report('needs-decision: new context');
   expect((await db.query(`SELECT status FROM agent_turns WHERE request_id=$1`, [expired!.turn_request_id])).rows)

@@ -57,7 +57,7 @@ export function isUpdateBusyPath(pathname: string): boolean {
  * Consumers such as UpdateBanner only render that state; they never start
  * independent checks or downloads.
  */
-export function UpdateProvider({ children }: { children: ReactNode }) {
+export function UpdateProvider({ children, active = true }: { children: ReactNode; active?: boolean }) {
     const pathname = usePathname();
     const pathnameRef = useRef(pathname);
     const checkingRef = useRef(false);
@@ -182,6 +182,7 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
     }, [applyUpdate, pathname, updateAvailable]);
 
     useEffect(() => {
+        if (!active) return;
         const stop = subscribeUpdateConnections(epoch => {
             if (epoch <= connectionEpochRef.current) return;
             connectionEpochRef.current = epoch;
@@ -190,7 +191,7 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
         // Private pre-socket initialization is one check, never an AppState poll.
         if (!initialCheckRef.current) { initialCheckRef.current = true; void checkForUpdates(); }
         return stop;
-    }, [checkForUpdates]);
+    }, [active, checkForUpdates]);
 
     const value = useMemo<UpdateContextValue>(() => ({
         updateAvailable,

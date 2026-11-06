@@ -27,7 +27,7 @@ import {
 import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { DECORATIVE_GLYPH_PROPS } from '@/components/buzz/decorative-glyph';
-import { ContentTarget } from '@/components/buzz/IndexRow';
+import { ContentTarget, InlineRow } from '@/components/buzz/IndexRow';
 import { chromeStrokeWidth } from '@/components/buzz/MembersGlyph';
 
 const DRAWER_WIDTH = 72;
@@ -351,7 +351,8 @@ type CommunityDrawerTriggerProps = {
 
 type CommunitySwitcherTriggerProps = CommunityDrawerTriggerProps & {
   expanded: boolean;
-  onPress: () => void;
+  /** Omit while the Room list is unavailable to show the same identity without a control. */
+  onPress?: () => void;
   attention?: boolean;
   pickerTitle?: string;
 };
@@ -375,6 +376,54 @@ export function CommunityDrawerTrigger({ community }: CommunityDrawerTriggerProp
   );
 }
 
+function CommunityHeaderIdentity({
+  community,
+  pickerTitle,
+  attention,
+  interactive,
+}: CommunityDrawerTriggerProps & { pickerTitle?: string | false; attention: boolean; interactive: boolean }) {
+  const desktop = useIsDesktop();
+  return (
+    <>
+      {!pickerTitle && (
+        <View style={styles.drawerTriggerPlate} testID="workspace-header-plate">
+          <View style={styles.drawerTriggerPictureSeat}>
+            <IdentityMark
+              kind="workspace"
+              seed={community?.communityId ?? 'workspace-loading'}
+              avatarUrl={community?.avatar}
+              name={community?.name}
+              size={HEADER_PLATE_SEAT.pictureSize}
+              testID="workspace-avatar-header"
+            />
+          </View>
+          {attention && <View style={desktop ? desktopAttentionStyles.workspaceAttentionDot : styles.workspaceAttentionMark} testID="workspace-attention" />}
+        </View>
+      )}
+      <Text
+        numberOfLines={1}
+        style={styles.drawerTriggerName}
+        testID={
+          pickerTitle
+            ? 'workspace-picker-title'
+            : community
+              ? `workspace-active-${community.communityId}`
+              : 'workspace-active-loading'
+        }
+      >
+        {pickerTitle || community?.name || WORKSPACE_LABEL}
+      </Text>
+      {interactive && (
+        <ChevronGlyph
+          color={styles.drawerTriggerCaret.color}
+          direction={pickerTitle ? 'up' : 'down'}
+          size={CHEVRON_ROW_SIZE}
+        />
+      )}
+    </>
+  );
+}
+
 export function CommunitySwitcherTrigger({
   community,
   expanded,
@@ -382,8 +431,15 @@ export function CommunitySwitcherTrigger({
   attention = false,
   pickerTitle,
 }: CommunitySwitcherTriggerProps) {
-  const desktop = useIsDesktop();
   const showingPickerTitle = expanded && pickerTitle;
+
+  if (!onPress) {
+    return (
+      <InlineRow style={styles.drawerTrigger}>
+        <CommunityHeaderIdentity community={community} pickerTitle={showingPickerTitle} attention={attention} interactive={false} />
+      </InlineRow>
+    );
+  }
   return (
     <Button
       accessibilityLabel={
@@ -397,43 +453,7 @@ export function CommunitySwitcherTrigger({
       label=""
       variant="quiet"
       appearance={{ control: styles.drawerTrigger }}
-      icon={
-        <>
-          {!showingPickerTitle && (
-            <View style={styles.drawerTriggerPlate} testID="workspace-header-plate">
-              <View style={styles.drawerTriggerPictureSeat}>
-                <IdentityMark
-                  kind="workspace"
-                  seed={community?.communityId ?? 'workspace-loading'}
-                  avatarUrl={community?.avatar}
-                  name={community?.name}
-                  size={HEADER_PLATE_SEAT.pictureSize}
-                  testID="workspace-avatar-header"
-                />
-              </View>
-              {attention && <View style={desktop ? desktopAttentionStyles.workspaceAttentionDot : styles.workspaceAttentionMark} testID="workspace-attention" />}
-            </View>
-          )}
-          <Text
-            numberOfLines={1}
-            style={styles.drawerTriggerName}
-            testID={
-              showingPickerTitle
-                ? 'workspace-picker-title'
-                : community
-                  ? `workspace-active-${community.communityId}`
-                  : 'workspace-active-loading'
-            }
-          >
-            {showingPickerTitle || community?.name || WORKSPACE_LABEL}
-          </Text>
-          <ChevronGlyph
-            color={styles.drawerTriggerCaret.color}
-            direction={showingPickerTitle ? 'up' : 'down'}
-            size={CHEVRON_ROW_SIZE}
-          />
-        </>
-      }
+      icon={<CommunityHeaderIdentity community={community} pickerTitle={showingPickerTitle} attention={attention} interactive />}
       testID="workspace-avatar-trigger"
     />
   );

@@ -98,7 +98,7 @@ export function setAppDisplay(
     applyRootBackground(themeName);
 }
 
-export function setAppAppearance(
+function setAppAppearance(
     appearance: LocalSettings['appearance'],
     uiSize: LocalSettings['uiSize'] = loadLocalSettings().uiSize,
 ): void {

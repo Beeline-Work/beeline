@@ -101,5 +101,6 @@
   ],
   "humanAvatars": "App-native personFaceLayers: Alan cat, Jimmy fox, Maya owl, visitor hare; source apps/mobile/sources/buzz/faces/face-tile.tsx and animals.tsx.",
   "dots": "The official OpenAI corporate mark identifies ChatGPT dots. The older approved yellow stand-in is not used.",
+  "claudeDuet": "Neutral CD initial tile; no official Duet icon is bundled in this repository.",
   "coverage": "Seven native harnesses from AUTO_DETECT_AGENT_KINDS, plus Hermes, Muse, ChatGPT dots and the Gemini/ZCode existing-client entries."
 }

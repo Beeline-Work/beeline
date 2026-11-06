@@ -9,6 +9,30 @@ export function humanReportCornerSql(message: string): string {
   ),${message}.room_id::text)`;
 }
 
+/** Keep forwarded reports on their origin index, with a separate legacy fallback. */
+export function cornerHumanReportsSql(cornerId: string, workerId: string): string {
+  return `SELECT message.* FROM messages message
+    WHERE message.author_id=${workerId} AND message.card->>'reportToId' IS NOT NULL
+      AND message.card->>'sourceRoomId'=(${cornerId})::text
+    UNION ALL
+    SELECT message.* FROM messages message
+    WHERE message.room_id=${cornerId} AND message.author_id=${workerId}
+      AND message.card->>'reportToId' IS NOT NULL AND message.card->>'sourceRoomId' IS NULL
+      AND ${humanReportCornerSql('message')}=(${cornerId})::text
+    UNION ALL
+    SELECT message.* FROM messages message
+    WHERE message.author_id=${workerId}
+      AND EXISTS (SELECT 1 FROM agent_commands source
+        WHERE source.id=message.request_id AND source.agent_id=message.author_id
+          AND (CASE WHEN source.private_payload->>'originCornerId'
+            ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+            THEN (source.private_payload->>'originCornerId')::uuid ELSE source.room_id END)=${cornerId}
+        OFFSET 0)
+      AND message.room_id<>${cornerId} AND message.card->>'reportToId' IS NOT NULL
+      AND message.card->>'sourceRoomId' IS NULL
+      AND ${humanReportCornerSql('message')}=(${cornerId})::text`;
+}
+
 /**
  * The newest explicit worker wait, unless it has been answered. The log owns
  * both the return address and the answered marker; no waiting projection is stored.
@@ -40,7 +64,7 @@ export function cornerWaitingReportSql(corner: string): string {
       UNION ALL
       (SELECT NULL::text,message.id,encode(sha256(convert_to('agent-command-card:'||message.id,'UTF8')),'hex'),message.room_id,message.created_at,
         message.card->>'reportToId',message.text,message.card->>'waitingAnswered',message.id
-      FROM messages message
+      FROM (${cornerHumanReportsSql(`${corner}.id`, cornerImplementerSql('waiting_fact', corner))}) message
       WHERE message.card->>'reportToId' IS NOT NULL
         AND message.text ~ '^(needs-decision|blocked):'
         AND message.presentation='message' AND message.system_event IS NULL AND message.deleted_at IS NULL

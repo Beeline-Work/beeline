@@ -256,7 +256,6 @@ import type { SqlDatabase } from './database.js';
 
 /** Adapted from the owner's production free-credits-film revision 6. */
 export const WELCOME_VIDEO_SLUG = 'welcome-video';
-export const WELCOME_VIDEO_CONTRACT = contract;
 
 export async function seedWelcomeVideoWorkflow(db: SqlDatabase, workspaceId: string, roomId: string): Promise<void> {
   const markdown = JSON.stringify(contract);

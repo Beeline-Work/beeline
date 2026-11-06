@@ -6,7 +6,6 @@ vi.mock('@/auth/monolith-session', () => ({ MONOLITH_REQUEST_TIMEOUT_MS: 15_000,
 import { MonolithRequestTimeoutError } from '@/auth/monolith-session';
 import { RoomViewClient } from './room-view-client';
 import { PhoneSocketError } from './phone-socket-error';
-import { noteLiveFrame } from './live-frame-epoch';
 const fixture = { workspaces: [], viewer: { pubkey: 'a'.repeat(64), kind: 'human', name: 'Owner' }, truncated: false, watchFilters: [] };
 const client = () => new RoomViewClient({ baseUrl: 'https://legacy.example', identity: { publicKey: 'a'.repeat(64), secretKey: new Uint8Array(32) } });
 beforeEach(() => { request.mockReset(); });
@@ -22,18 +21,16 @@ describe('Room view socket reads', () => {
     request.mockRejectedValue(new Error('stop after dispatch'));
     await client().chats('w').catch(() => {});
     expect(request).toHaveBeenCalledExactlyOnceWith('readChats', { workspaceId: 'w' },
-      { timeoutMs: 15_000, signal: undefined, afterRoomDraw: false });
+      { timeoutMs: 15_000, signal: undefined });
   });
-  it('shares identical in-flight reads until a newer live frame arrives', async () => {
-    let resolve!: (value: unknown) => void;
-    request.mockImplementation(() => new Promise(r => { resolve = r; }));
+  it('sends each screen read directly without a sharing epoch or queue', async () => {
+    const complete: Array<(value: unknown) => void> = [];
+    request.mockImplementation(() => new Promise(resolve => complete.push(resolve)));
     const first = client().workspaces(), second = client().workspaces();
-    expect(request).toHaveBeenCalledOnce();
-    resolve(fixture); await Promise.all([first, second]);
-    const third = client().workspaces(); const completeThird = resolve;
-    noteLiveFrame(); const fourth = client().workspaces();
-    expect(request).toHaveBeenCalledTimes(3);
-    completeThird(fixture); resolve(fixture); await Promise.all([third, fourth]);
+    expect(request).toHaveBeenCalledTimes(2);
+    complete[1]!(fixture); complete[0]!(fixture);
+    await expect(first).resolves.toEqual(fixture);
+    await expect(second).resolves.toEqual(fixture);
   });
   it('reports the existing read deadline and server refusal without retry', async () => {
     request.mockRejectedValueOnce(new MonolithRequestTimeoutError());

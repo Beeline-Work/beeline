@@ -80,8 +80,8 @@ describe.each(['pglite',...(postgresUrl?['postgres']:[])])('P12 computer share a
       url: upstream, expires_at: new Date(Date.now() + 200).toISOString(),
     }) }] });
     try {
-      renewals.track(sessionId, client, lease()); await pending;
-      renewals.track(sessionId, client, lease()); release(); await committed;
+      renewals.track(sessionId, client, lease()); renewals.viewerActivity(sessionId); await pending;
+      renewals.track(sessionId, client, lease()); renewals.viewerActivity(sessionId); release(); await committed;
       expect(call).toHaveBeenCalledTimes(2); expect(writes).toBe(2);
       expect(reaped).not.toHaveBeenCalled();
       expect((await db.query<{ future: boolean }>(`SELECT expires_at>clock_timestamp()+interval '10 seconds' future

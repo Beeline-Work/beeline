@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { MemberRosterRow } from './MemberRosterRow';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, Text, TouchableOpacity, View } from 'react-native';
@@ -118,9 +119,7 @@ export function MemberPickerSheet({
         !agentConnectOnly || error ? (
           <View style={styles.footer}>
             {error && (
-              <Text accessibilityRole="alert" style={styles.error} testID="member-picker-error">
-                ! {error}
-              </Text>
+              <ErrorBanner inline title={error} titleTestID="member-picker-error" />
             )}
             {!agentConnectOnly && (
               <View style={styles.addInset}>
@@ -251,12 +250,5 @@ const styles = StyleSheet.create((theme) => {
       borderTopColor: hull.border,
     },
     addInset: { paddingHorizontal: HULL_SHEET_INSET, paddingTop: hull.space.sm },
-    error: {
-      ...Typography.default(),
-      ...hull.type.meta,
-      paddingHorizontal: hull.space.md,
-      paddingTop: hull.space.sm,
-      color: hull.danger,
-    },
   };
 });

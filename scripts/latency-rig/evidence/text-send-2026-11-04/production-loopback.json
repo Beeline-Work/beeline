@@ -1,0 +1,203 @@
+{
+  "at": "2026-11-04T03:24:10.912Z",
+  "label": "before-server-loopback",
+  "origin": "http://127.0.0.1:8080",
+  "version": {
+    "version": "v0.1.142",
+    "sourceSha": "98c2a49a4f3df909e8fd3fc32ae39129f6f8367b"
+  },
+  "proofWorkspace": "bee11e00-0000-4000-8000-000000000105",
+  "proofRoom": "bee11e00-0000-4000-8000-000000000103",
+  "n": 25,
+  "summary": {
+    "pingMs": {
+      "p50": 1.1394809999999893,
+      "p95": 4.393031999999948
+    },
+    "ackMs": {
+      "p50": 266.43613700000014,
+      "p95": 482.68656100000044
+    },
+    "ackMinusPingMs": {
+      "p50": 265.38897700000007,
+      "p95": 482.0606109999999
+    }
+  },
+  "samples": [
+    {
+      "sample": 1,
+      "pingMs": 1.1394809999999893,
+      "ackMs": 129.05735099999998,
+      "ackMinusPingMs": 127.91787,
+      "messageId": "e5585f0c3004e5bb2c9ebddd48c63d273789d103a659de98f69a5ee62c3c5112"
+    },
+    {
+      "sample": 2,
+      "pingMs": 12.818865999999957,
+      "ackMs": 410.151116,
+      "ackMinusPingMs": 397.33225000000004,
+      "messageId": "e1852f6016f2545c53a7e42438cd2cfcce24aa12f03cccbbd577b852be7c8941"
+    },
+    {
+      "sample": 3,
+      "pingMs": 4.393031999999948,
+      "ackMs": 306.34391600000015,
+      "ackMinusPingMs": 301.9508840000002,
+      "messageId": "212976608f567d1afdab10bb0e8e133bfe99b641bd259afc25d5ec176fe09a5e"
+    },
+    {
+      "sample": 4,
+      "pingMs": 3.1135119999999006,
+      "ackMs": 253.60599100000013,
+      "ackMinusPingMs": 250.49247900000023,
+      "messageId": "cec6b2c2bda4de42cbdd39e2d290ef79b0d14efe01cb9d22a5994be41af84e1a"
+    },
+    {
+      "sample": 5,
+      "pingMs": 1.6091499999999996,
+      "ackMs": 326.12475600000016,
+      "ackMinusPingMs": 324.51560600000016,
+      "messageId": "128852ed5d3a046c22d026253f6a462b230a42b7b8b4e7217520b3f197d285af"
+    },
+    {
+      "sample": 6,
+      "pingMs": 1.3609710000000632,
+      "ackMs": 295.79055100000005,
+      "ackMinusPingMs": 294.42958,
+      "messageId": "14b20199fe0cd170d7e7be692eecc55e6f1843b1b9153cea7eed8a6e064d540a"
+    },
+    {
+      "sample": 7,
+      "pingMs": 1.0471600000000763,
+      "ackMs": 266.43613700000014,
+      "ackMinusPingMs": 265.38897700000007,
+      "messageId": "6a2b2f3bfd56420ef9ff550fe1dff10772df284172de018b4fafd4d33e88bd6e"
+    },
+    {
+      "sample": 8,
+      "pingMs": 2.384422000000086,
+      "ackMs": 244.0201360000001,
+      "ackMinusPingMs": 241.635714,
+      "messageId": "e67f5835b39f8b8f28a0870e49630bc24795e8a37ed8f01efd6c5d8e68de8559"
+    },
+    {
+      "sample": 9,
+      "pingMs": 2.9424910000002455,
+      "ackMs": 160.75879699999996,
+      "ackMinusPingMs": 157.8163059999997,
+      "messageId": "41d418ab5bb64fdffa0626fb25b6a5889b4fa3c4c209e91755d5e5a3e730a355"
+    },
+    {
+      "sample": 10,
+      "pingMs": 2.5548610000000735,
+      "ackMs": 196.29635400000006,
+      "ackMinusPingMs": 193.741493,
+      "messageId": "caff95f2136a602292d9d2a457354b65eca379f6694ffb94cad9fc1db6fa9bc1"
+    },
+    {
+      "sample": 11,
+      "pingMs": 2.215701000000081,
+      "ackMs": 398.3372800000002,
+      "ackMinusPingMs": 396.1215790000001,
+      "messageId": "cb1e3185e29d797e6083c214f6dc5986144da91f686bedc3a6bf0b1c3fb1f0e6"
+    },
+    {
+      "sample": 12,
+      "pingMs": 0.6926800000001094,
+      "ackMs": 201.0286560000004,
+      "ackMinusPingMs": 200.3359760000003,
+      "messageId": "4d74c06df2d989946dfe092f0f265b7af2e6f280f6a9c1abfa8f9ab534af33cc"
+    },
+    {
+      "sample": 13,
+      "pingMs": 0.41776000000027125,
+      "ackMs": 206.07211899999993,
+      "ackMinusPingMs": 205.65435899999966,
+      "messageId": "e3188699e4399acc1ffd0d82fe68158da7a46661c8b2b5dd4af496d797b1e034"
+    },
+    {
+      "sample": 14,
+      "pingMs": 3.8954020000001037,
+      "ackMs": 160.64811599999985,
+      "ackMinusPingMs": 156.75271399999974,
+      "messageId": "9eb54aad5407c50a98e430e35a572101123db1818e83400121e4dec4b377e685"
+    },
+    {
+      "sample": 15,
+      "pingMs": 0.45487999999977546,
+      "ackMs": 296.37733199999957,
+      "ackMinusPingMs": 295.9224519999998,
+      "messageId": "5d2d04e61fa44ee812631f74ee8fc4be0929b9ef67a1d84353b93f99a13fd60f"
+    },
+    {
+      "sample": 16,
+      "pingMs": 1.0405399999999645,
+      "ackMs": 299.84916299999986,
+      "ackMinusPingMs": 298.8086229999999,
+      "messageId": "bc776773c5b32c529f31b05ca62179a78924b7fd7ab5074acde29a250c92f109"
+    },
+    {
+      "sample": 17,
+      "pingMs": 0.23870999999962805,
+      "ackMs": 245.7679079999998,
+      "ackMinusPingMs": 245.52919800000018,
+      "messageId": "890338c278476db387bad69bae5a9aa8e889e5b28ca99efd764206981cfd507f"
+    },
+    {
+      "sample": 18,
+      "pingMs": 1.1530800000000454,
+      "ackMs": 244.9156069999999,
+      "ackMinusPingMs": 243.76252699999986,
+      "messageId": "94606e2f99f941afed683bcf600777ee544239e4ee57291b30fa16f05c29ab88"
+    },
+    {
+      "sample": 19,
+      "pingMs": 1.1504910000003292,
+      "ackMs": 252.8114999999998,
+      "ackMinusPingMs": 251.66100899999947,
+      "messageId": "c97e108ecdddfb71aaeb1da478cb6e0a3175301bf05014c6b6ffa1c8d6843091"
+    },
+    {
+      "sample": 20,
+      "pingMs": 0.224250000000211,
+      "ackMs": 306.96373700000004,
+      "ackMinusPingMs": 306.7394869999998,
+      "messageId": "aba8cfd0aed63b8f9648402aa33192d6f3400a268eab6a3e6080f4beec20e10e"
+    },
+    {
+      "sample": 21,
+      "pingMs": 0.36569999999937863,
+      "ackMs": 178.0740050000004,
+      "ackMinusPingMs": 177.70830500000102,
+      "messageId": "ceb8a29964b1cb377b6bf7da0a58970a7360b900500293057b352a10f3cf7405"
+    },
+    {
+      "sample": 22,
+      "pingMs": 0.28721000000041386,
+      "ackMs": 396.52472899999975,
+      "ackMinusPingMs": 396.23751899999934,
+      "messageId": "79d429e30a3e2856341a194ce894024c6bbc4c65143268bcec14d96c072b8e8b"
+    },
+    {
+      "sample": 23,
+      "pingMs": 0.6259500000005573,
+      "ackMs": 482.68656100000044,
+      "ackMinusPingMs": 482.0606109999999,
+      "messageId": "312d2a753baa9a1fbfd8de8229a1413bfec81ac7581aad72d6b40909bb36a864"
+    },
+    {
+      "sample": 24,
+      "pingMs": 0.8478400000003603,
+      "ackMs": 437.8827190000002,
+      "ackMinusPingMs": 437.0348789999998,
+      "messageId": "d46bee7b9a46e3931f56b865f15aa363bc4b620b8b1f10d60e0a75da5cf03144"
+    },
+    {
+      "sample": 25,
+      "pingMs": 1.0005099999998492,
+      "ackMs": 550.8916529999997,
+      "ackMinusPingMs": 549.8911429999998,
+      "messageId": "32d8058203c559ea9e912f9451046735ad59c08949177d6817aa7266b8fca030"
+    }
+  ]
+}

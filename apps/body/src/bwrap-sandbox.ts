@@ -169,10 +169,6 @@ export type SandboxPolicy = 'bwrap' | 'off';
 
 export const DEFAULT_SANDBOX_POLICY: SandboxPolicy = 'bwrap';
 
-export function isSandboxPolicy(value: unknown): value is SandboxPolicy {
-  return value === 'bwrap' || value === 'off';
-}
-
 /**
  * Harness state roots derived from `$HOME` rather than a dedicated state env.
  * `agent-home.ts` now supplies a per-Room HOME, and the caller passes that home

@@ -6,6 +6,7 @@ export type RoomResponsePartitions = {
   readonly pages: readonly (readonly RoomViewMessage[])[];
 };
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function addRoomPage(
   partitions: RoomResponsePartitions,
   page: readonly RoomViewMessage[],

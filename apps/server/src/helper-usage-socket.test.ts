@@ -8,7 +8,7 @@ async function fixture(){
   vi.stubEnv('BEELINE_NETWORK_ROUTER_V1','1');const execute=vi.fn(async()=>({id:'ok',createdAt:1}));
   const replies:Record<string,unknown>[]=[],waiters:Array<(reply:Record<string,unknown>)=>void>=[];
   const database={query:vi.fn(async()=>({rows:[{owner_id:owner}],rowCount:1}))};
-  const deps={database,live:new LiveHub(),daemon:{execute},registry:new DaemonConnectionRegistry(),
+  const deps={database,live:new LiveHub(),daemon:{execute,negotiateOwnedModel:async()=>({})},registry:new DaemonConnectionRegistry(),
     connectionPresence:{claimConnection:async()=>1,releaseConnection:async()=>undefined},
     acquireLiveDbTask:async()=>()=>undefined,shuttingDown:()=>false,errors:{database:0,invalid:0,internal:0,overload:0},counters:{helperVersionRefusals:0,helperForceUpdates:0}} as unknown as DaemonLiveDependencies;
   const session=new DaemonAgentSession(deps,agent,{send:reply=>{replies.push(reply);waiters.shift()?.(reply);},isOpen:()=>true,drop:()=>undefined,admit:()=>true},{usageAccountV1:true});

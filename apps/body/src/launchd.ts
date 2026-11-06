@@ -1,5 +1,5 @@
 import { assertLifecycleTestIsolation } from './lifecycle-test-guard.js';
-import { nativeHelperPlist, convergeNativeHelper } from './native-helper.js';
+import {convergeNativeHelper} from './native-helper.js';
 import { execFile } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
@@ -76,15 +76,6 @@ export function launchdAgentPlistPath(
     'LaunchAgents',
     `${launchdAgentLabel(publicKey)}.plist`,
   );
-}
-
-export function launchdHelperPlistPath(env: NodeJS.ProcessEnv = process.env): string {
-  return resolve(launchdHome(env), 'Library', 'LaunchAgents', `${LAUNCHD_HELPER_LABEL}.plist`);
-}
-
-/** The native helper job directly execs the recovery launcher; every exit restarts. */
-export function launchdHelperPlist(env: NodeJS.ProcessEnv = process.env): string {
-  return nativeHelperPlist(env);
 }
 
 export function launchdBrokerPlistPath(env: NodeJS.ProcessEnv = process.env): string {

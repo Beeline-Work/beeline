@@ -79,12 +79,12 @@ export class QueryProfiler {
       .update(normalizedSql)
       .digest('hex')
       .slice(0, 16);
+    const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
     const previous = this.#profiles.get(fingerprint);
     if (!previous && this.#profiles.size >= 128) {
       this.#overflow++;
       return;
     }
-    const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
     const next: QueryProfile = {
       fingerprint,
       calls: (previous?.calls ?? 0) + 1,

@@ -151,7 +151,7 @@ describe('Needs-you expiry sweep', () => {
     expect(await delta()).toEqual({ workspaceId: WORKSPACE, count: 0, items: [] });
   });
 
-  it('wakes the viewer when a question nobody saw passes the 7-day lookback', async () => {
+  it('keeps an unseen question after seven days without an expiry wake', async () => {
     const question = await post('@ada can you look?');
     // Asked just under 7 days ago; only the badge count has held it, so no clock started.
     await database.query(
@@ -167,15 +167,13 @@ describe('Needs-you expiry sweep', () => {
     await new Promise((resolve) => setTimeout(resolve, 350));
     events.length = 0;
     await loop.runOnce();
-    await eventually(() => markWakes().length > 0);
-    expect(markWakes()).toEqual([
-      expect.objectContaining({ roomId: '', readerId: VIEWER, sourceRoomId: ROOM }),
-    ]);
-    // The held tray list and badge both take this delta; neither waits for a reconnect.
-    expect(await delta()).toEqual({ workspaceId: WORKSPACE, count: 0, items: [] });
+    await new Promise(resolve=>setTimeout(resolve,30));
+    expect(markWakes()).toEqual([]);
+    expect((await delta())?.items.map(item=>item.messageId)).toEqual([question]);
+    expect((await phone.execute('countNeedsYou',{workspaceId:WORKSPACE},VIEWER)).count).toBe(1);
   });
 
-  it('wakes the viewer at the lookback when it comes before 24 hours from first sight', async () => {
+  it('keeps an old question until 24 hours after first sight', async () => {
     const question = await post('@ada can you look?');
     await database.query(
       `UPDATE messages SET created_at=now()-interval '7 days 1 second' WHERE id=$1`, [question],
@@ -186,10 +184,9 @@ describe('Needs-you expiry sweep', () => {
     );
     events.length = 0;
     await new DeadlineExpiry(database).runOnce();
-    await eventually(() => markWakes().length > 0);
-    expect(markWakes()).toEqual([
-      expect.objectContaining({ readerId: VIEWER, sourceRoomId: ROOM }),
-    ]);
+    await new Promise(resolve=>setTimeout(resolve,30));
+    expect(markWakes()).toEqual([]);
+    expect((await read()).map(item=>item.messageId)).toContain(question);
   });
 
   it('wakes nobody when an unseen question at the lookback was already answered', async () => {

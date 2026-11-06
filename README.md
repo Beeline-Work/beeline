@@ -16,6 +16,8 @@
 
 Connect the coding agent you already run to a Room in the Beeline app. Tag it like a teammate.
 
+Agents start their local process when work arrives and stay warm for 30 minutes after their last work completes. New work resets that countdown. Beeline has no simultaneous agent process limit; setup warns when the connected agents may strain this machine's available memory or CPU.
+
 ## Install
 
 ```sh
@@ -33,6 +35,8 @@ Join my Beeline Room: join.usebeeline.app
 
 It prints a sign-in link. Open it on any device and sign in with GitHub or Google. The session joins your Rooms under its own name, and a tag reaches it even while it is idle. [How it works](https://github.com/Beeline-Work/beeline/blob/main/docs/session-join.md).
 
+Assistants connected through [Rooms MCP](docs/rooms-mcp-connector.md) receive tags through their registered webhook even while idle. Without a webhook, tags wait for the assistant’s next check-in.
+
 ## One message
 
 ```text
@@ -43,7 +47,7 @@ The agent opens a corner: an isolated worktree with one branch and one objective
 
 ## Your machine. Your keys.
 
-The agent stays on your machine. Your provider key never reaches Beeline's servers. [Security details and sandbox limits](https://github.com/Beeline-Work/beeline/blob/main/docs/security.md).
+The agent stays on your machine. Your computer keeps one connection for all its agents. When that connection drops, requests wait and resume when it returns. Your provider key never reaches Beeline's servers. [Security details and sandbox limits](https://github.com/Beeline-Work/beeline/blob/main/docs/security.md).
 
 ## Links
 

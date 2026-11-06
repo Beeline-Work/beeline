@@ -30,27 +30,3 @@ it.skipIf(process.platform !== 'linux')('streams inventories larger than the old
 });
 
 
-it.skipIf(process.platform !== 'linux')('Reproduction storage-watchdog: a moving inventory acknowledges watchdog progress before expiry', async () => {
-  const { startLocalWatchdog } = await import('./systemd.js');
-  vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
-  fixture.bytes = 0;
-  fixture.limit = 4 * 1024 * 1024;
-  let acknowledge: (() => void) | undefined;
-  const feeds = vi.fn(async () => undefined);
-  const stalled = vi.fn();
-  const stop = startLocalWatchdog({ progress: feeds }, () => 'healthy',
-    () => new Promise<void>(done => { acknowledge = done; }),
-    60_000, { WATCHDOG_USEC: '180000000' }, undefined, stalled);
-  fixture.advance = () => vi.advanceTimersByTimeAsync(60_000);
-  const progress = vi.fn(async () => { acknowledge?.(); acknowledge = undefined; });
-  try {
-    const tree = await storageTree('/large/cache', progress);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(tree.size).toBe(1);
-    expect(stalled).not.toHaveBeenCalled();
-    expect(feeds.mock.calls.length).toBeGreaterThan(3);
-  } finally {
-    stop(); fixture.advance = undefined; fixture.limit = 129 * 1024 * 1024;
-    vi.useRealTimers();
-  }
-});

@@ -1,7 +1,9 @@
 import { afterEach, expect, it, vi } from 'vitest';
 const sdk = vi.hoisted(() => ({ init: vi.fn(), captureException: vi.fn(), setTag: vi.fn() }));
+const device = vi.hoisted(() => ({ isDevice: true }));
 vi.mock('@sentry/react-native', () => sdk);
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.clearAllMocks(); vi.resetModules(); });
+vi.mock('expo-device', () => device);
+afterEach(() => { device.isDevice = true; vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.clearAllMocks(); vi.resetModules(); });
 
 it('R-SENTRY-ROUTE: phone and web events retain an allowlisted screen pattern without parameter values', async () => {
   vi.stubGlobal('__DEV__', false); vi.stubEnv('EXPO_PUBLIC_SENTRY_DSN', 'https://public@fixture.ingest.sentry.io/1');
@@ -47,6 +49,12 @@ it('initializes production capture in JS-only mode and filters SDK event enrichm
 });
 it('does not initialize development builds even with a release DSN present', async () => {
   vi.stubGlobal('__DEV__', true); vi.stubEnv('EXPO_PUBLIC_SENTRY_DSN', 'https://public@fixture.ingest.sentry.io/1');
+  await import('./sentry'); expect(sdk.init).not.toHaveBeenCalled();
+});
+it('does not initialize release APKs or production OTAs on emulators even with a release DSN present', async () => {
+  device.isDevice = false;
+  vi.stubGlobal('__DEV__', false); vi.stubEnv('EXPO_PUBLIC_SENTRY_DSN', 'https://public@fixture.ingest.sentry.io/1');
+  vi.stubEnv('EXPO_PUBLIC_BEELINE_RELEASE_SHA', 'production-ota');
   await import('./sentry'); expect(sdk.init).not.toHaveBeenCalled();
 });
 it('keeps SDK initialization and reporting failures out of the recovery path', async () => {

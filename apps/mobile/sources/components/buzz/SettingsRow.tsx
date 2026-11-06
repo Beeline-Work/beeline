@@ -1,7 +1,5 @@
 import React from 'react';
-import { IndexRow, type IndexRowActionControl, type IndexRowProps } from './IndexRow';
-
-export type SettingsRowActionControl = IndexRowActionControl;
+import { IndexRow, type IndexRowProps } from './IndexRow';
 
 type SettingsRowProps = Omit<IndexRowProps, 'density' | 'inset' | 'accessibilityRole'> & {
   accessibilityRole?: 'button' | 'link';

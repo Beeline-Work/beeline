@@ -1,54 +1,32 @@
-import * as React from 'react';
-import { readFileSync } from 'node:fs';
-// @ts-expect-error react-test-renderer has no declarations in this workspace.
+import React from 'react';
+// @ts-expect-error No renderer declarations in this workspace.
 import { act, create } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { expect, it, vi } from 'vitest';
 
-const state = vi.hoisted(() => ({ value: 'connected' as 'connected' | 'connecting' | 'disconnected', reconnect: vi.fn() }));
-vi.mock('react-native', () => ({ Text: (p: any) => React.createElement('Text', p, p.children), View: (p: any) => React.createElement('View', p, p.children) }));
+const state = vi.hoisted(() => ({ failed: false, reconnect: vi.fn() }));
 vi.mock('@/sync/transport/live-connection', () => ({
-  useConnectionState: () => state.value,
+  useConnectionFailure: () => state.failed,
   reconnectNow: state.reconnect,
 }));
-vi.mock('./BeelineMarkSpinner', () => ({ BeelineMarkSpinner: () => React.createElement('BeelineMarkSpinner') }));
-vi.mock('./Button', () => ({ Button: (p: any) => React.createElement('Button', p, p.label) }));
-vi.mock('@expo/vector-icons', () => ({ Ionicons: (p: any) => React.createElement('Ionicons', p) }));
+vi.mock('react-native', () => ({ View: 'View' }));
+vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
+vi.mock('./IndexRow', () => ({ IndexRow: (props: Record<string, unknown>) => React.createElement('IndexRow', props) }));
 import { ConnectionStatus } from './ConnectionStatus';
 
-describe('ConnectionStatus', () => {
-  it('maps all socket states and reconnects now', () => {
-    state.value = 'connected';
-    let view!: ReturnType<typeof create>;
-    act(() => { view = create(<ConnectionStatus />); });
-    expect(view.toJSON()).toBeNull();
-    state.value = 'connecting';
-    act(() => { view = create(<ConnectionStatus />); });
-    expect(view.root.findByProps({ testID: 'connection-status-connecting' })).toBeTruthy();
-    state.value = 'disconnected';
-    act(() => { view = create(<ConnectionStatus />); });
-    expect(view.root.findByProps({ testID: 'connection-status-disconnected' })).toBeTruthy();
-    expect(view.root.findByProps({ testID: 'connection-status-disconnected-glyph' }).props.name).toBe('ban-outline');
-    act(() => view.root.findByProps({ testID: 'connection-status-reconnect' }).props.onPress());
+it('shows one recovery row only after failure and removes it on the next success', async () => {
+  let tree: any;
+  try {
+    await act(async () => { tree = create(<ConnectionStatus />); });
+    expect(tree.toJSON()).toBeNull();
+    state.failed = true;
+    await act(async () => tree.update(<ConnectionStatus />));
+    const rows = tree.root.findAllByType('IndexRow');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].props.title).toBe('Beeline isn’t connected');
+    await act(async () => rows[0].props.onPress());
     expect(state.reconnect).toHaveBeenCalledOnce();
-  });
-
-  it('renders connected recovery content without a connection status line', () => {
-    state.value = 'connected';
-    let view!: ReturnType<typeof create>;
-    act(() => { view = create(<ConnectionStatus connectedFallback={<Recovery />} />); });
-    expect(view.root.findByType(Recovery)).toBeTruthy();
-    expect(view.root.findAllByProps({ testID: 'connection-status-disconnected' })).toHaveLength(0);
-  });
-
-  it('replaces the Room-list offline error row and its retired copy', () => {
-    const source = readFileSync(new URL('../../app/(app)/beeline/channels.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('<ConnectionStatus />');
-    expect(source).not.toContain("Couldn't reach Beeline");
-    expect(source).not.toContain('No internet');
-    expect(source).not.toContain("Beeline isn't answering");
-  });
+    state.failed = false;
+    await act(async () => tree.update(<ConnectionStatus />));
+    expect(tree.toJSON()).toBeNull();
+  } finally { if (tree) await act(async () => tree.unmount()); }
 });
-
-function Recovery() {
-  return React.createElement('Recovery');
-}

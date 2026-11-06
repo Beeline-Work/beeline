@@ -3,7 +3,8 @@ import { systemLine } from './system-line.js';
 import { randomUUID } from 'node:crypto';
 import { expect, it } from 'vitest';
 import { migrate } from './database.js';
-import { migrateCornerPersonState, setRoomEventSubscriptions } from './corner-person-state.js';
+import { migrateCornerPersonState } from './corner-person-state.js';
+import { setRoomEventSubscriptions } from './agent-subscriptions.js';
 import { seedCornerOpening, PgliteDatabase, insertCornerFacts } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
@@ -73,6 +74,7 @@ it('copies sparse state twice, preserves owed items and read marks, and derives 
         corner_id: corner,
         identity_id: agent,
         event_subscriptions: ['joined'],
+        subscriptions_overridden: false,
         identity_profile: null,
         generation: 1,
         push_muted: true,
@@ -85,7 +87,7 @@ it('copies sparse state twice, preserves owed items and read marks, and derives 
     await migrate(db);
     expect((await db.query('SELECT * FROM memberships WHERE room_id=$1', [corner])).rowCount).toBe(0);
     await setRoomEventSubscriptions(db, corner, agent, ['joined']);
-    expect((await db.query('SELECT event_subscriptions FROM corner_person_state WHERE corner_id=$1 AND identity_id=$2', [corner, agent])).rows[0]!.event_subscriptions).toEqual(['joined']);
+    expect((await db.query('SELECT subscriptions_overridden,event_subscriptions FROM corner_person_state WHERE corner_id=$1 AND identity_id=$2', [corner, agent])).rows[0]).toEqual({subscriptions_overridden:true,event_subscriptions:null});
     const phone = new PhoneService(db, 'https://server.example');
     const daemon = new DaemonService(db, new LiveHub());
     expect((await phone.readRoom(corner, agent))?.viewer.pushMuted).toBe(true);
@@ -123,6 +125,7 @@ it('copies sparse state twice, preserves owed items and read marks, and derives 
       VALUES($1,$2,$3,'member','["joined"]')`,
       [workspace, room, outsider],
     );
+    await setRoomEventSubscriptions(db, room, outsider, ['joined']);
     expect(
       (await db.query('SELECT 1 FROM corner_person_state WHERE identity_id=$1', [outsider]))
         .rowCount,
@@ -133,11 +136,11 @@ it('copies sparse state twice, preserves owed items and read marks, and derives 
     await daemon.execute('setEventSubscriptions', { roomId: corner, kinds: [] }, outsider);
     expect(
       (
-        await db.query('SELECT event_subscriptions FROM corner_person_state WHERE identity_id=$1', [
+        await db.query('SELECT subscriptions_overridden FROM corner_person_state WHERE identity_id=$1', [
           outsider,
         ])
       ).rows,
-    ).toEqual([{ event_subscriptions: [] }]);
+    ).toEqual([{ subscriptions_overridden: true }]);
     expect(await daemon.execute('listEventSubscriptions', { roomId: corner }, outsider)).toEqual({
       kinds: [],
     });

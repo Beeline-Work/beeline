@@ -136,6 +136,10 @@ describe.each(['linear', 'stripe'] as const)('%s provider subscription', (servic
           'linear-delivery': 'delivery-1', 'linear-event': 'Issue' }
         : { 'stripe-signature': `t=${timestamp},v1=${createHmac('sha256', secret)
           .update(`${timestamp}.`).update(raw).digest('hex')}` };
+      await db.query('UPDATE agent_subscriptions SET paused_at=now()');
+      expect(await ingestProviderWebhook(db, service, jobs[0]!.id, raw, headers, now)).toBe(true);
+      expect((await db.query("SELECT id FROM agent_commands WHERE reason='subscribed_event'")).rowCount).toBe(0);
+      await db.query('UPDATE agent_subscriptions SET paused_at=NULL');
       expect(await ingestProviderWebhook(db, service, jobs[0]!.id, raw, headers, now)).toBe(true);
       expect(await ingestProviderWebhook(db, service, jobs[0]!.id, raw, headers, now)).toBe(true);
       expect(await ingestProviderWebhook(db, service, jobs[0]!.id, raw,

@@ -35,13 +35,13 @@ export async function load(url, context, nextLoad) {
     replace('    const quietStartup = getQuietStartup(params.cwd);',
       '    const quietStartup = getQuietStartup(params.cwd);\n' +
       '    const __beelinePiVersion = __beelineInstalledPiVersion(params.cwd);\n' +
-      '    if (!__beelinePiVersion) setTimeout(() => {\n' +
+      '    if (!__beelinePiVersion) void Promise.resolve().then(() => {\n' +
       '      void __beelineReadPiVersion(params.cwd).then(version => {\n' +
       '        if (version) return this.conn.sessionUpdate({ sessionId: session.sessionId, update: {\n' +
       '          sessionUpdate: "session_info_update", _meta: { piAcp: { version } }\n' +
       '        } });\n' +
       '      }).catch(() => {});\n' +
-      '    }, 0);');
+      '    });');
     const preamble = __BEELINE_PREAMBLE__;
     const shebangEnd = source.startsWith('#!') ? source.indexOf('\n') + 1 : 0;
     source = source.slice(0, shebangEnd) + preamble + source.slice(shebangEnd);

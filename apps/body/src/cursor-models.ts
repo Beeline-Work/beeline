@@ -6,7 +6,6 @@ export interface CursorModelCatalog {
 }
 
 /** Bounded wait for the CLI; a slow or missing binary must not hang connect. */
-const CURSOR_MODELS_TIMEOUT_MS = 10_000;
 
 /**
  * Parse `cursor-agent models` output. Each model prints as one line:
@@ -47,18 +46,13 @@ export async function enumerateCursorModels(
       stdio: ['ignore', 'pipe', 'ignore'],
     });
     let output = '';
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL');
-    }, CURSOR_MODELS_TIMEOUT_MS);
     child.stdout?.on('data', (chunk: Buffer) => {
       output += chunk.toString();
     });
     child.on('error', () => {
-      clearTimeout(timer);
       resolve(undefined);
     });
     child.on('close', (code) => {
-      clearTimeout(timer);
       resolve(code === 0 ? parseCursorModelsOutput(output) : undefined);
     });
   });

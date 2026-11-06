@@ -13,6 +13,7 @@ export const KIND_CHANNEL_ADMINS = 39001;
 export const KIND_CHANNEL_MEMBERS = 39002;
 
 /** NIP-33 parameterized replaceable application data (live in-flight agent reply draft). */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export const KIND_AGENT_DRAFT = 30078;
 /** Paired-owner-authored per-agent access policy. */
 export const KIND_AGENT_ACCESS_CONFIG = 30078;

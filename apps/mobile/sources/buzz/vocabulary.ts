@@ -30,7 +30,7 @@ export const MEMBERS_LABEL = 'Members';
  * read one, and an unknown number is likewise reported as nothing rather than
  * guessed at.
  */
-export function formatRoomCornerCount(count: number | undefined): string | null {
+function formatRoomCornerCount(count: number | undefined): string | null {
   if (count === undefined || count <= 0) return null;
   return `${count} ${count === 1 ? CORNER_LABEL : CHANGES_LABEL}`;
 }

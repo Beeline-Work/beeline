@@ -1,0 +1,842 @@
+import * as React from 'react';
+// @ts-expect-error react-test-renderer has no declarations in this workspace.
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { CornerListItem, CornerListView } from '@beeline/buzz-client';
+
+const list = vi.hoisted(() => ({
+  reads: [] as Array<{ options: unknown; settle?: () => void }>,
+  /** The rows each read answers with, by state. */
+  state: 'waiting' as string,
+  /** Extra open corners the first page carries. */
+  extra: [] as string[],
+  /** The server's Mine rule holds for every open row the read answers with. */
+  mine: false,
+  /** Open rows the server's Mine rule holds for, when `mine` is off. */
+  mineIds: [] as string[],
+  /** When set, a read waits on this gate before it answers. */
+  readGate: null as Promise<void> | null,
+  archived: [] as string[],
+  cached: null as unknown,
+  createCalls: [] as unknown[][],
+  createGate: null as Promise<void> | null,
+  createFailure: null as Error | null,
+  live: null as null | import('@/sync/transport/live-connection').LiveConnection,
+  identityPubkey: 'viewer',
+  appListeners: new Set<(state: string) => void>(),
+}));
+
+vi.mock('react-native', async () => {
+  const ReactModule = await import('react');
+  const host = (name: string) => (props: any) =>
+    ReactModule.createElement(name, props, props.children);
+  return {
+    AppState: { currentState: 'active', addEventListener: (_event: string, listener: (state: string) => void) => {
+      list.appListeners.add(listener);
+      return { remove: () => list.appListeners.delete(listener) };
+    } },
+    Platform: {
+      OS: 'ios',
+      select: (choices: Record<string, unknown>) => choices.ios ?? choices.default,
+    },
+    Pressable: host('Pressable'),
+    Text: host('Text'),
+    TouchableOpacity: host('TouchableOpacity'),
+    View: host('View'),
+  };
+});
+
+function hostModule(...names: string[]) {
+  return Object.fromEntries(
+    names.map((name) => [name, (props: any) => React.createElement(name, props, props?.children)]),
+  );
+}
+vi.mock('@/components/buzz/Button', () => hostModule('Button'));
+vi.mock('@/components/buzz/CornerGlyph', () => ({
+  ...hostModule('CornerGlyph'),
+  CORNER_META_SIZE: 12,
+}));
+vi.mock('@/components/buzz/CornerWaitingPulse', () => hostModule('CornerWaitingPulse'));
+vi.mock('@/components/buzz/SurfaceGlyphLoader', () => hostModule('SurfaceGlyphLoader'));
+vi.mock('@/components/buzz/RoomCornersHeader', () => hostModule('RoomCornersHeader'));
+vi.mock('@/components/buzz/RoomCornersList', () => hostModule('RoomCornersList'));
+vi.mock('@/components/buzz/PinGlyph', () => hostModule('PinGlyph'));
+vi.mock('react-native-reanimated', () => ({
+  default: { View: (props: any) => React.createElement('AnimatedView', props, props.children) },
+  Easing: { out: () => 'out', cubic: 'cubic' },
+  ReduceMotion: { System: 'system' },
+  useAnimatedStyle: (style: () => unknown) => style(),
+  useSharedValue: (value: number) => ({ value }),
+  withTiming: (value: number) => value,
+}));
+vi.mock('@/components/buzz/CommunityRail', () => hostModule('BuzzCommunityShell'));
+vi.mock('@/modal', () => ({ Modal: { alert: vi.fn() } }));
+vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
+vi.mock('@/buzz/use-room-workflow-run', () => ({
+  liveRoomRuns: () => [],
+  useRoomWorkflowRuns: () => [],
+}));
+vi.mock('@/buzz/workflow-run-copy', () => ({ workflowRunHref: () => '/workflow' }));
+vi.mock('@/components/buzz/corner-brief-viewer', () => ({ openCornerBriefViewer: vi.fn() }));
+vi.mock('expo-haptics', () => ({
+  notificationAsync: vi.fn(),
+  NotificationFeedbackType: { Success: 'success', Error: 'error' },
+}));
+vi.mock('expo-router', () => ({
+  router: { push: vi.fn(), replace: vi.fn(), back: vi.fn() },
+  useLocalSearchParams: () => ({ roomId: 'room-a' }),
+}));
+vi.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+}));
+vi.mock('@/auth/buzz-identity-storage', () => ({
+  getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
+  loadBuzzIdentity: vi.fn(async () => ({ publicKey: list.identityPubkey, secretKey: new Uint8Array(32) })),
+}));
+vi.mock('@/buzz/surface-storage', () => ({
+  mobileSurfaceCache: {
+    read: vi.fn(async () => list.cached),
+    write: vi.fn(async () => undefined),
+  },
+  surfaceAddress: vi.fn(() => 'surface-address'),
+}));
+vi.mock('@/sync/transport/monolith-operation', () => ({
+  phoneOperationFailureReason: (reason: unknown) => String(reason),
+}));
+vi.mock('@/sync/transport/live-connection', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/sync/transport/live-connection')>()),
+  sharedLiveConnection: () => list.live,
+}));
+vi.mock('@/sync/transport', () => ({
+  BuzzRigTransport: class {
+    async createHumanCorner(...args: unknown[]) {
+      list.createCalls.push(args);
+      await list.createGate;
+      if (list.createFailure) throw list.createFailure;
+      return 'corner-created';
+    }
+  },
+}));
+vi.mock('@/sync/transport/room-view-client', () => ({
+  RoomViewClient: class {
+    private readonly pubkey: string;
+    constructor(config: { identity: { publicKey: string } }) {
+      this.pubkey = config.identity.publicKey;
+    }
+    async corners(
+      _id: string,
+      options?: { archived?: boolean; openBefore?: string },
+    ): Promise<CornerListView> {
+      const read: { options: unknown; settle?: () => void } = { options };
+      list.reads.push(read);
+      const state = list.state;
+      const extra = [...list.extra];
+      const archived = [...list.archived];
+      if (this.pubkey === 'viewer') await list.readGate;
+      if (options?.archived) {
+        return { ...cornerList(state), corners: archived.map((id) => corner(id, 'archived')) };
+      }
+      const view = cornerList(this.pubkey === 'viewer' ? state : 'review', extra);
+      return options?.openBefore ? view : { ...view, summary: summaryOf(view.corners) };
+    }
+  },
+}));
+
+import BuzzCorners from './[roomId]';
+import { CornerOpenToast } from '@/components/buzz/CornerOpenToast';
+import { cornerOpenEnded } from '@/buzz/corner-open-status';
+import {
+  applyChatListCorners,
+  cornerStoreClock,
+  resetRoomCornerStore,
+} from '@/buzz/room-corner-store';
+import { DesktopRoomCorners } from '@/components/buzz/DesktopRoomCorners';
+import { ConversationRow } from '@/components/buzz/ConversationRow';
+import { LiveConnection } from '@/sync/transport/live-connection';
+import { router } from 'expo-router';
+import { cornerDisplayState, cornerHeaderAgent } from '@/buzz/corner-display-state';
+import { useCornerHeaderItem } from '@/buzz/use-room-corners';
+import { resetClientState } from '@/sync/client-reset';
+import { CornerHeaderAgentText } from '@/components/buzz/HeaderLadder';
+
+const viewer = { pubkey: 'viewer', kind: 'human' as const, name: 'Captain' };
+
+function corner(id: string, state: string, reason?: string): CornerListItem {
+  return {
+    ...(reason ? { reason } : {}),
+    corner: {
+      id,
+      workspaceId: 'workspace',
+      parentId: 'room-a',
+      name: id,
+      archived: state === 'archived',
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    lifecycle: { lifecycle: 'unknown', checks: 'unknown' },
+    state,
+    stateAt: 1,
+  } as unknown as CornerListItem;
+}
+
+function cornerList(state: string, extra: readonly string[] = []): CornerListView {
+  return {
+    room: {
+      id: 'room-a',
+      workspaceId: 'workspace',
+      name: 'general',
+      archived: false,
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    corners: [...extra.map((id) => corner(id, 'working')), corner('corner-1', state)]
+      .map((item) => (list.mine || list.mineIds.includes(item.corner.id) ? { ...item, mine: true } : item)),
+    viewer: {
+      identity: viewer,
+      role: 'member',
+      permissions: { send: true, manage: false },
+    },
+    // What the server sends for this surface today.
+    watchFilters: [],
+  } as unknown as CornerListView;
+}
+
+/** The Room list summary the server sends with a first page that holds every open corner. */
+function summaryOf(rows: readonly CornerListItem[]): NonNullable<CornerListView['summary']> {
+  return {
+    cornerCount: rows.length,
+    waitingCornerCount: rows.filter((item) => item.state === 'waiting').length,
+    mineCornerCount: rows.filter((item) => item.mine).length,
+    openCorners: rows.map((item) => ({
+      id: item.corner.id,
+      name: item.corner.name,
+      state: item.state as 'working',
+      ...(item.mine ? { mine: true as const } : {}),
+    })),
+  };
+}
+
+type TestSocket = {
+  readyState: number;
+  sent: string[];
+  onopen?: () => void;
+  onmessage?: (event: { data: string }) => void;
+  onclose?: () => void;
+};
+
+/** The phone server's side of the one live socket. */
+const server = {
+  sockets: [] as TestSocket[],
+  socket(): TestSocket {
+    const socket = server.sockets.at(-1);
+    if (!socket) throw new Error('no live socket');
+    return socket;
+  },
+  open() {
+    const socket = server.socket();
+    socket.readyState = 1;
+    socket.onopen?.();
+  },
+  emit(frame: unknown) {
+    server.socket().onmessage?.({ data: JSON.stringify(frame) });
+  },
+  subscribed(resumed = false, epoch = 'epoch', cursor = 0) {
+    server.emit({ type: 'subscribed', roomId: 'room-a', epoch, cursor, resumed });
+  },
+  status(sequence: number, rows: readonly CornerListItem[], nextOpen?: string) {
+    server.emit({
+      type: 'corner-status', roomId: 'room-a', sequence, cornerCount: rows.length,
+      waitingCornerCount: 0, openCorners: [], agentState: null, corners: rows,
+      ...(nextOpen ? { nextOpen } : {}),
+    });
+  },
+};
+
+function painted(renderer: ReactTestRenderer): string[] {
+  const rows = renderer.root.find((node: { type: unknown }) => node.type === 'RoomCornersList');
+  return (rows.props.corners as CornerListItem[]).map((item) => `${item.corner.id}:${item.state}`);
+}
+
+function openReads(): number {
+  return list.reads.filter((read) => !(read.options as { archived?: boolean } | undefined)?.archived
+    && !(read.options as { openBefore?: string } | undefined)?.openBefore).length;
+}
+
+function textOf(node: { children: unknown[] }): string {
+  return node.children
+    .map((child) => (typeof child === 'string' ? child : textOf(child as { children: unknown[] })))
+    .join('');
+}
+
+/** The corner header's state path, as the chat surface runs it. */
+function CornerHeader({ cornerId, archived, turns = [] }: {
+  cornerId: string;
+  archived?: boolean;
+  turns?: readonly string[];
+}) {
+  const item = useCornerHeaderItem('room-a', cornerId, archived === true);
+  const display = item ? cornerDisplayState(item) : undefined;
+  const header = cornerHeaderAgent({
+    ownerPubkey: 'agent-owner',
+    ...(display ? { status: display.status } : {}),
+    ...(display?.headerSuffix ? { headerSuffix: display.headerSuffix } : {}),
+    activeTurnPubkeys: turns,
+  });
+  return React.createElement(CornerHeaderAgentText, {
+    name: 'Ruby',
+    ...(header.stateWord ? { stateWord: header.stateWord } : {}),
+  });
+}
+
+function headerText(renderer: ReactTestRenderer): string {
+  return textOf(renderer.root.find((node: { type: unknown }) => node.type === 'Text'));
+}
+
+async function mountHeader(props: React.ComponentProps<typeof CornerHeader>) {
+  let renderer!: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(React.createElement(CornerHeader, props));
+  });
+  await settle();
+  return renderer;
+}
+
+const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+
+/** Another screen, such as the Room list, holds the parent Room lane. */
+async function holdLaneElsewhere(): Promise<() => void> {
+  const stop = await list.live!.register([{ '#h': ['room-a'] }], () => undefined);
+  await vi.waitFor(() => expect(server.sockets).toHaveLength(1));
+  server.open();
+  server.subscribed();
+  return stop;
+}
+
+async function openCorners(): Promise<ReactTestRenderer> {
+  let renderer!: ReactTestRenderer;
+  await act(async () => {
+    // The app layout mounts the toast over every screen.
+    renderer = create(
+      React.createElement(React.Fragment, null,
+        React.createElement(BuzzCorners),
+        React.createElement(CornerOpenToast)),
+    );
+  });
+  await settle();
+  return renderer;
+}
+
+/** Open Corners with nothing else holding the lane; the first read paints it. */
+async function mountList(): Promise<ReactTestRenderer> {
+  const renderer = await openCorners();
+  await vi.waitFor(() => expect(server.sockets).toHaveLength(1));
+  server.open();
+  server.subscribed();
+  await settle();
+  await vi.waitFor(() => expect(painted(renderer)).toEqual(['corner-1:waiting']));
+  return renderer;
+}
+
+beforeEach(() => {
+  list.appListeners.clear();
+  list.reads.length = 0;
+  list.state = 'waiting';
+  list.extra = [];
+  list.mine = false;
+  list.mineIds = [];
+  list.readGate = null;
+  list.identityPubkey = 'viewer';
+  list.archived = [];
+  list.cached = null;
+  list.createCalls.length = 0;
+  list.createGate = null;
+  list.createFailure = null;
+  cornerOpenEnded();
+  vi.mocked(router.push).mockClear();
+  server.sockets.length = 0;
+  vi.stubGlobal('WebSocket', class {
+    readyState = 0;
+    sent: string[] = [];
+    onopen?: () => void;
+    onmessage?: (event: { data: string }) => void;
+    onclose?: () => void;
+    constructor() { server.sockets.push(this as unknown as TestSocket); }
+    send(value: string) { this.sent.push(value); }
+    close() { this.readyState = 3; }
+  });
+  resetRoomCornerStore();
+  list.live = new LiveConnection({
+    authorization: async () => 'phone-session',
+    liveUrl: () => 'wss://server.example/v1/phone/live',
+    subscribeIdentityChange: () => () => undefined,
+  });
+});
+
+afterEach(() => {
+  list.live?.dispose();
+  list.live = null;
+  vi.unstubAllGlobals();
+});
+
+describe('Corner list live path', () => {
+  it('Reproduction 5b25dbcb: rereads a current list on mount and foreground while keeping its rows painted', async () => {
+    const stop = await holdLaneElsewhere();
+    const first = await openCorners();
+    await vi.waitFor(() => expect(openReads()).toBe(1));
+    await settle();
+    await act(async () => first.unmount());
+    list.state = 'idle';
+    let release!: () => void;
+    list.readGate = new Promise((resolve) => { release = resolve; });
+    const second = await openCorners();
+    expect(painted(second)).toEqual(['corner-1:waiting']);
+    expect(openReads()).toBe(2);
+    await act(async () => release());
+    await settle();
+    expect(painted(second)).toEqual(['corner-1:idle']);
+    list.readGate = null;
+    list.state = 'working';
+    await act(async () => {
+      for (const listener of list.appListeners) listener('background');
+      for (const listener of list.appListeners) listener('active');
+    });
+    await settle();
+    expect(openReads()).toBe(3);
+    expect(painted(second)).toEqual(['corner-1:working']);
+    await act(async () => second.unmount());
+    stop();
+  });
+
+  it('shows corners the Room lane heard while Corners was closed at once, and reads once for its saved header (D3)', async () => {
+    // The Room list holds the parent lane. While Corners is closed, two
+    // corners open and the server sends their rows.
+    await holdLaneElsewhere();
+    server.status(1, [corner('corner-new', 'working'), corner('corner-1', 'waiting')]);
+    server.status(2, [corner('corner-newer', 'working'), corner('corner-new', 'working'),
+      corner('corner-1', 'waiting')]);
+    // Corners saved an older list the last time it was open.
+    list.cached = cornerList('waiting');
+    list.extra = ['corner-newer', 'corner-new'];
+    let release!: () => void;
+    list.readGate = new Promise((resolve) => (release = resolve));
+    const renderer = await openCorners();
+    // The rows the lane proved paint before the read answers.
+    await vi.waitFor(() => expect(painted(renderer)).toEqual(
+      ['corner-newer:working', 'corner-new:working', 'corner-1:waiting']));
+    // Only a read makes the saved header current.
+    await vi.waitFor(() => expect(openReads()).toBe(1));
+    await act(async () => release());
+    await settle();
+    expect(painted(renderer)).toEqual(
+      ['corner-newer:working', 'corner-new:working', 'corner-1:waiting']);
+    expect(openReads()).toBe(1);
+  });
+
+  it('Reproduction G3-3.1: reads once when the Room list holds the lane but nothing proved the saved list', async () => {
+    // The Room list holds the parent lane after app start; no corner changed
+    // since, so no frame came. The late join still reports the lane resumed.
+    await holdLaneElsewhere();
+    list.cached = cornerList('waiting');
+    list.state = 'working';
+    const renderer = await openCorners();
+    // The saved copy paints at once; the read replaces it.
+    await vi.waitFor(() => expect(painted(renderer)).toEqual(['corner-1:working']));
+    expect(openReads()).toBe(1);
+  });
+
+  it('keeps a frame that lands while the first read is in flight', async () => {
+    let release!: () => void;
+    list.readGate = new Promise((resolve) => (release = resolve));
+    const renderer = await openCorners();
+    await vi.waitFor(() => expect(server.sockets).toHaveLength(1));
+    server.open();
+    server.subscribed();
+    await vi.waitFor(() => expect(openReads()).toBe(1));
+    server.status(1, [corner('corner-new', 'working'), corner('corner-1', 'working')]);
+    await act(async () => release());
+    await settle();
+    expect(painted(renderer)).toEqual(['corner-new:working', 'corner-1:working']);
+  });
+
+  it('J04/J10: a new account reads its own corners while the old GET is in flight', async () => {
+    let release!: () => void;
+    list.readGate = new Promise((resolve) => (release = resolve));
+    const renderer = await openCorners();
+    await vi.waitFor(() => expect(server.sockets).toHaveLength(1));
+    server.open();
+    server.subscribed();
+    await vi.waitFor(() => expect(openReads()).toBe(1));
+
+    list.identityPubkey = 'new-viewer';
+    await act(async () => resetClientState());
+    server.subscribed(false, 'new-account');
+    await vi.waitFor(() => expect(openReads()).toBe(2));
+    await vi.waitFor(() => expect(painted(renderer)).toEqual(['corner-1:review']));
+    await act(async () => release());
+    expect(painted(renderer)).toEqual(['corner-1:review']);
+  });
+
+  it('never repeats a corner a frame moved from a later page to the first', async () => {
+    const renderer = await mountList();
+    server.status(1, [corner('corner-1', 'waiting')], 'older');
+    await settle();
+    // The next page holds corner-old, and repeats corner-1 from the first.
+    list.extra = ['corner-old'];
+    await act(async () => renderer.root.findByType('RoomCornersList').props.onMoreOpen());
+    await settle();
+    expect(painted(renderer)).toEqual(['corner-1:waiting', 'corner-old:working']);
+    server.status(2, [corner('corner-old', 'review'), corner('corner-1', 'waiting')]);
+    await settle();
+    expect(painted(renderer)).toEqual(['corner-old:review', 'corner-1:waiting']);
+  });
+
+  it('re-reads the archived list when a corner leaves the open list', async () => {
+    const renderer = await mountList();
+    server.status(1, [corner('corner-2', 'working'), corner('corner-1', 'waiting')]);
+    await settle();
+    await act(async () => renderer.root.findByType('RoomCornersList').props.onShowArchived());
+    await settle();
+    expect(renderer.root.findByType('RoomCornersList').props.archived.corners).toEqual([]);
+    list.archived = ['corner-2'];
+    server.status(2, [corner('corner-1', 'waiting')]);
+    await settle();
+    await vi.waitFor(() => expect(
+      renderer.root.findByType('RoomCornersList').props.archived.corners
+        .map((item: CornerListItem) => item.corner.id),
+    ).toEqual(['corner-2']));
+    expect(painted(renderer)).toEqual(['corner-1:waiting']);
+  });
+
+  it('Reproduction G3-R1: re-reads the archived list when a corner closes during its first read', async () => {
+    const renderer = await mountList();
+    server.status(1, [corner('corner-2', 'working'), corner('corner-1', 'waiting')]);
+    await settle();
+    // The first archived read starts while corner-2 is still open, so its
+    // answer is empty.
+    let release!: () => void;
+    list.readGate = new Promise((resolve) => (release = resolve));
+    let shown!: Promise<void>;
+    await act(async () => {
+      shown = renderer.root.findByType('RoomCornersList').props.onShowArchived();
+    });
+    await vi.waitFor(() => expect(list.reads.at(-1)?.options).toEqual({ archived: true }));
+    // corner-2 closes before that read lands.
+    list.archived = ['corner-2'];
+    server.status(2, [corner('corner-1', 'waiting')]);
+    await settle();
+    list.readGate = null;
+    await act(async () => { release(); await shown; });
+    await settle();
+    await vi.waitFor(() => expect(
+      renderer.root.findByType('RoomCornersList').props.archived.corners
+        .map((item: CornerListItem) => item.corner.id),
+    ).toEqual(['corner-2']));
+  });
+
+  it('creates and opens a randomly named corner from the plus button', async () => {
+    const renderer = await mountList();
+    const header = renderer.root.findByType('RoomCornersHeader');
+    await act(async () => header.props.onAdd());
+    expect(list.createCalls).toHaveLength(1);
+    const [roomId, title] = list.createCalls[0] as [string, string];
+    expect(roomId).toBe('room-a');
+    expect(title).toMatch(/^\w+-\w+-corner$/);
+    expect(router.push).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pathname: '/beeline/chat/[channelId]',
+        params: expect.objectContaining({ channelId: 'corner-created', title }),
+      }),
+    );
+  });
+
+  it('shows the plus as busy while the create is in flight and ignores a second tap', async () => {
+    const renderer = await mountList();
+    let release!: () => void;
+    list.createGate = new Promise((resolve) => (release = resolve));
+    const header = () => renderer.root.findByType('RoomCornersHeader');
+    expect(header().props.busy).toBe(false);
+    await act(async () => {
+      void header().props.onAdd();
+    });
+    expect(header().props.busy).toBe(true);
+    await act(async () => {
+      void header().props.onAdd();
+    });
+    expect(list.createCalls).toHaveLength(1);
+    // The phone names the corner, so a retry can ask for the same one.
+    expect(list.createCalls[0]![4]).toMatch(/^[0-9a-f-]{36}$/);
+    await act(async () => release());
+    await vi.waitFor(() => expect(header().props.busy).toBe(false));
+    expect(router.push).toHaveBeenCalledOnce();
+  });
+
+  it('shows a placeholder row while the create waits, with no toast over its own list', async () => {
+    const renderer = await mountList();
+    let release!: () => void;
+    list.createGate = new Promise((resolve) => (release = resolve));
+    await act(async () => {
+      void renderer.root.findByType('RoomCornersHeader').props.onAdd();
+    });
+    const row = renderer.root.findByProps({ testID: 'corner-open-row-pending' });
+    expect(textOf(row)).toBe('Opening corner…Waiting for server · 0s');
+    expect(renderer.root.findAllByProps({ testID: 'corner-open-pending' })).toHaveLength(0);
+    await act(async () => release());
+    await vi.waitFor(() =>
+      expect(renderer.root.findAllByProps({ testID: 'corner-open-row-pending' })).toHaveLength(0),
+    );
+  });
+
+  it.each([
+    ['loses the network', new TypeError('Network request failed'), 'No connection to the server'],
+    [
+      'times out',
+      Object.assign(new Error('timed out'), { name: 'MonolithRequestTimeoutError' }),
+      'No response from server after 15s',
+    ],
+  ])('says so with Retry when the create %s, and Retry asks for the same corner', async (_, failure, why) => {
+    const renderer = await mountList();
+    list.createFailure = failure;
+    await act(async () => renderer.root.findByType('RoomCornersHeader').props.onAdd());
+    expect(router.push).not.toHaveBeenCalled();
+    expect(renderer.root.findAllByProps({ testID: 'corner-open-row-failed' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'corner-open-failed' })).toHaveLength(0);
+
+    list.createFailure = null;
+    await act(async () => { const {cornerOpenStatus}=await import('@/buzz/corner-open-status');const status=cornerOpenStatus();if(status.status==='failed')status.retry(); });
+    expect(list.createCalls).toHaveLength(2);
+    expect(list.createCalls[1]![1]).toBe(list.createCalls[0]![1]);
+    expect(list.createCalls[1]![4]).toBe(list.createCalls[0]![4]);
+    expect(router.push).toHaveBeenCalledOnce();
+    expect(renderer.root.findAllByProps({ testID: 'corner-open-failed' })).toHaveLength(0);
+  });
+
+  it('reads when the parent Room names a corner change without its rows', async () => {
+    const renderer = await mountList();
+    expect(openReads()).toBe(1);
+    list.state = 'working';
+    server.emit({ type: 'invalidate', roomId: 'room-a', reason: 'corner-status' });
+    await settle();
+    expect(openReads()).toBe(2);
+    expect(painted(renderer)).toEqual(['corner-1:working']);
+  });
+
+  it('reads on reconnect invalidation, not parent chat traffic or subscription acknowledgement', async () => {
+    const renderer = await mountList();
+    server.emit({ type: 'invalidate', roomId: 'room-a', reason: 'postgres:messages', messageId: 'm1' });
+    await settle();
+    expect(openReads()).toBe(1);
+
+    list.state = 'working';
+    server.subscribed(false, 'epoch-2');
+    await settle();
+    expect(openReads()).toBe(1);
+    server.emit({ type: 'invalidate', roomId: 'room-a', reason: 'reconnect' });
+    await settle();
+    expect(openReads()).toBe(2);
+    expect(painted(renderer)).toEqual(['corner-1:working']);
+  });
+});
+
+describe('Corner header reads the parent Room record (3.6)', () => {
+  it('shows the same row as the Corners list, and follows its frames', async () => {
+    const screen = await mountList();
+    const header = await mountHeader({ cornerId: 'corner-1' });
+    expect(headerText(header)).toBe('RUBY · waiting');
+    const review = corner('corner-1', 'review');
+    server.status(1, [{ ...review, lifecycle: { ...review.lifecycle, checks: 'failing' } }]);
+    await settle();
+    expect(painted(screen)).toEqual(['corner-1:review']);
+    expect(headerText(header)).toBe('RUBY · review · checks failed');
+    expect(openReads()).toBe(2);
+  });
+
+  it('keeps an idle row idle while a turn runs in the corner', async () => {
+    const screen = await mountList();
+    server.status(1, [corner('corner-1', 'idle')]);
+    await settle();
+    expect(painted(screen)).toEqual(['corner-1:idle']);
+    const header = await mountHeader({ cornerId: 'corner-1', turns: ['agent-owner'] });
+    expect(headerText(header)).toBe('RUBY · idle');
+  });
+
+  it('shows no state word before the row lands, and archived only from the server', async () => {
+    await mountList();
+    const unknown = await mountHeader({ cornerId: 'corner-elsewhere', archived: false });
+    expect(headerText(unknown)).toBe('RUBY');
+    const closed = await mountHeader({ cornerId: 'corner-elsewhere', archived: true });
+    expect(headerText(closed)).toBe('RUBY · archived');
+  });
+
+  it('Reproduction G3-R2: the Room list dropdown, Corners list and header agree after a read', async () => {
+    // The Room list read saw corner-1 waiting.
+    const chat = {
+      room: { id: 'room-a', name: 'general' },
+      cornerCount: 1,
+      waitingCornerCount: 1,
+      openCorners: [{ id: 'corner-1', name: 'corner-1', state: 'waiting' as const, mine: true as const }],
+    } as unknown as import('@beeline/buzz-client').ChatListItem;
+    applyChatListCorners([chat], cornerStoreClock());
+    let dropdown!: ReactTestRenderer;
+    await act(async () => {
+      dropdown = create(React.createElement(DesktopRoomCorners, { item: chat, onOpen: () => undefined }));
+    });
+    const dropdownStates = () => dropdown.root
+      .findAll((node: { type: unknown }) => node.type === 'Pressable')
+      .map((node: { props: { accessibilityLabel: string } }) => node.props.accessibilityLabel);
+    expect(dropdownStates()).toEqual(['Open corner corner-1, waiting']);
+    // The corner went idle; the Corners read carries that row.
+    list.state = 'idle';
+    list.mine = true;
+    const renderer = await openCorners();
+    await vi.waitFor(() => expect(server.sockets).toHaveLength(1));
+    server.open();
+    server.subscribed();
+    await vi.waitFor(() => expect(painted(renderer)).toEqual(['corner-1:idle']));
+    const header = await mountHeader({ cornerId: 'corner-1' });
+    expect(headerText(header)).toBe('RUBY · idle');
+    expect(dropdownStates()).toEqual(['Open corner corner-1, idle']);
+  });
+
+  it('Reproduction G3-R2: a corner closed before Corners opens leaves the dropdown too', async () => {
+    // The Room list read saw both corners waiting; corner-closed then closed unheard.
+    const chat = {
+      room: { id: 'room-a', name: 'general' },
+      cornerCount: 2,
+      waitingCornerCount: 2,
+      openCorners: [
+        { id: 'corner-closed', name: 'corner-closed', state: 'waiting' as const, mine: true as const },
+        { id: 'corner-1', name: 'corner-1', state: 'waiting' as const, mine: true as const },
+      ],
+    } as unknown as import('@beeline/buzz-client').ChatListItem;
+    applyChatListCorners([chat], cornerStoreClock());
+    let dropdown!: ReactTestRenderer;
+    await act(async () => {
+      dropdown = create(React.createElement(DesktopRoomCorners, { item: chat, onOpen: () => undefined }));
+    });
+    const dropdownStates = () => dropdown.root
+      .findAll((node: { type: unknown }) => node.type === 'Pressable')
+      .map((node: { props: { accessibilityLabel: string } }) => node.props.accessibilityLabel);
+    expect(dropdownStates()).toEqual([
+      'Open corner corner-closed, waiting',
+      'Open corner corner-1, waiting',
+    ]);
+    // The Corners read holds every open corner: corner-1 idle, no next page.
+    list.state = 'idle';
+    list.mine = true;
+    const renderer = await openCorners();
+    await vi.waitFor(() => expect(server.sockets).toHaveLength(1));
+    server.open();
+    server.subscribed();
+    await vi.waitFor(() => expect(painted(renderer)).toEqual(['corner-1:idle']));
+    const closed = await mountHeader({ cornerId: 'corner-closed', archived: true });
+    expect(headerText(closed)).toBe('RUBY · archived');
+    expect(dropdownStates()).toEqual(['Open corner corner-1, idle']);
+  });
+
+  it('Reproduction G3-R2: a Mine corner opened before Corners opens joins the dropdown too', async () => {
+    // The Room list read saw only corner-1; corner-new then opened unheard.
+    const chat = {
+      room: { id: 'room-a', name: 'general' },
+      cornerCount: 1,
+      waitingCornerCount: 1,
+      openCorners: [
+        { id: 'corner-1', name: 'corner-1', state: 'waiting' as const, mine: true as const },
+      ],
+    } as unknown as import('@beeline/buzz-client').ChatListItem;
+    applyChatListCorners([chat], cornerStoreClock());
+    let dropdown!: ReactTestRenderer;
+    await act(async () => {
+      dropdown = create(React.createElement(DesktopRoomCorners, { item: chat, onOpen: () => undefined }));
+    });
+    const dropdownStates = () => dropdown.root
+      .findAll((node: { type: unknown }) => node.type === 'Pressable')
+      .map((node: { props: { accessibilityLabel: string } }) => node.props.accessibilityLabel);
+    expect(dropdownStates()).toEqual(['Open corner corner-1, waiting']);
+    // The Corners read holds every open corner, both Mine, no next page.
+    list.extra = ['corner-new'];
+    list.mine = true;
+    const renderer = await openCorners();
+    await vi.waitFor(() => expect(server.sockets).toHaveLength(1));
+    server.open();
+    server.subscribed();
+    await vi.waitFor(() => expect(painted(renderer)).toEqual(['corner-new:working', 'corner-1:waiting']));
+    const opened = await mountHeader({ cornerId: 'corner-new' });
+    expect(headerText(opened)).toBe('RUBY · working');
+    // The dropdown lists waiting corners first.
+    expect(dropdownStates()).toEqual([
+      'Open corner corner-1, waiting',
+      'Open corner corner-new, working',
+    ]);
+  });
+
+  it('Reproduction G3-R2: the dropdown follows a corner whose server Mine flag changed', async () => {
+    // The Room list read saw corner-1 not Mine and corner-mine Mine.
+    const chat = {
+      room: { id: 'room-a', name: 'general' },
+      cornerCount: 2,
+      waitingCornerCount: 1,
+      openCorners: [
+        { id: 'corner-mine', name: 'corner-mine', state: 'working' as const, mine: true as const },
+        { id: 'corner-1', name: 'corner-1', state: 'waiting' as const },
+      ],
+    } as unknown as import('@beeline/buzz-client').ChatListItem;
+    applyChatListCorners([chat], cornerStoreClock());
+    let dropdown!: ReactTestRenderer;
+    await act(async () => {
+      dropdown = create(React.createElement(DesktopRoomCorners, { item: chat, onOpen: () => undefined }));
+    });
+    const dropdownStates = () => dropdown.root
+      .findAll((node: { type: unknown }) => node.type === 'Pressable')
+      .map((node: { props: { accessibilityLabel: string } }) => node.props.accessibilityLabel);
+    expect(dropdownStates()).toEqual(['Open corner corner-mine, working']);
+    // The viewer now follows corner-1 and no longer follows corner-mine.
+    list.extra = ['corner-mine'];
+    list.mineIds = ['corner-1'];
+    const renderer = await openCorners();
+    await vi.waitFor(() => expect(server.sockets).toHaveLength(1));
+    server.open();
+    server.subscribed();
+    await vi.waitFor(() => expect(painted(renderer)).toEqual(['corner-mine:working', 'corner-1:waiting']));
+    const followed = await mountHeader({ cornerId: 'corner-1' });
+    expect(headerText(followed)).toBe('RUBY · waiting');
+    expect(dropdownStates()).toEqual(['Open corner corner-1, waiting']);
+  });
+
+  it('Reproduction G3-split3: one corners read updates the Room row badge and its dropdown together', async () => {
+    // The Room list read saw two Mine corners waiting.
+    const chat = {
+      room: { id: 'room-a', name: 'general' },
+      cornerCount: 2,
+      openCorners: [
+        { id: 'corner-closed', name: 'corner-closed', state: 'waiting' as const, mine: true as const },
+        { id: 'corner-1', name: 'corner-1', state: 'waiting' as const, mine: true as const },
+      ],
+    } as unknown as import('@beeline/buzz-client').ChatListItem;
+    applyChatListCorners([chat], cornerStoreClock());
+    let room!: ReactTestRenderer;
+    await act(async () => {
+      room = create(React.createElement(React.Fragment, null,
+        React.createElement(ConversationRow, { item: chat, now: 0, onPress: () => undefined,
+          onPin: () => undefined, onToggleCorners: () => undefined, testID: 'room' }),
+        React.createElement(DesktopRoomCorners, { item: chat, onOpen: () => undefined })));
+    });
+    const badge = () => room.root.findByProps({ testID: 'room-corners' }).props.accessibilityLabel;
+    const dropdown = () => room.root
+      .findAll((node: { type: unknown; props: { testID?: string } }) =>
+        node.type === 'Pressable' && node.props.testID?.startsWith('desktop-corner-'))
+      .map((node: { props: { accessibilityLabel: string } }) => node.props.accessibilityLabel);
+    expect(badge()).toBe('Expand 2 corners');
+    expect(dropdown()).toHaveLength(2);
+    // corner-closed closed unheard; the Corners read sends the server's summary.
+    list.state = 'idle';
+    list.mine = true;
+    const renderer = await openCorners();
+    await vi.waitFor(() => expect(server.sockets).toHaveLength(1));
+    server.open();
+    server.subscribed();
+    await vi.waitFor(() => expect(painted(renderer)).toEqual(['corner-1:idle']));
+    await settle();
+    expect(badge()).toBe('Expand 1 corners');
+    expect(dropdown()).toEqual(['Open corner corner-1, idle']);
+  });
+});

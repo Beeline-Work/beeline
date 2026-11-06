@@ -52,19 +52,13 @@ import { execFile, spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import { squireReachCause } from './squire-status.js';
 import { squireBrokerSocketReady, squireHostPaths, squireHostRewriteEnv } from './squire-host.js';
-import type {
-  ConnectionDetail,
-  ConnectionGrant,
-  ConnectionLedgerEntry,
-  ConnectorBrowserLocation,
-  ConnectorSignIn,
-  ConnectorStep,
-  VaultConnectionMeta,
-} from '@beeline/api-contract/daemon';
+import type {ConnectionGrant, ConnectorBrowserLocation, ConnectorSignIn, ConnectorStep, VaultConnectionMeta} from '@beeline/api-contract/daemon';
 
 /** The one Squire MCP contract this connector speaks. */
 export interface SquireMcpClient {
   call(tool: string, args?: Record<string, unknown>): Promise<unknown>;
+  /** An explicit connect has changed the account binding; the next read owns a new session. */
+  reconnect?(): void;
 }
 
 /** The one Squire connect package, tracked at the release that carries the
@@ -215,7 +209,6 @@ export type StreamedShellRunner = (
 export const CONNECT_TIMEOUT_MS = 300_000;
 
 /** How long a connect that reported `connected` may keep running before it is ended. */
-const CONNECTED_EXIT_GRACE_MS = 2_000;
 
 /**
  * Default streamed runner: spawns the process, reads its NEWLINE-DELIMITED
@@ -251,24 +244,8 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env, o
     // The one copy of the run's answer: the last report received. Nothing
     // else is remembered and nothing is inferred from it.
     let report: SquireConnectReport | undefined;
-    let finishing: ReturnType<typeof setTimeout> | undefined;
-
-    // This timer bounds the ceremony itself, not just the wait for its URL: it
-    // stays armed after the surface is published, because nothing downstream
-    // reaps the connect once the connector row leaves `installing`. The human
-    // has until it fires to finish; after that the Xvfb/x11vnc/websockify/
-    // cloudflared rig under the connect goes with the process group.
-    const safetyTimer = setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        resolve({ stdout, stderr, pid: child.pid ?? undefined, report, abort: () => {} });
-      }
-      killConnectTree(child);
-    }, CONNECT_TIMEOUT_MS);
 
     const abort = () => {
-      clearTimeout(safetyTimer);
-      clearTimeout(finishing);
       killConnectTree(child);
     };
 
@@ -305,7 +282,6 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env, o
     };
 
     const settle = (result: StreamedCommandResult) => {
-      clearTimeout(safetyTimer);
       finish(result);
     };
 
@@ -340,8 +316,8 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env, o
       // signs in, but its process can outlive it while the remote-login rig
       // winds down. The exit is what re-drains this helper, so end it here
       // instead of leaving the row installing until the safety timer.
-      if (resolved && report?.terminal && report.state === 'connected' && !finishing) {
-        finishing = setTimeout(abort, CONNECTED_EXIT_GRACE_MS);
+      if (resolved && report?.terminal && report.state === 'connected') {
+        abort();
       }
     };
 
@@ -357,7 +333,6 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env, o
     });
 
     child.on('close', () => {
-      clearTimeout(finishing);
       notifyExit();
       consumeReports(true);
       settle({
@@ -370,7 +345,6 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env, o
     });
 
     child.on('error', () => {
-      clearTimeout(finishing);
       notifyExit();
       settle({ stdout, stderr, pid: child.pid ?? undefined, report, abort: () => {} });
     });
@@ -686,17 +660,12 @@ export async function resolveSquireConnectSpec(run: ShellRunner): Promise<Squire
 export async function prepareHostedSquire(
   run: ShellRunner,
   sockets: { brokerSocket: string; mcpSocket: string },
-  timeoutMs = 60_000,
+  _timeoutMs = 60_000,
 ): Promise<boolean> {
-  const started = await run('systemctl', ['--user', '--no-block', 'start', 'trusty-squire-broker.service']);
+  const started = await run('systemctl', ['--user', 'start', 'trusty-squire-broker.service']);
   if (started.code !== 0) return false;
-  const deadline = Date.now() + timeoutMs;
-  do {
-    if (await squireBrokerSocketReady(sockets.brokerSocket) && await squireBrokerSocketReady(sockets.mcpSocket))
-      return true;
-    await new Promise(resolve => setTimeout(resolve, Math.min(100, Math.max(0, deadline - Date.now()))));
-  } while (Date.now() < deadline);
-  return false;
+  return await squireBrokerSocketReady(sockets.brokerSocket) && await squireBrokerSocketReady(sockets.mcpSocket);
+
 }
 
 /**
@@ -753,6 +722,7 @@ async function installSquireAttempt(
   // Stop only the connect ceremony this agent spawned. Squire alone decides
   // whether its profile is busy or connected in the next typed report.
   releaseSquireConnectSession(log, options.workspaceId);
+  options.mcp?.reconnect?.();
 
   // Verify the copy npx resolves BEFORE connect runs, re-resolving a stale
   // one against the release this reader is written for.
@@ -832,7 +802,8 @@ async function installSquireAttempt(
   const signIn: ConnectorSignIn | undefined =
     isOutstandingSignIn(report) && report.sign_in_url
       ? {
-          method: 'streamed-page',
+          method: location?.kind === 'virtual' || location?.kind === 'host_screen'
+            ? 'streamed-page' : 'oauth',
           url: location?.kind === 'virtual' ? location.url : report.sign_in_url,
           ...(location ? { browserLocation: location } : {}),
         }
@@ -916,9 +887,9 @@ const PAGE_READY_TIMEOUT_MS = 30_000;
 
 /** One admitted readiness observation. A pending tunnel never schedules another
  * GET; another explicit setup action or actual report can observe it anew. */
-export async function awaitPublicPage(url: string, timeoutMs = PAGE_READY_TIMEOUT_MS): Promise<boolean> {
+export async function awaitPublicPage(url: string, _timeoutMs = PAGE_READY_TIMEOUT_MS): Promise<boolean> {
   try {
-    const response = await fetch(url, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(Math.max(1,Math.min(5_000,timeoutMs))) });
+    const response = await fetch(url, { method: 'GET', redirect: 'manual', signal: undefined });
     await response.body?.cancel().catch(() => undefined);
     return response.status < 500;
   } catch { return false; }
@@ -1021,32 +992,6 @@ export async function readVault(mcp: SquireMcpClient): Promise<VaultConnectionMe
   return asArray(result.credentials ?? result.items ?? result).map(vaultConnectionMeta);
 }
 
-export function connectionLedgerEntry(raw: unknown): ConnectionLedgerEntry {
-  const record = asRecord(raw);
-  return {
-    id: String(record.id ?? record.event_id ?? ''),
-    timestamp: numberOrNull(record.timestamp ?? record.created_at) ?? 0,
-    action: String(record.action ?? record.event ?? record.kind ?? 'event'),
-    ...(typeof record.actor === 'string' ? { actor: record.actor } : {}),
-    ...(numberOrNull(record.status) !== null ? { status: numberOrNull(record.status)! } : {}),
-    ...(numberOrNull(record.bytes) !== null ? { bytes: numberOrNull(record.bytes)! } : {}),
-    ...(record.anomaly === true || record.anomaly === false
-      ? { anomaly: record.anomaly as boolean }
-      : {}),
-    ...(typeof record.anomaly_reason === 'string' ? { anomalyReason: record.anomaly_reason } : {}),
-  };
-}
-
-/** `audit_log` (default ledger view) for one credential, shaped to the contract. */
-export async function readConnectionLedger(
-  mcp: SquireMcpClient,
-  ref: string,
-): Promise<ConnectionLedgerEntry[]> {
-  const result = asRecord(await mcp.call('audit_log', { reference: ref, view: 'ledger' }));
-  const entries = asArray(result.entries ?? result.events ?? result.ledger ?? result);
-  return entries.map(connectionLedgerEntry);
-}
-
 export function connectionGrant(raw: unknown): ConnectionGrant {
   const record = asRecord(raw);
   return {
@@ -1091,23 +1036,4 @@ export async function revokeGrants(
     }
   }
   return { revoked, failed };
-}
-
-/** One connection's full detail: metadata, live grants, ledger. */
-export async function readConnectionDetail(
-  mcp: SquireMcpClient,
-  ref: string,
-): Promise<ConnectionDetail | { error: string }> {
-  try {
-    const vault = await readVault(mcp);
-    const metadata = vault.find((entry) => entry.reference === ref);
-    if (!metadata) return { error: `unknown connection: ${ref}` };
-    const [grants, ledger] = await Promise.all([
-      readGrants(mcp, ref),
-      readConnectionLedger(mcp, ref),
-    ]);
-    return { metadata, grants, ledger };
-  } catch (error) {
-    return { error: error instanceof Error ? error.message : String(error) };
-  }
 }

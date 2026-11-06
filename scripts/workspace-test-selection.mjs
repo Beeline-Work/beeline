@@ -139,6 +139,8 @@ export function selectWorkspaceTests({ root, changes, testFiles, trackedFiles, r
 
 function main() {
   const root = process.cwd();
+  const group = process.argv[2];
+  assert.ok(['body', 'mobile'].includes(group), 'Expected body or mobile');
   const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   const out = process.argv[process.argv.indexOf('--out') + 1];
   assert.ok(process.argv.includes('--out') && out, '--out is required');
@@ -162,7 +164,7 @@ function main() {
       const forced = fullReason(changes);
       if (forced) selection = { version: 1, mode: 'full', reason: forced };
       else if (changes.every(change => quietDoc(change.path))) selection = { version: 1, mode: 'subset', reason: 'Documentation only', groups: { server: [], body: [], mobile: [] } };
-      else selection = selectWorkspaceTests({ root, changes, testFiles: discoverTests(root), requiredMobile,
+      else selection = selectWorkspaceTests({ root, changes, testFiles: discoverTests(root, [group]), requiredMobile,
           trackedFiles: execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8', maxBuffer: 16 * 1024 ** 2 }).split('\0').filter(Boolean) });
     }
   } catch (error) { selection = { version: 1, mode: 'full', reason: `Conservative fallback: ${error.message}` }; }
@@ -171,16 +173,6 @@ function main() {
   const summary = `Workspace selection: ${selection.mode}; ${selection.reason}; ${JSON.stringify(selection.counts ?? {})}`;
   console.log(summary);
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary + '\n');
-  if (process.env.GITHUB_OUTPUT) {
-    const lines = [`mode=${selection.mode}`];
-    for (const group of ['server', 'body', 'mobile']) lines.push(`${group}=${selection.mode === 'full' || selection.groups[group].length > 0}`);
-    for (const group of ['body', 'mobile']) {
-      let value = { version: 1, sha, mode: selection.mode, reason: selection.reason,
-        ...(selection.mode === 'subset' ? { groups: { [group]: selection.groups[group] } } : {}) };
-      if (Buffer.byteLength(JSON.stringify(value)) > 100_000) value = { version: 1, sha, mode: 'full', reason: 'Selection exceeds the safe environment size' };
-      lines.push(`${group}-selection=${JSON.stringify(value)}`);
-    }
-    appendFileSync(process.env.GITHUB_OUTPUT, lines.join('\n') + '\n');
-  }
+
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

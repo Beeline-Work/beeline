@@ -1,3 +1,4 @@
+import { phoneFetch } from '../../../tests/helpers/phone-operation.js';
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { AddressInfo } from 'node:net';
@@ -139,7 +140,7 @@ describe('the read cursor over the live phone surface', () => {
   });
 
   const request = (path: string, method = 'GET', payload?: unknown, token = ownerToken) =>
-    fetch(`${origin}${path}`, {
+    phoneFetch(`${origin}${path}`, {
       method,
       headers: {
         authorization: `Bearer ${token}`,
@@ -351,7 +352,7 @@ describe('the read cursor over the live phone surface', () => {
           type: 'invalidate', reason: 'postgres:room_read_marks',
         })]);
         for (const base of [origin, peerOrigin]) {
-          const response = await fetch(`${base}/v1/phone/rooms/${ROOM}`, {
+          const response = await phoneFetch(`${base}/v1/phone/rooms/${ROOM}`, {
             headers: { authorization: `Bearer ${ownerToken}` },
           });
           expect((await response.json()).viewer.readCursor.unreadCount).toBe(unreadCount);

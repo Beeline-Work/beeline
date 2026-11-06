@@ -8,4 +8,4 @@ export function messageTexts(content) {
 
 // Same approximation as prompt-assembly.test.ts's saved prompt measurements.
 // Unlike the subscription audit's o200k_base tokenizer, this needs only Node.
-export const estimateTokens = text => Math.ceil(Buffer.byteLength(text, 'utf8') / 4);
+const estimateTokens = text => Math.ceil(Buffer.byteLength(text, 'utf8') / 4);

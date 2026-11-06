@@ -1,5 +1,4 @@
 import type { AttachmentReference } from '@beeline/buzz-client';
-import type { RouterAuthorityCertificate } from '@beeline/api-contract/router-protocol';
 import { artifactByteDigest } from './artifact-byte-digest';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { clientResetGeneration } from '@/sync/client-reset';
@@ -7,9 +6,9 @@ import { getBuzzRuntimeConfig } from './runtime-config';
 import { mediaIdFromUrl } from './artifact';
 import { createArtifactByteStore } from './artifact-byte-store';
 import { ImmutableByteCache, type ImmutableByteAddress } from './immutable-byte-cache';
-import { mediaCacheFences, mediaCertificateCurrent, mediaMetadataFor, retainMediaObjectDisplay, subscribeMediaCacheBoundary } from './media-cache-connection';
+import { mediaMetadataCurrent, mediaMetadataFor, subscribeMediaCacheBoundary } from './media-cache-connection';
 export type ArtifactByteOptions = Readonly<{ signal?: AbortSignal; preview?: boolean; thumbnail?: boolean }>;
-type Details = { format: string; authority?: RouterAuthorityCertificate; objectId: string; parentId: string; size?: number };
+type Details = { format: string; objectId: string; parentId: string; size?: number };
 const details = new Map<string, Details>();
 const store = createArtifactByteStore(key => details.get(key) ?? { format: 'bin' });
 const cache: ImmutableByteCache = new ImmutableByteCache(store, async (address, bytes, signal): Promise<boolean> => {
@@ -20,7 +19,6 @@ const cache: ImmutableByteCache = new ImmutableByteCache(store, async (address, 
 const listeners = new Set<(ids: ReadonlySet<string> | null) => void>();
 const watchedIds = new Map<string, number>();
 let epoch = 0;
-let adopted: Promise<void> | undefined;
 export class ArtifactPreviewUnavailable extends Error { constructor() { super('A bounded preview is unavailable.'); this.name = 'ArtifactPreviewUnavailable'; } }
 function formatOf(mime: string): string {
   if (mime === 'application/pdf') return 'pdf';
@@ -36,22 +34,10 @@ cache.subscribePurge(keys => {
   for (const listener of listeners) listener(ids);
 });
 subscribeMediaCacheBoundary(event => {
-  if (event.kind === 'identity') { epoch++; void cache.purge().catch(() => {}); details.clear(); adopted = undefined; }
-  else if (event.kind === 'connection') { epoch++; cache.suspend(); }
-  else {
-    const keys = [...details].filter(([, value]) => !value.authority || value.authority.scopes.some(scope =>
-      scope.authorityScope === event.authorityScope && BigInt(scope.epoch) <= BigInt(event.epoch))).map(([key]) => key);
-    // Fence active replies/UI synchronously before asynchronous disk eviction.
-    void cache.purgeKeys(keys).then(async () => {
-      const disk = await store.revoke(event.authorityScope, event.epoch);
-      if (disk.length) await cache.purgeKeys(disk);
-    }).catch(() => {});
-  }
+  epoch++;
+  void cache.purge().catch(() => {});
+  details.clear();
 });
-
-function adoptFences(): Promise<void> {
-  return adopted ??= (async () => { for (const [scope, version] of mediaCacheFences()) await store.revoke(scope, version); })().catch(() => {});
-}
 
 /** Called by the existing authenticated artifact byte leaf. No feature can
  * choose a URL, transport or arbitrary operation through this owner.
@@ -69,11 +55,12 @@ export async function readArtifactObject(attachment: AttachmentReference,
   const metadata = await mediaMetadataFor(origin, identity.publicKey, objectId);
   if (reset !== clientResetGeneration() || localEpoch !== epoch || options.signal?.aborted) throw new Error('The file is no longer visible.');
   const raster = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(attachment.mimeType);
+  // The image itself is its card preview when the server has no thumbnail.
   const source = options.thumbnail ? metadata?.thumbnail : options.preview && metadata && metadata.size > 16 * 1024
-    ? raster ? metadata.thumbnail : undefined : metadata;
+    ? raster ? metadata.thumbnail ?? metadata : undefined : metadata;
   if (options.thumbnail && !source) throw new ArtifactPreviewUnavailable();
   if (options.preview && metadata && !source) throw new ArtifactPreviewUnavailable();
-  if (options.preview && (!source && (!Number.isSafeInteger(attachment.size) || attachment.size > 16 * 1024) || source && source.size > 16 * 1024))
+  if (options.preview && !raster && (!source && (!Number.isSafeInteger(attachment.size) || attachment.size > 16 * 1024) || source && source.size > 16 * 1024))
     throw new ArtifactPreviewUnavailable();
   const id = source?.objectId ?? objectId;
   const mimeType = source?.mimeType ?? attachment.mimeType;
@@ -87,15 +74,14 @@ export async function readArtifactObject(attachment: AttachmentReference,
     details.delete(expendable[0]);
   }
   details.delete(key);
-  details.set(key, { format: formatOf(mimeType), objectId: id, parentId: objectId, authority: metadata?.authority, size: source?.size });
+  details.set(key, { format: formatOf(mimeType), objectId: id, parentId: objectId, size: source?.size });
   const current = () => reset === clientResetGeneration() && localEpoch === epoch &&
-    new URL(getBuzzRuntimeConfig().monolithUrl).origin === origin && (!metadata || mediaCertificateCurrent(metadata));
-  await adoptFences();
+    new URL(getBuzzRuntimeConfig().monolithUrl).origin === origin && (!metadata || mediaMetadataCurrent(metadata));
   const bytes = await cache.get(address, async signal => {
-    const bytes = await read(id, signal, options.preview ? 16 * 1024 : 25 * 1024 * 1024);
+    const bytes = await read(id, signal, options.preview && !raster ? 16 * 1024 : 25 * 1024 * 1024);
     return bytes;
   }, { signal: options.signal, restoreAuthorized: !!metadata, reuseAuthorized: !!metadata, isCurrent: current,
-    maxBytes: options.preview ? 16 * 1024 : 25 * 1024 * 1024 });
+    maxBytes: options.preview && !raster ? 16 * 1024 : 25 * 1024 * 1024 });
   if (!current() || options.signal?.aborted) throw new Error('The file is no longer visible.');
   return { bytes, key, address, mimeType, isCurrent: current };
 }
@@ -106,12 +92,10 @@ export async function artifactObjectLocalUri(key: string): Promise<string> {
 }
 export function subscribeArtifactBytesPurge(attachment: AttachmentReference, listener: () => void): () => void {
   const objectId = mediaIdFromUrl(attachment.url);
-  const releaseDisplay = objectId ? retainMediaObjectDisplay(objectId) : () => {};
   if (objectId) watchedIds.set(objectId, (watchedIds.get(objectId) ?? 0) + 1);
   const receive = (ids: ReadonlySet<string> | null) => { if (!ids || objectId && ids.has(objectId)) listener(); };
   listeners.add(receive); return () => {
     if (!listeners.delete(receive)) return;
-    releaseDisplay();
     if (objectId) {
       const count = (watchedIds.get(objectId) ?? 1) - 1;
       if (count) watchedIds.set(objectId, count); else watchedIds.delete(objectId);

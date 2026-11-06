@@ -1,0 +1,10 @@
+{
+  "startBeforeNs": 1793762842576188450,
+  "startAfterNs": 1793762842600448166,
+  "definition": "process-cold deep link, retained Room DTO cache; includes JS process startup",
+  "firstMeaningfulFrameNs": 1793762844443448249,
+  "durationMs": 1867.259799,
+  "previousFrameNs": 1793762844428198249,
+  "n": 1,
+  "source": "original Play runtime44, unmodified production142"
+}

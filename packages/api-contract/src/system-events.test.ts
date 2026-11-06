@@ -91,6 +91,7 @@ describe('the event kinds beside the prose', () => {
   it('names the server kinds a subscriber may ask for', () => {
     expect([...SERVER_EVENT_KINDS]).toEqual([
       'joined',
+      'left',
       'schedule-ran',
       'corner-opened',
       'check-passed',
@@ -108,6 +109,8 @@ describe('the event kinds beside the prose', () => {
       'computer-session-activity',
     ]);
     expect(isServerEventKind('joined')).toBe(true);
+    expect(isServerEventKind('left')).toBe(true);
+    expect(isSubscribableEventKind('left')).toBe(true);
     expect(isServerEventKind('agent:handoff')).toBe(false);
     expect(isServerEventKind('nonsense')).toBe(false);
   });
@@ -184,6 +187,7 @@ describe('the event kinds beside the prose', () => {
     }
     expect([...SUBSCRIBABLE_EVENT_KINDS]).toEqual([
       'joined',
+      'left',
       'schedule-ran',
       'corner-opened',
       'check-passed',

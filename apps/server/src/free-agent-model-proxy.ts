@@ -38,7 +38,7 @@ export interface FreeAgentModelProxyOptions {
   ownedModel?: Readonly<{
     credentials: OwnedModelCredentials;
     ready(): boolean;
-    /** Synchronous server-known model evidence only; absent means text-only. */
+    /** Synchronous server-known model evidence only; absent allows images. */
     acceptsImages?(model: string): boolean;
   }>;
 }
@@ -503,9 +503,7 @@ async function handleOwnedFreeAgentModel(request: IncomingMessage, response: Ser
   try {
     body = JSON.parse((await readBody(request)).toString('utf8')) as Record<string, unknown>;
     if (!body || typeof body !== 'object' || Array.isArray(body) || !Array.isArray(body.messages)) throw new Error('messages required');
-    // No public model-metadata network read. Initial text-only compatibility is
-    // an explicit activation gate until pinned modality evidence is supplied.
-    imageInput(body, selected.acceptsImages?.(binding.model) === true);
+    imageInput(body, selected.acceptsImages?.(binding.model) !== false);
   } catch {
     sendJson(response, 400, { error: { message: 'Invalid owned model request' } }); return true;
   }
@@ -587,13 +585,12 @@ async function handleOwnedFreeAgentModel(request: IncomingMessage, response: Ser
     }
     if (!upstream.body) { ownedOutcome(response, admitted.receipt); return true; }
     const reader = upstream.body.getReader(), decoder = new TextDecoder(), usage = new StreamUsageReader(), filtered = new OwnedModelStream();
-    let whole = '', bytes = 0, complete = false, reported: Usage | undefined, answer: Record<string, unknown> | undefined;
+    let whole = '', complete = false, reported: Usage | undefined, answer: Record<string, unknown> | undefined;
     let receipt: OwnedModelAttemptReceipt | undefined;
     response.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') ?? 'application/json', 'cache-control': 'no-store' });
     try {
       for (;;) {
         const next = await waitOwned(reader.read(), abort.signal); if (next.done) { complete = true; break; }
-        bytes += next.value.byteLength; if (bytes > MAX_REQUEST_BYTES) throw new Error('Owned model response exceeds capacity');
         const text = decoder.decode(next.value, { stream: true });
         if (stream) {
           usage.push(text);

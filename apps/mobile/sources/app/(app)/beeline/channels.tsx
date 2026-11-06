@@ -1,4 +1,5 @@
-import { appErrorCopy, connectionErrorDescription, connectionErrorTitle } from '@/buzz/app-error-copy';
+import { EmptyState } from '@/components/buzz/EmptyState';
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { IndexRow } from '@/components/buzz/IndexRow';
 import { invalidatesWorkspaceList } from '@/buzz/workspace-list-invalidation';
 import { TrayGlyph } from '@/components/buzz/TrayGlyph';
@@ -6,17 +7,16 @@ import { takePendingBrowserShare } from '@/buzz/pending-browser-share';
 import { RoomViewHttpError } from '@beeline/buzz-client';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import { useRoomSearch } from '@/buzz/use-room-search';
+import { useScopedCallbacks } from '@/buzz/use-stable';
 import {
   useNeedsYouCount,
 } from '@/buzz/needs-you-store';
-import { PinnedConversationsEmpty } from '@/components/buzz/PinnedConversationsEmpty';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
 import { useGitHubInstallationSession } from '@/auth/github-installation-host';
-import { useRouterFamily } from '@/buzz/router-family';
-import { retryRouterLane, routerFamilyMode } from '@/buzz/router-owner';
+
 import { acquireChatList, type ChatListHandle } from '@/buzz/chat-list-store';
-import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
+import { saveActiveCommunityId, saveLastViewedChannel, watchActiveCommunityId } from '@/buzz/community-storage';
 import { cornerHref, navigateToRoom } from '@/buzz/corner-navigation';
 import { useCornerDropdowns } from '@/buzz/corner-dropdowns';
 import { agentPairingCommand } from '@/buzz/agent-pairing-command';
@@ -34,27 +34,23 @@ import { cornerOpenTappedAgain } from '@/buzz/corner-open-status';
 import type { CornerOpenAttempt } from '@/buzz/open-random-corner';
 import { roomListSections, roomRowName } from '@/buzz/room-list-row';
 import { useRoomListGestures } from '@/buzz/use-room-list-gestures';
-import { useActiveCommunityId } from '@/buzz/use-active-community';
 import { leaveRoomWithConfirmation } from '@/buzz/room-leave';
 import { validRoomSlug } from '@/buzz/room-name';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import { inviteOnlyForRepository, type RepoCandidate } from '@/buzz/room-repo-picker';
 import { workspaceRailItem, type WorkspaceMemberDisplayItem } from '@/buzz/room-view-presentation';
-import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
-import { ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
-import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/CommunityRail';
+import { mobileSurfaceCache, surfaceAddress, restoreStoredSurface } from '@/buzz/surface-storage';
+import { ROOM_LABEL } from '@/buzz/vocabulary';
+import { BuzzCommunityShell, CommunityDrawerTrigger, CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
 import { ConversationRow } from '@/components/buzz/ConversationRow';
 import { DesktopRoomCorners } from '@/components/buzz/DesktopRoomCorners';
 import { DirectMessagePickerSheet } from '@/components/buzz/DirectMessagePickerSheet';
 import { ExitGlyph } from '@/components/buzz/ExitGlyph';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
 import { Button } from '@/components/buzz/Button';
-import { ConnectionStatus } from '@/components/buzz/ConnectionStatus';
-import { RoomDeckUnavailableView } from '@/components/buzz/RoomDeckUnavailableView';
 import { reconnectNow } from '@/sync/transport/live-connection';
 import { clientResetGeneration } from '@/sync/client-reset';
 import { InlineRow } from '@/components/buzz/IndexRow';
-import { NoMatchingConversationsEmpty } from '@/components/buzz/NoMatchingConversationsEmpty';
 import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
 import {
   type RoomDeckComposeAction,
@@ -73,7 +69,7 @@ import { BuzzRigTransport } from '@/sync/transport';
 import { RoomViewClient, isRoomViewTimeoutError } from '@/sync/transport/room-view-client';
 import { useIsDesktop } from '@/utils/responsive';
 import {
-  SurfaceRefreshScheduler,
+  isChatListView,
   isWorkspaceListView,
   isWorkspaceView,
   type ChatListItem,
@@ -84,8 +80,8 @@ import {
 } from '@beeline/buzz-client';
 import { useFocusEffect } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
-import { router, useLocalSearchParams, type Href } from 'expo-router';
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { router, useLocalSearchParams, usePathname, type Href } from 'expo-router';
+import { startTransition, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AppState,
   Keyboard,
@@ -98,6 +94,13 @@ import { Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
+import { afterFirstFrame, FirstContentDrawContext, isInitialLandingNavigationSuppressed, isInitialLandingResolved, markInitialLandingResolved } from '@/navigation/initial-landing';
+import { isPersonNameOnboardingPending } from '@/buzz/person-name';
+import { initialAuthUrl } from '@/auth/desktop-auth-session';
+import { deliverDesktopDeepLink } from '@/auth/desktop-deep-link';
+import { parseCommunityInviteToken } from '@/buzz/community-invite';
+import { parseReviewSecret } from '@/buzz/review-link';
+import { subscribeClientReset } from '@/sync/client-reset';
 
 const AGE_TICK_MS = 60_000;
 const COMPOSE_FAB_CLEARANCE = 80;
@@ -171,7 +174,95 @@ function workspaceMembers(view: WorkspaceView | null): WorkspaceMemberDisplayIte
     }));
 }
 
-export default function BuzzChannels() {
+type DeckSession = { identity: Identity; relayUrl: string; workspaceId: string | null };
+
+export default function SavedRoomDeck() {
+  const insets = useSafeAreaInsets();
+  const rootRoute = useRef(usePathname() === '/').current;
+  const rootLanding = useRef(rootRoute && !isInitialLandingResolved()).current;
+  const requestedWorkspaceId = firstParam(useLocalSearchParams<{ communityId?: string | string[] }>().communityId);
+  const notifyDraw = useContext(FirstContentDrawContext);
+  const [session, setSession] = useState<DeckSession | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    let stopWorkspace: (() => void) | undefined;
+    const restore = async () => {
+      stopWorkspace?.();
+      setSession(null);
+      setError(null);
+      const [identity, relayUrl, url, naming] = await Promise.all([
+        loadBuzzIdentity(),
+        getEffectiveRelayUrl(),
+        rootLanding ? initialAuthUrl().catch(() => null) : null,
+        rootRoute ? isPersonNameOnboardingPending() : false,
+      ]);
+      if (cancelled) return;
+      const mayRedirect = !rootLanding || !isInitialLandingNavigationSuppressed();
+      if (rootLanding && url && mayRedirect) {
+        if (deliverDesktopDeepLink(url, router)) return;
+        const review = parseReviewSecret(url);
+        const invite = parseCommunityInviteToken(url);
+        if (review) {
+          router.replace({ pathname: '/review/[secret]', params: { secret: review } });
+          return;
+        }
+        if (invite) {
+          router.replace({ pathname: '/join/[token]', params: { token: invite } });
+          return;
+        }
+      }
+      if (!identity || naming) {
+        if (mayRedirect) router.replace('/beeline/onboarding');
+        return;
+      }
+      stopWorkspace = watchActiveCommunityId(identity.publicKey, (workspaceId) => {
+        if (cancelled) return;
+        restoreStoredSurface(surfaceAddress(relayUrl, identity.publicKey, '/workspaces'), isWorkspaceListView);
+        setSession({ identity, relayUrl, workspaceId });
+      });
+    };
+    void restore().catch((reason) => {
+      if (!cancelled) setError(appErrorCopy(reason));
+    });
+    const stopReset = subscribeClientReset(() => {
+      cancelled = true;
+      stopWorkspace?.();
+      setSession(null);
+      setRetry(value => value + 1);
+    });
+    return () => {
+      cancelled = true;
+      stopWorkspace?.();
+      stopReset();
+    };
+  }, [rootRoute, rootLanding, retry]);
+  useEffect(() => { if (session || error) markInitialLandingResolved(); }, [session, error]);
+  if (error) return (
+    <View
+      style={{ flex: 1, paddingTop: insets.top, paddingBottom: insets.bottom }}
+      onLayout={notifyDraw}
+      testID="room-deck-unavailable"
+    >
+      <IndexRow
+        testID="room-deck-error-retry"
+        title="Secure storage unavailable"
+        description={error}
+        action="Retry"
+        onPress={() => setRetry(value => value + 1)}
+      />
+    </View>
+  );
+  return session ? (
+    <BuzzChannels
+      key={`${session.identity.publicKey}:${session.relayUrl}:${requestedWorkspaceId ?? session.workspaceId}`}
+      session={session}
+    />
+  ) : <RoomDeckLoadingView />;
+}
+
+function BuzzChannels({ session }: { session: DeckSession }) {
   const [retryGeneration, setRetryGeneration] = useState(0);
   const insets = useSafeAreaInsets();
   const isDesktop = useIsDesktop();
@@ -182,22 +273,32 @@ export default function BuzzChannels() {
   }>();
   const requestedWorkspaceId = firstParam(params.communityId);
   // The route's Workspace wins; without one the deck follows the current Workspace.
-  const storedWorkspaceId = useActiveCommunityId(retryGeneration);
-  const deckWorkspaceId = requestedWorkspaceId ?? storedWorkspaceId;
+  const deckWorkspaceId = requestedWorkspaceId ?? session.workspaceId;
   const requestedNewRoom = firstParam(params.newRoom);
   const requestedNewDirectMessage = firstParam(params.newDirectMessage);
-  const [identity, setIdentity] = useState<Identity | null>(null);
-  const [relayUrl, setRelayUrl] = useState<string | null>(null);
-  const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
-  const workspaceListAddress = useMemo(() => identity && relayUrl
-    ? surfaceAddress(relayUrl, identity.publicKey, '/workspaces') : null,
-    [identity?.publicKey, relayUrl]);
+  const { identity, relayUrl } = session;
+  const transport = useMemo(() => new BuzzRigTransport(identity), [identity]);
+  const workspaceListAddress = useMemo(
+    () => surfaceAddress(relayUrl, identity.publicKey, '/workspaces'),
+    [identity.publicKey, relayUrl],
+  );
   const workspaceList = useSurfaceSnapshot(workspaceListAddress, isWorkspaceListView);
   // Only a live read (never a cached one) may say "you have no Workspace".
   const [confirmedWorkspaceCount, setConfirmedWorkspaceCount] = useState<number | null>(null);
-  const chatListMode = useRouterFamily('room-list');
-  const [chatListState, setChatList] = useState<ChatListView | null>(null);
-  const chatList = chatListMode === 'pending' ? null : chatListState;
+
+  const [selectedId] = useState(() => deckWorkspaceId ?? mobileSurfaceCache.peek(workspaceListAddress, isWorkspaceListView)?.workspaces[0]?.id);
+  const [chatList, setChatList] = useState<ChatListView | null>(() => selectedId
+    ? restoreStoredSurface(surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/chats', { workspaceId: selectedId }), isChatListView)
+    : null);
+  const notifyDraw = useContext(FirstContentDrawContext);
+  const [drawn, setDrawn] = useState(false);
+  const firstLayout = useRef<(() => void) | null>(null);
+  const onLayout = useCallback(() => {
+    if (firstLayout.current) return;
+    notifyDraw();
+    firstLayout.current = afterFirstFrame(() => setDrawn(true));
+  }, [notifyDraw]);
+  useEffect(() => () => { firstLayout.current?.(); firstLayout.current = null; }, []);
   useLatencyRouteFrame('/beeline/channels', chatList !== null, true);
   // A covering list read seeds the Needs-you rows behind the badge;
   // ordinary changes carry typed row deltas on the live socket.
@@ -233,7 +334,7 @@ export default function BuzzChannels() {
   const [repoPickerNotice, setRepoPickerNotice] = useState<string | null>(null);
   const handledNewRoomRequest = useRef<string | null>(null);
   const chatStore = useRef<ChatListHandle | null>(null);
-  const workspaceScheduler = useRef<SurfaceRefreshScheduler<WorkspaceListView | null> | null>(null);
+  const readWorkspaceRef = useRef<(() => Promise<void>) | null>(null);
   const deckFocusedRef = useRef(true);
   const deckVisible = useCallback(
     () => deckFocusedRef.current && AppState.currentState === 'active',
@@ -248,22 +349,29 @@ export default function BuzzChannels() {
   );
   const activeCommunityId =
     requestedWorkspaceId ?? chatList?.workspace.id ?? communities[0]?.communityId ?? null;
-  const workspaceDetailAddress = useMemo(() => identity && relayUrl && activeCommunityId
-    ? surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id', { workspaceId: activeCommunityId })
-    : null, [identity?.publicKey, relayUrl, activeCommunityId]);
+  const workspaceDetailAddress = useMemo(
+    () =>
+      identity && relayUrl && activeCommunityId
+        ? surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id', {
+            workspaceId: activeCommunityId,
+          })
+        : null,
+    [identity?.publicKey, relayUrl, activeCommunityId],
+  );
   const workspaceDetail = useSurfaceSnapshot(workspaceDetailAddress, isWorkspaceView);
   const activeCommunity =
     communities.find((entry) => entry.communityId === activeCommunityId) ?? null;
   const viewerIsAgent = chatList?.viewer.kind === 'agent';
   const canManageWorkspace =
     chatList?.workspace.role === 'owner' || chatList?.workspace.role === 'admin';
-  const [roomName, setRoomName, roomNameDraft]= useTextDraft(
+  const [roomName, setRoomName, roomNameDraft] = useTextDraft(
     `new-room:${activeCommunityId}`,
     '',
     identity?.publicKey ?? null,
   );
   const { query, setQuery, searchOpen, setSearchOpen } = useRoomSearch(
-    activeCommunityId ?? null, identity?.publicKey ?? null,
+    activeCommunityId ?? null,
+    identity?.publicKey ?? null,
   );
   const { pinned, pinsLoaded, togglePin, pinError } = useRoomPins(
     identity?.publicKey,
@@ -283,7 +391,11 @@ export default function BuzzChannels() {
     ),
   );
   const chatSections = useMemo(
-    () => roomListSections(filterConversations(chatList?.chats ?? [], query, filter, pinned), !query.trim() && filter === 'all'),
+    () =>
+      roomListSections(
+        filterConversations(chatList?.chats ?? [], query, filter, pinned),
+        !query.trim() && filter === 'all',
+      ),
     [chatList?.chats, query, filter, pinned],
   );
   const searchClient = useMemo(
@@ -333,14 +445,12 @@ export default function BuzzChannels() {
   }, [isDesktop, requestedNewDirectMessage, viewerIsAgent]);
 
   const refreshNow = useCallback(() => {
-    workspaceScheduler.current?.force();
-    if (activeCommunityId && routerFamilyMode('room-list') === 'router')
-      retryRouterLane({ family: 'room-list', workspaceId: activeCommunityId });
-    else chatStore.current?.force();
+    void readWorkspaceRef.current?.();
+    chatStore.current?.force();
   }, [activeCommunityId]);
 
   const refreshMissed = useCallback(() => {
-    if (deckMissedRef.current.workspaces) workspaceScheduler.current?.force();
+    if (deckMissedRef.current.workspaces) void readWorkspaceRef.current?.();
     chatStore.current?.catchUp();
     deckMissedRef.current = { workspaces: false };
   }, []);
@@ -392,7 +502,7 @@ export default function BuzzChannels() {
   );
 
   useEffect(() => {
-    if (deckWorkspaceId === undefined) return;
+    if (!drawn) return;
     setConfirmedWorkspaceCount(null);
     let cancelled = false;
     const identityGeneration = clientResetGeneration();
@@ -408,62 +518,51 @@ export default function BuzzChannels() {
     });
     let unsubscribeWorkspaces: (() => void) | undefined;
     let unsubscribeChats: (() => void) | undefined;
-    let workspaceRefresh: SurfaceRefreshScheduler<WorkspaceListView | null> | undefined;
+    let readWorkspace: (() => Promise<void>) | undefined;
     let releaseChats: (() => void) | undefined;
     void (async () => {
       setError(null);
-      const [nextIdentity, pendingInvite, nextRelayUrl] = await Promise.all([
-        loadBuzzIdentity(),
-        loadPendingInvite(),
-        getEffectiveRelayUrl(),
-      ]);
-      if (!nextIdentity) {
-        router.replace('/beeline/onboarding');
-        return;
-      }
+      const nextIdentity = identity;
+      const nextRelayUrl = relayUrl;
+      const pendingInvite = await loadPendingInvite();
+      if (cancelled) return;
       // An invite opened before sign-in outranks every other landing.
-      if (pendingInvite) {
+      if (pendingInvite && deckFocusedRef.current) {
         if (!cancelled)
           router.replace({ pathname: '/join/[token]', params: { token: pendingInvite } });
         return;
       }
       if (cancelled) return;
-      const browserShareId = await takePendingBrowserShare();
+      const browserShareId = deckFocusedRef.current ? await takePendingBrowserShare() : null;
       if (cancelled) return;
-      if (browserShareId) {
+      if (browserShareId && deckFocusedRef.current) {
         router.replace({ pathname: '/beeline/browser-share', params: { id: browserShareId } });
         return;
       }
-      const nextTransport = new BuzzRigTransport(nextIdentity);
+      const nextTransport = transport;
       const http = new RoomViewClient({ baseUrl: nextRelayUrl, identity: nextIdentity });
       const relayPromise = nextTransport.ensureClient();
-      setIdentity(nextIdentity);
-      setRelayUrl(nextRelayUrl);
-      setTransport(nextTransport);
 
       const workspaceCacheAddress = surfaceAddress(
         nextRelayUrl,
         nextIdentity.publicKey,
         '/workspaces',
       );
-      const cachedWorkspaces = await mobileSurfaceCache.read(workspaceCacheAddress, isWorkspaceListView);
+      const cachedWorkspaces = mobileSurfaceCache.peek(workspaceCacheAddress, isWorkspaceListView);
       if (cancelled) return;
-      const selectedId = deckWorkspaceId ?? cachedWorkspaces?.workspaces[0]?.id;
       let selectedWorkspaceRemoved = false;
-      let workspaceReadConfirmed = false;
-      let startupTimeoutRetried = false;
 
-      workspaceRefresh = new SurfaceRefreshScheduler({
-        fetch: () => {
+      readWorkspace = async () => {
+        if (cancelled) return;
+        try {
           deckMissedRef.current.workspaces = false;
-          return mobileSurfaceCache.fetch(workspaceCacheAddress, isWorkspaceListView, () =>
+          const value = await mobileSurfaceCache.fetch(workspaceCacheAddress, isWorkspaceListView, () =>
             http.workspaces(),
           );
-        },
-        apply: (value) => {
+          if (cancelled) return;
+
           // Null: an eviction overtook the read; there is nothing to paint.
           if (!value) return;
-          workspaceReadConfirmed = true;
           setConfirmedWorkspaceCount(value.workspaces.length);
           if (value.deletedNotices?.length) {
             setDeletedWorkspaceNotice('This workspace was deleted by its owner');
@@ -480,34 +579,30 @@ export default function BuzzChannels() {
             setError(null);
             const nextId = value.workspaces[0]?.id ?? null;
             void saveActiveCommunityId(nextIdentity.publicKey, nextId);
-            if (nextId) {
+            if (nextId && deckFocusedRef.current) {
               router.replace({
                 pathname: '/beeline/channels',
                 params: { communityId: nextId },
               } as never);
             }
           }
-        },
-        onError: (reason) => {
-          // A cold post-auth read can time out on the connection used during
-          // the browser handoff. The transport moves off that connection;
-          // give this initial discovery one bounded recovery read before
-          // asking the person to retry. Never retry refusals or later reads.
-          if (!workspaceReadConfirmed && !startupTimeoutRetried && isRoomViewTimeoutError(reason)) {
-            startupTimeoutRetried = true;
-            workspaceRefresh?.force();
-            return;
+        } catch (reason) {
+          if (!cancelled) {
+            setError(appErrorCopy(reason));
           }
-          setError(appErrorCopy(reason));
-        },
-      });
-      workspaceScheduler.current = workspaceRefresh;
+        }
+      };
+      readWorkspaceRef.current = readWorkspace;
 
       // The app-level Room list owns its live watch, covering reads and disk
       // copy; the deck paints it and reports whether it is on view.
       const chats = selectedId
         ? acquireChatList(
-            { relayUrl: nextRelayUrl, viewerPubkey: nextIdentity.publicKey, workspaceId: selectedId },
+            {
+              relayUrl: nextRelayUrl,
+              viewerPubkey: nextIdentity.publicKey,
+              workspaceId: selectedId,
+            },
             {
               visible: deckVisible,
               onRead: () => {
@@ -522,8 +617,11 @@ export default function BuzzChannels() {
                 setError(appErrorCopy(reason));
                 // A deleted Workspace's old route may be restored from storage
                 // before the authoritative workspace read has reconciled it.
-                if (reason instanceof RoomViewHttpError && (reason.status === 403 || reason.status === 404))
-                  workspaceRefresh?.force();
+                if (
+                  reason instanceof RoomViewHttpError &&
+                  (reason.status === 403 || reason.status === 404)
+                )
+                  void readWorkspace?.();
               },
             },
           )
@@ -537,11 +635,11 @@ export default function BuzzChannels() {
         paint();
         // A store another screen already read is current: it seeds the badge.
         if (chats.confirmed()) setNeedsYouSignal((signal) => signal + 1);
-        // Live list reconciliation must yield to a Room or push navigation.
-        // Its committed transcript rows are already in the scoped cache.
+        // Saved Rooms are the first usable deck; paint them immediately.
+        // Confirmed live reconciliation still yields to Room or push navigation.
         unsubscribeChats = chats.subscribe(() => {
-          if (routerFamilyMode('room-list') === 'router') paint();
-          else startTransition(paint);
+          if (chats.confirmed() || !deckVisible()) startTransition(paint);
+          else paint();
         });
       }
       const relay = await relayPromise;
@@ -559,7 +657,7 @@ export default function BuzzChannels() {
               !invalidatesWorkspaceList(event)
             )
               return;
-            if (deckVisible()) workspaceRefresh?.signal();
+            if (deckVisible()) void readWorkspace?.();
             else deckMissedRef.current.workspaces = true;
           },
         )
@@ -567,7 +665,8 @@ export default function BuzzChannels() {
           if (cancelled) stop();
           else unsubscribeWorkspaces = stop;
         });
-      await workspaceRefresh.startAfter(workspaceListenReady);
+      await workspaceListenReady;
+      await readWorkspace();
     })().catch((reason) => {
       if (!cancelled) setError(appErrorCopy(reason));
     });
@@ -576,20 +675,12 @@ export default function BuzzChannels() {
       activation.remove();
       unsubscribeWorkspaces?.();
       unsubscribeChats?.();
-      workspaceRefresh?.dispose();
       releaseChats?.();
-      workspaceScheduler.current = null;
+      readWorkspaceRef.current = null;
       chatStore.current = null;
     };
-  }, [deckVisible, deckWorkspaceId, refreshMissed, retryGeneration]);
+  }, [drawn, identity, relayUrl, transport, selectedId, deckVisible, refreshMissed, retryGeneration]);
 
-  // Cover local identity/selection/cache reads as well as socket RPCs. Those
-  // native promises can stall before any individual request deadline starts.
-  useEffect(() => {
-    if (chatList || error) return;
-    const deadline = setTimeout(() => setError(connectionErrorTitle), 35_000);
-    return () => clearTimeout(deadline);
-  }, [chatList, error, retryGeneration]);
 
   useFocusEffect(
     useCallback(() => {
@@ -611,9 +702,15 @@ export default function BuzzChannels() {
     const address = surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id', {
       workspaceId: activeCommunityId,
     });
-    void mobileSurfaceCache.read(address, isWorkspaceView)
-      .then((cached) => cached ?? mobileSurfaceCache.fetch(address, isWorkspaceView,
-        () => http.workspace(activeCommunityId)))
+    void mobileSurfaceCache
+      .read(address, isWorkspaceView)
+      .then(
+        (cached) =>
+          cached ??
+          mobileSurfaceCache.fetch(address, isWorkspaceView, () =>
+            http.workspace(activeCommunityId),
+          ),
+      )
       .catch((reason) => {
         if (!cancelled) setError(appErrorCopy(reason));
       });
@@ -656,6 +753,27 @@ export default function BuzzChannels() {
       }
     },
     [transport],
+  );
+
+  // A list update changes one DTO, not every Room's event handlers.
+  const rowActions = useScopedCallbacks(
+    {
+      press: (roomId: string) => {
+        if (!roomListGestures.canInteract()) return;
+        swipeableRefs.current.get(roomId)?.close();
+        openRoom(roomId);
+      },
+      pin: (roomId: string) => {
+        if (roomListGestures.canInteract()) void togglePin(roomId);
+      },
+      toggleCorners: (roomId: string) => {
+        if (roomListGestures.canInteract()) cornerDropdowns.toggle(roomId);
+      },
+      newCorner: (roomId: string) => {
+        if (roomListGestures.canInteract()) void openNewCorner(roomId);
+      },
+    },
+    `${identity?.publicKey ?? ''}:${activeCommunityId ?? ''}`,
   );
 
   const selectWorkspace = useCallback(
@@ -704,7 +822,7 @@ export default function BuzzChannels() {
     try {
       await loadRepoPicker(true);
     } catch (reason) {
-      setRepoPickerError('Could not load repos. Check your connection and try again.');
+      setRepoPickerError('Could not load repos. Try again.');
     } finally {
       setRepoAccessLoading(false);
     }
@@ -762,8 +880,11 @@ export default function BuzzChannels() {
           name,
           private: true,
         });
-        if (githubScope) await updateGitHubAccess(githubScope,
-          (current) => ({ ...current, candidates: [...current.candidates, repository] }));
+        if (githubScope)
+          await updateGitHubAccess(githubScope, (current) => ({
+            ...current,
+            candidates: [...current.candidates, repository],
+          }));
         setPendingRepo(repository);
         return repository;
       } catch (reason) {
@@ -776,70 +897,74 @@ export default function BuzzChannels() {
     [transport],
   );
 
-  const createRoom = useCallback(async (repository: RepoCandidate | null) => {
-    const name = roomName.trim();
-    if (
-      !validRoomSlug(name) ||
-      !transport ||
-      !activeCommunityId ||
-      creatingRoom ||
-      creatingRepository ||
-      !canManageWorkspace
-    )
-      return;
-    setCreatingRoom(true);
-    setError(null);
-    const clearSubmittedRoom = roomNameDraft.capture();
-    let publishAcknowledged = false;
-    try {
-      await transport.createRoom(name, {
-        communityId: activeCommunityId,
-        visibility: inviteOnly ? 'invite-only' : 'public',
-        repository: repository ?? undefined,
-        onPublished: () => {
-          publishAcknowledged = true;
+  const createRoom = useCallback(
+    async (repository: RepoCandidate | null) => {
+      const name = roomName.trim();
+      if (
+        !validRoomSlug(name) ||
+        !transport ||
+        !activeCommunityId ||
+        creatingRoom ||
+        creatingRepository ||
+        !canManageWorkspace
+      )
+        return;
+      setCreatingRoom(true);
+      setError(null);
+      const clearSubmittedRoom = roomNameDraft.capture();
+      let publishAcknowledged = false;
+      try {
+        await transport.createRoom(name, {
+          communityId: activeCommunityId,
+          visibility: inviteOnly ? 'invite-only' : 'public',
+          repository: repository ?? undefined,
+          onPublished: () => {
+            publishAcknowledged = true;
+            clearSubmittedRoom();
+            setInviteOnly(false);
+            setPendingRepo(null);
+            setShowRepoPicker(false);
+            setShowCreateRoom(false);
+            chatStore.current?.force();
+          },
+        });
+        if (!publishAcknowledged) {
           clearSubmittedRoom();
           setInviteOnly(false);
           setPendingRepo(null);
           setShowRepoPicker(false);
           setShowCreateRoom(false);
-          chatStore.current?.force();
-        },
-      });
-      if (!publishAcknowledged) {
-        clearSubmittedRoom();
-        setInviteOnly(false);
-        setPendingRepo(null);
-        setShowRepoPicker(false);
-        setShowCreateRoom(false);
+        }
+        chatStore.current?.force();
+      } catch (reason) {
+        setError(
+          publishAcknowledged
+            ? appErrorCopy(reason, `${ROOM_LABEL} created, but membership is still syncing.`)
+            : appErrorCopy(reason, `Could not create ${ROOM_LABEL}.`),
+        );
+      } finally {
+        setCreatingRoom(false);
       }
-      chatStore.current?.force();
-    } catch (reason) {
-      setError(
-        publishAcknowledged
-          ? appErrorCopy(reason, `${ROOM_LABEL} created, but membership is still syncing.`)
-          : appErrorCopy(reason, `Could not create ${ROOM_LABEL}.`),
-      );
-    } finally {
-      setCreatingRoom(false);
-    }
-  }, [
-    activeCommunityId,
-    canManageWorkspace,
-    creatingRoom,
-    creatingRepository,
-    inviteOnly,
-    roomName,
-    roomNameDraft,
-    transport,
-  ]);
+    },
+    [
+      activeCommunityId,
+      canManageWorkspace,
+      creatingRoom,
+      creatingRepository,
+      inviteOnly,
+      roomName,
+      roomNameDraft,
+      transport,
+    ],
+  );
 
   const landing = deckLanding({
-    workspaces: confirmedWorkspaceCount !== null
-      ? { status: 'ready', count: confirmedWorkspaceCount }
-      : error
-        ? { status: 'failed' }
-        : { status: 'pending' },
+    workspaces:
+      confirmedWorkspaceCount !== null
+        ? { status: 'ready', count: confirmedWorkspaceCount }
+        : error
+          ? { status: 'failed' }
+          : { status: 'pending' },
     chats: chatList ? 'ready' : error ? 'failed' : 'pending',
   });
   const noWorkspace = landing.kind === 'choice';
@@ -897,26 +1022,22 @@ export default function BuzzChannels() {
   );
 
   if (landing.kind === 'error') {
-    if (error === connectionErrorTitle) {
-      return <RoomDeckUnavailableView
-        style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}
-        onReconnect={() => {
-          reconnectNow();
-          setError(null);
-          setRetryGeneration((value) => value + 1);
-        }}
-      />;
-    }
     return (
-      <View style={[styles.center, { paddingTop: insets.top }]}>
-        <IndexRow title={error!} description={connectionErrorDescription} action="Retry" onPress={() => { setError(null); setRetryGeneration((value) => value + 1); }} />
+      <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]} testID="room-deck-unavailable">
+        <InlineRow style={styles.header}>
+          {!isDesktop && <CommunitySwitcherTrigger community={activeCommunity} expanded={false} />}
+        </InlineRow>
+        <View style={styles.failureInset}>
+          <IndexRow inset="flush" title={error || 'Could not load Rooms'}  testID="room-deck-error-retry" action="Retry"
+            onPress={() => { reconnectNow(); setError(null); setRetryGeneration(value => value + 1); }} />
+        </View>
       </View>
     );
   }
   if (landing.kind !== 'deck' || !chatList) {
     // Choice: the create-or-join screen is the landing and the effect above
     // is replacing this one; loader: nothing has answered yet.
-    return <RoomDeckLoadingView style={{ paddingTop: insets.top }} />;
+    return <RoomDeckLoadingView style={{ paddingTop: insets.top }} onLayout={onLayout} />;
   }
 
   return (
@@ -933,17 +1054,43 @@ export default function BuzzChannels() {
       <View
         style={[styles.container, { paddingTop: insets.top }]}
         testID={refreshing ? 'room-list-refreshing' : 'room-list-idle'}
+        onLayout={onLayout}
       >
         <InlineRow style={styles.header}>
           {!isDesktop && <CommunityDrawerTrigger community={activeCommunity} />}
           {!isDesktop && activeCommunityId && (
             <View style={styles.headerActions}>
-              <Button label="" iconOnly variant="quiet" accessibilityLabel="Members" testID="workspace-members"
+              <Button
+                label=""
+                iconOnly
+                variant="quiet"
+                accessibilityLabel="Members"
+                testID="workspace-members"
                 icon={<MembersAgentsGlyph size={22} color={styles.membersGlyph.color} />}
-                onPress={() => router.push({ pathname: '/beeline/members', params: { communityId: activeCommunityId } } as never)} />
-                <TrayGlyph size={22} color={styles.trayGlyph.color} cutColor={styles.trayGlyph.backgroundColor}
-                  testID="workspace-tray" needsYouCount={needsYouCount} filled={false}
-                  onPress={() => router.push({ pathname: '/beeline/tray', params: { communityId: activeCommunityId, workspaceName: chatList?.workspace.name ?? '' } } as never)} />
+                onPress={() =>
+                  router.push({
+                    pathname: '/beeline/members',
+                    params: { communityId: activeCommunityId },
+                  } as never)
+                }
+              />
+              <TrayGlyph
+                size={22}
+                color={styles.trayGlyph.color}
+                cutColor={styles.trayGlyph.backgroundColor}
+                testID="workspace-tray"
+                needsYouCount={needsYouCount}
+                filled={false}
+                onPress={() =>
+                  router.push({
+                    pathname: '/beeline/tray',
+                    params: {
+                      communityId: activeCommunityId,
+                      workspaceName: chatList?.workspace.name ?? '',
+                    },
+                  } as never)
+                }
+              />
             </View>
           )}
         </InlineRow>
@@ -956,13 +1103,9 @@ export default function BuzzChannels() {
             query={query}
             onQuery={setQuery}
             counts={counts}
-
           />
         )}
-        <ConnectionStatus />
-        {pinError && (
-          <IndexRow title={pinError} />
-        )}
+        {pinError && <IndexRow title={pinError} />}
         <NewRoomDialog
           draftContext={activeCommunityId ?? ''}
           visible={showCreateRoom}
@@ -1013,7 +1156,17 @@ export default function BuzzChannels() {
             appearance={{ control: styles.errorBar, label: styles.error }}
           />
         )}
-        {!!error && error !== connectionErrorTitle && <View style={styles.failureInset}><IndexRow inset="flush" title={error} description={connectionErrorDescription} action="Retry" onPress={refreshNow} /></View>}
+        {!!error && (
+          <View style={styles.failureInset}>
+            <IndexRow
+              inset="flush"
+              title={error}
+
+              action="Retry"
+              onPress={refreshNow}
+            />
+          </View>
+        )}
         {isDesktop ? (
           chatList.chats.length === 0 ? (
             <EmptyRoomActions
@@ -1057,9 +1210,18 @@ export default function BuzzChannels() {
               }
               renderSectionHeader={({ section }) =>
                 section.title && !query.trim() ? (
-                  <RoomListSectionHeader title={section.title} inset="roomList"
-                    actionAccessibilityLabel={section.kind === 'rooms' ? 'Create a new Room' : 'Start a direct message'}
-                    onAction={viewerIsAgent || (section.kind === 'rooms' && !canManageWorkspace) ? undefined : () => compose(section.kind === 'rooms' ? 'room' : 'message')} />
+                  <RoomListSectionHeader
+                    title={section.title}
+                    inset="roomList"
+                    actionAccessibilityLabel={
+                      section.kind === 'rooms' ? 'Create a new Room' : 'Start a direct message'
+                    }
+                    onAction={
+                      viewerIsAgent || (section.kind === 'rooms' && !canManageWorkspace)
+                        ? undefined
+                        : () => compose(section.kind === 'rooms' ? 'room' : 'message')
+                    }
+                  />
                 ) : null
               }
               ListFooterComponent={
@@ -1075,12 +1237,21 @@ export default function BuzzChannels() {
               ListEmptyComponent={
                 messageSearch.status !== 'unavailable' ? null : filter === 'pinned' &&
                   !query.trim() ? (
-                  <PinnedConversationsEmpty onShowAll={() => setFilter('all')} />
+                  <EmptyState
+                    title="No pinned conversations yet"
+                    description="Long press a Room to pin it here."
+                    testID="pinned-empty"
+                    action={{ label: 'Show all conversations', onPress: () => setFilter('all'), testID: 'show-all-conversations' }}
+                  />
                 ) : query || filter !== 'all' ? (
-                  <NoMatchingConversationsEmpty
-                    onShowAll={() => {
-                      setQuery('');
-                      setFilter('all');
+                  <EmptyState
+                    title="No matching conversations"
+                    description="Try a different search or filter."
+                    testID="room-list-no-match"
+                    action={{
+                      label: 'Show all conversations',
+                      onPress: () => { setQuery(''); setFilter('all'); },
+                      testID: 'no-match-show-all-conversations',
                     }}
                   />
                 ) : (
@@ -1114,26 +1285,12 @@ export default function BuzzChannels() {
                       item={item}
                       viewer={chatList.viewer.pubkey}
                       now={ageNow}
-                      onPress={() => {
-                        if (!roomListGestures.canInteract()) return;
-                        swipeableRefs.current.get(item.room.id)?.close();
-                        openRoom(item.room.id);
-                      }}
+                      onPress={rowActions.press}
                       pinned={pinned.includes(item.room.id)}
-                      onPin={() => {
-                        if (roomListGestures.canInteract()) void togglePin(item.room.id);
-                      }}
+                      onPin={rowActions.pin}
                       cornersExpanded={cornersExpanded}
-                      onToggleCorners={() => {
-                        if (roomListGestures.canInteract()) cornerDropdowns.toggle(item.room.id);
-                      }}
-                      onLongPressCorners={
-                        viewerIsAgent
-                          ? undefined
-                          : () => {
-                              if (roomListGestures.canInteract()) void openNewCorner(item.room.id);
-                            }
-                      }
+                      onToggleCorners={rowActions.toggleCorners}
+                      onLongPressCorners={viewerIsAgent ? undefined : rowActions.newCorner}
                       testID={`room-${item.room.id}`}
                     />
                     {!item.directMessage && cornersExpanded && (

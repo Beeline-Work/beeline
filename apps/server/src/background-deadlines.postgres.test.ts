@@ -115,15 +115,15 @@ describe.skipIf(!url)('P12 actual background deadline composition, real PostgreS
     }finally{stop();}
   });
 
-  it('uses an actual free-agent idle record once and never manufactures a failed-stop retry deadline',async()=>{
+  it('uses an actual free-agent idle record once and never manufactures a failed-suspend retry deadline',async()=>{
     const db=fixture.database,agent='d'.repeat(64),human='b'.repeat(64),workspace='22222222-2222-4222-8222-222222222222';
     await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Synthetic idle agent')`,[agent]);
     await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`,[agent,human]);
     await db.query(`INSERT INTO free_agents(agent_id,owner_id,workspace_id,state,fly_machine_id,sealed_keys,last_activity_at,wake_requested_at)
       VALUES($1,$2,$3,'running','synthetic-machine','unused',clock_timestamp()-interval '10 minutes',clock_timestamp()-interval '10 minutes')`,[agent,human,workspace]);
-    const refused=vi.fn(async()=>{throw new Error('Synthetic stop result unknown');});
+    const refused=vi.fn(async()=>{throw new Error('Synthetic suspend result unknown');});
     const unexpected=vi.fn(async()=>{throw new Error('Unexpected provider action');});
-    const machines={create:unexpected,find:unexpected,start:unexpected,suspend:unexpected,stop:refused,destroy:unexpected,state:unexpected,waitFor:unexpected} as unknown as FreeAgentMachines;
+    const machines={create:unexpected,find:unexpected,start:unexpected,refresh:async()=>false,suspend:refused,stop:unexpected,destroy:unexpected,state:unexpected,waitFor:unexpected} as unknown as FreeAgentMachines;
     const free=new FreeAgentService(db,freeAgentConfigFromEnv({BEELINE_FREE_AGENT_SEAL_KEY:'synthetic',FLY_FREE_AGENT_IMAGE:'synthetic'},'http://127.0.0.1')!,machines,unexpected,()=>{});
     expect(await free.sweep()).toBe(1);expect(refused).toHaveBeenCalledOnce();
     const due=await free.nextDelayMs();expect(due).toBeGreaterThan(29*86_400_000);

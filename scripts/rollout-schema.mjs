@@ -99,10 +99,29 @@ export function contractFiles() {
   catch (error) { if (error.code === 'ENOENT') return []; throw error; }
 }
 
-export function assertDrained(machines, image) {
-  const tag = value => String(value ?? '').replace(/@sha256:[a-f0-9]+$/, '');
-  if (!machines.length || machines.some(m => m.state !== 'started' || tag(m.config?.image ?? m.imageRef) !== tag(image)))
+export async function assertDrained(machines, release, fetchImpl = fetch) {
+  if (!release?.version || !release?.sourceSha || !machines.length ||
+      machines.some(m => m.state !== 'started' || !m.id))
     throw new Error('contract migration refused: old or unready Machines remain');
+  // Fly may replace the requested image tag with a per-Machine deployment tag.
+  // Prove what each Machine serves instead, including on already-deployed reruns.
+  await Promise.all(machines.map(async machine => {
+    try {
+      const options = () => ({
+        headers: { 'fly-force-instance-id': machine.id },
+        cache: 'no-store', signal: AbortSignal.timeout(10_000),
+      });
+      const ready = await fetchImpl('https://server.usebeeline.app/readyz', options());
+      if (!ready.ok) throw new Error(`readiness HTTP ${ready.status}`);
+      const response = await fetchImpl('https://server.usebeeline.app/version', options());
+      if (!response.ok) throw new Error(`version HTTP ${response.status}`);
+      const version = await response.json();
+      if (version?.sourceSha !== release.sourceSha || version?.version !== release.version)
+        throw new Error('served release identity differs');
+    } catch (cause) {
+      throw new Error(`contract migration refused: old or unready Machines remain (${machine.id}: ${cause.message})`, { cause });
+    }
+  }));
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

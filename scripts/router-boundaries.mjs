@@ -8,7 +8,7 @@ import { scanSource, NETWORK_LIBRARIES } from './phone-network-channels.mjs';
 export const INVENTORY = 'packages/net/migration-sites.json';
 const ROOTS = ['apps/server/src', 'apps/body/src', 'apps/api/src', 'apps/auth/src', 'apps/mobile/sources', 'apps/mobile/modules',
   'apps/mobile/index.ts', 'apps/mobile/src-tauri/src', 'packages'];
-const PUBLIC_ENTRIES = ['packages/net/src/index.ts', 'packages/net/src/phone-inputs.ts', 'packages/net/src/helper-codecs.ts', 'packages/net/src/helper-activation-codecs.ts', 'packages/net/src/helper-turn-codecs.ts'];
+const PUBLIC_ENTRIES = ['packages/net/src/index.ts', 'packages/net/src/helper-codecs.ts', 'packages/net/src/helper-activation-codecs.ts', 'packages/net/src/helper-turn-codecs.ts'];
 const SKIP = new Set(['node_modules', 'dist', 'build', '.git', 'target', 'Pods', '__tests__', 'fixtures']);
 const SOURCE = /\.(?:[cm]?[jt]sx?|swift|kt|java|m|mm|rs)$/;
 const TEST = /\.(?:test|spec|typecheck)\.[^.]+$|\.d\.ts$|\/test-support[^/]*\.[^.]+$/;
@@ -90,132 +90,166 @@ function imports(file, text) {
 }
 
 const MOBILE = 'apps/mobile/sources/';
-const LIVE_BRIDGE = MOBILE + 'sync/transport/live-connection.ts';
-const OWNER_CALLERS = {
-  routerOwnerUsageProfile: ['app/(app)/beeline/agent-profile.tsx', 'app/(app)/beeline/chat/_chat-surface.tsx'],
-  routerOwnerArtifactViewport: ['app/(app)/beeline/chat/_chat-surface.tsx'],
-  routerOwnerArtifactAction: ['components/buzz/ArtifactCard.tsx', 'components/buzz/RunnableArtifact.tsx',
-    'app/(app)/beeline/chat/RoomMessageVariants.tsx', 'buzz/picture-actions.ts', 'buzz/artifact-link.ts'],
-  routerOwnerNavigation: ['buzz/use-router-navigation.ts'],
-  routerOwnerListPanel: ['components/SidebarNavigator.tsx'],
-  readRouterToolPage: ['components/buzz/ActivityTimeline.tsx'],
-  admitRouterPreparedMessage: ['buzz/command-message-gesture.ts'],
-  admitRouterScheduledStop: ['buzz/router-scheduled-work.ts'],
-  acquireRouterSavedContinuation: ['buzz/router-tray.ts'],
-  acquireRouterRosterQuery: ['buzz/use-routed-roster.ts'],
-  acquireRouterRoomRoster: ['buzz/use-room-roster.ts'],
-  admitRouterTrayCommand: ['buzz/router-tray.ts'],
-  admitRouterTrayPaint: ['buzz/router-tray.ts'],
-  routerOwnerCapabilities: ['sync/transport/live-connection.ts'],
-  routerOwnerNegotiated: ['sync/transport/live-connection.ts'],
-  routerOwnerDisconnected: ['sync/transport/live-connection.ts'],
-  routerOwnerReceive: ['sync/transport/live-connection.ts'],
-  retryRouterLane: ['buzz/router-resource.ts', 'buzz/router-scheduled-work.ts', 'buzz/router-tray.ts', 'app/(app)/beeline/channels.tsx', 'app/(app)/beeline/chat/useRoomSurfaceSession.ts'],
-  acquireRouterLane: ['buzz/router-resource.ts', 'buzz/router-scheduled-work.ts', 'buzz/router-tray.ts', 'app/(app)/beeline/chat/useRoomSurfaceSession.ts', 'buzz/router-chat-list.ts', 'buzz/needs-you-store.ts'],
-};
-const OWNER_READS = new Set(['routerFamilyMode', 'routerLaneSnapshot', 'subscribeRouterOwner']);
-function inspectOwnerAccess(file, source, errors) {
-  const allowed = name => OWNER_READS.has(name) || (Object.hasOwn(OWNER_CALLERS, name) && OWNER_CALLERS[name].some(caller => MOBILE + caller === file));
-  const ownerModule = specifier => {
-    if (!specifier || !ts.isStringLiteralLike(specifier)) return false;
-    const target = specifier.text.startsWith('.')
-      ? path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier.text)) : specifier.text;
-    return target.replace(/\.[cm]?[jt]sx?$/, '') === MOBILE + 'buzz/router-owner' || target === '@/buzz/router-owner';
+
+
+// Helper execution is capability ownership, not a count of existing fetches.
+// There are no inventory allowances or warning-only branches for these sinks.
+function inspectHelperOperations(file, source, errors) {
+  const client = 'apps/body/src/daemon-api-client.ts';
+  const machine = 'apps/body/src/machine-link.ts';
+  const member = node => ts.isPropertyAccessExpression(node) ? node.name.text
+    : ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression) ? node.argumentExpression.text
+    : ts.isBindingElement(node) ? (node.propertyName ?? node.name).text : undefined;
+  function owner(node, expectedFile, klass, method) {
+    if (file !== expectedFile) return false;
+    let enclosing = node.parent;
+    while (enclosing && !ts.isMethodDeclaration(enclosing) && !ts.isFunctionDeclaration(enclosing)) enclosing = enclosing.parent;
+    return enclosing && ts.isMethodDeclaration(enclosing) && enclosing.name.getText(source) === method &&
+      ts.isClassDeclaration(enclosing.parent) && enclosing.parent.name?.text === klass;
+  }
+  const deny = (node, detail) => errors.push(`${file}:${source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1}: helper operation authority ${detail}`);
+  const channelModule = value => {
+    if (!value || !ts.isStringLiteralLike(value)) return false;
+    const target = value.text.startsWith('.')
+      ? path.posix.normalize(path.posix.join(path.posix.dirname(file), value.text)) : value.text;
+    return /apps\/body\/src\/helper-(turn|usage|activation)-channel(?:\.[cm]?[jt]s)?$/.test(target) ||
+      /apps\/body\/src\/machine-link(?:\.[cm]?[jt]s)?$/.test(target);
   };
-  const reject = name => errors.push(`${file}: router owner authority ${name} belongs to its declared UI or socket boundary`);
   function visit(node) {
-    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && ownerModule(node.moduleSpecifier) &&
-        !node.isTypeOnly && !node.importClause?.isTypeOnly) {
-      const names = node.importClause?.namedBindings ?? node.exportClause;
-      // Re-exports and namespace/default imports could forward minting authority.
-      if (ts.isExportDeclaration(node) || node.importClause?.name || !names || !ts.isNamedImports(names)) reject('module forwarding');
-      else for (const item of names.elements) if (!item.isTypeOnly && !allowed((item.propertyName ?? item.name).text))
-        reject((item.propertyName ?? item.name).text);
+    const name = member(node);
+    if (file.startsWith('apps/body/') && file !== client && name === 'channel') {
+      // Reading negotiated metadata is public. Capturing the channel itself
+      // would let a feature alias its request/send methods past the boundary.
+      const observation = member(node.parent);
+      const observers = new Set(['usageAccountScope', 'usageAccountSelected', 'activationScope', 'activationContextSelected', 'isOpen']);
+      if (!observers.has(observation) && !(observation === 'overlay' && file === 'apps/body/src/turn-stream.ts'))
+        deny(node, 'raw channel cannot escape the daemon owner');
+    }
+    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && channelModule(node.moduleSpecifier) &&
+        !node.isTypeOnly && !node.importClause?.isTypeOnly && file !== machine) {
+      const names = node.importClause?.namedBindings;
+      const module = node.moduleSpecifier.text.replace(/\.[cm]?[jt]s$/, '');
+      const allowed = name => module.endsWith('/machine-link') && [client, 'apps/body/src/machine-helper.ts'].includes(file) && name === 'MachineLink' ||
+        module.endsWith('/helper-usage-channel') && file === client && name === 'HELPER_USAGE_OPERATIONS';
+      if (!names || !ts.isNamedImports(names) || names.elements.some(item => !item.isTypeOnly && !allowed((item.propertyName ?? item.name).text)))
+        deny(node, 'channel constructors belong to the machine owner');
     }
     if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
-        ts.isIdentifier(node.expression) && node.expression.text === 'require') && ownerModule(node.arguments[0]) && file !== LIVE_BRIDGE)
-      reject('dynamic module');
-    const member = ts.isPropertyAccessExpression(node) ? node.name.text
-      : ts.isElementAccessExpression(node) && node.argumentExpression && ts.isStringLiteralLike(node.argumentExpression)
-        ? node.argumentExpression.text : undefined;
-    if (member && Object.hasOwn(OWNER_CALLERS, member) && !allowed(member)) reject(member);
+        ts.isIdentifier(node.expression) && node.expression.text === 'require') && channelModule(node.arguments[0]))
+      deny(node, 'channel constructors require their static owner binding');
+    if ((name === 'requestOperation' || name === 'operationReady' && !owner(node, client, 'DaemonApiClient', 'waitForConnection')) &&
+        !owner(node, client, 'DaemonApiClient', 'execute') && !owner(node, client, 'DaemonApiClient', 'readCommandActivation'))
+      deny(node, 'belongs to DaemonApiClient.execute');
+    if (ts.isPrivateIdentifier(node) && node.text === '#requestHttp' && !ts.isMethodDeclaration(node.parent) &&
+        !owner(node, client, 'DaemonApiClient', 'execute')) deny(node, 'HTTP adapter cannot escape its owner');
+    if ((ts.isStringLiteralLike(node) || ts.isTemplateHead(node)) && node.text.includes('/v1/daemon/operations/') &&
+        file === client && !owner(node, client, 'DaemonApiClient', '#requestHttp')) deny(node, 'HTTP sink must remain private');
+    if (name === 'request' && (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node))) {
+      const family = member(node.expression);
+      if (['turn', 'usage', 'activation'].includes(family) &&
+          !owner(node, client, 'DaemonApiClient', family === 'activation' ? 'readCommandActivation' : 'execute'))
+        deny(node, 'family dispatch belongs to the daemon channel owner');
+    }
+    // Check the actual frame construction even inside an otherwise trusted file.
+    if (ts.isPropertyAssignment(node) && node.name.getText(source).replace(/['"]/g, '') === 'type' &&
+        ts.isStringLiteralLike(node.initializer)) {
+      const sinks = {
+        'daemon-operation': [machine, 'AgentChannel', 'requestOperation'],
+        'turn-operation': ['apps/body/src/helper-turn-channel.ts', 'HelperTurnChannel', 'request'],
+        'usage-operation': ['apps/body/src/helper-usage-channel.ts', 'HelperUsageChannel', 'request'],
+        'activation-context': ['apps/body/src/helper-activation-channel.ts', 'HelperActivationChannel', 'request'],
+      };
+      const sink = sinks[node.initializer.text];
+      if (file.startsWith('apps/body/') && sink && !owner(node, ...sink)) deny(node, 'frame must be minted by its one channel method');
+    }
     ts.forEachChild(node, visit);
   }
   visit(source);
 }
 
-// Gesture wrappers retain the same exact caller boundary as the owner mint.
-// Observing a hook cannot be used to re-export its command/paint authority.
-function inspectGestureWrappers(file,source,errors){
-  const modules={
-    'buzz/router-resource': {'useRoutedResource': ['buzz/use-room-workflow-run.ts', 'buzz/workbench-surface.ts', 'buzz/wallet-surface.ts', 'app/(app)/beeline/members.tsx', 'buzz/use-routed-roster.ts', 'buzz/use-room-roster.ts']},
-    'buzz/use-routed-roster':{'useRoutedRoster':['app/(app)/beeline/members.tsx']},
-    'buzz/use-room-roster':{'useRoomRoster':['app/(app)/beeline/chat/_chat-surface.tsx']},
-    'buzz/router-tray':{'useRoutedTray':['app/(app)/beeline/tray.tsx'],
-      'prepareTrayCommand':['app/(app)/beeline/tray.tsx'],'acknowledgeRoutedTrayPaint':['app/(app)/beeline/tray.tsx']},
-    'buzz/router-scheduled-work':{'useRoutedScheduledWork':['buzz/scheduled-work.ts'],'prepareScheduledStop':['buzz/scheduled-work.ts']},
-  };
-  const resolve=specifier=>{
-    if(!specifier||!ts.isStringLiteralLike(specifier))return;
-    const target=(specifier.text.startsWith('.')?path.posix.normalize(path.posix.join(path.posix.dirname(file),specifier.text)):
-      specifier.text.replace(/^@\//,MOBILE)).replace(/\.[cm]?[jt]sx?$/,'');
-    return Object.keys(modules).find(name=>target===MOBILE+name);
-  };
-  const deny=()=>errors.push(`${file}: gesture wrapper authority belongs to its declared UI boundary`);
-  function visit(node){
-    if((ts.isImportDeclaration(node)||ts.isExportDeclaration(node))&&!node.isTypeOnly&&!node.importClause?.isTypeOnly){
-      const module=resolve(node.moduleSpecifier);
-      if(module){
-        const names=node.importClause?.namedBindings;
-        if(ts.isExportDeclaration(node)||node.importClause?.name||!names||!ts.isNamedImports(names))deny();
-        else for(const item of names.elements)if(!item.isTypeOnly){
-          const allowed=modules[module][(item.propertyName??item.name).text];
-          if(!allowed?.some(caller=>MOBILE+caller===file))deny();
-        }
-      }
-    }
-    if(ts.isCallExpression(node)&&(node.expression.kind===ts.SyntaxKind.ImportKeyword||ts.isIdentifier(node.expression)&&node.expression.text==='require')&&resolve(node.arguments[0]))deny();
-    ts.forEachChild(node,visit);
-  }
-  visit(source);
-}
+// Server-authored list caches still have one writer. Screens may send ordinary
+// reads directly through the shared socket; no read capability is minted.
+export function inspectSurfaceReadAuthority(file, text) {
+  if (!file.startsWith(MOBILE) || !/\.[cm]?[jt]sx?$/.test(file)) return [];
+  const owner = MOBILE + 'buzz/server-read-owner.ts';
+  const transport = MOBILE + 'sync/transport/';
+  const adapters = new Set([transport + 'monolith-operation.ts', transport + 'room-view-client.ts']);
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+  const errors = [];
+  const deny = reason => errors.push(`${file}: server-indexed read authority ${reason}`);
+  const resolve = value => value?.startsWith('.') ? path.posix.normalize(path.posix.join(path.posix.dirname(file), value)) : value?.replace(/^@\//, MOBILE);
+  const guards = new Set(['isChatListView', 'needsList', 'savedList']);
+  const restricted = new Set(['applyChatListDelta', 'chatListDeltaNeedsRead', 'keepUnavailableChatFacts', 'withoutCornerFacts', 'withCornerFacts']);
+  const memberName = node => ts.isPropertyAccessExpression(node) ? node.name.text :
+    ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression) ? node.argumentExpression.text : undefined;
+  const writerAliases = new Set();
 
-// Installing a connection adapter or an authority receipt is trusted owner work.
-// Feature consumers may observe metadata/cells, but cannot replace their executor.
-function inspectConnectionOwners(file, source, errors) {
-  const modules = {
-    'media-cache-connection': new Set(['installMediaCacheConnection',
-      'suspendMediaCacheConnection', 'receiveMediaAuthorityRemoval', 'invalidateMediaCacheDemand']),
-    'agent-usage-cell': new Set(['installUsageCellConnection', 'suspendUsageCellConnection', 'receiveUsageCell', 'setUsageCellProfile']),
-  };
-  if (file === MOBILE + 'buzz/router-owner.ts') return;
-  const target = specifier => {
-    if (!specifier || !ts.isStringLiteralLike(specifier)) return;
-    const resolved = specifier.text.startsWith('.') ? path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier.text))
-      : specifier.text.replace(/^@\//, MOBILE);
-    return Object.keys(modules).find(name => resolved.replace(/\.[cm]?[jt]sx?$/, '') === MOBILE + 'buzz/' + name);
-  };
-  const deny = () => errors.push(`${file}: connection installation belongs to the trusted router owner`);
+  const publicReads = new Set(['ChatListKey', 'ChatListConsumer', 'ChatListHandle', 'acquireChatList',
+    'liveChatList', 'chatListSnapshot', 'refreshChatList', 'resetChatListStoresForTest', 'readChatList',
+    'loadNeedsYouList', 'loadSavedList', 'loadTrayList', 'seedNeedsYouList', 'forgetTray',
+    'removeNeedsYou', 'holdNeedsYou', 'subscribeTrayGap', 'useTrayList', 'useNeedsYouCount',
+    'acknowledgePaintedNeedsYou', 'hideSavedItems', 'revealSavedItems']);
   function visit(node) {
-    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && !node.isTypeOnly && !node.importClause?.isTypeOnly) {
-      const module = target(node.moduleSpecifier);
-      if (module) {
-        const names = node.importClause?.namedBindings;
-        if (ts.isExportDeclaration(node) || node.importClause?.name || !names || !ts.isNamedImports(names)) deny();
-        else for (const item of names.elements) if (!item.isTypeOnly && modules[module].has((item.propertyName ?? item.name).text)) deny();
+    if ((ts.isFunctionDeclaration(node) || ts.isVariableDeclaration(node)) && node.name &&
+        /(?:ChatListView|NeedsYouListResult|MessageBookmarkListResult)/.test((node.type ?? node.initializer?.type)?.getText(source) ?? ''))
+      guards.add(node.name.getText(source));
+    if (file === owner && node.parent === source) {
+      if (ts.isExportDeclaration(node) || ts.isExportAssignment(node)) deny('implementation cannot be forwarded');
+      if (node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword)) {
+        const names = ts.isVariableStatement(node) ? node.declarationList.declarations.map(item => item.name.getText(source)) : [node.name?.text];
+        if (names.some(name => !publicReads.has(name))) deny('implementation must remain module-private');
       }
     }
-    if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
-        ts.isIdentifier(node.expression) && node.expression.text === 'require') && target(node.arguments[0])) deny();
+    if (ts.isImportDeclaration(node) && ts.isStringLiteralLike(node.moduleSpecifier)) {
+      for (const element of node.importClause?.namedBindings?.elements ?? []) {
+        if (guards.has((element.propertyName ?? element.name).text)) guards.add(element.name.text);
+        if ((element.propertyName ?? element.name).text === 'readChatList' && /server-read-owner$/.test(resolve(node.moduleSpecifier.text) ?? '') && file !== MOBILE + 'buzz/chat-list-store.ts') deny('Forward gesture belongs to its declared transcript boundary');
+        if (['applyChatListDelta', 'chatListDeltaNeedsRead', 'keepUnavailableChatFacts', 'withoutCornerFacts', 'withCornerFacts'].includes((element.propertyName ?? element.name).text) && file !== owner) deny('dispatch belongs to its owner');
+      }
+    }
+    if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteralLike(node.moduleSpecifier) &&
+        /(?:read-authority|server-read-owner)$/.test(resolve(node.moduleSpecifier.text) ?? '') &&
+        ![MOBILE + 'buzz/needs-you-store.ts', MOBILE + 'buzz/chat-list-store.ts'].includes(file) && !node.isTypeOnly)
+      deny('cannot be forwarded');
+    const member = memberName(node);
+    if (file !== owner && (restricted.has(member) || ts.isBindingElement(node) && restricted.has((node.propertyName ?? node.name).getText(source))))
+      deny('capability cannot be extracted outside its owner');
+    if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteralLike(node.moduleSpecifier) &&
+        /(?:monolith-operation|chat-list-delta)$/.test(resolve(node.moduleSpecifier.text) ?? '') && !node.isTypeOnly &&
+        (!node.exportClause || !ts.isNamedExports(node.exportClause) || node.exportClause.elements.some(element => restricted.has((element.propertyName ?? element.name).text))))
+      deny('wire/reducer capability cannot be forwarded');
+    if (ts.isVariableDeclaration(node) && node.initializer) {
+      if (ts.isIdentifier(node.name) && ['write','publish','persist'].includes(memberName(node.initializer))) writerAliases.add(node.name.text);
+      if (ts.isObjectBindingPattern(node.name)) for (const element of node.name.elements)
+        if (['write','publish','persist'].includes((element.propertyName ?? element.name).getText(source))) writerAliases.add(element.name.getText(source));
+    }
+    if (file !== owner && ts.isCallExpression(node)) {
+      const expression = node.expression;
+      const member = ts.isPropertyAccessExpression(expression) ? expression.name.text :
+        ts.isElementAccessExpression(expression) && ts.isStringLiteralLike(expression.argumentExpression) ? expression.argumentExpression.text : undefined;
+      if ((['write','publish','persist'].includes(member) || ts.isIdentifier(expression) && writerAliases.has(expression.text)) &&
+          (node.arguments.some(arg => ts.isIdentifier(arg) && guards.has(arg.text)) || /(?:ChatListView|NeedsYouListResult|MessageBookmarkListResult)|\/(?:needs-you|bookmarks|workspace\/:id\/chats)/.test(node.getText(source))))
+        deny('committed surface writes belong to its owner');
+    }
+    // A capability-requiring adapter cannot become a generic exported executor.
+    if (file === transport + 'monolith-operation.ts' && ts.isFunctionDeclaration(node) &&
+        node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword) &&
+        node.name?.text === 'executePhoneOperation') deny('raw executor must remain module-private');
+    if (file === owner && ts.isModuleDeclaration(node) && node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword))
+      deny('implementation state must remain module-private');
     ts.forEachChild(node, visit);
   }
   visit(source);
+  return errors;
 }
 
 export function inspectSource(file, text) {
   const errors = [];
   const inCore = file.startsWith('packages/net/src/');
   let hits = scanSource(file, text, LIBRARIES).filter(hit => !hit.kind.startsWith('origin:'));
+  // The physical machine connection is now the one primary WebSocket owner.
+  // Its constructor/send/close sinks are pinned by machine-connection-boundaries.
+  if(file==='apps/body/src/live-link.ts')hits=hits.filter(hit=>!['import:ws','websocket'].includes(hit.kind));
   // Rust HTTP clients are native leaves too; imports remain explicit inventory.
   if (file.endsWith('.rs')) {
     for (const match of text.matchAll(/\b(?:reqwest|hyper|TcpStream|UdpSocket|tungstenite)\b/g))
@@ -224,19 +258,8 @@ export function inspectSource(file, text) {
   if (/\.[cm]?[jt]sx?$/.test(file)) {
     const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
     if (configuredMcpDispatcher(file, source)) hits = hits.filter(hit => hit.kind !== 'import:undici');
-    const commandOwners = ['apps/mobile/sources/buzz/command-owner.ts', 'apps/mobile/sources/sync/transport/live-connection.ts'];
-    function commandAccess(node) {
-      const member = ts.isPropertyAccessExpression(node) ? node.name.text
-        : ts.isElementAccessExpression(node) && node.argumentExpression && ts.isStringLiteralLike(node.argumentExpression)
-          ? node.argumentExpression.text : undefined;
-      if (member === 'requestCommand' && !commandOwners.includes(file))
-        errors.push(`${file}: durable command executor belongs to the persisted intent owner`);
-      ts.forEachChild(node, commandAccess);
-    }
-    commandAccess(source);
-    inspectOwnerAccess(file, source, errors);
-    inspectGestureWrappers(file, source, errors);
-    inspectConnectionOwners(file, source, errors);
+    errors.push(...inspectSurfaceReadAuthority(file, text));
+    inspectHelperOperations(file, source, errors);
     for (const entry of imports(file, text)) {
       if (entry.dynamic && !entry.specifier) hits.push({ kind: 'computed-import', line: 1 });
       const target = entry.specifier?.startsWith('.')
@@ -254,9 +277,7 @@ export function inspectSource(file, text) {
         // Closed activation codec belongs only to the owned machine socket adapters.
       } else if (target === '@beeline/net/helper-codecs' && ['apps/body/src/helper-usage-channel.ts', 'apps/server/src/daemon-live.ts'].includes(file)) {
         // Closed usage codecs belong only to the existing machine socket adapters.
-      } else if (target === '@beeline/net/owner' && ['apps/mobile/sources/buzz/router-owner.ts', 'apps/mobile/sources/buzz/command-owner.ts'].includes(file)) {
-        // Exact trusted navigation and persisted-intent owners; no feature imports.
-      } else if (target?.startsWith('@beeline/net/') && target !== '@beeline/net/phone-inputs' || target?.startsWith('packages/net/')) {
+      } else if (target?.startsWith('@beeline/net/') || target?.startsWith('packages/net/')) {
         // Add exact production owners only with their M2/M3
         // proofs rather than authorizing a directory of feature callers.
         errors.push(`${file}: private router import ${entry.specifier}`);

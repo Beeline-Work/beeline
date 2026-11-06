@@ -1,4 +1,3 @@
-import { routerOwnerListPanel } from '@/buzz/router-owner';
 import { InlineRow } from '@/components/buzz/IndexRow';
 import { subscribeDesktopArtifact, type DesktopArtifactSelection } from '@/buzz/desktop-artifact-pane';
 import { DesktopArtifactPane } from '@/components/buzz/DesktopArtifactPane';
@@ -61,7 +60,7 @@ export const SidebarNavigator = React.memo(() => {
   // Choosing, creating or joining a Workspace is a focused setup step, like
   // onboarding: no Room sidebar (a person there may have no Workspace yet).
   const isAppSurface =
-    pathname.startsWith('/beeline/') &&
+    (pathname === '/' || pathname.startsWith('/beeline/')) &&
     !pathname.includes('/onboarding') &&
     !SETUP_SURFACES.includes(pathname);
   const showSessionChrome =
@@ -82,7 +81,6 @@ export const SidebarNavigator = React.memo(() => {
   }, [document]);
   React.useEffect(() => setDocument(null), [pathname]);
   const showSidebar = showSessionChrome && !zenMode && desktopLayout.showRoomList;
-  React.useLayoutEffect(() => { routerOwnerListPanel(showSidebar); }, [showSidebar]);
   const { width: windowWidth } = useWindowDimensions();
 
   React.useEffect(() => {

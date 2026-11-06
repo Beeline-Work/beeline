@@ -56,18 +56,13 @@ export async function withKernelLock<T>(
     const remaining = deadline - Date.now();
     if (remaining <= 0) throw new KernelLockBusyError();
     // Wait for owner death/completion on the connection, rather than rereading a lock file.
-    await new Promise<void>((done, reject) => {
+    await new Promise<void>((done) => {
       const peer = createConnection(address);
       // Consume EOF so a completed owner's connection closes. A paused
       // client can otherwise keep a Linux abstract address referenced after
       // the listener has gone, preventing the next owner from binding it.
       peer.resume();
-      const timer = setTimeout(() => {
-        peer.destroy();
-        reject(new KernelLockBusyError());
-      }, remaining);
       const finish = () => {
-        clearTimeout(timer);
         peer.destroy();
         done();
       };

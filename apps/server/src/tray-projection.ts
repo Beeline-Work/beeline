@@ -1,9 +1,6 @@
-import type { RouterValues } from '@beeline/api-contract/router-protocol';
 import type { PhoneOperationMap } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
-import { countNeedsYouProjection, needsYouItems,type NeedsClockMode } from './needs-you.js';
-import { RouterProjectionUnavailable } from './router-projections.js';
-import {readTraySavedWindow} from './tray-saved-window.js';
+import { needsYouItems } from './needs-you.js';
 
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
 type Output<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['output'];
@@ -66,7 +63,7 @@ export async function readMessageBookmarks(database: SqlDatabase, input: Input<'
        )
        SELECT COALESCE((SELECT jsonb_agg(to_jsonb(bookmarks) ORDER BY bookmarked_at DESC,message_id)
          FROM bookmarks),'[]'::jsonb) bookmarks FROM authorized`,
-      cursor ? [input.workspaceId, viewerId, cursor[1], cursor[2]] : [input.workspaceId, viewerId],
+      cursor ? [input.workspaceId, viewerId, cursor[1], cursor[2]] : [input.workspaceId, viewerId], 'phone-tray-saved-0',
     );
     if (!result.rows[0]) throw new Error('workspace membership required');
     const page = result.rows[0].bookmarks.slice(0, BOOKMARK_PAGE);
@@ -103,26 +100,4 @@ export async function readMessageBookmarks(database: SqlDatabase, input: Input<'
         });
       }),
     };
-}
-
-/** Complete existing Tray content, with no seen write or provider operation.
- * Both sections share the caller's repeatable-read handle; a failure makes
- * the projection unavailable rather than asserting a partial coherent cut. */
-export async function buildTrayProjection(database: SqlDatabase, workspaceId: string,
-  viewerId: string, toIdentity: IdentityFormatter,clock:NeedsClockMode='wall'): Promise<RouterValues['needs-you-tray']> {
-  const [needs, saved, count] = await Promise.all([
-    needsYouItems(database, workspaceId, viewerId, toIdentity, false,clock),
-    readTraySavedWindow(database, { workspaceId }, viewerId, toIdentity).catch(error=>{
-      if(error instanceof Error&&error.message==='saved_window_budget')throw new RouterProjectionUnavailable('budget');
-      throw error;
-    }),
-    countNeedsYouProjection(database, workspaceId, viewerId,clock),
-  ]);
-  // Legacy question selection caps its rows. Never certify that truncated
-  // result, or a count/cell disagreement, as a complete canonical projection.
-  if (needs.items.length !== count) throw new RouterProjectionUnavailable('dependency');
-  if(needs.items.length>30)throw new RouterProjectionUnavailable('budget');
-  const value = { needs, saved };
-  if (Buffer.byteLength(JSON.stringify(value)) > 64 * 1024) throw new RouterProjectionUnavailable('budget');
-  return value;
 }

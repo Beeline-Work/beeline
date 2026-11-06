@@ -1,4 +1,4 @@
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RoomsMcp } from './rooms-mcp.js';
@@ -37,6 +37,35 @@ describe('MCP member stream server-first negotiation',()=>{
       const stream=await fetch(origin+'/mcp/member-stream?mentions=0',{headers:{authorization:'Bearer synthetic'}});
       expect(stream.status).toBe(409);expect(await stream.json()).toEqual({error:'member_stream_unavailable'});
     }
+    expect(query).not.toHaveBeenCalled();
+  });
+});
+
+describe('MCP join JSON discovery', () => {
+  it.each([
+    ['/join', '127.0.0.1', 'http://127.0.0.1/.well-known/oauth-protected-resource/join'],
+    ['/', 'join.usebeeline.app', 'http://join.usebeeline.app/.well-known/oauth-protected-resource'],
+    ['/join', 'join.usebeeline.app', 'http://join.usebeeline.app/.well-known/oauth-protected-resource/join'],
+  ])('%s on %s challenges JSON discovery and keeps the readable page', async (path, host, metadata) => {
+    const { origin, query } = await fixture(false);
+    const get = (accept: string) => new Promise<{ status: number; challenge?: string; contentType?: string; body: string }>((resolve, reject) => {
+      const request = httpRequest(origin + path, { headers: { host, accept } }, response => {
+        let body = '';
+        response.on('data', chunk => { body += String(chunk); });
+        response.on('end', () => resolve({ status: response.statusCode!, challenge: response.headers['www-authenticate'],
+          contentType: response.headers['content-type'], body }));
+      });
+      request.on('error', reject); request.end();
+    });
+    for (const accept of ['application/json', 'Application/JSON; charset=utf-8']) {
+      const discovery = await get(accept);
+      expect(discovery.status).toBe(401);
+      expect(discovery.challenge).toContain(`resource_metadata="${metadata}"`);
+      expect(JSON.parse(discovery.body)).toEqual({ error: 'invalid_token' });
+    }
+    const page = await get('text/html');
+    expect(page.status).toBe(200);
+    expect(page.contentType).toContain('text/html');
     expect(query).not.toHaveBeenCalled();
   });
 });

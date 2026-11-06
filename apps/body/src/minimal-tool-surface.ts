@@ -868,7 +868,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "report",
-    "description": "Report the assigned outcome one step up through command provenance. Status and text prefix must agree: done:, blocked:, failed:, needs-decision:. No address. Feedback is separate from assignment completion. Optional `to`: who receives this report, when the default recipient is wrong. Local proof paths are refused. First upload each proof with post_artifact, then cite its attachment filename instead of a local path.",
+    "description": "Report the assigned outcome one step up through command provenance. Choose the terminal status and provide the report body as text; the server adds its status prefix. No address. Feedback is separate from assignment completion. Optional `to`: who receives this report, when the default recipient is wrong. Local proof paths are refused. First upload each proof with post_artifact, then cite its attachment filename instead of a local path.",
     "inputSchema": {
       "type": "object",
       "required": ["status", "text"],
@@ -1170,11 +1170,11 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "wake",
-    "description": "Manage your own wake sources. List your schedules across every Room you belong to by scheduleId; update and delete require a turn started by a human Workspace admin of the schedule’s Room, and a scheduled wake cannot do either; lists include roomId and roomName. Creating schedules and managing events stay in this place. Schedules and events reject address. lifecycle requires address and watches opened/merged. Opening a corner already watches it. events discovers the catalog. For an admin-requested incoming webhook use source webhook and event webhook.called; admins copy the link and token from Schedules and subscriptions. Never posts, orders or reports. replace_events replaces your own room-kind subscription list; it does not add subscriptions.",
+    "description": "Manage your own wake sources. List your schedules across every Room you belong to by scheduleId; update and delete require a turn started by a human Workspace admin of the schedule’s Room, and a scheduled wake cannot do either; lists include roomId and roomName. Creating schedules and managing events stay in this place. Schedules and events reject address. lifecycle requires address and watches opened/merged. Opening a corner already watches it. events discovers the catalog. For an admin-requested incoming webhook use source webhook and event webhook.called; admins copy the link and token from Schedules and subscriptions. pause and resume take exactly one scheduleId or subscriptionId. Resume skips missed schedule runs. After 3 days without app interaction the owner is warned; 1 day later all their agents’ schedules and subscriptions pause. Ask the owner which to resume. Never posts, orders or reports. replace_events replaces your own room-kind subscription list; it does not add subscriptions.",
     "inputSchema": {
       "type": "object",
       "properties": {
-        "action": {"type": "string", "enum": ["create", "list", "update", "delete", "events", "replace_events"]},
+        "action": {"type": "string", "enum": ["create", "list", "update", "delete", "pause", "resume", "events", "replace_events"]},
         "trigger": {"type": "string", "enum": ["schedule", "event", "lifecycle"]},
         "address": {
           "type": "string",
@@ -1204,11 +1204,6 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
             "timeZone": {"type": "string", "description": "Optional IANA time zone for cron."}
           },
           "additionalProperties": false
-        },
-        "maxRuns": {
-          "type": "integer",
-          "minimum": 1,
-          "description": "Delete the schedule automatically after this many runs."
         },
         "scheduleId": {"type": "string", "description": "The scheduleId from wake(action:list)."},
         "source": {"type": "string", "enum": ["room", "repository", "service", "webhook"]},
@@ -1242,6 +1237,8 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
           "required": ["action", "trigger"]
         },
         {"properties": {"action": {"const": "delete"}, "trigger": {"const": "schedule"}}, "required": ["action", "scheduleId"]},
+        {"properties": {"action": {"enum": ["pause", "resume"]}}, "required": ["action", "scheduleId"]},
+        {"properties": {"action": {"enum": ["pause", "resume"]}}, "required": ["action", "subscriptionId"]},
         {"properties": {"action": {"const": "replace_events"}}, "required": ["action", "kinds"]}
       ]
     }
@@ -1354,14 +1351,57 @@ export function placeBeelineApps(_cornerTurn: boolean, onboarding = false): stri
 export function minimalTools(cornerTurn: boolean): ToolDefinition[] {
   const apps = placeBeelineApps(cornerTurn).join(', ');
   return structuredClone(ORDINARY_TOOLS).map(tool =>
-    tool.name === 'app_tool' ? { ...tool, description: tool.description.replace('BEELINE_APPS', apps) } : tool);
+    providerCompatibleTool(tool.name === 'app_tool'
+      ? { ...tool, description: tool.description.replace('BEELINE_APPS', apps) } : tool));
 }
-export function repositoryTools(): ToolDefinition[] { return structuredClone(REPOSITORY_TOOLS); }
+export function repositoryTools(): ToolDefinition[] { return structuredClone(REPOSITORY_TOOLS).map(providerCompatibleTool); }
 export function scratchTools(quota: boolean): ToolDefinition[] {
  const tools = structuredClone(SCRATCH_TOOLS);
  if (!quota) {
    const properties = tools[0]!.inputSchema.properties as Record<string, { enum?: string[] }>;
    properties.action!.enum = ['write', 'image'];
  }
- return tools;
+ return tools.map(providerCompatibleTool);
+}
+
+/** Full input contract, retained independently of provider schema restrictions. */
+export function toolValidationSchema(name: string): Record<string, unknown> | undefined {
+  const schema = [...ORDINARY_TOOLS, ...REPOSITORY_TOOLS, ...SCRATCH_TOOLS].find(tool => tool.name === name)?.inputSchema;
+  return schema ? structuredClone(schema) : undefined;
+}
+
+/**
+ * Claude Code skips root combinators on deployments without its optional
+ * rewrite. All harnesses receive the same object schema; branch constraints
+ * remain visible in the description and mandatory in server-side validation.
+ * Nested schemas are left intact. Never depend on a harness feature flag.
+ */
+function providerCompatibleTool(tool: ToolDefinition): ToolDefinition {
+  const { anyOf, oneOf, allOf, ...inputSchema } = tool.inputSchema;
+  const combinations = { ...(anyOf ? { anyOf } : {}), ...(oneOf ? { oneOf } : {}), ...(allOf ? { allOf } : {}) };
+  return Object.keys(combinations).length
+    ? { ...tool, inputSchema, description: `${tool.description} Argument combinations (validated by Beeline): ${JSON.stringify(combinations)}` }
+    : tool;
+}
+
+/** The ordinary surface is stable across warm turns; optional schemas are read through app_tool. */
+export function agentToolsFor(
+  agentSurface: boolean,
+  _directMessage: boolean,
+  cornerTurn = false,
+  repositoryCorner = false,
+  commandRunnerAvailable = true,
+  institutionalMemoryEnabled = true,
+  nativeIoProven = false,
+): ToolDefinition[] {
+  if (!agentSurface) return repositoryTools();
+  const tools = minimalTools(cornerTurn).filter(tool =>
+    institutionalMemoryEnabled || !['search', 'remember'].includes(tool.name));
+  if (commandRunnerAvailable) tools.push(RUNNER_TOOL);
+  // no_reply_needed mounts on every harness: it is the only silence path, so a
+  // nonhuman wake must always be able to end without posting prose. The tool
+  // itself refuses human wakes.
+  tools.push(SILENT_TOOL);
+  if (!nativeIoProven) tools.push(...scratchTools(cornerTurn && !repositoryCorner));
+  return tools;
 }

@@ -45,6 +45,30 @@ describe('effective command ownership', () => {
     await db.query(`UPDATE live_server_instances SET renewed_at=clock_timestamp(); UPDATE agent_connections SET released_at=clock_timestamp()`);
     expect((await active(db)).find(row => row.id === 'owned')!.active).toBe(false);
   });
+  it('retains a runtime owner while offline but admits effects only after registration, and fences a replacement runtime', async () => {
+    await db.query(`UPDATE agent_connections SET turn_connection_id=connection_id,turn_connection_epoch=epoch,
+      released_at=clock_timestamp();UPDATE live_server_instances SET renewed_at=clock_timestamp()-interval '1 day'`);
+    expect((await active(db)).find(row=>row.id==='owned')!.active).toBe(true);
+    await expect(db.transaction(tx=>assertCurrentTurnOwner(tx,'agent',{connectionId:'connection',epoch:1}))).rejects.toThrow('source changed');
+    await db.query(`UPDATE agent_connections SET connection_id='next-socket',turn_transport_id='next-socket',epoch=2,released_at=NULL;
+      UPDATE live_server_instances SET renewed_at=clock_timestamp()`);
+    await db.transaction(tx=>assertCurrentTurnOwner(tx,'agent',{connectionId:'connection',epoch:1}));
+    expect((await active(db)).find(row=>row.id==='owned')!.active).toBe(true);
+    await db.query(`UPDATE agent_connections SET turn_connection_id='new-runtime',turn_connection_epoch=3`);
+    expect((await active(db)).find(row=>row.id==='owned')!.active).toBe(false);
+    await expect(db.transaction(tx=>assertCurrentTurnOwner(tx,'agent',{connectionId:'connection',epoch:1}))).rejects.toThrow('source changed');
+  });
+
+  it('clears a continuation when a pre-continuation server replaces the physical connection',async()=>{
+    await db.query(`UPDATE agent_connections SET turn_connection_id='connection',turn_connection_epoch=1,
+      turn_transport_id=connection_id`);
+    await db.query(`UPDATE agent_connections SET connection_id='old-server-socket',epoch=2,released_at=NULL`);
+    expect((await db.query('SELECT turn_connection_id,turn_connection_epoch FROM agent_connections')).rows[0])
+      .toEqual({turn_connection_id:null,turn_connection_epoch:null});
+    expect((await active(db)).find(row=>row.id==='owned')!.active).toBe(false);
+    await db.transaction(tx=>assertCurrentTurnOwner(tx,'agent',{connectionId:'old-server-socket',epoch:2}));
+  });
+
   it('rejects a partial owner pair and arbitrary SQL aliases', async () => {
     await expect(db.query(`UPDATE agent_commands SET turn_owner_epoch=NULL WHERE id='owned'`)).rejects.toThrow();
     expect(() => commandOwnerLiveSql('command; SELECT 1')).toThrow('alias');

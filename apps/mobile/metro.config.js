@@ -65,4 +65,5 @@ config.transformer.getTransformOptions = async () => ({
   },
 });
 
+/** @public Metro loads this configuration by filename. */
 module.exports = config;

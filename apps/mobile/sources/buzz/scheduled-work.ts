@@ -16,8 +16,6 @@ import { useSharedSurface } from './use-shared-surface';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { subscribeClientReset } from '@/sync/client-reset';
 import type { SurfaceCacheAddress } from '@beeline/buzz-client';
-import {useRoutedScheduledWork,prepareScheduledStop} from './router-scheduled-work';
-
 
 const NEXT_RUN = new Intl.DateTimeFormat(undefined, {
   month: 'short',
@@ -83,6 +81,7 @@ export function scheduleTitle(schedule: RoomScheduleView): string {
 }
 
 export function scheduleTrigger(schedule: RoomScheduleView, now = new Date()): string {
+  if (schedule.paused) return 'Paused while you were away';
   const next = new Date(schedule.nextRunAt * 1000);
   if (schedule.maxRuns !== 1) return scheduleCadenceLabel(schedule.cadence, next);
   const date = new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'numeric', day: 'numeric' });
@@ -101,6 +100,7 @@ export function scheduleTrigger(schedule: RoomScheduleView, now = new Date()): s
 
 /** The detail page's Runs row: the cadence and the next firing. */
 export function scheduleRuns(schedule: RoomScheduleView): string {
+  if (schedule.paused) return 'Paused while you were away';
   return `${scheduleTrigger(schedule)} · next ${NEXT_RUN.format(
     new Date(schedule.nextRunAt * 1_000),
   )}`;
@@ -114,6 +114,7 @@ export function subscriptionTitle(subscription: RoomSubscriptionView): string {
 }
 
 export function subscriptionWhen(subscription: RoomSubscriptionView, isDirectMessage = false): string {
+  if (subscription.paused) return 'Paused while you were away';
   if (subscription.registrationStatus === 'error')
     return `Setup failed · ${subscription.when ?? subscription.event}`;
   if (subscription.registrationStatus === 'registering')
@@ -217,22 +218,21 @@ function holdScheduledWork(roomId: string, address: SurfaceCacheAddress): { firs
  */
 export function useScheduledWork(roomId: string | undefined,legacyTargetValid=true) {
   const focused = useSurfaceFocus();
-  const routed=useRoutedScheduledWork(roomId,focused);
   const request = useCallback(() => monolithPhoneOperation('readScheduledWork', { roomId: roomId! }), [roomId]);
   const { value, address, loading, error, setError, refresh } = useSharedSurface(
-    '/room/:id/scheduled-work', roomId&&legacyTargetValid ? { roomId } : undefined, isScheduledWork, request, Boolean(roomId)&&legacyTargetValid&&focused&&routed.mode==='legacy', true);
+    '/room/:id/scheduled-work', roomId&&legacyTargetValid ? { roomId } : undefined, isScheduledWork, request, (Boolean(roomId)&&legacyTargetValid&&focused), true);
   useEffect(() => {
-    if (routed.mode!=='legacy'||!focused || !roomId || !address) return;
+    if ((!focused) || !roomId || !address) return;
     const owner = holdScheduledWork(roomId, address);
     if (owner.first && AppState.currentState === 'active') void refresh();
     return owner.release;
-  }, [address, roomId, focused, refresh,routed.mode]);
-  const selected=routed.mode==='legacy'?value:routed.value;
+  }, [address, roomId, focused, refresh]);
+  const selected=(value);
   const work = useMemo<ScheduledWork | null>(() => selected && ({roomName:selected.roomName,isDirectMessage:selected.isDirectMessage===true,
     agentNames:new Map(selected.agentNames),schedules:selected.schedules,subscriptions:selected.subscriptions}),[selected]);
-  return { work,routed:routed.mode==='router',loading:routed.mode==='legacy'?loading&&!value:routed.loading,
-    error:roomId&&(routed.mode!=='legacy'||legacyTargetValid)?(routed.mode==='legacy'?error:routed.error):'Schedules target is missing.',
-    setError,retry:()=>{if(routed.mode==='router')routed.retry();else if(routed.mode==='legacy'&&focused&&AppState.currentState==='active')void refresh();} };
+  return { work,loading:(loading&&!value),
+    error:roomId&&((legacyTargetValid))?((error)):'Schedules target is missing.',
+    setError,retry:()=>{if((focused)&&AppState.currentState==='active')void refresh();} };
 }
 
 /**
@@ -257,8 +257,6 @@ async function stopRow(
 }
 
 export async function stopSchedule(roomId: string, scheduleId: string): Promise<StopOutcome> {
-  const command=prepareScheduledStop('deleteRoomSchedule',roomId,scheduleId);
-  if(command){await command;return 'stopped';}
   const outcome = await stopRow(
     () => monolithPhoneOperation('deleteRoomSchedule', { roomId, scheduleId }), 'schedule not found');
   const [identity, relay] = await Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]);
@@ -272,8 +270,6 @@ export async function stopSchedule(roomId: string, scheduleId: string): Promise<
 }
 
 export async function stopSubscription(roomId: string, subscriptionId: string): Promise<StopOutcome> {
-  const command=prepareScheduledStop('deleteRoomSubscription',roomId,subscriptionId);
-  if(command){await command;return 'stopped';}
   const outcome = await stopRow(
     () => monolithPhoneOperation('deleteRoomSubscription', { roomId, subscriptionId }), 'subscription not found');
   const [identity, relay] = await Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]);

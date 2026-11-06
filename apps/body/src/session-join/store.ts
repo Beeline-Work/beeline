@@ -1,3 +1,4 @@
+import { waitForPathRemoval } from '../filesystem-change.js';
 // Local state for sessions that joined Beeline: one private file per machine user, a lock, and per-session inboxes
 // for apps that take messages through their own hooks or plugins instead of a push channel.
 import { createHash, randomUUID } from 'node:crypto';
@@ -102,7 +103,7 @@ export async function withLock<T>(dir: string, run: () => Promise<T> | T): Promi
       // A holder that died leaves its lock; nothing holds it for 30 seconds.
       try { if (Date.now() - statSync(lock).mtimeMs > 30_000) rmSync(lock, { recursive: true, force: true }); } catch { /* gone */ }
       if (attempt > 400) throw new Error('Beeline session state is locked');
-      await new Promise(resolve => setTimeout(resolve, 25));
+      await waitForPathRemoval(lock);
     }
   }
   try { return await run(); } finally { rmSync(lock, { recursive: true, force: true }); }

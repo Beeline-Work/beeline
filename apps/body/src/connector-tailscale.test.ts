@@ -26,11 +26,12 @@ describe('installTailscale', () => {
     let state = 'NeedsLogin';
     const run = vi.fn(async () => ({ code: 0, stdout: JSON.stringify({ BackendState: state }), stderr: '' }));
     const connected = vi.fn();
-    const stop = watchTailscaleSignIn(connected, { run, intervalMs: 100 });
+    let changed!:()=>void;
+    const stop=watchTailscaleSignIn(connected,{run,watch:listener=>{changed=listener;return ()=>{};}});
     await vi.advanceTimersByTimeAsync(100);
     expect(run).toHaveBeenCalledWith('tailscale', ['status', '--json']);
     expect(connected).not.toHaveBeenCalled();
-    state = 'Running';
+    state = 'Running';changed();
     await vi.advanceTimersByTimeAsync(100);
     expect(connected).toHaveBeenCalledOnce();
     await vi.advanceTimersByTimeAsync(1_000);

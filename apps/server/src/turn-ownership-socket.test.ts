@@ -1,3 +1,5 @@
+import { DaemonApiClient } from '../../body/src/daemon-api-client.js';
+import { MachineLink } from '../../body/src/machine-link.js';
 import type { AddressInfo } from 'node:net';
 import { setTimeout as realTimeout, clearTimeout as realClearTimeout } from 'node:timers';
 import WebSocket from 'ws';
@@ -71,8 +73,7 @@ describe.each(['pglite', ...(postgresUrl ? ['postgres'] : [])])('P12 actual sele
   async function connect(enabled = true, identity = agent) {
     vi.stubEnv('BEELINE_NETWORK_ROUTER_V1', enabled ? '1' : '0');
     if (!server) {
-      server = createBeelineServer({ database: db, live, daemon, connectionPresence: presence, liveHeartbeatMs: 30_000,
-        connectionWork,
+      server = createBeelineServer({ database: db, live, daemon, connectionPresence: presence,
         auth: { authenticateDaemon: async (token: string) => token === 'bdt_synthetic' ? agent : token === 'bdt_synthetic_peer' ? 'c'.repeat(64) : null,
           retiredDaemonAgent: async () => null, authenticatePhone: async () => null } as unknown as TokenAuth,
         phone: { canReadRooms: async () => new Set([room]) } as unknown as PhoneService });
@@ -105,9 +106,50 @@ describe.each(['pglite', ...(postgresUrl ? ['postgres'] : [])])('P12 actual sele
     return client.next(frame => frame.type === 'turn-result' && frame.requestId === requestId, `turn result ${requestId}`);
   }
 
+  it('requeues on every actual socket close, reclaims a fresh generation, and retains the Squire verdict', async () => {
+    const bootstrap=await connect();bootstrap.socket.terminate();
+    const helperSockets:WebSocket[]=[];
+    const vault=vi.fn(async()=>({connections:[{reference:'synthetic-credential',service:'example',label:'connected',
+      fieldNames:['password'],allowedHosts:['example.test'],createdAt:1,stale:false,state:'active' as const}]}));
+    const baseUrl=`http://127.0.0.1:${(server!.address() as AddressInfo).port}`;
+    const machine=new MachineLink({baseUrl,readVault:vault,log:vi.fn(),factory:(url,protocols,options)=>{
+      const socket=new WebSocket(url,protocols,options);helperSockets.push(socket);sockets.push(socket);return socket;
+    }});
+    const api=new DaemonApiClient(baseUrl,'bdt_synthetic',agent,fetch,undefined,undefined,machine);
+    try {
+      await api.execute('getAgentCommands',{roomId:room});
+      for(let drop=0;drop<3;drop++){
+        const generationId=`before-drop-${drop}`;
+        await api.execute('claimAgentCommand',{roomId:room,commandId:command.id,generationId});
+        const previous=api.turnOwnershipScope()!,lost=vi.fn();
+        api.noteOwnedTurnClaim({roomId:room,requestId:command.turn_request_id,generationId},previous,lost);
+        const dropped=helperSockets.at(-1)!;
+        const closed=new Promise<void>(resolve=>dropped.once('close',()=>resolve()));
+        dropped.terminate();await closed;
+        await api.waitForConnection();
+        await vi.waitFor(async()=>expect((await db.query('SELECT state FROM agent_commands WHERE id=$1',[command.id])).rows[0]).toMatchObject({state:'pending'}));
+        expect(api.turnOwnershipScope()).not.toEqual(previous);
+        expect(lost).toHaveBeenCalledTimes(1);
+        expect(await expireOwnedAgentTurns(db,live,agent)).toBe(0);
+      }
+      await machine.refreshVault();
+      expect((await daemon.execute('getConnectorStatus',{agentId:agent,connectorId:`squire:${agent}`},agent)).status).toBe('connected');
+      vault.mockRejectedValueOnce(new Error('Squire MCP session closed'));await machine.refreshVault();
+      expect((await daemon.execute('getConnectorStatus',{agentId:agent,connectorId:`squire:${agent}`},agent)).status).toBe('connected');
+      const turn={roomId:room,requestId:command.turn_request_id,generationId:'final-generation'};
+      await api.execute('claimAgentCommand',{roomId:room,commandId:command.id,generationId:turn.generationId});
+      await api.execute('postRoomMessage',{...turn,text:'Finished after three connection drops.'});
+      await api.execute('postAgentTurnReceipt',{agentId:agent,...turn,status:'complete'});
+      expect((await db.query('SELECT state,generation_id FROM agent_commands WHERE id=$1',[command.id])).rows[0])
+        .toMatchObject({state:'complete',generation_id:turn.generationId});
+      expect(machine.link.reconnects).toBe(3);
+      expect(helperSockets).toHaveLength(4);
+    }finally{api.closeLive();machine.stop();}
+  });
+
   it('binds the actual registration, replays without row writes, and rejects freshness/legacy receipt paths', async () => {
     const client = await connect();
-    expect(client.registered.capabilities).toMatchObject({ turnOwnershipV1: true, intakeHeartbeat: false });
+    expect(client.registered.capabilities).toMatchObject({ turnOwnershipV1: true });
     expect(await claim(client)).toHaveProperty('result');
     const current = (await db.query(`SELECT turn_owner_connection_id,turn_owner_epoch::integer turn_owner_epoch,lease_expires_at FROM agent_commands WHERE id=$1`, [command.id])).rows[0]!;
     expect(current).toMatchObject({ turn_owner_connection_id: client.registered.capabilities.turnConnectionId,
@@ -126,23 +168,11 @@ describe.each(['pglite', ...(postgresUrl ? ['postgres'] : [])])('P12 actual sele
     await expect(daemon.execute('postAgentTurnReceipt', { agentId: agent, roomId: room,
       requestId: command.turn_request_id, generationId: 'generation', status: 'working', heartbeat: true }, agent)).rejects.toThrow('negotiated machine owner');
     expect(await versions()).toEqual(before);
-    const event = (name: 'ping' | 'pong') => new Promise<void>((resolve, reject) => {
-      const deadline = realTimeout(() => { client.socket.off(name, observed); reject(new Error(`Missing controlled ${name}`)); }, 2_000);
-      const observed = () => { realClearTimeout(deadline); resolve(); }; client.socket.once(name, observed);
-    });
     const queries = vi.spyOn(db, 'query');
     const published: unknown[] = [];
     const stopLive = live.subscribeAll(event => published.push(event));
     for (let i = 0; i < 20; i += 1) {
-      const ping = event('ping');
       elapsed += 30_000; vi.setSystemTime(Date.now() + 30_000);
-      for (const control of controls) if (control.next <= elapsed) {
-        control.next += control.interval; control.run();
-      }
-      await ping;
-      // FIFO control frames prove the server processed its automatic pong
-      // before the next clock edge; CPU processing latency is not a failure.
-      const pong = event('pong'); client.socket.ping(); await pong;
       await presence.renewLease(); // Join the admitted aggregate lease write.
     }
     expect(await versions()).toEqual(before);
@@ -151,6 +181,17 @@ describe.each(['pglite', ...(postgresUrl ? ['postgres'] : [])])('P12 actual sele
     expect(published.filter(event => (event as Frame).reason === 'postgres:agent_turns' || (event as Frame).type === 'turn-delta')).toHaveLength(0);
     expect(queries.mock.calls.filter(([sql]) => sql.includes('INSERT INTO live_server_instances')).length).toBeLessThanOrEqual(20);
     stopLive(); queries.mockRestore();
+  });
+
+  it('binds a free-agent claim to its machine while the optional model rollout is disabled', async () => {
+    await db.query(`INSERT INTO free_agents(agent_id,workspace_id,owner_id,state,sealed_keys,model_token_hash)
+      VALUES($1,$2,$3,'running','fixture',$4)`,[agent,workspace,owner,'c'.repeat(64)]);
+    expect(daemon.ownedModelReady()).toBe(false);
+    const client=await connect();
+    expect(client.registered.capabilities).toMatchObject({turnOwnershipV1:true});
+    expect(await claim(client)).toHaveProperty('result');
+    expect((await db.query('SELECT turn_owner_connection_id FROM agent_commands WHERE id=$1',[command.id])).rows[0])
+      .toMatchObject({turn_owner_connection_id:client.registered.capabilities.turnConnectionId});
   });
 
   it('F14 scopes 1,000 irrelevant facts to zero inbox reads and sends one targeted command', async () => {
@@ -198,15 +239,9 @@ describe.each(['pglite', ...(postgresUrl ? ['postgres'] : [])])('P12 actual sele
     expect(queries.mock.calls.slice(before)).toEqual([]);
   });
 
-  it('keeps the disabled cohort legacy and refuses closed-shape/source forgery before dispatch', async () => {
-    const legacy = await connect(false), execute = vi.spyOn(daemon, 'execute');
-    expect(legacy.registered.capabilities).not.toHaveProperty('turnOwnershipV1');
-    legacy.send({ type: 'turn-operation', operation: 'claimAgentCommand', requestId: 'unsupported',
-      input: { roomId: room, commandId: command.id, generationId: 'generation' } });
-    legacy.send({ type: 'subscribe', roomId: room });
-    await legacy.next(frame => frame.type === 'subscribed');
-    expect(execute.mock.calls.some(([name]) => name === 'claimAgentCommand')).toBe(false);
-    const selected = await connect(true); execute.mockClear();
+  it('requires machine ownership even in the disabled router cohort and rejects source forgery before dispatch', async () => {
+    const selected=await connect(false),execute=vi.spyOn(daemon,'execute');
+    expect(selected.registered.capabilities).toHaveProperty('turnOwnershipV1',true);
     selected.send({ type: 'turn-operation', operation: 'claimAgentCommand', requestId: 'forged',
       input: { roomId: room, commandId: command.id, generationId: 'generation', source: { connectionId: 'forged', epoch: 1 } } });
     expect(await selected.next(frame => frame.requestId === 'forged')).toHaveProperty('error');

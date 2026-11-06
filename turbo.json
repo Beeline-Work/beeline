@@ -19,6 +19,7 @@
       "persistent": true
     },
     "typecheck": {
+      "outputs": [".typecheck*.tsbuildinfo"],
       "dependsOn": [
         "^build"
       ]

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import type { ServerResponse } from 'node:http';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { PgliteDatabase } from './test-support.js';
-import { DURABLE_LIVE_SCHEMA } from './durable-live.js';
+import { COMMITTED_JOURNAL_SCHEMA } from './committed-journal-schema.js';
 import { COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion } from './command-completion.js';
 import { MCP_MEMBER_STREAM_SCHEMA, serveMcpMemberStream } from './rooms-mcp-stream.js';
 import type { PostgresDatabase, SqlDatabase } from './database.js';
@@ -52,7 +52,7 @@ describe.each(['pglite',...(postgresUrl?['postgres']:[])])('P12 MCP committed me
       CREATE TABLE rooms_mcp_tokens(hash text,client_id text,identity_id text,family_id text,scope text,expires_at timestamptz,revoked_at timestamptz,calls integer DEFAULT 0);
       CREATE TABLE rooms_mcp_connections(client_id text,identity_id text,scope text,revoked_at timestamptz);
       CREATE TABLE rooms_mcp_families(id text,client_id text,identity_id text,revoked_at timestamptz);`);
-    await db.query(DURABLE_LIVE_SCHEMA);await db.query(MCP_MEMBER_STREAM_SCHEMA);
+    await db.query(COMMITTED_JOURNAL_SCHEMA);await db.query(MCP_MEMBER_STREAM_SCHEMA);
     await db.query(`INSERT INTO rooms VALUES($1,$2,NULL)`,[room,workspace]);
     await db.query(`INSERT INTO room_access VALUES($1,'member',NULL)`,[room]);
     await db.query(`INSERT INTO memberships VALUES($1,NULL,'member','member',NULL)`,[workspace]);

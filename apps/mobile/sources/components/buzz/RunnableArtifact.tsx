@@ -1,3 +1,4 @@
+import { IndexRow } from '@/components/buzz/IndexRow';
 import { useArtifactRecoveryGeneration } from '@/buzz/use-artifact-recovery';
 import { funnelOnboarding } from '@/auth/signin-funnel';
 import React, { useEffect, useRef, useState } from 'react';
@@ -6,8 +7,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { AttachmentReference } from '@beeline/buzz-client';
 import { runnableArtifactUrl } from '@/buzz/artifact-link';
 import { mediaIdFromUrl } from '@/buzz/artifact';
-import { mediaMetadataAvailable, retainMediaObjectDisplay, subscribeMediaCacheBoundary } from '@/buzz/media-cache-connection';
-import { routerOwnerArtifactAction } from '@/buzz/router-owner';
+import { subscribeMediaCacheBoundary } from '@/buzz/media-cache-connection';
 import { useSandboxWebView, useSandboxWebViewStatus } from './sandbox-webview';
 import { Button } from './Button';
 
@@ -31,11 +31,8 @@ export function RunnableArtifact({ attachment }: { attachment: AttachmentReferen
   useEffect(() => {
     let live = true;
     const objectId = mediaIdFromUrl(attachment.url);
-    const releaseDisplay = objectId ? retainMediaObjectDisplay(objectId) : () => {};
     const stopAuthority = subscribeMediaCacheBoundary(event => {
       const objectId = mediaIdFromUrl(attachment.url);
-      if (event.kind === 'revoke' && mediaMetadataAvailable() && !event.objectIds.includes(objectId ?? '') &&
-          event.authorityScope !== `object:${objectId}`) return;
       live = false; setUrl(undefined); setFailed(true);
     });
     setUrl(undefined);
@@ -51,7 +48,7 @@ export function RunnableArtifact({ attachment }: { attachment: AttachmentReferen
       },
     );
     return () => {
-      live = false; stopAuthority(); releaseDisplay();
+      live = false; stopAuthority();
     };
   }, [attachment.url, attempt, recovery]);
   if (navigationStopped) {
@@ -62,7 +59,6 @@ export function RunnableArtifact({ attachment }: { attachment: AttachmentReferen
           label="Reopen"
           onPress={() => {
             const objectId = mediaIdFromUrl(attachment.url);
-            if (objectId) routerOwnerArtifactAction('RunArtifact', objectId);
             setAttempt((value) => value + 1);
           }}
           testID="runnable-artifact-reopen"
@@ -72,8 +68,8 @@ export function RunnableArtifact({ attachment }: { attachment: AttachmentReferen
   }
   if (failed || (Platform.OS !== 'web' && status === 'unavailable')) {
     return (
-      <View style={styles.placeholder}>
-        <Text style={styles.text}>Stopped. Close and reopen it to try again.</Text>
+      <View style={styles.failureInset} >
+        <IndexRow inset="flush" title="Artifact stopped" description={"Stopped. Close and reopen it to try again."} />
       </View>
     );
   }
@@ -147,6 +143,7 @@ export function RunnableArtifact({ attachment }: { attachment: AttachmentReferen
 }
 
 const styles = StyleSheet.create((theme) => ({
+  failureInset: { paddingHorizontal: theme.buzz.roomList.edge },
   frame: { flex: 1 },
   placeholder: {
     flex: 1,

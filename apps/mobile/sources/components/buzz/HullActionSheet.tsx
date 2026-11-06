@@ -109,8 +109,10 @@ export function HullActionSheet({
           Math.max(keyboardHeight, 0),
       )
     : undefined;
+  // Keep the body's parent stable across compact/desktop presentation changes.
+  // Adding a wrapper only on desktop remounts every child and discards its state.
   const body =
-    pinChrome && scrollBody ? (
+    scrollBody ? (
       <ScrollView
         keyboardShouldPersistTaps="handled"
         nestedScrollEnabled
@@ -119,12 +121,10 @@ export function HullActionSheet({
       >
         {children}
       </ScrollView>
-    ) : pinChrome ? (
+    ) : (
       <View style={[styles.bodyScroll, bodyMaxHeight != null && { maxHeight: bodyMaxHeight }]}>
         {children}
       </View>
-    ) : (
-      children
     );
   return (
     <HullFloatingSurface style={[styles.sheet, style]} testID={testID}>
@@ -273,6 +273,7 @@ type HullActionSheetModalProps = {
   titleTestID?: string;
   subtitle?: string;
   visible: boolean;
+  withinScreen?: boolean;
 };
 
 export function HullActionSheetModal({
@@ -295,6 +296,7 @@ export function HullActionSheetModal({
   titleAccessibilityLabel,
   titleTestID,
   visible,
+  withinScreen,
 }: HullActionSheetModalProps) {
   const insets = useSafeAreaInsets();
   const isDesktop = useIsDesktop();
@@ -310,6 +312,7 @@ export function HullActionSheetModal({
       scrimTestID={scrimTestID}
       testID={modalTestID}
       visible={visible}
+      withinScreen={withinScreen}
     >
       <HullActionSheet
         desktop={isDesktop}

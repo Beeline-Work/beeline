@@ -1,14 +1,12 @@
-import { artifactObjectIdsFromVisibleRows, observeArtifactRows, setArtifactViewportActive } from '@/buzz/artifact-viewport';
-import { routerOwnerArtifactViewport, routerOwnerUsageProfile } from '@/buzz/router-owner';
+import { IndexRow } from '@/components/buzz/IndexRow';
+import { observeArtifactRows, setArtifactViewportActive } from '@/buzz/artifact-viewport';
 import { useSurfaceFocus } from '@/buzz/use-surface-focus';
-import { prepareRouterMessageGesture } from '@/buzz/command-message-gesture';
 import { trackDictatedMessage } from '@/buzz/dictation-timing';
 import { presentPersonInvite } from '@/components/buzz/PersonInviteSheet';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { useDesktopParentRoom } from '@/buzz/use-desktop-parent-room';
 import { DesktopRoomListToggle } from '@/components/buzz/DesktopRoomListToggle';
-import { ConnectionStatus } from '@/components/buzz/ConnectionStatus';
 import { useDesktopLayout, setDesktopPaneOpen } from '@/buzz/desktop-layout-state';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { MonolithRequestTimeoutError } from '@/auth/monolith-session';
@@ -34,22 +32,7 @@ import React, {
 } from 'react';
 import { Buffer } from 'buffer';
 import { transcriptBylineOpeners } from '@/buzz/message-dates';
-import {
-  View,
-  Text,
-  FlatList,
-  Keyboard,
-  Pressable,
-  ScrollView,
-  Share,
-  TextInput,
-  TouchableOpacity,
-  Platform,
-  AppState,
-  AccessibilityInfo,
-  type ViewProps,
-  type ViewToken,
-} from 'react-native';
+import { View, Text, FlatList, Keyboard, Share, TextInput, TouchableOpacity, Platform, AppState, AccessibilityInfo, type ViewProps, type ViewToken } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
@@ -84,24 +67,8 @@ import {
   removeViewerConversation,
   type ViewerMessage,
 } from '@/buzz/viewer-conversation';
-import {
-  type ChannelRole,
-  type RoomRepository,
-  type RoomView,
-  type GitHubInstallationAccess,
-  type MessageReactionEmoji,
-  type ChatListItem,
-  AGENT_PRESENCE_STALE_MS,
-} from '@beeline/buzz-client';
-import {
-  cornerDisplayName,
-  cornerShortTitle,
-  directMessageTitle,
-  roomTitle,
-  type AgentComposerCommand,
-  type WorkflowRunSummaryView,
-  type WorkspaceView,
-} from '@beeline/api-contract/phone';
+import { type RoomRepository, type GitHubInstallationAccess, type MessageReactionEmoji, type ChatListItem } from '@beeline/buzz-client';
+import { directMessageTitle, roomTitle, type AgentComposerCommand, type WorkflowRunSummaryView } from '@beeline/api-contract/phone';
 import {
   createRoomMessageProjector,
   conversationIdentityByPubkey,
@@ -122,7 +89,7 @@ import {
 } from '@/buzz/channel-reference';
 import { pushOpenBuzzChannelId, releaseOpenBuzzChannelId } from '@/buzz/open-room-tracker';
 import { dismissPresentedNotificationsForChannel } from '@/push/presented-notifications';
-import { afterInteractions } from '@/buzz/defer-interaction';
+
 import { cancelScheduledAnimationFrame, scheduleAnimationFrame, yieldToNextPaint } from '@/buzz/host-scheduler';
 import {
   activeChannelAtCursor,
@@ -156,7 +123,7 @@ import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
 import { openExternalUrl } from '@/utils/open-external-url';
 import { openAppSignIn } from '@/buzz/app-sign-in';
 import { AgentSignInCard } from '@/components/buzz/AgentSignInCard';
-import { openArtifactInBrowserOrExplain } from '@/buzz/artifact-link';
+
 import { subscribeDesktopArtifact } from '@/buzz/desktop-artifact-pane';
 import { subscribeDesktopComputer } from '@/buzz/desktop-computer-pane';
 import { ComputerSessionCard } from '@/components/buzz/ComputerSession';
@@ -172,7 +139,8 @@ import {
   type DesktopWorkPanePrimary,
 } from '@/buzz/desktop-workbench-state';
 import { useRoomSendFrame } from '@/buzz/room-send-frame';
-import { useChatList } from '@/buzz/chat-list-store';
+import { RoomSendList, RoomSendPreview } from '@/buzz/room-send-list';
+import { useChatList, readChatList } from '@/buzz/chat-list-store';
 import { useRoomRepoReplacementGuard } from '@/buzz/room-repo-replacement';
 import { liveDraftMessages, projectActiveTurnStream } from '@/buzz/live-turn-stream';
 import {
@@ -197,12 +165,7 @@ import {
   roomIsArchived,
   roomViewParentId,
 } from '@/buzz/corner-display-state';
-import {
-  directMessageHeaderIdentity,
-  fallbackMemberHandle,
-  fallbackMemberName,
-  personIdentityLabel,
-} from '@/buzz/member-display';
+import { directMessageHeaderIdentity, fallbackMemberHandle, fallbackMemberName } from '@/buzz/member-display';
 import {
   directMessageAgentHeaderMeta,
   directMessageHeaderPresence,
@@ -213,27 +176,11 @@ import {
 } from '@/buzz/community-invite';
 import { MemberPickerSheet, type MemberPickerCandidate } from '@/components/buzz/MemberPickerSheet';
 import { normalizedRoomRole } from '@/buzz/room-management';
-import {
-  looksLikeCornerOpenIntent,
-  GITHUB_REPOSITORY_SELECTION_INSTRUCTION,
-  githubFullNameFromInput,
-  githubRepositoryLinkagePlan,
-  roomRepoChipLabel,
-  type RepoCandidate,
-} from '@/buzz/room-repo-picker';
-import {
-  OwnerGrantNeededCard,
-  ownerGrantShareMessage,
-  type OwnerGrantNeeded,
-} from '@/components/buzz/OwnerGrantNeededCard';
+import { looksLikeCornerOpenIntent, GITHUB_REPOSITORY_SELECTION_INSTRUCTION, githubRepositoryLinkagePlan, roomRepoChipLabel, type RepoCandidate } from '@/buzz/room-repo-picker';
+import { ownerGrantShareMessage, type OwnerGrantNeeded } from '@/components/buzz/OwnerGrantNeededCard';
 import { StarPromptCard, useStarPrompt } from '@/components/buzz/StarPromptCard';
 import { selectWorkingAgents } from '@/buzz/room-indicators';
-import {
-  roomBottomChromeStyles,
-  TURN_LINE_BAR_MARGIN_BOTTOM,
-  TURN_LINE_BOX_HEIGHT,
-  TURN_LINE_ROW_MIN_HEIGHT,
-} from '@/buzz/room-bottom-chrome';
+import { roomBottomChromeStyles, TURN_LINE_BOX_HEIGHT } from '@/buzz/room-bottom-chrome';
 import {
   phoneTranscriptTailPadding,
   roomOpenLandsOnTail,
@@ -247,11 +194,7 @@ import {
   requestMessageJump,
   useTranscriptScrollController,
 } from '@/buzz/transcript-scroll-controller';
-import {
-  loadActiveCommunityId,
-  saveActiveCommunityId,
-  saveLastViewedChannel,
-} from '@/buzz/community-storage';
+
 import {
   createChatAttachmentUploader,
   formatAttachmentSize,
@@ -271,12 +214,7 @@ import {
   type BuiltInSlashVerbId,
   type FastModeCommandState,
 } from '@/buzz/slash-verbs';
-import {
-  cachedChannelKind,
-  channelHeaderTitle,
-  resolveCornerViewAgentPubkey,
-  type ChannelKind,
-} from '@/buzz/corner-session';
+import { channelHeaderTitle, resolveCornerViewAgentPubkey, type ChannelKind } from '@/buzz/corner-session';
 import {
   messageJumpHref,
   chatBackAction,
@@ -287,7 +225,7 @@ import {
   roomHref,
   type ChatStackRoute,
 } from '@/buzz/corner-navigation';
-import { isNearChatBottom } from '@/buzz/chat-scroll';
+
 import {
   agentActivityReplyExcerpt,
   beginReplyTarget,
@@ -321,12 +259,7 @@ import {
   useRoomMessageStore,
 } from '@/buzz/room-message-store';
 import { roomMessageRecord, useRoomMessageRecords, writeRoomBookmark } from '@/buzz/room-message-records';
-import {
-  markRoomOpen,
-  useRoomSurfaceSession,
-  type RoomSurfaceSessionBindings,
-  type UseRoomSurfaceSessionResult,
-} from './useRoomSurfaceSession';
+import { markRoomOpen, type RoomSurfaceSessionBindings, type UseRoomSurfaceSessionResult } from './useRoomSurfaceSession';
 import {
   GitHubEventCard,
   NotificationLifecycleCard,
@@ -346,7 +279,7 @@ import {
   monolithPhoneOperation,
   phoneOperationFailureReason,
 } from '@/sync/transport/monolith-operation';
-import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
+
 import {useRoomRoster} from '@/buzz/use-room-roster';
 import { promptAndReportMessageIssue, reportIssueToastCopy } from '@/buzz/report-message-issue';
 import { useCopiedToast } from '@/components/buzz/CopiedToast';
@@ -363,25 +296,14 @@ import {
   EMPTY_TRANSCRIPT_ARRIVAL_STATE,
   observeTranscriptArrivals,
 } from '@/buzz/transcript-motion';
-import {
-  boundaryRowIndex,
-  countsAsUnread,
-  messageBoundaryIds,
-  newestTranscriptRowId,
-} from '@/buzz/room-new-message-boundary';
+import { boundaryRowIndex, messageBoundaryIds, newestTranscriptRowId } from '@/buzz/room-new-message-boundary';
 import { pinnedTailReadReport } from '@/buzz/read-cursor-advance';
 import { useNewMessageControl, useUnreadLineControl } from '@/buzz/use-new-message-control';
 import { RoomUnreadControls } from '@/components/buzz/RoomUnreadControls';
 import { TranscriptScrubber } from '@/components/buzz/TranscriptScrubber';
 import { usePhoneUnderfillHistory } from '@/buzz/phone-underfill-history';
 import { createTranscriptCardMotionStore } from '@/components/buzz/transcript-card-motion-context';
-import {
-  isAgentTurnActive,
-  nextAgentPresenceTransitionAt,
-  nextAgentTurnExpiryAt,
-  activeMentionCandidates,
-  AGENT_PRESENCE_BACKGROUND_GRACE_MS,
-} from '@/buzz/agent-presence';
+import { isAgentTurnActive, nextAgentPresenceTransitionAt, nextAgentTurnExpiryAt, activeMentionCandidates } from '@/buzz/agent-presence';
 import {
   sameElementRefs,
   sameMessageRefMap,
@@ -411,7 +333,7 @@ import {
   HullActionSheetModal,
   HullActionSheetRow,
 } from '@/components/buzz/HullActionSheet';
-import { useRoomRepositoryChoice } from '@/components/buzz/RoomRepositoryChoice';
+import { RoomActionsBackground, RoomActionsSheet, type RoomActionsSheetHandle, type RoomRepositoryOptions } from '@/components/buzz/RoomRepositoryChoice';
 import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { CornerGlyph } from '@/components/buzz/CornerGlyph';
 import { OverflowGlyph } from '@/components/buzz/OverflowGlyph';
@@ -443,12 +365,7 @@ import { useVoiceCall } from '@/buzz/use-voice-call';
 import { VoiceCallCard } from '@/components/buzz/VoiceCallCard';
 import { useIsDesktop } from '@/utils/responsive';
 import { isDesktopShell } from '@/utils/isDesktopShell';
-import {
-  LEDGER_MARGINALIA_WIDTH,
-  LedgerHistoryLine,
-  LedgerRoomUpdate,
-  LedgerSystemLine,
-} from '@/components/buzz/Ledger';
+import { LedgerHistoryLine, LedgerRoomUpdate, LedgerSystemLine } from '@/components/buzz/Ledger';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import {
   ChannelSuggestionMenu,
@@ -512,7 +429,7 @@ const TAIL_PIN_THRESHOLD = 50;
 // Rows the inverted phone list draws in its first render (FlatList's
 // `initialNumToRender`). A source landing scrolls only to a row this close to
 // the newest end; the store narrows the window for one further back.
-const PHONE_FIRST_RENDER_ROWS = 10;
+const PHONE_FIRST_RENDER_ROWS = 2;
 // Open on the tail of a long transcript instead of the full history, then
 // page older messages in as the reader scrolls up.
 const INITIAL_MESSAGE_WINDOW = 30;
@@ -625,6 +542,12 @@ export function BuzzChatSurface({
     returnTo?: string;
   }>();
   const decodedId = channelId ? decodeURIComponent(channelId) : '';
+  const sendPreview = useMemo(() => new RoomSendPreview(), [decodedId]);
+  useEffect(() => {
+    sendPreview.activate();
+    return () => sendPreview.dispose();
+  }, [sendPreview]);
+
   const messageAnchorId = (notificationMessageId ?? notificationTarget ?? '').trim();
   const allowOlderHistoryRef = useRef(false);
   useEffect(() => {
@@ -659,7 +582,9 @@ export function BuzzChatSurface({
   // list caches a row's position by key, and a row kept from the rows a new
   // window replaced would keep its old position.
   const transcriptWindowIdRef = useRef(0);
-  const phoneRowKey = (rowId: string) => `${transcriptWindowIdRef.current}:${rowId}`;
+  const sendPreviewRef = useRef(sendPreview);
+  sendPreviewRef.current = sendPreview;
+  const phoneRowKey = (rowId: string) => `${transcriptWindowIdRef.current}:${sendPreviewRef.current.key(rowId)}`;
   const [measuredPhoneRowKeys] = useState(() => new Set<string>());
   const [phoneScrollList] = useState(() =>
     phoneTranscriptList(
@@ -892,7 +817,7 @@ export function BuzzChatSurface({
     hydrationFailed: transcriptHydrationFailed,
     hydrationError: transcriptHydrationError,
     retryHydration,
-    refreshSignal,
+    readRoom,
     outbox,
   } = session;
   useEffect(() => {
@@ -1033,7 +958,12 @@ export function BuzzChatSurface({
   } | null>(null);
   const [rosterVisible, setRosterVisible] = useState(false);
   const closeRoster = useCallback(() => setRosterVisible(false), []);
-  const [roomActionsVisible, setRoomActionsVisible] = useState(false);
+  const roomActionsRef = useRef<RoomActionsSheetHandle>(null);
+  const conversationFrameRef = useRef<View>(null);
+  const setRoomActionsVisible = useCallback(
+    (visible: boolean) => roomActionsRef.current?.setVisible(visible),
+    [],
+  );
   const [cornerActionsVisible, setCornerActionsVisible] = useState(false);
   const [dmActionsVisible, setDmActionsVisible] = useState(false);
   const [renameEditing, setRenameEditing] = useState(false);
@@ -1179,7 +1109,6 @@ export function BuzzChatSurface({
   const committedUsageProfileId = desktopExperience && profileKind === 'agent' && activeCommunityId ? profileAgentId : null;
   useEffect(() => {
     if (!usageProfileFocused) return;
-    routerOwnerUsageProfile(committedUsageProfileId);
   }, [committedUsageProfileId, usageProfileFocused]);
   // The DM header, the repository-change guard, mentions and forwarding read
   // the app-level Room list, which stays live while this Room is open.
@@ -1435,7 +1364,7 @@ export function BuzzChatSurface({
         } else {
           Modal.alert(
             'Could not open destination',
-            `Beeline could not verify access to ${referenceLabel}. Check your connection and try again.`,
+            `Beeline could not verify access to ${referenceLabel}. Try again.`,
           );
         }
       } finally {
@@ -2981,7 +2910,6 @@ export function BuzzChatSurface({
       const visibleRows = viewableItems
         .filter((token) => token.isViewable)
         .map((token) => token.item);
-      routerOwnerArtifactViewport(decodedId, artifactObjectIdsFromVisibleRows(visibleRows));
       observeArtifactRows(decodedId, visibleRows.flatMap(messageBoundaryIds));
       transcriptPositions.observeVisibleRows(visibleRows);
       // The list recomputes viewability on scroll AND on every committed
@@ -3524,7 +3452,7 @@ export function BuzzChatSurface({
         // A turn that settled while the press was in the air is the ordinary
         // race, not a failure worth a dialog: the line is already gone.
         if (err instanceof MonolithRequestTimeoutError) {
-          refreshSignal.force();
+          readRoom();
           Modal.alert('Stop result unknown', phoneOperationFailureReason(err));
         }
         console.warn('Stopping the turn failed:', err);
@@ -3877,7 +3805,7 @@ export function BuzzChatSurface({
         // The live Room list is current; only a list not yet loaded reads one.
         const held = workspaceChatListRef.current;
         const [chats, workspace] = await Promise.all([
-          held ? held.chats : roomClient.chats(activeCommunityId).then((list) => list.chats),
+          held ? held.chats : chatListKey ? readChatList(chatListKey).then(list => list.chats) : Promise.reject(new Error('Room list unavailable.')),
           roomClient.workspace(activeCommunityId),
         ]);
         setForwardRooms(forwardTargets(chats, workspace, decodedId));
@@ -3886,7 +3814,7 @@ export function BuzzChatSurface({
         setForwardRooms([]);
       }
     },
-    [activeCommunityId, decodedId, roomClient],
+    [activeCommunityId, decodedId, roomClient, chatListKey],
   );
 
   const forwardToRoom = useCallback(
@@ -3956,19 +3884,6 @@ export function BuzzChatSurface({
         isArchived
       )
         return;
-      // Repository guidance is optional; the agent must still receive the request.
-      if (
-        !isDirectMessage &&
-        !isCorner &&
-        ((!roomRepository && roomRepositoryResolved) || roomRepoAccessIssue) &&
-        looksLikeCornerOpenIntent(rawText)
-      ) {
-        setCornerOpenRepoPrompt(true);
-        if (activeCommunityId && roomRepoCandidates.length === 0 && transport) {
-          if (githubScope) void readGitHubAccess(transport, githubScope, true)
-            .catch(() => undefined);
-        }
-      }
       const preparedReply = activeReplyTarget
         ? prepareMessageReply(rawText, activeReplyTarget)
         : undefined;
@@ -3995,28 +3910,27 @@ export function BuzzChatSurface({
         isCorner ||
         Boolean(mentionedAgent) ||
         (roomAgents.length === 1 && roomParticipants.length <= 2);
-      // Prepare immutable final message bytes inside this existing gesture,
-      // before the paint yield. Upload-dependent legacy sends keep their path.
-      const routerPrepared = activePendingAttachments.length === 0 && !viewer?.screenshotBase64
-        ? prepareRouterMessageGesture({ roomId: decodedId, principal: userPubkey, text,
-            attachments: viewer?.artifact ? [viewer.artifact] : [],
-            mentions: [...new Set([...mentionedPubkeys, ...(mentionedAgent ? [mentionedAgent] : [])])],
-            ...(preparedReply?.reference ? { parentMessageId: preparedReply.reference.eventId } : {}),
-          }) : undefined;
-      setReceivedSteer(null);
-      setPendingAck(addressesAgent ? { sentAt: Date.now() } : null);
-
+      // Retain this Room's delivery handle across first paint and navigation.
+      // Session cleanup may clear its ref while this send is still preparing.
+      let activeOutbox = outbox.current();
       sendInFlightRef.current = true;
-      setSending(true);
-      if (desktopExperience) setDesktopDeliveryState('sending');
+      const phonePreview = Platform.OS !== 'web' && !desktopTranscript && activePendingAttachments.length === 0;
+      const updateSendStatus = () => {
+        setReceivedSteer(null);
+        setPendingAck(addressesAgent ? { sentAt: Date.now() } : null);
+        setSending(true);
+        if (desktopExperience) setDesktopDeliveryState('sending');
+      };
+      if (!phonePreview) updateSendStatus();
       // Text feedback lands in the local overlay in this same turn. Signing,
       // transport startup and outbox persistence can all take longer than a
       // frame on a cold Android device.
-      const provisionalId = activePendingAttachments.length === 0
+      // Web uses its prepared row directly; native keeps its provisional first frame.
+      const provisionalId = Platform.OS !== 'web' && activePendingAttachments.length === 0
         ? `pending:${Date.now()}:${Math.random()}`
         : null;
       if (provisionalId) {
-        addMessages([{
+        const provisional = {
           id: provisionalId,
           text,
           isUser: true,
@@ -4029,16 +3943,36 @@ export function BuzzChatSurface({
           pubkey: userPubkey,
           ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
           ...(preparedReply?.reference ? { replyToId: preparedReply.reference.eventId } : {}),
-        }]);
-        landAtOwnSend(provisionalId);
-        // Signing, the outbox write and the send request wait until this row
-        // has a frame. They used to occupy the JS thread first, so the row
-        // painted after the request had already left.
-        await yieldToNextPaint();
+        } satisfies ChatDisplayMessage;
+        if (phonePreview) {
+          // Only the list's new cell renders now. Window resets, status and
+          // the Room-wide projections wait until native layout and a frame.
+          const painted = sendPreview.show(provisional);
+          scrollController.request({ kind: 'newest' });
+          await painted;
+          updateSendStatus();
+          landAtOwnSend(provisionalId);
+        } else {
+          addMessages([provisional]);
+          landAtOwnSend(provisionalId);
+          await yieldToNextPaint();
+        }
+      }
+      // Repository guidance is optional; the agent must still receive the request.
+      if (
+        !isDirectMessage &&
+        !isCorner &&
+        ((!roomRepository && roomRepositoryResolved) || roomRepoAccessIssue) &&
+        looksLikeCornerOpenIntent(rawText)
+      ) {
+        setCornerOpenRepoPrompt(true);
+        if (activeCommunityId && roomRepoCandidates.length === 0 && transport) {
+          if (githubScope) void readGitHubAccess(transport, githubScope, true)
+            .catch(() => undefined);
+        }
       }
       let preparedEvent: Awaited<ReturnType<BuzzRigTransport['composeMessage']>> | undefined;
       try {
-        if (routerPrepared) await routerPrepared.persisted;
         // A warm/partial snapshot can paint before the hydration effect has
         // published its transport state. Sending is still a valid operation:
         // construct the monolith transport on demand rather than
@@ -4053,9 +3987,11 @@ export function BuzzChatSurface({
         // ■ on a dictated message drops it at any step before it enters the Room.
         const dictationCancelled = () => {
           if (!dictated?.cancelled) return false;
-          if (routerPrepared) void routerPrepared.cancelBeforeSend().catch(() => undefined);
           setPendingAck(null);
-          if (provisionalId) removeOptimistic(preparedEvent?.id ?? provisionalId);
+          if (provisionalId) {
+            sendPreview.remove(preparedEvent?.id ?? provisionalId);
+            removeOptimistic(preparedEvent?.id ?? provisionalId);
+          }
           if (desktopExperience) setDesktopDeliveryState(null);
           return true;
         };
@@ -4085,7 +4021,7 @@ export function BuzzChatSurface({
         if (dictationCancelled()) return;
         // Sign before append. The authoritative event id is the optimistic row
         // identity and the durable outbox key from its first frame onward.
-        preparedEvent = routerPrepared?.event ?? (preparedReply?.reference
+        preparedEvent = preparedReply?.reference
           ? await sendTransport.composeReplyMessage(
               text,
               preparedReply.reference,
@@ -4101,13 +4037,16 @@ export function BuzzChatSurface({
                     ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
                   }
                 : undefined,
-            ));
+            );
         if (addressesAgent) {
           setPendingAck((current) =>
             current ? { ...current, requestId: preparedEvent!.id } : current,
           );
         }
-        if (provisionalId) reconcileOptimistic(provisionalId, preparedEvent.id);
+        if (provisionalId) {
+          if (phonePreview) sendPreview.reconcile(provisionalId, preparedEvent.id);
+          else reconcileOptimistic(provisionalId, preparedEvent.id);
+        }
         const optimistic = {
           id: preparedEvent.id,
           text,
@@ -4124,7 +4063,7 @@ export function BuzzChatSurface({
           ...(preparedReply?.reference ? { replyToId: preparedReply.reference.eventId } : {}),
           ...(attachments.length ? { attachments } : {}),
         } satisfies ChatDisplayMessage;
-        const activeOutbox = outbox.current();
+        activeOutbox ??= outbox.current();
         if (!activeOutbox) throw new Error('Message outbox is unavailable');
         if (dictationCancelled()) return;
         if (dictated) {
@@ -4206,11 +4145,16 @@ export function BuzzChatSurface({
         return true;
       } catch (err) {
         console.warn('Send failed:', err);
-        if (provisionalId && !preparedEvent) removeOptimistic(provisionalId);
+        if (phonePreview && provisionalId && (!preparedEvent || !activeOutbox?.get(preparedEvent.id))) {
+          sendPreview.remove(preparedEvent?.id ?? provisionalId);
+        }
+        if (provisionalId && !preparedEvent) {
+          removeOptimistic(provisionalId);
+        }
         if (desktopExperience) setDesktopDeliveryState('failed');
         // Delivery errors stay in the outbox. Preparation errors keep the draft.
         setPendingAck(null);
-        if (isFocused() && (!preparedEvent || !outbox.current()?.get(preparedEvent.id))) {
+        if (isFocused() && (!preparedEvent || !activeOutbox?.get(preparedEvent.id))) {
           Modal.alert('Could not prepare message', appErrorCopy(err));
         }
         return false;
@@ -4232,6 +4176,9 @@ export function BuzzChatSurface({
       addMessages,
       reconcileOptimistic,
       removeOptimistic,
+      desktopTranscript,
+      sendPreview,
+      scrollController,
       isArchived,
       isCorner,
       activeAgentTurn,
@@ -4505,7 +4452,7 @@ export function BuzzChatSurface({
         if (picked?.options.find(option => option.optionId === optionId)?.label === 'Something else') focusComposer();
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
-        refreshSignal.force();
+        readRoom();
         console.warn('Choice answer failed:', err);
         Modal.alert('Could not answer', phoneOperationFailureReason(err));
       } finally {
@@ -4599,7 +4546,7 @@ export function BuzzChatSurface({
         }
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
-        console.warn('Connector offer acceptance failed:', err);
+        Modal.alert('Could not connect', phoneOperationFailureReason(err));
       } finally {
         setConnectorOfferActionId(null);
       }
@@ -4796,7 +4743,7 @@ export function BuzzChatSurface({
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         returnToRoomList();
       } catch (err) {
-        refreshSignal.force();
+        readRoom();
         setMembershipError(
           appErrorCopy(err, `Could not ${deleting ? 'delete' : 'leave'} ${ROOM_LABEL}.`),
         );
@@ -4872,8 +4819,8 @@ export function BuzzChatSurface({
     if (!transport) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Modal.alert(
-        'Not connected yet',
-        `A new ${CORNER_LABEL} could not be opened because the app is still connecting to the server. Try again in a moment.`,
+        `Could not open ${CORNER_LABEL}`,
+        `A new ${CORNER_LABEL} could not be opened while Rooms are loading. Try again.`,
       );
       return;
     }
@@ -4919,8 +4866,8 @@ export function BuzzChatSurface({
       if (!transport) {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         Modal.alert(
-          'Not connected yet',
-          `A new ${CORNER_LABEL} could not be opened because the app is still connecting to the server. Try again in a moment.`,
+          `Could not open ${CORNER_LABEL}`,
+          `A new ${CORNER_LABEL} could not be opened while Rooms are loading. Try again.`,
         );
         return;
       }
@@ -5015,7 +4962,7 @@ export function BuzzChatSurface({
     try {
       await loadRoomRepoPicker(true);
     } catch (err) {
-      setRoomRepoError('Could not load repos. Check your connection and try again.');
+      setRoomRepoError('Could not load repos. Try again.');
     }
   }, [activeCommunityId, loadRoomRepoPicker, transport]);
 
@@ -5169,8 +5116,7 @@ export function BuzzChatSurface({
     }
   }, [clearRoomRepository, decodedId, openCornerCount, roomRepoBusy, roomRepository, transport]);
 
-  const roomRepoChoice = useRoomRepositoryChoice({
-    visible: roomActionsVisible,
+  const roomRepoOptions: RoomRepositoryOptions = {
     canManage: canManageWorkspace,
     roomName: roomSurface?.room.name ?? '',
     current: roomRepository?.binding ?? null,
@@ -5189,7 +5135,7 @@ export function BuzzChatSurface({
     onUnlink: () => void handleUnlinkRoomRepository(),
     onCancel: closeRoomActions,
     draftContext: decodedId,
-  });
+  };
 
   const handleReconnectRoomRepository = useCallback(async () => {
     if (!roomRepoAccessIssue || !transport) return;
@@ -5261,12 +5207,12 @@ export function BuzzChatSurface({
       await transport.closeCorner(decodedId);
       handleBack();
     } catch (error) {
-      refreshSignal.force();
+      readRoom();
       Modal.alert('Could not close corner', appErrorCopy(error));
     } finally {
       closeCornerPending.current = false;
     }
-  }, [decodedId, handleBack, transport, refreshSignal]);
+  }, [decodedId, handleBack, transport, readRoom]);
 
   const handleCommunitySelect = useCallback((communityId: string | null) => {
     if (!communityId) return;
@@ -5833,6 +5779,7 @@ export function BuzzChatSurface({
               void continueConnectorOffer(offerId, connectorType, pairedConnectorId, item.connectorOffer!.intent === 'reconnect')
             }
             onOpenWorkbench={openWorkbench}
+            onOpenReplacement={messageId => handleOpenMessageSource(decodedId, messageId)}
           />
         );
       }
@@ -5847,7 +5794,6 @@ export function BuzzChatSurface({
           />
         );
       }
-
 
       if (item.walletTx || item.walletInsufficient || item.walletDelegation) {
         return <WalletCards message={item} stamp={ledgerStamp(item.timestamp)} />;
@@ -5885,7 +5831,6 @@ export function BuzzChatSurface({
       if (item.corner) {
         return null;
       }
-
 
       if (item.githubEvent) {
         return <GitHubEventCard message={item} onOpenCorner={openCorner} onOpenUrl={handleOpenGitHubEvent} />;
@@ -6141,9 +6086,23 @@ export function BuzzChatSurface({
     isCorner,
     isReadOnlyDirectMessage,
   ]);
+  const pendingMessageContext = useCallback((item: ChatDisplayMessage) => {
+    const preceding = visibleMessages.at(-1);
+    const pair = preceding ? [preceding, item] : [item];
+    return {
+      immediatelyPrecedingMessage: preceding,
+      continued: continuedSpeakerIds(pair.map(message => ({
+        id: message.id,
+        speaker: ledgerSpeakerKey(message, knownAgentPubkeysFor(agentByPubkey)),
+        isMachine: message.isAgentActivity,
+        hasReplyReference: Boolean(message.replyToId),
+      }))).has(item.id),
+    };
+  }, [agentByPubkey, visibleMessages]);
   const renderItem = useRoomMessageRenderItem({
     render: renderMessage,
     presentationForMessage,
+    pendingContext: pendingMessageContext,
     continuedIds: continuedAttributionIds,
     precedingMessageById: immediatelyPrecedingVisibleMessageById,
     messageById: visibleMessageById,
@@ -6179,10 +6138,11 @@ export function BuzzChatSurface({
                 kind={headerTitleKind}
                 title={displayHeaderTitle ?? routeChannelTitle ?? ROOM_LABEL}
               />
-              <HeaderMetaCaps>HISTORY UNAVAILABLE</HeaderMetaCaps>
             </View>
           </View>
-          <SettingsRow title={transcriptHydrationError ?? 'Could not load this conversation.'} description="Check your connection and try again." action="Retry" onPress={retryHydration} />
+          <View style={styles.hydrationFailureInset}>
+            {transcriptHydrationError && <IndexRow inset="flush" title={transcriptHydrationError} action="Retry" onPress={retryHydration} testID="room-read-error" />}
+          </View>
         </View>
       );
     }
@@ -6206,7 +6166,7 @@ export function BuzzChatSurface({
       viewerPubkey={userPubkey || undefined}
       viewerAvatarUrl={personProfileByPubkey.get(userPubkey)?.avatar}
     >
-      <View style={styles.desktopConversationFrame}>
+      <RoomActionsBackground style={styles.desktopConversationFrame} ref={conversationFrameRef}>
         <View style={styles.container}>
           {/* Header. No surface of its own — the chrome sits on the same
             obsidian as the transcript, parted only by a hairline. */}
@@ -6427,7 +6387,6 @@ export function BuzzChatSurface({
               </View>
             )}
           </View>
-          <ConnectionStatus />
 
           {!isCorner && !isDirectMessage && (() => {
             const call = workspaceChats.find(chat => chat.room.id === decodedId)?.voiceCall;
@@ -6521,21 +6480,26 @@ export function BuzzChatSurface({
                   </View>
                 </View>
               ) : (
-                <FlatList
+                <RoomSendList
+                  preview={sendPreview}
                   testID="chat-messages"
                   ref={flatListRef}
                   inverted={transcriptMessages.length > 0}
+                  initialNumToRender={PHONE_FIRST_RENDER_ROWS}
+                  // Keep history outside the viewport from monopolizing the
+                  // JS thread while the newly opened Room accepts a gesture.
+                  maxToRenderPerBatch={4}
+                  windowSize={5}
                   data={transcriptMessages}
                   keyExtractor={(item: ChatDisplayMessage) => phoneRowKey(item.id)}
                   CellRendererComponent={PhoneTranscriptCell}
                   style={styles.messageList}
+                  emptyContentContainerStyle={styles.messageListContentEmpty}
                   contentContainerStyle={[
                     styles.messageListContent,
-                    transcriptMessages.length === 0 && styles.messageListContentEmpty,
-                    // Inverted list: paddingTop is the visual tail. Always the
-                    // ordinary speaker-change margin plus the fixed composer-top
-                    // gap — the thinking line is absolute and paints over that
-                    // invariant tail rather than changing it when mounted.
+                    // Inverted list: paddingTop is the visual tail, measured
+                    // from the whole newest row (including reaction chips).
+                    // The absolute turn canvas fits inside this fixed inset.
                     !isArchived && {
                       paddingTop: phoneTranscriptTailPadding({
                         turnChromeVisible: Boolean(composerAck || settledTurn),
@@ -6680,16 +6644,10 @@ export function BuzzChatSurface({
               </View>
             ) : (
               <View style={[styles.bottomChromeStack, desktopExperience && styles.desktopReadingColumn]} testID="room-bottom-chrome">
-                {/* Phone turn chrome paints over the transcript's own bottom
-                margin: `TurnBandSlot` is absolute (`room-bottom-chrome`),
-                anchored to this stack's top edge, so it takes no height from
-                the list whether or not an agent is working and cannot cover
-                the newest row — the line's box is exactly the speaker-change
-                margin plus the fixed composer-top gap the transcript always
-                leaves. The slot is mounted
-                whether or not a line is showing; `pointerEvents="box-none"`
-                lets the transcript keep every touch the line is not using.
-                Desktop keeps the slot inside inputBar. */}
+                {/* Phone turn chrome overlays the fixed transcript tail.
+                Its canvas fits below the whole newest row, including reactions;
+                the label balances against the composer's field border rather
+                than the stack edge. Desktop keeps its unchanged in-flow slot. */}
                 {!desktopExperience && (
                   <TurnBandSlot testID="hanging-turn-chrome" onTopInset={setTurnChromeTopInset}>
                     {composerAck ? (
@@ -6716,6 +6674,7 @@ export function BuzzChatSurface({
                 typing in. The Room's corners door in the header is the one way
                 in; the corner's own state is read there, in the corners list,
                 and on the Room-list row. */}
+                  {transcriptHydrationFailed && !!transcriptHydrationError && <IndexRow title={transcriptHydrationError} action="Retry" onPress={retryHydration} testID="room-read-error" />}
                 {isReadOnlyDirectMessage ? (
                   <View style={[styles.archivedInputBar, readOnlyFooterInset]}>
                     <Text style={styles.archivedInputText}>
@@ -6770,7 +6729,7 @@ export function BuzzChatSurface({
                       />
                     )}
                     {cornerOpenRepoPrompt && (roomRepoAccessIssue ? (
-                      <ErrorBanner inline title={roomRepoAccessIssue.reason === 'revoked' ? 'ACCESS TO THIS REPO WAS REVOKED' : 'THIS REPO ISN’T IN THE BEELINE INSTALLATION'}
+                      <ErrorBanner inline title={roomRepoAccessIssue.reason === 'revoked' ? 'Access to this repo was revoked' : 'This repo isn’t in the Beeline installation'}
                         description={`${roomRepoAccessIssue.fullName} must be reconnected before a ${CORNER_LABEL} can open.`}
                         retryLabel={roomRepoAccessIssue.reason === 'not_granted' ? 'Add this repo to the Beeline installation' : `Connect ${roomRepoAccessIssue.fullName.split('/')[0]}`}
                         retryDestination="external"
@@ -6849,7 +6808,7 @@ export function BuzzChatSurface({
                           >
                             {desktopDeliveryState === 'delivered'
                               ? 'DELIVERED'
-                              : 'MESSAGE FAILED · RETRY FROM THE MESSAGE'}
+                              : 'Message failed · retry from the message'}
                           </Text>
                         ) : settledTurn ? (
                           <TurnSettledLine line={settledTurn.line} testID="turn-settled-line" />
@@ -7062,7 +7021,7 @@ export function BuzzChatSurface({
             onClose={closeDesktopWorkPane}
           />
         )}
-      </View>
+      </RoomActionsBackground>
 
       <AttachmentPickerSheet
         visible={attachmentPickerVisible}
@@ -7239,26 +7198,20 @@ export function BuzzChatSurface({
         visible={memberManagement.rosterVisible}
       />
 
-      <HullActionSheetModal
+      <RoomActionsSheet
         accessibilityLabel={`Close ${ROOM_LABEL} actions`}
         dismissOnBackdrop={!renameBusy}
-        footer={roomRepoChoice.footer}
-        onClose={() =>
-          roomRepoChoice.listOpen ? setShowRoomRepoPicker(false) : closeRoomActions()
-        }
-        sticky={roomRepoChoice.listOpen ? undefined : roomRepoChoice.control}
-        onTitlePress={canRenameTitle && !roomRepoChoice.listOpen ? startRenameFromTitle : undefined}
+        onClose={closeRoomActions}
+        onTitlePress={canRenameTitle ? startRenameFromTitle : undefined}
         testID="room-actions-sheet"
-        title={roomRepoChoice.listOpen ? 'Choose a repo' : displayRoomName}
-        titleAccessibilityLabel={roomRepoChoice.listOpen ? undefined : `Rename ${displayRoomName}`}
+        title={displayRoomName}
+        titleAccessibilityLabel={`Rename ${displayRoomName}`}
         titleTestID="room-actions-title"
-        visible={roomActionsVisible}
+        ref={roomActionsRef}
+        repository={roomRepoOptions}
+        backgroundRef={conversationFrameRef}
       >
-        {roomRepoChoice.listOpen ? (
-          roomRepoChoice.list
-        ) : (
-          <>
-            {roomRepoChoice.row}
+        <>
             {!isCorner && canRenameTitle && renameEditing && (
               <View style={styles.roomRenameEditor} testID="rename-room-editor">
                 <Text style={styles.roomRenameLabel}>New {ROOM_LABEL.toLowerCase()} name</Text>
@@ -7362,12 +7315,11 @@ export function BuzzChatSurface({
             />
             {(renameError || membershipError) && (
               <View accessibilityRole="alert" style={styles.membershipError}>
-                <Text style={styles.membershipErrorText}>! {renameError ?? membershipError}</Text>
+                <ErrorBanner inline title={renameError ?? membershipError ?? ''} />
               </View>
             )}
-          </>
-        )}
-      </HullActionSheetModal>
+        </>
+      </RoomActionsSheet>
 
       <HullActionSheetModal
         accessibilityLabel="Close conversation actions"
@@ -7405,7 +7357,7 @@ export function BuzzChatSurface({
         )}
         {membershipError && (
           <View accessibilityRole="alert" style={styles.membershipError}>
-            <Text style={styles.membershipErrorText}>! {membershipError}</Text>
+            <ErrorBanner inline title={membershipError} />
           </View>
         )}
         <HullActionSheetCancel
@@ -7432,9 +7384,9 @@ export function BuzzChatSurface({
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
           handleBack();
         }}
-        onSaved={() => refreshSignal.force()}
+        onSaved={() => readRoom()}
         onError={(error) => {
-          refreshSignal.force();
+          readRoom();
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
           Modal.alert('Could not complete request', appErrorCopy(error));
         }}
@@ -7487,9 +7439,7 @@ export function BuzzChatSurface({
           value={renameDraft}
         />
         {renameError ? (
-          <Text accessibilityRole="alert" style={styles.membershipErrorText}>
-            {renameError}
-          </Text>
+          <ErrorBanner inline title={renameError} />
         ) : null}
       </HullDialog>
 
@@ -7576,6 +7526,7 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       justifyContent: 'center',
     },
+    hydrationFailureInset: { paddingHorizontal: theme.buzz.roomList.edge },
     hydrationErrorHeader: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -7586,23 +7537,6 @@ const styles = StyleSheet.create((theme) => {
       borderBottomColor: groknight.border,
       backgroundColor: groknight.bgBase,
     },
-    hydrationErrorBody: {
-      flex: 1,
-      alignItems: 'flex-start',
-      justifyContent: 'center',
-      paddingHorizontal: groknight.space.xl,
-    },
-    errorLabel: {
-      ...theme.buzz.type.sectionHead,
-      fontFamily: groknight.monoSemibold,
-      color: groknight.accent,
-    },
-    hydrationErrorText: {
-      ...theme.buzz.type.body,
-      marginTop: groknight.space.sm,
-      color: groknight.textSecondary,
-    },
-    hydrationErrorRetry: { marginTop: groknight.space.md },
     loadingText: {
       ...theme.buzz.type.sectionHead,
       fontFamily: groknight.monoSemibold,
@@ -7752,11 +7686,6 @@ const styles = StyleSheet.create((theme) => {
       borderWidth: 1,
       borderColor: groknight.borderStrong,
       backgroundColor: groknight.bgHighlight,
-    },
-    membershipErrorText: {
-      ...Typography.default('semiBold'),
-      ...theme.buzz.type.meta,
-      color: groknight.textSecondary,
     },
 
     // ── Message blocks ──────────────────────────────────────────────

@@ -123,7 +123,7 @@ function applyMessage(
 /**
  * Fold one committed Room delta into the deck. A working turn lights the row;
  * a terminal one cannot clear it here, because the row's state also rolls up
- * every corner's turns — see `chatListDeltaNeedsRead`.
+ * every corner's turns — see `chatListDeltaNeedsReadOwned`.
  */
 export function applyChatListDelta(
   view: ChatListView,
@@ -205,31 +205,6 @@ export function chatListDeltaNeedsRead(view: ChatListView, delta: ChatListDelta)
   }
   return !('agentState' in delta) && delta.turn.status !== 'working' &&
     view.chats.find((item) => item.room.id === delta.roomId)?.agentState === 'working';
-}
-
-/**
- * Whether a read shows a newer latest message than the deck held although
- * the socket delivered nothing for them since the previous read: proof the
- * socket missed those events.
- */
-export function roomsMissedByLive(
-  held: ChatListView,
-  read: ChatListView,
-  heardRoomIds: ReadonlySet<string>,
-): boolean {
-  const heldById = new Map(held.chats.map((item) => [item.room.id, item]));
-  return read.chats.some((item) => {
-    const before = heldById.get(item.room.id);
-    const latest = item.latestMessage;
-    if (!before || !latest || heardRoomIds.has(item.room.id)) return false;
-    const previous = before.latestMessage;
-    // Times are whole seconds, so a different message in the same second is also new.
-    const newer =
-      !previous ||
-      latest.createdAt > previous.createdAt ||
-      (latest.createdAt === previous.createdAt && latest.id !== previous.id);
-    return newer;
-  });
 }
 
 /**

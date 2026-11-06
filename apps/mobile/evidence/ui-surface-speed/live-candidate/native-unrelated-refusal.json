@@ -1,0 +1,11 @@
+{
+  "name": "native-unrelated-refusal",
+  "kind": "refusal",
+  "selfOnly": true,
+  "done": true,
+  "details": {
+    "id": "32294fc34a26ddfaedd2197908cb19159147908dd7cadd6edbefdf7e645e2f47",
+    "roomId": "11111111-1111-4111-8111-111111111111",
+    "reason": "native-ui-proof-refusal"
+  }
+}

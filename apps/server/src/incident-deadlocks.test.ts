@@ -10,6 +10,7 @@ import { LiveHub } from './live.js';
 import { systemLine } from './system-line.js';
 import { lockCornerLifecycle } from './corner-lifecycle.js';
 import { createAgentCommand } from './agent-command.js';
+import { claimAgentConnection } from './connection-presence.js';
 import { TokenAuth } from './auth.js';
 import { flushSentryWakes, runSentryWakeDeadline } from './sentry-wake.js';
 
@@ -78,6 +79,7 @@ function contention(db: SqlDatabase) {
 
 describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => {
   let db: PostgresDatabase, admin: Pool, databaseName: string;
+  let helperSource:{connectionId:string;epoch:number};
   beforeAll(async () => {
     databaseName = `incident_${randomUUID().replaceAll('-', '')}`;
     admin = new Pool({ connectionString: url });
@@ -114,6 +116,10 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
       pr:{number:1,headSha,url:'https://github.com/owner/widgets/pull/1',mergeability:'clean'}}), workflowState: 'implement' });
     for (const who of [H,A,B,F]) for (const room of [null,R])
       await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`, [W,room,who]);
+    const connectionId='incident-helper';
+    await db.query(`INSERT INTO live_server_instances(instance_id,renewed_at) VALUES($1,clock_timestamp())
+      ON CONFLICT(instance_id) DO UPDATE SET renewed_at=EXCLUDED.renewed_at`,[connectionId]);
+    helperSource={connectionId,epoch:await claimAgentConnection(db,new LiveHub(),A,{}, {connectionId,instanceId:connectionId})};
   });
 
   it('SERVER-26/1A: one blocked command cannot consume the phone and webhook connections', async () => {
@@ -128,7 +134,7 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
     await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Work')`, [source,R,H]);
     const command = await createAgentCommand(db, { roomId: R, agentId: A, sourceMessageId: source, reason: 'human_tag' });
     const setup = new DaemonService(db, new LiveHub());
-    await setup.execute('claimAgentCommand', { roomId: R, commandId: command!.id, generationId: 'rollout-proof' }, A);
+    await setup.execute('claimAgentCommand', { roomId: R, commandId: command!.id, generationId: 'rollout-proof' }, A, helperSource);
     await db.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login)
       VALUES('github','rollout-proof',$1,'https://github.com','beeline','owner') ON CONFLICT DO NOTHING`, [H]);
     const auth = new TokenAuth(appDb, async () => ({ subject: 'rollout-proof', login: 'owner', name: 'Owner' }));
@@ -153,7 +159,7 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
     const daemon = new DaemonService(watched, new LiveHub());
     const turn = { roomId: R, requestId: command!.turn_request_id, generationId: 'rollout-proof', agentId: A };
     const requests = Array.from({ length: 8 }, (_, n) => n % 2
-      ? daemon.execute('postAgentTurnReceipt', { ...turn, status: 'working', heartbeat: true }, A)
+      ? daemon.execute('postAgentTurnReceipt', { ...turn, status: 'working' }, A, helperSource)
       : daemon.execute('postAgentActivity', { ...turn, activity: [{ kind: 'thinking', title: 'Working', status: 'in_progress' }] }, A));
     // Observe all promises immediately, including on the failing pre-fix path.
     const settled = Promise.allSettled(requests);
@@ -190,7 +196,7 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
     await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Work')`, [source,R,H]);
     const command = await createAgentCommand(db, { roomId: R, agentId: A, sourceMessageId: source, reason: 'human_tag' });
     await new DaemonService(db, new LiveHub()).execute('claimAgentCommand',
-      { roomId: R, commandId: command!.id, generationId: 'deadline-proof' }, A);
+      { roomId: R, commandId: command!.id, generationId: 'deadline-proof' }, A, helperSource);
     const watched: SqlDatabase = { query: appDb.query.bind(appDb), transaction: work => appDb.transaction(tx => {
       const wrapped: SqlDatabase = { query: async (sql, values) => {
         const result = await tx.query(sql, values);
@@ -204,8 +210,8 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
     try {
       const results = await Promise.allSettled(Array.from({ length: 4 }, () => daemon.execute('postAgentTurnReceipt', {
         roomId: R, requestId: command!.turn_request_id, generationId: 'deadline-proof', agentId: A,
-        status: 'working', heartbeat: true,
-      }, A)));
+        status: 'working',
+      }, A, helperSource)));
       const errors = results.flatMap(result => result.status === 'rejected' ? [String(result.reason)] : []);
       expect(errors).toEqual([]);
       expect(appDb.transactionDeadlineCount()).toBe(0);
@@ -250,7 +256,7 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
     await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Clarify the brief')`, [source,R,H]);
     const command = await createAgentCommand(db,{roomId:R,agentId:A,sourceMessageId:source,reason:'human_tag'});
     const daemon = new DaemonService(db,new LiveHub());
-    await daemon.execute('claimAgentCommand',{roomId:R,commandId:command!.id,generationId:'brief-proof'},A);
+    await daemon.execute('claimAgentCommand',{roomId:R,commandId:command!.id,generationId:'brief-proof'},A,helperSource);
     const turn = {roomId:R,requestId:command!.turn_request_id,generationId:'brief-proof'};
     await daemon.execute('reviseCornerBrief',{...turn,cornerId:C,expectedRevision:0,
       brief:{spec:'Build the widget',change:'Record scope'}},A);

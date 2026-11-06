@@ -23,6 +23,7 @@ import {
   type PermissionUsage,
 } from './permission-ledger.js';
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export interface PermissionConcreteAction {
   permissionId: string;
   requestEventId: string;
@@ -44,6 +45,7 @@ export interface PermissionConcreteAction {
   };
 }
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export type PermissionFreshReader = {
   /** Immutable event lookup may cache only after signature verification. */
   readEvent(eventId: string): Promise<NostrEvent | undefined>;
@@ -316,6 +318,7 @@ async function verifyPermissionActionInternal(
   }
 }
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function verifyPermissionAction(
   input: PermissionActionVerificationInput,
 ): Promise<PermissionVerificationResult> {

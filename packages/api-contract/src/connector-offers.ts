@@ -42,7 +42,7 @@ export const CONNECTOR_OFFER_REASON_MAX_LENGTH = 200;
  * the same tool (any agent, any age) is also joined-or-refused so two agents
  * cannot both wait on the same connector.
  */
-export const CONNECTOR_OFFER_WINDOW_MS = 2 * 60_000;
+const CONNECTOR_OFFER_WINDOW_MS = 2 * 60_000;
 
 /** Fixed boundary clause the card always ends on. Never agent prose. */
 export const CONNECTOR_OFFER_KEY_BOUNDARY = systemMessage("connector-offers.still-no-raw-key-in-chat");
@@ -158,12 +158,12 @@ export function connectorPurpose(kind: ConnectorKind): string {
 }
 
 /** The card's title, a question with one affirmative answer. */
-export function connectorOfferTitle(connectorName: string): string {
+function connectorOfferTitle(connectorName: string): string {
   return `Add ${connectorName} as a tool?`;
 }
 
 /** The one action word on the card. */
-export function connectorOfferActionLabel(connectorName: string): string {
+function connectorOfferActionLabel(connectorName: string): string {
   return `Add ${connectorName}`;
 }
 
@@ -205,6 +205,8 @@ export type ConnectorOfferCardView = {
   readonly acceptedAt?: number;
   /** The Workbench connector row the acceptance created, for the settled card's link. */
   readonly connectorId?: string;
+  /** A failed card's current replacement in the same Room. */
+  readonly replacementMessageId?: string;
   /** `'add'` when omitted — every offer before this field existed. */
   readonly intent?: ConnectorOfferIntent;
   /** The provider a `'reconnect'` or `'switch'` offer signs in again, e.g. `'google'`. */
@@ -222,13 +224,13 @@ export type ConnectorOfferDecisionLine = {
   readonly connectorName: string;
 };
 
-export function formatConnectorOfferDecisionLine(line: ConnectorOfferDecisionLine): string {
+function formatConnectorOfferDecisionLine(line: ConnectorOfferDecisionLine): string {
   return `${line.deciderName} added ${line.connectorName}`;
 }
 
 const DECISION_LINE = /^(.+?) added (.+)$/s;
 
-export function parseConnectorOfferDecisionLine(
+function parseConnectorOfferDecisionLine(
   body: string,
 ): ConnectorOfferDecisionLine | undefined {
   const match = DECISION_LINE.exec(body);

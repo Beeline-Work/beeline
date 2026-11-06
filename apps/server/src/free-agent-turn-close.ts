@@ -8,7 +8,7 @@ export async function closeFreeAgentTurn(database: SqlDatabase, input: {
   generationId?: string | null; reason?: string | null; reasonKind?: string;
   normal?: boolean;
 }): Promise<boolean> {
-  if (input.reasonKind === 'update-interrupted') return false;
+  if (['update-interrupted', 'process-exited'].includes(input.reasonKind ?? '')) return false;
   const agent = (await database.query<{ name: string }>(
     `SELECT identity.name FROM free_agents free JOIN identities identity ON identity.id=free.agent_id
      WHERE free.agent_id=$1 AND free.removed_at IS NULL`, [input.agentId],

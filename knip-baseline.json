@@ -7,10 +7,14 @@
     "types"
   ],
   "findings": [
-    "exports:apps/mobile/scripts/identity-axis-proof-shims.tsx:HullLivePulse",
-    "exports:apps/mobile/scripts/identity-axis-proof-shims.tsx:useUnistyles",
+    "exports:apps/mobile/plugins/android-splash-theme.js:ANDROID_12_SPLASH_ITEMS",
+    "exports:apps/mobile/plugins/android-splash-theme.js:DARK_SPLASH_BACKGROUND",
+    "exports:apps/mobile/plugins/android-splash-theme.js:EXPO_ANDROIDX_ONLY_SPLASH_STYLE",
+    "exports:apps/mobile/plugins/android-splash-theme.js:LIGHT_SPLASH_BACKGROUND",
+    "exports:apps/mobile/plugins/android-splash-theme.js:android12SplashThemeGaps",
+    "exports:apps/mobile/plugins/android-splash-theme.js:applyAndroid12SplashTheme",
+    "exports:apps/mobile/plugins/android-splash-theme.js:styleItems",
     "exports:apps/mobile/sources/components/buzz/decorative-glyph.web.ts:DECORATIVE_GLYPH_PROPS",
-    "exports:apps/mobile/sources/sync/transport/live-connection.ts:reportRequestDeadlineMissed",
     "exports:apps/mobile/sources/utils/readFileBytes.web.ts:readFileBytes"
   ]
 }

@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
@@ -6,6 +7,7 @@ import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import * as WebBrowser from 'expo-web-browser';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { Typography } from '@/constants/Typography';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -298,6 +300,12 @@ function ConnectToolFlow() {
   const openSignIn = () => {
     const signIn = install?.signIn;
     if (!install || !signIn) return;
+    if (signIn.method === 'oauth') {
+      void WebBrowser.openBrowserAsync(signIn.url)
+        .then(() => observed.retry())
+        .catch(cause => setError(appErrorCopy(cause, 'Sign-in could not open')));
+      return;
+    }
     router.push({
       pathname: '/beeline/settings/workbench/connect-signin' as never,
       params: {
@@ -390,8 +398,8 @@ function ConnectToolFlow() {
             ))}
           </View>
         ) : null}
-        {errorUnplaced ? <Text style={styles.failure} testID="connect-error">{error}</Text> : null}
-        {helperLoadError && !helpers ? <Text style={styles.failure} testID="connect-error">Helpers are unavailable right now</Text> : null}
+        {errorUnplaced ? <ErrorBanner inline title={error ?? ''} titleTestID="connect-error" /> : null}
+        {helperLoadError && !helpers ? <ErrorBanner inline title={"Helpers are unavailable right now"} titleTestID="connect-error" /> : null}
       </ScrollView>
       {showSteps ? (
         <View style={[styles.foot, { paddingBottom: theme.buzz.space.lg + insets.bottom }]}>
@@ -410,7 +418,9 @@ function ConnectToolFlow() {
                   onPress={signInReady ? openSignIn : () => undefined} testID="connect-sign-in" />
               </View>
               <Text style={styles.footNote}>
-                {signInReady ? `Opens ${machineName}’s secure browser. About a minute.` : 'Unlocks when pairing finishes.'}
+                {signInReady ? install?.signIn?.method === 'oauth'
+                  ? 'Opens sign-in in your browser.'
+                  : `Opens ${machineName}’s secure browser. About a minute.` : 'Unlocks when pairing finishes.'}
               </Text>
             </>
           )}

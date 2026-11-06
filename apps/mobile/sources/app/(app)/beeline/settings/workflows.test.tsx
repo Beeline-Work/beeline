@@ -3,7 +3,6 @@ import React from 'react';
 import { act, create } from 'react-test-renderer';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { RoomViewHttpError } from '@beeline/buzz-client';
-import { connectionErrorTitle, connectionErrorDescription } from '@/buzz/app-error-copy';
 
 const controls = vi.hoisted(() => ({ room: vi.fn(), operation: vi.fn() }));
 vi.mock('react-native', () => {
@@ -37,7 +36,7 @@ beforeEach(() => {
 });
 
 it.each([
-  ['network',new RoomViewHttpError(504,'surface_request_timed_out'),connectionErrorTitle,connectionErrorDescription],
+  ['network',new RoomViewHttpError(504,'surface_request_timed_out'),'Could not load workflows.',undefined],
   ['server refusal',Object.assign(new Error('Workspace admins only'),{status:403}),'Workspace admins only',undefined],
   ['unknown',new Error('opaque_diagnostic'),'Could not load workflows.',undefined],
 ])('R2: displays the %s failure and Retry reloads Workflow settings', async (_kind,reason,title,description) => {

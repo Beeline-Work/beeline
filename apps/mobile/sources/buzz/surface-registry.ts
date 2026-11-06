@@ -42,6 +42,25 @@ export class SurfaceRegistry {
     return null;
   }
 
+  /** Restore the same scoped response synchronously before a navigation
+   * render. A removal or an in-flight replacement still owns its revision;
+   * disk must never resurrect it or outrank a newer server answer. */
+  restoreStored<T>(address: SurfaceCacheAddress, guard: Guard<T>, read: (key: string) => unknown): T | null {
+    const current = this.peek(address, guard);
+    if (current) return current;
+    const key = surfaceCacheKey(address);
+    if (this.revisions.has(key)) return null;
+    try {
+      const value = this.normalize(read(key));
+      if (!guard(value)) return null;
+      this.remember(key, address, value, 0);
+      this.notify(key);
+      return this.peek(address, guard);
+    } catch {
+      return null;
+    }
+  }
+
   private projection(key: string, address: SurfaceCacheAddress, value: unknown): unknown {
     const memo = this.selected.get(key);
     if (memo && memo.value === value) return memo.projection;

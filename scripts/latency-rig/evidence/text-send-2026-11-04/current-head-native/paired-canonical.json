@@ -1,0 +1,203 @@
+{
+  "exactlyOnce": true,
+  "roomId": "ba6e778a-69ff-4ea2-8b8d-68f94039add3",
+  "workspaceId": "bee11e00-0000-4000-8000-000000000105",
+  "expected": 48,
+  "canonicalTextsFound": 48,
+  "historyPages": 2,
+  "complete": true,
+  "matched": [
+    {
+      "token": "sendproofSAA",
+      "messageId": "92b5854b1de1cbfd156701f3386397afbe839cd4a39c1c7bbbc39747712246cb"
+    },
+    {
+      "token": "sendproofSAB",
+      "messageId": "b25e6cbcf57fbd1026f2b44e26647c4a0fef73bf165f0f1696ac0af6a3b420d5"
+    },
+    {
+      "token": "sendproofSAC",
+      "messageId": "e6ee6a867e8c96d7c0b837ceac3db9e80cc190e70f853fa3cb8a91e57e279ac3"
+    },
+    {
+      "token": "sendproofSAD",
+      "messageId": "6d62a275c1d8ad0b0773db46d1a12eb3e7702996d19d1195ce7f65958688ee12"
+    },
+    {
+      "token": "sendproofSAE",
+      "messageId": "6007f9a312c9784e0e9d4f10d27747a434ba70ea8aa83e255edaa9d5ee9f5aa0"
+    },
+    {
+      "token": "sendproofSAF",
+      "messageId": "9c3cc3f4bf687ea335fc0dbdf97367a70b916f8757109545e267753d7585d4a4"
+    },
+    {
+      "token": "sendproofSBA",
+      "messageId": "7ab644d246f5bbb2c9fe5f4a29a1f60d3a6aad50ea1d50d5a12c55c5a2a6e128"
+    },
+    {
+      "token": "sendproofSBB",
+      "messageId": "becbef5c313b5c2c7680dfa5d2483533e5a3e9100474ae34bd4bef69e34d44b5"
+    },
+    {
+      "token": "sendproofSBC",
+      "messageId": "386055c6a919486faf498387c41ae1ec8156bfc691323b6b727024e5995273ee"
+    },
+    {
+      "token": "sendproofSBD",
+      "messageId": "349757c88e317afb9aaa9c7a50bb760eb7df7451bc957c0683704d45816edbaa"
+    },
+    {
+      "token": "sendproofSBE",
+      "messageId": "2d6dc4bcafb08215ad079b620c9057c6b5db3017f624d8e1309dfa991eda995d"
+    },
+    {
+      "token": "sendproofSBF",
+      "messageId": "7281cb9e9e8044f99014e7a2dbb2b731855b588c3bbe8ec9d7fa668df294f2d7"
+    },
+    {
+      "token": "sendproofSCA",
+      "messageId": "4638a495aaf799d46bb765f33f7d1be487425b6808a321f6c8a198a7f1bde185"
+    },
+    {
+      "token": "sendproofSCB",
+      "messageId": "d65cc6744b714c052593956725fd262fb6807ad2150e2b12343905e78683946e"
+    },
+    {
+      "token": "sendproofSCC",
+      "messageId": "768716061d58febe49ab45ed5a2be9801aa534ccd0ced8e732b0ba34d5b2f00a"
+    },
+    {
+      "token": "sendproofSCD",
+      "messageId": "b21b05f5fe40cba6b755bcf53a5c875146c0d373c0497a3b05a2c6bc196243cf"
+    },
+    {
+      "token": "sendproofSCE",
+      "messageId": "eff4fff90ebed2a0b139c6a5c2dc0b025dbffbd2d3ad28330024b6eed8002aa8"
+    },
+    {
+      "token": "sendproofSCF",
+      "messageId": "1a7dea02fd50a1d968392925f7162978a2e7be40c434d3e9ed08cf8676398ed1"
+    },
+    {
+      "token": "sendproofSDA",
+      "messageId": "8784704344b97b9d015b4950d89aafaf2870531f777d25127a3f6eba8d02e5eb"
+    },
+    {
+      "token": "sendproofSDB",
+      "messageId": "72b14ac3b2886c27545efdc3ab7c803e126c76c87e4a012769f01ce89f0191ef"
+    },
+    {
+      "token": "sendproofSDC",
+      "messageId": "78dd11a3ec55081a52f26549d982f41732a17c725d20744f0a1da2f61d27c03f"
+    },
+    {
+      "token": "sendproofSDD",
+      "messageId": "2a5c9c2a806ed6b50674ab31c7e31878b8127b3a348cdc74292067ef35f33577"
+    },
+    {
+      "token": "sendproofSDE",
+      "messageId": "694ef1812f59cc6a0e6607f9b1462950b34eb05eebc4f37af68fa2d60df5b719"
+    },
+    {
+      "token": "sendproofSDF",
+      "messageId": "15ec1930e6d00e69b2dd094dc6904bd0fc65c3e4317423c61e817192dc02954a"
+    },
+    {
+      "token": "sendproofTAA",
+      "messageId": "8730e2b8ec44003131370ece1208276e3658c8e75fbb78036105fe4adadc81c6"
+    },
+    {
+      "token": "sendproofTAB",
+      "messageId": "fd02cdd099789f684df173663fdbc7d95a89b24449fcaa4d3d0307006303b452"
+    },
+    {
+      "token": "sendproofTAC",
+      "messageId": "5ec72e7b153dcc6a2d2e0419ec196e779c73aea52350f8e750aa0f942b93ca92"
+    },
+    {
+      "token": "sendproofTAD",
+      "messageId": "d2c1d14ef7f125ccb9ebd8484936e9a48128aa0e4b21c32196e7160dcc27ded0"
+    },
+    {
+      "token": "sendproofTAE",
+      "messageId": "4f47ee39c0e2ad05bf45f15a0526cd27111992eec4b4bd162deef627060fa2fa"
+    },
+    {
+      "token": "sendproofTAF",
+      "messageId": "2987f1dcf5af52cc690298ac60911759a358d38b3d6fcc962faa1424252de6cb"
+    },
+    {
+      "token": "sendproofTBA",
+      "messageId": "a21fc22858ee58b7e94cb538c6ea010cc4733b0d1ff24062041a16993c183e6e"
+    },
+    {
+      "token": "sendproofTBB",
+      "messageId": "738dd35d79820cfb163ff64f433f489c1c790c6e09598ad9834d6a2ae88cf095"
+    },
+    {
+      "token": "sendproofTBC",
+      "messageId": "b6a9dcfc1b082579229b964c86a983851d79d413dc4efdd0eec3bda2b5e2b4d7"
+    },
+    {
+      "token": "sendproofTBD",
+      "messageId": "d028b0ca0d358de834225efb3c3a54efbde9e7bdd77c2b94b01b9629b5bc550e"
+    },
+    {
+      "token": "sendproofTBE",
+      "messageId": "1b0d80a4052c0a19031c3517493ec480379571e79659f2bc396de4b3b67bd400"
+    },
+    {
+      "token": "sendproofTBF",
+      "messageId": "5c1d29081ebc4881acf0da356cf2d316c74dc72a5902325cef2d162586cb36c7"
+    },
+    {
+      "token": "sendproofTCA",
+      "messageId": "c8bb34225ea84cad2cda4fe1e87d6c6959920ef011a07e6ee05b34f94e146975"
+    },
+    {
+      "token": "sendproofTCB",
+      "messageId": "4598f0f87da15198a3830f10537ebcfd127f4115bd0dc7fb9933cdf444ad6aab"
+    },
+    {
+      "token": "sendproofTCC",
+      "messageId": "fe2cf200a22ab5481b8b645d70b469330b6a854430f1f7241c09348db0c22908"
+    },
+    {
+      "token": "sendproofTCD",
+      "messageId": "dbced4db5c58618c1e54a7a5ab7d20c0c45d01aaf1615d169bb42a260bcbf49e"
+    },
+    {
+      "token": "sendproofTCE",
+      "messageId": "42049654542f1981295cf6892f9e023716a4a887af8eaf6e1bf36864fbf70ba6"
+    },
+    {
+      "token": "sendproofTCF",
+      "messageId": "59a360cb62739fe7bc6c4e01af992edb70cca911cec579286c4ccd9374ea48f9"
+    },
+    {
+      "token": "sendproofTDA",
+      "messageId": "a6498d771d7ee7bcb3826bdd7b425a7e836f9f261f779fe463cb6e7ba51d6a55"
+    },
+    {
+      "token": "sendproofTDB",
+      "messageId": "b3590bce09144accc30dd95954728b93a3d077744052615a5b480b9ed4dc3f80"
+    },
+    {
+      "token": "sendproofTDC",
+      "messageId": "1b12f05916b7392cc647101026a55dbb05cc64f5a431e5d57565aca684109c60"
+    },
+    {
+      "token": "sendproofTDD",
+      "messageId": "fbe81fcd6811966b748c0dd4982487b8059ff8742df48c860d0eb3aa259c3c0e"
+    },
+    {
+      "token": "sendproofTDE",
+      "messageId": "044a65d82034093820a9b6959cf06f38dc731606a775c6e7fe380516bb424de6"
+    },
+    {
+      "token": "sendproofTDF",
+      "messageId": "66ad38182682b2af99c51976b1f933ca4c77066b8bab89c4ef9bf864c30ff1b1"
+    }
+  ]
+}

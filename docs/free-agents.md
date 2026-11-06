@@ -64,9 +64,14 @@ soul. Existing free agents keep their names.
   install/sign-in is active. The idle reaper respects the same connector work;
   completion, failure or disconnect releases that protection. A refused or uncertain helper request stays parked until actual activity
   or resume starts a new idle episode. Otherwise the server records
-  `sleeping` and asks Fly to suspend the Machine. If suspend fails, it stops the
-  Machine. A helper behind the announced release asks for `refresh` and gets a stop,
-  so its next boot installs the new release. The helper never updates in place.
+  `sleeping` and asks Fly to suspend the Machine. Suspend failures are reported
+  without falling back to a cold stop. A helper behind the announced release
+  asks for `refresh`: the server boots it on the configured image immediately,
+  so installation happens before the next message. The refreshed helper connects
+  and uses its normal idle boundary to suspend. Image promotion runs
+  `--refresh-free-agents` to warm existing stopped or outdated sleeping Machines;
+  active helpers reconcile the image at their next idle boundary. The helper
+  never updates in place.
 - **Wake.** The Fly adapter submits one start request per admitted action. HTTP 412 and lost replies return to the owner without a timer or resubmission (`fly-machines.test.ts`). Before starting an existing Machine, the server compares its image
   with the configured published digest and updates it while keeping its complete
   configuration and persistent rootfs. Cold boot reconciles the broker marker

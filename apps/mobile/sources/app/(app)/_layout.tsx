@@ -5,17 +5,16 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { statusBarStyleForTheme } from '@/components/StatusBarProvider';
+import { ConnectionStatus } from '@/components/buzz/ConnectionStatus';
 import { CornerOpenToast } from '@/components/buzz/CornerOpenToast';
 import { useIsDesktop } from '@/utils/responsive';
-import { startMessageOutbox } from '@/buzz/message-outbox-runtime';
-import { useRouterNavigationOwner } from '@/buzz/use-router-navigation';
 
+/** @public Expo Router consumes this named export through its filesystem convention. */
 export const unstable_settings = {
   initialRouteName: 'index',
 };
 
 export default function RootLayout() {
-  useRouterNavigationOwner();
   const pathname = usePathname();
   const pathnameRef = React.useRef(pathname);
   pathnameRef.current = pathname;
@@ -25,10 +24,6 @@ export default function RootLayout() {
     () => router.replace('/beeline/onboarding'), undefined,
     () => !pathnameRef.current.startsWith('/review/'),
   ), [pathname]);
-  React.useEffect(() => {
-    // Delivery is required on every signed-in route, including a stale web tab.
-    void startMessageOutbox();
-  }, []);
   const isDesktop = useIsDesktop();
   const { theme } = useUnistyles();
 
@@ -39,6 +34,7 @@ export default function RootLayout() {
         backgroundColor: isDesktop ? theme.colors.surface : theme.colors.groupped.background,
       }}
     >
+      <ConnectionStatus />
       <Stack
         initialRouteName="index"
         screenOptions={{
@@ -57,6 +53,8 @@ export default function RootLayout() {
         <Stack.Screen
           name="index"
           options={{
+            // The saved deck is now this route; preserve its launch presentation.
+            animation: 'none',
             headerShown: false,
             headerTitle: '',
           }}
@@ -75,6 +73,9 @@ export default function RootLayout() {
         <Stack.Screen
           name="beeline/channels"
           options={{
+            // The launch landing replaces into this screen; an entrance fade
+            // can expose a blank frame before its loader or Room list appears.
+            animation: 'none',
             headerShown: false,
             contentStyle: { backgroundColor: theme.buzz.bgBase },
           }}
@@ -211,7 +212,7 @@ export default function RootLayout() {
         <Stack.Screen name="artifact-viewer" options={{ headerShown: false }} />
         <Stack.Screen name="text-selection" options={{ headerShown: false }} />
       </Stack>
-      {/* One corner-open notice over every screen: pending, or unreachable with Retry. */}
+      {/* One corner-open notice over every screen: pending, or a failed action with Retry. */}
       <CornerOpenToast />
     </View>
   );

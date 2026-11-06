@@ -1,6 +1,5 @@
-import { routerFamilyMode } from '@/buzz/router-owner';
 import { isRoomView, isChatListView } from '@beeline/buzz-client';
-import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
+import { mobileSurfaceCache, restoreStoredSurface, surfaceAddress } from '@/buzz/surface-storage';
 import type { RoomView } from '@beeline/api-contract/phone';
 import { loadBuzzViewerPubkey, peekBuzzViewerContext } from '@/auth/buzz-identity-storage';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
@@ -8,8 +7,6 @@ import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset
 import { readPushedMonolithRoom } from '@/sync/transport/room-view-client';
 import { markRoomOpen } from '@/buzz/room-open-trace';
 import { currentSurfaceStamp } from '@/buzz/surface-clock';
-import { beginRoomDraw, openingRoomResponseReady,
-  requireOpeningRoomResponse, roomDrawGeneration, waitForRoomDraw } from '@/buzz/room-draw-barrier';
 import { reconcileRoomView } from '@/buzz/room-view-presentation';
 
 type PendingRoom = {
@@ -34,14 +31,8 @@ subscribeClientReset(() => {
 
 /** Start the push's single Room read while initial landing is still resolving. */
 export function prefetchPushRoom(responseId: string, roomId: string, messageId?: string): void {
-  // Negotiated Room heads are owned solely by destination focus. Unknown
-  // capability also waits for navigation, so cold pushes cannot race two paths.
-  if (routerFamilyMode('room-head') !== 'legacy') return;
   const config = getBuzzRuntimeConfig();
   if (pending?.responseId === responseId && pending.roomId === roomId) return;
-  beginRoomDraw(roomId);
-  const drawVisit = roomDrawGeneration();
-  requireOpeningRoomResponse(drawVisit);
   markRoomOpen('prefetch-start');
   markRoomOpen('prefetch-target', messageId ?? 'unspecified');
   const generation = clientResetGeneration();
@@ -67,8 +58,7 @@ export function prefetchPushRoom(responseId: string, roomId: string, messageId?:
     const received = Boolean(cached && (!newestId || cached.messages.some((message) => message.id === newestId)));
     markRoomOpen('prefetch-cache', `${received ? 'received' : 'missing'}:${cached?.messages.at(-1)?.id ?? 'empty'}`);
     if (received) {
-      openingRoomResponseReady(undefined, drawVisit);
-      return afterPaint.then(async () => { await waitForRoomDraw(); return read(); });
+      return afterPaint.then(read);
     }
     if (!address) return read();
     // An opening read can finish before the Room's asynchronous session setup.
@@ -85,9 +75,10 @@ export function prefetchPushRoom(responseId: string, roomId: string, messageId?:
     return response;
   };
   const hotAddress = hotViewer ? surfaceAddress(config.monolithUrl, hotViewer, `/room/${roomId}`) : null;
-  const hotCache = hotAddress ? mobileSurfaceCache.peek(hotAddress, isRoomView) : null;
-  // A warm authorized cache can decide whether to fetch on the tap's stack,
-  // before navigation renders. Cold storage retains its asynchronous path.
+  const hotCache = hotAddress ? restoreStoredSurface(hotAddress, isRoomView) : null;
+  // A known viewer can restore an authorized stored response on the tap's
+  // stack, before navigation renders. A cache miss or unresolved viewer
+  // retains the asynchronous path.
   const view = hotViewer && hotCache
     ? openCached(hotViewer, hotCache)
     : viewer.then(async (pubkey) => {
@@ -96,18 +87,10 @@ export function prefetchPushRoom(responseId: string, roomId: string, messageId?:
       return openCached(pubkey, cached);
     });
   void view.then(() => markRoomOpen('prefetch-end'), () => markRoomOpen('prefetch-error'));
-  void view.then(view => openingRoomResponseReady(view.messages.at(-1)?.id, drawVisit),
-    () => openingRoomResponseReady(undefined, drawVisit));
   // The route may never mount (for example, if the tap is superseded). Its
   // read must not produce an unhandled rejection in that case.
   void view.catch(() => undefined);
   pending = { responseId, roomId, origin: config.monolithUrl, viewer, generation, startedAt: Date.now(), view, releaseRead };
-}
-
-/** The route must not require a second response when its tap already owns one. */
-export function hasPrefetchedRoomOpen(roomId: string): boolean {
-  return pending?.roomId === roomId && pending.generation === clientResetGeneration() &&
-    pending.origin === getBuzzRuntimeConfig().monolithUrl && Date.now() - pending.startedAt <= MAX_PREFETCH_AGE_MS;
 }
 
 /**

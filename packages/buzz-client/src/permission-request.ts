@@ -49,17 +49,7 @@ export type {
   PermissionScopePolicy,
   PermissionScopeType,
 } from './permission-scope.js';
-export {
-  buildPermissionDecision,
-  buildPermissionExecution,
-  buildPermissionRequest,
-  buildPermissionRevocation,
-  defaultPermissionGrantEnvelope,
-  parsePermissionDecision,
-  parsePermissionExecution,
-  parsePermissionRequest,
-  parsePermissionRevocation,
-} from './permission-events.js';
+export {buildPermissionDecision, buildPermissionExecution, buildPermissionRequest, defaultPermissionGrantEnvelope, parsePermissionDecision, parsePermissionExecution, parsePermissionRequest, parsePermissionRevocation} from './permission-events.js';
 export {
   foldPermissionLedger,
   permissionActionId,

@@ -10,6 +10,7 @@ export interface ChannelOpsContext {
   identity: Identity;
 }
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export type ChannelRole = 'owner' | 'admin' | 'member' | 'spectator';
 
 async function latestRoleProjection(
@@ -46,7 +47,7 @@ export async function listMembers(
 }
 
 /** True if pubkey appears in current member, owner, or admin projections. */
-export async function isMember(
+async function isMember(
   ctx: ChannelOpsContext,
   channelId: string,
   pubkey: string,
@@ -79,7 +80,7 @@ export async function getChannelRole(
  * different answer from "someone else created it": a caller must not treat an
  * unreadable create event as proof of foreign ownership.
  */
-export async function getChannelCreator(
+async function getChannelCreator(
   ctx: ChannelOpsContext,
   channelId: string,
 ): Promise<string | null> {

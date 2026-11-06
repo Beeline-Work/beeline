@@ -11,12 +11,20 @@ export class CornerAccessDatabase implements SqlDatabase {
     return database instanceof CornerAccessDatabase ? database.database : database;
   }
 
-  query<Row extends QueryResultRow = QueryResultRow>(sql: string, values?: unknown[]): Promise<QueryResult<Row>> {
-    return this.database.query<Row>(new CornerAccessStatement(sql).sql, values);
+  get backgroundWork() {
+    return this.database.backgroundWork;
+  }
+
+  query<Row extends QueryResultRow = QueryResultRow>(
+    sql: string,
+    values?: unknown[],
+    preparedName?: string,
+  ): Promise<QueryResult<Row>> {
+    return this.database.query<Row>(new CornerAccessStatement(sql).sql, values, preparedName);
   }
 
   transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {
-    return this.database.transaction(database => work(new CornerAccessDatabase(database)));
+    return this.database.transaction((database) => work(new CornerAccessDatabase(database)));
   }
 }
 

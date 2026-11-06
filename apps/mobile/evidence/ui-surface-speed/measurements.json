@@ -1,0 +1,4444 @@
+{
+  "samples": [
+    {
+      "arm": "before-final",
+      "case": "corners",
+      "sample": 10,
+      "startMs": 146611520.0,
+      "rootRenderTotalMs": 1871.6616934239864,
+      "rootMaxCommitRenderMs": 695.5502045750618,
+      "surfaceRenderTotalMs": 24.132106363773346,
+      "surfaceMaxCommitRenderMs": 14.615187168121338,
+      "surfaceCommitCount": 3,
+      "bodyRenders": {
+        "RoomRosterSheet": 7,
+        "RootLayout": 1,
+        "ConversationRow": 30,
+        "RoomCornersList": 3,
+        "BuzzChannels": 2
+      },
+      "jsTouchMs": 146612377.403968,
+      "meaningfulFrameCandidateMs": 3115.7907930016518,
+      "nextNativeFrameBoundMs": 3404.7558780014515,
+      "tapToNativeFrameProxyMs": 2547.351909995079,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "40.86 46.94 47.65 59/7091 3799545"
+    },
+    {
+      "arm": "before-final",
+      "case": "corners",
+      "sample": 11,
+      "startMs": 146622990.0,
+      "rootRenderTotalMs": 1870.1897946894169,
+      "rootMaxCommitRenderMs": 923.308818012476,
+      "surfaceRenderTotalMs": 50.94769349694252,
+      "surfaceMaxCommitRenderMs": 24.75863680243492,
+      "surfaceCommitCount": 4,
+      "bodyRenders": {
+        "RoomRosterSheet": 6,
+        "RoomCornersList": 3,
+        "RootLayout": 1,
+        "ConversationRow": 28,
+        "BuzzChannels": 2
+      },
+      "jsTouchMs": 146623262.460657,
+      "meaningfulFrameCandidateMs": 1415.8453019857407,
+      "nextNativeFrameBoundMs": 1788.4447309970856,
+      "tapToNativeFrameProxyMs": 1515.9840739965439,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "44.92 47.54 47.84 51/7029 3809094"
+    },
+    {
+      "arm": "before-final",
+      "case": "corners",
+      "sample": 12,
+      "startMs": 146634650.0,
+      "rootRenderTotalMs": 1164.720288336277,
+      "rootMaxCommitRenderMs": 382.8818266093731,
+      "surfaceRenderTotalMs": 23.210349798202515,
+      "surfaceMaxCommitRenderMs": 14.303508579730988,
+      "surfaceCommitCount": 5,
+      "bodyRenders": {
+        "RoomRosterSheet": 5,
+        "RoomCornersList": 3,
+        "RootLayout": 1,
+        "ConversationRow": 28,
+        "BuzzChannels": 2
+      },
+      "jsTouchMs": 146635477.570792,
+      "meaningfulFrameCandidateMs": 1125.0806539952755,
+      "nextNativeFrameBoundMs": 1237.2470600008965,
+      "tapToNativeFrameProxyMs": 409.67626801133156,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "46.61 47.81 47.92 43/7037 3817808"
+    },
+    {
+      "arm": "before-final",
+      "case": "corners",
+      "sample": 13,
+      "startMs": 146645730.0,
+      "rootRenderTotalMs": 1169.3949632048607,
+      "rootMaxCommitRenderMs": 336.84617948532104,
+      "surfaceRenderTotalMs": 44.66419893503189,
+      "surfaceMaxCommitRenderMs": 19.514452069997787,
+      "surfaceCommitCount": 5,
+      "bodyRenders": {
+        "RoomRosterSheet": 5,
+        "RoomCornersList": 3,
+        "RootLayout": 1,
+        "ConversationRow": 28,
+        "BuzzChannels": 2
+      },
+      "jsTouchMs": 146645967.836278,
+      "meaningfulFrameCandidateMs": 897.4394179880619,
+      "nextNativeFrameBoundMs": 966.906809002161,
+      "tapToNativeFrameProxyMs": 729.0705310106277,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "44.94 47.42 47.79 54/6968 3821075"
+    },
+    {
+      "arm": "before-final",
+      "case": "corners",
+      "sample": 14,
+      "startMs": 146658250.0,
+      "rootRenderTotalMs": 1322.3729021251202,
+      "rootMaxCommitRenderMs": 388.80687749385834,
+      "surfaceRenderTotalMs": 36.11396384239197,
+      "surfaceMaxCommitRenderMs": 26.031000047922134,
+      "surfaceCommitCount": 4,
+      "bodyRenders": {
+        "RoomRosterSheet": 5,
+        "RoomCornersList": 3,
+        "RootLayout": 1,
+        "ConversationRow": 28,
+        "BuzzChannels": 2
+      },
+      "jsTouchMs": 146658409.353953,
+      "meaningfulFrameCandidateMs": 1275.9321340024471,
+      "nextNativeFrameBoundMs": 1713.4449850022793,
+      "tapToNativeFrameProxyMs": 1554.091031998396,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "50.29 48.53 48.15 55/6939 3827140"
+    },
+    {
+      "arm": "before-final",
+      "case": "corners",
+      "sample": 15,
+      "startMs": 146669350.0,
+      "rootRenderTotalMs": 691.113218665123,
+      "rootMaxCommitRenderMs": 199.81929379701614,
+      "surfaceRenderTotalMs": 34.4611339867115,
+      "surfaceMaxCommitRenderMs": 25.954601138830185,
+      "surfaceCommitCount": 5,
+      "bodyRenders": {
+        "RoomRosterSheet": 4,
+        "RoomCornersList": 3,
+        "RootLayout": 1,
+        "ConversationRow": 28,
+        "BuzzChannels": 2
+      },
+      "jsTouchMs": 146669511.958779,
+      "meaningfulFrameCandidateMs": 337.96885600686073,
+      "nextNativeFrameBoundMs": 448.0745350122452,
+      "tapToNativeFrameProxyMs": 286.11575600504875,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "50.74 48.68 48.20 20/7133 3833123"
+    },
+    {
+      "arm": "before-final",
+      "case": "corners",
+      "sample": 16,
+      "startMs": 146680000.0,
+      "rootRenderTotalMs": 628.4430152475834,
+      "rootMaxCommitRenderMs": 176.3764190673828,
+      "surfaceRenderTotalMs": 20.29362463951111,
+      "surfaceMaxCommitRenderMs": 11.830405861139297,
+      "surfaceCommitCount": 5,
+      "bodyRenders": {
+        "RoomRosterSheet": 4,
+        "RoomCornersList": 3,
+        "RootLayout": 1,
+        "ConversationRow": 28,
+        "BuzzChannels": 2
+      },
+      "jsTouchMs": 146680197.268626,
+      "meaningfulFrameCandidateMs": 378.3139880001545,
+      "nextNativeFrameBoundMs": 479.42023599147797,
+      "tapToNativeFrameProxyMs": 282.1516099870205,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "49.05 48.38 48.11 14/6951 3835452"
+    },
+    {
+      "arm": "before-final",
+      "case": "corners",
+      "sample": 17,
+      "startMs": 146691070.0,
+      "rootRenderTotalMs": 797.831597507,
+      "rootMaxCommitRenderMs": 232.65592953562737,
+      "surfaceRenderTotalMs": 48.339404076337814,
+      "surfaceMaxCommitRenderMs": 28.773630172014236,
+      "surfaceCommitCount": 5,
+      "bodyRenders": {
+        "RoomRosterSheet": 5,
+        "RoomCornersList": 3,
+        "RootLayout": 1,
+        "ConversationRow": 28,
+        "BuzzChannels": 2
+      },
+      "jsTouchMs": 146691519.420382,
+      "meaningfulFrameCandidateMs": 691.1223179996014,
+      "nextNativeFrameBoundMs": 783.1606560051441,
+      "tapToNativeFrameProxyMs": 333.7402740120888,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "47.22 48.02 47.99 37/6869 3841687"
+    },
+    {
+      "arm": "before-final",
+      "case": "corners",
+      "sample": 18,
+      "startMs": 146701160.0,
+      "rootRenderTotalMs": 304.83453944325447,
+      "rootMaxCommitRenderMs": 120.75389072299004,
+      "surfaceRenderTotalMs": 14.248661935329437,
+      "surfaceMaxCommitRenderMs": 7.8852231204509735,
+      "surfaceCommitCount": 5,
+      "bodyRenders": {
+        "ConversationRow": 28,
+        "BuzzChannels": 2,
+        "RoomRosterSheet": 3,
+        "RoomCornersList": 3,
+        "RootLayout": 1
+      },
+      "jsTouchMs": 146701284.456216,
+      "meaningfulFrameCandidateMs": 226.02881601452827,
+      "nextNativeFrameBoundMs": 268.1249819993973,
+      "tapToNativeFrameProxyMs": 143.6687659919262,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "48.14 48.21 48.06 25/6855 3845182"
+    },
+    {
+      "arm": "before-final",
+      "case": "corners",
+      "sample": 19,
+      "startMs": 146711370.0,
+      "rootRenderTotalMs": 593.8809532523155,
+      "rootMaxCommitRenderMs": 185.67173418402672,
+      "surfaceRenderTotalMs": 22.592206865549088,
+      "surfaceMaxCommitRenderMs": 13.039649218320847,
+      "surfaceCommitCount": 5,
+      "bodyRenders": {
+        "RoomRosterSheet": 4,
+        "RoomCornersList": 3,
+        "RootLayout": 1,
+        "ConversationRow": 28,
+        "BuzzChannels": 2
+      },
+      "jsTouchMs": 146711541.109317,
+      "meaningfulFrameCandidateMs": 357.0693629980087,
+      "nextNativeFrameBoundMs": 460.32423800230026,
+      "tapToNativeFrameProxyMs": 289.21492099761963,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "45.95 47.72 47.90 14/6830 3848556"
+    },
+    {
+      "arm": "before-final",
+      "case": "foreground",
+      "sample": 10,
+      "startMs": 146779600.0,
+      "rootRenderTotalMs": 98.3563803434372,
+      "rootMaxCommitRenderMs": 58.59771817922592,
+      "surfaceRenderTotalMs": 98.3563803434372,
+      "surfaceMaxCommitRenderMs": 58.59771817922592,
+      "surfaceCommitCount": 3,
+      "bodyRenders": {
+        "ConversationRow": 14
+      },
+      "jsTouchMs": null,
+      "meaningfulFrameCandidateMs": 0.0,
+      "nextNativeFrameBoundMs": 555.2277970016003,
+      "tapToNativeFrameProxyMs": 555.2277970016003,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "34.48 43.79 46.52 30/6921 3879211"
+    },
+    {
+      "arm": "before-final",
+      "case": "foreground",
+      "sample": 11,
+      "startMs": 146782870.0,
+      "rootRenderTotalMs": 138.16195464134216,
+      "rootMaxCommitRenderMs": 99.82859233021736,
+      "surfaceRenderTotalMs": 138.16195464134216,
+      "surfaceMaxCommitRenderMs": 99.82859233021736,
+      "surfaceCommitCount": 3,
+      "bodyRenders": {
+        "ConversationRow": 14
+      },
+      "jsTouchMs": null,
+      "meaningfulFrameCandidateMs": 0.0,
+      "nextNativeFrameBoundMs": 696.493391007185,
+      "tapToNativeFrameProxyMs": 696.493391007185,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "34.36 43.61 46.45 16/6932 3880457"
+    },
+    {
+      "arm": "before-final",
+      "case": "foreground",
+      "sample": 12,
+      "startMs": 146786220.0,
+      "rootRenderTotalMs": 137.32931178808212,
+      "rootMaxCommitRenderMs": 121.5464523434639,
+      "surfaceRenderTotalMs": 137.32931178808212,
+      "surfaceMaxCommitRenderMs": 121.5464523434639,
+      "surfaceCommitCount": 3,
+      "bodyRenders": {
+        "ConversationRow": 14
+      },
+      "jsTouchMs": null,
+      "meaningfulFrameCandidateMs": 0.0,
+      "nextNativeFrameBoundMs": 411.4332819879055,
+      "tapToNativeFrameProxyMs": 411.4332819879055,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "34.36 43.61 46.45 32/6920 3883029"
+    },
+    {
+      "arm": "before-final",
+      "case": "foreground",
+      "sample": 13,
+      "startMs": 146789660.0,
+      "rootRenderTotalMs": 305.2525315582752,
+      "rootMaxCommitRenderMs": 278.78442546725273,
+      "surfaceRenderTotalMs": 305.2525315582752,
+      "surfaceMaxCommitRenderMs": 278.78442546725273,
+      "surfaceCommitCount": 3,
+      "bodyRenders": {
+        "ConversationRow": 14
+      },
+      "jsTouchMs": null,
+      "meaningfulFrameCandidateMs": 0.0,
+      "nextNativeFrameBoundMs": 1079.6047480106354,
+      "tapToNativeFrameProxyMs": 1079.6047480106354,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "37.14 44.03 46.57 38/7037 3885566"
+    },
+    {
+      "arm": "before-final",
+      "case": "foreground",
+      "sample": 14,
+      "startMs": 146793060.0,
+      "rootRenderTotalMs": 164.87015196681023,
+      "rootMaxCommitRenderMs": 81.01668086647987,
+      "surfaceRenderTotalMs": 164.87015196681023,
+      "surfaceMaxCommitRenderMs": 81.01668086647987,
+      "surfaceCommitCount": 8,
+      "bodyRenders": {
+        "ConversationRow": 42,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": null,
+      "meaningfulFrameCandidateMs": 0.0,
+      "nextNativeFrameBoundMs": 586.7120060026646,
+      "tapToNativeFrameProxyMs": 586.7120060026646,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "38.89 44.28 46.63 12/7062 3888293"
+    },
+    {
+      "arm": "before-final",
+      "case": "foreground",
+      "sample": 15,
+      "startMs": 146796400.0,
+      "rootRenderTotalMs": 127.33261841535568,
+      "rootMaxCommitRenderMs": 103.50652357935905,
+      "surfaceRenderTotalMs": 127.33261841535568,
+      "surfaceMaxCommitRenderMs": 103.50652357935905,
+      "surfaceCommitCount": 3,
+      "bodyRenders": {
+        "ConversationRow": 14
+      },
+      "jsTouchMs": null,
+      "meaningfulFrameCandidateMs": 0.0,
+      "nextNativeFrameBoundMs": 678.0396710038185,
+      "tapToNativeFrameProxyMs": 678.0396710038185,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "38.89 44.28 46.63 12/7080 3889745"
+    },
+    {
+      "arm": "before-final",
+      "case": "foreground",
+      "sample": 16,
+      "startMs": 146799890.0,
+      "rootRenderTotalMs": 34.81332537531853,
+      "rootMaxCommitRenderMs": 31.019125640392303,
+      "surfaceRenderTotalMs": 34.81332537531853,
+      "surfaceMaxCommitRenderMs": 31.019125640392303,
+      "surfaceCommitCount": 3,
+      "bodyRenders": {
+        "ConversationRow": 14
+      },
+      "jsTouchMs": null,
+      "meaningfulFrameCandidateMs": 0.0,
+      "nextNativeFrameBoundMs": 680.6943590044975,
+      "tapToNativeFrameProxyMs": 680.6943590044975,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "43.14 45.08 46.88 47/7163 3890969"
+    },
+    {
+      "arm": "before-final",
+      "case": "foreground",
+      "sample": 17,
+      "startMs": 146803670.0,
+      "rootRenderTotalMs": 254.7036488354206,
+      "rootMaxCommitRenderMs": 205.9140047132969,
+      "surfaceRenderTotalMs": 254.7036488354206,
+      "surfaceMaxCommitRenderMs": 205.9140047132969,
+      "surfaceCommitCount": 3,
+      "bodyRenders": {
+        "ConversationRow": 14
+      },
+      "jsTouchMs": null,
+      "meaningfulFrameCandidateMs": 0.0,
+      "nextNativeFrameBoundMs": 771.1144070029259,
+      "tapToNativeFrameProxyMs": 771.1144070029259,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "43.93 45.21 46.91 26/7159 3891997"
+    },
+    {
+      "arm": "before-final",
+      "case": "foreground",
+      "sample": 18,
+      "startMs": 146807070.0,
+      "rootRenderTotalMs": 250.71644794940948,
+      "rootMaxCommitRenderMs": 81.72604668140411,
+      "surfaceRenderTotalMs": 250.71644794940948,
+      "surfaceMaxCommitRenderMs": 81.72604668140411,
+      "surfaceCommitCount": 10,
+      "bodyRenders": {
+        "ConversationRow": 42,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": null,
+      "meaningfulFrameCandidateMs": 0.0,
+      "nextNativeFrameBoundMs": 599.6201860010624,
+      "tapToNativeFrameProxyMs": 599.6201860010624,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "43.93 45.21 46.91 26/7091 3892841"
+    },
+    {
+      "arm": "before-final",
+      "case": "foreground",
+      "sample": 19,
+      "startMs": 146810980.0,
+      "rootRenderTotalMs": 192.68716129660606,
+      "rootMaxCommitRenderMs": 90.92491135001183,
+      "surfaceRenderTotalMs": 192.68716129660606,
+      "surfaceMaxCommitRenderMs": 90.92491135001183,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "ConversationRow": 28
+      },
+      "jsTouchMs": null,
+      "meaningfulFrameCandidateMs": 0.0,
+      "nextNativeFrameBoundMs": 907.8450460135937,
+      "tapToNativeFrameProxyMs": 907.8450460135937,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "45.70 45.55 47.01 38/7152 3894923"
+    },
+    {
+      "arm": "before-final",
+      "case": "list",
+      "sample": 10,
+      "startMs": 146721210.0,
+      "rootRenderTotalMs": 148.9794533252716,
+      "rootMaxCommitRenderMs": 71.20254078507423,
+      "surfaceRenderTotalMs": 95.48462280631065,
+      "surfaceMaxCommitRenderMs": 56.98587021231651,
+      "surfaceCommitCount": 3,
+      "bodyRenders": {
+        "ConversationRow": 28,
+        "BuzzChannels": 2,
+        "RoomRosterSheet": 1,
+        "RootLayout": 1
+      },
+      "jsTouchMs": 146721262.672244,
+      "meaningfulFrameCandidateMs": 332.49369099736214,
+      "nextNativeFrameBoundMs": 370.38204300403595,
+      "tapToNativeFrameProxyMs": 317.70979899168015,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "45.70 47.62 47.87 19/6570 3855766"
+    },
+    {
+      "arm": "before-final",
+      "case": "list",
+      "sample": 11,
+      "startMs": 146727020.0,
+      "rootRenderTotalMs": 169.90278801321983,
+      "rootMaxCommitRenderMs": 84.15801775455475,
+      "surfaceRenderTotalMs": 140.1699242889881,
+      "surfaceMaxCommitRenderMs": 78.89219504594803,
+      "surfaceCommitCount": 4,
+      "bodyRenders": {
+        "ConversationRow": 28,
+        "BuzzChannels": 2,
+        "RootLayout": 1
+      },
+      "jsTouchMs": 146727062.445702,
+      "meaningfulFrameCandidateMs": 335.92051300406456,
+      "nextNativeFrameBoundMs": 384.7620809972286,
+      "tapToNativeFrameProxyMs": 342.31637901067734,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "41.02 46.54 47.51 20/6679 3857407"
+    },
+    {
+      "arm": "before-final",
+      "case": "list",
+      "sample": 12,
+      "startMs": 146733000.0,
+      "rootRenderTotalMs": 161.86390873789787,
+      "rootMaxCommitRenderMs": 80.16395083069801,
+      "surfaceRenderTotalMs": 138.74719655513763,
+      "surfaceMaxCommitRenderMs": 72.8068677186966,
+      "surfaceCommitCount": 3,
+      "bodyRenders": {
+        "ConversationRow": 28,
+        "BuzzChannels": 2,
+        "RootLayout": 1
+      },
+      "jsTouchMs": 146733062.638733,
+      "meaningfulFrameCandidateMs": 480.1255060136318,
+      "nextNativeFrameBoundMs": 561.8176540136337,
+      "tapToNativeFrameProxyMs": 499.1789210140705,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "38.61 45.95 47.32 27/6601 3859315"
+    },
+    {
+      "arm": "before-final",
+      "case": "list",
+      "sample": 13,
+      "startMs": 146739190.0,
+      "rootRenderTotalMs": 548.271468013525,
+      "rootMaxCommitRenderMs": 247.038232088089,
+      "surfaceRenderTotalMs": 230.52487260103226,
+      "surfaceMaxCommitRenderMs": 158.39009150862694,
+      "surfaceCommitCount": 4,
+      "bodyRenders": {
+        "RoomRosterSheet": 2,
+        "ConversationRow": 28,
+        "BuzzChannels": 2,
+        "RootLayout": 1
+      },
+      "jsTouchMs": 146739427.911465,
+      "meaningfulFrameCandidateMs": 639.4956850111485,
+      "nextNativeFrameBoundMs": 682.1560589969158,
+      "tapToNativeFrameProxyMs": 444.2445940077305,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "38.40 45.79 47.26 54/6862 3864827"
+    },
+    {
+      "arm": "before-final",
+      "case": "list",
+      "sample": 14,
+      "startMs": 146745130.0,
+      "rootRenderTotalMs": 173.56101378798485,
+      "rootMaxCommitRenderMs": 96.93173298239708,
+      "surfaceRenderTotalMs": 152.82193982601166,
+      "surfaceMaxCommitRenderMs": 96.64244773983955,
+      "surfaceCommitCount": 4,
+      "bodyRenders": {
+        "ConversationRow": 28,
+        "BuzzChannels": 2,
+        "RootLayout": 1
+      },
+      "jsTouchMs": 146745179.734428,
+      "meaningfulFrameCandidateMs": 295.7066679894924,
+      "nextNativeFrameBoundMs": 331.8219439983368,
+      "tapToNativeFrameProxyMs": 282.0875160098076,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "37.49 45.48 47.15 28/6909 3867557"
+    },
+    {
+      "arm": "before-final",
+      "case": "list",
+      "sample": 15,
+      "startMs": 146751050.0,
+      "rootRenderTotalMs": 143.53026163578033,
+      "rootMaxCommitRenderMs": 87.10283106565475,
+      "surfaceRenderTotalMs": 87.7667321562767,
+      "surfaceMaxCommitRenderMs": 51.140362083911896,
+      "surfaceCommitCount": 3,
+      "bodyRenders": {
+        "ConversationRow": 28,
+        "BuzzChannels": 2,
+        "RoomRosterSheet": 1,
+        "RootLayout": 1
+      },
+      "jsTouchMs": 146751169.795732,
+      "meaningfulFrameCandidateMs": 413.4355430006981,
+      "nextNativeFrameBoundMs": 444.7527570128441,
+      "tapToNativeFrameProxyMs": 324.9570250213146,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "35.93 45.02 46.99 4/6910 3868425"
+    },
+    {
+      "arm": "before-final",
+      "case": "list",
+      "sample": 16,
+      "startMs": 146756970.0,
+      "rootRenderTotalMs": 154.07585376501083,
+      "rootMaxCommitRenderMs": 76.78349986672401,
+      "surfaceRenderTotalMs": 125.17300939559937,
+      "surfaceMaxCommitRenderMs": 72.20282846689224,
+      "surfaceCommitCount": 3,
+      "bodyRenders": {
+        "ConversationRow": 28,
+        "BuzzChannels": 2,
+        "RootLayout": 1
+      },
+      "jsTouchMs": 146757030.759842,
+      "meaningfulFrameCandidateMs": 507.0941370129585,
+      "nextNativeFrameBoundMs": 613.686361014843,
+      "tapToNativeFrameProxyMs": 552.9265190064907,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "34.73 44.62 46.85 33/6860 3869706"
+    },
+    {
+      "arm": "before-final",
+      "case": "list",
+      "sample": 17,
+      "startMs": 146763500.0,
+      "rootRenderTotalMs": 246.46286046504974,
+      "rootMaxCommitRenderMs": 89.43216273188591,
+      "surfaceRenderTotalMs": 146.17440471053123,
+      "surfaceMaxCommitRenderMs": 89.1378398835659,
+      "surfaceCommitCount": 4,
+      "bodyRenders": {
+        "RoomRosterSheet": 2,
+        "ConversationRow": 28,
+        "BuzzChannels": 2,
+        "RootLayout": 1
+      },
+      "jsTouchMs": 146763603.989593,
+      "meaningfulFrameCandidateMs": 546.0459930002689,
+      "nextNativeFrameBoundMs": 594.7579579949379,
+      "tapToNativeFrameProxyMs": 490.768364995718,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "35.68 44.50 46.79 58/6951 3874522"
+    },
+    {
+      "arm": "before-final",
+      "case": "list",
+      "sample": 18,
+      "startMs": 146769930.0,
+      "rootRenderTotalMs": 225.8526190519333,
+      "rootMaxCommitRenderMs": 83.01871865987778,
+      "surfaceRenderTotalMs": 152.54077053070068,
+      "surfaceMaxCommitRenderMs": 81.11141100525856,
+      "surfaceCommitCount": 4,
+      "bodyRenders": {
+        "RoomRosterSheet": 1,
+        "ConversationRow": 28,
+        "BuzzChannels": 2,
+        "RootLayout": 1
+      },
+      "jsTouchMs": 146769997.770074,
+      "meaningfulFrameCandidateMs": 360.6925700008869,
+      "nextNativeFrameBoundMs": 424.62421798706055,
+      "tapToNativeFrameProxyMs": 356.8541439771652,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "34.26 44.06 46.63 41/6876 3877537"
+    },
+    {
+      "arm": "before-final",
+      "case": "list",
+      "sample": 19,
+      "startMs": 146776140.0,
+      "rootRenderTotalMs": 209.01504933834076,
+      "rootMaxCommitRenderMs": 82.70859229564667,
+      "surfaceRenderTotalMs": 152.0164498090744,
+      "surfaceMaxCommitRenderMs": 82.29515740275383,
+      "surfaceCommitCount": 4,
+      "bodyRenders": {
+        "RoomRosterSheet": 2,
+        "ConversationRow": 28,
+        "BuzzChannels": 2,
+        "RootLayout": 1
+      },
+      "jsTouchMs": 146776215.815005,
+      "meaningfulFrameCandidateMs": 421.6317270100117,
+      "nextNativeFrameBoundMs": 471.887226998806,
+      "tapToNativeFrameProxyMs": 396.0722219944,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "34.96 44.04 46.61 30/6984 3878756"
+    },
+    {
+      "arm": "before-final",
+      "case": "members",
+      "sample": 10,
+      "startMs": 146485720.0,
+      "rootRenderTotalMs": 343.7323552072048,
+      "rootMaxCommitRenderMs": 113.98058819770813,
+      "surfaceRenderTotalMs": 139.61552515625954,
+      "surfaceMaxCommitRenderMs": 62.57116886973381,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "BuzzMembers": 6,
+        "RootLayout": 1,
+        "ConversationRow": 28,
+        "BuzzChannels": 2,
+        "MemberRosterRow": 8
+      },
+      "jsTouchMs": 146485763.985707,
+      "meaningfulFrameCandidateMs": 323.83075600862503,
+      "nextNativeFrameBoundMs": 742.672531992197,
+      "tapToNativeFrameProxyMs": 698.6868249773979,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "40.88 50.51 48.77 52/7013 3756384"
+    },
+    {
+      "arm": "before-final",
+      "case": "members",
+      "sample": 11,
+      "startMs": 146489530.0,
+      "rootRenderTotalMs": 330.73130518198013,
+      "rootMaxCommitRenderMs": 159.2223657667637,
+      "surfaceRenderTotalMs": 100.06668630242348,
+      "surfaceMaxCommitRenderMs": 38.76452285051346,
+      "surfaceCommitCount": 8,
+      "bodyRenders": {
+        "BuzzMembers": 6,
+        "RootLayout": 1,
+        "MemberRosterRow": 16,
+        "ConversationRow": 28,
+        "BuzzChannels": 2
+      },
+      "jsTouchMs": 146489591.448054,
+      "meaningfulFrameCandidateMs": 276.38102999329567,
+      "nextNativeFrameBoundMs": 368.02505201101303,
+      "tapToNativeFrameProxyMs": 306.5769980251789,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "40.09 50.19 48.67 31/7164 3757678"
+    },
+    {
+      "arm": "before-final",
+      "case": "members",
+      "sample": 12,
+      "startMs": 146493240.0,
+      "rootRenderTotalMs": 320.2161722481251,
+      "rootMaxCommitRenderMs": 165.95811185240746,
+      "surfaceRenderTotalMs": 96.51530209183693,
+      "surfaceMaxCommitRenderMs": 53.98074600100517,
+      "surfaceCommitCount": 8,
+      "bodyRenders": {
+        "BuzzMembers": 6,
+        "RootLayout": 1,
+        "MemberRosterRow": 16,
+        "ConversationRow": 28,
+        "BuzzChannels": 2
+      },
+      "jsTouchMs": 146493279.016156,
+      "meaningfulFrameCandidateMs": 267.58394199609756,
+      "nextNativeFrameBoundMs": 410.14859798550606,
+      "tapToNativeFrameProxyMs": 371.1324419975281,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "40.08 50.02 48.62 16/7179 3758201"
+    },
+    {
+      "arm": "before-final",
+      "case": "members",
+      "sample": 13,
+      "startMs": 146496850.0,
+      "rootRenderTotalMs": 352.60165217518806,
+      "rootMaxCommitRenderMs": 156.1371427476406,
+      "surfaceRenderTotalMs": 141.6059281527996,
+      "surfaceMaxCommitRenderMs": 64.87506255507469,
+      "surfaceCommitCount": 7,
+      "bodyRenders": {
+        "BuzzMembers": 6,
+        "RootLayout": 1,
+        "MemberRosterRow": 16,
+        "ConversationRow": 28,
+        "BuzzChannels": 2
+      },
+      "jsTouchMs": 146496896.076941,
+      "meaningfulFrameCandidateMs": 281.9818289875984,
+      "nextNativeFrameBoundMs": 418.2045699954033,
+      "tapToNativeFrameProxyMs": 372.1276289820671,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "40.08 50.02 48.62 14/7042 3758762"
+    },
+    {
+      "arm": "before-final",
+      "case": "members",
+      "sample": 14,
+      "startMs": 146500540.0,
+      "rootRenderTotalMs": 339.3105463683605,
+      "rootMaxCommitRenderMs": 104.25353261828423,
+      "surfaceRenderTotalMs": 135.6556762456894,
+      "surfaceMaxCommitRenderMs": 69.56167089939117,
+      "surfaceCommitCount": 8,
+      "bodyRenders": {
+        "BuzzMembers": 6,
+        "RootLayout": 1,
+        "MemberRosterRow": 16,
+        "ConversationRow": 28,
+        "BuzzChannels": 2
+      },
+      "jsTouchMs": 146500579.318139,
+      "meaningfulFrameCandidateMs": 336.2947680056095,
+      "nextNativeFrameBoundMs": 478.6835409998894,
+      "tapToNativeFrameProxyMs": 439.36540201306343,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "39.11 49.66 48.51 18/7073 3759482"
+    },
+    {
+      "arm": "before-final",
+      "case": "members",
+      "sample": 15,
+      "startMs": 146504300.0,
+      "rootRenderTotalMs": 325.47241792082787,
+      "rootMaxCommitRenderMs": 120.10641548037529,
+      "surfaceRenderTotalMs": 116.05559474229813,
+      "surfaceMaxCommitRenderMs": 65.01088458299637,
+      "surfaceCommitCount": 8,
+      "bodyRenders": {
+        "BuzzMembers": 6,
+        "RootLayout": 1,
+        "MemberRosterRow": 16,
+        "ConversationRow": 28,
+        "BuzzChannels": 2
+      },
+      "jsTouchMs": 146504347.322112,
+      "meaningfulFrameCandidateMs": 306.25775799155235,
+      "nextNativeFrameBoundMs": 428.4482620060444,
+      "tapToNativeFrameProxyMs": 381.1261500120163,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "39.11 49.48 48.46 27/7122 3760484"
+    },
+    {
+      "arm": "before-final",
+      "case": "members",
+      "sample": 16,
+      "startMs": 146508200.0,
+      "rootRenderTotalMs": 351.25113722682,
+      "rootMaxCommitRenderMs": 134.6871730685234,
+      "surfaceRenderTotalMs": 156.46108508110046,
+      "surfaceMaxCommitRenderMs": 62.03200623393059,
+      "surfaceCommitCount": 7,
+      "bodyRenders": {
+        "BuzzMembers": 6,
+        "RootLayout": 1,
+        "MemberRosterRow": 16,
+        "ConversationRow": 28,
+        "BuzzChannels": 2
+      },
+      "jsTouchMs": 146508245.696785,
+      "meaningfulFrameCandidateMs": 553.0081259906292,
+      "nextNativeFrameBoundMs": 907.0426949858665,
+      "tapToNativeFrameProxyMs": 861.3459099829197,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "38.46 49.17 48.37 32/7202 3761768"
+    },
+    {
+      "arm": "before-final",
+      "case": "members",
+      "sample": 17,
+      "startMs": 146512060.0,
+      "rootRenderTotalMs": 482.2619411945343,
+      "rootMaxCommitRenderMs": 157.91077229380608,
+      "surfaceRenderTotalMs": 219.22127625346184,
+      "surfaceMaxCommitRenderMs": 125.66860121488571,
+      "surfaceCommitCount": 7,
+      "bodyRenders": {
+        "BuzzMembers": 6,
+        "RootLayout": 1,
+        "MemberRosterRow": 16,
+        "ConversationRow": 28,
+        "BuzzChannels": 2
+      },
+      "jsTouchMs": 146512113.337596,
+      "meaningfulFrameCandidateMs": 459.63098499178886,
+      "nextNativeFrameBoundMs": 812.7016919851303,
+      "tapToNativeFrameProxyMs": 759.3640959858894,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "38.90 49.08 48.34 36/7064 3762622"
+    },
+    {
+      "arm": "before-final",
+      "case": "members",
+      "sample": 18,
+      "startMs": 146515950.0,
+      "rootRenderTotalMs": 459.9834896028042,
+      "rootMaxCommitRenderMs": 210.4417817890644,
+      "surfaceRenderTotalMs": 122.95354983210564,
+      "surfaceMaxCommitRenderMs": 57.15995618700981,
+      "surfaceCommitCount": 8,
+      "bodyRenders": {
+        "BuzzMembers": 6,
+        "RootLayout": 1,
+        "MemberRosterRow": 16,
+        "ConversationRow": 28,
+        "BuzzChannels": 2
+      },
+      "jsTouchMs": 146515996.05444,
+      "meaningfulFrameCandidateMs": 641.9001069962978,
+      "nextNativeFrameBoundMs": 947.2303250133991,
+      "tapToNativeFrameProxyMs": 901.1758850216866,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "38.90 49.08 48.34 14/7209 3764230"
+    },
+    {
+      "arm": "before-final",
+      "case": "members",
+      "sample": 19,
+      "startMs": 146519710.0,
+      "rootRenderTotalMs": 401.61741852760315,
+      "rootMaxCommitRenderMs": 184.37451100349426,
+      "surfaceRenderTotalMs": 230.55723908543587,
+      "surfaceMaxCommitRenderMs": 183.66589704155922,
+      "surfaceCommitCount": 7,
+      "bodyRenders": {
+        "BuzzMembers": 6,
+        "RootLayout": 1,
+        "MemberRosterRow": 16,
+        "ConversationRow": 28,
+        "BuzzChannels": 2
+      },
+      "jsTouchMs": 146519765.950146,
+      "meaningfulFrameCandidateMs": 458.9029090106487,
+      "nextNativeFrameBoundMs": 651.53695499897,
+      "tapToNativeFrameProxyMs": 595.5868090093136,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "40.03 49.15 48.37 22/7262 3768191"
+    },
+    {
+      "arm": "before-final",
+      "case": "room",
+      "sample": 10,
+      "startMs": 146526000.0,
+      "rootRenderTotalMs": 989.1356281936169,
+      "rootMaxCommitRenderMs": 252.76679754257202,
+      "surfaceRenderTotalMs": 989.1356281936169,
+      "surfaceMaxCommitRenderMs": 252.76679754257202,
+      "surfaceCommitCount": 17,
+      "bodyRenders": {
+        "RoomRosterSheet": 8,
+        "RootLayout": 1,
+        "ConversationRow": 14,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146526046.286696,
+      "meaningfulFrameCandidateMs": 1410.415650010109,
+      "nextNativeFrameBoundMs": null,
+      "tapToNativeFrameProxyMs": null,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "41.87 49.38 48.45 18/7160 3771711"
+    },
+    {
+      "arm": "before-final",
+      "case": "room",
+      "sample": 11,
+      "startMs": 146534080.0,
+      "rootRenderTotalMs": 757.3033418059349,
+      "rootMaxCommitRenderMs": 205.64650294184685,
+      "surfaceRenderTotalMs": 757.3033418059349,
+      "surfaceMaxCommitRenderMs": 205.64650294184685,
+      "surfaceCommitCount": 15,
+      "bodyRenders": {
+        "RoomRosterSheet": 8,
+        "RootLayout": 1,
+        "ConversationRow": 14,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146534115.580836,
+      "meaningfulFrameCandidateMs": 1124.084017008543,
+      "nextNativeFrameBoundMs": null,
+      "tapToNativeFrameProxyMs": null,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "41.61 49.06 48.35 21/7051 3775974"
+    },
+    {
+      "arm": "before-final",
+      "case": "room",
+      "sample": 12,
+      "startMs": 146542220.0,
+      "rootRenderTotalMs": 951.5021992325783,
+      "rootMaxCommitRenderMs": 235.91222846508026,
+      "surfaceRenderTotalMs": 951.5021992325783,
+      "surfaceMaxCommitRenderMs": 235.91222846508026,
+      "surfaceCommitCount": 15,
+      "bodyRenders": {
+        "RoomRosterSheet": 8,
+        "RootLayout": 1,
+        "ConversationRow": 14,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146542279.572874,
+      "meaningfulFrameCandidateMs": 1302.4733209908009,
+      "nextNativeFrameBoundMs": null,
+      "tapToNativeFrameProxyMs": null,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "38.77 48.20 48.08 31/7107 3779603"
+    },
+    {
+      "arm": "before-final",
+      "case": "room",
+      "sample": 13,
+      "startMs": 146550230.0,
+      "rootRenderTotalMs": 918.8056283593178,
+      "rootMaxCommitRenderMs": 248.66370996832848,
+      "surfaceRenderTotalMs": 918.8056283593178,
+      "surfaceMaxCommitRenderMs": 248.66370996832848,
+      "surfaceCommitCount": 14,
+      "bodyRenders": {
+        "RoomRosterSheet": 8,
+        "RootLayout": 1,
+        "ConversationRow": 14,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146550279.294935,
+      "meaningfulFrameCandidateMs": 1323.5303100049496,
+      "nextNativeFrameBoundMs": null,
+      "tapToNativeFrameProxyMs": null,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "38.55 48.00 48.02 23/7165 3783769"
+    },
+    {
+      "arm": "before-final",
+      "case": "room",
+      "sample": 14,
+      "startMs": 146558670.0,
+      "rootRenderTotalMs": 1102.5474357903004,
+      "rootMaxCommitRenderMs": 285.6088956296444,
+      "surfaceRenderTotalMs": 1102.5474357903004,
+      "surfaceMaxCommitRenderMs": 285.6088956296444,
+      "surfaceCommitCount": 13,
+      "bodyRenders": {
+        "RoomRosterSheet": 8,
+        "RootLayout": 1,
+        "ConversationRow": 14,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146558730.448375,
+      "meaningfulFrameCandidateMs": 1422.8789199888706,
+      "nextNativeFrameBoundMs": null,
+      "tapToNativeFrameProxyMs": null,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "39.63 47.90 47.98 21/6982 3787807"
+    },
+    {
+      "arm": "before-final",
+      "case": "room",
+      "sample": 15,
+      "startMs": 146567030.0,
+      "rootRenderTotalMs": 1069.5492069125175,
+      "rootMaxCommitRenderMs": 253.58126345276833,
+      "surfaceRenderTotalMs": 1069.5492069125175,
+      "surfaceMaxCommitRenderMs": 253.58126345276833,
+      "surfaceCommitCount": 15,
+      "bodyRenders": {
+        "RoomRosterSheet": 8,
+        "RootLayout": 1,
+        "ConversationRow": 14,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146567082.180665,
+      "meaningfulFrameCandidateMs": 1746.413105994463,
+      "nextNativeFrameBoundMs": null,
+      "tapToNativeFrameProxyMs": null,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "40.81 47.88 47.97 26/7059 3789429"
+    },
+    {
+      "arm": "before-final",
+      "case": "room",
+      "sample": 16,
+      "startMs": 146575540.0,
+      "rootRenderTotalMs": 1543.5504364669323,
+      "rootMaxCommitRenderMs": 720.9349363446236,
+      "surfaceRenderTotalMs": 1543.5504364669323,
+      "surfaceMaxCommitRenderMs": 720.9349363446236,
+      "surfaceCommitCount": 13,
+      "bodyRenders": {
+        "RoomRosterSheet": 8,
+        "RootLayout": 1,
+        "ConversationRow": 14,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146575579.434765,
+      "meaningfulFrameCandidateMs": 2199.7423389852047,
+      "nextNativeFrameBoundMs": null,
+      "tapToNativeFrameProxyMs": null,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "40.42 47.68 47.91 19/7057 3790908"
+    },
+    {
+      "arm": "before-final",
+      "case": "room",
+      "sample": 17,
+      "startMs": 146584470.0,
+      "rootRenderTotalMs": 1280.6675407588482,
+      "rootMaxCommitRenderMs": 377.72217682003975,
+      "surfaceRenderTotalMs": 1280.6675407588482,
+      "surfaceMaxCommitRenderMs": 377.72217682003975,
+      "surfaceCommitCount": 13,
+      "bodyRenders": {
+        "RoomRosterSheet": 8,
+        "RootLayout": 1,
+        "ConversationRow": 14,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146584543.990657,
+      "meaningfulFrameCandidateMs": 1642.593403995037,
+      "nextNativeFrameBoundMs": null,
+      "tapToNativeFrameProxyMs": null,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "39.14 47.16 47.74 29/7109 3793538"
+    },
+    {
+      "arm": "before-final",
+      "case": "room",
+      "sample": 18,
+      "startMs": 146593170.0,
+      "rootRenderTotalMs": 1263.7598223090172,
+      "rootMaxCommitRenderMs": 334.1541024148464,
+      "surfaceRenderTotalMs": 1263.7598223090172,
+      "surfaceMaxCommitRenderMs": 334.1541024148464,
+      "surfaceCommitCount": 13,
+      "bodyRenders": {
+        "RoomRosterSheet": 8,
+        "RootLayout": 1,
+        "ConversationRow": 14,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146593233.239667,
+      "meaningfulFrameCandidateMs": 1750.4306100010872,
+      "nextNativeFrameBoundMs": null,
+      "tapToNativeFrameProxyMs": null,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "40.62 47.21 47.75 24/7083 3794754"
+    },
+    {
+      "arm": "before-final",
+      "case": "room",
+      "sample": 19,
+      "startMs": 146601540.0,
+      "rootRenderTotalMs": 1328.0033113062382,
+      "rootMaxCommitRenderMs": 351.7876261174679,
+      "surfaceRenderTotalMs": 1328.0033113062382,
+      "surfaceMaxCommitRenderMs": 351.7876261174679,
+      "surfaceCommitCount": 15,
+      "bodyRenders": {
+        "RoomRosterSheet": 8,
+        "RootLayout": 1,
+        "ConversationRow": 14,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146601606.114459,
+      "meaningfulFrameCandidateMs": 1803.3440530002117,
+      "nextNativeFrameBoundMs": null,
+      "tapToNativeFrameProxyMs": null,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "39.93 46.96 47.66 15/7091 3795803"
+    },
+    {
+      "arm": "before-final",
+      "case": "tray",
+      "sample": 10,
+      "startMs": 146446030.0,
+      "rootRenderTotalMs": 139.5448206961155,
+      "rootMaxCommitRenderMs": 66.5439071059227,
+      "surfaceRenderTotalMs": 30.380018323659897,
+      "surfaceMaxCommitRenderMs": 12.252097576856613,
+      "surfaceCommitCount": 7,
+      "bodyRenders": {
+        "TrayScreen": 5,
+        "RootLayout": 1,
+        "ConversationRow": 14,
+        "BuzzChannels": 1,
+        "NeedsYouCell": 1
+      },
+      "jsTouchMs": 146446079.341453,
+      "meaningfulFrameCandidateMs": 400.3913750052452,
+      "nextNativeFrameBoundMs": 689.7658849954605,
+      "tapToNativeFrameProxyMs": 640.4244320094585,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "35.34 51.07 48.86 17/6923 3730957"
+    },
+    {
+      "arm": "before-final",
+      "case": "tray",
+      "sample": 11,
+      "startMs": 146449730.0,
+      "rootRenderTotalMs": 59.05681127309799,
+      "rootMaxCommitRenderMs": 21.654470533132553,
+      "surfaceRenderTotalMs": 23.397056579589844,
+      "surfaceMaxCommitRenderMs": 8.955178439617157,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "TrayScreen": 4,
+        "RootLayout": 1,
+        "NeedsYouCell": 2
+      },
+      "jsTouchMs": 146449779.052908,
+      "meaningfulFrameCandidateMs": 188.58026799559593,
+      "nextNativeFrameBoundMs": 270.80213698744774,
+      "tapToNativeFrameProxyMs": 221.7492289841175,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "36.51 51.05 48.87 21/7093 3731735"
+    },
+    {
+      "arm": "before-final",
+      "case": "tray",
+      "sample": 12,
+      "startMs": 146453390.0,
+      "rootRenderTotalMs": 47.10754409432411,
+      "rootMaxCommitRenderMs": 19.29391485452652,
+      "surfaceRenderTotalMs": 21.966242164373398,
+      "surfaceMaxCommitRenderMs": 8.444269180297852,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "TrayScreen": 3,
+        "RootLayout": 1,
+        "NeedsYouCell": 1
+      },
+      "jsTouchMs": 146453428.914583,
+      "meaningfulFrameCandidateMs": 128.33900600671768,
+      "nextNativeFrameBoundMs": 154.72685301303864,
+      "tapToNativeFrameProxyMs": 115.81227001547813,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "36.79 50.87 48.82 22/7102 3732446"
+    },
+    {
+      "arm": "before-final",
+      "case": "tray",
+      "sample": 13,
+      "startMs": 146457080.0,
+      "rootRenderTotalMs": 58.02885514497757,
+      "rootMaxCommitRenderMs": 21.056027084589005,
+      "surfaceRenderTotalMs": 20.144085377454758,
+      "surfaceMaxCommitRenderMs": 9.17648234963417,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "TrayScreen": 3,
+        "RootLayout": 1,
+        "NeedsYouCell": 1
+      },
+      "jsTouchMs": 146457115.72517,
+      "meaningfulFrameCandidateMs": 212.32416400313377,
+      "nextNativeFrameBoundMs": 403.65252301096916,
+      "tapToNativeFrameProxyMs": 367.9273530244827,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "36.65 50.60 48.75 20/6982 3733323"
+    },
+    {
+      "arm": "before-final",
+      "case": "tray",
+      "sample": 14,
+      "startMs": 146460740.0,
+      "rootRenderTotalMs": 74.55384233593941,
+      "rootMaxCommitRenderMs": 27.7376429438591,
+      "surfaceRenderTotalMs": 26.887874841690063,
+      "surfaceMaxCommitRenderMs": 10.331455916166306,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "TrayScreen": 4,
+        "RootLayout": 1,
+        "NeedsYouCell": 2
+      },
+      "jsTouchMs": 146460779.194088,
+      "meaningfulFrameCandidateMs": 212.5171599984169,
+      "nextNativeFrameBoundMs": 305.36852899193764,
+      "tapToNativeFrameProxyMs": 266.1744409799576,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "36.65 50.60 48.75 18/7109 3733988"
+    },
+    {
+      "arm": "before-final",
+      "case": "tray",
+      "sample": 15,
+      "startMs": 146464900.0,
+      "rootRenderTotalMs": 80.42562362551689,
+      "rootMaxCommitRenderMs": 36.0404267013073,
+      "surfaceRenderTotalMs": 30.161044627428055,
+      "surfaceMaxCommitRenderMs": 11.158516019582748,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "TrayScreen": 4,
+        "RootLayout": 1,
+        "NeedsYouCell": 2
+      },
+      "jsTouchMs": 146464948.739673,
+      "meaningfulFrameCandidateMs": 218.5743969976902,
+      "nextNativeFrameBoundMs": 334.99599999189377,
+      "tapToNativeFrameProxyMs": 286.2563270032406,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "37.24 50.49 48.72 21/7093 3735700"
+    },
+    {
+      "arm": "before-final",
+      "case": "tray",
+      "sample": 16,
+      "startMs": 146469420.0,
+      "rootRenderTotalMs": 60.50354188680649,
+      "rootMaxCommitRenderMs": 25.28878140449524,
+      "surfaceRenderTotalMs": 20.4509140253067,
+      "surfaceMaxCommitRenderMs": 8.849060028791428,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "TrayScreen": 3,
+        "RootLayout": 1,
+        "NeedsYouCell": 1
+      },
+      "jsTouchMs": 146469496.779842,
+      "meaningfulFrameCandidateMs": 199.09763699769974,
+      "nextNativeFrameBoundMs": 250.11824598908424,
+      "tapToNativeFrameProxyMs": 173.33840399980545,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "39.46 50.73 48.81 41/7082 3740419"
+    },
+    {
+      "arm": "before-final",
+      "case": "tray",
+      "sample": 17,
+      "startMs": 146473780.0,
+      "rootRenderTotalMs": 65.20728838443756,
+      "rootMaxCommitRenderMs": 21.020436018705368,
+      "surfaceRenderTotalMs": 27.32610794901848,
+      "surfaceMaxCommitRenderMs": 13.182713896036148,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "TrayScreen": 3,
+        "RootLayout": 1,
+        "NeedsYouCell": 1
+      },
+      "jsTouchMs": 146473856.403467,
+      "meaningfulFrameCandidateMs": 238.0265200138092,
+      "nextNativeFrameBoundMs": 388.4949739873409,
+      "tapToNativeFrameProxyMs": 312.09150698781013,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "40.95 50.86 48.86 59/7045 3743340"
+    },
+    {
+      "arm": "before-final",
+      "case": "tray",
+      "sample": 18,
+      "startMs": 146478050.0,
+      "rootRenderTotalMs": 139.16472485661507,
+      "rootMaxCommitRenderMs": 47.40717703104019,
+      "surfaceRenderTotalMs": 55.33309951424599,
+      "surfaceMaxCommitRenderMs": 35.90286609530449,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "TrayScreen": 4,
+        "RootLayout": 1,
+        "NeedsYouCell": 2
+      },
+      "jsTouchMs": 146478130.680286,
+      "meaningfulFrameCandidateMs": 460.90368500351906,
+      "nextNativeFrameBoundMs": 578.0797890126705,
+      "tapToNativeFrameProxyMs": 497.3995030224323,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "40.87 50.68 48.81 45/7032 3747423"
+    },
+    {
+      "arm": "before-final",
+      "case": "tray",
+      "sample": 19,
+      "startMs": 146481900.0,
+      "rootRenderTotalMs": 89.0681571662426,
+      "rootMaxCommitRenderMs": 35.34905609488487,
+      "surfaceRenderTotalMs": 39.10537967085838,
+      "surfaceMaxCommitRenderMs": 19.034435033798218,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "TrayScreen": 4,
+        "RootLayout": 1,
+        "NeedsYouCell": 2
+      },
+      "jsTouchMs": 146481953.072641,
+      "meaningfulFrameCandidateMs": 279.1255060136318,
+      "nextNativeFrameBoundMs": 439.22615098953247,
+      "tapToNativeFrameProxyMs": 386.153510004282,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "40.87 50.68 48.81 38/7118 3751947"
+    },
+    {
+      "arm": "after-final",
+      "case": "corners",
+      "sample": 10,
+      "startMs": 146990580.0,
+      "rootRenderTotalMs": 336.56053337454796,
+      "rootMaxCommitRenderMs": 111.32078278064728,
+      "surfaceRenderTotalMs": 17.543633103370667,
+      "surfaceMaxCommitRenderMs": 8.655263841152191,
+      "surfaceCommitCount": 5,
+      "bodyRenders": {
+        "RootLayout": 1,
+        "RoomCornersList": 3,
+        "BuzzChannels": 2,
+        "RoomRosterSheet": 3,
+        "ConversationRow": 1
+      },
+      "jsTouchMs": 146990612.568647,
+      "meaningfulFrameCandidateMs": 163.62080800533295,
+      "nextNativeFrameBoundMs": 179.8596130013466,
+      "tapToNativeFrameProxyMs": 147.29096600413322,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "37.04 42.48 45.63 9/6847 4001523"
+    },
+    {
+      "arm": "after-final",
+      "case": "corners",
+      "sample": 11,
+      "startMs": 147000530.0,
+      "rootRenderTotalMs": 339.96947026252747,
+      "rootMaxCommitRenderMs": 126.66723245382309,
+      "surfaceRenderTotalMs": 31.461539417505264,
+      "surfaceMaxCommitRenderMs": 22.45466059446335,
+      "surfaceCommitCount": 5,
+      "bodyRenders": {
+        "BuzzChannels": 2,
+        "RoomRosterSheet": 3,
+        "RoomCornersList": 3,
+        "RootLayout": 1,
+        "ConversationRow": 1
+      },
+      "jsTouchMs": 147000697.92724,
+      "meaningfulFrameCandidateMs": 311.5054019987583,
+      "nextNativeFrameBoundMs": 349.7009690105915,
+      "tapToNativeFrameProxyMs": 181.77372899651527,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "35.07 41.89 45.41 17/6787 4006324"
+    },
+    {
+      "arm": "after-final",
+      "case": "corners",
+      "sample": 12,
+      "startMs": 147010270.0,
+      "rootRenderTotalMs": 277.05476236343384,
+      "rootMaxCommitRenderMs": 114.68596094846725,
+      "surfaceRenderTotalMs": 19.148390352725983,
+      "surfaceMaxCommitRenderMs": 7.440480947494507,
+      "surfaceCommitCount": 5,
+      "bodyRenders": {
+        "BuzzChannels": 2,
+        "RoomRosterSheet": 3,
+        "RoomCornersList": 3,
+        "RootLayout": 1,
+        "ConversationRow": 1
+      },
+      "jsTouchMs": 147010353.605533,
+      "meaningfulFrameCandidateMs": 198.55214801430702,
+      "nextNativeFrameBoundMs": 243.8546000123024,
+      "tapToNativeFrameProxyMs": 160.24906700849533,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "34.05 41.45 45.23 15/6830 4012177"
+    },
+    {
+      "arm": "after-final",
+      "case": "corners",
+      "sample": 13,
+      "startMs": 147019950.0,
+      "rootRenderTotalMs": 275.67494079470634,
+      "rootMaxCommitRenderMs": 110.74277290701866,
+      "surfaceRenderTotalMs": 27.50694289803505,
+      "surfaceMaxCommitRenderMs": 13.61862576007843,
+      "surfaceCommitCount": 5,
+      "bodyRenders": {
+        "BuzzChannels": 2,
+        "RoomRosterSheet": 3,
+        "RoomCornersList": 3,
+        "RootLayout": 1,
+        "ConversationRow": 1
+      },
+      "jsTouchMs": 147020096.338458,
+      "meaningfulFrameCandidateMs": 328.0783649981022,
+      "nextNativeFrameBoundMs": 394.7946859896183,
+      "tapToNativeFrameProxyMs": 248.45622798800468,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "31.00 40.54 44.89 14/6645 4018555"
+    },
+    {
+      "arm": "after-final",
+      "case": "corners",
+      "sample": 14,
+      "startMs": 147029740.0,
+      "rootRenderTotalMs": 170.27097555994987,
+      "rootMaxCommitRenderMs": 48.620749711990356,
+      "surfaceRenderTotalMs": 17.55171510577202,
+      "surfaceMaxCommitRenderMs": 10.897127330303192,
+      "surfaceCommitCount": 5,
+      "bodyRenders": {
+        "RoomCornersList": 3,
+        "RootLayout": 1,
+        "RoomRosterSheet": 2,
+        "ConversationRow": 1,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 147029763.149618,
+      "meaningfulFrameCandidateMs": 191.44318601489067,
+      "nextNativeFrameBoundMs": 304.69369700551033,
+      "tapToNativeFrameProxyMs": 281.54407900571823,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "30.36 40.09 44.70 15/6823 4022211"
+    },
+    {
+      "arm": "after-final",
+      "case": "corners",
+      "sample": 15,
+      "startMs": 147039530.0,
+      "rootRenderTotalMs": 198.36122485995293,
+      "rootMaxCommitRenderMs": 101.80913493037224,
+      "surfaceRenderTotalMs": 13.410844802856445,
+      "surfaceMaxCommitRenderMs": 7.147105902433395,
+      "surfaceCommitCount": 5,
+      "bodyRenders": {
+        "RoomRosterSheet": 3,
+        "RoomCornersList": 3,
+        "RootLayout": 1,
+        "ConversationRow": 1,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 147039562.331135,
+      "meaningfulFrameCandidateMs": 117.30762401223183,
+      "nextNativeFrameBoundMs": 147.9970529973507,
+      "tapToNativeFrameProxyMs": 115.66591799259186,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "31.21 39.95 44.60 11/6786 4032016"
+    },
+    {
+      "arm": "after-final",
+      "case": "corners",
+      "sample": 16,
+      "startMs": 147049160.0,
+      "rootRenderTotalMs": 151.82837483286858,
+      "rootMaxCommitRenderMs": 84.91467002034187,
+      "surfaceRenderTotalMs": 11.709195584058762,
+      "surfaceMaxCommitRenderMs": 6.765807658433914,
+      "surfaceCommitCount": 5,
+      "bodyRenders": {
+        "RoomCornersList": 3,
+        "RootLayout": 1,
+        "RoomRosterSheet": 2,
+        "ConversationRow": 1,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 147049195.482849,
+      "meaningfulFrameCandidateMs": 127.30387398600578,
+      "nextNativeFrameBoundMs": 144.600840985775,
+      "tapToNativeFrameProxyMs": 109.11799198389053,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "27.48 38.86 44.20 8/6732 4035059"
+    },
+    {
+      "arm": "after-final",
+      "case": "corners",
+      "sample": 17,
+      "startMs": 147058890.0,
+      "rootRenderTotalMs": 203.8442484140396,
+      "rootMaxCommitRenderMs": 77.19682016968727,
+      "surfaceRenderTotalMs": 56.80564510822296,
+      "surfaceMaxCommitRenderMs": 49.800150990486145,
+      "surfaceCommitCount": 5,
+      "bodyRenders": {
+        "RoomCornersList": 3,
+        "RootLayout": 1,
+        "RoomRosterSheet": 2,
+        "ConversationRow": 1,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 147058929.152456,
+      "meaningfulFrameCandidateMs": 203.90367901325226,
+      "nextNativeFrameBoundMs": 223.8414570093155,
+      "tapToNativeFrameProxyMs": 184.68900102376938,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "28.16 38.65 44.07 9/6820 4044061"
+    },
+    {
+      "arm": "after-final",
+      "case": "corners",
+      "sample": 18,
+      "startMs": 147068530.0,
+      "rootRenderTotalMs": 247.9300071299076,
+      "rootMaxCommitRenderMs": 158.67668932676315,
+      "surfaceRenderTotalMs": 23.26697865128517,
+      "surfaceMaxCommitRenderMs": 11.628764390945435,
+      "surfaceCommitCount": 5,
+      "bodyRenders": {
+        "BuzzChannels": 2,
+        "RoomRosterSheet": 3,
+        "RoomCornersList": 3,
+        "RootLayout": 1,
+        "ConversationRow": 1
+      },
+      "jsTouchMs": 147068579.062508,
+      "meaningfulFrameCandidateMs": 135.39892500638962,
+      "nextNativeFrameBoundMs": 165.38679799437523,
+      "tapToNativeFrameProxyMs": 116.32429000735283,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "27.87 38.25 43.88 7/6763 4048630"
+    },
+    {
+      "arm": "after-final",
+      "case": "corners",
+      "sample": 19,
+      "startMs": 147078380.0,
+      "rootRenderTotalMs": 188.4668833911419,
+      "rootMaxCommitRenderMs": 88.30784097313881,
+      "surfaceRenderTotalMs": 13.574961751699448,
+      "surfaceMaxCommitRenderMs": 7.636594146490097,
+      "surfaceCommitCount": 5,
+      "bodyRenders": {
+        "BuzzChannels": 2,
+        "RoomRosterSheet": 3,
+        "RoomCornersList": 3,
+        "RootLayout": 1,
+        "ConversationRow": 1
+      },
+      "jsTouchMs": 147078413.237713,
+      "meaningfulFrameCandidateMs": 134.78004199266434,
+      "nextNativeFrameBoundMs": 169.91010800004005,
+      "tapToNativeFrameProxyMs": 136.67239499092102,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "29.26 38.18 43.80 18/6812 4055339"
+    },
+    {
+      "arm": "after-final",
+      "case": "foreground",
+      "sample": 10,
+      "startMs": 147142260.0,
+      "rootRenderTotalMs": 44.125114023685455,
+      "rootMaxCommitRenderMs": 43.80179709196091,
+      "surfaceRenderTotalMs": 44.125114023685455,
+      "surfaceMaxCommitRenderMs": 43.80179709196091,
+      "surfaceCommitCount": 2,
+      "bodyRenders": {},
+      "jsTouchMs": null,
+      "meaningfulFrameCandidateMs": 0.0,
+      "nextNativeFrameBoundMs": 354.43189200758934,
+      "tapToNativeFrameProxyMs": 354.43189200758934,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "25.45 35.60 42.57 10/6847 4092684"
+    },
+    {
+      "arm": "after-final",
+      "case": "foreground",
+      "sample": 11,
+      "startMs": 147145480.0,
+      "rootRenderTotalMs": 52.23557490110397,
+      "rootMaxCommitRenderMs": 43.04482880234718,
+      "surfaceRenderTotalMs": 52.23557490110397,
+      "surfaceMaxCommitRenderMs": 43.04482880234718,
+      "surfaceCommitCount": 8,
+      "bodyRenders": {
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": null,
+      "meaningfulFrameCandidateMs": 0.0,
+      "nextNativeFrameBoundMs": 282.94449800252914,
+      "tapToNativeFrameProxyMs": 282.94449800252914,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "26.38 35.63 42.54 31/6871 4095044"
+    },
+    {
+      "arm": "after-final",
+      "case": "foreground",
+      "sample": 12,
+      "startMs": 147148640.0,
+      "rootRenderTotalMs": 87.22821661829948,
+      "rootMaxCommitRenderMs": 80.32921814918518,
+      "surfaceRenderTotalMs": 87.22821661829948,
+      "surfaceMaxCommitRenderMs": 80.32921814918518,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": null,
+      "meaningfulFrameCandidateMs": 0.0,
+      "nextNativeFrameBoundMs": 243.4913760125637,
+      "tapToNativeFrameProxyMs": 243.4913760125637,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "27.39 35.68 42.52 8/6621 4096066"
+    },
+    {
+      "arm": "after-final",
+      "case": "foreground",
+      "sample": 13,
+      "startMs": 147151980.0,
+      "rootRenderTotalMs": 11.689177066087723,
+      "rootMaxCommitRenderMs": 5.248040676116943,
+      "surfaceRenderTotalMs": 11.689177066087723,
+      "surfaceMaxCommitRenderMs": 5.248040676116943,
+      "surfaceCommitCount": 5,
+      "bodyRenders": {},
+      "jsTouchMs": null,
+      "meaningfulFrameCandidateMs": 0.0,
+      "nextNativeFrameBoundMs": 289.53445199131966,
+      "tapToNativeFrameProxyMs": 289.53445199131966,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "27.39 35.68 42.52 15/6715 4097239"
+    },
+    {
+      "arm": "after-final",
+      "case": "foreground",
+      "sample": 14,
+      "startMs": 147155270.0,
+      "rootRenderTotalMs": 4.414669543504715,
+      "rootMaxCommitRenderMs": 4.057111829519272,
+      "surfaceRenderTotalMs": 4.414669543504715,
+      "surfaceMaxCommitRenderMs": 4.057111829519272,
+      "surfaceCommitCount": 2,
+      "bodyRenders": {},
+      "jsTouchMs": null,
+      "meaningfulFrameCandidateMs": 0.0,
+      "nextNativeFrameBoundMs": 225.71884301304817,
+      "tapToNativeFrameProxyMs": 225.71884301304817,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "27.60 35.59 42.45 15/6867 4098456"
+    },
+    {
+      "arm": "after-final",
+      "case": "foreground",
+      "sample": 15,
+      "startMs": 147158620.0,
+      "rootRenderTotalMs": 65.41572290658951,
+      "rootMaxCommitRenderMs": 43.32236933708191,
+      "surfaceRenderTotalMs": 65.41572290658951,
+      "surfaceMaxCommitRenderMs": 43.32236933708191,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": null,
+      "meaningfulFrameCandidateMs": 0.0,
+      "nextNativeFrameBoundMs": 294.67452400922775,
+      "tapToNativeFrameProxyMs": 294.67452400922775,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "26.51 35.23 42.30 44/6783 4099371"
+    },
+    {
+      "arm": "after-final",
+      "case": "foreground",
+      "sample": 16,
+      "startMs": 147161980.0,
+      "rootRenderTotalMs": 129.04852324724197,
+      "rootMaxCommitRenderMs": 78.27332410216331,
+      "surfaceRenderTotalMs": 129.04852324724197,
+      "surfaceMaxCommitRenderMs": 78.27332410216331,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": null,
+      "meaningfulFrameCandidateMs": 0.0,
+      "nextNativeFrameBoundMs": 434.9314169883728,
+      "tapToNativeFrameProxyMs": 434.9314169883728,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "26.51 35.23 42.30 35/6736 4100447"
+    },
+    {
+      "arm": "after-final",
+      "case": "foreground",
+      "sample": 17,
+      "startMs": 147165370.0,
+      "rootRenderTotalMs": 148.00896498560905,
+      "rootMaxCommitRenderMs": 97.4762913286686,
+      "surfaceRenderTotalMs": 148.00896498560905,
+      "surfaceMaxCommitRenderMs": 97.4762913286686,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": null,
+      "meaningfulFrameCandidateMs": 0.0,
+      "nextNativeFrameBoundMs": 343.4194769859314,
+      "tapToNativeFrameProxyMs": 343.4194769859314,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "28.95 35.59 42.38 25/6779 4101100"
+    },
+    {
+      "arm": "after-final",
+      "case": "foreground",
+      "sample": 18,
+      "startMs": 147168860.0,
+      "rootRenderTotalMs": 83.93385764956474,
+      "rootMaxCommitRenderMs": 66.9850138425827,
+      "surfaceRenderTotalMs": 83.93385764956474,
+      "surfaceMaxCommitRenderMs": 66.9850138425827,
+      "surfaceCommitCount": 8,
+      "bodyRenders": {
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": null,
+      "meaningfulFrameCandidateMs": 0.0,
+      "nextNativeFrameBoundMs": 403.4238609969616,
+      "tapToNativeFrameProxyMs": 403.4238609969616,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "28.15 35.32 42.25 21/6953 4102025"
+    },
+    {
+      "arm": "after-final",
+      "case": "foreground",
+      "sample": 19,
+      "startMs": 147172050.0,
+      "rootRenderTotalMs": 51.16826421022415,
+      "rootMaxCommitRenderMs": 40.885674834251404,
+      "surfaceRenderTotalMs": 51.16826421022415,
+      "surfaceMaxCommitRenderMs": 40.885674834251404,
+      "surfaceCommitCount": 8,
+      "bodyRenders": {
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": null,
+      "meaningfulFrameCandidateMs": 0.0,
+      "nextNativeFrameBoundMs": 249.66014701128006,
+      "tapToNativeFrameProxyMs": 249.66014701128006,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "28.15 35.32 42.25 22/6767 4102665"
+    },
+    {
+      "arm": "after-final",
+      "case": "list",
+      "sample": 10,
+      "startMs": 147088060.0,
+      "rootRenderTotalMs": 129.70939138531685,
+      "rootMaxCommitRenderMs": 81.20301878452301,
+      "surfaceRenderTotalMs": 88.23849913477898,
+      "surfaceMaxCommitRenderMs": 55.02610903978348,
+      "surfaceCommitCount": 3,
+      "bodyRenders": {
+        "BuzzChannels": 2,
+        "RoomRosterSheet": 1,
+        "RootLayout": 1
+      },
+      "jsTouchMs": 147088125.131097,
+      "meaningfulFrameCandidateMs": 244.6200200021267,
+      "nextNativeFrameBoundMs": 285.5453830063343,
+      "tapToNativeFrameProxyMs": 220.4142860174179,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "29.53 37.93 43.66 13/6704 4061801"
+    },
+    {
+      "arm": "after-final",
+      "case": "list",
+      "sample": 11,
+      "startMs": 147093700.0,
+      "rootRenderTotalMs": 41.47106549143791,
+      "rootMaxCommitRenderMs": 36.547544449567795,
+      "surfaceRenderTotalMs": 27.295187294483185,
+      "surfaceMaxCommitRenderMs": 27.27118816971779,
+      "surfaceCommitCount": 2,
+      "bodyRenders": {
+        "ConversationRow": 1,
+        "BuzzChannels": 1,
+        "RootLayout": 1
+      },
+      "jsTouchMs": 147093729.192658,
+      "meaningfulFrameCandidateMs": 183.71614199876785,
+      "nextNativeFrameBoundMs": 211.35644701123238,
+      "tapToNativeFrameProxyMs": 182.16378900408745,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "28.53 37.58 43.51 9/6847 4064042"
+    },
+    {
+      "arm": "after-final",
+      "case": "list",
+      "sample": 12,
+      "startMs": 147099430.0,
+      "rootRenderTotalMs": 47.92560985684395,
+      "rootMaxCommitRenderMs": 37.41469323635101,
+      "surfaceRenderTotalMs": 28.907515436410904,
+      "surfaceMaxCommitRenderMs": 28.86593848466873,
+      "surfaceCommitCount": 3,
+      "bodyRenders": {
+        "BuzzChannels": 1,
+        "RootLayout": 1
+      },
+      "jsTouchMs": 147099462.227496,
+      "meaningfulFrameCandidateMs": 201.54023098945618,
+      "nextNativeFrameBoundMs": 248.0516009926796,
+      "tapToNativeFrameProxyMs": 215.82410499453545,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "29.69 37.67 43.51 9/6757 4068247"
+    },
+    {
+      "arm": "after-final",
+      "case": "list",
+      "sample": 13,
+      "startMs": 147105140.0,
+      "rootRenderTotalMs": 84.30760619044304,
+      "rootMaxCommitRenderMs": 46.18538337945938,
+      "surfaceRenderTotalMs": 28.529056191444397,
+      "surfaceMaxCommitRenderMs": 28.49037331342697,
+      "surfaceCommitCount": 3,
+      "bodyRenders": {
+        "ConversationRow": 1,
+        "BuzzChannels": 1,
+        "RootLayout": 1
+      },
+      "jsTouchMs": 147105178.746385,
+      "meaningfulFrameCandidateMs": 231.78047400712967,
+      "nextNativeFrameBoundMs": 254.68649399280548,
+      "tapToNativeFrameProxyMs": 215.9401089847088,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "29.07 37.41 43.39 3/6665 4074416"
+    },
+    {
+      "arm": "after-final",
+      "case": "list",
+      "sample": 14,
+      "startMs": 147110670.0,
+      "rootRenderTotalMs": 74.4264357984066,
+      "rootMaxCommitRenderMs": 43.10573390126228,
+      "surfaceRenderTotalMs": 32.923559725284576,
+      "surfaceMaxCommitRenderMs": 32.90022170543671,
+      "surfaceCommitCount": 3,
+      "bodyRenders": {
+        "RoomRosterSheet": 1,
+        "BuzzChannels": 1,
+        "RootLayout": 1
+      },
+      "jsTouchMs": 147110723.079187,
+      "meaningfulFrameCandidateMs": 264.1046800017357,
+      "nextNativeFrameBoundMs": 292.53262001276016,
+      "tapToNativeFrameProxyMs": 239.45343300700188,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "28.11 37.07 43.25 25/6532 4076463"
+    },
+    {
+      "arm": "after-final",
+      "case": "list",
+      "sample": 15,
+      "startMs": 147116290.0,
+      "rootRenderTotalMs": 36.66064113378525,
+      "rootMaxCommitRenderMs": 31.470202654600143,
+      "surfaceRenderTotalMs": 19.3757563829422,
+      "surfaceMaxCommitRenderMs": 19.349977254867554,
+      "surfaceCommitCount": 2,
+      "bodyRenders": {
+        "BuzzChannels": 1,
+        "RootLayout": 1
+      },
+      "jsTouchMs": 147116312.109056,
+      "meaningfulFrameCandidateMs": 151.31363800168037,
+      "nextNativeFrameBoundMs": 171.37116599082947,
+      "tapToNativeFrameProxyMs": 149.2621099948883,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "28.58 37.02 43.20 5/6580 4078514"
+    },
+    {
+      "arm": "after-final",
+      "case": "list",
+      "sample": 16,
+      "startMs": 147121960.0,
+      "rootRenderTotalMs": 125.14034268260002,
+      "rootMaxCommitRenderMs": 75.57761216163635,
+      "surfaceRenderTotalMs": 67.61350923776627,
+      "surfaceMaxCommitRenderMs": 40.02188792824745,
+      "surfaceCommitCount": 3,
+      "bodyRenders": {
+        "BuzzChannels": 2,
+        "RoomRosterSheet": 1,
+        "RootLayout": 1
+      },
+      "jsTouchMs": 147122036.69388,
+      "meaningfulFrameCandidateMs": 247.2394210100174,
+      "nextNativeFrameBoundMs": 272.105093985796,
+      "tapToNativeFrameProxyMs": 195.41121399402618,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "27.25 36.60 43.03 10/6713 4082893"
+    },
+    {
+      "arm": "after-final",
+      "case": "list",
+      "sample": 17,
+      "startMs": 147127740.0,
+      "rootRenderTotalMs": 37.135826110839844,
+      "rootMaxCommitRenderMs": 32.37954041361809,
+      "surfaceRenderTotalMs": 20.773870050907135,
+      "surfaceMaxCommitRenderMs": 20.733133137226105,
+      "surfaceCommitCount": 3,
+      "bodyRenders": {
+        "ConversationRow": 3,
+        "BuzzChannels": 1,
+        "RootLayout": 1
+      },
+      "jsTouchMs": 147127779.096124,
+      "meaningfulFrameCandidateMs": 197.8027530014515,
+      "nextNativeFrameBoundMs": 221.3412309885025,
+      "tapToNativeFrameProxyMs": 182.24510699510574,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "26.70 36.19 42.83 7/6689 4087927"
+    },
+    {
+      "arm": "after-final",
+      "case": "list",
+      "sample": 18,
+      "startMs": 147133400.0,
+      "rootRenderTotalMs": 40.07305791974068,
+      "rootMaxCommitRenderMs": 35.294976741075516,
+      "surfaceRenderTotalMs": 29.294898808002472,
+      "surfaceMaxCommitRenderMs": 29.260811865329742,
+      "surfaceCommitCount": 2,
+      "bodyRenders": {
+        "BuzzChannels": 1,
+        "RootLayout": 1
+      },
+      "jsTouchMs": 147133429.1813,
+      "meaningfulFrameCandidateMs": 182.76077899336815,
+      "nextNativeFrameBoundMs": 211.3419649899006,
+      "tapToNativeFrameProxyMs": 182.16066497564316,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "25.84 35.85 42.69 5/6778 4089547"
+    },
+    {
+      "arm": "after-final",
+      "case": "list",
+      "sample": 19,
+      "startMs": 147138960.0,
+      "rootRenderTotalMs": 46.190686732530594,
+      "rootMaxCommitRenderMs": 27.571547120809555,
+      "surfaceRenderTotalMs": 18.598089963197708,
+      "surfaceMaxCommitRenderMs": 18.569512009620667,
+      "surfaceCommitCount": 3,
+      "bodyRenders": {
+        "RoomRosterSheet": 1,
+        "BuzzChannels": 1,
+        "RootLayout": 1
+      },
+      "jsTouchMs": 147139009.148452,
+      "meaningfulFrameCandidateMs": 188.79951199889183,
+      "nextNativeFrameBoundMs": 218.3772630095482,
+      "tapToNativeFrameProxyMs": 169.22881099581718,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "25.45 35.60 42.57 11/6639 4091360"
+    },
+    {
+      "arm": "after-final",
+      "case": "members",
+      "sample": 10,
+      "startMs": 146869990.0,
+      "rootRenderTotalMs": 172.68410819768906,
+      "rootMaxCommitRenderMs": 97.64844146370888,
+      "surfaceRenderTotalMs": 88.2167220711708,
+      "surfaceMaxCommitRenderMs": 42.10362982749939,
+      "surfaceCommitCount": 7,
+      "bodyRenders": {
+        "BuzzMembers": 5,
+        "RootLayout": 1,
+        "BuzzChannels": 1,
+        "MemberRosterRow": 4
+      },
+      "jsTouchMs": 146870045.849182,
+      "meaningfulFrameCandidateMs": 203.14888298511505,
+      "nextNativeFrameBoundMs": 229.50017800927162,
+      "tapToNativeFrameProxyMs": 173.65099599957466,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "42.80 45.00 46.74 16/6810 3922929"
+    },
+    {
+      "arm": "after-final",
+      "case": "members",
+      "sample": 11,
+      "startMs": 146873580.0,
+      "rootRenderTotalMs": 180.36868998408318,
+      "rootMaxCommitRenderMs": 72.2613719701767,
+      "surfaceRenderTotalMs": 98.15560749173164,
+      "surfaceMaxCommitRenderMs": 67.8596927523613,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "BuzzMembers": 5,
+        "RootLayout": 1,
+        "MemberRosterRow": 12,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146873630.697296,
+      "meaningfulFrameCandidateMs": 241.16476199030876,
+      "nextNativeFrameBoundMs": 364.7913349866867,
+      "tapToNativeFrameProxyMs": 314.0940389931202,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "43.62 45.13 46.78 14/6823 3924319"
+    },
+    {
+      "arm": "after-final",
+      "case": "members",
+      "sample": 12,
+      "startMs": 146877290.0,
+      "rootRenderTotalMs": 165.43920186161995,
+      "rootMaxCommitRenderMs": 72.24292409420013,
+      "surfaceRenderTotalMs": 80.12347948551178,
+      "surfaceMaxCommitRenderMs": 47.63120952248573,
+      "surfaceCommitCount": 7,
+      "bodyRenders": {
+        "BuzzMembers": 5,
+        "RootLayout": 1,
+        "MemberRosterRow": 12,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146877328.872895,
+      "meaningfulFrameCandidateMs": 212.74235001206398,
+      "nextNativeFrameBoundMs": 304.87698900699615,
+      "tapToNativeFrameProxyMs": 266.00409400463104,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "43.25 45.03 46.74 30/6883 3925325"
+    },
+    {
+      "arm": "after-final",
+      "case": "members",
+      "sample": 13,
+      "startMs": 146880850.0,
+      "rootRenderTotalMs": 160.20501309633255,
+      "rootMaxCommitRenderMs": 62.87717795372009,
+      "surfaceRenderTotalMs": 97.2435550391674,
+      "surfaceMaxCommitRenderMs": 50.74239546060562,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "BuzzMembers": 5,
+        "RootLayout": 1,
+        "MemberRosterRow": 12,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146880896.169518,
+      "meaningfulFrameCandidateMs": 211.4481979906559,
+      "nextNativeFrameBoundMs": 278.09264001250267,
+      "tapToNativeFrameProxyMs": 231.92312201857567,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "43.25 45.03 46.74 12/6866 3926677"
+    },
+    {
+      "arm": "after-final",
+      "case": "members",
+      "sample": 14,
+      "startMs": 146884440.0,
+      "rootRenderTotalMs": 309.4442777335644,
+      "rootMaxCommitRenderMs": 145.0714180469513,
+      "surfaceRenderTotalMs": 202.9112125337124,
+      "surfaceMaxCommitRenderMs": 144.46922907233238,
+      "surfaceCommitCount": 7,
+      "bodyRenders": {
+        "BuzzMembers": 5,
+        "RootLayout": 1,
+        "MemberRosterRow": 12,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146884479.024747,
+      "meaningfulFrameCandidateMs": 381.0195949971676,
+      "nextNativeFrameBoundMs": 721.7760179936886,
+      "tapToNativeFrameProxyMs": 682.7512709796429,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "42.27 44.80 46.65 27/6696 3927793"
+    },
+    {
+      "arm": "after-final",
+      "case": "members",
+      "sample": 15,
+      "startMs": 146888110.0,
+      "rootRenderTotalMs": 152.01157611608505,
+      "rootMaxCommitRenderMs": 64.50992459058762,
+      "surfaceRenderTotalMs": 84.79691809415817,
+      "surfaceMaxCommitRenderMs": 47.87753269076347,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "BuzzMembers": 5,
+        "RootLayout": 1,
+        "MemberRosterRow": 12,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146888145.508942,
+      "meaningfulFrameCandidateMs": 186.9886029958725,
+      "nextNativeFrameBoundMs": 245.67143601179123,
+      "tapToNativeFrameProxyMs": 210.16249400377274,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "40.72 44.43 46.52 11/6927 3929284"
+    },
+    {
+      "arm": "after-final",
+      "case": "members",
+      "sample": 16,
+      "startMs": 146891620.0,
+      "rootRenderTotalMs": 131.87348219752312,
+      "rootMaxCommitRenderMs": 53.63645267486572,
+      "surfaceRenderTotalMs": 70.96423673629761,
+      "surfaceMaxCommitRenderMs": 37.499128341674805,
+      "surfaceCommitCount": 7,
+      "bodyRenders": {
+        "BuzzMembers": 5,
+        "RootLayout": 1,
+        "MemberRosterRow": 12,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146891662.063305,
+      "meaningfulFrameCandidateMs": 180.3306109905243,
+      "nextNativeFrameBoundMs": 242.06723898649216,
+      "tapToNativeFrameProxyMs": 200.00393399596214,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "40.72 44.43 46.52 8/6955 3930301"
+    },
+    {
+      "arm": "after-final",
+      "case": "members",
+      "sample": 17,
+      "startMs": 146895180.0,
+      "rootRenderTotalMs": 255.2009849846363,
+      "rootMaxCommitRenderMs": 119.98798525333405,
+      "surfaceRenderTotalMs": 157.98363065719604,
+      "surfaceMaxCommitRenderMs": 119.2538113296032,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "BuzzMembers": 5,
+        "RootLayout": 1,
+        "MemberRosterRow": 12,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146895229.667238,
+      "meaningfulFrameCandidateMs": 312.75069600343704,
+      "nextNativeFrameBoundMs": 450.4910320043564,
+      "tapToNativeFrameProxyMs": 400.82379400730133,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "41.55 44.54 46.55 16/6831 3931271"
+    },
+    {
+      "arm": "after-final",
+      "case": "members",
+      "sample": 18,
+      "startMs": 146898930.0,
+      "rootRenderTotalMs": 177.9573612511158,
+      "rootMaxCommitRenderMs": 66.95017570257187,
+      "surfaceRenderTotalMs": 89.7368771135807,
+      "surfaceMaxCommitRenderMs": 55.90613979101181,
+      "surfaceCommitCount": 7,
+      "bodyRenders": {
+        "BuzzMembers": 5,
+        "RootLayout": 1,
+        "MemberRosterRow": 12,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146898962.972242,
+      "meaningfulFrameCandidateMs": 261.4191820025444,
+      "nextNativeFrameBoundMs": 384.0642130076885,
+      "tapToNativeFrameProxyMs": 351.0919710099697,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "43.66 44.93 46.66 25/6870 3935824"
+    },
+    {
+      "arm": "after-final",
+      "case": "members",
+      "sample": 19,
+      "startMs": 146902570.0,
+      "rootRenderTotalMs": 165.1187870502472,
+      "rootMaxCommitRenderMs": 63.45623990893364,
+      "surfaceRenderTotalMs": 95.28677967190742,
+      "surfaceMaxCommitRenderMs": 60.707482784986496,
+      "surfaceCommitCount": 7,
+      "bodyRenders": {
+        "BuzzMembers": 5,
+        "RootLayout": 1,
+        "MemberRosterRow": 12,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146902612.226362,
+      "meaningfulFrameCandidateMs": 251.1042020022869,
+      "nextNativeFrameBoundMs": 341.3485270142555,
+      "tapToNativeFrameProxyMs": 299.12216502428055,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "41.53 44.47 46.50 28/6808 3939433"
+    },
+    {
+      "arm": "after-final",
+      "case": "room",
+      "sample": 10,
+      "startMs": 146908680.0,
+      "rootRenderTotalMs": 860.6546890735626,
+      "rootMaxCommitRenderMs": 331.65344673395157,
+      "surfaceRenderTotalMs": 860.6546890735626,
+      "surfaceMaxCommitRenderMs": 331.65344673395157,
+      "surfaceCommitCount": 17,
+      "bodyRenders": {
+        "RootLayout": 1,
+        "RoomRosterSheet": 7,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146908729.010799,
+      "meaningfulFrameCandidateMs": 1247.1594440042973,
+      "nextNativeFrameBoundMs": 1281.4495350122452,
+      "tapToNativeFrameProxyMs": 1232.4387360215187,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "42.05 44.53 46.51 13/6785 3947554"
+    },
+    {
+      "arm": "after-final",
+      "case": "room",
+      "sample": 11,
+      "startMs": 146916480.0,
+      "rootRenderTotalMs": 741.6503379046917,
+      "rootMaxCommitRenderMs": 198.1884615123272,
+      "surfaceRenderTotalMs": 741.6503379046917,
+      "surfaceMaxCommitRenderMs": 198.1884615123272,
+      "surfaceCommitCount": 15,
+      "bodyRenders": {
+        "RoomRosterSheet": 8,
+        "RootLayout": 1,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146916515.253206,
+      "meaningfulFrameCandidateMs": 1072.395857989788,
+      "nextNativeFrameBoundMs": null,
+      "tapToNativeFrameProxyMs": null,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "41.48 44.37 46.45 24/6746 3956583"
+    },
+    {
+      "arm": "after-final",
+      "case": "room",
+      "sample": 12,
+      "startMs": 146924670.0,
+      "rootRenderTotalMs": 722.8856541216373,
+      "rootMaxCommitRenderMs": 189.72251841425896,
+      "surfaceRenderTotalMs": 722.8856541216373,
+      "surfaceMaxCommitRenderMs": 189.72251841425896,
+      "surfaceCommitCount": 15,
+      "bodyRenders": {
+        "RoomRosterSheet": 8,
+        "RootLayout": 1,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146924713.393374,
+      "meaningfulFrameCandidateMs": 976.7263939976692,
+      "nextNativeFrameBoundMs": null,
+      "tapToNativeFrameProxyMs": null,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "40.17 44.00 46.31 8/6734 3963010"
+    },
+    {
+      "arm": "after-final",
+      "case": "room",
+      "sample": 13,
+      "startMs": 146932800.0,
+      "rootRenderTotalMs": 254.43287989497185,
+      "rootMaxCommitRenderMs": 56.640178203582764,
+      "surfaceRenderTotalMs": 254.43287989497185,
+      "surfaceMaxCommitRenderMs": 56.640178203582764,
+      "surfaceCommitCount": 19,
+      "bodyRenders": {
+        "RootLayout": 1,
+        "RoomRosterSheet": 6,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146932878.826469,
+      "meaningfulFrameCandidateMs": 431.0964680016041,
+      "nextNativeFrameBoundMs": 461.4823539853096,
+      "tapToNativeFrameProxyMs": 382.6558849811554,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "39.71 43.78 46.21 55/6738 3968524"
+    },
+    {
+      "arm": "after-final",
+      "case": "room",
+      "sample": 14,
+      "startMs": 146940910.0,
+      "rootRenderTotalMs": 669.1487258970737,
+      "rootMaxCommitRenderMs": 179.6648807823658,
+      "surfaceRenderTotalMs": 669.1487258970737,
+      "surfaceMaxCommitRenderMs": 179.6648807823658,
+      "surfaceCommitCount": 16,
+      "bodyRenders": {
+        "RoomRosterSheet": 8,
+        "RootLayout": 1,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146940947.866757,
+      "meaningfulFrameCandidateMs": 921.9742119908333,
+      "nextNativeFrameBoundMs": null,
+      "tapToNativeFrameProxyMs": null,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "41.25 44.03 46.28 16/6735 3973767"
+    },
+    {
+      "arm": "after-final",
+      "case": "room",
+      "sample": 15,
+      "startMs": 146949360.0,
+      "rootRenderTotalMs": 1235.2124032080173,
+      "rootMaxCommitRenderMs": 453.74953734874725,
+      "surfaceRenderTotalMs": 1235.2124032080173,
+      "surfaceMaxCommitRenderMs": 453.74953734874725,
+      "surfaceCommitCount": 16,
+      "bodyRenders": {
+        "RoomRosterSheet": 8,
+        "RootLayout": 1,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146949395.671127,
+      "meaningfulFrameCandidateMs": 1610.063863992691,
+      "nextNativeFrameBoundMs": null,
+      "tapToNativeFrameProxyMs": null,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "39.01 43.44 46.06 11/6792 3976878"
+    },
+    {
+      "arm": "after-final",
+      "case": "room",
+      "sample": 16,
+      "startMs": 146957360.0,
+      "rootRenderTotalMs": 988.7423966526985,
+      "rootMaxCommitRenderMs": 306.1980536878109,
+      "surfaceRenderTotalMs": 988.7423966526985,
+      "surfaceMaxCommitRenderMs": 306.1980536878109,
+      "surfaceCommitCount": 15,
+      "bodyRenders": {
+        "RoomRosterSheet": 8,
+        "RootLayout": 1,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146957429.743651,
+      "meaningfulFrameCandidateMs": 1477.0763449966908,
+      "nextNativeFrameBoundMs": null,
+      "tapToNativeFrameProxyMs": null,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "39.76 43.46 46.04 32/6915 3979624"
+    },
+    {
+      "arm": "after-final",
+      "case": "room",
+      "sample": 17,
+      "startMs": 146965600.0,
+      "rootRenderTotalMs": 1243.9904572963715,
+      "rootMaxCommitRenderMs": 336.5764925777912,
+      "surfaceRenderTotalMs": 1243.9904572963715,
+      "surfaceMaxCommitRenderMs": 336.5764925777912,
+      "surfaceCommitCount": 14,
+      "bodyRenders": {
+        "RoomRosterSheet": 8,
+        "RootLayout": 1,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146965669.154107,
+      "meaningfulFrameCandidateMs": 1767.4254840016365,
+      "nextNativeFrameBoundMs": null,
+      "tapToNativeFrameProxyMs": null,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "40.98 43.65 46.09 38/6956 3986174"
+    },
+    {
+      "arm": "after-final",
+      "case": "room",
+      "sample": 18,
+      "startMs": 146973760.0,
+      "rootRenderTotalMs": 607.2243396341801,
+      "rootMaxCommitRenderMs": 180.2338523566723,
+      "surfaceRenderTotalMs": 607.2243396341801,
+      "surfaceMaxCommitRenderMs": 180.2338523566723,
+      "surfaceCommitCount": 14,
+      "bodyRenders": {
+        "RoomRosterSheet": 8,
+        "RootLayout": 1,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146973795.775413,
+      "meaningfulFrameCandidateMs": 890.6483789980412,
+      "nextNativeFrameBoundMs": null,
+      "tapToNativeFrameProxyMs": null,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "37.70 42.87 45.81 13/6971 3990174"
+    },
+    {
+      "arm": "after-final",
+      "case": "room",
+      "sample": 19,
+      "startMs": 146981590.0,
+      "rootRenderTotalMs": 615.5407972633839,
+      "rootMaxCommitRenderMs": 172.22941008210182,
+      "surfaceRenderTotalMs": 615.5407972633839,
+      "surfaceMaxCommitRenderMs": 172.22941008210182,
+      "surfaceCommitCount": 15,
+      "bodyRenders": {
+        "RoomRosterSheet": 8,
+        "RootLayout": 1,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 146981629.0396,
+      "meaningfulFrameCandidateMs": 943.050666987896,
+      "nextNativeFrameBoundMs": null,
+      "tapToNativeFrameProxyMs": null,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "37.16 42.67 45.73 29/6946 3993176"
+    },
+    {
+      "arm": "after-final",
+      "case": "tray",
+      "sample": 10,
+      "startMs": 146832220.0,
+      "rootRenderTotalMs": 127.67556390166283,
+      "rootMaxCommitRenderMs": 51.855365097522736,
+      "surfaceRenderTotalMs": 41.24970090389252,
+      "surfaceMaxCommitRenderMs": 11.498163282871246,
+      "surfaceCommitCount": 7,
+      "bodyRenders": {
+        "TrayScreen": 5,
+        "RootLayout": 1,
+        "BuzzChannels": 1,
+        "NeedsYouCell": 1
+      },
+      "jsTouchMs": 146832264.974296,
+      "meaningfulFrameCandidateMs": 328.15752801299095,
+      "nextNativeFrameBoundMs": 468.99074000120163,
+      "tapToNativeFrameProxyMs": 424.01644399762154,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "46.97 45.84 47.07 33/7086 3905451"
+    },
+    {
+      "arm": "after-final",
+      "case": "tray",
+      "sample": 11,
+      "startMs": 146836160.0,
+      "rootRenderTotalMs": 57.43919551372528,
+      "rootMaxCommitRenderMs": 19.67467224597931,
+      "surfaceRenderTotalMs": 23.74306970834732,
+      "surfaceMaxCommitRenderMs": 9.878098845481873,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "TrayScreen": 4,
+        "RootLayout": 1,
+        "NeedsYouCell": 1
+      },
+      "jsTouchMs": 146836212.571435,
+      "meaningfulFrameCandidateMs": 181.47796401381493,
+      "nextNativeFrameBoundMs": 268.60097301006317,
+      "tapToNativeFrameProxyMs": 216.02953800559044,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "46.97 45.84 47.07 32/6975 3906602"
+    },
+    {
+      "arm": "after-final",
+      "case": "tray",
+      "sample": 12,
+      "startMs": 146840070.0,
+      "rootRenderTotalMs": 95.97339743375778,
+      "rootMaxCommitRenderMs": 39.910942912101746,
+      "surfaceRenderTotalMs": 49.40656304359436,
+      "surfaceMaxCommitRenderMs": 16.799595057964325,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "TrayScreen": 4,
+        "RootLayout": 1,
+        "NeedsYouCell": 1
+      },
+      "jsTouchMs": 146840132.475366,
+      "meaningfulFrameCandidateMs": 291.73497501015663,
+      "nextNativeFrameBoundMs": 446.387708991766,
+      "tapToNativeFrameProxyMs": 383.9123429954052,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "45.29 45.51 46.95 42/6945 3909146"
+    },
+    {
+      "arm": "after-final",
+      "case": "tray",
+      "sample": 13,
+      "startMs": 146843960.0,
+      "rootRenderTotalMs": 74.06946584582329,
+      "rootMaxCommitRenderMs": 28.811912417411804,
+      "surfaceRenderTotalMs": 28.442593693733215,
+      "surfaceMaxCommitRenderMs": 16.335507541894913,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "TrayScreen": 3,
+        "RootLayout": 1,
+        "NeedsYouCell": 1
+      },
+      "jsTouchMs": 146844012.456819,
+      "meaningfulFrameCandidateMs": 275.87950599193573,
+      "nextNativeFrameBoundMs": 470.9951179921627,
+      "tapToNativeFrameProxyMs": 418.53829899430275,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "47.03 45.86 47.06 27/6977 3911982"
+    },
+    {
+      "arm": "after-final",
+      "case": "tray",
+      "sample": 14,
+      "startMs": 146847860.0,
+      "rootRenderTotalMs": 37.08017787337303,
+      "rootMaxCommitRenderMs": 12.528203964233398,
+      "surfaceRenderTotalMs": 16.237542033195496,
+      "surfaceMaxCommitRenderMs": 7.049939215183258,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "TrayScreen": 3,
+        "RootLayout": 1,
+        "NeedsYouCell": 1
+      },
+      "jsTouchMs": 146847895.534071,
+      "meaningfulFrameCandidateMs": 132.3797160089016,
+      "nextNativeFrameBoundMs": 184.685898989439,
+      "tapToNativeFrameProxyMs": 149.15182799100876,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "45.83 45.63 46.98 13/6886 3914976"
+    },
+    {
+      "arm": "after-final",
+      "case": "tray",
+      "sample": 15,
+      "startMs": 146851510.0,
+      "rootRenderTotalMs": 47.27593359351158,
+      "rootMaxCommitRenderMs": 15.064344942569733,
+      "surfaceRenderTotalMs": 15.75878757238388,
+      "surfaceMaxCommitRenderMs": 8.429773330688477,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "TrayScreen": 3,
+        "RootLayout": 1,
+        "NeedsYouCell": 1
+      },
+      "jsTouchMs": 146851545.639017,
+      "meaningfulFrameCandidateMs": 131.02488800883293,
+      "nextNativeFrameBoundMs": 189.53754100203514,
+      "tapToNativeFrameProxyMs": 153.8985240161419,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "45.83 45.63 46.98 12/6850 3916064"
+    },
+    {
+      "arm": "after-final",
+      "case": "tray",
+      "sample": 16,
+      "startMs": 146855250.0,
+      "rootRenderTotalMs": 133.98737663030624,
+      "rootMaxCommitRenderMs": 48.0714291036129,
+      "surfaceRenderTotalMs": 41.907203406095505,
+      "surfaceMaxCommitRenderMs": 16.032422244548798,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "TrayScreen": 4,
+        "RootLayout": 1,
+        "NeedsYouCell": 1
+      },
+      "jsTouchMs": 146855298.809028,
+      "meaningfulFrameCandidateMs": 294.80901700258255,
+      "nextNativeFrameBoundMs": 495.69811499118805,
+      "tapToNativeFrameProxyMs": 446.88908699154854,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "46.24 45.72 47.00 28/6844 3917068"
+    },
+    {
+      "arm": "after-final",
+      "case": "tray",
+      "sample": 17,
+      "startMs": 146858910.0,
+      "rootRenderTotalMs": 58.49016925692558,
+      "rootMaxCommitRenderMs": 21.70163482427597,
+      "surfaceRenderTotalMs": 23.8496575653553,
+      "surfaceMaxCommitRenderMs": 7.456643968820572,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "TrayScreen": 3,
+        "RootLayout": 1,
+        "NeedsYouCell": 1
+      },
+      "jsTouchMs": 146858962.460548,
+      "meaningfulFrameCandidateMs": 162.64008501172066,
+      "nextNativeFrameBoundMs": 207.48304998874664,
+      "tapToNativeFrameProxyMs": 155.02250197529793,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "44.70 45.41 46.89 27/6865 3918219"
+    },
+    {
+      "arm": "after-final",
+      "case": "tray",
+      "sample": 18,
+      "startMs": 146862530.0,
+      "rootRenderTotalMs": 54.82087567448616,
+      "rootMaxCommitRenderMs": 17.134014129638672,
+      "surfaceRenderTotalMs": 20.30264937877655,
+      "surfaceMaxCommitRenderMs": 9.438047736883163,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "TrayScreen": 3,
+        "RootLayout": 1,
+        "NeedsYouCell": 1
+      },
+      "jsTouchMs": 146862578.906328,
+      "meaningfulFrameCandidateMs": 171.34252598881721,
+      "nextNativeFrameBoundMs": 231.38168400526047,
+      "tapToNativeFrameProxyMs": 182.47535601258278,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "45.04 45.47 46.91 14/6954 3919290"
+    },
+    {
+      "arm": "after-final",
+      "case": "tray",
+      "sample": 19,
+      "startMs": 146866200.0,
+      "rootRenderTotalMs": 42.5856311917305,
+      "rootMaxCommitRenderMs": 15.309395134449005,
+      "surfaceRenderTotalMs": 16.303391486406326,
+      "surfaceMaxCommitRenderMs": 7.141036719083786,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "TrayScreen": 3,
+        "RootLayout": 1,
+        "NeedsYouCell": 1
+      },
+      "jsTouchMs": 146866245.861245,
+      "meaningfulFrameCandidateMs": 162.88881599903107,
+      "nextNativeFrameBoundMs": 220.74787199497223,
+      "tapToNativeFrameProxyMs": 174.88662698864937,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "45.04 45.47 46.91 13/6926 3922042"
+    },
+    {
+      "arm": "after-members-final",
+      "case": "members",
+      "sample": 10,
+      "startMs": 147552980.0,
+      "rootRenderTotalMs": 108.89372128248215,
+      "rootMaxCommitRenderMs": 35.147098898887634,
+      "surfaceRenderTotalMs": 43.33628925681114,
+      "surfaceMaxCommitRenderMs": 34.65019589662552,
+      "surfaceCommitCount": 8,
+      "bodyRenders": {
+        "BuzzMembers": 5,
+        "RootLayout": 1,
+        "BuzzChannels": 2,
+        "MemberRosterRow": 4
+      },
+      "jsTouchMs": 147553012.454937,
+      "meaningfulFrameCandidateMs": 234.75738701224327,
+      "nextNativeFrameBoundMs": 381.3392600119114,
+      "tapToNativeFrameProxyMs": 348.8843230009079,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "24.12 27.52 36.35 2/6124 89707"
+    },
+    {
+      "arm": "after-members-final",
+      "case": "members",
+      "sample": 11,
+      "startMs": 147556630.0,
+      "rootRenderTotalMs": 125.8482478260994,
+      "rootMaxCommitRenderMs": 55.283722311258316,
+      "surfaceRenderTotalMs": 48.053814858198166,
+      "surfaceMaxCommitRenderMs": 31.7218160033226,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "BuzzMembers": 5,
+        "RootLayout": 1,
+        "MemberRosterRow": 4,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 147556662.085235,
+      "meaningfulFrameCandidateMs": 142.4851030111313,
+      "nextNativeFrameBoundMs": 178.60068300366402,
+      "tapToNativeFrameProxyMs": 146.51544800400734,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "24.12 27.52 36.35 3/6238 90262"
+    },
+    {
+      "arm": "after-members-final",
+      "case": "members",
+      "sample": 12,
+      "startMs": 147560040.0,
+      "rootRenderTotalMs": 98.65302467346191,
+      "rootMaxCommitRenderMs": 39.143946796655655,
+      "surfaceRenderTotalMs": 53.538294821977615,
+      "surfaceMaxCommitRenderMs": 38.72921580076218,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "BuzzMembers": 5,
+        "RootLayout": 1,
+        "MemberRosterRow": 4,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 147560078.523045,
+      "meaningfulFrameCandidateMs": 167.73127299547195,
+      "nextNativeFrameBoundMs": 204.81689301133156,
+      "tapToNativeFrameProxyMs": 166.2938480079174,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "25.07 27.66 36.35 12/6165 90856"
+    },
+    {
+      "arm": "after-members-final",
+      "case": "members",
+      "sample": 13,
+      "startMs": 147563610.0,
+      "rootRenderTotalMs": 179.41112554073334,
+      "rootMaxCommitRenderMs": 62.25400897860527,
+      "surfaceRenderTotalMs": 108.13777777552605,
+      "surfaceMaxCommitRenderMs": 61.530366003513336,
+      "surfaceCommitCount": 7,
+      "bodyRenders": {
+        "BuzzMembers": 5,
+        "RootLayout": 1,
+        "MemberRosterRow": 4,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 147563662.963507,
+      "meaningfulFrameCandidateMs": 250.96220898628235,
+      "nextNativeFrameBoundMs": 320.24243199825287,
+      "tapToNativeFrameProxyMs": 267.27892500162125,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "24.10 27.42 36.23 18/6221 94245"
+    },
+    {
+      "arm": "after-members-final",
+      "case": "members",
+      "sample": 14,
+      "startMs": 147567150.0,
+      "rootRenderTotalMs": 133.95277500152588,
+      "rootMaxCommitRenderMs": 70.61336615681648,
+      "surfaceRenderTotalMs": 53.35351720452309,
+      "surfaceMaxCommitRenderMs": 34.33541378378868,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "BuzzMembers": 5,
+        "RootLayout": 1,
+        "MemberRosterRow": 4,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 147567179.100353,
+      "meaningfulFrameCandidateMs": 154.11354398727417,
+      "nextNativeFrameBoundMs": 237.13206100463867,
+      "tapToNativeFrameProxyMs": 208.03170800209045,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "24.10 27.42 36.23 16/6339 98557"
+    },
+    {
+      "arm": "after-members-final",
+      "case": "members",
+      "sample": 15,
+      "startMs": 147570590.0,
+      "rootRenderTotalMs": 112.82433468103409,
+      "rootMaxCommitRenderMs": 43.27591019868851,
+      "surfaceRenderTotalMs": 55.3321128487587,
+      "surfaceMaxCommitRenderMs": 35.79533511400223,
+      "surfaceCommitCount": 7,
+      "bodyRenders": {
+        "BuzzMembers": 5,
+        "RootLayout": 1,
+        "MemberRosterRow": 4,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 147570612.632896,
+      "meaningfulFrameCandidateMs": 152.2790159881115,
+      "nextNativeFrameBoundMs": 205.24532800912857,
+      "tapToNativeFrameProxyMs": 182.61243200302124,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "23.21 27.18 36.10 7/6429 103988"
+    },
+    {
+      "arm": "after-members-final",
+      "case": "members",
+      "sample": 16,
+      "startMs": 147574020.0,
+      "rootRenderTotalMs": 126.1041100025177,
+      "rootMaxCommitRenderMs": 46.56004664301872,
+      "surfaceRenderTotalMs": 69.4256796836853,
+      "surfaceMaxCommitRenderMs": 45.85779646039009,
+      "surfaceCommitCount": 7,
+      "bodyRenders": {
+        "BuzzMembers": 5,
+        "RootLayout": 1,
+        "MemberRosterRow": 4,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 147574045.176567,
+      "meaningfulFrameCandidateMs": 168.05302700400352,
+      "nextNativeFrameBoundMs": 217.0119630098343,
+      "tapToNativeFrameProxyMs": 191.83539602160454,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "21.99 26.86 35.95 9/6613 107713"
+    },
+    {
+      "arm": "after-members-final",
+      "case": "members",
+      "sample": 17,
+      "startMs": 147577510.0,
+      "rootRenderTotalMs": 110.7828403711319,
+      "rootMaxCommitRenderMs": 43.49416521191597,
+      "surfaceRenderTotalMs": 56.27742078900337,
+      "surfaceMaxCommitRenderMs": 38.676262974739075,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "BuzzMembers": 5,
+        "RootLayout": 1,
+        "MemberRosterRow": 4,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 147577545.299764,
+      "meaningfulFrameCandidateMs": 166.92360299825668,
+      "nextNativeFrameBoundMs": 190.75867998600006,
+      "tapToNativeFrameProxyMs": 155.45891597867012,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "21.11 26.60 35.82 7/6597 110857"
+    },
+    {
+      "arm": "after-members-final",
+      "case": "members",
+      "sample": 18,
+      "startMs": 147580900.0,
+      "rootRenderTotalMs": 104.94577115774155,
+      "rootMaxCommitRenderMs": 46.33646520972252,
+      "surfaceRenderTotalMs": 46.056761652231216,
+      "surfaceMaxCommitRenderMs": 30.53221368789673,
+      "surfaceCommitCount": 7,
+      "bodyRenders": {
+        "BuzzMembers": 5,
+        "RootLayout": 1,
+        "MemberRosterRow": 4,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 147580928.524228,
+      "meaningfulFrameCandidateMs": 141.92273598909378,
+      "nextNativeFrameBoundMs": 176.1130070090294,
+      "tapToNativeFrameProxyMs": 147.58877900242805,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "21.11 26.60 35.82 4/6529 111396"
+    },
+    {
+      "arm": "after-members-final",
+      "case": "members",
+      "sample": 19,
+      "startMs": 147584310.0,
+      "rootRenderTotalMs": 98.42830514907837,
+      "rootMaxCommitRenderMs": 36.886118680238724,
+      "surfaceRenderTotalMs": 53.69285437464714,
+      "surfaceMaxCommitRenderMs": 34.46023917198181,
+      "surfaceCommitCount": 6,
+      "bodyRenders": {
+        "BuzzMembers": 5,
+        "RootLayout": 1,
+        "MemberRosterRow": 4,
+        "BuzzChannels": 1
+      },
+      "jsTouchMs": 147584345.383112,
+      "meaningfulFrameCandidateMs": 154.19990599155426,
+      "nextNativeFrameBoundMs": 201.34024500846863,
+      "tapToNativeFrameProxyMs": 165.95713299512863,
+      "visibleTextUpperMs": null,
+      "visualProbe": null,
+      "badLogLines": 0,
+      "hostLoad": "19.74 26.22 35.65 7/6589 112149"
+    }
+  ],
+  "summary": {
+    "before-final": {
+      "tray": {
+        "rootRenderTotalMs": {
+          "n": 10,
+          "p50": 65.21,
+          "p95": 139.54
+        },
+        "rootMaxCommitRenderMs": {
+          "n": 10,
+          "p50": 25.29,
+          "p95": 66.54
+        },
+        "surfaceRenderTotalMs": {
+          "n": 10,
+          "p50": 26.89,
+          "p95": 55.33
+        },
+        "surfaceMaxCommitRenderMs": {
+          "n": 10,
+          "p50": 10.33,
+          "p95": 35.9
+        },
+        "surfaceCommitCount": {
+          "n": 10,
+          "p50": 6,
+          "p95": 7
+        },
+        "meaningfulFrameCandidateMs": {
+          "n": 10,
+          "p50": 212.52,
+          "p95": 460.9
+        },
+        "nextNativeFrameBoundMs": {
+          "n": 10,
+          "p50": 335.0,
+          "p95": 689.77
+        },
+        "tapToNativeFrameProxyMs": {
+          "n": 10,
+          "p50": 286.26,
+          "p95": 640.42
+        },
+        "visibleTextUpperMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "bodyRenders": {
+          "ConversationRow": {
+            "p50": 0,
+            "p95": 14
+          },
+          "MemberRosterRow": {
+            "p50": 0,
+            "p95": 0
+          },
+          "NeedsYouCell": {
+            "p50": 1,
+            "p95": 2
+          },
+          "RoomCornersList": {
+            "p50": 0,
+            "p95": 0
+          },
+          "TurnProgressLine": {
+            "p50": 0,
+            "p95": 0
+          }
+        },
+        "n": 10
+      },
+      "members": {
+        "rootRenderTotalMs": {
+          "n": 10,
+          "p50": 343.73,
+          "p95": 482.26
+        },
+        "rootMaxCommitRenderMs": {
+          "n": 10,
+          "p50": 156.14,
+          "p95": 210.44
+        },
+        "surfaceRenderTotalMs": {
+          "n": 10,
+          "p50": 135.66,
+          "p95": 230.56
+        },
+        "surfaceMaxCommitRenderMs": {
+          "n": 10,
+          "p50": 62.57,
+          "p95": 183.67
+        },
+        "surfaceCommitCount": {
+          "n": 10,
+          "p50": 7,
+          "p95": 8
+        },
+        "meaningfulFrameCandidateMs": {
+          "n": 10,
+          "p50": 323.83,
+          "p95": 641.9
+        },
+        "nextNativeFrameBoundMs": {
+          "n": 10,
+          "p50": 478.68,
+          "p95": 947.23
+        },
+        "tapToNativeFrameProxyMs": {
+          "n": 10,
+          "p50": 439.37,
+          "p95": 901.18
+        },
+        "visibleTextUpperMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "bodyRenders": {
+          "ConversationRow": {
+            "p50": 28,
+            "p95": 28
+          },
+          "MemberRosterRow": {
+            "p50": 16,
+            "p95": 16
+          },
+          "NeedsYouCell": {
+            "p50": 0,
+            "p95": 0
+          },
+          "RoomCornersList": {
+            "p50": 0,
+            "p95": 0
+          },
+          "TurnProgressLine": {
+            "p50": 0,
+            "p95": 0
+          }
+        },
+        "n": 10
+      },
+      "corners": {
+        "rootRenderTotalMs": {
+          "n": 10,
+          "p50": 797.83,
+          "p95": 1871.66
+        },
+        "rootMaxCommitRenderMs": {
+          "n": 10,
+          "p50": 232.66,
+          "p95": 923.31
+        },
+        "surfaceRenderTotalMs": {
+          "n": 10,
+          "p50": 24.13,
+          "p95": 50.95
+        },
+        "surfaceMaxCommitRenderMs": {
+          "n": 10,
+          "p50": 14.62,
+          "p95": 28.77
+        },
+        "surfaceCommitCount": {
+          "n": 10,
+          "p50": 5,
+          "p95": 5
+        },
+        "meaningfulFrameCandidateMs": {
+          "n": 10,
+          "p50": 691.12,
+          "p95": 3115.79
+        },
+        "nextNativeFrameBoundMs": {
+          "n": 10,
+          "p50": 783.16,
+          "p95": 3404.76
+        },
+        "tapToNativeFrameProxyMs": {
+          "n": 10,
+          "p50": 333.74,
+          "p95": 2547.35
+        },
+        "visibleTextUpperMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "bodyRenders": {
+          "ConversationRow": {
+            "p50": 28,
+            "p95": 30
+          },
+          "MemberRosterRow": {
+            "p50": 0,
+            "p95": 0
+          },
+          "NeedsYouCell": {
+            "p50": 0,
+            "p95": 0
+          },
+          "RoomCornersList": {
+            "p50": 3,
+            "p95": 3
+          },
+          "TurnProgressLine": {
+            "p50": 0,
+            "p95": 0
+          }
+        },
+        "n": 10
+      },
+      "list": {
+        "rootRenderTotalMs": {
+          "n": 10,
+          "p50": 169.9,
+          "p95": 548.27
+        },
+        "rootMaxCommitRenderMs": {
+          "n": 10,
+          "p50": 83.02,
+          "p95": 247.04
+        },
+        "surfaceRenderTotalMs": {
+          "n": 10,
+          "p50": 140.17,
+          "p95": 230.52
+        },
+        "surfaceMaxCommitRenderMs": {
+          "n": 10,
+          "p50": 78.89,
+          "p95": 158.39
+        },
+        "surfaceCommitCount": {
+          "n": 10,
+          "p50": 4,
+          "p95": 4
+        },
+        "meaningfulFrameCandidateMs": {
+          "n": 10,
+          "p50": 413.44,
+          "p95": 639.5
+        },
+        "nextNativeFrameBoundMs": {
+          "n": 10,
+          "p50": 444.75,
+          "p95": 682.16
+        },
+        "tapToNativeFrameProxyMs": {
+          "n": 10,
+          "p50": 356.85,
+          "p95": 552.93
+        },
+        "visibleTextUpperMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "bodyRenders": {
+          "ConversationRow": {
+            "p50": 28,
+            "p95": 28
+          },
+          "MemberRosterRow": {
+            "p50": 0,
+            "p95": 0
+          },
+          "NeedsYouCell": {
+            "p50": 0,
+            "p95": 0
+          },
+          "RoomCornersList": {
+            "p50": 0,
+            "p95": 0
+          },
+          "TurnProgressLine": {
+            "p50": 0,
+            "p95": 0
+          }
+        },
+        "n": 10
+      },
+      "room": {
+        "rootRenderTotalMs": {
+          "n": 10,
+          "p50": 1069.55,
+          "p95": 1543.55
+        },
+        "rootMaxCommitRenderMs": {
+          "n": 10,
+          "p50": 253.58,
+          "p95": 720.93
+        },
+        "surfaceRenderTotalMs": {
+          "n": 10,
+          "p50": 1069.55,
+          "p95": 1543.55
+        },
+        "surfaceMaxCommitRenderMs": {
+          "n": 10,
+          "p50": 253.58,
+          "p95": 720.93
+        },
+        "surfaceCommitCount": {
+          "n": 10,
+          "p50": 14,
+          "p95": 17
+        },
+        "meaningfulFrameCandidateMs": {
+          "n": 10,
+          "p50": 1422.88,
+          "p95": 2199.74
+        },
+        "nextNativeFrameBoundMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "tapToNativeFrameProxyMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "visibleTextUpperMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "bodyRenders": {
+          "ConversationRow": {
+            "p50": 14,
+            "p95": 14
+          },
+          "MemberRosterRow": {
+            "p50": 0,
+            "p95": 0
+          },
+          "NeedsYouCell": {
+            "p50": 0,
+            "p95": 0
+          },
+          "RoomCornersList": {
+            "p50": 0,
+            "p95": 0
+          },
+          "TurnProgressLine": {
+            "p50": 0,
+            "p95": 0
+          }
+        },
+        "n": 10
+      },
+      "foreground": {
+        "rootRenderTotalMs": {
+          "n": 10,
+          "p50": 138.16,
+          "p95": 305.25
+        },
+        "rootMaxCommitRenderMs": {
+          "n": 10,
+          "p50": 90.92,
+          "p95": 278.78
+        },
+        "surfaceRenderTotalMs": {
+          "n": 10,
+          "p50": 138.16,
+          "p95": 305.25
+        },
+        "surfaceMaxCommitRenderMs": {
+          "n": 10,
+          "p50": 90.92,
+          "p95": 278.78
+        },
+        "surfaceCommitCount": {
+          "n": 10,
+          "p50": 3,
+          "p95": 10
+        },
+        "meaningfulFrameCandidateMs": {
+          "n": 10,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "nextNativeFrameBoundMs": {
+          "n": 10,
+          "p50": 678.04,
+          "p95": 1079.6
+        },
+        "tapToNativeFrameProxyMs": {
+          "n": 10,
+          "p50": 678.04,
+          "p95": 1079.6
+        },
+        "visibleTextUpperMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "bodyRenders": {
+          "ConversationRow": {
+            "p50": 14,
+            "p95": 42
+          },
+          "MemberRosterRow": {
+            "p50": 0,
+            "p95": 0
+          },
+          "NeedsYouCell": {
+            "p50": 0,
+            "p95": 0
+          },
+          "RoomCornersList": {
+            "p50": 0,
+            "p95": 0
+          },
+          "TurnProgressLine": {
+            "p50": 0,
+            "p95": 0
+          }
+        },
+        "n": 10
+      }
+    },
+    "after-final": {
+      "tray": {
+        "rootRenderTotalMs": {
+          "n": 10,
+          "p50": 57.44,
+          "p95": 133.99
+        },
+        "rootMaxCommitRenderMs": {
+          "n": 10,
+          "p50": 19.67,
+          "p95": 51.86
+        },
+        "surfaceRenderTotalMs": {
+          "n": 10,
+          "p50": 23.74,
+          "p95": 49.41
+        },
+        "surfaceMaxCommitRenderMs": {
+          "n": 10,
+          "p50": 9.44,
+          "p95": 16.8
+        },
+        "surfaceCommitCount": {
+          "n": 10,
+          "p50": 6,
+          "p95": 7
+        },
+        "meaningfulFrameCandidateMs": {
+          "n": 10,
+          "p50": 171.34,
+          "p95": 328.16
+        },
+        "nextNativeFrameBoundMs": {
+          "n": 10,
+          "p50": 231.38,
+          "p95": 495.7
+        },
+        "tapToNativeFrameProxyMs": {
+          "n": 10,
+          "p50": 182.48,
+          "p95": 446.89
+        },
+        "visibleTextUpperMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "bodyRenders": {
+          "ConversationRow": {
+            "p50": 0,
+            "p95": 0
+          },
+          "MemberRosterRow": {
+            "p50": 0,
+            "p95": 0
+          },
+          "NeedsYouCell": {
+            "p50": 1,
+            "p95": 1
+          },
+          "RoomCornersList": {
+            "p50": 0,
+            "p95": 0
+          },
+          "TurnProgressLine": {
+            "p50": 0,
+            "p95": 0
+          }
+        },
+        "n": 10
+      },
+      "members": {
+        "rootRenderTotalMs": {
+          "n": 10,
+          "p50": 165.44,
+          "p95": 309.44
+        },
+        "rootMaxCommitRenderMs": {
+          "n": 10,
+          "p50": 66.95,
+          "p95": 145.07
+        },
+        "surfaceRenderTotalMs": {
+          "n": 10,
+          "p50": 89.74,
+          "p95": 202.91
+        },
+        "surfaceMaxCommitRenderMs": {
+          "n": 10,
+          "p50": 50.74,
+          "p95": 144.47
+        },
+        "surfaceCommitCount": {
+          "n": 10,
+          "p50": 7,
+          "p95": 7
+        },
+        "meaningfulFrameCandidateMs": {
+          "n": 10,
+          "p50": 212.74,
+          "p95": 381.02
+        },
+        "nextNativeFrameBoundMs": {
+          "n": 10,
+          "p50": 304.88,
+          "p95": 721.78
+        },
+        "tapToNativeFrameProxyMs": {
+          "n": 10,
+          "p50": 266.0,
+          "p95": 682.75
+        },
+        "visibleTextUpperMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "bodyRenders": {
+          "ConversationRow": {
+            "p50": 0,
+            "p95": 0
+          },
+          "MemberRosterRow": {
+            "p50": 12,
+            "p95": 12
+          },
+          "NeedsYouCell": {
+            "p50": 0,
+            "p95": 0
+          },
+          "RoomCornersList": {
+            "p50": 0,
+            "p95": 0
+          },
+          "TurnProgressLine": {
+            "p50": 0,
+            "p95": 0
+          }
+        },
+        "n": 10
+      },
+      "corners": {
+        "rootRenderTotalMs": {
+          "n": 10,
+          "p50": 203.84,
+          "p95": 339.97
+        },
+        "rootMaxCommitRenderMs": {
+          "n": 10,
+          "p50": 101.81,
+          "p95": 158.68
+        },
+        "surfaceRenderTotalMs": {
+          "n": 10,
+          "p50": 17.55,
+          "p95": 56.81
+        },
+        "surfaceMaxCommitRenderMs": {
+          "n": 10,
+          "p50": 8.66,
+          "p95": 49.8
+        },
+        "surfaceCommitCount": {
+          "n": 10,
+          "p50": 5,
+          "p95": 5
+        },
+        "meaningfulFrameCandidateMs": {
+          "n": 10,
+          "p50": 163.62,
+          "p95": 328.08
+        },
+        "nextNativeFrameBoundMs": {
+          "n": 10,
+          "p50": 179.86,
+          "p95": 394.79
+        },
+        "tapToNativeFrameProxyMs": {
+          "n": 10,
+          "p50": 147.29,
+          "p95": 281.54
+        },
+        "visibleTextUpperMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "bodyRenders": {
+          "ConversationRow": {
+            "p50": 1,
+            "p95": 1
+          },
+          "MemberRosterRow": {
+            "p50": 0,
+            "p95": 0
+          },
+          "NeedsYouCell": {
+            "p50": 0,
+            "p95": 0
+          },
+          "RoomCornersList": {
+            "p50": 3,
+            "p95": 3
+          },
+          "TurnProgressLine": {
+            "p50": 0,
+            "p95": 0
+          }
+        },
+        "n": 10
+      },
+      "list": {
+        "rootRenderTotalMs": {
+          "n": 10,
+          "p50": 46.19,
+          "p95": 129.71
+        },
+        "rootMaxCommitRenderMs": {
+          "n": 10,
+          "p50": 36.55,
+          "p95": 81.2
+        },
+        "surfaceRenderTotalMs": {
+          "n": 10,
+          "p50": 28.53,
+          "p95": 88.24
+        },
+        "surfaceMaxCommitRenderMs": {
+          "n": 10,
+          "p50": 28.49,
+          "p95": 55.03
+        },
+        "surfaceCommitCount": {
+          "n": 10,
+          "p50": 3,
+          "p95": 3
+        },
+        "meaningfulFrameCandidateMs": {
+          "n": 10,
+          "p50": 197.8,
+          "p95": 264.1
+        },
+        "nextNativeFrameBoundMs": {
+          "n": 10,
+          "p50": 221.34,
+          "p95": 292.53
+        },
+        "tapToNativeFrameProxyMs": {
+          "n": 10,
+          "p50": 182.25,
+          "p95": 239.45
+        },
+        "visibleTextUpperMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "bodyRenders": {
+          "ConversationRow": {
+            "p50": 0,
+            "p95": 3
+          },
+          "MemberRosterRow": {
+            "p50": 0,
+            "p95": 0
+          },
+          "NeedsYouCell": {
+            "p50": 0,
+            "p95": 0
+          },
+          "RoomCornersList": {
+            "p50": 0,
+            "p95": 0
+          },
+          "TurnProgressLine": {
+            "p50": 0,
+            "p95": 0
+          }
+        },
+        "n": 10
+      },
+      "room": {
+        "rootRenderTotalMs": {
+          "n": 10,
+          "p50": 722.89,
+          "p95": 1243.99
+        },
+        "rootMaxCommitRenderMs": {
+          "n": 10,
+          "p50": 189.72,
+          "p95": 453.75
+        },
+        "surfaceRenderTotalMs": {
+          "n": 10,
+          "p50": 722.89,
+          "p95": 1243.99
+        },
+        "surfaceMaxCommitRenderMs": {
+          "n": 10,
+          "p50": 189.72,
+          "p95": 453.75
+        },
+        "surfaceCommitCount": {
+          "n": 10,
+          "p50": 15,
+          "p95": 19
+        },
+        "meaningfulFrameCandidateMs": {
+          "n": 10,
+          "p50": 976.73,
+          "p95": 1767.43
+        },
+        "nextNativeFrameBoundMs": {
+          "n": 2,
+          "p50": 461.48,
+          "p95": 1281.45
+        },
+        "tapToNativeFrameProxyMs": {
+          "n": 2,
+          "p50": 382.66,
+          "p95": 1232.44
+        },
+        "visibleTextUpperMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "bodyRenders": {
+          "ConversationRow": {
+            "p50": 0,
+            "p95": 0
+          },
+          "MemberRosterRow": {
+            "p50": 0,
+            "p95": 0
+          },
+          "NeedsYouCell": {
+            "p50": 0,
+            "p95": 0
+          },
+          "RoomCornersList": {
+            "p50": 0,
+            "p95": 0
+          },
+          "TurnProgressLine": {
+            "p50": 0,
+            "p95": 0
+          }
+        },
+        "n": 10
+      },
+      "foreground": {
+        "rootRenderTotalMs": {
+          "n": 10,
+          "p50": 52.24,
+          "p95": 148.01
+        },
+        "rootMaxCommitRenderMs": {
+          "n": 10,
+          "p50": 43.32,
+          "p95": 97.48
+        },
+        "surfaceRenderTotalMs": {
+          "n": 10,
+          "p50": 52.24,
+          "p95": 148.01
+        },
+        "surfaceMaxCommitRenderMs": {
+          "n": 10,
+          "p50": 43.32,
+          "p95": 97.48
+        },
+        "surfaceCommitCount": {
+          "n": 10,
+          "p50": 6,
+          "p95": 8
+        },
+        "meaningfulFrameCandidateMs": {
+          "n": 10,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "nextNativeFrameBoundMs": {
+          "n": 10,
+          "p50": 289.53,
+          "p95": 434.93
+        },
+        "tapToNativeFrameProxyMs": {
+          "n": 10,
+          "p50": 289.53,
+          "p95": 434.93
+        },
+        "visibleTextUpperMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "bodyRenders": {
+          "ConversationRow": {
+            "p50": 0,
+            "p95": 0
+          },
+          "MemberRosterRow": {
+            "p50": 0,
+            "p95": 0
+          },
+          "NeedsYouCell": {
+            "p50": 0,
+            "p95": 0
+          },
+          "RoomCornersList": {
+            "p50": 0,
+            "p95": 0
+          },
+          "TurnProgressLine": {
+            "p50": 0,
+            "p95": 0
+          }
+        },
+        "n": 10
+      }
+    },
+    "after-members-final": {
+      "tray": {
+        "rootRenderTotalMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "rootMaxCommitRenderMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "surfaceRenderTotalMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "surfaceMaxCommitRenderMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "surfaceCommitCount": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "meaningfulFrameCandidateMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "nextNativeFrameBoundMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "tapToNativeFrameProxyMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "visibleTextUpperMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "bodyRenders": {
+          "ConversationRow": {
+            "p50": null,
+            "p95": null
+          },
+          "MemberRosterRow": {
+            "p50": null,
+            "p95": null
+          },
+          "NeedsYouCell": {
+            "p50": null,
+            "p95": null
+          },
+          "RoomCornersList": {
+            "p50": null,
+            "p95": null
+          },
+          "TurnProgressLine": {
+            "p50": null,
+            "p95": null
+          }
+        },
+        "n": 0
+      },
+      "members": {
+        "rootRenderTotalMs": {
+          "n": 10,
+          "p50": 110.78,
+          "p95": 179.41
+        },
+        "rootMaxCommitRenderMs": {
+          "n": 10,
+          "p50": 43.49,
+          "p95": 70.61
+        },
+        "surfaceRenderTotalMs": {
+          "n": 10,
+          "p50": 53.54,
+          "p95": 108.14
+        },
+        "surfaceMaxCommitRenderMs": {
+          "n": 10,
+          "p50": 34.65,
+          "p95": 61.53
+        },
+        "surfaceCommitCount": {
+          "n": 10,
+          "p50": 6,
+          "p95": 8
+        },
+        "meaningfulFrameCandidateMs": {
+          "n": 10,
+          "p50": 154.2,
+          "p95": 250.96
+        },
+        "nextNativeFrameBoundMs": {
+          "n": 10,
+          "p50": 204.82,
+          "p95": 381.34
+        },
+        "tapToNativeFrameProxyMs": {
+          "n": 10,
+          "p50": 166.29,
+          "p95": 348.88
+        },
+        "visibleTextUpperMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "bodyRenders": {
+          "ConversationRow": {
+            "p50": 0,
+            "p95": 0
+          },
+          "MemberRosterRow": {
+            "p50": 4,
+            "p95": 4
+          },
+          "NeedsYouCell": {
+            "p50": 0,
+            "p95": 0
+          },
+          "RoomCornersList": {
+            "p50": 0,
+            "p95": 0
+          },
+          "TurnProgressLine": {
+            "p50": 0,
+            "p95": 0
+          }
+        },
+        "n": 10
+      },
+      "corners": {
+        "rootRenderTotalMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "rootMaxCommitRenderMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "surfaceRenderTotalMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "surfaceMaxCommitRenderMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "surfaceCommitCount": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "meaningfulFrameCandidateMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "nextNativeFrameBoundMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "tapToNativeFrameProxyMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "visibleTextUpperMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "bodyRenders": {
+          "ConversationRow": {
+            "p50": null,
+            "p95": null
+          },
+          "MemberRosterRow": {
+            "p50": null,
+            "p95": null
+          },
+          "NeedsYouCell": {
+            "p50": null,
+            "p95": null
+          },
+          "RoomCornersList": {
+            "p50": null,
+            "p95": null
+          },
+          "TurnProgressLine": {
+            "p50": null,
+            "p95": null
+          }
+        },
+        "n": 0
+      },
+      "list": {
+        "rootRenderTotalMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "rootMaxCommitRenderMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "surfaceRenderTotalMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "surfaceMaxCommitRenderMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "surfaceCommitCount": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "meaningfulFrameCandidateMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "nextNativeFrameBoundMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "tapToNativeFrameProxyMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "visibleTextUpperMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "bodyRenders": {
+          "ConversationRow": {
+            "p50": null,
+            "p95": null
+          },
+          "MemberRosterRow": {
+            "p50": null,
+            "p95": null
+          },
+          "NeedsYouCell": {
+            "p50": null,
+            "p95": null
+          },
+          "RoomCornersList": {
+            "p50": null,
+            "p95": null
+          },
+          "TurnProgressLine": {
+            "p50": null,
+            "p95": null
+          }
+        },
+        "n": 0
+      },
+      "room": {
+        "rootRenderTotalMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "rootMaxCommitRenderMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "surfaceRenderTotalMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "surfaceMaxCommitRenderMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "surfaceCommitCount": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "meaningfulFrameCandidateMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "nextNativeFrameBoundMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "tapToNativeFrameProxyMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "visibleTextUpperMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "bodyRenders": {
+          "ConversationRow": {
+            "p50": null,
+            "p95": null
+          },
+          "MemberRosterRow": {
+            "p50": null,
+            "p95": null
+          },
+          "NeedsYouCell": {
+            "p50": null,
+            "p95": null
+          },
+          "RoomCornersList": {
+            "p50": null,
+            "p95": null
+          },
+          "TurnProgressLine": {
+            "p50": null,
+            "p95": null
+          }
+        },
+        "n": 0
+      },
+      "foreground": {
+        "rootRenderTotalMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "rootMaxCommitRenderMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "surfaceRenderTotalMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "surfaceMaxCommitRenderMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "surfaceCommitCount": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "meaningfulFrameCandidateMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "nextNativeFrameBoundMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "tapToNativeFrameProxyMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "visibleTextUpperMs": {
+          "n": 0,
+          "p50": null,
+          "p95": null
+        },
+        "bodyRenders": {
+          "ConversationRow": {
+            "p50": null,
+            "p95": null
+          },
+          "MemberRosterRow": {
+            "p50": null,
+            "p95": null
+          },
+          "NeedsYouCell": {
+            "p50": null,
+            "p95": null
+          },
+          "RoomCornersList": {
+            "p50": null,
+            "p95": null
+          },
+          "TurnProgressLine": {
+            "p50": null,
+            "p95": null
+          }
+        },
+        "n": 0
+      }
+    }
+  }
+}

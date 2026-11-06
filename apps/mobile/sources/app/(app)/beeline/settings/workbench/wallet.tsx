@@ -1,3 +1,5 @@
+import { IndexRow } from '@/components/buzz/IndexRow';
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { Button } from '@/components/buzz/Button';
@@ -12,7 +14,6 @@ import { Typography } from '@/constants/Typography';
 import * as Clipboard from 'expo-clipboard';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
-import { NetworkUnavailableState } from '@/components/buzz/NetworkUnavailableState';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { WalletQr } from '@/components/buzz/WalletQr';
 import { chainIcon, tokenIcon } from '@/buzz/wallet-icons';
@@ -171,7 +172,7 @@ export default function WalletScreen() {
     return (
       <View style={screenStyle}>
         {header}
-        <NetworkUnavailableState onRetry={() => void load()} testID="wallet-network-unavailable" />
+        <View style={styles.failureInset}><IndexRow inset="flush" title="Network is not available right now." action="Retry" onPress={() => void load()} testID="wallet-network-unavailable" /></View>
       </View>
     );
   }
@@ -328,9 +329,7 @@ export default function WalletScreen() {
 
               <RoomListSectionHeader title="Activity" inset="content" testID="wallet-activity-head" />
               {historyUnavailable ? (
-              <Text style={styles.quietLine} testID="wallet-activity-unavailable">
-                Activity is unavailable right now.
-              </Text>
+              <ErrorBanner inline title={"Activity is unavailable right now."} titleTestID="wallet-activity-unavailable" />
             ) : history === null ? (
               <View style={styles.activityLoading} testID="wallet-activity-loading">
                 <SurfaceGlyphLoader compact testID="wallet-activity-loader" />
@@ -407,6 +406,7 @@ const TOKEN_ICON_SIZE = 36;
 const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
+    failureInset: { paddingHorizontal: theme.buzz.roomList.edge },
     container: { flex: 1, backgroundColor: hull.bgTerminal },
     centered: {
       alignItems: 'center',

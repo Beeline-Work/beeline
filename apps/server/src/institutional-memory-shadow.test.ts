@@ -934,7 +934,7 @@ describe('institutional memory phase-0 shadow capture', () => {
     ).toEqual([{ item_ids: [matching.itemId], total_bytes: context.totalBytes }]);
   });
 
-  it('refuses a near-duplicate under another key and names the item to supersede', async () => {
+  it('saves and updates facts under distinct keys even when most words overlap', async () => {
     await enrollLive();
     const turn = await openTurn('duplicate-turn');
     const daemon = liveDaemon();
@@ -959,20 +959,14 @@ describe('institutional memory phase-0 shadow capture', () => {
     const duplicate = {
       ...base,
       canonicalKey: 'deploy.marker-order',
-      body: 'Release migrations write the schema marker at the end.',
+      body: 'Release migrations write the schema marker first.',
       keywords: ['marker'],
     };
-    const refusal = daemon.execute('saveInstitutionalMemory', duplicate, AGENT);
-    await expect(refusal).rejects.toThrow(/repeats item/);
-    await expect(refusal).rejects.toThrow(original.itemId);
-    await expect(refusal).rejects.toThrow(/key deploy\.marker,/);
-    expect(
-      (
-        await database.query(
-          `SELECT 1 FROM institutional_memory_items WHERE canonical_key='deploy.marker-order'`,
-        )
-      ).rowCount,
-    ).toBe(0);
+    await expect(daemon.execute('saveInstitutionalMemory', duplicate, AGENT))
+      .resolves.toMatchObject({ version: 1 });
+    expect((await database.query(
+      `SELECT body FROM institutional_memory_items WHERE canonical_key='deploy.marker-order'`,
+    )).rows).toEqual([{ body: duplicate.body }]);
 
     // A different fact that only shares a keyword is not a duplicate.
     await expect(
@@ -987,7 +981,7 @@ describe('institutional memory phase-0 shadow capture', () => {
         AGENT,
       ),
     ).resolves.toMatchObject({ version: 1 });
-    // Updating the named item in place is the way through.
+    // Exact item/version updates still work.
     await expect(
       daemon.execute(
         'updateInstitutionalMemory',

@@ -1,3 +1,4 @@
+import { waitForPathRemoval } from './filesystem-change.js';
 import { resolveGrantCommand, isNativeGrantExecutable, resolveGrantScriptExecutable } from './grant-script.js';
 /**
  * The command-kind grant runner (Agent Grants, slice 2).
@@ -170,7 +171,6 @@ const SECRETS_LOCK_STALE_MS = 15_000;
 /** Ceiling on waiting for the lock; the caller gets an error, not a hang. */
 const SECRETS_LOCK_TIMEOUT_MS = 30_000;
 /** Base poll interval while the lock is held by someone else. */
-const SECRETS_LOCK_POLL_MS = 25;
 
 /** The holder's unguessable owner token, which also names its lock marker file. */
 function operatorSecretsLockToken(): string {
@@ -285,9 +285,7 @@ export async function acquireOperatorSecretStoreLock(
       if (Date.now() > deadline) {
         throw new Error(`timed out waiting for the operator secret store lock at ${lockDir}`);
       }
-      await new Promise((resolve) =>
-        setTimeout(resolve, SECRETS_LOCK_POLL_MS + Math.floor(Math.random() * 25)),
-      );
+      await waitForPathRemoval(lockDir);
     }
   }
 }

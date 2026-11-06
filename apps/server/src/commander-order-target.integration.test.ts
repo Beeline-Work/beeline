@@ -2,7 +2,7 @@ import { cornerImplementerSql } from './corner-worker.js';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
-import { DaemonService } from './daemon-service.js';
+import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';
 import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';

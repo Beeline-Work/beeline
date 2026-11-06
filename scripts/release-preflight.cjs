@@ -1,17 +1,27 @@
 // Runs on a hosted runner so an offline release runner cannot hide a failed preflight.
+/** @public Release workflows invoke these through github-script. */
+exports.runnerMatrix = (inputs = {}) => [
+  { label: 'production', runner: '["self-hosted", "beeline-prod-host"]' },
+  { label: 'android', runner: '["self-hosted", "beeline-android"]' },
+  { label: 'ios', runner: '["self-hosted", "macOS", "X64", "ios-builder"]' },
+].filter(({ label }) => inputs[label] !== false && inputs[label] !== 'false');
+
+/** @public Release workflows invoke these through github-script. */
 exports.validateRunnerResults = async ({ github, context, core }) => {
   // The workflow dependency is the completion signal. Inspect its result once.
   const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
     ...context.repo, run_id: context.runId, per_page: 100,
   });
-  const probes = jobs.filter(job => job.name.startsWith('Runner probe '));
-  if (probes.length !== 3 || probes.some(job => job.status !== 'completed'))
+  const required = exports.runnerMatrix(context.payload?.inputs).map(({ label }) => `Runner probe ${label}`);
+  const probes = jobs.filter(job => required.includes(job.name));
+  if (required.some(name => !probes.some(job => job.name === name)) || probes.some(job => job.status !== 'completed'))
     throw new Error('Release runner completion is unavailable; inspect queued/offline labels before proceeding.');
   const failed = probes.filter(job => job.conclusion !== 'success');
   if (failed.length) throw new Error(`Release runner probes failed: ${failed.map(job => job.name).join(', ')}`);
-  core.info('All release runner labels executed node -v successfully.');
+  core.info('Selected release runner labels executed node -v successfully.');
 };
 
+/** @public Release workflows invoke these through github-script. */
 exports.triageFailure = async ({ github, context, run = context.payload.workflow_run }) => {
   if (!['failure', 'cancelled'].includes(run.conclusion)) return;
   if (!['.github/workflows/unified-release.yml', '.github/workflows/release-preflight.yml'].includes(run.path)) return;
@@ -48,6 +58,7 @@ exports.triageFailure = async ({ github, context, run = context.payload.workflow
   return created;
 };
 
+/** @public Release workflows invoke these through github-script. */
 exports.recoverFailures = async ({ github, context, run = context.payload.workflow_run }) => {
   if (run.conclusion !== 'success') return;
   const preflight = run.path === '.github/workflows/release-preflight.yml';
@@ -55,13 +66,18 @@ exports.recoverFailures = async ({ github, context, run = context.payload.workfl
   const issues = await github.paginate(github.rest.issues.listForRepo, {
     ...context.repo, state: 'open', labels: 'release-failure', per_page: 100,
   });
-  const jobs = preflight ? [] : await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+  const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
     ...context.repo, run_id: run.id, filter: 'latest', per_page: 100,
   });
   for (const issue of issues) {
     if (issue.pull_request || issue.state !== 'open' || !(Date.parse(issue.created_at) < Date.parse(run.run_started_at))) continue;
     if (preflight) {
       if (!issue.title.startsWith('Release preflight:')) continue;
+      // A successful subset must not close a failure on an untested platform.
+      const record = issue.body?.match(/<!-- release-failed-jobs:(.*?) -->/);
+      const failedJobs = record ? JSON.parse(record[1])
+        : [...exports.runnerMatrix().map(({ label }) => `Runner probe ${label}`), 'native'];
+      if (!failedJobs.length || !failedJobs.every(name => jobs.some(job => job.name === name && job.conclusion === 'success'))) continue;
     } else {
       // The dispatch attribution is the unified workflow's run name in newer issues.
       if (!issue.title.startsWith('Unified production release:') && !issue.title.startsWith('Production release ·')) continue;

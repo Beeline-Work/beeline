@@ -70,16 +70,13 @@ export async function parkOwnedModelGeneration(database: SqlDatabase, input: Ide
   if (cause.kind === 'terminal-receipt') {
     if (command.turn_owner_connection_id !== cause.source.connectionId || Number(command.turn_owner_epoch) !== cause.source.epoch ||
         !(await database.query(`SELECT 1 FROM agent_connections connection JOIN live_server_instances server
-          ON server.instance_id=connection.instance_id WHERE connection.agent_id=$1 AND connection.connection_id=$2
-          AND connection.epoch=$3 AND connection.released_at IS NULL
+          ON server.instance_id=connection.instance_id WHERE connection.agent_id=$1 AND COALESCE(connection.turn_connection_id,connection.connection_id)=$2
+          AND COALESCE(connection.turn_connection_epoch,connection.epoch)=$3 AND connection.released_at IS NULL
           AND server.renewed_at>clock_timestamp()-interval '90 seconds'`,
         [input.agentId, cause.source.connectionId, cause.source.epoch])).rowCount) throw new OwnedModelOwnerEndRefusal();
   } else {
-    const ended = await database.query(`SELECT 1 WHERE NOT EXISTS(SELECT 1 FROM agent_connections connection
-      JOIN live_server_instances server ON server.instance_id=connection.instance_id
-      WHERE connection.agent_id=$1 AND connection.connection_id=$2 AND connection.epoch=$3
-        AND connection.released_at IS NULL AND server.renewed_at>clock_timestamp()-interval '90 seconds')`,
-    [input.agentId, command.turn_owner_connection_id, command.turn_owner_epoch]);
+    const ended = await database.query(`SELECT 1 WHERE NOT beeline_command_owner_live($1,$2,$3,NULL,clock_timestamp())`,
+      [input.agentId, command.turn_owner_connection_id, command.turn_owner_epoch]);
     if (!ended.rowCount) return false;
   }
   const previous = await database.query(`SELECT 1 FROM agent_command_owner_ends WHERE command_id=$1 AND generation_id=$2`,

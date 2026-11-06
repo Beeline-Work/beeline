@@ -20,7 +20,7 @@ export async function migrateLegacyDaemonTransport(
   const identity = runtimeIdentity(runtime.agent);
   const response = await fetchImpl(url, {
     method: 'POST',
-    signal: AbortSignal.timeout(30_000),
+    signal: undefined,
     headers: {
       authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, url, 'POST'),
       'content-type': 'application/json',

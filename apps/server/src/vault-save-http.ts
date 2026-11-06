@@ -16,7 +16,8 @@ import type { VaultSaveRelay } from './vault-save-relay.js';
 import { systemLine } from './system-line.js';
 import { createAgentCommand, type CommandRow } from './agent-command.js';
 
-/** Dedicated boundary: all exceptions and provider failures become fixed, secret-free replies. */
+/** Vault secrets must reach the helper via Fly replay, outside generic phone JSON operations.
+ * All exceptions and provider failures become fixed, secret-free replies. */
 export async function vaultSaveHttp(
   request: IncomingMessage,
   response: ServerResponse,

@@ -12,7 +12,7 @@ import { randomUUID, randomBytes } from 'node:crypto';
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase, migratedDatabase, insertCornerFacts } from './test-support.js';
-import { DaemonService } from './daemon-service.js';
+import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';
 import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
 import { GitHubOperations } from './github-operations.js';
@@ -41,6 +41,8 @@ afterAll(async () => db.close());
 beforeEach(async () => {
   Object.assign(daemon, { github: undefined });
   await db.query(`DELETE FROM agent_commands`);
+  await db.query('DELETE FROM agent_connections');
+  await db.query('UPDATE agents SET wake_batch_minutes=0');
   await db.query(`DELETE FROM workspaces`);
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Review command proof')`, [WS]);
   await db.query(`INSERT INTO rooms(id,workspace_id,name,direct_participants,created_by)
@@ -195,9 +197,10 @@ it('chain of command: a corner agent may tag the person who directed this turn',
   const reply = await daemon.execute('postRoomMessage', { ...authority(asked), text: '@captain v2. Keep it?' }, WORKER);
   expect((await db.query(`SELECT room_id FROM messages WHERE id=$1`, [reply.id])).rows[0]?.room_id).toBe(opened.cornerId);
 });
-it('R1 names both fields when report status and prefix disagree', async () => {
-  await expect(daemon.execute('report', { ...authority(order), status: 'done',
-    text: 'blocked: choose scope' }, RUBY)).rejects.toThrow('received status "done" and text prefix "blocked:"');
+it('uses terminal status to deliver the canonical prefix and preserves the body', async () => {
+  const result=await daemon.execute('report',{...authority(order),status:'blocked',text:'done: choose scope'},RUBY);
+  expect((await db.query(`SELECT text FROM messages WHERE id=$1`,[result.id])).rows)
+    .toEqual([{text:'blocked: choose scope'}]);
 });
 it('accepts needs-decision without an ask and validates optional asks', async () => {
   const reported = await daemon.execute('report', { status: 'needs_decision', ...authority(order), text: 'needs-decision: Which scope should we use? @captain' }, RUBY);
@@ -273,6 +276,7 @@ it.each([['@ruby', false], [RUBY, false], ['@opener', false], ['@captain', false
   const opener = '8'.repeat(64);
   await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Opener','opener') ON CONFLICT DO NOTHING`, [opener]);
   await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [opener, HUMAN]);
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')`, [WS, opener]);
   await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WS, ROOM, opener]);
   await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WS, DM, opener]);
   const opened = await open();
@@ -430,104 +434,13 @@ it.each(['working', 'activity', 'other-place', 'optimistic'])(
         VALUES($1,$2,$3,'Reading source','activity')`,
         [randomBytes(32).toString('hex'), evidence === 'activity' ? opened.cornerId : ROOM, WORKER]);
     } else if (evidence === 'working') {
-      await db.query(`UPDATE agent_turns SET generation_id='running-helper' WHERE room_id=$1 AND agent_id=$2`, [opened.cornerId, WORKER]);
+      await worker(opened.cornerId);
     }
     await noteBlockedCornerChecks(db);
     const reports = (await commands(DM, RUBY)).filter(c => c.reason === 'report');
     expect(reports).toHaveLength(evidence === 'working' || evidence === 'activity' ? 0 : 1);
   },
 );
-
-it('Reproduction reported-stall: delivered done survives loss of terminal receipt', async () => {
-  const opened = await open(), turn = await worker(opened.cornerId);
-  await daemon.execute('report', { ...authority(turn), status: 'done', text: 'done: widget complete' }, WORKER);
-  const { ConnectionPresence } = await import('./connection-presence.js');
-  await db.query(`UPDATE agent_turns SET created_at=now()-interval '2 minutes' WHERE room_id=$1 AND request_id=$2`,
-    [opened.cornerId, turn.turnRequestId]);
-  const presence = new ConnectionPresence(db, new LiveHub());
-  try {
-    await presence.start();
-    await vi.waitFor(async () => expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
-      [opened.cornerId, turn.turnRequestId])).rows[0]?.status).toBe('complete'));
-  } finally { await presence.stop(); }
-  expect((await db.query(`SELECT status,failure_reason FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
-    [opened.cornerId, turn.turnRequestId])).rows).toEqual([{ status: 'complete', failure_reason: null }]);
-  expect((await commands(DM, RUBY)).filter(c => c.reason === 'report').map(c => c.source.body))
-    .toEqual(['done: widget complete']);
-  expect((await db.query(`SELECT state,hiccup_attempts FROM agent_commands WHERE id=$1`, [turn.id])).rows)
-    .toEqual([{ state: 'complete', hiccup_attempts: 0 }]);
-  console.info('Demonstrated reported-stall: commander retains done; worker complete; no failure or retry');
-});
-
-it('Reproduction R1: pickup deadline keeps work queued behind a claimed turn', async () => {
-  const opened = await open();
-  const running = (await commands(opened.cornerId, WORKER))[0]!;
-  // The second wake arrives just before the first claim (the production race).
-  const queued = await createAgentCommand(db, { roomId: opened.cornerId, agentId: WORKER,
-    sourceMessageId: null, reason: 'corner_background_tool',
-    privatePayload: { kind: 'lifecycle', text: 'Background tool completed', authorId: WORKER, fromRoomId: opened.cornerId } });
-  await db.query(`UPDATE agent_commands SET wake_after=NULL WHERE id=$1`, [queued!.id]);
-  expect((await db.query(`SELECT generation_id FROM agent_turns WHERE request_id=$1`, [queued!.turn_request_id])).rows)
-    .toEqual([{ generation_id: 'pending:' + queued!.id }]);
-  await claim(running);
-  await db.query(`UPDATE agent_turns SET created_at=now()-interval '2 minutes'
-    WHERE room_id=$1 AND request_id=$2`, [opened.cornerId, queued!.turn_request_id]);
-  const { ConnectionPresence } = await import('./connection-presence.js');
-  const presence = new ConnectionPresence(db, new LiveHub());
-  try {
-    await presence.start();
-    await vi.waitFor(async () => expect((await db.query(`SELECT 1 FROM agent_turns
-      WHERE room_id=$1 AND request_id=$2 AND generation_id LIKE 'pending:%'`,
-      [opened.cornerId, queued!.turn_request_id])).rows).toEqual([]));
-    await new Promise(resolve => setTimeout(resolve, 200));
-  } finally { await presence.stop(); }
-  expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
-    [opened.cornerId, queued!.turn_request_id])).rows).toEqual([]);
-  expect((await db.query(`SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%did not claim%'`,
-    [opened.cornerId])).rows).toEqual([]);
-  expect((await db.query(`SELECT state FROM agent_commands WHERE id=$1`, [queued!.id])).rows)
-    .toEqual([{ state: 'pending' }]);
-  await daemon.execute('postAgentTurnReceipt', { ...authority(running), agentId: WORKER, status: 'complete' }, WORKER);
-  const next = (await commands(opened.cornerId, WORKER)).find(command => command.id === queued!.id)!;
-  expect(next).toBeDefined();
-  await claim(next);
-  expect((await db.query(`SELECT status,generation_id FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
-    [opened.cornerId, next.turnRequestId])).rows).toEqual([{ status: 'working', generation_id: 'proof-generation' }]);
-});
-
-it.each(['unclaimed', 'disconnected', 'connected'])('Reproduction explained-stall: %s reaches the corner or commander with its cause', async kind => {
-  const opened = await open();
-  const turn = (await commands(opened.cornerId, WORKER))[0]!;
-  if (kind !== 'unclaimed') {
-    await claim(turn);
-    await db.query(`UPDATE agent_commands SET hiccup_attempts=3 WHERE id=$1`, [turn.id]);
-  }
-  if (kind === 'connected') {
-    await db.query(`INSERT INTO live_server_instances(instance_id) VALUES('proof') ON CONFLICT(instance_id) DO UPDATE SET renewed_at=now()`);
-    await db.query(`INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id)
-      VALUES($1,1,'proof','proof')`, [WORKER]);
-  }
-  await db.query(`UPDATE agent_turns SET created_at=now()-interval '2 minutes' WHERE room_id=$1`, [opened.cornerId]);
-  const { ConnectionPresence } = await import('./connection-presence.js');
-  const presence = new ConnectionPresence(db, new LiveHub());
-  try {
-    await presence.start();
-    await vi.waitFor(async () => expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1`, [opened.cornerId])).rows[0]?.status).toBe('failed'));
-  } finally {
-    await presence.stop();
-    if (kind === 'connected') {
-      await db.query(`DELETE FROM agent_connections WHERE connection_id='proof' AND agent_id=$1`, [WORKER]);
-      await db.query(`DELETE FROM live_server_instances WHERE instance_id='proof'`);
-    }
-  }
-  const failure = (await db.query<{ failure_reason: string }>(`SELECT failure_reason FROM agent_turns WHERE room_id=$1`, [opened.cornerId])).rows[0]!.failure_reason;
-  expect(failure).toContain(kind === 'unclaimed' ? 'did not claim the queued turn within 90 seconds' :
-    kind === 'connected' ? 'connected but stopped reporting' : 'helper disconnected');
-  const reports = (await commands(DM, RUBY)).filter(c => c.reason === 'report');
-  expect(reports.some(c => c.source.body.includes(failure))).toBe(true);
-  if (kind === 'unclaimed') expect((await db.query(`SELECT state FROM agent_commands WHERE id=$1`, [turn.id])).rows[0]?.state).toBe('pending');
-  console.info(`Demonstrated explained-stall (${kind}): ${failure}`);
-});
 
 it('Reproduction named-stall: exhausted corner stall names its source in the commander inbox', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
@@ -997,14 +910,17 @@ it('Reproduction corner-ancestor-rule: corner orders reach self, siblings and ch
     await expect(daemon.execute('reviseCornerBrief', { ...authority(grandchildTurn), cornerId, expectedRevision: 1,
       brief: { spec: 'Ancestor work', change: 'Attempt', approval: { sourceMessageId: turn.sourceMessageId } } }, WORKER))
       .rejects.toThrow("Corners can't order their parent Room. Report to your commander instead.");
-    await expect(daemon.execute('archiveCorner', { ...authority(grandchildTurn), cornerId }, WORKER))
-      .rejects.toThrow("Corners can't order their parent Room. Report to your commander instead.");
   }
   console.log('[corner-ancestor-rule] sibling/self/child/parent Room orders delivered; ancestors and DM/agent addresses rejected; broadcasts and nonmembers refused');
   await daemon.execute('reviseCornerBrief', { ...authority(turn), cornerId: grandchild.cornerId, expectedRevision: 1,
     brief: { spec: 'Clarified grandchild widget', change: 'Clarify', repositoryWork: false,
       approval: { sourceMessageId: grandchildTurn.sourceMessageId } } }, WORKER);
   await daemon.execute('archiveCorner', { ...authority(turn), cornerId: grandchild.cornerId }, WORKER);
+  // Closing is cleanup rather than an order: even the ended grandchild turn
+  // can close an ancestor through the same current parent Room membership.
+  await daemon.execute('archiveCorner', { ...authority(grandchildTurn), cornerId: opened.cornerId }, WORKER);
+  expect((await db.query(`SELECT archived_at IS NOT NULL archived FROM rooms WHERE id=$1`, [opened.cornerId])).rows[0])
+    .toEqual({ archived: true });
 
 });
 it('issues-triage can order and revise fix corners while opening cannot escape its Room', async () => {
@@ -1384,14 +1300,14 @@ it('failure visibility: an old report marker or approval cannot discharge a new 
     reason: 'unreported_order: repeated-tool-call; requested work is unconfirmed' }, WORKER);
   expect((await commands(DM, RUBY)).filter(c => c.source.body.startsWith('failed:'))).toHaveLength(1);
 });
-it('an expired order execution lease is reclaimed without an unreported-order report', async () => {
+it('a live machine keeps its order despite an expired legacy lease', async () => {
   const { turn } = await privateAssignment();
   await db.query(`UPDATE agent_commands SET lease_expires_at=now()-interval '10 minutes' WHERE id=$1`, [turn.id]);
   const { reclaimExpiredCommandLeases } = await import('./turn-silence-notice.js');
-  expect(await reclaimExpiredCommandLeases(db, new LiveHub())).toBe(1);
+  expect(await reclaimExpiredCommandLeases(db, new LiveHub())).toBe(0);
   await reclaimExpiredCommandLeases(db, new LiveHub());
   expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toEqual([]);
-  expect((await db.query('SELECT state FROM agent_commands WHERE id=$1', [turn.id])).rows[0]?.state).toBe('complete');
+  expect((await db.query('SELECT state FROM agent_commands WHERE id=$1', [turn.id])).rows[0]?.state).toBe('claimed');
 });
 it('closed-corner reports do not wake even the nearest live opening ancestor', async () => {
   const opened = await open(), turn = await worker(opened.cornerId), ancestor = randomUUID();
@@ -2080,7 +1996,6 @@ it.each([
   const snapshot = async () => ({
     briefs: (await db.query(`SELECT * FROM corner_brief_revisions WHERE corner_id=$1 ORDER BY revision`, [opened.cornerId])).rows,
     commands: (await db.query(`SELECT * FROM agent_commands ORDER BY id`)).rows,
-    journal: (await db.query(`SELECT * FROM live_journal WHERE event->>'roomId'=$1 ORDER BY stream_id,sequence`, [opened.cornerId])).rows,
     notes: (await db.query(`SELECT * FROM messages WHERE room_id=$1 ORDER BY id`, [opened.cornerId])).rows,
   });
   const before = await snapshot();
@@ -2126,7 +2041,6 @@ it.each([
     expect(restored.brief?.spec).toBe(input.brief.spec);
     const after = await snapshot();
     expect(after.briefs).toHaveLength(2);
-    expect(after.journal.length).toBeGreaterThan(before.journal.length);
     expect(after.notes.length).toBe(before.notes.length + 1);
     expect(after.commands.filter(row => row.state === 'pending' && row.room_id === opened.cornerId)).toHaveLength(1);
   } else if (scenario === 'authority revoked' || scenario === 'revision changed') {

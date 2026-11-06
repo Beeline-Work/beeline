@@ -1,6 +1,6 @@
 // This suite exercises an installed old-server path, with explicit legacy negotiation.
-vi.mock('@/buzz/router-owner', async () => (await import('@/test-fixtures/legacy-router-owner')).legacyRouterOwner);
-vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
+
+
 vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
@@ -10,8 +10,40 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
   getEffectiveRelayUrl: async () => 'https://relay.test',
   loadBuzzIdentity: async () => ({ publicKey: 'human-dani' }),
 }));
-vi.mock('@/buzz/surface-storage', async () =>
-  (await import('@/test/mock-surface-storage')).mockSurfaceStorage());
+vi.mock('@/buzz/surface-storage', () => {
+  type Address = { endpoint: string; params?: Record<string, unknown> };
+  const values = new Map<string, unknown>();
+  const listeners = new Map<string, Set<() => void>>();
+  const key = (address: Address) => `${address.endpoint}:${JSON.stringify(address.params ?? {})}`;
+  const announce = (address: Address) => listeners.get(key(address))?.forEach((listener) => listener());
+  return {
+    surfaceAddress: (_relay: string, _viewer: string, endpoint: string,
+      params?: Record<string, unknown>) => ({ endpoint, params }),
+    clearMobileSurfaceStorage: () => {
+      values.clear(); listeners.forEach((set) => set.forEach((listener) => listener()));
+    },
+    mobileSurfaceCache: {
+      clear: () => { values.clear(); listeners.forEach((set) => set.forEach((listener) => listener())); },
+      peek: (address: Address) => values.get(key(address)) ?? null,
+      read: async (address: Address) => values.get(key(address)) ?? null,
+      write: async (address: Address, value: unknown) => {
+        values.set(key(address), value); announce(address);
+      },
+      publish: (address: Address, value: unknown) => {
+        values.set(key(address), value); announce(address); return value;
+      },
+      remove: async (address: Address) => { values.delete(key(address)); announce(address); },
+      fetch: async (address: Address, _guard: unknown, request: () => Promise<unknown>) => {
+        const value = await request(); values.set(key(address), value); announce(address); return value;
+      },
+      subscribe: (address: Address, listener: () => void) => {
+        const set = listeners.get(key(address)) ?? new Set<() => void>();
+        set.add(listener); listeners.set(key(address), set);
+        return () => { set.delete(listener); };
+      },
+    },
+  };
+});
 import { mobileSurfaceCache } from '@/buzz/surface-storage';
 
 const phoneOperation = vi.hoisted(() => vi.fn());
@@ -23,6 +55,9 @@ vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () =>
   },
 }) }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
+
+const openBrowser = vi.hoisted(() => vi.fn(async () => ({ type: 'dismiss' })));
+vi.mock('expo-web-browser', () => ({ openBrowserAsync: openBrowser }));
 
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
 const searchParams = vi.hoisted(() => ({
@@ -361,7 +396,7 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     expect(navigation.push.mock.calls.at(-1)?.[0].params.connectorName).toBe('Tailscale');
   });
 
-  it('sign-in is a full-screen route, never a browser call inside the step list', async () => {
+  it('streamed sign-in opens the machine browser in a full-screen route', async () => {
     const renderer = await render();
     await pair(renderer);
     await untilSignin(renderer);
@@ -379,6 +414,42 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     expect(route.params.url).toContain('https://');
     expect(route.params.connectorName).toBe('Trusty Squire');
     expect(route.params.machineName).toBe('squire-box');
+  });
+
+  it('opens external Squire sign-in on the first tap and clears the mounted sheet on completion', async () => {
+    searchParams.params = { workspaceId: 'workspace-1', viewerId: 'human-dani',
+      connectorId: 'trusty-squire', pairedConnectorId: 'squire:machine',
+      offerId: 'offer-1', roomId: 'room-1' };
+    let connected = false;
+    const readInstallState = vi.fn(async () => ({
+      connectorId: 'squire:machine', helperName: 'cloud-machine',
+      steps: connected ? [] : [{ label: 'waiting for sign-in', status: 'active' as const }],
+      signIn: connected ? null : { method: 'oauth' as const, url: 'https://squire.test/install?token=test' },
+      connected,
+    }));
+    setWorkbenchSource(Object.assign(new MockWorkbenchSource(), { readInstallState }));
+    const renderer = await render();
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'connect-sign-in' }).props.onPress();
+    });
+    expect(openBrowser).toHaveBeenCalledExactlyOnceWith('https://squire.test/install?token=test');
+    expect(navigation.push).not.toHaveBeenCalled();
+    expect(navigation.replace).not.toHaveBeenCalled();
+    expect(JSON.stringify(renderer.toJSON())).toContain('Opens sign-in in your browser.');
+
+    // The browser has already returned; only the later server commit wakes this read.
+    readInstallState.mockClear();
+    connected = true;
+    await act(async () => {
+      for (const listener of liveListeners) listener({ monolithLive: {
+        type: 'resource-change', roomId: '', resource: 'install', resourceId: 'squire:machine',
+      } });
+    });
+    expect(readInstallState).toHaveBeenCalledOnce();
+    expect(navigation.replace).toHaveBeenCalledExactlyOnceWith({
+      pathname: '/beeline/chat/[channelId]', params: { channelId: 'room-1' },
+    });
+    expect(navigation.push).not.toHaveBeenCalled();
   });
 
   it('shows where the sign-in page opened, from the helper report', async () => {

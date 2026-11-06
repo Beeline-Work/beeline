@@ -1,4 +1,4 @@
-import { connectionErrorDescription } from '@/buzz/app-error-copy';
+import { EmptyState } from '@/components/buzz/EmptyState';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { useDesktopLayout } from '@/buzz/desktop-layout-state';
 import { TrayGlyph } from '@/components/buzz/TrayGlyph';
@@ -7,7 +7,7 @@ import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { InlineRow } from '@/components/buzz/IndexRow';
 import { removeRoomSearchDrafts } from '@/buzz/room-search-drafts';
 import { useNeedsYouCount } from '@/buzz/needs-you-store';
-import { PinnedConversationsEmpty } from '@/components/buzz/PinnedConversationsEmpty';
+import { invalidatesWorkspaceList } from '@/buzz/workspace-list-invalidation';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { saveActiveCommunityId, subscribeActiveCommunityId } from '@/buzz/community-storage';
 import { cornerHref, navigateToRoom, roomCornersHref } from '@/buzz/corner-navigation';
@@ -236,8 +236,8 @@ export const SidebarView = React.memo(function SidebarView() {
       setWorkspaceId(selected);
       if (routeWorkspaceId && selected === routeWorkspaceId && selected !== stored)
         void saveActiveCommunityId(identity.publicKey, selected);
-      void new BuzzRigTransport(identity).surfaceSubscribe([], () => {
-        if (!cancelled) setRefreshNonce((nonce) => nonce + 1);
+      void new BuzzRigTransport(identity).surfaceSubscribe([], (event) => {
+        if (!cancelled && invalidatesWorkspaceList(event)) setRefreshNonce((nonce) => nonce + 1);
       }).then((stop) => {
         if (cancelled) stop();
         else stopWorkspaces = stop;
@@ -553,11 +553,11 @@ export const SidebarView = React.memo(function SidebarView() {
           )}
           <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
             {navigationError ? (
-              <SettingsRow title={navigationError} description={connectionErrorDescription} action="Retry" onPress={() => setRefreshNonce((value) => value + 1)} />
+              <SettingsRow title={navigationError}  action="Retry" onPress={() => setRefreshNonce((value) => value + 1)} />
             ) : !filteredChats.length && (!surface || query.trim() || filter !== 'all') ? (
               surface ? (
                 filter === 'pinned' && !query.trim() ? (
-                  <PinnedConversationsEmpty desktop onShowAll={() => setFilter('all')} />
+                  <EmptyState title="No pinned conversations yet" description="Long press a Room to pin it here." testID="desktop-pinned-empty" action={{label:'Show all conversations',onPress:() => setFilter('all'),testID:'desktop-show-all-conversations'}} />
                 ) : (
                   <Text style={styles.empty}>
                     {query.trim() || filter !== 'all'

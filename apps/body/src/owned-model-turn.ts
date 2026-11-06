@@ -5,19 +5,6 @@ const owners = new WeakMap<object, OwnedModelFiles>();
 export class OwnedModelOutcomeUnknown extends Error {
   constructor(readonly modelRequestId?: string) { super('Owned model outcome UNKNOWN; dependent work ended without resubmission.'); }
 }
-/** Private activation seam only. Never copy the owner into command/context DTOs,
- * trace/fingerprint/logs or environment; a generation cannot be rebound. */
-export function bindOwnedModelTurn(context: object, owner: OwnedModelFiles): void {
-  const previous = owners.get(context);
-  if (previous && previous !== owner) throw new Error('Owned model turn binding cannot change');
-  owners.set(context, owner);
-}
-/** Only after the originating child/task drains. Revocation preserves its
- * UNKNOWN journal; a different explicit command gets a distinct owner later. */
-export function releaseOwnedModelTurn(context: object): void {
-  const owner = owners.get(context); if (!owner) return;
-  owner.revoke(); owners.delete(context);
-}
 export function assertOwnedModelTurnSettled(context: object): void {
   const owner = owners.get(context); if (!owner) return;
   let snapshot: ReturnType<OwnedModelFiles['snapshot']>;

@@ -1,3 +1,4 @@
+import { IndexRow } from '@/components/buzz/IndexRow';
 import { useArtifactRecoveryGeneration } from '@/buzz/use-artifact-recovery';
 import { Button } from '@/components/buzz/Button';
 import { CloseButton } from '@/components/buzz/CloseGlyph';
@@ -272,8 +273,8 @@ export function ArtifactViewerSandbox({
   }, [source, WebView, webviewStatus]);
   if (failed) {
     return (
-      <View style={styles.placeholder} testID="artifact-viewer-failed">
-        <Text style={styles.placeholderText}>{failed}</Text>
+      <View style={styles.failureInset} testID="artifact-viewer-failed">
+        <IndexRow inset="flush" title="Page unavailable" description={(failed)} />
       </View>
     );
   }
@@ -315,8 +316,8 @@ function ArtifactViewerMarkdown({ attachment }: { attachment: AttachmentReferenc
   }, [attachment, recovery]);
   if (failed) {
     return (
-      <View style={styles.placeholder} testID="artifact-viewer-failed">
-        <Text style={styles.placeholderText}>The page could not be loaded. Try again.</Text>
+      <View style={styles.failureInset} testID="artifact-viewer-failed">
+        <IndexRow inset="flush" title="Page unavailable" description={"The page could not be loaded. Try again."} />
       </View>
     );
   }
@@ -344,6 +345,7 @@ function ArtifactViewerMarkdownBody({ markdown }: { markdown: string }) {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  failureInset: { paddingHorizontal: theme.buzz.roomList.edge },
   screen: { flex: 1, backgroundColor: theme.buzz.bgBase },
   header: {
     flexDirection: 'row',

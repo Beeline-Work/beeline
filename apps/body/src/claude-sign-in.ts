@@ -37,8 +37,6 @@ export const CLAUDE_OAUTH = {
   ],
 } as const;
 
-const TOKEN_EXCHANGE_TIMEOUT_MS = 30_000;
-const PROFILE_TIMEOUT_MS = 10_000;
 /** Claude Code's own organization_type -> subscriptionType mapping. */
 const SUBSCRIPTION_TYPES: Readonly<Record<string, string>> = {
   claude_max: 'max',
@@ -219,7 +217,7 @@ export class ClaudeSignIn {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(request),
-          signal: AbortSignal.timeout(TOKEN_EXCHANGE_TIMEOUT_MS),
+          signal: undefined,
         });
       } catch {
         throw new Error("Could not reach Claude's sign-in service from the agent's machine. Try again.");
@@ -250,7 +248,7 @@ export class ClaudeSignIn {
     try {
       const response = await this.#fetch(CLAUDE_OAUTH.profileUrl, {
         headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
-        signal: AbortSignal.timeout(PROFILE_TIMEOUT_MS),
+        signal: undefined,
       });
       if (!response.ok) return { subscriptionType: null, rateLimitTier: null };
       const organization = ((await response.json()) as { organization?: Record<string, unknown> })

@@ -1,0 +1,9 @@
+{
+  "name": "native-unrelated-clear",
+  "kind": "clear-refusal",
+  "selfOnly": true,
+  "done": true,
+  "details": {
+    "remainingFixtureRecords": 0
+  }
+}

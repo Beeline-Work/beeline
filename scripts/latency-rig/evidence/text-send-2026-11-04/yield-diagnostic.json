@@ -1,0 +1,46 @@
+{
+  "n": 5,
+  "method": "Diagnostic JS only, no timing code ships; not a physical frame measurement.",
+  "samples": [
+    {
+      "sample": 1,
+      "tapToPressMs": 20.7587890625,
+      "appendToCommitMs": 88,
+      "commitToYieldMs": 96,
+      "yieldToWireMs": 11,
+      "wireToJsAckMs": 197
+    },
+    {
+      "sample": 2,
+      "tapToPressMs": 17.783935546875,
+      "appendToCommitMs": 65,
+      "commitToYieldMs": 92,
+      "yieldToWireMs": 2,
+      "wireToJsAckMs": 283
+    },
+    {
+      "sample": 3,
+      "tapToPressMs": 27.69140625,
+      "appendToCommitMs": 112,
+      "commitToYieldMs": 238,
+      "yieldToWireMs": 3,
+      "wireToJsAckMs": 404
+    },
+    {
+      "sample": 4,
+      "tapToPressMs": 26.911865234375,
+      "appendToCommitMs": 82,
+      "commitToYieldMs": 186,
+      "yieldToWireMs": 3,
+      "wireToJsAckMs": 289
+    },
+    {
+      "sample": 5,
+      "tapToPressMs": 56.556396484375,
+      "appendToCommitMs": 99,
+      "commitToYieldMs": 179,
+      "yieldToWireMs": 8,
+      "wireToJsAckMs": 267
+    }
+  ]
+}

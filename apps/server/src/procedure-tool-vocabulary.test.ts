@@ -7,7 +7,7 @@ it('corrects audited saved instructions without a database write', () => {
     'Save with save_skill; workflow save_workflow; fact save_memory.',
     'Use nonexistent handoff(state_check) to inspect state.',
     'start_workflow does not reliably wake its first role.',
-    'Inspect list_schedules; cancel with delete_schedule.',
+    'Inspect list_schedules; create with create_schedule; cancel with delete_schedule.',
     'Retry grant_inbox_consent:true without a human.',
     'Owner must handle this personally unless delegation is authorized.',
   ].join('\n'));
@@ -15,6 +15,8 @@ it('corrects audited saved instructions without a database write', () => {
   expect(result).toContain('tool:read,args:{runId}');
   expect(result).toContain('start dispatches its first state');
   expect(result).toContain('Owner must handle this personally');
+  expect(result).toContain('wake(action:create,trigger:schedule,cadence,prompt)');
+  expect(result).not.toContain('maxRuns');
   expect(result).not.toMatch(/state_check|grant_inbox_consent|\b(?:save_skill|save_memory|start_workflow|workbench_status|list_schedules|delete_schedule)\b/);
 });
 

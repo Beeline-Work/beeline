@@ -35,3 +35,4 @@ export function captureServerError(error: unknown, tags: Record<string, string> 
 export async function flushServerErrors(): Promise<void> {
   try { await Sentry.flush(2000); } catch { /* Shutdown stays bounded. */ }
 }
+

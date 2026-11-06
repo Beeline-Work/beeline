@@ -130,21 +130,32 @@ export async function closeCornerState(database: SqlDatabase, cornerId: string) 
     )
   ).rows[0];
   if (!corner) throw new Error('corner not found');
-  await cancelCornerAgentCommands(database, cornerId);
-  // Match command output: command locks precede the room's archival write lock.
-  const changed = await database.query(
-    `UPDATE rooms SET archived_at=now(),updated_at=now() WHERE id=$1 AND archived_at IS NULL`,
-    [cornerId],
-  );
+  const archived = await archiveCornerState(database, cornerId);
   await database.query(
     `UPDATE corner_github_cache SET lifecycle=lifecycle||'{"lifecycle":"done","checks":"unknown"}'::jsonb WHERE corner_id=$1`,
     [cornerId],
   );
-  await abandonCornerWorkflowRuns(database, cornerId);
-  await deleteCornerWakeSources(database, [cornerId]);
-  await releaseArchivedCornerHolds(database, [cornerId]);
   await advanceCorner(database, cornerId, { kind: 'closed' });
-  return { parentId: corner.parent_id, archived: Boolean(changed.rowCount) };
+  return { parentId: corner.parent_id, archived };
+}
+
+/** One archival sequence for close and confirmed merge. Callers retain outcome-specific
+ * lifecycle writes; locked standing corners deliberately do not enter this operation. */
+export async function archiveCornerState(database: SqlDatabase, cornerId: string): Promise<boolean> {
+  return database.transaction(async database => {
+    await lockCornerLifecycle(database, cornerId);
+    await lockCornerArchivalAuthority(database);
+    if (!(await database.query(`SELECT 1 FROM rooms WHERE id=$1 AND parent_id IS NOT NULL FOR KEY SHARE`, [cornerId])).rowCount)
+      throw new Error('corner not found');
+    await cancelCornerAgentCommands(database, cornerId);
+    // Match command output: command locks precede the Room archival write lock.
+    const changed = await database.query(
+      `UPDATE rooms SET archived_at=now(),updated_at=now() WHERE id=$1 AND archived_at IS NULL`, [cornerId]);
+    await abandonCornerWorkflowRuns(database, cornerId);
+    await deleteCornerWakeSources(database, [cornerId]);
+    await releaseArchivedCornerHolds(database, [cornerId]);
+    return Boolean(changed.rowCount);
+  });
 }
 
 /** Account deletion: the deleted agents' corners settle as done/abandoned, with the reason. */

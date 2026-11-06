@@ -1,10 +1,46 @@
 {
   "rules": [
     {
+      "id": "phone.write-door",
+      "module": "Phone socket",
+      "invariant": "Mobile writes use the existing live socket; HTTP shares only reads and documented non-phone tool operations.",
+      "pattern": "\\b(?:phone\\.(?:execute|markRead|markUnread|stopScheduledWorkCommand|uploadMedia)|options\\.voice\\.(?:join|leave|idle|resume|nativeStop|profiles\\.(?:save|preview))|dispatchPhoneOperation|requestCommand)\\s*\\(|\\bt\\s*:\\s*[\\'\"]req[\\'\"]",
+      "scope": [
+        "apps/mobile/sources",
+        "apps/server/src"
+      ],
+      "owners": [
+        "apps/mobile/sources/sync/transport/live-connection.ts",
+        "apps/server/src/phone-operations.ts",
+        "apps/server/src/server.ts",
+        "apps/server/src/rooms-mcp.ts"
+      ],
+      "ownerFunctions": {
+        "apps/mobile/sources/sync/transport/live-connection.ts": [
+          "sendRequest"
+        ],
+        "apps/server/src/phone-operations.ts": [
+          "execute",
+          "effect"
+        ],
+        "apps/server/src/server.ts": [
+          "httpPhoneOperation",
+          "route"
+        ],
+        "apps/server/src/rooms-mcp.ts": [
+          "call"
+        ]
+      },
+      "ownerSites": 16,
+      "strict": true,
+      "total": 0,
+      "fix": "Send phone operations through LiveConnection.request. Keep HTTP limited to its documented non-phone tool commands; do not add another sender. Rooms MCP retains its separate authenticated tool boundary."
+    },
+    {
       "id": "work.command-creation",
       "module": "Work authority",
       "invariant": "Agent commands are created only by agent-command.ts creation functions; only a command authorizes a turn.",
-      "pattern": "INSERT\\s+INTO\\s+agent_commands\\b",
+      "pattern": "INSERT\\s+INTO\\s+(?:\"?\\w+\"?\\s*\\.\\s*)?\"?agent_commands\"?\\b",
       "flags": "i",
       "scope": [
         "apps/server/src"
@@ -13,7 +49,104 @@
         "apps/server/src/agent-command.ts"
       ],
       "total": 0,
-      "fix": "Call createAgentCommand(db, {...}) or createClaimedMcpAgentCommand for an explicit connected-app call in apps/server/src/agent-command.ts instead of inserting the row; it owns depth, dedupe and wake routing."
+      "fix": "Call createAgentCommand(db, {...}) or createClaimedMcpAgentCommand for an explicit connected-app call in apps/server/src/agent-command.ts instead of inserting the row; it owns depth, dedupe and wake routing.",
+      "strict": true,
+      "ownerFunctions": {
+        "apps/server/src/agent-command.ts": [
+          "createAgentCommand",
+          "createClaimedMcpAgentCommand"
+        ]
+      },
+      "ownerSites": 2
+    },
+    {
+      "id": "work.command-claim",
+      "module": "Work authority",
+      "invariant": "Only claimAgentCommand can assign a claimed command; its working-turn write must succeed first.",
+      "pattern": "UPDATE\\s+(?:\\\"?\\w+\\\"?\\s*\\.\\s*)?\\\"?agent_commands\\\"?\\s+(?:(?:AS\\s+)?\"?\\w+\"?\\s+)?SET\\s+(?:(?!\\bWHERE\\b|;|`).)*?\\b\\\"?state\\\"?\\s*=\\s*'claimed'",
+      "flags": "is",
+      "scope": [
+        "apps/server/src"
+      ],
+      "owners": [
+        "apps/server/src/agent-command.ts"
+      ],
+      "ownerFunctions": {
+        "apps/server/src/agent-command.ts": [
+          "claimAgentCommand"
+        ]
+      },
+      "ownerSites": 1,
+      "strict": true,
+      "total": 0,
+      "fix": "Call claimAgentCommand; connected apps select orders with claimMcpOrder."
+    },
+    {
+      "id": "work.command-owner-fields",
+      "module": "Work authority",
+      "invariant": "Only the command owner assigns generations, owners and leases; progress cannot acquire a command.",
+      "pattern": "UPDATE\\s+(?:\\\"?\\w+\\\"?\\s*\\.\\s*)?\\\"?agent_commands\\\"?\\s+(?:(?:AS\\s+)?\"?\\w+\"?\\s+)?SET\\s+(?:(?!\\bWHERE\\b|;|`).)*?\\b\\\"?(?:generation_id|lease_expires_at|claimed_at|turn_owner_connection_id|turn_owner_epoch)\\\"?\\s*=(?!\\s*NULL\\b)",
+      "flags": "is",
+      "scope": [
+        "apps/server/src"
+      ],
+      "owners": [
+        "apps/server/src/agent-command.ts"
+      ],
+      "ownerFunctions": {
+        "apps/server/src/agent-command.ts": [
+          "claimAgentCommand",
+          "renewAgentCommandLease"
+        ]
+      },
+      "ownerSites": 2,
+      "strict": true,
+      "total": 0,
+      "fix": "Call claimAgentCommand; connected apps select orders with claimMcpOrder."
+    },
+    {
+      "id": "work.mcp-turn-state",
+      "module": "Work authority",
+      "invariant": "MCP transport adapters never write command or turn state; only command/receipt owners settle work.",
+      "pattern": "(?:INSERT\\s+INTO|UPDATE|DELETE\\s+FROM)\\s+(?:\"?\\w+\"?\\s*\\.\\s*)?\"?agent_(?:commands|turns)\"?\\b",
+      "flags": "i",
+      "scope": [
+        "apps/server/src"
+      ],
+      "filePattern": "(?:^|/)rooms-mcp(?:-[^/]*)?\\.(?:tsx?|m?js)$",
+      "owners": [],
+      "strict": true,
+      "total": 0,
+      "fix": "Use the command owner (claimMcpOrder, dismissAgentCommandWakes, releaseUnreportedMcpOrder) or postAgentTurnReceipt; MCP may only adapt ingress."
+    },
+    {
+      "id": "work.subscription-store",
+      "module": "Work authority",
+      "invariant": "Actionable subscriptions live in agent_subscriptions; old JSON is upgrade input only.",
+      "pattern": "jsonb_array_elements_text\\(\\s*(?:\\w+\\.)?event_subscriptions\\s*\\)|\\b(?:\\w+\\.)?event_subscriptions\\s*(?:@>|\\?\\||\\?)",
+      "flags": "i",
+      "scope": [
+        "apps/server/src"
+      ],
+      "owners": [
+        "apps/server/src/agent-subscriptions.ts",
+        "apps/server/src/corner-person-state.ts",
+        "apps/server/src/membership-join.ts"
+      ],
+      "ownerFunctions": {
+        "apps/server/src/agent-subscriptions.ts": [
+          "migrateMembershipSubscriptions"
+        ],
+        "apps/server/src/corner-person-state.ts": [
+          "migrateCornerPersonState"
+        ],
+        "apps/server/src/membership-join.ts": [
+          "perItemMembershipSubscriptionCleanupSql"
+        ]
+      },
+      "strict": true,
+      "total": 0,
+      "fix": "Read roomEventSubscriptions or subscriptionRooms from agent-subscriptions.ts; do not dispatch from old membership JSON."
     },
     {
       "id": "corner.state-writes",
@@ -82,18 +215,24 @@
     {
       "id": "corner.archive",
       "module": "Corner state machine",
-      "invariant": "A corner is archived only by closeCornerState or the merge path, so its run, wakes and state end with it.",
-      "pattern": "UPDATE\\s+rooms\\s+(?:\\w+\\s+)?SET\\s+archived_at",
-      "flags": "i",
+      "invariant": "Only archiveCornerState archives a corner, with commands, workflow runs, wakes and holds in one transaction.",
+      "pattern": "UPDATE\\s+(?:\"?\\w+\"?\\s*\\.\\s*)?\"?rooms\"?\\s+(?:(?:AS\\s+)?\"?\\w+\"?\\s+)?SET\\s+(?:(?!\\bWHERE\\b|;|`).)*?\\b\"?archived_at\"?\\s*=",
+      "flags": "is",
       "scope": [
         "apps/server/src"
       ],
       "owners": [
-        "apps/server/src/corner-close.ts",
-        "apps/server/src/github-operations.ts"
+        "apps/server/src/corner-close.ts"
       ],
       "total": 0,
-      "fix": "Close the corner with closeCornerState(db, cornerId) from apps/server/src/corner-close.ts. It archives the room, cancels commands, abandons the workflow run, deletes wake sources and advances the corner to closed."
+      "fix": "Call archiveCornerState in corner-close.ts; retain outcome-specific lifecycle writes in the caller.",
+      "ownerFunctions": {
+        "apps/server/src/corner-close.ts": [
+          "archiveCornerState"
+        ]
+      },
+      "ownerSites": 1,
+      "strict": true
     },
     {
       "id": "corner.merge-call",
@@ -240,7 +379,7 @@
         "apps/server/src"
       ],
       "owners": [],
-      "total": 18,
+      "total": 16,
       "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
     },
     {
@@ -264,7 +403,7 @@
         "apps/mobile/sources"
       ],
       "owners": [],
-      "total": 19,
+      "total": 17,
       "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
     },
     {
@@ -278,6 +417,102 @@
       "owners": [],
       "total": 4,
       "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
+    },
+    {
+      "id": "phone.connection-error-trigger",
+      "module": "Phone connection failures",
+      "invariant": "Only an explicit socket request outcome may publish the app connection error.",
+      "pattern": "\\bsetConnectionFailure\\s*\\(|\\bconnectionFailed\\s*=(?!=)(?!=)|\\bsetConnectionState\\s*\\(\\s*[\\x27\\x22]disconnected[\\x27\\x22]",
+      "scope": [
+        "apps/mobile/sources"
+      ],
+      "owners": [
+        "apps/mobile/sources/sync/transport/live-connection.ts"
+      ],
+      "ownerFunctions": {
+        "apps/mobile/sources/sync/transport/live-connection.ts": [
+          "connectionFailed",
+          "setConnectionFailure",
+          "request"
+        ]
+      },
+      "ownerSites": 4,
+      "total": 0,
+      "strict": true,
+      "fix": "Publish the outcome in LiveConnection.request. Socket lifecycle, HTTP, heartbeat and screen timers cannot set a connection error."
+    },
+    {
+      "id": "phone.connection-error-surface",
+      "module": "Phone connection failures",
+      "invariant": "Connection failure copy and the connection failure hook belong only to the app-wide banner.",
+      "pattern": "Beeline (?:isn[\\x27\u2019]t|is not) connected|Could(?:n[\\x27\u2019]t| not) reach Beeline|[Cc]heck your connection|Showing saved messages|connectionError(?:Title|Description)|\\buseConnectionFailure\\s*\\(|No connection to the server|Not connected yet|No connection(?!s)|You[\u2019']re offline",
+      "scope": [
+        "apps/mobile/sources"
+      ],
+      "owners": [
+        "apps/mobile/sources/components/buzz/ConnectionStatus.tsx",
+        "apps/mobile/sources/sync/transport/live-connection.ts"
+      ],
+      "ownerFunctions": {
+        "apps/mobile/sources/components/buzz/ConnectionStatus.tsx": [
+          "ConnectionStatus"
+        ],
+        "apps/mobile/sources/sync/transport/live-connection.ts": [
+          "useConnectionFailure"
+        ]
+      },
+      "ownerSites": 3,
+      "total": 0,
+      "strict": true,
+      "fix": "Use the one ConnectionStatus in the app layout. Keep screen errors specific to server refusals or failed actions; do not duplicate connection errors."
+    },
+    {
+      "id": "phone.connection-error-mount",
+      "module": "Phone connection failures",
+      "invariant": "The app layout mounts exactly one connection banner.",
+      "pattern": "<ConnectionStatus\\b|\\b(?:React\\.)?createElement\\s*\\(\\s*ConnectionStatus\\b",
+      "scope": [
+        "apps/mobile/sources"
+      ],
+      "owners": [
+        "apps/mobile/sources/app/(app)/_layout.tsx"
+      ],
+      "ownerFunctions": {
+        "apps/mobile/sources/app/(app)/_layout.tsx": [
+          "RootLayout"
+        ]
+      },
+      "ownerSites": 1,
+      "total": 0,
+      "strict": true,
+      "fix": "Remove the additional connection banner. The app layout owns the only mount."
+    },
+    {
+      "id": "helper.agent-process",
+      "module": "Helper agent processes",
+      "invariant": "Only agent-process.ts calls ACP process lifecycle primitives; acp.ts defines them. Work starts processes and one warm countdown retires them.",
+      "pattern": "\\b(?:startProcess|stopProcess)\\b",
+      "scope": [
+        "apps/body/src"
+      ],
+      "owners": [
+        "apps/body/src/agent-process.ts",
+        "apps/body/src/acp.ts"
+      ],
+      "ownerFunctions": {
+        "apps/body/src/agent-process.ts": [
+          "startAgentProcess",
+          "stopAgentProcess"
+        ],
+        "apps/body/src/acp.ts": [
+          "startProcess",
+          "stopProcess"
+        ]
+      },
+      "ownerSites": 5,
+      "strict": true,
+      "total": 0,
+      "fix": "Use startAgentProcess/stopAgentProcess in apps/body/src/agent-process.ts. Do not add another ACP process lifecycle caller."
     }
   ],
   "storage": {
@@ -286,7 +521,7 @@
       "apps/auth/src"
     ],
     "bootstrapTotal": 1741,
-    "unusedTotal": 180,
+    "unusedTotal": 181,
     "tables": {
       "agent_avatars": {
         "module": "Agent types",
@@ -352,7 +587,10 @@
           "connection_id": "existing before the registry; weekly audit reviews",
           "instance_id": "existing before the registry; weekly audit reviews",
           "connected_at": "existing before the registry; weekly audit reviews",
-          "released_at": "existing before the registry; weekly audit reviews"
+          "released_at": "existing before the registry; weekly audit reviews",
+          "turn_connection_id": "the machine connection that owns the agent's running turn, so a turn survives socket loss",
+          "turn_connection_epoch": "epoch of that turn-owning connection, so a stale socket cannot claim the turn",
+          "turn_transport_id": "transport that owns the running turn, so a reconnect resumes the same turn"
         }
       },
       "agent_grant_policy_revocations": {
@@ -456,6 +694,7 @@
         "module": "Background work and timers",
         "reason": "existing before the registry; weekly audit reviews",
         "columns": {
+          "paused_at": "Preserves suspension managed by away-auto-pause.ts and agent-wake-pause.ts so schedule admission stops without deleting its cadence or prompt.",
           "id": "existing before the registry; weekly audit reviews",
           "workspace_id": "existing before the registry; weekly audit reviews",
           "room_id": "existing before the registry; weekly audit reviews",
@@ -493,6 +732,7 @@
         "module": "Background work and timers",
         "reason": "existing before the registry; weekly audit reviews",
         "columns": {
+          "paused_at": "Preserves suspension managed by away-auto-pause.ts and agent-wake-pause.ts so every event ingress stops wakes without deleting the subscription.",
           "id": "existing before the registry; weekly audit reviews",
           "workspace_id": "existing before the registry; weekly audit reviews",
           "room_id": "existing before the registry; weekly audit reviews",
@@ -515,7 +755,8 @@
           "webhook_token": "existing before the registry; weekly audit reviews",
           "webhook_suffix": "existing before the registry; weekly audit reviews",
           "webhook_token_created_at": "existing before the registry; weekly audit reviews",
-          "webhook_owner_id": "existing before the registry; weekly audit reviews"
+          "webhook_owner_id": "existing before the registry; weekly audit reviews",
+          "inherit_to_corners": "Preserves a subscribe_events parent inheritance request independently of an explicit prompt on the same single-store Room/event key."
         }
       },
       "agent_turn_traces": {
@@ -814,7 +1055,8 @@
           "identity_profile": "existing before the registry; weekly audit reviews",
           "push_muted": "existing before the registry; weekly audit reviews",
           "generation": "existing before the registry; weekly audit reviews",
-          "created_at": "existing before the registry; weekly audit reviews"
+          "created_at": "existing before the registry; weekly audit reviews",
+          "subscriptions_overridden": "Distinguishes an explicit empty corner subscription preference from inheritance of the parent Room single-store subscriptions."
         }
       },
       "corner_watches": {
@@ -1060,6 +1302,8 @@
         "module": "Identity and sign-in",
         "reason": "existing before the registry; weekly audit reviews",
         "columns": {
+          "last_app_active_at": "Persists the person's last app interaction for away-auto-pause.ts; agent output and delivery cannot reconstruct this activity.",
+          "away_warning_at": "Persists when away-auto-pause.ts warned the person so one warning grants a full day across scheduler passes and restarts.",
           "id": "existing before the registry; weekly audit reviews",
           "kind": "existing before the registry; weekly audit reviews",
           "name": "existing before the registry; weekly audit reviews",
@@ -2150,7 +2394,8 @@
           "room_id": "existing before the registry; weekly audit reviews",
           "status": "existing before the registry; weekly audit reviews",
           "created_at": "existing before the registry; weekly audit reviews"
-        }
+        },
+        "drop": "docs/agent-server-invariants.md#database-and-reads (retired helper calendar mirror; separate post-drain contract migration)"
       },
       "sentry_wake_issues": {
         "module": "Background work and timers",
@@ -2263,8 +2508,7 @@
           "duration_ms": "existing before the registry; weekly audit reviews",
           "artifact_id": "existing before the registry; weekly audit reviews",
           "last_seen_at": "existing before the registry; weekly audit reviews",
-          "visits": "existing before the registry; weekly audit reviews",
-          "auth_session": "Preserves native auth-session cancellation diagnostics and OTA provenance unavailable from server requests."
+          "visits": "existing before the registry; weekly audit reviews"
         }
       },
       "signin_funnel_installs": {
@@ -2480,7 +2724,8 @@
           "schedule": "existing before the registry; weekly audit reviews",
           "authority_status": "existing before the registry; weekly audit reviews",
           "updated_at": "existing before the registry; weekly audit reviews"
-        }
+        },
+        "drop": "docs/agent-server-invariants.md#database-and-reads (retired helper calendar mirror; separate post-drain contract migration)"
       },
       "workflow_backfills": {
         "module": "Saved workflows",
@@ -2829,16 +3074,6 @@
           "bound_at": "Retired (SENTRY-22): older images still join it during rolling deploy and rollback; drop in a contract migration."
         }
       },
-      "agent_usage_cells": {
-        "module": "Helper usage cells (apps/server/src/helper-usage.ts)",
-        "reason": "Committed full-cell generations/revisions order canonical usage across source switches and server restarts.",
-        "columns": {
-          "agent_id": "Identifies the exact agent whose canonical usage cell changed, independently of client possession.",
-          "owner_id": "Pins the authorized owner for targeted committed source delivery and final enqueue fencing.",
-          "generation": "A durable generation prevents an older account/actor source from overwriting a newly selected source.",
-          "revision": "A committed monotonic cell revision orders all full replacements within that generation."
-        }
-      },
       "agent_usage_source_heads": {
         "module": "Helper usage cells (apps/server/src/helper-usage.ts)",
         "reason": "Per-registration source heads fence replayed account/actor publications before altering the canonical usage cell.",
@@ -2868,8 +3103,8 @@
         }
       },
       "router_authority": {
-        "module": "Router authority fencing (apps/server/src/router-projection-schema.ts)",
-        "reason": "Monotonic authority epochs survive response eviction and make revoke/regrant distinguishable at final enqueue and cold restore.",
+        "module": "Membership authority (apps/server/src/membership-authority-schema.ts)",
+        "reason": "Revocation epochs protect the separate MCP credential stream at final enqueue.",
         "columns": {
           "scope": "Identifies the exact permission domain whose readers must fence older private certificates.",
           "epoch": "A durable monotonic generation invalidates pre-revocation certificates even after an access regrant."
@@ -2885,7 +3120,6 @@
           "digest": "Detects conflicting canonical arguments attempting to reuse an admitted command identity.",
           "state": "Preserves durable pending, committed or unknown outcome when a reply or provider result is lost.",
           "result": "Retains the original committed outcome for bounded replay without executing its effect again.",
-          "coverage": "Binds optional original convenience data to its actual committed cut and authority for later replay fencing.",
           "created_at": "Records durable claim admission time for audit and pending outcome diagnosis.",
           "completed_at": "Records the committed completion boundary independently of when a caller receives its reply.",
           "result_expires_at": "Bounds full result retention while preserving permanent used identity/digest tombstones."
@@ -2913,24 +3147,6 @@
           "generation_id": "Pins the effect to its immutable execution generation even if that command is requeued before COMMIT."
         }
       },
-      "owner_projection_cells": {
-        "module": "Owner display projections (apps/server/src/router-owner-source.ts)",
-        "reason": "Committed owner summary cells separate pure Workbench display from wallet/provider observation and share one owner authority stream.",
-        "columns": {
-          "owner_id": "Partitions committed display cells by authenticated owner, independent of Workspace selection.",
-          "cell": "Names the bounded server-authored summary within an owner projection.",
-          "value": "Captures the transactional summary used by pure display snapshots without invoking the wallet/provider reader."
-        }
-      },
-      "owner_wallet_projections": {
-        "module": "Wallet observations (apps/server/src/wallet.ts)",
-        "reason": "A retained actual provider observation lets pure snapshots report measured balances and their age without observing the provider again.",
-        "columns": {
-          "owner_id": "Partitions the retained observation by the wallet owner.",
-          "value": "Preserves the last actual provider result, never a fabricated fresh balance.",
-          "observed_at": "Records when the retained provider observation changed, independently of display reads."
-        }
-      },
       "agent_command_owner_ends": {
         "module": "Owned model parking (apps/server/src/owned-model-parking.ts)",
         "reason": "Immutable causal evidence fences a generation after its owner ends without inventing a provider outcome or allowing a second claim.",
@@ -2942,144 +3158,49 @@
           "transaction_id": "Binds owner-end evidence to the transaction that committed its authority change."
         }
       },
-      "background_effect_attempts": {
-        "module": "Router lifecycle (apps/server/src/background-ownership.ts)",
-        "reason": "An immutable admitted provider attempt retains unknown outcomes across owner loss without dispatching twice.",
+      "owned_model_credentials": {
+        "module": "Owned model credentials (apps/server/src/owned-model-credential.ts)",
+        "reason": "Immutable credential bindings survive claim replay and revoke stale provider authority without retaining the bearer token.",
         "columns": {
-          "id": "Identifies this durable record (singleton where constrained by its owning schema).",
-          "job_id": "Names the closed background provider adapter that admitted this effect.",
-          "effect_id": "Retains the immutable source effect identity to prevent redispatch.",
-          "source_claim_id": "Binds the effect to its actual source claim.",
-          "source_claim_version": "Rejects reuse after the admitted source claim changes.",
-          "provider": "Names the exact provider adapter for the canonical request.",
-          "canonical_request": "Retains immutable provider request bytes for conflict detection and outcome reconciliation.",
-          "request_digest": "Detects changed request bytes under an already-used effect identity.",
-          "instance_id": "Binds the record to the server process holding aggregate ownership.",
-          "owner_generation": "Fences this attempt against a replacement aggregate owner.",
-          "owner_nonce": "Binds this attempt to the exact aggregate ownership claim.",
-          "state": "Preserves committed lifecycle/outcome state independently of caller delivery or wall time.",
-          "outcome": "Retains the known provider result without turning an unknown attempt into a retry.",
-          "created_at": "Records the durable admission boundary for this provider attempt."
+          "id": "Opaque durable credential identity selects the immutable binding without exposing its bearer.",
+          "key_version": "Pins credential MAC reconstruction to the signing key version used at issuance.",
+          "token_hash": "Verifies the issued bearer without storing recoverable bearer bytes.",
+          "agent_id": "Retains the exact admitted agent when current agent ownership changes.",
+          "owner_id": "Pins the account whose model quota and authority admitted this generation.",
+          "workspace_id": "Preserves the admitted Workspace boundary across later membership changes.",
+          "room_id": "Pins model authority to the Room that admitted the original command.",
+          "command_id": "Identifies the durable command whose claim issued this credential.",
+          "generation_id": "Distinguishes successive command claims and prevents a credential crossing generations.",
+          "request_id": "Binds model authority to the admitted helper turn request.",
+          "connection_id": "Retains the helper connection that owned the claim at issuance.",
+          "connection_epoch": "Distinguishes successive registrations of the same helper connection.",
+          "instance_id": "Binds the credential to the server instance whose live lease admitted it.",
+          "model": "Pins the selected provider model so configuration changes cannot retarget an issued credential.",
+          "agent_model": "Retains the explicit agent model selection used when the credential was issued.",
+          "model_token_hash": "Detects model-token rotation after issuance without retaining its secret.",
+          "expires_ms": "Preserves the original admitted deadline so replay cannot extend model authority.",
+          "created_at": "Records the issuance boundary independently of later command claim changes.",
+          "revoked_at": "Preserves the credential schema revocation marker checked by authentication; the existing primitive has no current revocation writer."
         }
       },
-      "background_leader_owners": {
-        "module": "Router lifecycle (apps/server/src/background-ownership.ts)",
-        "reason": "A durable owner generation binds work to the actual PostgreSQL advisory-lock backend and aggregate lease.",
+      "owned_model_attempts": {
+        "module": "Owned model attempts (apps/server/src/owned-model-attempt.ts)",
+        "reason": "Durable request identity, reservation and outcome evidence prevent duplicate provider dispatch after uncertain or lost replies.",
         "columns": {
-          "name": "Names the single existing background leadership domain.",
-          "instance_id": "Binds the record to the server process holding aggregate ownership.",
-          "generation": "Identifies the current ownership or readiness generation; stale work cannot borrow a replacement.",
-          "claim_nonce": "Distinguishes the exact aggregate owner claim within an instance.",
-          "lock_backend_pid": "Identifies the PostgreSQL backend that actually holds the leadership lock.",
-          "lock_backend_start": "Disambiguates a reused PostgreSQL backend PID.",
-          "acquired_at": "Records when this aggregate owner claim was installed.",
-          "released_at": "Records explicit owner retirement independently of lease expiry."
-        }
-      },
-      "tray_clock_deadlines": {
-        "module": "Router lifecycle (apps/server/src/tray-clock-source.ts)",
-        "reason": "Committed source-derived expiry state lets reads classify eligibility without wall-clock polling.",
-        "columns": {
-          "id": "Identifies this durable record (singleton where constrained by its owning schema).",
-          "source_kind": "Selects the source-owned message, seen-mark or choice lifecycle.",
-          "source_id": "Identifies the domain source row rather than a client cache or timer.",
-          "reader_id": "Scopes a reader-specific seen deadline; empty for source-wide deadlines.",
-          "incarnation": "Prevents a deleted and recreated source from accepting old expiry work.",
-          "revision": "Fences work and projections against subsequent committed source changes.",
-          "kind": "Selects the closed domain expiry handler.",
-          "workspace_id": "Binds clock authority or progress to its canonical Workspace.",
-          "room_id": "Retains the source Room for current-authority audience resolution.",
-          "due_at": "Stores the exact source-derived deadline, never a polling cadence.",
-          "state": "Preserves committed lifecycle/outcome state independently of caller delivery or wall time."
-        }
-      },
-      "tray_clock_sources": {
-        "module": "Router lifecycle (apps/server/src/tray-clock-source.ts)",
-        "reason": "Source incarnation and revision fence stale expiry work across edits, deletion and recreation.",
-        "columns": {
-          "source_kind": "Selects the source-owned message, seen-mark or choice lifecycle.",
-          "source_id": "Identifies the domain source row rather than a client cache or timer.",
-          "reader_id": "Scopes a reader-specific seen deadline; empty for source-wide deadlines.",
-          "incarnation": "Prevents a deleted and recreated source from accepting old expiry work.",
-          "revision": "Fences work and projections against subsequent committed source changes.",
-          "desired": "Retains source-derived deadline descriptors for semantic change and ABA detection.",
-          "retired": "Retains source tombstones so deletion/recreation cannot reuse an old incarnation."
-        }
-      },
-      "tray_clock_state": {
-        "module": "Router lifecycle (apps/server/src/tray-clock-source.ts)",
-        "reason": "A committed Workspace clock basis and readiness generation fence coherent Tray projections.",
-        "columns": {
-          "workspace_id": "Binds clock authority or progress to its canonical Workspace.",
-          "generation": "Identifies the current ownership or readiness generation; stale work cannot borrow a replacement.",
-          "revision": "Fences work and projections against subsequent committed source changes.",
-          "ready": "Records committed completion of source reconciliation; reads never infer it from time."
-        }
-      },
-      "tray_clock_readiness": {
-        "module": "Router lifecycle (apps/server/src/tray-clock-readiness.ts)",
-        "reason": "Bounded migration cursors survive owner replacement and prevent partial source capture from being advertised ready.",
-        "columns": {
-          "workspace_id": "Binds clock authority or progress to its canonical Workspace.",
-          "generation": "Identifies the current ownership or readiness generation; stale work cannot borrow a replacement.",
-          "phase": "Retains the current bounded reconciliation phase across owner replacement.",
-          "cursor_one": "Retains the first component of the last processed source key.",
-          "cursor_two": "Retains the second component of the last processed source key.",
-          "cursor_three": "Retains the third component of the last processed source key.",
-          "bounded": "Records whether the phase captured its immutable upper bound.",
-          "bound_one": "Retains the first component of the phase upper source-key bound.",
-          "bound_two": "Retains the second component of the phase upper source-key bound.",
-          "bound_three": "Retains the third component of the phase upper source-key bound.",
-          "fingerprint": "Binds progress to the installed source-capture schema.",
-          "room_bounded": "Records whether this phase captured the Room upper bound.",
-          "room_cursor": "Retains the last reconciled Room without a whole-Workspace rescan.",
-          "room_bound": "Retains the fixed Room upper bound for this pass.",
-          "current_room": "Preserves the Room whose bounded message pass is in progress.",
-          "message_bounded": "Records whether the current Room captured its message upper bound.",
-          "message_cursor": "Retains the last reconciled message key.",
-          "message_bound": "Retains the fixed message upper bound for the current Room pass.",
-          "current_message": "Preserves the message whose reader-specific sources are in progress.",
-          "source_epoch": "Binds acknowledged source work to its durable journal epoch.",
-          "source_through": "Retains the exact reconciled source journal position.",
-          "workspace_epoch": "Binds the readiness publication fence to its Workspace journal epoch.",
-          "workspace_through": "Retains the Workspace cut reconciled before ready publication."
-        }
-      },
-      "tray_clock_readiness_floor": {
-        "module": "Router lifecycle (apps/server/src/tray-clock-readiness.ts)",
-        "reason": "A schema fingerprint and bounded Workspace seed cursor distinguish completed capture from a new migration generation.",
-        "columns": {
-          "id": "Identifies this durable record (singleton where constrained by its owning schema).",
-          "contract_digest": "Detects changes to the clock capture contract that require new reconciliation.",
-          "fingerprint": "Binds progress to the installed source-capture schema.",
-          "seed_cursor": "Resumes bounded Workspace seeding after interruption.",
-          "seeding_done": "Distinguishes completed Workspace seeding from an empty or partial pass."
-        }
-      },
-      "tray_clock_health": {
-        "module": "Router lifecycle (apps/server/src/tray-clock-health.ts)",
-        "reason": "One aggregate owner receipt proves that source and readiness streams were reconciled before serving clock-dependent reads.",
-        "columns": {
-          "id": "Identifies this durable record (singleton where constrained by its owning schema).",
-          "instance_id": "Binds the record to the server process holding aggregate ownership.",
-          "generation": "Identifies the current ownership or readiness generation; stale work cannot borrow a replacement.",
-          "claim_nonce": "Distinguishes the exact aggregate owner claim within an instance.",
-          "lock_backend_pid": "Identifies the PostgreSQL backend that actually holds the leadership lock.",
-          "lock_backend_start": "Disambiguates a reused PostgreSQL backend PID.",
-          "source_epoch": "Binds acknowledged source work to its durable journal epoch.",
-          "source_through": "Retains the exact reconciled source journal position.",
-          "readiness_epoch": "Binds acknowledged readiness work to its durable journal epoch.",
-          "readiness_through": "Retains the exact reconciled readiness journal position."
-        }
-      },
-      "tray_clock_owner_fences": {
-        "module": "Router lifecycle (apps/server/src/tray-clock-owner.ts)",
-        "reason": "Transaction-local evidence lets a deferred commit trigger reject expiry effects after aggregate owner loss.",
-        "columns": {
-          "transaction_id": "Identifies ephemeral evidence consumed by the final commit fence.",
-          "instance_id": "Binds the record to the server process holding aggregate ownership.",
-          "generation": "Identifies the current ownership or readiness generation; stale work cannot borrow a replacement.",
-          "claim_nonce": "Distinguishes the exact aggregate owner claim within an instance."
+          "credential_id": "Links the attempt to the exact immutable authority that admitted it.",
+          "model_request_id": "Retains the helper request identity across transport loss and receipt replay.",
+          "command_id": "Preserves the original command for cross-generation UNKNOWN admission fences.",
+          "generation_id": "Pins the attempt to its admitted claim even after command lifecycle changes.",
+          "agent_id": "Retains the admitted actor for causal owner-end and source-loss checks.",
+          "owner_id": "Pins reservation and settlement accounting to the original owner account.",
+          "request_digest": "Detects a changed semantic request reusing an admitted identity without storing prompt content.",
+          "payload_digest": "Fences duplicate UNKNOWN provider payloads without retaining private request bytes.",
+          "reservation": "Retains the exact admitted quota and credit amounts needed for later evidence-based settlement.",
+          "state": "Preserves UNKNOWN, success or refusal across process loss without redispatching the provider effect.",
+          "evidence": "Retains the original usage or proven refusal that authorizes one-time settlement and receipt recovery.",
+          "evidence_hash": "Detects conflicting settlement evidence attempting to reuse the same attempt.",
+          "settled_at": "Records when the first durable settlement committed so later evidence cannot renew it.",
+          "created_at": "Records durable provider admission time independently of eventual settlement."
         }
       }
     },
@@ -3203,6 +3324,7 @@
         "sourceMessageId": "existing before the registry; weekly audit reviews",
         "appId": "existing before the registry; weekly audit reviews",
         "offerId": "existing before the registry; weekly audit reviews",
+        "replacementMessageId": "The committed replacement card keeps expired connector offers navigable across transcript reads and live deltas.",
         "toState": "existing before the registry; weekly audit reviews",
         "outcome": "existing before the registry; weekly audit reviews",
         "contents": "existing before the registry; weekly audit reviews",
@@ -3292,31 +3414,19 @@
         "command": "Retired corner app's command; only the unique index reads it, for older images."
       },
       "manifest": {},
-      "coverage": {
-        "cut": "Stores the original committed canonical data cut; replay cannot relabel an older convenience DTO at a newer cut.",
-        "authority": "Stores the original certificate for current-permission validation before replaying private convenience data.",
-        "workspaceId": "Binds the original command convenience projection to its canonical Workspace scope.",
-        "roomId": "Binds optional Room convenience data to the exact scope whose authority must still match."
+      "reservation": {
+        "day": "Retains the quota day charged at admission even when settlement occurs on another day.",
+        "reserved": "Preserves the admitted token reservation needed for exact settlement.",
+        "maxOutput": "Pins the output clamp used to construct the admitted provider payload.",
+        "reservedUsd": "Retains the admitted model cost reservation for evidence-based accounting.",
+        "credit": "Preserves the amount of account credit included in the original reservation."
       },
-      "value": {
-        "createdAt": "Committed binding creation time in the owner Workbench summary.",
-        "expiresAt": "Committed delegation expiry in the owner Workbench summary.",
-        "standing": "Committed standing-delegation flag in the owner Workbench summary.",
-        "workspace": "Existing source-capture JSON alias retains the changed Workspace identifier for committed scheduling causes.",
-        "room": "Existing source-capture JSON alias retains the changed Room identifier for committed scheduling causes.",
-        "roomId": "Existing scheduled-row source JSON alias preserves the Room scope across old/new capture."
-      },
-      "auth_session": {
-        "resultType": "Native auth-session result distinguishes cancellation from dismissal.",
-        "errorDomain": "Native error domain identifies the auth-session failure source.",
-        "errorCode": "Native error code preserves cancellation evidence.",
-        "updateId": "OTA update identity links the attempt to the running client code."
-      },
-      "desired": {
-        "kind": "Selects the closed source-owned expiry handler for this descriptor.",
-        "workspace": "Binds the source deadline to its canonical Workspace.",
-        "room": "Binds the source deadline to its Room for authority and audience checks.",
-        "due": "Retains the exact source-derived UTC deadline at microsecond precision."
+      "evidence": {
+        "kind": "Distinguishes provider usage from proven nonentry or provider refusal for one-time settlement.",
+        "tokens": "Retains the provider token usage actually observed for this attempt.",
+        "usd": "Retains the observed model charge used for settled accounting.",
+        "reason": "Records the exact proven nonentry cause without inferring it from elapsed time.",
+        "status": "Preserves the provider refusal status that authorized settlement."
       }
     }
   }

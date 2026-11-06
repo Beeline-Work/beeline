@@ -8,7 +8,6 @@ import { postRoomChoice } from './room-choice.js';
 import { CommandDigestConflict, InvalidCommandArguments, RouterCommandLedger } from './router-command-ledger.js';
 import { describedWorkflow, migratedDatabase, type PgliteDatabase } from './test-support.js';
 import { dispatchTrayDecisionCommand, isTrayDecisionCommand, type TrayDecisionOperation } from './tray-decision-command.js';
-import { TRAY_MUTABLE_SOURCE_SCHEMA } from './tray-mutable-source.js';
 import { getWorkflowRun, saveWorkflow, startWorkflow } from './workflow-runs.js';
 
 const A = 'a'.repeat(64), B = 'b'.repeat(64), AGENT = 'c'.repeat(64);
@@ -21,7 +20,7 @@ describe('durable DB-only Tray decision adapter', () => {
   let db: PgliteDatabase, live: LiveHub, phone: PhoneService;
   beforeEach(async () => {
     db = await migratedDatabase();
-    await db.query(TRAY_MUTABLE_SOURCE_SCHEMA);
+
     await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES
       ($1,'human','Owner','owner'),($2,'human','Member','member'),($3,'agent','Agent','agent')`, [A, B, AGENT]);
     await db.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)', [AGENT, A]);
@@ -58,10 +57,14 @@ describe('durable DB-only Tray decision adapter', () => {
     // Owning a personal resource does not require membership in its source Room.
     await db.query('DELETE FROM memberships WHERE identity_id=$1 AND room_id=$2', [A, ROOM]);
     const publish = vi.spyOn(live, 'publish');
+    await db.query("UPDATE identities SET away_warning_at=now(),last_app_active_at=now()-interval '3 days' WHERE id=$1", [A]);
     const input = { grantId: GRANT, decision: 'once' };
     const receipt = await dispatch('decideAgentGrant', input, 'grant-once');
     expect(receipt).toEqual({ v: 1, operation: 'decideAgentGrant', commandId: 'grant-once', state: 'committed', result: null });
     expect(await status()).toBe('once');
+    const activity = (await db.query<{ away_warning_at: Date | null; active: boolean }>(
+      "SELECT away_warning_at,last_app_active_at>now()-interval '1 minute' active FROM identities WHERE id=$1", [A])).rows[0];
+    expect(activity).toEqual({ away_warning_at: null, active: true });
     expect((await db.query(`SELECT count(*)::int count FROM messages WHERE card_type='grant-decision'`)).rows[0]?.count).toBe(1);
     expect(publish.mock.calls.map(([event]) => [event.roomId, event.type === 'invalidate' ? event.reason : null]))
       .toEqual([[OTHER, 'grant'], [ROOM, 'phone-write']]);

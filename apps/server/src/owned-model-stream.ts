@@ -4,7 +4,6 @@
 export class OwnedModelStream {
   private buffer = '';
   private data: string[] = [];
-  private eventBytes = 0;
   done = false;
   finishReason: string | null = null;
 
@@ -15,8 +14,6 @@ export class OwnedModelStream {
     while ((end = this.buffer.indexOf('\n')) >= 0) {
       const line = this.buffer.slice(0, end).replace(/\r$/, '');
       this.buffer = this.buffer.slice(end + 1);
-      this.eventBytes += Buffer.byteLength(line);
-      if (this.eventBytes > 256 * 1024) throw new Error('Owned model event exceeds capacity');
       if (!line) {
         if (this.data.length) {
           const value = this.data.join('\n');
@@ -42,12 +39,10 @@ export class OwnedModelStream {
             output.push(`data: ${JSON.stringify(record)}\n\n`);
           }
         }
-        this.data = []; this.eventBytes = 0;
+        this.data = [];
       } else if (line.startsWith('data:')) this.data.push(line.slice(5).replace(/^ /, ''));
       // Provider event IDs/retry hints are deliberately not forwarded.
     }
-    if (Buffer.byteLength(this.buffer) + this.eventBytes > 256 * 1024)
-      throw new Error('Owned model event exceeds capacity');
     return output;
   }
 

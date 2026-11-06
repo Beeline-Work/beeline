@@ -40,7 +40,7 @@ import { agentGitIdentity } from './agent-git-identity.js';
 import { reclaimHelperStorage, removeStoragePath, storageTree, isSquirePath, ordinaryDirectory, type StorageRoomState } from './helper-storage.js';
 import { pruneOpenCheckoutObjects, publishStorageFacts, rememberStorageOwner, discoverLegacyStorageOwners, readStorageOwners, reclaimOwnedCheckout, type StorageOwner } from './storage-owners.js';
 import { SurfaceHealth, type SurfaceHealthState } from './surface-health.js';
-import { cornerStarts, isStandingRuntimeFault, retryNotBefore } from './retry-barrier.js';
+import { isStandingRuntimeFault } from './runtime-start-fault.js';
 import { RoomSupervisor } from './room-supervisor.js';
 import type { AgentRuntimeRecord, RoomRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
@@ -51,17 +51,14 @@ import {
   fetchRepositoryCache,
 } from './repository-cache-repair.js';
 import {
-  resolveMaxWarmSessions,
-  resolvePerRoomLiveSessions,
   resolveSessionIdleMs,
-  SessionScheduler,
-  type SessionSchedulerSnapshot,
-} from './session-scheduler.js';
+  AgentProcesses,
+  type AgentProcessSnapshot,
+} from './agent-process.js';
 
 export type WorkspaceMembershipStatus = 'member' | 'not-member' | 'unknown';
 export const REMOVAL_CONFIRMATION_READS = 2;
 export const ROOM_JOIN_CONCURRENCY = 4;
-export const DEFAULT_DRAIN_DEADLINE_MS = 30 * 60_000;
 export const CORNER_BRANCH_DELETE_ATTEMPTS = 3;
 
 class CornerCredentialLookupError extends Error {
@@ -507,7 +504,6 @@ export class RoomRuntimeCoordinator {
   private readonly storageMaintenanceRooms = new Set<string>();
   private readonly storageDeferredStarts = new Set<string>();
   private readonly stopStorageAvailable: () => void;
-  private knownStorageStates: readonly StorageRoomState[] = [];
   private readonly startingCorners = new Set<string>();
   /**
    * Rooms whose start is in flight. `running` is not set until the checkout
@@ -524,19 +520,15 @@ export class RoomRuntimeCoordinator {
   private stopped = false;
   /** Runtime refusals wait for a server configuration/sign-in change. */
   private readonly standingRuntimeStartFaults = new Set<string>();
-  private readonly cornerStartScope: string;
-  private cornerStartRetryAt = 0;
   /** Per corner, the requests whose start failure has already been said out loud. */
   private readonly reportedCornerStartFailures = new Map<string, Set<string>>();
   /** Standing workspace-configuration faults: the config that failed, and how. */
   private readonly standingCornerStartFaults = new Map<string, { configKey: string; error: unknown }>();
-  private readonly scheduler: SessionScheduler;
+  private readonly scheduler: AgentProcesses;
   private readonly agent: ReturnType<typeof runtimeIdentity>;
   /** Parent ownership retained so a failed corner listing never authorizes removal. */
   private readonly monolithCornerParents = new Map<string, string>();
   private readonly now: () => number;
-  private readonly drainDeadlineMs: number;
-  private drainDeadlineAt: number | undefined;
   private workspaceRemovalConfirmations = 0;
   private readonly roomRemovalConfirmations = new Map<string, number>();
   private readonly repositoryRevisions = new Map<string, string>();
@@ -551,7 +543,7 @@ export class RoomRuntimeCoordinator {
   private readonly tokenFlights = new Map<string, Promise<RoomGitHubTokenResult>>();
   private restartRequested = false;
   /** Keeps Room and corner intakes alive across failed reads, without polling. */
-  readonly supervisor = new RoomSupervisor();
+  readonly supervisor: RoomSupervisor;
   private discoveryWakeListener?: () => void;
   private interactiveIdleListener?: () => void;
   /** One command-grant runner per daemon; Rooms and corners register their checkouts on it. */
@@ -566,15 +558,13 @@ export class RoomRuntimeCoordinator {
     private readonly baseConfig: BodyConfig,
     private readonly options: {
       now?: () => number;
-      drainDeadlineMs?: number;
       daemonApi: DaemonApiClient;
-      onRestartRequested?: () => void;
       onConfigChanged?: () => void | Promise<void>;
     },
   ) {
     if (!runtime.transport) throw new Error('thin daemon requires monolith transport');
+    this.supervisor = new RoomSupervisor(options.daemonApi);
     this.runtime = runtime;
-    this.cornerStartScope = JSON.stringify([runtime.supervisorRoot, runtime.transport.baseUrl]);
     this.agent = runtimeIdentity(runtime.agent);
     this.now = options.now ?? Date.now;
     this.grantRunner = new GrantCommandRunner({
@@ -613,29 +603,19 @@ export class RoomRuntimeCoordinator {
     // this. Optional like the wake above: a stub API without the listener
     // still reconciles, and the per-turn currency check remains the net.
     this.options.daemonApi.setConfigChangedListener?.(() => {
-      this.supervisor.configurationChanged();
       const retryStarts = this.standingRuntimeStartFaults.size > 0;
       this.standingRuntimeStartFaults.clear();
       if (retryStarts) this.wakeDiscovery();
       for (const running of this.running.values()) running.body.configurationChanged?.();
       void this.scheduler
-        .suspendIdle()
+        .stopIdle()
         .catch((error) => console.error('[body] config-change session restart failed', error));
       void Promise.resolve(this.options.onConfigChanged?.()).catch((error) =>
         console.error('[body] config-change catalog refresh failed', error),
       );
     });
-    this.drainDeadlineMs = options.drainDeadlineMs ?? DEFAULT_DRAIN_DEADLINE_MS;
-    const fixedWorkspaceCeiling = process.env.BEELINE_BODY_MAX_SESSIONS;
-    this.scheduler = new SessionScheduler({
-      ...(fixedWorkspaceCeiling ? { maxLiveSessions: Number(fixedWorkspaceCeiling) } : {}),
-      perRoomLiveSessions: resolvePerRoomLiveSessions(process.env),
-      activeRoomCount: () => this.activeRoomCount(),
-      idleMs: resolveSessionIdleMs(process.env),
-      maxWarmSessions: resolveMaxWarmSessions(process.env),
-      reserveInteractiveSlot: true,
-    });
-    this.stopStorageAvailable = SessionScheduler.onStorageAvailable(key => {
+    this.scheduler = new AgentProcesses({ idleMs: resolveSessionIdleMs(process.env) });
+    this.stopStorageAvailable = AgentProcesses.onStorageAvailable(key => {
       if (this.stopped) return;
       // Command intake stays subscribed while storage owns the session paths.
       // Wake it directly: the discovery sweep may still be reaping old checkouts.
@@ -663,25 +643,14 @@ export class RoomRuntimeCoordinator {
   }
 
   private async yieldReconciliation(): Promise<void> {
-    await new Promise<void>(resolveYield => setImmediate(resolveYield));
+    await Promise.resolve();
   }
 
   setInteractiveIdleListener(listener: () => void): void {
     this.interactiveIdleListener = listener;
   }
 
-  /**
-   * A failed reconcile makes the live socket suspect: it is pinged, and a
-   * silent one is replaced, which works with any server version. A response
-   * the server actually sent (or a full local read budget) says nothing about
-   * the socket.
-   */
-  suspectLink(error: unknown): void {
-    if (!(error instanceof DaemonApiError)) this.options.daemonApi.link?.suspect();
-  }
-
   private wakeDiscovery(): void {
-    this.supervisor.wake();
     this.discoveryWakeListener?.();
   }
 
@@ -703,13 +672,8 @@ export class RoomRuntimeCoordinator {
     return this.surfaceHealth.hasDegraded();
   }
 
-  /**
-   * The session scheduler's capacity, read-only, beside the turn traces
-   * (`turn-trace.ts` embeds the same snapshot in every record). A turn that
-   * sat in `queue-wait` while this was at its ceiling waited on capacity, not
-   * on a model.
-   */
-  schedulerSnapshot(): SessionSchedulerSnapshot {
+  /** Current running processes and ordered work, also recorded in turn traces. */
+  schedulerSnapshot(): AgentProcessSnapshot {
     return this.scheduler.snapshot();
   }
 
@@ -724,16 +688,15 @@ export class RoomRuntimeCoordinator {
     return count;
   }
 
-  private requestLifecycleRestart(): void {
-    if (this.restartRequested) return;
-    this.restartRequested = true;
-    this.options.onRestartRequested?.();
+  /** A restart command retires harnesses; subscriptions stay available for new work. */
+  private async stopAgentProcesses(): Promise<void> {
+    await this.scheduler.stopAll();
   }
 
   quiesceForUpdateIfIdle(): boolean {
     if (!this.isWorkspaceIdle()) return false;
     // A host restart may be staggered after this idle proof. Keep new
-    // commands from starting while the old process waits for its slot.
+    // commands from starting while the old runtime waits for its update.
     this.restartRequested = true;
     for (const room of this.running.values()) room.controller.abort();
     return true;
@@ -752,12 +715,6 @@ export class RoomRuntimeCoordinator {
     if (this.stopped) return;
     this.restartRequested = false;
     this.wakeDiscovery();
-  }
-
-  setDrainDeadlineAt(deadlineAt: number): void {
-    if (Number.isFinite(deadlineAt)) {
-      this.drainDeadlineAt = Math.min(this.drainDeadlineAt ?? Number.POSITIVE_INFINITY, deadlineAt);
-    }
   }
 
   async prepareForForcedUpdateRestart(): Promise<void> {
@@ -791,13 +748,11 @@ export class RoomRuntimeCoordinator {
   private async reconcileRooms(onServing?: () => void | Promise<void>): Promise<WorkspaceMembershipStatus> {
     if (this.stopped) return 'member';
     const existingRooms = new Set(this.running.keys());
-    this.knownStorageStates = [];
     this.noteReconciliationStage('bootstrap');
     const bootstrap = await this.options.daemonApi.execute('getDaemonBootstrap', {
       agentId: this.agent.publicKey,
     });
-    this.knownStorageStates = bootstrap.storageRooms ?? [];
-    publishStorageFacts(this.runtime.supervisorRoot, this.knownStorageStates);
+    publishStorageFacts(this.runtime.supervisorRoot, bootstrap.storageRooms ?? []);
     if (this.stopped) return 'member';
     if (!bootstrap.workspaceIds.includes(this.runtime.communityId)) {
       this.workspaceRemovalConfirmations += 1;
@@ -1020,7 +975,7 @@ export class RoomRuntimeCoordinator {
       await mapWithConcurrency(batch, ROOM_JOIN_CONCURRENCY, (event) =>
         this.applyMembershipEvent(event).catch((error) => {
           console.error('[thin-core] live membership apply failed', error);
-          this.wakeDiscovery();
+          // A failed read resumes at the next registration or membership push.
         }),
       );
     }
@@ -1155,10 +1110,15 @@ export class RoomRuntimeCoordinator {
     // The turn loop refreshes checkout before activation. Idle Rooms can
     // subscribe to durable commands without fetching a token or running Git.
     const cwd = this.roomRoot(roomId);
+    // An agent can belong to Rooms outside its helper's pairing Workspace.
+    const { workspaceId } = await this.options.daemonApi.execute('getRoomAuthority', {
+      roomId,
+      principalId: this.agent.publicKey,
+    });
     const grantRunnerEndpoint = await this.grantRunnerEndpoint();
     const loop = new MonolithRoomTurnLoop({
       roomId,
-      workspaceId: this.runtime.communityId,
+      workspaceId,
       cwd,
       refreshCheckout: () => this.refreshRoomCheckout(roomId),
       grantRunner: this.grantRunner,
@@ -1171,9 +1131,9 @@ export class RoomRuntimeCoordinator {
       health: { poll: () => this.notePoll(roomId) },
       onSubscriptionState: (connected) => this.surfaceHealth.subscribed(roomId, connected),
       onIntakeError: () => this.surfaceHealth.degraded(roomId, 'Room command intake failed'),
-      onRestartRequested: () => this.requestLifecycleRestart(),
-      canStartTurn: () => !this.restartRequested && !SessionScheduler.hostStoragePaused &&
-        !SessionScheduler.roomStoragePaused(roomId) && !this.storageMaintenanceRooms.has(roomId),
+      onRestartRequested: () => this.stopAgentProcesses(),
+      canStartTurn: () => !this.restartRequested && !AgentProcesses.hostStoragePaused &&
+        !AgentProcesses.roomStoragePaused(roomId) && !this.storageMaintenanceRooms.has(roomId),
       supervisor: this.supervisor,
     });
     const promise = loop
@@ -1285,34 +1245,19 @@ export class RoomRuntimeCoordinator {
     }
   }
 
-  private deferCornerStarts(retryAt: number): void {
-    this.cornerStartRetryAt = Math.max(this.cornerStartRetryAt, retryAt);
-    cornerStarts.defer(this.cornerStartScope, this.cornerStartRetryAt);
-    // Earliest eligible bound only. A committed/configuration/link event must
-    // independently wake discovery after it; time cannot authorize a read.
-  }
-
-  private cornerStartsDeferred(): boolean {
-    const retryAt = Math.max(this.cornerStartRetryAt, cornerStarts.retryAt(this.cornerStartScope));
-    if (retryAt <= Date.now()) return false;
-    if (retryAt !== this.cornerStartRetryAt) this.deferCornerStarts(retryAt);
-    return true;
-  }
-
   private async startCorner(corner: DesiredCorner): Promise<void> {
     if (this.stopped) return;
     if (this.running.has(corner.cornerId) || this.startingCorners.has(corner.cornerId)) return;
-    if (SessionScheduler.hostStoragePaused || SessionScheduler.roomStoragePaused(corner.cornerId) || this.storageMaintenanceRooms.has(corner.cornerId)) {
+    if (AgentProcesses.hostStoragePaused || AgentProcesses.roomStoragePaused(corner.cornerId) || this.storageMaintenanceRooms.has(corner.cornerId)) {
       this.storageDeferredStarts.add(corner.cornerId);
       return;
     }
-    if (this.cornerStartsDeferred() || this.standingRuntimeStartFaults.has(corner.cornerId)) return;
+    if (this.standingRuntimeStartFaults.has(corner.cornerId)) return;
     this.surfaceHealth.discover(corner.cornerId, 'corner');
     this.startingCorners.add(corner.cornerId);
-    const releaseStart = await cornerStarts.acquire();
     let configKey: string | undefined;
     try {
-      if (this.stopped || this.cornerStartsDeferred()) return;
+      if (this.stopped) return;
       const [restore, repository] = await Promise.all([
         this.options.daemonApi.execute('getCornerRestoreState', { cornerId: corner.cornerId }),
         this.parentRepositoryState(corner.parentRoomId),
@@ -1444,9 +1389,9 @@ export class RoomRuntimeCoordinator {
                 token: '',
               })
             : repositoryBacked ? this.cleanupArchivedCornerLocalState(corner.cornerId).then(() => undefined) : this.reapCornerScratch({ path: workspacePath, cornerId: corner.cornerId }),
-        onRestartRequested: () => this.requestLifecycleRestart(),
-        canStartTurn: () => !this.restartRequested && !SessionScheduler.hostStoragePaused &&
-          !SessionScheduler.roomStoragePaused(corner.cornerId) && !this.storageMaintenanceRooms.has(corner.cornerId),
+        onRestartRequested: () => this.stopAgentProcesses(),
+        canStartTurn: () => !this.restartRequested && !AgentProcesses.hostStoragePaused &&
+          !AgentProcesses.roomStoragePaused(corner.cornerId) && !this.storageMaintenanceRooms.has(corner.cornerId),
         supervisor: this.supervisor,
       });
       const promise = loop
@@ -1499,12 +1444,6 @@ export class RoomRuntimeCoordinator {
     } catch (error) {
       this.surfaceHealth.degraded(corner.cornerId, 'corner failed to start');
       console.error(`[thin-core] failed to start corner ${corner.cornerId}:`, error);
-      const retryAt = retryNotBefore(error instanceof CornerCredentialLookupError ? error.cause : error);
-      if (retryAt !== undefined) {
-        this.deferCornerStarts(retryAt);
-        // Keep the authoritative command pending until its provider recovers.
-        return;
-      }
       // Keep the pending command available for the next reconciliation. A
       // temporary token lookup must not turn into a human repair request.
       if (error instanceof CornerCredentialLookupError) return;
@@ -1515,7 +1454,6 @@ export class RoomRuntimeCoordinator {
         this.standingCornerStartFaults.set(corner.cornerId, { configKey, error });
       }
     } finally {
-      releaseStart();
       this.startingCorners.delete(corner.cornerId);
     }
   }
@@ -1530,7 +1468,6 @@ export class RoomRuntimeCoordinator {
     }
     if (!this.options.daemonApi.liveSubscribe) {
       await this.startCorner(corner);
-      if (!this.running.has(cornerId)) this.wakeDiscovery();
       return;
     }
     this.idleCornerSubscriptions.set(cornerId, () => undefined);
@@ -1543,14 +1480,14 @@ export class RoomRuntimeCoordinator {
           // A rolling old server cannot deliver command snapshots; retain
           // the pre-lazy startup path until it can.
           this.pendingCornerCommands.add(cornerId);
-          void this.activateWatchedCorner(corner, true);
+          void this.activateWatchedCorner(corner);
         }
       },
       undefined,
       (commands) => {
         if (!commands.length) return;
         this.pendingCornerCommands.add(cornerId);
-        void this.activateWatchedCorner(corner, true);
+        void this.activateWatchedCorner(corner);
       },
     );
     this.idleCornerSubscriptions.set(cornerId, release);
@@ -1565,13 +1502,11 @@ export class RoomRuntimeCoordinator {
     this.pendingCornerCommands.delete(cornerId);
   }
 
-  private async activateWatchedCorner(corner: DesiredCorner, wakeOnFailure = false): Promise<void> {
+  private async activateWatchedCorner(corner: DesiredCorner): Promise<void> {
     if (this.stopped || !this.idleCornerSubscriptions.has(corner.cornerId)) return;
     await this.startCorner(corner);
     if (this.running.has(corner.cornerId)) {
       this.unwatchCorner(corner.cornerId);
-    } else if (wakeOnFailure) {
-      this.wakeDiscovery();
     }
   }
 
@@ -1613,7 +1548,7 @@ export class RoomRuntimeCoordinator {
         if (corner.archived) continue;
         this.surfaceHealth.discover(corner.cornerId, 'corner');
         this.roomRemovalConfirmations.delete(corner.cornerId);
-        if (SessionScheduler.hostStoragePaused || SessionScheduler.roomStoragePaused(corner.cornerId) || this.running.has(corner.cornerId) || this.startingCorners.has(corner.cornerId)) continue;
+        if (AgentProcesses.hostStoragePaused || AgentProcesses.roomStoragePaused(corner.cornerId) || this.running.has(corner.cornerId) || this.startingCorners.has(corner.cornerId)) continue;
         await this.watchCorner({
           cornerId: corner.cornerId,
           parentRoomId: corner.parentRoomId,
@@ -1622,7 +1557,6 @@ export class RoomRuntimeCoordinator {
       }
     } catch (error) {
       console.error(`[thin-core] scoped corner refresh failed for Room ${roomId}:`, error);
-      this.wakeDiscovery();
     }
   }
 
@@ -2068,15 +2002,6 @@ export class RoomRuntimeCoordinator {
     }
   }
 
-  /** Local maintenance consumes only facts delivered by successful discovery.
-   * Archive is terminal; uncertainty never synthesizes an archive fact. */
-  async reclaimKnownPrivateStorage(): Promise<void> {
-    if (!this.stopped) {
-      await this.sweepRoomPrivateStorage(this.knownStorageStates);
-      await this.collectDependencyStores();
-    }
-  }
-
   private notePoll(roomId: string): void {
     this.surfaceHealth.intakeReady(roomId);
     const room = this.running.get(roomId);
@@ -2087,7 +2012,6 @@ export class RoomRuntimeCoordinator {
         .then(() => this.stopped ? undefined : this.startRoom(roomId))
         .catch((error) => {
           console.error(`[thin-core] failed to restart Room ${roomId} after repository change:`, error);
-          this.wakeDiscovery();
         });
     }
     if (this.isWorkspaceIdle()) this.interactiveIdleListener?.();
@@ -2111,37 +2035,13 @@ export class RoomRuntimeCoordinator {
     // Refuse further pushes, then wait — to the deadline, never past it — for
     // the in-flight apply, so whatever it started is in the snapshot below.
     this.beginShutdown();
-    const deadlineAt = Math.min(
-      this.now() + this.drainDeadlineMs,
-      this.drainDeadlineAt ?? Number.POSITIVE_INFINITY,
-    );
-    // A checkout can clone for minutes or stall on a black-holed fetch, so the
-    // wait for it rides the same deadline the Room drain does — the managed
-    // update's absolute convergence contract owns this process. Past the
-    // deadline the apply is on its own: `startRoomOnce`/`startCorner` see
-    // `stopped` and abort what they built instead of joining `running`.
-    const untilDeadline = async <T>(work: Promise<T>): Promise<T | 'deadline'> => {
-      let timer: NodeJS.Timeout | undefined;
-      const deadline = new Promise<'deadline'>((resolveDeadline) => {
-        timer = setTimeout(() => resolveDeadline('deadline'), Math.max(0, deadlineAt - this.now()));
-      });
-      try {
-        return await Promise.race([work, deadline]);
-      } finally {
-        if (timer) clearTimeout(timer);
-      }
-    };
-    if (this.membershipDrain) await untilDeadline(this.membershipDrain);
-    if (this.maintenanceFlight) await untilDeadline(this.maintenanceFlight);
-    if (this.preservationFlight) await untilDeadline(this.preservationFlight.catch(() => undefined));
+    if (this.membershipDrain) await this.membershipDrain;
+    if (this.maintenanceFlight) await this.maintenanceFlight;
+    if (this.preservationFlight) await this.preservationFlight.catch(() => undefined);
     const rooms = [...this.running.values()];
     for (const room of rooms) room.controller.abort();
     const drained = Promise.all(rooms.map((room) => room.promise.catch(() => undefined)));
-    const result = await untilDeadline(drained.then(() => 'drained' as const));
-    if (result === 'deadline') {
-      await Promise.allSettled(rooms.map((room) => room.body.forceRecoverRoom()));
-      await drained;
-    }
+    await drained;
     await this.grantRunnerServer.close();
     await this.scheduler.dispose();
   }

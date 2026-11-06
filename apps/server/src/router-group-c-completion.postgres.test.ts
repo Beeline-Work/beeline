@@ -108,7 +108,7 @@ describe.skipIf(!url)('Group C P7/P9/P12 real PostgreSQL correlated completion',
       const initiallyRead = deferred(); let reads = 0;
       const observed: SqlDatabase = { transaction: work => f.b.transaction(work), query: async (sql, values) => {
         const result = await f.b.query(sql, values);
-        if (sql.startsWith('SELECT digest,state,result,coverage,')) { reads++; initiallyRead.resolve(); }
+        if (sql.startsWith('SELECT digest,state,result,')) { reads++; initiallyRead.resolve(); }
         return result;
       } };
       const second = new RouterCommandLedger(observed);

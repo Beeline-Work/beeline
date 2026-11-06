@@ -22,7 +22,7 @@
 import { roomPreviewText } from '@/buzz/room-list-summary';
 
 /** One line of inherited Room conversation. */
-export type RoomContextEntry = {
+type RoomContextEntry = {
   id: string;
   text: string;
   timestamp: number;

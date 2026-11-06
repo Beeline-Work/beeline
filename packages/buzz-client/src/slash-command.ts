@@ -22,6 +22,7 @@
  * - the token starts with a letter and is bounded in length.
  */
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export const BEELINE_SLASH_COMMANDS = [
   'build',
   'poll',

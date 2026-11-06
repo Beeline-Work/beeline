@@ -27,7 +27,7 @@ describe.skipIf(!url)('real PostgreSQL blocking leader ownership',()=>{
       await leaders[2]!.stop();expect(cycles[2]).toBe(0);
       await leaders[0]!.stop();await entered[1]!.promise;
       expect(cycles).toEqual([1,1,0]);
-      expect(statements[0]).toEqual(['SET statement_timeout=0; SET lock_timeout=0','SELECT pg_advisory_lock($1)']);
+      expect(statements[0]).toEqual(['SET statement_timeout=0; SET lock_timeout=60000','SELECT pg_advisory_lock($1)']);
       expect(statements[1]).toEqual(statements[0]);
       await leaders[1]!.stop();
     }finally{
@@ -91,8 +91,9 @@ describe.skipIf(!url)('real PostgreSQL blocking leader ownership',()=>{
       backend = (await client.query('SELECT pg_backend_pid() id')).rows[0].id;
       return client;
     } }, async (initial, signal) => {
+      signal.addEventListener('abort', () => lost.resolve(), { once: true });
       const delay = await work.run(initial, signal); drained.resolve(); return delay;
-    }, { acquired: async () => {}, lost: () => { lost.resolve(); } });
+    });
     try {
       void leader.run(); await entered.promise;
       await admin.query('SELECT pg_terminate_backend($1)', [backend]);

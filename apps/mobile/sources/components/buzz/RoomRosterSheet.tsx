@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { InlineRow } from './IndexRow';
 import { SectionAddButton } from './RoomListSectionHeader';
 import { Button } from '@/components/buzz/Button';
@@ -268,7 +269,7 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
         </ScrollView>
         {membershipError && (
           <View accessibilityRole="alert" style={styles.membershipError}>
-            <Text style={styles.membershipErrorText}>! {membershipError}</Text>
+            <ErrorBanner inline title={membershipError} />
           </View>
         )}
       </View>
@@ -346,11 +347,6 @@ const styles = StyleSheet.create((theme) => {
       borderWidth: 1,
       borderColor: hull.borderStrong,
       backgroundColor: hull.bgHighlight,
-    },
-    membershipErrorText: {
-      ...Typography.default(),
-      ...hull.type.meta,
-      color: hull.textSecondary,
     },
   };
 });

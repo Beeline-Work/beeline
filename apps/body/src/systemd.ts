@@ -215,7 +215,7 @@ export async function cleanupAgentService(
 
 export interface DaemonNotifier {
   ready(status: string): Promise<void>;
-  progress(status: string, watchdog?: boolean): Promise<void>;
+  progress(status: string): Promise<void>;
   stopping(status: string): Promise<void>;
 }
 
@@ -231,14 +231,14 @@ export async function extendSystemdStartTimeout(ms: number): Promise<void> {
   );
 }
 
-/** systemd notification transport; only acknowledged work-loop ticks renew the watchdog. */
+/** Native service readiness and status; process exit remains manager-owned. */
 export class SystemdNotifier implements DaemonNotifier {
   async ready(status: string): Promise<void> {
     await notify(['--ready', `--status=${status}`]);
   }
 
-  async progress(status: string, watchdog = false): Promise<void> {
-    await notify([...(watchdog ? ['WATCHDOG=1'] : []), `STATUS=${status}`]);
+  async progress(status: string): Promise<void> {
+    await notify([`STATUS=${status}`]);
   }
 
   async stopping(status: string): Promise<void> {
@@ -246,62 +246,3 @@ export class SystemdNotifier implements DaemonNotifier {
   }
 }
 
-/**
- * Wake idle work loops locally and renew systemd only after all acknowledge.
- * No server read is needed. It runs only when systemd armed a watchdog. A failed notification
- * is logged: it must never become an unhandled rejection that kills the helper.
- */
-export function startLocalWatchdog(
-  notifier: Pick<DaemonNotifier, 'progress'>,
-  status: () => string,
-  workLoopProgress: () => Promise<void | boolean>,
-  intervalMs: number | undefined = undefined,
-  env: NodeJS.ProcessEnv = process.env,
-  onStall: () => void = () => process.exit(75),
-  onPending?: () => void,
-): () => void {
-  const localDeadline = process.platform === 'darwin';
-  if (!env.WATCHDOG_USEC && !localDeadline) return () => undefined;
-  let deadline: ReturnType<typeof setTimeout> | undefined;
-  let pending = false;
-  let warned = false;
-  let stopped = false;
-  const timer = setInterval(
-    () => {
-      if (stopped) return;
-      if (pending) {
-        if (!warned) {
-          warned = true;
-          onPending?.();
-        }
-        return;
-      }
-      pending = true;
-      warned = false;
-      if (localDeadline && !deadline) deadline = setTimeout(onStall, 180_000);
-      // The existing local tick asks the work loops to run. A wedged loop never
-      // completes this barrier, even while sockets and other agents keep running.
-      void workLoopProgress()
-        .then((progressed) => {
-          if (progressed !== false) {
-            clearTimeout(deadline);
-            deadline = undefined;
-          }
-          return stopped || progressed === false || localDeadline
-            ? undefined
-            : notifier.progress(status(), true);
-        })
-        .catch((error) => console.error('[thin-core] watchdog notification failed:', error))
-        .finally(() => {
-          pending = false;
-        });
-    },
-    intervalMs ?? Math.min(60_000, Math.max(100, Number(env.WATCHDOG_USEC || 180_000_000) / 3000)),
-  );
-  timer.unref?.();
-  return () => {
-    stopped = true;
-    clearInterval(timer);
-    clearTimeout(deadline);
-  };
-}

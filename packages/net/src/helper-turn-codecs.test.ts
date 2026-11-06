@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import { helperTurnCodecs } from './helper-turn-codecs.js';
+import { routes } from './routes.js';
 
 it('admits only the bounded causal model owner end on a terminal failed wire receipt', () => {
   const parse = helperTurnCodecs('postAgentTurnReceipt').params.parse;
@@ -52,4 +53,13 @@ it('rejects credential getters without executing or serializing secret values', 
   const modelCredential = { v: 1, expiresAt: 1_800_000_001, get token() { calls++; return 'synthetic-secret'; } };
   expect(() => helperTurnCodecs('claimAgentCommand').result.parse({ id: 'synthetic', createdAt: 1_800_000_000, modelCredential })).toThrow();
   expect(calls).toBe(0);
+});
+
+it('carries a subscribed leave event through both command claim codecs', () => {
+  const result = { id: 'leave-wake', createdAt: 1_800_000_000,
+    activitySource: { body: 'Ada left', systemEvent: {
+      subject: { kind: 'person', name: 'Ada' }, verb: 'left', kind: 'left',
+    } } };
+  expect(helperTurnCodecs('claimAgentCommand').result.parse(result)).toEqual(result);
+  expect(routes['daemon.claimAgentCommand'].result.parse(result)).toEqual(result);
 });

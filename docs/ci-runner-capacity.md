@@ -8,16 +8,15 @@ privileged/timing jobs, and publish coverage from those server executions. Requi
 
 ## Routing and resource budget
 
-All ten listeners are active. Instance `01` has one CPU and the
-`beeline-ci-control` role for detection, cache preparation, selection and
-verdicts. Instances `02`–`09` have the `beeline-ci-heavy` role for eight server
-shards, shared tests, typecheck and companion checks, each capped at two CPUs / 8 GiB. Instance `10` has only the
-`beeline-ci-workspace` role, capped at three CPUs / 12 GiB with CPUWeight 300.
-It runs the mobile suite with two workers in its own job and checkout. The **parent
-slice shares a ten-CPU hard quota across every listener and PR**, with
-MemoryHigh 48 GiB / MemoryMax 60 GiB; per-service maxima are not additive
-capacity. Ordinary listeners have MemoryHigh 6 GiB, the workspace listener
-10 GiB. Verify both service and parent limits before activation.
+The balanced layout uses eight listeners: 01 is one CPU for control work;
+02–07 are six one-CPU heavy listeners; 10 is three CPUs / 12 GiB for mobile.
+The maxima now sum to the existing ten-CPU parent quota rather than requesting
+twenty CPUs under that quota. MemoryHigh 48 GiB / MemoryMax 60 GiB are unchanged.
+Listeners 08 and 09 must be drained and disabled before activation. The extra
+`beeline-ci-balanced` label prevents older unconverted listeners receiving
+these jobs; the planner rejects unexpected names and role assignments.
+See `infra/ci/README.md` for the host-authorized rollout. Code changes alone
+are not proof that host limits or labels have been applied.
 
 Detect changes starts on `ubuntu-latest` and snapshots runner availability
 before preparing any workspace. It uses `CI_RUNNER_INVENTORY_TOKEN` for the
@@ -29,7 +28,7 @@ has a fifteen-second overall deadline and never becomes a new gate.
 The planner allocates each observed idle role slot once and subtracts only
 actual unassigned queued jobs requesting a `beeline-ci` role in older runs.
 Preparing workflows and hosted jobs reserve nothing: their future job graphs
-are not claims on idle Squire capacity. This keeps the eight-heavy-slot per-run
+are not claims on idle Squire capacity. This keeps the six-heavy-slot per-run
 allowance available while avoiding already queued Squire work. The runner
 inventory excludes busy listeners; overflow uses hosted Ubuntu immediately.
 Preparation may use an idle control listener; verdicts stay hosted. The plan
@@ -67,8 +66,10 @@ internal messages (more than its 200-row page), preserving receipt and privacy
 assertions without seeding 29,650 unrelated internal messages. Its original
 job consumed 13m34s in this file and timed out during integration; the smaller
 fixture removes that setup bottleneck without raising a deadline.
-PRs consume SELECT SERVER TESTS; an unavailable selection fails closed to the
-full suite. Main coverage remains full. No integration batch is removed or
+Every code PR runs SELECT SERVER TESTS in parallel with workspace preparation.
+The Body/mobile graph returning full no longer disables the independent server
+coverage selector; the latter retains its own conservative full-suite fallbacks.
+An unavailable selection still fails closed to the full suite. Main coverage remains full. No integration batch is removed or
 repeated.
 
 Ordinary server files use Vitest's single-fork mode with module isolation;

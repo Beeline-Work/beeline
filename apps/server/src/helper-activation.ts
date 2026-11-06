@@ -1,6 +1,5 @@
 import type { CommandActivationInput, CommandActivationSnapshot } from '@beeline/api-contract/helper-activation';
 import { createHash } from 'node:crypto';
-import { COMMAND_ACTIVATION_MAX_BYTES } from '@beeline/api-contract/helper-activation';
 import type { CommandRow } from './agent-command.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import type { SqlDatabase } from './database.js';
@@ -63,10 +62,6 @@ async function authorityHead(db:SqlDatabase,workspaceId:string,lock:boolean){
 async function serverTime(db:SqlDatabase):Promise<number>{
   return Number((await db.query<{at:number}>('SELECT EXTRACT(epoch FROM clock_timestamp())::double precision at')).rows[0]!.at);
 }
-function assertBounded(snapshot:CommandActivationSnapshot):void{
-  if(Buffer.byteLength(JSON.stringify(snapshot))+512>COMMAND_ACTIVATION_MAX_BYTES)throw new Error('Activation snapshot exceeds capacity');
-}
-
 /** All DB-derived setup readers run in this one read-only snapshot. No generic
  * operation dispatcher, provider, credential lookup or journal writer runs here. */
 export async function captureCommandActivation(database:SqlDatabase,input:CommandActivationInput,read:ActivationReader):Promise<CommandActivationSnapshot>{
@@ -81,7 +76,7 @@ export async function captureCommandActivation(database:SqlDatabase,input:Comman
     if(!(await isCommandOwnerLive(db,command.id,capturedAt))||
       validUntil!==undefined&&validUntil<=capturedAt)throw new Error('Activation authority expired');
     const snapshot:CommandActivationSnapshot={...input,v:1,capturedAt,authority:{...authority,commandRevision:commandRevision(command)},...values,...(validUntil!==undefined?{validUntil}:{})};
-    assertBounded(snapshot);return snapshot;
+    return snapshot;
   });
 }
 
@@ -96,6 +91,6 @@ export async function fenceCommandActivationEnqueue(database:SqlDatabase,snapsho
     await currentScope(db,snapshot);
     const at=await serverTime(db);
     if(!(await isCommandOwnerLive(db,command.id,at))||snapshot.validUntil!==undefined&&snapshot.validUntil<=at)return false;
-    assertBounded(snapshot);enqueue(snapshot);return true;
+    enqueue(snapshot);return true;
   });
 }

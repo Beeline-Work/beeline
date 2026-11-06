@@ -1,3 +1,4 @@
+import { migrateMembershipSubscriptions } from './agent-subscriptions.js';
 import { STARTER_BANTER_TYPING_MS, StarterOnboardingService } from './starter-onboarding-run.js';
 import { starterHello, consumeStarterVideoPost, postStarterVideoPreview } from './starter-onboarding.js';
 import { postRoomChoice } from './room-choice.js';
@@ -98,6 +99,12 @@ class FakeMachines implements FreeAgentMachines {
   async start(id: string) {
     this.calls.push(`start ${id}`);
     this.states.set(id, 'started');
+  }
+  async refresh(id: string, _image: string, force = false) {
+    if (!force && this.states.get(id) !== 'stopped') return false;
+    await this.stop(id);
+    await this.start(id);
+    return true;
   }
   async suspend(id: string) {
     this.calls.push(`suspend ${id}`);
@@ -387,6 +394,30 @@ describe('free starter agents', () => {
     await phone.execute('sendRoomMessage', { roomId: workspace.roomId!, text: 'I am back' }, FRIEND);
     expect((await db.query(`SELECT event FROM signin_funnel_events WHERE event LIKE 'returned_%' ORDER BY event`)).rows)
       .toEqual([{ event: 'returned_day_1' }, { event: 'returned_day_7' }]);
+  });
+
+  it('retains onboarding milestones when the transport releases a committed send before observation', async () => {
+    const installId = '11111111-1111-4111-8111-111111111111';
+    const attemptId = '22222222-2222-4222-8222-222222222222';
+    await recordSigninFunnelEvent(db, { event: 'signed_in', installId, attemptId, provider: 'google',
+      platform: 'android', version: '0.2.22', environment: 'production', timestamp: new Date().toISOString() }, 'server', FRIEND);
+    await db.query(`INSERT INTO signin_funnel_events(install_id,attempt_id,event,platform,version,source,occurred_at)
+      VALUES($1,$2,'signup','android','0.2.22','server',now())`, [installId, attemptId]);
+    const workspace = await phone.execute('createWorkspace', { name: 'Tracked phone milestones' }, FRIEND);
+    await finishWelcome(workspace.roomId!, FRIEND);
+    await recordOnboardingEvent(db, FRIEND, 'welcome_shown');
+    const room = await phone.readRoom(workspace.roomId!, FRIEND);
+    const welcome = room!.messages.find(message => message.choice?.status === 'open')!.choice!;
+    await phone.execute('answerChoice', { choiceId: welcome.choiceId, optionId: 'C' }, FRIEND);
+    await db.query(`UPDATE signin_funnel_events SET occurred_at=now()-interval '8 days' WHERE event='welcome_shown'`);
+
+    await phone.execute('sendRoomMessage', { roomId: workspace.roomId!, text: 'A committed transport send' }, FRIEND,
+      undefined, undefined, true);
+    await db.backgroundWork.drain();
+    const events = (await db.query<{ event: string }>(`SELECT event FROM signin_funnel_events WHERE install_id=$1`, [installId]))
+      .rows.map(row => row.event);
+    for (const event of ['user_answered', 'task_question', 'returned_day_1', 'returned_day_7'])
+      expect(events.filter(value => value === event)).toHaveLength(1);
   });
 
   // Lifecycle tests start after the owner's first actual request, not the server hello.
@@ -866,9 +897,10 @@ describe('free starter agents', () => {
       ...(ending === 'error' ? { errorMessage: 'Sign-in cancelled' } : { signedInAs: 'owner' }),
     }, ending === 'complete'));
     await freeAgents.sweep();
-    expect(machines.calls).toEqual([`stop ${agent.fly_machine_id}`]);
+    expect(machines.calls).toEqual([`suspend ${agent.fly_machine_id}`]);
     // The normal helper sleep path also releases after the terminal report.
     await db.query(`UPDATE free_agents SET state='running' WHERE agent_id=$1`, [agent.agent_id]);
+    machines.states.set(agent.fly_machine_id!, 'started');
     expect(await freeAgents.requestSleep(agent.agent_id)).toEqual({ sleep: true });
     await vi.waitFor(() => expect(machines.calls).toContain(`suspend ${agent.fly_machine_id}`));
   });
@@ -920,7 +952,7 @@ describe('free starter agents', () => {
     } finally { off(); }
   });
 
-  it('sleeps only when no wake is pending, suspending and falling back to stop', async () => {
+  it('sleeps only when no wake is pending and leaves suspend failures visible without stopping', async () => {
     const { id, roomId } = await createWorkspace();
     await settle();
     const agent = await freeAgentOf(id);
@@ -943,8 +975,48 @@ describe('free starter agents', () => {
     machines.calls.length = 0;
     expect(await freeAgents.requestSleep(agent.agent_id)).toEqual({ sleep: true });
     await new Promise((resolve) => setTimeout(resolve, 400));
-    expect(machines.calls).toEqual(['suspend m1', 'stop m1']);
+    expect(machines.calls).toEqual(['suspend m1']);
     expect(roomId).toBeTruthy();
+  });
+
+  it('refreshes before idle suspension, then wakes the warmed helper', async () => {
+    const { id, roomId } = await createWorkspace();
+    await settle();
+    const agent = await freeAgentOf(id);
+    await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE agent_id=$1`, [agent.agent_id]);
+    await db.query(`UPDATE free_agents SET state='running' WHERE agent_id=$1`, [agent.agent_id]);
+    machines.calls.length = 0;
+    expect(await freeAgents.requestSleep(agent.agent_id, { refresh: true })).toEqual({ sleep: true });
+    await vi.waitFor(() => expect(machines.calls).toEqual(['stop m1', 'start m1']));
+    // The refreshed helper establishes its connection before asking to sleep.
+    await db.query(`UPDATE free_agents SET state='running' WHERE agent_id=$1`, [agent.agent_id]);
+    expect(await freeAgents.requestSleep(agent.agent_id)).toEqual({ sleep: true });
+    await vi.waitFor(() => expect(machines.states.get('m1')).toBe('suspended'));
+    await createAgentCommand(db, { roomId, agentId: agent.agent_id, sourceMessageId: null, reason: 'human_tag' });
+    await freeAgents.wake(agent.agent_id);
+    expect(machines.calls).toEqual(['stop m1', 'start m1', 'suspend m1', 'start m1']);
+  });
+
+  it('image promotion warms existing stopped agents without provisioning new Machines or model work', async () => {
+    const { id } = await createWorkspace();
+    await settle();
+    const agent = await freeAgentOf(id);
+    await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE agent_id=$1`, [agent.agent_id]);
+    await db.query(`UPDATE free_agents SET state='sleeping' WHERE agent_id=$1`, [agent.agent_id]);
+    machines.states.set('m1', 'stopped');
+    machines.calls.length = 0;
+    await freeAgents.refreshSleepingMachines();
+    expect(machines.calls).toEqual(['stop m1', 'start m1']);
+    expect((await db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1 AND state='pending'`, [agent.agent_id])).rowCount).toBe(0);
+    machines.calls.length = 0;
+    await freeAgents.refreshSleepingMachines();
+    expect(machines.calls).toEqual([]);
+    // A service stop is an existing authority fence, distinct from a sleeping
+    // agent whose Fly Machine was stopped by the old refresh path.
+    await db.query(`UPDATE free_agents SET state='stopped' WHERE agent_id=$1`, [agent.agent_id]);
+    machines.states.set('m1', 'stopped');
+    await freeAgents.refreshSleepingMachines();
+    expect(machines.calls).toEqual([]);
   });
 
   it('sweeps: retries provisioning, wakes an overdue wake, reaps an idle Machine, deletes after 30 days and recreates on wake', async () => {
@@ -962,7 +1034,7 @@ describe('free starter agents', () => {
     );
     machines.calls.length = 0;
     await freeAgents.sweep();
-    expect(machines.calls).toEqual(['stop m1']);
+    expect(machines.calls).toEqual(['suspend m1']);
     expect(await freeAgentOf(id)).toMatchObject({ state: 'sleeping' });
 
     // Thirty days with no activity: the Machine is deleted.
@@ -1205,7 +1277,7 @@ describe('free starter agents', () => {
     const agent = await freeAgentOf(id);
     expect(
       (
-        await db.query(`SELECT event_subscriptions FROM memberships WHERE identity_id=$1 AND room_id=$2`, [
+        await db.query(`SELECT event_subscriptions FROM room_access WHERE identity_id=$1 AND room_id=$2`, [
           agent.agent_id,
           roomId,
         ])
@@ -1224,18 +1296,26 @@ describe('free starter agents', () => {
     await phone.execute('addWorkspaceMember', { workspaceId: id, memberId: FRIEND, role: 'member' }, OWNER);
     expect(await wakes()).toEqual(['@friend joined · invited by @lunchboxfortwo']);
 
-    // The person leaves #general: the next sweep queues one wake on the leave line.
+    // Leave producers use the same event dispatch as joins, before any sweep.
     await phone.execute('leaveRoom', { roomId }, FRIEND);
-    expect(await freeAgents.sweep()).toBeGreaterThanOrEqual(1);
     expect((await wakes()).at(-1)).toBe('@friend left');
+    await freeAgents.sweep();
     // Each leave is one wake, never repeated.
     await freeAgents.sweep();
     expect(await wakes()).toHaveLength(2);
     // A removal by an admin is a leave too.
     await phone.execute('addRoomMember', { roomId, memberIds: [FRIEND] }, OWNER);
     await phone.execute('removeRoomMember', { roomId, memberId: FRIEND }, OWNER);
-    await freeAgents.sweep();
     expect((await wakes()).at(-1)).toBe('@lunchboxfortwo removed @friend');
+    await freeAgents.sweep();
+    expect(await wakes()).toHaveLength(4);
+    // A recent unkinded fact from the preceding image retains its owed wake at upgrade.
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card,system_event)
+      VALUES('legacy-leave',$1,$2,'Legacy leave','system','member-left',$3::jsonb,'{"verb":"left"}')`,[roomId,FRIEND,JSON.stringify({identityId:FRIEND})]);
+    await migrateMembershipSubscriptions(db);
+    await migrateMembershipSubscriptions(db);
+    expect((await wakes()).at(-1)).toBe('Legacy leave');
+    expect(await wakes()).toHaveLength(5);
   });
 
   it('carries the owner\'s exact join greeting and the exit note in the free agent\'s instructions', async () => {

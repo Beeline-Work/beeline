@@ -1,7 +1,7 @@
 /**
  * Measure where a turn's time goes, through the real turn loop.
  *
- * This drives the shipped `MonolithRoomTurnLoop` — the real `SessionScheduler`,
+ * This drives the shipped `MonolithRoomTurnLoop` — the real `AgentProcesses`,
  * the real ACP client, the real `turn-trace.ts` wiring — and prints the
  * timelines it writes to the operator artifact. Nothing here reimplements the
  * measurement; it only supplies the two things a workstation does not have:
@@ -17,17 +17,12 @@
  *   gap    the same two turns with a real WAIT between them, so the follow-up
  *          is one a five-minute idle window would have made cold. Pass
  *          `--idle-ms 300000` to measure the window this repo used to ship.
- *   ceiling  N Rooms' worth of REAL harness processes held by the real
- *          scheduler, so the resident cost of retention and the ceiling that
- *          bounds it are both a number.
  *
  * Usage:
  *   node --import tsx apps/body/scripts/measure-turn-phases.ts live [--harness goose]
  *   node --import tsx apps/body/scripts/measure-turn-phases.ts retry
  *   node --import tsx apps/body/scripts/measure-turn-phases.ts gap [--harness claude] \
  *     [--gap-ms 330000] [--idle-ms 300000]
- *   node --import tsx apps/body/scripts/measure-turn-phases.ts ceiling [--harness claude] \
- *     [--rooms 5] [--max-warm 2]
  */
 import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
@@ -41,7 +36,7 @@ import type { BodyConfig } from '../src/config.js';
 import type { DaemonApiClient } from '../src/daemon-api-client.js';
 import { MonolithRoomTurnLoop } from '../src/monolith-room-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from '../src/runtime.js';
-import { DEFAULT_MAX_WARM_SESSIONS, SessionScheduler } from '../src/session-scheduler.js';
+import { AgentProcesses } from '../src/agent-process.js';
 import {
   formatDuration,
   TURN_PHASES,
@@ -113,8 +108,6 @@ async function runRig(options: {
   agentArgs: string[];
   modelSelection?: { model?: string; effort?: string };
   configOverrides?: Partial<BodyConfig>;
-  /** Occupy the scheduler's only slot for this long, so turn one really queues. */
-  holdSlotMs?: number;
   /** Real wall-clock silence between the first turn and the follow-up. */
   gapMs?: number;
   /** Retention window under test. Omit for the shipped default. */
@@ -223,9 +216,7 @@ async function runRig(options: {
     }),
   } as unknown as DaemonApiClient;
 
-  // Capacity one, so the held slot below is a real capacity wait.
-  const scheduler = new SessionScheduler({
-    maxLiveSessions: 1,
+  const scheduler = new AgentProcesses({
     ...(options.idleMs ? { idleMs: options.idleMs } : {}),
   });
   // Attempts count across clients: a provider re-pin spawns a NEW client.
@@ -248,7 +239,7 @@ async function runRig(options: {
             const client = new AcpClient(clientOptions);
             Object.defineProperty(client, 'isAlive', { get: () => true });
             Object.assign(client, {
-              start: async () => undefined,
+              startProcess: async () => undefined,
               sessionNew: async () => ({
                 sessionId: 'measure-session',
                 raw: options.modelSelection?.model
@@ -262,11 +253,10 @@ async function runRig(options: {
               }),
               canPromptWithImages: () => false,
               setModel: async () => undefined,
-              stop: async () => undefined,
+              stopProcess: async () => undefined,
               sessionPrompt: async (
                 _sessionId: string,
                 _prompt: unknown,
-                _timeout?: number,
                 onChunk?: (delta: string, full: string) => void,
               ) => {
                 attempt += 1;
@@ -280,20 +270,6 @@ async function runRig(options: {
         }
       : {}),
   });
-
-  if (options.holdSlotMs) {
-    // A second logical channel holds the scheduler's only slot, so the first
-    // turn's queue-wait is a real capacity wait through the real scheduler.
-    void scheduler.run(
-      'other-room',
-      {
-        activate: async () => 'held-session',
-        suspend: async () => undefined,
-      },
-      () => new Promise<void>((done) => setTimeout(done, options.holdSlotMs)),
-      { priority: 'background', roomKey: 'other-room' },
-    );
-  }
 
   const running = loop.run();
   const deadline = Date.now() + 240_000 + (options.gapMs ?? 0);
@@ -325,7 +301,6 @@ function table(record: TurnTraceRecord, title: string): string {
     const head = [
       `attempt ${attempt.attempt} (\`${attempt.attemptId}\`)`,
       `${attempt.activation} activation`,
-      ...(attempt.capacityWait ? ['waited for a scheduler slot'] : []),
       ...(attempt.provider ? [`re-pinned to \`${attempt.provider}\``] : []),
     ].join(' — ');
     lines.push(record.attempts.length > 1 ? `**${head}**` : `_${head}_`, '');
@@ -375,7 +350,6 @@ async function live(harness: string): Promise<void> {
     configOverrides: {
       agentEnv: { PATH: process.env.PATH ?? '' },
     } as Partial<BodyConfig>,
-    holdSlotMs: 1_500,
   });
   console.log(`\nReplies: ${JSON.stringify(posted, null, 2)}\n`);
   console.log(table(traces[0]!, 'Cold turn — real harness, real model'));
@@ -450,7 +424,6 @@ async function gap(harness: string, gapMs: number, idleMs?: number): Promise<voi
     agentCommand: command,
     agentArgs: spec.args,
     configOverrides: { agentEnv: { PATH: process.env.PATH ?? '' } } as Partial<BodyConfig>,
-    holdSlotMs: 1_500,
     gapMs,
     ...(idleMs ? { idleMs } : {}),
   });
@@ -464,76 +437,6 @@ async function gap(harness: string, gapMs: number, idleMs?: number): Promise<voi
       `Resident at the end of the gap: ${residentDuringGap.processes} process(es), ` +
         `${residentDuringGap.rssMb}MB RSS — ${residentDuringGap.commands.join(', ')}\n`,
     );
-  }
-}
-
-/**
- * What retention actually costs, and what bounds it.
- *
- * Real harness processes through the real scheduler, one per Room, with no
- * model turn: the resident cost of a retained session is its process, and this
- * measures that without spending a provider's tokens to learn it.
- */
-async function ceiling(harness: string, rooms: number, maxWarm: number): Promise<void> {
-  const spec = LIVE_HARNESSES[harness];
-  if (!spec) throw new Error(`unknown harness ${harness}`);
-  const command = execFileSync('which', [spec.executable], { encoding: 'utf8' }).trim();
-  const root = await mkdtemp(join(tmpdir(), 'beeline-measure-ceiling-'));
-  const cwd = join(root, 'room');
-  await mkdir(cwd, { recursive: true });
-  const scheduler = new SessionScheduler({ maxLiveSessions: rooms, maxWarmSessions: maxWarm });
-  const clients: AcpClient[] = [];
-  try {
-    for (let index = 0; index < rooms; index += 1) {
-      const agentEnv = {
-        PATH: process.env.PATH ?? '',
-        ...(await prepareRoomAgentHome({
-          root: join(root, `agent-home-${index}`),
-          operatorHome: process.env.HOME ?? '',
-          agentKind: spec.kind,
-        })),
-      };
-      let client: AcpClient | undefined;
-      await scheduler.run(
-        `room-${index}`,
-        {
-          activate: async () => {
-            client = new AcpClient({
-              agentCommand: command,
-              agentArgs: spec.args,
-              agentEnv,
-              agentCwd: cwd,
-              agentLabel: command,
-              osSandbox: false,
-              autoApprovePermissions: false,
-            });
-            clients.push(client);
-            await client.start();
-            const opened = await client.sessionNew({ cwd, mcpServers: [], mode: 'readonly' });
-            return opened.sessionId;
-          },
-          suspend: async () => {
-            if (client?.isAlive) await client.stop();
-          },
-        },
-        async () => undefined,
-        { roomKey: `room-${index}` },
-      );
-    }
-    const held = residentProcesses();
-    console.log(
-      `### Retention ceiling — ${rooms} Rooms, \`maxWarm\` ${maxWarm}\n\n` +
-        `| moment | scheduler | resident processes | RSS |\n| --- | --- | --- | --- |\n` +
-        `| every Room answered | ${JSON.stringify(scheduler.snapshot())} | ${held.processes} | ${held.rssMb}MB |`,
-    );
-    await Reflect.get(scheduler, 'sweepIdle').call(scheduler);
-    const culled = residentProcesses();
-    console.log(
-      `| after one sweep | ${JSON.stringify(scheduler.snapshot())} | ${culled.processes} | ${culled.rssMb}MB |\n`,
-    );
-  } finally {
-    await scheduler.dispose();
-    await Promise.all(clients.map((client) => client.stop().catch(() => undefined)));
   }
 }
 
@@ -552,11 +455,5 @@ else if (scenario === 'gap') {
     harness,
     Number(flags.get('gap-ms') ?? 330_000),
     ...((idle ? [Number(idle)] : []) as [number?]),
-  );
-} else if (scenario === 'ceiling') {
-  await ceiling(
-    harness,
-    Number(flags.get('rooms') ?? 5),
-    Number(flags.get('max-warm') ?? DEFAULT_MAX_WARM_SESSIONS),
   );
 } else await live(harness);

@@ -120,3 +120,7 @@ jobs:
             curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 \
               --header "fly-force-instance-id: $machine" https://server.usebeeline.app/readyz
           done < "$RUNNER_TEMP/free-agent-server-ids"
+          # Boot the new image before a person's next message. Each helper's
+          # existing idle path suspends it after startup is complete.
+          machine=$(head -n 1 "$RUNNER_TEMP/free-agent-server-ids")
+          flyctl machine exec "$machine" --app beeline-server 'node apps/server/dist/index.js --refresh-free-agents'

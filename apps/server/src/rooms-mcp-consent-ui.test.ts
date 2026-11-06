@@ -21,8 +21,12 @@ describe('MCP workspace consent', () => {
     const error = { hidden: true };
     const allow = { disabled: false };
     const form = { querySelector: (selector: string) => selector === 'button[value="allow"]' ? allow : null };
-    const nodes: Record<string, unknown> = { 'mcp-consent-form': form, 'select-all-workspaces': toggle, 'selection-error': error };
+    const trust = { checked: false, addEventListener: (_: string, fn: () => void) => listeners.set('trust', fn) };
+    const nodes: Record<string, unknown> = { 'trust_app': trust, 'mcp-consent-form': form, 'select-all-workspaces': toggle, 'selection-error': error };
     runInNewContext(MCP_WORKSPACE_SCRIPT, { document: { getElementById: (id: string) => nodes[id], querySelectorAll: () => choices } });
+    expect(allow.disabled).toBe(true);
+    trust.checked = true; listeners.get('trust')!();
+    expect(allow.disabled).toBe(false);
     expect(toggle.hidden).toBe(false);
     expect(toggle.textContent).toBe('Deselect all');
     listeners.get('toggle')!();
@@ -36,6 +40,9 @@ describe('MCP workspace consent', () => {
     expect(error.hidden).toBe(true);
     listeners.get('toggle')!();
     expect(choices.every(choice => choice.checked)).toBe(true);
+    trust.checked = false; listeners.get('trust')!();
+    listeners.get('toggle')!(); listeners.get('toggle')!();
+    expect(allow.disabled).toBe(true);
   });
   it('keeps already-connected workspaces checked through deselect-all on reconnect', () => {
     const html = renderMcpWorkspaceSelection([{ id: 'joined', name: 'Team', publicRoomCount: 1, selected: false, alreadyConnected: true }]);
@@ -78,11 +85,25 @@ describe('MCP workspace consent', () => {
     expect(allow.disabled).toBe(false);
     expect(renderMcpWorkspaceSelection([], '<script>')).toContain('&lt;script&gt;');
   });
+  it('requires trust on first connection even when no workspace picker is needed', () => {
+    let change = () => {};
+    const allow = { disabled: true };
+    const trust = { checked: false, addEventListener: (_: string, fn: () => void) => { change = fn; } };
+    runInNewContext(MCP_WORKSPACE_SCRIPT, { document: {
+      getElementById: (id: string) => id === 'mcp-consent-form' ? { querySelector: () => allow } : id === 'trust_app' ? trust : null,
+      querySelectorAll: () => [],
+    } });
+    expect(allow.disabled).toBe(true);
+    trust.checked = true; change();
+    expect(allow.disabled).toBe(false);
+    trust.checked = false; change();
+    expect(allow.disabled).toBe(true);
+  });
   it('shows the no-selection guidance for an empty eligible list and uses static progressive enhancement', () => {
     const html = renderMcpWorkspaceSelection([]);
     expect(html).toContain('Select at least one Workspace');
     expect(html).not.toContain('type="checkbox"');
-    expect(MCP_WORKSPACE_SCRIPT).toContain('allow.disabled = count === 0');
+    expect(MCP_WORKSPACE_SCRIPT).toContain('trust && !trust.checked');
     expect(MCP_WORKSPACE_SCRIPT).toContain("choice.addEventListener('change', update)");
     expect(MCP_WORKSPACE_SCRIPT).not.toContain('innerHTML');
   });

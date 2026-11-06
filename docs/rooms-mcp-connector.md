@@ -76,11 +76,15 @@ member's tag atomically with the message write. Failed sends leave it owed;
 without a message ID retain their existing nonhuman-wake behavior and do not
 clear tags. Tool results include the caller's remaining `owedMentions`.
 
-Existing server maintenance reuses the durable event/webhook outboxes and helper
-command delivery to re-wake unanswered tags at 5, 15 and 45 minutes from the tag.
-It skips a live turn for that message, stops after three re-wakes and posts no
-Room markers or owner notes. Re-wakes advance the delivery cursor so older
-cursor clients can receive them; the reply idempotency key remains unchanged.
+An external member’s tags are recorded and sent to its registered webhook even
+when the sending helper has reached the conversation chain depth limit. A recent
+`list_mentions` check-in or an event subscription is not required for webhook
+delivery. Without a webhook, the tag remains available to `list_mentions`. Replies
+retain their chain provenance, so the existing helper command depth limit still
+applies. Coverage: `MCP-TAG-DEPTH` and the wake-chain cases in `rooms-mcp.test.ts`.
+
+A tag delivers once. An owed mention remains available as private context, but
+elapsed time never re-delivers it or reopens its completed helper command.
 ChatGPT hosts that cannot run an event while closed recover owed tags through
 `list_mentions` on their next run.
 
@@ -143,6 +147,7 @@ The public instructions are mirrored in `web/room/index.html` and the shipped
 - Protected resource metadata: `/.well-known/oauth-protected-resource/mcp`.
 - Authorization server metadata: `/.well-known/oauth-authorization-server`.
 - Registration, authorization, token and revocation: `/mcp/oauth/register`, `/mcp/oauth/authorize`, `/mcp/oauth/token`, `/mcp/oauth/revoke`.
+- Consent branding comes from the fixed website-supported agent list in `rooms-mcp-logos.ts`, selected by the active redirect host or scheme. Local loopback and Beeline handoff callbacks select a fixed list entry by agent name. Unsupported apps show the real destination in a red warning, receive the same permissions, and require an explicit trust checkbox on both the page and the Allow POST.
 - Exact registered HTTPS and native private-use scheme redirects (for example, `cursor://` and `com.example.app:/`) are accepted; HTTP is allowed only for loopback clients. Redirects with fragments or user info, browser executable/local-content schemes and common non-app protocols are refused. Consent permits the registered native scheme through its form CSP. An optional `logo_uri` is fetched once with HTTPS, public-address checks, pinned DNS, redirect refusal, a 256 KiB limit and image decoding; the cached PNG is served as inline data, never hotlinked.
 - `resource` must be the canonical MCP URL on authorization and token exchange. Authorization uses `S256`. Register `token_endpoint_auth_method` as `none`, `client_secret_post` or `client_secret_basic`, `grant_types:["authorization_code","refresh_token"]`, `response_types:["code"]`.
 - Codes expire after a minute and are single use. Access tokens expire after an hour. Refresh tokens rotate on every use. Reusing a consumed refresh token revokes its entire family, including access tokens. Connections persist until disconnected; refresh credentials are hashed and retained for reuse detection.

@@ -38,7 +38,9 @@ token; never put it in Expo public variables or app configuration.
 
 The unified release workflow supplies the public helper and mobile DSNs from
 repository variables. A local source helper uses only its explicit environment;
-local development mobile builds do not initialize Sentry. Fly secrets were
+local development mobile builds and native emulators/simulators do not initialize
+Sentry, including release APKs running production OTAs. Web and physical release
+devices retain capture. Fly secrets were
 **staged**, not applied to running machines: firstmate's next server release
 activates them. Merging alone does not deploy this receiver.
 

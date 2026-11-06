@@ -1,0 +1,51 @@
+{
+  "n": 5,
+  "method": "Diagnostic-only candidate JS; fixed-label Date.now console probes. No text, tokens or ids logged. Excluded from the uninstrumented video comparison. UI commit is React layout-effect time, not physical display. Wire-to-JS-ack includes network, server and JS queue.",
+  "samples": [
+    {
+      "sample": 1,
+      "tapToPressMs": 41.364501953125,
+      "pressToAppendMs": 0,
+      "appendToReactCommitMs": 109,
+      "pressToWireMs": 295,
+      "wireToJsAckMs": 239,
+      "tapToJsAckMs": 575.364501953125
+    },
+    {
+      "sample": 2,
+      "tapToPressMs": 32.0185546875,
+      "pressToAppendMs": 1,
+      "appendToReactCommitMs": 96,
+      "pressToWireMs": 359,
+      "wireToJsAckMs": 442,
+      "tapToJsAckMs": 833.0185546875
+    },
+    {
+      "sample": 3,
+      "tapToPressMs": 30.534912109375,
+      "pressToAppendMs": 0,
+      "appendToReactCommitMs": 184,
+      "pressToWireMs": 367,
+      "wireToJsAckMs": 290,
+      "tapToJsAckMs": 687.534912109375
+    },
+    {
+      "sample": 4,
+      "tapToPressMs": 19.739501953125,
+      "pressToAppendMs": 1,
+      "appendToReactCommitMs": 76,
+      "pressToWireMs": 247,
+      "wireToJsAckMs": 310,
+      "tapToJsAckMs": 576.739501953125
+    },
+    {
+      "sample": 5,
+      "tapToPressMs": 26.669189453125,
+      "pressToAppendMs": 0,
+      "appendToReactCommitMs": 78,
+      "pressToWireMs": 311,
+      "wireToJsAckMs": 450,
+      "tapToJsAckMs": 787.669189453125
+    }
+  ]
+}

@@ -10,8 +10,6 @@ import {
 
 export type RoomAgentPresence = AgentPresence & { generationId?: string };
 
-/** Maximum lifetime of reconnect bookkeeping and authenticated online evidence. */
-export const AGENT_PRESENCE_BACKGROUND_GRACE_MS = AGENT_PRESENCE_STALE_MS;
 /** A missing terminal receipt must never leave a dead daemon visibly working forever. */
 export const AGENT_TURN_FRESHNESS_MS = 90_000;
 

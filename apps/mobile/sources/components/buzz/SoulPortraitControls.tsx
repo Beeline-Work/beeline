@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import React, { useEffect, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -103,9 +104,7 @@ export function SoulPortraitControls({
         </Text>
       )}
       {error && (
-        <Text accessibilityRole="alert" style={styles.copy} testID="avatar-generation-error">
-          {error}
-        </Text>
+        <ErrorBanner inline title={error} titleTestID="avatar-generation-error" />
       )}
       {detail.avatarGenerationId && (
         <View testID="avatar-refinement-hint">

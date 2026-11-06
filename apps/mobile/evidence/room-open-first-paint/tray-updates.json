@@ -1,0 +1,251 @@
+{
+  "samples": [
+    {
+      "case": "clear",
+      "sample": 0,
+      "proxy": "commit+rAF",
+      "tapMs": 4757922.499488,
+      "rootCommitMs": 4758260.399191,
+      "rafMs": 4758349.219848,
+      "commitToRafMs": 88.82065700087696,
+      "tapToRafMs": 426.7203600006178,
+      "needsCount": 0
+    },
+    {
+      "case": "undo",
+      "sample": 0,
+      "proxy": "commit+rAF",
+      "tapMs": 4760626.757555,
+      "rootCommitMs": 4760803.302029,
+      "rafMs": 4760912.467997,
+      "commitToRafMs": 109.1659679999575,
+      "tapToRafMs": 285.7104420000687,
+      "needsCount": 1
+    },
+    {
+      "case": "clear",
+      "sample": 1,
+      "proxy": "commit+rAF",
+      "tapMs": 4763520.978768,
+      "rootCommitMs": 4763715.768702,
+      "rafMs": 4763846.08654,
+      "commitToRafMs": 130.3178379992023,
+      "tapToRafMs": 325.10777199920267,
+      "needsCount": 0
+    },
+    {
+      "case": "undo",
+      "sample": 1,
+      "proxy": "commit+rAF",
+      "tapMs": 4766311.346188,
+      "rootCommitMs": 4766497.71108,
+      "rafMs": 4766599.750611,
+      "commitToRafMs": 102.03953099995852,
+      "tapToRafMs": 288.40442299935967,
+      "needsCount": 1
+    },
+    {
+      "case": "clear",
+      "sample": 2,
+      "proxy": "commit+rAF",
+      "tapMs": 4769174.075215,
+      "rootCommitMs": 4769384.583965,
+      "rafMs": 4769475.747951,
+      "commitToRafMs": 91.1639860002324,
+      "tapToRafMs": 301.67273600026965,
+      "needsCount": 0
+    },
+    {
+      "case": "undo",
+      "sample": 2,
+      "proxy": "commit+rAF",
+      "tapMs": 4771887.584268,
+      "rootCommitMs": 4772109.438306,
+      "rafMs": 4772261.178029,
+      "commitToRafMs": 151.73972299974412,
+      "tapToRafMs": 373.59376099985093,
+      "needsCount": 1
+    },
+    {
+      "case": "clear",
+      "sample": 3,
+      "proxy": "commit+rAF",
+      "tapMs": 4774669.900882,
+      "rootCommitMs": 4774952.221914,
+      "rafMs": 4775120.949034,
+      "commitToRafMs": 168.7271199999377,
+      "tapToRafMs": 451.048151999712,
+      "needsCount": 0
+    },
+    {
+      "case": "undo",
+      "sample": 3,
+      "proxy": "commit+rAF",
+      "tapMs": 4777496.17805,
+      "rootCommitMs": 4777680.358971,
+      "rafMs": 4777822.573358,
+      "commitToRafMs": 142.2143870005384,
+      "tapToRafMs": 326.3953080000356,
+      "needsCount": 1
+    },
+    {
+      "case": "clear",
+      "sample": 4,
+      "proxy": "commit+rAF",
+      "tapMs": 4780422.893408,
+      "rootCommitMs": 4780646.462012,
+      "rafMs": 4780852.604038,
+      "commitToRafMs": 206.14202599972486,
+      "tapToRafMs": 429.7106300005689,
+      "needsCount": 0
+    },
+    {
+      "case": "undo",
+      "sample": 4,
+      "proxy": "commit+rAF",
+      "tapMs": 4783272.384706,
+      "rootCommitMs": 4783403.450825,
+      "rafMs": 4783478.561914,
+      "commitToRafMs": 75.11108899954706,
+      "tapToRafMs": 206.17720799986273,
+      "needsCount": 1
+    },
+    {
+      "case": "clear",
+      "sample": 5,
+      "proxy": "commit+rAF",
+      "tapMs": 4785803.260314,
+      "rootCommitMs": 4785909.476802,
+      "rafMs": 4785957.077528,
+      "commitToRafMs": 47.60072600003332,
+      "tapToRafMs": 153.8172140000388,
+      "needsCount": 0
+    },
+    {
+      "case": "undo",
+      "sample": 5,
+      "proxy": "commit+rAF",
+      "tapMs": 4788192.407243,
+      "rootCommitMs": 4788332.714811,
+      "rafMs": 4788411.962468,
+      "commitToRafMs": 79.2476570000872,
+      "tapToRafMs": 219.55522499978542,
+      "needsCount": 1
+    },
+    {
+      "case": "clear",
+      "sample": 6,
+      "proxy": "commit+rAF",
+      "tapMs": 4790703.435197,
+      "rootCommitMs": 4790851.056262,
+      "rafMs": 4790903.152407,
+      "commitToRafMs": 52.09614499937743,
+      "tapToRafMs": 199.71720999944955,
+      "needsCount": 0
+    },
+    {
+      "case": "undo",
+      "sample": 6,
+      "proxy": "commit+rAF",
+      "tapMs": 4793054.471818,
+      "rootCommitMs": 4793183.105457,
+      "rafMs": 4793243.598241,
+      "commitToRafMs": 60.49278400000185,
+      "tapToRafMs": 189.12642300035805,
+      "needsCount": 1
+    },
+    {
+      "case": "clear",
+      "sample": 7,
+      "proxy": "commit+rAF",
+      "tapMs": 4795636.172736,
+      "rootCommitMs": 4795768.808625,
+      "rafMs": 4795838.342219,
+      "commitToRafMs": 69.53359400015324,
+      "tapToRafMs": 202.16948299948126,
+      "needsCount": 0
+    },
+    {
+      "case": "undo",
+      "sample": 7,
+      "proxy": "commit+rAF",
+      "tapMs": 4798088.427632,
+      "rootCommitMs": 4798221.042806,
+      "rafMs": 4798283.140071,
+      "commitToRafMs": 62.09726499952376,
+      "tapToRafMs": 194.71243899967521,
+      "needsCount": 1
+    },
+    {
+      "case": "clear",
+      "sample": 8,
+      "proxy": "commit+rAF",
+      "tapMs": 4800619.888582,
+      "rootCommitMs": 4800890.450666,
+      "rafMs": 4801034.585937,
+      "commitToRafMs": 144.13527099974453,
+      "tapToRafMs": 414.6973550003022,
+      "needsCount": 0
+    },
+    {
+      "case": "undo",
+      "sample": 8,
+      "proxy": "commit+rAF",
+      "tapMs": 4803203.211468,
+      "rootCommitMs": 4803314.6255,
+      "rafMs": 4803364.176513,
+      "commitToRafMs": 49.55101300030947,
+      "tapToRafMs": 160.96504500042647,
+      "needsCount": 1
+    },
+    {
+      "case": "clear",
+      "sample": 9,
+      "proxy": "commit+rAF",
+      "tapMs": 4805753.91735,
+      "rootCommitMs": 4805936.202671,
+      "rafMs": 4806009.872572,
+      "commitToRafMs": 73.66990100033581,
+      "tapToRafMs": 255.95522200036794,
+      "needsCount": 0
+    },
+    {
+      "case": "undo",
+      "sample": 9,
+      "proxy": "commit+rAF",
+      "tapMs": 4808173.798996,
+      "rootCommitMs": 4808307.05796,
+      "rafMs": 4808404.776148,
+      "commitToRafMs": 97.7181879999116,
+      "tapToRafMs": 230.97715200018138,
+      "needsCount": 1
+    }
+  ],
+  "invalidRecords": 0,
+  "summary": {
+    "clear": {
+      "commitToRafMs": {
+        "n": 10,
+        "p50": 88.821,
+        "p95": 206.142
+      },
+      "tapToRafMs": {
+        "n": 10,
+        "p50": 301.673,
+        "p95": 451.048
+      }
+    },
+    "undo": {
+      "commitToRafMs": {
+        "n": 10,
+        "p50": 79.248,
+        "p95": 151.74
+      },
+      "tapToRafMs": {
+        "n": 10,
+        "p50": 219.555,
+        "p95": 373.594
+      }
+    }
+  }
+}

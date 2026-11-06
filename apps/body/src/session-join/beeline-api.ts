@@ -46,11 +46,10 @@ async function request(url: string, body: unknown, headers: Record<string,string
   if(held){if(stream)throw new Error('Held MCP completion mode invalid');admitHeldMcpCompletion(url,body);}
   if(stream&&new URL(url).pathname!=='/mcp/member-stream')throw new Error('MCP member stream route unavailable');
   return fetch(url,{method:stream?'GET':'POST',headers:{'content-type':'application/json',...headers},
-    ...((stream||held)?{dispatcher:memberStreamAgent}:{}),...(!stream?{body:JSON.stringify(body)}:{}),signal:stream ?? cancellation ?? AbortSignal.timeout(60_000)});
+    ...((stream||held)?{dispatcher:memberStreamAgent}:{}),...(!stream?{body:JSON.stringify(body)}:{}),signal:stream ?? cancellation ?? undefined});
 }
-async function postJson(url: string, body: unknown, headers: Record<string, string> = {}, signal?:AbortSignal,timeoutMs=60_000,held=false): Promise<{ status: number; value: Record<string, unknown> }> {
-  const timeout=AbortSignal.timeout(Math.max(1,timeoutMs));
-  const response = await request(url,body,headers,undefined,signal?AbortSignal.any([signal,timeout]):timeout,held);
+async function postJson(url: string, body: unknown, headers: Record<string, string> = {}, signal?:AbortSignal,_timeoutMs=60_000,held=false): Promise<{ status: number; value: Record<string, unknown> }> {
+  const response = await request(url,body,headers,undefined,signal,held);
   const text = await response.text();
   let value: Record<string, unknown> = {};
   try { value = JSON.parse(text) as Record<string, unknown>; } catch { /* not JSON */ }
@@ -185,11 +184,9 @@ export async function* memberStream(session: Pick<JoinedSession,'server'|'cursor
   if(session.streamCursor) url.searchParams.set('cursor',JSON.stringify(session.streamCursor));
   const controller=new AbortController(),abort=()=>controller.abort();
   signal.addEventListener('abort',abort,{once:true});if(signal.aborted)abort();
-  const handshake=setTimeout(abort,60_000);handshake.unref?.();
   let cancel:(()=>Promise<void>)|undefined;
   try{
     const response=await request(url.toString(),undefined,{authorization:`Bearer ${token}`,accept:'application/x-ndjson'},controller.signal);
-    clearTimeout(handshake);
     if(!response.ok || !response.body || !response.headers.get('content-type')?.startsWith('application/x-ndjson'))
       throw new Error(`Beeline member stream unavailable (HTTP ${response.status})`);
     opened();
@@ -198,15 +195,14 @@ export async function* memberStream(session: Pick<JoinedSession,'server'|'cursor
     while(!signal.aborted){
       const next=await reader.read();if(next.done)break;
       buffered+=decoder.decode(next.value,{stream:true});
-      if(Buffer.byteLength(buffered)>2*256*1024)throw new Error('Beeline stream frame exceeds capacity');
       let end:number;
       while((end=buffered.indexOf('\n'))>=0){
         const line=buffered.slice(0,end);buffered=buffered.slice(end+1);
-        if(!line)continue;if(Buffer.byteLength(line)>256*1024)throw new Error('Beeline stream frame exceeds capacity');
+        if(!line)continue;
         yield JSON.parse(line) as unknown;
       }
     }
     if(buffered.trim())throw new Error('Beeline stream ended inside a delivery');
-  } finally {clearTimeout(handshake);signal.removeEventListener('abort',abort);await cancel?.().catch(()=>undefined);}
+  } finally {signal.removeEventListener('abort',abort);await cancel?.().catch(()=>undefined);}
 
 }

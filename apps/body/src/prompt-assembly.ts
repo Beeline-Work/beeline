@@ -11,7 +11,7 @@ import { boundRoomTaskBody, budgetTranscript } from './transcript-budget.js';
 import type { MachineHost } from './machine-host.js';
 import type { KvmAccess } from './kvm-device-access.js';
 import { SITUATIONAL_SKILL_NAMES } from './beeline-skill.js';
-import { placeBeelineApps } from './minimal-tool-surface.js';
+import { agentToolsFor, placeBeelineApps } from './minimal-tool-surface.js';
 
 /**
  * The ONE place Beeline prompt text is written and assembled.
@@ -77,7 +77,8 @@ const EVERYWHERE: readonly PromptSurface[] = PROMPT_SURFACES;
  * required by the largest variant. A denied /dev/kvm adds its one advice
  * line, at most the 320-byte `kvm` section budget.
  */
-export const SESSION_BUDGET_BYTES = 8_011;
+// The canonical tool inventory adds at most 600 bytes.
+export const SESSION_BUDGET_BYTES = 8_611;
 
 /**
  * Whether this session can run shell commands, and why not when it cannot.
@@ -192,7 +193,7 @@ export function cornerHasRepositoryWork(brief?: CornerBrief): boolean {
 
 export const CORNER_RUNTIME_AUTHOR_CONTRACT = `Work in this corner; report blockers or decisions one step up, never recruit Room agents. The current brief's spec, approving order, non-goals and inherited human constraints bound the work; its objective is navigation only. Meet every story and criterion, respect risks and use the file manifest. Before code/build, read the current brief. Any human in the Room can direct you. If a newer human instruction contradicts an earlier one, follow the newer instruction, revise the brief with that message as approval, and state in the corner what changed. Dispatch authorizes work without separate spec/mock approval; produce either first when requested. Deliver artifacts with post_artifact and report without requiring a PR. Claim another agent's progress only from durable commands, the current prompt or tool evidence. No unrequested features or refactors.`;
 
-export const CORNER_AUTHOR_CONTRACT = `Work in this corner; report blockers or decisions one step up, never recruit Room agents. Report status done/blocked/failed/needs_decision must match its text prefix; progress stays here. Worker done requires an opened PR or repositoryWork:false.
+export const CORNER_AUTHOR_CONTRACT = `Work in this corner; report blockers or decisions one step up, never recruit Room agents. Report with status done/blocked/failed/needs_decision and plain text; progress stays here. Worker done requires an opened PR or repositoryWork:false.
 The current brief's stories, criteria, approving order, non-goals and inherited human constraints bound the work; its objective is navigation only. Meet every story, respect risks and use the file manifest. Before code/build, read the current brief. Any human in the Room can direct you. If a newer human instruction contradicts an earlier one, follow the newer instruction, revise the brief with that message as approval, and state in the corner what changed. Dispatch authorizes work without separate spec/mock approval; produce either first when requested.
 Bugfix briefs need a real-target Reproduction <id> or why infeasible and the closest stand-in; done requires that proof to pass.
 Follow beeline-triage. Before PR, prove the user path in the built app/service or, if unavailable, the narrowest script for that path. Inner-function tests/logs/code reads prove no visible result. The PR body needs ## Reproduced and ## Demonstrated: steps, wrong/passing results, same Reproduction <id>, why real-target proof is unavailable and its stand-in. Features: "not a defect report".
@@ -464,11 +465,14 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
       'dm.choices': 'A pick in a DM is a preference, never authority, and polls need an electorate.',
       'core.skills': 'Agents retried refused Beeline tools or guessed at steps a beeline-* skill already covered, because nothing told them to look.',
     },
-    budgetBytes: 1_100,
+    budgetBytes: 1_700,
     layer: 'session',
     surfaces: EVERYWHERE,
-    render: ({ squireAvailable }) =>
+    render: ({ surface, squireAvailable }) =>
       paragraphs(
+        // Native IO and grant-runner tools are optional; this inventory names
+        // only the stable tools mounted by every harness.
+        `Beeline tools: ${agentToolsFor(true, surface === 'dm', CORNERS.includes(surface), surface === 'code-corner', false, true, true).map(tool => '`' + tool.name + '`').join(', ')}.`,
         "For a 📎 file, call read(facet:attachment, messageId, attachmentId) and read its path. Never fetch media URLs; on failure, say you couldn't open it.",
         'Services: use connect(mode:discover) if unclear, then connect(mode:ensure, service, reason, continuation). GitHub: connect(mode:status). Beeline App writes linked repos; no checkout: Room corner. Personal: lookups, no-App repos, person-scoped.',
         squireAvailable === true &&
@@ -528,7 +532,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
           'When asked whether the reviewer was woken, call read(facet:checks) and report reviewerWake; do not invent a cause. Never schedule polls of read(facet:checks) or the merge gate; the server wakes you when it changes.',
         repositoryWork && (reviewer ? CORNER_REVIEWER_AUTHOR_MERGE : cornerMergeInstruction(reviewerHandle)),
         reviewer &&
-          `Reviewer rules: ${CORNER_REVIEWER_SESSION_INSTRUCTION} Findings go to the author, not a commit; never push another agent's branch. This wins over the finished-fix rule. Reject this PR’s redundant tests or assertions weakened or deleted without proof. Remove a test only with a named surviving test catching the same failure under a seeded bug or mutation check. Coverage overlap or "never failed" is not proof.`,
+          `Reviewer rules: ${CORNER_REVIEWER_SESSION_INSTRUCTION} Findings go to the author, not a commit; never push another agent's branch. This wins over the finished-fix rule. Assess actual coverage loss when tests or assertions are changed or deleted. Redundant or obsolete tests may be removed when surviving coverage or other adequate evidence supports the change; a seeded bug or mutation check is optional.`,
       );
     },
   },

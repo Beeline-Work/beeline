@@ -1,3 +1,4 @@
+/** @public The isolated phone dependency tree consumes this client contract. */
 export interface GitHubInstallationAccess {
   installationId: number;
   accountId: string;

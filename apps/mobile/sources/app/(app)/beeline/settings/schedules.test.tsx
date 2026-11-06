@@ -1,7 +1,6 @@
-vi.mock('@/buzz/command-owner', () => ({ activeCommandOwner: () => { throw new Error('Legacy Scheduled Work must not use router command authority'); } }));
 // This suite exercises an installed old-server path, with explicit legacy negotiation.
-vi.mock('@/buzz/router-owner', async () => (await import('@/test-fixtures/legacy-router-owner')).legacyRouterOwner);
-vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
+
+
 vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => undefined) }));
 vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
@@ -295,4 +294,9 @@ it('uses the server DM flag for location and fallback trigger wording, not a mis
   expect(scheduleWhere({}, 'Room', false)).toBe('this Room');
   expect(subscriptionWhen({ source: 'room', event: 'joined' } as any, true)).toBe('On someone joining this DM');
   expect(subscriptionWhen({ source: 'room', event: 'other' } as any, true)).toBe('On an event in this DM');
+});
+
+it('shows paused schedules and subscriptions without claiming a next run', () => {
+  expect(scheduleTrigger({ paused: true } as any)).toBe('Paused while you were away');
+  expect(subscriptionWhen({ paused: true, registrationStatus: 'registering' } as any)).toBe('Paused while you were away');
 });

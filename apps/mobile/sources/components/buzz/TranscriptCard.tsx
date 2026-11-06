@@ -1,3 +1,4 @@
+import { ErrorBanner } from './ErrorBanner';
 import { ContentTarget } from '@/components/buzz/IndexRow';
 import { Button, type ButtonDestination } from '@/components/buzz/Button';
 import { CloseButton } from '@/components/buzz/CloseGlyph';
@@ -459,13 +460,8 @@ export function TranscriptCard({
               {body}
             </SettlingText>
           ) : null}
-          {inlineError ? <InlineRow accessibilityRole="alert" accessibilityLiveRegion="polite" style={styles.inlineError}>
-            <Ionicons name="alert-circle-outline" size={20} color={theme.buzz.dialogDanger} />
-            <View style={styles.errorCopy}>
-              <Text style={styles.errorTitle}>{inlineError.title}</Text>
-              <Text style={styles.errorDescription}>{inlineError.description}</Text>
-            </View>
-          </InlineRow> : null}
+          {inlineError ? <View style={styles.inlineError}><ErrorBanner inline
+            title={inlineError.title} description={inlineError.description} /></View> : null}
           {facts.length ? <View style={[styles.detailInset, styles.facts]}>{facts.map((fact) => (
             <TranscriptFactRow key={fact.label} label={fact.label} value={fact.value} />
           ))}</View> : null}
@@ -799,10 +795,7 @@ const styles = StyleSheet.create((theme) => {
     },
     detailInset: { marginHorizontal: metric.side },
     facts: { marginTop: card.space.sm },
-    inlineError: { flexDirection: 'row', gap: card.space.sm, paddingHorizontal: metric.side, paddingTop: card.space.sm },
-    errorCopy: { flex: 1, minWidth: 0, gap: card.space.xs },
-    errorTitle: { ...card.type.meta, fontFamily: card.proseMedium, color: card.dialogDanger },
-    errorDescription: { ...card.type.meta, color: card.textSecondary },
+    inlineError: { paddingHorizontal: metric.side, paddingTop: card.space.sm },
     bodyPrimary: { color: card.textPrimary },
     bodyCompact: { ...card.type.meta },
     footerWithoutDivider: { borderTopWidth: 0 },

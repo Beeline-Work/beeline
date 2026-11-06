@@ -335,3 +335,96 @@ describe('augmented harness lookup', () => {
     expect(message).toContain('Pi is not installed on this machine (pi)');
   });
 });
+
+import { afterEach as m20_afterEach, describe as m20_describe, expect as m20_expect, it as m20_it, vi as m20_vi } from 'vitest';
+
+import { chmod as m20_chmod, mkdir as m20_mkdir, mkdtemp as m20_mkdtemp, rm as m20_rm, writeFile as m20_writeFile } from 'node:fs/promises';
+
+import { tmpdir as m20_tmpdir } from 'node:os';
+
+import { join as m20_join } from 'node:path';
+
+import {
+  AUTO_DETECT_AGENT_KINDS as m20_AUTO_DETECT_AGENT_KINDS,
+  installedAgentProgramEnvironment as m20_installedAgentProgramEnvironment,
+  missingAgentProgramMessage as m20_missingAgentProgramMessage,
+  explainAgentProgramFailure as m20_explainAgentProgramFailure,
+} from "./agent-command.js";
+
+import { collectConnectWizard as m20_collectConnectWizard, CONNECT_HARNESSES as m20_CONNECT_HARNESSES, type ConnectPrompts as m20_ConnectPrompts } from "./connect-command.js";
+
+import { loadBodyConfig as m20_loadBodyConfig } from "./config.js";
+import { describe as mergedDescribe20 } from 'vitest';
+mergedDescribe20("installed-agent-program.test.ts", () => {
+
+const roots: string[] = [];
+
+m20_afterEach(async () => {
+  await Promise.all(roots.splice(0).map((path) => m20_rm(path, { recursive: true, force: true })));
+});
+
+async function fixture() {
+  const root = await m20_mkdtemp(m20_join(m20_tmpdir(), 'beeline-installed-program-'));
+  roots.push(root);
+  const bin = m20_join(root, 'bin');
+  await m20_mkdir(bin);
+  return { root, bin, env: { HOME: root, PATH: bin, BEELINE_HARNESS_PATH_AUGMENT: '0' } };
+}
+
+m20_describe('installed agent programs', () => {
+  m20_it.each(m20_AUTO_DETECT_AGENT_KINDS)(
+    'stops the wizard before probing a missing %s program',
+    async (kind) => {
+      const { env } = await fixture();
+      const loadModels = m20_vi.fn();
+      const prompts = {
+        select: async (input: { options: { value: string }[] }) => {
+          m20_expect(input.options.map((option) => option.value)).toEqual([...m20_CONNECT_HARNESSES]);
+          return kind;
+        },
+      } as unknown as m20_ConnectPrompts;
+      await m20_expect(
+        m20_collectConnectWizard(
+          prompts,
+          loadModels,
+          { read: async () => undefined, save: async () => {} },
+          env,
+          async () => undefined,
+          { detect: () => [] },
+        ),
+      ).rejects.toThrow(m20_missingAgentProgramMessage(kind));
+      m20_expect(loadModels).not.toHaveBeenCalled();
+    },
+  );
+  m20_it.each([
+    ['claude', 'claude', 'CLAUDE_CODE_EXECUTABLE'],
+    ['codex', 'codex', 'CODEX_PATH'],
+    ['pi', 'pi', 'PI_ACP_PI_COMMAND'],
+  ] as const)('sets the %s adapter launch to the user program', async (kind, binary, variable) => {
+    const { bin, env, root } = await fixture();
+    const program = m20_join(bin, binary);
+    await m20_writeFile(program, '#!/bin/sh\necho 2.0.0\n');
+    await m20_chmod(program, 0o755);
+    const overrides = m20_installedAgentProgramEnvironment(kind, env);
+    m20_expect(overrides).toEqual({ [variable]: program });
+    const config = m20_loadBodyConfig({
+      workspaceRoot: root,
+      agent: { kind, command: m20_join(bin, `${kind}-acp`), args: [] },
+      env: { ...env, BUZZ_DEV_MCP_BIN: '/bin/true', BEELINE_READONLY_MCP_BIN: '/bin/true' },
+    });
+    m20_expect(config.agentEnv[variable]).toBe(program);
+  });
+  m20_it('names the installed Claude version and remedy when an old CLI rejects adapter flags', async () => {
+    const { bin, env } = await fixture();
+    const program = m20_join(bin, 'claude');
+    await m20_writeFile(program, '#!/bin/sh\necho 1.0.0\n');
+    await m20_chmod(program, 0o755);
+    const error = await m20_explainAgentProgramFailure(new Error('unknown option --settings'), {
+      ...env,
+      CLAUDE_CODE_EXECUTABLE: program,
+    });
+    m20_expect(String(error)).toContain('Claude Code 1.0.0 could not start');
+    m20_expect(String(error)).toContain('curl -fsSL https://claude.ai/install.sh | bash');
+  });
+});
+});

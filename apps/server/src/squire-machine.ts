@@ -127,14 +127,19 @@ export async function squireWorkStatus(database: SqlDatabase, agentId: string): 
   if (!row) throw new Error('machine helper not found');
   const report = await machineSquireReport(database, row.owner_id, row.machine_id);
   const work = row.squire_work;
+  const status = work.errorMessage ? 'error' : work.install ? 'installing'
+    : report?.status === 'connected' ? 'connected' : report?.status === 'error' ? 'error' : 'disconnected';
+  const errorMessage = status === 'error' ? work.errorMessage ?? report?.errorMessage : undefined;
+  const steps = work.install || work.errorMessage ? work.steps ?? [] : [];
   return { connectorId: squireMachineAddress(row.machine_id),
-    status: work.errorMessage ? 'error' : work.install ? 'installing'
-      : report?.status === 'connected' ? 'connected' : report?.status === 'error' ? 'error' : 'disconnected',
-    steps: work.install ? work.steps ?? [] : [],
+    status,
+    // Terminal failures must retain a failed step: the phone uses it to start
+    // a new ceremony on Retry instead of merely re-reading the expired one.
+    steps: errorMessage && !steps.some(step => step.status === 'failed')
+      ? [...steps, { label: 'waiting for sign-in', status: 'failed', reason: errorMessage }] : steps,
     ...(row.machine_name ? { helperName: row.machine_name } : {}),
     ...(work.install && work.signIn ? { signIn: work.signIn } : {}),
-    ...(work.errorMessage || report?.errorMessage
-      ? { errorMessage: work.errorMessage ?? report?.errorMessage } : {}) };
+    ...(errorMessage ? { errorMessage } : {}) };
 }
 
 export async function reportSquireWork(database: SqlDatabase, agentId: string,

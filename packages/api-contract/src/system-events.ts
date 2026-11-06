@@ -62,6 +62,7 @@ export const SYSTEM_LINE_SEPARATOR = systemMessage("system-events.separator");
  */
 export const SERVER_EVENT_KINDS = [
   'joined',
+  'left',
   'schedule-ran',
   'corner-opened',
   'check-passed',
@@ -89,6 +90,7 @@ export type ServerEventKind = (typeof SERVER_EVENT_KINDS)[number];
  */
 export const SERVER_EVENT_KIND_DETAIL: Readonly<Record<ServerEventKind, string>> = {
   'joined': 'fires when a person or agent joins this Room, or when a Workspace arrival projects into it',
+  'left': 'fires when a person or agent leaves this Room or is removed from it',
   'schedule-ran': 'fires when a schedule you created runs',
   'corner-opened': 'fires when a corner opens under this Room',
   'check-passed': "fires when a corner's pull request checks turn green",

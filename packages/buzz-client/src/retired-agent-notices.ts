@@ -56,6 +56,7 @@ function isRetiredStructuralNotice(trimmed: string): boolean {
 }
 
 /** Whole-message only: a real response may legitimately quote a notice. */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function isRetiredAgentNotice(text: string): boolean {
   const trimmed = text.trim();
   return RETIRED.has(trimmed) || isRetiredStructuralNotice(trimmed);

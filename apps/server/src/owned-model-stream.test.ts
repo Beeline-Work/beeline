@@ -23,8 +23,16 @@ describe('owned model terminal stream boundary',()=>{
     const stream=new OwnedModelStream();const output=stream.push('data: {"id":"provider","choices":[{"delta":{"tool_calls":[{"id":"tool-id","function":{"name":"read"}}]}}],"usage":{"prompt_tokens":2}}\n\n');
     expect(output.join('')).toContain('tool-id');expect(output.join('')).toContain('"prompt_tokens":2');expect(output.join('')).not.toContain('provider');
   });
+  it('streams a fragmented provider event larger than 256 KiB while preserving usage and stripping provider IDs',()=>{
+    const stream=new OwnedModelStream(),content='Large output ☃ '.repeat(40_000);
+    const event='data: '+JSON.stringify({id:'provider-id',choices:[{delta:{content},finish_reason:'stop'}],usage:{prompt_tokens:1,completion_tokens:2}})+'\n\ndata: [DONE]\n\n';
+    const output:string[]=[];
+    for(let offset=0;offset<event.length;offset+=4096)output.push(...stream.push(event.slice(offset,offset+4096)));
+    expect(stream.complete()).toBe(true);expect(output.join('')).toContain(content);expect(output.join('')).not.toContain('provider-id');
+    expect(stream.terminal('receipt')).toContain('receipt');
+  });
   it('refuses malformed, oversize or post-terminal events without a success delimiter',()=>{
-    for(const input of ['data: []\n\n','data: {"error":{}}\n\n','data: {broken}\n\n','data: '+ 'x'.repeat(256*1024),
+    for(const input of ['data: []\n\n','data: {"error":{}}\n\n','data: {broken}\n\n',
       'data: [DONE]\n\ndata: {}\n\n'])expect(()=>new OwnedModelStream().push(input)).toThrow();
   });
 });

@@ -1,0 +1,419 @@
+vi.mock('@/components/buzz/Button', async () => {
+  const React = await import('react');
+  return { Button: (props: any) => React.createElement('Button', props, React.createElement('Text', null, props.label)) };
+});
+vi.mock('@/components/buzz/WorkspaceSettingsPanel', async () => { const React = await import('react'); return { WORKSPACE_VISIBILITY_LABELS: { public: 'Public', 'invite-only': 'Invite-only' }, default: React.forwardRef((props: object, _ref) => React.createElement('WorkspaceSettings', props)) }; });
+vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
+vi.mock('react-native-keyboard-controller', async () => { const R = await import('react'); return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) }; });
+import { readFileSync } from 'node:fs';
+import * as React from 'react';
+// @ts-expect-error react-test-renderer has no declarations in this workspace.
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Person/agent photo-override darkflight (owner decision, 2026-08-23): their
+// identity marks remain their only avatars. Workspace pictures are controlled
+// separately and must not revive these surfaces.
+
+const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
+const client = vi.hoisted(() => ({
+  listCommunities: vi.fn(async () => []),
+  getGlobalPersonProfile: vi.fn(async () => ({
+    name: 'Captain',
+    avatar: 'https://example.test/captain.png',
+  })),
+}));
+const pushModule = vi.hoisted(() => ({
+  getBuzzPushEnabled: vi.fn(async () => true),
+  getBuzzPushRegistrationState: vi.fn(async () => null),
+  registerBuzzPushNotifications: vi.fn(),
+  setBuzzPushEnabled: vi.fn(),
+}));
+const permissionInfo = vi.hoisted(() => ({
+  getPushPermissionInfo: vi.fn(async () => ({
+    status: 'granted',
+    granted: true,
+    canAskAgain: true,
+  })),
+}));
+const phoneOperation = vi.hoisted(() => vi.fn());
+const identityApi = vi.hoisted(() => ({
+  lookupRecovery: vi.fn(async () => []),
+  lookupManagedIdentity: vi.fn(async () => null),
+}));
+
+vi.mock('expo-router', () => ({
+  router: navigation,
+  useLocalSearchParams: () => ({}),
+  useFocusEffect: (effect: () => void | (() => void)) => React.useEffect(effect, [effect]),
+}));
+vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn() }));
+vi.mock('expo-crypto', () => ({ getRandomBytes: (n: number) => new Uint8Array(n) }));
+vi.mock('expo-linking', () => ({
+  createURL: (path: string) => `beeline://${path}`,
+  addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+}));
+vi.mock('expo-web-browser', () => ({ openAuthSessionAsync: vi.fn() }));
+vi.mock('expo-updates', () => ({
+  isEnabled: false,
+  channel: null,
+  updateId: null,
+  checkForUpdateAsync: vi.fn(),
+  fetchUpdateAsync: vi.fn(),
+  reloadAsync: vi.fn(),
+}));
+vi.mock('expo-haptics', () => ({
+  notificationAsync: vi.fn(async () => undefined),
+  NotificationFeedbackType: { Success: 'SUCCESS', Warning: 'WARNING', Error: 'ERROR' },
+}));
+vi.mock('expo-local-authentication', () => ({
+  hasHardwareAsync: vi.fn(async () => false),
+  isEnrolledAsync: vi.fn(async () => false),
+  supportedAuthenticationTypesAsync: vi.fn(async () => []),
+}));
+vi.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+}));
+vi.mock('qrcode', () => ({ create: vi.fn(() => ({ modules: { size: 0, get: () => 0 } })) }));
+vi.mock('react-native-svg', async () => {
+  const ReactModule = await import('react');
+  const host = (name: string) => (props: React.Attributes) => ReactModule.createElement(name, props);
+  return {
+    Dimensions: { get: () => ({ width: 390, height: 844 }) },
+    default: host('Svg'),
+    Svg: host('Svg'),
+    Path: host('Path'),
+    Rect: host('Rect'),
+    Circle: host('Circle'),
+    Polygon: host('Polygon'),
+    Polyline: host('Polyline'),
+    G: host('G'),
+  };
+});
+vi.mock('@beeline/buzz-client', () => ({
+  adoptGitHubHandle: vi.fn(),
+  buildOidcBindEvent: vi.fn(),
+  finishOidcBind: vi.fn(),
+  fallbackPersonName: (pubkey: string) => `Person ${pubkey.slice(0, 4)}`,
+  isWorkspaceListView: () => true,
+  isWorkspaceView: (value: any) => Array.isArray(value?.members),
+  lookupRecovery: identityApi.lookupRecovery,
+  lookupManagedIdentity: identityApi.lookupManagedIdentity,
+  normalizeNip05Identifier: (value: string) => value.trim().toLowerCase(),
+  normalizePersonHandle: (value: string) => value.trim().toLowerCase() || null,
+  normalizePersonName: (value: string) => value.trim() || null,
+  personHandle: (name: string) => name.toLowerCase(),
+  RoomViewClient: class {
+    workspaces = vi.fn(async () => ({ workspaces: [] }));
+  },
+  startGitHubBind: vi.fn(),
+}));
+vi.mock('@/auth/buzz-identity-storage', () => ({
+  getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
+  loadBuzzIdentity: vi.fn(async () => ({
+    publicKey: 'a'.repeat(64),
+    secretKey: new Uint8Array(32).fill(1),
+  })),
+  loadBuzzIdentityNsecForExport: vi.fn(async () => 'nsec1test'),
+}));
+vi.mock('@/buzz/community-storage', () => ({
+  loadActiveCommunityId: vi.fn(async () => null),
+  watchActiveCommunityId: vi.fn((_pubkey: string, listener: (id: string | null) => void) => {
+    void Promise.resolve(null).then(listener);
+    return () => undefined;
+  }),
+}));
+vi.mock('@/buzz/avatar-upload', () => ({ pickAndUploadAvatar: vi.fn() }));
+vi.mock('@/buzz/person-name', () => ({
+  ensurePersonNameForWorkspace: vi.fn(async () => ({ name: 'Captain' })),
+  loadPreferredPersonName: vi.fn(async () => 'Captain'),
+  savePreferredPersonName: vi.fn(async () => undefined),
+}));
+vi.mock('@/buzz/runtime-config', () => ({
+  getBuzzRuntimeConfig: () => ({
+    relayUrl: 'https://relay.test',
+    pushGatewayUrl: 'https://push.test',
+  }),
+}));
+vi.mock('@/sync/appConfig', () => ({
+  loadAppConfig: () => ({ releaseVersion: 'v0.0.1', releaseSha: null }),
+}));
+vi.mock('@/constants/Typography', () => ({
+  Typography: {
+    default: () => ({}),
+    mono: () => ({}),
+  },
+}));
+vi.mock('@/components/buzz/MonoHull', async () => {
+  const ReactModule = await import('react');
+  const host = (name: string) => (props: React.Attributes) => ReactModule.createElement(name, props);
+  return {
+    HullSurface: host('HullSurface'),
+    PixelGateReveal: host('PixelGateReveal'),
+    PixelLoader: host('PixelLoader'),
+  };
+});
+vi.mock('@/components/buzz/IdentityMark', async () => {
+  const ReactModule = await import('react');
+  return { IdentityMark: (props: React.Attributes) => ReactModule.createElement('IdentityMark', props) };
+});
+vi.mock('@/components/buzz/FacePickerSheet', async () => {
+  const ReactModule = await import('react');
+  return {
+    FacePickerSheet: (props: React.Attributes) => ReactModule.createElement('FacePickerSheet', props),
+  };
+});
+vi.mock('@/components/buzz/BeelineMark', async () => {
+  const ReactModule = await import('react');
+  return { BeelineMark: (props: React.Attributes) => ReactModule.createElement('BeelineMark', props) };
+});
+vi.mock('@/utils/open-external-url', () => ({
+  openExternalUrl: vi.fn(async () => undefined),
+}));
+vi.mock('@/components/buzz/PushLevelSetting', async () => {
+  const ReactModule = await import('react');
+  return {
+    PushLevelSetting: (props: React.Attributes) => ReactModule.createElement('PushLevelSetting', props),
+  };
+});
+vi.mock('@/components/buzz/AppearanceSetting', async () => {
+  const ReactModule = await import('react');
+  return {
+    AppearanceSetting: (props: React.Attributes) => ReactModule.createElement('AppearanceSetting', props),
+  };
+});
+vi.mock('@/components/buzz/UiSizeSetting', async () => {
+  const ReactModule = await import('react');
+  return { UiSizeSetting: (props: React.Attributes) => ReactModule.createElement('UiSizeSetting', props) };
+});
+vi.mock('@/components/buzz/SpeakingSpeedSetting', async () => {
+  const ReactModule = await import('react');
+  return { SpeakingSpeedSetting: (props: React.Attributes) => ReactModule.createElement('SpeakingSpeedSetting', props) };
+});
+vi.mock('@/components/buzz/SettingsRow', async () => {
+  const ReactModule = await import('react');
+  return {
+    SettingsRow: (props: React.Attributes) => ReactModule.createElement('SettingsRow', props as never),
+  };
+});
+// Real @/unistyles boots Unistyles and MMKV-backed local settings, neither of
+// which this screen's own tests exercise or mock elsewhere.
+vi.mock('@/unistyles', () => ({ applyAppearanceChoice: vi.fn(), setAppDisplay: vi.fn() }));
+vi.mock('@/sync/storage', () => ({
+  useLocalSettingMutable: (name: string) => [name === 'appearance' ? 'dark' : 'medium', vi.fn()],
+}));
+vi.mock('@/sync/transport', () => ({
+  BuzzRigTransport: class {
+    ensureClient = vi.fn(async () => client);
+  },
+}));
+vi.mock('@/push/buzz-push-registration', () => pushModule);
+vi.mock('@/push/push-level-storage', () => ({
+  saveStoredPushLevel: vi.fn(async () => undefined),
+  watchStoredPushLevel: () => () => undefined,
+}));
+vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
+vi.mock('@/buzz/identity-live', () => ({ subscribeOwnIdentityChange: () => () => undefined }));
+vi.mock('@/sync/pushRegistration', () => permissionInfo);
+vi.mock('@/buzz/surface-storage', () => {
+  type Address = { endpoint: string; params?: Record<string, unknown> };
+  const values = new Map<string, unknown>();
+  const listeners = new Map<string, Set<() => void>>();
+  const key = (address: Address) => `${address.endpoint}:${JSON.stringify(address.params ?? {})}`;
+  const announce = (address: Address) => listeners.get(key(address))?.forEach((listener) => listener());
+  return {
+    surfaceAddress: (_relay: string, _viewer: string, endpoint: string,
+      params?: Record<string, unknown>) => ({ endpoint, params }),
+    clearMobileSurfaceStorage: () => {
+      values.clear(); listeners.forEach((set) => set.forEach((listener) => listener()));
+    },
+    mobileSurfaceCache: {
+      clear: () => { values.clear(); listeners.forEach((set) => set.forEach((listener) => listener())); },
+      peek: (address: Address) => values.get(key(address)) ?? null,
+      read: async (address: Address) => values.get(key(address)) ?? null,
+      write: async (address: Address, value: unknown) => {
+        values.set(key(address), value); announce(address);
+      },
+      publish: (address: Address, value: unknown) => {
+        values.set(key(address), value); announce(address); return value;
+      },
+      remove: async (address: Address) => { values.delete(key(address)); announce(address); },
+      fetch: async (address: Address, _guard: unknown, request: () => Promise<unknown>) => {
+        const value = await request(); values.set(key(address), value); announce(address); return value;
+      },
+      subscribe: (address: Address, listener: () => void) => {
+        const set = listeners.get(key(address)) ?? new Set<() => void>();
+        set.add(listener); listeners.set(key(address), set);
+        return () => { set.delete(listener); };
+      },
+    },
+  };
+});
+vi.mock('react-native-unistyles', () => ({
+  StyleSheet: {
+    create: (styles: unknown) =>
+      typeof styles === 'function'
+        ? (styles as (theme: unknown) => unknown)({ buzz: beelineThemes.obsidian })
+        : styles,
+  },
+  useUnistyles: () => ({
+    theme: { buzz: { textPrimary: '#fff', bgRaised: '#111', chrome: '#d7af5f' } },
+  }),
+}));
+vi.mock('react-native', async () => {
+  const ReactModule = await import('react');
+  const host = (name: string) => (props: React.Attributes) =>
+    ReactModule.createElement(name, props as never);
+  return {
+    Platform: { OS: 'web', select: (choices: Record<string, unknown>) => choices.default },
+    AppState: {
+      addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+    },
+    ScrollView: host('ScrollView'),
+    Share: { share: vi.fn() },
+    Switch: host('Switch'),
+    Text: host('Text'),
+    TextInput: host('TextInput'),
+    TouchableOpacity: host('TouchableOpacity'),
+    View: host('View'),
+    useWindowDimensions: () => ({ width: 390, height: 844 }),
+    StyleSheet: {
+      create: (styles: unknown) =>
+        typeof styles === 'function'
+          ? (styles as (theme: unknown) => unknown)({ buzz: beelineThemes.obsidian })
+          : styles,
+      flatten: (s: unknown) => s,
+    },
+  };
+});
+
+// The theme has to be live before the screen evaluates, because the mocked
+// StyleSheet.create calls the screen's theme-taking factory as it imports.
+import { beelineThemes } from '@/buzz/groknight';
+import IdentitySettingsScreen from './identity';
+import { mobileSurfaceCache } from '@/buzz/surface-storage';
+import { openExternalUrl } from '@/utils/open-external-url';
+
+const originalConsoleError = console.error;
+
+beforeAll(() => {
+  (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
+  vi.spyOn(console, 'error').mockImplementation((message?: unknown, ...args: unknown[]) => {
+    if (
+      typeof message === 'string' &&
+      (message.startsWith('react-test-renderer is deprecated') || message.includes('act('))
+    ) {
+      return;
+    }
+    originalConsoleError(message, ...args);
+  });
+});
+afterAll(() => vi.restoreAllMocks());
+
+function identitySettings(handle: string | null, providers: Array<{ provider: 'github' | 'google'; login?: string }> = []) {
+  return {
+    identity: { personId: 'a'.repeat(64), face: null, pushLevel: 'attention', handle, name: 'Captain', providers },
+    workspaces: { workspaces: [] },
+  };
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mobileSurfaceCache.clear();
+  phoneOperation.mockImplementation(async (name: string) => {
+    if (name === 'readIdentitySettings') return identitySettings(null);
+    throw new Error(`unexpected operation ${name}`);
+  });
+  identityApi.lookupManagedIdentity.mockResolvedValue(null);
+  client.getGlobalPersonProfile.mockResolvedValue({
+    name: 'Captain',
+    avatar: 'https://example.test/captain.png',
+  });
+});
+
+async function renderScreen(): Promise<ReactTestRenderer> {
+  let renderer!: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(React.createElement(IdentitySettingsScreen));
+    // Profile hydration crosses the identity, relay, and managed-identity
+    // boundaries before it renders its fields.
+    for (let pass = 0; pass < 8; pass += 1) await Promise.resolve();
+  });
+  return renderer;
+}
+
+function renderedText(renderer: ReactTestRenderer): string {
+  return renderer.root
+    .findAllByType('Text')
+    .map((node: any) => (typeof node.props.children === 'string' ? node.props.children : ''))
+    .join(' ');
+}
+
+describe('photo-override darkflight on the settings surfaces', () => {
+  it('keeps picture-setting actions unreachable on human and agent settings', () => {
+    const root = new URL('../../../../../', import.meta.url).pathname;
+    const surfaces = [
+      'sources/app/(app)/beeline/settings/identity.tsx',
+      'sources/app/(app)/beeline/members.tsx',
+    ];
+    const identitySource = readFileSync(`${root}${surfaces[0]}`, 'utf8');
+    expect(identitySource).not.toContain('pickAndUploadAvatar');
+    expect(identitySource).not.toMatch(/set(?:Agent|Person)(?:Avatar|Photo)/);
+    const membersSource = readFileSync(`${root}${surfaces[1]}`, 'utf8');
+    expect(membersSource).not.toContain('pickAndUploadAvatar');
+    expect(membersSource).not.toMatch(/set(?:Agent|Person)(?:Avatar|Photo)/);
+  });
+
+  it('renders no picture-setting UI even when the profile carries a stored photo', async () => {
+    const renderer = await renderScreen();
+
+    const text = renderedText(renderer);
+    expect(text).not.toContain('Your picture');
+    expect(text).not.toContain('Set picture');
+    expect(text).not.toContain('Change picture');
+    expect(text).not.toContain('Use generated mark');
+    expect(text).not.toContain('Cosmetic only');
+    // pickAndUploadAvatar is unreachable from this surface.
+    const { pickAndUploadAvatar } = await import('@/buzz/avatar-upload');
+    expect(pickAndUploadAvatar).not.toHaveBeenCalled();
+  });
+
+  it('shows one GitHub-provisioned identity and no secondary handle controls', async () => {
+    phoneOperation.mockImplementation(async (name: string) => {
+      if (name === 'readIdentitySettings') return identitySettings('octocat', [{ provider: 'github', login: 'octocat' }]);
+      throw new Error(`unexpected operation ${name}`);
+    });
+    const renderer = await renderScreen();
+
+    expect(renderer.root.findByProps({ testID: 'identity-managed-handle' })).toBeDefined();
+    await vi.waitFor(() => {
+      expect(renderedText(renderer)).toContain('octocat');
+    });
+    expect(renderedText(renderer)).toContain('@');
+    expect(
+      renderer.root.findAllByProps({ testID: 'identity-managed-handle' }).length,
+    ).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({ testID: 'identity-person-name-input' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'identity-person-handle-input' })).toHaveLength(
+      0,
+    );
+    expect(renderer.root.findAllByProps({ testID: 'identity-person-nip05-input' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'claim-handle-setting' })).toHaveLength(0);
+
+    act(() => renderer.root.findByProps({ testID: 'identity-managed-handle' }).props.onPress());
+    expect(openExternalUrl).toHaveBeenCalledWith('https://github.com/octocat');
+  });
+  it('does not open a GitHub profile for a Google-only account with an editable handle', async () => {
+    phoneOperation.mockImplementation(async (name: string) => {
+      if (name === 'readIdentitySettings') return identitySettings('octocat', [{ provider: 'google', login: 'octocat@gmail.com' }]);
+      throw new Error(`unexpected operation ${name}`);
+    });
+    const renderer = await renderScreen();
+    await vi.waitFor(() => { expect(renderedText(renderer)).toContain('octocat'); });
+    expect(renderer.root.findByProps({ testID: 'identity-managed-handle' }).props.onPress).toBeUndefined();
+    expect(openExternalUrl).not.toHaveBeenCalled();
+  });
+
+});

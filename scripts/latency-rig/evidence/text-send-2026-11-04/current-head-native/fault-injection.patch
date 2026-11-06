@@ -1,0 +1,45 @@
+diff --git a/apps/mobile/sources/buzz/message-outbox.ts b/apps/mobile/sources/buzz/message-outbox.ts
+index 40996c3a2..13a46742d 100644
+--- a/apps/mobile/sources/buzz/message-outbox.ts
++++ b/apps/mobile/sources/buzz/message-outbox.ts
+@@ -1,3 +1,4 @@
++import Constants from 'expo-constants';
+ import { SignedEventOutbox, type SignedOutboxRecord, type RoomViewMessage } from '@beeline/buzz-client';
+ import type { NostrEvent } from '@beeline/nostr';
+ import type { AgentMessageWriteResult } from '@beeline/api-contract/phone';
+@@ -27,7 +28,34 @@ export class MessageOutbox {
+     reconcile?(ids: ReadonlySet<string>): Promise<void>;
+     rejection(error: unknown): string | undefined;
+     now?: () => number;
+-  }) {}
++  }) {
++    // Native proof fixture only: disarmed in Expo metadata before restarting the process.
++    const durableSave = this.deps.save.bind(this.deps);
++    const enabled = Boolean(Constants.expoConfig?.extra?.app?.nativeEnqueueFault);
++    const proof = globalThis as typeof globalThis & { __nativeEnqueueFaultDone?: boolean };
++    // Retain one unrelated durable record until the fixture is disarmed and restarted.
++    const nativeSend = this.deps.send.bind(this.deps);
++    this.deps.send = async event => {
++      if (enabled && this.get(event.id)?.row.text === 'unrelatedproofBeta') throw new Error('Native proof transient transport hold');
++      return nativeSend(event);
++    };
++    if (this.deps.sendWithCause) {
++      const nativeSendWithCause = this.deps.sendWithCause.bind(this.deps);
++      this.deps.sendWithCause = async (event, cause) => {
++        if (enabled && this.get(event.id)?.row.text === 'unrelatedproofBeta') throw new Error('Native proof transient transport hold');
++        return nativeSendWithCause(event, cause);
++      };
++    }
++
++    this.deps.save = async records => {
++      if (enabled && !proof.__nativeEnqueueFaultDone && records.some(record => record.row.text === 'failureproofBeta')) {
++        proof.__nativeEnqueueFaultDone = true;
++        console.warn('[NATIVE_ENQUEUE_FAULT]', records.find(record => record.row.text === 'failureproofBeta')?.event.id);
++        throw new Error('Injected durable outbox persistence failure');
++      }
++      return durableSave(records);
++    };
++  }
+   private now() { return this.deps.now?.() ?? Date.now(); }
+   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
+   snapshot = () => this.records;

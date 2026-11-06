@@ -5,7 +5,7 @@ import { resolveGrantCommand, isNativeGrantExecutable, resolveGrantScriptExecuta
 import { beelineManagedSkills, runningBeelineReleaseId } from './beeline-skill.js';
 import { builtinBeelineApp } from '@beeline/api-contract/workbench';
 import { Check, Errors } from 'typebox/value';
-import { CAPABILITY_ROUTES, REPOSITORY_ROUTES, SCRATCH_ROUTES, minimalTools, placeBeelineApps, repositoryTools, scratchTools, CAPABILITY_TOOLS, RUNNER_TOOL, SILENT_TOOL } from './minimal-tool-surface.js';
+import { CAPABILITY_ROUTES, REPOSITORY_ROUTES, SCRATCH_ROUTES, agentToolsFor, toolValidationSchema, placeBeelineApps, repositoryTools, CAPABILITY_TOOLS } from './minimal-tool-surface.js';
 import { squireReachCause } from './squire-status.js';
 import { nonhumanSilentWake } from './silent-wake.js';
 /**
@@ -151,29 +151,9 @@ function memorySources(args: JsonObject): unknown[] {
   return args.source_message_ids;
 }
 
-const agentSurface = process.env.BEELINE_MCP_SURFACE === 'agent';
-/** The ordinary surface is stable across warm turns; optional schemas are read through app_tool. */
-export function agentToolsFor(
-  agentSurface: boolean,
-  _directMessage: boolean,
-  cornerTurn = false,
-  repositoryCorner = false,
-  commandRunnerAvailable = true,
-  institutionalMemoryEnabled = true,
-  nativeIoProven = false,
-): ToolDefinition[] {
-  if (!agentSurface) return repositoryTools();
-  const tools = minimalTools(cornerTurn).filter(tool =>
-    institutionalMemoryEnabled || !['search', 'remember'].includes(tool.name));
-  if (commandRunnerAvailable) tools.push(RUNNER_TOOL);
-  // no_reply_needed mounts on every harness: it is the only silence path, so a
-  // nonhuman wake must always be able to end without posting prose. The tool
-  // itself refuses human wakes.
-  tools.push(SILENT_TOOL);
-  if (!nativeIoProven) tools.push(...scratchTools(cornerTurn && !repositoryCorner));
-  return tools;
-}
+export { agentToolsFor } from './minimal-tool-surface.js';
 
+const agentSurface = process.env.BEELINE_MCP_SURFACE === 'agent';
 const TOOLS = agentToolsFor(
   agentSurface,
   process.env.BEELINE_AGENT_DM === '1',
@@ -712,6 +692,8 @@ export function isDaemonNetworkFailure(error: unknown): boolean {
 
 const toolOwedStorage = new AsyncLocalStorage<{ owedMentions?: unknown[] }>();
 
+// This sandboxed stdio process has no machine registration. Its HTTP ingress
+// keeps command authorization in DaemonService without replacing the parent socket.
 async function daemonExecute(name: string, input: JsonObject): Promise<JsonObject> {
   const baseUrl = requiredEnv('BEELINE_DAEMON_BASE_URL');
   const body = JSON.stringify({
@@ -1695,8 +1677,7 @@ const BRIEF_FILE_INERT_MIMES = new Set(['text/html', 'image/svg+xml', 'applicati
 /** File citations, including Markdown links, file URLs and key=value text. */
 const NAMED_PATH = /(?:^|[\s(<[=:])(?:"([^"\n]+)"|'([^'\n]+)'|`([^`\n]+)`|(file:\/\/[^\s`'"()<>\]]+|[^\s`'"()<>\]=:]+))/g;
 
-/** Recognize private paths even when missing or unreadable, so delivery fails
- *  explicitly rather than handing the worker an inaccessible filename. */
+/** Recognize private paths even when missing or unreadable for delivery advice. */
 export function namedPrivateFiles(roots: string[], text: string, includeRelative = false): { named: string; resolved: string }[] {
   const home = process.env.HOME?.trim();
   const found: { named: string; resolved: string }[] = [];
@@ -1732,7 +1713,7 @@ export function namedPrivateFiles(roots: string[], text: string, includeRelative
     try {
       resolved = resolveAttachPath(roots, absolute);
     } catch {
-      // A named path in our roots still needs a refusal if it cannot be read.
+      // A named private path still needs advice if it cannot be read.
       if (!inRoots && !/^(?:~\/|\/(?:tmp|var\/tmp|home|Users|root|private\/var)\/)/.test(path)) continue;
     }
     if (!found.some((file) => file.resolved === resolved)) found.push({ named, resolved });
@@ -1876,20 +1857,12 @@ export async function createSchedule(
   if (!prompt) throw new Error('prompt must be a non-empty string');
   if (prompt.length > 2000) throw new Error('prompt exceeds 2000 characters');
   const { cadence, floored, describe } = parseScheduleCadence(args);
-  const maxRuns = args.maxRuns;
-  if (
-    maxRuns !== undefined &&
-    (typeof maxRuns !== 'number' || !Number.isInteger(maxRuns) || maxRuns < 1)
-  ) {
-    throw new Error('maxRuns must be a positive integer');
-  }
   const created = await deps.execute('createAgentSchedule', {
     roomId: deps.roomId,
     prompt,
     cadence,
     ...(args.title !== undefined ? { title: args.title } : {}),
     ...(stringArg(args, 'workflowName') ? { workflowName: stringArg(args, 'workflowName')! } : {}),
-    ...(maxRuns !== undefined ? { maxRuns } : {}),
   });
   const scheduleId = typeof created.scheduleId === 'string' ? created.scheduleId : 'unknown';
   const floorNote = floored
@@ -1897,7 +1870,6 @@ export async function createSchedule(
     : '';
   return (
     `Schedule ${scheduleId} created: ${describe()}` +
-    (maxRuns !== undefined ? `, ${maxRuns} run${maxRuns === 1 ? '' : 's'}` : '') +
     `; the prompt runs as a mention to you in this Room.` +
     floorNote +
     ' Use wake(action:delete, scheduleId) to remove it.'
@@ -2049,15 +2021,8 @@ export async function updateSchedule(
   if (args.prompt !== undefined && !prompt) throw new Error('prompt must be a non-empty string');
   if (prompt && prompt.length > 2000) throw new Error('prompt exceeds 2000 characters');
   const parsed = args.cadence === undefined ? undefined : parseScheduleCadence(args);
-  const maxRuns = args.maxRuns;
-  if (
-    maxRuns !== undefined &&
-    (typeof maxRuns !== 'number' || !Number.isInteger(maxRuns) || maxRuns < 1)
-  ) {
-    throw new Error('maxRuns must be a positive integer');
-  }
-  if (prompt === undefined && parsed === undefined && maxRuns === undefined && args.title === undefined && !stringArg(args, 'workflowName'))
-    throw new Error('give a prompt, cadence, or maxRuns to change');
+  if (prompt === undefined && parsed === undefined && args.title === undefined && !stringArg(args, 'workflowName'))
+    throw new Error('give a prompt, cadence, title, or workflowName to change');
   const updated = await deps.execute('updateAgentSchedule', {
     roomId: deps.roomId,
     scheduleId,
@@ -2066,7 +2031,6 @@ export async function updateSchedule(
     ...(stringArg(args, 'workflowName') ? { workflowName: stringArg(args, 'workflowName')! } : {}),
     ...(prompt !== undefined ? { prompt } : {}),
     ...(parsed ? { cadence: parsed.cadence } : {}),
-    ...(maxRuns !== undefined ? { maxRuns } : {}),
   });
   const nextRunAt =
     typeof updated.nextRunAt === 'number'
@@ -2407,7 +2371,7 @@ export function connectorOfferDepsFromEnv(): ConnectorOfferDeps {
       headers: { authorization: `Bearer ${relayToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({ ...context, method: 'tools/call',
         params: { name: tool, arguments: args } }),
-      signal: AbortSignal.timeout(120_000),
+      signal: undefined,
     });
     const body = await response.json().catch((error) => {
       if (!response.ok) throw new Error(`Squire relay HTTP ${response.status}`);
@@ -2429,23 +2393,15 @@ export function connectorOfferDepsFromEnv(): ConnectorOfferDeps {
     tailscaleReach: (enabled) => describeTailscaleReach({ enabled, installIfMissing: enabled }),
     // This task relay reaches only the broker on this agent's own machine.
     squireReach: relayUrl && relayToken ? async () => {
-      let connections: Awaited<ReturnType<typeof readVault>>;
       try {
-        connections = await readVault({ call: squireCall! });
+        await readVault({ call: squireCall! });
       } catch (error) {
         // Task authorization and stale turns are not machine failures.
         if (/not authorized|active task|active server command|Squire relay HTTP 403/i.test(
           error instanceof Error ? error.message : ''))
           return { reachable: false, cause: 'Squire status probe was not authorized' };
-        const cause = squireReachCause(error);
-        try {
-          await daemonExecute('postConnectorVault', { connections: [], errorMessage: cause });
-        } catch { /* The live verdict remains useful when its report fails. */ }
-        return { reachable: false, cause };
+        return { reachable: false, cause: squireReachCause(error) };
       }
-      try {
-        await daemonExecute('postConnectorVault', { connections });
-      } catch { /* A failed metadata sync does not change MCP reachability. */ }
       return { reachable: true };
     } : undefined,
   };
@@ -2502,7 +2458,7 @@ async function squireShareEndpoint(sessionId: string): Promise<{ url: string; ex
       headers: { authorization: `Bearer ${relayToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({ ...await activeCommandContext(), method: 'tools/call',
         params: { name: 'operate_share', arguments: { session_id: sessionId } } }),
-      signal: AbortSignal.timeout(30_000),
+      signal: undefined,
     });
     // Only an unparseable body is tolerated; a timeout while reading it is not.
     body = await response.json().catch((error: unknown) => {
@@ -2894,6 +2850,12 @@ function advertisedAgentTool(name: string): ToolDefinition {
   if (!tool) throw new Error(`unknown or unavailable tool: ${name}; use only advertised tools`);
   return tool;
 }
+function validateAdvertisedToolInput(tool: ToolDefinition, args: JsonObject): void {
+  // Restore root combinations while retaining surface-specific restrictions
+  // such as scratch_io without quota. App operations have their own contracts
+  // and may share a name (e.g. workflow read) with an ordinary tool.
+  validateToolInput({ ...tool, inputSchema: { ...toolValidationSchema(tool.name), ...tool.inputSchema } }, args);
+}
 function validateToolInput(tool: ToolDefinition, args: JsonObject): void {
   const requestedAction = args.action;
   if (tool.name === 'search' && typeof args.query === 'string'
@@ -3001,17 +2963,20 @@ async function executeAgentTool(name: string, args: JsonObject, toolCallId: stri
   if (name === 'read' && args.cursor !== undefined &&
       (!args.cursor || typeof args.cursor !== 'object' || Array.isArray(args.cursor)))
     throw new Error('read: pass the returned next object unchanged as cursor');
-  validateToolInput(advertisedAgentTool(name), args);
+  validateAdvertisedToolInput(advertisedAgentTool(name), args);
+  let deliveryWarning = '';
   if (name === 'order' || name === 'report' || name === 'post') {
     const named = namedPrivateFiles(attachRootsFromEnv(), String(args.text ?? ''), true)
       .filter(file => basename(file.named) !== file.named || !attachmentNames.includes(file.named));
-    if (named.length) throw new Error(
-      `the ${name} names ${named.map(file => file.named).join(', ')}, which recipients cannot open; ` +
-      'upload the file with post_artifact and name its attachment instead, or attach it to the target corner brief with revise_corner',
-    );
+    if (named.length) deliveryWarning =
+      `Warning: the ${name} names ${named.map(file => file.named).join(', ')}, which recipients may not be able to open; ` +
+      'upload the file with post_artifact and name its attachment instead, or attach it to the target corner brief with revise_corner.';
   }
   const addressed = { ...args, ...(typeof args.address === 'string' ? { cornerId: args.address } : {}) };
-  const execute = (operation: string, input = args) => executeAgentOperation(operation, input, toolCallId);
+  const execute = async (operation: string, input = args) => {
+    const result = await executeAgentOperation(operation, input, toolCallId);
+    return deliveryWarning ? `${result}\n\n${deliveryWarning}` : result;
+  };
   switch (name) {
     case 'read': {
       const facet = args.facet;
@@ -3139,12 +3104,18 @@ async function executeAgentTool(name: string, args: JsonObject, toolCallId: stri
       if (args.action === 'delete' && args.trigger === undefined && args.scheduleId !== undefined)
         args = { ...args, trigger: 'schedule' };
       // Explicit allowlist: no payload can select an arbitrary daemon operation or recipient.
-      const allowed = new Set(['action', 'trigger', 'address', 'scheduleId', 'subscriptionId', 'prompt', 'cadence', 'maxRuns', 'title', 'when', 'workflowName', 'source', 'event', 'repository', 'channelId', 'channelName', 'kinds']);
+      const allowed = new Set(['action', 'trigger', 'address', 'scheduleId', 'subscriptionId', 'prompt', 'cadence', 'title', 'when', 'workflowName', 'source', 'event', 'repository', 'channelId', 'channelName', 'kinds']);
       if (Object.keys(args).some(key => !allowed.has(key))) throw new Error('wake only manages this agent’s own wake sources');
       if (args.trigger !== 'lifecycle' && args.address !== undefined) throw new Error('address is only supported for lifecycle wakes; schedules and events belong to this place');
       if (args.trigger === 'lifecycle' && !args.address) throw new Error('lifecycle wake requires address');
       const roomId = agentScheduleRoomId();
       const deps = { ...agentScheduleDepsFromEnv(), selfOnly: true };
+      if (args.action === 'pause' || args.action === 'resume') {
+        if (args.trigger === 'lifecycle') throw new Error('pause and resume apply to schedules and subscriptions');
+        return JSON.stringify(await daemonExecute('setAgentWakePaused', { roomId,
+          scheduleId: args.scheduleId as string | undefined, subscriptionId: args.subscriptionId as string | undefined,
+          paused: args.action === 'pause' }));
+      }
       if (args.action === 'list') {
         const [schedules, subscriptions, watches, events] = await Promise.all([
           daemonExecute('listAgentSchedules', { roomId, selfOnly: true }),
@@ -4044,7 +4015,7 @@ export async function withToolOwedContext(work: () => Promise<string>) {
       if (!toolOwedStorage.getStore()?.owedMentions) {
         try {
           const response = await fetch(new URL('/v1/daemon/owed-mentions', requiredEnv('BEELINE_DAEMON_BASE_URL')), {
-            signal: AbortSignal.timeout(5_000),
+            signal: undefined,
             headers: { authorization: `Bearer ${requiredEnv('BEELINE_DAEMON_TOKEN')}` },
           });
           if (response.ok) {
@@ -4105,7 +4076,7 @@ async function handleLine(line: string): Promise<void> {
         const definition = TOOLS.find(tool => tool.name === params.name);
         if (!definition) throw new Error(`unknown or unavailable tool: ${params.name}`);
         if (params.arguments !== undefined && (!params.arguments || typeof params.arguments !== 'object' || Array.isArray(params.arguments))) throw new Error('tool arguments must be an object');
-        validateToolInput(definition, asObject(params.arguments));
+        validateAdvertisedToolInput(definition, asObject(params.arguments));
         return agentSurface
           ? callAgentTool(params.name as string, asObject(params.arguments), toolCallId(params, request.id))
           : callTool(params.name as string, asObject(params.arguments));

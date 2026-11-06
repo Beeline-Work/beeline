@@ -39,26 +39,26 @@ export function StoreUpdateScreen({ minimum, installed, platform }: {
 }
 
 /** Root replacement keeps sign-in, deep links and Android Back behind the gate. */
-export function StoreUpdateGate({ children, fontsReady = true }: { children: React.ReactNode; fontsReady?: boolean }) {
+export function StoreUpdateGate({ children, fontsReady = true, active = true }: { children: React.ReactNode; fontsReady?: boolean; active?: boolean }) {
   const [minimum, setMinimum] = React.useState<MobileMinimum | null>(null);
   const initialCheck = React.useRef(false);
   const lastConnection = React.useRef(-1);
   React.useEffect(() => {
-    if (Platform.OS !== 'android' && Platform.OS !== 'ios') return;
-    let active = true;
+    if (!active || Platform.OS !== 'android' && Platform.OS !== 'ios') return;
+    let mounted = true;
     let generation = 0;
     const check = () => {
       const current = ++generation;
       void checkStoreUpdate()
-        .then(result => { if (active && current === generation) setMinimum(result); });
+        .then(result => { if (mounted && current === generation) setMinimum(result); });
     };
     if (!initialCheck.current) { initialCheck.current = true; check(); }
     const stop = subscribeUpdateConnections(epoch => {
       if (epoch <= lastConnection.current) return;
       lastConnection.current = epoch; check();
     });
-    return () => { active = false; stop(); };
-  }, []);
+    return () => { mounted = false; stop(); };
+  }, [active]);
   React.useEffect(() => {
     if (!minimum || Platform.OS !== 'android') return;
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => true);

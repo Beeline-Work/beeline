@@ -6,7 +6,7 @@ import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { lifecycleItem } from '@/buzz/pr-lifecycle';
 
 /** The corner's current state, anchored beneath the message that requested it. */
-export function CornerOpenedMarker({
+function CornerOpenedMarker({
   title,
   closed = false,
   onOpen,

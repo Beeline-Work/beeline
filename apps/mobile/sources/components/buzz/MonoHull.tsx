@@ -366,7 +366,7 @@ export function HullLivePulse({
  * tense of the copy still reports the state, which is why the motion is allowed
  * to be purely redundant.
  */
-export function HullMechanismReveal({
+function HullMechanismReveal({
   children,
   live,
   style,
@@ -428,7 +428,7 @@ export function HullMechanismReveal({
  * live signal in the product move together rather than beating against
  * each other.
  */
-export function HullMechanismRail({ live }: { live: boolean }) {
+function HullMechanismRail({ live }: { live: boolean }) {
   const rail = <View style={[styles.mechanismRail, live && styles.mechanismRailLive]} />;
   return live ? <HullLivePulse>{rail}</HullLivePulse> : rail;
 }

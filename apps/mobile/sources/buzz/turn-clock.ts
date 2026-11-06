@@ -56,7 +56,7 @@ export function spinnerFrameIndexAt(elapsedMs: number): number {
   return step < count ? step : cycle - step;
 }
 
-export function spinnerFrameAt(elapsedMs: number): string {
+function spinnerFrameAt(elapsedMs: number): string {
   return SPINNER_FRAMES[spinnerFrameIndexAt(elapsedMs)]!;
 }
 

@@ -1,13 +1,10 @@
 import type { SqlDatabase } from './database.js';
 import {
-  askingMessageSql,
   cardExpiresAtSql,
   EXPIRING_CARD_TYPES,
   expiringCardForSql,
   NEEDS_YOU_EXPIRY_HOURS,
-  NEEDS_YOU_LOOKBACK,
   questionForSql,
-  questionLeavesAtSql,
   viewerMemberSql,
 } from './needs-you.js';
 import { notifyDeadlineNoticesSql, POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
@@ -34,12 +31,6 @@ export class DeadlineExpiry {
          WHERE mark.cleared_at IS NULL
            AND mark.first_seen_at>$1::timestamptz-interval '${NEEDS_YOU_EXPIRY_HOURS} hours'
            AND mark.first_seen_at<=$2::timestamptz-interval '${NEEDS_YOU_EXPIRY_HOURS} hours'
-         UNION
-         SELECT m.id,member.identity_id FROM messages m
-         JOIN room_access member ON member.room_id=m.room_id AND member.removed_at IS NULL
-         WHERE ${askingMessageSql('m')}
-           AND m.created_at>$1::timestamptz-${NEEDS_YOU_LOOKBACK}
-           AND m.created_at<=$2::timestamptz-${NEEDS_YOU_LOOKBACK}
        ), questions AS (
        SELECT DISTINCT viewer.id identity_id,room.workspace_id::text workspace_id,room.id::text room_id
        FROM candidates due
@@ -51,7 +42,8 @@ export class DeadlineExpiry {
        LEFT JOIN needs_you_marks mark ON mark.identity_id=viewer.id AND mark.message_id=m.id
        WHERE ${questionForSql('viewer.id')}
          AND ${viewerMemberSql('room.workspace_id', 'viewer.id')}
-         AND ${questionLeavesAtSql()}>$1::timestamptz AND ${questionLeavesAtSql()}<=$2::timestamptz
+         AND mark.first_seen_at+interval '${NEEDS_YOU_EXPIRY_HOURS} hours'>$1::timestamptz
+         AND mark.first_seen_at+interval '${NEEDS_YOU_EXPIRY_HOURS} hours'<=$2::timestamptz
        ), approvals AS (
        SELECT DISTINCT viewer.identity_id,room.workspace_id::text workspace_id,room.id::text room_id
        FROM messages m
@@ -82,9 +74,6 @@ export class DeadlineExpiry {
             WHERE cleared_at IS NULL
               AND first_seen_at>$1::timestamptz-interval '${NEEDS_YOU_EXPIRY_HOURS} hours')
              +interval '${NEEDS_YOU_EXPIRY_HOURS} hours',
-           (SELECT min(created_at) FROM messages
-            WHERE ${askingMessageSql()} AND created_at>$1::timestamptz-${NEEDS_YOU_LOOKBACK})
-             +${NEEDS_YOU_LOOKBACK},
            to_timestamp((SELECT min(${cardExpiresAtSql()}) FROM messages
             WHERE ${EXPIRING_CARD_TYPES} AND deleted_at IS NULL
               AND ${cardExpiresAtSql()}>$2)/1000.0),

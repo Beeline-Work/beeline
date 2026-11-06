@@ -1,0 +1,147 @@
+import * as React from 'react';
+// @ts-expect-error react-test-renderer has no declarations in this workspace.
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+
+vi.mock('react-native-svg', async () => {
+  const ReactModule = await import('react');
+  const host = (name: string) => (props: Record<string, unknown>) =>
+    ReactModule.createElement(name, props, props.children as React.ReactNode);
+  return {
+    default: host('Svg'),
+    Line: host('Line'),
+    Polygon: host('Polygon'),
+  };
+});
+
+vi.mock('react-native', async () => {
+  const ReactModule = await import('react');
+  const host = (name: string) => (props: any) =>
+    ReactModule.createElement(
+      name,
+      props,
+      // Pressable takes a render prop for its press state; every other host
+      // takes plain children.
+      typeof props.children === 'function' ? props.children({ pressed: false }) : props.children,
+    );
+  return {
+    Platform: { OS: 'android', select: (choices: Record<string, unknown>) => choices.default },
+    Pressable: host('Pressable'),
+    StyleSheet: { create: (styles: unknown) => styles },
+    Text: host('Text'),
+    TouchableOpacity: host('TouchableOpacity'),
+    View: host('View'),
+  };
+});
+
+// This component only consumes the ledger's fixed gutter width. Keep the
+// source-level test out of Ledger's animation/native dependency graph.
+vi.mock('./Ledger', () => ({ LEDGER_MARGINALIA_WIDTH: 36 }));
+
+import { WritePermissionOutcome, writePermissionStatusLabel } from './WritePermissionOutcome';
+import brand from '@/buzz/brand.json';
+
+const originalConsoleError = console.error;
+
+beforeAll(() => {
+  (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
+  vi.spyOn(console, 'error').mockImplementation((message?: unknown, ...args: unknown[]) => {
+    if (typeof message === 'string' && message.startsWith('react-test-renderer is deprecated'))
+      return;
+    originalConsoleError(message, ...args);
+  });
+});
+
+afterAll(() => vi.restoreAllMocks());
+
+function render(element: React.ReactElement): ReactTestRenderer {
+  let renderer!: ReactTestRenderer;
+  act(() => {
+    renderer = create(element);
+  });
+  return renderer;
+}
+
+describe('write permission corner outcome', () => {
+  it('inscribes the outcome as one dim line — no border, no fill, no chip', () => {
+    const renderer = render(React.createElement(WritePermissionOutcome, { status: 'denied' }));
+    const [line] = renderer.root.findAllByType('View');
+    expect(line.props.style).not.toHaveProperty('borderWidth');
+    expect(line.props.style).not.toHaveProperty('borderColor');
+    expect(line.props.style).not.toHaveProperty('backgroundColor');
+    expect(line.props.style).not.toHaveProperty('minHeight');
+    // Starts at the prose margin and reserves the same right gutter the
+    // timestamps hang in.
+    expect(line.props.style.paddingHorizontal).toBeUndefined();
+    expect(line.props.style.paddingRight).toBe(36);
+
+    const [status] = renderer.root.findAllByType('Text');
+    expect(status.props.children).toContain('STILL READ-ONLY');
+    const tone = (node: { props: { style: unknown } }) =>
+      (Array.isArray(node.props.style) ? node.props.style : [node.props.style])
+        .filter(Boolean)
+        .reduce(
+          (merged: Record<string, unknown>, style: Record<string, unknown>) => ({
+            ...merged,
+            ...style,
+          }),
+          {},
+        );
+    expect(tone(status).color).toBe('#90909B');
+  });
+
+  it('mutates an approval into one corner link and keeps other outcomes inert', () => {
+    const onOpen = vi.fn();
+    const allowed = render(
+      React.createElement(WritePermissionOutcome, {
+        status: 'allowed',
+        subchannelId: 'new-corner-id',
+        onOpen,
+      }),
+    );
+    const [link] = allowed.root.findAllByProps({ testID: 'write-permission-open-corner' });
+    expect(link).toBeDefined();
+    expect(allowed.root.findAllByType('Svg' as never)).toHaveLength(1);
+    expect(allowed.root.findAllByType('Polygon' as never)[0]!.props.fill).toBe(brand.mark);
+    expect(
+      String(allowed.root.findAllByType('Text').map((node: any) => node.props.children)),
+    ).not.toContain('◇');
+    expect(
+      allowed.root.findAllByType('Text').map((node: any) => node.props.children),
+    ).toEqual(['Corner approved ·', 'View corner']);
+    const resting = link!.props.style({ pressed: false }).filter(Boolean);
+    const pressed = link!.props.style({ pressed: true }).filter(Boolean);
+    expect(Object.assign({}, ...resting).minHeight).toBe(44);
+    expect(Object.assign({}, ...resting).backgroundColor).toBeUndefined();
+    expect(Object.assign({}, ...pressed).backgroundColor).toBeDefined();
+    act(() => link!.props.onPress());
+    expect(onOpen).toHaveBeenCalledOnce();
+
+    for (const status of ['pending', 'denied', 'expired', 'failed'] as const) {
+      const renderer = render(
+        React.createElement(WritePermissionOutcome, { status, subchannelId: 'new-corner-id' }),
+      );
+      expect(renderer.root.findAllByType('Pressable')).toHaveLength(0);
+      expect(renderer.root.findAllByProps({ testID: 'write-permission-open-corner' })).toHaveLength(
+        0,
+      );
+    }
+  });
+
+  it('names every decision plainly, and never claims a corner is open', () => {
+    const label = (props: Parameters<typeof writePermissionStatusLabel>) =>
+      writePermissionStatusLabel(...props);
+    expect(label(['allowed', 'new-corner-id'])).toBe('ALLOWED · OPENING CORNER');
+    expect(label(['pending', undefined, true])).toBe('⊘ A PERSON MUST RESPOND');
+    expect(label(['denied'])).toContain('STILL READ-ONLY');
+    expect(label(['failed'])).toContain('STILL READ-ONLY');
+    expect(label(['expired'])).toContain('STILL READ-ONLY');
+    // Status copy alone never overclaims live state; the approved mutation is
+    // a real navigation affordance bound to the returned corner id.
+    for (const status of ['pending', 'allowed', 'denied', 'expired', 'failed'] as const) {
+      expect(label([status, 'new-corner-id'])).not.toContain('CORNER OPEN');
+    }
+  });
+});

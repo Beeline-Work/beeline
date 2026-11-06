@@ -1,0 +1,30 @@
+[
+  {
+    "case": "under-threshold",
+    "horizontalOffsetPx": 0,
+    "verticalOffsetPx": 0,
+    "quote": false
+  },
+  {
+    "case": "scroll-interrupted",
+    "horizontalOffsetPx": 0,
+    "verticalOffsetPx": 150,
+    "quote": false
+  },
+  {
+    "case": "reply",
+    "horizontalOffsetPx": 0,
+    "verticalOffsetPx": 0,
+    "quote": true
+  },
+  {
+    "case": "corner",
+    "prompt": true,
+    "cancelled": true,
+    "createdCorner": false
+  },
+  {
+    "case": "long-press",
+    "messageActions": true
+  }
+]

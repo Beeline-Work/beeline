@@ -101,49 +101,6 @@ export class AcpRequestError extends Error {
   }
 }
 
-/** Stable startup failure surfaced by bounded functional-update probes. */
-export class AcpRequestTimeoutError extends Error {
-  readonly code = 'ACP_REQUEST_TIMEOUT';
-
-  constructor(
-    readonly method: string,
-    readonly timeoutMs: number,
-    stderrTail = '',
-    readonly inactivity = false,
-    /** What the request was carrying, so "inactivity" is not the whole cause. */
-    detail = '',
-  ) {
-    const meaningful = flattenHarnessCause(stderrTail);
-    const suffix = meaningful ? `; harness stderr: ${meaningful}` : '';
-    super(
-      `ACP ${method} timed out after ${timeoutMs}ms${inactivity ? ' of inactivity' : ''}` +
-        `${detail ? ` (${detail})` : ''}${suffix}`,
-    );
-    this.name = 'AcpRequestTimeoutError';
-  }
-}
-
-// Host traces include completed attempts with 41.4 minutes to first output.
-// Bound idle time (including an abandoned tool) beyond that observed tail.
-export const TURN_BACKSTOP_MS = 45 * 60_000;
-
-export class AcpTurnBackstopError extends Error {
-  override readonly cause = 'turn_backstop';
-  constructor(
-    readonly timeoutMs: number,
-    readonly lastActivity: string,
-    stderrTail = '',
-    detail = '',
-  ) {
-    const meaningful = flattenHarnessCause(stderrTail);
-    super(
-      `turn_backstop: no ACP traffic for ${timeoutMs / 60_000} minutes; last activity: ${lastActivity}` +
-      `${detail ? ` (${detail})` : ''}${meaningful ? `; harness stderr: ${meaningful}` : ''}`,
-    );
-    this.name = 'AcpTurnBackstopError';
-  }
-}
-
 export class AcpRuntimeExitedError extends Error {
   override readonly cause = 'runtime_exited';
   constructor(detail: string) {
@@ -213,20 +170,6 @@ export interface PromptResult {
 /** One `session/prompt` content block: text, or an inline image for a harness that advertises `promptCapabilities.image`. */
 export type AcpPromptBlock =
   { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string };
-
-/**
- * What a prompt is carrying, for a timeout that would otherwise say only
- * "inactivity" (C87). A turn that wedged while holding megabytes of inline
- * image is a different fact from a wedged text turn, and the failure line the
- * Room shows has to name which one it was.
- */
-export function promptPayloadNote(prompt: string | readonly AcpPromptBlock[]): string {
-  if (typeof prompt === 'string') return '';
-  const images = prompt.filter((block) => block.type === 'image');
-  if (!images.length) return '';
-  const bytes = images.reduce((total, block) => total + Math.floor((block.data.length * 3) / 4), 0);
-  return `prompt carried ${images.length} inline image${images.length === 1 ? '' : 's'}, ${Math.round(bytes / 1024)} KB`;
-}
 
 export interface SteerResult {
   runId: string;
@@ -767,14 +710,7 @@ export function toolCallEntries(updates: readonly SessionUpdate[]): ToolCallEntr
 interface Pending {
   resolve: (v: unknown) => void;
   reject: (e: Error) => void;
-  timer?: ReturnType<typeof setTimeout>;
-  /** Idle window used to re-arm `timer` on activity; undefined for non-resettable requests. */
-  idleTimeoutMs?: number;
-  method?: string;
-  /** Named in this request's timeout so the cause is not just "inactivity". */
-  detail?: string;
   sessionId?: string;
-  lastActivity?: string;
 }
 
 /** Claude ACP's negotiated asyncTasks extension keeps background Bash lifecycle
@@ -860,7 +796,6 @@ export class AcpClient extends EventEmitter {
   private readonly useResourceScope: boolean;
   private readonly resourceScopeMemoryMaxBytes?: number;
   private resourceScope?: AcpResourceScope;
-  private resourceScopeUnavailable = false;
   /** A deliberate stop owns its SIGKILL; that exit is never labelled OOM. */
   private stopping = false;
   private readonly mcpLaunchFiles = new McpLaunchFiles();
@@ -945,7 +880,7 @@ export class AcpClient extends EventEmitter {
     this.resourceScopeMemoryMaxBytes = opts.resourceScopeMemoryMaxBytes;
   }
 
-  async start(timeoutMs = 60_000): Promise<void> {
+  async startProcess(): Promise<void> {
     if (this.alive) return;
     this.promptDeliveries.clear();
     this.piDeliveryMarkers.clear();
@@ -980,7 +915,7 @@ export class AcpClient extends EventEmitter {
         // Preserve the spawn error for a missing or inaccessible executable.
       }
     }
-    this.resourceScope = this.useResourceScope && !this.resourceScopeUnavailable
+    this.resourceScope = this.useResourceScope
       ? new AcpResourceScope(this.resourceScopeMemoryMaxBytes) : undefined;
     const launch = this.resourceScope?.launch(this.agentCommand, this.agentArgs, childEnv);
     // Managed adapters are immutable; a candidate install never blocks sessions.
@@ -1006,15 +941,12 @@ export class AcpClient extends EventEmitter {
     this.child.stdout.setEncoding('utf8');
     this.child.stdout.on('data', (chunk: string) => this.onData(chunk));
     const child = this.child;
-    // A harness can close a protocol pipe while its process is still alive.
-    // Let an exit already in progress retain its code/signal and OOM diagnosis.
+    // Pipe closure is process loss even if a wrapper is still resident.
     const pipeClosed = (pipe: string) => {
-      setTimeout(() => {
-        if (this.child === child && this.alive) {
-          const stderr = flattenHarnessCause(this.stderrTail);
-          this.failRuntime(`ACP agent ${this.agentLabel} ${pipe} pipe closed${stderr ? `: ${stderr}` : ''}`);
-        }
-      }, 25);
+      if (this.child === child && this.alive) {
+        const stderr = flattenHarnessCause(this.stderrTail);
+        this.failRuntime(`ACP agent ${this.agentLabel} ${pipe} pipe closed${stderr ? `: ${stderr}` : ''}`);
+      }
     };
     this.child.stdout.on('end', () => pipeClosed('stdout'));
     this.child.stdout.on('close', () => pipeClosed('stdout'));
@@ -1054,28 +986,8 @@ export class AcpClient extends EventEmitter {
               ? { _meta: { jetbrains: { air: { version: 1, capabilities: ['asyncTasks'] } } } } : {}),
           },
         },
-        timeoutMs,
       )) as Record<string, unknown>;
     } catch (error) {
-      // A failed launcher or shebang can close stdin before stderr arrives.
-      if (/EPIPE/.test(String(error)) && this.child?.exitCode === null) {
-        await new Promise<void>((resolve) => {
-          const timer = setTimeout(resolve, 250);
-          this.child?.once('close', () => { clearTimeout(timer); resolve(); });
-        });
-      }
-      const scopeUnavailable = launch && !this.resourceScopeUnavailable &&
-        /(?:Failed to connect to bus|Failed to create bus connection|spawn systemd-run ENOENT)/i
-          .test(`${this.stderrTail}\n${String(error)}`);
-      await this.stop().catch(() => undefined);
-      if (scopeUnavailable) {
-        this.resourceScopeUnavailable = true;
-        this.resourceScope = undefined;
-        this.child = null;
-        this.alive = false;
-        console.warn('[acp] systemd user scope unavailable; starting ACP session in a process group');
-        return this.start(timeoutMs);
-      }
       if (/EPIPE/.test(String(error)) && this.stderrTail.trim()) {
         throw new AcpRuntimeExitedError(`ACP agent ${this.agentLabel}: ${String(error)}: ${flattenHarnessCause(this.stderrTail)}`);
       }
@@ -1121,33 +1033,17 @@ export class AcpClient extends EventEmitter {
   ): Promise<void> {
     const child = this.child;
     this.alive = false;
-    // Exit owns the outcome immediately; diagnostic I/O cannot turn it into
-    // a backstop timeout or keep an already-dead runtime's turn hanging.
-    for (const p of this.pending.values()) this.clearTimer(p);
     const scope = this.resourceScope;
     const memoryLimitLikely = Boolean(scope && !this.stopping &&
       (signal === 'SIGKILL' || code === 137));
-    let oomKilled = false;
-    if (!scope && signal === 'SIGKILL' && !this.stopping) {
-      let diagnosticTimer: ReturnType<typeof setTimeout> | undefined;
-      try {
-        oomKilled = await Promise.race([
-          this.oomKills.consume().catch(() => false),
-          new Promise<boolean>((resolve) => {
-            diagnosticTimer = setTimeout(() => resolve(false), 100);
-          }),
-        ]);
-      } finally {
-        clearTimeout(diagnosticTimer);
-      }
-    }
-    const exitText = oomKilled
-      ? `ACP agent ${this.agentLabel} was killed by the kernel OOM killer (signal=SIGKILL)`
-      : `ACP agent ${this.agentLabel} exited code=${code} signal=${signal}`;
+    const exitText = `ACP agent ${this.agentLabel} exited code=${code} signal=${signal}`;
+    if (!scope && signal === 'SIGKILL' && !this.stopping)
+      void this.oomKills.consume().then(killed => {
+        if (killed) this.emit('stderr', `ACP agent ${this.agentLabel} was killed by the kernel OOM killer`);
+      }).catch(() => undefined);
     const meaningful = flattenHarnessCause(this.stderrTail);
     const stderrSuffix = meaningful ? `: ${meaningful}` : '';
     for (const [, p] of this.pending) {
-      this.clearTimer(p);
       p.reject(memoryLimitLikely
         ? new AcpResourceLimitError(scope!.memoryMaxBytes)
         : new AcpRuntimeExitedError(`${exitText}${stderrSuffix}`));
@@ -1170,15 +1066,15 @@ export class AcpClient extends EventEmitter {
   private failRuntime(detail: string): void {
     this.alive = false;
     for (const p of this.pending.values()) {
-      this.clearTimer(p);
       p.reject(new AcpRuntimeExitedError(detail));
     }
     this.pending.clear();
+    this.emit('exit', { code: null, signal: null });
     if (this.resourceScope) void this.resourceScope.stop().catch((error) =>
       console.error('[acp] resource scope cleanup failed:', error));
   }
 
-  async stop(): Promise<void> {
+  async stopProcess(): Promise<void> {
     const child = this.child;
     const scope = this.resourceScope;
     if (!child && !scope) { this.mcpLaunchFiles.clear(); return; }
@@ -1197,10 +1093,10 @@ export class AcpClient extends EventEmitter {
       await scope.stop();
       if (this.resourceScope === scope) this.resourceScope = undefined;
     } else if (child) {
-      await new Promise<void>((r) => setTimeout(r, 300));
-      try { killChildProcessGroup(child, 'SIGTERM'); } catch { /* ignore */ }
-      await new Promise<void>((r) => setTimeout(r, 500));
+      const exited = !child.pid || child.exitCode !== null || child.signalCode !== null
+        ? Promise.resolve() : new Promise<void>(resolve => child.once('exit', () => resolve()));
       try { killChildProcessGroup(child, 'SIGKILL'); } catch { /* ignore */ }
+      await exited;
     }
     this.mcpLaunchFiles.clear();
     this.child = null;
@@ -1242,7 +1138,6 @@ export class AcpClient extends EventEmitter {
     /** Ask agents with ACP modes to enforce the Body session boundary. */
     mode?: SessionMode;
     /** Bounded startup probes use a shorter fail-fast deadline. */
-    timeoutMs?: number;
   }): Promise<{ sessionId: string; raw: unknown }> {
     const params: Record<string, unknown> = {
       cwd: opts.cwd,
@@ -1278,7 +1173,7 @@ export class AcpClient extends EventEmitter {
       meta.systemPrompt = { append: opts.systemPrompt };
     }
     if (Object.keys(meta).length > 0) params._meta = meta;
-    const raw = (await this.request('session/new', params, opts.timeoutMs ?? 60_000).catch(async error => { throw await explainAgentProgramFailure(error, this.agentEnv); })) as Record<
+    const raw = (await this.request('session/new', params).catch(async error => { throw await explainAgentProgramFailure(error, this.agentEnv); })) as Record<
       string,
       unknown
     >;
@@ -1382,23 +1277,7 @@ export class AcpClient extends EventEmitter {
     await this.request('session/set_mode', { sessionId, modeId: target });
   }
 
-  /**
-   * Run one prompt turn. `timeoutMs` is an idle window, not a hard cap on
-   * turn length: every inbound ACP message for this session re-arms it.
-   * Tool progress re-arms the same bound; an open tool never disables it.
-   * A silent session is cancelled without stopping sibling sessions.
-   * `onChunk` is the ACP-boundary
-   * streaming hook: called for every incremental `agent_message_chunk`
-   * delta as it arrives, so a caller can project live text without waiting
-   * for the turn to finish. A harness that only emits a final message
-   * (never chunks) simply never invokes it — `agentText` is unaffected
-   * either way. `onActivity`, when given, fires on every `session/update`
-   * regardless of kind (the same trigger that re-arms the idle timer above),
-   * so a caller can drive its own shorter "still working" notice off the
-   * identical genuine-activity signal without duplicating the timeout logic.
-   * It receives the current lane snapshot; existing callbacks that ignore
-   * arguments remain valid.
-   */
+  /** Tool progress and process exit arrive through the ACP stream. */
   get hasBackgroundTools(): boolean {
     return this.detachedTools.size > 0;
   }
@@ -1410,7 +1289,6 @@ export class AcpClient extends EventEmitter {
   async sessionPrompt(
     sessionId: string,
     text: string | readonly AcpPromptBlock[],
-    timeoutMs = TURN_BACKSTOP_MS,
     onChunk?: AcpTextChunkHandler,
     onActivity?: AcpStreamHandler,
     onToolCalls?: (calls: readonly ToolCallEntry[]) => void,
@@ -1453,17 +1331,6 @@ export class AcpClient extends EventEmitter {
       endTurn({ stopReason: reason });
       this.sessionCancel(sessionId);
     };
-    const freeAgent = this.agentEnv.BEELINE_FREE_AGENT_ID || this.agentEnv.BEELINE_FREE_AGENT_MODEL_TOKEN;
-    const configuredSeconds = Number(this.agentEnv.BEELINE_FREE_AGENT_MAX_TURN_SECONDS);
-    const maxTurnMs = (Number.isFinite(configuredSeconds) && configuredSeconds > 0 ? configuredSeconds : 900) * 1000;
-    let startedAt = Date.now();
-    if (contextPath) {
-      try {
-        const context = JSON.parse(readFileSync(contextPath, 'utf8'));
-        if (Number.isFinite(context.startedAt)) startedAt = context.startedAt;
-      } catch { /* The prompt timer still bounds a missing context. */ }
-    }
-    const hardTimer = freeAgent ? setTimeout(() => stop('free-agent-time-limit'), Math.max(0, startedAt + maxTurnMs - Date.now())) : undefined;
     const isSilentCall = (call: ToolCallEntry) =>
       /^(?:(?:mcp__)?beeline[-_]agent__|mcp\.beeline-agent\.)?no_reply_needed$/.test(call.title ?? '');
     const silentCallPending = () => toolCallEntries(updates).some(call =>
@@ -1541,27 +1408,20 @@ export class AcpClient extends EventEmitter {
           sessionId,
           prompt: typeof text === 'string' ? [{ type: 'text', text }] : [...text],
         },
-        timeoutMs,
-        true,
-        promptPayloadNote(text),
       )])) as { stopReason?: string };
 
       // Some harnesses return end_turn before background MCP calls finish.
       // Silence is part of this turn, never a detached job or a new trigger.
       if (!terminalReason && silentCallPending()) {
-        let timer: ReturnType<typeof setTimeout> | undefined;
         let runtimeExited: (() => void) | undefined;
         try {
           await Promise.race([terminal, new Promise<void>((resolve, reject) => {
             toolsSettled = resolve;
             runtimeExited = () => reject(new AcpRuntimeExitedError('runtime exited awaiting no_reply_needed result'));
             this.once('exit', runtimeExited);
-            timer = setTimeout(() => reject(new AcpTurnBackstopError(
-              timeoutMs, 'no_reply_needed result',
-            )), timeoutMs);
+            if (!this.alive) runtimeExited();
           })]);
         } finally {
-          if (timer) clearTimeout(timer);
           if (runtimeExited) this.off('exit', runtimeExited);
           toolsSettled = undefined;
         }
@@ -1585,16 +1445,15 @@ export class AcpClient extends EventEmitter {
     } finally {
       this.promptDeliveries.get(sessionId)?.complete(completed);
       if (!completed) this.piSessionInstructions.failed(sessionId);
-      if (hardTimer) clearTimeout(hardTimer);
       watcher?.close();
       for (const [id, pending] of this.pending) {
         if (terminalReason && pending.sessionId === sessionId) {
-          this.clearTimer(pending);
           this.pending.delete(id);
           pending.resolve({ stopReason: terminalReason });
         }
       }
       this.activePromptSessions.delete(sessionId);
+      this.emit('prompt/end', { sessionId });
       if (promptRunId && this.activeRunIds.get(sessionId) === promptRunId) {
         this.activeRunIds.delete(sessionId);
       }
@@ -1619,7 +1478,7 @@ export class AcpClient extends EventEmitter {
    * buzz-agent advertises the target run through ACP session metadata; binding
    * the request to that id prevents a late message from steering a newer turn.
    */
-  async sessionSteer(sessionId: string, text: string, timeoutMs = 60_000): Promise<SteerResult> {
+  async sessionSteer(sessionId: string, text: string): Promise<SteerResult> {
     if (this.supportsStandardSteering) {
       const raw = (await this.request(
         '_session/steering',
@@ -1627,7 +1486,6 @@ export class AcpClient extends EventEmitter {
           sessionId,
           prompt: [{ type: 'text', text }],
         },
-        timeoutMs,
       )) as { outcome?: string };
       if (!raw.outcome || raw.outcome === 'failed') {
         throw new Error('ACP session steering failed');
@@ -1637,7 +1495,7 @@ export class AcpClient extends EventEmitter {
         messageId: raw.outcome,
       };
     }
-    const expectedRunId = await this.waitForActiveRun(sessionId, Math.min(timeoutMs, 5_000));
+    const expectedRunId = await this.waitForActiveRun(sessionId);
     const raw = (await this.request(
       '_goose/unstable/session/steer',
       {
@@ -1645,7 +1503,6 @@ export class AcpClient extends EventEmitter {
         prompt: [{ type: 'text', text }],
         expectedRunId,
       },
-      timeoutMs,
     )) as { runId?: string; messageId?: string };
     if (!raw.runId || !raw.messageId) {
       throw new Error('ACP session steer response missing runId or messageId');
@@ -1689,31 +1546,6 @@ export class AcpClient extends EventEmitter {
     return this.request('session/set_model', { sessionId, modelId });
   }
 
-  private clearTimer(p: Pending): void {
-    if (p.timer) {
-      clearTimeout(p.timer);
-      p.timer = undefined;
-    }
-  }
-
-  /**
-   * Bound silence even when a tool stays open: a missing terminal tool update
-   * must not leave a claimed turn running indefinitely.
-   */
-  private resetPendingIdleTimeout(id: number): void {
-    const p = this.pending.get(id);
-    if (!p || p.idleTimeoutMs === undefined) return;
-    this.clearTimer(p);
-    const { idleTimeoutMs, reject, detail, sessionId, lastActivity } = p;
-    p.timer = setTimeout(() => {
-      this.pending.delete(id);
-      if (sessionId) this.sessionCancel(sessionId);
-      reject(
-        new AcpTurnBackstopError(idleTimeoutMs, lastActivity ?? 'session/prompt', this.stderrTail, detail),
-      );
-    }, idleTimeoutMs);
-  }
-
   private onData(chunk: string): void {
     this.buf += chunk;
     let nl: number;
@@ -1734,27 +1566,12 @@ export class AcpClient extends EventEmitter {
   private handleMessage(msg: Record<string, unknown>): void {
     const id = msg.id;
     const method = msg.method as string | undefined;
-    const params = msg.params as { sessionId?: string; update?: Record<string, unknown> } | undefined;
-    const response = !method && id !== undefined ? this.pending.get(Number(id)) : undefined;
-    const sessionId = params?.sessionId ?? response?.sessionId;
-    if (sessionId) {
-      for (const [requestId, pending] of this.pending) {
-        if (pending.method !== 'session/prompt' || pending.sessionId !== sessionId) continue;
-        const update = params?.update;
-        pending.lastActivity = typeof update?.sessionUpdate === 'string'
-          ? update.sessionUpdate
-          : method ?? `response:${response?.method ?? 'request'}`;
-        this.resetPendingIdleTimeout(requestId);
-      }
-    }
-
     // Response to our request.
     if (id !== undefined && !method) {
       const n = Number(id);
       const p = this.pending.get(n);
       if (!p) return;
       this.pending.delete(n);
-      this.clearTimer(p);
       if (msg.error) {
         const err = msg.error as { code?: number; message?: string; data?: { details?: unknown } };
         const details =
@@ -1866,9 +1683,10 @@ export class AcpClient extends EventEmitter {
       : undefined;
   }
 
-  private waitForActiveRun(sessionId: string, timeoutMs: number): Promise<string> {
+  private waitForActiveRun(sessionId: string): Promise<string> {
     const current = this.activeRunIds.get(sessionId);
     if (current) return Promise.resolve(current);
+    if (!this.activePromptSessions.has(sessionId)) return Promise.reject(new Error('No active prompt to steer'));
 
     return new Promise((resolve, reject) => {
       const onUpdate = (update: SessionUpdate) => {
@@ -1878,14 +1696,15 @@ export class AcpClient extends EventEmitter {
         cleanup();
         resolve(runId);
       };
-      const timer = setTimeout(() => {
-        cleanup();
-        reject(new Error(`ACP session ${sessionId} has no active run to steer`));
-      }, timeoutMs);
+      const exited = () => { cleanup(); reject(new AcpRuntimeExitedError('runtime exited before an active run was advertised')); };
+      const ended = (event: { sessionId: string }) => { if (event.sessionId === sessionId) { cleanup(); reject(new Error('Prompt ended before an active run was advertised')); } };
       const cleanup = () => {
-        clearTimeout(timer);
         this.off('session/update', onUpdate);
+        this.off('exit', exited);
+        this.off('prompt/end', ended);
       };
+      this.on('prompt/end', ended);
+      this.once('exit', exited);
       this.on('session/update', onUpdate);
     });
   }
@@ -1956,38 +1775,15 @@ export class AcpClient extends EventEmitter {
     });
   }
 
-  /** Prompt backstops reset on session traffic; other requests use a fixed deadline. */
-  private request(
-    method: string,
-    params: unknown,
-    timeoutMs = 60_000,
-    backstop = false,
-    detail = '',
-  ): Promise<unknown> {
-    if (!this.child || !this.alive) {
-      return Promise.reject(new Error('AcpClient not started'));
-    }
+  /** Responses and transport loss settle requests; silence never starts a retry. */
+  private request(method: string, params: unknown): Promise<unknown> {
+    if (!this.child || !this.alive)
+      return Promise.reject(new AcpRuntimeExitedError('ACP process is not running'));
     const id = this.nextId++;
-    const payload = { jsonrpc: '2.0', id, method, params };
     return new Promise((resolve, reject) => {
-      const timer = backstop ? undefined : setTimeout(() => {
-        this.pending.delete(id);
-        reject(
-          new AcpRequestTimeoutError(method, timeoutMs, this.stderrTail, false, detail),
-        );
-      }, timeoutMs);
       const sessionId = (params as { sessionId?: string })?.sessionId;
-      this.pending.set(id, {
-        resolve,
-        reject,
-        timer,
-        method,
-        ...(sessionId ? { sessionId } : {}),
-        ...(detail ? { detail } : {}),
-        ...(backstop ? { idleTimeoutMs: timeoutMs, lastActivity: method } : {}),
-      });
-      if (backstop) this.resetPendingIdleTimeout(id);
-      this.write(payload);
+      this.pending.set(id, { resolve, reject, ...(sessionId ? { sessionId } : {}) });
+      this.write({ jsonrpc: '2.0', id, method, params });
     });
   }
 

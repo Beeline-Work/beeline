@@ -15,7 +15,7 @@
   "scripts": {
     "clean": "node ../../scripts/clean-dist.mjs",
     "build": "npm run clean && tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit --incremental --tsBuildInfoFile .typecheck.tsbuildinfo",
     "test": "vitest run",
     "test:build-clean": "mkdir -p dist/read-model && touch dist/read-model/stale && npm run build && test ! -e dist/read-model/stale",
     "format:check": "prettier --check src package.json README.md",

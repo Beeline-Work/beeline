@@ -112,21 +112,6 @@ function isPiAcpCommand(agentCommand: string | undefined): boolean {
 }
 
 /**
- * True when `session/new`'s `mcpServers` actually reaches the model's tools.
- * Fail-closed: an unknown or retired harness must not claim delivery it does
- * not perform. `cursor-agent-acp` is the unfinished stub; `cursor-acp-bridge`
- * writes the servers into the isolated cursor home before spawning.
- */
-export function harnessMountsSessionMcpServers(agentCommand: string | undefined): boolean {
-  if (!agentCommand) return false;
-  if (isPiAcpCommand(agentCommand)) return false;
-  if (/(^|[/\\])cursor-agent-acp(\.[a-z]+)?$/i.test(agentCommand)) return false;
-  return /(^|[/\\])(claude-(agent|code)-acp|codex-acp|grok|buzz-agent|cursor-acp-bridge)(\.[a-z]+)?$/i.test(
-    agentCommand,
-  );
-}
-
-/**
  * The extension source for one session's servers.
  *
  * Pure and exported so tests can run the bridge against real stdio processes.
@@ -245,22 +230,14 @@ function callServer(server, request, signal, timeoutMs) {
     let settled = false;
     let buffer = '';
     let stderr = '';
-    let timer;
     const finish = (error, value) => {
       if (settled) return;
       settled = true;
-      if (timer) clearTimeout(timer);
       signal?.removeEventListener?.('abort', onAbort);
       child.kill('SIGKILL');
       if (error) rejectPromise(error); else resolvePromise(value);
     };
     const onAbort = () => finish(new Error(server.name + ' call cancelled'));
-    if (timeoutMs) {
-      timer = setTimeout(
-        () => finish(new Error(server.name + ' did not answer in ' + timeoutMs + 'ms')),
-        timeoutMs,
-      );
-    }
     if (signal) {
       if (signal.aborted) { onAbort(); return; }
       signal.addEventListener?.('abort', onAbort, { once: true });
@@ -313,6 +290,8 @@ function callServer(server, request, signal, timeoutMs) {
 }
 
 // Read the turn file for each call: a live Pi session serves multiple requesters.
+// This generated harness child has no machine registration; keep its closed
+// Squire permission check at the server's command-authorized HTTP ingress.
 async function authorizeSquire(signal) {
   const env = SERVERS.find((server) => server.name === 'beeline-agent')?.env;
   if (!env?.BEELINE_DAEMON_BASE_URL || !env.BEELINE_DAEMON_TOKEN || !env.BEELINE_TURN_CONTEXT_FILE)
@@ -320,13 +299,12 @@ async function authorizeSquire(signal) {
   const context = JSON.parse(await readFile(env.BEELINE_TURN_CONTEXT_FILE, 'utf8'));
   if (![context.roomId, context.requestId, context.generationId].every((value) => typeof value === 'string' && value.length > 0))
     throw new Error('Squire requires an active server command.');
-  const timeout = AbortSignal.timeout(20000);
   const response = await fetch(new URL('/v1/daemon/operations/authorizeSquireCall', env.BEELINE_DAEMON_BASE_URL), {
     method: 'POST',
     headers: { authorization: 'Bearer ' + env.BEELINE_DAEMON_TOKEN, 'content-type': 'application/json',
       'x-beeline-helper-version': env.BEELINE_HELPER_VERSION || 'v0.0.0' },
     body: JSON.stringify({ roomId: context.roomId, requestId: context.requestId, generationId: context.generationId }),
-    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    signal,
   });
   if (!response.ok) throw new Error('Squire authorization is unavailable.');
   const result = await response.json();

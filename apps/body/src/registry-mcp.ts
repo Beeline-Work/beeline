@@ -355,7 +355,7 @@ export async function installRegistryMcp(input: {
             resource: stored.resourceIndicator,
             ...(stored.clientSecret ? { client_secret: stored.clientSecret } : {}),
           }),
-          signal: AbortSignal.timeout(20_000),
+          signal: undefined,
         },
         guard,
         transport,
@@ -408,7 +408,7 @@ export async function installRegistryMcp(input: {
               clientInfo: { name: 'Beeline', version: '1' },
             },
           }),
-          signal: AbortSignal.timeout(20_000),
+          signal: undefined,
         },
         guard,
         transport,
@@ -431,7 +431,7 @@ export async function installRegistryMcp(input: {
       await assertNotOwnMachine(resourceMetadataUrl, remoteIsOwnMachine, resolveHost);
       const resourceResponse = await guardedFetch(
         resourceMetadataUrl,
-        { signal: AbortSignal.timeout(10_000) },
+        { signal: undefined },
         guard,
         transport,
       );
@@ -446,7 +446,7 @@ export async function installRegistryMcp(input: {
       for (const metadataUrl of authorizationServerMetadataUrls(authorizationServer)) {
         const candidate = await guardedFetch(
           metadataUrl,
-          { signal: AbortSignal.timeout(10_000) },
+          { signal: undefined },
           guard,
           transport,
         );
@@ -487,7 +487,7 @@ export async function installRegistryMcp(input: {
             response_types: ['code'],
             token_endpoint_auth_method: 'none',
           }),
-          signal: AbortSignal.timeout(20_000),
+          signal: undefined,
         },
         guard,
         transport,
@@ -636,7 +636,7 @@ async function refresh(state: ConnectedState, transport: typeof fetch): Promise<
         ...(state.resourceIndicator ? { resource: state.resourceIndicator } : {}),
         ...(state.clientSecret ? { client_secret: state.clientSecret } : {}),
       }),
-      signal: AbortSignal.timeout(20_000),
+      signal: undefined,
     },
     (target) => assertNotOwnMachine(target, remoteIsOwnMachine, resolveHostAddresses),
     transport,
@@ -796,7 +796,7 @@ export class RegistryMcpHostBroker {
         ...(cached ? { 'mcp-session-id': cached } : {}),
       },
       body: line,
-      signal: AbortSignal.timeout(120_000),
+      signal: undefined,
     });
     if (!response.ok) {
       // 404 is the streamable-HTTP signal that this session id is gone. A
@@ -900,7 +900,6 @@ async function brokerRequest(socketPath: string, request: BrokerRequest): Promis
     const socket = createConnection(socketPath);
     let output = '';
     socket.setEncoding('utf8');
-    socket.setTimeout(125_000, () => socket.destroy(new Error('Registry MCP broker timed out')));
     socket.on('connect', () => socket.end(JSON.stringify(request)));
     socket.on('data', (chunk) => {
       output += chunk;

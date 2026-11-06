@@ -1,6 +1,7 @@
 /** Only known causes reach chat or the Workbench; provider payloads may hold secrets. */
 export function squireReachCause(error: unknown): string {
   const message = error instanceof Error ? error.message : '';
+  if (/"code"\s*:\s*"reconnect_required"/.test(message)) return 'Squire account sign-in required';
   if (/broker unavailable/i.test(message)) return 'Squire broker unavailable';
   if (/ECONNREFUSED/.test(message) || (error instanceof Error &&
       (error.cause as { code?: string } | undefined)?.code === 'ECONNREFUSED'))

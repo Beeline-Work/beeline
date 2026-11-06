@@ -1,5 +1,4 @@
 import { appErrorCopy } from '@/buzz/app-error-copy';
-import { connectionErrorDescription } from '@/buzz/app-error-copy';
 import { HullDialogActions } from '@/components/buzz/HullDialog';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useTextDraft } from '@/buzz/use-text-draft';
@@ -9,7 +8,6 @@ import * as Clipboard from 'expo-clipboard';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { router, useFocusEffect, type Href } from 'expo-router';
 import {
-  SurfaceRefreshScheduler,
   isWorkspaceView,
   type BuzzClient,
   type WorkspaceView,
@@ -160,7 +158,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
   const [errorRow, setErrorRow] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retryGeneration, setRetryGeneration] = useState(0);
-  const workspaceSchedulerRef = useRef<SurfaceRefreshScheduler<WorkspaceView | null> | null>(null);
+  const readWorkspaceRef = useRef<(() => Promise<void>) | null>(null);
   // The Room names come from the app-level Room list, which owns its watch and reads.
   const chatList = useChatList(chatListKey, { onError: (reason) => setError(appErrorCopy(reason)) });
 
@@ -236,7 +234,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
-      let workspaceScheduler: SurfaceRefreshScheduler<WorkspaceView | null> | undefined;
+      let readWorkspace: (() => Promise<void>) | undefined;
       if (paintedWorkspaceId.current !== communityId) {
         setLoading(true);
         setWorkspaceAddress(null);
@@ -274,31 +272,36 @@ function WorkspaceSettings({ workspaceId }, ref) {
           if (cancelled) return;
           setClient(currentClient);
           const http = new RoomViewClient({ baseUrl: currentRelayUrl, identity: currentIdentity });
-          workspaceScheduler = new SurfaceRefreshScheduler({
-            fetch: () => mobileSurfaceCache.fetch(address, isWorkspaceView, () => http.workspace(communityId)),
-            apply: (value) => {
+          readWorkspace = async () => {
+            if (cancelled) return;
+            try {
+              const value = await mobileSurfaceCache.fetch(address, isWorkspaceView, () =>
+                http.workspace(communityId),
+              );
+              if (cancelled) return;
+
               // Null: an eviction overtook the read; there is nothing to paint.
               if (!value) return;
               setLoading(false);
               setError(null);
-            },
-            onError: (reason) => {
-              setLoading(false);
-              setError(appErrorCopy(reason));
-            },
-          });
-          workspaceSchedulerRef.current = workspaceScheduler;
-          await workspaceScheduler.startAfter(Promise.resolve());
+            } catch (reason) {
+              if (!cancelled) {
+                setLoading(false);
+                setError(appErrorCopy(reason));
+              }
+            }
+          };
+          readWorkspaceRef.current = readWorkspace;
+          await readWorkspace();
         } catch (caught) {
           if (!cancelled) setError(appErrorCopy(caught, `Could not load ${WORKSPACE_LABEL} settings.`));
         } finally {
-          if (!cancelled && !workspaceScheduler) setLoading(false);
+          if (!cancelled && !readWorkspace) setLoading(false);
         }
       })();
       return () => {
         cancelled = true;
-        workspaceScheduler?.dispose();
-        workspaceSchedulerRef.current = null;
+        readWorkspaceRef.current = null;
       };
     }, [communityId, retryGeneration]),
   );
@@ -312,7 +315,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
     try {
       await client.renameCommunity(communityId, workspaceName);
       clearWorkspace();
-      workspaceSchedulerRef.current?.force();
+      void readWorkspaceRef.current?.();
       setRenamingWorkspace(false);
     } catch (caught) {
       setError(appErrorCopy(caught, `Could not rename ${WORKSPACE_LABEL}.`));
@@ -330,7 +333,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
       const avatar = await pickAndUploadAvatar(client);
       if (!avatar) return;
       await client.setCommunityAvatar(communityId, avatar);
-      workspaceSchedulerRef.current?.force();
+      void readWorkspaceRef.current?.();
     } catch (caught) {
       setError(appErrorCopy(caught, `Could not set ${WORKSPACE_LABEL} picture.`));
     } finally {
@@ -347,7 +350,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
     setError(null);
     try {
       await client.setCommunityAvatar(communityId, '');
-      workspaceSchedulerRef.current?.force();
+      void readWorkspaceRef.current?.();
     } catch (caught) {
       setError(appErrorCopy(caught, `Could not reset ${WORKSPACE_LABEL} picture.`));
     } finally {
@@ -364,7 +367,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
       setError(null);
       try {
         await client.setCommunityVisibility(communityId, visibility);
-        workspaceSchedulerRef.current?.force();
+        void readWorkspaceRef.current?.();
       } catch (caught) {
         setError(appErrorCopy(caught, `Could not change ${WORKSPACE_LABEL} visibility.`));
       } finally {
@@ -384,7 +387,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
       setError(null);
       try {
         await monolithPhoneOperation('updateRoom', { roomId: room.id, visibility });
-        workspaceSchedulerRef.current?.force();
+        void readWorkspaceRef.current?.();
         if (chatListKey) refreshChatList(chatListKey);
       } catch (caught) {
         setError(appErrorCopy(caught, `Could not change ${ROOM_LABEL} visibility.`));
@@ -474,10 +477,10 @@ function WorkspaceSettings({ workspaceId }, ref) {
   return (
     <View style={styles.container}>
       {!workspaceView ? (
-        <SettingsRow title={error ?? `Could not load ${WORKSPACE_LABEL} settings`} description={connectionErrorDescription} action="Retry" onPress={() => setRetryGeneration((value) => value + 1)} testID="workspace-settings-retry" />
+        error === '' ? null : <SettingsRow title={error ?? `Could not load ${WORKSPACE_LABEL} settings`}  action="Retry" onPress={() => setRetryGeneration((value) => value + 1)} testID="workspace-settings-retry" />
       ) : (
         <View testID={canManageWorkspace ? 'workspace-settings-manage' : 'workspace-settings-read-only'}>
-          {error && !errorRow ? <SettingsRow title={error} description={connectionErrorDescription} action="Retry" onPress={() => setRetryGeneration((value) => value + 1)} /> : null}
+          {error && !errorRow ? <SettingsRow title={error}  action="Retry" onPress={() => setRetryGeneration((value) => value + 1)} /> : null}
           <View testID="workspace-overview-settings">
             <RoomListSectionHeader title="General" inset="content" />
             {canManageWorkspace ? (
@@ -579,7 +582,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
                     setWorkingKey('fix-sweep');
                     setError(null);
                     void monolithPhoneOperation('updateWorkspace', { workspaceId: communityId, allowFixSweep })
-                      .then(() => workspaceSchedulerRef.current?.force())
+                      .then(() => void readWorkspaceRef.current?.())
                       .catch((caught) => setError(appErrorCopy(caught, `Could not update Allow fix sweep.`)))
                       .finally(() => setWorkingKey(null));
                   },

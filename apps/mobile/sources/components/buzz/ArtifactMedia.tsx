@@ -1,3 +1,4 @@
+import { IndexRow } from '@/components/buzz/IndexRow';
 import { useArtifactRecoveryGeneration } from '@/buzz/use-artifact-recovery';
 import React, { useEffect, useState } from 'react';
 import { Image, ScrollView, Text, View } from 'react-native';
@@ -62,8 +63,8 @@ export function ArtifactImage({
   }, [attachment, fit, recovery]);
   if (failed) {
     return (
-      <View style={[styles.placeholder, style]} testID="artifact-image-failed">
-        <Text style={styles.placeholderText}>The image could not be loaded. Try again.</Text>
+      <View style={[styles.failureInset, style]} testID="artifact-image-failed">
+        <IndexRow inset="flush" title="Image unavailable" description={"The image could not be loaded. Try again."} />
       </View>
     );
   }
@@ -131,8 +132,8 @@ export function ArtifactText({
   }, [attachment, crop, recovery]);
   if (failed) {
     return (
-      <View style={styles.placeholder} testID="artifact-text-failed">
-        <Text style={styles.placeholderText}>The file could not be loaded. Try again.</Text>
+      <View style={styles.failureInset} testID="artifact-text-failed">
+        <IndexRow inset="flush" title="File unavailable" description={"The file could not be loaded. Try again."} />
       </View>
     );
   }
@@ -160,6 +161,7 @@ export function ArtifactText({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  failureInset: { paddingHorizontal: theme.buzz.roomList.edge },
   placeholder: {
     flex: 1,
     alignItems: 'center',

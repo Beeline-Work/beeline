@@ -1,0 +1,1738 @@
+{
+  "old": {
+    "n": 24,
+    "p50Ms": 136.594899,
+    "p95Ms": 202.782926,
+    "samples": [
+      {
+        "sample": 1,
+        "token": "sendproofSAA",
+        "tapBeforeNs": 150514420000000,
+        "tapAfterNs": 150514440000000,
+        "tapBeforeElapsedNs": 150514420000000,
+        "tapAfterElapsedNs": 150514440000000,
+        "wallTapBeforeNs": 1793775794181904558,
+        "wallTapAfterNs": 1793775794216252986,
+        "firstFrame": 17,
+        "firstFrameNs": 150514852882926,
+        "previousFrameNs": 150514842603926,
+        "visibleAfterTapBeforeMs": 432.882926,
+        "visibleAfterTapAfterMs": 412.882926,
+        "frameGapMs": 10.279,
+        "recognition": [
+          {
+            "frame": 3,
+            "ms": -57.559074,
+            "text": "sendproofRDD\n sendproofRDE\n sendproofRDF"
+          },
+          {
+            "frame": 4,
+            "ms": 112.155926,
+            "text": "sendproofRDD\n sendproofRDE\n sendproofRDF"
+          },
+          {
+            "frame": 5,
+            "ms": 141.091926,
+            "text": "sendproofRDD\n sendproofRDE\n sendproofRDF"
+          },
+          {
+            "frame": 6,
+            "ms": 151.173926,
+            "text": "sendproofRDD\n sendproofRDE\n sendproofRDF"
+          },
+          {
+            "frame": 7,
+            "ms": 179.367926,
+            "text": "sendproofRDD\n sendproofRDE\n sendproofRDF"
+          },
+          {
+            "frame": 8,
+            "ms": 192.460926,
+            "text": "sendprooftRDD\n sendproofRDE\n sendproofRDF"
+          },
+          {
+            "frame": 9,
+            "ms": 213.424926,
+            "text": "sendprooftRDD\n sendproofRDE\n sendproofRDF"
+          },
+          {
+            "frame": 10,
+            "ms": 246.258926,
+            "text": "sendproofRDE\n sendproofRDF\n WED4NOV"
+          },
+          {
+            "frame": 11,
+            "ms": 263.444926,
+            "text": "sendproofRDE\n sendproofRDF\n WED4NOV"
+          },
+          {
+            "frame": 12,
+            "ms": 282.625926,
+            "text": "sendproofRDE\n sendproofRDF\n WED4NOV"
+          },
+          {
+            "frame": 13,
+            "ms": 302.539926,
+            "text": "sendproofRDE\n sendproofRDF\n WED4NOV"
+          },
+          {
+            "frame": 14,
+            "ms": 314.602926,
+            "text": "sendproofRDE\n sendproofRDF\n WED4NOV"
+          },
+          {
+            "frame": 15,
+            "ms": 394.338926,
+            "text": "sendproofRDE\n sendproofRDF\n WED4NOV"
+          },
+          {
+            "frame": 16,
+            "ms": 422.603926,
+            "text": "sendproofRDF\n WED4NOV\n a TURMRmeotmcee"
+          },
+          {
+            "frame": 17,
+            "ms": 432.882926,
+            "text": "WED4NOV\n B PlayReview\n sendproofSAA"
+          }
+        ],
+        "label": "SA"
+      },
+      {
+        "sample": 2,
+        "token": "sendproofSAB",
+        "tapBeforeNs": 150517330000000,
+        "tapAfterNs": 150517360000000,
+        "tapBeforeElapsedNs": 150517330000000,
+        "tapAfterElapsedNs": 150517360000000,
+        "wallTapBeforeNs": 1793775797092164237,
+        "wallTapAfterNs": 1793775797128841464,
+        "firstFrame": 51,
+        "firstFrameNs": 150517487186926,
+        "previousFrameNs": 150517279501926,
+        "visibleAfterTapBeforeMs": 157.186926,
+        "visibleAfterTapAfterMs": 127.186926,
+        "frameGapMs": 207.685,
+        "recognition": [
+          {
+            "frame": 50,
+            "ms": -50.498074,
+            "text": "WED4NOV\n BS PlayReview\n sendproofSAA"
+          },
+          {
+            "frame": 51,
+            "ms": 157.186926,
+            "text": "PlayReview\n sendproofSAA\n sendproofSAB"
+          }
+        ],
+        "label": "SA"
+      },
+      {
+        "sample": 3,
+        "token": "sendproofSAC",
+        "tapBeforeNs": 150520340000000,
+        "tapAfterNs": 150520360000000,
+        "tapBeforeElapsedNs": 150520340000000,
+        "tapAfterElapsedNs": 150520360000000,
+        "wallTapBeforeNs": 1793775800101616312,
+        "wallTapAfterNs": 1793775800133034201,
+        "firstFrame": 102,
+        "firstFrameNs": 150520542782926,
+        "previousFrameNs": 150520519088926,
+        "visibleAfterTapBeforeMs": 202.782926,
+        "visibleAfterTapAfterMs": 182.782926,
+        "frameGapMs": 23.694,
+        "recognition": [
+          {
+            "frame": 95,
+            "ms": -91.327074,
+            "text": "PlayReview\n sendproofSAA\n sendproofSAB"
+          },
+          {
+            "frame": 96,
+            "ms": 60.557926,
+            "text": "PlayReview\n sendproofSAA\n sendproofSAB"
+          },
+          {
+            "frame": 97,
+            "ms": 92.201926,
+            "text": "PlayReview\n sendproofSAA\n sendproofSAB"
+          },
+          {
+            "frame": 98,
+            "ms": 109.929926,
+            "text": "PlayReview\n sendproofSAA\n sendproofSAB"
+          },
+          {
+            "frame": 99,
+            "ms": 127.233926,
+            "text": "PlayReview\n sendproofSAA\n sendproofSAB"
+          },
+          {
+            "frame": 100,
+            "ms": 153.807926,
+            "text": "PlayReview\n sendproofSAA\n sendproofSAB"
+          },
+          {
+            "frame": 101,
+            "ms": 179.088926,
+            "text": "PlayReview\n sendproofSAA\n sendproofSAB"
+          },
+          {
+            "frame": 102,
+            "ms": 202.782926,
+            "text": "sendproofSAA\n sendproofSAB\n sendproofSAC"
+          }
+        ],
+        "label": "SA"
+      },
+      {
+        "sample": 4,
+        "token": "sendproofSAD",
+        "tapBeforeNs": 150523160000000,
+        "tapAfterNs": 150523180000000,
+        "tapBeforeElapsedNs": 150523160000000,
+        "tapAfterElapsedNs": 150523180000000,
+        "wallTapBeforeNs": 1793775802921253324,
+        "wallTapAfterNs": 1793775802953507654,
+        "firstFrame": 145,
+        "firstFrameNs": 150523314577926,
+        "previousFrameNs": 150523145345926,
+        "visibleAfterTapBeforeMs": 154.577926,
+        "visibleAfterTapAfterMs": 134.577926,
+        "frameGapMs": 169.232,
+        "recognition": [
+          {
+            "frame": 144,
+            "ms": -14.654074,
+            "text": "sendproofSAA\n sendproofSAB\n sendproofSAC"
+          },
+          {
+            "frame": 145,
+            "ms": 154.577926,
+            "text": "sendproofSAB\n sendproofSAC\n sendproofSAD"
+          }
+        ],
+        "label": "SA"
+      },
+      {
+        "sample": 5,
+        "token": "sendproofSAE",
+        "tapBeforeNs": 150526540000000,
+        "tapAfterNs": 150526550000000,
+        "tapBeforeElapsedNs": 150526540000000,
+        "tapAfterElapsedNs": 150526550000000,
+        "wallTapBeforeNs": 1793775806298100374,
+        "wallTapAfterNs": 1793775806326872510,
+        "firstFrame": 191,
+        "firstFrameNs": 150526667133926,
+        "previousFrameNs": 150526447420926,
+        "visibleAfterTapBeforeMs": 127.133926,
+        "visibleAfterTapAfterMs": 117.133926,
+        "frameGapMs": 219.713,
+        "recognition": [
+          {
+            "frame": 190,
+            "ms": -92.579074,
+            "text": "sendproofSAB\n sendproofSAC\n sendproofSAD"
+          },
+          {
+            "frame": 191,
+            "ms": 127.133926,
+            "text": "sendproofSAC\n sendproofSAD\n sendproofSAE"
+          }
+        ],
+        "label": "SA"
+      },
+      {
+        "sample": 6,
+        "token": "sendproofSAF",
+        "tapBeforeNs": 150529330000000,
+        "tapAfterNs": 150529360000000,
+        "tapBeforeElapsedNs": 150529330000000,
+        "tapAfterElapsedNs": 150529360000000,
+        "wallTapBeforeNs": 1793775809095559096,
+        "wallTapAfterNs": 1793775809132085384,
+        "firstFrame": 242,
+        "firstFrameNs": 150529515095926,
+        "previousFrameNs": 150529480407926,
+        "visibleAfterTapBeforeMs": 185.095926,
+        "visibleAfterTapAfterMs": 155.095926,
+        "frameGapMs": 34.688,
+        "recognition": [
+          {
+            "frame": 236,
+            "ms": -280.365074,
+            "text": "sendproofSAC\n sendproofSAD\n sendproofSAE"
+          },
+          {
+            "frame": 237,
+            "ms": 15.555926,
+            "text": "sendproofSAC\n sendproofSAD\n sendproofSAE"
+          },
+          {
+            "frame": 238,
+            "ms": 65.701926,
+            "text": "sendproofSAC\n sendproofSAD\n sendproofSAE"
+          },
+          {
+            "frame": 239,
+            "ms": 103.459926,
+            "text": "sendproofSAC\n sendproofSAD\n sendproofSAE"
+          },
+          {
+            "frame": 240,
+            "ms": 118.243926,
+            "text": "sendproofSAC\n sendproofSAD\n sendproofSAE"
+          },
+          {
+            "frame": 241,
+            "ms": 150.407926,
+            "text": "sendproofSAC\n sendproofSAD\n sendproofSAE"
+          },
+          {
+            "frame": 242,
+            "ms": 185.095926,
+            "text": "sendproofSAD\n sendproofSAE\n sendproofSAF"
+          }
+        ],
+        "label": "SA"
+      },
+      {
+        "sample": 1,
+        "token": "sendproofSBA",
+        "tapBeforeNs": 150558680000000,
+        "tapAfterNs": 150558700000000,
+        "tapBeforeElapsedNs": 150558680000000,
+        "tapAfterElapsedNs": 150558700000000,
+        "wallTapBeforeNs": 1793775838439982284,
+        "wallTapAfterNs": 1793775838477895340,
+        "firstFrame": 5,
+        "firstFrameNs": 150558811132891,
+        "previousFrameNs": 150558713293891,
+        "visibleAfterTapBeforeMs": 131.132891,
+        "visibleAfterTapAfterMs": 111.132891,
+        "frameGapMs": 97.839,
+        "recognition": [
+          {
+            "frame": 3,
+            "ms": -468.290109,
+            "text": "sendproofTlAD\n sendproofTAE\n sendproofTAF"
+          },
+          {
+            "frame": 4,
+            "ms": 33.293891,
+            "text": "sendproofTlAD\n sendproofTAE\n sendproofTAF"
+          },
+          {
+            "frame": 5,
+            "ms": 131.132891,
+            "text": "sendproofTAE\n sendprooftlAF\n sendproofSBA"
+          }
+        ],
+        "label": "SB"
+      },
+      {
+        "sample": 2,
+        "token": "sendproofSBB",
+        "tapBeforeNs": 150561480000000,
+        "tapAfterNs": 150561500000000,
+        "tapBeforeElapsedNs": 150561480000000,
+        "tapAfterElapsedNs": 150561500000000,
+        "wallTapBeforeNs": 1793775841245116075,
+        "wallTapAfterNs": 1793775841276674989,
+        "firstFrame": 51,
+        "firstFrameNs": 150561615467891,
+        "previousFrameNs": 150561463437891,
+        "visibleAfterTapBeforeMs": 135.467891,
+        "visibleAfterTapAfterMs": 115.467891,
+        "frameGapMs": 152.03,
+        "recognition": [
+          {
+            "frame": 50,
+            "ms": -16.562109,
+            "text": "sendproofITAE\n sendprooftlAF\n sendproofSBA"
+          },
+          {
+            "frame": 51,
+            "ms": 135.467891,
+            "text": "sendprooftlAF\n sendproofSBA\n sendproofSBB"
+          }
+        ],
+        "label": "SB"
+      },
+      {
+        "sample": 3,
+        "token": "sendproofSBC",
+        "tapBeforeNs": 150564180000000,
+        "tapAfterNs": 150564200000000,
+        "tapBeforeElapsedNs": 150564180000000,
+        "tapAfterElapsedNs": 150564200000000,
+        "wallTapBeforeNs": 1793775843945083223,
+        "wallTapAfterNs": 1793775843975764768,
+        "firstFrame": 89,
+        "firstFrameNs": 150564316221891,
+        "previousFrameNs": 150564163162891,
+        "visibleAfterTapBeforeMs": 136.221891,
+        "visibleAfterTapAfterMs": 116.221891,
+        "frameGapMs": 153.059,
+        "recognition": [
+          {
+            "frame": 88,
+            "ms": -16.837109,
+            "text": "sendprooftlAF\n sendproofSBA\n sendproofSBB"
+          },
+          {
+            "frame": 89,
+            "ms": 136.221891,
+            "text": "sendproofSBA\n sendproofSBB\n sendproofSBC"
+          }
+        ],
+        "label": "SB"
+      },
+      {
+        "sample": 4,
+        "token": "sendproofSBD",
+        "tapBeforeNs": 150566900000000,
+        "tapAfterNs": 150566930000000,
+        "tapBeforeElapsedNs": 150566900000000,
+        "tapAfterElapsedNs": 150566930000000,
+        "wallTapBeforeNs": 1793775846663534063,
+        "wallTapAfterNs": 1793775846701777538,
+        "firstFrame": 134,
+        "firstFrameNs": 150567033741891,
+        "previousFrameNs": 150566929370891,
+        "visibleAfterTapBeforeMs": 133.741891,
+        "visibleAfterTapAfterMs": 103.741891,
+        "frameGapMs": 104.371,
+        "recognition": [
+          {
+            "frame": 132,
+            "ms": -118.887109,
+            "text": "sendproofSBA\n sendproofSBB\n sendproofSBC"
+          },
+          {
+            "frame": 133,
+            "ms": 29.370891,
+            "text": "sendproofSBA\n sendproofSBB\n sendproofSBC"
+          },
+          {
+            "frame": 134,
+            "ms": 133.741891,
+            "text": "sendproofSBB\n sendproofSBC\n sendproofSBD"
+          }
+        ],
+        "label": "SB"
+      },
+      {
+        "sample": 5,
+        "token": "sendproofSBE",
+        "tapBeforeNs": 150569670000000,
+        "tapAfterNs": 150569690000000,
+        "tapBeforeElapsedNs": 150569670000000,
+        "tapAfterElapsedNs": 150569690000000,
+        "wallTapBeforeNs": 1793775849429935294,
+        "wallTapAfterNs": 1793775849460978534,
+        "firstFrame": 179,
+        "firstFrameNs": 150569802744891,
+        "previousFrameNs": 150569697249891,
+        "visibleAfterTapBeforeMs": 132.744891,
+        "visibleAfterTapAfterMs": 112.744891,
+        "frameGapMs": 105.495,
+        "recognition": [
+          {
+            "frame": 177,
+            "ms": -174.052109,
+            "text": "sendproofSBB\n sendproofSBC\n sendproofSBD"
+          },
+          {
+            "frame": 178,
+            "ms": 27.249891,
+            "text": "sendproofSBB\n sendproofSBC\n sendproofSBD"
+          },
+          {
+            "frame": 179,
+            "ms": 132.744891,
+            "text": "sendproofSBC\n sendproofSBD\n sendproofSBE"
+          }
+        ],
+        "label": "SB"
+      },
+      {
+        "sample": 6,
+        "token": "sendproofSBF",
+        "tapBeforeNs": 150572390000000,
+        "tapAfterNs": 150572410000000,
+        "tapBeforeElapsedNs": 150572390000000,
+        "tapAfterElapsedNs": 150572410000000,
+        "wallTapBeforeNs": 1793775852155266423,
+        "wallTapAfterNs": 1793775852183918890,
+        "firstFrame": 224,
+        "firstFrameNs": 150572532032891,
+        "previousFrameNs": 150572446482891,
+        "visibleAfterTapBeforeMs": 142.032891,
+        "visibleAfterTapAfterMs": 122.032891,
+        "frameGapMs": 85.55,
+        "recognition": [
+          {
+            "frame": 222,
+            "ms": -160.686109,
+            "text": "sendproofSBC\n sendproofSBD\n sendproofSBE"
+          },
+          {
+            "frame": 223,
+            "ms": 56.482891,
+            "text": "sendproofSBC\n sendproofSBD\n sendproofSBE"
+          },
+          {
+            "frame": 224,
+            "ms": 142.032891,
+            "text": "sendproofSBD\n sendproofSBE\n sendproofSBF"
+          }
+        ],
+        "label": "SB"
+      },
+      {
+        "sample": 1,
+        "token": "sendproofSCA",
+        "tapBeforeNs": 150602510000000,
+        "tapAfterNs": 150602530000000,
+        "tapBeforeElapsedNs": 150602510000000,
+        "tapAfterElapsedNs": 150602530000000,
+        "wallTapBeforeNs": 1793775882270790589,
+        "wallTapAfterNs": 1793775882309525529,
+        "firstFrame": 5,
+        "firstFrameNs": 150602668075899,
+        "previousFrameNs": 150602547711899,
+        "visibleAfterTapBeforeMs": 158.075899,
+        "visibleAfterTapAfterMs": 138.075899,
+        "frameGapMs": 120.364,
+        "recognition": [
+          {
+            "frame": 3,
+            "ms": -461.449101,
+            "text": "sendproofIlBD\n sendproofITBE\n sendproofTBF"
+          },
+          {
+            "frame": 4,
+            "ms": 37.711899,
+            "text": "sendproofIlBD\n sendproofITBE\n sendproofTBF"
+          },
+          {
+            "frame": 5,
+            "ms": 158.075899,
+            "text": "sendproofITBE\n sendproofIlBF\n sendproofSCA"
+          }
+        ],
+        "label": "SC"
+      },
+      {
+        "sample": 2,
+        "token": "sendproofSCB",
+        "tapBeforeNs": 150605330000000,
+        "tapAfterNs": 150605340000000,
+        "tapBeforeElapsedNs": 150605330000000,
+        "tapAfterElapsedNs": 150605340000000,
+        "wallTapBeforeNs": 1793775885087550112,
+        "wallTapAfterNs": 1793775885116457169,
+        "firstFrame": 49,
+        "firstFrameNs": 150605459651899,
+        "previousFrameNs": 150605297351899,
+        "visibleAfterTapBeforeMs": 129.651899,
+        "visibleAfterTapAfterMs": 119.651899,
+        "frameGapMs": 162.3,
+        "recognition": [
+          {
+            "frame": 48,
+            "ms": -32.648101,
+            "text": "sendproofTBE\n sendproofIlBF\n sendproofSCA"
+          },
+          {
+            "frame": 49,
+            "ms": 129.651899,
+            "text": "sendproofIlBF\n sendproofSCA\n sendproofSCB"
+          }
+        ],
+        "label": "SC"
+      },
+      {
+        "sample": 3,
+        "token": "sendproofSCC",
+        "tapBeforeNs": 150607970000000,
+        "tapAfterNs": 150607990000000,
+        "tapBeforeElapsedNs": 150607970000000,
+        "tapAfterElapsedNs": 150607990000000,
+        "wallTapBeforeNs": 1793775887732105843,
+        "wallTapAfterNs": 1793775887768768216,
+        "firstFrame": 92,
+        "firstFrameNs": 150608095948899,
+        "previousFrameNs": 150607994109899,
+        "visibleAfterTapBeforeMs": 125.948899,
+        "visibleAfterTapAfterMs": 105.948899,
+        "frameGapMs": 101.839,
+        "recognition": [
+          {
+            "frame": 90,
+            "ms": -37.620101,
+            "text": "sendproofIlBF\n sendproofSCA\n sendproofSCB"
+          },
+          {
+            "frame": 91,
+            "ms": 24.109899,
+            "text": "sendproofIlBF\n sendproofSCA\n sendproofSCB"
+          },
+          {
+            "frame": 92,
+            "ms": 125.948899,
+            "text": "sendproofSCA\n sendproofSCB\n sendproofSCC"
+          }
+        ],
+        "label": "SC"
+      },
+      {
+        "sample": 4,
+        "token": "sendproofSCD",
+        "tapBeforeNs": 150610740000000,
+        "tapAfterNs": 150610750000000,
+        "tapBeforeElapsedNs": 150610740000000,
+        "tapAfterElapsedNs": 150610750000000,
+        "wallTapBeforeNs": 1793775890497023813,
+        "wallTapAfterNs": 1793775890526990045,
+        "firstFrame": 138,
+        "firstFrameNs": 150610867422899,
+        "previousFrameNs": 150610782433899,
+        "visibleAfterTapBeforeMs": 127.422899,
+        "visibleAfterTapAfterMs": 117.422899,
+        "frameGapMs": 84.989,
+        "recognition": [
+          {
+            "frame": 136,
+            "ms": -160.885101,
+            "text": "sendproofSCA\n sendproofSCB\n sendproofSCC"
+          },
+          {
+            "frame": 137,
+            "ms": 42.433899,
+            "text": "sendproofSCA\n sendproofSCB\n sendproofSCC"
+          },
+          {
+            "frame": 138,
+            "ms": 127.422899,
+            "text": "sendproofSCB\n sendproofSCC\n sendproofSCD"
+          }
+        ],
+        "label": "SC"
+      },
+      {
+        "sample": 5,
+        "token": "sendproofSCE",
+        "tapBeforeNs": 150613380000000,
+        "tapAfterNs": 150613390000000,
+        "tapBeforeElapsedNs": 150613380000000,
+        "tapAfterElapsedNs": 150613390000000,
+        "wallTapBeforeNs": 1793775893137483349,
+        "wallTapAfterNs": 1793775893165623609,
+        "firstFrame": 179,
+        "firstFrameNs": 150613518082899,
+        "previousFrameNs": 150613431717899,
+        "visibleAfterTapBeforeMs": 138.082899,
+        "visibleAfterTapAfterMs": 128.082899,
+        "frameGapMs": 86.365,
+        "recognition": [
+          {
+            "frame": 177,
+            "ms": -182.610101,
+            "text": "sendproofSCB\n sendproofSCC\n sendproofSCD"
+          },
+          {
+            "frame": 178,
+            "ms": 51.717899,
+            "text": "sendproofSCB\n sendproofSCC\n sendproofSCD"
+          },
+          {
+            "frame": 179,
+            "ms": 138.082899,
+            "text": "sendproofSCC\n sendproofSCD\n sendproofSCE"
+          }
+        ],
+        "label": "SC"
+      },
+      {
+        "sample": 6,
+        "token": "sendproofSCF",
+        "tapBeforeNs": 150616040000000,
+        "tapAfterNs": 150616070000000,
+        "tapBeforeElapsedNs": 150616040000000,
+        "tapAfterElapsedNs": 150616070000000,
+        "wallTapBeforeNs": 1793775895804630582,
+        "wallTapAfterNs": 1793775895840014581,
+        "firstFrame": 220,
+        "firstFrameNs": 150616176594899,
+        "previousFrameNs": 150616065207899,
+        "visibleAfterTapBeforeMs": 136.594899,
+        "visibleAfterTapAfterMs": 106.594899,
+        "frameGapMs": 111.387,
+        "recognition": [
+          {
+            "frame": 218,
+            "ms": -124.438101,
+            "text": "sendproofSCC\n sendproofSCD\n sendproofSCE"
+          },
+          {
+            "frame": 219,
+            "ms": 25.207899,
+            "text": "sendproofSCC\n sendproofSCD\n sendproofSCE"
+          },
+          {
+            "frame": 220,
+            "ms": 136.594899,
+            "text": "sendproofSCD\n sendproofSCE\n sendproofSCF"
+          }
+        ],
+        "label": "SC"
+      },
+      {
+        "sample": 1,
+        "token": "sendproofSDA",
+        "tapBeforeNs": 150645830000000,
+        "tapAfterNs": 150645860000000,
+        "tapBeforeElapsedNs": 150645830000000,
+        "tapAfterElapsedNs": 150645860000000,
+        "wallTapBeforeNs": 1793775925594543877,
+        "wallTapAfterNs": 1793775925633680470,
+        "firstFrame": 5,
+        "firstFrameNs": 150645971368889,
+        "previousFrameNs": 150645866971889,
+        "visibleAfterTapBeforeMs": 141.368889,
+        "visibleAfterTapAfterMs": 111.368889,
+        "frameGapMs": 104.397,
+        "recognition": [
+          {
+            "frame": 3,
+            "ms": -466.663111,
+            "text": "sendproofITCD\n sendproofTCE\n sendproofTCF"
+          },
+          {
+            "frame": 4,
+            "ms": 36.971889,
+            "text": "sendproofTCD\n sendproofTCE\n sendproofTCF"
+          },
+          {
+            "frame": 5,
+            "ms": 141.368889,
+            "text": "sendproofTCE\n sendproofTCF\n sendproofSDA"
+          }
+        ],
+        "label": "SD"
+      },
+      {
+        "sample": 2,
+        "token": "sendproofSDB",
+        "tapBeforeNs": 150648530000000,
+        "tapAfterNs": 150648560000000,
+        "tapBeforeElapsedNs": 150648530000000,
+        "tapAfterElapsedNs": 150648560000000,
+        "wallTapBeforeNs": 1793775928290777741,
+        "wallTapAfterNs": 1793775928332150400,
+        "firstFrame": 48,
+        "firstFrameNs": 150648702392889,
+        "previousFrameNs": 150648566548889,
+        "visibleAfterTapBeforeMs": 172.392889,
+        "visibleAfterTapAfterMs": 142.392889,
+        "frameGapMs": 135.844,
+        "recognition": [
+          {
+            "frame": 46,
+            "ms": -250.547111,
+            "text": "sendproofTCE\n sendproofTCF\n sendproofSDA"
+          },
+          {
+            "frame": 47,
+            "ms": 36.548889,
+            "text": "sendproofTCE\n sendproofTCF\n sendproofSDA"
+          },
+          {
+            "frame": 48,
+            "ms": 172.392889,
+            "text": "sendproofTCF\n sendproofSDA\n sendproofSDB"
+          }
+        ],
+        "label": "SD"
+      },
+      {
+        "sample": 3,
+        "token": "sendproofSDC",
+        "tapBeforeNs": 150651280000000,
+        "tapAfterNs": 150651310000000,
+        "tapBeforeElapsedNs": 150651280000000,
+        "tapAfterElapsedNs": 150651310000000,
+        "wallTapBeforeNs": 1793775931043574046,
+        "wallTapAfterNs": 1793775931082513193,
+        "firstFrame": 96,
+        "firstFrameNs": 150651445573889,
+        "previousFrameNs": 150651430404889,
+        "visibleAfterTapBeforeMs": 165.573889,
+        "visibleAfterTapAfterMs": 135.573889,
+        "frameGapMs": 15.169,
+        "recognition": [
+          {
+            "frame": 92,
+            "ms": -198.830111,
+            "text": "sendproofTCF\n sendproofSDA\n sendproofSDB"
+          },
+          {
+            "frame": 93,
+            "ms": 18.645889,
+            "text": "sendproofTCF\n sendproofSDA\n sendproofSDB"
+          },
+          {
+            "frame": 94,
+            "ms": 134.579889,
+            "text": "sendproofTCF\n sendproofSDA\n sendproofSDB"
+          },
+          {
+            "frame": 95,
+            "ms": 150.404889,
+            "text": "sendproofTCF\n sendproofSDA\n sendproofSDB"
+          },
+          {
+            "frame": 96,
+            "ms": 165.573889,
+            "text": "sendproofSDA\n sendproofSDB\n sendproofSDC"
+          }
+        ],
+        "label": "SD"
+      },
+      {
+        "sample": 4,
+        "token": "sendproofSDD",
+        "tapBeforeNs": 150654000000000,
+        "tapAfterNs": 150654030000000,
+        "tapBeforeElapsedNs": 150654000000000,
+        "tapAfterElapsedNs": 150654030000000,
+        "wallTapBeforeNs": 1793775933765350161,
+        "wallTapAfterNs": 1793775933800506246,
+        "firstFrame": 142,
+        "firstFrameNs": 150654134120889,
+        "previousFrameNs": 150654029421889,
+        "visibleAfterTapBeforeMs": 134.120889,
+        "visibleAfterTapAfterMs": 104.120889,
+        "frameGapMs": 104.699,
+        "recognition": [
+          {
+            "frame": 140,
+            "ms": -120.026111,
+            "text": "sendproofSDA\n sendproofSDB\n sendproofSDC"
+          },
+          {
+            "frame": 141,
+            "ms": 29.421889,
+            "text": "sendproofSDA\n sendproofSDB\n sendproofSDC"
+          },
+          {
+            "frame": 142,
+            "ms": 134.120889,
+            "text": "sendproofSDB\n sendproofSDC\n sendproofSDD"
+          }
+        ],
+        "label": "SD"
+      },
+      {
+        "sample": 5,
+        "token": "sendproofSDE",
+        "tapBeforeNs": 150656750000000,
+        "tapAfterNs": 150656770000000,
+        "tapBeforeElapsedNs": 150656750000000,
+        "tapAfterElapsedNs": 150656770000000,
+        "wallTapBeforeNs": 1793775936509901521,
+        "wallTapAfterNs": 1793775936539566552,
+        "firstFrame": 184,
+        "firstFrameNs": 150656883299889,
+        "previousFrameNs": 150656747482889,
+        "visibleAfterTapBeforeMs": 133.299889,
+        "visibleAfterTapAfterMs": 113.299889,
+        "frameGapMs": 135.817,
+        "recognition": [
+          {
+            "frame": 183,
+            "ms": -2.517111,
+            "text": "sendproofSDB\n sendproofSDC\n sendproofSDD"
+          },
+          {
+            "frame": 184,
+            "ms": 133.299889,
+            "text": "sendproofSDC\n sendproofSDD\n sendproofSDE"
+          }
+        ],
+        "label": "SD"
+      },
+      {
+        "sample": 6,
+        "token": "sendproofSDF",
+        "tapBeforeNs": 150659430000000,
+        "tapAfterNs": 150659450000000,
+        "tapBeforeElapsedNs": 150659430000000,
+        "tapAfterElapsedNs": 150659450000000,
+        "wallTapBeforeNs": 1793775939195907946,
+        "wallTapAfterNs": 1793775939226697347,
+        "firstFrame": 226,
+        "firstFrameNs": 150659568767889,
+        "previousFrameNs": 150659449187889,
+        "visibleAfterTapBeforeMs": 138.767889,
+        "visibleAfterTapAfterMs": 118.767889,
+        "frameGapMs": 119.58,
+        "recognition": [
+          {
+            "frame": 224,
+            "ms": -119.895111,
+            "text": "sendproofSDC\n sendproofSDD\n sendproofSDE"
+          },
+          {
+            "frame": 225,
+            "ms": 19.187889,
+            "text": "sendproofSDC\n sendproofSDD\n sendproofSDE"
+          },
+          {
+            "frame": 226,
+            "ms": 138.767889,
+            "text": "sendproofSDD\n sendproofSDE\n sendproofSDF"
+          }
+        ],
+        "label": "SD"
+      }
+    ]
+  },
+  "new": {
+    "n": 24,
+    "p50Ms": 84.258884,
+    "p95Ms": 127.080884,
+    "samples": [
+      {
+        "sample": 1,
+        "token": "sendproofTAA",
+        "tapBeforeNs": 150537190000000,
+        "tapAfterNs": 150537220000000,
+        "tapBeforeElapsedNs": 150537190000000,
+        "tapAfterElapsedNs": 150537220000000,
+        "wallTapBeforeNs": 1793775816947861245,
+        "wallTapAfterNs": 1793775816992469213,
+        "firstFrame": 5,
+        "firstFrameNs": 150537262573884,
+        "previousFrameNs": 150537215176884,
+        "visibleAfterTapBeforeMs": 72.573884,
+        "visibleAfterTapAfterMs": 42.573884,
+        "frameGapMs": 47.397,
+        "recognition": [
+          {
+            "frame": 3,
+            "ms": -474.919116,
+            "text": "sendproofSAD\n sendproofSAE\n sendproofSAF"
+          },
+          {
+            "frame": 4,
+            "ms": 25.176884,
+            "text": "sendproofSAD\n sendproofSAE\n sendproofSAF"
+          },
+          {
+            "frame": 5,
+            "ms": 72.573884,
+            "text": "sendproofSAE\n sendproofSAF\n sendproofTAA"
+          }
+        ],
+        "label": "TA"
+      },
+      {
+        "sample": 2,
+        "token": "sendproofTAB",
+        "tapBeforeNs": 150539950000000,
+        "tapAfterNs": 150539980000000,
+        "tapBeforeElapsedNs": 150539950000000,
+        "tapAfterElapsedNs": 150539980000000,
+        "wallTapBeforeNs": 1793775819705476483,
+        "wallTapAfterNs": 1793775819752840556,
+        "firstFrame": 34,
+        "firstFrameNs": 150540051021884,
+        "previousFrameNs": 150539989688884,
+        "visibleAfterTapBeforeMs": 101.021884,
+        "visibleAfterTapAfterMs": 71.021884,
+        "frameGapMs": 61.333,
+        "recognition": [
+          {
+            "frame": 32,
+            "ms": -485.283116,
+            "text": "sendproofSAE\n sendproofSAF\n sendproofTAA"
+          },
+          {
+            "frame": 33,
+            "ms": 39.688884,
+            "text": "sendproofSAE\n sendproofSAF\n sendproofTAA"
+          },
+          {
+            "frame": 34,
+            "ms": 101.021884,
+            "text": "sendproofSAF\n sendproofTAA\n sendproofTAB"
+          }
+        ],
+        "label": "TA"
+      },
+      {
+        "sample": 3,
+        "token": "sendproofTAC",
+        "tapBeforeNs": 150542750000000,
+        "tapAfterNs": 150542760000000,
+        "tapBeforeElapsedNs": 150542750000000,
+        "tapAfterElapsedNs": 150542760000000,
+        "wallTapBeforeNs": 1793775822507145460,
+        "wallTapAfterNs": 1793775822537659427,
+        "firstFrame": 65,
+        "firstFrameNs": 150542834130884,
+        "previousFrameNs": 150542800220884,
+        "visibleAfterTapBeforeMs": 84.130884,
+        "visibleAfterTapAfterMs": 74.130884,
+        "frameGapMs": 33.91,
+        "recognition": [
+          {
+            "frame": 63,
+            "ms": -449.745116,
+            "text": "sendproofSAF\n sendproofTAA\n sendproofTAB"
+          },
+          {
+            "frame": 64,
+            "ms": 50.220884,
+            "text": "sendproofSAF\n sendproofTAA\n sendproofTAB"
+          },
+          {
+            "frame": 65,
+            "ms": 84.130884,
+            "text": "sendproofTlAA\n sendprooflTAB\n sendproofTAC"
+          }
+        ],
+        "label": "TA"
+      },
+      {
+        "sample": 4,
+        "token": "sendproofTAD",
+        "tapBeforeNs": 150545470000000,
+        "tapAfterNs": 150545500000000,
+        "tapBeforeElapsedNs": 150545470000000,
+        "tapAfterElapsedNs": 150545500000000,
+        "wallTapBeforeNs": 1793775825234374963,
+        "wallTapAfterNs": 1793775825275652197,
+        "firstFrame": 95,
+        "firstFrameNs": 150545597080884,
+        "previousFrameNs": 150545575908884,
+        "visibleAfterTapBeforeMs": 127.080884,
+        "visibleAfterTapAfterMs": 97.080884,
+        "frameGapMs": 21.172,
+        "recognition": [
+          {
+            "frame": 92,
+            "ms": -487.677116,
+            "text": "sendproofTlAA\n sendprooflAB\n sendproofTAC"
+          },
+          {
+            "frame": 93,
+            "ms": 23.108884,
+            "text": "sendproofTlAA\n sendprooflAB\n sendproofTAC"
+          },
+          {
+            "frame": 94,
+            "ms": 105.908884,
+            "text": "sendproofTlAA\n sendprooflAB\n sendproofTAC"
+          },
+          {
+            "frame": 95,
+            "ms": 127.080884,
+            "text": "sendprooflAB\n sendproofTAC\n sendproofTAD"
+          }
+        ],
+        "label": "TA"
+      },
+      {
+        "sample": 5,
+        "token": "sendproofTAE",
+        "tapBeforeNs": 150548160000000,
+        "tapAfterNs": 150548190000000,
+        "tapBeforeElapsedNs": 150548160000000,
+        "tapAfterElapsedNs": 150548190000000,
+        "wallTapBeforeNs": 1793775827920103864,
+        "wallTapAfterNs": 1793775827959393195,
+        "firstFrame": 134,
+        "firstFrameNs": 150548244258884,
+        "previousFrameNs": 150548176614884,
+        "visibleAfterTapBeforeMs": 84.258884,
+        "visibleAfterTapAfterMs": 54.258884,
+        "frameGapMs": 67.644,
+        "recognition": [
+          {
+            "frame": 132,
+            "ms": -499.860116,
+            "text": "sendprooflAB\n sendproofTAC\n sendproofTAD"
+          },
+          {
+            "frame": 133,
+            "ms": 16.614884,
+            "text": "sendprooflAB\n sendproofTAC\n sendproofTAD"
+          },
+          {
+            "frame": 134,
+            "ms": 84.258884,
+            "text": "sendproofTAC\n sendproofTlAD\n sendproofTAE"
+          }
+        ],
+        "label": "TA"
+      },
+      {
+        "sample": 6,
+        "token": "sendproofTAF",
+        "tapBeforeNs": 150550830000000,
+        "tapAfterNs": 150550850000000,
+        "tapBeforeElapsedNs": 150550830000000,
+        "tapAfterElapsedNs": 150550850000000,
+        "wallTapBeforeNs": 1793775830587628537,
+        "wallTapAfterNs": 1793775830626563133,
+        "firstFrame": 161,
+        "firstFrameNs": 150550930521884,
+        "previousFrameNs": 150550870978884,
+        "visibleAfterTapBeforeMs": 100.521884,
+        "visibleAfterTapAfterMs": 80.521884,
+        "frameGapMs": 59.543,
+        "recognition": [
+          {
+            "frame": 159,
+            "ms": -482.422116,
+            "text": "sendproofTAC\n sendproofTlAD\n sendproofTAE"
+          },
+          {
+            "frame": 160,
+            "ms": 40.978884,
+            "text": "sendproofTAC\n sendproofTlAD\n sendproofTAE"
+          },
+          {
+            "frame": 161,
+            "ms": 100.521884,
+            "text": "sendproofTAD\n sendproofTAE\n sendproofTAF"
+          }
+        ],
+        "label": "TA"
+      },
+      {
+        "sample": 1,
+        "token": "sendproofTBA",
+        "tapBeforeNs": 150581130000000,
+        "tapAfterNs": 150581150000000,
+        "tapBeforeElapsedNs": 150581130000000,
+        "tapAfterElapsedNs": 150581150000000,
+        "wallTapBeforeNs": 1793775860884334068,
+        "wallTapAfterNs": 1793775860923799270,
+        "firstFrame": 4,
+        "firstFrameNs": 150581213113879,
+        "previousFrameNs": 150581130095879,
+        "visibleAfterTapBeforeMs": 83.113879,
+        "visibleAfterTapAfterMs": 63.113879,
+        "frameGapMs": 83.018,
+        "recognition": [
+          {
+            "frame": 2,
+            "ms": -500.108121,
+            "text": "sendproofSBD\n sendproofSBE\n sendproofSBF"
+          },
+          {
+            "frame": 3,
+            "ms": 0.095879,
+            "text": "sendproofSBD\n sendproofSBE\n sendproofSBF"
+          },
+          {
+            "frame": 4,
+            "ms": 83.113879,
+            "text": "sendproofSBE\n sendproofSBF\n sendproofTBA"
+          }
+        ],
+        "label": "TB"
+      },
+      {
+        "sample": 2,
+        "token": "sendproofTBB",
+        "tapBeforeNs": 150583870000000,
+        "tapAfterNs": 150583900000000,
+        "tapBeforeElapsedNs": 150583870000000,
+        "tapAfterElapsedNs": 150583900000000,
+        "wallTapBeforeNs": 1793775863624998289,
+        "wallTapAfterNs": 1793775863670314620,
+        "firstFrame": 30,
+        "firstFrameNs": 150583962085879,
+        "previousFrameNs": 150583866189879,
+        "visibleAfterTapBeforeMs": 92.085879,
+        "visibleAfterTapAfterMs": 62.085879,
+        "frameGapMs": 95.896,
+        "recognition": [
+          {
+            "frame": 29,
+            "ms": -3.810121,
+            "text": "sendproofSBE\n sendproofSBF\n sendproofTBA"
+          },
+          {
+            "frame": 30,
+            "ms": 92.085879,
+            "text": "sendproofSBF\n sendproofIBA\n sendproofTBB"
+          }
+        ],
+        "label": "TB"
+      },
+      {
+        "sample": 3,
+        "token": "sendproofTBC",
+        "tapBeforeNs": 150586540000000,
+        "tapAfterNs": 150586560000000,
+        "tapBeforeElapsedNs": 150586540000000,
+        "tapAfterElapsedNs": 150586560000000,
+        "wallTapBeforeNs": 1793775866303148548,
+        "wallTapAfterNs": 1793775866334919567,
+        "firstFrame": 60,
+        "firstFrameNs": 150586680340879,
+        "previousFrameNs": 150586663093879,
+        "visibleAfterTapBeforeMs": 140.340879,
+        "visibleAfterTapAfterMs": 120.340879,
+        "frameGapMs": 17.247,
+        "recognition": [
+          {
+            "frame": 56,
+            "ms": -480.895121,
+            "text": "sendproofSBF\n sendproofIBA\n sendproofTBB"
+          },
+          {
+            "frame": 57,
+            "ms": 41.084879,
+            "text": "sendproofSBF\n sendproofIBA\n sendproofTBB"
+          },
+          {
+            "frame": 58,
+            "ms": 105.927879,
+            "text": "sendproofSBF\n sendproofIBA\n sendproofTBB"
+          },
+          {
+            "frame": 59,
+            "ms": 123.093879,
+            "text": "sendproofSBF\n sendproofIBA\n sendproofTBB"
+          },
+          {
+            "frame": 60,
+            "ms": 140.340879,
+            "text": "sendproofIBA\n sendproofIBB\n sendproofTBC"
+          }
+        ],
+        "label": "TB"
+      },
+      {
+        "sample": 4,
+        "token": "sendproofTBD",
+        "tapBeforeNs": 150589280000000,
+        "tapAfterNs": 150589310000000,
+        "tapBeforeElapsedNs": 150589280000000,
+        "tapAfterElapsedNs": 150589310000000,
+        "wallTapBeforeNs": 1793775869035680798,
+        "wallTapAfterNs": 1793775869087193544,
+        "firstFrame": 100,
+        "firstFrameNs": 150589385422879,
+        "previousFrameNs": 150589298432879,
+        "visibleAfterTapBeforeMs": 105.422879,
+        "visibleAfterTapAfterMs": 75.422879,
+        "frameGapMs": 86.99,
+        "recognition": [
+          {
+            "frame": 98,
+            "ms": -497.543121,
+            "text": "sendproofIBA\n sendproofIBB\n sendproofTBC"
+          },
+          {
+            "frame": 99,
+            "ms": 18.432879,
+            "text": "sendproofIBA\n sendproofIBB\n sendproofTBC"
+          },
+          {
+            "frame": 100,
+            "ms": 105.422879,
+            "text": "sendproofIBB\n sendproofTBC\n sendproofTBD"
+          }
+        ],
+        "label": "TB"
+      },
+      {
+        "sample": 5,
+        "token": "sendproofTBE",
+        "tapBeforeNs": 150591950000000,
+        "tapAfterNs": 150591960000000,
+        "tapBeforeElapsedNs": 150591950000000,
+        "tapAfterElapsedNs": 150591960000000,
+        "wallTapBeforeNs": 1793775871707505391,
+        "wallTapAfterNs": 1793775871737306212,
+        "firstFrame": 127,
+        "firstFrameNs": 150592029467879,
+        "previousFrameNs": 150591996827879,
+        "visibleAfterTapBeforeMs": 79.467879,
+        "visibleAfterTapAfterMs": 69.467879,
+        "frameGapMs": 32.64,
+        "recognition": [
+          {
+            "frame": 125,
+            "ms": -302.317121,
+            "text": "sendproofIBB\n sendproofTBC\n sendproofTBD"
+          },
+          {
+            "frame": 126,
+            "ms": 46.827879,
+            "text": "sendproofIBB\n sendproofTBC\n sendproofTBD"
+          },
+          {
+            "frame": 127,
+            "ms": 79.467879,
+            "text": "sendproofTBC\n sendproofIlBD\n sendproofTBE"
+          }
+        ],
+        "label": "TB"
+      },
+      {
+        "sample": 6,
+        "token": "sendproofTBF",
+        "tapBeforeNs": 150594680000000,
+        "tapAfterNs": 150594700000000,
+        "tapBeforeElapsedNs": 150594680000000,
+        "tapAfterElapsedNs": 150594700000000,
+        "wallTapBeforeNs": 1793775874438886918,
+        "wallTapAfterNs": 1793775874469283590,
+        "firstFrame": 157,
+        "firstFrameNs": 150594763582879,
+        "previousFrameNs": 150594714882879,
+        "visibleAfterTapBeforeMs": 83.582879,
+        "visibleAfterTapAfterMs": 63.582879,
+        "frameGapMs": 48.7,
+        "recognition": [
+          {
+            "frame": 155,
+            "ms": -484.136121,
+            "text": "sendproofTBC\n sendproofIlBD\n sendproofTBE"
+          },
+          {
+            "frame": 156,
+            "ms": 34.882879,
+            "text": "sendproofTBC\n sendproofIlBD\n sendproofTBE"
+          },
+          {
+            "frame": 157,
+            "ms": 83.582879,
+            "text": "sendproofIlBD\n sendproofITBE\n sendproofTBF"
+          }
+        ],
+        "label": "TB"
+      },
+      {
+        "sample": 1,
+        "token": "sendproofTCA",
+        "tapBeforeNs": 150623950000000,
+        "tapAfterNs": 150623980000000,
+        "tapBeforeElapsedNs": 150623950000000,
+        "tapAfterElapsedNs": 150623980000000,
+        "wallTapBeforeNs": 1793775903714716662,
+        "wallTapAfterNs": 1793775903751061728,
+        "firstFrame": 5,
+        "firstFrameNs": 150624048894900,
+        "previousFrameNs": 150623976135900,
+        "visibleAfterTapBeforeMs": 98.8949,
+        "visibleAfterTapAfterMs": 68.8949,
+        "frameGapMs": 72.759,
+        "recognition": [
+          {
+            "frame": 3,
+            "ms": -470.7761,
+            "text": "sendproofSCD\n sendproofSCE\n sendproofSCF"
+          },
+          {
+            "frame": 4,
+            "ms": 26.1359,
+            "text": "sendproofSCD\n sendproofSCE\n sendproofSCF"
+          },
+          {
+            "frame": 5,
+            "ms": 98.8949,
+            "text": "sendproofSCE\n sendproofSCF\n sendproofTCA"
+          }
+        ],
+        "label": "TC"
+      },
+      {
+        "sample": 2,
+        "token": "sendproofTCB",
+        "tapBeforeNs": 150626650000000,
+        "tapAfterNs": 150626680000000,
+        "tapBeforeElapsedNs": 150626650000000,
+        "tapAfterElapsedNs": 150626680000000,
+        "wallTapBeforeNs": 1793775906414269937,
+        "wallTapAfterNs": 1793775906447698144,
+        "firstFrame": 37,
+        "firstFrameNs": 150626751734900,
+        "previousFrameNs": 150626698771900,
+        "visibleAfterTapBeforeMs": 101.7349,
+        "visibleAfterTapAfterMs": 71.7349,
+        "frameGapMs": 52.963,
+        "recognition": [
+          {
+            "frame": 35,
+            "ms": -449.2831,
+            "text": "sendproofSCE\n sendproofSCF\n sendproofTCA"
+          },
+          {
+            "frame": 36,
+            "ms": 48.7719,
+            "text": "sendproofSCE\n sendproofSCF\n sendproofTCA"
+          },
+          {
+            "frame": 37,
+            "ms": 101.7349,
+            "text": "sendproofSCF\n sendproofTCA\n sendproofTCB"
+          }
+        ],
+        "label": "TC"
+      },
+      {
+        "sample": 3,
+        "token": "sendproofTCC",
+        "tapBeforeNs": 150629380000000,
+        "tapAfterNs": 150629400000000,
+        "tapBeforeElapsedNs": 150629380000000,
+        "tapAfterElapsedNs": 150629400000000,
+        "wallTapBeforeNs": 1793775909142419741,
+        "wallTapAfterNs": 1793775909173591296,
+        "firstFrame": 69,
+        "firstFrameNs": 150629463494900,
+        "previousFrameNs": 150629449162900,
+        "visibleAfterTapBeforeMs": 83.4949,
+        "visibleAfterTapAfterMs": 63.4949,
+        "frameGapMs": 14.332,
+        "recognition": [
+          {
+            "frame": 67,
+            "ms": -447.3801,
+            "text": "sendproofSCF\n sendproofTCA\n sendproofTCB"
+          },
+          {
+            "frame": 68,
+            "ms": 69.1629,
+            "text": "sendproofSCF\n sendproofTCA\n sendproofTCB"
+          },
+          {
+            "frame": 69,
+            "ms": 83.4949,
+            "text": "sendproofTCA\n sendproofTCB\n sendproofTCC"
+          }
+        ],
+        "label": "TC"
+      },
+      {
+        "sample": 4,
+        "token": "sendproofTCD",
+        "tapBeforeNs": 150632090000000,
+        "tapAfterNs": 150632120000000,
+        "tapBeforeElapsedNs": 150632090000000,
+        "tapAfterElapsedNs": 150632120000000,
+        "wallTapBeforeNs": 1793775911847848729,
+        "wallTapAfterNs": 1793775911892291858,
+        "firstFrame": 96,
+        "firstFrameNs": 150632178899900,
+        "previousFrameNs": 150632114028900,
+        "visibleAfterTapBeforeMs": 88.8999,
+        "visibleAfterTapAfterMs": 58.8999,
+        "frameGapMs": 64.871,
+        "recognition": [
+          {
+            "frame": 94,
+            "ms": -490.8011,
+            "text": "sendproofTCA\n sendproofTCB\n sendproofTCC"
+          },
+          {
+            "frame": 95,
+            "ms": 24.0289,
+            "text": "sendproofTCA\n sendproofTCB\n sendproofTCC"
+          },
+          {
+            "frame": 96,
+            "ms": 88.8999,
+            "text": "sendproofTCB\n sendproofTCC\n sendproofTCD"
+          }
+        ],
+        "label": "TC"
+      },
+      {
+        "sample": 5,
+        "token": "sendproofTCE",
+        "tapBeforeNs": 150634770000000,
+        "tapAfterNs": 150634790000000,
+        "tapBeforeElapsedNs": 150634770000000,
+        "tapAfterElapsedNs": 150634790000000,
+        "wallTapBeforeNs": 1793775914532580831,
+        "wallTapAfterNs": 1793775914567280245,
+        "firstFrame": 122,
+        "firstFrameNs": 150634842478900,
+        "previousFrameNs": 150634792502900,
+        "visibleAfterTapBeforeMs": 72.4789,
+        "visibleAfterTapAfterMs": 52.4789,
+        "frameGapMs": 49.976,
+        "recognition": [
+          {
+            "frame": 120,
+            "ms": -303.7581,
+            "text": "sendproofTCB\n sendproofTCC\n sendproofTCD"
+          },
+          {
+            "frame": 121,
+            "ms": 22.5029,
+            "text": "sendproofTCB\n sendproofTCC\n sendproofTCD"
+          },
+          {
+            "frame": 122,
+            "ms": 72.4789,
+            "text": "sendproofTCC\n sendproofTCD\n sendproofTCE"
+          }
+        ],
+        "label": "TC"
+      },
+      {
+        "sample": 6,
+        "token": "sendproofTCF",
+        "tapBeforeNs": 150637670000000,
+        "tapAfterNs": 150637700000000,
+        "tapBeforeElapsedNs": 150637670000000,
+        "tapAfterElapsedNs": 150637700000000,
+        "wallTapBeforeNs": 1793775917432120824,
+        "wallTapAfterNs": 1793775917470357154,
+        "firstFrame": 154,
+        "firstFrameNs": 150637745545900,
+        "previousFrameNs": 150637693117900,
+        "visibleAfterTapBeforeMs": 75.5459,
+        "visibleAfterTapAfterMs": 45.5459,
+        "frameGapMs": 52.428,
+        "recognition": [
+          {
+            "frame": 152,
+            "ms": -319.4821,
+            "text": "sendproofTCC\n sendproofTCD\n sendproofTCE"
+          },
+          {
+            "frame": 153,
+            "ms": 23.1179,
+            "text": "sendproofTCC\n sendproofTCD\n sendproofTCE"
+          },
+          {
+            "frame": 154,
+            "ms": 75.5459,
+            "text": "sendproofTCD\n sendproofTCE\n sendproofTCF"
+          }
+        ],
+        "label": "TC"
+      },
+      {
+        "sample": 1,
+        "token": "sendproofTDA",
+        "tapBeforeNs": 150667150000000,
+        "tapAfterNs": 150667180000000,
+        "tapBeforeElapsedNs": 150667150000000,
+        "tapAfterElapsedNs": 150667180000000,
+        "wallTapBeforeNs": 1793775946914383683,
+        "wallTapAfterNs": 1793775946949663649,
+        "firstFrame": 5,
+        "firstFrameNs": 150667244595903,
+        "previousFrameNs": 150667163607903,
+        "visibleAfterTapBeforeMs": 94.595903,
+        "visibleAfterTapAfterMs": 64.595903,
+        "frameGapMs": 80.988,
+        "recognition": [
+          {
+            "frame": 3,
+            "ms": -491.057097,
+            "text": "sendproofSDD\n sendproofSDE\n sendproofSDF"
+          },
+          {
+            "frame": 4,
+            "ms": 13.607903,
+            "text": "sendproofSDD\n sendproofSDE\n sendproofSDF"
+          },
+          {
+            "frame": 5,
+            "ms": 94.595903,
+            "text": "sendproofSDE\n sendproofSDF\n sendproofTDA"
+          }
+        ],
+        "label": "TD"
+      },
+      {
+        "sample": 2,
+        "token": "sendproofTDB",
+        "tapBeforeNs": 150669810000000,
+        "tapAfterNs": 150669830000000,
+        "tapBeforeElapsedNs": 150669810000000,
+        "tapAfterElapsedNs": 150669830000000,
+        "wallTapBeforeNs": 1793775949576558566,
+        "wallTapAfterNs": 1793775949609006593,
+        "firstFrame": 33,
+        "firstFrameNs": 150669895792903,
+        "previousFrameNs": 150669847913903,
+        "visibleAfterTapBeforeMs": 85.792903,
+        "visibleAfterTapAfterMs": 65.792903,
+        "frameGapMs": 47.879,
+        "recognition": [
+          {
+            "frame": 31,
+            "ms": -481.900097,
+            "text": "sendproofSDE\n sendproofSDF\n sendproofTDA"
+          },
+          {
+            "frame": 32,
+            "ms": 37.913903,
+            "text": "sendproofSDE\n sendproofSDF\n sendproofTDA"
+          },
+          {
+            "frame": 33,
+            "ms": 85.792903,
+            "text": "sendproofSDF\n sendproofIDA\n sendproofTDB"
+          }
+        ],
+        "label": "TD"
+      },
+      {
+        "sample": 3,
+        "token": "sendproofTDC",
+        "tapBeforeNs": 150672530000000,
+        "tapAfterNs": 150672560000000,
+        "tapBeforeElapsedNs": 150672530000000,
+        "tapAfterElapsedNs": 150672560000000,
+        "wallTapBeforeNs": 1793775952295722960,
+        "wallTapAfterNs": 1793775952328795418,
+        "firstFrame": 63,
+        "firstFrameNs": 150672612814903,
+        "previousFrameNs": 150672546909903,
+        "visibleAfterTapBeforeMs": 82.814903,
+        "visibleAfterTapAfterMs": 52.814903,
+        "frameGapMs": 65.905,
+        "recognition": [
+          {
+            "frame": 61,
+            "ms": -481.360097,
+            "text": "sendproofSDF\n sendproofIDA\n sendproofTDB"
+          },
+          {
+            "frame": 62,
+            "ms": 16.909903,
+            "text": "sendproofSDF\n sendproofIDA\n sendproofTDB"
+          },
+          {
+            "frame": 63,
+            "ms": 82.814903,
+            "text": "sendproofIDA\n sendproofIDB\n sendproofTDC"
+          }
+        ],
+        "label": "TD"
+      },
+      {
+        "sample": 4,
+        "token": "sendproofTDD",
+        "tapBeforeNs": 150675190000000,
+        "tapAfterNs": 150675210000000,
+        "tapBeforeElapsedNs": 150675190000000,
+        "tapAfterElapsedNs": 150675210000000,
+        "wallTapBeforeNs": 1793775954950451158,
+        "wallTapAfterNs": 1793775954983208208,
+        "firstFrame": 88,
+        "firstFrameNs": 150675279124903,
+        "previousFrameNs": 150675197790903,
+        "visibleAfterTapBeforeMs": 89.124903,
+        "visibleAfterTapAfterMs": 69.124903,
+        "frameGapMs": 81.334,
+        "recognition": [
+          {
+            "frame": 86,
+            "ms": -494.700097,
+            "text": "sendproofIDA\n sendproofIDB\n sendproofTDC"
+          },
+          {
+            "frame": 87,
+            "ms": 7.790903,
+            "text": "sendproofIDA\n sendproofIDB\n sendproofTDC"
+          },
+          {
+            "frame": 88,
+            "ms": 89.124903,
+            "text": "sendproofIDB\n sendproofTDC\n sendproofTDD"
+          }
+        ],
+        "label": "TD"
+      },
+      {
+        "sample": 5,
+        "token": "sendproofTDE",
+        "tapBeforeNs": 150677950000000,
+        "tapAfterNs": 150677970000000,
+        "tapBeforeElapsedNs": 150677950000000,
+        "tapAfterElapsedNs": 150677970000000,
+        "wallTapBeforeNs": 1793775957709311971,
+        "wallTapAfterNs": 1793775957749341558,
+        "firstFrame": 118,
+        "firstFrameNs": 150678032459903,
+        "previousFrameNs": 150677976550903,
+        "visibleAfterTapBeforeMs": 82.459903,
+        "visibleAfterTapAfterMs": 62.459903,
+        "frameGapMs": 55.909,
+        "recognition": [
+          {
+            "frame": 116,
+            "ms": -488.539097,
+            "text": "sendproofIDB\n sendproofTDC\n sendproofTDD"
+          },
+          {
+            "frame": 117,
+            "ms": 26.550903,
+            "text": "sendproofIDB\n sendproofTDC\n sendproofTDD"
+          },
+          {
+            "frame": 118,
+            "ms": 82.459903,
+            "text": "sendproofTDC\n sendproofIlDD\n sendproofTDE"
+          }
+        ],
+        "label": "TD"
+      },
+      {
+        "sample": 6,
+        "token": "sendproofTDF",
+        "tapBeforeNs": 150680680000000,
+        "tapAfterNs": 150680700000000,
+        "tapBeforeElapsedNs": 150680680000000,
+        "tapAfterElapsedNs": 150680700000000,
+        "wallTapBeforeNs": 1793775960436118168,
+        "wallTapAfterNs": 1793775960473923293,
+        "firstFrame": 150,
+        "firstFrameNs": 150680761603903,
+        "previousFrameNs": 150680697914903,
+        "visibleAfterTapBeforeMs": 81.603903,
+        "visibleAfterTapAfterMs": 61.603903,
+        "frameGapMs": 63.689,
+        "recognition": [
+          {
+            "frame": 148,
+            "ms": -399.079097,
+            "text": "sendproofTDC\n sendproofIlDD\n sendproofTDE"
+          },
+          {
+            "frame": 149,
+            "ms": 17.914903,
+            "text": "sendproofTDC\n sendproofIlDD\n sendproofTDE"
+          },
+          {
+            "frame": 150,
+            "ms": 81.603903,
+            "text": "sendproofIlDD\n sendproofITDE\n sendproofTDF"
+          }
+        ],
+        "label": "TD"
+      }
+    ]
+  }
+}

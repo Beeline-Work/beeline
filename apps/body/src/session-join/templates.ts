@@ -5,6 +5,9 @@
 /** opencode 1.x and 2.x: reports busy/idle, and puts Beeline messages into idle sessions within seconds. */
 export const OPENCODE_PLUGIN = `// Beeline for opencode: written by \`usebeeline join\`, removed by \`usebeeline session leave\`.
 import { execFile } from "node:child_process"
+import { watch, mkdirSync } from "node:fs"
+import { join } from "node:path"
+import { homedir } from "node:os"
 
 const NODE = "__NODE__"
 const BUNDLE = "__BUNDLE__"
@@ -33,7 +36,9 @@ const network = (prompt: (id: string, text: string) => Promise<unknown>) => {
       delivering.delete(id)
     }
   }
-  const timer = setInterval(() => idle.forEach((id) => void deliver(id)), 5_000)
+  const inbox=join(process.env.XDG_STATE_HOME||join(process.env.HOME||homedir(),".local/state"),"beeline-sessions","inbox")
+  mkdirSync(inbox,{recursive:true})
+  const watcher=watch(inbox,()=>idle.forEach((id)=>void deliver(id)))
   return {
     subagent: (id: string) => subagents.add(id),
     status: async (id: string, state: string, dir: string) => {
@@ -45,7 +50,7 @@ const network = (prompt: (id: string, text: string) => Promise<unknown>) => {
         await deliver(id)
       } else idle.delete(id)
     },
-    stop: () => clearInterval(timer),
+    stop: () => watcher.close(),
     end: (id?: string) => {
       for (const [s, dir] of [...dirs]) {
         if (id && s !== id) continue
@@ -112,6 +117,9 @@ export default {
 export const PI_EXTENSION = `// Beeline for pi: written by \`usebeeline join\`, removed by \`usebeeline session leave\`.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { execFile } from "node:child_process"
+import { watch, mkdirSync } from "node:fs"
+import { join } from "node:path"
+import { homedir } from "node:os"
 
 const NODE = "__NODE__"
 const BUNDLE = "__BUNDLE__"
@@ -121,7 +129,7 @@ export default function (pi: ExtensionAPI) {
   let cwd = process.cwd()
   let busy = false
   let delivering = false
-  let timer: ReturnType<typeof setInterval> | undefined
+  let watcher: ReturnType<typeof watch> | undefined
   const hook = (args: string[]) =>
     new Promise<string>((resolve) =>
       execFile(NODE, [BUNDLE, "session", "hook", "pi", ...args, "--session", id], { cwd, timeout: 10_000, windowsHide: true },
@@ -141,9 +149,9 @@ export default function (pi: ExtensionAPI) {
     id = ctx.sessionManager.getSessionId()
     cwd = ctx.cwd
     await hook(["status", "--state", "idle"])
-    timer ??= setInterval(() => {
-      if (!busy) void deliver("poll")
-    }, 5_000)
+    const inbox=join(process.env.XDG_STATE_HOME||join(process.env.HOME||homedir(),".local/state"),"beeline-sessions","inbox")
+    mkdirSync(inbox,{recursive:true})
+    watcher??=watch(inbox,()=>{void deliver("poll")})
   })
   pi.on("agent_start", async () => {
     busy = true
@@ -158,8 +166,8 @@ export default function (pi: ExtensionAPI) {
     await deliver("poll")
   })
   pi.on("session_shutdown", async () => {
-    if (timer) clearInterval(timer)
-    timer = undefined
+    watcher?.close()
+    watcher = undefined
     await hook(["session-end"])
   })
 }

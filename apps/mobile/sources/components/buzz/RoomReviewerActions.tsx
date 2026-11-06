@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
@@ -155,7 +156,7 @@ export function RoomReviewerActions({
             />
             {error ? (
               <View accessibilityRole="alert" style={styles.error} testID="room-reviewer-error">
-                <Text style={styles.errorText}>! {error}</Text>
+                <ErrorBanner inline title={error} />
               </View>
             ) : null}
             <HullActionSheetCancel

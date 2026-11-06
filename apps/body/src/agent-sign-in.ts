@@ -37,7 +37,6 @@ import type { DaemonApiClient } from './daemon-api-client.js';
 import { verifyProviderKey } from './provider-key-check.js';
 
 /** How long the CLI may take to print its link before the attempt fails. */
-const CLI_LINK_TIMEOUT_MS = 30_000;
 
 export type CliSignIn = {
   readonly command: string;
@@ -183,7 +182,7 @@ export type AgentSignInOptions = {
 };
 
 type Pending =
-  | { readonly kind: 'cli'; readonly child: ChildProcess; readonly timer: NodeJS.Timeout }
+  | { readonly kind: 'cli'; readonly child: ChildProcess }
   | { readonly kind: 'key'; readonly provider: AgentSignInKeyProvider; readonly expiresAt: number };
 
 /** One agent runtime's sign-in attempts. Secrets never leave this process. */
@@ -234,7 +233,6 @@ export class AgentSignIn {
     for (const [attemptId, pending] of this.#pending) {
       this.#pending.delete(attemptId);
       if (pending.kind === 'cli') {
-        clearTimeout(pending.timer);
         pending.child.kill('SIGTERM');
       }
     }
@@ -245,7 +243,6 @@ export class AgentSignIn {
     for (const [id, pending] of this.#pending) {
       if (pending.kind !== 'cli') continue;
       this.#pending.delete(id);
-      clearTimeout(pending.timer);
       pending.child.kill('SIGTERM');
     }
     const env: NodeJS.ProcessEnv = {
@@ -269,37 +266,18 @@ export class AgentSignIn {
         reject(new Error(`\`${login.command}\` is not installed on the agent's machine.`));
         return;
       }
-      const linkTimer = setTimeout(() => {
-        if (answered) return;
-        answered = true;
-        child.kill('SIGTERM');
-        reject(new Error(`\`${login.command} ${login.args.join(' ')}\` printed no sign-in link. Update it on the agent's machine, then try again.`));
-      }, CLI_LINK_TIMEOUT_MS);
-      linkTimer.unref?.();
-      const expiry = setTimeout(() => {
-        this.#pending.delete(attemptId);
-        child.kill('SIGTERM');
-        this.options.onResult(attemptId, {
-          ok: false,
-          error: 'The sign-in expired before it was approved. Send the agent `/login` again.',
-        });
-      }, AGENT_SIGN_IN_ATTEMPT_TTL_MS);
-      expiry.unref?.();
-      this.#pending.set(attemptId, { kind: 'cli', child, timer: expiry });
+      this.#pending.set(attemptId, {kind:'cli',child});
       const read = (chunk: Buffer) => {
         output = `${output}${chunk.toString('utf8')}`.slice(-16_000);
         if (answered) return;
         const link = login.parse(output.replace(ANSI, '').replace(/\r/g, ''), this.#now());
         if (!link) return;
         answered = true;
-        clearTimeout(linkTimer);
         resolve(link);
       };
       child.stdout?.on('data', read);
       child.stderr?.on('data', read);
       child.once('error', (error) => {
-        clearTimeout(linkTimer);
-        clearTimeout(expiry);
         this.#pending.delete(attemptId);
         const missing = (error as NodeJS.ErrnoException).code === 'ENOENT';
         const message = missing
@@ -311,8 +289,6 @@ export class AgentSignIn {
         }
       });
       child.once('exit', (code, signal) => {
-        clearTimeout(linkTimer);
-        clearTimeout(expiry);
         const owned = this.#pending.get(attemptId);
         if (owned?.kind === 'cli' && owned.child === child) this.#pending.delete(attemptId);
         else return; // replaced, expired, or stopped: its outcome is already decided

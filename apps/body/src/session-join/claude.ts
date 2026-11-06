@@ -49,30 +49,13 @@ export function chosenName(session: ClaudeSession): string | undefined {
   return ['user', 'peer', 'hook'].includes(session.nameSource ?? '') ? session.name : undefined;
 }
 
-/**
- * The Claude Code process we run under: the nearest ancestor with a registry entry. A headless Claude run from an
- * interactive one's shell has no entry of its own, so the entry above it is the other conversation's; the caller
- * checks the conversation id when the environment names one.
- */
-export function registryAncestor(chain: number[], hasEntry: (pid: number) => boolean): number | undefined {
-  return chain.find(hasEntry);
-}
-
-/** The inbox of a live session, by its conversation id or its process. */
-export function socketFor(sessions: ClaudeSession[], sessionId?: string, pid?: number): ClaudeSocket | undefined {
-  const session = sessions.find(s => (sessionId && s.sessionId === sessionId) || (pid !== undefined && s.pid === pid));
-  return session?.messagingSocketPath ? { path: session.messagingSocketPath } : undefined;
-}
-
-export function postToClaude(socket: ClaudeSocket, text: string, timeoutMs = 5000): Promise<void> {
+export function postToClaude(socket: ClaudeSocket, text: string, _timeoutMs = 5000): Promise<void> {
   return new Promise((resolve, reject) => {
     const connection = createConnection(socket.path);
-    const timer = setTimeout(() => { connection.destroy(); reject(new Error('Claude Code inbox did not answer')); }, timeoutMs);
-    connection.once('error', error => { clearTimeout(timer); reject(error); });
+    connection.once('error', error => { reject(error); });
     connection.once('connect', () => {
       if (socket.token) connection.write(JSON.stringify({ type: 'auth', token: socket.token }) + '\n');
       connection.end(JSON.stringify({ type: 'user', message: { role: 'user', content: text } }) + '\n', () => {
-        clearTimeout(timer);
         resolve();
       });
     });

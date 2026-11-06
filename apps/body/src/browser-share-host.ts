@@ -41,12 +41,14 @@ export class BrowserShareHost {
             shareId: request.shareId,
             serverBaseUrl: request.serverBaseUrl,
             daemonToken: request.daemonToken,
+            // The hosted share can outlive its model/MCP process; this closed
+            // session-end receipt has its own lifetime, without a turn source.
             onEnded: async () => {
               await fetch(new URL('/v1/daemon/operations/endComputerSession', request.serverBaseUrl), {
                 method: 'POST',
                 headers: { authorization: `Bearer ${request.daemonToken}`, 'content-type': 'application/json' },
                 body: JSON.stringify({ roomId: request.roomId, sessionId: request.page.id }),
-                signal: AbortSignal.timeout(10_000),
+                signal: undefined,
               }).catch(() => {});
             },
           });
@@ -73,7 +75,6 @@ export function startHostedBrowserShare(socketPath: string, request: ShareReques
     const socket = createConnection(socketPath);
     let output = '';
     socket.setEncoding('utf8');
-    socket.setTimeout(5_000, () => socket.destroy(new Error('Browser share host timed out')));
     socket.once('connect', () => socket.end(JSON.stringify(request)));
     socket.on('data', (chunk: string) => { output += chunk; });
     socket.once('error', reject);

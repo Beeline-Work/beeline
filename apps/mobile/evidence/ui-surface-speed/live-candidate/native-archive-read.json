@@ -1,0 +1,13 @@
+{
+  "name": "native-archive-read",
+  "kind": "archive-read",
+  "selfOnly": true,
+  "done": true,
+  "details": {
+    "archivedIds": [
+      "be6da34a-d710-4e4a-aad6-2869aa4c766d"
+    ],
+    "summaryIdentityPreserved": true,
+    "archivedStored": 1
+  }
+}

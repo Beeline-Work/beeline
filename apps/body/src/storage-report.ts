@@ -27,10 +27,12 @@ export async function helperStorageReport(supervisorRoot = defaultSupervisorRoot
     try {
       const runtime = JSON.parse(await readFile(resolve(runtimeDir, 'runtime.json'), 'utf8')) as AgentRuntimeRecord;
       if (!runtime.transport?.daemonToken) throw new Error('no existing daemon token; no exchange attempted');
-      const operation = async <T>(name: string, operationInput: unknown): Promise<T> => {
+      // Operator storage inspection must also work with the helper stopped.
+      // Only these two lifecycle reads may use the existing token, never a claim.
+      const operation = async <T>(name: 'getDaemonBootstrap' | 'listRoomCorners', operationInput: unknown): Promise<T> => {
         const response = await fetch(new URL(`/v1/daemon/operations/${name}`, runtime.transport!.baseUrl), {
           method: 'POST', headers: { authorization: `Bearer ${runtime.transport!.daemonToken}`, 'content-type': 'application/json' },
-          body: JSON.stringify(operationInput), signal: AbortSignal.timeout(30_000),
+          body: JSON.stringify(operationInput), signal: undefined,
         });
         if (!response.ok) {
           const payload = await response.json().catch(() => ({})) as { error?: string; code?: string };

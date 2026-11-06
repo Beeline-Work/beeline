@@ -106,7 +106,7 @@ export type WorkbenchDisplayApp = {
 
 export type WorkbenchDisplayView = {
   aiClients?: readonly import('./workbench.js').AiClientConnection[];
-  companies?: import('./workbench.js').WorkbenchCompanyIndex;
+  companies?: import('./workbench-companies.js').WorkbenchCompanyIndex;
   linkAccount?: { connected: boolean; pending: boolean; ineligible: boolean };
   connectors: readonly WorkbenchDisplayConnector[];
   connections: readonly WorkbenchDisplayConnection[];

@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { createAgentCommand } from './agent-command.js';
 import { TokenAuth } from './auth.js';
-import { DaemonService } from './daemon-service.js';
+import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';

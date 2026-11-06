@@ -1,3 +1,4 @@
+import { phoneFetch } from '../../../tests/helpers/phone-operation.js';
 import { createHash } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import sharp from 'sharp';
@@ -114,7 +115,7 @@ describe('durable workspace avatars through the installed phone contract', () =>
     if (database) await database.close();
   });
   const set = (avatar: string, accessToken = token) =>
-    fetch(`${origin}/v1/phone/operations/updateWorkspace`, {
+    phoneFetch(`${origin}/v1/phone/operations/updateWorkspace`, {
       method: 'POST',
       headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({ workspaceId: WORKSPACE, avatar }),
@@ -122,13 +123,13 @@ describe('durable workspace avatars through the installed phone contract', () =>
   const read = async (accessToken = token) =>
     (
       await (
-        await fetch(`${origin}/v1/phone/workspaces/${WORKSPACE}`, {
+        await phoneFetch(`${origin}/v1/phone/workspaces/${WORKSPACE}`, {
           headers: { authorization: `Bearer ${accessToken}` },
         })
       ).json()
     ).workspace;
   const upload = async (bytes: Buffer, accessToken = token) => {
-    const response = await fetch(`${origin}/v1/phone/media`, {
+    const response = await phoneFetch(`${origin}/v1/phone/media`, {
       method: 'POST',
       headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'image/png' },
       body: bytes,
@@ -142,7 +143,7 @@ describe('durable workspace avatars through the installed phone contract', () =>
     expect((await set(uploaded)).status).toBe(204);
     const saved = await read();
     expect(saved.avatar).toMatch(new RegExp(`^${origin}/v1/avatars/`));
-    const first = await fetch(saved.avatar);
+    const first = await phoneFetch(saved.avatar);
     expect(first.status).toBe(200);
     expect(first.headers.get('content-type')).toBe('image/webp');
     const bytes = Buffer.from(await first.arrayBuffer());
@@ -155,17 +156,17 @@ describe('durable workspace avatars through the installed phone contract', () =>
         service: objectService,
       }).runOnce(),
     ).toBe(1);
-    expect((await fetch(uploaded)).status).toBe(410);
+    expect((await phoneFetch(uploaded)).status).toBe(410);
     // Fresh session + fresh HTTP reads model the server boundary of reinstall.
     // Nothing from AsyncStorage, an old image cache or the previous read is used.
     const freshToken = (await auth.exchangeGitHubOidc('owner')).accessToken;
     const fresh = await read(freshToken);
     expect(fresh.avatar).toBe(saved.avatar);
-    const afterSweep = await fetch(fresh.avatar, { cache: 'no-store' });
+    const afterSweep = await phoneFetch(fresh.avatar, { cache: 'no-store' });
     expect(afterSweep.status).toBe(200);
     expect(Buffer.from(await afterSweep.arrayBuffer())).toEqual(bytes);
     const list = await (
-      await fetch(`${origin}/v1/phone/workspaces`, {
+      await phoneFetch(`${origin}/v1/phone/workspaces`, {
         headers: { authorization: `Bearer ${freshToken}` },
       })
     ).json();
@@ -173,7 +174,7 @@ describe('durable workspace avatars through the installed phone contract', () =>
       saved.avatar,
     );
     await migrate(database);
-    expect((await fetch(saved.avatar)).status).toBe(200);
+    expect((await phoneFetch(saved.avatar)).status).toBe(200);
   });
 
   it('replaces and removes the workspace-owned object without accumulating old images', async () => {
@@ -184,12 +185,12 @@ describe('durable workspace avatars through the installed phone contract', () =>
     expect((await set(await upload(await picture('#22aa55')))).status).toBe(204);
     const second = (await read()).avatar;
     expect(second).not.toBe(first);
-    expect((await fetch(first)).status).toBe(404);
-    expect((await fetch(second)).status).toBe(200);
+    expect((await phoneFetch(first)).status).toBe(404);
+    expect((await phoneFetch(second)).status).toBe(200);
     expect((await database.query('SELECT 1 FROM avatars')).rowCount).toBe(1);
     expect((await set('')).status).toBe(204);
     expect((await read()).avatar).toBeUndefined();
-    expect((await fetch(second)).status).toBe(404);
+    expect((await phoneFetch(second)).status).toBe(404);
     expect((await database.query('SELECT 1 FROM avatars')).rowCount).toBe(0);
   });
 
@@ -203,7 +204,7 @@ describe('durable workspace avatars through the installed phone contract', () =>
     expect((await set('https://images.example/image.png')).status).toBe(400);
     expect((await set(await upload(Buffer.from('invalid image')))).status).toBe(400);
     expect((await read()).avatar).toBe(saved);
-    expect((await fetch(saved)).status).toBe(200);
-    expect((await fetch(`${origin}/v1/avatars/not-a-uuid`)).status).toBe(404);
+    expect((await phoneFetch(saved)).status).toBe(200);
+    expect((await phoneFetch(`${origin}/v1/avatars/not-a-uuid`)).status).toBe(404);
   });
 });

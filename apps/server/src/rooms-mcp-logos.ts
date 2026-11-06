@@ -39,23 +39,47 @@ export async function fetchMcpLogo(value: string, size = 96): Promise<string> {
   } finally { agent.destroy(); }
 }
 
+// Website-supported agents. Only local/handoff callbacks use the registered name
+// to select a fixed entry; web/native callbacks determine their own identity.
+const MCP_AGENTS = [
+  { name: 'Codex', logo: 'codex.png', aliases: /^(codex|openai codex)$/i },
+  { name: 'Claude Code', logo: 'claude.png', aliases: /^(claude|claude code)$/i },
+  { name: 'Claude Duet', logo: 'claude.png', aliases: /^claude duet$/i, hosts: ['claude.ai', 'claude.com'] },
+  { name: 'Cursor', logo: 'cursor.svg', aliases: /^cursor$/i, hosts: ['cursor.com', 'www.cursor.com'], scheme: 'cursor:', authority: 'anysphere.cursor-mcp' },
+  { name: 'Goose', logo: 'goose.png', aliases: /^goose$/i },
+  { name: 'Pi', logo: 'pi.svg', aliases: /^pi$/i },
+  { name: 'OpenCode', logo: 'opencode.svg', aliases: /^opencode$/i },
+  { name: 'Grok', logo: 'grok.svg', aliases: /^grok$/i },
+  { name: 'Grok Bot', logo: 'grok-bot.svg', aliases: /^(grok bot|grokbot)$/i, callback: 'https://www.cursor.com/agents/mcp/oauth/callback' },
+  { name: 'Hermes', logo: 'hermes.svg', aliases: /^hermes$/i },
+  { name: 'Muse', logo: 'muse.webp', aliases: /^(meta muse|metamuse|muse)$/i, hosts: ['agent.meta.ai'] },
+  { name: 'ChatGPT', logo: 'dots.png', aliases: /^(chatgpt|chatgpt dots|dots|openai dots)$/i, hosts: ['chatgpt.com'] },
+  { name: 'Gemini', logo: 'gemini.png', aliases: /^gemini$/i },
+  { name: 'ZCode', logo: 'zcode.png', aliases: /^zcode$/i },
+];
+
+/** The redirect selects web branding; a remote app cannot claim a vendor by name. */
+export function supportedMcpAgent(name: string, redirect: string, handoff?: string) {
+  const url = new URL(redirect);
+  const callback = MCP_AGENTS.find(agent => agent.callback === redirect);
+  if (callback) return callback;
+  const remote = MCP_AGENTS.find(agent =>
+    (url.protocol === 'https:' && !url.port && agent.hosts?.includes(url.hostname)) ||
+    (agent.scheme === url.protocol && agent.authority === url.host));
+  if (remote) return remote;
+  if (['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || redirect === handoff ||
+      redirect === 'https://server.usebeeline.app/mcp/oauth/handoff')
+    return MCP_AGENTS.find(agent => agent.aliases.test(name));
+  return undefined;
+}
+
 /** Registration identity shared by consent and member defaults. */
 export function mcpClientName(name: string, redirects: readonly string[] = []): string {
-  // Grok Bot registers as Cursor with https://www.cursor.com/agents/mcp/oauth/callback.
-  // Cursor desktop and the other web callback must retain Cursor's identity.
-  return name === 'Cursor' && redirects.includes('https://www.cursor.com/agents/mcp/oauth/callback')
-    ? 'Grok Bot' : name;
+  return redirects.length ? supportedMcpAgent(name, redirects[0]!)?.name ?? name : name;
 }
 
 const bundled = new Map<string, Promise<string>>();
-const bundledKey = (name: string) =>
-  /^(grok bot|grokbot)$/i.test(name) ? 'grok-bot.svg'
-    : /^grok$/i.test(name) ? 'grok.svg'
-    : /^(meta muse|metamuse|muse)$/i.test(name) ? 'muse.webp'
-    : /^(codex|openai codex)$/i.test(name) ? 'codex.png'
-    : /^(claude|claude code)$/i.test(name) ? 'claude.png'
-    : /^cursor$/i.test(name) ? 'cursor.svg'
-    : /^(dots|openai dots)$/i.test(name) ? 'dots.png' : undefined;
+const bundledKey = (name: string) => MCP_AGENTS.find(agent => agent.aliases.test(name))?.logo;
 export function bundledMcpLogo(name: string): Promise<string | undefined> {
   const key = bundledKey(name);
   if (!key) return Promise.resolve(undefined);

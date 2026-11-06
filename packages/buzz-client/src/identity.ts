@@ -13,6 +13,7 @@ import {
 import type { AgentIdentity, Identity } from './types.js';
 
 /** Create a fresh identity (new random nsec). */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function createIdentity(name?: string): Identity {
   const kp = generateKeypair();
   return name ? { ...kp, name } : kp;
@@ -24,6 +25,7 @@ export function createAgentIdentity(name = 'Agent'): AgentIdentity {
 }
 
 /** Load an identity from a bech32 `nsec1…` string. */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function loadIdentityFromNsec(nsec: string, name?: string): Identity {
   const secretKey = decodeNsec(nsec);
   const publicKey = getPublicKey(secretKey);
@@ -31,6 +33,7 @@ export function loadIdentityFromNsec(nsec: string, name?: string): Identity {
 }
 
 /** Encode identity pubkey as `npub1…`. */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function identityNpub(identity: Identity): string {
   return encodeNpub(identity.publicKey);
 }

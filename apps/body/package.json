@@ -24,7 +24,7 @@
   "scripts": {
     "body": "node --import tsx src/cli.ts",
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit --incremental --tsBuildInfoFile .typecheck.tsbuildinfo",
     "test": "vitest run",
     "measure:turns": "node --import tsx scripts/measure-turn-phases.ts",
     "prove:codex-prompt-delivery": "node --import tsx scripts/prove-codex-prompt-delivery.ts",

@@ -19,7 +19,7 @@ export function queueCornerPreservation(key: string, job: () => Promise<void>): 
   preservationJobs.set(key, job);
   if (preserving) return;
   preserving = true;
-  setImmediate(() => { void drainPreservationJobs(); });
+  void drainPreservationJobs();
 }
 
 async function drainPreservationJobs(): Promise<void> {
@@ -28,7 +28,6 @@ async function drainPreservationJobs(): Promise<void> {
       const [key, job] = preservationJobs.entries().next().value!;
       preservationJobs.delete(key);
       await job().catch(error => console.error('[corner-recovery] preservation failed:', error));
-      await new Promise<void>(resolveYield => setImmediate(resolveYield));
     }
   } finally {
     preserving = false;

@@ -1,0 +1,64 @@
+{
+  "sourceHead": "3a77888f6b99465e9156efc237cfab7d5a5167e4",
+  "scenarios": [
+    {
+      "name": "empty Room send and canonical handoff",
+      "token": "emptyproofGamma",
+      "tap": {
+        "tapBeforeNs": 1793775722520313441,
+        "tapAfterNs": 1793775722555657728,
+        "tapBeforeElapsedNs": 150442760000000,
+        "tapAfterElapsedNs": 150442780000000,
+        "count": 1,
+        "x": 981,
+        "y": 1438
+      },
+      "canonicalIds": [
+        "38b7104d9b2be1e2f487478258a7a426e643bd2e3e507ebe773d1f3fb235c3c9"
+      ],
+      "passed": true
+    },
+    {
+      "name": "double tap",
+      "token": "doubleproofGamma",
+      "tap": {
+        "tapBeforeNs": 1793775728813513951,
+        "tapAfterNs": 1793775728861587872,
+        "tapBeforeElapsedNs": 150449050000000,
+        "tapAfterElapsedNs": 150449090000000,
+        "count": 2,
+        "x": 981,
+        "y": 1438
+      },
+      "canonicalIds": [
+        "eb40d5365e228dc4b2cec2d7333641cefb4ceabf96406ab4b4418f65825f9c52"
+      ],
+      "passed": true
+    },
+    {
+      "name": "navigate away during first paint",
+      "token": "navproofGamma",
+      "timing": {
+        "send": {
+          "tapBeforeNs": 1793775734911330840,
+          "tapAfterNs": 1793775734942749429,
+          "tapBeforeElapsedNs": 150455150000000,
+          "tapAfterElapsedNs": 150455170000000,
+          "count": 1,
+          "x": 981,
+          "y": 1438
+        },
+        "navigateBeforeElapsedNs": 150455190000000,
+        "navigateAfterElapsedNs": 150455250000000
+      },
+      "sourceCanonicalIds": [
+        "1895166a82359c172eec5d412d01932af13b1fd708f15c6984cd50e57d7da70b"
+      ],
+      "targetMessages": 0,
+      "passed": true
+    }
+  ],
+  "bundleSha256": "e3657b2917c33e2183354f6c743e18fe5becba55a018eeaf15aad30171c9e70c",
+  "nativeScopePassed": true,
+  "frameSummary": "frame-summary.json"
+}

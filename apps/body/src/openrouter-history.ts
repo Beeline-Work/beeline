@@ -121,7 +121,7 @@ export async function readOpenRouterTraffic(input: {
       try {
         const response = await (input.fetchImpl ?? fetch)(`${OPENROUTER_GENERATION_URL}?id=${encodeURIComponent(id)}`, {
           headers: { authorization: `Bearer ${input.apiKey}` },
-          signal: AbortSignal.timeout(input.timeoutMs ?? 10_000),
+          signal: undefined,
         });
         if (!response.ok) continue;
         const { data } = await response.json() as { data?: Record<string, unknown> };

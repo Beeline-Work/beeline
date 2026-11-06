@@ -417,6 +417,6 @@ export function tokenizeCode(code: string, language: string | null): TokenizedLi
 /**
  * Test helper that flattens tokenized output back to the original text.
  */
-export function flattenTokens(lines: TokenizedLine[]): string {
+function flattenTokens(lines: TokenizedLine[]): string {
   return lines.map((line) => line.map((s) => s.text).join('')).join('\n');
 }

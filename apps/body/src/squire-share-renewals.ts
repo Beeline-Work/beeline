@@ -3,7 +3,7 @@ import type { StdioSquireMcpClient } from './squire-mcp-client.js';
 export type SquireShareLease = { sessionId: string; upstreamUrl: string; expiresAt: number };
 type Renewal = SquireShareLease & {
   client: StdioSquireMcpClient;
-  timer?: ReturnType<typeof setTimeout>;
+  pending?: Promise<void>;
 };
 
 function shareResult(result: unknown): { upstreamUrl: string; expiresAt: number } {
@@ -33,12 +33,11 @@ export class SquireShareRenewals {
     this.stop(sessionId);
     const share = { sessionId, client, ...lease };
     this.shares.set(sessionId, share);
-    this.schedule(share);
+    owners.set(sessionId,this);
   }
 
   stop(sessionId: string): void {
-    const share = this.shares.get(sessionId);
-    if (share?.timer) clearTimeout(share.timer);
+    if(owners.get(sessionId)===this)owners.delete(sessionId);
     this.shares.delete(sessionId);
   }
 
@@ -46,15 +45,10 @@ export class SquireShareRenewals {
     for (const id of this.shares.keys()) this.stop(id);
   }
 
-  private schedule(share: Renewal): void {
-    if (this.shares.get(share.sessionId) !== share) return;
-    const remaining = share.expiresAt - Date.now();
-    // The current live lease permits one renewal before its actual expiry.
-    // Leave room for the MCP client's existing terminal request deadline.
-    const margin = Math.min(4 * 60_000, Math.max(1, remaining / 2));
-    const delay = Math.max(1, remaining - margin);
-    share.timer = setTimeout(() => { void this.renew(share); }, delay);
-    share.timer.unref?.();
+  viewerActivity(sessionId:string):void {
+    const share=this.shares.get(sessionId);if(!share||share.pending)return;
+    if(share.expiresAt<=Date.now()){this.stop(sessionId);return;}
+    share.pending=this.renew(share).finally(()=>{share.pending=undefined;});
   }
 
   private async renew(share: Renewal): Promise<void> {
@@ -86,7 +80,7 @@ export class SquireShareRenewals {
         return;
       }
       share.expiresAt = lease.expiresAt;
-      this.schedule(share);
+
     } catch {
       // A failed/uncertain renewal cannot authorize another attempt. The
       // existing stored expiry ends this view; an unfenced end command could
@@ -96,3 +90,6 @@ export class SquireShareRenewals {
     }
   }
 }
+
+const owners=new Map<string,SquireShareRenewals>();
+export function renewSquireShareOnViewerActivity(sessionId:string):void { owners.get(sessionId)?.viewerActivity(sessionId); }

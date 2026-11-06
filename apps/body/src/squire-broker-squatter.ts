@@ -1,3 +1,4 @@
+import { waitForProcessExit } from './process-exit.js';
 /**
  * The host unit's socket preflight. Squire's broker unlinks a dead
  * predecessor's socket on its own, but it refuses to bind over a LIVE
@@ -155,17 +156,12 @@ async function waitReleased(
   pids: readonly number[],
   sockets: readonly string[],
   procRoot: string,
-  timeoutMs: number,
+  _timeoutMs: number,
 ): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    if (!pids.some((pid) => alive(pid, procRoot))) {
-      const live = await Promise.all(sockets.map((socket) => squireBrokerSocketReady(socket)));
-      if (!live.includes(true)) return true;
-    }
-    if (Date.now() >= deadline) return false;
-    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
-  }
+  await Promise.all(pids.filter(pid=>alive(pid,procRoot)).map(pid=>waitForProcessExit(pid)));
+  const live=await Promise.all(sockets.map(socket=>squireBrokerSocketReady(socket)));
+  return !live.includes(true);
+
 }
 
 function describe(holder: SquireSocketHolder): string {

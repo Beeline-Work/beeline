@@ -22,6 +22,7 @@
 const easChunks = new WeakMap();
 
 /** @type {import('@expo/fingerprint').Config} */
+/** @public Expo fingerprint loads this configuration by filename. */
 module.exports = {
   // This patch catches a web-only font promise in JavaScript. It changes no
   // native input; keep native patches (including expo-notifications) counted.

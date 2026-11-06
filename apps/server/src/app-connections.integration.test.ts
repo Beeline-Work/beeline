@@ -1,10 +1,12 @@
+import { phoneFetch } from '../../../tests/helpers/phone-operation.js';
 import { COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion } from './command-completion.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { Pool } from 'pg';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { SCHEDULE_SCHEDULER_ID } from '@beeline/api-contract/scheduled-prompts';
 import { LinkAgentWallet } from './link-agent-wallet.js';
-import { migrate } from './database.js';
+import { migrate, PostgresDatabase } from './database.js';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
@@ -188,7 +190,8 @@ describe('the app route order', () => {
 });
 
 describe('connect_app', () => {
-  let database: PgliteDatabase;
+  let database: PgliteDatabase | PostgresDatabase;
+  let cleanupPostgres: (() => Promise<void>) | undefined;
 
   const daemonWith = (registry: McpRegistryClient, composio: ComposioApps = {
     supportsOAuth: async () => false,
@@ -232,8 +235,8 @@ describe('connect_app', () => {
         active = true;
         return { accountId: 'ca_fixture', toolkit: completedToolkit };
       }),
-      listTools: vi.fn(async () => [{ slug: 'SLACK_POST_MESSAGE', name: 'Post message',
-        description: 'Post to a channel', inputParameters: {} }]),
+      listTools: vi.fn(async () => ({ tools: [{ slug: 'SLACK_POST_MESSAGE', name: 'Post message',
+        description: 'Post to a channel', inputParameters: {} }] })),
       execute: vi.fn(async () => ({ ok: true })),
       deleteAccount: vi.fn(async () => { active = false; }),
     };
@@ -242,8 +245,26 @@ describe('connect_app', () => {
 
   let releaseCompletions: () => Promise<void>;
   beforeEach(async () => {
-    database = await migratedDatabase();
-    releaseCompletions = await database.client.listen(COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion);
+    const postgresUrl = process.env.BEELINE_APP_DISCOVERY_TEST_POSTGRES_URL;
+    if (postgresUrl) {
+      if (!['127.0.0.1', 'localhost', '[::1]'].includes(new URL(postgresUrl).hostname))
+        throw new Error('App discovery proofs require isolated loopback PostgreSQL');
+      const name = `app_discovery_${randomUUID().replaceAll('-', '')}`;
+      const admin = new Pool({ connectionString: postgresUrl, max: 1 });
+      await admin.query(`CREATE DATABASE ${name}`);
+      const isolatedUrl = new URL(postgresUrl);
+      isolatedUrl.pathname = `/${name}`;
+      database = new PostgresDatabase(isolatedUrl.toString(), 2, { mode: 'migration' });
+      cleanupPostgres = async () => {
+        await admin.query(`DROP DATABASE ${name}`);
+        await admin.end();
+      };
+      await migrate(database);
+      releaseCompletions = async () => {};
+    } else {
+      database = await migratedDatabase();
+      releaseCompletions = await database.client.listen(COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion);
+    }
     await database.query(
       `INSERT INTO identities(id,kind,name,handle)
        VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
@@ -277,9 +298,14 @@ describe('connect_app', () => {
          'claimed',$5,now()+interval '10 minutes')`,
       [COMMAND, ROOM, HELPER, REQUEST, GENERATION],
     );
-  });
+  }, 120_000);
 
-  afterEach(async () => { await releaseCompletions(); await database.close(); });
+  afterEach(async () => {
+    await releaseCompletions?.();
+    await database?.close();
+    await cleanupPostgres?.();
+    cleanupPostgres = undefined;
+  });
 
   it.each(['registry-mcp', 'trusty-squire'])(
     'R-STALE-SIGN-IN: %s stale card returns reconnect guidance through HTTP', async connectKind => {
@@ -299,7 +325,7 @@ describe('connect_app', () => {
       await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
       vi.mocked(captureServerError).mockClear();
       try {
-        const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/phone/operations/beginAppSignIn`, {
+        const response = await phoneFetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/phone/operations/beginAppSignIn`, {
           method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer fixture-phone-token-0001' },
           body: JSON.stringify({ appId }),
         });
@@ -605,7 +631,7 @@ describe('connect_app', () => {
       auth: { authenticateDaemon: async () => HELPER, authenticatePhone: async () => null } as unknown as TokenAuth });
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     try {
-      const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/daemon/operations/connect`, {
+      const response = await phoneFetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/daemon/operations/connect`, {
         method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer bdt_fixture-token-0001' },
         body: JSON.stringify({ ...turn, service: 'GitHub', reason: 'Read repository issues', squireAvailable: true }),
       });
@@ -852,12 +878,8 @@ describe('connect_app', () => {
     const generationId = owned ? 'owned-provider-parity' : GENERATION;
     if (presence) {
       const epoch = await presence.claimConnection(HELPER, {connectionId:'owned-provider-parity'});
-      // A fresh binding leaves the fixture's historical legacy generation intact.
-      await database.query(`UPDATE agent_commands SET generation_id=$2,
-        turn_owner_connection_id=$3,turn_owner_epoch=$4,lease_expires_at=NULL WHERE id=$1`,
-        [COMMAND,generationId,'owned-provider-parity',epoch]);
-      await database.query(`UPDATE agent_turns SET generation_id=$3 WHERE room_id=$1 AND request_id=$2`,
-        [ROOM,REQUEST,generationId]);
+      await daemon.execute('claimAgentCommand', { roomId: ROOM, commandId: COMMAND, generationId },
+        HELPER, { connectionId: 'owned-provider-parity', epoch });
     }
     const callTurn = {...turn,generationId};
     try {
@@ -1198,6 +1220,45 @@ describe('connect_app', () => {
     console.log('Reproduction CRED-1: connect and status select vault:github-work among two GitHub keys');
   });
 
+  it('Reproduction APP-CATALOG-CONTINUATION: reaches every tool in a 1,895-Room Workspace', async () => {
+    await database.query(`INSERT INTO rooms(id,workspace_id,created_by,name,parent_id,archived_at)
+      SELECT md5('catalog-room-'||n)::uuid,$1,$2,'Archived corner '||n,$3,now()
+      FROM generate_series(1,1894) n`, [WORKSPACE, OWNER, ROOM]);
+    const appId = randomUUID();
+    await database.query(`INSERT INTO workspace_apps
+      (id,workspace_id,owner_identity_id,app_key,display_name,transport,route,composio_account_id)
+      VALUES($1,$2,$3,'slack','Slack','composio','composio','ca_fixture')`, [appId, WORKSPACE, OWNER]);
+    const items = Array.from({ length: 1000 }, (_, i) => ({ slug: `SLACK_TOOL_${i}`,
+      name: `Tool ${i}`, toolkit: { slug: 'slack' }, description: 'Useful description '.repeat(30),
+      input_parameters: { type: 'object' } }));
+    const transport = vi.fn(async (url: URL | string) => {
+      const parsed = new URL(String(url));
+      if (parsed.pathname.endsWith('/connected_accounts/ca_fixture')) return Response.json({
+        id: 'ca_fixture', user_id: OWNER, toolkit: { slug: 'slack' }, status: 'ACTIVE',
+      });
+      if (!parsed.searchParams.has('cursor') && !parsed.searchParams.has('query'))
+        return Response.json({ items: [], next_cursor: 'catalog' });
+      return Response.json({ items });
+    });
+    const daemon = daemonWith(fakeRegistry([]).client, new ComposioApps('fixture-only', transport as typeof fetch));
+    const slugs: string[] = [];
+    let query: string | undefined;
+    let pages = 0;
+    do {
+      const page = await daemon.execute('listAppTools', { ...turn, appId, query }, HELPER);
+      slugs.push(...page.tools.map(tool => tool.slug));
+      query = /query="(beeline-page:[^"]+)"/.exec(page.next ?? '')?.[1];
+      pages++;
+    } while (query);
+    expect(pages).toBeGreaterThan(1);
+    expect(slugs).toEqual(items.map(tool => tool.slug));
+    expect((await database.query(`SELECT count(*)::int count FROM rooms WHERE workspace_id=$1`, [WORKSPACE])).rows[0]).toEqual({ count: 1895 });
+    const schema = await daemon.execute('listAppTools', { ...turn, appId, query: 'SLACK_TOOL_999' }, HELPER);
+    expect(schema.tools).toEqual([expect.objectContaining({ slug: 'SLACK_TOOL_999', inputParameters: { type: 'object' } })]);
+    await database.query(`UPDATE memberships SET removed_at=now() WHERE identity_id=$1`, [HELPER]);
+    await expect(daemon.execute('listAppTools', { ...turn, appId }, HELPER)).rejects.toThrow();
+  }, 120_000);
+
   it('uses a connected owner app from a Room and corner where only the agent is a member', async () => {
     const provider = fakeComposio();
     const daemon = daemonWith(fakeRegistry([]).client, provider);
@@ -1308,7 +1369,7 @@ describe('connect_app', () => {
           : 'GitHub is connected through squire-api, not app tools. ' +
             'Call GitHub\'s API with Trusty Squire use_credential (reference "vault:github").';
         for (const operation of ['listAppTools', 'executeAppTool']) {
-          const response = await fetch(`${origin}/v1/daemon/operations/${operation}`, {
+          const response = await phoneFetch(`${origin}/v1/daemon/operations/${operation}`, {
             method: 'POST',
             headers: { 'content-type': 'application/json', authorization: 'Bearer bdt_fixture-token-0001' },
             body: JSON.stringify({ ...turn, appId: 'github',
@@ -1352,7 +1413,7 @@ describe('connect_app', () => {
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     const call = async (operation: string, args: Record<string, unknown>) => {
-      const response = await fetch(`${origin}/v1/daemon/operations/${operation}`, {
+      const response = await phoneFetch(`${origin}/v1/daemon/operations/${operation}`, {
         method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer bdt_fixture-token-0001' },
         body: JSON.stringify({ ...turn, ...args }),
       });
@@ -1420,14 +1481,14 @@ describe('connect_app', () => {
       undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
     await phone.execute('beginAppSignIn', { appId: started.appId! }, OWNER);
     await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: started.appId! }, OWNER);
-    provider.listTools.mockResolvedValueOnce([]);
+    provider.listTools.mockResolvedValueOnce({ tools: [] });
     const server = createBeelineServer({ database, phone, daemon, live: new LiveHub(),
       mediaMaximumBytes: 1,
       auth: { authenticateDaemon: async () => HELPER, authenticatePhone: async () => null } as unknown as TokenAuth });
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     try {
-      const response = await fetch(`${origin}/v1/daemon/operations/listAppTools`, {
+      const response = await phoneFetch(`${origin}/v1/daemon/operations/listAppTools`, {
         method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer bdt_fixture-token-0001' },
         body: JSON.stringify({ ...turn, appId: started.appId!, query: 'nonexistent-tool' }),
       });
@@ -1453,7 +1514,7 @@ describe('connect_app', () => {
       undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
     await phone.execute('beginAppSignIn', { appId: started.appId! }, OWNER);
     await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: started.appId! }, OWNER);
-    provider.listTools.mockResolvedValueOnce([]);
+    provider.listTools.mockResolvedValueOnce({ tools: [] });
     await expect(daemon.execute('listAppTools', { ...turn, appId: started.appId! }, HELPER))
       .rejects.toThrow(/no tools/i);
   });
@@ -1587,19 +1648,19 @@ describe('connect_app', () => {
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     try {
-      const callback = await fetch(`${origin}/v1/apps/oauth/verify?session_uri=session-fixture`);
+      const callback = await phoneFetch(`${origin}/v1/apps/oauth/verify?session_uri=session-fixture`);
       expect(callback.status).toBe(200);
       const html = await callback.text();
       const returnLink = new URL(html.match(/id="open-beeline" href="([^"]+)"/)![1]);
       expect(html).toContain('Open Beeline</a>');
       expect(provider.completeAuth).not.toHaveBeenCalled();
       const input = { sessionUri: returnLink.searchParams.get('appSignInSession'), appId };
-      const unauthorized = await fetch(`${origin}/v1/phone/operations/completeAppSignIn`, {
+      const unauthorized = await phoneFetch(`${origin}/v1/phone/operations/completeAppSignIn`, {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) });
       expect(unauthorized.status).toBe(401);
       expect(provider.completeAuth).not.toHaveBeenCalled();
       provider.accountStatus.mockResolvedValue({ status: 'active' });
-      const completion = await fetch(`${origin}/v1/phone/operations/completeAppSignIn`, {
+      const completion = await phoneFetch(`${origin}/v1/phone/operations/completeAppSignIn`, {
         method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer fixture-phone-token-0001' },
         body: JSON.stringify(input) });
       expect(completion.status).toBe(200);
@@ -2207,7 +2268,7 @@ describe('connect_app', () => {
         const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
         vi.mocked(captureServerError).mockClear();
         try {
-          const response = await fetch(`${origin}/v1/daemon/operations/executeAppTool`, {
+          const response = await phoneFetch(`${origin}/v1/daemon/operations/executeAppTool`, {
             method: 'POST',
             headers: { 'content-type': 'application/json', authorization: 'Bearer bdt_fixture-token-0001' },
             body: JSON.stringify({ ...turn, appId: YOUTUBE_APP,

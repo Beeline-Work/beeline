@@ -77,6 +77,12 @@ export function useBrowserNavigationShortcuts() {
             if (getKeyboardNavigationDirection(event) !== 'back') {
                 return;
             }
+            // RN Web's active Modal owns Escape on keyup. A directly mounted
+            // Hull sheet is absent from ModalProvider's stack, so navigating on
+            // keydown would also leave the page underneath that sheet.
+            if (document.querySelector('[aria-modal="true"]')) {
+                return;
+            }
             if (runBack({ exitZen: true })) {
                 event.preventDefault();
                 event.stopPropagation();

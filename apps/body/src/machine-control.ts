@@ -88,7 +88,7 @@ export async function requestMachine(
   stateRoot: string,
   request: MachineRequest,
   accept: (status: HelperStatusFile) => boolean,
-  timeoutMs = 600_000,
+  _timeoutMs = 600_000,
 ): Promise<HelperStatusFile> {
   const path = machineControlPath(stateRoot);
   await preparePrivateSocketDirectory(path);
@@ -97,33 +97,16 @@ export async function requestMachine(
     let connecting = false;
     let reconnectNeeded = false;
     let settled = false;
-    let lastStatus: HelperStatusFile | undefined;
     const watcher = watch(dirname(path), (_event, filename) => {
       if (filename === basename(path)) {
         reconnectNeeded = true;
         if (!socket && !connecting) connect();
       }
     });
-    const timer = setTimeout(
-      () =>
-        finish(
-          new Error(
-            `helper convergence timed out${
-              lastStatus
-                ? `: ${Object.entries(lastStatus.agents)
-                    .filter(([, agent]) => agent.state !== 'serving' && agent.state !== 'stopped')
-                    .map(([id, agent]) => `${id}: ${agent.state} (${agent.status})`)
-                    .join('; ')}`
-                : '; no live helper acknowledgment'
-            }`,
-          ),
-        ),
-      timeoutMs,
-    );
+
     function finish(error?: Error, status?: HelperStatusFile) {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
       watcher.close();
       socket?.destroy();
       if (error) reject(error);
@@ -162,8 +145,7 @@ export async function requestMachine(
               Array.isArray(status.agents)
             )
               throw new Error('invalid helper acknowledgment');
-            lastStatus = status;
-            if (accept(status)) finish(undefined, status);
+                  if (accept(status)) finish(undefined, status);
           } catch (error) {
             finish(error instanceof Error ? error : new Error(String(error)));
           }

@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { Button } from './Button';
 import React from 'react';
@@ -168,7 +169,7 @@ export function ViewerConversationDock({
                   ) : null}
                 </View>
               ))}
-              {error ? <Text style={styles.error}>{error}</Text> : null}
+              {error ? <ErrorBanner inline title={error} /> : null}
             </ScrollView>
           ) : (
             <>

@@ -1,7 +1,7 @@
 vi.mock('react-native', () => ({ AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) }, Platform: { OS: 'ios' } }));
 // This suite exercises an installed old-server path, with explicit legacy negotiation.
-vi.mock('@/buzz/router-owner', async () => (await import('@/test-fixtures/legacy-router-owner')).legacyRouterOwner);
-vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
+
+
 vi.mock('@/buzz/room-transition-work', () => ({
   deferRoomWrite: (_key: string, work: () => Promise<void>) => work(),
 }));

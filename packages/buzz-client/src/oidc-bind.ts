@@ -24,6 +24,7 @@ const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
 
 const HEX_KEY_RE = /^[0-9a-f]{64}$/;
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export interface OidcBindChallenge {
   protocol: typeof OIDC_BIND_PROTOCOL;
   kind: typeof OIDC_BIND_KIND;
@@ -38,6 +39,7 @@ export interface OidcBindChallenge {
   expires_at: number;
 }
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export interface OidcBindStart {
   authorizationUrl: string;
   redirectUri: string;
@@ -202,6 +204,7 @@ function startProviderBind(
 }
 
 /** GitHub OAuth enters the exact same one-use npub bind protocol as OIDC. */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function startGitHubBind(
   baseUrl: string,
   input: { redirectUri: string; state: string },
@@ -210,6 +213,7 @@ export function startGitHubBind(
 }
 
 /** Parse and strictly validate the native completion URL before any key signs it. */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function parseOidcBindCallback(
   callbackUrl: string,
   expectedState: string,
@@ -263,6 +267,7 @@ export function parseOidcBindCallback(
 }
 
 /** Sign every authoritative field supplied by the one-use bind challenge. */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function buildOidcBindEvent(
   challenge: OidcBindChallenge,
   identity: Pick<Identity, 'secretKey' | 'publicKey'>,
@@ -334,6 +339,7 @@ function assertBindEvent(challenge: OidcBindChallenge, event: NostrEvent): void 
 }
 
 /** Submit the signed challenge. The Nostr secret never enters the request body. */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export async function finishOidcBind(
   baseUrl: string,
   challenge: OidcBindChallenge,
@@ -372,6 +378,7 @@ export async function finishOidcBind(
  * returned identity_conflict. The short-lived OAuth ticket and signed event
  * are reused, and replacement is a separate explicit protocol action.
  */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export async function recoverOidcBind(
   baseUrl: string,
   challenge: OidcBindChallenge,
@@ -410,6 +417,7 @@ export async function recoverOidcBind(
 }
 
 /** Read the canonical managed display handle assigned to the key on this device. */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export async function lookupManagedIdentity(
   baseUrl: string,
   identity: Pick<Identity, 'secretKey' | 'publicKey'>,

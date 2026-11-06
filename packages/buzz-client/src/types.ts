@@ -1,6 +1,7 @@
 import type { NostrEvent } from '@beeline/nostr';
 
 /** A keypair used as a client identity. */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export interface Identity {
   /** 32-byte secp256k1 secret key. */
   secretKey: Uint8Array;
@@ -17,6 +18,7 @@ export interface AgentIdentity extends Identity {
 }
 
 /** Relay-backed, self-signed declaration of an agent inside a community. */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export interface Agent {
   agentId: string;
   communityId: string;
@@ -42,6 +44,7 @@ export interface AgentPairingCode {
 }
 
 /** Stable Room-level repository identity. Secrets from remote URLs are never retained. */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export interface RepositoryBinding {
   /** SHA-256 identity used to converge clones of the same origin into one Room. */
   key: string;
@@ -56,6 +59,7 @@ export interface RepositoryBinding {
 }
 
 /** Input for binding (or re-binding) a repository to a Room. */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export interface RoomRepositoryInput {
   /** SHA-256 repository identity (converges clones of the same origin). */
   key: string;
@@ -80,6 +84,7 @@ export interface RoomRepositoryInput {
  * compatibility path that keeps every Room paired before room-repo config
  * existed resolving with no republish.
  */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export interface RoomRepository {
   channelId: string;
   communityId?: string;
@@ -119,6 +124,7 @@ export interface AgentSoulProfile extends AgentSoulInput {
  * `thought_level`, `effort`, `reasoning_effort`, `mode`, ...); only the first
  * four are ever exposed to a picker — see `ALLOWED_AGENT_MODEL_CONFIG_CATEGORIES`.
  */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export interface AgentModelConfigOption {
   /** The `configId` passed back to `session/set_config_option`. */
   id: string;
@@ -128,6 +134,7 @@ export interface AgentModelConfigOption {
   options: Array<{ id: string; name?: string; description?: string }>;
 }
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export interface AgentModelConfigInput {
   fastMode?: boolean;
   /** The chosen `model` option's id. Absent leaves the current model choice alone. */
@@ -152,6 +159,7 @@ export interface AgentModelConfig {
 }
 
 /** Global kind:0, self-authored cosmetic metadata for a human identity. */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export interface PersonProfile {
   /** Present only when a legacy Workspace-scoped profile supplied the fallback. */
   communityId?: string;
@@ -197,6 +205,7 @@ export interface PublishResult {
 }
 
 /** A channel member as projected from kind:39002 tags. */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export interface ChannelMember {
   pubkey: string;
   /** Role when present as a separate `["role", …]` tag on put-user history. */
@@ -216,6 +225,7 @@ export interface ChannelMetadata {
 }
 
 /** Immutable create-event binding for a private two-member Room. */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export interface DirectMessage {
   channelId: string;
   communityId: string;

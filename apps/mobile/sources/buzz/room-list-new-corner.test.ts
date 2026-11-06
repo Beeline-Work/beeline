@@ -10,10 +10,10 @@ vi.mock('@/sync/transport/monolith-operation', () => ({
   phoneOperationFailureReason: (err: unknown) => (err as Error).message,
 }));
 
-import { MONOLITH_REQUEST_TIMEOUT_MS, MonolithRequestTimeoutError } from '@/auth/monolith-session';
+import { MonolithRequestTimeoutError } from '@/auth/monolith-session';
+import { PhoneSocketDisconnectedError } from '@/sync/transport/phone-socket-error';
 import { openRoomListCorner } from './room-list-new-corner';
 import {
-  CORNER_OPEN_DEADLINE_SECONDS,
   cornerOpenEnded,
   cornerOpenStatus,
 } from './corner-open-status';
@@ -44,7 +44,7 @@ describe('openRoomListCorner', () => {
     await openRoomListCorner({ roomId: 'room-a', createCorner: null, openCorner, retry: vi.fn() });
 
     expect(openCorner).not.toHaveBeenCalled();
-    expect(alert).toHaveBeenCalledWith('Not connected yet', expect.stringContaining('corner'));
+    expect(alert).toHaveBeenCalledWith('Could not open corner', expect.stringContaining('corner'));
   });
 
   it('names a refused create and opens nothing', async () => {
@@ -65,6 +65,7 @@ describe('openRoomListCorner', () => {
   it.each([
     ['times out', new MonolithRequestTimeoutError()],
     ['loses the network', new TypeError('Network request failed')],
+    ['loses its socket', new PhoneSocketDisconnectedError()],
   ])('offers Retry with the same corner id when the request %s', async (_, failure) => {
     const createCorner = vi.fn(async (): Promise<string> => {
       throw failure;
@@ -98,10 +99,6 @@ describe('openRoomListCorner', () => {
     expect(createCorner).toHaveBeenLastCalledWith('room-a', title, cornerId);
     expect(openCorner).toHaveBeenCalledWith('corner-new', title);
     expect(cornerOpenStatus()).toEqual({ status: 'idle' });
-  });
-
-  it('names the same deadline the create request runs under', () => {
-    expect(CORNER_OPEN_DEADLINE_SECONDS * 1000).toBe(MONOLITH_REQUEST_TIMEOUT_MS);
   });
 
   it('shows the create as pending while the request is in flight', async () => {

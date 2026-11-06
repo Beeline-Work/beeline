@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import React, { useState } from 'react';
 import { Text, View } from 'react-native';
@@ -83,7 +84,7 @@ export function PushLevelSetting({ disabled = false, onSave, value }: Props) {
         ))}
         {error ? (
           <View accessibilityRole="alert" style={styles.error} testID="push-level-error">
-            <Text style={styles.errorText}>! {error}</Text>
+            <ErrorBanner inline title={error} />
           </View>
         ) : null}
         <HullActionSheetCancel onPress={() => setOpen(false)} testID="push-level-close" />
@@ -99,5 +100,4 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.buzz.space.md,
     paddingVertical: theme.buzz.space.sm,
   },
-  errorText: { ...theme.buzz.type.meta, color: theme.buzz.danger },
 }));

@@ -9,16 +9,6 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
-    "./phone-inputs": {
-      "types": "./dist/phone-inputs.d.ts",
-      "import": "./dist/phone-inputs.js",
-      "default": "./dist/phone-inputs.js"
-    },
-    "./owner": {
-      "types": "./dist/private/phone-owner.d.ts",
-      "import": "./dist/private/phone-owner.js",
-      "default": "./dist/private/phone-owner.js"
-    },
     "./helper-codecs": {
       "types": "./dist/helper-codecs.d.ts",
       "import": "./dist/helper-codecs.js",
@@ -37,7 +27,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit --incremental --tsBuildInfoFile .typecheck.tsbuildinfo",
     "test": "vitest run --minWorkers=1 --maxWorkers=2"
   },
   "dependencies": {

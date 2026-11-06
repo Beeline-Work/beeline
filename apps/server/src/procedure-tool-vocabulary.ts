@@ -19,7 +19,7 @@ const calls: Record<string, string> = {
   get_workflow_run: 'app_tool(app:beeline:workflow,tool:read,args:{runId})',
   cancel_workflow_run: 'app_tool(app:beeline:workflow,tool:cancel,args:{runId,reason})',
   list_schedules: 'wake(action:list)',
-  create_schedule: 'wake(action:create,trigger:schedule,cadence,prompt,maxRuns)',
+  create_schedule: 'wake(action:create,trigger:schedule,cadence,prompt)',
   update_schedule: 'wake(action:update,trigger:schedule,scheduleId)',
   delete_schedule: 'wake(action:delete,trigger:schedule,scheduleId)',
   revise_corner_brief: 'revise_corner(action:brief,address,brief,expectedRevision,change)',

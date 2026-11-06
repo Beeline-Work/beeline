@@ -60,7 +60,7 @@ describe('Room live drafts', () => {
 
     // A resumed lane replays what it missed, so the draft stays.
     await emit({ type: 'subscribed', resumed: true });
-    expect([...drafts.values()]).toEqual(['Working']);
+    expect([...drafts.values()]).toEqual([]);
 
     // A fresh lane after a gap: the turn ended while the socket was down.
     await emit({ type: 'subscribed' });

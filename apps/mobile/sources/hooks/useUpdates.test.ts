@@ -355,3 +355,18 @@ it('rejects an incompatible native manifest without requesting a reload', async 
   await expect(checkNativeUpdate()).rejects.toThrow('runtime is incompatible');
   expect(updates.reloadAsync).not.toHaveBeenCalled();
 });
+
+it('renders the initial screen before starting SDK or socket-generation update work', async () => {
+  let renderer!: ReactTestRenderer;
+  const child = React.createElement('SavedRoomDeck');
+  await act(async () => { renderer = create(React.createElement(UpdateProvider, { active: false }, child)); });
+  mountedRenderers.add(renderer);
+  expect(renderer.root.findAllByType('SavedRoomDeck')).toHaveLength(1);
+  expect(updates.checkForUpdateAsync).not.toHaveBeenCalled();
+  expect(connections.listeners.size).toBe(0);
+  await act(async () => renderer.update(React.createElement(UpdateProvider, { active: true }, child)));
+  await settleUpdate(() => expect(updates.checkForUpdateAsync).toHaveBeenCalledTimes(1));
+  expect(connections.listeners.size).toBe(1);
+  await unmount(renderer);
+  expect(connections.listeners.size).toBe(0);
+});

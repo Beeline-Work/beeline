@@ -34,7 +34,7 @@ export default function Subscription() {
   const params = useLocalSearchParams<{ roomId?: string | string[]; subscriptionId?: string | string[] }>();
   const roomId = first(params.roomId);
   const subscriptionId = first(params.subscriptionId);
-  const { work, loading, error, retry,routed } = useScheduledWork(roomId);
+  const { work, loading, error, retry } = useScheduledWork(roomId);
   useLatencyRouteFrame('/beeline/settings/subscription', !loading, true);
   const [working, setWorking] = useState(false);
   const [stopFailed, setStopFailed] = useState(false);
@@ -60,7 +60,7 @@ export default function Subscription() {
       const result = await monolithPhoneOperation(rotate ? 'rotateWebhookToken' : 'revealWebhookToken',
         { roomId, subscriptionId: subscription.id });
       setToken(result.token); setConfirmRotate(false);
-      if (rotate&&!routed) retry();
+      if (rotate) retry();
     } catch { setWebhookError(rotate ? 'Could not rotate the token. Try again.' : 'Could not show the token. Try again.'); }
     finally { setWebhookBusy(false); }
   };

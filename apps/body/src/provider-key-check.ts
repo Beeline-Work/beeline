@@ -69,7 +69,7 @@ export async function verifyProviderKey(input: {
   try {
     response = await (input.fetchImpl ?? fetch)(url, {
       headers,
-      signal: AbortSignal.timeout(input.timeoutMs ?? 15_000),
+      signal: undefined,
     });
   } catch (error) {
     const cause = error instanceof Error ? error.message.split('\n')[0] : String(error);

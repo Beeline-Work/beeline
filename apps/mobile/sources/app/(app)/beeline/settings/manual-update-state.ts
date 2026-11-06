@@ -60,7 +60,7 @@ export function manualUpdateButtonLabel(state: ManualUpdateState): string {
 export function manualUpdateMessage(state: ManualUpdateState): string | null {
   if (state.notice === 'latest') return "You're on the latest version.";
   if (state.notice === 'error') {
-    return "Couldn't check for updates. Check your connection and try again.";
+    return "Couldn't check for updates. Try again.";
   }
   if (state.notice === 'unavailable') return 'Updates are unavailable in this build.';
   return null;

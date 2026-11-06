@@ -92,6 +92,7 @@ export interface MissionControlScope {
 
 export const MAX_MISSION_RESERVED_TOKENS = 100_000_000;
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export type PermissionScope =
   | {
       type: 'room.create';
@@ -145,6 +146,7 @@ export type PermissionAudience = 'admin' | 'owner';
 export type PermissionExecutor = 'human-device' | 'body' | 'ops-broker';
 export type PermissionRole = 'admin' | 'owner';
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export type PermissionGrantEnvelopeV1 = {
   /** Tier 1 is autonomous inside a standing envelope; Tier 2 always asks. */
   tier: 1 | 2;
@@ -222,6 +224,7 @@ export interface PermissionExecutionV1 {
   result?: string;
 }
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export type ParsedPermissionRequest = {
   type: 'request';
   event: NostrEvent;

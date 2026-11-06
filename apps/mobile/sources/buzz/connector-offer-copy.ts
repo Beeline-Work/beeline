@@ -9,29 +9,29 @@ import type { ConnectorOfferCardView } from '@beeline/api-contract/phone';
  */
 
 /** `Add Trusty Squire as a tool?` — a question with one affirmative answer. */
-export function connectorOfferTitle(connectorName: string): string {
+function connectorOfferTitle(connectorName: string): string {
   return `Add ${connectorName} as a tool?`;
 }
 
 /** `Sign in to Google again` — a `'reconnect'` offer asks nothing; it names
  *  what stalled. `provider` is Squire's own value (e.g. `'google'`), omitted
  *  for an `oauth_sign_in` wall, where Squire names no provider. */
-export function connectorOfferReconnectTitle(provider?: string): string {
+function connectorOfferReconnectTitle(provider?: string): string {
   if (!provider) return 'Sign in again';
   return `Sign in to ${provider[0]!.toUpperCase()}${provider.slice(1)} again`;
 }
 
 /** `Switch Trusty Squire's Google account?` — a `'switch'` offer asks to
  *  replace the account an already-connected tool is signed in with. */
-export function connectorOfferSwitchTitle(connectorName: string, provider = 'google'): string {
+function connectorOfferSwitchTitle(connectorName: string, provider = 'google'): string {
   return `Switch ${connectorName}'s ${provider[0]!.toUpperCase()}${provider.slice(1)} account?`;
 }
 
 /** `Switch account` — the one action on a `'switch'` offer. */
-export const CONNECTOR_OFFER_SWITCH_ACTION = 'Switch account';
+const CONNECTOR_OFFER_SWITCH_ACTION = 'Switch account';
 
 /** `Add Trusty Squire` — the one action; a label carries words only. */
-export function connectorOfferActionLabel(connectorName: string): string {
+function connectorOfferActionLabel(connectorName: string): string {
   return `Add ${connectorName}`;
 }
 
@@ -44,7 +44,7 @@ function clock(seconds: number): string {
 
 /** `added by @zeke · 12:04` (`switched by` for a `'switch'` offer) — the
  *  settled record; null while the offer is open. */
-export function connectorOfferOutcomeLine(
+function connectorOfferOutcomeLine(
   offer: Pick<ConnectorOfferCardView, 'status' | 'acceptedBy' | 'acceptedAt' | 'intent'>,
 ): string | null {
   if (offer.status !== 'accepted') return null;

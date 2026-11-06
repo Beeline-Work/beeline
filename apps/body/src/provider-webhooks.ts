@@ -40,7 +40,7 @@ async function linearRequest(job: Job, home: string, query: string,
   const token = await registryMcpProviderToken(job.connectorId, 'app.linear/linear', home, transport);
   const response = await transport('https://api.linear.app/graphql', {
     method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ query, variables }), signal: AbortSignal.timeout(20_000),
+    body: JSON.stringify({ query, variables }), signal: undefined,
   });
   if (!response.ok) throw new Error(`Linear webhook API refused (${response.status})`);
   const value = object(await response.json());

@@ -4,7 +4,7 @@ This is a CI performance change, not a defect report. It changes scheduling and 
 
 ## Runner demand
 
-`node --test scripts/workflow-change-filter.test.mjs` evaluates the real path filters, decision shell script, job conditions and matrix sizes. Counts below exclude skipped checks and cover `checks.yml` only; Desktop and release workflows are unchanged.
+The recorded counts below exclude skipped checks and cover the historical `checks.yml` revision only; Desktop and release workflows were unchanged.
 
 | Representative diff | Before | After |
 | --- | ---: | ---: |

@@ -27,15 +27,17 @@ export const MCP_WORKSPACE_SCRIPT = `
   const toggle = document.getElementById('select-all-workspaces');
   const error = document.getElementById('selection-error');
   const allow = form.querySelector('button[value="allow"]');
-  if (!toggle || !error || !allow) return;
+  const trust = document.getElementById('trust_app');
+  if (!allow) return;
   const update = () => {
     const count = choices.filter(choice => choice.checked).length;
-    allow.disabled = count === 0;
-    error.hidden = count > 0;
-    toggle.textContent = editable.length > 0 && editable.every(choice => choice.checked) ? 'Deselect all' : 'Select all';
+    allow.disabled = !!((error && count === 0) || (trust && !trust.checked));
+    if (error) error.hidden = count > 0;
+    if (toggle) toggle.textContent = editable.length > 0 && editable.every(choice => choice.checked) ? 'Deselect all' : 'Select all';
   };
-  toggle.hidden = editable.length === 0;
-  toggle.addEventListener('click', () => {
+  if (trust) trust.addEventListener('change', update);
+  if (toggle) toggle.hidden = editable.length === 0;
+  if (toggle) toggle.addEventListener('click', () => {
     const select = editable.some(choice => !choice.checked);
     editable.forEach(choice => { choice.checked = select; });
     update();

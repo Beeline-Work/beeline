@@ -1,3 +1,5 @@
+import { groupBPostgresDatabase } from './test-fixtures/test-support-router-group-b-postgres.js';
+import { seedOwnedModelFixture, type OwnedModelFixture } from './test-fixtures/owned-model.js';
 import { readOwnedModelReceipt } from '@beeline/api-contract/helper-model-receipt';
 import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -18,10 +20,14 @@ const success = () => Response.json({ choices: [{ message: { role: 'assistant', 
   usage: { prompt_tokens: 10, completion_tokens: 3, cost: 0.00002 } });
 
 describe('actual owned model endpoint and actual quota adapter', () => {
-  let f: Awaited<ReturnType<typeof ownedModelFixture>>, server: Server, origin: string, options: FreeAgentModelProxyOptions;
+  let f: OwnedModelFixture<SqlDatabase>, closeDatabase:()=>Promise<void>, server: Server, origin: string, options: FreeAgentModelProxyOptions;
   let calls: { body: string; headers: Headers }[], reply: () => Response | Promise<Response>;
-  beforeEach(async () => {
-    vi.mocked(freeAgentModelTakesImages).mockClear(); f = await ownedModelFixture(); calls = []; reply = success;
+  beforeEach(async context => {
+    vi.mocked(freeAgentModelTakesImages).mockClear();
+    const url=process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
+    if(url&&/image input|large provider/.test(context.task.name)){
+      const pg=await groupBPostgresDatabase(url);f=await seedOwnedModelFixture(pg.database,{installSchema:false});closeDatabase=pg.close;
+    }else{const local=await ownedModelFixture();f=local;closeDatabase=()=>local.db.close();} calls = []; reply = success;
     options = { database: f.db, config: { model: 'unselected/default', dailyTokenCap: 100_000, firstDayTokenCap: 100_000, lifetimeTokenCap: 0 },
       upstreamKey: 'SYNTHETIC_SERVER_PROVIDER_KEY',
       ownedModel: { credentials: f.credentials, ready: () => true },
@@ -34,8 +40,8 @@ describe('actual owned model endpoint and actual quota adapter', () => {
     });
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  });
-  afterEach(async () => { vi.useRealTimers(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await f.db.close(); });
+  },60000);
+  afterEach(async () => { vi.useRealTimers(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await closeDatabase(); },60000);
   const call = (body: Record<string, unknown> = input, id = ONE, token?: string) => fetch(origin + '/v1/free-agents/model/chat/completions', {
     method: 'POST', headers: { authorization: `Bearer ${token ?? f.issued.token}`, 'x-beeline-model-request': id,
       'content-type': 'application/json', 'x-beeline-command-generation': 'UNTRUSTED_CALLER_METADATA' }, body: JSON.stringify(body),
@@ -172,10 +178,18 @@ describe('actual owned model endpoint and actual quota adapter', () => {
     expect(calls).toHaveLength(1);
   });
 
-  it('keeps the selected text-only cohort explicit without image metadata reads or quota admission', async () => {
+  it('settles a large provider event without a 256 KiB refusal or losing terminal receipt evidence',async()=>{
+    const content='large provider output '.repeat(30_000);
+    reply=()=>new Response('data: '+JSON.stringify({id:'untrusted-provider',choices:[{index:0,delta:{content},finish_reason:'stop'}],usage:{prompt_tokens:10,completion_tokens:3,cost:0.00002}})+'\n\ndata: [DONE]\n\n',{headers:{'content-type':'text/event-stream'}});
+    const response=await call({...input,stream:true}),text=await response.text();
+    expect(response.status).toBe(200);expect(text).toContain(content);expect(text).not.toContain('untrusted-provider');expect(text).toContain('bfmr_v1.');expect(text).toContain('[DONE]');
+    expect((await f.db.query('SELECT state FROM owned_model_attempts')).rows).toEqual([{state:'succeeded'}]);expect(calls).toHaveLength(1);
+  });
+  it('allows image input by default without extra model metadata admission', async () => {
+    options.config = {...options.config,dailyTokenCap:1_000_000,firstDayTokenCap:1_000_000};
     const image = await call({ messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'https://synthetic.invalid/image.png' } }] }] });
-    expect(image.status).toBe(400); await image.text(); expect(calls).toHaveLength(0);
-    expect(freeAgentModelTakesImages).not.toHaveBeenCalled(); expect(await counters()).toEqual({ usage: [], budget: [], rate: [] });
+    expect(image.status).toBe(200); await image.text(); expect(calls).toHaveLength(1);
+    expect(freeAgentModelTakesImages).not.toHaveBeenCalled(); expect((await counters()).usage).toHaveLength(1);
   });
 
   it('rolls actual token/budget/rate reservation back when the attempt insert cannot commit', async () => {

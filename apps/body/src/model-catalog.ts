@@ -1,3 +1,4 @@
+import { startAgentProcess, stopAgentProcess } from './agent-process.js';
 /**
  * Reads an ACP agent's own live model/effort catalog by briefly starting the
  * exact selected command and inspecting `session/new`'s advertised
@@ -81,24 +82,6 @@ export function filterAgentModelCatalog(
  * and the client is still stopped and the scratch directory still removed
  * when it expires. Omitted, both requests keep their own 60s defaults.
  */
-export interface ModelCatalogProbeLimits {
-  timeoutMs?: number;
-}
-
-/**
- * A whole-read deadline that never fires until `ms` have genuinely passed,
- * but also never keeps the process alive on its own account: an `unref`ed
- * timer that only ever rejects cannot be what a caller is waiting on.
- */
-function withDeadline<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout>;
-  const expired = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms}ms`)), ms);
-    timer.unref?.();
-  });
-  return Promise.race([work, expired]).finally(() => clearTimeout(timer));
-}
-
 async function withAgentModelCatalog<T>(
   agent: ModelCatalogAgent,
   agentEnv: Record<string, string>,
@@ -109,11 +92,7 @@ async function withAgentModelCatalog<T>(
     raw: AgentModelConfigOption[];
     catalog: AgentModelConfigOption[];
   }) => Promise<T>,
-  limits: ModelCatalogProbeLimits = {},
 ): Promise<T> {
-  const deadline = limits.timeoutMs === undefined ? undefined : Date.now() + limits.timeoutMs;
-  const remaining = (): number | undefined =>
-    deadline === undefined ? undefined : Math.max(1, deadline - Date.now());
   const scratchCwd = await mkdtemp(resolve(tmpdir(), 'beeline-pair-model-check-'));
   const probeEnv = modelCatalogProbeEnvironment(agent, agentEnv, scratchCwd);
   const client = new AcpClient({
@@ -129,11 +108,9 @@ async function withAgentModelCatalog<T>(
     inheritProcessEnv: true,
   });
   try {
-    await client.start(remaining() ?? 60_000);
-    const sessionTimeout = remaining();
+    await startAgentProcess(client);
     const { sessionId, raw: sessionRaw } = await client.sessionNew({
       cwd: scratchCwd,
-      ...(sessionTimeout === undefined ? {} : { timeoutMs: sessionTimeout }),
     });
     const raw = parseAdvertisedConfigOptions(
       sessionRaw,
@@ -142,19 +119,9 @@ async function withAgentModelCatalog<T>(
     );
     const catalog = filterAgentModelCatalog(agent, raw, probeEnv);
     const inspected = inspect({ client, sessionId, raw, catalog });
-    // `inspect` (live-validating every advertised model, one ACP round trip
-    // each) has no timeout of its own to inherit: each individual round trip
-    // defaults to a generous 60s, so a whole-read deadline set on this call
-    // must also bound this step or a catalog with several model choices can
-    // run well past it in total silence. A probe that outlives the deadline
-    // still finishes on its own account; its result is simply no longer
-    // awaited here, matching `client.stop()` below tearing the session down.
-    const inspectDeadline = remaining();
-    return inspectDeadline === undefined
-      ? await inspected
-      : await withDeadline(inspected, inspectDeadline, 'model catalog probe');
+    return await inspected;
   } finally {
-    await client.stop().catch(() => undefined);
+    await stopAgentProcess(client).catch(() => undefined);
     await rm(scratchCwd, { recursive: true, force: true }).catch(() => undefined);
   }
 }
@@ -168,7 +135,6 @@ export async function fetchAgentModelCatalog(
   agent: ModelCatalogAgent,
   agentEnv: Record<string, string>,
   selection?: { model?: string; effort?: string },
-  limits: ModelCatalogProbeLimits = {},
 ): Promise<{ raw: AgentModelConfigOption[]; catalog: AgentModelConfigOption[] }> {
   return withAgentModelCatalog(
     agent,
@@ -183,7 +149,6 @@ export async function fetchAgentModelCatalog(
         selection?.model,
       ),
     }),
-    limits,
   );
 }
 

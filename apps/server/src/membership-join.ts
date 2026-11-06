@@ -1,5 +1,5 @@
+import { subscriptionRooms } from './agent-subscriptions.js';
 import type { QueryResultRow } from 'pg';
-import { cornerReviewerSql } from './corner-reviewer.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { randomUUID } from 'node:crypto';
 import type { SystemEventKind } from '@beeline/api-contract/phone';
@@ -98,14 +98,7 @@ async function subscriberRooms(
 ): Promise<string[]> {
   if (!roomIds.length) return [];
   try {
-    const rows = await database.query<{ room_id: string }>(
-      `SELECT DISTINCT member.room_id FROM memberships member
-       JOIN identities identity ON identity.id=member.identity_id AND identity.kind='agent'
-       WHERE member.room_id=ANY($1::uuid[]) AND member.removed_at IS NULL
-         AND member.event_subscriptions @> $2::jsonb`,
-      [roomIds, JSON.stringify([kind])],
-    );
-    return rows.rows.map((row) => row.room_id);
+    return await subscriptionRooms(database, roomIds, kind);
   } catch (error) {
     console.error('[membership-join] subscriber room lookup failed', error);
     return [];
@@ -282,77 +275,11 @@ export async function joinRooms(
 
 // Membership write primitives. Callers retain their transaction and access checks.
 // Keep each conflict policy explicit: initial joins and restorations differ.
-export function subscribeConfiguredReviewers<Row extends QueryResultRow = QueryResultRow>(
-  database: Pick<SqlDatabase, 'query'>, values: [parentRoomId: string | null],
-) {
-  return database.query<Row>(
-    `UPDATE memberships reviewer_membership
-     SET event_subscriptions=reviewer_membership.event_subscriptions||'["check-passed"]'::jsonb
-     FROM rooms surface
-     JOIN rooms parent ON parent.id=COALESCE(surface.parent_id,surface.id)
-     WHERE surface.parent_id IS NULL AND reviewer_membership.room_id=surface.id
-       AND reviewer_membership.identity_id=parent.reviewer_agent_id
-       AND reviewer_membership.removed_at IS NULL
-       AND NOT reviewer_membership.event_subscriptions @> '["check-passed"]'::jsonb
-       AND ($1::uuid IS NULL OR parent.id=$1)`, values,
-  );
-}
-
 export function removeWorkspaceMemberships<Row extends QueryResultRow = QueryResultRow>(
   database: Pick<SqlDatabase, 'query'>, values: [workspaceId: string, identityId: string],
 ) {
   return database.query<Row>(
     `UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`, values,
-  );
-}
-
-export function deleteMembershipSubscription<Row extends QueryResultRow = QueryResultRow>(
-  database: Pick<SqlDatabase, 'query'>, values: [roomId: string, surfaceId: string, agentId: string, event: string],
-) {
-  return database.query<Row>(
-    `WITH surface AS (
-         SELECT room.id,room.parent_id,member.event_subscriptions
-         FROM rooms room JOIN rooms parent ON parent.id=COALESCE(room.parent_id,room.id)
-         JOIN room_access member ON member.room_id=room.id AND member.identity_id=$3
-           AND member.removed_at IS NULL
-         WHERE room.id=$2 AND (room.id=$1 OR room.parent_id=$1)
-           AND member.event_subscriptions ? $4
-           AND NOT ($4='check-passed' AND ${cornerReviewerSql('room')}=$3)
-       ), room_update AS (
-         UPDATE memberships member SET event_subscriptions=member.event_subscriptions-$4
-         FROM surface WHERE surface.parent_id IS NULL AND member.room_id=surface.id
-           AND member.identity_id=$3 RETURNING member.identity_id
-       ), corner_update AS (
-         INSERT INTO corner_person_state(corner_id,identity_id,event_subscriptions)
-         SELECT id,$3,event_subscriptions-$4 FROM surface WHERE parent_id IS NOT NULL
-         ON CONFLICT(corner_id,identity_id) DO UPDATE SET event_subscriptions=
-           COALESCE(corner_person_state.event_subscriptions-$4,EXCLUDED.event_subscriptions)
-         RETURNING identity_id
-       ) SELECT * FROM room_update UNION ALL SELECT * FROM corner_update`, values,
-  );
-}
-
-export function writeSurfaceEventSubscriptions<Row extends QueryResultRow = QueryResultRow>(
-  database: Pick<SqlDatabase, 'query'>, values: [roomId: string, identityId: string, subscriptions: string],
-) {
-  return database.query<Row>(
-    `WITH surface AS (
-      SELECT room.id,room.parent_id,CASE WHEN ${cornerReviewerSql('room')}=$2
-        AND NOT $3::jsonb @> '["check-passed"]'::jsonb
-        THEN $3::jsonb||'["check-passed"]'::jsonb ELSE $3::jsonb END event_subscriptions
-      FROM rooms room JOIN rooms parent ON parent.id=COALESCE(room.parent_id,room.id)
-      JOIN memberships member ON member.room_id=COALESCE(room.parent_id,room.id)
-        AND member.identity_id=$2 AND member.removed_at IS NULL WHERE room.id=$1
-    ), room_update AS (
-      UPDATE memberships member SET event_subscriptions=surface.event_subscriptions FROM surface
-      WHERE surface.parent_id IS NULL AND member.room_id=surface.id AND member.identity_id=$2
-      RETURNING member.event_subscriptions
-    ), corner_update AS (
-      INSERT INTO corner_person_state(corner_id,identity_id,event_subscriptions)
-      SELECT id,$2,event_subscriptions FROM surface WHERE parent_id IS NOT NULL
-      ON CONFLICT(corner_id,identity_id) DO UPDATE SET event_subscriptions=EXCLUDED.event_subscriptions
-      RETURNING event_subscriptions
-    ) SELECT * FROM room_update UNION ALL SELECT * FROM corner_update`, values,
   );
 }
 
@@ -392,24 +319,6 @@ export function createInvitedWorkspaceMembership<Row extends QueryResultRow = Qu
   );
 }
 
-export function writeActiveRoomEventSubscriptions<Row extends QueryResultRow = QueryResultRow>(
-  database: Pick<SqlDatabase, 'query'>, values: [identityId: string, roomId: string, subscriptions: string],
-) {
-  return database.query<Row>(
-    `UPDATE memberships SET event_subscriptions=$3::jsonb
-     WHERE identity_id=$1 AND room_id=$2 AND removed_at IS NULL`, values,
-  );
-}
-
-export function writeActiveRoomMembersEventSubscriptions<Row extends QueryResultRow = QueryResultRow>(
-  database: Pick<SqlDatabase, 'query'>, values: [identityIds: string[], roomId: string, subscriptions: string],
-) {
-  return database.query<Row>(
-    `UPDATE memberships SET event_subscriptions=$3::jsonb
-      WHERE identity_id=ANY($1::text[]) AND room_id=$2 AND removed_at IS NULL`, values,
-  );
-}
-
 export function deleteCornerMembershipBatch<Row extends QueryResultRow = QueryResultRow>(
   database: Pick<SqlDatabase, 'query'>, values: [] = [],
 ) {
@@ -443,15 +352,6 @@ export function restorePairedWorkspaceMembership<Row extends QueryResultRow = Qu
   );
 }
 
-export function writeIdentityRoomsEventSubscriptions<Row extends QueryResultRow = QueryResultRow>(
-  database: Pick<SqlDatabase, 'query'>, values: [identityId: string, roomIds: string[], subscriptions: string],
-) {
-  return database.query<Row>(
-    `UPDATE memberships SET event_subscriptions=$3::jsonb
-             WHERE identity_id=$1 AND room_id=ANY($2::uuid[])`, values,
-  );
-}
-
 export function createWorkspaceOwnerMembership<Row extends QueryResultRow = QueryResultRow>(
   database: Pick<SqlDatabase, 'query'>, values: [workspaceId: string, identityId: string],
 ) {
@@ -467,36 +367,6 @@ export function joinRoomCreator<Row extends QueryResultRow = QueryResultRow>(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
          SELECT $1,$2,$3,role FROM memberships
          WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$3 AND removed_at IS NULL`, values,
-  );
-}
-
-export function unsubscribeRoomReviewer<Row extends QueryResultRow = QueryResultRow>(
-  database: Pick<SqlDatabase, 'query'>, values: [roomId: string, identityId: string],
-) {
-  return database.query<Row>(
-    `UPDATE memberships member
-             SET event_subscriptions=member.event_subscriptions-'check-passed'
-             FROM rooms room
-             WHERE member.room_id=room.id AND member.identity_id=$2
-               AND member.removed_at IS NULL
-               AND room.id=$1 AND room.parent_id IS NULL`, values,
-  );
-}
-
-export function subscribeRoomReviewer<Row extends QueryResultRow = QueryResultRow>(
-  database: Pick<SqlDatabase, 'query'>, values: [roomId: string, identityId: string],
-) {
-  return database.query<Row>(
-    `UPDATE memberships member
-             SET event_subscriptions=CASE
-               WHEN member.event_subscriptions @> '["check-passed"]'::jsonb
-                 THEN member.event_subscriptions
-               ELSE member.event_subscriptions||'["check-passed"]'::jsonb
-             END
-             FROM rooms room
-             WHERE member.room_id=room.id AND member.identity_id=$2
-               AND member.removed_at IS NULL
-               AND room.id=$1 AND room.parent_id IS NULL`, values,
   );
 }
 
@@ -696,4 +566,9 @@ BEGIN
 END;
 $$;
 `;
+}
+
+/** Upgrade-only: old membership JSON cannot remain an actionable subscription store. */
+export async function retireMembershipSubscriptionLists(database: SqlDatabase): Promise<void> {
+  await database.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb WHERE event_subscriptions<>'[]'::jsonb`);
 }

@@ -59,12 +59,11 @@ describe('agent-created webhook subscription', () => {
       const stored = (await db.query<{ webhook_token: string }>('SELECT webhook_token FROM agent_subscriptions WHERE id=$1', [one.id])).rows[0]!;
       expect(stored.webhook_token).not.toContain(revealed.token);
       await expect(webhookToken(db, ROOM, one.id, MEMBER)).rejects.toThrow('Workspace admin required');
-      await expect(webhookDetails(db, ROOM, one.id, MEMBER, 'https://beeline.test')).rejects.toThrow('Workspace admin required');
+      expect((await webhookDetails(db, ROOM, one.id, MEMBER, 'https://beeline.test')).webhook?.url).toContain('/hooks/');
       const adminView = await phone.execute('readScheduledWork', { roomId: ROOM }, OWNER);
       expect(adminView.subscriptions[0]!.webhook?.url).toContain('/hooks/');
       expect(JSON.stringify(adminView)).not.toContain(revealed.token);
-      await expect(phone.execute('readScheduledWork', { roomId: ROOM }, MEMBER))
-        .rejects.toThrow('workspace admins only');
+      expect((await phone.execute('readScheduledWork', { roomId: ROOM }, MEMBER)).subscriptions).toHaveLength(2);
       await expect(phone.execute('rotateWebhookToken', { roomId: ROOM, subscriptionId: one.id }, MEMBER)).rejects.toThrow('Workspace admin required');
       await db.query('UPDATE messages SET author_id=$2 WHERE id=$1', [root, MEMBER]);
       await expect(create()).rejects.toThrow('Workspace admin required');
@@ -88,6 +87,9 @@ describe('agent-created webhook subscription', () => {
       expect((await post({ authorization: `Bearer ${token}`, 'x-beeline-delivery': 'first' })).status).toBe(200);
       expect(await (await post({ authorization: `Bearer ${token}`, 'x-beeline-delivery': 'first' })).json()).toEqual({ outcome: 'skipped' });
       expect((await post({ 'x-beeline-signature': `sha256=${createHmac('sha256', token).update(body).digest('hex')}`, 'x-beeline-delivery': 'signed' })).status).toBe(200);
+      await db.query('UPDATE agent_subscriptions SET paused_at=now() WHERE id=$1', [subscription.id]);
+      expect((await post({ authorization: `Bearer ${token}`, 'x-beeline-delivery': 'paused' })).status).toBe(409);
+      await db.query('UPDATE agent_subscriptions SET paused_at=NULL WHERE id=$1', [subscription.id]);
       const signedQuery = `${endpoint}?signature=${createHmac('sha256', token).update(body).digest('hex')}&delivery=query`;
       expect((await fetch(signedQuery, { method: 'POST', body })).status).toBe(200);
       expect((await post({ 'x-beeline-signature': '0'.repeat(64) })).status).toBe(401);

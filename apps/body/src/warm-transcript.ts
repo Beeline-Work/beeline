@@ -1,6 +1,6 @@
 import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { DEFAULT_SESSION_IDLE_MS } from './session-scheduler.js';
+import { DEFAULT_SESSION_IDLE_MS } from './agent-process.js';
 
 /**
  * A warm ACP session still holds every transcript row an earlier turn in that

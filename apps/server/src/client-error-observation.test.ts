@@ -1,3 +1,4 @@
+import { phoneFetch } from '../../../tests/helpers/phone-operation.js';
 import { randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -10,7 +11,7 @@ async function start() {
   const server = createBeelineServer({ database: {}, auth: { authenticatePhone: async () => identity },
     phone: {}, daemon: {}, live: new LiveHub(), mediaMaximumBytes: 1 } as unknown as ServerOptions);
   servers.push(server); await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
-  return (body: unknown, authenticated = true) => fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/phone/observations/client-error`, {
+  return (body: unknown, authenticated = true) => phoneFetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/phone/observations/client-error`, {
     method: 'POST', headers: { 'content-type': 'application/json', ...(authenticated ? { authorization: 'Bearer isolated-diagnostic-fixture-token' } : {}) }, body: JSON.stringify(body),
   });
 }

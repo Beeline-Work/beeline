@@ -1,12 +1,9 @@
 import { execFile } from 'node:child_process';
-import { lstat, readdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import {lstat} from 'node:fs/promises';
 import { promisify } from 'node:util';
-import { reclaimWholeStorageObject } from './helper-storage.js';
 
 const execFileAsync = promisify(execFile);
 export const CORNER_SCRATCH_BUDGET_BYTES = 5 * 1024 ** 3;
-export const SHARED_MODEL_CACHE_BUDGET_BYTES = 32 * 1024 ** 3;
 
 /** du counts allocated blocks once per inode and never follows symlinks. */
 export async function allocatedDirectoryBytes(path: string): Promise<number> {
@@ -42,16 +39,4 @@ export async function assertScratchWriteBudget(
   if (usage + incomingBytes > budget) {
     throw new Error(`${scratchBudgetMessage(usage, budget)} Requested write: ${incomingBytes} bytes.`);
   }
-}
-
-/** Complete model objects share the seven-day whole-object policy. */
-export async function pruneSharedModelCache(root: string, now = Date.now(), _budget = SHARED_MODEL_CACHE_BUDGET_BYTES): Promise<string[]> {
-  const removed: string[] = [];
-  for (const parent of [join(root, 'hub'), root]) {
-    for (const entry of await readdir(parent, { withFileTypes: true }).catch(() => [])) {
-      if (!entry.isDirectory() || !(parent === root ? entry.name === 'xet' : /^(?:models|datasets|spaces)--/.test(entry.name))) continue;
-      removed.push(...(await reclaimWholeStorageObject(join(parent, entry.name), false, { now })).map(item => item.path));
-    }
-  }
-  return removed;
 }

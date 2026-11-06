@@ -43,6 +43,26 @@ afterEach(() => {
 });
 
 describe('StdioSquireMcpClient', () => {
+  it('reconnects on an explicit account change and ignores the retired facade exiting later', async () => {
+    const old = fakeChild({ initialize: {}, 'tools/call': {
+      isError: true, content: [{ type: 'text', text: '{"error":{"code":"reconnect_required"}}' }],
+    } });
+    const fresh = fakeChild({ initialize: {}, 'tools/call': {
+      content: [{ type: 'text', text: '{"credentials":[]}' }],
+    } });
+    const spawn = vi.fn().mockReturnValueOnce(old.child).mockReturnValueOnce(fresh.child);
+    const client = new StdioSquireMcpClient({ scope: { agentId: 'agent', roomId: 'connector' }, spawn });
+    await expect(client.call('list_credentials')).rejects.toThrow('reconnect_required');
+    expect(spawn).toHaveBeenCalledTimes(1);
+    client.reconnect();
+    expect(old.child.killed).toBe(true);
+    expect(await client.call('list_credentials')).toEqual({ credentials: [] });
+    old.child.emit('exit', 0);
+    expect(await client.call('list_credentials')).toEqual({ credentials: [] });
+    expect(spawn).toHaveBeenCalledTimes(2);
+    client.close();
+  });
+
   it('initializes once, then answers each tool call with the parsed tool result', async () => {
     const calls: string[] = [];
     const { child } = fakeChild({
@@ -179,48 +199,21 @@ describe('StdioSquireMcpClient', () => {
     client.close();
   });
 
-  it('returns a named error for a hung vault approval call within 30 seconds', async () => {
+  it.each(['fetch_credential','operate_screenshot'])('waits for %s until a real result arrives', async tool => {
     vi.useFakeTimers();
-    const { child } = fakeChild({ initialize: {} });
-    const client = new StdioSquireMcpClient({
-      scope: { agentId: 'agent-a', roomId: 'room-a' },
-      spawn: () => child as never,
-    });
-    try {
-      const pending = client.requestMcp('tools/call', {
-        name: 'fetch_credential', arguments: { approval_id: 'fixture-approval' },
-      });
-      const failure = expect(pending).rejects.toThrow('fetch_credential timed out after 30000ms');
-      await vi.advanceTimersByTimeAsync(30_000);
-      await failure;
-    } finally {
-      client.close();
-      vi.useRealTimers();
-    }
-  });
-
-  it('does not time out at Squire\'s own longest in-call wait, and names the tool once it does', async () => {
-    vi.useFakeTimers();
-    try {
-      const { child } = fakeChild({ initialize: {} }); // 'tools/call' is absent, so the call stays pending
-      const client = new StdioSquireMcpClient({
-        scope: { agentId: 'agent-a', roomId: 'room-a' },
-        spawn: () => child as never,
-      });
-      const pending = client.call('operate_screenshot');
-      let settled = false;
-      pending.catch(() => { settled = true; });
-
-      await vi.advanceTimersByTimeAsync(180_000); // Squire's own longest in-call wait (captcha RES_TIMEOUT_MS)
-      expect(settled).toBe(false); // a 120 s client timeout used to kill this call here
-
-      await vi.advanceTimersByTimeAsync(30_000); // the margin above it: now the client's own ceiling
-      expect(settled).toBe(true);
-      await expect(pending).rejects.toThrow('operate_screenshot timed out after 210000ms');
-      client.close();
-    } finally {
-      vi.useRealTimers();
-    }
+    const {child,written}=fakeChild({initialize:{}});
+    const client=new StdioSquireMcpClient({scope:{agentId:'agent-a',roomId:'room-a'},spawn:()=>child as never});
+    try{
+      let settled=false;
+      const pending=client.call(tool).then(result=>{settled=true;return result;});
+      await vi.advanceTimersByTimeAsync(24*60*60*1000);
+      expect(settled).toBe(false);
+      const request=written.map(line=>JSON.parse(line)).find(message=>message.method==='tools/call');
+      expect(request.params.name).toBe(tool);
+      child.stdout.emit('data',JSON.stringify({jsonrpc:'2.0',id:request.id,result:{content:[{type:'text',text:'{"done":true}'}]}})+'\n');
+      await expect(pending).resolves.toEqual({done:true});
+      expect(written.map(line=>JSON.parse(line)).filter(message=>message.method==='tools/call')).toHaveLength(1);
+    }finally{client.close();vi.useRealTimers();}
   });
 
   it('spawns the non-electing façade, never a server of its own', async () => {

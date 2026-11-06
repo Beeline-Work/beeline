@@ -1,10 +1,11 @@
 import { flushDueCommanderWakes } from './commander-wakes.js';
+import { releaseAgentConnection } from './connection-presence.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { advanceCorner } from './corner-lifecycle.js';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { beforeAll, beforeEach, afterAll, afterEach, expect, it, vi } from 'vitest';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
-import { DaemonService } from './daemon-service.js';
+import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';
 import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
 import { captureServerError } from './sentry.js';
@@ -130,6 +131,10 @@ it('STALE-ANSWERED-REPORT: preserves a report already being handled', async () =
   expect((await db.query('SELECT state FROM agent_commands WHERE id=$1', [report.id])).rows)
     .toEqual([{ state: 'claimed' }]);
   await db.query(`UPDATE agent_commands SET lease_expires_at=now()-interval '1 second' WHERE id=$1`, [report.id]);
+  await claim(report); // Only a closed connection releases the live machine's work.
+  const connection = (await db.query<{ connection_id: string }>(
+    'SELECT connection_id FROM agent_connections WHERE agent_id=$1', [RUBY])).rows[0]!;
+  await releaseAgentConnection(db, new LiveHub(), RUBY, connection.connection_id);
   await expect(claim(report)).rejects.toThrow('command claim conflict');
 });
 it.each([
@@ -204,17 +209,24 @@ it.each([true, false])('DONE-PR-1: report resolves an unregistered PR (exists: %
     expect(app.openPullRequestsForBranch).toHaveBeenCalledWith('fixture-token', 'owner/widgets', branch);
   } finally { Object.assign(daemon, { github: undefined }); }
 });
-it('requires a status that matches the report prefix', async () => {
-  await expect(daemon.execute('report', { ...authority(order), status: 'done', text: 'Delivered without a prefix' }, RUBY))
-    .rejects.toThrow('received status "done" and text prefix null');
-  await expect(daemon.execute('report', { ...authority(order), text: 'done: delivered' } as never, RUBY))
-    .rejects.toThrow('received status null and text prefix "done:"');
-  await expect(daemon.execute('report', { ...authority(order), status: 'done', text: 'blocked: missing input' }, RUBY))
-    .rejects.toThrow('received status "done" and text prefix "blocked:"');
+it.each(['Delivered', 'blocked: Delivered'])('uses the validated report status for %s', async text => {
+  const input={...authority(order),status:'done' as const,text};
+  const first=await daemon.execute('report',input,RUBY);
+  const retry=await daemon.execute('report',input,RUBY);
+  expect(retry.id).toBe(first.id);
+  expect((await db.query(`SELECT text FROM messages WHERE id=$1`,[first.id])).rows).toEqual([{text:'done: Delivered'}]);
+});
+it.each([undefined,'working'])('rejects a nonterminal report status %s', async status => {
+  await expect(daemon.execute('report',{...authority(order),status,text:'Delivered'} as never,RUBY))
+    .rejects.toThrow('report requires status');
+});
+it.each(['','done:   '])('rejects an empty report body %s', async text => {
+  await expect(daemon.execute('report',{...authority(order),status:'done',text},RUBY))
+    .rejects.toThrow('nonempty text');
 });
 it('Reproduction report-schema: stores and delivers a complete multi-paragraph report', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
-  const text = 'blocked: ' + 'Synthetic paragraph for report delivery.\n\n'.repeat(150) + 'End of report.';
+  const text = 'blocked: ' + 'Synthetic paragraph for report delivery.\n\n'.repeat(150) + 'End of report.\n\n';
   await daemon.execute('report', { ...authority(turn), status: 'blocked', text }, WORKER);
   const report = (await commands(DM, RUBY)).find(command => command.reason === 'report')!;
   expect(report.source.body).toBe(text);

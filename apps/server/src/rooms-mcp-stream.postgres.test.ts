@@ -4,7 +4,7 @@ import type { ServerResponse } from 'node:http';
 import { Pool } from 'pg';
 import { describe, expect, it } from 'vitest';
 import { PostgresDatabase, type SqlDatabase } from './database.js';
-import { DURABLE_LIVE_SCHEMA } from './durable-live.js';
+import { COMMITTED_JOURNAL_SCHEMA } from './committed-journal-schema.js';
 import { MCP_MEMBER_STREAM_SCHEMA, serveMcpMemberStream } from './rooms-mcp-stream.js';
 const url=process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
 if(url&&!['localhost','127.0.0.1','[::1]'].includes(new URL(url).hostname))throw new Error('MCP proof requires isolated loopback PostgreSQL');
@@ -34,7 +34,7 @@ describe.skipIf(!url)('MCP real PostgreSQL final authority contention',()=>{
         CREATE TABLE rooms_mcp_tokens(hash text,client_id text,identity_id text,family_id text,scope text,expires_at timestamptz,revoked_at timestamptz);
         CREATE TABLE rooms_mcp_connections(client_id text,identity_id text,scope text,revoked_at timestamptz);
         CREATE TABLE rooms_mcp_families(id text,client_id text,identity_id text,revoked_at timestamptz);`);
-      await first.query(DURABLE_LIVE_SCHEMA);await first.query(MCP_MEMBER_STREAM_SCHEMA);
+      await first.query(COMMITTED_JOURNAL_SCHEMA);await first.query(MCP_MEMBER_STREAM_SCHEMA);
       await first.query(`INSERT INTO rooms VALUES($1,$2,NULL)`,[room,workspace]);
       await first.query(`INSERT INTO room_access VALUES($1,'member',NULL)`,[room]);
       await first.query(`INSERT INTO memberships VALUES($1,NULL,'member','member',NULL)`,[workspace]);

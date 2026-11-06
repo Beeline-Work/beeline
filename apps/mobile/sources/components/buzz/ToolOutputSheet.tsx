@@ -1,3 +1,4 @@
+import { ErrorBanner } from './ErrorBanner';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ScrollView, Text, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -24,6 +25,7 @@ export type ToolOutputSheetProps = {
   title: string;
   subtitle?: string;
   detail: string | null | undefined;
+  error?: string | null;
   /**
    * When set, render Two Inks and wrap. Omitted for ordinary tool output,
    * which stays plain wrapped machine text.
@@ -42,6 +44,7 @@ export function ToolOutputSheet({
   title,
   subtitle,
   detail,
+  error,
   language,
   visible,
   onClose,
@@ -87,7 +90,7 @@ export function ToolOutputSheet({
         ]}
         testID="tool-output-scroll"
       >
-        {highlight ? (
+        {error ? <ErrorBanner inline title={error} /> : highlight ? (
           <CodeHighlighter code={detail ?? ''} language={language} />
         ) : (
           <Text selectable style={styles.sheetOutput} testID="tool-output-text">

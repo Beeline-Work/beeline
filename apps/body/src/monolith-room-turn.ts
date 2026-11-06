@@ -13,12 +13,12 @@ import { installRoomGitHubLauncher } from './room-github-auth.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { resourceCallFacts } from './resource-mcp-facade.js';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { lstatSync, realpathSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { machineHost } from './machine-host.js';
-import { isolatedSharedAssetCategories, markWorkspaceLayoutLive, prepareCodexCacheTargets, preparePackageCacheTargets, preparePrivateAssets, prepareWorkspaceAssets, workspaceAssetPaths, workspaceCacheEnv } from './workspace-assets.js';
+import { markWorkspaceLayoutLive, prepareCodexCacheTargets, preparePackageCacheTargets, preparePrivateAssets, prepareWorkspaceAssets, workspaceAssetPaths, workspaceCacheEnv } from './workspace-assets.js';
 import type { SharedAssetCategory } from '@beeline/api-contract/agent-grants';
 import { admitSharedAssets } from './shared-asset-capacity.js';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
@@ -31,9 +31,6 @@ import { type SystemEvent } from '@beeline/api-contract/daemon';
 import {
   AcpClient,
   openAcpConversation,
-  AcpTurnBackstopError,
-  TURN_BACKSTOP_MS,
-  isPureRetryNarration,
   agentTurnSteps,
   type AcpPermissionDecision,
   type AcpPermissionRequest,
@@ -56,7 +53,6 @@ import {
   writeBackRoomClaudeLogin,
 } from './agent-home.js';
 import {
-  claimGrantedHostRoutes,
   grantedHostRouteWires,
   grantedSquireHostRoute,
   ungatedHostServers,
@@ -78,6 +74,7 @@ import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import { installPiTurnBudget } from './pi-turn-budget.js';
 import {
   beelineAgentMcpServer,
+  sessionGrantedResources, writeSessionResourceAuth, recordSessionModelFallback, tracedAgentProcessLifecycle,
   readOnlyMcpServer,
 } from './room-session.js';
 import { awaitInstitutionalContext, startInstitutionalContextFetch } from './institutional-context.js';
@@ -99,7 +96,6 @@ import {
 } from './read-only-policy.js';
 import {
   credentialMaskPaths,
-  grantedSandboxDevices,
   harnessHomeStateDirs,
   siblingAgentMaskPaths,
   wrapAgentCommand,
@@ -126,7 +122,6 @@ import {
   filterAllowedModelConfigOptions,
   parseAdvertisedConfigOptions,
 } from './model-config.js';
-import type { AgentModelConfigOption } from './model-types.js';
 import type { AgentRuntimeRecord } from './runtime.js';
 import { runtimeDirectory, runtimeIdentity } from './runtime.js';
 import {
@@ -143,12 +138,11 @@ import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
 import { isCompletedToolCall, isPrivateWorkToolCall, toolCallFailureLine } from './tool-call-failure.js';
 import { distillTurnFailureReason, redactTurnError, redactToolDetail } from './turn-failure-reason.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
-import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
+import { AgentProcesses, startAgentProcess, stopAgentProcess, isAgentProcessExit, type AgentProcessLifecycle } from './agent-process.js';
 import { WarmTranscript } from './warm-transcript.js';
 import { PromptSectionBaseline } from './prompt-section-baseline.js';
 import type { RoomSupervisor } from './room-supervisor.js';
 
-export const ROOM_PROMPT_BACKSTOP_MS = TURN_BACKSTOP_MS;
 const execFileAsync = promisify(execFile);
 
 type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
@@ -551,7 +545,7 @@ export interface MonolithRoomTurnOptions {
   runtime: AgentRuntimeRecord;
   config: BodyConfig;
   api: DaemonApiClient;
-  scheduler: SessionScheduler;
+  scheduler: AgentProcesses;
   health: MonolithRoomTurnHealth;
   onSubscriptionState?: (connected: boolean) => void;
   onIntakeError?: (error: unknown) => void;
@@ -559,7 +553,7 @@ export interface MonolithRoomTurnOptions {
   pollMs?: number;
   createAcpClient?: (options: ConstructorParameters<typeof AcpClient>[0]) => AcpClient;
   onCornerOpened?: () => void;
-  onRestartRequested?: () => void;
+  onRestartRequested?: () => Promise<void>;
   canStartTurn?: () => boolean;
   /** Keeps this Room's intake alive across failed reads. */
   supervisor?: RoomSupervisor;
@@ -598,6 +592,8 @@ export class MonolithRoomTurnLoop {
   private client?: AcpClient;
   private claudeLoginWatch?: { close(): void };
   private sessionId?: string;
+  /** MCP subprocesses capture this generation-specific path at launch. */
+  private sessionContextPath?: string;
   private sessionCwd?: string;
   private sessionCommit?: string;
   private sessionGitHubToken?: string;
@@ -715,11 +711,13 @@ export class MonolithRoomTurnLoop {
         return view.apps?.find(app => app.appKey === service.trim().toLowerCase() &&
           app.transport === 'squire-api' && app.status === 'connected')?.connectionReference;
       },
+      () => options.api.refreshMachineVault(),
     );
     this.options = { ...options, api: this.commandContext.bind(options.api) };
     this.activationContext=new CommandActivationContext({
       scope:()=>options.api.channel?.activationScope?.(),
-      selected:()=>options.api.channel?.activationContextSelected===true,
+      machine:()=>Boolean(options.api.channel?.isOpen),
+      ready:()=>options.api.waitForConnection(),
       read:input=>options.api.readCommandActivation(input),
     });
     options.grantRunner?.register(options.roomId, {
@@ -822,7 +820,7 @@ export class MonolithRoomTurnLoop {
   }
 
   async refreshPersonaForSoulUpdate(): Promise<void> {
-    await this.options.scheduler.suspend(this.options.roomId);
+    await this.options.scheduler.stop(this.options.roomId);
   }
 
   async prepareForForcedUpdateRestart(): Promise<void> {
@@ -852,15 +850,14 @@ export class MonolithRoomTurnLoop {
 
   async forceRecoverRoom(): Promise<void> {
     if (this.client && this.sessionId) this.client.sessionCancel(this.sessionId);
-    await this.options.scheduler.forceSuspend(this.options.roomId);
+    await this.options.scheduler.stop(this.options.roomId, true);
   }
 
   private commandActivation(){
-    if(!this.options.api.channel?.activationContextSelected&&!this.options.api.channel?.activationScope?.())return Promise.resolve(undefined);
+    if(!this.options.api.channel?.isOpen)return Promise.resolve(undefined);
     const command=this.commandContext?.current;
     if(!command){
-      if(this.options.api.channel?.activationContextSelected)return Promise.reject(new Error('Activation requires a claimed command'));
-      return Promise.resolve(undefined);
+      return Promise.reject(new Error('Activation requires a claimed command'));
     }
     return this.activationContext.read({agentId:this.agent.publicKey,workspaceId:this.options.workspaceId,
       roomId:this.options.roomId,commandId:command.id,generationId:this.commandContext.generationId});
@@ -995,13 +992,14 @@ export class MonolithRoomTurnLoop {
     this.stopClaudeLoginWatch();
     this.client = undefined;
     this.sessionId = undefined;
+    this.sessionContextPath = undefined;
     this.sessionCwd = undefined;
     this.sessionCommit = undefined;
     this.sessionGitHubToken = undefined;
     this.sessionFingerprint = undefined;
     this.sessionCodegraphReady = false;
     this.pinnedProviderOverride = undefined;
-    if (client) await client.stop();
+    if (client) await stopAgentProcess(client);
   }
 
   /**
@@ -1016,7 +1014,7 @@ export class MonolithRoomTurnLoop {
    * `AcpClient not started` instead of spawning a fresh one.
    */
   private async sessionIsCurrent(): Promise<boolean> {
-    if (!this.client?.isAlive) return false;
+    if (!this.client?.isAlive || this.sessionContextPath !== this.commandContext.path) return false;
     await this.refreshTurnCheckout();
     return (
       this.sessionCwd === this.options.cwd &&
@@ -1078,34 +1076,14 @@ export class MonolithRoomTurnLoop {
     });
   }
 
-  private async grantedResources(): Promise<{ hostRoutes: string[]; devices: string[]; isolatedCategories: SharedAssetCategory[] }> {
-    try {
-      const activation=await this.commandActivation();
-      const grants = activation?activation.grants:await this.options.api.execute('listAgentGrants', {
+  private async grantedResources() {
+    return sessionGrantedResources(this.options.config, async () => {
+      const activation = await this.commandActivation();
+      return activation ? activation.grants : this.options.api.execute('listAgentGrants', {
         agentId: this.agent.publicKey,
         roomId: this.options.roomId,
       });
-      const approved = await claimGrantedHostRoutes(grants);
-      // Discovery is safe to mount; the transport gate authorizes every use.
-      // This also lets an owner use a yolo resource without an activation prompt.
-      return {
-        hostRoutes: [
-          ...new Set([
-            ...approved,
-            ...Object.keys(
-              hostImportedMcpDeclarations({
-                operatorHome: this.options.config.operatorHome,
-                agentKind: this.options.config.agentKind,
-              }),
-            ),
-          ]),
-        ],
-        devices: grantedSandboxDevices(grants),
-        isolatedCategories: isolatedSharedAssetCategories(grants),
-      };
-    } catch {
-      return { hostRoutes: [], devices: [], isolatedCategories: [] };
-    }
+    });
   }
 
   private mountedMcpServers(preparedEnv?: Record<string, string>): string[] {
@@ -1126,7 +1104,7 @@ export class MonolithRoomTurnLoop {
       previousStep = now;
     };
     await this.refreshTurnCheckout();
-    if (this.client?.isAlive && this.sessionId) {
+    if (this.client?.isAlive && this.sessionId && this.sessionContextPath === this.commandContext.path) {
       if (this.options.config.agentHomeRoot) {
         await repairRoomAgentCredentialLinks({
           root: this.options.config.agentHomeRoot,
@@ -1193,19 +1171,10 @@ export class MonolithRoomTurnLoop {
         ...hostImportedMcpDeclarations({ operatorHome, agentKind: this.options.config.agentKind }),
         ...registryHostDeclarations,
       })
-        ? { relay: await this.squireRelay.listen() }
+        ? { relay: await this.squireRelay.listen(this.commandContext.path) }
         : {}),
     };
-    const resourceAuthFile = `${this.commandContext.path}.resource-auth.json`;
-    await mkdir(dirname(resourceAuthFile), { recursive: true, mode: 0o700 });
-    await writeFile(
-      resourceAuthFile,
-      JSON.stringify({
-        ...this.options.api.connection(),
-        turnContextPath: this.commandContext.path,
-      }),
-      { mode: 0o600 },
-    );
+    const resourceAuthFile = await writeSessionResourceAuth(this.options.api, this.commandContext.path);
     const homeOverlay = this.options.config.agentHomeRoot
       ? await prepareRoomAgentHome({
           root: this.options.config.agentHomeRoot,
@@ -1510,7 +1479,7 @@ export class MonolithRoomTurnLoop {
     this.client = (this.options.createAcpClient ?? ((value) => new AcpClient(value)))(
       clientOptions,
     );
-    await this.client.start();
+    await startAgentProcess(this.client);
     startupStep('acp-initialize');
     if (assets) await markWorkspaceLayoutLive(assets);
     this.watchClaudeLogin();
@@ -1578,6 +1547,7 @@ export class MonolithRoomTurnLoop {
     }
     this.warmTranscript.rememberSession(opened.sessionId, conversationFingerprint);
     this.sessionId = opened.sessionId;
+    this.sessionContextPath = this.commandContext.path;
     this.sessionCwd = this.options.cwd;
     this.sessionCommit = this.turnCheckout?.commit;
     this.sessionGitHubToken = this.turnCheckout?.githubToken;
@@ -1593,7 +1563,8 @@ export class MonolithRoomTurnLoop {
         applied.appliedSelection.model &&
         applied.appliedSelection.model !== selection.model
       ) {
-        this.recordModelFallback(applied.appliedSelection, applied.options);
+        recordSessionModelFallback(this.options.api, this.agent.publicKey, this.options.workspaceId,
+          applied.appliedSelection, applied.options, `Room ${this.options.roomId}`);
       }
     }
     startupStep('model-selection');
@@ -1601,60 +1572,22 @@ export class MonolithRoomTurnLoop {
   }
 
   /**
-   * A vanished model id was just substituted for a same-family replacement
-   * (`resolveModelFamilyFallback`) so THIS turn could proceed instead of
-   * failing it. Persist the correction so the phone stops offering the dead
-   * id and the durable `model_unavailable` flag stays clear, and let the
-   * server (`daemon-service.ts`'s `modelCatalog`) name the change in the
-   * agent's DM — fire-and-forget: a slow or failed report must never hold up
-   * or fail a turn that already succeeded with the fallback model applied.
-   */
-  private recordModelFallback(
-    appliedSelection: { model?: string; effort?: string },
-    options: AgentModelConfigOption[],
-  ): void {
-    this.options.api
-      .execute('postAgentModelCatalog', {
-        agentId: this.agent.publicKey,
-        workspaceId: this.options.workspaceId,
-        options: options as DaemonOperationMap['postAgentModelCatalog']['input']['options'],
-        selection: appliedSelection,
-      })
-      .catch((error) =>
-        console.error(
-          `[thin-core] failed to persist automatic model fallback for Room ${this.options.roomId}:`,
-          error,
-        ),
-      );
-  }
-
-  /**
    * The scheduler seam, and the only place that can see the boundary between
-   * waiting for a slot and spawning a harness: `queue-wait` closes the instant
-   * `activate()` is called, and `cold` vs `warm` is decided by whether this
+   * waiting for the previous turn and spawning a harness: `queue-wait` closes when
+   * the process starts, and `cold` vs `warm` is decided by whether this
    * Room already holds a live ACP client.
    */
-  private lifecycle(trace?: TurnTrace): SessionLifecycle {
+  private lifecycle(trace?: TurnTrace): AgentProcessLifecycle {
     return {
-      activate: async () => {
-        trace?.end('queue-wait');
-        // `cold` is noted inside activate() rather than guessed here: the
-        // scheduler calls this for a fresh process AND after it retires a
-        // stale retained one, and the trace has to say what happened.
-        return trace ? trace.measure('activation', () => this.activate(trace)) : this.activate();
+      ...tracedAgentProcessLifecycle(() => this.activate(trace), () => this.sessionIsCurrent(), trace),
+      stop: () => this.discardSession(true),
+      isRunning: () => this.client?.isAlive === true,
+      onWorkChanged: listener => {
+        const client = this.client;
+        client?.on('session/update', listener);
+        client?.on('exit', listener);
+        return () => { client?.off('session/update', listener); client?.off('exit', listener); };
       },
-      isCurrent: () => {
-        // The scheduler is about to hand back a retained process; this is the
-        // only moment its configuration can be re-checked, so the wait for a
-        // slot ends here exactly as it does for a spawn.
-        trace?.end('queue-wait');
-        const check = () => this.sessionIsCurrent();
-        return trace ? trace.measure('activation', check) : check();
-      },
-      onStateChange: (state) => {
-        if (state === 'waiting-for-slot') trace?.noteCapacityWait();
-      },
-      suspend: () => this.discardSession(true),
     };
   }
 
@@ -1707,9 +1640,10 @@ export class MonolithRoomTurnLoop {
     this.stopClaudeLoginWatch();
     this.client = undefined;
     this.sessionId = undefined;
+    this.sessionContextPath = undefined;
     this.sessionFingerprint = undefined;
     this.sessionCodegraphReady = false;
-    if (client) await client.stop();
+    if (client) await stopAgentProcess(client);
     this.pinnedProviderOverride = next;
     await (trace ? trace.measure('activation', () => this.activate(trace)) : this.activate());
     return next;
@@ -1787,11 +1721,9 @@ export class MonolithRoomTurnLoop {
     // Best-effort read of this turn's search_memory call/miss counters before
     // the trace writes — bounded so a slow or unreachable server never delays
     // the turn's own completion over a diagnostic.
-    let statsStartedAt = 0;
     let statsPromise: Promise<{ searchCalls: number; searchMisses: number } | undefined> | undefined;
     const startTraceStats = (): void => {
       if (statsPromise) return;
-      statsStartedAt = Date.now();
       statsPromise = api.execute('getInstitutionalMemoryTurnStats', {
         roomId: this.options.roomId,
         agentId: this.agent.publicKey,
@@ -1803,14 +1735,7 @@ export class MonolithRoomTurnLoop {
       reason?: string,
     ): Promise<void> => {
       try {
-        const remaining = Math.max(0, 800 - (Date.now() - statsStartedAt));
-        let timer: NodeJS.Timeout | undefined;
-        const stats = statsPromise && remaining > 0
-          ? await Promise.race([
-              statsPromise,
-              new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), remaining); }),
-            ]).finally(() => { if (timer) clearTimeout(timer); })
-          : undefined;
+        const stats=await statsPromise;
         if (stats) trace.noteSearchMemoryStats(stats.searchCalls, stats.searchMisses);
       } catch {
         // Losing this measurement must never affect the turn.
@@ -1827,12 +1752,6 @@ export class MonolithRoomTurnLoop {
     // throws never reaches its settle, and only this reference can dissolve
     // what the model had already written.
     let liveStream: AgentTurnStream | undefined;
-    // Corner-opened observed LIVE from the stream, held where the catch below
-    // can reach it, not only read from the final result: a timeout thrown out
-    // of runPrompt() never produces a result, so the success path's
-    // `openedACorner` check alone cannot see that the work already moved to
-    // the corner.
-    let liveCornerOpened = false;
     try {
       if (freeAgent) await this.freeContinuation.begin(inboxItemPromptBody(item));
       // The first row of the turn names who asked; learn the name once per session.
@@ -2037,7 +1956,6 @@ export class MonolithRoomTurnLoop {
                         this.client!.sessionPrompt(
                           this.sessionId!,
                           nextPrompt,
-                          ROOM_PROMPT_BACKSTOP_MS,
                           (delta, full, currentRun) => {
                             trace.firstModelOutput();
                             stream.onChunk(delta, full, currentRun);
@@ -2045,7 +1963,6 @@ export class MonolithRoomTurnLoop {
                           undefined,
                           (calls) => {
                             trace.toolCalls(calls);
-                            if (openedACorner(openCornerToolCall(calls))) liveCornerOpened = true;
                           },
                         )),
                     );
@@ -2053,7 +1970,7 @@ export class MonolithRoomTurnLoop {
                   } catch (error) {
                     promptError = error;
                   }
-                  if (promptError instanceof OwnedModelOutcomeUnknown) throw promptError;
+                  if (promptError instanceof OwnedModelOutcomeUnknown || isAgentProcessExit(promptError)) throw promptError;
                   this.turnMetrics = await this.captureTurnMetrics();
                   await this.writeBackClaudeLogin();
                   if (result && ['no-reply', 'repeated-tool-call'].includes(result.stopReason)) break;
@@ -2294,7 +2211,6 @@ export class MonolithRoomTurnLoop {
                 ),
               );
             },
-            { priority: 'interactive', roomKey: this.options.roomId },
           );
         },
         (error) =>
@@ -2347,62 +2263,24 @@ export class MonolithRoomTurnLoop {
         void finishTrace('cancelled').catch(() => undefined);
         return;
       }
+      if (isAgentProcessExit(error)) {
+        liveStream?.close();
+        await liveStream?.retract().catch(retractError => console.error('[body] interrupted draft retract failed:', retractError));
+        await this.discardSession(true);
+        await api.execute('postAgentTurnReceipt', {
+          agentId: this.agent.publicKey, roomId: this.options.roomId, requestId: item.id,
+          status: 'failed', generationId: this.commandContext.generationId,
+          reason: 'agent process exited', reasonKind: 'process-exited',
+          trace: trace.replay(),
+        }).catch(receiptError => console.error('[body] process interruption receipt failed:', receiptError));
+        void finishTrace('failed', 'agent process exited').catch(() => undefined);
+        throw error;
+      }
       if (error instanceof OwnedModelOutcomeUnknown) {
         liveStream?.close(); await this.discardSession();
         await api.execute('postAgentTurnReceipt', ownedModelEndReceipt(error, { agentId: this.agent.publicKey,
           roomId: this.options.roomId, requestId: item.id, generationId: this.commandContext.generationId }));
         throw error;
-      }
-      if (error instanceof AcpTurnBackstopError) await this.discardSession();
-      // A backstop after opening a corner settles the Room reply through
-      // the existing corner card. Runtime and provider errors still fail.
-      if (liveCornerOpened && error instanceof AcpTurnBackstopError) {
-        console.log(
-          `[thin-core] monolith Room ${this.options.roomId} turn ${item.id}: ` +
-            'turn_backstop after opening a corner; the work continues in the corner',
-        );
-        this.options.onCornerOpened?.();
-        // The prose the reader watched arrive is the same completion as the
-        // card, and the `complete` receipt below ends the draft either way, so
-        // settling it here is what keeps it on the page. It is the LAST run
-        // alone — what `result.agentText` would have carried had the prompt
-        // returned — never the joined stream, so a turn's durable answer does
-        // not depend on whether it wedged. A last run that is retry narration
-        // or sanitizes away settles through the card alone.
-        const lastRun = liveStream?.lastRunText ?? '';
-        const streamed = isPureRetryNarration(lastRun) ? '' : durableReplyText(lastRun);
-        let settleFailure: unknown;
-        if (liveStream) {
-          await liveStream
-            .settle(streamed, streamed ? { triggerMessageId: item.id } : {})
-            .catch((settleError: unknown) => {
-              settleFailure = settleError;
-              console.error(
-                `[thin-core] monolith Room ${this.options.roomId} draft settle failed:`,
-                settleError,
-              );
-            });
-          // `settle` posts the reply before it retracts, so a refused reply
-          // throws past its own retract and leaves the draft live under a turn
-          // this arm is about to report complete. The retract is idempotent.
-          await liveStream.retract();
-        }
-        if (!settleFailure) {
-          startTraceStats();
-          await api.execute('postAgentTurnReceipt', {
-            agentId: this.agent.publicKey,
-            roomId: this.options.roomId,
-            requestId: item.id,
-            status: 'complete',
-            generationId: this.commandContext.generationId,
-            toolCalls: trace.toolCallsTotal,
-        trace: trace.replay(),
-            ...this.turnMetrics,
-          });
-          void finishTrace('complete').catch(() => undefined);
-          return;
-        }
-        error = settleFailure;
       }
       // A failed turn ends owning no live output. Only `settle` dissolves the
       // draft on the way out and a throw never reaches one, so without this the
@@ -2509,7 +2387,7 @@ export class MonolithRoomTurnLoop {
     } finally {
       this.squireRelay.close();
       this.options.grantRunner?.unregister(roomId);
-      await this.options.scheduler.suspend(roomId);
+      await this.options.scheduler.stop(roomId);
       this.options.scheduler.forget(roomId);
     }
   }

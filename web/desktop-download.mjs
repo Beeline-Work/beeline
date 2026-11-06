@@ -51,7 +51,7 @@ export function selectPlatform(input = {}) {
   return undefined;
 }
 
-export function selectDesktopInstaller(input = {}) {
+function selectDesktopInstaller(input = {}) {
   const platform = selectPlatform(input);
   if (!platform || platform === 'ios' || platform === 'android') return undefined;
   if ((platform === 'windows' || platform === 'linux') && !isX64(input)) return undefined;

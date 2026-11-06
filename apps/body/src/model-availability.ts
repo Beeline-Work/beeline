@@ -53,10 +53,3 @@ export function modelUnavailableState(
       : 'Restore access to the selected harness and its live catalog, then restart the agent.',
   };
 }
-
-/** Bounded local diagnostic for logs and rejected ACP activation errors. */
-export function modelUnavailableDiagnostic(state: ModelUnavailableState): string {
-  const title =
-    state.kind === 'model-unavailable' ? 'Model unavailable' : 'Model validation unavailable';
-  return `${title} · ${state.unavailable.value}\n${state.detail}\n${state.recovery}`;
-}

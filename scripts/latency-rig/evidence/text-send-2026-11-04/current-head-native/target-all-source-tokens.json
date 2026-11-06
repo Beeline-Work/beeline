@@ -1,0 +1,36 @@
+{
+  "sourceTokens": [
+    "emptyproofGamma",
+    "doubleproofGamma",
+    "navproofGamma"
+  ],
+  "targetFrames": [
+    {
+      "frame": 27,
+      "headerSimilarity": 0.9999996423721313,
+      "readableBody": "#latency-navigate-3a-1793775712 is\nempty\nAsk an agent, open a corner for a bounded\ntask, or invite a collaborator into this Room.\nAdd an aaent"
+    },
+    {
+      "frame": 28,
+      "headerSimilarity": 0.9999996423721313,
+      "readableBody": "#latency-navigate-3a-1793775712 is\nempty\nAsk an agent, open a corner for a bounded\ntask, or invite a collaborator into this Room.\nAdd an aaent"
+    },
+    {
+      "frame": 29,
+      "headerSimilarity": 0.9999996423721313,
+      "readableBody": "#latency-navigate-3a-1793775712 is\nempty\nAsk an agent, open a corner for a bounded\ntask, or invite a collaborator into this Room.\nAdd an aaent"
+    },
+    {
+      "frame": 30,
+      "headerSimilarity": 1.0,
+      "readableBody": "#latency-navigate-3a-1793775712 is\nempty\nAsk an agent, open a corner for a bounded\ntask, or invite a collaborator into this Room.\nAdd an aaent"
+    },
+    {
+      "frame": 31,
+      "headerSimilarity": 0.9999996423721313,
+      "readableBody": "#latency-navigate-3a-1793775712 is\nempty\nAsk an agent, open a corner for a bounded\ntask, or invite a collaborator into this Room.\nAdd an aaent"
+    }
+  ],
+  "sourceMessageLeaks": 0,
+  "passed": true
+}

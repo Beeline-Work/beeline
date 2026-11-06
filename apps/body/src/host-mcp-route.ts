@@ -45,21 +45,6 @@ export function ungatedHostServers(
   return hostServers.filter((name) => !allowed.has(name));
 }
 
-export function grantedHostRoutesFromList(result: unknown): string[] {
-  if (!result || typeof result !== 'object' || !('grants' in result)) return [];
-  const grants = (result as { grants?: unknown }).grants;
-  if (!Array.isArray(grants)) return [];
-  return grantedMcpServerNames(
-    grants.flatMap((entry) => {
-      if (!entry || typeof entry !== 'object') return [];
-      const row = entry as { kind?: unknown; target?: unknown };
-      return typeof row.kind === 'string' && typeof row.target === 'string'
-        ? [{ kind: row.kind, target: row.target }]
-        : [];
-    }),
-  );
-}
-
 /** Mounting is not resource use. All Once grants are consumed by the per-call server gate. */
 export async function claimGrantedHostRoutes(result: unknown): Promise<string[]> {
   if (!result || typeof result !== 'object' || !('grants' in result)) return [];

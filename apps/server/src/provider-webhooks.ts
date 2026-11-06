@@ -227,7 +227,7 @@ export async function ingestProviderWebhook(db: SqlDatabase, service: ProviderSe
        AND app.state='active' AND app.transport='registry-mcp'
      JOIN memberships owner ON owner.workspace_id=room.workspace_id AND owner.room_id IS NULL
        AND owner.identity_id=app.owner_identity_id AND owner.removed_at IS NULL
-     WHERE subscription.trigger_id=$1 AND subscription.event=$2`, [id, hook.event],
+     WHERE subscription.paused_at IS NULL AND subscription.trigger_id=$1 AND subscription.event=$2`, [id, hook.event],
   );
   if (!rows.rowCount) return true;
   await ensureSystemIdentity(db);
@@ -235,7 +235,7 @@ export async function ingestProviderWebhook(db: SqlDatabase, service: ProviderSe
     const messageId = createHash('sha256').update(`subscription:${service}:${deliveryId}:${row.id}`).digest('hex');
     await db.transaction(async (tx) => {
       const current = (await tx.query<{ prompt: string; workflow_slug: string | null }>(
-        `SELECT prompt,workflow_slug FROM agent_subscriptions WHERE id=$1 FOR UPDATE`, [row.id],
+        `SELECT prompt,workflow_slug FROM agent_subscriptions WHERE id=$1 AND paused_at IS NULL FOR UPDATE`, [row.id],
       )).rows[0];
       if (!current) return;
       const data = body.data && typeof body.data === 'object' && !Array.isArray(body.data)

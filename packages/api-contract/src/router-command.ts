@@ -1,4 +1,3 @@
-import type { RouterAuthorityCertificate, RouterCut } from './router-protocol.js';
 
 /** Durable intent identity is separate from a socket's transient request id. */
 export interface RouterCommandIdentity {
@@ -8,20 +7,12 @@ export interface RouterCommandIdentity {
 /** Bounded identity, independent of native runtime and database schema versions. */
 const ROUTER_COMMAND_ID_MAX_LENGTH = 128;
 export type RouterCommandState = 'committed' | 'pending' | 'unknown' | 'result-expired';
-/** Coverage belongs only to the optional command-result convenience payload.
- * It never acknowledges other facts or advances a projection stream cursor. */
-export interface RouterCommandCoverage {
-  readonly scope: { readonly workspaceId: string; readonly roomId?: string };
-  readonly cut: RouterCut;
-  readonly authority: RouterAuthorityCertificate;
-}
 export interface RouterCommandReceipt<Result = unknown> {
   readonly v: 1;
   readonly operation: string;
   readonly commandId: string;
   readonly state: RouterCommandState;
   readonly result?: Result;
-  readonly coverage?: RouterCommandCoverage;
 }
 export function parseRouterCommandIdentity(value: unknown): RouterCommandIdentity {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid_command_identity');

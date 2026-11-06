@@ -112,7 +112,7 @@ const styles = StyleSheet.create((theme) => {
       minWidth: 0,
     },
     // The one subtitle voice is the calm `meta` role (DESIGN.md → Type):
-    // sans, never mono, muted. Callers still pass caps copy.
+    // sans, never mono, muted. Callers own the copy’s casing.
     metaCaps: {
       ...theme.buzz.type.meta,
       flexShrink: 1,

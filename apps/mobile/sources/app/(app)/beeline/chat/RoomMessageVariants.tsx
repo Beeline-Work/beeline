@@ -6,15 +6,15 @@ import { funnelOnboarding } from '@/auth/signin-funnel';
 import { LedgerUntaggedHint } from '@/components/buzz/Ledger';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { Image, Platform, Pressable, Text, View } from 'react-native';
+import { Platform, Pressable, Text, View } from 'react-native';
 export { GitHubEventCard, DaemonFactCard } from '@/components/buzz/LifecycleCard';
 import { NotificationLifecycleCard } from '@/components/buzz/PrLifecycleCard';
 export { NotificationLifecycleCard };
-import ReanimatedSwipeable, { type SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
+import TranscriptSwipeable, { type TranscriptSwipeableMethods as SwipeableMethods } from '@/components/buzz/TranscriptSwipeable';
 import { DesktopMessageAction } from '@/components/buzz/DesktopMessageAction';
 import { ButtonRowFrame } from '@/components/buzz/ButtonRow';
 import { DesktopWorkspacePortal } from '@/components/buzz/DesktopWorkspacePortal';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 import {
   MESSAGE_REACTION_EMOJIS,
   type AttachmentReference,
@@ -56,14 +56,13 @@ import { isLedgerDayOpener } from '@/buzz/message-dates';
 import { useTranscriptStamp } from '@/buzz/use-transcript-stamp';
 import { attachmentOpenUrl, formatAttachmentSize } from '@/buzz/chat-attachment';
 import { artifactFormat, mediaIdFromUrl } from '@/buzz/artifact';
-import { routerOwnerArtifactAction } from '@/buzz/router-owner';
 import { ArtifactImage } from '@/components/buzz/ArtifactMedia';
 import { TranscriptReference } from '@/components/buzz/TranscriptReference';
 import { openComputerSessionViewer } from '@/components/buzz/ComputerSession';
 import { ArtifactCard, openArtifactViewer } from '@/components/buzz/ArtifactCard';
 import { ArtifactViewerScreen } from '@/components/buzz/ArtifactViewer';
 import { showPictureActions } from '@/buzz/picture-actions';
-import { ROOM_LABEL, CORNER_LABEL } from '@/buzz/vocabulary';
+import { CORNER_LABEL } from '@/buzz/vocabulary';
 import { CornerGlyph } from '@/components/buzz/CornerGlyph';
 import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { ContentTarget } from '@/components/buzz/IndexRow';
@@ -261,6 +260,7 @@ export interface ConnectorOfferCardProps {
   ): void;
   /** Opens the Workbench page — the settled card is one of its three remaining doors. */
   onOpenWorkbench(): void;
+  onOpenReplacement(messageId: string): void;
   onDecline?(offerId: string): void;
 }
 
@@ -293,7 +293,7 @@ export function AppSignInCard({ message, agentName, canConnect, onConnect, busy 
           <Text style={appSignInStyles.detail}>{INSTAGRAM_SIGN_IN_REQUIREMENT}</Text>
         ) : null}
         {app.status === 'failed' ? (
-          <Text accessibilityRole="alert" style={appSignInStyles.error}>{app.errorMessage ?? 'App sign-in failed. Try again.'}</Text>
+          <ErrorBanner inline title={(app.errorMessage ?? 'App sign-in failed. Try again.')} />
         ) : null}
         {canConnect ? (
           <Button disabled={busy} label={busy ? 'Connecting' : app.status === 'failed' ? `Retry ${app.name}` : `Connect ${app.name}`} onPress={onConnect} style={appSignInStyles.button} testID={`app-sign-in-${app.appKey}-connect`} />
@@ -320,7 +320,6 @@ const appSignInStyles = StyleSheet.create(theme => {
   heading: { flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.sm },
   title: { ...theme.buzz.type.bodyStrong, color: board.ink },
   detail: { ...theme.buzz.type.meta, color: board.secondary },
-  error: { ...theme.buzz.type.meta, color: theme.buzz.dialogDanger },
   // A single decision sits where a ButtonRow puts its confirm: at the trailing edge.
   button: { alignSelf: 'flex-end' },
   settled: { ...theme.buzz.type.sectionHead, color: board.quiet, marginVertical: 8, marginHorizontal: 8 },
@@ -337,6 +336,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
   onAccept,
   onContinue,
   onOpenWorkbench,
+  onOpenReplacement,
   onDecline,
 }: ConnectorOfferCardProps) {
   const offer = message.connectorOffer!;
@@ -353,11 +353,13 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
     (pending || failed) && canAccept
       ? [
           {
-            label: failed ? 'Retry' : offer.intent === 'switch' ? 'Switch' : offer.intent === 'reconnect' ? 'Reconnect' : 'Add',
+            label: failed ? offer.replacementMessageId ? 'Open current card' : 'Retry' : offer.intent === 'switch' ? 'Switch' : offer.intent === 'reconnect' ? 'Reconnect' : 'Add',
             primary: true,
             disabled: actionId !== null,
             loading: busy,
-            onPress: () => onAccept(offer.offerId, offer.connectorType),
+            onPress: () => offer.replacementMessageId
+              ? onOpenReplacement(offer.replacementMessageId)
+              : onAccept(offer.offerId, offer.connectorType),
             testID: `connector-offer-${offer.offerId}-accept`,
           },
         ]
@@ -402,7 +404,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
             ? canAccept
               ? undefined
               : connectorOfferWaitingLine(offer)
-            : failed ? 'Connection failed. Retry to continue.' : approvalDecisionNote(offer.status === 'denied' ? 'denied' : 'allowed', offer.acceptedBy, offer.acceptedAt ?? message.timestamp, viewerPubkey)
+            : failed ? offer.replacementMessageId ? 'This card was replaced. Use the current connection card.' : 'Connection failed. Retry to continue.' : approvalDecisionNote(offer.status === 'denied' ? 'denied' : 'allowed', offer.acceptedBy, offer.acceptedAt ?? message.timestamp, viewerPubkey)
       }
       footerNoteTestID={
         connecting
@@ -435,8 +437,8 @@ function choiceHandle(identity?: { handle?: string; name: string; pubkey: string
 
 /**
  * One choice family: lettered plates for a question or a poll. Skip is a footer
- * word on an open question. Closed polls carry a still brass wash; options are
- * never TranscriptCardRow.
+ * word on an open question. Settled questions show their decision without
+ * option plates. Closed polls retain their vote results in a still brass wash.
  */
 export const ChoiceCard = React.memo(function ChoiceCard({
   message,
@@ -467,12 +469,24 @@ export const ChoiceCard = React.memo(function ChoiceCard({
       ? onAnswer(card.choiceId, optionId, note.trim())
       : onAnswer(card.choiceId, optionId);
   const turnout = `${card.votedCount} of ${card.electorateCount} voted`;
-  const clock = card.closesAt ? `closes ${formatChoiceClock(card.closesAt)}` : undefined;
+  const clock = open && card.closesAt ? `closes ${formatChoiceClock(card.closesAt)}` : undefined;
   const subline =
     card.mode === 'poll'
       ? [clock, turnout].filter(Boolean).join(' · ')
-      : [card.constraint, clock].filter(Boolean).join(' · ') || undefined;
-  const choices: TranscriptCardChoice[] = card.options.map((option) => ({
+      : open
+        ? [card.constraint, clock].filter(Boolean).join(' · ') || undefined
+        : undefined;
+  const selectedOption = card.options.find((option) => option.optionId === card.selectedOptionId);
+  const decision = card.footer ||
+    (card.status === 'answered'
+      ? `picked ${card.selectedOptionId ?? ''} · @${choiceHandle(card.answeredBy)}`
+      : card.status === 'skipped'
+        ? 'Skipped'
+        : card.mode === 'question' ? 'Closed · no longer waiting for an answer' : undefined);
+  const footer = card.mode === 'question' && card.status === 'answered' && selectedOption
+    ? `${selectedOption.label} · ${decision}`
+    : decision;
+  const choices: TranscriptCardChoice[] = (!open && card.mode === 'question' ? [] : card.options).map((option) => ({
     id: option.optionId,
     letter: option.letter,
     label: option.label,
@@ -516,7 +530,7 @@ export const ChoiceCard = React.memo(function ChoiceCard({
       }
       title={card.prompt}
       wrapTitle
-      subline={subline || card.constraint}
+      subline={subline}
       sublineTestID={`choice-${card.choiceId}-subline`}
       stamp={ledgerStamp(message.timestamp)}
       body={card.videoPreview ? <ChoiceVideoPreview {...card.videoPreview} /> : undefined}
@@ -536,10 +550,7 @@ export const ChoiceCard = React.memo(function ChoiceCard({
       footerNote={
         open
           ? busy ? 'Sending decision…' : undefined
-          : card.footer ||
-            (card.status === 'answered'
-              ? `picked ${card.selectedOptionId ?? ''} · @${choiceHandle(card.answeredBy)}`
-              : undefined)
+          : footer
       }
       footerNoteTestID={`choice-${card.choiceId}-footer`}
       actions={actions}
@@ -701,7 +712,6 @@ export const TargetBranchProposalCard = React.memo(function TargetBranchProposal
   );
 });
 
-
 /**
  * Attachment bytes are kept for 24 hours (`apps/server/src/media-ttl.ts`); the
  * message that carried them is kept forever. Past the window the server marks
@@ -726,7 +736,6 @@ function AttachmentCard({
     // desktop included; the work pane keeps only its documents.
     if (attachment.mimeType.startsWith('image/')) {
       const objectId = mediaIdFromUrl(attachment.url);
-      if (objectId) routerOwnerArtifactAction('OpenArtifact', objectId);
       Modal.show({
         component: ArtifactViewerScreen,
         props: { attachment },
@@ -855,7 +864,7 @@ function SwipeToReply({
   const hideSwipe = useCallback(() => setSwipeShown(false), []);
   useEffect(() => setSwipeShown(false), [messageId]);
   const commitSwipe = (direction: 'left' | 'right') => {
-    // ReanimatedSwipeable reports the movement direction. Its UI-thread spring
+    // TranscriptSwipeable reports the movement direction. Its UI-thread spring
     // can return immediately without the legacy native-driver close timers.
     swipeableRef.current?.close();
     // Install the quote before a composer update can recycle this row.
@@ -1011,12 +1020,14 @@ function SwipeToReply({
       style={[styles.cornerSwipeAction, !swipeShown && styles.swipeActionAtRest, poseStyle]}
       testID={`corner-swipe-action-${messageId}`}
     >
-      <CornerGlyph color={styles.cornerSwipeGlyph.color} size={20} />
-      <Text style={styles.replySwipeLabel}>{CORNER_LABEL.toUpperCase()}</Text>
+      {swipeShown ? <>
+        <CornerGlyph color={styles.cornerSwipeGlyph.color} size={20} />
+        <Text style={styles.replySwipeLabel}>{CORNER_LABEL.toUpperCase()}</Text>
+      </> : null}
     </View>
   );
   const swipeRow = () => (
-    <ReanimatedSwipeable
+    <TranscriptSwipeable
       ref={swipeableRef}
       // Swipeable's container clips (`overflow: 'hidden'`) at the row's content
       // edge, where the byline tile sits — and a live agent's gold ring paints
@@ -1032,9 +1043,6 @@ function SwipeToReply({
       onSwipeableWillOpen={commitSwipe}
       onSwipeableClose={hideSwipe}
       onSwipeableOpenStartDrag={showSwipe}
-      onSwipeableCloseStartDrag={showSwipe}
-      overshootLeft={false}
-      overshootRight={false}
       renderLeftActions={onSwipeCorner ? () => cornerAction() : undefined}
       renderRightActions={onReply ? () => (
         <View
@@ -1042,15 +1050,17 @@ function SwipeToReply({
           style={styles.replySwipeAction}
           testID={`reply-swipe-action-${messageId}`}
         >
-          <Text style={styles.replySwipeGlyph}>↩</Text>
-          <Text style={styles.replySwipeLabel}>REPLY</Text>
+          {swipeShown ? <>
+            <Text style={styles.replySwipeGlyph}>↩</Text>
+            <Text style={styles.replySwipeLabel}>REPLY</Text>
+          </> : null}
         </View>
       ) : undefined}
       enabled={Boolean(onReply || onSwipeCorner)}
       testID={`swipe-reply-${messageId}`}
     >
       {message}
-    </ReanimatedSwipeable>
+    </TranscriptSwipeable>
   );
   return swipeRow();
 }
@@ -1570,8 +1580,9 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
     replyReference
   );
 
+  // A local send is tap feedback; never hide it behind the arrival fade.
   const content = (
-    <NewMessageMaterialize enabled={Boolean(message.isNew)} messageId={message.id}>
+    <NewMessageMaterialize enabled={Boolean(message.isNew) && !message.isUser} messageId={message.id}>
       <View>
         {isSelfSteer ? (
           <LedgerSteer
@@ -1640,6 +1651,10 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             }
             footerNoteTestID={`corner-proposal-footer-${message.id}`}
           />
+        ) : message.awayWarning ? (
+          <TranscriptCard tier="record" testID="away-warning-card" wrapTitle
+            title="Schedules and subscriptions will pause in 1 day"
+            body={message.text} stamp={ledgerStamp(message.timestamp)} />
         ) : (message.authorIdentity?.pubkey ?? message.pubkey) === SYSTEM_IDENTITY_PUBKEY ? (
           <LedgerSystemLine
             id={message.id}

@@ -1,5 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { priorReleaseCornerListSql } from './fixtures/sentry-22-load-corners.js';
+import { CornerAccessDatabase } from './corner-access-database.js';
+import { CommandScopedDatabase } from './command-scoped-database.js';
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Pool } from 'pg';
@@ -33,6 +35,38 @@ import {
 } from './database.js';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { requireRoomSlug, reserveRoomName } from './room-names.js';
+
+it('removes installed Tray clocks and unused provider effects while source writes still work', async () => {
+  const database = await migratedDatabase();
+  try {
+    await database.query(`CREATE TABLE tray_clock_sources(id text);
+      CREATE TABLE tray_clock_deadlines(id text);
+      CREATE TABLE tray_clock_state(id text);
+      CREATE TABLE tray_clock_readiness(id text);
+      CREATE TABLE tray_clock_readiness_floor(id text);
+      CREATE TABLE tray_clock_health(id text);
+      CREATE TABLE tray_clock_owner_fences(id text);
+      CREATE TABLE background_leader_owners(id text);
+      CREATE TABLE background_effect_attempts(id text);
+      CREATE FUNCTION beeline_tray_clock_capture() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN INSERT INTO tray_clock_sources VALUES(NEW.id); RETURN NEW; END $$;
+      CREATE TRIGGER beeline_tray_clock_message_insert AFTER INSERT ON messages
+        FOR EACH ROW EXECUTE FUNCTION beeline_tray_clock_capture();`);
+    await migrate(database);
+    await migrate(database);
+    expect((await database.query(`SELECT tablename FROM pg_tables WHERE schemaname=current_schema()
+      AND (tablename LIKE 'tray_clock_%' OR tablename IN ('background_leader_owners','background_effect_attempts'))`)).rows).toEqual([]);
+    expect((await database.query(`SELECT proname FROM pg_proc WHERE pronamespace=current_schema()::regnamespace
+      AND (proname LIKE 'beeline_tray_clock_%' OR proname IN ('beeline_register_tray_clock_owner','beeline_commit_tray_clock_owner','beeline_background_backend_holds'))`)).rows).toEqual([]);
+    const author='f'.repeat(64), workspace='11111111-1111-4111-8111-111111119991', room='22222222-2222-4222-8222-222222229991';
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Author')`,[author]);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Clock migration proof')`,[workspace]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Proof Room')`,[room,workspace]);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text)
+      VALUES('clock-migration-message',$1,$2,'Please review?')`, [room,author]);
+    expect((await database.query(`SELECT text FROM messages WHERE id='clock-migration-message'`)).rows).toEqual([{text:'Please review?'}]);
+  } finally { await database.close(); }
+});
 
 it('indexes delivered claims still awaiting a read-clear push', async () => {
   const database = await migratedDatabase();
@@ -246,6 +280,31 @@ function poolWithQuery(query: ReturnType<typeof vi.fn>): Pool {
   });
   return { query: vi.fn(), on: vi.fn(), connect, end: vi.fn() } as unknown as Pool;
 }
+
+describe('named prepared Room reads', () => {
+  it('retains names through access and transaction scopes and separates SQL variants', async () => {
+    const client = stubClient();
+    const database = new PostgresDatabase('', 1, { pool: poolHandingOut([client, client, client]) });
+    const scoped = new CommandScopedDatabase(new CornerAccessDatabase(database));
+    const sql = 'SELECT member.identity_id FROM memberships member WHERE member.identity_id=$1';
+    await scoped.query(sql, ['first'], 'phone-room-test');
+    await scoped.transaction(tx => scoped.run(tx, () => scoped.query(sql, ['second'], 'phone-room-test')));
+    await scoped.query(sql + ' AND member.removed_at IS NULL', ['third'], 'phone-room-test');
+    const prepared = client.query.mock.calls.filter(([query]) => typeof query === 'object')
+      .map(([query]) => query as { name: string; text: string; values: unknown[] });
+    expect(prepared).toHaveLength(3);
+    expect(prepared[0]).toMatchObject({
+      name: expect.stringMatching(/^phone-room-test-/),
+      text: sql.replace('FROM memberships', 'FROM room_access'), values: ['first'],
+    });
+    expect(prepared[1]).toMatchObject({ name: prepared[0]!.name, text: prepared[0]!.text, values: ['second'] });
+    expect(prepared[2]!.name).not.toBe(prepared[0]!.name);
+    expect(prepared[2]!.values).toEqual(['third']);
+    expect(database.queryProfiles().top.some(profile => profile.calls === 2)).toBe(true);
+    expect(client.release).toHaveBeenCalledTimes(3);
+    await database.close();
+  });
+});
 
 describe('pool checkout telemetry', () => {
   it('separates queued checkout time from checked-out query time and releases on failure', async () => {

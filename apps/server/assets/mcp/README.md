@@ -13,6 +13,8 @@
 - `cursor.svg`: published Cursor favicon, https://cursor.com/marketing-static/favicon-light.svg (brand kit: https://cursor.com/brand). Used only to identify the connected app.
 - `codex.png`: OpenAI's published GitHub organization avatar, https://avatars.githubusercontent.com/u/14957082?s=256. Uses the OpenAI mark for Codex identification.
 - `claude.png`: existing Claude mark from `apps/mobile/sources/assets/images/icon-claude@3x.png`.
-- `dots.png`: approved yellow demo-dot stand-in supplied with the brief (SHA256 42e896b4e168c6991037c3495e4f923e1035a66e24a42da34b08c1be541517df). Official Dots introduction: https://openai.com/index/introducing-dots/; no separately licensed default-avatar download was found. Keyed on Dots/OpenAI Dots only; Codex and ChatGPT registrations are not inferred to be Dots.
+- `dots.png`: approved yellow demo-dot stand-in supplied with the brief (SHA256 42e896b4e168c6991037c3495e4f923e1035a66e24a42da34b08c1be541517df). Official Dots introduction: https://openai.com/index/introducing-dots/; no separately licensed default-avatar download was found. Used for the ChatGPT entry and its legacy Dots aliases in the supported-agent list.
+
+- `goose.png`, `pi.svg`, `opencode.svg`, `hermes.svg`, `gemini.png`, `zcode.png`: copied from `web/marketing/logos/`, the website-supported agent marks; provenance is recorded in `web/marketing/logos/provenance.json`.
 
 Company marks identify the connected apps, without implying endorsement. Custom member portraits are never replaced by these defaults.

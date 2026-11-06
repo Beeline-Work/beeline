@@ -662,12 +662,13 @@ export function readConnectorOfferCardView(value: unknown): ConnectorOfferCardVi
     ...field('acceptedBy', readIdentityOnly(item.acceptedBy)),
     ...field('acceptedAt', integer(item.acceptedAt) ? item.acceptedAt : undefined),
     ...field('connectorId', typeof item.connectorId === 'string' ? item.connectorId : undefined),
+    ...field('replacementMessageId', nonempty(item.replacementMessageId) ? item.replacementMessageId : undefined),
     ...field('intent', isConnectorOfferIntent(item.intent) ? item.intent : undefined),
     ...field('provider', typeof item.provider === 'string' ? item.provider : undefined),
   };
 }
 
-export function isConnectorOfferCardView(value: unknown): value is ConnectorOfferCardView {
+function isConnectorOfferCardView(value: unknown): value is ConnectorOfferCardView {
   return readConnectorOfferCardView(value) !== null;
 }
 
@@ -1125,6 +1126,7 @@ export function readRoomViewMessage(value: unknown): RoomViewMessage | null {
     ...field('targetBranch', readTargetBranch(item.targetBranch)),
     ...field('githubEvent', readGithubEvent(item.githubEvent)),
     ...field('daemonFact', readDaemonFact(item.daemonFact)),
+    ...field('awayWarning', typeof item.awayWarning === 'boolean' ? item.awayWarning : undefined),
     ...field('systemEvent', isSystemEvent(item.systemEvent) ? item.systemEvent : undefined),
   };
 }
@@ -1948,6 +1950,7 @@ export function readChatListView(value: unknown): ChatListView | null {
   };
 }
 
+/** @public The phone push-prefetch boundary consumes this guard through the client facade. */
 export function isChatListView(value: unknown): value is ChatListView {
   return readChatListView(value) !== null;
 }

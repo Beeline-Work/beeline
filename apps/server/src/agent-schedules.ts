@@ -1,3 +1,4 @@
+import { nextAwayPauseDelay, pauseAwayWork } from './away-auto-pause.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { createAgentCommand } from './agent-command.js';
@@ -109,7 +110,7 @@ export class AgentScheduleLoop {
         `SELECT greatest(0,ceil(extract(epoch FROM (schedule.next_run_at-clock_timestamp()))*1000))::float8 delay_ms
          FROM agent_schedules schedule
          JOIN rooms room ON room.id=schedule.room_id AND room.archived_at IS NULL
-         WHERE (schedule.max_runs IS NULL OR schedule.run_count<schedule.max_runs)
+         WHERE schedule.paused_at IS NULL AND (schedule.max_runs IS NULL OR schedule.run_count<schedule.max_runs)
            AND ${unfailedSchedule} AND (schedule.workflow_run IS NOT NULL OR (
            EXISTS(SELECT 1 FROM identities creator WHERE creator.id=schedule.creator_id
              AND (creator.kind='human' OR creator.id=schedule.agent_id))
@@ -121,9 +122,10 @@ export class AgentScheduleLoop {
          ORDER BY schedule.next_run_at,schedule.id LIMIT 1`,
       )
     ).rows[0];
-    if (!row) return;
+    const awayDelay = await nextAwayPauseDelay(this.database);
+    if (!row) return awayDelay;
     if (!Number.isFinite(row.delay_ms)) throw new Error('Schedule deadline unavailable');
-    return row.delay_ms;
+    return awayDelay === undefined ? row.delay_ms : Math.min(row.delay_ms, awayDelay);
   }
 
   async runOnce(now?: Date): Promise<number> {
@@ -131,6 +133,7 @@ export class AgentScheduleLoop {
     // clock that may be ahead of the persisted calendar. Explicit times are
     // reserved for deterministic fixture runs.
     now ??= (await this.database.query<{ now_at: Date }>('SELECT clock_timestamp() now_at')).rows[0]!.now_at;
+    await pauseAwayWork(this.database, now, this.onPosted);
     const due = await this.database.query<DueSchedule>(
       `SELECT schedule.id,schedule.room_id,schedule.agent_id,schedule.creator_id,schedule.owner_id,schedule.workflow_slug,schedule.human_command_message_id,
         schedule.cadence,schedule.message,schedule.max_runs,schedule.run_count,schedule.next_run_at,
@@ -144,7 +147,7 @@ export class AgentScheduleLoop {
          AND creator_membership.identity_id=schedule.creator_id AND creator_membership.removed_at IS NULL
        JOIN memberships agent_membership ON agent_membership.room_id=schedule.room_id
          AND agent_membership.identity_id=schedule.agent_id AND agent_membership.removed_at IS NULL
-       WHERE schedule.next_run_at <= $1 AND schedule.workflow_run IS NULL AND ${unfailedSchedule}
+       WHERE schedule.paused_at IS NULL AND schedule.next_run_at <= $1 AND schedule.workflow_run IS NULL AND ${unfailedSchedule}
          AND (schedule.max_runs IS NULL OR schedule.run_count<schedule.max_runs)
        ORDER BY schedule.next_run_at,schedule.id LIMIT 100`,
       [now],
@@ -172,7 +175,7 @@ export class AgentScheduleLoop {
                JOIN memberships agent_membership ON agent_membership.room_id=schedule.room_id
                  AND agent_membership.identity_id=schedule.agent_id
                  AND agent_membership.removed_at IS NULL
-               WHERE schedule.id=$1 AND schedule.next_run_at <= $2 AND schedule.workflow_run IS NULL AND ${unfailedSchedule}
+               WHERE schedule.paused_at IS NULL AND schedule.id=$1 AND schedule.next_run_at <= $2 AND schedule.workflow_run IS NULL AND ${unfailedSchedule}
                  AND (schedule.max_runs IS NULL OR schedule.run_count<schedule.max_runs)
                FOR UPDATE OF schedule`,
               [candidate.id, now],
@@ -338,7 +341,7 @@ export class AgentScheduleLoop {
       `SELECT schedule.id,schedule.room_id,schedule.workflow_run,schedule.next_run_at,schedule.updated_at::text updated_at,schedule.next_run_at::text due_revision
        FROM agent_schedules schedule
        JOIN rooms room ON room.id=schedule.room_id AND room.archived_at IS NULL
-       WHERE schedule.next_run_at <= $1 AND schedule.workflow_run IS NOT NULL AND ${unfailedSchedule}
+       WHERE schedule.paused_at IS NULL AND schedule.next_run_at <= $1 AND schedule.workflow_run IS NOT NULL AND ${unfailedSchedule}
        ORDER BY schedule.next_run_at,schedule.id LIMIT 100`,
       [now],
     );

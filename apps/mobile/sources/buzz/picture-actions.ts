@@ -11,14 +11,11 @@ import {
 } from '@/buzz/artifact-link';
 import { Modal } from '@/modal';
 import { mediaIdFromUrl } from './artifact';
-import { routerOwnerArtifactAction } from './router-owner';
-
 
 /** Copies the picture; true once it is on the clipboard. The caller reports the outcome. */
 export async function copyPicture(attachment: AttachmentReference): Promise<boolean> {
   try {
     const objectId = mediaIdFromUrl(attachment.url);
-    if (objectId) routerOwnerArtifactAction('CopyArtifact', objectId);
     await Clipboard.setImageAsync(await artifactBase64(attachment));
     return true;
   } catch {
@@ -29,7 +26,6 @@ export async function copyPicture(attachment: AttachmentReference): Promise<bool
 export async function sharePicture(attachment: AttachmentReference): Promise<void> {
   try {
     const objectId = mediaIdFromUrl(attachment.url);
-    if (objectId) routerOwnerArtifactAction('SaveArtifact', objectId);
     if (Platform.OS === 'web') {
       const file = new File([await fetchArtifactBytes(attachment) as unknown as BlobPart], attachment.name, {
         type: attachment.mimeType,

@@ -1,4 +1,5 @@
 import { flushDueCommanderWakes } from './commander-wakes.js';
+import { releaseAgentConnection } from './connection-presence.js';
 import { advanceCorner } from './corner-lifecycle.js';
 import { createHash, randomUUID, randomBytes } from 'node:crypto';
 import { beforeAll, beforeEach, afterAll, expect, it, vi } from 'vitest';
@@ -11,7 +12,7 @@ import { createInterface } from 'node:readline';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DaemonService } from './daemon-service.js';
+import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';
 import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
 import { PushDeliveryLoop } from './background.js';
@@ -208,11 +209,11 @@ it.each(['report', 'postRoomMessage'] as const)('Reproduction FILE-HANDOFF: %s k
 it('reports a later corner order to its actual orderer', async () => {
   const opened = await open();
   const OTHER = 'd'.repeat(64);
-  await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Other','other')`, [
-    OTHER,
-  ]);
+  await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Other','other')`, [OTHER]);
+  await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [OTHER, HUMAN]);
   await db.query(
-    `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,NULL,$3,'member'),($1,$2,$3,'member')`,
     [WS, ROOM, OTHER],
   );
   await db.query(
@@ -600,10 +601,9 @@ it('rejects stale private workflow wakes after their run ends', async () => {
   )!;
   await claim(stale);
   await db.query(`UPDATE messages SET card=card||'{"runStatus":"done"}'::jsonb WHERE id=$1`, [run]);
-  await db.query(
-    `UPDATE agent_commands SET lease_expires_at=now()-interval '1 second' WHERE id=$1`,
-    [stale.id],
-  );
+  const connection = (await db.query<{ connection_id: string }>(
+    'SELECT connection_id FROM agent_connections WHERE agent_id=$1', [WORKER])).rows[0]!;
+  await releaseAgentConnection(db, new LiveHub(), WORKER, connection.connection_id);
   expect((await commands(opened.cornerId, WORKER)).some((c) => c.id === stale.id)).toBe(false);
   await expect(claim(stale)).rejects.toThrow('command claim conflict');
   expect(
@@ -1202,16 +1202,16 @@ it('Reproduction commander-files: a commander home file reaches the worker as th
       await expect(openCorner('Private-path', { spec: `Read ${named}` }))
         .rejects.toThrow(`the brief names ${path}, which only you can open`);
       await expect(callAgentTool('order', { address: ROOM, agent: 'worker', text: `Read ${named}` }, 'order-private'))
-        .rejects.toThrow(`the order names ${path}, which recipients cannot open`);
+        .resolves.toContain(`Warning: the order names ${path}, which recipients may not be able to open`);
     }
     // A path that cannot be read is refused by name.
     await expect(openCorner('Missing-file', { spec: 'Read the trace.', attachments: [
       { path: join(home, 'gone.csv'), purpose: 'Failing trace', required: true }] }))
       .rejects.toThrow(`brief attachment ${join(home, 'gone.csv')} cannot be delivered`);
     expect(await cornerCount()).toBe(before);
-    // An order that names the private file is refused by name.
+    // An order that names a private file is delivered with advice to attach it.
     await expect(callAgentTool('order', { address: ROOM, agent: 'worker', text: `Read ${trace}` }, 'order-named'))
-      .rejects.toThrow(`the order names ${trace}, which recipients cannot open`);
+      .resolves.toContain(`Warning: the order names ${trace}, which recipients may not be able to open`);
     const opened = JSON.parse(await openCorner('Attached-trace', { spec: `Read "${spaced}" and find the failing step.`,
       attachments: [{ path: spaced, purpose: 'Failing trace', required: true }] }));
     const next = await worker(opened.address);

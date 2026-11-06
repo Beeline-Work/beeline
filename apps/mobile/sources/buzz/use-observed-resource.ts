@@ -9,161 +9,80 @@ import type { ConnectorInstallState } from './workbench';
 type Snapshot<T> = { data: T | undefined; loading: boolean; error: string | null; installMissing?: boolean; successVersion: number };
 type Options<T> = {
   load(): Promise<T>;
-  subscribe?: (invalidate: () => void, reconnect: () => void,
+  subscribe?: (invalidate: () => void, refresh: () => void,
     replace: (data: T) => void, recover: () => void) => Promise<() => void>;
-  missLimit?: number;
-  /** Failed reads wait for explicit Retry, real reconnect or a new focus. */
-  retryOnChange?: boolean;
-  /** Event-driven cooldown only; never schedules a retry timer. */
-  retryBackoffMs?: { initial: number; max: number };
   onError?: (cause: unknown) => void;
 };
 class InstallMissingError extends Error {}
 const resources = new Map<string, Resource<any>>();
 const empty: Snapshot<never> = { data: undefined, loading: false, error: null, successVersion: 0 };
 
-/** Shared by key, including when installer and sign-in are mounted together. */
+/** Cache the displayed answer by key; every change calls the same read directly. */
 class Resource<T> {
   snapshot: Snapshot<T> = { data: undefined, loading: true, error: null, successVersion: 0 };
   listeners = new Set<() => void>();
-  flight = false;
-  dirty = false;
-  waiters: Array<() => void> = [];
-  misses = 0;
   version = 0;
-  retryAfter = 0;
   stop?: () => void;
-  constructor(
-    readonly key: string,
-    public options: Options<T>,
-  ) {}
+  constructor(readonly key: string, public options: Options<T>) {}
   publish(next: Snapshot<T>) {
     this.snapshot = next;
-    this.listeners.forEach((listener) => listener());
+    for (const listener of this.listeners) listener();
   }
   replace = (data: T) => {
     if (!this.listeners.size) return;
-    this.version += 1;
-    this.misses = 0;
-    this.retryAfter = 0;
-    this.dirty = false;
-    this.publish({ data, loading: false, error: null,
-      successVersion: this.snapshot.successVersion + 1 });
+    this.version++;
+    this.publish({ data, loading: false, error: null, successVersion: this.snapshot.successVersion + 1 });
   };
-  invalidate = () => {
-    if (!this.listeners.size) return Promise.resolve();
-    if (this.options.retryBackoffMs) {
-      if (Date.now() < this.retryAfter) return Promise.resolve();
-    } else if (this.snapshot.error) return Promise.resolve();
-    this.dirty = true;
-    const completed = new Promise<void>((resolve) => this.waiters.push(resolve));
-    void this.read();
-    return completed;
-  };
-  retry = () => {
-    this.misses = 0;
-    this.retryAfter = 0;
-    this.publish({ ...this.snapshot, error: null, installMissing: false });
-    if (!this.stop) this.attach();
-    return this.invalidate();
-  };
-  recover = () => this.snapshot.error ? this.invalidate() : Promise.resolve();
-  async read() {
-    if (this.flight || !this.listeners.size) return;
-    this.flight = true;
+  read = async () => {
+    if (!this.listeners.size) return;
     const version = this.version;
-    this.dirty = false;
-    this.publish({ ...this.snapshot, loading: this.snapshot.data === undefined });
+    this.publish({ ...this.snapshot, loading: this.snapshot.data === undefined, error: null });
     try {
-      let timeout: ReturnType<typeof setTimeout> | undefined;
-      const data = await Promise.race([this.options.load(), new Promise<never>((_, reject) => {
-        timeout = setTimeout(() => reject(new Error('The connection did not answer. Try again.')), 15_000);
-      })]).finally(() => clearTimeout(timeout));
-      if (this.listeners.size && version === this.version) {
-        this.misses = 0;
-        this.retryAfter = 0;
+      const data = await this.options.load();
+      if (this.listeners.size && version === this.version)
         this.publish({ data, loading: false, error: null, successVersion: this.snapshot.successVersion + 1 });
-      }
     } catch (cause) {
       if (this.listeners.size && version === this.version) {
         this.options.onError?.(cause);
-        this.misses += 1;
-        const backoff = this.options.retryBackoffMs;
-        if (backoff) this.retryAfter = Date.now() + Math.min(backoff.max, backoff.initial * 2 ** Math.min(this.misses - 1, 30));
-        this.publish({
-          ...this.snapshot,
-          loading: false,
-          installMissing: cause instanceof InstallMissingError,
-          error:
-            this.misses >= (this.options.missLimit ?? 1)
-              ? appErrorCopy(cause)
-              : null,
-        });
+        this.publish({ ...this.snapshot, loading: false,
+          installMissing: cause instanceof InstallMissingError, error: appErrorCopy(cause) });
       }
-    } finally {
-      this.flight = false;
-      if (!this.listeners.size) {
-        if (resources.get(this.key) === this) resources.delete(this.key);
-      } else if (this.dirty && !(this.options.retryOnChange === false && this.snapshot.error) &&
-          (!this.snapshot.error || this.options.subscribe) &&
-          (!this.options.retryBackoffMs || Date.now() >= this.retryAfter)) {
-        this.publish({ ...this.snapshot, error: null });
-        void this.read();
-        return;
-      }
-      this.waiters.splice(0).forEach((resolve) => resolve());
     }
-  }
+  };
+  retry = async () => { if (!this.stop) this.attach(); await this.read(); };
+  recover = this.read;
   attach() {
     if (!this.options.subscribe || !this.listeners.size || this.stop) return;
     let active = true;
-    let subscriptionStop: (() => void) | undefined;
-    this.stop = () => {
-      active = false;
-      subscriptionStop?.();
-    };
-    void Promise.resolve()
-      .then(() => (active ? this.options.subscribe?.(
-        this.options.retryBackoffMs || this.options.retryOnChange === false ? this.invalidate : this.retry,
-        this.options.retryBackoffMs ? this.invalidate : this.retry, this.replace,
-        this.options.retryOnChange === false ? () => Promise.resolve() : this.recover) : undefined))
-      .then((stop) => {
-        if (active) subscriptionStop = stop;
-        else stop?.();
-      })
-      .catch((cause) => {
-        if (active) {
-          this.options.onError?.(cause);
-          this.stop = undefined;
-          this.publish({ ...this.snapshot, loading: false, error: appErrorCopy(cause) });
-        }
-      });
+    let stop: (() => void) | undefined;
+    this.stop = () => { active = false; stop?.(); };
+    void this.options.subscribe(this.read, this.read, this.replace, this.read).then(release => {
+      if (active) stop = release;
+      else release();
+    }).catch(cause => {
+      if (!active) return;
+      this.stop = undefined;
+      this.options.onError?.(cause);
+      this.publish({ ...this.snapshot, loading: false, error: appErrorCopy(cause) });
+    });
   }
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
-    if (this.listeners.size === 1) {
-      resources.set(this.key, this);
-      this.attach();
-      if (!this.flight) this.invalidate();
-    }
+    if (this.listeners.size === 1) { resources.set(this.key, this); this.attach(); void this.read(); }
     return () => {
       this.listeners.delete(listener);
       if (!this.listeners.size) {
         this.stop?.();
         this.stop = undefined;
-        this.dirty = false;
-        if (!this.flight && resources.get(this.key) === this) resources.delete(this.key);
+        if (resources.get(this.key) === this) resources.delete(this.key);
       }
     };
   };
   getSnapshot = () => this.snapshot;
-  /** Drop the old account's data at once and read again as the new one. */
   reset() {
-    this.version += 1;
-    this.misses = 0;
-    this.retryAfter = 0;
+    this.version++;
     this.publish({ data: undefined, loading: true, error: null, successVersion: this.snapshot.successVersion });
-    void this.invalidate();
+    void this.read();
   }
 }
 
@@ -213,16 +132,12 @@ export function observeRoomResource(
   changes: (message: RoomViewMessage) => boolean = isSystemOrCardMessage,
   onTurn?: (turn: RoomViewAgentTurn) => void,
 ) {
-  return (invalidate: () => void, reconnect: () => void) => {
-    let subscribed = false;
+  return (invalidate: () => void, refresh: () => void) => {
     return sharedLiveConnection().register([{ '#h': [roomId] }], (event) => {
       if (!('monolithLive' in event)) return;
       const live = event.monolithLive;
       if (!('roomId' in live) || live.roomId !== roomId) return;
-      if (live.type === 'subscribed') {
-        if (subscribed && !live.resumed) reconnect();
-        subscribed = true;
-      } else if (live.type === 'message-delta') {
+      if (live.type === 'message-delta') {
         if (changes(live.message)) invalidate();
       } else if (live.type === 'turn-delta') {
         onTurn?.(live.turn);
@@ -247,14 +162,14 @@ export function useInstallObserver(workspaceId: string, connectorId: string | un
         if (!state) throw new InstallMissingError('Lost track of the install — retry to reconnect');
         return state;
       },
-      subscribe: async (invalidate, reconnect) =>
+      subscribe: async (invalidate, refresh) =>
         sharedLiveConnection().register([], (event) => {
           if (!('monolithLive' in event)) return;
           const live = event.monolithLive;
           if (live.type === 'resource-change' && live.resource === 'install' &&
               live.resourceId === connectorId) void invalidate();
           else if (live.type === 'invalidate' && live.roomId === '' &&
-              live.reason === 'reconnect') void reconnect();
+              live.reason === 'reconnect') void refresh();
         }),
     },
   );

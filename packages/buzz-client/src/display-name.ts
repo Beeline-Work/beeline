@@ -85,11 +85,13 @@ function stableHash(value: string): number {
   return hash >>> 0;
 }
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function fallbackAgentName(_pubkey: string): string {
   return 'Agent';
 }
 
 /** Human identities keep a stable, friendly first-name fallback. */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function fallbackPersonName(pubkey: string): string {
   return FIRST_NAMES[stableHash(pubkey.toLowerCase()) % FIRST_NAMES.length]!;
 }
@@ -97,6 +99,7 @@ export function fallbackPersonName(pubkey: string): string {
 export const PERSON_NAME_MAX_LENGTH = 60;
 
 /** Normalize authored human display names before publishing or showing them. */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function normalizePersonName(value: string): string | null {
   const normalized = value.trim().replace(/\s+/g, ' ');
   if (
@@ -113,6 +116,7 @@ export function isSingleWordAgentName(value: string): boolean {
   return /^\p{L}[\p{L}\p{M}'’]*$/u.test(value.trim());
 }
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export const AGENT_NAME_MAX_LENGTH = 32;
 
 /** Neutral default identity name for a freshly minted agent (no soul set). */
@@ -136,6 +140,7 @@ const SYSTEM_AGENT_NAMES = new Set(['agent', 'beeline-agent', 'buzzy-agent']);
  * `isSingleWordAgentName` so an operator-chosen compound name survives
  * registration and display instead of being swapped for a placeholder.
  */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function isReasonableAgentName(value: string): boolean {
   const normalized = normalizeAuthoredAgentName(value);
   return (
@@ -155,6 +160,7 @@ function normalizeAuthoredAgentName(value: string): string {
  * system-generic marker or a genuinely unusable value falls back to a neutral
  * label without exposing key material.
  */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function resolveAgentName(value: string | undefined, pubkey: string): string {
   const authored = value?.trim();
   if (
@@ -185,10 +191,12 @@ export function deriveAgentDisplayName(value: string | undefined | null, pubkey:
  * handle is now name-derived, but callers compiled against either declaration
  * shape must remain type-safe.
  */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function agentHandle(name: string, _pubkey?: string): string {
   return agentHandleFromName(name);
 }
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function personHandle(name: string, pubkey: string): string {
   const handle = name
     .normalize('NFKD')

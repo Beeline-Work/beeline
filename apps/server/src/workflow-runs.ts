@@ -1,3 +1,4 @@
+import { resourceRequester } from './resource-requester.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { commandOwnerExpiredSql } from './turn-ownership.js';
 import { WELCOME_VIDEO_SLUG } from './welcome-video-workflow.js';
@@ -2286,7 +2287,12 @@ export async function archiveWorkflow(
       [room.workspace_id, input.name],
     )).rows[0];
     if (!skill) return { slug: input.name, archived: false };
-    const actorId = await workflowRequester(db, command);
+    const resolved = await resourceRequester(db, command);
+    const workflow = resolved && await workflowRunRequester(db, {
+      roomId: command.room_id, agentId: command.agent_id,
+      rootSourceMessageId: command.root_source_message_id,
+    });
+    const actorId = workflow?.id ?? resolved?.requester.id ?? command.agent_id;
     if (!(await humanRoomAdmin(db, command.room_id, actorId)))
       throw new WorkflowAuthorizationError('workspace admins only: only a workspace admin can archive this workflow', 403);
     const result = await db.query(

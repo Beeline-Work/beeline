@@ -5,13 +5,24 @@ pattern (a SQL write, a notify, a timer, a merge call), the files that own it,
 and a `total`: how many sites outside those files exist today. `total` is a
 one-way ratchet. `scripts/check-architecture.mjs` runs in the TYPECHECK job.
 
-The check reads behaviour boundaries, never bytes: editing an owner file,
-renaming a function, or moving an existing site to another file passes. A
-failure names the rule, every site, and the one way to comply.
+The check reads sink ownership. Rules with `ownerFunctions` inspect TypeScript
+function scope inside owner files too; `ownerSites` fixes the number of owned
+sinks, so another implementation inside an owner function also fails. `filePattern`
+keeps the read/adapt-only MCP transport family inside the real server source tree;
+its command/turn writes are forbidden, including terminal fallbacks. A failure
+names the rule, every site and the way to comply. Command creation, claim/lease
+assignment, legacy subscription reads and corner archival are strict, with zero
+external allowance. Their owner boundaries cannot be relaxed through a candidate
+rule edit; negative fixtures live in `scripts/check-architecture.test.mjs`.
 
 The command-creation, live-notify, membership-write and server-interval rules
 have zero exceptions. Command creation lives in `agent-command.ts`, including
-explicit connected-app calls that start claimed. `membership-join.ts` owns
+explicit connected-app commands minted and claimed in one transaction. All helper
+and MCP acquisition uses `claimAgentCommand`; only its successful working-turn
+write can claim input/resume work. Lease progress uses a generation-fenced owner
+operation. `archiveCornerState` alone runs corner archival cleanup. Subscriptions
+live in `agent_subscriptions`; legacy JSON may be read only by named upgrade
+functions. `membership-join.ts` owns
 membership SQL and its conflict policies; callers pass their current transaction
 and retain access checks. `postgres-live.ts` owns named notifiers and SQL
 expressions for atomic CTE/trigger notifications. `background-work.ts` drives
@@ -54,8 +65,10 @@ each app so a module cannot grow a second path for the same job.
 | Remove a rule whose pattern matches nothing any more | None. |
 | Raise a `total`, `bootstrapTotal` or `unusedTotal`, remove a live rule, change `pattern`/`flags`/`scope`/`owners`/`distinct` or the storage `scope`, or change the guard scripts | Candidate invariants must pass CI; owner reviews the diff weekly after merging. |
 
-Invariant changes, including approved relaxations, pass CI when the candidate
-satisfies its declared rules. `--base` reports those changes for the weekly audit;
+Non-strict invariant changes pass CI when the candidate satisfies its declared
+rules. Strict capability boundaries reject changes to their matching scope,
+owner functions, owned sink count or zero allowance; they cannot use the weekly
+warning path to reopen a second owner. `--base` reports those changes for the weekly audit;
 it adds no approval or merge gate. CI executes the candidate guard. The owner
 reviews invariant and guard diffs weekly after merging.
 
@@ -70,3 +83,15 @@ remaining exceptions and why their callers still need them.
 A scheduled Beeline agent turn (a due-time wake, not a polling loop) reviews
 the week's merged PRs. The prompt is [weekly-audit.md](weekly-audit.md). It
 opens tightening PRs on its own and reports invariant, System catalog and corner reference changes to the owner weekly.
+
+## Machine connection and helper timers
+
+`scripts/machine-connection-boundaries.mjs` runs inside the architecture check.
+The helper physical connection belongs to `apps/body/src/live-link.ts`; server
+machine output and login/version changes belong to `machine-connection.ts`.
+`machine-connection-sinks.json` pins owned sink counts and can only shrink.
+A helper cannot acquire another reconnect/close/send path. Helper timers have
+zero inventory allowance, including generated child code and timer aliases.
+The sole exception is one stay-warm countdown in `AgentProcesses.workChanged`
+in `apps/body/src/agent-process.ts`. The mutation suite plants a second
+reconnect and timer and requires both to fail; TYPECHECK runs that suite.

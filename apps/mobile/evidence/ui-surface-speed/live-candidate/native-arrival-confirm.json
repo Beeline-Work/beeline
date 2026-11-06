@@ -1,0 +1,9 @@
+{
+  "name": "native-arrival-confirm",
+  "kind": "arrival",
+  "selfOnly": true,
+  "done": true,
+  "details": {
+    "messageId": "ab672395fc4ec3e835c2cd6e6f2df3e8801fb30c1dd1968dc84929e443641141"
+  }
+}

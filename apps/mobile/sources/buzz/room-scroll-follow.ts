@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef } from 'react';
-import { COMPOSER_TOP_GAP } from './room-bottom-chrome';
+import { PHONE_TRANSCRIPT_TAIL_PADDING } from './room-bottom-chrome';
 
 /**
  * The captain's scroll rule for the transcript (2026-09): whenever a new
@@ -24,32 +24,10 @@ import { COMPOSER_TOP_GAP } from './room-bottom-chrome';
  */
 export type ScrollFollowDecision = 'scroll' | 'hold';
 
-/**
- * Ordinary inverted-list tail. It is the speaker-change margin (24px), plus
- * the fixed 18px composer-top gap, minus the newest row's own 6px bottom
- * padding. The visual gap under the newest message is therefore the same 42px
- * whether or not the turn line paints over it.
- */
-const PHONE_TRANSCRIPT_BASE_TAIL_PADDING = 18 + COMPOSER_TOP_GAP;
-
-/**
- * The inverted phone transcript's visual-tail padding. Always the ordinary
- * speaker-change margin plus the fixed composer-top gap, and this function's
- * whole job is to be the one place that says so.
- *
- * It must never be keyed on whether a turn line is showing. Growing the tail
- * while an agent works and shrinking it afterwards is a step the reader sees
- * as the transcript jumping, and it is the first thing anyone tries. The turn
- * line needs nothing from here: it is absolute, painted over the margin the
- * transcript already leaves below its newest message (`room-bottom-chrome`),
- * so it takes no height from the list and this padding has no part to play.
- *
- * That is why the chrome flag is still taken and still ignored. The
- * signature exists to fail the regression: `room-scroll-follow.test.ts` reads
- * the parameter back to prove no caller has started keying padding on it.
- */
+/** The visual tail belongs to the whole newest row, including reaction chips.
+ * It stays fixed when the absolute thinking line mounts or unmounts. */
 export function phoneTranscriptTailPadding(_chrome: { turnChromeVisible: boolean }): number {
-  return PHONE_TRANSCRIPT_BASE_TAIL_PADDING;
+  return PHONE_TRANSCRIPT_TAIL_PADDING;
 }
 
 /** Phone inverted lists already show the newest row; a chronological desktop

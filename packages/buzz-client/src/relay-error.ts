@@ -212,6 +212,7 @@ export function relayPublishNegativeAck(body: unknown, eventKind?: number): Rela
  * Central compatibility adapter for errors produced before the typed client boundary.
  * It may inspect legacy strings, but callers only receive safe typed output.
  */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function asRelayPublishError(error: unknown): RelayPublishError {
   if (error instanceof RelayPublishError) return error;
   const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';

@@ -1,5 +1,6 @@
+import { phoneFetch } from '../../../tests/helpers/phone-operation.js';
 import { cornerKindSql } from './corner-opening.js';
-import { setRoomEventSubscriptions } from './corner-person-state.js';
+import { setRoomEventSubscriptions } from './agent-subscriptions.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QueryResultRow } from 'pg';
@@ -8,7 +9,7 @@ import { migrate, migrateData, type QueryResult, type SqlDatabase } from './data
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { describedWorkflow, PgliteDatabase, migratedDatabase, assignCornerWorker } from './test-support.js';
 import { PhoneService } from './phone-service.js';
-import { DaemonService } from './daemon-service.js';
+import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';
 import { GitHubOperations } from './github-operations.js';
 import { LiveHub } from './live.js';
 import { backfillArchivedCornerCleanup } from './corner-cleanup-backfill.js';
@@ -208,7 +209,6 @@ beforeEach(async () => {
   await db.query(`DELETE FROM corner_merge_approvals`);
   await db.query(`DELETE FROM rooms WHERE parent_id IS NOT NULL`);
   await db.query(`UPDATE memberships SET removed_at=NULL`);
-  await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb`);
   await db.query(`UPDATE rooms SET reviewer_agent_id=NULL WHERE id=$1`, [R]);
   await db.query(`DELETE FROM live_outputs`);
   await db.query(`UPDATE agents SET yolo_mode=true,wake_batch_minutes=0`);
@@ -1010,16 +1010,16 @@ describe('landing and closing from any state (finding 3, implicit edges)', () =>
     await db.query(`INSERT INTO agent_schedule_occurrences(schedule_id,scheduled_for,message_id)
       VALUES($1,now(),$2)`, [id, randomUUID()]);
     await db.query(`INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,prompt)
-      VALUES($1,$2,$3,$4,'room','message','wake')`, [randomUUID(), W, roomId, A]);
+      VALUES($1,$2,$3,$4,'room','joined','wake')`, [randomUUID(), W, roomId, A]);
     await db.query(`INSERT INTO work_schedules(schedule_id,agent_id,room_id,revision,schedule)
       VALUES($1,$2,$3,1,'{}')`, [id, A, roomId]);
-    for (const member of [A,B,H]) await setRoomEventSubscriptions(db,roomId,member,['message']);
+    for (const member of [A,B,H]) await setRoomEventSubscriptions(db,roomId,member,['joined']);
     return id;
   }
 
   async function expectWakeSources(roomId: string, count: number) {
     for (const table of ['agent_schedules', 'agent_subscriptions', 'work_schedules'])
-      expect((await db.query(`SELECT 1 FROM ${table} WHERE room_id=$1`, [roomId])).rowCount).toBe(count);
+      expect((await db.query(`SELECT 1 FROM ${table} WHERE room_id=$1 ${table === 'agent_subscriptions' && count ? "AND event='joined'" : ''}`, [roomId])).rowCount).toBe(table === 'agent_subscriptions' ? count * 3 : count);
     expect((await db.query(`SELECT 1 FROM room_access WHERE room_id=$1 AND event_subscriptions<>'[]'::jsonb`,
       [roomId])).rowCount).toBe(count ? 3 : 0);
   }
@@ -1028,11 +1028,15 @@ describe('landing and closing from any state (finding 3, implicit edges)', () =>
     const cornerId = path === 'close' ? await open() : await inReview();
     const scheduleId = await seedWakeSources(cornerId);
     const liveScheduleId = await seedWakeSources(R);
+    const liveSubscriptions = (await db.query(`SELECT * FROM agent_subscriptions WHERE room_id=$1 ORDER BY id`, [R])).rows;
+    const { holdId } = await phone.execute('setCornerHold', { cornerId }, H);
     if (path === 'close') await phone.execute('requestCornerClose', { roomId: cornerId }, H);
     else await mergedWebhook(cornerId, 7, SHA);
     expect((await db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0].archived_at).not.toBeNull();
     await expectWakeSources(cornerId, 0);
     await expectWakeSources(R, 1);
+    expect((await db.query(`SELECT * FROM agent_subscriptions WHERE room_id=$1 ORDER BY id`, [R])).rows).toEqual(liveSubscriptions);
+    expect((await db.query(`SELECT released_at IS NOT NULL released FROM corner_merge_holds WHERE id=$1`, [holdId])).rows[0]!.released).toBe(true);
     expect((await db.query(`SELECT 1 FROM agent_schedule_occurrences WHERE schedule_id=$1`, [scheduleId])).rowCount).toBe(0);
     expect((await db.query(`SELECT 1 FROM agent_schedule_occurrences WHERE schedule_id=$1`, [liveScheduleId])).rowCount).toBe(1);
   });
@@ -3353,10 +3357,10 @@ describe('the gate stays shut (AC-8)', () => {
     }
   });
 
-  it('Demonstrated R8-HOLD and HOLD-IDS: HTTP service separates agent and person hold release', async () => {
+  it('Demonstrated R8-HOLD and HOLD-IDS: HTTP agent and socket person hold release stay separate', async () => {
     const { createBeelineServer } = await import('../dist/server.js');
     const { PhoneService: BuiltPhone } = await import('../dist/phone-service.js');
-    const { DaemonService: BuiltDaemon } = await import('../dist/daemon-service.js');
+    const { HelperDaemonService: BuiltDaemon } = await import('../dist/test-fixtures/helper-daemon.js');
     const { GitHubOperations: BuiltGitHub } = await import('../dist/github-operations.js');
     const { TokenAuth, tokenHash } = await import('./auth.js');
     const auth = new TokenAuth(db, async () => { throw new Error('fixture does not sign in'); });
@@ -3375,7 +3379,7 @@ describe('the gate stays shut (AC-8)', () => {
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     const address = server.address() as { port: number };
     const post = async (lane: 'phone' | 'daemon', operation: string, body: unknown, expectedStatus = 200) => {
-      const response = await fetch(`http://127.0.0.1:${address.port}/v1/${lane}/operations/${operation}`, {
+      const response = await (lane === 'phone' ? phoneFetch : fetch)(`http://127.0.0.1:${address.port}/v1/${lane}/operations/${operation}`, {
         method: 'POST', headers: { authorization: `Bearer ${lane === 'phone' ? token : daemonToken}`, 'content-type': 'application/json' },
         body: JSON.stringify(body),
       });

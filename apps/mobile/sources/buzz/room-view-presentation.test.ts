@@ -38,6 +38,13 @@ describe('Room view presentation', () => {
     watchFilters: [{ '#h': ['room'] }],
   });
 
+  it('preserves the server warning card through transcript projection', () => {
+    expect(displayRoomMessage({
+      id: 'away', text: 'Return within 1 day', createdAt: 1, presentation: 'card', awayWarning: true,
+      author: { pubkey: 'system', kind: 'human', name: 'Beeline' },
+    }, 'viewer')).toMatchObject({ awayWarning: true, text: 'Return within 1 day' });
+  });
+
   it('applies committed message deltas idempotently and in authoritative order', () => {
     const message = (id: string, createdAt: number): RoomViewMessage => ({
       id,

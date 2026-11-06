@@ -1,3 +1,4 @@
+import { resourceReadAuthority } from './resource-requester.js';
 import { Check } from 'typebox/value';
 import {
   INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX,
@@ -120,26 +121,13 @@ function snippet(text: string, query: string): string {
  */
 export async function searchInstitutionalHistory(
   database: SqlDatabase,
-  command: Pick<CommandRow, 'room_id' | 'root_source_message_id' | 'agent_id' | 'turn_request_id'>,
+  command: Pick<CommandRow, 'room_id' | 'root_source_message_id' | 'agent_id' | 'turn_request_id'> & Partial<Pick<CommandRow, 'root_command_id'>>,
   input: SearchInstitutionalHistoryInput,
 ): Promise<SearchInstitutionalHistoryResult> {
   const query = boundedQuery(input.query);
   const limit = boundedLimit(input.limit);
   return database.transaction(async (db) => {
-    // The root message's author is this turn's requester whether human or
-    // agent (a schedule, event, or agent-to-agent wake); only its Room needs
-    // to share the output Room's Workspace.
-    const authority = (
-      await db.query<{ workspace_id: string; requester_identity_id: string }>(
-        `SELECT output.workspace_id,root.author_id requester_identity_id
-         FROM rooms output
-         JOIN messages root ON root.id=$2 AND root.deleted_at IS NULL
-         JOIN rooms root_room ON root_room.id=root.room_id
-           AND root_room.workspace_id=output.workspace_id
-         WHERE output.id=$1`,
-        [command.room_id, command.root_source_message_id],
-      )
-    ).rows[0];
+    const authority = await resourceReadAuthority(db, command);
     if (!authority) throw new Error('institutional history requester authority is unavailable');
 
     const rows = await db.query<SearchRow>(

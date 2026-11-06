@@ -1,11 +1,12 @@
-import { captureHelperError, flushHelperErrors } from './sentry.js';
+import { waitForProcessExit } from './process-exit.js';
+import { captureHelperError } from './sentry.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { MachineControl, machineControlPath } from './machine-control.js';
 import { withKernelLock } from './kernel-lock.js';
 import { DaemonApiError, isAgentRemovedError } from './daemon-api-client.js';
 import { retireRemovedAgent } from './agent-retirement.js';
-import { watch, type FSWatcher } from 'node:fs';
+import { existsSync, watch, type FSWatcher } from 'node:fs';
 import type { EventEmitter } from 'node:events';
 import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -27,7 +28,6 @@ import {
 import { supervisor } from './helper-service.js';
 import { installLaunchdTrustySquireBrokerService } from './launchd.js';
 import { MachineLink } from './machine-link.js';
-import { FreeAgentIdle } from './free-agent-idle.js';
 import { ReleaseTransaction, withInstallLock } from './managed-update.js';
 import {
   clearHelperPidRecordIfPid,
@@ -49,20 +49,18 @@ import {
 import type { InstalledBundleIdentity } from './self-update-manifest.js';
 import {
   installTrustySquireBrokerService,
-  startLocalWatchdog,
   SystemdNotifier,
 } from './systemd.js';
-import { squireBrokerMeetsComputerUseMinimum } from './squire-host.js';
+import { squireBrokerMeetsComputerUseMinimum, squireBrokerInstallEntry, squireHostPaths } from './squire-host.js';
+import { readVault } from './connector-squire.js';
+import { StdioSquireMcpClient } from './squire-mcp-client.js';
 import { pruneDeletedRuntimes, pruneRepositoryCaches, pruneMachineStorage } from './host-disk-retention.js';
-import { SessionScheduler } from './session-scheduler.js';
+import { AgentProcesses } from './agent-process.js';
 import { refreshSystemdHelperUnit } from './native-helper.js';
 import { reclaimArchivedMemberStorage, watchStorageFacts, pruneStoppedAgentStorage, pruneEndedOwnerStorage, pruneArchivedCheckoutStorage, pruneUnusedCheckoutStorage } from './storage-owners.js';
 import { monitorHelperUsage } from './helper-usage.js';
-import { monitorPrivateRecoveryReserve } from './shared-asset-capacity.js';
 
 /** How long an old per-agent daemon gets to drain before forced takeover. */
-const PREVIOUS_OWNER_STOP_MS = 15_000;
-const PREVIOUS_OWNER_KILL_MS = 2_000;
 
 interface AgentSlot {
   readonly configPath: string;
@@ -85,7 +83,7 @@ interface AgentSlot {
  * The machine's one helper process. It hosts every paired agent on this host
  * as an in-process runtime and holds one live socket per server for all of
  * them. It owns everything that is per process: signals, the service
- * manager's watchdog, the update drain (all agents drain, then one restart),
+ * manager's process ownership, the update drain (all agents drain, then one restart),
  * and the forced update. One agent's failure restarts or stops only
  * that agent. SIGHUP rescans the paired agents, which is how pairing, `start`
  * and `stop` change what it hosts.
@@ -109,8 +107,6 @@ async function serveMachineHelper(
      */
     freeAgentIdle?: {
       idleMs: number;
-      /** Bounded startup; tests may shorten the production five-minute deadline. */
-      startupTimeoutMs?: number;
       requestSleep: (options: { refresh: boolean }) => Promise<boolean>;
     };
   } = {},
@@ -133,29 +129,11 @@ async function serveMachineHelper(
   });
   const signals = options.signals ?? process;
   const disposeSignals = lifecycle.installSignals(signals);
-  const stopReserveMonitor = monitorPrivateRecoveryReserve(supervisorRoot);
   const usage = !options.freeAgentIdle && managedBy !== 'lab' && process.platform === 'linux'
     ? monitorHelperUsage(supervisorRoot) : undefined;
   const notifier = new SystemdNotifier();
   const slots = new Map<string, AgentSlot>();
   const hosted = new Map<string, HostedAgent>();
-  // Free-agent Machines have no native manager to stop a pre-socket retry loop.
-  // Exit 78 tells their entrypoint to leave this boot stopped for inspection.
-  const inheritedDeadline = Number(env.BEELINE_FREE_AGENT_START_DEADLINE) * 1_000;
-  const startupBudget = Number.isFinite(inheritedDeadline) && inheritedDeadline > 0
-    ? Math.max(1, inheritedDeadline - Date.now()) : 5 * 60_000;
-  const startupAlreadyServed = options.freeAgentIdle && env.BEELINE_FREE_AGENT_READY_FILE &&
-    await stat(env.BEELINE_FREE_AGENT_READY_FILE).then(() => true, () => false);
-  const startupDeadline = options.freeAgentIdle && !startupAlreadyServed ? setTimeout(() => {
-    const error = new Error('free agent did not serve within its startup deadline; stopping this boot');
-    captureHelperError(error);
-    console.error('[helper]', error.message);
-    void flushHelperErrors().finally(() => {
-      lifecycle.stop('failed');
-      (options.exitProcess ?? process.exit)(78);
-    });
-  }, options.freeAgentIdle.startupTimeoutMs ?? startupBudget) : undefined;
-  startupDeadline?.unref();
   const links = new Map<string, MachineLink>();
   const archiveStoragePending = new Map<string, import('./helper-storage.js').StorageRoomState>();
   let archiveStorageRunning = false;
@@ -196,7 +174,7 @@ async function serveMachineHelper(
       await pruneDeletedRuntimes(supervisorRoot, now, options);
       await pruneArchivedCheckoutStorage(supervisorRoot, options);
       await pruneUnusedCheckoutStorage(supervisorRoot, options);
-      const swept = await SessionScheduler.withIdleHostStorage(async () => {
+      const swept = await AgentProcesses.withIdleHostStorage(async () => {
         await pruneRepositoryCaches(supervisorRoot, now, options);
         await pruneMachineStorage(supervisorRoot, options);
       }, { allowLiveSessions: true });
@@ -237,9 +215,7 @@ async function serveMachineHelper(
   };
 
   const finish = async (reason: HelperExitReason) => {
-    clearTimeout(startupDeadline);
     disposeSignals();
-    stopReserveMonitor();
     usage?.stop();
     await notifier.stopping(stoppingStatus).catch(() => undefined);
     if (!options.configPaths) await clearHelperPidRecordIfPid(supervisorRoot, process.pid);
@@ -384,6 +360,10 @@ async function serveMachineHelper(
     });
   const tickUpdate = async () => {
     await update?.idleChanged();
+    if(freeAgentRefresh&&options.freeAgentIdle&&![...hosted.values()].some(agent=>agent.core.activeTurnCount()>0)){
+      freeAgentRefresh=false;
+      await options.freeAgentIdle.requestSleep({refresh:true});
+    }
     void sweepHostDisk();
   };
   const requestForceUpdate = (minimum: string) => {
@@ -398,10 +378,23 @@ async function serveMachineHelper(
     machineLink: (baseUrl) => {
       let link = links.get(baseUrl);
       if (!link) {
+        let vaultClient: StdioSquireMcpClient | undefined;
+        controller.signal.addEventListener('abort', () => vaultClient?.close(), { once: true });
+        const home = env.HOME?.trim() || homedir();
         link = new MachineLink({
           baseUrl,
+          readVault: async agentId => {
+            if (!existsSync(squireBrokerInstallEntry(home)) && !existsSync(squireHostPaths(home).mcpSocket))
+              return { connections: [], notAdded: true };
+            vaultClient ??= new StdioSquireMcpClient({ home, scope: { agentId, roomId: 'machine-vault' } });
+            return { connections: await readVault(vaultClient) };
+          },
+          log: message => console.warn(`[helper] ${message}`),
           onRegistered: () => {
             update?.notify();
+            if(env.BEELINE_HOSTED_SERVICES==='1')execFile('/bin/sh',['/opt/beeline/hosted-services.sh'],{env},error=>{
+              if(error){console.error('[helper] hosted services recovery failed:',error.message);restartHelper('failed');}
+            });
           },
         });
         link.setHelperIdentity({
@@ -465,8 +458,7 @@ async function serveMachineHelper(
     established: (agentId) => {
       const slot = [...slots.values()].find((candidate) => candidate.agentId === agentId);
       if (!slot) return;
-      clearTimeout(startupDeadline);
-      if (options.freeAgentIdle && env.BEELINE_FREE_AGENT_READY_FILE)
+        if (options.freeAgentIdle && env.BEELINE_FREE_AGENT_READY_FILE)
         void writeFile(env.BEELINE_FREE_AGENT_READY_FILE, 'ready\n', { mode: 0o600 })
           .catch(error => console.warn('[helper] could not record startup readiness:', error));
       slot.established = true;
@@ -511,6 +503,9 @@ async function serveMachineHelper(
           if (!migrationReleaseChecked) {
             migrationReleaseChecked = true;
             update?.notify();
+            if(env.BEELINE_HOSTED_SERVICES==='1')execFile('/bin/sh',['/opt/beeline/hosted-services.sh'],{env},error=>{
+              if(error){console.error('[helper] hosted services recovery failed:',error.message);restartHelper('failed');}
+            });
           }
           const signalOwner = async (signal: NodeJS.Signals) => {
             // Re-read identity immediately before each signal; records and PIDs can change.
@@ -518,24 +513,12 @@ async function serveMachineHelper(
             if (!previous || previous === process.pid || slot.controller.signal.aborted) return;
             try { process.kill(previous, signal); }
             catch {
-              // Judge the handoff by verified liveness after the stop deadlines.
+              // Judge the handoff by the process exit notification.
             }
           };
-          const waitForOwner = async (timeout: number) => {
-            const deadline = Date.now() + timeout;
-            while (!slot.controller.signal.aborted) {
-              previous = await runtimeDaemonPid(slot.configPath);
-              if (!previous || previous === process.pid || Date.now() >= deadline) return;
-              await sleep(Math.min(100, deadline - Date.now()), slot.controller.signal);
-            }
-          };
-          await signalOwner('SIGTERM');
-          await waitForOwner(PREVIOUS_OWNER_STOP_MS);
-          if (slot.controller.signal.aborted) break;
-          if (previous && previous !== process.pid) {
-            await signalOwner('SIGKILL');
-            await waitForOwner(PREVIOUS_OWNER_KILL_MS);
-          }
+          await signalOwner('SIGKILL');
+          if(previous&&previous!==process.pid)await waitForProcessExit(previous,slot.controller.signal);
+          previous=await runtimeDaemonPid(slot.configPath);
           if (slot.controller.signal.aborted) break;
           if (previous && previous !== process.pid) {
             reportError = reportedPreviousOwner !== previous;
@@ -589,10 +572,6 @@ async function serveMachineHelper(
         reason = 'failed';
       }
       if (controller.signal.aborted || slot.controller.signal.aborted) break;
-      if (reason === 'restart-requested') {
-        setState(slot, 'restarting', 'restart requested');
-        continue;
-      }
       if (reason === 'agent-removed') {
         slot.enabled = false;
         setState(slot, 'removed', 'agent removed from Beeline');
@@ -714,61 +693,6 @@ async function serveMachineHelper(
   });
   await control.start();
   signals.on('SIGHUP', onHangup);
-  const pendingWatchdogAgents = new Set<string>();
-  const stopWatchdog = startLocalWatchdog(
-    notifier,
-    statusLine,
-    async () => {
-      // Startup/backoff slots have no live core to acknowledge. Include every
-      // hosted core so an actual stalled loop cannot borrow a sibling's health.
-      pendingWatchdogAgents.clear();
-      await Promise.all([...hosted.values()].map(async (agent) => {
-        pendingWatchdogAgents.add(agent.agentId);
-        try { await agent.core.requestWorkLoopProgress(); }
-        finally { pendingWatchdogAgents.delete(agent.agentId); }
-      }));
-      return true;
-    },
-    undefined,
-    env,
-    () => restartHelper('failed'),
-    () => console.warn('[helper] watchdog awaiting work-loop progress', JSON.stringify(
-      [...pendingWatchdogAgents].map(agentId => ({
-        agentId, ...hosted.get(agentId)?.core.workLoopDiagnostics(),
-      })),
-    )),
-  );
-
-  const freeAgentIdle = options.freeAgentIdle;
-  const idle = freeAgentIdle
-    ? new FreeAgentIdle({
-        idleMs: freeAgentIdle.idleMs,
-        requestSleep: () => freeAgentIdle.requestSleep({ refresh: freeAgentRefresh }),
-        activeTurns: () =>
-          [...hosted.values()].reduce((total, agent) => total + agent.core.activeTurnCount(), 0),
-        onResume: () => {
-          const reconnect = () => {
-            for (const link of links.values()) link.reconnectNow();
-          };
-          if (env.BEELINE_HOSTED_SERVICES !== '1') {
-            reconnect();
-            return;
-          }
-          // The image owns the manager and unit. Restore them before taking
-          // resumed connector work; only systemd starts the production broker.
-          execFile('/bin/sh', ['/opt/beeline/hosted-services.sh'], { env, timeout: 30_000 }, (error) => {
-            if (error) {
-              console.error('[helper] hosted services recovery failed:', error.message);
-              restartHelper('failed');
-              return;
-            }
-            reconnect();
-          });
-        },
-        log: (line) => console.log(`[helper] free agent ${line}`),
-      })
-    : undefined;
-  idle?.start();
 
   try {
     console.log(`[helper] hosting ${initial.length} agent(s) on one machine socket per server`);
@@ -793,9 +717,7 @@ async function serveMachineHelper(
     }
     await Promise.all([...slots.values()].map((slot) => slot.running));
   } finally {
-    idle?.stop();
     signals.off('SIGHUP', onHangup);
-    stopWatchdog();
     update?.dispose();
     await control.stop();
     for (const link of links.values()) link.stop();
@@ -841,16 +763,3 @@ export async function runMachineHelper(
   );
 }
 
-/** Resolves after `ms`, or as soon as `signal` aborts. */
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolveSleep) => {
-    if (signal?.aborted) return resolveSleep();
-    const done = () => {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', done);
-      resolveSleep();
-    };
-    const timer = setTimeout(done, ms);
-    signal?.addEventListener('abort', done, { once: true });
-  });
-}

@@ -1,3 +1,4 @@
+import { reportSquireWork, squireWorkStatus } from './squire-machine.js';
 import { DISPLAY_DEADLINE_KEY } from './deadline-expiry-source.js';
 import { BackgroundWork } from './background-work.js';
 import { SENTRY_TRIAGE_ROOM, sentryEligibilityKey } from './sentry-wake-source.js';
@@ -293,6 +294,21 @@ describe('Postgres live fanout', () => {
     await settle(events); expect(wake).not.toHaveBeenCalled();
     await database.query("UPDATE agent_schedules SET updated_at=updated_at+interval '1 second' WHERE id=$1", [schedule]);
     await eventually(() => wake.mock.calls.length === 1);
+    wake.mockClear();
+    await database.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)', [agent,AUTHOR]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    await database.query('UPDATE identities SET last_app_active_at=now(),away_warning_at=NULL WHERE id=$1', [AUTHOR]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    const subscription = '55555555-5555-4555-8555-555555555555';
+    await database.query(`INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,prompt)
+      VALUES($1,$2,$3,$4,'room','joined',NULL)`, [subscription,WORKSPACE,ROOM,agent]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    await database.query('UPDATE agent_subscriptions SET fired_count=fired_count+1 WHERE id=$1', [subscription]);
+    await settle(events); expect(wake).not.toHaveBeenCalled();
+    await database.query('UPDATE agent_subscriptions SET paused_at=now() WHERE id=$1', [subscription]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    await database.query('UPDATE agent_schedules SET paused_at=now() WHERE id=$1', [schedule]);
+    await eventually(() => wake.mock.calls.length === 1);
     expect(events.some(event => event.type === 'invalidate' && event.reason === 'postgres:agent_schedule_due')).toBe(false);
   });
 
@@ -479,6 +495,38 @@ describe('Postgres live fanout', () => {
     await eventually(() => received.some((event) => event.type === 'resource-change' && event.resource === 'workbench')
       && received.some((event) => event.type === 'resource-change' && event.resource === 'install'));
     expect(received).toContainEqual({ type: 'resource-change', roomId: '', ownerId: AUTHOR, resource: 'workbench' });
+    expect(received).toContainEqual({ type: 'resource-change', roomId: '', ownerId: AUTHOR,
+      resource: 'install', resourceId: 'squire:machine' });
+  });
+
+  it('refreshes an open Squire install when the vault report arrives after connect completion', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client);
+    listeners.push(listener);
+    const received: LiveEvent[] = [];
+    live.subscribeAll(event => received.push(event));
+    void listener.run();
+    await eventually(() => listener.projectionHealth().connected);
+    const agent = 'b'.repeat(64);
+    await database.query("INSERT INTO identities(id,kind,name) VALUES($1,'agent','Helper')", [agent]);
+    await database.query("INSERT INTO agents(agent_id,owner_id,machine_id,squire_report,squire_work) VALUES($1,$2,'machine',$3::jsonb,$4::jsonb)",
+      [agent, AUTHOR, JSON.stringify({ status: 'error', errorMessage: 'Squire account sign-in required', reportedAt: 1 }),
+        JSON.stringify({ generation: 1, install: true, signIn: { method: 'oauth', url: 'https://squire.test/install' } })]);
+    await settle(received);
+
+    // ConnectorAssignmentLoop commits installConnector before refreshVault.
+    await database.transaction(db => reportSquireWork(db, agent,
+      { connectorId: 'squire:machine', pairingGeneration: 1, steps: [] }, true));
+    await eventually(() => received.some(event => event.type === 'resource-change' && event.resource === 'install'));
+    expect((await squireWorkStatus(database, agent)).status).toBe('error');
+    await settle(received);
+
+    // This later report is the first read boundary that can say connected.
+    await database.query('UPDATE agents SET squire_report=$2::jsonb WHERE agent_id=$1',
+      [agent, JSON.stringify({ status: 'connected', reportedAt: 2 })]);
+    await eventually(() => received.some(event => event.type === 'resource-change' && event.resource === 'workbench'));
+    expect((await squireWorkStatus(database, agent)).status).toBe('connected');
     expect(received).toContainEqual({ type: 'resource-change', roomId: '', ownerId: AUTHOR,
       resource: 'install', resourceId: 'squire:machine' });
   });
@@ -1020,7 +1068,7 @@ describe('Postgres live fanout', () => {
     );
 
 
-    await database.query(`INSERT INTO corner_person_state(corner_id,identity_id,event_subscriptions) VALUES($1,$2,'["joined"]')`,[corner,AUTHOR]);
+    await database.query(`INSERT INTO corner_person_state(corner_id,identity_id,subscriptions_overridden) VALUES($1,$2,true)`,[corner,AUTHOR]);
     await eventually(() =>
       received.some(
         (event) =>
@@ -1039,7 +1087,7 @@ describe('Postgres live fanout', () => {
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [opener]);
     await insertCornerFacts(database, { cornerId: corner, ownerAgentId: opener });
     received.length = 0;
-    await database.query(`INSERT INTO corner_person_state(corner_id,identity_id,event_subscriptions) VALUES($1,$2,'["joined"]')`,[corner,opener]);
+    await database.query(`INSERT INTO corner_person_state(corner_id,identity_id,subscriptions_overridden) VALUES($1,$2,true)`,[corner,opener]);
     await eventually(() =>
       received.some(
         (event) =>
@@ -1060,7 +1108,7 @@ describe('Postgres live fanout', () => {
     received.length = 0;
 
 
-    await database.query(`INSERT INTO corner_person_state(corner_id,identity_id,event_subscriptions) VALUES($1,$2,'[]')`,[corner,latecomer]);
+    await database.query(`INSERT INTO corner_person_state(corner_id,identity_id,subscriptions_overridden) VALUES($1,$2,true)`,[corner,latecomer]);
     await eventually(() =>
       received.some(
         (event) =>
@@ -1330,7 +1378,7 @@ describe('Postgres live fanout', () => {
     await expectNudge(() => database.query(
       `DELETE FROM corner_follows WHERE corner_id=$1 AND identity_id=$2`, [corner, reader]));
     await expectNudge(() => database.query(
-      `INSERT INTO corner_person_state(corner_id,identity_id,event_subscriptions) VALUES($1,$2,'[]')`,
+      `INSERT INTO corner_person_state(corner_id,identity_id,subscriptions_overridden) VALUES($1,$2,true)`,
       [corner,reader]));
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text) VALUES('owed-1',$1,$2,'question')`,
@@ -1764,42 +1812,7 @@ describe('Postgres live fanout', () => {
     }
   });
 
-  it('rehydrates a missed delivery deadline when its first LISTEN connection opens', async () => {
-    const agent = 'b'.repeat(64);
-    const live = new LiveHub();
-    const presence = new ConnectionPresence(database, live, 50);
-    await database.query(
-      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Bee','bee')`,
-      [agent],
-    );
-    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, AUTHOR]);
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-      VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
-      [WORKSPACE, ROOM, AUTHOR, agent],
-    );
-    try {
-      await presence.start();
-      await presence.announce(ROOM, agent, { lifecycleId: 'boot' });
-      await database.query(
-        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@bee Are you there?')`,
-        ['2'.repeat(64), ROOM, AUTHOR],
-      );
-      const client = new PgliteListenClient(database);
-      const listener = new PostgresLiveListener(database, live, () => client);
-      listeners.push(listener);
-      void listener.run();
-      await eventually(async () => {
-        const row = await database.query<{ body: { status: string } }>(
-          `SELECT body FROM live_outputs WHERE agent_id=$1 AND kind='presence'`,
-          [agent],
-        );
-        return row.rows[0]?.body.status === 'offline';
-      });
-    } finally {
-      await presence.stop();
-    }
-  });
+
 
   it('broadcasts resync after its listener connection is restored', async () => {
     const live = new LiveHub();

@@ -31,7 +31,7 @@ import { appendFile, mkdir, readdir, rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import type { PromptSectionChange } from './prompt-section-baseline.js';
-import type { SessionSchedulerSnapshot } from './session-scheduler.js';
+import type { AgentProcessSnapshot } from './agent-process.js';
 
 /**
  * The phases a turn is cut into.
@@ -45,10 +45,10 @@ import type { SessionSchedulerSnapshot } from './session-scheduler.js';
  * showed that. The phases therefore do not add up and must not be summed.
  */
 export const TURN_PHASES = [
-  /** Enqueued on `SessionScheduler` until this turn holds a slot. A capacity wait lives here. */
+  /** Enqueued on `AgentProcesses` until the previous turn ends. */
   'queue-wait',
   /**
-   * The work that buys a usable session: on a cold turn `lifecycle.activate()`
+   * The work that buys a usable session: on a cold turn `lifecycle.start()`
    * — the ACP spawn and `session/new` — and on a warm one only the check that
    * the retained process still matches the agent's configuration (C104).
    */
@@ -77,8 +77,6 @@ export interface TurnAttemptTrace {
    * session, and `activation` then holds only its currency check.
    */
   activation: 'cold' | 'warm';
-  /** True when the scheduler reported `waiting-for-slot` before admitting this turn. */
-  capacityWait?: boolean;
   /** The OpenRouter provider this attempt was re-pinned to, when it is a retry. */
   provider?: string;
   /** Why the previous attempt did not answer, when this attempt is its retry. */
@@ -121,11 +119,11 @@ export interface TurnTraceRecord {
   /**
    * The scheduler's own `snapshot()`, read twice: as the turn was enqueued and
    * again once it was admitted. A long `queue-wait` beside a full snapshot is
-   * a capacity wait; a long one beside an empty snapshot is not.
+   * a previous turn; separate conversations never wait for process capacity.
    */
   scheduler: {
-    atQueue?: SessionSchedulerSnapshot;
-    atAdmission?: SessionSchedulerSnapshot;
+    atQueue?: AgentProcessSnapshot;
+    atAdmission?: AgentProcessSnapshot;
   };
   /** Bytes per prompt section of the last prompt built (`prompt-assembly.ts`). */
   promptSections?: Record<string, number>;
@@ -153,7 +151,6 @@ function toolCallOutstanding(call: { status?: string }): boolean {
 interface MutableAttempt {
   attempt: number;
   activation: 'cold' | 'warm';
-  capacityWait: boolean;
   provider?: string;
   retryReason?: string;
   phases: Map<TurnPhase, number>;
@@ -190,8 +187,8 @@ export class TurnTrace {
   private readonly begunAt: number;
   private readonly attempts: MutableAttempt[] = [];
   private readonly open = new Map<TurnPhase, number>();
-  private atQueue?: SessionSchedulerSnapshot;
-  private atAdmission?: SessionSchedulerSnapshot;
+  private atQueue?: AgentProcessSnapshot;
+  private atAdmission?: AgentProcessSnapshot;
   private finished = false;
   private promptSections?: Record<string, number>;
   private promptSectionChanges?: Record<string, PromptSectionChange>;
@@ -211,7 +208,6 @@ export class TurnTrace {
     return {
       attempt,
       activation: 'warm',
-      capacityWait: false,
       phases: new Map(),
       toolCallIds: new Set(),
       tools: new Map(),
@@ -250,14 +246,9 @@ export class TurnTrace {
     }
   }
 
-  noteScheduler(where: 'queue' | 'admission', snapshot: SessionSchedulerSnapshot): void {
+  noteScheduler(where: 'queue' | 'admission', snapshot: AgentProcessSnapshot): void {
     if (where === 'queue') this.atQueue = snapshot;
     else this.atAdmission = snapshot;
-  }
-
-  /** The scheduler told this turn it was waiting for a slot: the wait is capacity, not the model. */
-  noteCapacityWait(): void {
-    this.current.capacityWait = true;
   }
 
   noteActivation(kind: 'cold' | 'warm'): void {
@@ -439,7 +430,6 @@ export class TurnTrace {
         attemptId: `${this.options.requestId}#${attempt.attempt}`,
         attempt: attempt.attempt,
         activation: attempt.activation,
-        ...(attempt.capacityWait ? { capacityWait: true } : {}),
         ...(attempt.provider ? { provider: attempt.provider } : {}),
         ...(attempt.retryReason ? { retryReason: redactReplayError(attempt.retryReason) } : {}),
         ...(attempt.institutionalMemory ? { institutionalMemory: attempt.institutionalMemory } : {}),
@@ -509,7 +499,6 @@ export function formatDuration(ms: number): string {
  */
 export function formatTurnAttempt(attempt: TurnAttemptTrace): string {
   const parts = [`attempt ${attempt.attempt} ${attempt.activation}`];
-  if (attempt.capacityWait) parts.push('capacity-wait');
   if (attempt.provider) parts.push(`provider ${attempt.provider}`);
   if (attempt.institutionalMemory) parts.push(`memory ${attempt.institutionalMemory}`);
   if (attempt.institutionalMemoryEmbeddingOutcome) {

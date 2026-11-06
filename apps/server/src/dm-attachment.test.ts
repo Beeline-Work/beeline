@@ -1,3 +1,4 @@
+import { phoneFetch } from '../../../tests/helpers/phone-operation.js';
 import { createHash } from 'node:crypto';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -110,7 +111,7 @@ describe('DM attachments', () => {
   });
 
   const request = async (path: string, method = 'GET', payload?: unknown, token = accessToken) =>
-    fetch(`${origin}${path}`, {
+    phoneFetch(`${origin}${path}`, {
       method,
       headers: {
         authorization: `Bearer ${token}`,
@@ -124,7 +125,7 @@ describe('DM attachments', () => {
     request(`/v1/daemon/operations/${name}`, 'POST', payload, daemonToken);
 
   const uploadPng = async () => {
-    const upload = await fetch(`${origin}/v1/phone/media`, {
+    const upload = await phoneFetch(`${origin}/v1/phone/media`, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${accessToken}`,
@@ -172,7 +173,7 @@ describe('DM attachments', () => {
     expect(sent.status).toBe(200);
 
     // The bytes are fetchable by the peer.
-    const bytes = await fetch(attachment.url);
+    const bytes = await phoneFetch(attachment.url);
     expect(bytes.status).toBe(200);
     expect(Buffer.from(await bytes.arrayBuffer())).toEqual(PNG_BYTES);
 

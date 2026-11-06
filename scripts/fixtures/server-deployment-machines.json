@@ -1,0 +1,28 @@
+[
+  {
+    "id": "83d1301f029798",
+    "config": {
+      "image": "registry.fly.io/beeline-server:deployment-01M6J073EW3QD5G3HAFPT9WR6J"
+    },
+    "image_ref": {
+      "digest": "sha256:3f4b2d3f53f9c298730e5acd9d97b360db9e3423c4144051f1e483178f58b2ab",
+      "labels": {
+        "app.usebeeline.release.sha": "98c2a49a4f3df909e8fd3fc32ae39129f6f8367b",
+        "app.usebeeline.release.version": "v0.1.142"
+      }
+    }
+  },
+  {
+    "id": "8d04d0ce21d2d8",
+    "config": {
+      "image": "registry.fly.io/beeline-server:deployment-01M6J0B78AXMZ56Y0D929YKXFT"
+    },
+    "image_ref": {
+      "digest": "sha256:3f4b2d3f53f9c298730e5acd9d97b360db9e3423c4144051f1e483178f58b2ab",
+      "labels": {
+        "app.usebeeline.release.sha": "98c2a49a4f3df909e8fd3fc32ae39129f6f8367b",
+        "app.usebeeline.release.version": "v0.1.142"
+      }
+    }
+  }
+]

@@ -7,6 +7,7 @@ import {
 } from './kinds.js';
 import type { RoomViewAgentTurn, RoomViewMessage } from './room-view.js';
 
+/** @public The isolated phone dependency tree consumes this client contract. */
 export type LiveOverlay =
   | {
       readonly kind: 'draft';
@@ -42,6 +43,7 @@ function exactTag(event: NostrEvent, name: string): string | undefined {
 }
 
 /** Verifies and decodes only the three ephemeral lanes the UI renders live. */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export class LiveOverlayDecoder {
   private readonly newest = new Map<
     string,
@@ -135,6 +137,7 @@ export class LiveOverlayDecoder {
 }
 
 /** Route-local ephemeral replacement; durable DTO fields are never patched. */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function applyLiveOverlay(
   current: readonly LiveOverlay[],
   update: LiveOverlay,
@@ -199,6 +202,7 @@ export function applyLiveOverlay(
  * A turn that failed or was stopped is NOT an ending of this kind: its partial
  * text stays exactly where the reader last saw it.
  */
+/** @public The isolated phone dependency tree consumes this client contract. */
 export function visibleLiveOverlays(
   overlays: readonly LiveOverlay[],
   durable: readonly RoomViewMessage[],

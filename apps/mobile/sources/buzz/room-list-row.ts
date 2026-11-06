@@ -161,7 +161,7 @@ function attachmentPreview(
  * hidden behind agent state: an unread Room lights the square whatever its
  * agents are doing.
  */
-export function roomRowNeedsAttention(
+function roomRowNeedsAttention(
   item: Pick<ChatListItem, 'unread' | 'agentState' | 'latestMessage'>,
 ): boolean {
   return item.unread || item.agentState === 'needs-you';

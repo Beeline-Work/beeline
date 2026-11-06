@@ -1,3 +1,4 @@
+vi.mock('@/buzz/use-artifact-recovery', () => ({ useArtifactRecoveryGeneration: () => 0 }));
 vi.mock('@/auth/signin-funnel', () => ({ funnelOnboarding: vi.fn(async () => undefined) }));
 vi.mock('./Button', () => ({ Button: 'Button' }));
 // The runnable boundary has its own suite; this pane suite verifies selection
@@ -49,7 +50,7 @@ vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 const theme = vi.hoisted(() => ({
-  buzz: {
+  buzz: { roomList: { edge: 20 },
     border: '#333',
     bgBase: '#111',
     textPrimary: '#eee',

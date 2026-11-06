@@ -7,12 +7,13 @@ vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () =>
 vi.mock('@/buzz/workbench-source', () => ({ getWorkbenchSource: vi.fn() }));
 import { useObservedResource, observeRoomResource } from './use-observed-resource';
 import { resetClientState } from '@/sync/client-reset';
+import { PhoneSocketDisconnectedError } from '@/sync/transport/phone-socket-error';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 const mounted: any[] = [];
 afterEach(async () => { await act(async () => mounted.splice(0).forEach(tree => tree.unmount())); vi.useRealTimers(); vi.clearAllMocks(); });
 function mount(element: React.ReactElement) { const tree = create(element); mounted.push(tree); return tree; }
 
-it('shares a read, coalesces pushes during a flight, and detaches after the last reader', async () => {
+it('shares the displayed answer and directly reads each relevant push without a queue', async () => {
   const releases: Array<(value: string) => void> = [];
   const load = vi.fn(() => new Promise<string>(resolve => releases.push(resolve)));
   let current: any;
@@ -20,28 +21,29 @@ it('shares a read, coalesces pushes during a flight, and detaches after the last
   let first: any; let second: any;
   await act(async () => { first = mount(<Reader />); second = mount(<Reader />); });
   expect(load).toHaveBeenCalledTimes(1);
-  await act(async () => {
-    wire.listener({ monolithLive: { type: 'subscribed', roomId: 'room' } });
-    wire.listener({ monolithLive: { type: 'invalidate', roomId: 'other', reason: 'message' } });
-    // Its delta follows; the delta, not this hint, decides.
-    wire.listener({ monolithLive: { type: 'invalidate', roomId: 'room', reason: 'message', messageId: 'm', deliveryId: 'd' } });
-  });
   await act(async () => releases.shift()!('initial'));
-  expect(load).toHaveBeenCalledTimes(1);
-  await act(async () => wire.listener({ monolithLive: { type: 'subscribed', roomId: 'room' } }));
-  expect(load).toHaveBeenCalledTimes(2);
+  expect(current.data).toBe('initial');
   await act(async () => {
     for (let n = 0; n < 5; n++) wire.listener({ monolithLive: { type: 'message-delta', roomId: 'room', message: { presentation: 'card' } } });
   });
-  expect(load).toHaveBeenCalledTimes(2);
-  await act(async () => releases.shift()!('updated'));
-  expect(load).toHaveBeenCalledTimes(3);
-  await act(async () => first.unmount());
-  expect(wire.stop).not.toHaveBeenCalled();
-  await act(async () => second.unmount());
-  expect(wire.stop).toHaveBeenCalledTimes(1);
-  await act(async () => releases.shift()!('late'));
-  expect(load).toHaveBeenCalledTimes(3);
+  expect(load).toHaveBeenCalledTimes(6);
+  await act(async () => { while (releases.length) releases.shift()!('updated'); });
+  expect(current.data).toBe('updated');
+  await act(async () => first.unmount()); expect(wire.stop).not.toHaveBeenCalled();
+  await act(async () => second.unmount()); expect(wire.stop).toHaveBeenCalledTimes(1);
+});
+
+it('a slow resource keeps waiting for its live socket request instead of adding a second timeout', async () => {
+  vi.useFakeTimers();
+  let resolve!: (value: string) => void;
+  const load = vi.fn(() => new Promise<string>(done => { resolve = done; }));
+  let current: any;
+  function Reader() { current = useObservedResource<string>('slow', { load }); return <span>{current.data}</span>; }
+  await act(async () => { mount(<Reader />); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+  expect(current.loading).toBe(true); expect(current.error).toBeNull(); expect(load).toHaveBeenCalledOnce();
+  await act(async () => resolve('answer'));
+  expect(current.data).toBe('answer'); expect(current.loading).toBe(false);
 });
 
 it('a failed read stays visible, stops automatic reads, and retry recovers', async () => {
@@ -50,7 +52,7 @@ it('a failed read stays visible, stops automatic reads, and retry recovers', asy
   let current: any;
   function Reader() { current = useObservedResource<string>('error', { load }); return <span>{current.error ?? current.data}</span>; }
   await act(async () => { mount(<Reader />); });
-  expect(current.error).toBe('Couldn’t reach Beeline');
+  expect(current.error).toBe('Could not complete request');
   await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
   expect(load).toHaveBeenCalledTimes(1);
   await act(async () => current.retry());
@@ -58,7 +60,7 @@ it('a failed read stays visible, stops automatic reads, and retry recovers', asy
   expect(current.data).toBe('recovered');
 });
 
-it('R9-OBS-01: reconnect recovers a failed room read', async () => {
+it('R9-OBS-01: the reconnect invalidation calls the same failed read again', async () => {
   const load = vi.fn().mockResolvedValueOnce('initial').mockRejectedValueOnce(new Error('offline')).mockResolvedValue('current');
   let current: any;
   function Reader() { current = useObservedResource<string>('reconnect', { load, subscribe: observeRoomResource('room') }); return <span>{current.error ?? current.data}</span>; }
@@ -66,8 +68,8 @@ it('R9-OBS-01: reconnect recovers a failed room read', async () => {
   await act(async () => wire.listener({ monolithLive: { type: 'subscribed', roomId: 'room' } }));
   expect(load).toHaveBeenCalledTimes(1);
   await act(async () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'room', reason: 'message' } }));
-  expect(current.error).toBe('Couldn’t reach Beeline');
-  await act(async () => wire.listener({ monolithLive: { type: 'subscribed', roomId: 'room' } }));
+  expect(current.error).toBe('Could not complete request');
+  await act(async () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'room', reason: 'reconnect' } }));
   expect(load).toHaveBeenCalledTimes(3);
   expect(current.error).toBeNull();
   expect(current.data).toBe('current');
@@ -78,14 +80,34 @@ it('R9-OBS-02: a room invalidation recovers after an error', async () => {
   let current: any;
   function Reader() { current = useObservedResource<string>('live-error', { load, subscribe: observeRoomResource('room') }); return <span>{current.error ?? current.data}</span>; }
   await act(async () => { mount(<Reader />); });
-  expect(current.error).toBe('Couldn’t reach Beeline');
+  expect(current.error).toBe('Could not complete request');
   await act(async () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'room', reason: 'message' } }));
   expect(load).toHaveBeenCalledTimes(2);
   expect(current.error).toBeNull();
   expect(current.data).toBe('current');
 });
 
-it('R9-OBS-03: retry waits for the read queued after an existing flight', async () => {
+it('keeps cached data without local connection copy after a socket failure and recovers on invalidation', async () => {
+  const load = vi.fn().mockResolvedValueOnce('cached')
+    .mockRejectedValueOnce(new PhoneSocketDisconnectedError()).mockResolvedValueOnce('current');
+  let current: any;
+  function Reader() {
+    current = useObservedResource<string>('socket-failure', { load, subscribe: observeRoomResource('room') });
+    return <span>{current.data}</span>;
+  }
+  let tree: any;
+  await act(async () => { tree = mount(<Reader />); });
+  await act(async () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'room', reason: 'message' } }));
+  expect(current.data).toBe('cached');
+  expect(current.error).toBe('');
+  expect(tree.root.findByType('span').props.children).toBe('cached');
+  await act(async () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'room', reason: 'reconnect' } }));
+  expect(current.data).toBe('current');
+  expect(current.error).toBeNull();
+  expect(load).toHaveBeenCalledTimes(3);
+});
+
+it('R9-OBS-03: Retry starts its own read immediately, without waiting on an existing flight', async () => {
   const releases: Array<(value: string) => void> = [];
   const load = vi.fn(() => new Promise<string>(resolve => releases.push(resolve)));
   let current: any;
@@ -95,7 +117,7 @@ it('R9-OBS-03: retry waits for the read queued after an existing flight', async 
   let refresh: Promise<void>;
   await act(async () => { refresh = Promise.resolve(current.retry()).then(() => { settled = true; }); });
   expect(settled).toBe(false);
-  expect(load).toHaveBeenCalledTimes(1);
+  expect(load).toHaveBeenCalledTimes(2);
   await act(async () => releases.shift()!('initial'));
   expect(settled).toBe(false);
   expect(load).toHaveBeenCalledTimes(2);
@@ -176,57 +198,4 @@ it('an account switch drops the old data and the old read, then shows the new ac
   expect(current.data).toBeUndefined();
   await act(async () => releases.shift()!('second account'));
   expect(current.data).toBe('second account');
-});
-
-it('CR1: event cooldown grows to a cap without polling and resets after success', async () => {
-  vi.useFakeTimers();
-  const load = vi.fn().mockRejectedValue(new Error('offline'));
-  let current: any;
-  function Reader() {
-    current = useObservedResource('backoff', { load, retryBackoffMs: { initial: 1000, max: 30000 }, subscribe: observeRoomResource('backoff') });
-    return null;
-  }
-  const push = () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'backoff' } });
-  await act(async () => { mount(<Reader />); });
-  let reads = 1;
-  for (const delay of [1000, 2000, 4000, 8000, 16000, 30000, 30000]) {
-    await act(async () => { vi.advanceTimersByTime(delay - 1); push(); });
-    expect(load).toHaveBeenCalledTimes(reads);
-    await act(async () => { vi.advanceTimersByTime(1); });
-    expect(load).toHaveBeenCalledTimes(reads);
-    await act(async () => push());
-    expect(load).toHaveBeenCalledTimes(++reads);
-  }
-  load.mockResolvedValue('recovered');
-  await act(async () => { vi.advanceTimersByTime(30000); push(); });
-  expect(current.data).toBe('recovered');
-  await act(async () => push());
-  expect(load).toHaveBeenCalledTimes(reads + 2);
-});
-
-it('parks an owner-only read even when a relevant change arrived during its failing flight', async () => {
-  let reject!: (reason: Error) => void;
-  const load = vi.fn().mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }))
-    .mockResolvedValue('ready');
-  let current: ReturnType<typeof useObservedResource<string>>;
-  function Reader() {
-    current = useObservedResource('owner-failure', { load, retryOnChange: false, subscribe: observeRoomResource('room') });
-    return null;
-  }
-  let tree: any;
-  await act(async () => { tree = mount(<Reader />); });
-  await act(async () => {
-    wire.listener({ monolithLive: { type: 'message-delta', roomId: 'room', message: { presentation: 'card' } } });
-    reject(new Error('offline'));
-  });
-  expect(load).toHaveBeenCalledTimes(1);
-  await act(async () => {
-    for (let n = 0; n < 1000; n++) wire.listener({ monolithLive: {
-      type: 'message-delta', roomId: 'room', message: { presentation: 'card' },
-    } });
-  });
-  expect(load).toHaveBeenCalledTimes(1);
-  await act(async () => { await current!.retry(); });
-  expect(load).toHaveBeenCalledTimes(2);
-  await act(async () => tree.unmount());
 });

@@ -1,6 +1,4 @@
-import type { AgentUsageCell } from './helper-usage.js';
 import type { MediaMetadata, MediaLink } from './media-metadata.js';
-import type { RouterSnapshotInput, RouterSnapshot } from './router-protocol.js';
 import type { RepositoryOnboardingAction } from './repository-onboarding.js';
 import { PHONE_ROUTE_READ_OPERATIONS, type PhoneRouteOperationMap } from './phone-route-operations.js';
 import type { RoomSubscriptionListResult } from './subscriptions.js';
@@ -93,9 +91,7 @@ export type CornerMergeHold = {
 };
 
 export type PhoneOperationMap = PhoneRouteOperationMap & {
-  readAgentUsageCell: { input: { agentId: string }; output: AgentUsageCell };
   readRoomTools: { input: import('./phone-types.js').RoomToolReference & { before?: string; messageId?: string }; output: import('./phone-types.js').RoomToolPage };
-  readRouterSnapshot: { input: RouterSnapshotInput; output: RouterSnapshot };
   readMediaMetadata: { input: { objectId: string }; output: MediaMetadata };
   readMediaLink: { input: { objectId: string }; output: MediaLink };
   readMediaPlayback: { input: { objectId: string }; output: MediaLink };
@@ -302,8 +298,6 @@ export type PhoneOperationMap = PhoneRouteOperationMap & {
 export const PHONE_READ_OPERATIONS = [
   ...PHONE_ROUTE_READ_OPERATIONS,
   'readRoomTools',
-  'readRouterSnapshot',
-  'readAgentUsageCell',
   'readMediaMetadata',
   'readMediaLink',
   'readMediaPlayback',
@@ -423,6 +417,7 @@ export type RoomScheduleCadence =
   | { readonly kind: 'cron'; readonly expression: string; readonly timeZone?: string }
   | { readonly kind: 'interval'; readonly everyMinutes: number; readonly startsAt?: number };
 export type RoomScheduleView = {
+  readonly paused?: boolean;
   readonly title?: string;
   readonly maxRuns?: number;
   readonly id: string;
@@ -572,8 +567,11 @@ export type ReportMessageIssueInput = RoomInput & {
 /** `duplicate` is true when this message was already reported. */
 export type ReportMessageIssueResult = { readonly itemId: string; readonly duplicate: boolean };
 export type MessageBookmarkListResult = { readonly bookmarks: readonly MessageBookmarkView[]; readonly next?: string };
-export type NeedsYouListResult = { readonly items: readonly NeedsYouItemView[] };
-export type NeedsYouCountResult = { readonly count: number };
+/** These reads include the next display expiry in epoch milliseconds. */
+export type NeedsYouListResult = {
+  readonly nextExpiry?: number; readonly items: readonly NeedsYouItemView[] };
+export type NeedsYouCountResult = {
+  readonly nextExpiry?: number; readonly count: number };
 export type ClearNeedsYouInput = WorkspaceInput & { readonly messageId: string; readonly dismissReminder?: boolean };
 /**
  * Stop one turn in progress.

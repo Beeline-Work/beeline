@@ -37,7 +37,7 @@ const BODY_POINTS = `${APEX_X} ${APEX_Y} ${APEX_X + LEG} ${APEX_Y + LEG} ${APEX_
  * triangle. Consumers can fill the mark when it needs the same solid weight
  * as neighbouring destination glyphs; the default remains outline chrome.
  */
-export function MembersGlyph({
+function MembersGlyph({
   color = brand.mark,
   filled = false,
   size = 24,

@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { watch, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { ancestors } from './agents.js';
@@ -63,7 +63,7 @@ export async function runClaudeMcp(dir: string, env: NodeJS.ProcessEnv, rulesFor
       await flushClaudeMcp(dir, session, env.CLAUDE_CODE_MESSAGING_TOKEN);
     } finally { flushing = false; }
   };
-  const timer = setInterval(() => { void flush().catch(() => undefined); }, 500);
+  const watcher=watch(dir,{recursive:true},(_event,name)=>{if(String(name??'').startsWith('inbox/'))void flush().catch(()=>undefined);});
   try {
     await flush();
     for await (const line of createInterface({ input: process.stdin })) {
@@ -77,7 +77,7 @@ export async function runClaudeMcp(dir: string, env: NodeJS.ProcessEnv, rulesFor
       process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, ...(result ? { result } : { error: { code: -32601, message: 'Method not found' } }) }) + '\n');
     }
   } finally {
-    clearInterval(timer);
+    watcher.close();
     if (registration) rmSync(registration, { force: true });
   }
 }

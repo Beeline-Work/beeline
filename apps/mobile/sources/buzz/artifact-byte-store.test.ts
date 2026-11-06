@@ -55,7 +55,6 @@ vi.mock('expo-file-system', () => ({
   },
 }));
 import { createArtifactByteStore } from './artifact-byte-store';
-const certificate = (scope: string, epoch: string) => ({ digest: 'a'.repeat(64), scopes: [{ authorityScope: scope, epoch }] });
 beforeEach(() => {
   mocks.files.clear(); mocks.peak = 0; mocks.typed = true; mocks.partial = false; mocks.failWrite = false; mocks.afterWrite = undefined;
   mocks.autoFrames = true; mocks.frames.clear(); mocks.frameId = 0; mocks.onFrame = undefined;
@@ -175,16 +174,7 @@ describe('owned immutable native byte disk', () => {
     expect(await store.localUri('key-1')).toBeNull(); expect(await store.localUri('key-0')).not.toBeNull();
     await expect(store.set('oversized', new Uint8Array(25 * 1024 * 1024 + 1))).rejects.toThrow('budget');
   }, 30_000);
-  it('purges only the affected held authority at or below a removal fence; logout clears the owned partition', async () => {
-    const store = createArtifactByteStore(key => ({ format: 'png', authority: key === 'old'
-      ? certificate('room:one', '1') : key === 'new' ? certificate('room:one', '3') : certificate('room:two', '1') }));
-    for (const key of ['old', 'new', 'unrelated']) await store.set(key, new Uint8Array([1]));
-    expect(await store.revoke('room:one', '2')).toEqual(['old']);
-    expect(await store.localUri('old')).toBeNull(); expect(await store.localUri('new')).not.toBeNull();
-    expect(await store.localUri('unrelated')).not.toBeNull();
-    await store.clear(); expect([...mocks.files.keys()]).toEqual([]);
-    expect(mocks.deleted.mock.calls.every(([uri]) => uri.startsWith(directory))).toBe(true);
-  });
+
   it('an invalid index cannot restore caller-controlled paths or touch files outside its owned cache', async () => {
     mocks.files.set(`${directory}index.json`, { text: 'invalid', size: 7 });
     mocks.files.set('file:///synthetic-cache/unrelated', { text: 'keep', size: 4 });

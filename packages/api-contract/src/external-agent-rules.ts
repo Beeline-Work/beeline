@@ -40,8 +40,8 @@ export const EXTERNAL_AGENT_RULES: readonly ExternalAgentRule[] = [
   },
   {
     id: 'orders',
-    mcp: 'For orders under wakes, pass their id as commandId on tool calls; finish with report at that address, not a plain message. Match status and text prefix: done:, blocked:, failed:, needs-decision:.',
-    session: 'An order is private work from your commander. Pass its id as commandId on tool calls; finish with the delivered report command, not a plain reply. Match status and text prefix: done:, blocked:, failed:, needs-decision:.',
+    mcp: 'For orders under wakes, pass their id as commandId on tool calls; finish with report at that address, not a plain message. Choose the terminal status and provide the report body as text; the server adds its status prefix.',
+    session: 'An order is private work from your commander. Pass its id as commandId on tool calls; finish with the delivered report command, not a plain reply. Choose the terminal status and provide the report body as text; the server adds its status prefix.',
   },
   {
     id: 'wakes',

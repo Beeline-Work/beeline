@@ -218,25 +218,6 @@ export async function fetchRepositoryCache(input: {
   await rm(marker, { force: true });
 }
 
-/** Every repo the helper fetches into: corner caches and Room checkouts. */
-async function helperRepositories(
-  supervisorRoot: string,
-): Promise<Array<{ gitDir: string; label: string }>> {
-  const root = resolve(supervisorRoot, 'beeline');
-  const found: Array<{ gitDir: string; label: string }> = [];
-  for (const name of await readdir(resolve(root, 'repositories')).catch(() => [] as string[])) {
-    const gitDir = resolve(root, 'repositories', name);
-    if (name.endsWith('.git') && existsSync(resolve(gitDir, 'HEAD')))
-      found.push({ gitDir, label: `repositories/${name}` });
-  }
-  for (const name of await readdir(resolve(root, 'room-checkouts')).catch(() => [] as string[])) {
-    const gitDir = resolve(root, 'room-checkouts', name, '.git');
-    if (existsSync(resolve(gitDir, 'HEAD')))
-      found.push({ gitDir, label: `room-checkouts/${name}` });
-  }
-  return found;
-}
-
 async function checkRepository(gitDir: string, label: string): Promise<void> {
   for (const [key, value] of CRASH_SAFE_GIT_CONFIG) {
     const current = await git(gitDir, ['config', '--get', key]).then((out) => out.trim(), () => '');
@@ -249,21 +230,6 @@ async function checkRepository(gitDir: string, label: string): Promise<void> {
   console.warn(
     `[thin-core] repo cache ${label} had crash damage; removed ${repair.removedObjects.length} empty objects and ${repair.removedRefs.length} refs`,
   );
-}
-
-/**
- * Explicit inventory: turn on crash-safe writes for every existing repo, and repair
- * any repo a crash left with empty loose objects before a corner uses it.
- * Never fatal; a cache this cannot fix is repaired again by its next fetch.
- */
-export async function checkRepositoryCaches(supervisorRoot: string): Promise<void> {
-  for (const { gitDir, label } of await helperRepositories(supervisorRoot)) {
-    try {
-      await checkRepository(gitDir, label);
-    } catch (error) {
-      console.error(`[thin-core] repo cache ${label} check failed:`, error);
-    }
-  }
 }
 
 const checked = new Map<string, Promise<void>>();

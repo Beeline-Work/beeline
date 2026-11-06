@@ -1,7 +1,5 @@
-import { BACKGROUND_OWNERSHIP_SCHEMA } from './background-ownership.js';
-import { TRAY_CLOCK_SOURCE_SCHEMA } from './tray-clock-source.js';
-import { TRAY_CLOCK_OWNER_SCHEMA } from './tray-clock-owner.js';
-import { TRAY_CLOCK_WORK_SCHEMA } from './tray-clock-work.js';
+import { OWNED_MODEL_CREDENTIAL_SCHEMA } from './owned-model-credential.js';
+import { OWNED_MODEL_ATTEMPT_SCHEMA } from './owned-model-attempt.js';
 import { DISPLAY_DEADLINE_SOURCE_SCHEMA } from './deadline-expiry-source.js';
 import { SENTRY_WAKE_SOURCE_SCHEMA } from './sentry-wake-source.js';
 import { CONNECTOR_OFFER_EXPIRY_SCHEMA } from './connector-offer-expiry.js';
@@ -12,16 +10,9 @@ import { HELPER_USAGE_SCHEMA } from './helper-usage.js';
 import { HELPER_OVERLAY_SCHEMA } from './helper-overlay.js';
 import { BACKGROUND_DUE_SOURCE_SCHEMA } from './background-due-source.js';
 import { MCP_MEMBER_STREAM_SCHEMA } from './rooms-mcp-stream.js';
-import { MEDIA_AUTHORITY_SCHEMA } from './media-authority-schema.js';
 import { X_SIGNUP_DELIVERY_SCHEMA } from './x-ads.js';
 import { SERVER_LEASE_DEADLINE_SCHEMA } from './server-lease-deadlines.js';
 import { commandCompletionSchema } from './command-completion.js';
-import { ROUTER_PROJECTION_SCHEMA, ROUTER_EXTRA_CAPTURE_SCHEMA } from './router-projection-schema.js';
-import { ROUTER_PROFILE_SCHEMA } from './router-profile-source.js';
-import { ROUTER_OWNER_SCHEMA } from './router-owner-source.js';
-import { ROUTER_ROSTER_SCHEMA } from './router-roster-source.js';
-import { SCHEDULED_WORK_AUTHORITY_SCHEMA } from './scheduled-work-authority.js';
-import { ROOM_SCHEDULES_CAPTURE_SCHEMA } from './room-schedules-capture.js';
 import { ROUTER_COMMAND_SCHEMA } from './router-command-ledger.js';
 import { backfillWelcomeVideoWorkflow } from './welcome-video-workflow.js';
 import { closeCompletedCommandTurns } from './migrations/completed-command-turns.js';
@@ -49,7 +40,7 @@ import { FREE_AGENTS_SCHEMA, FREE_AGENT_CONNECT_GUIDE } from './free-agents.js';
 import { backfillComputerObservations } from './system-line.js';
 import { scheduleWorkflowSlugSql } from './workflow-admin.js';
 import { SUBSCRIPTION_WEBHOOKS_SCHEMA } from './subscription-webhooks.js';
-import { AGENT_SUBSCRIPTIONS_SCHEMA } from './agent-subscriptions.js';
+import { AGENT_SUBSCRIPTIONS_SCHEMA, migrateMembershipSubscriptions } from './agent-subscriptions.js';
 import { PROVIDER_WEBHOOKS_SCHEMA } from './provider-webhooks.js';
 import { SENTRY_WAKE_SCHEMA } from './sentry-wake.js';
 import { CORNER_MERGE_HOLDS_SCHEMA } from './migrations/corner-merge-holds.js';
@@ -99,8 +90,9 @@ import { cornerOwedBackfillSql, cornerOwedSchemaSql } from './corner-owed.js';
 import { cornerWaitingFunctionSql } from './corner-waiting-report.js';
 import { CORNER_ATTENTION_SCHEMA } from './corner-attention.js';
 import { backfillCornerFollows, cornerFollowsSchemaSql } from './corner-follow.js';
-import { logLockHolders, runMigrationStep, splitMigrationStatements } from './migration-steps.js';
+import { alreadyNoOp, alreadySatisfied, logLockHolders, triggerAlreadyCurrent, runMigrationStep, splitMigrationStatements } from './migration-steps.js';
 import { Pool, type PoolClient, type PoolConfig, type QueryResultRow } from 'pg';
+import { createHash } from 'node:crypto';
 import { QueryProfiler } from './query-profile.js';
 import { DatabaseBackgroundWork } from './database-background-work.js';
 
@@ -113,6 +105,8 @@ export const ENRICHMENT_POOL_WAIT_TIMEOUT_MS = 500;
 export const HEALTH_STATEMENT_TIMEOUT_MS = 2_000;
 export const HEALTH_POOL_WAIT_TIMEOUT_MS = 1_000;
 export const MIGRATION_LOCK_TIMEOUT_MS = 1_000;
+/** Schema statements retry a busy table this many times (about 2 minutes). */
+export const MIGRATION_DDL_ATTEMPTS = 120;
 export const MIGRATION_STATEMENT_TIMEOUT_MS = 10 * 60_000;
 export const APP_TRANSACTION_DEADLINE_MS = 30_000;
 export const ENRICHMENT_TRANSACTION_DEADLINE_MS = 3_000;
@@ -178,7 +172,10 @@ export function postgresPoolConfig(
   };
 }
 
-const TRANSIENT_CONNECTION_CODES = new Set(['57P01', '57P03', '53300', '08006', '08003', '08000', 'ETIMEDOUT', 'EAI_AGAIN']);
+const TRANSIENT_CONNECTION_CODES = ['57P01', '57P03', '53300', '08006', '08003', '08000', 'ETIMEDOUT', 'EAI_AGAIN'] as const;
+const transientConnectionCodes = new Set<string>(TRANSIENT_CONNECTION_CODES);
+/** Named handled states; arbitrary driver details retain the generic error path. */
+export type DatabaseFailureKind = typeof TRANSIENT_CONNECTION_CODES[number] | '40P01' | '55P03' | '57014' | 'unknown';
 const TRANSIENT_CONNECTION_MESSAGE =
   /Connection terminated|ECONNRESET|server closed the connection|terminating connection|timeout exceeded when trying to connect/i;
 
@@ -186,7 +183,7 @@ export function isTransientDatabaseConnectionError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
   const candidate = error as { code?: unknown; message?: unknown };
   return (
-    (typeof candidate.code === 'string' && TRANSIENT_CONNECTION_CODES.has(candidate.code)) ||
+    (typeof candidate.code === 'string' && transientConnectionCodes.has(candidate.code)) ||
     (typeof candidate.message === 'string' && TRANSIENT_CONNECTION_MESSAGE.test(candidate.message))
   );
 }
@@ -219,6 +216,7 @@ export interface SqlDatabase {
   query<Row extends QueryResultRow = QueryResultRow>(
     sql: string,
     values?: unknown[],
+    preparedName?: string,
   ): Promise<QueryResult<Row>>;
   transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T>;
   poolCounts?(): { total: number; idle: number; waiting: number };
@@ -264,11 +262,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-// Preserve the schema46 image's boot marker through the additive expansion.
-// Router readiness has its own marker, written only after all migrations finish.
-// The expansion image (router off) becomes the switch release's rollback floor.
 export const REQUIRED_SCHEMA_VERSION = 46;
-export const REQUIRED_ROUTER_SCHEMA_VERSION = 62;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -281,25 +275,14 @@ export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
     VALUES (true, ${REQUIRED_SCHEMA_VERSION}, now())
     ON CONFLICT (singleton) DO UPDATE
       SET version=EXCLUDED.version, migrated_at=EXCLUDED.migrated_at;
-    CREATE TABLE IF NOT EXISTS beeline_router_schema_state (
-      singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
-      version integer NOT NULL,
-      migrated_at timestamptz NOT NULL DEFAULT now()
-    );
-    INSERT INTO beeline_router_schema_state(singleton, version, migrated_at)
-    VALUES (true, ${REQUIRED_ROUTER_SCHEMA_VERSION}, now())
-    ON CONFLICT (singleton) DO UPDATE
-      SET version=EXCLUDED.version, migrated_at=EXCLUDED.migrated_at
   `);
 }
 
 export async function assertSchemaCurrent(database: SqlDatabase): Promise<void> {
-  let result: QueryResult<{ version: number; router_version: number | null }>;
+  let result: QueryResult<{ version: number }>;
   try {
-    result = await database.query<{ version: number; router_version: number | null }>(
-      `SELECT version,
-        (SELECT version FROM beeline_router_schema_state WHERE singleton=true) router_version
-       FROM beeline_schema_state WHERE singleton=true`,
+    result = await database.query<{ version: number }>(
+      `SELECT version FROM beeline_schema_state WHERE singleton=true`,
     );
   } catch (error) {
     // Unavailability is not a schema mismatch and grants no timed observation.
@@ -316,12 +299,13 @@ export async function assertSchemaCurrent(database: SqlDatabase): Promise<void> 
       `database schema is not ready for this server image (expected schema version ${REQUIRED_SCHEMA_VERSION}, found ${version ?? 'no marker'}); run the release migration step`,
     );
   }
-  const routerVersion = result.rows[0]?.router_version;
-  if (routerVersion !== REQUIRED_ROUTER_SCHEMA_VERSION) {
-    throw new Error(
-      `database schema is not ready for this server image (expected router schema version ${REQUIRED_ROUTER_SCHEMA_VERSION}, found ${routerVersion ?? 'no marker'}); run the release migration step`,
-    );
-  }
+
+}
+
+/** Include final SQL so optional filters and inherited-membership rewrites cannot
+ * bind a different statement to a name already parsed on this connection. */
+function preparedQuery(name: string, text: string, values: unknown[]) {
+  return { name: `${name}-${createHash('sha256').update(text).digest('hex').slice(0, 16)}`, text, values };
 }
 
 export class PostgresDatabase implements ClosableDatabase {
@@ -463,12 +447,15 @@ export class PostgresDatabase implements ClosableDatabase {
   async query<Row extends QueryResultRow = QueryResultRow>(
     sql: string,
     values: unknown[] = [],
+    preparedName?: string,
   ): Promise<QueryResult<Row>> {
     try {
       const raw = await this.#timed(sql, async () => {
         const { client, release } = await this.#connectCheckedOut();
         try {
-          const result = values.length ? await client.query<Row>(sql, values) : await client.query<Row>(sql);
+          const result = preparedName
+            ? await client.query<Row>(preparedQuery(preparedName, sql, values))
+            : values.length ? await client.query<Row>(sql, values) : await client.query<Row>(sql);
           release();
           return result;
         } catch (error) {
@@ -557,10 +544,12 @@ export class PostgresDatabase implements ClosableDatabase {
         query: async <Row extends QueryResultRow = QueryResultRow>(
           sql: string,
           values: unknown[] = [],
+          preparedName?: string,
         ) => {
           if (expired) throw deadlineError;
           const raw = await this.#timed(sql, () => Promise.race([
-            values.length ? client.query<Row>(sql, values) : client.query<Row>(sql),
+            preparedName ? client.query<Row>(preparedQuery(preparedName, sql, values))
+              : values.length ? client.query<Row>(sql, values) : client.query<Row>(sql),
             deadline,
           ]));
           const result = Array.isArray(raw) ? raw.at(-1) : raw;
@@ -694,6 +683,9 @@ CREATE TABLE IF NOT EXISTS identities (
 );
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS hidden_from_roster boolean NOT NULL DEFAULT false;
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS face_id text NULL;
+-- Start existing people's inactivity clock at rollout; account age is not app inactivity.
+ALTER TABLE identities ADD COLUMN IF NOT EXISTS last_app_active_at timestamptz DEFAULT now();
+ALTER TABLE identities ADD COLUMN IF NOT EXISTS away_warning_at timestamptz;
 -- Null excludes every identity present at rollout. New humans inherit true;
 -- completion changes it to false and follows the account across devices.
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS welcome_cards_due boolean;
@@ -815,7 +807,6 @@ CREATE TABLE IF NOT EXISTS legacy_daemon_migrations (
   migrated_at timestamptz NOT NULL DEFAULT now()
 );
 
-
 CREATE TABLE IF NOT EXISTS workspaces (
   id uuid PRIMARY KEY,
   name text NOT NULL,
@@ -836,7 +827,6 @@ UPDATE workspaces SET internal=true WHERE NOT internal AND id IN (
   'b81a2815-924c-4bd9-bc04-d38bdee177bc',
   '18e555f7-e191-452b-9b0f-b825f58ee4ba'
 );
-
 
 -- Retired: empty in production on 2026-11-02 and written by nothing on main.
 DROP TABLE IF EXISTS service_review_notice_deliveries;
@@ -1906,6 +1896,7 @@ ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS ownership_initialized bool
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS workflow_slug text;
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS human_command_message_id text;
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS title text;
+ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS paused_at timestamptz;
 -- Owner-approved labels for the existing #beeline schedules and its corners.
 UPDATE agent_schedules SET title=labels.title FROM (VALUES
   ('ea5594a0-42ec-49dd-8957-5582216ebedd'::uuid,'Prompt replay'),
@@ -2473,7 +2464,6 @@ CREATE INDEX IF NOT EXISTS signin_funnel_installs_account ON signin_funnel_insta
 ALTER TABLE signin_funnel_events ADD COLUMN IF NOT EXISTS onboarding_option text CHECK(onboarding_option IN ('A','B','C','D'));
 ALTER TABLE signin_funnel_events ADD COLUMN IF NOT EXISTS duration_ms bigint;
 ALTER TABLE signin_funnel_events ADD COLUMN IF NOT EXISTS artifact_id uuid;
-ALTER TABLE signin_funnel_events ADD COLUMN IF NOT EXISTS auth_session jsonb;
 CREATE INDEX IF NOT EXISTS signin_funnel_events_date ON signin_funnel_events(occurred_at);
 ALTER TABLE signin_funnel_events ADD COLUMN IF NOT EXISTS screen text NOT NULL DEFAULT '';
 -- Device time of the latest visit for a screen_shown row; NULL otherwise.
@@ -2616,9 +2606,15 @@ ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS superseded_at timestamptz;
 ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS purpose text;
 ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS touches text;
 ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS capabilities text;
-ALTER TABLE agent_grants DROP CONSTRAINT IF EXISTS agent_grants_kind_check;
-ALTER TABLE agent_grants ADD CONSTRAINT agent_grants_kind_check
-  CHECK (kind IN ('path','host','secret','device','budget','command','mcp','repository','shared_asset'));
+-- Replacing an unchanged check locks this hot table on every release.
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='agent_grants'::regclass
+      AND conname='agent_grants_kind_check' AND pg_get_constraintdef(oid) LIKE '%shared_asset%') THEN
+    ALTER TABLE agent_grants DROP CONSTRAINT IF EXISTS agent_grants_kind_check;
+    ALTER TABLE agent_grants ADD CONSTRAINT agent_grants_kind_check
+      CHECK (kind IN ('path','host','secret','device','budget','command','mcp','repository','shared_asset'));
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS agent_grants_agent_idx ON agent_grants(agent_id, workspace_id, status);
 CREATE INDEX IF NOT EXISTS agent_grants_room_idx ON agent_grants(room_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS agent_grants_pending_idx ON agent_grants(workspace_id)
@@ -2894,7 +2890,14 @@ CREATE INDEX IF NOT EXISTS connector_offers_workspace_idx ON connector_offers(wo
 CREATE INDEX IF NOT EXISTS connector_offers_message_idx
   ON connector_offers(message_id) WHERE message_id IS NOT NULL;
 
-
+-- Existing failed cards must lead to the current card instead of a dead Retry.
+UPDATE messages message SET card=jsonb_set(message.card,'{replacementMessageId}',to_jsonb(current_offer.message_id))
+FROM connector_offers failed JOIN connector_offers current_offer
+  ON current_offer.room_id=failed.room_id AND current_offer.connector_type=failed.connector_type
+    AND current_offer.status IN ('pending','connecting') AND current_offer.created_at>failed.created_at
+WHERE failed.status='failed' AND current_offer.message_id IS NOT NULL AND message.room_id=failed.room_id
+  AND message.card_type='connector-offer' AND message.card->>'offerId'=failed.id::text
+  AND message.card->>'replacementMessageId' IS DISTINCT FROM current_offer.message_id;
 
 -- What an agent did with a connection, as reported by the helper. The ledger
 -- behind the connection detail screen; also the source for batched receipt
@@ -2920,7 +2923,6 @@ CREATE INDEX IF NOT EXISTS connection_receipts_turn_idx
   ON connection_receipts(connection_id, turn_key) WHERE turn_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS connection_receipts_workspace_idx ON connection_receipts(workspace_id);
 ALTER TABLE connection_receipts ADD COLUMN IF NOT EXISTS event_class text;
-
 
 -- Apps: the one front door (\`app-connections.ts\`). ONE row per app per
 -- person, served by an existing Workbench connection, managed OAuth, or
@@ -3213,14 +3215,31 @@ export async function migrate(
   database: SqlDatabase,
   options: { deferData?: boolean } = {},
 ): Promise<void> {
-  const ddl = (name: string, sql: string) =>
-    runMigrationStep(name, async () => { await database.query(sql); }, {
-      onLockTimeout: () => logLockHolders(database, name, sql),
-    });
+  // A schema change needs its table to itself for an instant. On a live app
+  // that table is rarely idle for the whole lock timeout, so wait in line and
+  // try again rather than failing the release on the first busy moment.
+  const ddl = async (name: string, sql: string) => {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await runMigrationStep(name, async () => { await database.query(sql); }, {
+          onLockTimeout: attempt === 1 ? () => logLockHolders(database, name, sql) : undefined,
+        });
+      } catch (error) {
+        const code = (error as { code?: unknown } | null)?.code;
+        if ((code !== '55P03' && code !== '40P01') || attempt >= MIGRATION_DDL_ATTEMPTS) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 250 + Math.floor(Math.random() * 1250)));
+      }
+    }
+  };
   const ddlScript = async (name: string, sql: string) => {
     const statements = splitMigrationStatements(sql);
-    for (const [index, statement] of statements.entries())
+    for (let index = 0; index < statements.length; index++) {
+      const statement = statements[index]!;
+      if (await alreadySatisfied(database, statement) || await alreadyNoOp(database, statement)) continue;
+      const next = statements[index + 1];
+      if (next && await triggerAlreadyCurrent(database, statement, next)) { index++; continue; }
       await ddl(`${name} ${index + 1}/${statements.length}`, statement);
+    }
   };
   await ddlScript('server schema', SCHEMA);
   await ddlScript('Rooms MCP OAuth', ROOMS_MCP_SCHEMA);
@@ -3247,9 +3266,46 @@ export async function migrate(
   );
   await ddlScript('agent command schema', AGENT_COMMAND_SCHEMA);
   await ddlScript('turn ownership schema', TURN_OWNERSHIP_SCHEMA);
+  // The phone reads source rows directly. Disable old capture triggers on
+  // upgraded databases; keep stored rows available to an older server rollback.
+  await ddlScript('remove retired phone read capture', `
+    DO $$ DECLARE retired record; BEGIN
+      FOR retired IN SELECT trigger.tgname, table_schema.nspname, relation.relname
+        FROM pg_trigger trigger JOIN pg_proc function ON function.oid=trigger.tgfoid
+        JOIN pg_class relation ON relation.oid=trigger.tgrelid
+        JOIN pg_namespace table_schema ON table_schema.oid=relation.relnamespace
+        WHERE NOT trigger.tgisinternal AND table_schema.nspname=current_schema()
+          AND function.proname IN (
+        'beeline_usage_cell_source',
+        'beeline_commit_tray_clock_owner',
+        'beeline_media_authority',
+        'beeline_owner_projection_source',
+        'beeline_profile_projection_source',
+        'beeline_room_schedules_capture',
+        'beeline_roster_projection_source',
+        'beeline_router_authority_capture',
+        'beeline_router_extra_capture',
+        'beeline_router_workspace_stream',
+        'beeline_saved_source_capture',
+        'beeline_saved_window_capture',
+        'beeline_saved_window_identity',
+        'beeline_scheduled_work_authority',
+        'beeline_scheduled_work_row_source',
+        'beeline_tray_clock_capture',
+        'beeline_tray_clock_health_change',
+        'beeline_tray_clock_room_move',
+        'beeline_tray_clock_workspace_birth',
+        'beeline_tray_mutable_capture')
+      LOOP
+        EXECUTE format('DROP TRIGGER %I ON %I.%I',retired.tgname,retired.nspname,retired.relname);
+      END LOOP;
+    END $$;
+  `);
   await ddlScript('router command identity', ROUTER_COMMAND_SCHEMA);
   await ddlScript('startup wake backoff', STARTUP_WAKE_BACKOFF_SCHEMA);
   await ddlScript('free agents schema', FREE_AGENTS_SCHEMA);
+  await ddlScript('owned model credentials', OWNED_MODEL_CREDENTIAL_SCHEMA);
+  await ddlScript('owned model attempts', OWNED_MODEL_ATTEMPT_SCHEMA);
   await ddlScript('starter onboarding schema', STARTER_ONBOARDING_SCHEMA);
   await runMigrationStep('checkin human history index', () => createIndexConcurrently(
     database, 'messages_checkin_author_history',
@@ -3560,6 +3616,43 @@ export async function migrate(
   await ddlScript('corner owed schema', cornerOwedSchemaSql());
   await ddlScript('corner explicit wait function', cornerWaitingFunctionSql());
   await ddlScript('corner attention schema', CORNER_ATTENTION_SCHEMA);
+  // Idle reads use bounded ordered probes, including a corner with a long
+  // execution/transcript history. Build outside busy writer transactions.
+  await runMigrationStep('corner idle turn history index', () => createIndexConcurrently(
+    database, 'agent_turns_idle_latest_idx',
+    `CREATE INDEX CONCURRENTLY IF NOT EXISTS agent_turns_idle_latest_idx
+     ON agent_turns(room_id,ended_at DESC NULLS LAST,created_at DESC) INCLUDE(agent_id,status)
+     WHERE COALESCE(generation_id,'') NOT LIKE 'pending:%'`,
+  ));
+  await runMigrationStep('corner working turn index', () => createIndexConcurrently(
+    database, 'agent_turns_working_room_idx',
+    `CREATE INDEX CONCURRENTLY IF NOT EXISTS agent_turns_working_room_idx
+     ON agent_turns(room_id,agent_id,request_id)
+     WHERE status='working' AND COALESCE(generation_id,'') NOT LIKE 'pending:%'`,
+  ));
+  await runMigrationStep('corner human input history index', () => createIndexConcurrently(
+    database, 'messages_idle_human_history_idx',
+    `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_idle_human_history_idx
+     ON messages(room_id,author_id,created_at DESC)
+     WHERE presentation='message' AND system_event IS NULL`,
+  ));
+  await runMigrationStep('corner private report card index', () => createIndexConcurrently(
+    database, 'messages_private_report_card_idx',
+    `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_private_report_card_idx
+     ON messages(id) WHERE card_type='agent-command' AND card->>'kind'='report'`,
+  ));
+  await runMigrationStep('corner human report origin history index', () => createIndexConcurrently(
+    database, 'messages_human_report_origin_idx',
+    `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_human_report_origin_idx
+     ON messages((card->>'sourceRoomId'),author_id,created_at DESC,id DESC)
+     WHERE card->>'reportToId' IS NOT NULL`,
+  ));
+  await runMigrationStep('corner legacy human report history index', () => createIndexConcurrently(
+    database, 'messages_human_report_legacy_idx',
+    `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_human_report_legacy_idx
+     ON messages(room_id,author_id,created_at DESC,id DESC)
+     WHERE card->>'reportToId' IS NOT NULL AND card->>'sourceRoomId' IS NULL`,
+  ));
   await ddlScript('corner follows schema', cornerFollowsSchemaSql());
   await ddlScript('live notification schema', (await postgresLiveSchema()));
   await ddlScript('sentry eligibility source', SENTRY_WAKE_SOURCE_SCHEMA);
@@ -3569,16 +3662,8 @@ export async function migrate(
   await ddlScript('computer expiry source', COMPUTER_EXPIRY_SCHEMA);
   await ddlScript('choice expiry source', CHOICE_EXPIRY_SCHEMA);
   await ddlScript('connector offer expiry source', CONNECTOR_OFFER_EXPIRY_SCHEMA);
-  await ddlScript('router projection authority', ROUTER_PROJECTION_SCHEMA);
-  await ddlScript('router projection extra sources', ROUTER_EXTRA_CAPTURE_SCHEMA);
-  await ddlScript('router profile sources', ROUTER_PROFILE_SCHEMA);
-  await ddlScript('router owner sources', ROUTER_OWNER_SCHEMA);
-  await ddlScript('router roster source',ROUTER_ROSTER_SCHEMA);
-  await ddlScript('scheduled work authority', SCHEDULED_WORK_AUTHORITY_SCHEMA);
-  await ddlScript('scheduled work sources', ROOM_SCHEDULES_CAPTURE_SCHEMA);
   await ddlScript('server lease deadlines', SERVER_LEASE_DEADLINE_SCHEMA);
   await ddlScript('X signup delivery deadlines', X_SIGNUP_DELIVERY_SCHEMA);
-  await ddlScript('media authority domains', MEDIA_AUTHORITY_SCHEMA);
   await ddlScript('command completion notifications', commandCompletionSchema());
   await ddlScript('MCP member stream', MCP_MEMBER_STREAM_SCHEMA);
   await ddlScript('Helper overlay demand', HELPER_OVERLAY_SCHEMA);
@@ -3586,10 +3671,42 @@ export async function migrate(
   await ddlScript('Helper command activation', HELPER_ACTIVATION_SCHEMA);
   await ddlScript('push outbox', PUSH_OUTBOX_SCHEMA);
   await ddlScript('Background obligation sources', BACKGROUND_DUE_SOURCE_SCHEMA);
-  await ddlScript('Router background ownership', BACKGROUND_OWNERSHIP_SCHEMA);
-  await ddlScript('Tray clock sources and readiness', TRAY_CLOCK_SOURCE_SCHEMA);
-  await ddlScript('Tray clock commit ownership', TRAY_CLOCK_OWNER_SCHEMA);
-  await ddlScript('Tray clock work streams', TRAY_CLOCK_WORK_SCHEMA);
+  await ddlScript('Retire Tray clock and unused background effects', `
+DROP TRIGGER IF EXISTS beeline_tray_clock_message_retire ON messages;
+DROP TRIGGER IF EXISTS beeline_tray_clock_message_insert ON messages;
+DROP TRIGGER IF EXISTS beeline_tray_clock_message_change ON messages;
+DROP TRIGGER IF EXISTS beeline_tray_clock_seen_retire ON needs_you_marks;
+DROP TRIGGER IF EXISTS beeline_tray_clock_seen_insert ON needs_you_marks;
+DROP TRIGGER IF EXISTS beeline_tray_clock_seen_change ON needs_you_marks;
+DROP TRIGGER IF EXISTS beeline_tray_clock_choice_retire ON room_choices;
+DROP TRIGGER IF EXISTS beeline_tray_clock_choice_insert ON room_choices;
+DROP TRIGGER IF EXISTS beeline_tray_clock_choice_change ON room_choices;
+DROP TRIGGER IF EXISTS beeline_tray_clock_room_move ON rooms;
+DROP TRIGGER IF EXISTS beeline_tray_clock_workspace_birth ON workspaces;
+DROP TABLE IF EXISTS tray_clock_deadlines, tray_clock_sources, tray_clock_state,
+  tray_clock_readiness, tray_clock_readiness_floor, tray_clock_health, tray_clock_owner_fences CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_is_open(text,text,text) CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_desired(text,text,text) CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_reconcile(text,text,text) CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_retire(text,text,text) CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_consume(text,text,bigint) CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_capture() CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_room_move() CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_lock_workspaces(uuid[]) CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_publish_basis(uuid,boolean) CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_readiness_wake(uuid) CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_require_readiness(uuid[]) CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_workspace_birth() CASCADE;
+DROP FUNCTION IF EXISTS beeline_tray_clock_health_change() CASCADE;
+DROP FUNCTION IF EXISTS beeline_register_tray_clock_owner(text,bigint,uuid) CASCADE;
+DROP FUNCTION IF EXISTS beeline_commit_tray_clock_owner() CASCADE;
+DROP TABLE IF EXISTS background_effect_attempts, background_leader_owners CASCADE;
+DROP FUNCTION IF EXISTS beeline_background_backend_holds(integer,timestamptz) CASCADE;
+DROP INDEX IF EXISTS tray_clock_readiness_rooms_idx;
+DROP INDEX IF EXISTS tray_clock_readiness_messages_idx;
+DROP INDEX IF EXISTS tray_clock_readiness_marks_idx;
+DROP INDEX IF EXISTS tray_clock_readiness_choices_idx;
+`);
   if (!options.deferData) await migrateData(database);
 }
 
@@ -3647,6 +3764,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   await dataStep('corner follows backfill', () =>
     workflowBackfillOnce(database, 'corner-follows-v1', backfillCornerFollows));
   await dataStep('corner person state migration', () => migrateCornerPersonState(database));
+  await dataStep('single subscription store', () => migrateMembershipSubscriptions(database));
   await dataStep('remove corner memberships', () => removeCornerMemberships(database));
   await dataStep('rooms MCP preregistered clients', () => seedPreregisteredMcpClients(database));
   const mcpMembers = await dataStep('rooms MCP members', () => backfillMcpMembers(database));
@@ -3929,8 +4047,17 @@ async function createIndexConcurrently(
   );
   const state = existing.rows[0];
   if (state?.valid) return;
-  if (state) await database.query(`DROP INDEX CONCURRENTLY IF EXISTS ${name}`);
-  await database.query(create);
+  // A concurrent build waits for every older transaction, and a standby
+  // background leader waits on its advisory lock indefinitely. The index only
+  // speeds reads, so a release skips it instead of stalling; the next release
+  // (or an operator) builds it.
+  try {
+    if (state) await database.query(`DROP INDEX CONCURRENTLY IF EXISTS ${name}`);
+    await database.query(create);
+  } catch (error) {
+    if ((error as { code?: string }).code !== '55P03') throw error;
+    console.warn(`[migration] ${name} skipped: an older transaction is still open`);
+  }
 }
 
 /** Backfill machine_id on legacy workspace_connectors rows. */

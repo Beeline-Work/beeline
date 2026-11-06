@@ -70,7 +70,7 @@ export interface PdfViewerDocumentOptions {
  * for it, and every other request goes to the guard underneath untouched — so
  * the initial load is still the only navigation that ever passes.
  */
-export function pdfRenderedSignalGuard(
+function pdfRenderedSignalGuard(
   guard: { allow(requestUrl: string): boolean },
   onRendered: () => void,
 ): { allow(requestUrl: string): boolean } {

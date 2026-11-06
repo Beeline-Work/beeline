@@ -37,10 +37,10 @@ export function MessageSearchResults({
           Too many messages match “{search.query}”. Add another word.
         </Text>
       ) : search.status === 'rate_limited' || search.status === 'error' ? (
-        <Retry
-          label={FAILURE_LABELS[search.status]}
-          onPress={search.retry}
-          testID={search.status === 'rate_limited' ? 'message-search-too-fast' : 'message-search-retry'}
+        <ErrorBanner inline
+          title={FAILURE_LABELS[search.status]}
+          onRetry={search.retry}
+          retryTestID={search.status === 'rate_limited' ? 'message-search-too-fast' : 'message-search-retry'}
         />
       ) : search.results.length === 0 ? (
         <Text style={styles.note} testID="message-search-empty">
@@ -52,10 +52,10 @@ export function MessageSearchResults({
             <MessageSearchRow key={result.messageId} result={result} now={now} onOpen={onOpen} />
           ))}
           {search.moreFailed ? (
-            <Retry
-              label={search.moreFailed === 'error' ? "Couldn't load more." : FAILURE_LABELS[search.moreFailed]}
-              onPress={search.loadMore}
-              testID="message-search-more-retry"
+            <ErrorBanner inline
+              title={search.moreFailed === 'error' ? "Couldn't load more." : FAILURE_LABELS[search.moreFailed]}
+              onRetry={search.loadMore}
+              retryTestID="message-search-more-retry"
             />
           ) : search.hasMore ? (
             <Button
@@ -126,10 +126,6 @@ function MessageSearchRow({
   );
 }
 
-function Retry({ label, onPress, testID }: { label: string; onPress: () => void; testID: string }) {
-  return <ErrorBanner inline title={label} retryLabel="Retry" onRetry={onPress} retryTestID={testID} />;
-}
-
 const styles = StyleSheet.create((theme) => ({
   row: {
     paddingHorizontal: theme.buzz.space.md,
@@ -151,7 +147,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.buzz.space.md,
     paddingVertical: theme.buzz.space.sm,
   },
-  retryLine: { padding: theme.buzz.space.md, gap: theme.buzz.space.md },
   more: { paddingHorizontal: theme.buzz.space.md, paddingVertical: theme.buzz.space.sm, minHeight: 44, justifyContent: 'center' },
   action: { ...theme.buzz.type.meta, color: theme.buzz.buttonSecondaryText },
 }));

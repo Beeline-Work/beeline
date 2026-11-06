@@ -1,0 +1,44 @@
+[
+  {
+    "theme": "bone",
+    "destinations": [
+      "corner-glyph-alignment",
+      "mock-embedded-fonts"
+    ],
+    "rows": [
+      {
+        "text": "Opened corner-glyph-alignment",
+        "bounds": "[97,352][756,413]"
+      },
+      {
+        "text": "Opened mock-embedded-fonts",
+        "bounds": "[97,531][742,592]"
+      },
+      {
+        "text": "Opened a-long-corner-name-that-must-truncate-without-moving-either-icon",
+        "bounds": "[97,709][980,770]"
+      }
+    ]
+  },
+  {
+    "theme": "obsidian",
+    "destinations": [
+      "corner-glyph-alignment",
+      "mock-embedded-fonts"
+    ],
+    "rows": [
+      {
+        "text": "Opened corner-glyph-alignment",
+        "bounds": "[97,352][756,413]"
+      },
+      {
+        "text": "Opened mock-embedded-fonts",
+        "bounds": "[97,531][742,592]"
+      },
+      {
+        "text": "Opened a-long-corner-name-that-must-truncate-without-moving-either-icon",
+        "bounds": "[97,709][980,770]"
+      }
+    ]
+  }
+]

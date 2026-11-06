@@ -1,0 +1,80 @@
+[
+  {
+    "theme": "bone",
+    "title": "corner-glyph-alignment",
+    "rowBounds": [
+      42,
+      324,
+      1038,
+      440
+    ],
+    "beforeTextCenterOffsetPx": -6.5,
+    "afterTextCenterOffsetPx": 0.5,
+    "iconPixelsUnchanged": true
+  },
+  {
+    "theme": "bone",
+    "title": "mock-embedded-fonts",
+    "rowBounds": [
+      42,
+      503,
+      1038,
+      618
+    ],
+    "beforeTextCenterOffsetPx": -6.0,
+    "afterTextCenterOffsetPx": 1.0,
+    "iconPixelsUnchanged": true
+  },
+  {
+    "theme": "bone",
+    "title": "a-long-corner-name-that-must-truncate-without-moving-either-icon",
+    "rowBounds": [
+      42,
+      681,
+      1038,
+      797
+    ],
+    "beforeTextCenterOffsetPx": -6.5,
+    "afterTextCenterOffsetPx": 0.5,
+    "iconPixelsUnchanged": true
+  },
+  {
+    "theme": "obsidian",
+    "title": "corner-glyph-alignment",
+    "rowBounds": [
+      42,
+      324,
+      1038,
+      440
+    ],
+    "beforeTextCenterOffsetPx": -6.5,
+    "afterTextCenterOffsetPx": 0.5,
+    "iconPixelsUnchanged": true
+  },
+  {
+    "theme": "obsidian",
+    "title": "mock-embedded-fonts",
+    "rowBounds": [
+      42,
+      503,
+      1038,
+      618
+    ],
+    "beforeTextCenterOffsetPx": -6.0,
+    "afterTextCenterOffsetPx": 1.0,
+    "iconPixelsUnchanged": true
+  },
+  {
+    "theme": "obsidian",
+    "title": "a-long-corner-name-that-must-truncate-without-moving-either-icon",
+    "rowBounds": [
+      42,
+      681,
+      1038,
+      797
+    ],
+    "beforeTextCenterOffsetPx": -6.5,
+    "afterTextCenterOffsetPx": 0.5,
+    "iconPixelsUnchanged": true
+  }
+]

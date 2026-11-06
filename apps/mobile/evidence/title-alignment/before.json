@@ -1,0 +1,390 @@
+[
+  {
+    "width": 390,
+    "theme": "bone",
+    "destination": "corner-glyph-alignment",
+    "rows": [
+      {
+        "row": {
+          "x": 16,
+          "y": 16,
+          "width": 358,
+          "height": 44
+        },
+        "copy": {
+          "x": 37,
+          "y": 24,
+          "width": 315,
+          "height": 23
+        },
+        "icons": [
+          {
+            "x": 16,
+            "y": 31.5,
+            "width": 13,
+            "height": 13
+          },
+          {
+            "x": 360,
+            "y": 31,
+            "width": 14,
+            "height": 14
+          }
+        ],
+        "text": "Opened corner-glyph-alignment",
+        "overflow": false
+      },
+      {
+        "row": {
+          "x": 16,
+          "y": 84,
+          "width": 358,
+          "height": 44
+        },
+        "copy": {
+          "x": 37,
+          "y": 92,
+          "width": 315,
+          "height": 23
+        },
+        "icons": [
+          {
+            "x": 16,
+            "y": 99.5,
+            "width": 13,
+            "height": 13
+          },
+          {
+            "x": 360,
+            "y": 99,
+            "width": 14,
+            "height": 14
+          }
+        ],
+        "text": "Opened mock-embedded-fonts",
+        "overflow": false
+      },
+      {
+        "row": {
+          "x": 16,
+          "y": 152,
+          "width": 358,
+          "height": 44
+        },
+        "copy": {
+          "x": 37,
+          "y": 160,
+          "width": 315,
+          "height": 23
+        },
+        "icons": [
+          {
+            "x": 16,
+            "y": 167.5,
+            "width": 13,
+            "height": 13
+          },
+          {
+            "x": 360,
+            "y": 167,
+            "width": 14,
+            "height": 14
+          }
+        ],
+        "text": "Opened a-long-corner-name-that-must-truncate-without-moving-either-icon",
+        "overflow": false
+      }
+    ]
+  },
+  {
+    "width": 390,
+    "theme": "obsidian",
+    "destination": "corner-glyph-alignment",
+    "rows": [
+      {
+        "row": {
+          "x": 16,
+          "y": 16,
+          "width": 358,
+          "height": 44
+        },
+        "copy": {
+          "x": 37,
+          "y": 24,
+          "width": 315,
+          "height": 23
+        },
+        "icons": [
+          {
+            "x": 16,
+            "y": 31.5,
+            "width": 13,
+            "height": 13
+          },
+          {
+            "x": 360,
+            "y": 31,
+            "width": 14,
+            "height": 14
+          }
+        ],
+        "text": "Opened corner-glyph-alignment",
+        "overflow": false
+      },
+      {
+        "row": {
+          "x": 16,
+          "y": 84,
+          "width": 358,
+          "height": 44
+        },
+        "copy": {
+          "x": 37,
+          "y": 92,
+          "width": 315,
+          "height": 23
+        },
+        "icons": [
+          {
+            "x": 16,
+            "y": 99.5,
+            "width": 13,
+            "height": 13
+          },
+          {
+            "x": 360,
+            "y": 99,
+            "width": 14,
+            "height": 14
+          }
+        ],
+        "text": "Opened mock-embedded-fonts",
+        "overflow": false
+      },
+      {
+        "row": {
+          "x": 16,
+          "y": 152,
+          "width": 358,
+          "height": 44
+        },
+        "copy": {
+          "x": 37,
+          "y": 160,
+          "width": 315,
+          "height": 23
+        },
+        "icons": [
+          {
+            "x": 16,
+            "y": 167.5,
+            "width": 13,
+            "height": 13
+          },
+          {
+            "x": 360,
+            "y": 167,
+            "width": 14,
+            "height": 14
+          }
+        ],
+        "text": "Opened a-long-corner-name-that-must-truncate-without-moving-either-icon",
+        "overflow": false
+      }
+    ]
+  },
+  {
+    "width": 1280,
+    "theme": "bone",
+    "destination": "corner-glyph-alignment",
+    "rows": [
+      {
+        "row": {
+          "x": 16,
+          "y": 16,
+          "width": 1248,
+          "height": 44
+        },
+        "copy": {
+          "x": 37,
+          "y": 24,
+          "width": 1205,
+          "height": 23
+        },
+        "icons": [
+          {
+            "x": 16,
+            "y": 31.5,
+            "width": 13,
+            "height": 13
+          },
+          {
+            "x": 1250,
+            "y": 31,
+            "width": 14,
+            "height": 14
+          }
+        ],
+        "text": "Opened corner-glyph-alignment",
+        "overflow": false
+      },
+      {
+        "row": {
+          "x": 16,
+          "y": 84,
+          "width": 1248,
+          "height": 44
+        },
+        "copy": {
+          "x": 37,
+          "y": 92,
+          "width": 1205,
+          "height": 23
+        },
+        "icons": [
+          {
+            "x": 16,
+            "y": 99.5,
+            "width": 13,
+            "height": 13
+          },
+          {
+            "x": 1250,
+            "y": 99,
+            "width": 14,
+            "height": 14
+          }
+        ],
+        "text": "Opened mock-embedded-fonts",
+        "overflow": false
+      },
+      {
+        "row": {
+          "x": 16,
+          "y": 152,
+          "width": 1248,
+          "height": 44
+        },
+        "copy": {
+          "x": 37,
+          "y": 160,
+          "width": 1205,
+          "height": 23
+        },
+        "icons": [
+          {
+            "x": 16,
+            "y": 167.5,
+            "width": 13,
+            "height": 13
+          },
+          {
+            "x": 1250,
+            "y": 167,
+            "width": 14,
+            "height": 14
+          }
+        ],
+        "text": "Opened a-long-corner-name-that-must-truncate-without-moving-either-icon",
+        "overflow": false
+      }
+    ]
+  },
+  {
+    "width": 1280,
+    "theme": "obsidian",
+    "destination": "corner-glyph-alignment",
+    "rows": [
+      {
+        "row": {
+          "x": 16,
+          "y": 16,
+          "width": 1248,
+          "height": 44
+        },
+        "copy": {
+          "x": 37,
+          "y": 24,
+          "width": 1205,
+          "height": 23
+        },
+        "icons": [
+          {
+            "x": 16,
+            "y": 31.5,
+            "width": 13,
+            "height": 13
+          },
+          {
+            "x": 1250,
+            "y": 31,
+            "width": 14,
+            "height": 14
+          }
+        ],
+        "text": "Opened corner-glyph-alignment",
+        "overflow": false
+      },
+      {
+        "row": {
+          "x": 16,
+          "y": 84,
+          "width": 1248,
+          "height": 44
+        },
+        "copy": {
+          "x": 37,
+          "y": 92,
+          "width": 1205,
+          "height": 23
+        },
+        "icons": [
+          {
+            "x": 16,
+            "y": 99.5,
+            "width": 13,
+            "height": 13
+          },
+          {
+            "x": 1250,
+            "y": 99,
+            "width": 14,
+            "height": 14
+          }
+        ],
+        "text": "Opened mock-embedded-fonts",
+        "overflow": false
+      },
+      {
+        "row": {
+          "x": 16,
+          "y": 152,
+          "width": 1248,
+          "height": 44
+        },
+        "copy": {
+          "x": 37,
+          "y": 160,
+          "width": 1205,
+          "height": 23
+        },
+        "icons": [
+          {
+            "x": 16,
+            "y": 167.5,
+            "width": 13,
+            "height": 13
+          },
+          {
+            "x": 1250,
+            "y": 167,
+            "width": 14,
+            "height": 14
+          }
+        ],
+        "text": "Opened a-long-corner-name-that-must-truncate-without-moving-either-icon",
+        "overflow": false
+      }
+    ]
+  }
+]

@@ -62,8 +62,16 @@ async function render(props: Partial<React.ComponentProps<typeof ArtifactCard>> 
   let tree!: ReactTestRenderer;
   await act(async () => { tree = create(<ArtifactCard attachment={attachment} {...props} />); });
   renderers.push(tree);
-  for (let round = 0; round < 12; round++) {
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+  if (props.visible !== false) {
+    await vi.waitFor(async () => {
+      await act(async () => { await Promise.resolve(); });
+      expect(tree.root.findAllByProps({ testID: 'artifact-preview-loading' })).toHaveLength(0);
+      expect([
+        ...tree.root.findAllByType(host.os === 'web' ? 'iframe' : 'WebView'),
+        ...tree.root.findAllByProps({ testID: 'artifact-preview-snapshot' }),
+        ...tree.root.findAllByProps({ testID: 'artifact-preview-failed' }),
+      ].length).toBeGreaterThan(0);
+    });
   }
   return tree;
 }

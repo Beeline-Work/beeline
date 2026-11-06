@@ -114,7 +114,7 @@
     {
       "file": "apps/mobile/sources/buzz/runtime-config.ts",
       "kind": "origin:server.usebeeline.app",
-      "count": 2,
+      "count": 1,
       "fate": "exception",
       "why": "The Beeline server origin: host of the main live socket and of the remaining HTTP exceptions."
     },
@@ -299,13 +299,6 @@
       "count": 1,
       "fate": "link",
       "why": "Base URL that gives the sandboxed PDF page a non-opaque origin; nothing is fetched from it."
-    },
-    {
-      "file": "apps/mobile/sources/buzz/beeline-glyph.ts",
-      "kind": "origin:www.w3.org",
-      "count": 1,
-      "fate": "link",
-      "why": "SVG namespace string."
     },
     {
       "file": "apps/mobile/sources/buzz/pr-lifecycle.ts",

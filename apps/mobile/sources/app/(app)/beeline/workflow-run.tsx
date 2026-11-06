@@ -1,3 +1,4 @@
+import { ContentTarget } from '@/components/buzz/IndexRow';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
@@ -5,7 +6,7 @@ import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { Button } from '@/components/buzz/Button';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useEffect, useState } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { ScrollView, Text, View } from 'react-native';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
@@ -188,7 +189,7 @@ function AlsoRunning({ roomId, current, now }: { roomId: string; current: Workfl
         <RoomListSectionHeader title="Also running in this corner" inset="content" />
       </View>
       {others.map((other) => (
-        <Pressable
+        <ContentTarget
           accessibilityLabel={`Open ${workflowDisplayName(other.workflowSlug)}, ${workflowStateLabel(other.state)}`}
           accessibilityRole="link"
           key={other.runId}
@@ -205,7 +206,7 @@ function AlsoRunning({ roomId, current, now }: { roomId: string; current: Workfl
             ) : null}
           </View>
           <Text style={styles.statusMeta}>{formatRunDuration(now - other.startedAt)}</Text>
-        </Pressable>
+        </ContentTarget>
       ))}
     </View>
   );

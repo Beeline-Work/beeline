@@ -1,7 +1,8 @@
+import { ContentTarget } from '@/components/buzz/IndexRow';
 import { ErrorBanner } from './ErrorBanner';
 import { Button } from '@/components/buzz/Button';
 import React from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { MESSAGE_SEARCH_MIN_CHARS, type MessageSearchResult } from '@beeline/api-contract/phone';
 import { compactRelativeTime } from '@/buzz/relative-time';
@@ -96,7 +97,7 @@ function MessageSearchRow({
   const room = result.roomName.replace(/^[#@]+/, '');
   const text = result.snippet.map((part) => part.text).join('');
   return (
-    <Pressable
+    <ContentTarget
       accessibilityRole="button"
       accessibilityLabel={`${result.authorName} in ${sigil}${room}: ${text}`}
       onPress={() => onOpen(result)}
@@ -122,7 +123,7 @@ function MessageSearchRow({
           ),
         )}
       </Text>
-    </Pressable>
+    </ContentTarget>
   );
 }
 

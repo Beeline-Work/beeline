@@ -1855,7 +1855,7 @@ it('Reproduction SELF-1: self-orders in another Room and corner retain receipts 
     name: 'self-work', objective: 'Continue own work', implementer: 'ruby',
     brief: { spec: 'Continue own work', repositoryWork: false } }, RUBY);
   await daemon.execute('order', { ...authority(order), address: opened.cornerId, text: 'Resume own corner' }, RUBY);
-  expect(await commands(opened.cornerId, RUBY)).toEqual([]);
+  expect((await commands(opened.cornerId, RUBY)).map(c => c.reason)).toEqual(['corner_objective']);
   await expect(daemon.execute('order', { ...authority(order), address: DM, agent: 'ruby', text: 'Recurse' }, RUBY))
     .rejects.toThrow('current place');
 });

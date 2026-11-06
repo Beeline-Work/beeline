@@ -27,6 +27,7 @@ export type ToolOutputSheetProps = {
   subtitle?: string;
   detail: string | null | undefined;
   error?: string | null;
+  outputHidden?: boolean;
   /**
    * When set, render Two Inks and wrap. Omitted for ordinary tool output,
    * which stays plain wrapped machine text.
@@ -45,6 +46,7 @@ export function ToolOutputSheet({
   title,
   subtitle,
   detail,
+  outputHidden,
   error,
   language,
   visible,
@@ -62,7 +64,7 @@ export function ToolOutputSheet({
     [],
   );
   const copy = useCallback(async () => {
-    if (!detail) return;
+    if (!detail || outputHidden) return;
     try {
       await (await import('expo-clipboard')).setStringAsync(detail);
       setCopied(true);
@@ -71,8 +73,8 @@ export function ToolOutputSheet({
     }
     if (copyTimer.current) clearTimeout(copyTimer.current);
     copyTimer.current = setTimeout(() => setCopied(false), 2000);
-  }, [detail]);
-  const canCopy = Boolean(detail && detail !== 'Output hidden: contains a secret.' && detail !== 'Loading…' && !error);
+  }, [detail, outputHidden]);
+  const canCopy = Boolean(detail && !outputHidden && detail !== 'Loading…' && !error);
   const highlight = language !== undefined;
   return (
     <HullActionSheetModal

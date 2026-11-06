@@ -421,17 +421,23 @@ describe('a reply’s steps line', () => {
 });
 
 describe('the output sheet', () => {
-  it.each([undefined, 'Output hidden: contains a secret.'])(
-    'shows an empty or hidden output without a copy control (%s)', (output) => {
-      const renderer = render(<TurnStepsLine items={[{
-        kind: 'tool', id: 'empty', title: 'Read', toolKind: 'read', status: 'completed', output,
+  it.each([
+    ...[ActivityTimeline, TurnStepsLine].flatMap(Component => [
+      [Component, undefined, 'completed'],
+      [Component, 'Output hidden: contains a secret.', 'completed'],
+      [Component, 'Output hidden: contains a secret.', 'failed'],
+    ] as const),
+  ] as const)(
+    'shows an empty or hidden output without a copy control (%s, %s, %s)', (Component, output, status) => {
+      const renderer = render(<Component items={[{
+        kind: 'tool', id: 'empty', title: 'Read', toolKind: 'read', status, output,
         requestedBy: { pubkey: 'owner', name: 'lunchbox' },
       }]} />);
       expandRun(renderer, 'empty');
       act(() => renderer.root.findByProps({ testID: 'tool-ledger-line-empty' }).props.onPress());
-      expect(renderer.root.findByProps({ testID: 'tool-output-sheet' }).props.subtitle).toBe("at lunchbox's request");
-      expect(renderer.root.findByProps({ testID: 'tool-output-text' }).props.children).toBe(output ?? 'No output saved');
+      expect(renderer.root.findByProps({ testID: 'tool-output-sheet' }).props.subtitle).toBe(status === 'failed' ? output : "at lunchbox's request");
       expect(renderer.root.findAllByProps({ testID: 'tool-output-copy' })).toHaveLength(0);
+      expect(renderer.root.findByProps({ testID: 'tool-output-text' }).props.children).toBe(output ?? 'No output saved');
     },
   );
 
@@ -918,21 +924,30 @@ it('retains Failed and a brass cross for a failed named MCP tool', () => {
 });
 
 
-it('F07: collapsed 200-step summary reads zero; disclosure and output presses each load only their bounded target',async()=>{
+it.each([ActivityTimeline, TurnStepsLine].flatMap(Component => [
+  [Component, 'completed', 'x'.repeat(32768)],
+  [Component, 'failed', 'permission denied'],
+  [Component, 'failed', 'Output hidden: contains a secret.'],
+] as const))('F07: collapsed summary reads zero; lazy disclosure and tap preserve the fetched failure reason (%s, %s)',async(Component, status, output)=>{
   toolReader.mockReset();
   const roomId='22222222-2222-4222-8222-222222222222',anchor='d'.repeat(64);
   const message={id:anchor,text:'',createdAt:1,presentation:'activity',author:{pubkey:'b'.repeat(64),kind:'agent',name:'Worker'},
-    activity:[{kind:'tool',title:'Synthetic tool',output:'excerpt',toolOutput:{roomId,anchor,messageId:anchor}}]};
+    activity:[{kind:'tool',title:'Synthetic tool',status,toolOutput:{roomId,anchor,messageId:anchor}}]};
   toolReader.mockResolvedValueOnce({roomId,messages:[message],next:'tool-anchor'});
-  const renderer=render(<TurnStepsLine items={[{kind:'tool',id:'aggregate',title:'200 steps',toolGroup:{roomId,anchor,count:200}}]}/>);
+  const renderer=render(<Component items={[{kind:'tool',id:'aggregate',title:'200 steps',toolGroup:{roomId,anchor,count:200}}]}/>);
   expect(toolReader).not.toHaveBeenCalled();
   expect(renderer.root.findByProps({testID:'tool-run-group-aggregate'}).props.accessibilityLabel).toContain('200 steps');
   await act(async()=>expandRun(renderer,'aggregate'));
   expect(toolReader).toHaveBeenCalledTimes(1);expect(toolReader.mock.calls[0][0]).toMatchObject({roomId,anchor});
-  toolReader.mockResolvedValueOnce({roomId,messages:[{...message,activity:[{kind:'tool',title:'Synthetic tool',output:'x'.repeat(32768)}]}]});
+  toolReader.mockResolvedValueOnce({roomId,messages:[{...message,activity:[{kind:'tool',title:'Synthetic tool',status,output}]}]});
   await act(async()=>renderer.root.findByProps({testID:`tool-ledger-line-${anchor}:0`}).props.onPress());
   expect(toolReader).toHaveBeenCalledTimes(2);expect(toolReader.mock.calls[1][0]).toEqual({roomId,anchor,messageId:anchor});
-  expect(renderer.root.findByProps({testID:'tool-output-text'}).props.children).toBe('x'.repeat(32768));
+  expect(renderer.root.findByType('HullActionSheetModal').props.subtitle).toBe(status === 'failed' ? output : undefined);
+  expect(renderer.root.findByProps({testID:'tool-output-text'}).props.children).toContain(output);
+  if (output === 'Output hidden: contains a secret.') {
+    expect(renderer.root.findAllByProps({testID:'tool-output-copy'})).toHaveLength(0);
+    expect(renderer.root.findByProps({testID:'tool-output-text'}).props.children).toBe(output);
+  }
   await act(async()=>renderer.unmount());
 });
 

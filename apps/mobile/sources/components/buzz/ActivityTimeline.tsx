@@ -136,7 +136,8 @@ function useToolOutput() {
     void request.then(page => {
       if (generation !== current.current) return;
       const full = toolPageLines(page).find(item => item.id === next.id);
-      setLine({ ...next, detail: full?.detail, requester: full?.requester });
+      setLine({ ...next, detail: full?.detail, requester: full?.requester,
+        reason: full?.reason, outputHidden: full?.outputHidden });
     }).catch(() => {
       if (generation !== current.current) return;
       const message = 'Output unavailable. Open again to retry.';
@@ -236,6 +237,7 @@ export const TurnStepsLine = React.memo(function TurnStepsLine({
       ))}
       <ToolOutputSheet
         detail={sheetLine?.detail}
+        outputHidden={sheetLine?.outputHidden}
         error={sheetError}
         onClose={closeLine}
         subtitle={sheetLine?.outcome === 'failure' ? sheetLine.reason : sheetLine?.requester}
@@ -308,6 +310,7 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
       ) : null}
       <ToolOutputSheet
         detail={sheetLine?.detail}
+        outputHidden={sheetLine?.outputHidden}
         error={sheetError}
         onClose={closeLine}
         subtitle={sheetLine?.outcome === 'failure' ? sheetLine.reason : sheetLine?.requester}

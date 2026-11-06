@@ -16,7 +16,7 @@ it('an upgrade deletes retired deadline state and keeps a real owner schedule', 
       VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`, [workspace, room, human, agent]);
     await db.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,max_runs)
       VALUES('33333333-3333-4333-8333-333333333333',$4,$1,$2,$3,'{"kind":"interval","everyMinutes":5}','Run my schedule',now()+interval '1 minute',1)`, [room, agent, human, workspace]);
-    await db.query(`ALTER TABLE agent_schedules ADD COLUMN workflow_run jsonb;`);
+    await db.query(`ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS workflow_run jsonb;`);
     await db.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,workflow_run)
       VALUES('44444444-4444-4444-8444-444444444444',$4,$1,$2,$3,'{"kind":"interval","everyMinutes":5}','Internal workflow timer',now(),'{"runId":"retired","timer":"deadline"}')`, [room, agent, human, workspace]);
     // Emulate an upgrade from the former source/expiry architecture.

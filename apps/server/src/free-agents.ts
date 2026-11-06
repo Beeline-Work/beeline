@@ -55,7 +55,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS free_agents_bootstrap_hash ON free_agents(boot
   WHERE bootstrap_hash IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS free_agents_model_token_hash ON free_agents(model_token_hash)
   WHERE model_token_hash IS NOT NULL;
-ALTER TABLE free_agents DROP COLUMN IF EXISTS last_activity_at;
 CREATE INDEX IF NOT EXISTS free_agents_owner ON free_agents(owner_id);
 CREATE INDEX IF NOT EXISTS free_agents_workspace ON free_agents(workspace_id);
 CREATE TABLE IF NOT EXISTS free_agent_usage (

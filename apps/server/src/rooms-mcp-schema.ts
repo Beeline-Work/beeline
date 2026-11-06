@@ -43,7 +43,6 @@ ALTER TABLE rooms_mcp_members ADD COLUMN IF NOT EXISTS callback_secret text;
 -- Until the member names itself, read results repeat the setup rules, because
 -- many hosts never show the model the server instructions.
 ALTER TABLE rooms_mcp_members ADD COLUMN IF NOT EXISTS profile_set boolean NOT NULL DEFAULT false;
-ALTER TABLE rooms_mcp_members DROP COLUMN IF EXISTS last_bridge_poll_at;
 -- Each tag or direct message addressed to an AI-client member, in order: the
 -- list_mentions catch-up read and send_message's wake provenance.
 CREATE TABLE IF NOT EXISTS rooms_mcp_mentions (
@@ -68,7 +67,6 @@ DO $$ BEGIN
   END IF;
 END $$;
 DROP FUNCTION IF EXISTS beeline_mcp_stream_source() CASCADE;
-ALTER TABLE rooms_mcp_mentions DROP COLUMN IF EXISTS rewakes;
 -- Retire the index used only by the deleted timed mention re-delivery.
 DROP INDEX IF EXISTS rooms_mcp_mentions_owed;
 -- A reply settles its own author's tag only after the message write succeeds,
@@ -197,8 +195,6 @@ CREATE TABLE IF NOT EXISTS rooms_mcp_event_deliveries (
   PRIMARY KEY(subscription_id,message_id)
 );
 CREATE INDEX IF NOT EXISTS rooms_mcp_event_deliveries_done ON rooms_mcp_event_deliveries(delivered_at) WHERE delivered_at IS NOT NULL;
-ALTER TABLE rooms_mcp_event_deliveries DROP COLUMN IF EXISTS attempts CASCADE;
-ALTER TABLE rooms_mcp_event_deliveries DROP COLUMN IF EXISTS next_attempt_at CASCADE;
 CREATE INDEX IF NOT EXISTS rooms_mcp_event_deliveries_room ON rooms_mcp_event_deliveries(room_id);
 -- A private wake has no message. command_id is its idempotency key; exactly one of the two is set.
 ALTER TABLE rooms_mcp_event_deliveries ADD COLUMN IF NOT EXISTS command_id text;

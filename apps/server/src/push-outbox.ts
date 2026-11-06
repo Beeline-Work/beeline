@@ -10,7 +10,6 @@ CREATE TABLE IF NOT EXISTS push_outbox (
   PRIMARY KEY(message_id,device_token)
 );
 CREATE INDEX IF NOT EXISTS push_outbox_device_idx ON push_outbox(device_token);
-ALTER TABLE push_outbox DROP COLUMN IF EXISTS not_before CASCADE;
 CREATE INDEX IF NOT EXISTS push_outbox_expiry_idx ON push_outbox(expires_at);
 DROP TABLE IF EXISTS push_outbox_retirements;
 CREATE TABLE IF NOT EXISTS push_message_context (

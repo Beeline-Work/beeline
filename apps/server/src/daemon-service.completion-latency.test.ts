@@ -402,7 +402,6 @@ describe('agent reply completion latency', () => {
         requestId: request,
         status: 'working',
         generationId: generation,
-        heartbeat: true,
       },
       AGENT,
     );

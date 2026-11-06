@@ -41,7 +41,6 @@ CREATE TABLE IF NOT EXISTS rooms_mcp_webhook_outbox (
  delivered_at timestamptz
 );
 ALTER TABLE rooms_mcp_webhook_outbox ADD COLUMN IF NOT EXISTS claimed_at timestamptz;
-ALTER TABLE rooms_mcp_webhook_outbox DROP COLUMN IF EXISTS attempts CASCADE;
 DROP INDEX IF EXISTS rooms_mcp_webhook_outbox_due;
 DROP INDEX IF EXISTS rooms_mcp_webhook_outbox_pending;
 CREATE INDEX rooms_mcp_webhook_outbox_pending

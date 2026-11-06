@@ -635,10 +635,7 @@ CREATE TABLE IF NOT EXISTS identities (
 );
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS hidden_from_roster boolean NOT NULL DEFAULT false;
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS face_id text NULL;
--- Start existing people's inactivity clock at rollout; account age is not app inactivity.
 DROP TRIGGER IF EXISTS beeline_agent_schedule_due ON identities;
-ALTER TABLE identities DROP COLUMN IF EXISTS last_app_active_at;
-ALTER TABLE identities DROP COLUMN IF EXISTS away_warning_at;
 -- Null excludes every identity present at rollout. New humans inherit true;
 -- completion changes it to false and follows the account across devices.
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS welcome_cards_due boolean;
@@ -910,6 +907,7 @@ CREATE TABLE IF NOT EXISTS agents (
   yolo_set_at timestamptz,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS wake_batch_minutes integer NOT NULL DEFAULT 0 CHECK (wake_batch_minutes >= 0);
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS usage_snapshot jsonb;
 -- One plan reading per owner, provider and account, shared by every agent on
 -- it (agent-usage.ts). account_key is a hash; it never names the account.
@@ -931,7 +929,6 @@ ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_by text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_at timestamptz;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS model_unavailable text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS fast_mode boolean NOT NULL DEFAULT false;
-ALTER TABLE agents DROP COLUMN IF EXISTS wake_batch_minutes;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS machine_id text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS machine_name text;
 -- Broker facts are machine reports, not connector lifecycle records.
@@ -1854,9 +1851,12 @@ CREATE INDEX IF NOT EXISTS agent_schedules_room_idx ON agent_schedules(room_id, 
 CREATE INDEX IF NOT EXISTS agent_schedules_workspace_idx ON agent_schedules(workspace_id);
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS max_runs integer;
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS run_count integer NOT NULL DEFAULT 0;
-ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS workflow_run jsonb;
-DELETE FROM agent_schedules WHERE workflow_run IS NOT NULL;
-ALTER TABLE agent_schedules DROP COLUMN workflow_run;
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema()
+    AND table_name='agent_schedules' AND column_name='workflow_run') THEN
+    DELETE FROM agent_schedules WHERE workflow_run IS NOT NULL;
+  END IF;
+END $$;
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS owner_id text REFERENCES identities(id);
 
 CREATE TABLE IF NOT EXISTS agent_schedule_occurrences (
@@ -2316,7 +2316,6 @@ CREATE TABLE IF NOT EXISTS push_delivery_claims (
 );
 ALTER TABLE push_delivery_claims ADD COLUMN IF NOT EXISTS attempts integer NOT NULL DEFAULT 1;
 DROP TRIGGER IF EXISTS retry_push_outbox ON push_delivery_claims;
-ALTER TABLE push_delivery_claims DROP COLUMN IF EXISTS next_retry_at;
 -- When a read-clear push named this delivered message (sendReadClears). Read
 -- messages a push left out stay NULL and go in a later push.
 ALTER TABLE push_delivery_claims ADD COLUMN IF NOT EXISTS read_cleared_at timestamptz;
@@ -2331,7 +2330,6 @@ CREATE TABLE IF NOT EXISTS x_ad_signups (
   delivery_failed boolean NOT NULL DEFAULT false
 );
 CREATE INDEX IF NOT EXISTS x_ad_signups_date ON x_ad_signups(created_at);
-ALTER TABLE x_ad_signups DROP COLUMN IF EXISTS next_attempt_at CASCADE;
 CREATE INDEX IF NOT EXISTS x_ad_signups_pending ON x_ad_signups(created_at) WHERE sent_at IS NULL AND attempts=0;
 CREATE TABLE IF NOT EXISTS x_ad_daily (
   day date NOT NULL, level text NOT NULL CHECK(level IN ('campaign','ad_group','ad')),
@@ -3212,8 +3210,8 @@ export async function migrate(
   `);
   await ddlScript('router command identity', ROUTER_COMMAND_SCHEMA);
   await ddlScript('retired turn recovery schema', `
+    ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS startup_outcome text;
     DROP TABLE IF EXISTS agent_startup_backoff;
-    ALTER TABLE agent_turns DROP COLUMN IF EXISTS startup_outcome;
     DROP TRIGGER IF EXISTS defer_startup_wake ON agent_commands;
     DROP FUNCTION IF EXISTS defer_startup_wake();
   `);

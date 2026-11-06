@@ -33,11 +33,6 @@ CREATE TABLE IF NOT EXISTS sentry_wake_issues (
  pending boolean NOT NULL DEFAULT true,
  PRIMARY KEY(issue_id,event_type)
 );
-ALTER TABLE sentry_wake_state DROP COLUMN IF EXISTS last_wake_at;
-ALTER TABLE sentry_wake_state DROP COLUMN IF EXISTS last_daily_wake_at;
-ALTER TABLE sentry_wake_issues DROP COLUMN IF EXISTS last_digested_at;
-ALTER TABLE sentry_wake_issues DROP COLUMN IF EXISTS last_digested_level;
-ALTER TABLE sentry_wake_issues DROP COLUMN IF EXISTS urgent;
 CREATE INDEX IF NOT EXISTS sentry_wake_pending ON sentry_wake_issues(last_seen) WHERE pending;
 `;
 

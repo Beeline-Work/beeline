@@ -458,8 +458,6 @@ export class PushDeliveryLoop {
         LEFT JOIN push_delivery_claims claim
           ON claim.message_id=candidate.message_id AND claim.device_token=candidate.token
         WHERE claim.message_id IS NULL
-          OR (claim.status='claimed' AND claim.claimed_at<now()-interval '1 minute'
-            AND claim.attempts<1)
         ORDER BY candidate.message_id,candidate.token
       )
       SELECT message_id,workspace_id,room_id,channel_id,corner_id,target,

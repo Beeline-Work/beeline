@@ -65,13 +65,17 @@
 
 ## Turn recovery storage retirement
 
-The turn-lifecycle cleanup removes every runtime use and trigger for the following
-storage. This release retains the inert schema because the previous server reads
-it during a rolling deployment. The next release drops `agent_startup_backoff`,
-`pending_mention_notices`, `agent_commands.startup_wake_after`,
-`agent_turns.startup_outcome`, `free_agents.allowance_paused_until`,
-`agents.wake_batch_minutes`, `agent_commands.wake_after`,
-`agent_commands.coalesced_context`, `agent_commands.coalesced_attachments`,
-`agent_commands.created_offline`, and `agent_commands.hiccup_attempts`, then removes
-their storage-registry entries. This schema retention authorizes no timer,
-recovery reader, writer, or resend path.
+The existing post-drain retired-column cleanup covers `agent_commands.startup_wake_after`,
+`agent_turns.startup_outcome`, `free_agents.allowance_paused_until`, `agents.wake_batch_minutes`,
+`agent_commands.wake_after`, `agent_commands.coalesced_context`, `agent_commands.coalesced_attachments`,
+`agent_commands.created_offline`, `agent_commands.hiccup_attempts`. The background simplification also leaves
+these unused upgrade columns for that same cleanup: `agent_commands.renudged_at`,
+`agent_schedules.workflow_run`, `free_agents.last_activity_at`, `identities.away_warning_at`,
+`identities.last_app_active_at`, `push_delivery_claims.next_retry_at`, `push_outbox.not_before`,
+`rooms_mcp_event_deliveries.attempts`, `rooms_mcp_event_deliveries.next_attempt_at`,
+`rooms_mcp_members.last_bridge_poll_at`, `rooms_mcp_mentions.rewakes`, `rooms_mcp_webhook_outbox.attempts`,
+`sentry_wake_issues.last_digested_at`, `sentry_wake_issues.last_digested_level`, `sentry_wake_issues.urgent`,
+`sentry_wake_state.last_daily_wake_at`, `sentry_wake_state.last_wake_at`, `x_ad_signups.next_attempt_at`.
+Runtime readers, writers and triggers are removed with their features; these columns authorize no timer,
+recovery scan, retry or resend path. Remove their storage-registry entries only when the corresponding schema
+columns are dropped after serving and rollback images have drained.

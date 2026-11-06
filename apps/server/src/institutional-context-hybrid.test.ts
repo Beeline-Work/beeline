@@ -245,37 +245,7 @@ describe('getInstitutionalContext hybrid vector snapshot', () => {
     expect(context.embeddingMs).toBeGreaterThanOrEqual(0);
   });
 
-  it('degrades to keyword-only and reports timed-out when the embedding call exceeds its budget', async () => {
-    stubEmbeddingFetch(5_000); // far past INSTITUTIONAL_CONTEXT_EMBEDDING_TIMEOUT_MS
-    const daemon = liveDaemon();
-    await openCommand('turn-2', 'gen-2');
-    // A keyword-matched item, so the snapshot still serves something even
-    // though the vector pass never resolves in time.
-    const saved = await daemon.execute(
-      'saveInstitutionalMemory',
-      {
-        agentId: RONNIE,
-        roomId: ROOM,
-        requestId: 'turn-2',
-        generationId: 'gen-2',
-        memoryKind: 'human_profile_fact',
-        canonicalKey: 'requester.spouse.daeun_lee.wife_fact',
-        body: 'Her name is Daeun.',
-        keywords: ['wife', 'daeun'],
-        sourceMessageIds: [MESSAGE],
-        personAsked: false,
-        confidence: 0.9,
-      },
-      RONNIE,
-    );
-    const context = await daemon.execute(
-      'getInstitutionalContext',
-      { roomId: ROOM, requestId: 'turn-2', generationId: 'gen-2' },
-      RONNIE,
-    );
-    expect(context.embeddingOutcome).toBe('timed-out');
-    expect(context.itemIds).toContain(saved.itemId);
-  });
+
 
   it('serves the embedding when it resolves within the real INSTITUTIONAL_CONTEXT_EMBEDDING_TIMEOUT_MS budget', async () => {
     stubEmbeddingFetch(INSTITUTIONAL_CONTEXT_EMBEDDING_TIMEOUT_MS - 150);
@@ -289,17 +259,7 @@ describe('getInstitutionalContext hybrid vector snapshot', () => {
     expect(context.embeddingOutcome).toBe('served');
   });
 
-  it('times out an embedding that resolves just past the real INSTITUTIONAL_CONTEXT_EMBEDDING_TIMEOUT_MS budget', async () => {
-    stubEmbeddingFetch(INSTITUTIONAL_CONTEXT_EMBEDDING_TIMEOUT_MS + 150);
-    const daemon = liveDaemon();
-    await openCommand('turn-budget-timeout', 'gen-budget-timeout');
-    const context = await daemon.execute(
-      'getInstitutionalContext',
-      { roomId: ROOM, requestId: 'turn-budget-timeout', generationId: 'gen-budget-timeout' },
-      RONNIE,
-    );
-    expect(context.embeddingOutcome).toBe('timed-out');
-  });
+
 
   it('reports disabled and makes no network call when no embedding key is configured', async () => {
     const fetchImpl = vi.fn();

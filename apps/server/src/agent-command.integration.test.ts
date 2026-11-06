@@ -413,6 +413,7 @@ const result = (c: AgentCommand, text: string, generationId = 'g1', extra = {}) 
   );
 
 it.each([R, C])('projects reply context outside the conversation window in %s', async (roomId) => {
+  await db.query(`UPDATE messages SET created_at=now()-interval '1 day' WHERE room_id=$1`, [roomId]);
   const parentId = id();
   const parentText = 'Five corners from the audit: '.repeat(30);
   await db.query('INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)',

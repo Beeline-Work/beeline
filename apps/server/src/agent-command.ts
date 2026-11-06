@@ -123,7 +123,6 @@ ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS avatar_job boolean NOT NULL 
 CREATE UNIQUE INDEX IF NOT EXISTS agent_commands_one_avatar_job ON agent_commands(agent_id)
   WHERE avatar_job AND state IN ('pending','claimed');
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS hiccup_attempts integer NOT NULL DEFAULT 0;
-ALTER TABLE agent_commands DROP COLUMN IF EXISTS renudged_at CASCADE;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS lifecycle_before text;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS review_context jsonb;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS wake_context jsonb;

@@ -6,7 +6,6 @@ import { LiveHub } from './live.js';
 afterEach(()=>{vi.useRealTimers();vi.restoreAllMocks();});
 it.each([true, false])('never redispatches a failed effect after 24h (owned=%s)',async owned=>{
   vi.useFakeTimers();
-  const timers=vi.spyOn(globalThis,'setTimeout');
   const deadlock=Object.assign(new Error('Synthetic transaction rolled back'),{code:'40P01'});
   const query=vi.fn(async(sql:string)=>sql.includes('agent_command_generation_owners')
     ?{rows:owned?[{owned:true}]:[],rowCount:owned?1:0}
@@ -17,7 +16,9 @@ it.each([true, false])('never redispatches a failed effect after 24h (owned=%s)'
   const result=daemon.execute('postAgentActivity',input,'synthetic-agent').catch(error=>error);
   await vi.advanceTimersByTimeAsync(24*60*60_000);
   expect(await result).toBe(deadlock);
-  expect(transaction).toHaveBeenCalledOnce();expect(timers).not.toHaveBeenCalled();
+  // Assert the effect itself: native HTTP parser timers from other suites can
+  // fire in this reused worker while the fake clock advances.
+  expect(transaction).toHaveBeenCalledOnce();
   expect(query).toHaveBeenCalledTimes(2);
   expect(input).toMatchObject({requestId:'same-request',generationId:'same-generation'});
 });

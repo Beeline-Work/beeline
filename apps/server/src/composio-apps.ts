@@ -801,7 +801,7 @@ export class ComposioApps {
         throw new YouTubeUploadRefusal(message);
       const refusalStatus = appRefusalStatus(result);
       if (refusalStatus) throw new CommandRefusalError(message, refusalStatus);
-      throw new Error(message);
+      return { successful: false, error: message };
     }
     return stripSecrets(result.data);
   }

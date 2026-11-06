@@ -438,10 +438,8 @@ import { daemonRequestAgentGrant, daemonGrantRequester, daemonConsumeAgentGrant 
       };
     }
     if (!ctx.composio) throw new Error('App tools are unavailable');
-    if (row.composio_link_expires_at)
-      throw new Error('App sign-in has not completed in Beeline');
-    if (!row.composio_account_id)
-      throw new Error('App sign-in is pending');
+    if (row.composio_link_expires_at || !row.composio_account_id)
+      return { tools: [], next: 'App sign-in is pending. Complete sign-in in Beeline.' };
     if (!(await ctx.composio.account(row.composio_account_id,
       row.owner_identity_id, composioToolkitForApp(row.app_key))))
       throw new Error('App account is unavailable; reconnect it');

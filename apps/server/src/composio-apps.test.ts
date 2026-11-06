@@ -715,7 +715,7 @@ describe('managed app provider boundary', () => {
     expect(transport).toHaveBeenCalledTimes(1);
   });
 
-  it('surfaces a provider reason from a flagged execution error', async () => {
+  it.each(['some provider reason', JSON.stringify({ detail: '`Filter ID` must be a valid UUID hex (32-36 characters long, containing only digits, dashes, or a-f characters)' })])('R-NOISE-9: returns a failed tool result: %s', async reason => {
     const transport = vi.fn(async (url: URL | string) => {
       const path = new URL(String(url)).pathname;
       if (path.endsWith(`/connected_accounts/${ACCOUNT}`)) return json({
@@ -725,13 +725,13 @@ describe('managed app provider boundary', () => {
         slug: 'SLACK_POST_MESSAGE', version: '20260928_00', toolkit: { slug: 'slack' },
       });
       if (path.endsWith('/tools/execute/SLACK_POST_MESSAGE'))
-        return json({ error: 'some provider reason' });
+        return json({ error: reason });
       throw new Error('unexpected request');
     });
     const provider = new ComposioApps('fixture-only', transport as typeof fetch);
     const error = await provider.execute({ accountId: ACCOUNT, userId: PERSON, toolkit: 'slack',
       tool: 'SLACK_POST_MESSAGE', arguments: { channel: 'announcements' } }).catch((e: unknown) => e);
-    expect((error as Error).message).toBe('App tool execution failed: some provider reason');
+    expect(error).toEqual({ successful: false, error: 'App tool execution failed: ' + reason });
   });
 
   it('keeps the API key out of execution results and every provider error message', async () => {
@@ -752,7 +752,7 @@ describe('managed app provider boundary', () => {
         tool: 'SLACK_POST_MESSAGE', arguments: { channel: 'announcements' } });
     const flagged = await run(() => json({ error: `invalid x-api-key ${KEY}` }))
       .catch((e: unknown) => e as Error);
-    expect(flagged.message).toBe('App tool execution failed: invalid x-api-key [redacted]');
+    expect(flagged).toEqual({ successful: false, error: 'App tool execution failed: invalid x-api-key [redacted]' });
     const rejected = await run(() => json({ message: `key ${KEY} is not allowed` }, 401))
       .catch((e: unknown) => e as Error);
     expect(rejected.message).toBe('App provider request failed (401): key [redacted] is not allowed');
@@ -779,8 +779,8 @@ describe('managed app provider boundary', () => {
     const provider = new ComposioApps('fixture-only', transport as typeof fetch);
     const error = await provider.execute({ accountId: ACCOUNT, userId: PERSON, toolkit: 'slack',
       tool: 'SLACK_POST_MESSAGE', arguments: { channel: 'announcements' } }).catch((e: unknown) => e);
-    expect((error as Error).message).toContain('nested reason');
-    expect((error as Error).message).not.toContain('x-secret-value');
+    expect(error).toMatchObject({ successful: false, error: expect.stringContaining('nested reason') });
+    expect(JSON.stringify(error)).not.toContain('x-secret-value');
   });
 
   it.each([
@@ -829,12 +829,11 @@ describe('managed app provider boundary', () => {
     const failure = await new ComposioApps('fixture-only', transport as typeof fetch).execute({
       accountId: ACCOUNT, userId: PERSON, toolkit: 'slack', tool: 'SLACK_POST_MESSAGE', arguments: {},
     }).catch((error: unknown) => error);
-    expect(failure).toBeInstanceOf(Error);
-    expect((failure as Error).message).toBe('App tool execution failed: ' + JSON.stringify(detail));
     if (status) {
+      expect((failure as Error).message).toBe('App tool execution failed: ' + JSON.stringify(detail));
       expect(failure).toBeInstanceOf(CommandRefusalError);
       expect(failure).toMatchObject({ status });
-    } else expect(failure).not.toBeInstanceOf(CommandRefusalError);
+    } else expect(failure).toEqual({ successful: false, error: 'App tool execution failed: ' + JSON.stringify(detail) });
   });
 
   it('keeps the fixed execution message when a flag is set without an error detail', async () => {
@@ -852,7 +851,7 @@ describe('managed app provider boundary', () => {
     const provider = new ComposioApps('fixture-only', transport as typeof fetch);
     const error = await provider.execute({ accountId: ACCOUNT, userId: PERSON, toolkit: 'slack',
       tool: 'SLACK_POST_MESSAGE', arguments: { channel: 'announcements' } }).catch((e: unknown) => e);
-    expect((error as Error).message).toBe('App tool execution failed');
+    expect(error).toEqual({ successful: false, error: 'App tool execution failed' });
   });
 });
 

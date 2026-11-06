@@ -1,3 +1,4 @@
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { cornerReportWaiting } from './corner-state.js';
 import { cornerWaitingReportSql } from './corner-waiting-report.js';
 
@@ -101,7 +102,7 @@ const wake = async (agentId = WORKER, id = 'new-work') =>
     agentId,
     sourceMessageId: null,
     reason: 'order',
-    privatePayload: { kind: 'order', text: 'Continue', authorId: COMMANDER, fromRoomId: ROOM },
+    privatePayload: { kind: 'order', text: 'Continue', authorId: agentId === COMMANDER ? HUMAN : COMMANDER, fromRoomId: ROOM },
   });
 const post = async (id: string, text: string, author = WORKER, age = '0 hours') =>
   db.query(
@@ -1009,7 +1010,7 @@ it.each(['agent', 'human'] as const)('REPORT-WAITING-DERIVED: %s report quiets w
     for (const input of ['return-room-answer', 'commander-order', 'new-head'] as const) {
       const automatic = await createAgentCommand(db, { id: `automatic-${input}`, roomId: C, agentId: WORKER,
         sourceMessageId: null, reason: 'corner_lifecycle',
-        privatePayload: { kind: 'lifecycle', authorId: WORKER, fromRoomId: C, text: 'Continue automatically' } });
+        privatePayload: { kind: 'lifecycle', authorId: SYSTEM_IDENTITY_ID, fromRoomId: C, text: 'Continue automatically' } });
       expect(automatic).toBeDefined();
       expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2`, [C,automatic!.turn_request_id])).rows)
         .toEqual([{ status: 'working' }]);

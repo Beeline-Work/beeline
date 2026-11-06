@@ -201,6 +201,8 @@ export type PrivateCommandPayload = {
   idleSince?: string;
   text: string;
   authorId: string;
+  /** Agent whose work a server-authored report describes; prevents self-wakes. */
+  sourceAgentId?: string;
   fromRoomId: string;
   kind: 'order' | 'report' | 'lifecycle';
   attachments?: RoomInboxResult['items'][number]['attachments'];
@@ -605,12 +607,22 @@ export async function createAgentCommand(
   return db.transaction(async (db) => {
   await lockAgentCommandQueue(db, input.roomId, input.agentId);
   // Membership removal serializes with dispatch; lifecycle wakes retain their opening order.
-  const member = await db.query<{ opening: CommandRow | null; source_text: string | null; source_event: { kind?: string } | null; human_input: boolean; failing_check_wake: boolean; app_callback_url: string | null }>(
+  const member = await db.query<{ opening: CommandRow | null; source_text: string | null; source_event: { kind?: string } | null; self_authored: boolean; human_input: boolean; failing_check_wake: boolean; app_callback_url: string | null }>(
     `SELECT (SELECT to_jsonb(opened) FROM agent_commands opened
        WHERE r.parent_id IS NOT NULL AND opened.room_id=r.id AND opened.private_payload->>'kind'='order'
        ORDER BY (opened.agent_id=$2) DESC,opened.created_at DESC,opened.id DESC LIMIT 1) opening,
        (SELECT text FROM messages WHERE id=$3) source_text,
        (SELECT system_event FROM messages WHERE id=$3) source_event,
+       (COALESCE($5::text=$2,false) OR COALESCE($8::text=$2,false) OR EXISTS (
+         WITH RECURSIVE output AS (
+           SELECT id,author_id,system_event,event_cause_id,ARRAY[id] path FROM messages WHERE id=$3
+           UNION ALL
+           SELECT cause.id,cause.author_id,cause.system_event,cause.event_cause_id,output.path||cause.id
+           FROM output JOIN messages cause ON cause.id=output.event_cause_id
+           WHERE output.system_event->>'kind'='subscription-fired' AND NOT cause.id=ANY(output.path)
+         ) SELECT 1 FROM output WHERE author_id=$2
+           AND (system_event IS NULL OR system_event->'subject'->>'id'=$2)
+       )) self_authored,
        COALESCE((SELECT author.kind='human' AND source.presentation='message' AND source.system_event IS NULL
          FROM messages source JOIN identities author ON author.id=source.author_id WHERE source.id=$3),false)
          AND $4::boolean OR COALESCE((SELECT kind='human' FROM identities WHERE id=$5),false) AND $6::boolean human_input,
@@ -626,15 +638,23 @@ export async function createAgentCommand(
      WHERE m.room_id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL AND r.archived_at IS NULL
      FOR SHARE OF m,r`, [input.roomId, input.agentId, input.sourceMessageId,
        input.reason !== 'schedule' && !input.privatePayload && !input.reason.startsWith('corner_'),
-       input.privatePayload?.authorId ?? null, input.privatePayload?.kind === 'order', input.reason],
+       input.privatePayload?.authorId ?? null, input.privatePayload?.kind === 'order', input.reason,
+       input.privatePayload?.sourceAgentId ?? null],
   );
   if (!member.rowCount) return undefined;
+  // Output is already known to its author. Keep a completed command as the
+  // provenance receipt (opening orders also own corner identity), but never
+  // admit another turn, delayed wake, or app delivery for that same output.
+  // Resolve the incoming source, not an inherited order's historical author:
+  // an external lifecycle event still wakes a corner's self-opening worker.
+  const selfAuthored = member.rows[0]!.self_authored &&
+    [undefined, 'input', 'resume'].includes(input.action);
   // A green review is the reply to a block filed while checks were still pending.
   // A red head still wakes the implementer after that block: the four-push stop
   // must not swallow failing checks.
   const greenReviewWake = isGreenReviewWake(input.reason, member.rows[0]!.source_event?.kind);
   const failingCheckWake = member.rows[0]!.failing_check_wake;
-  if ((input.action === undefined || input.action === 'input' || input.action === 'resume') &&
+  if (!selfAuthored && (input.action === undefined || input.action === 'input' || input.action === 'resume') &&
       input.privatePayload?.kind !== 'order' && !member.rows[0]!.human_input && !greenReviewWake &&
       !failingCheckWake &&
       await cornerReportWaiting(db, input.roomId, input.privatePayload?.kind))
@@ -700,21 +720,23 @@ export async function createAgentCommand(
   // adds no round trip. list_mentions remains the catch-up read.
   const wake = mcpCommandWakeSql(14);
   const result = await db.query<CommandRow>(
-    `WITH inserted AS (
+    `WITH created AS (
        INSERT INTO agent_commands
         (id,room_id,agent_id,source_message_id,turn_request_id,action,reason,root_command_id,parent_command_id,root_source_message_id,agent_depth,avatar_job,private_payload,state)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,'pending')
         ON CONFLICT DO NOTHING
         RETURNING *
+     ), inserted AS (
+       SELECT * FROM created WHERE NOT $18::boolean
      ), owed AS (
        INSERT INTO rooms_mcp_mentions(member_id,room_id,message_id)
        SELECT agent_id,room_id,source_message_id FROM inserted
-       WHERE source_message_id IS NOT NULL AND private_payload IS NULL AND NOT avatar_job
+       WHERE state='pending' AND source_message_id IS NOT NULL AND private_payload IS NULL AND NOT avatar_job
          AND reason IN ('human_tag','direct_message','agent_tag')
        ON CONFLICT(member_id,message_id) DO NOTHING
      ),
      ${wake.cte}
-     SELECT inserted.* FROM inserted
+     SELECT created.* FROM created
      ${wake.join}`,
     [
       id,
@@ -731,6 +753,7 @@ export async function createAgentCommand(
       input.avatarJob ?? false,
       privatePayload ? JSON.stringify(privatePayload) : null,
       ...wake.params,
+      selfAuthored,
     ],
   );
   const command = result.rows[0] ?? (await db.query<CommandRow>(
@@ -738,6 +761,12 @@ export async function createAgentCommand(
       AND agent_id=$4 AND action=$5) LIMIT 1`,
     [id, input.roomId, input.sourceMessageId, input.agentId, input.action ?? 'input'],
   )).rows[0];
+  // The terminal owner settles self-output in this transaction. Filtering the
+  // dispatch CTE above prevents MCP delivery; no pending work can commit.
+  if (command && selfAuthored && command.state === 'pending') {
+    await endAgentTurn(db, command, 'complete');
+    command.state = 'complete';
+  }
   // Replace unhandled updates about the same decision under the recipient's
   // queue lock. A replayed id and a live claimed report retain their authority.
   const reportStatus = privatePayload?.kind === 'report'
@@ -767,7 +796,7 @@ export async function createAgentCommand(
   // A connected app has no helper to claim this: its webhook announces the
   // wake, and list_mentions shows it until the app reports or clears it.
   const appCallbackUrl = member.rows[0]!.app_callback_url;
-  if (result.rows[0] && (input.action ?? 'input') === 'input' && appCallbackUrl) {
+  if (result.rows[0]?.state === 'pending' && (input.action ?? 'input') === 'input' && appCallbackUrl) {
     await recordMcpMemberWebhook(db, input.agentId, appCallbackUrl, input.roomId, id,
         `${privatePayload?.kind === 'order' ? 'Order' : 'Wake'} (${input.reason}): ${privatePayload?.text ?? sourceText ?? ''}`.trim());
   }
@@ -1267,8 +1296,9 @@ export async function routeAgentResult(
         return command;
       })
       : await dispatch(db);
-    if (dispatched) woken.push(mention.handle);
-    else notWoken.push({ handle: mention.handle, reason: parent && nextAgentDepth(parent.agent_depth) === undefined
+    if (dispatched && (dispatched.state === 'pending' || dispatched.state === 'claimed')) woken.push(mention.handle);
+    else notWoken.push({ handle: mention.handle, reason: dispatched?.state === 'complete'
+      ? 'own output does not start another turn' : parent && nextAgentDepth(parent.agent_depth) === undefined
       ? 'agent tag chain depth limit reached' : 'agent or place is no longer available' });
   }
   return { woken, notWoken };

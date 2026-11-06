@@ -273,7 +273,7 @@ it('Reproduction stop-queued-orders: Stop drains the queued orders and reports o
 
 it('Stop preserves other senders, source Rooms, targets, human mentions and newer orders', async () => {
   const { queued, root } = await queueStopOrders();
-  for (const [authorId, fromRoomId, agentId] of [[H, R, A], [B, C, A], [B, R, B]]) {
+  for (const [authorId, fromRoomId, agentId] of [[H, R, A], [B, C, A], [H, R, B]]) {
     await createAgentCommand(db, { roomId: R, agentId: agentId!, sourceMessageId: null,
       privatePayload: { kind: 'order', authorId: authorId!, fromRoomId: fromRoomId!, text: 'survivor' }, reason: 'order' });
   }
@@ -607,8 +607,8 @@ it('Reproduction workflow-corner-objective: a corner objective rooted on a paren
     [
       parentHandoffId,
       R,
-      B,
-      'Goosy handed off workflow feedback-triage',
+      A,
+      'Hoots handed off workflow feedback-triage',
       JSON.stringify({
         runId: parentRunId,
         workflowSlug: 'feedback-triage',
@@ -645,8 +645,8 @@ it('a workflow wake for a run in the turn’s own Room still carries the run ins
     [
       handoffId,
       C,
-      B,
-      'Goosy handed off workflow feedback-triage',
+      A,
+      'Hoots handed off workflow feedback-triage',
       JSON.stringify({
         runId,
         workflowSlug: 'feedback-triage',
@@ -1629,7 +1629,7 @@ it('ignores legacy Room merged subscriptions; lifecycle watches own merge delive
   expect(await commands(A, R)).toEqual([]);
   expect(await commands(B, R)).toEqual([]);
 });
-it('transfers a corner objective to the opener only, without resetting the authorized chain', async () => {
+it('records its own corner objective without a second wake or resetting the authorized chain', async () => {
   await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
   await send('@hoots');
   const [c] = await commands();
@@ -1645,12 +1645,11 @@ it('transfers a corner objective to the opener only, without resetting the autho
     },
     A,
   );
-  const [objective] = await commands(A, opened.cornerId);
-  expect(objective?.reason).toBe('corner_objective');
-  expect(objective?.rootCommandId).toBe(c!.id);
-  expect(objective?.parentCommandId).toBe(c!.id);
-  expect(objective?.agentDepth).toBe(c!.agentDepth);
-  expect(objective?.source.body).toBe('Do this task');
+  expect(await commands(A, opened.cornerId)).toEqual([]);
+  expect((await db.query(`SELECT reason,root_command_id,parent_command_id,agent_depth,state,
+    private_payload->>'objective' objective FROM agent_commands WHERE room_id=$1 AND reason='corner_objective'`,
+    [opened.cornerId])).rows).toEqual([{reason:'corner_objective',root_command_id:c!.id,
+      parent_command_id:c!.id,agent_depth:c!.agentDepth,state:'complete',objective:'Do this task'}]);
   // B is a member (it can read the corner and answer when tagged) but the
   // objective is not its work: no intake command.
   expect(await commands(B, opened.cornerId)).toEqual([]);

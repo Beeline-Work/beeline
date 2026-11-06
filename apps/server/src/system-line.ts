@@ -672,11 +672,10 @@ export async function backfillComputerObservations(database: SqlDatabase): Promi
     WHERE system_event->>'kind'='computer-session-activity'`);
   // Browser activity accepted by an older release must not start a turn.
   // Claimed turns and commands sourced from a person's message stay intact.
-  await database.query(`UPDATE agent_commands command SET state='cancelled',completed_at=now()
-    FROM messages source WHERE source.id=command.source_message_id
+  await database.query(`SELECT (terminal.ended).* FROM (SELECT beeline_end_agent_turn(command.id,command.generation_id,'cancelled',NULL,NULL) ended FROM agent_commands command ,messages source WHERE source.id=command.source_message_id
       AND command.state='pending'
       AND command.reason IN ('subscribed_event','computer_activity')
-      AND source.system_event->>'kind'='computer-session-activity'`);
+      AND source.system_event->>'kind'='computer-session-activity') terminal`);
 }
 
 /** A plain operator notice in the recipient's existing System thread. */

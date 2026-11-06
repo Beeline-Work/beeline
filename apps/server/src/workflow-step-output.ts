@@ -4,17 +4,15 @@ import type { SqlDatabase } from './database.js';
 /** Pin authorized turns to visits within the statement that claims them. */
 export function workflowOutputBindingCtes(commandRelation: string, runIdSql = 'NULL::text'): string {
   return `workflow_output_scope AS (
-    SELECT command.id command_id,command.room_id,original.action,original.parent_command_id,
-      command.agent_id,original.source_message_id,
+    SELECT command.id command_id,command.room_id,command.action,command.parent_command_id,
+      command.agent_id,command.source_message_id,
       COALESCE(${runIdSql},source.card->>'runId',choice_message.card->>'runId') run_id
     FROM ${commandRelation} command
-    JOIN agent_commands original ON original.room_id=command.room_id AND original.agent_id=command.agent_id
-      AND (original.id=command.id OR original.cancellation_reason='coalesced_into:'||command.id)
-    JOIN messages source ON source.id=original.source_message_id AND source.room_id=command.room_id
+    JOIN messages source ON source.id=command.source_message_id AND source.room_id=command.room_id
     LEFT JOIN room_choices choice ON choice.id::text=source.card->>'choiceId'
       AND choice.room_id=command.room_id
     LEFT JOIN messages choice_message ON choice_message.id=choice.message_id
-    WHERE original.action IN ('input','resume')
+    WHERE command.action IN ('input','resume')
   ), workflow_output_pins AS (
     SELECT scope.command_id,scope.room_id,COALESCE(parent_visit.id,latest.id) visit_id
     FROM workflow_output_scope scope

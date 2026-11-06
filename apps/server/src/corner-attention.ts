@@ -95,11 +95,11 @@ CREATE TRIGGER corner_activity_schedule AFTER INSERT OR UPDATE OR DELETE ON agen
  FOR EACH ROW EXECUTE FUNCTION notify_corner_activity();
 `;
 
-/** Commands are the once-per-episode claim; the recipient queue lock reserves its budget. */
+/** A committed event emits one immediate idle signal when no work remains. */
 export async function refreshCornerAttention(
   db: SqlDatabase,
   cornerId: string,
-): Promise<{ parentId: string; deadlines: number[] } | undefined> {
+): Promise<{ parentId: string } | undefined> {
   return db.transaction(async (tx) => {
     const row = (await tx.query<CornerIdleRow>(cornerIdleSql('$1'), [cornerId])).rows[0];
     if (!row) return;
@@ -107,21 +107,19 @@ export async function refreshCornerAttention(
     // A queued alert for an episode that has ended is withdrawn before anyone
     // claims it; a claimed or delivered alert keeps its history.
     await tx.query(
-      `UPDATE agent_commands SET state='cancelled',completed_at=now(),cancellation_reason='stale_idle_alert'
-       WHERE state='pending' AND reason='report'
+      `SELECT (terminal.ended).* FROM (SELECT beeline_end_agent_turn(agent_commands.id,agent_commands.generation_id,'cancelled','stale_idle_alert',NULL) ended FROM agent_commands WHERE state='pending' AND reason='report'
          AND private_payload->>'authorId'=$3
          AND private_payload->>'idleSince' IS NOT NULL
          AND COALESCE(private_payload->>'originCornerId',private_payload->>'fromRoomId')=$1::text
-         AND private_payload->>'idleSince' IS DISTINCT FROM $2::text`,
+         AND private_payload->>'idleSince' IS DISTINCT FROM $2::text) terminal`,
       [cornerId, current, SYSTEM_IDENTITY_ID],
     );
-    if (!current) return { parentId: row.parent_id, deadlines: [] };
+    if (!current) return { parentId: row.parent_id };
     const id = createHash('sha256').update(`idle:${cornerId}:${row.idle_since}`).digest('hex');
-    const due = row.last_turn_ended_at ? new Date(row.last_turn_ended_at).getTime() + 30_000 : 0;
-    const report = await reportToCommander(tx, cornerId, SYSTEM_IDENTITY_ID,
+    await reportToCommander(tx, cornerId, SYSTEM_IDENTITY_ID,
       `blocked: Corner ${row.name} is idle. Resume it, set a hold, or close it.`, undefined, id,
-      { automatic: true, agentOnly: true, wakeInCorner: true, idleSince: row.idle_since, wakeAfter: due });
-    return { parentId: row.parent_id, deadlines: report.retryAt ? [report.retryAt] : [] };
+      { automatic: true, agentOnly: true, wakeInCorner: true, idleSince: row.idle_since });
+    return { parentId: row.parent_id };
   });
 }
 
@@ -135,7 +133,7 @@ export async function runCornerAttention(db: SqlDatabase): Promise<void> {
   for (const row of rows) await refreshCornerAttention(db, row.id);
 }
 
-/** Event adapter only. CommanderWakeDeadlines owns every durable report deadline. */
+/** Recompute the immediate idle signal from committed source events. */
 export class CornerAttentionDeadlines {
   private release: () => void;
   private resync: () => void;

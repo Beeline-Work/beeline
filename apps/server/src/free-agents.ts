@@ -1,7 +1,6 @@
 import { setRoomEventSubscriptions } from './agent-subscriptions.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
-import { closeFreeAgentTurn } from './free-agent-turn-close.js';
 import { createCipheriv, createDecipheriv, createECDH, createHash, randomBytes } from 'node:crypto';
 import { assignSeededAgentIdentity, resolveFace, uniqueAgentHandle } from '@beeline/api-contract/phone';
 import { createAgentCommand } from './agent-command.js';
@@ -49,18 +48,10 @@ ALTER TABLE free_agents ADD COLUMN IF NOT EXISTS removed_at timestamptz;
 ALTER TABLE free_agents ADD COLUMN IF NOT EXISTS removal_cleaned_at timestamptz;
 ALTER TABLE free_agents ADD COLUMN IF NOT EXISTS model text;
 ALTER TABLE free_agents ADD COLUMN IF NOT EXISTS starter_role text;
-ALTER TABLE free_agents ADD COLUMN IF NOT EXISTS allowance_paused_until timestamptz;
-CREATE OR REPLACE FUNCTION defer_allowance_wake() RETURNS trigger LANGUAGE plpgsql AS $pause$
-BEGIN
-  IF NEW.state='pending' AND NEW.action IN ('input','resume') THEN
-    NEW.startup_wake_after := GREATEST(NEW.startup_wake_after,
-      (SELECT allowance_paused_until FROM free_agents WHERE agent_id=NEW.agent_id AND allowance_paused_until>now()));
-  END IF;
-  RETURN NEW;
-END $pause$;
 DROP TRIGGER IF EXISTS defer_allowance_wake ON agent_commands;
-CREATE TRIGGER defer_allowance_wake BEFORE INSERT OR UPDATE OF state ON agent_commands
-  FOR EACH ROW EXECUTE FUNCTION defer_allowance_wake();
+DROP FUNCTION IF EXISTS defer_allowance_wake();
+-- Inert for the previous server during this rolling release; drop next release.
+ALTER TABLE free_agents ADD COLUMN IF NOT EXISTS allowance_paused_until timestamptz;
 CREATE UNIQUE INDEX IF NOT EXISTS free_agents_bootstrap_hash ON free_agents(bootstrap_hash)
   WHERE bootstrap_hash IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS free_agents_model_token_hash ON free_agents(model_token_hash)
@@ -505,9 +496,7 @@ const WAKE_DUE_SQL = `f.removed_at IS NULL AND f.fly_machine_id IS NOT NULL
         WHERE connection.agent_id=f.agent_id AND connection.released_at IS NULL
           AND server.renewed_at>clock_timestamp()-interval '90 seconds')))
   AND (${connectorWorkSql('f.agent_id')} OR EXISTS (SELECT 1 FROM agent_commands command
-    WHERE command.agent_id=f.agent_id AND command.state='pending'
-             AND (command.startup_wake_after IS NULL OR command.startup_wake_after<=now())
-      AND (command.wake_after IS NULL OR command.wake_after<=now())))`;
+    WHERE command.agent_id=f.agent_id AND command.state='pending'))`;
 
 /**
  * The start limit for one agent. A `connected` event ends an episode. A
@@ -681,7 +670,6 @@ export class FreeAgentService {
    * serving. The row update is the fence: one instance per 20 seconds.
    */
   async #budgetPaused(agentId: string): Promise<boolean> {
-    if ((await this.database.query(`SELECT 1 FROM free_agents WHERE agent_id=$1 AND allowance_paused_until>now()`, [agentId])).rowCount) return true;
     if (!await freeAgentBudgetReached(this.database, (this.config.limits ?? DEFAULT_FREE_AGENT_LIMITS).dailyBudgetUsd)) return false;
     await recordFreeAgentEvent(this.database, agentId, 'budget_reached');
     return true;
@@ -804,8 +792,7 @@ export class FreeAgentService {
          WHERE f.agent_id=$1 AND f.removed_at IS NULL AND f.fly_machine_id IS NOT NULL AND f.state IN ('running','waking')
            AND NOT ${connectorWorkSql('f.agent_id')}
            AND NOT EXISTS (SELECT 1 FROM agent_commands command
-             WHERE command.agent_id=f.agent_id AND command.state IN ('pending','claimed')
-               AND (command.state='claimed' OR ((command.wake_after IS NULL OR command.wake_after<=now()) AND (command.startup_wake_after IS NULL OR command.startup_wake_after<=now()))))
+             WHERE command.agent_id=f.agent_id AND command.state IN ('pending','claimed'))
          RETURNING f.fly_machine_id`,
         [agentId],
       )
@@ -933,14 +920,6 @@ export class FreeAgentService {
          WHERE f.removed_at IS NULL AND f.fly_machine_id IS NOT NULL AND f.state IN ('sleeping','stopped')
            AND NOT ${connectorWorkSql('f.agent_id')}
            AND NOT EXISTS(SELECT 1 FROM agent_commands WHERE agent_id=f.agent_id AND state IN ('pending','claimed'))
-       UNION ALL SELECT COALESCE((SELECT turn.started_at FROM agent_turns turn WHERE turn.agent_id=command.agent_id
-         AND turn.room_id=command.room_id AND turn.request_id=command.turn_request_id
-         AND COALESCE(turn.generation_id,'') NOT LIKE 'pending:%'),command.claimed_at)
-         +make_interval(secs=>${((this.config.limits ?? DEFAULT_FREE_AGENT_LIMITS).maxTurnMs + 60_000) / 1000})
-         FROM agent_commands command JOIN free_agents f ON f.agent_id=command.agent_id
-         WHERE f.removed_at IS NULL AND command.state='claimed' AND command.action IN ('input','resume')
-       UNION ALL SELECT GREATEST(command.startup_wake_after,command.wake_after) FROM agent_commands command
-         JOIN free_agents f ON f.agent_id=command.agent_id WHERE f.removed_at IS NULL AND command.state='pending'
        UNION ALL SELECT provision_started_at+interval '2 minutes' FROM free_agents
          WHERE provision_started_at IS NOT NULL AND provision_error IS NULL AND removal_cleaned_at IS NULL`,admittedAt);
   }
@@ -961,7 +940,7 @@ export class FreeAgentService {
       `SELECT agent_id FROM free_agents
        WHERE removed_at IS NULL AND fly_machine_id IS NULL AND state='provisioning' AND provision_attempts<5
          AND (${connectorWorkSql('free_agents.agent_id')} OR EXISTS (SELECT 1 FROM agent_commands command WHERE command.agent_id=free_agents.agent_id
-           AND command.state='pending' AND (command.startup_wake_after IS NULL OR command.startup_wake_after<=now()) AND (command.wake_after IS NULL OR command.wake_after<=now())))
+           AND command.state='pending' ))
          AND (provision_started_at IS NULL OR provision_started_at<clock_timestamp()-interval '2 minutes')
        ORDER BY created_at LIMIT 20`,
     );
@@ -975,10 +954,7 @@ export class FreeAgentService {
       `SELECT f.agent_id FROM free_agents f
        WHERE (f.fly_machine_id IS NOT NULL OR f.state='destroyed') AND f.state<>'failed' AND f.removed_at IS NULL
          AND (${connectorWorkSql('f.agent_id')} OR EXISTS (SELECT 1 FROM agent_commands command
-           WHERE command.agent_id=f.agent_id AND command.state='pending'
-             AND (command.startup_wake_after IS NULL OR command.startup_wake_after<=now())
-             AND (command.wake_after IS NULL OR command.wake_after<=now())
-             AND command.created_at<clock_timestamp()-interval '5 seconds'))
+           WHERE command.agent_id=f.agent_id AND command.state='pending'))
          AND NOT EXISTS (SELECT 1 FROM agent_connections connection
            JOIN live_server_instances server ON server.instance_id=connection.instance_id
            WHERE connection.agent_id=f.agent_id AND connection.released_at IS NULL
@@ -991,45 +967,6 @@ export class FreeAgentService {
       await this.#advance(row.agent_id, 'sweep').catch((error) =>
         this.log(`wake ${row.agent_id.slice(0, 12)}: ${String(error)}`),
       );
-    }
-    // The helper's idle timer is the normal path to sleep; this catches a
-    // helper that crashed or never asked, so no Machine runs unattended.
-    const timedOut = await this.database.query<{
-      id: string; agent_id: string; room_id: string; turn_request_id: string; generation_id: string | null;
-    }>(`SELECT command.id,command.agent_id,command.room_id,command.turn_request_id,command.generation_id
-       FROM agent_commands command JOIN free_agents f ON f.agent_id=command.agent_id
-       WHERE f.removed_at IS NULL AND command.state='claimed' AND command.action IN ('input','resume')
-         AND COALESCE((SELECT turn.started_at FROM agent_turns turn
-           WHERE turn.agent_id=command.agent_id AND turn.room_id=command.room_id
-             AND turn.request_id=command.turn_request_id
-             AND COALESCE(turn.generation_id,'') NOT LIKE 'pending:%'),command.claimed_at)
-           <clock_timestamp()-make_interval(secs => $1::double precision / 1000)
-       ORDER BY command.claimed_at LIMIT 100`,
-      [(this.config.limits ?? DEFAULT_FREE_AGENT_LIMITS).maxTurnMs + 60_000]);
-    for (const row of timedOut.rows) {
-      const stopped = await this.database.transaction(async db => {
-        // Use the same lock order as terminal receipts before changing the command.
-        await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`,
-          [`silence:${row.room_id}:${row.turn_request_id}:${row.agent_id}`]);
-        const cancelled = await db.query(`UPDATE agent_commands SET state='cancelled',
-          completed_at=clock_timestamp(),cancellation_reason='free-agent-time-limit'
-          WHERE id=$1 AND state='claimed' AND generation_id IS NOT DISTINCT FROM $2`, [row.id,row.generation_id]);
-        if (!cancelled.rowCount) return null;
-        await db.query(`UPDATE agent_turns SET status='cancelled',failure_reason='free-agent-time-limit'
-          WHERE agent_id=$1 AND room_id=$2 AND request_id=$3 AND status='working'`,
-          [row.agent_id,row.room_id,row.turn_request_id]);
-        const machine = (await db.query<{ fly_machine_id: string | null }>(
-          `UPDATE free_agents SET state='stopped',updated_at=now()
-           WHERE agent_id=$1 AND removed_at IS NULL RETURNING fly_machine_id`, [row.agent_id])).rows[0];
-        await closeFreeAgentTurn(db, { roomId: row.room_id, requestId: row.turn_request_id,
-          agentId: row.agent_id, reason: 'free-agent-time-limit' });
-        await recordFreeAgentEvent(db, row.agent_id, 'turn_time_limit');
-        return machine;
-      });
-      if (!stopped) continue;
-      acted++;
-      if (stopped.fly_machine_id) await this.machines.stop(stopped.fly_machine_id).catch(error =>
-        this.log(`stop ${row.agent_id.slice(0, 12)}: ${String(error)}`));
     }
     const idle = await this.database.query<{ agent_id: string; fly_machine_id: string }>(
       `UPDATE free_agents f SET state='sleeping',updated_at=now()

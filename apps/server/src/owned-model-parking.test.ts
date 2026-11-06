@@ -1,11 +1,12 @@
+import { releaseAgentConnection } from './connection-presence.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { OwnedModelAttempts } from './owned-model-attempt.js';
-import { parkOwnedModelGeneration, parkOwnedModelTerminal, guardOwnedModelSilence } from './owned-model-parking.js';
+import { parkOwnedModelGeneration, parkOwnedModelTerminal } from './owned-model-parking.js';
 import { commandOwnerLiveSql, commandOwnerExpiredSql, registerOwnedEffectFence } from './turn-ownership.js';
 import { createAgentCommand, claimAgentCommand } from './agent-command.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
-import { noteFirstSilence } from './turn-silence-notice.js';
+
 import { MODEL, MODEL_AGENT, MODEL_CLAIM, MODEL_OWNER, MODEL_ROOM, MODEL_SOURCE, MODEL_WORKSPACE, ownedModelFixture } from './test-fixtures/owned-model.js';
 
 const ONE = '11111111-1111-4111-8111-111111111111', TWO = '22222222-2222-4222-8222-222222222222';
@@ -34,11 +35,11 @@ describe('causal owned-model generation parking', () => {
     expect((await f.db.query(`SELECT ${commandOwnerLiveSql()} live FROM agent_commands`)).rows[0]?.live).toBe(false);
   });
 
-  it('preserves command/generation/UNKNOWN and clears only live execution presentation', async () => {
+  it('preserves command/generation/UNKNOWN while terminal state remains owned by the receipt', async () => {
     expect(await f.db.transaction(tx => parkOwnedModelTerminal(tx, terminal, MODEL_AGENT, MODEL_SOURCE))).toBe(true);
     expect(await row()).toEqual({ state: 'claimed', generation_id: input.generationId });
     expect((await f.db.query(`SELECT state FROM owned_model_attempts`)).rows).toEqual([{ state: 'unknown' }]);
-    expect((await f.db.query('SELECT * FROM agent_turns')).rowCount).toBe(0);
+    expect((await f.db.query('SELECT status FROM agent_turns')).rows).toEqual([{status:'working'}]);
     expect((await f.db.query(`SELECT ${commandOwnerLiveSql()} live,${commandOwnerExpiredSql()} expired FROM agent_commands`)).rows[0])
       .toEqual({ live: false, expired: false });
     expect((await f.db.query('SELECT * FROM messages')).rowCount).toBe(0);
@@ -60,46 +61,13 @@ describe('causal owned-model generation parking', () => {
     expect(await row()).toEqual({ state: 'claimed', generation_id: input.generationId });
   });
 
-  it('active UNKNOWN is still running; only actual source loss parks it', async () => {
-    expect(await f.db.transaction(tx => guardOwnedModelSilence(tx, input))).toBe(true);
-    expect((await f.db.query('SELECT * FROM agent_command_owner_ends')).rowCount).toBe(0);
-    expect((await f.db.query('SELECT status FROM agent_turns')).rows[0]?.status).toBe('working');
+  it('connection closure hands work back without inventing a model outcome or owner-end receipt', async () => {
     expect((await f.db.query(`SELECT ${commandOwnerLiveSql()} live FROM agent_commands`)).rows[0]?.live).toBe(true);
-    await f.db.query(`UPDATE live_server_instances SET renewed_at=clock_timestamp()-interval '91 seconds'`);
-    expect(await f.db.transaction(tx => guardOwnedModelSilence(tx, input))).toBe(true);
-    expect((await f.db.query('SELECT state FROM owned_model_attempts')).rows[0]?.state).toBe('unknown');
-  });
-
-  it('keeps an in-flight model generation through transport loss and resumes settlement after registration',async()=>{
-    await f.db.query(`UPDATE agent_connections SET turn_connection_id=connection_id,turn_connection_epoch=epoch,
-      turn_transport_id=connection_id,released_at=clock_timestamp();
-      UPDATE live_server_instances SET renewed_at=clock_timestamp()-interval '91 seconds'`);
-    expect(await f.db.transaction(tx=>parkOwnedModelGeneration(tx,input,{kind:'source-ended'}))).toBe(false);
-    expect(await f.db.transaction(tx=>guardOwnedModelSilence(tx,input))).toBe(true);
+    await releaseAgentConnection(f.db,new LiveHub(),MODEL_AGENT,MODEL_SOURCE.connectionId);
+    expect((await f.db.query('SELECT state,generation_id FROM agent_commands')).rows).toEqual([{state:'pending',generation_id:null}]);
     expect((await f.db.query('SELECT * FROM agent_command_owner_ends')).rowCount).toBe(0);
-    expect((await f.db.query('SELECT status FROM agent_turns')).rows[0]?.status).toBe('working');
-    await f.db.query(`UPDATE agent_connections SET connection_id='next-socket',turn_transport_id='next-socket',epoch=epoch+1,released_at=NULL;
-      UPDATE live_server_instances SET renewed_at=clock_timestamp()`);
-    await attempts.settleUsage(f.actor,ONE,{tokens:2,usd:0},'succeeded',async()=>{});
-    expect((await f.db.query('SELECT state FROM owned_model_attempts')).rows).toEqual([{state:'succeeded'}]);
-  });
-
-  it('actual unrelated silence while UNKNOWN is in flight creates no failure, reassignment or owner end', async () => {
-    const live = new LiveHub(), events: unknown[] = []; live.publish = event => { events.push(event); };
-    const result = await noteFirstSilence(f.db, live, { ...input, reason: 'synthetic unrelated silence', reasonKind: 'hiccup', stalled: true });
-    expect(result.hiccupRestart).toBe(false); expect(result.updateRequeued).toBe(false); expect(events).toEqual([]);
-    expect((await f.db.query('SELECT * FROM agent_command_owner_ends')).rowCount).toBe(0);
-    expect((await f.db.query('SELECT status FROM agent_turns')).rows[0]?.status).toBe('working');
-    expect((await f.db.query(`SELECT ${commandOwnerLiveSql()} live FROM agent_commands`)).rows[0]?.live).toBe(true);
+    expect((await f.db.query('SELECT state FROM owned_model_attempts')).rows).toEqual([{state:'unknown'}]);
     expect((await f.db.query('SELECT * FROM messages')).rowCount).toBe(0);
-    expect(await row()).toEqual({ state: 'claimed', generation_id: input.generationId });
-  });
-
-  it('source loss after known success does not invent an unresolved owner end', async () => {
-    await attempts.settleUsage(f.actor, ONE, { tokens: 2, usd: 0 }, 'succeeded', async () => {});
-    await f.db.query(`UPDATE live_server_instances SET renewed_at=clock_timestamp()-interval '91 seconds'`);
-    expect(await f.db.transaction(tx => guardOwnedModelSilence(tx, input))).toBe(false);
-    expect((await f.db.query('SELECT * FROM agent_command_owner_ends')).rowCount).toBe(0);
   });
 
   it('wrong request, generation, source and invalid terminal shape refuse without falling through', async () => {
@@ -154,13 +122,16 @@ describe('causal owned-model generation parking', () => {
     expect(await row()).toEqual({ state: 'claimed', generation_id: input.generationId });
   });
 
-  it('actual terminal service ingress parks without publishing generic failed events or traces', async () => {
+  it('actual terminal service ingress ends once with a plain failure and preserves UNKNOWN', async () => {
     const live = new LiveHub(), events: unknown[] = []; live.publish = event => { events.push(event); };
     const daemon = new DaemonService(f.db, live);
     await daemon.execute('postAgentTurnReceipt', terminal, MODEL_AGENT, MODEL_SOURCE);
     expect(events).toEqual([]);
-    expect((await f.db.query('SELECT * FROM agent_turns')).rowCount).toBe(0);
-    expect((await f.db.query('SELECT * FROM messages')).rowCount).toBe(0);
+    expect((await f.db.query('SELECT status FROM agent_turns')).rows).toEqual([{status:'failed'}]);
+    expect(await row()).toEqual({state:'complete',generation_id:input.generationId});
+    expect((await f.db.query("SELECT 1 FROM messages WHERE card_type='turn-failed'")).rowCount).toBe(1);
+    await daemon.execute('postAgentTurnReceipt',terminal,MODEL_AGENT,MODEL_SOURCE);
+    expect((await f.db.query("SELECT 1 FROM messages WHERE card_type='turn-failed'")).rowCount).toBe(1);
     expect((await f.db.query('SELECT state FROM owned_model_attempts')).rows[0]?.state).toBe('unknown');
   });
 

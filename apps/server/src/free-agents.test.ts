@@ -7,7 +7,7 @@ import { TokenAuth } from './auth.js';
 import { DaemonService } from './daemon-service.js';
 import { createECDH } from 'node:crypto';
 import { getPublicKey } from '@beeline/nostr';
-import { AGENT_MENTION_NOTICE_GRACE_MS } from '@beeline/api-contract/agent-access';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { claimAgentCommand, createAgentCommand, type CommandRow } from './agent-command.js';
 import {
@@ -722,110 +722,6 @@ describe('free starter agents', () => {
     expect(exchanges).toHaveLength(2);
   });
 
-  it('keeps a free agent reachable and its wake alive while its Machine is offline, and starts the Machine', async () => {
-    const { id, roomId } = await createWorkspace();
-    await settle();
-    const agent = await freeAgentOf(id);
-    // An ordinary agent on a machine with no live helper, in the same Room.
-    await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Ordinary','ordinary')`, [
-      ORDINARY,
-    ]);
-    await db.query(
-      `INSERT INTO agents(agent_id,owner_id,machine_id,machine_name) VALUES($1,$2,'laptop','Laptop')`,
-      [ORDINARY, OWNER],
-    );
-    await db.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
-      [id, ORDINARY, roomId],
-    );
-    // Both helpers connected once and went away; the free agent's Machine is asleep.
-    await db.query(
-      `INSERT INTO live_server_instances(instance_id,renewed_at) VALUES('server-1',now())
-       ON CONFLICT DO NOTHING`,
-    );
-    for (const agentId of [agent.agent_id, ORDINARY]) {
-      await claimAgentConnection(db, live, agentId, { lifecycleId: `life-${agentId}` }, {
-        connectionId: `conn-${agentId}`,
-        instanceId: 'server-1',
-      });
-      await releaseAgentConnection(db, live, agentId, `conn-${agentId}`);
-    }
-    await db.query(`UPDATE free_agents SET state='sleeping' WHERE agent_id=$1`, [agent.agent_id]);
-    await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE agent_id=$1`, [
-      agent.agent_id,
-    ]);
-
-    const offline = async (agentId: string) =>
-      (
-        await db.query<{ offline: boolean }>(`SELECT ${agentMachineOfflineSql('$1')} offline`, [agentId])
-      ).rows[0]!.offline;
-    expect(await offline(agent.agent_id)).toBe(false);
-    expect(await offline(ORDINARY)).toBe(true);
-
-    const presence = async (agentId: string) =>
-      (
-        await db.query<{ body: Record<string, unknown> }>(
-          `SELECT body FROM live_outputs WHERE agent_id=$1 AND kind='presence'`,
-          [agentId],
-        )
-      ).rows[0]!.body;
-    expect(await presence(agent.agent_id)).toMatchObject({ status: 'online', held: true, asleep: true });
-    expect(await presence(ORDINARY)).toMatchObject({ status: 'offline', held: false });
-
-    // The owner tags both agents. The free agent's wake is kept and starts its
-    // Machine; the ordinary agent is told offline after the grace window.
-    const handle = (
-      await db.query<{ handle: string }>(`SELECT handle FROM identities WHERE id=$1`, [agent.agent_id])
-    ).rows[0]!.handle;
-    machines.calls.length = 0;
-    await phone.execute(
-      'sendRoomMessage',
-      {
-        roomId,
-        messageId: '9'.repeat(64),
-        text: `@${handle} @ordinary make a file`,
-        mentions: [agent.agent_id, ORDINARY],
-      },
-      OWNER,
-    );
-    const pending = (
-      await db.query<{ agent_id: string; state: string }>(
-        `SELECT agent_id,state FROM agent_commands WHERE source_message_id=$1 ORDER BY agent_id`,
-        ['9'.repeat(64)],
-      )
-    ).rows;
-    expect(pending).toEqual(
-      expect.arrayContaining([{ agent_id: agent.agent_id, state: 'pending' }]),
-    );
-    freeAgents.kickIfFree(ORDINARY);
-    freeAgents.kickIfFree(agent.agent_id);
-    await settle();
-    expect(machines.calls).toEqual(['start m1']);
-    expect(await freeAgentOf(id)).toMatchObject({ state: 'waking' });
-    await phone.flushPendingMentionNotices(Date.now() + AGENT_MENTION_NOTICE_GRACE_MS + 1_000);
-    const notices = (
-      await db.query<{ author_id: string; text: string }>(
-        `SELECT author_id,text FROM messages WHERE room_id=$1 AND text LIKE '%did not answer%'`,
-        [roomId],
-      )
-    ).rows;
-    expect(notices).toEqual([{ author_id: ORDINARY, text: '@ordinary did not answer @lunchboxfortwo · its helper is offline' }]);
-
-    // The Machine's helper registers: the free agent is running again.
-    await claimAgentConnection(db, live, agent.agent_id, { lifecycleId: 'life-2' }, {
-      connectionId: 'conn-2',
-      instanceId: 'server-1',
-    });
-    expect(await freeAgentOf(id)).toMatchObject({ state: 'running' });
-    expect(
-      (
-        await db.query(`SELECT kind,detail FROM free_agent_events WHERE agent_id=$1 AND kind IN ('wake_requested','machine_started','connected') ORDER BY id`, [
-          agent.agent_id,
-        ])
-      ).rows.map((row) => row.kind),
-    ).toEqual(['connected', 'wake_requested', 'machine_started', 'connected']);
-  });
-
   it('keeps a free agent reachable when its server instance dies, unlike an ordinary agent', async () => {
     const { id } = await createWorkspace();
     await settle();
@@ -1213,7 +1109,7 @@ describe('free starter agents', () => {
     expect((await db.query(`SELECT kind FROM free_agent_events WHERE kind='budget_reached'`)).rows).toHaveLength(2);
   });
 
-  it('FREE-ABUSE-1: reaps a Machine when its command passes the hard cap plus grace', async () => {
+  it('leaves overlong commands to model-request admission instead of a machine-stop sweep', async () => {
     const { id } = await createWorkspace();
     await settle();
     const agent = await freeAgentOf(id);
@@ -1223,14 +1119,11 @@ describe('free starter agents', () => {
       lease_expires_at=now()+interval '90 seconds' WHERE agent_id=$1`, [agent.agent_id]);
     machines.calls.length = 0;
     await freeAgents.sweep();
-    expect(machines.calls).toContain('stop m1');
-    const closed = await db.query(`SELECT text FROM messages WHERE card->>'freeAgentClosed'='true'`);
-    expect(closed.rows).toHaveLength(1);
-    expect(closed.rows[0].text).toContain('15-minute limit');
-    await freeAgents.sweep();
-    expect((await db.query(`SELECT id FROM messages WHERE card->>'freeAgentClosed'='true'`)).rowCount).toBe(1);
-    expect((await db.query(`SELECT state,cancellation_reason FROM agent_commands WHERE agent_id=$1`, [agent.agent_id])).rows)
-      .toEqual([{ state: 'cancelled', cancellation_reason: 'free-agent-time-limit' }]);
+    expect(machines.calls).not.toContain('stop m1');
+    expect((await db.query(`SELECT state FROM agent_commands WHERE agent_id=$1`,[agent.agent_id])).rows)
+      .toEqual([{state:'claimed'}]);
+    expect((await db.query(`SELECT id FROM messages WHERE card_type='turn-failed'`)).rows).toEqual([]);
+
   });
 
   it('adds one free agent to an existing Workspace in its #general, owned by its owner', async () => {

@@ -430,7 +430,7 @@ DROP TRIGGER IF EXISTS corner_report_push ON corner_github_cache;
 CREATE TRIGGER corner_report_push AFTER UPDATE OF lifecycle ON corner_github_cache FOR EACH ROW EXECUTE FUNCTION clear_corner_report_blockers();
 -- A queued automatic wake predating the report is not new input either.
 CREATE OR REPLACE FUNCTION quiet_corner_report_wakes() RETURNS trigger LANGUAGE plpgsql AS $quiet$
-DECLARE corner uuid;
+DECLARE corner uuid; ignored bigint;
 BEGIN
   IF TG_TABLE_NAME='agent_commands' THEN
     IF NEW.private_payload->>'kind' IS DISTINCT FROM 'report' THEN RETURN NULL; END IF;
@@ -446,16 +446,12 @@ BEGIN
   IF NOT EXISTS(SELECT 1 FROM rooms report_corner
     CROSS JOIN LATERAL (${cornerWaitingReportSql('report_corner')}) waiting WHERE report_corner.id=corner) THEN RETURN NULL; END IF;
   WITH cancelled AS (
-    UPDATE agent_commands command SET state='cancelled',completed_at=now(),cancellation_reason='corner_waiting'
-    WHERE command.room_id=corner AND command.state='pending' AND command.action IN ('input','resume')
+    SELECT (terminal.ended).* FROM (SELECT beeline_end_agent_turn(command.id,command.generation_id,'cancelled','corner_waiting',NULL) ended FROM agent_commands command WHERE command.room_id=corner AND command.state='pending' AND command.action IN ('input','resume')
       AND command.private_payload->>'kind' IS DISTINCT FROM 'order'
       AND command.private_payload->>'kind' IS DISTINCT FROM 'report'
       AND NOT EXISTS(SELECT 1 FROM messages source JOIN identities author ON author.id=source.author_id
-        WHERE source.id=command.source_message_id AND author.kind='human' AND source.system_event IS NULL)
-    RETURNING command.*)
-  UPDATE agent_turns turn SET status='cancelled',created_at=now()
-    FROM cancelled WHERE turn.room_id=cancelled.room_id AND turn.agent_id=cancelled.agent_id
-      AND turn.request_id=cancelled.turn_request_id AND turn.status='working';
+        WHERE source.id=command.source_message_id AND author.kind='human' AND source.system_event IS NULL)) terminal)
+  SELECT count(*) INTO ignored FROM cancelled;
   RETURN NULL;
 END $quiet$;
 DROP TRIGGER IF EXISTS corner_report_quiet ON agent_commands;

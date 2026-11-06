@@ -10,9 +10,6 @@ export {
   type DerivedCornerState,
 } from '@beeline/api-contract/phone';
 
-/** Existing grace period for commands a helper has not claimed. */
-export const CORNER_CHECKS_BLOCKED_AFTER = '2 minutes';
-
 /** An explicit worker report pauses automatic work until an answer is committed. */
 export async function cornerReportWaiting(db: SqlDatabase, cornerId: string, commandKind?: string): Promise<boolean> {
   // A worker's waiting state pauses automatic work, but must still let reports reach its commander.

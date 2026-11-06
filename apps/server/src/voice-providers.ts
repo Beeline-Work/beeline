@@ -23,7 +23,7 @@ export const AURA_VOICES = ['amalthea', 'andromeda', 'apollo', 'arcas', 'aries',
   'luna', 'mars', 'minerva', 'neptune', 'odysseus', 'ophelia', 'orion', 'orpheus',
   'pandora', 'phoebe', 'pluto', 'saturn', 'thalia', 'theia', 'vesta', 'zeus'] as const;
 
-export type VoiceAgent = { id: string; name: string; handle: string; soul: string; voice: string; chosenVoice?: string; face?: string };
+export type VoiceAgent = { id: string; name: string; handle: string; soul: string; voice: string; chosenVoice?: string; face?: string; avatar?: string };
 
 /** Stable per-agent timbre, influenced by its soul; collisions resolve within the Room. */
 export function assignVoiceAgents(

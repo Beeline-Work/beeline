@@ -32,18 +32,11 @@ import { PhoneService } from './phone-service.js';
 
 import { readRoomView } from '@beeline/api-contract/phone';
 
-import { cornerStatusLine } from '../../mobile/sources/buzz/corner-status-line.js';
-
 import type { createServer } from 'node:http';
 
 import type { AddressInfo } from 'node:net';
 
 vi.mock('./sentry.js', () => ({ captureServerError: vi.fn() }));
-
-
-export function checkStatusLine(lifecycle: unknown): string | undefined {
-  return cornerStatusLine(lifecycle as import('@beeline/api-contract/phone').CornerLifecycleView, false);
-}
 
 
 export const HUMAN = 'a'.repeat(64);

@@ -1,4 +1,4 @@
-import { randomBytes, describe, expect, it, vi, assignCornerWorker, PhoneService, DaemonService, GitHubOperations, LiveHub, systemLine, advanceCorner, cornerMergeGate, createAgentCommand, queueCornerMergeConflict, reconcileCornerMergeBlockers, CORNER_LIFECYCLE_CARD_TYPE, cornerOwnerSql, workflowRunLockKey, RecordingDatabase, H, A, B, R, db, phone, daemon, github, githubRollupState, githubHead, githubApp, implementersMerge, cards, currentState, commissioned, brief, open, claim, pushToCorner, greenHead, redHead, resumeWorker, commands, result, terminalResult, orderRepairsFromRoom, SHA, branchOf, reasons, projected, inReview, approve, approved, mergedWebhook, say, revise, F, fallback, rootFixture, fixtureScope14, fixtureScope18, fixtureScope19, fixtureScope20, type GitHubAppClient, type GitHubOAuthClient } from './test-support-corner-lifecycle.test-support.js';
+import { randomBytes, describe, expect, it, vi, assignCornerWorker, PhoneService, DaemonService, GitHubOperations, LiveHub, systemLine, advanceCorner, cornerMergeGate, createAgentCommand, queueCornerMergeConflict, reconcileCornerMergeBlockers, CORNER_LIFECYCLE_CARD_TYPE, cornerOwnerSql, RecordingDatabase, H, A, B, R, db, phone, daemon, github, githubRollupState, githubHead, githubApp, implementersMerge, cards, currentState, commissioned, brief, open, claim, pushToCorner, greenHead, redHead, resumeWorker, commands, result, terminalResult, orderRepairsFromRoom, SHA, branchOf, reasons, projected, inReview, approve, approved, mergedWebhook, say, revise, F, fallback, rootFixture, fixtureScope14, fixtureScope18, fixtureScope19, fixtureScope20, type GitHubAppClient, type GitHubOAuthClient } from './test-support-corner-lifecycle.test-support.js';
 
 describe('Reproduction S-07: every reviewer waits for a quiet corner', () => {
   it.each([B])('holds a review for %s until the worker releases its lease', async (reviewerId) => {
@@ -26,23 +26,23 @@ describe('Reproduction S-07: every reviewer waits for a quiet corner', () => {
 describe('Reproduction R5a: entry paths lock the run before corner rows', () => {
   it.each(['check webhook', 'merged webhook', 'approval', 'hold', 'brief', 'create', 'zero-check', 'blocker reconciliation', 'agent close', 'phone close'])('%s', async path => {
     const cornerId = await inReview();
-    const recording = new RecordingDatabase(db);
+    const recording = new RecordingDatabase(rootFixture.db);
     const recordedDaemon = new DaemonService(recording, new LiveHub());
-    const recordedGithub = new GitHubOperations(recording, {} as GitHubOAuthClient, githubApp as unknown as GitHubAppClient, 'secret');
+    const recordedGithub = new GitHubOperations(recording, {} as GitHubOAuthClient, rootFixture.githubApp as unknown as GitHubAppClient, 'secret');
     vi.spyOn(recordedGithub, 'assertCornerReviewerNotAuthor').mockResolvedValue(undefined);
     Object.assign(recordedDaemon, { github: recordedGithub });
     let lockId = cornerId;
     if (path === 'check webhook') {
-      githubRollupState = 'passed';
+      rootFixture.githubRollupState = 'passed';
       await recordedGithub.processWebhook('check_run', {
         installation: { id: 77 }, repository: { id: 101, full_name: 'owner/widgets' }, action: 'completed',
         check_run: { id: 5, name: 'typecheck', status: 'completed', conclusion: 'success',
           check_suite: { head_branch: branchOf(cornerId), head_sha: SHA } },
       });
     } else if (path === 'merged webhook') {
-      const previous = github;
-      github = recordedGithub;
-      try { await mergedWebhook(cornerId, 7, SHA); } finally { github = previous; }
+      const previous = rootFixture.github;
+      rootFixture.github = recordedGithub;
+      try { await mergedWebhook(cornerId, 7, SHA); } finally { rootFixture.github = previous; }
     } else if (path === 'approval') {
       await recordedDaemon.execute('approveCornerMerge', { cornerId, headSha: SHA }, B);
     } else if (path === 'hold') {
@@ -60,9 +60,9 @@ describe('Reproduction R5a: entry paths lock the run before corner rows', () => 
         brief: brief(command.sourceMessageId) }, A);
       lockId = created.cornerId;
     } else if (path === 'zero-check') {
-      await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(jsonb_set(lifecycle,'{checks}','"unknown"'),'{pr,mergeability}','"clean"') WHERE corner_id=$1`, [cornerId]);
+      await rootFixture.db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(jsonb_set(lifecycle,'{checks}','"unknown"'),'{pr,mergeability}','"clean"') WHERE corner_id=$1`, [cornerId]);
       const command = await commissioned(cornerId);
-      const status = { ...(await github.prChecksStatus({ cornerId })), checks: 'pending' as const, checkCount: 0, zeroChecksConfirmed: true };
+      const status = { ...(await rootFixture.github.prChecksStatus({ cornerId })), checks: 'pending' as const, checkCount: 0, zeroChecksConfirmed: true };
       const completion = new DaemonService(recording, new LiveHub(), undefined, undefined, false, undefined, false, undefined, async () => {
         // Completion runs after the reply transaction commits; inspect its own locks.
         recording.calls.length = 0;
@@ -71,7 +71,7 @@ describe('Reproduction R5a: entry paths lock the run before corner rows', () => 
       await completion.execute('postRoomMessage', { roomId: cornerId, requestId: command.turnRequestId,
         generationId: 'g1', text: 'https://github.com/owner/widgets/pull/7' }, A);
     } else {
-      await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checks}','"failing"') WHERE corner_id=$1`, [cornerId]);
+      await rootFixture.db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checks}','"failing"') WHERE corner_id=$1`, [cornerId]);
       await reconcileCornerMergeBlockers(recording, cornerId);
     }
     const retained = recording.calls.findIndex(call => call.values?.[0] === lockId

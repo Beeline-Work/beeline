@@ -1,4 +1,4 @@
-import { cornerKindSql, createHash, randomBytes, describe, expect, it, migrate, SYSTEM_IDENTITY_ID, describedWorkflow, PhoneService, DaemonService, LiveHub, systemLine, advanceCorner, CORNER_LIFECYCLE_SLUG, cornerMergeGate, deleteStoredCornerWorkflows, createAgentCommand, CORNER_LIFECYCLE_CARD_TYPE, cornerOwnerSql, getWorkflowRun, liveWorkflowRun, saveWorkflow, startWorkflow, workflowRunLockKey, RecordingDatabase, H, A, B, W, R, db, phone, daemon, github, githubRollupState, githubHead, githubApp, implementersMerge, derivedWorker, cards, currentState, commissioned, brief, open, claim, pushToCorner, greenHead, redHead, commands, result, SHA, OPEN_CLOSE_BADGES, branchOf, reasons, projected, inReview, approve, approved, mergedWebhook, say, revise, F, fallback, rootFixture, fixtureScope2, fixtureScope9, fixtureScope10, fixtureScope11, type CommandRow } from './test-support-corner-lifecycle.test-support.js';
+import { cornerKindSql, createHash, randomBytes, describe, expect, it, migrate, SYSTEM_IDENTITY_ID, describedWorkflow, PhoneService, DaemonService, LiveHub, systemLine, advanceCorner, CORNER_LIFECYCLE_SLUG, cornerMergeGate, deleteStoredCornerWorkflows, createAgentCommand, CORNER_LIFECYCLE_CARD_TYPE, cornerOwnerSql, getWorkflowRun, liveWorkflowRun, saveWorkflow, startWorkflow, RecordingDatabase, H, A, B, W, R, db, phone, daemon, github, githubRollupState, githubHead, githubApp, implementersMerge, derivedWorker, cards, currentState, commissioned, brief, open, claim, pushToCorner, greenHead, redHead, commands, result, SHA, OPEN_CLOSE_BADGES, branchOf, reasons, projected, inReview, approve, approved, mergedWebhook, say, revise, F, fallback, rootFixture, fixtureScope2, fixtureScope9, fixtureScope10, fixtureScope11, type CommandRow } from './test-support-corner-lifecycle.test-support.js';
 
 describe('the corner lifecycle contract itself', () => {
 
@@ -370,7 +370,7 @@ describe('checks dispatch (rows 6-8)', () => {
 describe('the run lock (a push transition can race a close or another push)', () => {
   it('retains the state row in the first read before applying a transition', async () => {
     const cornerId = await open('owner/widgets');
-    const recording = new RecordingDatabase(db);
+    const recording = new RecordingDatabase(rootFixture.db);
     await advanceCorner(recording, cornerId, { kind: 'push', headSha: '1'.repeat(40), contents: {} });
     expect(recording.calls[0]).toEqual({
       sql: expect.stringContaining('FOR UPDATE OF fact'),
@@ -736,8 +736,8 @@ const scope11 = fixtureScope11();
 
   it('keeps the yes on the head: a brief edit does not cancel it, and the implementer still merges', async () => {
     const cornerId = await approved();
-    await implementerOnline();
-    const recording = new RecordingDatabase(db);
+    await scope11.implementerOnline();
+    const recording = new RecordingDatabase(rootFixture.db);
     expect(await revise(cornerId, new DaemonService(recording, new LiveHub())))
       .toMatchObject({ revision: 2, wake: { queued: true, agentId: A } });
     const lock = recording.calls.findIndex(c => c.sql === 'SELECT corner_id FROM corner_facts WHERE corner_id=$1 FOR UPDATE');
@@ -746,10 +746,10 @@ const scope11 = fixtureScope11();
     expect(lock).toBeLessThan(write);
     expect(await reasons(cornerId, B)).not.toContain('corner_check');
     expect(await currentState(cornerId)).toBe('working');
-    expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ approved: true, open: true });
-    expect(await github.prChecksStatus({ cornerId })).toMatchObject({ approved: true, mergeAllowed: true });
+    expect(await cornerMergeGate(rootFixture.db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ approved: true, open: true });
+    expect(await rootFixture.github.prChecksStatus({ cornerId })).toMatchObject({ approved: true, mergeAllowed: true });
     expect(await implementersMerge()).toBe(1);
-    expect(githubApp.mergePullRequest).toHaveBeenCalledWith(77, 101, 'owner/widgets', 7, SHA);
+    expect(rootFixture.githubApp.mergePullRequest).toHaveBeenCalledWith(77, 101, 'owner/widgets', 7, SHA);
   });
 
 

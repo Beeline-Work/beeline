@@ -764,7 +764,7 @@ const scope1 = fixtureScope1();
 
 
   it.each(['installation', 'repository', 'removal'])('INSTALL-SYNC-1: consumes a failed %s callback and refuses replay', async boundary => {
-    const { operations, installState } = await boundInstallationOperations(orgInstallationApp('allow'));
+    const { operations, installState } = await scope1.boundInstallationOperations(scope1.orgInstallationApp('allow'));
     const transaction = scope1.database.transaction.bind(scope1.database);
     const failure = Object.assign(new Error('deadlock detected'), { code: '40P01' });
     let attempts = 0;

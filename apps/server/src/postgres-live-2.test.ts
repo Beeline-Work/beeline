@@ -715,7 +715,7 @@ const scope1 = fixtureScope1();
       liveB,
       () => clientB,
     );
-    listeners.push(listenerA, listenerB);
+    scope1.listeners.push(listenerA, listenerB);
     void listenerA.run();
     void listenerB.run();
     await eventually(() => listenerA.projectionHealth().connected && listenerB.projectionHealth().connected);

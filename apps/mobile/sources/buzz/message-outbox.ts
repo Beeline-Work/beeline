@@ -105,8 +105,9 @@ export class MessageOutbox {
   async connectionChanged(connected: boolean): Promise<void> {
     await this.restore();
     if (this.disposed) return;
+    // A confirming answer on an already connected socket is not a new epoch.
+    if (connected && !this.connected) this.epoch += 1;
     this.connected = connected;
-    if (connected) this.epoch += 1;
     this.records = this.records.map(record => ({ ...record, offlineSince: connected ? undefined : record.offlineSince ?? this.now() }));
     await this.save();
     if (connected) await this.flush();

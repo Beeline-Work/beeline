@@ -11,6 +11,8 @@ import { subscribeClientReset, clientResetGeneration } from '@/sync/client-reset
 let stop: (() => void) | undefined;
 let starting: Promise<void> | undefined;
 let active: ReturnType<typeof getMessageOutbox> | undefined;
+const rejection = (error: unknown) => error instanceof MonolithPhoneOperationError && error.status >= 400 && error.status < 500 && ![408, 429].includes(error.status)
+  ? error.code : undefined;
 export function startMessageOutbox(): Promise<void> {
   return starting ??= (async () => {
     const generation = clientResetGeneration();
@@ -19,19 +21,24 @@ export function startMessageOutbox(): Promise<void> {
     const transport = new MonolithRigTransport(identity);
     const connection = sharedLiveConnection();
     configureMessageOutboxDelivery({
-      send: async event => {
+      send: async (event, cause) => {
+        const socketGeneration = connection.diagnostics().generation;
         try {
           const result = await transport.publishPreparedMessage(event);
           markDictatedMessageAccepted(event.id);
           return result;
         }
         catch (error) {
-          if (connection.diagnostics().state !== 1) void active?.connectionChanged(false);
+          if (!rejection(error) && generation === clientResetGeneration() && socketGeneration === connection.diagnostics().generation) {
+            void active?.connectionChanged(false);
+            // The reconnect owns the replay. Its failure stays pending until
+            // another real trigger, rather than starting a recovery loop.
+            if (cause === 'send') connection.reconnectAfterFailedSend(socketGeneration);
+          }
           throw error;
         }
       },
-      rejection: error => error instanceof MonolithPhoneOperationError && error.status >= 400 && error.status < 500 && ![408, 429].includes(error.status)
-        ? error.code : undefined,
+      rejection,
     });
     const owner = getMessageOutbox(getBuzzRuntimeConfig().monolithUrl, identity);
     active = owner;

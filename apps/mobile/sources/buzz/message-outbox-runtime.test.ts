@@ -12,7 +12,8 @@ vi.mock('@/buzz/runtime-config', () => ({ getBuzzRuntimeConfig: () => ({ monolit
 vi.mock('@/auth/monolith-session', () => ({ MONOLITH_REQUEST_TIMEOUT_MS: 15_000, MonolithRequestTimeoutError: class extends Error {}, monolithSession: { fetch: vi.fn() } }));
 vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({
   request: fixture.request,
-  diagnostics: () => ({ state: fixture.state }),
+  reconnectAfterFailedSend: vi.fn(),
+  diagnostics: () => ({ state: fixture.state, generation: 1 }),
   subscribeConnected: (listener: () => void) => { fixture.connected = listener; return () => { fixture.connected = undefined; }; },
   subscribeDisconnected: (listener: () => void) => { fixture.disconnected = listener; return () => { fixture.disconnected = undefined; }; },
   register: async () => { fixture.holds++; return () => { fixture.holds--; }; },

@@ -1,3 +1,4 @@
+import { type PendingComposerAck } from '@/buzz/room-indicators';
 import { trackDictatedMessage } from '@/buzz/dictation-timing';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import React, { useRef, useCallback } from 'react';
@@ -38,7 +39,7 @@ type Props = [
   outbox: import("@/app/(app)/beeline/chat/useRoomSurfaceSession").RoomSurfaceOutboxHandle,
   desktopTranscript: boolean,
   setReceivedSteer: React.Dispatch<React.SetStateAction<{ agentPubkey: string; turnRequestId: string; receivedAt: number; } | null>>,
-  setPendingAck: React.Dispatch<React.SetStateAction<{ sentAt: number; requestId?: string; } | null>>,
+  setPendingAck: React.Dispatch<React.SetStateAction<PendingComposerAck | null>>,
   setSending: React.Dispatch<React.SetStateAction<boolean>>,
   desktopExperience: boolean,
   setDesktopDeliveryState: React.Dispatch<React.SetStateAction<"failed" | "sending" | "delivered" | null>>,
@@ -369,15 +370,14 @@ export function useChatComposerSend([
           });
         }
         if (desktopExperience) setDesktopDeliveryState('delivered');
-        // The write ack retires the local bridge: the server has STORED the
-        // message, so "sending…" has nothing left to bridge. It used to outlive
-        // the write by up to the whole first-token wait (tens of seconds) or
-        // its own 15s bound, whichever was longer. The claimed turn's WORKING
-        // receipt lights `thinking` on its own, and this ack must not sit
-        // between them.
+        // Storage retires the sending bridge. External recipients get a brief
+        // static confirmation; only a real working receipt drives native status.
+        const acceptedAt = Date.now();
         const ackedRequestId = preparedEvent.id;
         setPendingAck((current) =>
-          current && (current.requestId === undefined || current.requestId === ackedRequestId)
+          writeResult.externalAgentHandles?.length
+            ? { sentAt: acceptedAt, requestId: ackedRequestId, externalHandles: writeResult.externalAgentHandles }
+            : current && (current.requestId === undefined || current.requestId === ackedRequestId)
             ? null
             : current,
         );

@@ -9,10 +9,7 @@ export async function fetchMcpLogo(value: string, size = 96): Promise<string> {
   const url = new URL(value);
   if (url.protocol !== 'https:' || url.username || url.password || url.port || url.hash || value.length > 2048)
     throw new Error('Invalid logo URL');
-  const signal = AbortSignal.timeout(3000);
-  const answers = await Promise.race([lookup(url.hostname, { all: true, verbatim: true }), new Promise<never>((_, reject) => {
-    signal.addEventListener('abort', () => reject(new Error('Logo DNS timeout')), { once: true });
-  })]);
+  const answers = await lookup(url.hostname, { all: true, verbatim: true });
   if (!answers.length || answers.some(a => !publicMcpAddress(a.address))) throw new Error('Non-public logo address');
   const address = answers[0]!;
   const agent = new Agent({ autoSelectFamily: false, lookup(host, _options, callback) {
@@ -21,7 +18,7 @@ export async function fetchMcpLogo(value: string, size = 96): Promise<string> {
   } });
   try {
     const bytes = await new Promise<Buffer>((resolve, reject) => {
-      const req = request(url, { agent, signal, headers: { accept: 'image/png,image/jpeg,image/webp' } }, res => {
+      const req = request(url, { agent, headers: { accept: 'image/png,image/jpeg,image/webp' } }, res => {
         if (res.statusCode !== 200 || !['image/png', 'image/jpeg', 'image/webp'].includes(res.headers['content-type']?.split(';')[0] ?? '')) {
           res.resume(); reject(new Error('Unsupported logo')); return;
         }
@@ -39,21 +36,24 @@ export async function fetchMcpLogo(value: string, size = 96): Promise<string> {
   } finally { agent.destroy(); }
 }
 
+/** The bot face every AI app without its own company logo wears (Cursor included). */
+const BOT_FACE = 'grok-bot.svg';
+
 // Website-supported agents. Only local/handoff callbacks use the registered name
 // to select a fixed entry; web/native callbacks determine their own identity.
 const MCP_AGENTS = [
   { name: 'Codex', logo: 'codex.png', aliases: /^(codex|openai codex)$/i },
   { name: 'Claude Code', logo: 'claude.png', aliases: /^(claude|claude code)$/i },
   { name: 'Claude Duet', logo: 'claude.png', aliases: /^claude duet$/i, hosts: ['claude.ai', 'claude.com'] },
-  { name: 'Cursor', logo: 'cursor.svg', aliases: /^cursor$/i, hosts: ['cursor.com', 'www.cursor.com'], scheme: 'cursor:', authority: 'anysphere.cursor-mcp' },
+  { name: 'Cursor', logo: BOT_FACE, aliases: /^cursor$/i, hosts: ['cursor.com', 'www.cursor.com'], scheme: 'cursor:', authority: 'anysphere.cursor-mcp' },
   { name: 'Goose', logo: 'goose.png', aliases: /^goose$/i },
   { name: 'Pi', logo: 'pi.svg', aliases: /^pi$/i },
   { name: 'OpenCode', logo: 'opencode.svg', aliases: /^opencode$/i },
   { name: 'Grok', logo: 'grok.svg', aliases: /^grok$/i },
-  { name: 'Grok Bot', logo: 'grok-bot.svg', aliases: /^(grok bot|grokbot)$/i, callback: 'https://www.cursor.com/agents/mcp/oauth/callback' },
+  { name: 'Grok Bot', logo: BOT_FACE, aliases: /^(grok bot|grokbot)$/i, callback: 'https://www.cursor.com/agents/mcp/oauth/callback' },
   { name: 'Hermes', logo: 'hermes.svg', aliases: /^hermes$/i },
   { name: 'Muse', logo: 'muse.webp', aliases: /^(meta muse|metamuse|muse)$/i, hosts: ['agent.meta.ai'] },
-  { name: 'ChatGPT', logo: 'dots.png', aliases: /^(chatgpt|chatgpt dots|dots|openai dots)$/i, hosts: ['chatgpt.com'] },
+  { name: 'ChatGPT', logo: 'openai.svg', aliases: /^(chatgpt|chatgpt dots|dots|openai dots)$/i, hosts: ['chatgpt.com'] },
   { name: 'Gemini', logo: 'gemini.png', aliases: /^gemini$/i },
   { name: 'ZCode', logo: 'zcode.png', aliases: /^zcode$/i },
 ];
@@ -80,26 +80,45 @@ export function mcpClientName(name: string, redirects: readonly string[] = []): 
 
 const bundled = new Map<string, Promise<string>>();
 const bundledKey = (name: string) => MCP_AGENTS.find(agent => agent.aliases.test(name))?.logo;
-export function bundledMcpLogo(name: string): Promise<string | undefined> {
-  const key = bundledKey(name);
-  if (!key) return Promise.resolve(undefined);
+function bundledAsset(key: string): Promise<string> {
   if (!bundled.has(key)) bundled.set(key, sharp(readFileSync(new URL(`../assets/mcp/${key}`, import.meta.url)))
     .resize(96, 96, { fit: 'inside' }).png().toBuffer().then(bytes => `data:image/png;base64,${bytes.toString('base64')}`));
   return bundled.get(key)!;
+}
+export function bundledMcpLogo(name: string): Promise<string | undefined> {
+  const key = bundledKey(name);
+  return key ? bundledAsset(key) : Promise.resolve(undefined);
+}
+
+/**
+ * The one logo source for an AI app, shared by Connectors and its member's
+ * default picture: the known app's bundled mark, then the logo the app
+ * registered, then the bot face. Never a letter.
+ */
+function logoSource(clientName: string, registered: string | null): { key: string } | { data: string } {
+  const key = bundledKey(clientName);
+  if (key) return { key };
+  return registered?.startsWith('data:image/png;base64,') ? { data: registered } : { key: BOT_FACE };
+}
+
+/** Resolved on read from the registered identity, so a client registered
+ *  before its mapping existed still shows its logo. */
+export function mcpClientLogo(name: string, redirects: readonly string[], registered: string | null): Promise<string> {
+  const source = logoSource(mcpClientName(name, redirects), registered);
+  return 'key' in source ? bundledAsset(source.key) : Promise.resolve(source.data);
 }
 
 const AVATAR_SIZE = 256;
 /**
  * The picture a client's member shows in Members and on its messages, served
  * from /v1/agent-avatars/ like any generated portrait. A bundled mark renders
- * from the bundled asset; otherwise the image is the client's cached logo.
+ * from the bundled asset; otherwise the client's cached logo, else the bot face.
  * Member-selected portraits are stored separately and never pass this path.
  */
-export async function mcpMemberAvatar(name: string, image: string | null): Promise<Buffer | undefined> {
-  const key = bundledKey(name);
-  const source = key ? readFileSync(new URL(`../assets/mcp/${key}`, import.meta.url))
-    : image?.startsWith('data:image/') ? Buffer.from(image.slice(image.indexOf(',') + 1), 'base64') : undefined;
-  if (!source) return undefined;
+export async function mcpMemberAvatar(name: string, image: string | null): Promise<Buffer> {
+  const logo = logoSource(name, image);
+  const source = 'key' in logo ? readFileSync(new URL(`../assets/mcp/${logo.key}`, import.meta.url))
+    : Buffer.from(logo.data.slice(logo.data.indexOf(',') + 1), 'base64');
   // A brand mark sits inset on one bone plate, so it reads the same on every
   // member hue and in both themes.
   const inset = Math.round(AVATAR_SIZE * 0.14), plate = { r: 0xF3, g: 0xEE, b: 0xE4, alpha: 1 };

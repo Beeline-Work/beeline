@@ -1,80 +1,7 @@
+import { m16_access, m16_mkdtemp, m16_tmpdir, m16_resolve, m16_describe, m16_expect, m16_it, m16_cornerBranchIsSafeToDelete, m16_materializeCornerWorktree, m16_removeCornerWorktreeAndBranches, mergedDescribe16, m35_access, m35_mkdir, m35_mkdtemp, m35_rm, m35_writeFile, m35_tmpdir, m35_resolve, m35_expect, m35_it, m35_vi, m35_RoomRuntimeCoordinator, m35_materializeCornerWorktree, m35_MonolithCornerTurnLoop, m35_agentCornerCheckoutPaths, m35_readStorageOwners, m35_rememberStorageOwner, m35_markAgentStorageEnded, m35_pruneEndedOwnerStorage, m35_identityFromKey, mergedDescribe35, m36_mkdtemp, m36_tmpdir, m36_join, m36_describe, m36_expect, m36_it, m36_vi, m36_identityFromKey, m36_RoomRuntimeCoordinator, mergedDescribe36, m37_mkdtemp, m37_tmpdir, m37_resolve, m37_describe, m37_expect, m37_it, m37_vi, m37_DaemonApiError, m37_RoomRuntimeCoordinator, m37_identityFromKey, mergedDescribe37, m38_mkdtemp, m38_rm, m38_tmpdir, m38_resolve, m38_expect, m38_it, m38_vi, m38_RoomRuntimeCoordinator, m38_identityFromKey, mergedDescribe38, move2_resolve, move2_describe, move2_expect, move2_it, movedDescribe2, fixtureScope1, fixtureScope4, fixtureScope5, fixtureScope7, fixtureScope10, type m35_DaemonApiClient, type m35_AgentRuntimeRecord, type m36_DaemonApiClient, type m36_AgentRuntimeRecord, type m37_DaemonApiClient, type m37_AgentRuntimeRecord, type m38_AgentRuntimeRecord } from './test-support-room-runtime.test-support.js';
 
-import { execFile as m16_execFile } from 'node:child_process';
-
-import { access as m16_access, mkdtemp as m16_mkdtemp, rm as m16_rm, writeFile as m16_writeFile } from 'node:fs/promises';
-
-import { tmpdir as m16_tmpdir } from 'node:os';
-
-import { resolve as m16_resolve } from 'node:path';
-
-import { promisify as m16_promisify } from 'node:util';
-
-import { afterEach as m16_afterEach, describe as m16_describe, expect as m16_expect, it as m16_it } from 'vitest';
-
-import {
-  cornerBranchIsSafeToDelete as m16_cornerBranchIsSafeToDelete,
-  materializeCornerWorktree as m16_materializeCornerWorktree,
-  removeCornerWorktreeAndBranches as m16_removeCornerWorktreeAndBranches,
-} from "./room-runtime.js";
-import { describe as mergedDescribe16 } from 'vitest';
 mergedDescribe16("corner-pr-branch-preservation.test.ts", () => {
-
-
-/**
- * A corner's branch is the shared artifact its pull request points at. Close
- * cleanup may take the worktree, but never an open pull request's head branch:
- * deleting that closes the pull request and leaves the commits reachable only
- * through `refs/pull/<n>/head`. These run against a real bare repository so the
- * proof is git's own answer, not a mock that agrees with the code.
- */
-const execFileAsync = m16_promisify(m16_execFile);
-
-const roots: string[] = [];
-
-m16_afterEach(async () =>
-  Promise.all(roots.splice(0).map((root) => m16_rm(root, { recursive: true, force: true }))),
-);
-
-
-const FEATURE = 'feature/corner-open-pr';
-
-
-const COMMITTER = {
-  GIT_AUTHOR_NAME: 'Test',
-  GIT_AUTHOR_EMAIL: 'test@example.com',
-  GIT_COMMITTER_NAME: 'Test',
-  GIT_COMMITTER_EMAIL: 'test@example.com',
-};
-
-
-async function git(cwd: string, ...args: string[]): Promise<string> {
-  const result = await execFileAsync('git', ['-C', cwd, ...args], {
-    env: { ...process.env, ...COMMITTER },
-  });
-  return result.stdout.trim();
-}
-
-
-/** A bare repository with `main` and a corner branch one commit ahead of it. */
-async function remoteWithCornerBranch(): Promise<{ remote: string }> {
-  const scratch = await m16_mkdtemp(m16_resolve(m16_tmpdir(), 'beeline-corner-preserve-remote-'));
-  roots.push(scratch);
-  const seed = m16_resolve(scratch, 'seed');
-  await execFileAsync('git', ['init', '-b', 'main', seed]);
-  await m16_writeFile(m16_resolve(seed, 'README.md'), 'objective\n');
-  await git(seed, 'add', '.');
-  await git(seed, 'commit', '-m', 'objective');
-  await git(seed, 'checkout', '-b', FEATURE);
-  await m16_writeFile(m16_resolve(seed, 'opener.txt'), 'work the opener pushed\n');
-  await git(seed, 'add', '.');
-  await git(seed, 'commit', '-m', 'opener work');
-  await git(seed, 'checkout', 'main');
-  const bare = m16_resolve(scratch, 'remote.git');
-  await execFileAsync('git', ['clone', '--bare', seed, bare]);
-  return { remote: `file://${bare}` };
-}
-
-
+const scope1 = fixtureScope1();
 m16_describe('cornerBranchIsSafeToDelete', () => {
   m16_it('keeps the branch while a pull request is open (no merge stamp)', () => {
     m16_expect(
@@ -91,6 +18,7 @@ m16_describe('cornerBranchIsSafeToDelete', () => {
       }),
     ).toBe(false);
   });
+
 
   m16_it('deletes the branch once the pull request merged', () => {
     m16_expect(
@@ -109,25 +37,24 @@ m16_describe('cornerBranchIsSafeToDelete', () => {
     ).toBe(true);
   });
 
+
   m16_it('deletes a branch no pull request ever claimed', () => {
     m16_expect(m16_cornerBranchIsSafeToDelete(undefined)).toBe(true);
     m16_expect(
-      m16_cornerBranchIsSafeToDelete({ lifecycle: 'working', checks: 'unknown', branch: FEATURE }),
+      m16_cornerBranchIsSafeToDelete({ lifecycle: 'working', checks: 'unknown', branch: scope1.FEATURE }),
     ).toBe(true);
   });
 });
-
-
 m16_describe('corner close cleanup', () => {
   m16_it('reaps the worktree but keeps an open pull request branch on GitHub', async () => {
-    const { remote } = await remoteWithCornerBranch();
+    const { remote } = await scope1.remoteWithCornerBranch();
     const supervisorRoot = await m16_mkdtemp(m16_resolve(m16_tmpdir(), 'beeline-corner-preserve-'));
-    roots.push(supervisorRoot);
+    scope1.roots.push(supervisorRoot);
     const worktree = await m16_materializeCornerWorktree({
       cornerId: 'corner-open-pr',
       remote,
       targetBranch: 'main',
-      featureBranch: FEATURE,
+      featureBranch: scope1.FEATURE,
       token: 'unused',
       supervisorRoot,
       committer: { name: 'Helper', publicKey: 'a'.repeat(64) },
@@ -135,7 +62,7 @@ m16_describe('corner close cleanup', () => {
     const bare = remote.slice('file://'.length);
     const cleanup = () =>
       m16_removeCornerWorktreeAndBranches(
-        { ...worktree, cornerId: 'corner-open-pr', branch: FEATURE, token: 'unused' },
+        { ...worktree, cornerId: 'corner-open-pr', branch: scope1.FEATURE, token: 'unused' },
         { preserveRemoteBranch: true },
       );
 
@@ -143,26 +70,27 @@ m16_describe('corner close cleanup', () => {
 
     await m16_expect(m16_access(worktree.path)).rejects.toMatchObject({ code: 'ENOENT' });
     await m16_expect(
-      git(worktree.gitCommonDir, 'show-ref', '--verify', `refs/heads/${FEATURE}`),
+      scope1.git(worktree.gitCommonDir, 'show-ref', '--verify', `refs/heads/${scope1.FEATURE}`),
     ).rejects.toThrow();
     // The artifact the pull request points at survives.
-    await m16_expect(git(bare, 'show-ref', '--verify', `refs/heads/${FEATURE}`)).resolves.toBeTruthy();
-    await m16_expect(git(bare, 'show-ref', '--verify', 'refs/heads/main')).resolves.toBeTruthy();
+    await m16_expect(scope1.git(bare, 'show-ref', '--verify', `refs/heads/${scope1.FEATURE}`)).resolves.toBeTruthy();
+    await m16_expect(scope1.git(bare, 'show-ref', '--verify', 'refs/heads/main')).resolves.toBeTruthy();
 
     // A retried preserved cleanup stays idempotent.
     await m16_expect(cleanup()).resolves.toBeUndefined();
-    await m16_expect(git(bare, 'show-ref', '--verify', `refs/heads/${FEATURE}`)).resolves.toBeTruthy();
+    await m16_expect(scope1.git(bare, 'show-ref', '--verify', `refs/heads/${scope1.FEATURE}`)).resolves.toBeTruthy();
   });
 
+
   m16_it('an agent copy never deletes the shared remote branch during cleanup', async () => {
-    const { remote } = await remoteWithCornerBranch();
+    const { remote } = await scope1.remoteWithCornerBranch();
     const supervisorRoot = await m16_mkdtemp(m16_resolve(m16_tmpdir(), 'beeline-corner-delete-'));
-    roots.push(supervisorRoot);
+    scope1.roots.push(supervisorRoot);
     const worktree = await m16_materializeCornerWorktree({
       cornerId: 'corner-no-pr',
       remote,
       targetBranch: 'main',
-      featureBranch: FEATURE,
+      featureBranch: scope1.FEATURE,
       token: 'unused',
       supervisorRoot,
       committer: { name: 'Helper', publicKey: 'a'.repeat(64) },
@@ -170,43 +98,17 @@ m16_describe('corner close cleanup', () => {
     const bare = remote.slice('file://'.length);
 
     await m16_removeCornerWorktreeAndBranches(
-      { ...worktree, cornerId: 'corner-no-pr', branch: FEATURE, token: 'unused' },
+      { ...worktree, cornerId: 'corner-no-pr', branch: scope1.FEATURE, token: 'unused' },
       { preserveRemoteBranch: false },
     );
 
-    await m16_expect(git(bare, 'show-ref', '--verify', `refs/heads/${FEATURE}`)).resolves.toBeTruthy();
+    await m16_expect(scope1.git(bare, 'show-ref', '--verify', `refs/heads/${scope1.FEATURE}`)).resolves.toBeTruthy();
   });
 });
 });
-
-import { execFile as m35_execFile } from 'node:child_process';
-
-import { access as m35_access, mkdir as m35_mkdir, mkdtemp as m35_mkdtemp, rm as m35_rm, writeFile as m35_writeFile } from 'node:fs/promises';
-
-import { tmpdir as m35_tmpdir } from 'node:os';
-
-import { resolve as m35_resolve } from 'node:path';
-
-import { promisify as m35_promisify } from 'node:util';
-
-import { expect as m35_expect, it as m35_it, vi as m35_vi } from 'vitest';
-
-import type { DaemonApiClient as m35_DaemonApiClient } from "./daemon-api-client.js";
-
-import { RoomRuntimeCoordinator as m35_RoomRuntimeCoordinator, materializeCornerWorktree as m35_materializeCornerWorktree } from "./room-runtime.js";
-
-import { MonolithCornerTurnLoop as m35_MonolithCornerTurnLoop } from "./monolith-corner-turn.js";
-
-import { agentCornerCheckoutPaths as m35_agentCornerCheckoutPaths } from "./agent-corner-checkout.js";
-
-import { readStorageOwners as m35_readStorageOwners, rememberStorageOwner as m35_rememberStorageOwner, markAgentStorageEnded as m35_markAgentStorageEnded, pruneEndedOwnerStorage as m35_pruneEndedOwnerStorage } from "./storage-owners.js";
-
-import { identityFromKey as m35_identityFromKey, type AgentRuntimeRecord as m35_AgentRuntimeRecord } from "./runtime.js";
-import { describe as mergedDescribe35 } from 'vitest';
 mergedDescribe35("room-runtime.agent-checkout.test.ts", () => {
+const scope4 = fixtureScope4();
 
-
-const exec = m35_promisify(m35_execFile);
 
 m35_it('read-only assignments reuse the Room checkout, then select a private copy after a writable brief revision', async () => {
   const root = await m35_mkdtemp(m35_resolve(m35_tmpdir(), 'corner-readonly-'));
@@ -237,11 +139,11 @@ m35_it('read-only assignments reuse the Room checkout, then select a private cop
   m35_vi.spyOn(internal, 'materializeRoomCheckout').mockResolvedValue(roomCheckout);
   m35_vi.spyOn(internal, 'grantRunnerEndpoint').mockResolvedValue(undefined);
   try {
-    await exec('git', ['init', '-b', 'main', roomCheckout]);
+    await scope4.exec('git', ['init', '-b', 'main', roomCheckout]);
     await m35_writeFile(m35_resolve(roomCheckout, 'file'), 'source');
-    await exec('git', ['-C', roomCheckout, 'add', '.']);
-    await exec('git', ['-C', roomCheckout, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'base']);
-    await exec('git', ['clone', '--bare', roomCheckout, remote]);
+    await scope4.exec('git', ['-C', roomCheckout, 'add', '.']);
+    await scope4.exec('git', ['-C', roomCheckout, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'base']);
+    await scope4.exec('git', ['clone', '--bare', roomCheckout, remote]);
     await internal.startCorner({ cornerId: 'corner', parentRoomId: 'parent' });
     m35_expect(run).toHaveBeenCalledOnce();
     const turn = loop as unknown as { withCheckout(work: () => Promise<void>): Promise<void>;
@@ -270,6 +172,7 @@ m35_it('read-only assignments reuse the Room checkout, then select a private cop
 });
 
 
+
 m35_it('membership retirement preserves private copies without archive authority', async () => {
   const root = await m35_mkdtemp(m35_resolve(m35_tmpdir(), 'corner-leave-'));
   const identity = m35_identityFromKey('11'.repeat(32), 'Bee');
@@ -281,11 +184,11 @@ m35_it('membership retirement preserves private copies without archive authority
     { daemonApi: { execute } as unknown as m35_DaemonApiClient });
   try {
     const seed = m35_resolve(root, 'seed'), remote = m35_resolve(root, 'remote.git');
-    await exec('git', ['init', '-b', 'main', seed]);
+    await scope4.exec('git', ['init', '-b', 'main', seed]);
     await m35_writeFile(m35_resolve(seed, 'file'), 'published');
-    await exec('git', ['-C', seed, 'add', '.']);
-    await exec('git', ['-C', seed, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'base']);
-    await exec('git', ['clone', '--bare', seed, remote]);
+    await scope4.exec('git', ['-C', seed, 'add', '.']);
+    await scope4.exec('git', ['-C', seed, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'base']);
+    await scope4.exec('git', ['clone', '--bare', seed, remote]);
     const input = { supervisorRoot: root, cornerId: 'corner', remote: `file://${remote}`,
       targetBranch: 'main', featureBranch: 'feature/corner', token: 'fixture' };
     const [mine, peer] = await Promise.all([identity.publicKey, 'b'.repeat(64)].map(publicKey =>
@@ -293,7 +196,7 @@ m35_it('membership retirement preserves private copies without archive authority
     await m35_rememberStorageOwner(root, { workspaceId: 'workspace', roomId: 'corner', kind: 'corners',
       itemId: mine!.path.split('/').pop()!, agentId: identity.publicKey });
     // The reviewer may have detached to the published branch head.
-    await exec('git', ['-C', mine!.path, 'checkout', '--detach']);
+    await scope4.exec('git', ['-C', mine!.path, 'checkout', '--detach']);
     const internal = coordinator as unknown as { reapCornerWorktree(worktree: object): Promise<void> };
     await m35_expect(internal.reapCornerWorktree({ ...mine, cornerId: 'corner', branch: 'feature/corner', token: '' })).rejects.toThrow('membership revoked');
     await m35_expect(m35_access(mine!.path)).resolves.toBeUndefined();
@@ -317,56 +220,9 @@ m35_it('membership retirement preserves private copies without archive authority
 });
 
 
-async function cornerFixture(prefix: string, implementerAgentId: (self: string) => string) {
-  const root = await m35_mkdtemp(m35_resolve(m35_tmpdir(), prefix));
-  const identity = m35_identityFromKey('11'.repeat(32), 'Bee');
-  const runtime = { agent: { name: 'Bee', publicKey: identity.publicKey, secretKeyHex: '11'.repeat(32) },
-    rooms: [], communityId: 'workspace', supervisorRoot: root,
-    transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'fixture' } } as m35_AgentRuntimeRecord;
-  const remote = m35_resolve(root, 'remote.git'), roomCheckout = m35_resolve(root, 'room');
-  const posted: string[] = [];
-  const execute = m35_vi.fn(async (name: string, input: { text?: string }) => {
-    if (name === 'getCornerRestoreState') return { cornerId: 'corner', objective: 'Fix it', closeRequested: false,
-      implementerAgentId: implementerAgentId(identity.publicKey), brief: { repositoryWork: true } };
-    if (name === 'getRoomRepositoryState') return { resolution: 'repository', key: 'owner/repo', remote: `file://${remote}` };
-    if (name === 'getRoomGitHubToken') return { token: 'fixture', expiresAt: Date.now() + 60_000 };
-    if (name === 'postRoomMessage') posted.push(input.text!);
-    return {};
-  });
-  const coordinator = new m35_RoomRuntimeCoordinator(runtime, m35_resolve(root, 'runtime.json'), { workspaceRoot: root } as never,
-    { daemonApi: { execute } as unknown as m35_DaemonApiClient });
-  let loop!: m35_MonolithCornerTurnLoop;
-  const run = m35_vi.spyOn(m35_MonolithCornerTurnLoop.prototype, 'run').mockImplementation(function (this: m35_MonolithCornerTurnLoop) {
-    loop = this;
-    const signal = (this as unknown as { options: { signal: AbortSignal } }).options.signal;
-    return new Promise<void>(done => signal.addEventListener('abort', () => done(), { once: true }));
-  });
-  const internal = coordinator as unknown as { startCorner(input: { cornerId: string; parentRoomId: string }): Promise<void>;
-    materializeRoomCheckout(): Promise<string>; grantRunnerEndpoint(): Promise<undefined> };
-  m35_vi.spyOn(internal, 'materializeRoomCheckout').mockResolvedValue(roomCheckout);
-  m35_vi.spyOn(internal, 'grantRunnerEndpoint').mockResolvedValue(undefined);
-  await exec('git', ['init', '-b', 'main', roomCheckout]);
-  await m35_writeFile(m35_resolve(roomCheckout, 'file'), 'source');
-  await exec('git', ['-C', roomCheckout, 'add', '.']);
-  await exec('git', ['-C', roomCheckout, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'base']);
-  await exec('git', ['clone', '--bare', roomCheckout, remote]);
-  await internal.startCorner({ cornerId: 'corner', parentRoomId: 'parent' });
-  const turn = loop as unknown as {
-    withCheckout(work: () => Promise<void>): Promise<void>;
-    retainBackgroundClient(client: unknown): Promise<void>;
-    commandContext: { current?: { reason: string } };
-    options: { worktreePath: string; repository: { readOnly: boolean } };
-  };
-  return {
-    root, remote, roomCheckout, identity, turn, posted,
-    own: m35_agentCornerCheckoutPaths(root, 'corner', identity.publicKey),
-    close: async () => { run.mockRestore(); await coordinator.shutdown(); await m35_rm(root, { recursive: true, force: true }); },
-  };
-}
-
 
 m35_it('a commander or tagged agent reads the Room checkout; an order gives it a private copy', async () => {
-  const fixture = await cornerFixture('corner-commander-', () => 'c'.repeat(64));
+  const fixture = await scope4.cornerFixture('corner-commander-', () => 'c'.repeat(64));
   const { turn, own, roomCheckout } = fixture;
   try {
     // Activation and an ordinary turn of a non-implementer take no copy.
@@ -382,50 +238,19 @@ m35_it('a commander or tagged agent reads the Room checkout; an order gives it a
       m35_expect(turn.options.worktreePath).toBe(own.path);
       m35_expect(turn.options.repository.readOnly).toBe(false);
     });
-    m35_expect((await exec('git', ['-C', own.path, 'branch', '--show-current'])).stdout.trim()).toMatch(/^feature\/corner-/);
+    m35_expect((await scope4.exec('git', ['-C', own.path, 'branch', '--show-current'])).stdout.trim()).toMatch(/^feature\/corner-/);
     // Its later turns keep that copy, so its edits are never stranded.
     turn.commandContext.current = { reason: 'agent_tag' };
     await turn.withCheckout(async () => m35_expect(turn.options.worktreePath).toBe(own.path));
   } finally { turn.commandContext.current = undefined; await fixture.close(); }
 });
 });
-
-import { mkdtemp as m36_mkdtemp, rm as m36_rm } from 'node:fs/promises';
-
-import { tmpdir as m36_tmpdir } from 'node:os';
-
-import { join as m36_join } from 'node:path';
-
-import { afterEach as m36_afterEach, describe as m36_describe, expect as m36_expect, it as m36_it, vi as m36_vi } from 'vitest';
-
-import type { DaemonApiClient as m36_DaemonApiClient } from "./daemon-api-client.js";
-
-import { identityFromKey as m36_identityFromKey, type AgentRuntimeRecord as m36_AgentRuntimeRecord } from "./runtime.js";
-
-import { RoomRuntimeCoordinator as m36_RoomRuntimeCoordinator } from "./room-runtime.js";
-import { describe as mergedDescribe36 } from 'vitest';
 mergedDescribe36("room-runtime.config-change.test.ts", () => {
-
-
-const roots: string[] = [];
-
-m36_afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) => m36_rm(root, { recursive: true, force: true })));
-});
-
-
-/**
- * The phone-side model/effort change reaches the daemon as one `config-changed`
- * push over the live socket; `DaemonApiClient.setConfigChangedListener` is the
- * one registration and `RoomRuntimeCoordinator` is the one subscriber. This
- * pins that wiring: the coordinator must register the listener at construction
- * (like the rooms-changed wake) and its callback must route to the scheduler's
- * hot restart without throwing when nothing is live.
- */
+const scope5 = fixtureScope5();
 m36_describe('RoomRuntimeCoordinator config-change wake', () => {
   m36_it('registers the config-changed listener and hot-restarts on it', async () => {
     const root = await m36_mkdtemp(m36_join(m36_tmpdir(), 'beeline-coordinator-config-wake-'));
-    roots.push(root);
+    scope5.roots.push(root);
     const identity = m36_identityFromKey('11'.repeat(32), 'Bee');
     const runtime = {
       agent: {
@@ -470,39 +295,12 @@ m36_describe('RoomRuntimeCoordinator config-change wake', () => {
   });
 });
 });
-
-import { mkdtemp as m37_mkdtemp, rm as m37_rm } from 'node:fs/promises';
-
-import { tmpdir as m37_tmpdir } from 'node:os';
-
-import { resolve as m37_resolve } from 'node:path';
-
-import { afterEach as m37_afterEach, describe as m37_describe, expect as m37_expect, it as m37_it, vi as m37_vi } from 'vitest';
-
-import { DaemonApiError as m37_DaemonApiError } from "./daemon-api-client.js";
-
-import type { DaemonApiClient as m37_DaemonApiClient } from "./daemon-api-client.js";
-
-import { RoomRuntimeCoordinator as m37_RoomRuntimeCoordinator } from "./room-runtime.js";
-
-import { identityFromKey as m37_identityFromKey, type AgentRuntimeRecord as m37_AgentRuntimeRecord } from "./runtime.js";
-import { describe as mergedDescribe37 } from 'vitest';
 mergedDescribe37("room-runtime.lazy-corners.test.ts", () => {
-
-
-const roots: string[] = [];
-
-m37_afterEach(async () => {
-  m37_vi.useRealTimers();
-  m37_vi.restoreAllMocks();
-  await Promise.all(roots.splice(0).map((root) => m37_rm(root, { recursive: true, force: true })));
-});
-
-
+const scope7 = fixtureScope7();
 m37_describe('idle corner discovery', () => {
   m37_it('mass pushed starts have no capacity ceiling or timed retry barrier', async () => {
     const supervisorRoot = await m37_mkdtemp(m37_resolve(m37_tmpdir(), 'beeline-corner-storm-'));
-    roots.push(supervisorRoot);
+    scope7.roots.push(supervisorRoot);
     m37_vi.useFakeTimers();
     m37_vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const reset = Date.now() + 600_000;
@@ -557,9 +355,10 @@ m37_describe('idle corner discovery', () => {
     await Promise.all(coordinators.map(coordinator => coordinator.shutdown()));
   });
 
+
   m37_it('forgets archived parent mappings after discovery requests active corners only', async () => {
     const supervisorRoot = await m37_mkdtemp(m37_resolve(m37_tmpdir(), 'beeline-active-corner-'));
-    roots.push(supervisorRoot);
+    scope7.roots.push(supervisorRoot);
     const identity = m37_identityFromKey('11'.repeat(32), 'Bee');
     const execute = m37_vi.fn(async (name: string) => {
       if (name === 'getDaemonBootstrap')
@@ -589,9 +388,10 @@ m37_describe('idle corner discovery', () => {
     await runtime.shutdown();
   });
 
+
   m37_it('Reproduction R1: starts a corner under its own parent when a DM also lists it', async () => {
     const supervisorRoot = await m37_mkdtemp(m37_resolve(m37_tmpdir(), 'beeline-dm-corner-'));
-    roots.push(supervisorRoot);
+    scope7.roots.push(supervisorRoot);
     const identity = m37_identityFromKey('11'.repeat(32), 'Bee');
     const corner = { cornerId: 'corner-pr', parentRoomId: 'parent', archived: false,
       createdBy: identity.publicKey };
@@ -634,6 +434,7 @@ m37_describe('idle corner discovery', () => {
     await runtime.shutdown();
   });
 
+
   m37_it('Reproduction H-10: counts ten active corners of one parent once', () => {
     const runtime = new m37_RoomRuntimeCoordinator(
       {
@@ -658,9 +459,10 @@ m37_describe('idle corner discovery', () => {
     m37_expect(runtime.activeRoomCount()).toBe(10);
   });
 
+
   m37_it('subscribes before checkout and hydrates only after a pending command arrives', async () => {
     const supervisorRoot = await m37_mkdtemp(m37_resolve(m37_tmpdir(), 'beeline-idle-corner-'));
-    roots.push(supervisorRoot);
+    scope7.roots.push(supervisorRoot);
     const identity = m37_identityFromKey('11'.repeat(32), 'Bee');
     const execute = m37_vi.fn(async (name: string) => {
       if (name === 'getDaemonBootstrap') {
@@ -750,59 +552,7 @@ m37_describe('idle corner discovery', () => {
   });
 });
 });
-
-import { mkdtemp as m38_mkdtemp, rm as m38_rm } from 'node:fs/promises';
-
-import { tmpdir as m38_tmpdir } from 'node:os';
-
-import { resolve as m38_resolve } from 'node:path';
-
-import { expect as m38_expect, it as m38_it, vi as m38_vi } from 'vitest';
-
-import { RoomRuntimeCoordinator as m38_RoomRuntimeCoordinator, type CornerWorktree as m38_CornerWorktree } from "./room-runtime.js";
-
-import { identityFromKey as m38_identityFromKey, type AgentRuntimeRecord as m38_AgentRuntimeRecord } from "./runtime.js";
-import { describe as mergedDescribe38 } from 'vitest';
 mergedDescribe38("room-runtime.startup.test.ts", () => {
-
-
-m38_it('background reaping leases inactive corners and wakes a start deferred by that lease', async () => {
-  const root = await m38_mkdtemp(m38_resolve(m38_tmpdir(), 'beeline-reap-lease-'));
-  const identity = m38_identityFromKey('11'.repeat(32), 'Bee');
-  const execute = m38_vi.fn();
-  const coordinator = new m38_RoomRuntimeCoordinator({
-    agent: { publicKey: identity.publicKey, secretKeyHex: '11'.repeat(32), name: 'Bee' },
-    rooms: [], communityId: 'workspace', supervisorRoot: root,
-    transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'test' },
-  } as m38_AgentRuntimeRecord, m38_resolve(root, 'runtime.json'), { workspaceRoot: root } as never,
-  { daemonApi: { execute } as never });
-  const internal = coordinator as unknown as {
-    reapIdleCornerWorktree(worktree: m38_CornerWorktree, desired: ReadonlySet<string>): Promise<void>;
-    reapCornerWorktree(worktree: m38_CornerWorktree): Promise<void>;
-    startCorner(corner: { cornerId: string; parentRoomId: string }): Promise<void>;
-  };
-  const worktree = { cornerId: 'corner', parentRoomId: 'room', path: m38_resolve(root, 'corner'),
-    gitCommonDir: m38_resolve(root, 'repo.git'), branch: 'feature/corner', token: '' };
-  let release!: () => void;
-  const blocked = new Promise<void>(done => { release = done; });
-  const reap = m38_vi.spyOn(internal, 'reapCornerWorktree').mockReturnValue(blocked);
-  const wake = m38_vi.fn();
-  coordinator.setDiscoveryWakeListener(wake);
-  let maintenance: Promise<void> | undefined;
-  try {
-    await internal.reapIdleCornerWorktree(worktree, new Set(['corner']));
-    m38_expect(reap).not.toHaveBeenCalled();
-    maintenance = internal.reapIdleCornerWorktree(worktree, new Set());
-    await m38_vi.waitFor(() => m38_expect(reap).toHaveBeenCalledOnce());
-    await internal.startCorner({ cornerId: 'corner', parentRoomId: 'room' });
-    m38_expect(execute).not.toHaveBeenCalled();
-    release(); await maintenance;
-    m38_expect(wake).toHaveBeenCalledOnce();
-  } finally {
-    release(); await maintenance; reap.mockRestore();
-    await coordinator.shutdown(); await m38_rm(root, { recursive: true, force: true });
-  }
-});
 
 
 m38_it('establishes every corner subscription without waiting for pending legacy checkout migration', async () => {
@@ -847,6 +597,7 @@ m38_it('establishes every corner subscription without waiting for pending legacy
 });
 
 
+
 m38_it('starts Room and corner intake before waiting for archived cleanup', async () => {
   const root = await m38_mkdtemp(m38_resolve(m38_tmpdir(), 'beeline-intake-first-'));
   const identity = m38_identityFromKey('11'.repeat(32), 'Bee');
@@ -865,12 +616,12 @@ m38_it('starts Room and corner intake before waiting for archived cleanup', asyn
   const internal = coordinator as unknown as {
     startRoom(id: string): Promise<void>;
     watchCorner(input: { cornerId: string }): Promise<void>;
-    retryPendingCornerReaps(desired: ReadonlySet<string>): Promise<void>;
+    sweepArchivedCornerWorktrees(archived: ReadonlyMap<string, unknown>, desired: ReadonlySet<string>): Promise<void>;
   };
   const start = m38_vi.spyOn(internal, 'startRoom').mockResolvedValue();
   const watch = m38_vi.spyOn(internal, 'watchCorner').mockResolvedValue();
   let release!: () => void;
-  const cleanup = m38_vi.spyOn(internal, 'retryPendingCornerReaps')
+  const cleanup = m38_vi.spyOn(internal, 'sweepArchivedCornerWorktrees')
     .mockImplementation(() => new Promise<void>(done => { release = done; }));
   const serving = m38_vi.fn();
   const reconciliation = coordinator.reconcile(serving);
@@ -887,159 +638,57 @@ m38_it('starts Room and corner intake before waiting for archived cleanup', asyn
   }
 });
 });
-
-import { execFile as move2_execFile } from 'node:child_process';
-
-import { mkdtemp as move2_mkdtemp, rm as move2_rm, writeFile as move2_writeFile } from 'node:fs/promises';
-
-import { tmpdir as move2_tmpdir } from 'node:os';
-
-import { resolve as move2_resolve } from 'node:path';
-
-import { promisify as move2_promisify } from 'node:util';
-
-import { afterEach as move2_afterEach, describe as move2_describe, expect as move2_expect, it as move2_it } from 'vitest';
-
-import { materializeCornerWorktree as move2_materializeCornerWorktree } from "./room-runtime.js";
-import { describe as movedDescribe2 } from 'vitest';
 movedDescribe2("corner-fetch-refspec.test.ts", () => {
-
-
-/**
- * A corner is cut from a bare cache, and a bare clone writes no
- * `remote.origin.fetch`. Without that refspec a plain `git fetch origin main`
- * only moves FETCH_HEAD, so `origin/main` stays stale and an agent rebases or
- * diffs against an old main. These cases run real git against a real bare
- * remote, because a fake would only prove the fake agrees.
- */
-const execFileAsync = move2_promisify(move2_execFile);
-
-const roots: string[] = [];
-
-move2_afterEach(async () =>
-  Promise.all(roots.splice(0).map((root) => move2_rm(root, { recursive: true, force: true }))),
-);
-
-
-const COMMITTER = {
-  GIT_AUTHOR_NAME: 'Test',
-  GIT_AUTHOR_EMAIL: 'test@example.com',
-  GIT_COMMITTER_NAME: 'Test',
-  GIT_COMMITTER_EMAIL: 'test@example.com',
-};
-
-
-async function git(cwd: string, ...args: string[]): Promise<string> {
-  const result = await execFileAsync('git', ['-C', cwd, ...args], {
-    env: { ...process.env, ...COMMITTER },
-  });
-  return result.stdout.trim();
-}
-
-
-async function gitDir(gitCommonDir: string, ...args: string[]): Promise<string> {
-  const result = await execFileAsync('git', [`--git-dir=${gitCommonDir}`, ...args], {
-    env: { ...process.env, ...COMMITTER },
-  });
-  return result.stdout.trim();
-}
-
-
-const WILDCARD_REFSPEC = '+refs/heads/*:refs/remotes/origin/*';
-
-
-/** A bare remote with one commit on `main`, plus the seed it was cloned from. */
-async function bareRemoteWithMain(root: string): Promise<{ remote: string; seed: string }> {
-  const seed = move2_resolve(root, 'seed');
-  await execFileAsync('git', ['init', '-b', 'main', seed]);
-  await move2_writeFile(move2_resolve(seed, 'code.txt'), 'first\n');
-  await git(seed, 'add', '.');
-  await git(seed, 'commit', '-m', 'first');
-  const bare = move2_resolve(root, 'remote.git');
-  await execFileAsync('git', ['clone', '--bare', seed, bare]);
-  return { remote: `file://${bare}`, seed };
-}
-
-
-/** Advance the bare remote's `main` to a fresh commit in its seed. */
-async function advanceRemoteMain(seed: string, bare: string, message: string): Promise<string> {
-  await move2_writeFile(move2_resolve(seed, 'code.txt'), `${message}\n`);
-  await git(seed, 'commit', '-am', message);
-  const head = await git(seed, 'rev-parse', 'HEAD');
-  await gitDir(bare, 'fetch', seed, 'main');
-  await gitDir(bare, 'update-ref', 'refs/heads/main', head);
-  return head;
-}
-
-
-async function scratch(prefix: string): Promise<string> {
-  const root = await move2_mkdtemp(move2_resolve(move2_tmpdir(), prefix));
-  roots.push(root);
-  return root;
-}
-
-
-async function materialize(supervisorRoot: string, remote: string, cornerId: string) {
-  return move2_materializeCornerWorktree({
-    cornerId,
-    remote,
-    targetBranch: 'main',
-    featureBranch: `feature/${cornerId}`,
-    token: 'unused',
-    supervisorRoot,
-    committer: { name: 'Helper', publicKey: 'a'.repeat(64) },
-  });
-}
-
-
+const scope10 = fixtureScope10();
 move2_describe('a corner checkout fetch refspec', () => {
   move2_it('moves origin/main on a plain fetch and is set idempotently', async () => {
-    const supervisorRoot = await scratch('beeline-corner-refspec-');
-    const { remote, seed } = await bareRemoteWithMain(supervisorRoot);
+    const supervisorRoot = await scope10.scratch('beeline-corner-refspec-');
+    const { remote, seed } = await scope10.bareRemoteWithMain(supervisorRoot);
 
-    const worktree = await materialize(supervisorRoot, remote, 'corner-refspec');
+    const worktree = await scope10.materialize(supervisorRoot, remote, 'corner-refspec');
 
-    move2_expect(await git(worktree.path, 'config', '--get', 'remote.origin.fetch')).toBe(
-      WILDCARD_REFSPEC,
+    move2_expect(await scope10.git(worktree.path, 'config', '--get', 'remote.origin.fetch')).toBe(
+      scope10.WILDCARD_REFSPEC,
     );
     // AC-1: repeat prepares must not stack duplicate config entries.
-    await materialize(supervisorRoot, remote, 'corner-refspec');
-    move2_expect(await git(worktree.path, 'config', '--get-all', 'remote.origin.fetch')).toBe(
-      WILDCARD_REFSPEC,
+    await scope10.materialize(supervisorRoot, remote, 'corner-refspec');
+    move2_expect(await scope10.git(worktree.path, 'config', '--get-all', 'remote.origin.fetch')).toBe(
+      scope10.WILDCARD_REFSPEC,
     );
 
-    const before = await git(worktree.path, 'rev-parse', 'origin/main');
-    const newHead = await advanceRemoteMain(seed, move2_resolve(supervisorRoot, 'remote.git'), 'second');
+    const before = await scope10.git(worktree.path, 'rev-parse', 'origin/main');
+    const newHead = await scope10.advanceRemoteMain(seed, move2_resolve(supervisorRoot, 'remote.git'), 'second');
     move2_expect(newHead).not.toBe(before);
 
-    await git(worktree.path, 'fetch', 'origin', 'main');
+    await scope10.git(worktree.path, 'fetch', 'origin', 'main');
 
-    move2_expect(await git(worktree.path, 'rev-parse', 'origin/main')).toBe(newHead);
+    move2_expect(await scope10.git(worktree.path, 'rev-parse', 'origin/main')).toBe(newHead);
   });
 
-  move2_it('repairs a cache cloned before the refspec existed on its next prepare', async () => {
-    const supervisorRoot = await scratch('beeline-corner-legacy-refspec-');
-    const { remote, seed } = await bareRemoteWithMain(supervisorRoot);
 
-    const worktree = await materialize(supervisorRoot, remote, 'corner-legacy');
+  move2_it('repairs a cache cloned before the refspec existed on its next prepare', async () => {
+    const supervisorRoot = await scope10.scratch('beeline-corner-legacy-refspec-');
+    const { remote, seed } = await scope10.bareRemoteWithMain(supervisorRoot);
+
+    const worktree = await scope10.materialize(supervisorRoot, remote, 'corner-legacy');
     // A cache made by an older Beeline carries no fetch refspec at all.
-    await execFileAsync('git', [
+    await scope10.execFileAsync('git', [
       `--git-dir=${worktree.gitCommonDir}`,
       'config',
       '--unset-all',
       'remote.origin.fetch',
     ]).catch(() => undefined);
-    await move2_expect(git(worktree.path, 'config', '--get', 'remote.origin.fetch')).rejects.toThrow();
+    await move2_expect(scope10.git(worktree.path, 'config', '--get', 'remote.origin.fetch')).rejects.toThrow();
 
     // The worktree already exists, so this is the next prepare, not a re-clone.
-    await materialize(supervisorRoot, remote, 'corner-legacy');
-    move2_expect(await git(worktree.path, 'config', '--get', 'remote.origin.fetch')).toBe(
-      WILDCARD_REFSPEC,
+    await scope10.materialize(supervisorRoot, remote, 'corner-legacy');
+    move2_expect(await scope10.git(worktree.path, 'config', '--get', 'remote.origin.fetch')).toBe(
+      scope10.WILDCARD_REFSPEC,
     );
 
-    const newHead = await advanceRemoteMain(seed, move2_resolve(supervisorRoot, 'remote.git'), 'second');
-    await git(worktree.path, 'fetch', 'origin', 'main');
-    move2_expect(await git(worktree.path, 'rev-parse', 'origin/main')).toBe(newHead);
+    const newHead = await scope10.advanceRemoteMain(seed, move2_resolve(supervisorRoot, 'remote.git'), 'second');
+    await scope10.git(worktree.path, 'fetch', 'origin', 'main');
+    move2_expect(await scope10.git(worktree.path, 'rev-parse', 'origin/main')).toBe(newHead);
   });
 });
 });

@@ -83,7 +83,7 @@ describe('release-owned migration steps', () => {
           matches: (sql: string, _values: unknown[]) => sql.includes('SELECT hold.corner_id,hold.id,COALESCE'),
           run: () => migrateData(database) },
         { name: 'welcome video workflow', table: 'workflow_backfills',
-          matches: (sql: string, values: unknown[]) => sql.startsWith('SELECT name FROM workflow_backfills') && values[0] === 'welcome-video-v1',
+          matches: (sql: string, values: unknown[]) => sql.startsWith('SELECT name FROM workflow_backfills') && values[0] === 'welcome-video-v2',
           run: () => migrateData(database) },
         { name: 'agent handle candidates', table: 'identities',
           matches: (sql: string, _values: unknown[]) => sql.startsWith('SELECT id,created_at FROM identities'),

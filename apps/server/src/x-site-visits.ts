@@ -35,7 +35,7 @@ export async function syncXSiteVisits(
     const response = await send('https://api.cloudflare.com/client/v4/graphql', {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      signal: AbortSignal.timeout(30_000),
+
       body: JSON.stringify({ query: `{viewer{accounts(filter:{accountTag:"${ACCOUNT}"}){
         rumPageloadEventsAdaptiveGroups(limit:${LIMIT},filter:{siteTag:"${SITE}",date_geq:"${first}",date_leq:"${last}"}){
           dimensions{date refererHost requestPath} sum{visits}

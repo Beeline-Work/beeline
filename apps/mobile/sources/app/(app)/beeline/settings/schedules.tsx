@@ -52,7 +52,7 @@ function ListAttribution({ agent, corner, roomName, isDirectMessage }: {
   corner?: { id: string; name: string } | null;
 }) {
   return <>
-    <Text style={styles.listAgent}>@{agent}</Text>
+    <Text numberOfLines={1} style={styles.listAgent}>@{agent}</Text>
     <Text style={styles.listDot}>{' · '}</Text>
     <ScheduledWorkWhere isDirectMessage={isDirectMessage} corner={corner ? { ...corner, name: cornerShortTitle(roomName, corner.name, corner.id) } : undefined} />
   </>;
@@ -86,7 +86,7 @@ export default function ScheduledWork() {
     <SettingsRow
       chevron="right"
       description={scheduleTrigger(schedule)}
-      descriptionContent={<Text style={styles.listTrigger}>{scheduleTrigger(schedule)}</Text>}
+      descriptionContent={<Text numberOfLines={1} style={styles.listTrigger}>{scheduleTrigger(schedule)}</Text>}
       descriptionDetail={`@${work?.agentNames.get(schedule.agentId) ?? 'Agent'} · ${scheduleWhere(schedule, work?.roomName, work?.isDirectMessage)}`}
       descriptionDetailContent={<ListAttribution
         isDirectMessage={work?.isDirectMessage} roomName={work?.roomName} agent={work?.agentNames.get(schedule.agentId) ?? 'Agent'} corner={schedule.corner} />}
@@ -101,7 +101,7 @@ export default function ScheduledWork() {
     <SettingsRow
       chevron="right"
       description={subscriptionWhen(subscription, work?.isDirectMessage)}
-      descriptionContent={<Text style={styles.listTrigger}>{subscriptionWhen(subscription, work?.isDirectMessage)}</Text>}
+      descriptionContent={<Text numberOfLines={1} style={styles.listTrigger}>{subscriptionWhen(subscription, work?.isDirectMessage)}</Text>}
       descriptionDetail={`@${work?.agentNames.get(subscription.agentId) ?? 'Agent'} · ${scheduleWhere(subscription, work?.roomName, work?.isDirectMessage)}`}
       descriptionDetailContent={<ListAttribution
         isDirectMessage={work?.isDirectMessage} roomName={work?.roomName} agent={work?.agentNames.get(subscription.agentId) ?? 'Agent'} corner={subscription.corner} />}

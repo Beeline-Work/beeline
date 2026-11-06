@@ -586,7 +586,7 @@ function CornerCockpit({
           />
         ) : null}
         <View style={styles.headerCopy}>
-          <PageHeaderTitle style={styles.headerTitle}>
+          <PageHeaderTitle numberOfLines={2} style={styles.headerTitle}>
             {title}
           </PageHeaderTitle>
           <Text style={styles.headerMeta}>

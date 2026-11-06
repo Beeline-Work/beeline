@@ -221,7 +221,6 @@ export async function recordMcpMention(
 export async function postMcpWebhook(target: string, init: { headers: Record<string, string>; body: string; readResponse?: boolean }): Promise<Response> {
   const url = new URL(target);
   if (url.protocol !== 'https:' || url.username || url.password) throw new Error('Invalid webhook');
-  const signal = AbortSignal.timeout(5_000);
   const answers = await lookup(url.hostname, { all: true, verbatim: true });
   if (!answers.length || answers.some(answer => !publicMcpAddress(answer.address))) throw new Error('Non-public webhook address');
   const address = answers[0]!;
@@ -231,7 +230,7 @@ export async function postMcpWebhook(target: string, init: { headers: Record<str
   } });
   try {
     const result = await new Promise<{ status: number; body: string }>((resolve, reject) => {
-      const req = httpsRequest(url, { method: 'POST', agent, signal, headers: { ...init.headers, 'content-length': String(Buffer.byteLength(init.body)) } }, res => {
+      const req = httpsRequest(url, { method: 'POST', agent, headers: { ...init.headers, 'content-length': String(Buffer.byteLength(init.body)) } }, res => {
         if (!init.readResponse) {
           res.resume(); res.on('end', () => resolve({ status: res.statusCode ?? 0, body: '' })); res.on('error', reject);
           return;
@@ -307,11 +306,9 @@ function wakeBody(row: { member_id: string; room_id: string; command_id: string 
 
 /**
  * Best-effort delivery. Each pending delivery is claimed atomically immediately
- * before its own HTTP request, never as a batch, so a slow batch cannot outlive
- * its claim and two drains never call the same pending row twice. The
- * one-minute claim lease only has to outlast one request (5s timeout); it lets
- * a crashed claim retry later. The ledger row records the outcome either way,
- * and a refused call is not retried forever.
+ * before its own HTTP request. Two drains cannot call the same pending row
+ * twice. Claims never expire or admit retries; the ledger records the terminal
+ * result when the active request settles.
  *
  * Access is rechecked at claim time, not just when the wake was queued: a
  * member removed from the Room (or its Workspace) before the drain must not
@@ -320,34 +317,32 @@ function wakeBody(row: { member_id: string; room_id: string; command_id: string 
 export async function deliverMcpMemberWebhooks(
   db: SqlDatabase,
   transport: (url: string, init: { headers: Record<string, string>; body: string }) => Promise<Response> = postMcpWebhook,
-  limit = 50,
   signal?: AbortSignal,
 ): Promise<number> {
   let delivered = 0;
-  for (let index = 0; index < limit; index++) {
+  for (;;) {
     if (signal?.aborted) break;
     const claimed = await db.query<{
       call_id: string; member_id: string; room_id: string; message_id: string;
-      body: string; callback_url: string | null; callback_secret: string | null; deliverable: boolean;
+      body: string; callback_url: string | null; callback_secret: string | null; deliverable: boolean; answered: boolean;
       author_id: string | null; author_handle: string | null; author_name: string | null; author_kind: string | null; cursor: string | null;
       command_id: string | null; command_reason: string | null; command_kind: string | null; command_text: string | null;
     }>(
       `WITH claimed AS (
-         UPDATE rooms_mcp_webhook_outbox outbox SET attempts=attempts+1,claimed_at=now()
+         UPDATE rooms_mcp_webhook_outbox outbox SET claimed_at=now()
          WHERE outbox.call_id IN (
            SELECT candidate.call_id FROM rooms_mcp_webhook_outbox candidate
-           WHERE candidate.delivered_at IS NULL AND candidate.attempts<3
-             AND (candidate.claimed_at IS NULL OR candidate.claimed_at<now()-interval '1 minute')
+           WHERE candidate.delivered_at IS NULL AND candidate.claimed_at IS NULL
            ORDER BY candidate.created_at,candidate.call_id LIMIT 1
            FOR UPDATE SKIP LOCKED)
          RETURNING outbox.call_id,outbox.member_id,outbox.room_id,outbox.message_id,outbox.body)
        SELECT claimed.call_id,claimed.member_id,claimed.room_id,claimed.message_id,claimed.body,
          COALESCE(member.callback_url,client.callback_url) callback_url,
          CASE WHEN member.callback_url IS NOT NULL THEN member.callback_secret END callback_secret,
-         message.author_id,author.handle author_handle,author.name author_name,author.kind author_kind,mention.seq::text cursor,
+         message.author_id,author.handle author_handle,author.name author_name,author.kind author_kind,mention.seq::text cursor,mention.cleared_at IS NOT NULL answered,
          command.id command_id,command.reason command_reason,command.private_payload->>'kind' command_kind,
          left(COALESCE(command.private_payload->>'text',source.text),16000) command_text,(
-           room.id IS NOT NULL AND room.archived_at IS NULL
+           room.id IS NOT NULL AND room.archived_at IS NULL AND mention.cleared_at IS NULL
            AND EXISTS (SELECT 1 FROM room_access room_member
              WHERE room_member.room_id=claimed.room_id AND room_member.identity_id=claimed.member_id
                AND room_member.removed_at IS NULL)
@@ -371,7 +366,7 @@ export async function deliverMcpMemberWebhooks(
       await db.query('UPDATE rooms_mcp_webhook_outbox SET delivered_at=now() WHERE call_id=$1', [row.call_id]);
       await db.query(
         `UPDATE subscription_webhook_calls SET outcome='skipped',reason=$2 WHERE id=$1`,
-        [row.call_id, row.deliverable ? 'webhook disabled' : 'membership ended'],
+        [row.call_id, row.answered ? 'already answered' : row.deliverable ? 'webhook disabled' : 'membership ended'],
       );
       continue;
     }
@@ -394,34 +389,13 @@ export async function deliverMcpMemberWebhooks(
       await db.query(`UPDATE subscription_webhook_calls SET outcome='refused',reason='delivery failed' WHERE id=$1`, [row.call_id]);
     else delivered++;
   }
-  return delivered + await deliverMcpEvents(db, transport, limit, signal);
+  return delivered + await deliverMcpEvents(db, transport, signal);
 }
 
-/** One admitted drain. Only a persisted delivery or abandoned claim supplies
- * another deadline; no empty-queue reconciliation interval is returned. */
-export async function runMcpWebhookDelivery(
-  db: SqlDatabase,
-  transport: typeof postMcpWebhook = postMcpWebhook,
-  limit = 50,
-  signal?: AbortSignal,
-): Promise<number | undefined> {
-  await deliverMcpMemberWebhooks(db, transport, limit, signal);
-  if (signal?.aborted) return;
-  const row = (await db.query<{ delay_ms: number | null }>(`
-    SELECT ceil(extract(epoch FROM ((min(due_at) AT TIME ZONE 'UTC')-clock_timestamp()))*1000)::float8 delay_ms
-    FROM (
-      (SELECT GREATEST(created_at AT TIME ZONE 'UTC',(claimed_at AT TIME ZONE 'UTC')+interval '1 minute') due_at
-       FROM rooms_mcp_webhook_outbox WHERE delivered_at IS NULL AND attempts<3
-       ORDER BY due_at LIMIT 1)
-      UNION ALL
-      (SELECT GREATEST(next_attempt_at AT TIME ZONE 'UTC',(claimed_at AT TIME ZONE 'UTC')+interval '1 minute') due_at
-       FROM rooms_mcp_event_deliveries WHERE delivered_at IS NULL AND attempts<5
-       ORDER BY due_at LIMIT 1)
-    ) pending`)).rows[0];
-  if (row?.delay_ms == null) return;
-  if (!Number.isFinite(row.delay_ms)) throw new Error('MCP delivery deadline unavailable');
-  // Claims become eligible strictly after their existing one-minute lease.
-  return Math.max(1, row.delay_ms);
+/** A committed event drains each delivery once; failures never schedule another wake. */
+export async function runMcpWebhookDelivery(db: SqlDatabase, transport: typeof postMcpWebhook = postMcpWebhook,
+  signal?: AbortSignal): Promise<void> {
+  await deliverMcpMemberWebhooks(db, transport, signal);
 }
 
 /**
@@ -617,54 +591,15 @@ export async function mcpProvenance(db: SqlDatabase, memberId: string, roomId: s
   });
 }
 
-/**
- * Wake every agent a member's post tags. A durable row is written first and
- * removed only after routing commits, so a failed route is retried by
- * maintenance; agent commands and webhook calls dedupe per (message, target),
- * so a retry never wakes twice. A failed provenance read only loses the
- * chain: the post still routes, as one hop from a person.
- */
+/** Route this post once; an explicit repeat request can use its saved message ID. */
 export async function routeMcpMemberPost(
   db: SqlDatabase, memberId: string, roomId: string, messageId: string,
   provenance: typeof mcpProvenance = mcpProvenance,
-): Promise<{ woken: string[]; notWoken: { handle: string; reason: string }[]; routing: 'done' | 'retrying' }> {
-  await db.query(
-    `INSERT INTO rooms_mcp_pending_routes(message_id,room_id,member_id) VALUES($1,$2,$3)
-     ON CONFLICT(message_id) DO NOTHING`,
-    [messageId, roomId, memberId],
-  );
+): Promise<{ woken: string[]; notWoken: { handle: string; reason: string }[] }> {
   let incoming: Awaited<ReturnType<typeof mcpProvenance>> | null = null;
-  try {
-    incoming = await provenance(db, memberId, roomId, messageId);
-  } catch (error) {
-    console.error('[rooms-mcp] provenance lookup failed; routing without a parent', error);
-  }
-  const parent = incoming?.command
-    ? { ...incoming.command, agent_depth: incoming.command.agent_depth + 1 } : undefined;
-  try {
-    const delivery = await routeAgentResult(db, parent, messageId,
-      { roomId, agentId: memberId, initialAgentDepth: incoming === null || incoming ? 1 : undefined });
-    await db.query('DELETE FROM rooms_mcp_pending_routes WHERE message_id=$1', [messageId]);
-    return { ...delivery, routing: 'done' };
-  } catch (error) {
-    console.error('[rooms-mcp] wake routing failed; maintenance retries it', error);
-    await db.query(
-      'UPDATE rooms_mcp_pending_routes SET attempts=attempts+1,last_error=$2 WHERE message_id=$1',
-      [messageId, String(error instanceof Error ? error.message : error).slice(0, 500)],
-    ).catch(() => undefined);
-    return { woken: [], notWoken: [], routing: 'retrying' };
-  }
-}
-
-/** Maintenance: retry member posts whose routing failed, at most five times each. */
-export async function retryMcpMemberRoutes(db: SqlDatabase, limit = 20): Promise<number> {
-  const pending = await db.query<{ message_id: string; room_id: string; member_id: string }>(
-    `SELECT message_id,room_id,member_id FROM rooms_mcp_pending_routes
-     WHERE attempts<5 AND created_at<now()-interval '30 seconds' ORDER BY created_at LIMIT $1`,
-    [limit],
-  );
-  let routed = 0;
-  for (const row of pending.rows)
-    if ((await routeMcpMemberPost(db, row.member_id, row.room_id, row.message_id)).routing === 'done') routed++;
-  return routed;
+  try { incoming = await provenance(db, memberId, roomId, messageId); }
+  catch (error) { console.error('[rooms-mcp] provenance lookup failed; routing without a parent', error); }
+  const parent = incoming?.command ? { ...incoming.command, agent_depth: incoming.command.agent_depth + 1 } : undefined;
+  return routeAgentResult(db, parent, messageId,
+    { roomId, agentId: memberId, initialAgentDepth: incoming === null || incoming ? 1 : undefined });
 }

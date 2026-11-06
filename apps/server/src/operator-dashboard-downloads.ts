@@ -60,7 +60,7 @@ export async function dashboardDownloads(
       )
     ).rows.map((r) => r.day);
     if (claimed.length) {
-      const signal = AbortSignal.timeout(8000);
+      const signal = new AbortController().signal;
       const groups =
         platform === 'android'
           ? [...new Set(claimed.map((d) => d.slice(0, 7)))].map((m) =>

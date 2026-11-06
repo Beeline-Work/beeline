@@ -1,14 +1,9 @@
 import { cornerWaitingReportSql } from './corner-waiting-report.js';
 import type { SqlDatabase } from './database.js';
 
-/** The server-owned entrypoint for the one corner state machine. Keeping the
- * pure transition in api-contract lets every server-side projection use the
- * exact same function without a package cycle. */
-export {
-  deriveCornerState,
-  type CornerStateFacts,
-  type DerivedCornerState,
-} from '@beeline/api-contract/phone';
+/** Compatibility entrypoint: every server projection uses the corner machine. */
+export { deriveCornerState } from './corner-lifecycle.js';
+export type { CornerStateFacts, DerivedCornerState } from '@beeline/api-contract/phone';
 
 /** An explicit worker report pauses automatic work until an answer is committed. */
 export async function cornerReportWaiting(db: SqlDatabase, cornerId: string, commandKind?: string): Promise<boolean> {

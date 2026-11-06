@@ -15,19 +15,31 @@ import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { Button } from '@/components/buzz/Button';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { HullActionSheetModal, HullActionSheetRow, HullActionSheetCancel } from '@/components/buzz/HullActionSheet';
+import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { useSharedWorkbench } from '@/buzz/workbench-surface';
 import { connectionViewState, openCompanyItem, useConnectCompanyApp } from '@/buzz/company-connection-actions';
 import { appNeedsSquire, reconnectWorkbenchApp } from '@/buzz/app-reconnect';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import type { WorkbenchApp } from '@/buzz/workbench';
-import type { WorkbenchCompany } from '@beeline/api-contract/workbench';
+import type { AiClientConnection, WorkbenchCompany } from '@beeline/api-contract/workbench';
 
 function param(v: string | string[] | undefined) { return Array.isArray(v) ? v[0] : v; }
 /** Trusty Squire keeps the keys; it has no disconnect, so the page links out to its vault. */
 export const SQUIRE_VAULT_URL = 'https://trustysquire.ai/vault';
 type Machine = WorkbenchCompany['machines'][number];
 const needsFix = (m: Machine) => m.status !== 'connected' || Boolean(m.error);
+/** "Oct 31", or "today" for the current local day. */
+export function aiClientDay(seconds: number, now = new Date()): string {
+  const day = new Date(seconds * 1000);
+  return day.toDateString() === now.toDateString() ? 'today'
+    : day.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+const aiClientDates = (client: AiClientConnection) =>
+  `Connected ${aiClientDay(client.connectedAt)} · last used ${client.lastUsedAt ? aiClientDay(client.lastUsedAt) : 'not yet'}.`;
+const aiClientNote = (client: AiClientConnection) => client.agent
+  ? `${client.agent.name} uses ${client.name} to read your Rooms and post. It posts as ${client.agent.name}, not as you.`
+  : `${client.name} reads your Rooms and posts as its own agent, not as you.`;
 /** Signed in means a settled Google session; anything else needs sign-in (mock v3). */
 const signedIn = (m: Machine) => m.status === 'connected' && !m.reconnecting && !m.error;
 const signedInLine = (m: Machine) => m.signedInAs ? `Signed in as ${m.signedInAs}` : 'Signed in';
@@ -47,6 +59,9 @@ export default function ConnectorServiceScreen() {
   const [appBusy, setAppBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // A connected AI app has its own Status sheet: the same sheet as an app connection.
+  const aiClient = row?.roomsClientId ? view?.aiClients?.find(client => client.clientId === row.roomsClientId) : undefined;
+  const [aiOpen, setAiOpen] = useState(false);
   const manageMachine = row?.machines.find(item => item.id === machine?.id) ?? machine;
   const reconnectMachine = (helperId: string) => {
     setMachine(null); router.push({ pathname: '/beeline/settings/workbench/connect', params: { ...scope, connectorId: 'trusty-squire', helperId } } as Href);
@@ -119,12 +134,40 @@ export default function ConnectorServiceScreen() {
       setMachine(null); setLinkOpen(false); await refresh();
     } catch { setError('Could not disconnect. Try again.'); }
   };
+  const disconnectAiClient = async () => {
+    if (!aiClient || appBusy) return;
+    setAppBusy(aiClient.clientId); setError(null);
+    try {
+      await getWorkbenchSource().disconnectAiClient({ clientId: aiClient.clientId });
+      setAiOpen(false); await refresh(); router.back();
+    } catch { setAiOpen(false); setError('Could not disconnect. Try again.'); }
+    finally { setAppBusy(null); }
+  };
+  const agent = aiClient?.agent;
   return <View style={[styles.screen, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top }]} testID="connector-service-screen">
     <PageHeader eyebrow="Connectors" prominent title={row?.name ?? 'Connectors'} backAccessibilityLabel="Back to Connectors" onBack={() => router.back()} />
     {loadError && !row ? <View style={styles.failureInset}><IndexRow inset="flush" title="Network is not available right now." action="Retry" onPress={() => void refresh()}  /></View> : !view ? <SurfaceGlyphLoader /> : !row ?
       <Text style={styles.note}>This company is no longer connected.</Text> :
       <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + theme.buzz.space.xl }]}>
-        {row.kind === 'sign-in-service' ? <SettingsRow appBoard title={row.name} description={row.domain}
+        {row.roomsClientId ? <>
+          <SettingsRow appBoard title={row.name} description={row.domain} leading={<ServiceMark company={row.name} domain={row.domain} mark={row.logo} />}
+            value="Connected" statusGlyph="live" chevron="right" disabled={Boolean(appBusy)} onPress={() => setAiOpen(true)} testID="connector-info-status" />
+          {aiClient ? <Text style={styles.note} testID="connector-info-agents">{aiClientNote(aiClient)}</Text> : null}
+          {agent ? <View>
+            <RoomListSectionHeader title="Agent" inset="content" spacing="flush" />
+            <SettingsRow appBoard title={agent.name} description={agent.handle ? `@${agent.handle}` : undefined}
+              leading={<IdentityMark kind="agent" seed={agent.id} avatarUrl={agent.avatar} name={agent.name} size={36} />} chevron="right"
+              onPress={() => router.push({ pathname: '/beeline/agent-profile', params: { communityId: scope.workspaceId, agentId: agent.id } } as Href)}
+              testID="ai-client-agent" />
+          </View> : null}
+          {aiClient ? <View>
+            <RoomListSectionHeader title="What it can do" inset="content" spacing="flush" />
+            {aiClient.scopes.includes('rooms:read') ? <SettingsRow appBoard title="Read messages in your Rooms" testID="ai-client-can-read" /> : null}
+            {aiClient.scopes.includes('rooms:write') ? <SettingsRow appBoard title={`Post and reply as ${agent?.name ?? 'its agent'}`} testID="ai-client-can-post" /> : null}
+          </View> : null}
+          {aiClient ? <Text style={styles.note} testID="ai-client-dates">{aiClientDates(aiClient)}</Text> : null}
+          {error ? <SettingsRow title={error} /> : null}
+        </> : <>{row.kind === 'sign-in-service' ? <SettingsRow appBoard title={row.name} description={row.domain}
           leading={<ServiceMark company={row.name} domain={row.domain} mark={row.logo} />}
           value={needSignIn ? `${needSignIn} need sign-in` : 'Signed in'} valueTone={needSignIn ? 'danger' : undefined}
           statusGlyph={needSignIn ? 'failed' : 'live'} testID="connector-info-status" />
@@ -144,7 +187,7 @@ export default function ConnectorServiceScreen() {
             // A signed-in computer opens its own sheet; every other one connects in one tap.
             ? <SettingsRow appBoard key={item.id} title={item.name} description={item.statusText ?? signedInLine(item)}
               descriptionContent={<InlineRow style={styles.signedIn}><View style={styles.signedInDot} testID={`squire-computer-${item.id}-dot`} />
-                <Text style={styles.signedInText}>{item.statusText && item.statusText !== 'Google signed in' && !item.signedInAs ? item.statusText : signedInLine(item)}</Text></InlineRow>}
+                <Text numberOfLines={1} style={styles.signedInText}>{item.statusText && item.statusText !== 'Google signed in' && !item.signedInAs ? item.statusText : signedInLine(item)}</Text></InlineRow>}
               chevron="right" onPress={() => setMachine(item)} testID={`squire-computer-${item.id}`} />
             : <SettingsRow appBoard key={item.id} title={item.name} description="Google sign-in needed"
               action="Connect" onPress={() => reconnectMachine(item.id)} testID={`squire-computer-${item.id}`} />)}
@@ -179,15 +222,18 @@ export default function ConnectorServiceScreen() {
         {loadError ? <SettingsRow title="Could not refresh connections. Try again." /> : null}
         {notice ? <Text accessibilityLiveRegion="polite" style={styles.note} testID="connector-info-notice">{notice}</Text> : null}
         {error || actions.error ? <SettingsRow title={(error ?? actions.error)!} /> : null}
+        </>}
       </ScrollView>}
     <HullActionSheetModal visible={Boolean(machine) || linkOpen} title={machine?.name ?? 'Link'} onClose={() => { setMachine(null); setLinkOpen(false); }}>
       {machine && manageMachine && !signedIn(manageMachine) ? <HullActionSheetRow label="Connect" onPress={() => reconnectMachine(machine.id)} />
         : <HullActionSheetRow label="Disconnect" destructive onPress={() => void disconnect()} />}
       <HullActionSheetCancel onPress={() => { setMachine(null); setLinkOpen(false); }} />
     </HullActionSheetModal>
-    <HullActionSheetModal visible={Boolean(appOpen)} title={appOpen?.name} onClose={() => setAppOpen(null)}>
-      {appOpen ? <HullActionSheetRow label="Disconnect" destructive onPress={() => void disconnectApp(appOpen)} /> : null}
-      <HullActionSheetCancel onPress={() => setAppOpen(null)} />
+    {/* One connection sheet: an app connection's row and an AI app's Status row open it alike. */}
+    <HullActionSheetModal visible={Boolean(appOpen) || aiOpen} title={appOpen?.name ?? row?.name} onClose={() => { setAppOpen(null); setAiOpen(false); }}>
+      {appOpen ? <HullActionSheetRow label="Disconnect" destructive onPress={() => void disconnectApp(appOpen)} />
+        : aiOpen ? <HullActionSheetRow label="Disconnect" destructive disabled={Boolean(appBusy)} onPress={() => void disconnectAiClient()} testID="ai-client-disconnect" /> : null}
+      <HullActionSheetCancel onPress={() => { setAppOpen(null); setAiOpen(false); }} />
     </HullActionSheetModal>
   </View>;
 }

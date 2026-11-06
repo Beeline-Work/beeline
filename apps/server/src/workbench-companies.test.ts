@@ -78,13 +78,15 @@ describe('server-owned Connectors company projection', () => {
   it('Reproduction CONNECTORS-1: places Rooms apps by name among Connected apps', () => {
     const view = { ...base([], [app('notion', 'Notion', 'notion.so')]), helpers: [], aiClients: [
       { clientId: 'muse', name: 'Meta Muse', scopes: ['rooms:read'], connectedAt: 1, lastUsedAt: null },
-      { clientId: 'grok', name: 'Grok Bot', scopes: ['rooms:read', 'rooms:write'], connectedAt: 1, lastUsedAt: null },
+      { clientId: 'grok', name: 'Grok Bot', scopes: ['rooms:read', 'rooms:write'], connectedAt: 1, lastUsedAt: null,
+        agent: { id: 'agent-grok', name: 'Firstmate' } },
     ] };
     const index = projectWorkbenchCompanies(view, origin);
     expect(index.rows.filter(row => row.section === 'apps').map(row => row.name)).toEqual(['Grok Bot', 'Meta Muse', 'Notion']);
     expect(index.rows[0]?.roomsClientId).toBe('grok');
-    // A connection stored before full rights still reads and posts.
-    expect(index.rows.find(r => r.id === 'rooms:muse')).toMatchObject({ subtitle: 'Reads and posts' });
+    // Rows name the agent the app posts as; a connection made before members keeps a plain line.
+    expect(index.rows.find(r => r.id === 'rooms:grok')).toMatchObject({ subtitle: 'Connected as Firstmate' });
+    expect(index.rows.find(r => r.id === 'rooms:muse')).toMatchObject({ subtitle: 'Connected' });
     expect(projectWorkbenchCompanies({ ...view, apps: [] }, origin).hasConnections).toBe(true);
   });
   it('keeps one company for seven keys, and distinct Squire credentials out of the sign-in service', () => {

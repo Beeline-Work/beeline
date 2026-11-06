@@ -43,7 +43,6 @@ ALTER TABLE rooms_mcp_members ADD COLUMN IF NOT EXISTS callback_secret text;
 -- Until the member names itself, read results repeat the setup rules, because
 -- many hosts never show the model the server instructions.
 ALTER TABLE rooms_mcp_members ADD COLUMN IF NOT EXISTS profile_set boolean NOT NULL DEFAULT false;
-ALTER TABLE rooms_mcp_members ADD COLUMN IF NOT EXISTS last_bridge_poll_at timestamptz;
 -- Each tag or direct message addressed to an AI-client member, in order: the
 -- list_mentions catch-up read and send_message's wake provenance.
 CREATE TABLE IF NOT EXISTS rooms_mcp_mentions (
@@ -67,7 +66,7 @@ DO $$ BEGIN
         AND reply.presentation='message');
   END IF;
 END $$;
-ALTER TABLE rooms_mcp_mentions ADD COLUMN IF NOT EXISTS rewakes integer NOT NULL DEFAULT 0;
+DROP FUNCTION IF EXISTS beeline_mcp_stream_source() CASCADE;
 -- Retire the index used only by the deleted timed mention re-delivery.
 DROP INDEX IF EXISTS rooms_mcp_mentions_owed;
 -- A reply settles its own author's tag only after the message write succeeds,
@@ -85,16 +84,7 @@ CREATE TRIGGER clear_replied_room_mention AFTER INSERT ON messages
   FOR EACH ROW WHEN (NEW.reply_to_message_id IS NOT NULL AND NEW.presentation='message')
   EXECUTE FUNCTION clear_replied_room_mention();
 
--- A member's post whose agent wakes have not been routed yet. send_message
--- deletes it once routing commits; maintenance retries any that failed.
-CREATE TABLE IF NOT EXISTS rooms_mcp_pending_routes (
-  message_id text PRIMARY KEY,
-  room_id uuid NOT NULL,
-  member_id text NOT NULL,
-  attempts integer NOT NULL DEFAULT 0,
-  last_error text,
-  created_at timestamptz NOT NULL DEFAULT now()
-);
+DROP TABLE IF EXISTS rooms_mcp_pending_routes;
 -- A client-supplied idempotency key returns the first message it already posted.
 CREATE TABLE IF NOT EXISTS rooms_mcp_idempotency (
   member_id text NOT NULL,
@@ -200,18 +190,12 @@ CREATE TABLE IF NOT EXISTS rooms_mcp_event_deliveries (
   subscription_id text NOT NULL REFERENCES rooms_mcp_event_subscriptions(id) ON DELETE CASCADE,
   message_id text NOT NULL, room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   event_id text NOT NULL, body text NOT NULL,
-  attempts integer NOT NULL DEFAULT 0, claimed_at timestamptz,
-  next_attempt_at timestamptz NOT NULL DEFAULT now(), delivered_at timestamptz,
+  claimed_at timestamptz,
+  delivered_at timestamptz,
   PRIMARY KEY(subscription_id,message_id)
 );
 CREATE INDEX IF NOT EXISTS rooms_mcp_event_deliveries_done ON rooms_mcp_event_deliveries(delivered_at) WHERE delivered_at IS NOT NULL;
--- UTC keeps the claim-duration expression immutable and independent of session timezone.
-CREATE INDEX IF NOT EXISTS rooms_mcp_event_deliveries_due ON rooms_mcp_event_deliveries
- ((GREATEST(next_attempt_at AT TIME ZONE 'UTC',(claimed_at AT TIME ZONE 'UTC')+interval '1 minute')))
- WHERE delivered_at IS NULL AND attempts<5;
 CREATE INDEX IF NOT EXISTS rooms_mcp_event_deliveries_room ON rooms_mcp_event_deliveries(room_id);
-CREATE INDEX IF NOT EXISTS rooms_mcp_event_deliveries_pending ON rooms_mcp_event_deliveries(next_attempt_at)
-  WHERE delivered_at IS NULL;
 -- A private wake has no message. command_id is its idempotency key; exactly one of the two is set.
 ALTER TABLE rooms_mcp_event_deliveries ADD COLUMN IF NOT EXISTS command_id text;
 DO $$ BEGIN

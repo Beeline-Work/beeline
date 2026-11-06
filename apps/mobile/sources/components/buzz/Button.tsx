@@ -248,6 +248,7 @@ function ButtonFrame({
       {iconPosition === 'start' && icon}
       {label ? (
         <Text
+          numberOfLines={appearance || inline ? undefined : 1}
           style={labelStyles}
         >
           {label}

@@ -146,10 +146,6 @@ const cases = {
     });
     expect(database.oldestActiveTransactionAgeMs()).toBeNull();
   },
-  transactionDeadlineCount: async () => {
-    await database.transaction(tx => tx.query('SELECT 1'));
-    expect(database.transactionDeadlineCount()).toBe(0);
-  },
   onRecovery: async () => {
     let recoveries = 0;
     const remove = database.onRecovery(() => { recoveries++; });

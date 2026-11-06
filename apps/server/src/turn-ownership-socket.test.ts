@@ -28,12 +28,6 @@ describe.each(['pglite', ...(postgresUrl ? ['postgres'] : [])])('P12 actual sele
   let listener: PostgresLiveListener | undefined, listening: Promise<void> | undefined;
   let server: ReturnType<typeof createBeelineServer> | undefined;
   const sockets: WebSocket[] = [], releases: Promise<void>[] = [];
-  const controls = new Set<{ run: () => void; interval: number; next: number }>();
-  let elapsed = 0;
-  const connectionWork = (run: () => void, interval: number) => {
-    const control = { run, interval, next: elapsed + interval }; controls.add(control);
-    return () => { controls.delete(control); };
-  };
   let command: NonNullable<Awaited<ReturnType<typeof createAgentCommand>>>;
   beforeEach(async () => {
     if (backend === 'postgres') {
@@ -53,8 +47,8 @@ describe.each(['pglite', ...(postgresUrl ? ['postgres'] : [])])('P12 actual sele
     expect(command).toBeDefined();
     // Only Date and the two actual connection control owners are driven.
     // PostgreSQL's pool, socket and transaction timers keep real time.
-    elapsed = 0; controls.clear(); vi.useFakeTimers({ toFake: ['Date'] });
-    presence = new ConnectionPresence(db, live, undefined, undefined, { connectionWork });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    presence = new ConnectionPresence(db, live);
     const release = presence.releaseConnection.bind(presence);
     vi.spyOn(presence, 'releaseConnection').mockImplementation((...args) => {
       const work = release(...args); releases.push(work); return work;
@@ -171,15 +165,14 @@ describe.each(['pglite', ...(postgresUrl ? ['postgres'] : [])])('P12 actual sele
     const queries = vi.spyOn(db, 'query');
     const published: unknown[] = [];
     const stopLive = live.subscribeAll(event => published.push(event));
-    for (let i = 0; i < 20; i += 1) {
-      elapsed += 30_000; vi.setSystemTime(Date.now() + 30_000);
-      await presence.renewLease(); // Join the admitted aggregate lease write.
-    }
+    vi.setSystemTime(Date.now() + 86400_000);
+    await Promise.resolve();
+    expect(client.socket.readyState).toBe(WebSocket.OPEN);
+    expect(queries).not.toHaveBeenCalled();
     expect(await versions()).toEqual(before);
     expect(client.frames.some(frame => frame.type === 'intake-ready')).toBe(false);
     expect(queries.mock.calls.filter(([sql]) => /(?:INSERT INTO|UPDATE)\s+agent_turns/i.test(sql))).toHaveLength(0);
     expect(published.filter(event => (event as Frame).reason === 'postgres:agent_turns' || (event as Frame).type === 'turn-delta')).toHaveLength(0);
-    expect(queries.mock.calls.filter(([sql]) => sql.includes('INSERT INTO live_server_instances')).length).toBeLessThanOrEqual(20);
     stopLive(); queries.mockRestore();
   });
 

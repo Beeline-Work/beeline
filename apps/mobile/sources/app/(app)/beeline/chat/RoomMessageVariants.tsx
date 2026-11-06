@@ -1,98 +1,31 @@
-import { useArtifactRowVisible } from '@/buzz/artifact-viewport';
-import { Ionicons } from '@expo/vector-icons';
-import type { MessageSendState } from '@/buzz/message-outbox';
 import { ChoiceVideoPreview } from '@/components/buzz/ChoiceVideoPreview';
 import { funnelOnboarding } from '@/auth/signin-funnel';
-import { LedgerUntaggedHint } from '@/components/buzz/Ledger';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { Platform, Pressable, Text, View } from 'react-native';
-export { GitHubEventCard, DaemonFactCard } from '@/components/buzz/LifecycleCard';
+import React, { useEffect, useState } from 'react';
+import { Text, View } from 'react-native';
 import { NotificationLifecycleCard } from '@/components/buzz/PrLifecycleCard';
-export { NotificationLifecycleCard };
-import TranscriptSwipeable, { type TranscriptSwipeableMethods as SwipeableMethods } from '@/components/buzz/TranscriptSwipeable';
-import { DesktopMessageAction } from '@/components/buzz/DesktopMessageAction';
-import { ButtonRowFrame } from '@/components/buzz/ButtonRow';
-import { DesktopWorkspacePortal } from '@/components/buzz/DesktopWorkspacePortal';
 import { StyleSheet } from 'react-native-unistyles';
-import {
-  MESSAGE_REACTION_EMOJIS,
-  type AttachmentReference,
-  type MessageReactionEmoji,
-} from '@beeline/buzz-client';
-import {
-  CHOICE_NOTE_MAX_LENGTH,
-  formatChoiceClock,
-} from '@beeline/api-contract/phone';
-
+import { CHOICE_NOTE_MAX_LENGTH, formatChoiceClock } from '@beeline/api-contract/phone';
 import type { AgentPresentation, ChatDisplayMessage } from '@/buzz/room-view-presentation';
-import type { ChannelReferenceIndex, ChannelReferenceTarget } from '@/buzz/channel-reference';
-import { agentActivityReplyExcerpt, canBeginReply, type MessageReplyDisplayTarget } from '@/buzz/message-reply';
-import { resolveAgentDisplayIdentity, resolvePendingAgentDisplay } from '@/buzz/agent-display';
-import { fallbackMemberName } from '@/buzz/member-display';
-import { displayModel } from '@/buzz/model-display';
-import { CHANNEL_MENTION_HANDLE, SYSTEM_MENTION_HANDLE, hasChannelMentionToken } from '@/buzz/room-participants';
-import { SYSTEM_IDENTITY_PUBKEY } from '@/buzz/system-identity';
-import { emojiTextStyle } from '@/buzz/emoji-text';
-import {
-  connectorOfferWaitingLine,
-} from '@/buzz/connector-offer-copy';
+import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
+import { connectorOfferWaitingLine } from '@/buzz/connector-offer-copy';
 import { AppMark } from '@/components/buzz/AppMark';
 import { INSTAGRAM_SIGN_IN_REQUIREMENT } from '@/buzz/app-sign-in-copy';
 import { appBoardColors } from '@/buzz/app-board-style';
-import { shouldShowReplyReference } from '@/buzz/reply-reference';
-import {
-  draftRequestId,
-  provisionalDraftKey,
-} from '@/buzz/draft-settle';
-import { RoomPresentationContext } from '@/buzz/room-presentation-context';
-import { splitLedgerText } from '@/buzz/ledger-text';
-import { currentViewerConversation, subscribeViewerConversation, viewerContextLabel, splitViewerContext } from '@/buzz/viewer-conversation';
-import { parseConnectorReceipt, type ConnectorReceipt } from '@/buzz/connector-receipt';
 import { ledgerStamp } from '@/buzz/relative-time';
-import { isLedgerDayOpener } from '@/buzz/message-dates';
-import { useTranscriptStamp } from '@/buzz/use-transcript-stamp';
-import { attachmentOpenUrl, formatAttachmentSize } from '@/buzz/chat-attachment';
-import { artifactFormat, mediaIdFromUrl } from '@/buzz/artifact';
-import { ArtifactImage } from '@/components/buzz/ArtifactMedia';
-import { TranscriptReference } from '@/components/buzz/TranscriptReference';
-import { openComputerSessionViewer } from '@/components/buzz/ComputerSession';
-import { ArtifactCard, openArtifactViewer } from '@/components/buzz/ArtifactCard';
-import { ArtifactViewerScreen } from '@/components/buzz/ArtifactViewer';
-import { showPictureActions } from '@/buzz/picture-actions';
-import { CORNER_LABEL } from '@/buzz/vocabulary';
-import { CornerGlyph } from '@/components/buzz/CornerGlyph';
-import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
-import { ContentTarget } from '@/components/buzz/IndexRow';
-import { Typography } from '@/constants/Typography';
-import { Modal } from '@/modal';
 import { squireApprovalAction } from '@beeline/api-contract/phone';
 import { AgentApprovalCard, approvalAudience, approvalDecisionNote } from '@/components/buzz/AgentApprovalCard';
 import { openExternalUrl } from '@/utils/open-external-url';
-import { ActivityTimeline, TurnStepsLine } from '@/components/buzz/ActivityTimeline';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
-import { MessageReactionRoster } from '@/components/buzz/MessageReactionRoster';
-import { ALIVE_RING_PAD } from '@/buzz/identity-mark';
-import { parseCornerProposal } from '@/buzz/corner-proposal';
-import {
-  LedgerEntry,
-  LedgerGhostLine,
-  LedgerSystemLine,
-  LedgerSteer,
-  type LedgerByline,
-} from '@/components/buzz/Ledger';
 import { Button } from '@/components/buzz/Button';
-import { NewMessageMaterialize } from '@/components/buzz/MonoHull';
-import {
-  TranscriptCard,
-  TranscriptCardHandle,
-  type TranscriptCardAction,
-  type TranscriptCardChoice,
-} from '@/components/buzz/TranscriptCard';
-import { forwardedMessageParts } from '@/buzz/message-forward';
-import { agentMessageJsonMarkdown } from '@/buzz/agent-message-json';
+import { TranscriptCard, TranscriptCardHandle, type TranscriptCardAction, type TranscriptCardChoice } from '@/components/buzz/TranscriptCard';
+import { OrdinaryLedgerMessageProps, agentBylineLabel, ConnectorReceiptCard } from './RoomMessageVariants-attachment-card';
+import { OrdinaryLedgerMessage } from './RoomMessageVariants-ordinary-ledger-message';
+
+
 
 type WriteDecision = 'allow' | 'deny';
+
 
 export interface WritePermissionCardProps {
   message: ChatDisplayMessage;
@@ -107,6 +40,7 @@ export interface WritePermissionCardProps {
   onDecision(message: ChatDisplayMessage, decision: WriteDecision): void;
   onOpenCorner(cornerId: string): void;
 }
+
 
 export const WritePermissionCard = React.memo(function WritePermissionCard({
   message,
@@ -167,7 +101,7 @@ export const WritePermissionCard = React.memo(function WritePermissionCard({
         : [];
   return (
     <AgentApprovalCard
-      tier={pending ? 'ask' : 'record'} testID={`write-permission-${permission.status}`}
+      tier={pending ? 'ask' : 'record'} testID={`write-permission-${permission.status}`} wrapTitle
       askingAgent={{ pubkey: permission.agentPubkey, kind: 'agent', name: display.name }} agent={agent}
       title={<><TranscriptCardHandle>@{display.name.replace(/^@/, '')}</TranscriptCardHandle>{' '}{squireSpending ? 'wants to spend with Trusty Squire' : 'wants to open an edit corner'}</>}
       subline={`${squireSpending ? roomName ? `#${roomName}` : 'Room' : permission.repository ?? 'Repository'} · ${approvalAudience(permission.requester, viewerPubkey)}`}
@@ -182,7 +116,6 @@ export const WritePermissionCard = React.memo(function WritePermissionCard({
   );
 });
 
-export { GrantRequestCard, type GrantDecision, type GrantRequestCardProps } from '@/components/buzz/GrantRequestCard';
 
 export interface SquireApprovalCardProps {
   message: ChatDisplayMessage;
@@ -190,6 +123,7 @@ export interface SquireApprovalCardProps {
   viewerPubkey?: string;
   onOpenSource?(roomId: string, messageId: string): void;
 }
+
 
 /**
  * A notification, not an authority surface: the primary action opens the
@@ -215,7 +149,7 @@ export const SquireApprovalCard = React.memo(function SquireApprovalCard({
   });
   if (!settled) actions.push({ label: approval.linkKind === 'passkey' ? 'Use passkey' : approval.linkKind === 'vouch' ? 'Vouch' : 'Review',
     accessibilityRole: 'link', destination: 'external', onPress: () => void openExternalUrl(approval.approvalUrl), testID: 'squire-approval-open' });
-  return <AgentApprovalCard tier={settled ? 'record' : 'ask'} testID="squire-approval-card"
+  return <AgentApprovalCard tier={settled ? 'record' : 'ask'} testID="squire-approval-card" wrapTitle
     askingAgent={approval.agent} agent={agent}
     title={`@${name.replace(/^@/, '')} wants to ${approval.action ?? squireApprovalAction(approval.tool, approval.detail, approval.linkKind)}`}
     subline={`${approval.tool === 'Link' ? 'Link' : 'Trusty Squire'} · ${approvalAudience(approval.owner, viewerPubkey)}`}
@@ -224,6 +158,7 @@ export const SquireApprovalCard = React.memo(function SquireApprovalCard({
     footerNote={approval.status ? approvalDecisionNote(approval.status, approval.decidedBy, approval.decidedAt ?? message.timestamp, viewerPubkey, approval.action ?? squireApprovalAction(approval.tool, approval.detail, approval.linkKind)) : undefined}
     decisionNote={settled} actions={actions} />;
 });
+
 
 export interface ConnectorOfferCardProps {
   message: ChatDisplayMessage;
@@ -249,6 +184,7 @@ export interface ConnectorOfferCardProps {
   onOpenReplacement(messageId: string): void;
   onDecline?(offerId: string): void;
 }
+
 
 export function AppSignInCard({ message, agentName, canConnect, onConnect, busy }: {
   message: ChatDisplayMessage;
@@ -291,6 +227,7 @@ export function AppSignInCard({ message, agentName, canConnect, onConnect, busy 
   );
 }
 
+
 const appSignInStyles = StyleSheet.create(theme => {
   const board = appBoardColors(theme.buzz);
   return {
@@ -311,6 +248,7 @@ const appSignInStyles = StyleSheet.create(theme => {
   settled: { ...theme.buzz.type.sectionHead, color: board.quiet, marginVertical: 8, marginHorizontal: 8 },
   };
 });
+
 
 export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
   message,
@@ -371,7 +309,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
   return (
     <AgentApprovalCard
       tier={pending || connecting ? 'ask' : 'record'}
-      testID={`connector-offer-${pending ? 'pending' : connecting ? 'connecting' : 'settled'}`}
+      testID={`connector-offer-${pending ? 'pending' : connecting ? 'connecting' : 'settled'}`} wrapTitle
       askingAgent={offer.agent} agent={agent}
       title={`@${agentName.replace(/^@/, '')} wants to ${offer.intent === 'reconnect' ? 'reconnect' : offer.intent === 'switch' ? 'switch' : 'add'} ${offer.connectorName}`}
       subline={offer.addressee.pubkey === viewerPubkey ? undefined : approvalAudience(offer.addressee, viewerPubkey)}
@@ -406,6 +344,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
   );
 });
 
+
 export interface ChoiceCardProps {
   message: ChatDisplayMessage;
   agent?: AgentPresentation;
@@ -416,10 +355,12 @@ export interface ChoiceCardProps {
   onSkip(choiceId: string): void;
 }
 
+
 function choiceHandle(identity?: { handle?: string; name: string; pubkey: string }): string {
   const handle = identity?.handle?.replace(/^@/, '');
   return handle || identity?.name?.replace(/^@/, '') || 'someone';
 }
+
 
 /**
  * One choice family: lettered plates for a question or a poll. Skip is a footer
@@ -515,6 +456,7 @@ export const ChoiceCard = React.memo(function ChoiceCard({
         />
       }
       title={card.prompt}
+      wrapTitle
       subline={subline}
       sublineTestID={`choice-${card.choiceId}-subline`}
       stamp={ledgerStamp(message.timestamp)}
@@ -542,6 +484,7 @@ export const ChoiceCard = React.memo(function ChoiceCard({
     />
   );
 });
+
 
 /**
  * The @wallet thread's cards: every transaction, the one refusal, and the
@@ -623,6 +566,7 @@ export const WalletCards = React.memo(function WalletCards({
   return null;
 });
 
+
 /**
  * An agent's order into, or report from, a corner reads as ordinary transcript.
  * The recipient becomes the first word as a plain @mention; the byline still
@@ -649,6 +593,7 @@ export function agentCommandTranscriptMessage(
   };
 }
 
+
 export interface TargetBranchProposalCardProps {
   message: ChatDisplayMessage;
   agent?: AgentPresentation;
@@ -662,6 +607,7 @@ export interface TargetBranchProposalCardProps {
   viewerPubkey?: string;
   roomName?: string;
 }
+
 
 export const TargetBranchProposalCard = React.memo(function TargetBranchProposalCard({
   message,
@@ -682,7 +628,7 @@ export const TargetBranchProposalCard = React.memo(function TargetBranchProposal
     ? resolveAgentDisplayIdentity(proposal.agentPubkey, agent).name.replace(/^@/, '')
     : undefined;
   return (
-    <AgentApprovalCard tier={settled ? 'record' : 'ask'} testID="target-branch-proposal"
+    <AgentApprovalCard tier={settled ? 'record' : 'ask'} testID="target-branch-proposal" wrapTitle
       askingAgent={{ pubkey: proposal.agentPubkey ?? '', kind: 'agent', name: askingAgent ?? 'Agent' }} agent={agent}
       title={`@${askingAgent ?? 'Agent'} wants to change the target branch`}
       subline={`${roomName ? `#${roomName}` : proposal.repository ?? 'Room'} · for you`}
@@ -696,1192 +642,10 @@ export const TargetBranchProposalCard = React.memo(function TargetBranchProposal
       ] : []} />
   );
 });
-
-/**
- * Attachment bytes are kept for 24 hours (`apps/server/src/media-ttl.ts`); the
- * message that carried them is kept forever. Past the window the server marks
- * the attachment `expired`, and the row says so in the same metrics as a live
- * one — the name, type and size the message still holds, inscribed rather than
- * framed. Nothing is fetched and nothing opens: there is no longer a file
- * behind the link, and a broken thumbnail or a spinner would say otherwise.
- */
-function AttachmentCard({
-  attachment,
-  isDesktop,
-  visible,
-}: {
-  attachment: AttachmentReference;
-  isDesktop: boolean;
-  visible: boolean;
-}) {
-  const image =
-    visible && !attachment.expired && attachment.mimeType.startsWith('image/') && mediaIdFromUrl(attachment.url);
-  const open = () => {
-    // A picture opens the same centered full-screen viewer on every surface,
-    // desktop included; the work pane keeps only its documents.
-    if (attachment.mimeType.startsWith('image/')) {
-      const objectId = mediaIdFromUrl(attachment.url);
-      Modal.show({
-        component: ArtifactViewerScreen,
-        props: { attachment },
-        placement: 'fill',
-      });
-      return;
-    }
-    void openExternalUrl(attachmentOpenUrl(attachment)).catch(() => {
-      Modal.alert('Could not open attachment', 'The file link could not be opened on this device.');
-    });
-  };
-  const metadata = `${attachment.mimeType.toUpperCase()} · ${formatAttachmentSize(attachment.size)}`;
-  if (attachment.expired) {
-    return (
-      <View
-        accessibilityLabel={`Expired attachment ${attachment.name}`}
-        style={styles.attachmentCard}
-        testID={`chat-attachment-expired-${attachment.name}`}
-      >
-        <View style={styles.attachmentFileGlyph}>
-          <Text style={[styles.attachmentFileGlyphText, styles.attachmentExpired]}>▧</Text>
-        </View>
-        <View style={styles.attachmentCopy}>
-          <Text style={[styles.attachmentName, styles.attachmentExpired]}>
-            {attachment.name}
-          </Text>
-          <Text style={styles.attachmentMeta}>
-            EXPIRED · {metadata}
-          </Text>
-        </View>
-      </View>
-    );
-  }
-  return (
-    <ContentTarget
-      accessibilityLabel={`Open attachment ${attachment.name}`}
-      accessibilityRole={attachment.mimeType.startsWith('image/') ? 'button' : 'link'}
-      delayLongPress={450}
-      onLongPress={
-        attachment.mimeType.startsWith('image/')
-          ? (event) => {
-              event.stopPropagation();
-              showPictureActions(attachment);
-            }
-          : undefined
-      }
-      onPress={open}
-      style={styles.attachmentCard}
-      testID={`chat-attachment-${attachment.name}`}
-      {...(isDesktop && attachment.mimeType.startsWith('image/')
-        ? ({
-            onContextMenu: (event: { preventDefault(): void; stopPropagation(): void }) => {
-              event.preventDefault();
-              event.stopPropagation();
-              showPictureActions(attachment);
-            },
-          } as any)
-        : {})}
-    >
-      {image ? (
-        <ArtifactImage
-          attachment={attachment}
-          fit="cover"
-          style={styles.attachmentThumbnail}
-          testID={`chat-attachment-thumbnail-${attachment.name}`}
-        />
-      ) : (
-        <View style={styles.attachmentFileGlyph}>
-          <Text style={styles.attachmentFileGlyphText}>▧</Text>
-        </View>
-      )}
-      <View style={styles.attachmentCopy}>
-        <Text style={styles.attachmentName}>
-          {attachment.name}
-        </Text>
-        <Text style={styles.attachmentMeta}>
-          {metadata}
-        </Text>
-      </View>
-      <View style={styles.attachmentOpenGlyph}>
-        <ChevronGlyph color={styles.attachmentOpenGlyphInk.color} size={CHEVRON_ROW_SIZE} />
-      </View>
-    </ContentTarget>
-  );
-}
-
-function SwipeToReply({
-  children,
-  messageId,
-  onLongPress,
-  onActions,
-  onPress,
-  onReply,
-  onReact,
-  onForward,
-  onBookmark = () => undefined,
-  onReportIssue,
-  onSwipeCorner,
-  bookmarked = false,
-  isDesktop,
-  replyOnly = false,
-}: {
-  children: React.ReactNode;
-  messageId: string;
-  onLongPress(): void;
-  /** Mobile long press — opens the message actions sheet. Desktop long press
-   *  keeps its copy shortcut and reaches the same sheet through its buttons. */
-  onActions?(): void;
-  onPress?(): void;
-  onReply?(): void;
-  onReact(emoji: MessageReactionEmoji): void;
-  onForward(): void;
-  onBookmark?(): void;
-  /** Report issue — files the message with the Beeline feedback loop. Omitted
-   *  where the row offers no report (the desktop work pane's read-only copy). */
-  onReportIssue?(): void;
-  /** Mobile swipe right — forward the message into a new corner. */
-  onSwipeCorner?(): void;
-  bookmarked?: boolean;
-  isDesktop: boolean;
-  replyOnly?: boolean;
-}) {
-  const swipeableRef = useRef<SwipeableMethods | null>(null);
-  const [swipeShown, setSwipeShown] = useState(false);
-  const showSwipe = useCallback(() => setSwipeShown(true), []);
-  const hideSwipe = useCallback(() => setSwipeShown(false), []);
-  useEffect(() => setSwipeShown(false), [messageId]);
-  const commitSwipe = (direction: 'left' | 'right') => {
-    // TranscriptSwipeable reports the movement direction. Its UI-thread spring
-    // can return immediately without the legacy native-driver close timers.
-    swipeableRef.current?.close();
-    // Install the quote before a composer update can recycle this row.
-    if (direction === 'left') onReply?.();
-    else onSwipeCorner?.();
-  };
-  const [desktopActionsVisible, setDesktopActionsVisible] = useState(false);
-  const [desktopRowHovered, setDesktopRowHovered] = useState(false);
-  const [reactionPickerVisible, setReactionPickerVisible] = useState(false);
-  const actionsRef = useRef<View>(null);
-  const pickerRef = useRef<View>(null);
-  const [pickerPosition, setPickerPosition] = useState<{ top: number; left: number } | null>(null);
-  useEffect(() => setReactionPickerVisible(false), [messageId, isDesktop]);
-  useLayoutEffect(() => {
-    if (!isDesktop || !reactionPickerVisible || Platform.OS !== 'web') {
-      setPickerPosition(null);
-      return;
-    }
-    // RN Web rows create stacking contexts. A row-local zIndex cannot clear
-    // later messages, and the transcript clips anything below its bottom edge.
-    // Measure the real surface in the body portal, then keep it in the viewport.
-    const anchor = actionsRef.current as unknown as HTMLElement;
-    const picker = pickerRef.current as unknown as HTMLElement;
-    if (!anchor || !picker) return;
-    const bounds = anchor.getBoundingClientRect();
-    const size = picker.getBoundingClientRect();
-    const inset = 8;
-    const maxTop = Math.max(inset, window.innerHeight - size.height - inset);
-    setPickerPosition({
-      top: Math.max(inset, Math.min(
-        bounds.bottom + size.height <= window.innerHeight - inset
-          ? bounds.bottom
-          : bounds.top - size.height,
-        maxTop,
-      )),
-      left: Math.max(inset, Math.min(bounds.right - size.width, window.innerWidth - size.width - inset)),
-    });
-    const dismiss = () => setReactionPickerVisible(false);
-    const outside = (event: PointerEvent) => {
-      if (!picker.contains(event.target as Node) && !anchor.contains(event.target as Node)) dismiss();
-    };
-    const escape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') dismiss();
-    };
-    document.addEventListener('pointerdown', outside, true);
-    document.addEventListener('keydown', escape);
-    // A scrolled/replaced row must never leave a picker pointing at old content.
-    document.addEventListener('scroll', dismiss, true);
-    window.addEventListener('resize', dismiss);
-    return () => {
-      document.removeEventListener('pointerdown', outside, true);
-      document.removeEventListener('keydown', escape);
-      document.removeEventListener('scroll', dismiss, true);
-      window.removeEventListener('resize', dismiss);
-    };
-  }, [isDesktop, messageId, reactionPickerVisible]);
-  const message = isDesktop ? (
-    <Pressable
-      accessibilityHint="Long press to copy the entire message"
-      accessibilityLabel="Message"
-      delayLongPress={450}
-      onLongPress={onLongPress}
-      onPress={onPress}
-      style={isDesktop ? styles.replyDesktopMessage : undefined}
-      testID={`copy-message-${messageId}`}
-    >
-      {children}
-    </Pressable>
-  ) : (
-    <Pressable
-      // The long press is the row's action sheet — reactions, copy, reply,
-      // forward — so it deliberately claims what native text selection once
-      // held on this row; Copy on the sheet is the way to the full text now.
-      // Touch end keeps its composer-dismissal job.
-      delayLongPress={450}
-      onLongPress={onActions}
-      onTouchEnd={onPress}
-      testID={`copy-message-${messageId}`}
-    >
-      {children}
-    </Pressable>
-  );
-  if (isDesktop) {
-    return (
-      <View
-        style={styles.replyDesktopRow}
-        {...({
-          onMouseEnter: () => setDesktopRowHovered(true),
-          onMouseLeave: () => setDesktopRowHovered(false),
-        } as any)}
-      >
-        {message}
-        <ButtonRowFrame
-          ref={actionsRef}
-          accessibilityLabel="Message actions"
-          style={[
-            styles.replyDesktopActions,
-            (desktopActionsVisible || desktopRowHovered || reactionPickerVisible) && styles.replyDesktopActionsVisible,
-          ]}
-          testID={`message-actions-${messageId}`}
-        >
-          {!replyOnly ? (
-            <DesktopMessageAction action="copy" label="Copy message text" tooltip="Copy" onPress={onLongPress} onFocus={() => setDesktopActionsVisible(true)} onBlur={() => setDesktopActionsVisible(false)} testID={`copy-button-${messageId}`} />
-          ) : null}
-          {onReply ? <DesktopMessageAction action="reply" label="Reply to message" tooltip="Reply" onPress={onReply} onFocus={() => setDesktopActionsVisible(true)} onBlur={() => setDesktopActionsVisible(false)} testID={`reply-button-${messageId}`} /> : null}
-          {!replyOnly ? (
-            <>
-              <DesktopMessageAction action="react" label="React to message" tooltip="React" onPress={() => setReactionPickerVisible((visible) => !visible)} onFocus={() => setDesktopActionsVisible(true)} onBlur={() => setDesktopActionsVisible(false)} testID={`react-button-${messageId}`} />
-              <DesktopMessageAction action="bookmark" label={bookmarked ? 'Remove bookmark' : 'Bookmark message'} tooltip={bookmarked ? 'Remove bookmark' : 'Bookmark'} selected={bookmarked} onPress={onBookmark} onFocus={() => setDesktopActionsVisible(true)} onBlur={() => setDesktopActionsVisible(false)} testID={`bookmark-button-${messageId}`} />
-              {onReportIssue ? (
-                <DesktopMessageAction action="report" label="Report an issue with this message" tooltip="Report an issue" onPress={onReportIssue} onFocus={() => setDesktopActionsVisible(true)} onBlur={() => setDesktopActionsVisible(false)} testID={`report-button-${messageId}`} />
-              ) : null}
-              <DesktopMessageAction action="forward" label="Forward message" tooltip="Forward" onPress={onForward} onFocus={() => setDesktopActionsVisible(true)} onBlur={() => setDesktopActionsVisible(false)} testID={`forward-button-${messageId}`} />
-            </>
-          ) : null}
-        </ButtonRowFrame>
-        {!replyOnly && reactionPickerVisible ? (
-          <DesktopWorkspacePortal>
-            <ButtonRowFrame
-              ref={pickerRef}
-              style={[styles.reactionPicker, pickerPosition ?? { opacity: 0 }]}
-              testID={`reaction-picker-${messageId}`}
-            >
-            {MESSAGE_REACTION_EMOJIS.map((emoji) => (
-              <Pressable
-                accessibilityLabel={`React with ${emoji}`}
-                accessibilityRole="button"
-                key={emoji}
-                onPress={() => {
-                  onReact(emoji);
-                  setReactionPickerVisible(false);
-                }}
-                style={({ pressed }) => [
-                  styles.reactionPickerChoice,
-                  pressed && styles.replyDesktopPressed,
-                ]}
-                testID={`reaction-choice-${messageId}-${emoji}`}
-              >
-                <Text style={styles.reactionEmoji}>{emoji}</Text>
-              </Pressable>
-            ))}
-            </ButtonRowFrame>
-          </DesktopWorkspacePortal>
-        ) : null}
-      </View>
-    );
-  }
-  const cornerAction = (poseStyle?: object) => (
-    <View
-      accessibilityLabel={`Forward message to a new ${CORNER_LABEL}`}
-      accessibilityElementsHidden={!swipeShown}
-      importantForAccessibility={swipeShown ? 'auto' : 'no-hide-descendants'}
-      style={[styles.cornerSwipeAction, !swipeShown && styles.swipeActionAtRest, poseStyle]}
-      testID={`corner-swipe-action-${messageId}`}
-    >
-      {swipeShown ? <>
-        <CornerGlyph color={styles.cornerSwipeGlyph.color} size={20} />
-        <Text style={styles.replySwipeLabel}>{CORNER_LABEL.toUpperCase()}</Text>
-      </> : null}
-    </View>
-  );
-  const swipeRow = () => (
-    <TranscriptSwipeable
-      ref={swipeableRef}
-      // Swipeable's container clips (`overflow: 'hidden'`) at the row's content
-      // edge, where the byline tile sits — and a live agent's gold ring paints
-      // `ALIVE_RING_PAD` outside that tile. The clip box is outset by the ring
-      // gutter and the children padded back by the same amount, so the copy
-      // column never moves and the whole tile, ring included, stays visible.
-      // These third-party style props need plain values: Unistyles web styles
-      // hide their properties until a supported host style prop resolves them.
-      containerStyle={{ marginHorizontal: -ALIVE_RING_PAD }}
-      childrenContainerStyle={{ paddingHorizontal: ALIVE_RING_PAD }}
-      dragOffsetFromRightEdge={18}
-      friction={1.35}
-      onSwipeableWillOpen={commitSwipe}
-      onSwipeableClose={hideSwipe}
-      onSwipeableOpenStartDrag={showSwipe}
-      renderLeftActions={onSwipeCorner ? () => cornerAction() : undefined}
-      renderRightActions={onReply ? () => (
-        <View
-          accessibilityLabel="Reply to message"
-          style={styles.replySwipeAction}
-          testID={`reply-swipe-action-${messageId}`}
-        >
-          {swipeShown ? <>
-            <Text style={styles.replySwipeGlyph}>↩</Text>
-            <Text style={styles.replySwipeLabel}>REPLY</Text>
-          </> : null}
-        </View>
-      ) : undefined}
-      enabled={Boolean(onReply || onSwipeCorner)}
-      testID={`swipe-reply-${messageId}`}
-    >
-      {message}
-    </TranscriptSwipeable>
-  );
-  return swipeRow();
-}
-
-export interface OrdinaryLedgerMessageProps {
-  message: ChatDisplayMessage;
-  agent?: AgentPresentation;
-  /** The model stamped on the message at generation time, rendered verbatim
-   *  in the agent byline. Absent keeps the plain `AGENT` word — never a live
-   *  roster lookup, which would retro-label old messages with today's setting. */
-  agentModel?: string;
-  participantsHydrated: boolean;
-  personName?: string;
-  /** Current person portrait from the roster. Wins over a cached author snapshot. */
-  personAvatar?: string;
-  personFace?: string;
-  viewerPubkey: string;
-  /**
-   * The speaker is WORKING right now — its own fresh working receipt
-   * (`selectWorkingAgents`). Lights the byline's gold ring. Never the
-   * delivery availability: an available daemon may not be working yet (C77).
-   */
-  speakerWorking: boolean;
-  continued: boolean;
-  immediatelyPrecedingMessage?: ChatDisplayMessage;
-  firstBylineOfDay?: boolean;
-  referencedTarget?: MessageReplyDisplayTarget;
-  participantHandles: readonly { pubkey: string; handle: string }[];
-  channelIndex: ChannelReferenceIndex;
-  deliveryFailed: boolean;
-  sendState?: MessageSendState;
-  untaggedHint?: boolean;
-  onChannelReference(target: ChannelReferenceTarget): void;
-  codeRoomId?: string;
-  onOpenCode?(messageId: string): void;
-  onOpenSource?(roomId: string, messageId: string): void;
-  onMention?(participantId: string): void;
-  onOpenProfile?(participantId: string, kind?: 'human' | 'agent'): void;
-  /** A tap on the row — the composer's "outside" — puts the keyboard away. */
-  onTapOutsideComposer?(): void;
-  onReply(message: ChatDisplayMessage): void;
-  onCopy(text: string): void;
-  /** Mobile long press on the row — opens the message actions sheet. */
-  onMessageActions?(message: ChatDisplayMessage): void;
-  onReact?(message: ChatDisplayMessage, emoji: MessageReactionEmoji): void;
-  onForward?(message: ChatDisplayMessage): void;
-  onBookmark?(message: ChatDisplayMessage): void;
-  /** Report issue: prompt for a note and file the message with the feedback loop. */
-  onReportIssue?(message: ChatDisplayMessage): void;
-  /** Mobile swipe right — forward the message into a new human-owned corner. */
-  onForwardToNewCorner?(message: ChatDisplayMessage): void;
-  onCornerProposalDecision?(message: ChatDisplayMessage, decision: 'open' | 'cancel'): void;
-  cornerProposalAction?: 'open' | 'cancel' | null;
-  /** The human reply that answered this corner proposal, once one exists. */
-  cornerProposalAnswer?: { decision: 'open' | 'cancel' | null; handle: string } | null;
-  onRetry?(eventId: string): void;
-  onDismiss(eventId: string): void;
-  /** Read-only @system DMs are a full-width announcement feed, not a chat. */
-  announcementFeed?: boolean;
-  desktopLayout?: boolean;
-}
-
-/** The byline's quiet role tag carries the model the agent serves — the name
- *  already says who the speaker is, so the model REPLACES the old `AGENT`
- *  label rather than sitting beside it (captain ruling 2026-09-15). An agent
- *  with no known model keeps the plain `AGENT` word. */
-export function agentBylineLabel(model?: string): string {
-  const selectedModel = model?.trim();
-  return selectedModel ? displayModel(selectedModel) : 'AGENT';
-}
-
-/**
- * The connector receipt card: the structured card a connector DM carries
- * (connection, operation, helper, grant, counts — never a value). The
- * prose above stays a normal ledger entry; the card is the receipt.
- */
-export const ConnectorReceiptCard = React.memo(function ConnectorReceiptCard({
-  receipt,
-  connectorName = 'Trusty Squire',
-  identity,
-}: {
-  receipt: ConnectorReceipt;
-  connectorName?: string;
-  identity?: ChatDisplayMessage['authorIdentity'];
-}) {
-  return (
-    <View style={styles.connectorReceipt} testID="connector-receipt-card">
-      <View style={styles.connectorReceiptIdentity}>
-        {identity?.avatar ? (
-          <IdentityMark
-            kind="human"
-            seed={identity.pubkey}
-            name={identity.name}
-            avatarUrl={identity.avatar}
-            size={26}
-            testID="connector-receipt-logo"
-          />
-        ) : null}
-        <Text style={styles.connectorReceiptHead}>{identity?.name ?? connectorName}</Text>
-      </View>
-      <Text style={styles.connectorReceiptLine}>
-        {receipt.connection} · {receipt.operation}
-        {receipt.helper ? ` · on ${receipt.helper}` : ''}
-      </Text>
-      <Text style={styles.connectorReceiptLine}>
-        {[
-          receipt.grant ? `grant ${receipt.grant}` : undefined,
-          receipt.calls !== undefined
-            ? `${receipt.calls} ${receipt.calls === 1 ? 'call' : 'calls'}`
-            : undefined,
-          receipt.bytes,
-        ]
-          .filter(Boolean)
-          .join(' · ')}
-      </Text>
-      {/* One flat summary string; test assertions read it as a plain prop. */}
-      <Text style={styles.connectorReceiptLine} testID="connector-receipt-summary">
-        {[
-          receipt.connection,
-          receipt.operation,
-          receipt.helper,
-          receipt.grant ? `grant ${receipt.grant}` : undefined,
-          receipt.calls !== undefined
-            ? `${receipt.calls} ${receipt.calls === 1 ? 'call' : 'calls'}`
-            : undefined,
-          receipt.bytes,
-        ]
-          .filter(Boolean)
-          .join(' · ')}
-      </Text>
-    </View>
-  );
-});
-
-/** The Room publishes its transcript after paint; subscribe so a browser reference
- * becomes actionable as soon as that authoritative snapshot is available. */
-function ViewerContextReference({ context, attachment, roomId, timestamp, isDesktop, testID }: {
-  context: string; attachment?: AttachmentReference; roomId?: string; timestamp: number;
-  isDesktop: boolean; testID: string;
-}) {
-  const conversation = useSyncExternalStore(subscribeViewerConversation,
-    () => currentViewerConversation(roomId), () => currentViewerConversation(roomId));
-  const browserTitle = context.startsWith('Viewing browser: ')
-    ? context.slice('Viewing browser: '.length) : undefined;
-  const browserSession = browserTitle ? [...(conversation?.messages ?? [])].reverse()
-    .find((entry) => entry.createdAt <= timestamp && entry.computerSession?.title === browserTitle)
-    ?.computerSession : undefined;
-  return (
-    <TranscriptReference viewer testID={testID}
-    accessibilityLabel={browserTitle ? 'Open shared browser' : 'Open viewed artifact'}
-    onPress={browserSession ? () => void openComputerSessionViewer(browserSession, isDesktop, roomId)
-      : !browserTitle && attachment && !attachment.expired
-        ? () => openArtifactViewer(attachment, isDesktop, roomId) : undefined}
-  >{viewerContextLabel(context)}</TranscriptReference>
-  );
-}
-
-export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
-  message,
-  agent,
-  agentModel,
-  participantsHydrated,
-  personName,
-  personAvatar,
-  personFace,
-  viewerPubkey,
-  speakerWorking,
-  continued,
-  immediatelyPrecedingMessage,
-  firstBylineOfDay,
-  referencedTarget,
-  participantHandles,
-  channelIndex,
-  deliveryFailed,
-  sendState,
-  untaggedHint = false,
-  onChannelReference,
-  codeRoomId,
-  onOpenCode,
-  onOpenSource,
-  onMention,
-  onOpenProfile,
-  onTapOutsideComposer,
-  onReply,
-  onCopy,
-  onMessageActions,
-  onReact = () => undefined,
-  onForward = () => undefined,
-  onBookmark = () => undefined,
-  onReportIssue,
-  onForwardToNewCorner,
-  onCornerProposalDecision,
-  cornerProposalAction = null,
-  cornerProposalAnswer = null,
-  onDismiss,
-  announcementFeed = false,
-  desktopLayout = false,
-}: OrdinaryLedgerMessageProps) {
-  const liveDraftDrainStore = React.useContext(RoomPresentationContext);
-  const artifactVisible = useArtifactRowVisible(message.id, Boolean(message.attachments?.some(attachment => !attachment.expired)));
-  const replyAvailable = canBeginReply(message, codeRoomId ?? message.reference?.channelId ?? '');
-  const isOwn = message.isUser;
-  const indexedAuthor = message.authorIdentity;
-  // A loaded roster entry is the current identity. Historical rows may still
-  // carry the face or generated avatar that was current when they were cached,
-  // including artwork the agent has since removed.
-  const speakerFace = agent ? agent.face : (personFace ?? indexedAuthor?.face);
-  const speakerAvatar = agent ? agent.avatar : (personAvatar ?? indexedAuthor?.avatar);
-  const currentAgent =
-    indexedAuthor?.kind === 'agent'
-      ? {
-          pubkey: indexedAuthor.pubkey,
-          displayName: indexedAuthor.name,
-          ...(indexedAuthor.avatar ? { avatar: indexedAuthor.avatar } : {}),
-          ...(agent?.soulProfile ? { soulProfile: agent.soulProfile } : {}),
-          // This row's own server identity names the face first; the roster
-          // entry fills it in for a row the index has not identified.
-          ...(speakerFace ? { face: speakerFace } : {}),
-        }
-      : agent;
-  const isAgent =
-    indexedAuthor?.kind === 'agent' ||
-    message.isAgentAuthor ||
-    message.isAgentActivity ||
-    Boolean(currentAgent);
-  const cornerProposal =
-    isAgent && !message.isAgentActivity && !message.isAgentDraft
-      ? parseCornerProposal(message.text)
-      : null;
-  const display = isAgent
-    ? resolvePendingAgentDisplay(
-        message.pubkey ?? indexedAuthor?.pubkey ?? 'unknown-agent',
-        currentAgent,
-        participantsHydrated,
-      )
-    : null;
-  const isSelfSteer = isOwn && !isAgent;
-  const dayOpener = isLedgerDayOpener(message.timestamp, immediatelyPrecedingMessage?.timestamp);
-  const bylineOpener = firstBylineOfDay ?? dayOpener;
-  const stamp = useTranscriptStamp(message.timestamp, bylineOpener && !message.isAgentActivity);
-  const continuedRun = continued && !bylineOpener;
-  const voiceName = isAgent
-    ? (indexedAuthor?.name ??
-      display?.name ??
-      personName ??
-      fallbackMemberName(message.pubkey ?? ''))
-    : (indexedAuthor?.name ??
-      personName ??
-      (message.pubkey ? fallbackMemberName(message.pubkey) : 'SOMEONE'));
-  const markSeed = message.pubkey ?? (isSelfSteer ? viewerPubkey || 'self' : 'unknown-person');
-  const byline: LedgerByline | undefined =
-    continuedRun &&
-    !isAgent &&
-    !announcementFeed &&
-    !message.bookmarked &&
-    !message.feedbackReported
-      ? undefined
-      : {
-          // The viewer is named like every other speaker. Brass on the name
-          // (`isViewer`, drawn in Ledger.tsx) is the ONE thing that marks
-          // them; a "You" caption beside it says the same thing twice and
-          // breaks the run of names down the left edge.
-          name: voiceName,
-          onOpenProfile:
-            !announcementFeed && message.pubkey && onOpenProfile
-              ? () =>
-                  isAgent ? onOpenProfile(message.pubkey!) : onOpenProfile(message.pubkey!, 'human')
-              : undefined,
-          // The byline is a nested profile Pressable. Giving that Pressable
-          // the row's long-press action makes React Native cancel its onPress
-          // on release instead of navigating behind the actions sheet.
-          onLongPress: onMessageActions ? () => onMessageActions(message) : undefined,
-          role: isAgent ? agentBylineLabel(agentModel) : undefined,
-          stamp,
-          isViewer: isSelfSteer,
-          bookmarked: message.bookmarked,
-          feedbackReported: message.feedbackReported,
-          ...(announcementFeed
-            ? {}
-            : {
-                mark: {
-                  seed: markSeed,
-                  kind: isAgent ? ('agent' as const) : ('human' as const),
-                  ...(speakerFace ? { face: speakerFace } : {}),
-                  ...(speakerAvatar ? { avatarUrl: speakerAvatar } : {}),
-                  ...(isAgent ? { alive: speakerWorking } : {}),
-                },
-              }),
-        };
-  // A row with no activity of its own still has its text to show, so it is
-  // lifted into one `output` item — which `buildTurnActivity` renders as
-  // narration, at the settled tier. A LIVE DRAFT is the one row that must
-  // never take that path: its words are provisional, they are already rendered
-  // in the provisional face through `messageDraft`, and promoting them here
-  // printed the same unfinished sentence twice, the first copy dressed as the
-  // durable reply.
-  const activity = useMemo(
-    () =>
-      message.activity?.length
-        ? message.activity
-        : message.isAgentDraft
-          ? []
-          : [{ kind: 'output' as const, title: 'Output', text: message.text }],
-    [message.activity, message.isAgentDraft, message.text],
-  );
-  // What the reader is being shown while the turn writes, remembered under the
-  // turn's own request id. The durable reply below collects it and fades out
-  // of it; nothing about the draft itself changes (C98).
-  const draftKey =
-    message.pubkey && (message.agentMessageDraft || message.agentMessageDraftKey)
-      ? draftRequestId(message.id)
-      : undefined;
-  useEffect(() => {
-    if (!draftKey || !message.pubkey) return;
-    const text =
-      message.agentMessageDraft ??
-      (message.agentMessageDraftKey
-        ? liveDraftDrainStore.getReceived(message.agentMessageDraftKey)
-        : '');
-    if (!text) return;
-    liveDraftDrainStore.rememberProvisionalDraft(provisionalDraftKey(message.pubkey, draftKey), text);
-  }, [draftKey, liveDraftDrainStore, message.agentMessageDraft, message.agentMessageDraftKey, message.pubkey]);
-  // Spent once per settled reply, and decided once per mounted row: a
-  // re-render mid-transition must not restart or cancel the dissolve.
-  const settleRef = useRef<string | undefined>(undefined);
-  if (settleRef.current === undefined) {
-    settleRef.current =
-      isAgent && message.requestId && message.pubkey && !message.isAgentActivity
-        ? (liveDraftDrainStore.takeProvisionalDraft(provisionalDraftKey(message.pubkey, message.requestId)) ?? '')
-        : '';
-  }
-  const settleFrom = settleRef.current || undefined;
-  const taggedMentionPubkeys = useMemo(
-    () => new Set(message.mentionPubkeys ?? []),
-    [message.mentionPubkeys],
-  );
-  const mentionHandles = useMemo(() => {
-    const handles = participantHandles
-      .filter((participant) => taggedMentionPubkeys.has(participant.pubkey) ||
-        (isAgent && message.text.toLocaleLowerCase().includes(`@${participant.handle.toLocaleLowerCase()}`)))
-      .map((participant) => participant.handle);
-    // `@channel` is sent as one literal token, never expanded into names, so
-    // it is highlighted by its own reserved handle rather than a roster hit.
-    if (hasChannelMentionToken(message.text)) handles.push(CHANNEL_MENTION_HANDLE);
-    if (message.text.toLocaleLowerCase().includes('@system')) handles.push(SYSTEM_MENTION_HANDLE);
-    return handles;
-  }, [participantHandles, taggedMentionPubkeys, message.text, isAgent]);
-  const handleMention = useCallback(
-    (handle: string) => {
-      if (handle === SYSTEM_MENTION_HANDLE) {
-        onMention?.(SYSTEM_IDENTITY_PUBKEY);
-        return;
-      }
-      const participant = participantHandles.find(
-        (candidate) =>
-          candidate.pubkey !== viewerPubkey &&
-          (taggedMentionPubkeys.has(candidate.pubkey) || isAgent) &&
-          candidate.handle.normalize('NFKC').toLocaleLowerCase() === handle,
-      );
-      if (participant) onMention?.(participant.pubkey);
-    },
-    [onMention, participantHandles, taggedMentionPubkeys, viewerPubkey, isAgent],
-  );
-  if (message.isAgentActivity) {
-    const excerpt = agentActivityReplyExcerpt(message);
-    return (
-      <View style={styles.activityGroup} testID="corner-activity">
-        <SwipeToReply
-          messageId={message.id}
-          onLongPress={() => onCopy(excerpt)}
-          onActions={onMessageActions ? () => onMessageActions(message) : undefined}
-          {...(onTapOutsideComposer ? { onPress: onTapOutsideComposer } : {})}
-          onReply={replyAvailable ? () => onReply(message) : undefined}
-          onReact={() => undefined}
-          onForward={() => undefined}
-          isDesktop={desktopLayout}
-          replyOnly
-        >
-          <ActivityTimeline
-            active={message.isAgentLiveTurn === true}
-            chronological={desktopLayout}
-            handle={!continuedRun && isAgent ? voiceName : undefined}
-            role={agentBylineLabel(agentModel)}
-            mark={
-              !continuedRun && isAgent
-                ? {
-                    seed: markSeed,
-                    kind: 'agent',
-                    // Same axes the settled byline mark renders (its creature,
-                    // and working → gold ring): the streaming lane is the same
-                    // speaker, so it must not wear a different animal for the
-                    // length of the turn.
-                    ...(speakerFace ? { face: speakerFace } : {}),
-                    ...(speakerAvatar ? { avatarUrl: speakerAvatar } : {}),
-                    alive: message.isAgentLiveTurn === true,
-                  }
-                : undefined
-            }
-            items={activity}
-            messageDraft={message.agentMessageDraft}
-            messageDraftKey={message.agentMessageDraftKey}
-            stamp={ledgerStamp(message.timestamp)}
-            testID="corner-activity-timeline"
-          />
-        </SwipeToReply>
-      </View>
-    );
-  }
-
-  const showReplyReference = shouldShowReplyReference({
-    replyToId: message.replyToId,
-    speaksAsAgent: isAgent,
-    immediatelyPrecedingMessage,
-  });
-  const replySourceRoomId = message.reference?.channelId ?? codeRoomId;
-  const replySourceMessageId = message.replyToId;
-  const replyReference = showReplyReference ? (
-    <TranscriptReference
-      accessibilityLabel="Open original message"
-      onPress={onOpenSource && replySourceRoomId && replySourceMessageId
-        ? () => onOpenSource(replySourceRoomId, replySourceMessageId) : undefined}
-      testID={`reply-reference-${message.id}`}
-    >
-      ↳ {referencedTarget?.authorName ?? 'ORIGINAL MESSAGE'} ·{' '}
-      {referencedTarget?.preview ?? 'Message not loaded'}
-    </TranscriptReference>
-  ) : null;
-  const forwarded = forwardedMessageParts(message.text);
-  const forwardSource = forwarded.source;
-  const forwardBodyAction =
-    forwardSource && onOpenSource
-      ? {
-          accessibilityLabel: 'Open original forwarded message',
-          onPress: () => onOpenSource(forwardSource.roomId, forwardSource.messageId),
-          testID: `forward-source-${message.id}`,
-        }
-      : undefined;
-  const connectorReceipt = parseConnectorReceipt(forwarded.body);
-  const receiptBody = connectorReceipt ? connectorReceipt.prose : forwarded.body;
-  const viewerMessage = !isAgent ? splitViewerContext(receiptBody) : { body: receiptBody };
-  const ledgerText = isSelfSteer ? undefined : splitLedgerText(viewerMessage.body);
-  const proseBody = ledgerText ? ledgerText.prose : viewerMessage.body;
-  const renderedBody = isAgent ? (agentMessageJsonMarkdown(proseBody) ?? proseBody) : proseBody;
-  const receiptCard =
-    connectorReceipt && !isSelfSteer ? (
-      <ConnectorReceiptCard receipt={connectorReceipt.receipt} identity={message.authorIdentity} />
-    ) : null;
-  const ghostLine = ledgerText?.machine ? (
-    <LedgerGhostLine
-      body={ledgerText.machine}
-      label={`${ledgerText.machineLines} lines of tool output`}
-      testID={`chat-machine-noise-${message.id}`}
-    />
-  ) : null;
-  // A Room reply carries its turn's steps — tool calls and the text written
-  // before the answer — and shows them folded under the prose.
-  const stepsLine =
-    isAgent && message.activity?.length ? (
-      <TurnStepsLine items={message.activity} testID={`reply-steps-${message.id}`} />
-    ) : null;
-  const machineNoise =
-    ghostLine || stepsLine ? (
-      <>
-        {ghostLine}
-        {stepsLine}
-      </>
-    ) : null;
-  const livePhotoArtifacts = message.attachments?.filter(
-    (attachment) =>
-      attachment.kind === 'artifact' &&
-      !attachment.expired &&
-      artifactFormat(attachment.mimeType) === 'image',
-  );
-  const groupedPhotoArtifacts =
-    livePhotoArtifacts && livePhotoArtifacts.length > 1 ? livePhotoArtifacts : undefined;
-  const firstGroupedPhoto = groupedPhotoArtifacts?.[0];
-  const attachments = message.attachments?.map((attachment, index) => {
-    if (viewerMessage.context && index === 0 &&
-      (viewerMessage.context.startsWith('Viewing artifact:') || attachment.name === 'browser-screen.jpg')) return null;
-    if (attachment.kind === 'artifact' && !attachment.expired) {
-      if (groupedPhotoArtifacts && artifactFormat(attachment.mimeType) === 'image') {
-        if (attachment !== firstGroupedPhoto) return null;
-      }
-      return (
-        <ArtifactCard
-          visible={artifactVisible}
-          attachment={attachment}
-          authorHandle={
-            attachment.author ??
-            (message.authorIdentity?.kind === 'agent'
-              ? (message.authorIdentity.handle ?? message.authorIdentity.name).replace(/^@/, '')
-              : undefined)
-          }
-          isDesktop={desktopLayout}
-          key={`${message.id}-${attachment.url}`}
-          {...(attachment === firstGroupedPhoto ? { photoAttachments: groupedPhotoArtifacts } : {})}
-        />
-      );
-    }
-    return (
-      <AttachmentCard
-        visible={artifactVisible}
-        attachment={attachment}
-        isDesktop={desktopLayout}
-        key={`${message.id}-${attachment.url}`}
-      />
-    );
-  });
-
-  const viewerReference = viewerMessage.context ? (
-    <ViewerContextReference context={viewerMessage.context} attachment={message.attachments?.[0]}
-      roomId={codeRoomId} timestamp={message.timestamp} isDesktop={desktopLayout}
-      testID={`viewer-context-${message.id}`} />
-  ) : null;
-  const messageReference = viewerReference ? (
-    <>{replyReference}{viewerReference}</>
-  ) : (
-    replyReference
-  );
-
-  // A local send is tap feedback; never hide it behind the arrival fade.
-  const content = (
-    <NewMessageMaterialize enabled={Boolean(message.isNew) && !message.isUser} messageId={message.id}>
-      <View>
-        {isSelfSteer ? (
-          <LedgerSteer
-            itemId={message.id}
-            continued={continuedRun}
-            chronological={desktopLayout}
-            precededByDayCaption={dayOpener}
-            byline={byline}
-            bodyText={viewerMessage.body}
-            mentionHandles={mentionHandles}
-            onMention={handleMention}
-            channelIndex={channelIndex}
-            onChannelReference={onChannelReference}
-            codeRoomId={codeRoomId}
-            onOpenCode={onOpenCode}
-            bodyTestID={`chat-message-text-${message.id}`}
-            bodyAction={forwardBodyAction}
-            replyReference={messageReference}
-            attachments={attachments}
-          />
-        ) : cornerProposal ? (
-          <TranscriptCard
-            tier={onCornerProposalDecision && !cornerProposalAnswer ? 'ask' : 'record'}
-            testID={`corner-proposal-${message.id}`}
-            identity={
-              <IdentityMark
-                kind="agent"
-                seed={markSeed}
-                avatarUrl={speakerAvatar}
-                face={speakerFace}
-                name={voiceName}
-                size={26}
-              />
-            }
-            title={`Proposed ${CORNER_LABEL}: ${cornerProposal.title}`}
-            subline={cornerProposal.objective}
-            stamp={ledgerStamp(message.timestamp)}
-            body={cornerProposal.warnings.length ? cornerProposal.warnings.join('\n') : undefined}
-            quietBody
-            choices={(
-              [
-                ['open', 'A', `Open ${CORNER_LABEL}`],
-                ['cancel', 'B', 'Cancel'],
-              ] as const
-            ).map(([decision, letter, label]) => ({
-              id: `corner-proposal-${decision}-${message.id}`,
-              letter,
-              label,
-              consequence: '',
-              selected: (cornerProposalAnswer?.decision ?? cornerProposalAction) === decision,
-              ...(onCornerProposalDecision && !cornerProposalAnswer && !cornerProposalAction
-                ? { onPress: () => onCornerProposalDecision(message, decision) }
-                : {}),
-            }))}
-            footerNote={
-              cornerProposalAnswer
-                ? `${
-                    cornerProposalAnswer.decision === 'open'
-                      ? 'opened'
-                      : cornerProposalAnswer.decision === 'cancel'
-                        ? 'cancelled'
-                        : 'answered'
-                  } · @${cornerProposalAnswer.handle}`
-                : undefined
-            }
-            footerNoteTestID={`corner-proposal-footer-${message.id}`}
-          />
-        ) : message.awayWarning ? (
-          <TranscriptCard tier="record" testID="away-warning-card"
-            title="Schedules and subscriptions will pause in 1 day"
-            body={message.text} stamp={ledgerStamp(message.timestamp)} />
-        ) : (message.authorIdentity?.pubkey ?? message.pubkey) === SYSTEM_IDENTITY_PUBKEY ? (
-          <LedgerSystemLine
-            id={message.id}
-            text={renderedBody}
-            {...(message.systemEvent ? { event: message.systemEvent } : {})}
-            stamp={ledgerStamp(message.timestamp)}
-            onOpenUrl={(url) => void openExternalUrl(url).catch(() => undefined)}
-          />
-        ) : (
-          <LedgerEntry
-            itemId={message.id}
-            byline={byline}
-            continued={continuedRun}
-            chronological={desktopLayout}
-            precededByDayCaption={dayOpener}
-            luminous={isAgent && !announcementFeed}
-            typewriter={isAgent && !announcementFeed && Boolean(message.isNew)}
-            settleFrom={settleFrom}
-            bodyText={renderedBody}
-            mentionHandles={mentionHandles}
-            onMention={handleMention}
-            channelIndex={channelIndex}
-            onChannelReference={onChannelReference}
-            codeRoomId={codeRoomId}
-            onOpenCode={onOpenCode}
-            bodyTestID={`chat-message-text-${message.id}`}
-            bodyAction={forwardBodyAction}
-            replyReference={messageReference}
-            machineNoise={machineNoise}
-            attachments={attachments}
-          />
-        )}
-        {receiptCard}
-        {forwarded.caption ? (
-          forwardSource && onOpenSource ? (
-            <Pressable
-              accessibilityLabel="Open original forwarded message"
-              accessibilityRole="button"
-              onPress={() => onOpenSource(forwardSource.roomId, forwardSource.messageId)}
-              testID={`forward-source-caption-${message.id}`}
-            >
-              <Text style={styles.forwardCaption} testID={`forward-caption-${message.id}`}>
-                {forwarded.caption}
-              </Text>
-            </Pressable>
-          ) : (
-            <Text style={styles.forwardCaption} testID={`forward-caption-${message.id}`}>
-              {forwarded.caption}
-            </Text>
-          )
-        ) : null}
-        {untaggedHint && isSelfSteer && !deliveryFailed &&
-          (message.pubkey ?? indexedAuthor?.pubkey) === viewerPubkey ? (
-          <LedgerUntaggedHint messageId={message.id} />
-        ) : null}
-        {/* A pending send looks sent; only a failure gets a line. */}
-        {message.isUser && sendState && sendState.kind !== 'sending' ? (
-          <ErrorBanner inline
-            title={sendState.text}
-            icon={<Ionicons name="alert-circle-outline" size={13} color={styles.sendFailure.color} />}
-            secondaryAction={{ label: 'Dismiss', onPress: () => onDismiss(message.id) }}
-            testID={`outbox-delivery-failed-${message.id}`}
-          />
-        ) : null}
-        {message.reactions?.length ? (
-          <View style={styles.reactionChips} testID={`reaction-chips-${message.id}`}>
-            {message.reactions.map((reaction) => (
-              <MessageReactionRoster
-                desktop={desktopLayout}
-                key={reaction.emoji}
-                messageId={message.id}
-                onReact={() => onReact(message, reaction.emoji)}
-                reaction={reaction}
-              />
-            ))}
-          </View>
-        ) : null}
-      </View>
-    </NewMessageMaterialize>
-  );
-  if (announcementFeed) return content;
-  return (
-    <SwipeToReply
-      messageId={message.id}
-      onLongPress={() => onCopy(message.text)}
-      onActions={onMessageActions ? () => onMessageActions(message) : undefined}
-      {...(onTapOutsideComposer ? { onPress: onTapOutsideComposer } : {})}
-      onReply={replyAvailable ? () => onReply(message) : undefined}
-      onReact={(emoji) => onReact(message, emoji)}
-      onForward={() => onForward(message)}
-      onBookmark={() => onBookmark(message)}
-      {...(onReportIssue && !message.isAgentDraft && !message.isAgentActivity
-        ? { onReportIssue: () => onReportIssue(message) }
-        : {})}
-      {...(onForwardToNewCorner && !message.isAgentDraft
-        ? // A message someone else wrote can carry the swipe-to-corner tip.
-          { onSwipeCorner: () => onForwardToNewCorner(message) }
-        : {})}
-      bookmarked={message.bookmarked}
-      isDesktop={desktopLayout}
-    >
-      {content}
-    </SwipeToReply>
-  );
-});
-
-const styles = StyleSheet.create((theme) => ({
-  activityGroup: { width: '100%', minWidth: 0 },
-  connectorReceipt: {
-    marginTop: 4,
-    marginHorizontal: 8,
-    borderWidth: 1,
-    borderColor: theme.buzz.borderStrong,
-    borderRadius: 3,
-    padding: 8,
-    gap: theme.buzz.space.xs,
-  },
-  connectorReceiptHead: {
-    ...Typography.mono('semiBold'),
-    ...theme.buzz.type.sectionHead,
-    color: theme.buzz.textSecondary,
-  },
-  connectorReceiptIdentity: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  connectorReceiptLine: {
-    ...Typography.mono(),
-    ...theme.buzz.type.machine,
-    color: theme.buzz.textSecondary,
-  },
-  replyDesktopRow: { position: 'relative', flexDirection: 'row', alignItems: 'flex-start' },
-  replyDesktopMessage: { flex: 1, minWidth: 0 },
-  replyDesktopActions: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    flexDirection: 'row',
-    opacity: 0,
-    borderWidth: 1,
-    borderColor: theme.buzz.borderStrong,
-    borderRadius: theme.buzz.radius,
-    backgroundColor: theme.buzz.bgTerminal,
-  },
-  replyDesktopActionsVisible: { opacity: 1 },
-  replyDesktopPressed: { backgroundColor: theme.buzz.bgHighlight },
-  reactionPicker: {
-    position: 'fixed' as any,
-    zIndex: 4,
-    flexDirection: 'row',
-    padding: 4,
-    borderWidth: 1,
-    borderColor: theme.buzz.borderStrong,
-    borderRadius: theme.buzz.radius,
-    backgroundColor: theme.buzz.bgTerminal,
-  },
-  reactionPickerChoice: {
-    width: 36,
-    height: 34,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  reactionChips: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: theme.buzz.space.sm,
-    marginTop: theme.buzz.space.xs,
-    marginBottom: theme.buzz.space.xs,
-    marginLeft: 8,
-  },
-  reactionEmoji: emojiTextStyle(theme.buzz.type.body),
-  sendFailure: { color: theme.buzz.dialogDanger },
-  forwardCaption: {
-    ...theme.buzz.type.sectionHead,
-    marginTop: theme.buzz.space.xs,
-    marginLeft: 8,
-    color: theme.buzz.ledgerQuiet,
-  },
-  replySwipeAction: {
-    width: 78,
-    marginBottom: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderLeftWidth: 1,
-    borderLeftColor: theme.buzz.borderStrong,
-    backgroundColor: theme.buzz.bgHighlight,
-  },
-  cornerSwipeAction: {
-    width: 78,
-    marginBottom: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRightWidth: 1,
-    borderRightColor: theme.buzz.borderStrong,
-    backgroundColor: theme.buzz.bgHighlight,
-  },
-  cornerSwipeGlyph: { color: theme.buzz.accent },
-  // Keeps the panel's width, which Swipeable measures for its open distance.
-  swipeActionAtRest: { opacity: 0 },
-  replySwipeGlyph: {
-    ...theme.buzz.type.body,
-    fontFamily: theme.buzz.proseSemibold,
-    color: theme.buzz.textPrimary,
-  },
-  replySwipeLabel: {
-    ...theme.buzz.type.sectionHead,
-    fontFamily: theme.buzz.monoSemibold,
-    marginTop: theme.buzz.space.xs,
-    color: theme.buzz.textMuted,
-  },
-  attachmentCard: {
-    minWidth: 0,
-    width: '100%',
-    minHeight: 58,
-    marginTop: 8,
-    paddingVertical: theme.buzz.space.sm,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.buzz.space.sm,
-  },
-  attachmentThumbnail: { width: 46, height: 46, backgroundColor: theme.buzz.bgHighlight },
-  attachmentFileGlyph: { width: 46, height: 46, alignItems: 'center', justifyContent: 'center' },
-  attachmentFileGlyphText: { ...theme.buzz.type.hero, color: theme.buzz.steel },
-  attachmentCopy: { flex: 1, minWidth: 0 },
-  attachmentExpired: { color: theme.buzz.textMuted },
-  attachmentName: {
-    ...theme.buzz.type.body,
-    fontSize: theme.buzz.transcriptCard.rowTitleSize,
-    color: theme.buzz.textPrimary,
-  },
-  attachmentMeta: {
-    ...theme.buzz.type.machine,
-    fontSize: theme.buzz.transcriptCard.rowKindSize,
-    marginTop: theme.buzz.space.xs,
-    color: theme.buzz.textMuted,
-  },
-  attachmentOpenGlyph: {
-    width: 22,
-    alignItems: 'center',
-  },
-  attachmentOpenGlyphInk: { color: theme.buzz.steel },
-
-replyDesktopLabel: {
-    ...theme.buzz.type.sectionHead,
-    marginTop: theme.buzz.space.xs,
-    color: theme.buzz.textMuted,
-  },
-}));
+export { GitHubEventCard, DaemonFactCard } from '@/components/buzz/LifecycleCard';
+export { NotificationLifecycleCard };
+export { GrantRequestCard, type GrantDecision, type GrantRequestCardProps } from '@/components/buzz/GrantRequestCard';
+export type { OrdinaryLedgerMessageProps } from './RoomMessageVariants-attachment-card';
+export { agentBylineLabel } from './RoomMessageVariants-attachment-card';
+export { ConnectorReceiptCard } from './RoomMessageVariants-attachment-card';
+export { OrdinaryLedgerMessage } from './RoomMessageVariants-ordinary-ledger-message';

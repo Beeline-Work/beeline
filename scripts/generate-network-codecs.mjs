@@ -80,8 +80,13 @@ const operations = {};
 for (let i = 0; i < sources.length; i++) {
   const family = i === 0 ? 'phone' : 'daemon';
   const source = program.getSourceFile(sources[i]);
-  const alias = source.statements.find(node => ts.isTypeAliasDeclaration(node) && node.name.text === `${i === 0 ? 'Phone' : 'Daemon'}OperationMap`);
-  const type = checker.getTypeAtLocation(alias);
+  const name = `${i === 0 ? 'Phone' : 'Daemon'}OperationMap`;
+  const exported = checker.getExportsOfModule(checker.getSymbolAtLocation(source))
+    .find(symbol => symbol.name === name);
+  if (!exported) throw new Error(`${name} is not exported by ${sources[i]}`);
+  const symbol = exported.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(exported) : exported;
+  const type = checker.getDeclaredTypeOfSymbol(symbol);
+  if (!checker.getPropertiesOfType(type).length) throw new Error(`${name} has no operations`);
   for (const op of checker.getPropertiesOfType(type).sort((a,b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)) {
     const value = checker.getTypeOfSymbolAtLocation(op, op.valueDeclaration ?? op.declarations[0]);
     const contract = {};

@@ -84,8 +84,10 @@ type TranscriptCardNoteInput = {
 export type TranscriptCardProps = {
   tier: TranscriptCardTier;
   title: ReactNode;
+  wrapTitle?: boolean;
   subline?: ReactNode;
   /** Cut the subline to this many lines (a collapsed record's first line). */
+  sublineLines?: number;
   sublineTestID?: string;
   stamp?: string;
   identity?: ReactNode;
@@ -237,7 +239,9 @@ const EMPTY_CARD_LIVE_MOTION: CardLiveMotion = {
 export function TranscriptCard({
   tier,
   title,
+  wrapTitle = false,
   subline,
+  sublineLines,
   sublineTestID,
   stamp,
   identity,
@@ -412,6 +416,8 @@ export function TranscriptCard({
                   key={currentSnapshot.title ?? 'title'}
                   active={animateArrival || liveMotion.title}
                   durationMs={animateArrival ? TRANSCRIPT_SETTLE_MS : liveMotion.durationMs}
+                  ellipsizeMode="tail"
+                  numberOfLines={wrapTitle ? undefined : 1}
                   steadyColor={steady.title}
                   style={styles.title}
                   testID={testID ? `${testID}-title` : undefined}
@@ -433,6 +439,8 @@ export function TranscriptCard({
                 <SettlingText
                   active={animateArrival}
                   durationMs={TRANSCRIPT_SETTLE_MS}
+                  ellipsizeMode="tail"
+                  numberOfLines={sublineLines}
                   steadyColor={steady.quiet}
                   style={styles.subline}
                   testID={sublineTestID}
@@ -481,6 +489,7 @@ export function TranscriptCard({
                 <TranscriptCardRowView
                   key={row.id}
                   row={row}
+                  wrapTitle={wrapTitle}
                   animateCardArrival={animateArrival}
                   animateEntry={liveMotion.appendedRowIds.has(row.id)}
                   animateState={liveMotion.changedRowIds.has(row.id)}
@@ -561,6 +570,7 @@ export function TranscriptCard({
 
 function TranscriptCardRowView({
   row,
+  wrapTitle,
   animateCardArrival,
   animateEntry,
   animateState,
@@ -568,6 +578,7 @@ function TranscriptCardRowView({
   steady,
 }: {
   row: TranscriptCardRow;
+  wrapTitle: boolean;
   animateCardArrival: boolean;
   animateEntry: boolean;
   animateState: boolean;
@@ -604,7 +615,9 @@ function TranscriptCardRowView({
           active={animateRowText}
           delayMs={animateEntry ? 100 : 0}
           durationMs={animateCardArrival ? TRANSCRIPT_SETTLE_MS : settleDurationMs}
+          ellipsizeMode="tail"
           fadeMs={animateEntry ? 300 : 0}
+          numberOfLines={wrapTitle ? undefined : 1}
           steadyColor={steady.rowTitle}
           style={styles.rowTitle}
         >
@@ -615,6 +628,7 @@ function TranscriptCardRowView({
           delayMs={animateEntry ? 100 : 0}
           durationMs={animateCardArrival ? TRANSCRIPT_SETTLE_MS : settleDurationMs}
           fadeMs={animateEntry ? 300 : 0}
+          numberOfLines={wrapTitle ? undefined : 1}
           steadyColor={steady.rowKind}
           style={styles.rowKind}
         >

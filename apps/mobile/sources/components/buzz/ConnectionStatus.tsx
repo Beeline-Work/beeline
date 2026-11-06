@@ -13,7 +13,7 @@ export function ConnectionStatus({ children }: { children?: React.ReactNode }) {
     <>
       {failed && (
         <View accessibilityLiveRegion="polite" style={[styles.banner, { paddingTop: insets.top }]} testID="connection-status-disconnected">
-          <IndexRow inset="flush" title="Beeline isn’t connected" description="Try your request again."
+          <IndexRow wrap inset="flush" title="Beeline isn’t connected" description="Try your request again."
             action="Reconnect" onPress={reconnectNow} testID="connection-status-reconnect" />
         </View>
       )}

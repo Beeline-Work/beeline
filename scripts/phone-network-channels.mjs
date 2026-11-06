@@ -20,7 +20,7 @@ const SKIP_DIRS = new Set(['node_modules', 'build', '.gradle', 'Pods', '__tests_
 const SKIP_FILES = new Set(['apps/mobile/sources/vendor/pdfjs/pdfjs.gen.ts']);
 const JS_FILE = /\.(ts|tsx|js|jsx|mjs|cjs)$/;
 const NATIVE_FILE = /\.(kt|java|swift|m|mm)$/;
-const TEST_FILE = /\.(test|spec)\.[^.]+$|\.d\.ts$/;
+const TEST_FILE = /\.(test|spec|test-support)\.[^.]+$|\.d\.ts$/;
 
 /** Libraries whose job is to open their own network connections. */
 export const NETWORK_LIBRARIES = [

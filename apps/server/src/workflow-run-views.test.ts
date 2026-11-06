@@ -9,12 +9,11 @@ import { createAgentCommand, claimAgentCommand, readAgentCommands, type CommandR
 import { advanceCorner } from './corner-lifecycle.js';
 import { PhoneService } from './phone-service.js';
 import { answerRoomChoice, postRoomChoice } from './room-choice.js';
-import { handoff, saveWorkflow, startWorkflow, settleWorkflowGate, fireWorkflowTimer, cancelWorkflowRun, assignWorkflowRole } from './workflow-runs.js';
+import { handoff, saveWorkflow, startWorkflow, settleWorkflowGate, cancelWorkflowRun, assignWorkflowRole } from './workflow-runs.js';
 
 /**
- * The phone's workflow run reads over real `workflow-handoff` cards written by
- * `startWorkflow`/`handoff`, and a corner's own lifecycle cards written by
- * `advanceCorner` — never hand-built rows.
+ * Workflow runs use real `workflow-handoff` cards. Retired corner lifecycle
+ * cards are seeded only to prove they remain hidden during the expand release.
  */
 
 vi.mock('node:crypto', async (importOriginal) => {
@@ -168,8 +167,6 @@ describe('listRoomWorkflowRuns', () => {
     const runId = await triageRun();
     await advanceCorner(database, CORNER, {
       kind: 'open',
-      workspaceId: WORKSPACE,
-      implementerAgentId: TRIAGER,
     });
     const listed = await phone.execute('listRoomWorkflowRuns', { roomId: ROOM }, OWNER);
     const bySlug = Object.fromEntries(listed.workflows.map((run) => [run.workflowSlug, run]));
@@ -205,8 +202,6 @@ describe('listRoomWorkflowRuns', () => {
     });
     await advanceCorner(database, CORNER, {
       kind: 'open',
-      workspaceId: WORKSPACE,
-      implementerAgentId: TRIAGER,
     });
     expect(
       (await advanceCorner(database, CORNER, { kind: 'closed' })).accepted,
@@ -269,36 +264,6 @@ describe('readWorkflowRun', () => {
     expect(run.run.runId).toBe(runId);
     expect(reads).toHaveBeenCalledTimes(1);
     reads.mockRestore();
-  });
-
-  it('sends visit display status for live, deadline-failed, and cancelled runs without changing card status', async () => {
-    const starter = await command(CORNER, TRIAGER);
-    await saveWorkflow(database, starter, { contract: describedWorkflow(TRIAGE) });
-    const first = await startWorkflow(database, starter, { name: 'feedback-triage', roleBindings: { triager: TRIAGER } });
-    const live = await phone.execute('readWorkflowRun', { roomId: CORNER, runId: first.runId }, OWNER);
-    expect(live.run.status).toBe('live');
-    expect(live.history[0]).toMatchObject({ displayStatus: 'current' });
-    expect(live.history[0]).not.toHaveProperty('status');
-    // Claims keep PostgreSQL microseconds, not a truncated JavaScript Date.
-    await database.query(`UPDATE agent_schedules SET next_run_at=next_run_at+interval '0.000123 seconds',
-      updated_at=updated_at+interval '0.000123 seconds' WHERE workflow_run->>'runId'=$1`, [first.runId]);
-    const timer = (await database.query<{ id: string; room_id: string; next_run_at: Date; due_revision: string; updated_at: string; workflow_run: { runId: string; workflowSlug: string; timer: 'deadline' } }>(
-      `SELECT id,room_id,workflow_run,next_run_at,next_run_at::text due_revision,updated_at::text updated_at FROM agent_schedules WHERE workflow_run->>'runId'=$1 AND workflow_run->>'timer'='deadline'`, [first.runId],
-    )).rows[0]!;
-    await expect(fireWorkflowTimer(database, { ...timer, updated_at: '2000-01-01 00:00:00+00' })).resolves.toBe(false);
-    expect((await database.query('SELECT id FROM agent_schedules WHERE id=$1', [timer.id])).rowCount).toBe(1);
-    await fireWorkflowTimer(database, timer);
-    const failed = await phone.execute('readWorkflowRun', { roomId: CORNER, runId: first.runId }, OWNER);
-    expect(failed.run.status).toBe('failed');
-    expect(failed.history.map(step => step.displayStatus)).toEqual(['failed', 'failed']);
-    expect(failed.history[1]).toMatchObject({ status: 'failed', outcome: 'deadline' });
-    const second = await startWorkflow(database, starter, { name: 'feedback-triage', roleBindings: { triager: TRIAGER } });
-    await handoff(database, starter, { runId: second.runId, outcome: 'ranked', contents: {} });
-    await cancelWorkflowRun(database, starter, { runId: second.runId, reason: 'No longer needed' });
-    const cancelled = await phone.execute('readWorkflowRun', { roomId: CORNER, runId: second.runId }, OWNER);
-    expect(cancelled.run.status).toBe('abandoned');
-    console.log(`Reproduction abandoned-step-1: cancelWorkflowRun → readWorkflowRun: run=${cancelled.run.status}; steps=${cancelled.history.map(step => step.displayStatus).join(',')}`);
-    expect(cancelled.history.map(step => step.displayStatus)).toEqual(['done', 'failed', 'failed']);
   });
 
   it('preserves the prompt and visit-window fallback for gate cards without a run id', async () => {
@@ -391,11 +356,13 @@ describe('readWorkflowRun', () => {
 
   it('Reproduction C1: a corner lifecycle has no workflow listing or run page, including legacy cards', async () => {
     await advanceCorner(database, CORNER, {
-      kind: 'open', workspaceId: WORKSPACE, implementerAgentId: TRIAGER,
+      kind: 'open',
     });
     for (const legacy of [false, true]) {
       if (legacy) await database.query(
-        `UPDATE messages SET card=card || '{"workflowSlug":"corner","workflowVersion":7}'::jsonb WHERE room_id=$1`, [CORNER],
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+         VALUES('legacy-corner',$1::uuid,$2,'Historical corner','card','corner-workflow-handoff',
+           jsonb_build_object('runId',$1::text,'workflowSlug','corner','workflowVersion',7,'toState','implement','seq',1))`, [CORNER,TRIAGER],
       );
       for (const roomId of [ROOM, CORNER]) {
         expect((await phone.execute('listRoomWorkflowRuns', { roomId }, OWNER)).workflows).toEqual([]);
@@ -424,18 +391,13 @@ describe('readWorkflowRun', () => {
     });
     await advanceCorner(database, CORNER, {
       kind: 'open',
-      workspaceId: WORKSPACE,
-      implementerAgentId: TRIAGER,
     });
     const lifecycleCards = await database.query<{ slug: string | null; version: string | null }>(
       `SELECT card->>'workflowSlug' slug,card->>'workflowVersion' version FROM messages
        WHERE room_id=$1 AND card_type='corner-workflow-handoff'`,
       [CORNER],
     );
-    expect(lifecycleCards.rows).toEqual([
-      { slug: null, version: null },
-      { slug: null, version: null },
-    ]);
+    expect(lifecycleCards.rows).toEqual([]);
 
     const listed = await phone.execute('listRoomWorkflowRuns', { roomId: ROOM }, OWNER);
     const byRun = Object.fromEntries(listed.workflows.map((run) => [run.runId, run]));

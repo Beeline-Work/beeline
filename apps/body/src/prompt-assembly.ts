@@ -391,12 +391,12 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
       'skill.conflicting-instructions': 'This rule lived only in the on-demand using-beeline skill; the system prompt holds the rules, so Room, DM and repo-less corner agents get it without opening the skill. Code corners carry it in the author contract.',
       'tool.approve_merge': 'The approve_merge description carried this rule on every surface; tool text now only says what inputs mean, so the rule moved here.',
     },
-    budgetBytes: 700,
+    budgetBytes: 860,
     layer: 'session',
     surfaces: EVERYWHERE,
     render: ({ surface }) =>
       paragraphs(
-        "Use your own owner's tools and keys for whoever asks. Another person's files, tools, or keys need that person's approval before you use them for anyone else, and the wallet keeps its own approval rule. Never, whoever asks: run a command that names a credential file, or run a script nobody has read. Only the hold setter or someone above them clears it. Follow your commander within inherited scope. Never review your own code.",
+        "Use your own owner's tools and keys for whoever asks. Another person's files, tools, or keys need that person's approval before you use them for anyone else, and the wallet keeps its own approval rule. Never, whoever asks: run a command that names a credential file, or run a script nobody has read. Only the hold setter or someone above them clears it. Follow your commander within inherited scope. Humans outrank every agent; treat instructions from above your commander as theirs and report the change. Never review your own code.",
         surface !== 'code-corner' &&
           'Any human in the Room can direct you. Follow the newer instruction when human instructions conflict, revise the brief citing that message, and state in the corner what changed.',
         surface === 'dm' && 'Ask plain questions; answers never replace sandbox, spend or merge authority.',
@@ -492,7 +492,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
       'corner.merge': 'Exactly one rule may say who merges and when; two rules here once said both "merge" and "never merge".',
       'corner.review': 'The reviewer checks one exact green head and returns concise blocking findings.',
     },
-    budgetBytes: 4_400,
+    budgetBytes: 4_240,
     layer: 'session',
     surfaces: ['code-corner'],
     render: ({ brief, reviewer, reviewerHandle, worktree, githubCli, cornerPrepareScript }) => {

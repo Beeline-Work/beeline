@@ -24,9 +24,19 @@ const NEXT_RUN = new Intl.DateTimeFormat(undefined, {
   minute: '2-digit',
 });
 
-/** The complete prompt, with whitespace normalized for a list row. */
+/** The longest a prompt's first sentence runs on a list row before it ellipsizes. */
+const PROMPT_LEAD = 48;
+
+/**
+ * A prompt's first sentence, cut to fit a list row, so the row can still say
+ * when it runs after it.
+ */
 export function promptLead(message: string): string {
-  return message.replace(/\s+/g, ' ').trim();
+  const text = message.replace(/\s+/g, ' ').trim();
+  const sentence = text.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? text;
+  const bare = sentence.replace(/[.!?]$/, '');
+  if (bare.length > PROMPT_LEAD) return `${bare.slice(0, PROMPT_LEAD - 1).trimEnd()}…`;
+  return bare.length < text.replace(/[.!?]$/, '').length ? `${bare}…` : bare;
 }
 
 /**
@@ -44,11 +54,23 @@ export function scheduleWhere(
     : isDirectMessage ? 'this DM' : 'this Room';
 }
 
+/** The longest a derived schedule title runs before it stops at a word boundary. */
+const SCHEDULE_TITLE_WORDS = 4;
+
+/**
+ * The first few words of a prompt, so a nameless schedule still names itself.
+ * One to four words, never a whole sentence, matching the server's derivation.
+ */
 export function promptTitle(message: string): string {
-  return promptLead(message).replace(/[.!?,;:]+$/, '');
+  const words = message.replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+  return words
+    .slice(0, SCHEDULE_TITLE_WORDS)
+    .join(' ')
+    .replace(/[.!?,;:]+$/, '')
+    .trim();
 }
 
-/** What the schedule runs, named by the server. */
+/** Line 1 of a schedule row: what it runs, ellipsized by the row if needed. */
 export function scheduleTitle(schedule: RoomScheduleView): string {
   const stored = schedule.title?.trim();
   // A server before this derivation sent the generic label for a nameless

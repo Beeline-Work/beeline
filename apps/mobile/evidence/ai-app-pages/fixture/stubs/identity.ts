@@ -1,0 +1,1 @@
+export const loadBuzzIdentity=async()=>({publicKey:'fixture-owner'}); export const getEffectiveRelayUrl=async()=> 'https://fixture.invalid'; export const subscribeBuzzIdentity=()=>()=>{};

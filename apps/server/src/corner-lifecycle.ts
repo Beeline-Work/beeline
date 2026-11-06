@@ -1,147 +1,28 @@
-import { cornerLifecycleSql } from './corner-github-cache.js';
+import { deleteCornerWakeSources } from './corner-wake-cleanup.js';
+import { releaseArchivedCornerHolds } from './corner-holds.js';
+import { workingTurnFreshSql } from './turn-ownership.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
-import { REVIEW_VERDICT_SQL, missingReviewAttachments } from './review-evidence.js';
-import { cornerReviewerSql } from './corner-reviewer.js';
-import { cornerReportWaiting } from './corner-state.js';
-import { CornerAccessDatabase } from './corner-access-database.js';
-import { isZeroCheckCommander } from './corner-merge-approval.js';
 import { reportToCommander } from './commander.js';
-import type { activeCornerHolds } from './corner-holds.js';
 import { createHash } from 'node:crypto';
-import { type CornerLifecycleContract, type WorkflowTerminalState } from '@beeline/api-contract/daemon';
-import { cornerRunFromLifecycle, type CornerLifecycleView } from '@beeline/api-contract/phone';
+import { CornerLifecycleView } from '@beeline/api-contract/phone';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
-import {
-  createAgentCommand,
-  refuseVerdictedReviewerWake,
-  repairReviewerCornerMembership,
-  type CommandRow,
-} from './agent-command.js';
-import { assertCornerBriefAllowsMerge } from './corner-brief.js';
-import { cornerImplementerSql } from './corner-worker.js';
-import { cornerRunStateSql } from './corner-run.js';
+import { insertAgentCommand as createAgentCommand, refuseVerdictedReviewerWake, currentCornerCommandTargetSql, type CommandRow } from './agent-command.js';
 import { firstHealthyAgent } from './agent-health.js';
-import { CORNER_LIFECYCLE_CARD_TYPE } from './room-choice.js';
-import { ensureSystemIdentity, GITHUB_SUBJECT, systemLine, type SystemLineInput } from './system-line.js';
-import { workflowRunLockKey } from './workflow-runs.js';
+import { ensureSystemIdentity, GITHUB_SUBJECT, systemLine } from './system-line.js';
+import { abandonCornerWorkflowRuns } from './workflow-runs.js';
+import { cornerIdleSql, type CornerIdleRow } from './corner-idle.js';
+import { CornerCheckObservation, CornerMachine, transitionCorner, loadCorner, CornerMachineFacts, CornerRow, CornerMachineEvent, deriveCornerState, planCornerCheckObservation, checksSettled, checksRestarted, actionsJobId } from './corner-lifecycle-read-state.js';
+import { lockCornerArchivalAuthority, lockCornerLifecycle, CornerAdvance, blockingReview, cornerMergeGate, independentReviewerConfigured, RevisionWake, Applied, noteReviewDispatchFailure, reachableReviewer, backfillCornerLifecycleRuns, archiveCornerState, cornerReviewWokenSql, CornerMergeGate, CornerMergeabilityInput, cornerMergeability, confirmCornerMergeAuthority, deleteStoredCornerWorkflows } from './corner-lifecycle-review-state.js';
+import { OK, reviewChecksSql, CORNER_LIFECYCLE_SLUG, CORNER_MACHINE_SCHEMA } from './corner-lifecycle-values.js';
 
-/**
- * Lifecycle cards retain their persisted discriminator for existing history.
- * They carry no workflow event kind: lifecycle wakes belong to advanceCorner.
- * hiddenWakeCardSql excludes these rows from the human conversation, while
- * actual workflows keep their visible workflow-handoff cards.
- */
 
-/**
- * The corner lifecycle as a declarative contract, and the one
- * authority that moves a corner through it.
- *
- * Every corner state change goes through `advanceCorner`: open, push,
- * checks passed/failed, review verdict, merge refusal, merge webhook, brief
- * revision and close. The callers (`createCorner`, `createHumanCorner`, the
- * GitHub webhook handlers, `routeSystemCommand`, `approveCornerMerge`,
- * `closeCornerState`, and the merge in
- * `GitHubOperations.landCorner`) only REPORT their event. Under the run lock,
- * `advanceCorner` reads the run's current state, validates the edge against
- * `CORNER_LIFECYCLE_CONTRACT`, writes the
- * handoff card, and performs the edge's side effect — the one wake of the
- * next role. People are asked only for an explicit agent decision or a failed
- * agent wake. An event the current state does not allow changes nothing and is logged. No other code path
- * issues a corner lifecycle wake.
- *
- * The merge rule is one sentence: a pull request merges when its checks are
- * green on the current head (read live from GitHub) and a yes was said on
- * that head, unless a hold stands. The yes is a configured reviewer agent's
- * `approve_merge` PASS or a Workspace owner or admin's order
- * (`order_corner_merge` or the phone's approve call); the server lands either
- * at once through `GitHubOperations.landCorner`. A yes given while checks run
- * wakes the implementer to call `merge_corner` once they pass. A new commit cancels the yes; a
- * brief edit does not. The server does not referee who a reviewer is allowed
- * to be — a reviewer that wrote the code it is PASSing is a prompt
- * discipline, not a server gate. With no reviewer configured, green checks go
- * to review and wake the implementer to arrange review or explicitly ask for a
- * decision. A refused merge returns the corner to `implement` with GitHub's reason; the merge webhook moves it to
- * `landed`.
- *
- * The contract is plain TypeScript. It is not a Workspace workflow: it is
- * never stored in `workspace_skills`, never listed or started as one, and a
- * Workspace workflow saved with the slug `corner` has no effect on corners.
- * Its schema is separate from saved workflows. A
- * corner's run id is its own room id — one run for its whole life — and its
- * current state is the newest card citing that run (`corner-run.ts`); nothing
- * copies it onto the corner row.
- */
-export const CORNER_LIFECYCLE_SLUG = 'corner';
 
-export const CORNER_LIFECYCLE_CONTRACT: CornerLifecycleContract = {
-  version: 1,
-  name: CORNER_LIFECYCLE_SLUG,
-  description: 'Corner lifecycle: build, check, get a yes, merge, or close',
-  summary: 'Build the agreed change, check it, get a yes, and land it.',
-  roles: ['implementer', 'reviewer'],
-  start: 'opened',
-  handoffs: {
-    // `createCorner` / `createHumanCorner` report `open` in the same
-    // transaction that opens the Room; every corner starts implementing. A
-    // corner in a Room without a repository simply never pushes.
-    opened: { does: 'Set up the corner for the agreed work.',
-      kind: 'server',
-      requires: [],
-      on: { opened: 'implement' },
-    },
-    // The implementer's turn. A push reported by the GitHub webhook moves it
-    // to checks. `rechecked` is a checks verdict on the same head arriving
-    // after the one that sent the corner here (a re-run, or a reviewer
-    // configured later).
-    implement: { does: 'Build and prove the agreed change.',
-      role: 'implementer',
-      requires: [],
-      on: { pushed: 'checks', rechecked: 'checks', merge_refused: 'implement', pr_closed: 'implement' },
-    },
-    // Green wakes the reviewer (live from the parent Room's
-    // `reviewer_agent_id`, or the corner override); with no reviewer
-    // configured, zero checks ask the commander for a yes; other green heads
-    // return the missing review decision to the implementer. Red wakes the
-    // implementer, for every failing run, without a human escalation cap.
-    checks: { does: 'Check the proposed change.',
-      kind: 'server',
-      requires: [],
-      on: { passing: 'review', no_reviewer: 'review', failing: 'implement', pr_closed: 'implement' },
-    },
-    // Waiting for a yes on the current head. A reviewer's PASS
-    // (`approve_merge`) or a person's order takes `approved`, and its caller
-    // lands the corner at once. A reviewer turn that
-    // ends without a PASS changes nothing: the reviewer's own message carries
-    // any requested change to the implementer, whose next push restarts
-    // checks. The merge webhook takes the implicit edge to `landed`; GitHub
-    // refusing the merge returns to the implementer.
-    review: { does: 'Wait for a yes on the current head.',
-      role: 'reviewer',
-      roleBinding: 'live:parent.reviewer_agent_id',
-      requires: [],
-      on: {
-        approved: 'review',
-        pr_closed: 'implement',
-        pushed: 'checks',
-        rechecked: 'checks',
-        merge_refused: 'implement',
-      },
-    },
-    landed: { does: 'The change has landed.', kind: 'terminal', status: 'done' },
-    closed: { does: 'The corner has closed.', kind: 'terminal', status: 'abandoned' },
-  },
-  // The merge webhook and a close request end a corner from wherever it sits.
-  implicitEdges: ['landed', 'closed'],
-  // Only an event from outside the run takes these: a new commit on the
-  // branch, a check verdict re-reported on the same head, a yes after a
-  // handback, or GitHub refusing the merge.
-  externalOutcomes: ['pushed', 'rechecked', 'merge_refused', 'pr_closed'],
-};
-
-/** Everything that can move a corner. Each adapter reports exactly one of these. */
 export type CornerEvent =
-  | { kind: 'open'; workspaceId: string; implementerAgentId: string }
+  | {
+      kind: 'open';
+      command?: Parameters<typeof createAgentCommand>[1];
+    }
   | { kind: 'push'; headSha: string; contents: Record<string, unknown> }
   | { kind: 'checks'; result: 'passing' | 'failing'; sourceMessageId: string; followup?: boolean }
   | {
@@ -157,56 +38,13 @@ export type CornerEvent =
   | { kind: 'merge-refused'; headSha: string; reason: string; confirmedUnmerged?: boolean }
   | { kind: 'merged'; contents: Record<string, unknown> }
   | { kind: 'pull-request-closed'; number: number }
-  | { kind: 'closed' };
+  | { kind: 'closed' }
+  | { kind: 'merge-conflict'; sourceMessageId: string }
+  | { kind: 'check-observation'; observation: CornerCheckObservation }
+  | { kind: 'reconcile' }
+  | { kind: 'command'; command: Parameters<typeof createAgentCommand>[1] };
 
-type RevisionWake = { queued: boolean; agentId?: string; reason?: string };
-export type CornerAdvance = {
-  wake?: RevisionWake;
-  /** The run's state after the event, or undefined when the corner has no run. */
-  state: string | undefined;
-  /** False when the event was not allowed from the current state (logged). */
-  accepted: boolean;
-};
 
-type RunState = {
-  toState: string;
-  outcome: string | undefined;
-  /** The PR head the newest card was written for. */
-  headSha: string | undefined;
-  roleBindings: Record<string, string>;
-  seq: number;
-};
-
-type CornerRow = {
-  parent_id: string;
-  workspace_id: string;
-  worker_agent_id: string | null;
-  lifecycle: CornerLifecycleView;
-  archived: boolean;
-  locked: boolean;
-  configured_reviewer_id: string | null;
-  configured_reviewer_kind: string | null;
-  configured_reviewer_name: string | null;
-  reviewer_parent_member: boolean;
-};
-
-/**
- * Serializes one corner run's whole read-current-state -> write-next-card
- * sequence, with the same key format as `workflow-runs.ts`'s `lockWorkflowRun`.
- * Taken as the transaction's FIRST statement, so two events against the same
- * corner (a push landing with a close, a redelivered webhook, two merge sweeps)
- * cannot both read the same state and both act on it.
- */
-export async function lockCornerLifecycle(db: SqlDatabase, cornerId: string): Promise<void> {
-  await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [workflowRunLockKey(cornerId)]);
-}
-
-/**
- * Expand step for `corner_github_cache` (created in the server schema): copy the
- * old column once, then mirror both ways while older replicas still read and
- * write corner_facts.lifecycle. The IS DISTINCT FROM guards end the recursion.
- * The mirror is removed together with the corner_facts.lifecycle column.
- */
 export const CORNER_GITHUB_CACHE_MIRROR_SQL = `
 INSERT INTO corner_github_cache(corner_id,lifecycle)
   SELECT corner_id,lifecycle FROM corner_facts ON CONFLICT(corner_id) DO NOTHING;
@@ -231,6 +69,7 @@ CREATE TRIGGER corner_github_cache_mirror AFTER INSERT OR UPDATE OF lifecycle ON
   FOR EACH ROW EXECUTE FUNCTION corner_github_cache_mirror();
 `;
 
+
 /**
  * The corner's own row: created once with the corner, then changed only by
  * this module (its lock and its reviewer). Its GitHub display cache row starts
@@ -242,561 +81,593 @@ export async function createCornerFacts(db: SqlDatabase, cornerId: string): Prom
      VALUES($1,'{"lifecycle":"working","checks":"unknown"}') ON CONFLICT(corner_id) DO NOTHING`,
     [cornerId],
   );
-  await db.query(`INSERT INTO corner_github_cache(corner_id) VALUES($1) ON CONFLICT(corner_id) DO NOTHING`, [cornerId]);
+  await db.query(
+    `INSERT INTO corner_github_cache(corner_id) VALUES($1) ON CONFLICT(corner_id) DO NOTHING`,
+    [cornerId],
+  );
 }
 
+
 /** A person's lock: merges then keep the corner open (`corner lock`). */
-export async function setCornerLockedFact(db: SqlDatabase, cornerId: string, locked: boolean): Promise<void> {
+export async function setCornerLockedFact(
+  db: SqlDatabase,
+  cornerId: string,
+  locked: boolean,
+): Promise<void> {
   await db.query(`UPDATE corner_facts SET locked=$2 WHERE corner_id=$1`, [cornerId, locked]);
 }
 
+
 /** Account deletion: corners whose own reviewer was a deleted agent fall back to their Room's. */
 export async function clearCornerReviewers(db: SqlDatabase, agentIds: string[]): Promise<void> {
-  await db.query(`UPDATE corner_facts SET reviewer_agent_id=NULL WHERE reviewer_agent_id=ANY($1)`, [agentIds]);
+  await db.query(`UPDATE corner_facts SET reviewer_agent_id=NULL WHERE reviewer_agent_id=ANY($1)`, [
+    agentIds,
+  ]);
 }
+
 
 /** The corner's own reviewer; returns whether it changed. Callers check authority first. */
-export async function setCornerReviewerFact(db: SqlDatabase, cornerId: string, reviewerId: string): Promise<boolean> {
-  return ((await db.query(
-    `UPDATE corner_facts SET reviewer_agent_id=$2
-     WHERE corner_id=$1 AND reviewer_agent_id IS DISTINCT FROM $2 RETURNING corner_id`, [cornerId, reviewerId],
-  )).rowCount ?? 0) > 0;
-}
-
-/**
- * The newest card wins. Ordering is this file's own monotonic `seq` embedded
- * in the card, never `created_at` (two cards written in one transaction can
- * share a timestamp) or the ids (a uuid start card and sha256 later cards).
- */
-async function loadCornerLifecycleState(
+export async function setCornerReviewerFact(
   db: SqlDatabase,
   cornerId: string,
-): Promise<RunState | undefined> {
-  const row = (
-    await db.query<{
-      to_state: string;
-      outcome: string | null;
-      head_sha: string | null;
-      role_bindings: Record<string, string> | null;
-      seq: number | null;
-    }>(
-      `SELECT card->>'toState' to_state, card->>'outcome' outcome,
-              COALESCE(card->'contents'->>'headSha',card->>'headSha') head_sha,
-              card->'roleBindings' role_bindings,
-              (card->>'seq')::int seq
-       FROM messages
-       WHERE room_id=$1::uuid AND card_type=$2 AND card->>'runId'=$1::text
-       ORDER BY (card->>'seq')::int DESC LIMIT 1`,
-      [cornerId, CORNER_LIFECYCLE_CARD_TYPE],
-    )
-  ).rows[0];
-  if (!row?.to_state) return undefined;
-  return {
-    toState: row.to_state,
-    outcome: row.outcome ?? undefined,
-    headSha: row.head_sha ?? undefined,
-    roleBindings: row.role_bindings ?? {},
-    seq: row.seq ?? 0,
-  };
-}
-
-async function loadCorner(db: SqlDatabase, cornerId: string): Promise<CornerRow | undefined> {
-    db = new CornerAccessDatabase(db);
-  return (
-    await db.query<CornerRow>(
-      `SELECT corner.parent_id,parent.workspace_id,
-              ${cornerImplementerSql('fact', 'corner')} worker_agent_id,
-              ${cornerLifecycleSql('fact.corner_id')},fact.locked,
-              corner.archived_at IS NOT NULL archived,
-              ${cornerReviewerSql()} configured_reviewer_id,
-              configured.kind configured_reviewer_kind,
-              configured.name configured_reviewer_name,
-              EXISTS (
-                SELECT 1 FROM memberships reviewer_membership
-                JOIN identities reviewer ON reviewer.id=reviewer_membership.identity_id
-                  AND reviewer.kind='agent'
-                WHERE reviewer_membership.room_id=parent.id
-                  AND reviewer_membership.identity_id=${cornerReviewerSql()}
-                  AND reviewer_membership.removed_at IS NULL
-              ) reviewer_parent_member
-       FROM corner_facts fact
-       JOIN rooms corner ON corner.id=fact.corner_id
-       JOIN rooms parent ON parent.id=corner.parent_id
-       LEFT JOIN identities configured ON configured.id=${cornerReviewerSql()}
-       WHERE fact.corner_id=$1
-       FOR UPDATE OF fact`,
-      [cornerId],
-    )
-  ).rows[0];
-}
-
-/**
- * Every corner lifecycle card is authored by `@system`, never by the corner's
- * own implementer or reviewer agent — a card "written" by that agent would
- * inflate any query counting the agent's own conversational messages.
- */
-async function cornerBookkeepingSubject(db: SqlDatabase): Promise<SystemLineInput['subject']> {
-  await ensureSystemIdentity(db);
-  return { kind: 'system', id: SYSTEM_IDENTITY_ID, name: systemMessage("corner-lifecycle.system") };
-}
-
-function terminalStatus(toState: string): WorkflowTerminalState['status'] | undefined {
-  const state = CORNER_LIFECYCLE_CONTRACT.handoffs[toState];
-  return state?.kind === 'terminal' ? state.status : undefined;
-}
-
-/** The declared `on` edges of a state; empty for waiting and terminal states. */
-function edgesOf(stateName: string): Readonly<Record<string, string>> {
-  // Historical cards can still name the removed automatic escalation state.
-  if (stateName === 'ask_human') return {
-    pushed: 'checks', rechecked: 'checks', revision_work: 'implement', merge_refused: 'implement', pr_closed: 'implement',
-  };
-  const state = CORNER_LIFECYCLE_CONTRACT.handoffs[stateName];
-  return state && 'on' in state ? state.on : {};
-}
-
-const REVIEWER_ROLE_BINDING = 'live:parent.reviewer_agent_id';
-
-/**
- * Starts the run card (seq 0). `id` is the corner's own id, as `startWorkflow`
- * uses the run id, so a retried `createCorner` transaction cannot duplicate it.
- */
-async function writeStartCard(
-  db: SqlDatabase,
-  input: {
-    cornerId: string;
-    roleBindings: Record<string, string>;
-    toState: string;
-    /** Set only on a run derived from an older corner's lifecycle. */
-    backfilled?: { outcome: string | undefined; headSha: string | undefined };
-  },
-): Promise<void> {
-  const subject = await cornerBookkeepingSubject(db);
-  await systemLine(db, {
-    id: input.cornerId,
-    roomId: input.cornerId,
-    authorId: SYSTEM_IDENTITY_ID,
-    subject,
-    verb: systemMessage("corner-lifecycle.opened"),
-    object: systemMessage("corner-lifecycle.corner"),
-    // Never a chat line: `hiddenWakeCardSql` excludes this card type from the
-    // transcript a human reads.
-    presentation: 'card',
-    cardType: CORNER_LIFECYCLE_CARD_TYPE,
-    card: {
-      runId: input.cornerId,
-      roleBindings: input.roleBindings,
-      toState: input.toState,
-      seq: 0,
-      ...(input.backfilled
-        ? {
-            backfilledFrom: 'lifecycle',
-            ...(input.backfilled.outcome ? { outcome: input.backfilled.outcome } : {}),
-            ...(input.backfilled.headSha ? { headSha: input.backfilled.headSha } : {}),
-          }
-        : {}),
-    },
-  });
-}
-
-/**
- * One validated transition inside an `advanceCorner` transaction. The edge
- * must be declared on the current state (or be an implicit edge).
- */
-class Transition {
-  constructor(
-    private readonly db: SqlDatabase,
-    private readonly cornerId: string,
-    public run: RunState,
-    /** The corner's current PR head; every card records the head it was written for. */
-    private readonly headSha: string | undefined,
-  ) {
-    this.db = new CornerAccessDatabase(db);}
-
-  /** The handoff card the last `take` wrote. */
-  lastCardId: string | undefined;
-
-  get state(): string {
-    return this.run.toState;
-  }
-
-  allows(outcome: string): boolean {
-    return Object.hasOwn(edgesOf(this.run.toState), outcome);
-  }
-
-  async take(
-    outcome: string,
-    contents: Record<string, unknown> = {},
-  ): Promise<string> {
-    const fromState = this.run.toState;
-    const implicit = CORNER_LIFECYCLE_CONTRACT.implicitEdges?.includes(outcome) ?? false;
-    if (!implicit && !this.allows(outcome))
-      throw new Error(`corner contract has no ${fromState} --${outcome}--> edge`);
-    const toState = implicit ? outcome : edgesOf(fromState)[outcome]!;
-    const seq = this.run.seq + 1;
-    const status = terminalStatus(toState);
-    if (this.headSha && contents.headSha === undefined) contents = { ...contents, headSha: this.headSha };
-    const subject = await cornerBookkeepingSubject(this.db);
-    const card = await systemLine(this.db, {
-      id: createHash('sha256')
-        .update(`beeline:corner-workflow:${this.cornerId}:${seq}:${fromState}:${outcome}`)
-        .digest('hex'),
-      roomId: this.cornerId,
-      authorId: SYSTEM_IDENTITY_ID,
-      subject,
-      verb: systemMessage("corner-lifecycle.handed-off"),
-      object: toState,
-      // The card never wakes anyone itself (no `wakes`); the one wake of the
-      // next role is this transition's own side effect in `advanceCorner`.
-      presentation: 'card',
-      cardType: CORNER_LIFECYCLE_CARD_TYPE,
-      card: {
-        runId: this.cornerId,
-        roleBindings: this.run.roleBindings,
-        fromState,
-        outcome,
-        toState,
-        contents,
-        receipt: { exit: { gate: outcome, actorId: SYSTEM_IDENTITY_ID } },
-        seq,
-        ...(status ? { status } : {}),
-      },
-    });
-    this.lastCardId = card.id;
-    this.run = {
-      ...this.run,
-      toState,
-      outcome,
-      seq,
-      headSha: typeof contents.headSha === 'string' ? contents.headSha : undefined,
-    };
-    return toState;
-  }
-}
-
-function rejected(cornerId: string, event: CornerEvent, state: string | undefined, why: string) {
-  console.info(
-    `[corner-lifecycle] ${cornerId}: ignored ${event.kind} in ${state ?? 'no run'}: ${why}`,
-  );
-}
-
-/**
- * The run a corner opened before the workflow run existed (#1918) is given
- * once, derived from its lifecycle (`cornerRunFromLifecycle`, the mapping the
- * phone badge uses) and from what was already dispatched for its current head:
- * a checks verdict whose wake
- * (reviewer on green, implementer on red) never went out is still `checks`,
- * so reporting that verdict again dispatches it.
- */
-async function backfillRun(
-  db: SqlDatabase,
-  cornerId: string,
-  corner: CornerRow,
-): Promise<RunState> {
-  const derived = cornerRunFromLifecycle({ archived: corner.archived, locked: corner.locked, lifecycle: corner.lifecycle });
-  let toState = derived.state;
-  let outcome = derived.outcome;
-  if (toState === 'review') {
-    if (!(await checksVerdictDispatched(db, cornerId, 'check-passed', 'subscribed_event')))
-      toState = 'checks';
-  } else if (
-    toState === 'implement' &&
-    outcome === 'failing' &&
-    !(await checksVerdictDispatched(db, cornerId, 'check-failed', 'corner_check'))
-  ) {
-    toState = 'checks';
-    outcome = undefined;
-  }
-  const roleBindings = {
-    implementer: corner.worker_agent_id ?? '',
-    reviewer: REVIEWER_ROLE_BINDING,
-  };
-  const headSha = corner.lifecycle.pr?.headSha;
-  await writeStartCard(db, {
-    cornerId,
-    roleBindings,
-    toState,
-    backfilled: { outcome, headSha },
-  });
-  return { toState, outcome, headSha, roleBindings, seq: 0 };
-}
-
-async function checksVerdictDispatched(
-  db: SqlDatabase,
-  cornerId: string,
-  kind: 'check-passed' | 'check-failed',
-  reason: string,
+  reviewerId: string,
 ): Promise<boolean> {
-  const dispatched = await db.query(
-    `SELECT 1 FROM agent_commands command
-     JOIN messages source ON source.id=command.source_message_id
-     JOIN corner_github_cache fact ON fact.corner_id=command.room_id
-     WHERE command.room_id=$1 AND command.reason=$2
-       AND source.system_event->>'kind'=$3
-       AND (source.system_event->'object'->>'headSha' IS NULL
-            OR source.system_event->'object'->>'headSha'=fact.lifecycle->'pr'->>'headSha')
-     LIMIT 1`,
-    [cornerId, reason, kind],
+  return (
+    ((
+      await db.query(
+        `UPDATE corner_facts SET reviewer_agent_id=$2
+     WHERE corner_id=$1 AND reviewer_agent_id IS DISTINCT FROM $2 RETURNING corner_id`,
+        [cornerId, reviewerId],
+      )
+    ).rowCount ?? 0) > 0
   );
-  return dispatched.rowCount > 0;
 }
 
+
 /**
- * The single entry point for every corner state change. Runs in the caller's
- * transaction when it has one. See the file header.
+ * Cancels every pending or claimed input/resume/restart command for a corner, and any
+ * turn still marked `working`, so a corner that just landed never leaves a
+ * stale assignment behind. Shared by every path that archives a corner:
+ * `closeCornerState` and the GitHub merge webhook.
+ * Take command locks before the room's archival UPDATE/FOR UPDATE lock:
+ * command output already holds its command when dispatch locks rooms FOR SHARE.
  */
+export async function cancelCornerAgentCommands(database: SqlDatabase, cornerId: string): Promise<void> {
+  await lockCornerArchivalAuthority(database);
+  const active = await database.query<CommandRow>(
+    `SELECT * FROM agent_commands
+     WHERE room_id=$1 AND action IN ('input','resume') AND state IN ('pending','claimed')
+     ORDER BY created_at DESC,id DESC FOR UPDATE`,
+    [cornerId],
+  );
+  // Only a claimed command has a helper turn to stop. A pending one never started;
+  // cancelling it below is enough, and a stop for it would stay pending forever.
+  const assignments = new Map<string, CommandRow>();
+  for (const command of active.rows) {
+    if (command.state !== 'claimed') continue;
+    const key = `${command.agent_id}:${command.turn_request_id}`;
+    if (!assignments.has(key)) assignments.set(key, command);
+  }
+  for (const command of assignments.values())
+    await createAgentCommand(database, {
+      roomId: cornerId,
+      agentId: command.agent_id,
+      sourceMessageId: command.source_message_id,
+      turnRequestId: command.turn_request_id,
+      action: 'stop',
+      reason: 'corner_close',
+      parent: command,
+      retainDepth: true,
+    });
+  await database.query(
+    `SELECT (terminal.ended).* FROM (SELECT beeline_end_agent_turn(agent_commands.id,agent_commands.generation_id,'cancelled',NULL,NULL) ended FROM agent_commands WHERE room_id=$1 AND action IN ('input','resume','restart') AND state IN ('pending','claimed')) terminal`,
+    [cornerId],
+  );
+  await database.query(`DELETE FROM agent_pending_attachments WHERE room_id=$1`, [cornerId]);
+}
+
+
+
+export async function archiveCorner(database: SqlDatabase, cornerId: string): Promise<boolean> {
+  return database.transaction(async database => {
+    await lockCornerLifecycle(database, cornerId);
+    await lockCornerArchivalAuthority(database);
+    if (!(await database.query(`SELECT 1 FROM rooms WHERE id=$1 AND parent_id IS NOT NULL FOR KEY SHARE`, [cornerId])).rowCount)
+      throw new Error('corner not found');
+    await cancelCornerAgentCommands(database, cornerId);
+    // Match command output: command locks precede the Room archival write lock.
+    const changed = await database.query(
+      `UPDATE rooms SET archived_at=now(),updated_at=now() WHERE id=$1 AND archived_at IS NULL`, [cornerId]);
+    await abandonCornerWorkflowRuns(database, cornerId);
+    await deleteCornerWakeSources(database, [cornerId]);
+    await releaseArchivedCornerHolds(database, [cornerId]);
+    return Boolean(changed.rowCount);
+  });
+}
+
+
 export async function advanceCorner(
   database: SqlDatabase,
   cornerId: string,
   event: CornerEvent,
 ): Promise<CornerAdvance> {
+  // Admission is not a committed activity fact. Preserve the queue's lock
+  // order (queue -> command -> Room); its committed event updates the machine.
+  if (event.kind === 'command') return database.transaction(async db => {
+    const current = (await db.query<{ machine: CornerMachine | null }>('SELECT machine FROM corner_facts WHERE corner_id=$1', [cornerId])).rows[0]?.machine ?? { state: 'idle' as const };
+    const plan = transitionCorner(current, { facts: { archived: false, turnRunning: false }, event });
+    const command = plan.wakes.length ? await createAgentCommand(db, event.command) : undefined;
+    return { state: current.state, accepted: Boolean(command), ...(command ? { command } : {}) };
+  });
   return database.transaction(async (db) => {
     await lockCornerLifecycle(db, cornerId);
     const corner = await loadCorner(db, cornerId);
-    if (!corner) {
-      rejected(cornerId, event, undefined, 'corner not found');
-      return { state: undefined, accepted: false };
-    }
-    let run = await loadCornerLifecycleState(db, cornerId);
-    if (event.kind === 'open') {
-      if (run) {
-        rejected(cornerId, event, run.toState, 'run already started');
-        return { state: run.toState, accepted: false };
-      }
-      const roleBindings = {
-        implementer: event.implementerAgentId,
-        // Never a real agent id, so the generic handoff() engine's own
-        // `boundAgentId !== command.agent_id` check can never match it.
-        reviewer: REVIEWER_ROLE_BINDING,
-      };
-      await writeStartCard(db, { cornerId, roleBindings, toState: 'opened' });
-      const transition = new Transition(
-        db,
-        cornerId,
-        { toState: 'opened', outcome: undefined, headSha: undefined, roleBindings, seq: 0 },
-        corner.lifecycle.pr?.headSha,
-      );
-      return { state: await transition.take(systemMessage("corner-lifecycle.opened")), accepted: true };
-    }
-    run ??= await backfillRun(db, cornerId, corner);
-    const transition = new Transition(db, cornerId, run, corner.lifecycle.pr?.headSha);
-    if (terminalStatus(run.toState)) {
-      rejected(cornerId, event, run.toState, 'run already ended');
-      return { state: run.toState, accepted: false };
-    }
-    const accepted = await applyEvent(db, cornerId, corner, transition, event);
-    if (!accepted.ok) {
-      rejected(cornerId, event, run.toState, accepted.why);
-      return { state: transition.state, accepted: false };
-    }
-    // A green review state must carry a reviewer command even when the state
-    // was entered while checks were already green or an earlier wake was lost.
-    const reviewWake = transition.state === 'review' && !accepted.wake?.queued
-      ? await ensureReviewDispatch(db, cornerId, corner, transition)
+    if (!corner) return { accepted: false, state: undefined };
+    const head = corner.lifecycle.pr?.headSha ?? (event.kind === 'push' ? event.headSha : undefined);
+    await ensureSystemIdentity(db);
+    const row = (await db.query<CornerIdleRow>(cornerIdleSql('$1', true), [cornerId])).rows[0];
+    const sourceHead =
+      event.kind === 'checks'
+        ? (
+            await db.query<{ head: string | null }>(
+              `SELECT system_event->'object'->>'headSha' head FROM messages WHERE id=$1 AND room_id=$2`,
+              [event.sourceMessageId, cornerId],
+            )
+          ).rows[0]?.head
+        : undefined;
+    const checkSource = (
+      await db.query<{ id: string; followup: boolean }>(
+        `SELECT id,COALESCE((system_event->'payload'->>'followup')::boolean,false) followup FROM messages WHERE room_id=$1
+      AND system_event->>'kind'=$2 AND (system_event->'object'->>'headSha' IS NULL OR system_event->'object'->>'headSha'=$3)
+      ORDER BY created_at DESC,id DESC LIMIT 1`,
+        [
+          cornerId,
+          corner.lifecycle.checks === 'failing' ? 'check-failed' : 'check-passed',
+          head ?? null,
+        ],
+      )
+    ).rows[0];
+    const ended = head ? await blockingReview(db, cornerId, head) : undefined;
+    const completed = head
+      ? (
+          await db.query<{ id: string; findings: string | null; reported: boolean }>(
+            `SELECT command.id,result.text findings,COALESCE(command.private_payload->>'reportedOutcome',command.report_outcome) IN ('failed','blocked') reported
+      FROM agent_commands command LEFT JOIN messages result ON result.id=command.result_message_id
+      WHERE command.room_id=$1 AND command.review_context->>'headSha'=$2
+        AND command.review_context->'pullRequest'=$3::jsonb AND command.review_context->>'purpose' IS NULL
+        AND command.action='input' AND ($4::text IS NULL OR command.agent_id=$4) AND NOT EXISTS (SELECT 1 FROM agent_turns running
+          WHERE running.room_id=command.room_id AND running.agent_id=command.agent_id
+            AND running.request_id=command.turn_request_id AND running.status='working' AND ${workingTurnFreshSql('running')})
+        AND (command.state='complete' OR command.state='cancelled' AND EXISTS (
+          SELECT 1 FROM agent_turns turn WHERE turn.room_id=command.room_id AND turn.agent_id=command.agent_id
+            AND turn.request_id=command.turn_request_id AND turn.status<>'working'))
+      ORDER BY command.completed_at DESC NULLS LAST,command.created_at DESC LIMIT 1`,
+            [cornerId, head, JSON.stringify(corner.lifecycle.pr?.number), corner.configured_reviewer_id],
+          )
+        ).rows[0]
       : undefined;
-    const wake = accepted.wake?.queued ? accepted.wake : reviewWake?.ok ? reviewWake.wake : accepted.wake;
-    return { state: transition.state, accepted: true, ...(wake ? { wake } : {}) };
+    const evidence = ended
+      ? (
+          await db.query<{ text: string }>(
+            'SELECT result.text FROM agent_commands command JOIN messages result ON result.id=command.result_message_id WHERE command.id=$1',
+            [ended],
+          )
+        ).rows[0]?.text
+      : undefined;
+    // Completed commands still prove delivery; only missing IDs invalidate their receipts.
+    const receipts = (corner.machine?.effects ?? []).filter(key => key.startsWith('command:red:')).map(marker => ({
+      marker, key: marker.slice('command:'.length, marker.lastIndexOf(':')), id: marker.slice(marker.lastIndexOf(':') + 1),
+    }));
+    const active = (
+      await db.query<{ worker: boolean; reviewer: boolean; conflict: boolean; retained: string[] | null }>(
+        `SELECT
+      EXISTS(SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2
+        AND state IN ('pending','claimed') AND action IN ('input','resume') AND reason<>'report' AND ${currentCornerCommandTargetSql('agent_commands')}) worker,
+      EXISTS(SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$3 AND (state IN ('pending','claimed') OR EXISTS(SELECT 1 FROM agent_turns running
+          WHERE running.room_id=agent_commands.room_id AND running.agent_id=agent_commands.agent_id
+            AND running.request_id=agent_commands.turn_request_id AND running.status='working' AND ${workingTurnFreshSql('running')}))
+        AND action='input' AND review_context->>'purpose' IS NULL
+        AND review_context->>'headSha'=$4 AND review_context->'pullRequest'=$5::jsonb
+        AND COALESCE((review_context->>'briefRevision')::int,0)=COALESCE((SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=$1),0)) reviewer,
+      EXISTS(SELECT 1 FROM agent_commands delivered JOIN messages source ON source.id=delivered.source_message_id
+        WHERE delivered.room_id=$1 AND delivered.reason='corner_merge_conflict'
+          AND source.system_event->'object'->>'headSha'=$4) conflict,
+      (SELECT array_agg(id) FROM agent_commands WHERE id=ANY($6::text[])) retained`,
+        [
+          cornerId,
+          corner.worker_agent_id,
+          corner.configured_reviewer_id,
+          head ?? null,
+          JSON.stringify(corner.lifecycle.pr?.number ?? null),
+          receipts.map(receipt => receipt.id),
+        ],
+      )
+    ).rows[0];
+    const waitText = row?.waiting_item_id
+      ? (
+          await db.query<{ text: string | null }>(
+            `SELECT COALESCE(
+      (SELECT private_payload->>'text' FROM agent_commands WHERE id=$1),
+      (SELECT text FROM messages WHERE id=$1)) text`,
+            [row.waiting_item_id],
+          )
+        ).rows[0]?.text
+      : undefined;
+    const gate =
+      head && corner.lifecycle.pr?.number
+        ? await cornerMergeGate(db, cornerId, { number: corner.lifecycle.pr.number, headSha: head })
+        : undefined;
+    // Personal-resource cards live in the owner's System DM. Their source
+    // message can be in the parent Room; the grant's room_id owns this wait.
+    // Only read the wait identity here, never project private approval details.
+    const pendingGrant = (await db.query<{ id: string }>(
+      `SELECT id FROM agent_grants WHERE room_id=$1 AND status='pending'
+        AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at>now())
+       ORDER BY created_at,id LIMIT 1`, [cornerId],
+    )).rows[0];
+    const facts: CornerMachineFacts = {
+      archived: corner.archived,
+      locked: corner.locked,
+      lifecycle: corner.lifecycle,
+      headSha: head,
+      turnRunning: row?.worker_active === true || active?.worker === true,
+      reviewerActive: row?.reviewer_active === true || active?.reviewer === true,
+      approved: gate?.approved,
+      mergeHeld: gate?.held,
+      mergeConflictDelivered: active?.conflict,
+      lostEffects: receipts.filter(receipt => !active?.retained?.includes(receipt.id)).flatMap(receipt => [receipt.key, receipt.marker]),
+      draftReadyFailure: (corner.lifecycle as CornerLifecycleView & { draftReadyFailure?: { headSha?: string } }).draftReadyFailure?.headSha === head && Boolean(head),
+      reviewerConfigured: independentReviewerConfigured(corner),
+      ...(pendingGrant ? { waitReason: 'user_action' as const }
+        : /^blocked:/.test(waitText ?? '') ? { waitReason: 'blocked' as const } : {}),
+      ...(ended || completed
+        ? {
+            reviewEnded: {
+              id: ended ?? completed!.id,
+              reported: completed?.reported,
+              ...(ended
+                ? { findings: evidence ?? 'The reviewer requested changes on this head.' }
+                : {}),
+            },
+          }
+        : {}),
+      ...(pendingGrant
+        ? { blocker: { reason: 'approve' as const, itemId: `grant:${pendingGrant.id}` } }
+        : row && row.waiting_item_id && row.waiting_reason
+        ? {
+            blocker: {
+              reason: row.waiting_reason,
+              itemId: row.waiting_item_id,
+              ...(row.waiting_kind ? { blocker: { kind: row.waiting_kind } } : {}),
+            },
+          }
+        : {}),
+      checkSourceId:
+        sourceHead && sourceHead !== head
+          ? 'stale'
+          : event.kind === 'checks'
+            ? event.sourceMessageId
+            : checkSource?.id ?? (corner.lifecycle.checks === 'failing' && head
+              ? `cache:${head}` : undefined),
+      checkFollowup: checkSource?.followup,
+      checkAttempt: (corner.lifecycle.checksSummary as { attempt?: number } | undefined)?.attempt,
+      idleSince: row?.idle_since,
+      idleEligible: row
+        ? !row.suppressed && !row.worker_active && !row.reviewer_active && !row.blocking
+        : false,
+    };
+    const prior = corner.machine ?? { state: 'idle' };
+    const plan = transitionCorner(prior, { facts, event });
+    if (plan.suppression) return { state: prior.state, accepted: false };
+    const archived = plan.state.state === 'archived' && !corner.archived &&
+      (event.kind === 'closed' || event.kind === 'merged' || corner.lifecycle.outcome === 'landed' || corner.lifecycle.pr?.mergedAt)
+      ? await archiveCorner(db, cornerId) : false;
+    if (event.kind === 'closed') await db.query(
+      `UPDATE corner_github_cache SET lifecycle=lifecycle||'{"lifecycle":"done","checks":"unknown"}'::jsonb WHERE corner_id=$1`, [cornerId]);
+    let wakeResult: RevisionWake | undefined;
+    const effects = [...(plan.state.effects ?? [])];
+    for (const effect of plan.wakes) {
+      let result: Applied = OK;
+      const sourceId = event.kind === 'checks' ? event.sourceMessageId : checkSource?.id;
+      switch (effect.kind) {
+        case 'merge-conflict': {
+          const source =
+            event.kind === 'merge-conflict'
+              ? event.sourceMessageId
+              : (
+                  await systemLine(db, {
+                    id: createHash('sha256')
+                      .update(
+                        `beeline:${cornerId}:github:merge-conflict:${corner.lifecycle.pr?.number}:${head}`,
+                      )
+                      .digest('hex'),
+                    roomId: cornerId,
+                    authorId: corner.worker_agent_id ?? SYSTEM_IDENTITY_ID,
+                    subject: GITHUB_SUBJECT,
+                    verb: systemMessage('agent-command.found-merge-conflicts-in'),
+                    object: { text: corner.lifecycle.pr?.title ?? 'Pull request', headSha: head },
+                  })
+                ).id;
+          const command = corner.worker_agent_id
+            ? await createAgentCommand(db, {
+                roomId: cornerId,
+                agentId: corner.worker_agent_id,
+                sourceMessageId: source,
+                reason: 'corner_merge_conflict',
+              })
+            : undefined;
+          result = {
+            ok: true,
+            wake: { queued: Boolean(command), ...(command ? { agentId: command.agent_id } : {}) },
+          };
+          break;
+        }
+        case 'open': {
+          const command =
+            event.kind === 'open' && event.command
+              ? await createAgentCommand(db, event.command)
+              : undefined;
+          result = {
+            ok: true,
+            wake: { queued: Boolean(command), ...(command ? { agentId: command.agent_id } : {}) },
+          };
+          break;
+        }
+        case 'revision': {
+          if (event.kind !== 'brief-revised') break;
+          const agentId = corner.worker_agent_id
+            ? await firstHealthyAgent(db, cornerId, [corner.worker_agent_id])
+            : null;
+          const command = agentId
+            ? await createAgentCommand(db, {
+                roomId: cornerId,
+                agentId,
+                sourceMessageId: event.sourceMessageId,
+                reason: 'corner_brief_revision',
+                parent: event.command,
+                retainDepth: true,
+              })
+            : undefined;
+          result = {
+            ok: true,
+            wake: { queued: Boolean(command), ...(command ? { agentId: command.agent_id } : { reason: 'No reachable implementer for the revision' }) },
+          };
+          break;
+        }
+        case 'checks-failed':
+          if (!corner.worker_agent_id) {
+            await noteReviewDispatchFailure(db, cornerId, head ?? 'checks', 'the corner has no implementer');
+            result = { ok: true, wake: { queued: false, reason: 'the corner has no implementer' } };
+          } else if (facts.checkSourceId && corner.worker_agent_id) {
+            const command = await createAgentCommand(db, {
+              roomId: cornerId,
+              agentId: corner.worker_agent_id,
+              sourceMessageId: sourceId ?? null,
+              ...(!sourceId ? { id: createHash('sha256').update(`cached-checks:${cornerId}:${corner.lifecycle.pr?.number}:${head}:${facts.checkAttempt ?? 0}`).digest('hex'),
+                privatePayload: { kind: 'lifecycle' as const, authorId: SYSTEM_IDENTITY_ID, fromRoomId: cornerId,
+                  text: `Failing checks on head ${head}: ${corner.lifecycle.checksSummary?.failing.length ? corner.lifecycle.checksSummary.failing.join(', ') : 'the recorded checks failed; read the current checks for details'}. Fix these recorded failures.` } } : {}),
+              reason: 'corner_check',
+            });
+            if (command) effects.push(`command:${effect.key}:${command.id}`);
+            if (command && !sourceId) await db.query(`UPDATE agent_commands SET review_context=jsonb_build_object(
+              'cornerId',$2::text,'headSha',$3::text,'pullRequest',$4::int,'briefRevision',
+              COALESCE((SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=$2::uuid),0),'purpose','repair') WHERE id=$1`,
+              [command.id,cornerId,head,corner.lifecycle.pr?.number]);
+            result = {
+              ok: true,
+              wake: { queued: Boolean(command), ...(command ? { agentId: command.agent_id } : {}) },
+            };
+          }
+          break;
+        case 'review': {
+          const reviewer = await reachableReviewer(db, cornerId, corner, sourceId ?? cornerId);
+          if (!reviewer) {
+            result = await noteReviewBlocked(
+              db,
+              cornerId,
+              corner,
+              head!,
+              'the configured reviewer is unreachable',
+              false,
+            );
+            break;
+          }
+          const source =
+            event.kind === 'checks' && sourceId ? sourceId :
+            (
+              await systemLine(db, {
+                roomId: cornerId,
+                authorId: corner.worker_agent_id ?? SYSTEM_IDENTITY_ID,
+                subject: GITHUB_SUBJECT,
+                verb: systemMessage('corner-lifecycle.requested-review-of'),
+                object: { text: corner.lifecycle.pr?.title ?? 'Pull request', headSha: head },
+              })
+            ).id;
+          const queued = await queueReviewerCommand(db, {
+            roomId: cornerId,
+            agentId: reviewer,
+            sourceMessageId: source,
+            reason: event.kind === 'checks' ? 'subscribed_event' : 'corner_review_dispatch',
+          });
+          result = queued.command
+            ? { ok: true, wake: { queued: true, agentId: reviewer } }
+            : queued.blocked
+              ? OK
+              : await noteReviewBlocked(
+                  db,
+                  cornerId,
+                  corner,
+                  head!,
+                  `the reviewer command could not be queued${queued.error ? `: ${queued.error}` : ''}`,
+                );
+          // Lost/cancelled unclaimed review commands are recoverable. Durable
+          // command facts, rather than an effect receipt, suppress live reviews.
+          break;
+        }
+        case 'review-gap':
+          result = await noteMissingReviewer(
+            db,
+            cornerId,
+            corner,
+            `${corner.lifecycle.pr?.number}:${head}`,
+          );
+          break;
+        case 'review-findings':
+          result = await noteReviewBlocked(
+            db,
+            cornerId,
+            corner,
+            `${head}:${facts.reviewEnded!.id}`,
+            `the reviewer completed its review of the current head ${head}.\n${facts.reviewEnded!.findings}`,
+            false,
+          );
+          break;
+        case 'review-no-verdict':
+          result = await noteMissingReviewVerdict(db, cornerId, corner, head!, facts.reviewEnded?.reported);
+          break;
+        case 'land':
+          if (corner.worker_agent_id) {
+            const command = await createAgentCommand(db, {
+              id: createHash('sha256')
+                .update(`corner-land:${cornerId}:${corner.lifecycle.pr?.number}:${head}`)
+                .digest('hex'),
+              roomId: cornerId,
+              agentId: corner.worker_agent_id,
+              sourceMessageId: null,
+              reason: 'corner_land',
+              privatePayload: {
+                kind: 'lifecycle',
+                authorId: SYSTEM_IDENTITY_ID,
+                fromRoomId: cornerId,
+                text: `A yes is recorded on ${head} and checks passed. Call merge_corner through the normal merge gate.`,
+              },
+            });
+            result = {
+              ok: true,
+              wake: { queued: Boolean(command), ...(command ? { agentId: command.agent_id } : {}) },
+            };
+          }
+          break;
+        case 'merge-refused': {
+          if (event.kind !== 'merge-refused') break;
+          const line = await systemLine(db, {
+            roomId: cornerId,
+            authorId: corner.worker_agent_id ?? SYSTEM_IDENTITY_ID,
+            subject: GITHUB_SUBJECT,
+            verb: systemMessage('corner-lifecycle.refused-to-merge'),
+            object: { text: corner.lifecycle.pr?.title ?? 'Pull request', headSha: head },
+            consequence: event.reason,
+          });
+          const command = corner.worker_agent_id
+            ? await createAgentCommand(db, {
+                roomId: cornerId,
+                agentId: corner.worker_agent_id,
+                sourceMessageId: line.id,
+                reason: 'corner_merge_refused',
+              })
+            : undefined;
+          result = {
+            ok: true,
+            wake: { queued: Boolean(command), ...(command ? { agentId: command.agent_id } : {}) },
+          };
+          break;
+        }
+      }
+      if (result.wake) wakeResult = result.wake;
+      if (!['review', 'command'].includes(effect.kind) && (result.wake?.queued || !result.wake))
+        effects.push(effect.key);
+    }
+    for (const notice of plan.notifications) {
+      if (notice.kind === 'draft') await reportToCommander(db, cornerId, corner.worker_agent_id ?? SYSTEM_IDENTITY_ID,
+        systemMessage('agent-command.blocked-pr-is-a-draft-marking-it-ready-for-review-failed'), undefined,
+        createHash('sha256').update(`draft-blocked:${cornerId}:${head}`).digest('hex'));
+      if (notice.kind === 'idle' && row) {
+        await reportToCommander(
+          db,
+          cornerId,
+          SYSTEM_IDENTITY_ID,
+          `blocked: Corner ${row.name} is idle. Resume it, set a hold, or close it.`,
+          undefined,
+          createHash('sha256').update(`idle:${cornerId}:${row.idle_since}`).digest('hex'),
+          { automatic: true, agentOnly: true, wakeInCorner: true, idleSince: row.idle_since },
+        );
+      }
+      // Explicit reports, owed asks and action cards already deliver to their
+      // commander. The machine records the wait; it never broadcasts to Room people.
+      effects.push(notice.key);
+    }
+    // Committed command activity invalidates idle delivery immediately through its fact guard.
+    await db.query(
+      `SELECT (terminal.ended).* FROM (SELECT beeline_end_agent_turn(agent_commands.id,agent_commands.generation_id,'cancelled','stale_idle_alert',NULL) ended
+      FROM agent_commands WHERE state='pending' AND reason='report' AND private_payload->>'authorId'=$3
+        AND private_payload->>'idleSince' IS NOT NULL AND COALESCE(private_payload->>'originCornerId',private_payload->>'fromRoomId')=$1::text
+        AND private_payload->>'idleSince' IS DISTINCT FROM $2::text) terminal`,
+      [cornerId, plan.state.state === 'idle' ? facts.idleSince : null, SYSTEM_IDENTITY_ID],
+    );
+    const state = { ...plan.state, effects };
+    await db.query(
+      'UPDATE corner_facts SET machine=$2::jsonb WHERE corner_id=$1 AND machine IS DISTINCT FROM $2::jsonb',
+      [cornerId, JSON.stringify(state)],
+    );
+    return {
+      state: state.state,
+      accepted: true,
+      ...(archived ? { archived: true } : {}),
+      ...(wakeResult ? { wake: wakeResult } : {}),
+    };
   });
 }
 
-type Applied = { ok: true; wake?: RevisionWake } | { ok: false; why: string };
-const OK: Applied = { ok: true };
-const no = (why: string): Applied => ({ ok: false, why });
-
-async function applyEvent(
-  db: SqlDatabase,
-  cornerId: string,
-  corner: CornerRow,
-  transition: Transition,
-  event: Exclude<CornerEvent, { kind: 'open' }>,
-): Promise<Applied> {
-  switch (event.kind) {
-    case 'push':
-      if (!transition.allows('pushed')) return no('no push edge');
-      await transition.take(systemMessage("corner-lifecycle.pushed"), event.contents);
-      return OK;
-    case 'checks':
-      return checksReported(db, cornerId, corner, transition, event);
-    case 'brief-revised': {
-      // A brief edit wakes the implementer; it never cancels a yes or sends
-      // the corner back to review.
-      const agentId = corner.worker_agent_id
-        ? await firstHealthyAgent(db, cornerId, [corner.worker_agent_id])
-        : null;
-      if (!agentId) return { ok: true, wake: { queued: false, reason: 'No reachable implementer for the revision' } };
-      const command = await createAgentCommand(db, {
-        roomId: cornerId,
-        agentId,
-        sourceMessageId: event.sourceMessageId,
-        reason: 'corner_brief_revision',
-        parent: event.command,
-        retainDepth: true,
-      });
-      if (!command) return { ok: true, wake: { queued: false, reason: 'The revision recipient cannot be woken' } };
-      if (transition.state === 'ask_human')
-        await transition.take(systemMessage("corner-lifecycle.revision-work"), { briefRevision: event.revision });
-      return { ok: true, wake: { queued: true, agentId } };
-    }
-    case 'checks-pending': {
-      if (corner.lifecycle.checks !== 'pending' &&
-          !corner.lifecycle.checksSummary?.checks?.some(check => check.status === 'pending'))
-        return no(`checks are ${corner.lifecycle.checks}`);
-      const verdictHolds =
-        transition.state === 'review' || transition.state === 'ask_human' ||
-        (transition.state === 'implement' &&
-          transition.run.outcome === 'failing');
-      if (!verdictHolds) return no('no checks verdict to re-run');
-      await transition.take(systemMessage("corner-lifecycle.rechecked"));
-      return OK;
-    }
-    case 'approval':
-      return approvalRecorded(db, cornerId, corner, transition, event);
-    case 'merge-refused':
-      return mergeRefused(db, cornerId, corner, transition, event);
-    case 'merged':
-      // Landing wakes no one in the parent Room: the merge card announces it,
-      // and an agent with work left after the merge subscribes to `merged`.
-      await transition.take(corner.locked ? systemMessage("corner-lifecycle.pr-closed") : systemMessage("corner-lifecycle.landed"), event.contents);
-      return OK;
-    case 'pull-request-closed':
-      if (corner.lifecycle.pr) return no('the corner still has a pull request');
-      if (!transition.allows('pr_closed')) return no('no pull request close edge');
-      await transition.take(systemMessage("corner-lifecycle.pr-closed"), { pullRequestNumber: event.number });
-      return OK;
-    case 'closed':
-      await transition.take(systemMessage("corner-lifecycle.closed"));
-      return OK;
-  }
-}
-
-/** Where a checks verdict leads, decided before any card is written. */
-type ChecksPlan =
-  | { outcome: 'failing' }
-  | { outcome: 'no_reviewer' }
-  | { outcome: 'passing'; approved: true }
-  | { outcome: 'passing'; approved: false; reviewerAgentId: string };
-
-async function checksReported(
-  db: SqlDatabase,
-  cornerId: string,
-  corner: CornerRow,
-  transition: Transition,
-  event: Extract<CornerEvent, { kind: 'checks' }>,
-): Promise<Applied> {
-  // Read the durable event under the lifecycle lock, before either verdict can wake anyone.
-  const source = (await db.query<{ head_sha: string | null }>(
-    `SELECT system_event->'object'->>'headSha' head_sha FROM messages WHERE id=$1 AND room_id=$2`,
-    [event.sourceMessageId, cornerId],
-  )).rows[0];
-  if (source?.head_sha && source.head_sha !== corner.lifecycle.pr?.headSha)
-    return no('checks event belongs to an old head');
-  // A fact replayed after the checks moved on is stale.
-  if (corner.lifecycle.checks !== event.result) return no(`checks are ${corner.lifecycle.checks}`);
-  const from = transition.state;
-  if (!['checks', 'implement', 'review', 'ask_human'].includes(from)) return no('no checks edge');
-  const headSha = corner.lifecycle.pr?.headSha ?? null;
-  const sameHead = transition.run.headSha === (headSha ?? undefined);
-  // A repeat of the green verdict that already holds changes nothing, and
-  // must not spend a reviewer pick, a membership repair, or a note. A head
-  // waiting for a person's yes is re-planned: a reviewer configured since
-  // then is woken.
-  if (event.result === 'passing' && from === 'review' && sameHead && transition.run.outcome !== 'no_reviewer')
-    return ensureReviewDispatch(db, cornerId, corner, transition);
-  let plan: ChecksPlan;
-  if (event.result === 'failing') plan = { outcome: 'failing' };
-  // A yes given while checks ran (a PASS or a person's order) needs no review.
-  else if (await approvedCurrentHead(db, cornerId, corner)) plan = { outcome: 'passing', approved: true };
-  else if (!independentReviewerConfigured(corner)) plan = { outcome: 'no_reviewer' };
-  else {
-    const reviewerAgentId = await reachableReviewer(db, cornerId, corner, event.sourceMessageId);
-    if (!reviewerAgentId)
-      return noteReviewBlocked(db, cornerId, corner, headSha ?? event.sourceMessageId,
-        systemMessage("corner-lifecycle.the-configured-reviewer-is-unreachable-or-unhealthy"), false);
-    plan = { outcome: 'passing', approved: false, reviewerAgentId };
-  }
-  if (from === 'review' && sameHead && plan.outcome === 'no_reviewer')
-    return ensureReviewDispatch(db, cornerId, corner, transition);
-  if (from === 'implement' && sameHead) {
-    const repeat = transition.run.outcome === plan.outcome;
-    if (repeat && plan.outcome === 'failing' && event.followup) {
-      if (!corner.worker_agent_id) {
-        await noteReviewDispatchFailure(db, cornerId, headSha ?? event.sourceMessageId, systemMessage("corner-lifecycle.the-corner-has-no-implementer"));
-        return no('the corner has no implementer');
-      }
-      const command = await createAgentCommand(db, {
-        roomId: cornerId, agentId: corner.worker_agent_id,
-        sourceMessageId: event.sourceMessageId, reason: 'corner_check',
-      });
-      return command ? OK : no('the implementer cannot be woken');
-    }
-    if (repeat) return no(`${plan.outcome} already holds on this head`);
-  }
-  // The wake goes out first: a verdict whose wake cannot be delivered (the
-  // implementer is no longer a member) leaves the run in place, so the next
-  // report of the same verdict retries it.
-  if (plan.outcome === 'failing') {
-    if (!corner.worker_agent_id) {
-      await noteReviewDispatchFailure(db, cornerId, headSha ?? event.sourceMessageId, systemMessage("corner-lifecycle.the-corner-has-no-implementer"));
-      return no('the corner has no implementer');
-    }
-    const command = await createAgentCommand(db, {
-      roomId: cornerId,
-      agentId: corner.worker_agent_id,
-      sourceMessageId: event.sourceMessageId,
-      reason: 'corner_check',
-    });
-    if (!command) {
-      return no('the implementer cannot be woken');
-    }
-  } else if (plan.outcome === 'passing' && !plan.approved && !(await blockingReview(db, cornerId, headSha))) {
-    // A blocking verdict on this head is handed back by
-    // `ensureReviewDispatch` instead of waking the reviewer again.
-    const queued = await queueReviewerCommand(db, {
-      roomId: cornerId,
-      agentId: plan.reviewerAgentId,
-      sourceMessageId: event.sourceMessageId,
-      reason: 'subscribed_event',
-    });
-    if (!queued.command && !queued.blocked) {
-      const reason = systemMessage("corner-lifecycle.the-reviewer-command-could-not-be-queued-on-restore-reviewer-acce", headSha ?? systemMessage("corner-lifecycle.this-head"), queued.error ? systemMessage("corner-lifecycle.dispatch-error", queued.error) : '');
-      console.error(`[corner-lifecycle] ${cornerId}: ${reason}`);
-      return noteReviewBlocked(db, cornerId, corner, headSha ?? event.sourceMessageId, reason);
-    }
-  }
-  if (from !== 'checks') await transition.take(systemMessage("corner-lifecycle.rechecked"));
-  await transition.take(plan.outcome, headSha ? { headSha } : {});
-  if (plan.outcome === 'no_reviewer') {
-    return noteMissingReviewer(db, cornerId, corner, headSha ?? event.sourceMessageId);
-  }
-  if (plan.outcome === 'passing' && plan.approved) {
-    await transition.take(systemMessage("corner-lifecycle.approved"), { verdict: 'approved' });
-    await wakeToLand(db, cornerId, corner, transition);
-  }
-  return OK;
-}
 
 /** Zero checks need the commander's yes; other review gaps retain their handback. */
-async function noteMissingReviewer(db: SqlDatabase, cornerId: string, corner: CornerRow, headKey: string): Promise<Applied> {
+export async function noteMissingReviewer(
+  db: SqlDatabase,
+  cornerId: string,
+  corner: CornerRow,
+  headKey: string,
+): Promise<Applied> {
   if (corner.lifecycle.checksSummary?.total === 0) {
-    const command = corner.worker_agent_id ? await createAgentCommand(db, {
-      id: createHash('sha256').update(`zero-check-ready:${cornerId}:${headKey}`).digest('hex'),
-      roomId: cornerId, agentId: corner.worker_agent_id, sourceMessageId: null,
-      privatePayload: { text: 'This pull request has no checks and no reviewer. Landing needs your commander\'s yes. Ask your commander using your normal report tool.',
-        authorId: SYSTEM_IDENTITY_ID, fromRoomId: cornerId, kind: 'lifecycle' },
-      reason: 'corner_review_needed',
-    }) : undefined;
-    return { ok: true, wake: command ? { queued: true, agentId: corner.worker_agent_id! }
-      : { queued: false, reason: 'The implementer cannot be woken to ask its commander for a merge decision' } };
+    const command = corner.worker_agent_id
+      ? await createAgentCommand(db, {
+          id: createHash('sha256').update(`zero-check-ready:${cornerId}:${headKey}`).digest('hex'),
+          roomId: cornerId,
+          agentId: corner.worker_agent_id,
+          sourceMessageId: null,
+          privatePayload: {
+            text: "This pull request has no checks and no reviewer. Landing needs your commander's yes. Ask your commander using your normal report tool.",
+            authorId: SYSTEM_IDENTITY_ID,
+            fromRoomId: cornerId,
+            kind: 'lifecycle',
+          },
+          reason: 'corner_review_needed',
+        })
+      : undefined;
+    return {
+      ok: true,
+      wake: command
+        ? { queued: true, agentId: corner.worker_agent_id! }
+        : {
+            queued: false,
+            reason: 'The implementer cannot be woken to ask its commander for a merge decision',
+          },
+    };
   }
-  return noteReviewBlocked(db, cornerId, corner, headKey, systemMessage("corner-lifecycle.no-reviewer-is-configured"));
+  return noteReviewBlocked(
+    db,
+    cornerId,
+    corner,
+    headKey,
+    systemMessage('corner-lifecycle.no-reviewer-is-configured'),
+  );
 }
+
 
 /**
  * One handback for every review gap. The implementer owns arranging another
  * review or reporting the blocker up the chain; a passive transcript note
  * alone cannot make that happen. A stable episode key dedupes fact replays.
  */
-async function noteReviewBlocked(
+export async function noteReviewBlocked(
   db: SqlDatabase,
   cornerId: string,
   corner: CornerRow,
@@ -805,223 +676,85 @@ async function noteReviewBlocked(
   reportCommander = true,
 ): Promise<Applied> {
   const episode = `${cornerId}:${headKey}:${reason}`;
-  if (reportCommander) await reportToCommander(db, cornerId, SYSTEM_IDENTITY_ID, systemMessage("corner-lifecycle.blocked", reason),
-    undefined, createHash('sha256').update(`review-gap:${episode}`).digest('hex'));
-  const command = corner.worker_agent_id ? await createAgentCommand(db, {
-    id: createHash('sha256').update(`review-needed:${episode}`).digest('hex'),
-    roomId: cornerId, agentId: corner.worker_agent_id, sourceMessageId: null,
-    privatePayload: { text: `Checks passed; ${reason}; arrange review or report the blocker to its commander`,
-      authorId: SYSTEM_IDENTITY_ID, fromRoomId: cornerId, kind: 'lifecycle' },
-    reason: 'corner_review_needed',
-  }) : undefined;
-  const wakeResult = command ? { queued: true, agentId: corner.worker_agent_id! }
-    : { queued: false, reason: systemMessage("corner-lifecycle.the-implementer-cannot-be-woken-to-arrange-review") };
+  if (reportCommander)
+    await reportToCommander(
+      db,
+      cornerId,
+      SYSTEM_IDENTITY_ID,
+      systemMessage('corner-lifecycle.blocked', reason),
+      undefined,
+      createHash('sha256').update(`review-gap:${episode}`).digest('hex'),
+    );
+  const command = corner.worker_agent_id
+    ? await createAgentCommand(db, {
+        id: createHash('sha256').update(`review-needed:${episode}`).digest('hex'),
+        roomId: cornerId,
+        agentId: corner.worker_agent_id,
+        sourceMessageId: null,
+        privatePayload: {
+          text: `${corner.lifecycle.checks === 'passing' ? 'Checks passed; ' : ''}${reason}; arrange review or report the blocker to its commander`,
+          authorId: SYSTEM_IDENTITY_ID,
+          fromRoomId: cornerId,
+          kind: 'lifecycle',
+        },
+        reason: 'corner_review_needed',
+      })
+    : undefined;
+  const wakeResult = command
+    ? { queued: true, agentId: corner.worker_agent_id! }
+    : {
+        queued: false,
+        reason: systemMessage('corner-lifecycle.the-implementer-cannot-be-woken-to-arrange-review'),
+      };
   if (!command) await noteReviewDispatchFailure(db, cornerId, headKey, wakeResult.reason!);
   return { ok: true, wake: wakeResult };
 }
 
-async function noteReviewDispatchFailure(
-  db: SqlDatabase, cornerId: string, headSha: string, reason: string,
-): Promise<void> {
-  await reportToCommander(db, cornerId, SYSTEM_IDENTITY_ID, systemMessage("corner-lifecycle.blocked", reason),
-    undefined, createHash('sha256').update(`review-dispatch:${cornerId}:${headSha}:${reason}`).digest('hex'));
-}
 
-/**
- * Repair a green review state whose reviewer wake is missing or failed. Any
- * active reviewer command since the run's newest card counts. A completed
- * verdict without PASS returns findings to the implementer. A completion
- * without a verdict is reported once; it never creates another review turn.
- * A report filed while the gate was still pending is not that review, so it
- * does not swallow the one wake for this head.
- */
-async function ensureReviewDispatch(
+/** Exhausted empty reviews are a private missing-verdict handback, never a completed review. */
+export async function noteMissingReviewVerdict(
   db: SqlDatabase,
   cornerId: string,
   corner: CornerRow,
-  transition: Transition,
+  headSha: string,
+  reported = false,
 ): Promise<Applied> {
-  const pr = corner.lifecycle.pr;
-  if (transition.state !== 'review' || corner.lifecycle.checks !== 'passing' || !pr?.headSha)
-    return OK;
-  if (transition.run.headSha !== pr.headSha || await approvedCurrentHead(db, cornerId, corner))
-    return OK;
-  if (!independentReviewerConfigured(corner)) return noteMissingReviewer(db, cornerId, corner, pr.headSha);
-  const outstanding = await db.query<{ id: string; state: string }>(
-    `SELECT command.id,command.state FROM agent_commands command
-     JOIN rooms corner ON corner.id=command.room_id
-     JOIN rooms parent ON parent.id=corner.parent_id
-     WHERE command.room_id=$1 AND command.action='input'
-       AND command.agent_id=${cornerReviewerSql()}
-       AND command.agent_id IS DISTINCT FROM $3
-       AND command.state IN ('pending','claimed')
-       AND ((command.review_context->>'headSha'=(SELECT lifecycle->'pr'->>'headSha' FROM corner_github_cache WHERE corner_id=$1)
-           AND command.review_context->'pullRequest'=(SELECT lifecycle->'pr'->'number' FROM corner_github_cache WHERE corner_id=$1)
-           AND (command.review_context->>'briefRevision')::int=COALESCE((SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=$1),0))
-         OR (command.review_context IS NULL AND command.created_at>=(
-           SELECT created_at FROM messages WHERE room_id=$1 AND card_type=$2
-             AND card->>'runId'=$1::text ORDER BY (card->>'seq')::int DESC LIMIT 1)))
-     ORDER BY (command.state IN ('pending','claimed')) DESC,command.created_at DESC,command.id DESC
-     LIMIT 1`,
-    [cornerId, CORNER_LIFECYCLE_CARD_TYPE, corner.worker_agent_id],
+  const text = `blocked: the reviewer ended without a verdict on head ${headSha}; arrange review or restore reviewer access`;
+  const key = `${cornerId}:${corner.lifecycle.pr?.number}:${headSha}`;
+  if (!reported) await reportToCommander(
+    db,
+    cornerId,
+    SYSTEM_IDENTITY_ID,
+    text,
+    undefined,
+    createHash('sha256').update(`review-no-verdict:${key}`).digest('hex'),
+    { automatic: true, agentOnly: true },
   );
-  const reviewed = outstanding.rows[0];
-  if (reviewed?.state === 'pending' || reviewed?.state === 'claimed') return OK;
-  const ended = await blockingReview(db, cornerId, pr.headSha);
-  if (ended) {
-    const implementerWorking = await db.query(
-      `SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2
-       AND action='input' AND state IN ('pending','claimed') LIMIT 1`,
-      [cornerId, corner.worker_agent_id],
-    );
-    if (implementerWorking.rowCount) return OK;
-    const evidence = (await db.query<{ text: string }>(
-      `SELECT result.text FROM agent_commands command JOIN messages result ON result.id=command.result_message_id
-       WHERE command.id=$1`, [ended],
-    )).rows[0]?.text;
-    const reason = systemMessage("corner-lifecycle.the-reviewer-completed-its-review-of-the-current-head", evidence ? systemMessage("corner-lifecycle.prior-verdict-and-evidence", evidence) : '');
-    // A consumed handback already delivered these findings. In particular,
-    // an implementer's explicit wait must not turn that delivery into a wake
-    // failure, whose report can send the same target back to the reviewer
-    // that ordered the repair.
-    const handbackId = createHash('sha256').update(`review-needed:${cornerId}:${pr.headSha}:${ended}:${reason}`).digest('hex');
-    if ((await db.query('SELECT 1 FROM agent_commands WHERE id=$1', [handbackId])).rowCount ||
-        await cornerReportWaiting(db, cornerId)) return OK;
-    return noteReviewBlocked(db, cornerId, corner, `${pr.headSha}:${ended}`,
-      reason, false);
-  }
-  const completedReview = (await db.query<{failed:boolean;implementer_working:boolean}>(`SELECT EXISTS(
-      SELECT 1 FROM agent_turns turn WHERE turn.room_id=command.room_id AND turn.agent_id=command.agent_id
-        AND turn.request_id=command.turn_request_id AND turn.generation_id=command.generation_id
-        AND turn.status='failed') failed, EXISTS(SELECT 1 FROM agent_commands worker
-      WHERE worker.room_id=$1 AND worker.agent_id=$4 AND worker.action='input'
-        AND worker.state IN ('pending','claimed')) implementer_working
-    FROM agent_commands command WHERE room_id=$1
-    AND review_context->>'headSha'=$2 AND review_context->>'purpose' IS NULL
-    AND review_context->'pullRequest'=$3::jsonb AND action='input' AND state='complete'
-    ORDER BY completed_at DESC LIMIT 1`, [cornerId,pr.headSha,JSON.stringify(pr.number),corner.worker_agent_id])).rows[0];
-  if (completedReview) return completedReview.failed || completedReview.implementer_working ? OK : noteMissingReviewVerdict(db, cornerId, corner, pr.headSha);
-  const sourceId = transition.lastCardId ?? (
-    await db.query<{ id: string }>(
-      `SELECT id FROM messages WHERE room_id=$1 AND card_type=$2
-       AND card->>'runId'=$1::text ORDER BY (card->>'seq')::int DESC LIMIT 1`,
-      [cornerId, CORNER_LIFECYCLE_CARD_TYPE],
-    )
-  ).rows[0]?.id;
-  if (!sourceId) throw new Error(`green review ${cornerId} has no lifecycle card for dispatch`);
-  const reviewerAgentId = await reachableReviewer(db, cornerId, corner, sourceId);
-  if (!reviewerAgentId) {
-    console.error(`[corner-lifecycle] ${cornerId}: green review reviewer is unreachable or unhealthy; reporting to the commander`);
-    return noteReviewBlocked(db, cornerId, corner, pr.headSha,
-      systemMessage("corner-lifecycle.the-configured-reviewer-is-unreachable-or-unhealthy"), false);
-  }
-  // A fresh source lets a recovered review wake follow an earlier completed
-  // command from the same check fact. The lifecycle card remains the run state.
-  const source = await systemLine(db, {
-    roomId: cornerId,
-    authorId: corner.worker_agent_id ?? SYSTEM_IDENTITY_ID,
-    subject: GITHUB_SUBJECT,
-    verb: systemMessage("corner-lifecycle.requested-review-of"),
-    object: { text: pr.title ?? systemMessage("corner-lifecycle.pull-request", pr.number), ...(pr.url ? { url: pr.url } : {}), headSha: pr.headSha },
-  });
-  const queued = await queueReviewerCommand(db, {
-    roomId: cornerId,
-    agentId: reviewerAgentId,
-    sourceMessageId: source.id,
-    reason: 'corner_review_dispatch',
-  });
-  if (!queued.command && !queued.blocked) {
-    const reason = systemMessage("corner-lifecycle.the-reviewer-command-could-not-be-queued-on-restore-reviewer-acce", pr.headSha, queued.error ? systemMessage("corner-lifecycle.dispatch-error", queued.error) : '');
-    console.error(`[corner-lifecycle] ${cornerId}: ${reason}`);
-    return noteReviewBlocked(db, cornerId, corner, pr.headSha, reason);
-  }
-  return { ok: true, wake: { queued: true, agentId: reviewerAgentId } };
+  const command = corner.worker_agent_id
+    ? await createAgentCommand(db, {
+        id: createHash('sha256')
+          .update(`review-no-verdict-worker:${key}`)
+          .digest('hex'),
+        roomId: cornerId,
+        agentId: corner.worker_agent_id,
+        sourceMessageId: null,
+        privatePayload: {
+          text,
+          authorId: SYSTEM_IDENTITY_ID,
+          fromRoomId: cornerId,
+          kind: 'lifecycle',
+        },
+        reason: 'corner_review_needed',
+      })
+    : undefined;
+  return {
+    ok: true,
+    wake: { queued: Boolean(command), ...(command ? { agentId: corner.worker_agent_id! } : {}) },
+  };
 }
 
-// Compare check results, not refresh timestamps, attempts or run URLs.
-const reviewChecksSql = `jsonb_build_object('status',lifecycle->>'checks','checks',
-  (SELECT jsonb_agg(jsonb_build_object('name',item->>'name','status',item->>'status') ORDER BY item->>'name')
-   FROM jsonb_array_elements(COALESCE(lifecycle->'checksSummary'->'checks','[]'::jsonb)) item))`;
 
-/** Exhausted empty reviews are a private missing-verdict handback, never a completed review. */
-async function noteMissingReviewVerdict(db: SqlDatabase, cornerId: string, corner: CornerRow, headSha: string): Promise<Applied> {
-  const text = 'blocked: the reviewer ended without a verdict after bounded retries; arrange review or restore reviewer access';
-  await reportToCommander(db, cornerId, SYSTEM_IDENTITY_ID, text, undefined,
-    createHash('sha256').update(`review-no-verdict:${cornerId}:${headSha}`).digest('hex'),
-    {automatic: true, agentOnly: true});
-  const command = corner.worker_agent_id ? await createAgentCommand(db, {
-    id: createHash('sha256').update(`review-no-verdict-worker:${cornerId}:${headSha}`).digest('hex'),
-    roomId: cornerId, agentId: corner.worker_agent_id, sourceMessageId: null,
-    privatePayload: {text, authorId: SYSTEM_IDENTITY_ID, fromRoomId: cornerId, kind: 'lifecycle'},
-    reason: 'corner_review_needed',
-  }) : undefined;
-  return {ok: true, wake: {queued: Boolean(command), ...(command ? {agentId: corner.worker_agent_id!} : {})}};
-}
-
-/**
- * The reviewer's finished review of this head (callers have already checked
- * for an approval on the head), while the corner was still in review. Another
- * review wake for the same head would only repeat that verdict. A later brief
- * revision does not reopen it: the code is unchanged. A new head does.
- * Delivered failed/blocked reports retain their head even if checks changed
- * during the turn; a failed execution without a delivered decision does not.
- */
-export async function blockingReview(
-  db: SqlDatabase,
-  cornerId: string,
-  headSha: string | null,
-): Promise<string | undefined> {
-  if (!headSha) return undefined;
-  return (
-    await db.query<{ id: string }>(
-      `SELECT command.id FROM agent_commands command
-       JOIN rooms corner ON corner.id=command.room_id
-       JOIN rooms parent ON parent.id=corner.parent_id
-       LEFT JOIN messages source ON source.id=command.source_message_id
-       JOIN agent_turns turn ON turn.room_id=command.room_id
-         AND turn.agent_id=command.agent_id AND turn.request_id=command.turn_request_id
-       LEFT JOIN LATERAL (SELECT true delivered FROM agent_commands repair
-         WHERE repair.room_id=command.room_id AND repair.parent_command_id=command.id AND repair.reason='order'
-           AND repair.private_payload->>'authorId'=command.agent_id
-           AND repair.review_context->>'purpose'='repair'
-           AND repair.review_context->>'headSha'=$2
-           AND repair.review_context->'pullRequest'=command.review_context->'pullRequest'
-           AND repair.private_payload->>'text' ~* $4 LIMIT 1) repair_verdict ON true
-       WHERE command.room_id=$1 AND command.action='input'
-         AND (command.state='complete' AND turn.status='complete'
-           OR COALESCE(command.private_payload->>'reportedOutcome',command.report_outcome) IN ('failed','blocked') OR repair_verdict.delivered)
-         AND (EXISTS (SELECT 1 FROM messages verdict
-           WHERE verdict.room_id=command.room_id AND verdict.author_id=command.agent_id
-             AND (verdict.id=command.result_message_id OR verdict.request_id=command.turn_request_id
-               OR verdict.id IN (SELECT jsonb_array_elements_text(COALESCE(command.review_context->'reportIds','[]'::jsonb))))
-             AND verdict.deleted_at IS NULL AND verdict.text ~* $4)
-           OR EXISTS (SELECT 1 FROM agent_commands report
-             WHERE report.id IN (SELECT jsonb_array_elements_text(COALESCE(command.review_context->'reportIds','[]'::jsonb)))
-               AND report.private_payload->>'authorId'=command.agent_id AND report.private_payload->>'text' ~* $4)
-           OR repair_verdict.delivered)
-         AND command.agent_id=${cornerReviewerSql()}
-         AND (command.reason='corner_review_dispatch'
-           OR (command.reason IN ('agent_tag','order') AND command.review_context IS NOT NULL
-             AND command.review_context->>'purpose' IS DISTINCT FROM 'repair')
-           OR (command.reason='subscribed_event' AND source.system_event->>'kind'='check-passed'))
-         AND COALESCE(command.review_context->>'headSha',source.system_event->'object'->>'headSha',
-           (SELECT COALESCE(card->'contents'->>'headSha',card->>'headSha') FROM messages
-            WHERE room_id=$1 AND card_type=$3 AND card->>'runId'=$1::text AND created_at<=command.created_at
-            ORDER BY (card->>'seq')::int DESC LIMIT 1))=$2
-         AND (command.review_context IS NULL OR command.review_context->'pullRequest'=(
-           SELECT lifecycle->'pr'->'number' FROM corner_github_cache WHERE corner_id=$1))
-         AND (COALESCE(command.private_payload->>'reportedOutcome',command.report_outcome) IN ('failed','blocked') OR repair_verdict.delivered OR NOT EXISTS (
-           SELECT 1 FROM messages card WHERE card.room_id=$1 AND card.card_type=$3
-             AND card.card->>'runId'=$1::text AND card.card->>'fromState'='review'
-             AND card.created_at>command.created_at
-             AND card.created_at<=COALESCE(command.completed_at,now())))
-       ORDER BY command.created_at DESC,command.id DESC LIMIT 1`,
-      [cornerId, headSha, CORNER_LIFECYCLE_CARD_TYPE, `${REVIEW_VERDICT_SQL}|(^|\\n)[[:space:]]*blocked:[[:space:]]*[^[:space:]]`],
-    )
-  ).rows[0]?.id;
-}
-
-async function queueReviewerCommand(
+export async function queueReviewerCommand(
   db: SqlDatabase,
   input: Parameters<typeof createAgentCommand>[1],
 ): Promise<{ command?: CommandRow; error?: string; blocked?: boolean }> {
@@ -1033,25 +766,37 @@ async function queueReviewerCommand(
       [input.roomId],
     )
   ).rows[0];
-  const context = (await db.query<{ context: Record<string, unknown> | null }>(
-    `SELECT CASE WHEN lifecycle->'pr'->>'headSha' IS NOT NULL AND lifecycle->'pr'->>'number' IS NOT NULL
+  const context = (
+    await db.query<{ context: Record<string, unknown> | null }>(
+      `SELECT CASE WHEN lifecycle->'pr'->>'headSha' IS NOT NULL AND lifecycle->'pr'->>'number' IS NOT NULL
        THEN jsonb_build_object('cornerId',corner_id,'headSha',lifecycle->'pr'->>'headSha',
        'pullRequest',lifecycle->'pr'->'number','briefRevision',$2::int,
        'checks',${reviewChecksSql}) ELSE NULL END context
-     FROM corner_github_cache WHERE corner_id=$1`, [input.roomId, brief?.revision ?? 0],
-  )).rows[0]?.context;
+     FROM corner_github_cache WHERE corner_id=$1`,
+      [input.roomId, brief?.revision ?? 0],
+    )
+  ).rows[0]?.context;
   const headSha = typeof context?.headSha === 'string' ? context.headSha : undefined;
   const rawPull = context?.pullRequest;
-  const pullRequest = typeof rawPull === 'number' ? rawPull
-    : typeof rawPull === 'string' && /^\d+$/.test(rawPull) ? Number(rawPull) : null;
-  if (headSha !== undefined && await refuseVerdictedReviewerWake(db, input.roomId, input.agentId, headSha, pullRequest))
+  const pullRequest =
+    typeof rawPull === 'number'
+      ? rawPull
+      : typeof rawPull === 'string' && /^\d+$/.test(rawPull)
+        ? Number(rawPull)
+        : null;
+  if (
+    headSha !== undefined &&
+    (await refuseVerdictedReviewerWake(db, input.roomId, input.agentId, headSha, pullRequest))
+  )
     return { blocked: true };
-  const prior = (await db.query<{ text: string }>(
-    `SELECT result.text FROM agent_commands command JOIN messages result ON result.id=command.result_message_id
+  const prior = (
+    await db.query<{ text: string }>(
+      `SELECT result.text FROM agent_commands command JOIN messages result ON result.id=command.result_message_id
      WHERE command.room_id=$1 AND command.agent_id=$2 AND command.review_context IS NOT NULL
        AND command.state='complete' ORDER BY command.created_at DESC,command.id DESC LIMIT 1`,
-    [input.roomId, input.agentId],
-  )).rows[0]?.text;
+      [input.roomId, input.agentId],
+    )
+  ).rows[0]?.text;
   // A rejected insert must leave this transaction usable so the failure line
   // can commit. A broken connection still propagates rather than pretending
   // the reviewer was woken.
@@ -1059,396 +804,81 @@ async function queueReviewerCommand(
   try {
     const command = await createAgentCommand(db, {
       ...input,
-      wakeNote: [context ? `Current handoff target: PR #${context.pullRequest} at ${context.headSha}. Older heads in the conversation are historical.` : '',
-        brief ? `Review against brief revision ${brief.revision}, the corner's current brief at this dispatch.` : '',
-        prior ? `Prior reviewer verdict and evidence (historical context):\n${prior}` : ''].filter(Boolean).join('\n'),
+      wakeNote: [
+        context
+          ? `Current handoff target: PR #${context.pullRequest} at ${context.headSha}. Older heads in the conversation are historical.`
+          : '',
+        brief
+          ? `Review against brief revision ${brief.revision}, the corner's current brief at this dispatch.`
+          : '',
+        prior ? `Prior reviewer verdict and evidence (historical context):\n${prior}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n'),
     });
-    if (command) await db.query('UPDATE agent_commands SET review_context=$2::jsonb WHERE id=$1',
-      [command.id, context ? JSON.stringify(context) : null]);
+    if (command)
+      await db.query('UPDATE agent_commands SET review_context=$2::jsonb WHERE id=$1', [
+        command.id,
+        context ? JSON.stringify(context) : null,
+      ]);
     if (command) command.review_context = context as Record<string, unknown> | null;
     await db.query('RELEASE SAVEPOINT corner_reviewer_dispatch');
     return { command };
   } catch (error) {
     await db.query('ROLLBACK TO SAVEPOINT corner_reviewer_dispatch');
     await db.query('RELEASE SAVEPOINT corner_reviewer_dispatch');
-    return { error: error instanceof Error ? error.message.slice(0, 160) : systemMessage("corner-lifecycle.unknown-dispatch-error") };
+    return {
+      error:
+        error instanceof Error
+          ? error.message.slice(0, 160)
+          : systemMessage('corner-lifecycle.unknown-dispatch-error'),
+    };
   }
 }
+export { CORNER_LIFECYCLE_SLUG } from './corner-lifecycle-values.js';
 
-/** A reviewer is configured and is not the implementer it would review. */
-function independentReviewerConfigured(corner: CornerRow): boolean {
-  return Boolean(corner.configured_reviewer_id) && corner.configured_reviewer_id !== corner.worker_agent_id;
-}
+export { lockCornerLifecycle } from './corner-lifecycle-review-state.js';
 
-/**
- * Which reviewer a green head wakes, or undefined (after naming the gap in the
- * corner) when the configured reviewer cannot be reached. A configured
- * reviewer who is not a current member is never "no reviewer": it does not
- * fall through to the no-reviewer path.
- */
-async function reachableReviewer(
-  db: SqlDatabase,
-  cornerId: string,
-  corner: CornerRow,
-  sourceMessageId: string,
-): Promise<string | undefined> {
-  const reviewerId = corner.configured_reviewer_id;
-  if (!reviewerId || reviewerId === corner.worker_agent_id) return undefined;
-  if (!corner.reviewer_parent_member) {
-    await noteUnreachableReviewer(db, {
-      cornerId,
-      sourceMessageId,
-      reviewerId,
-      reviewerKind: corner.configured_reviewer_kind,
-      reviewerName: corner.configured_reviewer_name,
-      reason: REVIEWER_NOT_PARENT_MEMBER,
-    });
-    return undefined;
-  }
-  return (await readableByReviewer(db, cornerId, reviewerId, sourceMessageId)) ? reviewerId : undefined;
-}
+export type { CornerMachine } from './corner-lifecycle-read-state.js';
 
-/**
- * Dispatch only when the reviewer can read the corner; a missing projection
- * is repaired, an unreachable reviewer is named instead of rerouting the
- * review to the owner (whose daemon would post it under the owner's name).
- */
-async function readableByReviewer(
-  db: SqlDatabase,
-  cornerId: string,
-  reviewerAgentId: string,
-  sourceMessageId: string,
-): Promise<boolean> {
-  if (await repairReviewerCornerMembership(db, cornerId, reviewerAgentId)) return true;
-  const reviewer = (
-    await db.query<{ kind: string; name: string }>(`SELECT kind,name FROM identities WHERE id=$1`, [
-      reviewerAgentId,
-    ])
-  ).rows[0];
-  await noteUnreachableReviewer(db, {
-    cornerId,
-    sourceMessageId,
-    reviewerId: reviewerAgentId,
-    reviewerKind: reviewer?.kind ?? null,
-    reviewerName: reviewer?.name ?? null,
-    reason: REVIEWER_NOT_CORNER_MEMBER,
-  });
-  return false;
-}
+export type { CornerMachineFacts } from './corner-lifecycle-read-state.js';
 
-async function approvalRecorded(
-  db: SqlDatabase,
-  cornerId: string,
-  corner: CornerRow,
-  transition: Transition,
-  event: Extract<CornerEvent, { kind: 'approval' }>,
-): Promise<Applied> {
-  if (corner.lifecycle.pr?.headSha !== event.headSha) return no('approval is not for the current head');
-  // A yes while checks still run is kept; the checks-passed that follows it
-  // skips the review.
-  if (corner.lifecycle.checks !== 'passing') return no('checks are not green yet');
-  if (transition.state !== 'review') return no('not waiting for a yes');
-  await transition.take(systemMessage("corner-lifecycle.approved"), { verdict: 'approved', headSha: event.headSha });
-  // A reviewer's PASS and a person's order are landed by their callers at once.
-  return OK;
-}
+export type { CornerMachineEvent } from './corner-lifecycle-read-state.js';
 
-/** A yes given while checks ran hands the merge to the implementer (`merge_corner`) once they pass. */
-async function wakeToLand(
-  db: SqlDatabase,
-  cornerId: string,
-  corner: CornerRow,
-  transition: Transition,
-): Promise<void> {
-  if (corner.worker_agent_id && transition.lastCardId)
-    await wake(db, cornerId, corner.worker_agent_id, transition.lastCardId, 'corner_land');
-}
+export { transitionCorner } from './corner-lifecycle-read-state.js';
 
-async function mergeRefused(
-  db: SqlDatabase,
-  cornerId: string,
-  corner: CornerRow,
-  transition: Transition,
-  event: Extract<CornerEvent, { kind: 'merge-refused' }>,
-): Promise<Applied> {
-  if (corner.lifecycle.pr?.headSha !== event.headSha) return no('the head moved');
-  if (!transition.allows('merge_refused')) return no('not landing');
-  await transition.take(systemMessage("corner-lifecycle.merge-refused"), { headSha: event.headSha, reason: event.reason });
-  const pullRequest = corner.lifecycle.pr;
-  const line = await systemLine(db, {
-    // Confirmed refusals can recur on one head; each needs its own wake source.
-    // Deduplicate refusals whose outcome GitHub could not yet confirm.
-    id: event.confirmedUnmerged ? undefined : createHash('sha256')
-      .update(`beeline:${cornerId}:github:merge-refused:${event.headSha}`)
-      .digest('hex'),
-    roomId: cornerId,
-    authorId: corner.worker_agent_id ?? SYSTEM_IDENTITY_ID,
-    subject: GITHUB_SUBJECT,
-    verb: systemMessage("corner-lifecycle.refused-to-merge"),
-    object: {
-      text: pullRequest?.title ?? systemMessage("corner-lifecycle.pull-request", pullRequest?.number ?? ''),
-      ...(pullRequest?.url ? { url: pullRequest.url } : {}),
-      headSha: event.headSha,
-    },
-    consequence: event.reason,
-  });
-  if (corner.worker_agent_id)
-    await wake(db, cornerId, corner.worker_agent_id, line.id, 'corner_merge_refused');
-  return OK;
-}
+export { deriveCornerState } from './corner-lifecycle-read-state.js';
 
-async function wake(
-  db: SqlDatabase,
-  cornerId: string,
-  agentId: string,
-  sourceMessageId: string,
-  reason: string,
-): Promise<RevisionWake> {
-  if (await cornerReportWaiting(db, cornerId)) return { queued: false, reason: 'The corner is waiting for an answer' };
-  const command = await createAgentCommand(db, { roomId: cornerId, agentId, sourceMessageId, reason });
-  return command ? { queued: true, agentId } : { queued: false, reason: 'The implementer cannot be woken' };
-}
+export { planCornerCheckObservation } from './corner-lifecycle-read-state.js';
 
-const REVIEWER_NOT_PARENT_MEMBER = 'not a current member of the parent Room';
-const REVIEWER_NOT_CORNER_MEMBER = 'not a current member of this corner';
+export { checksSettled } from './corner-lifecycle-read-state.js';
 
-/**
- * A configured reviewer that cannot be dispatched is named in the corner, not
- * collapsed into the no-reviewer path. Deterministic id so a later retry of
- * the same gap does not spam.
- */
-async function noteUnreachableReviewer(
-  db: SqlDatabase,
-  input: {
-    cornerId: string;
-    sourceMessageId: string;
-    reviewerId: string;
-    reviewerKind: string | null;
-    reviewerName: string | null;
-    reason: string;
-  },
-): Promise<void> {
-  console.error(`[corner-lifecycle] ${input.cornerId}: reviewer ${input.reviewerId} ${input.reason}; reporting to the commander`);
-  const id = createHash('sha256')
-    .update(`beeline:${input.cornerId}:reviewer-unreachable:${input.reviewerId}:${input.reason}`)
-    .digest('hex');
-  await reportToCommander(db, input.cornerId, input.reviewerId,
-    systemMessage("corner-lifecycle.blocked-configured-reviewer-could-not-be-reached", input.reviewerName ?? input.reviewerId, input.reason),
-    undefined, id);
-}
+export { checksRestarted } from './corner-lifecycle-read-state.js';
 
-/** A yes on the corner's current head (`cornerMergeGate`'s `approved`). */
-async function approvedCurrentHead(
-  db: SqlDatabase,
-  cornerId: string,
-  corner: Pick<CornerRow, 'lifecycle'>,
-): Promise<boolean> {
-  const pr = corner.lifecycle.pr;
-  if (!pr?.headSha || !pr.number) return false;
-  return (await cornerMergeGate(db, cornerId, { number: pr.number, headSha: pr.headSha })).approved;
-}
+export { actionsJobId } from './corner-lifecycle-read-state.js';
 
-export type CornerMergeGate = {
-  /** A reviewer is configured. */
-  reviewerExists: boolean;
-  /**
-   * A yes said on this exact head: a configured reviewer agent's PASS, or a
-   * current Workspace owner or admin's order, or the zero-check commander's yes.
-   */
-  approved: boolean;
-  evidenceMissing?: boolean;
-  held: boolean;
-  holds: Awaited<ReturnType<typeof activeCornerHolds>>;
-  /** Everything but checks: a yes on this head and no hold. */
-  open: boolean;
-};
+export type { CornerAdvance } from './corner-lifecycle-review-state.js';
 
-export type CornerMergeabilityInput = {
-  checks: string;
-  evidenceMissing?: boolean;
-  approved: boolean;
-  held: boolean;
-  holds: readonly { id: string; holderId?: string; holderName?: string | null }[];
-  archived: boolean;
-  merged?: boolean;
-  expectedHeadSha?: string | null;
-  currentHeadSha: string;
-  mergeability?: string;
-};
+export { CORNER_MACHINE_SCHEMA } from './corner-lifecycle-values.js';
 
-/** One verdict and refusal reason for both the checks read and merge command. */
-export function cornerMergeability(input: CornerMergeabilityInput) {
-  const reasons = [
-    input.merged ? 'the pull request is already merged' : '',
-    input.archived ? 'the corner is closed' : '',
-    input.expectedHeadSha && input.expectedHeadSha !== input.currentHeadSha
-      ? 'PR head changed; checks and approval must match the corner head'
-      : '',
-    input.mergeability === 'draft' ? 'PR is a draft' : '',
-    input.checks !== 'passed' ? `checks are ${input.checks}` : '',
-    input.evidenceMissing ? 'missing review attachments: attach the screenshots or files claimed by the verdict' : input.approved ? '' : 'no yes on this head',
-    input.held
-      ? `a hold stands${input.holds.length ? `: ${input.holds.map(hold => `${hold.id}${hold.holderName ? ` (${hold.holderName}, ${hold.holderId ?? ''})` : ''}`).join('; ')}` : ''}`
-      : '',
-  ].filter(Boolean);
-  return { mergeAllowed: reasons.length === 0, ...(reasons.length ? { blockedReason: reasons.join('; ') } : {}) };
-}
+export { backfillCornerLifecycleRuns } from './corner-lifecycle-review-state.js';
 
-/**
- * The merge gate for one exact PR head, minus the checks verdict (the caller
- * supplies that live from GitHub). Shared by `pr_checks_status` and the server
- * merge, so the gate an agent reads is the gate `landCorner` merges on.
- */
-export async function cornerMergeGate(
-  db: SqlDatabase,
-  cornerId: string,
-  head: { number: number; headSha: string },
-): Promise<CornerMergeGate> {
-    db = new CornerAccessDatabase(db);
-  const rows = await db.query<{
-    configured_reviewer_id: string | null;
-    approved: boolean;
-    holds: CornerMergeGate['holds'];
-  }>(
-      `SELECT ${cornerReviewerSql()} configured_reviewer_id,
-              EXISTS (
-                SELECT 1 FROM corner_merge_approvals approval
-                WHERE approval.corner_id=fact.corner_id AND approval.pull_request_number=$2
-                  AND approval.head_sha=$3
-                  AND (
-                    -- A configured reviewer agent, still a parent member.
-                    EXISTS (
-                      SELECT 1 FROM memberships member
-                      JOIN identities reviewer ON reviewer.id=member.identity_id AND reviewer.kind='agent'
-                      WHERE member.room_id=parent.id AND member.identity_id=approval.approved_by
-                        AND approval.approved_by IS DISTINCT FROM ${cornerImplementerSql('fact', 'corner')}
-                        AND member.removed_at IS NULL
-                        AND approval.approved_by=${cornerReviewerSql()}
-                    )
-                    -- Or a current Workspace owner or admin.
-                    OR EXISTS (
-                      SELECT 1 FROM memberships workspace_member
-                      JOIN identities person ON person.id=workspace_member.identity_id AND person.kind='human'
-                      WHERE workspace_member.workspace_id=corner.workspace_id
-                        AND workspace_member.room_id IS NULL
-                        AND workspace_member.identity_id=approval.approved_by
-                        AND workspace_member.removed_at IS NULL
-                        AND workspace_member.role IN ('owner','admin')
-                    )
-                  )
-              ) approved,
-              COALESCE((SELECT jsonb_agg(jsonb_build_object('id',hold.id::text,'actorId',hold.actor_id,
-                'holderId',COALESCE(hold.set_by_agent_id,hold.actor_id),'holderName',(SELECT name FROM identities WHERE id=COALESCE(hold.set_by_agent_id,hold.actor_id)),
-                'sourceMessageId',hold.source_message_id,'sourceAuthorId',hold.source_author_id,
-                'sourceAuthorName',(SELECT name FROM identities WHERE id=hold.source_author_id),'sourceText',hold.source_text,
-                'standing',hold.standing,'setAt',hold.set_at::text) ORDER BY hold.set_at,hold.id)
-                FROM corner_merge_holds hold WHERE hold.corner_id=fact.corner_id AND hold.released_at IS NULL),
-                '[]'::jsonb) holds
-       FROM corner_facts fact
-       JOIN rooms corner ON corner.id=fact.corner_id
-       JOIN rooms parent ON parent.id=corner.parent_id
-       WHERE fact.corner_id=$1`,
-    [cornerId, head.number, head.headSha],
-  );
-  const corner = rows.rows[0];
-  if (!corner) throw new Error('corner not found');
-  if (!corner.approved && !corner.configured_reviewer_id) {
-    const approval = (await db.query<{ approved_by: string }>(
-      `SELECT approved_by FROM corner_merge_approvals
-       WHERE corner_id=$1 AND pull_request_number=$2 AND head_sha=$3`,
-      [cornerId, head.number, head.headSha],
-    )).rows[0];
-    if (approval) corner.approved = await isZeroCheckCommander(db, cornerId, approval.approved_by);
-  }
-  const approval = (await db.query<{ approved_by: string }>(
-    `SELECT approval.approved_by FROM corner_merge_approvals approval JOIN identities reviewer
-       ON reviewer.id=approval.approved_by AND reviewer.kind='agent'
-     WHERE corner_id=$1 AND pull_request_number=$2 AND head_sha=$3`,
-    [cornerId,head.number,head.headSha])).rows[0];
-  const evidenceMissing = Boolean(approval && await missingReviewAttachments(db, cornerId, head, approval.approved_by));
-  if (evidenceMissing) corner.approved=false;
-  const held = corner.holds.length > 0;
-  return {
-    ...(evidenceMissing ? {evidenceMissing:true} : {}),
-    reviewerExists: Boolean(corner.configured_reviewer_id),
-    approved: corner.approved,
-    held,
-    holds: corner.holds,
-    open: corner.approved && !held,
-  };
-}
+export { lockCornerArchivalAuthority } from './corner-lifecycle-review-state.js';
 
-/**
- * Rechecks local merge authority under the run lock after the live gate read,
- * immediately before GitHub is asked to merge: the corner is open, the head
- * is unchanged, the brief still assigns repository work, a yes stands on this
- * head and no hold stands. Nothing is stored. GitHub's expected-head merge
- * merges a pull request at most once; a concurrent second attempt reads the
- * live pull request and confirms the merge instead of reporting a refusal.
- */
-export async function confirmCornerMergeAuthority(
-  database: SqlDatabase,
-  cornerId: string,
-  headSha: string,
-  onBlocked?: (reason: string) => void,
-): Promise<boolean> {
-  const blocked = (reason: string) => { onBlocked?.(reason); return false; };
-  return database.transaction(async (db) => {
-    await lockCornerLifecycle(db, cornerId);
-    const corner = await loadCorner(db, cornerId);
-    const pr = corner?.lifecycle.pr;
-    if (!corner) return blocked('the corner no longer exists');
-    if (corner.archived) return blocked('the corner is archived');
-    if (!pr?.number) return blocked('the corner has no pull request');
-    if (pr.headSha !== headSha) return blocked('the pull request head changed before the merge');
-    // A brief revised during the GitHub read is seen here: revisions take this lock.
-    await assertCornerBriefAllowsMerge(db, cornerId);
-    const gate = await cornerMergeGate(db, cornerId, { number: pr.number, headSha });
-    if (!gate.open) return blocked(gate.evidenceMissing ? 'missing review attachments: attach the screenshots or files claimed by the verdict' : gate.held ? 'a hold stands' : 'no yes on this head');
-    return true;
-  });
-}
+export { archiveCornerState } from './corner-lifecycle-review-state.js';
 
-/**
- * Gives a run to corners opened before the workflow run existed (#1918),
- * derived from their lifecycle. Run once from `migrateData()`.
- */
-export async function backfillCornerLifecycleRuns(database: SqlDatabase): Promise<number> {
-  const missing = await database.query<{ corner_id: string }>(
-    `SELECT fact.corner_id FROM corner_facts fact
-     WHERE ${cornerRunStateSql('fact.corner_id')} IS NULL`,
-  );
-  for (const row of missing.rows) {
-    await database.transaction(async (db) => {
-      await lockCornerLifecycle(db, row.corner_id);
-      if (await loadCornerLifecycleState(db, row.corner_id)) return;
-      const corner = await loadCorner(db, row.corner_id);
-      if (corner) await backfillRun(db, row.corner_id, corner);
-    });
-  }
-  if (missing.rowCount)
-    console.log(`backfillCornerLifecycleRuns: started ${missing.rowCount} corner run(s)`);
-  return missing.rowCount;
-}
+export { cornerReviewWokenSql } from './corner-lifecycle-review-state.js';
 
-/**
- * Deletes the copy of the corner contract that older servers seeded into every
- * Workspace as a `corner` workflow, with its versions. The corner lifecycle
- * never read it. Every such row carries a version written by the seed's
- * `corner-workflow-v1` extractor; a workflow a person saves later under the
- * slug `corner` has none, so it survives every run of `migrateData()`.
- */
-export async function deleteStoredCornerWorkflows(database: SqlDatabase): Promise<number> {
-  const deleted = await database.query(
-    `DELETE FROM workspace_skills skill
-     WHERE skill.slug=$1 AND skill.kind='workflow'
-       AND EXISTS (
-         SELECT 1 FROM workspace_skill_versions version
-         WHERE version.skill_id=skill.id AND version.extractor_version='corner-workflow-v1'
-       )`,
-    [CORNER_LIFECYCLE_SLUG],
-  );
-  if (deleted.rowCount)
-    console.log(`deleteStoredCornerWorkflows: deleted ${deleted.rowCount} stored corner workflow(s)`);
-  return deleted.rowCount;
-}
+export { blockingReview } from './corner-lifecycle-review-state.js';
+
+export type { CornerMergeGate } from './corner-lifecycle-review-state.js';
+
+export type { CornerMergeabilityInput } from './corner-lifecycle-review-state.js';
+
+export { cornerMergeability } from './corner-lifecycle-review-state.js';
+
+export { cornerMergeGate } from './corner-lifecycle-review-state.js';
+
+export { confirmCornerMergeAuthority } from './corner-lifecycle-review-state.js';
+
+export { deleteStoredCornerWorkflows } from './corner-lifecycle-review-state.js';

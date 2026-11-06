@@ -139,26 +139,17 @@ of substatus, regressed issues, and triggered `event_alert` notifications. Other
 signed events are acknowledged without waking an agent. The Telegram receiver
 above remains independent.
 
-`sentry_wake_issues` stores issue metadata keyed by issue id and event type;
-retries do not re-arm an acknowledged row, and a newer occurrence updates its
-metadata. A committed digest records its time and level per issue. Repeat alerts
-across event types are suppressed for six hours from that digest, except a new
-regression or changed level. Suppressed alerts still refresh metadata and do not
-extend the suppression window. `sentry_wake_state` serializes ingestion and dispatch across server
-machines. Every accepted issue, including handled errors, queues a private command
-for Jellybean in issues-triage on arrival. Pending issue metadata coalesces when
-an unavailable recipient becomes eligible again. Fatal and unhandled metadata
-remains recorded without changing handled errors into urgent issues.
-The command and acknowledgement commit together. Startup and committed
-PostgreSQL notifications admit a delivery pass; there is no five-minute batch
-clock or trailing digest timer. The legacy `last_daily_wake_at` column is retained
-for schema compatibility, and `last_wake_at` records the last dispatch for diagnostics;
-neither controls dispatch.
-An unavailable target keeps rows pending. Empty, refused or failed observations
-park without a recurring sweep or retry timer. A committed arrival, relevant
-recipient membership, triage authority or blocking-report change, or actual database/listener
-recovery admits another observation. This changes only
-Sentry arrivals; the standing daily feedback sweep keeps its existing cadence.
+`sentry_wake_issues` stores issue metadata keyed by issue id and event type.
+Exact delivery repeats and older occurrences do not re-arm an acknowledged row;
+a changed, current occurrence admits a new event. The singleton row orders
+committed ingestion and delivery across server instances. The private command
+and its batch acknowledgement commit together.
+
+HTTP arrivals and committed eligibility changes admit delivery. Startup and idle
+time do no work. An unavailable recipient leaves pending metadata for an actual
+membership, triage authority or blocking-report change. A failed observation
+creates no retry deadline. There is no urgency, daily or elapsed-time batch gate.
+The standing feedback schedule remains an owner-created schedule.
 The server setting `BEELINE_SENTRY_TRIAGE_AGENT_ID` selects the recipient and
 defaults to Jellybean (`7eafb2e0cc049a9b3345f4322024b604358af04cb551d1fc71084ca3a99d7877`).
 The receiver and background worker share that setting. Set it consistently on
@@ -211,7 +202,7 @@ staging. Production activation remains a follow-up for the next normal release.
 **Production proof remains pending the next release:** after deployment, use
 Sentry's send-test-notification action and verify Jellybean receives the digest in
 issues-triage. Do not dispatch a release for this work. Local reproduction
-`sentry-no-wake` posts signed HTTP requests to the actual server and inspects
+`sentry-wake.test.ts` posts signed HTTP requests to the actual server and inspects
 private commands, including competing workers against isolated PostgreSQL.
 Run the PostgreSQL proof with `BEELINE_SENTRY_TEST_POSTGRES_URL` set to an isolated
 loopback database and `npm test -w @beeline/server -- src/sentry-wake.test.ts`;

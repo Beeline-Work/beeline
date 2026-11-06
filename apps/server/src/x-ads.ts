@@ -59,18 +59,7 @@ CREATE TRIGGER beeline_notify_x_signup_delivery AFTER INSERT OR UPDATE OR DELETE
 FOR EACH ROW EXECUTE FUNCTION beeline_notify_x_signup_delivery();
 `;
 
-/** A persisted conversion remains a delivery obligation with its stable
- * provider id. Missing credentials park it until an actual config/process
- * boundary; they never produce a status-check deadline. */
-export async function nextXSignupDeliveryAt(database: SqlDatabase,
-  token = process.env.BEELINE_X_PIXEL_TOKEN): Promise<Date | null> {
-  if (!token || !xSignupEventId()) return null;
-  return (await database.query<{next_attempt_at:Date}>(`SELECT next_attempt_at FROM x_ad_signups
-    WHERE sent_at IS NULL AND twclid IS NOT NULL AND attempts<10 AND created_at>now()-interval '2 days'
-    ORDER BY next_attempt_at LIMIT 1`)).rows[0]?.next_attempt_at ?? null;
-}
-
-/** Leased, bounded outbox. A crash after X accepts retries the same deduplication ID. */
+/** A committed signup gets one best-effort conversion delivery. */
 export async function deliverXSignups(
   database: SqlDatabase,
   token = process.env.BEELINE_X_PIXEL_TOKEN,
@@ -85,12 +74,12 @@ export async function deliverXSignups(
       event_id: string;
       created_at: Date;
     }>(
-      `UPDATE x_ad_signups SET attempts=attempts+1,next_attempt_at=now()+interval '5 minutes',
+      `UPDATE x_ad_signups SET attempts=attempts+1,
        event_id=COALESCE(event_id,$1)
      WHERE identity_id IN (SELECT identity_id FROM x_ad_signups
-       WHERE sent_at IS NULL AND twclid IS NOT NULL AND attempts<10 AND next_attempt_at<=now()
+       WHERE sent_at IS NULL AND twclid IS NOT NULL AND attempts=0
          AND created_at>now()-interval '2 days'
-       ORDER BY next_attempt_at LIMIT 20 FOR UPDATE SKIP LOCKED)
+       ORDER BY created_at FOR UPDATE SKIP LOCKED)
      RETURNING identity_id,twclid,conversion_id,event_id,created_at`,
       [xSignupEventId()],
     )
@@ -103,7 +92,7 @@ export async function deliverXSignups(
         {
           method: 'POST',
           headers: { 'content-type': 'application/json', 'X-Pixel-Token': token },
-          signal: AbortSignal.timeout(10_000),
+
           body: JSON.stringify({
             conversions: [
               {

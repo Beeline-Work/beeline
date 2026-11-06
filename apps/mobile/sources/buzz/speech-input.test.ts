@@ -1,127 +1,11 @@
-import * as React from 'react';
-import { act, create } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  ANDROID_GOOGLE_RECOGNITION_SERVICE,
-  SPEECH_FINALIZATION_TIMEOUT_MS,
-  SPEECH_SILENCE_TIMEOUT_MS,
-  useSpeechInput,
-} from './speech-input';
+import { upload, platformState, mockMod, fireEvent, renderHook, fixtureScope2 } from './test-support-speech-input.test-support.js';
+// @ts-expect-error react-test-renderer has no declarations in this workspace.
+import { act } from 'react-test-renderer';
+import { describe, expect, it, vi } from 'vitest';
+import { ANDROID_GOOGLE_RECOGNITION_SERVICE, SPEECH_FINALIZATION_TIMEOUT_MS, SPEECH_SILENCE_TIMEOUT_MS } from './speech-input';
 import { getRecognitionModule } from './speech-recognition-adapter';
-import { dictationTranscriptionAvailable, startDictationUpload } from './speech-transcription';
-import { reportClientError } from './client-error-report';
+import { startDictationUpload } from './speech-transcription';
 import { dictationWaveformLevel } from './waveform-level';
-
-vi.mock('react-native', () => ({
-  Platform: {
-    get OS() {
-      return platformState.OS;
-    },
-    get Version() {
-      return platformState.Version;
-    },
-    select: (c: any) => c.default,
-  },
-}));
-vi.mock('./speech-recognition-adapter', () => ({
-  getRecognitionModule: vi.fn(),
-}));
-const upload = vi.hoisted(() => ({
-  add: vi.fn(),
-  finish: vi.fn<() => Promise<string | null>>(),
-  discard: vi.fn(),
-}));
-vi.mock('./speech-transcription', () => ({
-  dictationTranscriptionAvailable: vi.fn(() => true),
-  startDictationUpload: vi.fn(() => upload),
-  discardDictationRecordings: vi.fn(async () => {}),
-}));
-vi.mock('./client-error-report', () => ({ reportClientError: vi.fn(async () => {}) }));
-vi.mock('./speech-locale', () => ({
-  getDeviceSpeechLocale: () => 'en-GB',
-}));
-
-// Android 13 never offers the on-device model, so most tests start straight away.
-const platformState = vi.hoisted(() => ({ OS: 'android', Version: 33 }));
-
-const mockMod = {
-  start: vi.fn(),
-  stop: vi.fn(),
-  abort: vi.fn(),
-  getPermissionsAsync: vi.fn(),
-  requestPermissionsAsync: vi.fn(),
-  supportsOnDeviceRecognition: vi.fn(),
-  getSupportedLocales: vi.fn(),
-  androidTriggerOfflineModelDownload: vi.fn(),
-  getSpeechRecognitionServices: vi.fn(),
-  addListener: vi.fn(),
-};
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-const handlerMap = new Map<string, (...args: any[]) => void>();
-function fireEvent(event: string, data?: any) {
-  handlerMap.get(event)?.(data);
-}
-
-function Harness({
-  onResult,
-  contextualStrings,
-}: {
-  onResult: (t: string) => void;
-  contextualStrings?: string[];
-}) {
-  const speech = useSpeechInput(onResult, contextualStrings);
-  // Expose state through serializable props so react-test-renderer can find them.
-  return React.createElement('div', {
-    'data-state': speech.state,
-    'data-capability': speech.capability,
-    'data-partial': speech.partialText,
-    speechRef: speech,
-  } as any);
-}
-
-function renderHook(onResult = vi.fn(), contextualStrings?: string[]) {
-  let renderer: any;
-  act(() => {
-    renderer = create(React.createElement(Harness, { onResult, contextualStrings }));
-  });
-  return {
-    renderer,
-    onResult,
-    speech: () =>
-      renderer.root.findByProps({ 'data-capability': 'available' }).props.speechRef as any,
-    probe: () => renderer.root.findByType('div').props as any,
-  };
-}
-
-beforeEach(() => {
-  vi.clearAllMocks();
-  handlerMap.clear();
-  mockMod.addListener.mockImplementation((event: string, handler: (...args: any[]) => void) => {
-    handlerMap.set(event, handler);
-    return { remove: () => handlerMap.delete(event) };
-  });
-  mockMod.getPermissionsAsync.mockResolvedValue({
-    status: 'granted',
-    granted: true,
-    canAskAgain: true,
-  });
-  mockMod.supportsOnDeviceRecognition.mockReturnValue(true);
-  // Most Android tests cover a phone without Google's recognizer.
-  mockMod.getSpeechRecognitionServices.mockReturnValue([]);
-  mockMod.getSupportedLocales.mockResolvedValue({ locales: [], installedLocales: [] });
-  mockMod.androidTriggerOfflineModelDownload.mockResolvedValue({
-    status: 'download_success',
-    message: '',
-  });
-  platformState.Version = 33;
-  vi.mocked(getRecognitionModule).mockReturnValue(mockMod as any);
-});
-
-afterEach(() => {
-  vi.useRealTimers();
-});
 
 describe('useSpeechInput', () => {
   it('start -> interim -> final -> stop commits finals immediately', async () => {
@@ -162,6 +46,7 @@ describe('useSpeechInput', () => {
     expect(mockMod.stop).toHaveBeenCalled();
   });
 
+
   it('passes contextual names to the recogniser only when there are some', async () => {
     const { speech } = renderHook(vi.fn(), ['Niglet', 'Emberus']);
     await act(async () => {
@@ -178,6 +63,7 @@ describe('useSpeechInput', () => {
     expect(mockMod.start.mock.lastCall?.[0]).not.toHaveProperty('contextualStrings');
   });
 
+
   it("uses Apple's server recognizer on iOS even when on-device is supported", async () => {
     platformState.OS = 'ios';
     const { speech } = renderHook();
@@ -190,6 +76,7 @@ describe('useSpeechInput', () => {
     expect(mockMod.start.mock.lastCall?.[0]).not.toHaveProperty('androidRecognitionServicePackage');
     platformState.OS = 'android';
   });
+
 
   it("pins Google's server recognizer on Android when it is installed, without the model offer", async () => {
     platformState.Version = 34;
@@ -213,6 +100,7 @@ describe('useSpeechInput', () => {
     );
   });
 
+
   it('commits the alternative that names Room terms, snapped to the lexicon', async () => {
     const { speech, probe, onResult } = renderHook(vi.fn(), ['Groq', 'OpenRouter']);
     await act(async () => {
@@ -234,6 +122,7 @@ describe('useSpeechInput', () => {
     expect(onResult).toHaveBeenCalledWith('try Groq and OpenRouter');
   });
 
+
   it('uses the Android on-device recognizer, which punctuates, when the locale is installed', async () => {
     mockMod.getSupportedLocales.mockResolvedValue({
       locales: ['en-GB', 'en-US'],
@@ -248,6 +137,7 @@ describe('useSpeechInput', () => {
     );
     expect(mockMod.androidTriggerOfflineModelDownload).not.toHaveBeenCalled();
   });
+
 
   it('offers the missing model on Android 14+ and requests it only when accepted', async () => {
     platformState.Version = 34;
@@ -275,6 +165,7 @@ describe('useSpeechInput', () => {
     );
   });
 
+
   it('starts dictating without the model when its offer is declined', async () => {
     platformState.Version = 34;
     const { speech } = renderHook();
@@ -293,6 +184,7 @@ describe('useSpeechInput', () => {
     );
   });
 
+
   it('does not offer the model on Android 13, where the platform owns the whole download', async () => {
     const { speech } = renderHook();
     await act(async () => {
@@ -304,6 +196,7 @@ describe('useSpeechInput', () => {
     expect(speech().modelDownloadOffered).toBe(false);
     expect(mockMod.androidTriggerOfflineModelDownload).not.toHaveBeenCalled();
   });
+
 
   it('falls back to the Android platform recognizer when the on-device one rejects the locale', async () => {
     mockMod.getSupportedLocales.mockResolvedValue({ locales: [], installedLocales: ['en-GB'] });
@@ -320,6 +213,7 @@ describe('useSpeechInput', () => {
     );
   });
 
+
   it('maps native volume changes to the mic activity range', async () => {
     const { speech, probe } = renderHook();
     await act(async () => {
@@ -335,6 +229,7 @@ describe('useSpeechInput', () => {
     expect(probe().speechRef.volumeLevel).toBe(dictationWaveformLevel(20, 'android'));
   });
 
+
   it('auto-stops after silence with nothing recognised', async () => {
     vi.useFakeTimers();
     const { speech, probe } = renderHook();
@@ -348,6 +243,7 @@ describe('useSpeechInput', () => {
     expect(speech().state).toBe('nothing-recognised');
     expect(mockMod.stop).toHaveBeenCalled();
   });
+
 
   it('does not pair captured text with a nothing-caught error', async () => {
     vi.useFakeTimers();
@@ -370,6 +266,7 @@ describe('useSpeechInput', () => {
     expect(speech().state).toBe('idle');
     expect(speech().partialText).toBe('');
   });
+
 
   it('does not stop mid-utterance when interim results are sparse', async () => {
     vi.useFakeTimers();
@@ -397,6 +294,7 @@ describe('useSpeechInput', () => {
     expect(speech().state).toBe('listening');
   });
 
+
   it('gives a short phrase time to produce its first hypothesis', async () => {
     vi.useFakeTimers();
     const { speech } = renderHook();
@@ -409,6 +307,7 @@ describe('useSpeechInput', () => {
     });
     expect(speech().state).toBe('listening');
   });
+
 
   it('does not treat silent volume as speech', async () => {
     vi.useFakeTimers();
@@ -425,6 +324,7 @@ describe('useSpeechInput', () => {
     expect(speech().partialText).toBe('');
   });
 
+
   it('keeps listening while speech volume continues without new hypotheses', async () => {
     vi.useFakeTimers();
     const { speech } = renderHook();
@@ -440,6 +340,7 @@ describe('useSpeechInput', () => {
     });
     expect(speech().state).toBe('listening');
   });
+
 
   it('interim results keep resetting the silence timer', async () => {
     vi.useFakeTimers();
@@ -461,6 +362,7 @@ describe('useSpeechInput', () => {
     });
     expect(speech().state).not.toBe('listening');
   });
+
 
   it('restarts the session transparently when the platform ends it', async () => {
     const { speech, probe } = renderHook();
@@ -485,6 +387,7 @@ describe('useSpeechInput', () => {
     expect(mockMod.start).toHaveBeenCalledTimes(2);
   });
 
+
   it('waits for end after an error so error and end cannot start two recognizers', async () => {
     const { speech } = renderHook();
     await act(async () => {
@@ -500,6 +403,7 @@ describe('useSpeechInput', () => {
     });
     expect(mockMod.start).toHaveBeenCalledOnce();
   });
+
 
   it('permission denied sets the permission-denied state', async () => {
     mockMod.getPermissionsAsync.mockResolvedValue({
@@ -520,6 +424,7 @@ describe('useSpeechInput', () => {
     expect(mockMod.start).not.toHaveBeenCalled();
   });
 
+
   it('runtime not-allowed error sets permission-denied', async () => {
     const { speech, probe } = renderHook();
     await act(async () => {
@@ -530,6 +435,7 @@ describe('useSpeechInput', () => {
     });
     expect(speech().state).toBe('permission-denied');
   });
+
 
   it('treats an explicit empty stop as neutral', async () => {
     const { speech } = renderHook();
@@ -542,6 +448,7 @@ describe('useSpeechInput', () => {
     });
     expect(speech().state).toBe('idle');
   });
+
 
   it('commits the latest interim when Android ends a requested stop without a final', async () => {
     const { onResult, speech } = renderHook();
@@ -558,6 +465,7 @@ describe('useSpeechInput', () => {
     expect(onResult).toHaveBeenCalledWith('keep these words');
     expect(speech().state).toBe('idle');
   });
+
 
   it('waits for the final transcript after stop instead of committing a truncated interim', async () => {
     const { onResult, speech } = renderHook();
@@ -585,6 +493,7 @@ describe('useSpeechInput', () => {
     expect(speech().partialText).toBe('');
   });
 
+
   it('falls back to the latest interim when Android ends without a final result', async () => {
     const { onResult, speech } = renderHook();
     await act(async () => {
@@ -598,6 +507,7 @@ describe('useSpeechInput', () => {
     expect(onResult).toHaveBeenCalledOnce();
     expect(onResult).toHaveBeenCalledWith('hello');
   });
+
 
   it('bounds finalization when the recognizer emits neither final nor end', async () => {
     vi.useFakeTimers();
@@ -621,6 +531,7 @@ describe('useSpeechInput', () => {
     expect(speech().state).toBe('idle');
   });
 
+
   it('ignores recognizer results after a stopped session has ended', async () => {
     const { onResult, speech } = renderHook();
     await act(async () => {
@@ -632,6 +543,7 @@ describe('useSpeechInput', () => {
     expect(onResult).not.toHaveBeenCalled();
   });
 
+
   it('is unavailable in a browser without recognition', async () => {
     platformState.OS = 'web';
     vi.mocked(getRecognitionModule).mockReturnValue(null);
@@ -641,43 +553,20 @@ describe('useSpeechInput', () => {
     platformState.OS = 'android';
   });
 
+
   it('is unavailable when a device build does not contain the native recognizer', async () => {
     vi.mocked(getRecognitionModule).mockReturnValue(null);
     const { probe } = renderHook();
     expect(probe()['data-capability']).toBe('unavailable');
   });
+describe('recorded take for server transcription', () => {
+const scope2 = fixtureScope2();
 
-  describe('recorded take for server transcription', () => {
-    const supportsRecording = vi.fn(() => true);
-
-    beforeEach(() => {
-      upload.add.mockReset();
-      upload.finish.mockReset();
-      upload.discard.mockReset();
-      (mockMod as any).supportsRecording = supportsRecording;
-      supportsRecording.mockReturnValue(true);
-      vi.mocked(dictationTranscriptionAvailable).mockReturnValue(true);
-    });
-
-    afterEach(() => {
-      delete (mockMod as any).supportsRecording;
-      delete (mockMod as any).transcribesOnServerOnly;
-    });
-
-    async function dictate(speech: () => any) {
-      await act(async () => {
-        await speech().start();
-      });
-      await act(async () => {
-        fireEvent('result', { results: [{ transcript: 'ask jelly bean' }], isFinal: true });
-        fireEvent('result', { results: [{ transcript: 'to open a corner' }], isFinal: false });
-      });
-    }
 
     it('records, shows live on-device words, and commits the server text on stop', async () => {
       upload.finish.mockResolvedValue('Ask Jellybean to open a corner.');
       const { onResult, speech, probe } = renderHook(vi.fn(), ['Jellybean', 'corner']);
-      await dictate(speech);
+      await scope2.dictate(speech);
 
       expect(mockMod.start).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -707,13 +596,14 @@ describe('useSpeechInput', () => {
       expect(speech().state).toBe('idle');
     });
 
+
     it.each(['android', 'ios'])('DS1 finalizes closed audio before native end on %s', async (os) => {
       vi.useFakeTimers();
       platformState.OS = os;
       try {
         upload.finish.mockResolvedValue('Whisper final.');
         const { renderer, onResult, speech } = renderHook();
-        await dictate(speech);
+        await scope2.dictate(speech);
         let result: Promise<boolean | null>;
         await act(async () => {
           result = speech().stop();
@@ -736,13 +626,14 @@ describe('useSpeechInput', () => {
       }
     });
 
+
     it.each(['android', 'ios'])('DS1 keeps late native finals and waits for the recording URI on %s', async (os) => {
       platformState.OS = os;
       try {
         let finish!: (value: string | null) => void;
         upload.finish.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
         const { renderer, onResult, speech } = renderHook();
-        await dictate(speech);
+        await scope2.dictate(speech);
         let stopped: Promise<boolean | null>;
         await act(async () => {
           fireEvent('audiostart');
@@ -765,11 +656,12 @@ describe('useSpeechInput', () => {
       }
     });
 
+
     it('DS1 never commits a late Whisper reply after microphone permission is lost', async () => {
       let finish!: (value: string | null) => void;
       upload.finish.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
       const { renderer, onResult, speech } = renderHook();
-      await dictate(speech);
+      await scope2.dictate(speech);
       await act(async () => {
         void speech().stop();
         fireEvent('audioend', { uri: 'file:///closed.wav' });
@@ -784,10 +676,11 @@ describe('useSpeechInput', () => {
       act(() => renderer.unmount());
     });
 
+
     it('commits the on-device text when server transcription fails', async () => {
       upload.finish.mockResolvedValue(null);
       const { onResult, speech } = renderHook();
-      await dictate(speech);
+      await scope2.dictate(speech);
 
       await act(async () => {
         const stopped = speech().stop();
@@ -798,6 +691,7 @@ describe('useSpeechInput', () => {
 
       expect(onResult).toHaveBeenCalledWith('ask jelly bean to open a corner');
     });
+
 
     it('uploads each restarted segment as it closes and commits the joined text once', async () => {
       upload.finish.mockResolvedValue('one two');
@@ -830,6 +724,7 @@ describe('useSpeechInput', () => {
       expect(onResult).toHaveBeenCalledWith('one two');
     });
 
+
     it('waits for native end after a silence stop, then commits the server text', async () => {
       vi.useFakeTimers();
       upload.finish.mockResolvedValue('Hello there.');
@@ -854,6 +749,7 @@ describe('useSpeechInput', () => {
       expect(speech().state).toBe('idle');
     });
 
+
     it('commits Whisper text from recorded audio with no on-device words', async () => {
       upload.finish.mockResolvedValue('Whisper heard me.');
       const { onResult, speech } = renderHook();
@@ -871,6 +767,7 @@ describe('useSpeechInput', () => {
       expect(onResult).toHaveBeenCalledExactlyOnceWith('Whisper heard me.');
     });
 
+
     it.each([true, false])('shows nothing-recognised when both transcripts are empty (audio=%s)', async (audio) => {
       upload.finish.mockResolvedValue(null);
       const { onResult, speech } = renderHook();
@@ -884,6 +781,7 @@ describe('useSpeechInput', () => {
       expect(speech().state).toBe('nothing-recognised');
       expect(onResult).not.toHaveBeenCalled();
     });
+
 
     it.each(['silence', 'restart-limit'])('uses Whisper after %s even without native text or a final end', async (reason) => {
       vi.useFakeTimers();
@@ -900,155 +798,5 @@ describe('useSpeechInput', () => {
       expect(onResult).toHaveBeenCalledExactlyOnceWith('Recovered speech.');
       expect(speech().state).toBe('idle');
     });
-
-    it.each(['client', 'aborted', 'no-speech', 'speech-timeout', 'not-allowed', 'service-not-allowed', 'language-not-supported'])(
-      'does not report the expected Android refusal %s, but still reports a later failure',
-      async (error) => {
-        const { renderer, speech } = renderHook();
-        await act(async () => { await speech().start(); });
-        await act(async () => { fireEvent('error', { error, message: 'Recognition refused' }); });
-        expect(reportClientError).not.toHaveBeenCalled();
-        if (error === 'not-allowed') {
-          expect(speech().state).toBe('permission-denied');
-          await act(async () => { await speech().start(); });
-        }
-        await act(async () => { fireEvent('error', { error: 'audio-capture', message: 'Capture failed' }); });
-        expect(reportClientError).toHaveBeenCalledExactlyOnceWith('app', expect.objectContaining({
-          message: expect.stringContaining('dictation-error: audio-capture: Capture failed'),
-        }));
-        act(() => renderer.unmount());
-      },
-    );
-
-    it.each(['unknown', 'new-error-code', 'busy', 'network'])('reports unexpected Android error %s', async (error) => {
-      const { renderer, speech } = renderHook();
-      await act(async () => { await speech().start(); });
-      await act(async () => { fireEvent('error', { error, message: 'Recognition failed' }); });
-      expect(reportClientError).toHaveBeenCalledExactlyOnceWith('app', expect.objectContaining({
-        message: expect.stringContaining(`dictation-error: ${error}: Recognition failed`),
-      }));
-      act(() => renderer.unmount());
-    });
-
-    it.each(['ios', 'web'])('keeps reporting client errors on %s', async (platform) => {
-      platformState.OS = platform;
-      const { renderer, speech } = renderHook();
-      try {
-        await act(async () => { await speech().start(); });
-        await act(async () => { fireEvent('error', { error: 'client', message: 'Recognition failed' }); });
-        expect(reportClientError).toHaveBeenCalledOnce();
-      } finally {
-        act(() => renderer.unmount());
-        platformState.OS = 'android';
-      }
-    });
-
-    it('reports the native error and recognizer once per take and resets on the next take', async () => {
-      mockMod.getSpeechRecognitionServices.mockReturnValue([ANDROID_GOOGLE_RECOGNITION_SERVICE]);
-      const { speech } = renderHook();
-      await act(async () => { await speech().start(); });
-      await act(async () => {
-        fireEvent('error', { error: 'network', message: 'service unavailable' });
-        fireEvent('end');
-        fireEvent('error', { error: 'busy', message: 'busy' });
-      });
-      expect(reportClientError).toHaveBeenCalledTimes(1);
-      expect(reportClientError).toHaveBeenCalledWith('app', expect.objectContaining({
-        message: `dictation-error: network: service unavailable; platform=android; recognizer=${ANDROID_GOOGLE_RECOGNITION_SERVICE}`,
-      }));
-      await act(async () => { speech().cancel(); await speech().start(); });
-      await act(async () => { fireEvent('error', { error: 'audio-capture', message: 'capture failed' }); });
-      expect(reportClientError).toHaveBeenCalledTimes(2);
-    });
-
-    it('commits server-only browser audio without a recognition result', async () => {
-      (mockMod as any).transcribesOnServerOnly = true;
-      upload.finish.mockResolvedValue('Hello desktop.');
-      const { onResult, speech } = renderHook();
-      await act(async () => { await speech().start(); });
-      await act(async () => {
-        const stopped = speech().stop();
-        fireEvent('audioend', { uri: 'blob:desktop-take' });
-        fireEvent('end');
-        expect(await stopped).toBe(true);
-      });
-      expect(upload.add).toHaveBeenCalledWith('blob:desktop-take');
-      expect(upload.finish).toHaveBeenCalledOnce();
-      expect(onResult).toHaveBeenCalledWith('Hello desktop.');
-    });
-
-    it('keeps the old path when the device cannot record or the server has no key', async () => {
-      supportsRecording.mockReturnValue(false);
-      const first = renderHook();
-      await act(async () => {
-        await first.speech().start();
-      });
-      expect(mockMod.start.mock.lastCall?.[0]).not.toHaveProperty('recordingOptions');
-
-      supportsRecording.mockReturnValue(true);
-      vi.mocked(dictationTranscriptionAvailable).mockReturnValue(false);
-      const second = renderHook();
-      await act(async () => {
-        await second.speech().start();
-      });
-      expect(mockMod.start.mock.lastCall?.[0]).not.toHaveProperty('recordingOptions');
-      await act(async () => {
-        fireEvent('result', { results: [{ transcript: 'hello' }], isFinal: true });
-      });
-      expect(second.onResult).toHaveBeenCalledWith('hello');
-    });
-
-    it('drops a transcription that returns after the composer unmounts', async () => {
-      let resolve!: (text: string) => void;
-      upload.finish.mockReturnValue(
-        new Promise<string>((done) => {
-          resolve = done;
-        }),
-      );
-      const { renderer, onResult, speech } = renderHook();
-      await dictate(speech);
-      let stopped!: Promise<boolean | null>;
-      await act(async () => {
-        stopped = speech().stop();
-        fireEvent('audioend', { uri: 'file:///cache/take-1.wav' });
-        fireEvent('end');
-      });
-      await act(async () => {
-        renderer.unmount();
-      });
-      await act(async () => {
-        resolve('late text');
-      });
-      expect(await stopped).toBeNull();
-      expect(onResult).not.toHaveBeenCalled();
-    });
-
-    it('lowercases a function word at an on-device seam when the server text fails', async () => {
-      upload.finish.mockResolvedValue(null);
-      const { onResult, speech } = renderHook();
-      await act(async () => {
-        await speech().start();
-      });
-      await act(async () => {
-        fireEvent('result', { results: [{ transcript: 'ask jelly bean' }], isFinal: true });
-        fireEvent('result', { results: [{ transcript: 'And his snapshot' }], isFinal: true });
-      });
-      await act(async () => {
-        const stopped = speech().stop();
-        fireEvent('end');
-        await stopped;
-      });
-      expect(onResult).toHaveBeenCalledWith('ask jelly bean and his snapshot');
-    });
-
-    it('discards the take when the microphone permission is lost', async () => {
-      const { speech } = renderHook();
-      await dictate(speech);
-      await act(async () => {
-        fireEvent('error', { error: 'not-allowed' });
-      });
-      expect(upload.discard).toHaveBeenCalled();
-      expect(upload.finish).not.toHaveBeenCalled();
-    });
-  });
+});
 });

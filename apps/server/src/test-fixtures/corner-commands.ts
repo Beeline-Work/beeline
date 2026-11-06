@@ -1,3 +1,4 @@
+import { createCornerFacts, setCornerLockedFact, setCornerReviewerFact } from '../corner-lifecycle.js';
 import { randomUUID } from 'node:crypto';
 import type { SqlDatabase } from '../database.js';
 
@@ -53,11 +54,9 @@ export async function seedCornerOpening(database: SqlDatabase, input: {
 export async function seedCornerFactsRow(
   db: SqlDatabase, cornerId: string, lifecycle: string | null, locked: boolean, reviewerAgentId: string | null,
 ): Promise<void> {
-  await db.query(
-    `INSERT INTO corner_facts(corner_id,lifecycle,locked,reviewer_agent_id)
-     VALUES($1,COALESCE($2::jsonb,'{"lifecycle":"unknown","checks":"unknown"}'::jsonb),$3,$4)`,
-    [cornerId, lifecycle, locked, reviewerAgentId],
-  );
+  await createCornerFacts(db, cornerId);
+  if (locked) await setCornerLockedFact(db, cornerId, locked);
+  if (reviewerAgentId) await setCornerReviewerFact(db, cornerId, reviewerAgentId);
   await db.query(
     `INSERT INTO corner_github_cache(corner_id,lifecycle)
      VALUES($1,COALESCE($2::jsonb,'{"lifecycle":"unknown","checks":"unknown"}'::jsonb))

@@ -15,7 +15,7 @@ if (url && !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(url).hostname))
 function deferred<T = void>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 
 describe.skipIf(!url)('Group C P7/P12 real PostgreSQL OAuth HTTP handoff', () => {
-  it('F21: ten pending minutes inspect once; foreign completion cannot wake the waiter and a lost HTTP result replays the same committed code', async () => {
+  it('F21: idle time inspects once; foreign completion cannot wake the waiter and a lost HTTP result replays the same committed code', async () => {
     const schema = `group_c_oauth_${randomUUID().replaceAll('-', '')}`, admin = new Pool({ connectionString: url, max: 1 });
     await admin.query(`CREATE SCHEMA ${schema}`);
     const config = { connectionString: url, options: `-c search_path=${schema},public`, max: 2 };
@@ -58,20 +58,18 @@ describe.skipIf(!url)('Group C P7/P12 real PostgreSQL OAuth HTTP handoff', () =>
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
       pending = post(state); await pending.headers; await inspection.promise;
       await vi.advanceTimersByTimeAsync(599_999); expect(reads).toBe(1);
-      await vi.advanceTimersByTimeAsync(1);
-      expect(await pending.done).toEqual({ status: 200, body: { error: 'authorization_pending' } }); expect(reads).toBe(1);
-      inspection = deferred(); pending = post(state); await pending.headers; await inspection.promise;
-      expect(reads).toBe(2);
+      await vi.advanceTimersByTimeAsync(86_400_000); expect(reads).toBe(1);
+      expect(vi.getTimerCount()).toBe(0);
       foreignDelivered = deferred();
       await fetch(origin + '/mcp/oauth/handoff?state=' + 'z'.repeat(43) + '&code=foreign-code'); await foreignDelivered.promise;
-      expect(reads).toBe(2);
+      expect(reads).toBe(1);
       await fetch(origin + '/mcp/oauth/handoff?state=' + state + '&code=synthetic-code');
-      expect(await pending.done).toEqual({ status: 200, body: { code: 'synthetic-code' } }); expect(reads).toBe(3);
+      expect(await pending.done).toEqual({ status: 200, body: { code: 'synthetic-code' } }); expect(reads).toBe(2);
       // Treat that first body as lost. Replay retrieves the same receipt;
       // no provider token exchange or regenerated authorization is performed.
-      expect(await post(state).done).toEqual({ status: 200, body: { code: 'synthetic-code' } }); expect(reads).toBe(4);
+      expect(await post(state).done).toEqual({ status: 200, body: { code: 'synthetic-code' } }); expect(reads).toBe(3);
       expect(JSON.stringify(notices)).not.toContain(state); expect(JSON.stringify(notices)).not.toContain('synthetic-code');
-      await vi.advanceTimersByTimeAsync(86_400_000); expect(reads).toBe(4);
+      await vi.advanceTimersByTimeAsync(86_400_000); expect(reads).toBe(3);
     } finally {
       for (const request of requests) request.destroy(); await pending?.done.catch(() => undefined); vi.useRealTimers();
       await new Promise<void>(resolve => server.close(() => resolve())); await listener.end(); await db.close();

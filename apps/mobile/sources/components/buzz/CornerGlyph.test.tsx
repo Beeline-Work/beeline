@@ -83,7 +83,7 @@ describe('CornerGlyph', () => {
   it('uses theme brass in the Room header and keeps the default at inline mounts', () => {
     const roots = path.resolve(__dirname, '../..');
     const headerSource = readFileSync(
-      path.join(roots, 'app/(app)/beeline/chat/_chat-surface.tsx'),
+      path.join(roots, 'app/(app)/beeline/chat/ChatSurfaceHeader.tsx'),
       'utf8',
     );
     const headerMounts = [...headerSource.matchAll(/<CornerGlyph\b[^>]*\/?>/g)].map(
@@ -92,7 +92,7 @@ describe('CornerGlyph', () => {
     expect(headerMounts).toContainEqual(
       expect.stringContaining('color={styles.roomCornersGlyph.color}'),
     );
-    expect(headerSource).toContain('roomCornersGlyph: { color: groknight.accent }');
+    expect(readFileSync(path.join(roots, 'app/(app)/beeline/chat/chat-surface-styles.ts'), 'utf8')).toContain('roomCornersGlyph: { color: groknight.accent }');
 
     const inlineSites = [
       'app/(app)/beeline/tray.tsx',

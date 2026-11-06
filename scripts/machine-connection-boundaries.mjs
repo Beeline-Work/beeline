@@ -8,6 +8,8 @@ const BODY='apps/body/src/';
 const LINK=BODY+'live-link.ts';
 const MACHINE=BODY+'machine-link.ts';
 const SERVER='apps/server/src/machine-connection.ts';
+const SERVER_ROOT='apps/server/src/server.ts';
+const SERVER_CREATE='apps/server/src/server-create-beeline-server.ts';
 const TIMER_NAMES=new Set(['setTimeout','setInterval','setImmediate','sleep']);
 const member=node=>ts.isPropertyAccessExpression(node)?node.name.text:
   ts.isElementAccessExpression(node)&&ts.isStringLiteralLike(node.argumentExpression)?node.argumentExpression.text:undefined;
@@ -100,7 +102,7 @@ export function machineConnectionSites(file,text){
   const add=id=>sites.set(id,(sites.get(id)??0)+1);
   function visit(node){
     if(file===LINK&&ts.isNewExpression(node)&&name(node.expression)==='WebSocket')add(`${file}::${method(node)??'<module>'}::new WebSocket`);
-    if([LINK,MACHINE,SERVER,'apps/server/src/server.ts'].includes(file)&&ts.isCallExpression(node)&&
+    if([LINK,MACHINE,SERVER,SERVER_ROOT,SERVER_CREATE].includes(file)&&ts.isCallExpression(node)&&
       ['send','close','terminate','#connect'].includes(name(node.expression)))
       add(`${file}::${method(node)??'<module>'}::${name(node.expression)}`);
     ts.forEachChild(node,visit);
@@ -118,9 +120,35 @@ export function checkMachineConnections(root,base){
   const inventory=JSON.parse(readFileSync(path.join(root,MACHINE_SINKS),'utf8'));
   let baseline;
   if(base){try{baseline=JSON.parse(execFileSync('git',['show',`${base}:${MACHINE_SINKS}`],{cwd:root,encoding:'utf8',stdio:['ignore','pipe','ignore']}));}catch{}}
-  return [...errors,...judgeMachineSites(sites,inventory,baseline)];
+  let moved = false;
+  if(base){
+    try{
+      const before=execFileSync('git',['show',`${base}:${SERVER_ROOT}`],{cwd:root,encoding:'utf8',stdio:['ignore','pipe','ignore']});
+      moved=mechanicalServerSinkMove(before,readFileSync(path.join(root,SERVER_CREATE),'utf8'));
+    }catch{}
+  }
+  return [...errors,...judgeMachineSites(sites,inventory,baseline,moved)];
 }
-export function judgeMachineSites(sites,inventory,baseline){
+/** A server split may relocate shutdown sinks only with identical call tokens.
+ * The exact source/destination paths and createBeelineServer owner stay pinned. */
+export function mechanicalServerSinkMove(before,after){
+  const collect=text=>{
+    const source=ts.createSourceFile('server.ts',text,ts.ScriptTarget.Latest,true),calls=[];
+    function visit(node){
+      if(ts.isCallExpression(node)&&['send','close','terminate','#connect'].includes(name(node.expression))){
+        if(method(node)!=='createBeelineServer')return;
+        const scanner=ts.createScanner(ts.ScriptTarget.Latest,true,ts.LanguageVariant.Standard,node.getText(source)),tokens=[];
+        while(scanner.scan()!==ts.SyntaxKind.EndOfFileToken)tokens.push(scanner.getTokenText());
+        calls.push(JSON.stringify(tokens));
+      }
+      ts.forEachChild(node,visit);
+    }
+    visit(source);return calls.sort();
+  };
+  const old=collect(before),current=collect(after);
+  return old.length>0&&JSON.stringify(old)===JSON.stringify(current);
+}
+export function judgeMachineSites(sites,inventory,baseline,moved=false){
   const errors=[];
   for(const [id,count]of sites){
     const allowed=inventory[id];
@@ -129,7 +157,8 @@ export function judgeMachineSites(sites,inventory,baseline){
   for(const [id,entry]of Object.entries(inventory))
     if(!sites.has(id)||entry.count!==sites.get(id))errors.push(`machine connection boundary: remove or lower stale inventory ${id}`);
   if(baseline)for(const [id,entry]of Object.entries(inventory)){
-    if(!baseline[id]||entry.count>baseline[id].count)errors.push(`machine connection boundary: inventory may only shrink: ${id}`);
+    const previous=baseline[id]??(moved&&id.startsWith(SERVER_CREATE+'::createBeelineServer::')?baseline[id.replace(SERVER_CREATE,SERVER_ROOT)]:undefined);
+    if(!previous||entry.count>previous.count)errors.push(`machine connection boundary: inventory may only shrink: ${id}`);
   }
   return errors;
 }

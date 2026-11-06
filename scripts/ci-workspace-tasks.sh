@@ -33,7 +33,7 @@ typecheck() {
   # Check no script, workflow, unit or skill names a deleted file
   npm run lint:referenced-paths
   # Check CI routing, partitioning and build provenance
-  node --test --test-concurrency=1  scripts/run-workspace-tests.test.mjs scripts/report-main-checks.test.mjs scripts/architecture-invariants.test.mjs scripts/machine-connection-boundaries.test.mjs
+  node --test --test-concurrency=1  scripts/run-workspace-tests.test.mjs scripts/report-main-checks.test.mjs scripts/architecture-invariants.test.mjs scripts/integration-shards.test.mjs scripts/mobile-ui-policy-moves.test.mjs scripts/server-timers.test.mjs scripts/machine-connection-boundaries.test.mjs scripts/corner-machine-boundary.test.mjs
   # Test nightly Checks orchestration
 }
 

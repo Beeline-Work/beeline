@@ -22,7 +22,7 @@ export type ViewerMessage = {
 const VIEWER_CONTEXT_PATTERN = /\n\n\[Viewing (artifact|browser): ([^\]\n]{1,120})\]$/;
 
 export function viewerContext(kind: 'artifact' | 'computer', title: string): string {
-  const safeTitle = title.replace(/[\r\n\[\]]/g, ' ').trim() || 'Untitled';
+  const safeTitle = title.replace(/[\r\n\[\]]/g, ' ').trim().slice(0, 120) || 'Untitled';
   return `Viewing ${kind === 'computer' ? 'browser' : 'artifact'}: ${safeTitle}`;
 }
 

@@ -12,7 +12,8 @@ vi.mock('@/buzz/runtime-config', () => ({ getBuzzRuntimeConfig: () => ({ monolit
 vi.mock('@/auth/monolith-session', () => ({ MONOLITH_REQUEST_TIMEOUT_MS: 15_000, MonolithRequestTimeoutError: class extends Error {}, monolithSession: { fetch: vi.fn() } }));
 vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({
   request: fixture.request,
-  diagnostics: () => ({ state: fixture.state }),
+  reconnectAfterFailedSend: vi.fn(async () => undefined),
+  diagnostics: () => ({ state: fixture.state, generation: 1 }),
   subscribeConnected: (listener: () => void) => { fixture.connected = listener; return () => { fixture.connected = undefined; }; },
   subscribeDisconnected: (listener: () => void) => { fixture.disconnected = listener; return () => { fixture.disconnected = undefined; }; },
   register: async () => { fixture.holds++; return () => { fixture.holds--; }; },
@@ -59,7 +60,7 @@ it('R2 app startup flushes the persisted owner over the one phone operation path
     expect(owner.state(interrupted.id)?.text).toBe('Sending');
     expect(fixture.request).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(2);
-    expect(owner.state(interrupted.id)?.text).toBe('Not sent yet');
+    expect(owner.state(interrupted.id)?.text).toBe('Sending');
     fixture.state = 1; fixture.connected!();
     await vi.advanceTimersByTimeAsync(0);
     expect(owner.get(interrupted.id)).toBeUndefined();
@@ -68,7 +69,7 @@ it('R2 app startup flushes the persisted owner over the one phone operation path
     fixture.connected!();
     await vi.advanceTimersByTimeAsync(0);
     expect(fixture.request).toHaveBeenCalledTimes(3);
-    console.log('R2 runtime: transient send failure; socket loss; Sending before cutoff; Not sent yet after cutoff; same id replayed once on reconnect');
+    console.log('R2 runtime: transient send failure; socket loss; Sending without a time-based failure; same id replayed once on reconnect');
   } finally { vi.useRealTimers(); }
   // A Room's handle is just a selector; dropping it does not own delivery.
   const refused = { ...e, id: 'b'.repeat(64) };
@@ -77,7 +78,7 @@ it('R2 app startup flushes the persisted owner over the one phone operation path
   fixture.request.mockRejectedValue(new PhoneSocketError('access_denied', 'The relay did not allow this message.', false));
   fixture.connected!();
   await vi.waitFor(() => expect(owner.state(refused.id)?.kind).toBe('refused'));
-  expect(owner.state(refused.id)?.text).toBe('Not sent · The relay did not allow this message.');
+  expect(owner.state(refused.id)?.text).toBe('Not sent: The relay did not allow this message.');
   fixture.connected!(); await new Promise(resolve => setTimeout(resolve, 0));
   expect(fixture.request).toHaveBeenCalledTimes(4);
   resetMessageOutboxes();

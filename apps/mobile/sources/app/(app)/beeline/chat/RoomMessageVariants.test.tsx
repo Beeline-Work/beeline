@@ -12,7 +12,8 @@ vi.mock('@/components/buzz/Ledger', () => ({ LedgerUntaggedHint: vi.fn(() => nul
 vi.mock('@/components/buzz/ErrorBanner', () => ({ ErrorBanner: vi.fn(() => null) }));
 vi.mock('@/components/buzz/LifecycleCard', () => ({ GitHubEventCard: vi.fn(() => null), DaemonFactCard: vi.fn(() => null) }));
 vi.mock('@/components/buzz/PrLifecycleCard', () => ({ NotificationLifecycleCard: vi.fn(() => null) }));
-vi.mock('@/components/buzz/TranscriptSwipeable', () => ({ default: vi.fn(() => null) }));
+vi.mock('@/components/buzz/TranscriptSwipeable', () => ({ default: vi.fn((props: any) => props.children) }));
+vi.mock('@/components/buzz/TurnProgressLine', () => ({ TurnSettledLine: vi.fn(() => null) }));
 vi.mock('@/components/buzz/DesktopMessageAction', () => ({ DesktopMessageAction: vi.fn(() => null) }));
 vi.mock('@/components/buzz/ButtonRow', () => ({ ButtonRowFrame: vi.fn(() => null) }));
 vi.mock('@/components/buzz/DesktopWorkspacePortal', () => ({ DesktopWorkspacePortal: vi.fn(() => null) }));
@@ -23,7 +24,7 @@ vi.mock('@/components/buzz/ComputerSession', () => ({ openComputerSessionViewer:
 vi.mock('@/components/buzz/ArtifactCard', () => ({ ArtifactCard: vi.fn(() => null), openArtifactViewer: vi.fn(() => null) }));
 vi.mock('@/components/buzz/ArtifactViewer', () => ({ ArtifactViewerScreen: vi.fn(() => null) }));
 vi.mock('@/components/buzz/CornerGlyph', () => ({ CornerGlyph: vi.fn(() => null) }));
-vi.mock('@/components/buzz/IndexRow', () => ({ ContentTarget: vi.fn(() => null) }));
+vi.mock('@/components/buzz/IndexRow', () => ({ ContentTarget: vi.fn((props: any) => React.createElement('Pressable', props, props.children)) }));
 vi.mock('@/components/buzz/AgentApprovalCard', () => ({ AgentApprovalCard: vi.fn(() => null), approvalAudience: vi.fn(() => null), approvalDecisionNote: vi.fn(() => null) }));
 vi.mock('@/components/buzz/ActivityTimeline', () => ({ ActivityTimeline: vi.fn(() => null), TurnStepsLine: vi.fn(() => null) }));
 vi.mock('@/components/buzz/IdentityMark', () => ({ IdentityMark: vi.fn(() => null) }));
@@ -51,6 +52,11 @@ vi.mock('@/components/buzz/TranscriptCard', () => ({
 }));
 
 import { ChoiceCard } from './RoomMessageVariants';
+import { OrdinaryLedgerMessage } from './RoomMessageVariants-ordinary-ledger-message';
+import { LedgerSteer } from '@/components/buzz/Ledger';
+import { NewMessageMaterialize } from '@/components/buzz/MonoHull';
+import { TurnSettledLine } from '@/components/buzz/TurnProgressLine';
+import { splitViewerContext } from '@/buzz/viewer-conversation';
 const VIEWER = 'a'.repeat(64);
 const choice: ChoiceCardView = {
   choiceId: '11111111-1111-4111-8111-111111111111', mode: 'question', status: 'open',
@@ -84,6 +90,7 @@ it('renders a workflow-closed question as a record without dead option boxes', (
   expect(cardProps().actions).toEqual([]);
   expect(cardProps().noteInput).toBeUndefined();
   expect(cardProps().subline).toBeUndefined();
+  expect(cardProps().wrapTitle).toBe(true);
 });
 
 it('shows the selected outcome and actor after an answer, without option boxes', () => {
@@ -136,4 +143,55 @@ it('keeps closed poll result plates and their vote counts', () => {
   expect(plates()).toHaveLength(2);
   expect(plates()[1].props.choice.votes).toBe(1);
   expect(renderer.root.findAllByType('Pressable')).toHaveLength(0);
+});
+
+function ordinaryProps(): React.ComponentProps<typeof OrdinaryLedgerMessage> {
+  vi.mocked(NewMessageMaterialize).mockImplementation(({ children }: any) => children);
+  vi.mocked(splitViewerContext).mockImplementation(text => ({ body: text }));
+  return {
+    message: { id: 'pending', text: 'Please check the market', isUser: true, pubkey: VIEWER, timestamp: 1 },
+    viewerPubkey: VIEWER, personName: 'Kai', participantsHydrated: true, speakerWorking: false,
+    continued: true, firstBylineOfDay: false, participantHandles: [], channelIndex: { rooms: [], corners: [] },
+    deliveryFailed: false, onChannelReference() {}, onReply() {}, onCopy() {}, onDismiss() {},
+  };
+}
+
+it('SEND-PENDING greys only pending text, then restores committed text without a glyph or status line', () => {
+  const props = ordinaryProps();
+  act(() => { renderer = create(<OrdinaryLedgerMessage {...props} sendState={{ kind: 'sending', text: 'Sending' }} />); });
+  expect(vi.mocked(LedgerSteer).mock.calls.at(-1)?.[0].pending).toBe(true);
+  expect(TurnSettledLine).not.toHaveBeenCalled();
+  act(() => renderer.update(<OrdinaryLedgerMessage {...props} />));
+  expect(vi.mocked(LedgerSteer).mock.calls.at(-1)?.[0].pending).toBe(false);
+  expect(TurnSettledLine).not.toHaveBeenCalled();
+});
+
+it.each([
+  { kind: 'offline' as const, text: 'Not sent' },
+  { kind: 'refused' as const, text: 'Not sent: Room access denied', reason: 'Room access denied' },
+])('SEND-FAILED puts $text under the message with one Retry action', sendState => {
+  const props = ordinaryProps(), retry = vi.fn();
+  act(() => { renderer = create(<OrdinaryLedgerMessage {...props} sendState={sendState} sendFailureIds={['pending']} onRetry={retry} />); });
+  const line = vi.mocked(TurnSettledLine).mock.calls.at(-1)![0];
+  expect(line).toMatchObject({ line: sendState.text, inset: false, leadingGlyph: false, action: { label: 'Retry' } });
+  line.action!.onPress(); expect(retry).toHaveBeenCalledWith(['pending']);
+  expect(vi.mocked(LedgerSteer).mock.calls.at(-1)?.[0].pending).toBe(true);
+});
+
+it('SEND-GROUP emits only the last failure line and retries the exact consecutive group', () => {
+  const props = ordinaryProps(), retry = vi.fn(), sendState = { kind: 'offline' as const, text: 'Not sent' };
+  act(() => { renderer = create(<OrdinaryLedgerMessage {...props} sendState={sendState} onRetry={retry} />); });
+  expect(TurnSettledLine).not.toHaveBeenCalled();
+  act(() => renderer.update(<OrdinaryLedgerMessage {...props} sendState={sendState} sendFailureIds={['a', 'b', 'pending']} onRetry={retry} />));
+  const line = vi.mocked(TurnSettledLine).mock.calls.at(-1)![0];
+  expect(line.line).toBe('3 not sent'); expect(line.action!.label).toBe('Retry all');
+  line.action!.onPress(); expect(retry).toHaveBeenCalledWith(['a', 'b', 'pending']);
+});
+
+it('SEND-ACTIONS keeps tap and long press on the existing message-actions path', () => {
+  const props = ordinaryProps(), actions = vi.fn();
+  act(() => { renderer = create(<OrdinaryLedgerMessage {...props} sendState={{ kind: 'offline', text: 'Not sent' }} onMessageActions={actions} />); });
+  const target = renderer.root.findByProps({ testID: 'copy-message-pending' });
+  act(() => target.props.onPress()); act(() => target.props.onLongPress());
+  expect(actions).toHaveBeenCalledTimes(2); expect(actions).toHaveBeenCalledWith(props.message);
 });

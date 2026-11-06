@@ -5,6 +5,7 @@ import { BeelineMarkSpinner, MARK_CELL } from './BeelineMarkSpinner';
 import { ribbon } from '@/buzz/beeline-glyph';
 import { HullLivePulse } from './MonoHull';
 import { Button } from './Button';
+import { InlineRow } from './IndexRow';
 import { SPINNER_STEP_MS, elapsedSeconds, formatWorkingCounter } from '@/buzz/turn-clock';
 import {
   TURN_LINE_BAR_MARGIN_BOTTOM,
@@ -56,7 +57,10 @@ export const STOP_HIT_SLOP = (44 - TURN_LINE_ROW_MIN_HEIGHT) / 2;
  * the control dims and the counter says `stopping` — before the cancelled
  * receipt lands; a failed stop enables it again.
  */
-export function TurnProgressLine(props: React.ComponentProps<typeof TurnProgressLineBody>) {
+export function TurnProgressLine(props: React.ComponentProps<typeof TurnProgressLineBody> & {
+  /** Accepted external sends use the same line without live motion. */
+  live?: boolean;
+}) {
   // A stream replaces its parent's Stop closure on every tick. Keep the paint
   // boundary stable while the action reads the latest committed turn.
   const stopRef = React.useRef(props.onStop);
@@ -64,7 +68,11 @@ export function TurnProgressLine(props: React.ComponentProps<typeof TurnProgress
     stopRef.current = props.onStop;
   });
   const stop = React.useCallback(() => stopRef.current?.(), []);
-  return <TurnProgressLineBody {...props} onStop={props.onStop ? stop : undefined} />;
+  return props.live === false ? (
+    <TurnSettledLine line={props.label} inset={props.inset} leading testID={props.testID} />
+  ) : (
+    <TurnProgressLineBody {...props} onStop={props.onStop ? stop : undefined} />
+  );
 }
 
 const TurnProgressLineBody = React.memo(function TurnProgressLineBody({
@@ -126,7 +134,7 @@ const TurnProgressLineBody = React.memo(function TurnProgressLineBody({
         >
           <BeelineMarkSpinner live />
         </View>
-        <Text style={styles.label}>
+        <Text numberOfLines={1} ellipsizeMode="tail" style={styles.label}>
           {label}
         </Text>
         {counter != null && (
@@ -170,17 +178,33 @@ const TurnProgressLineBody = React.memo(function TurnProgressLineBody({
  * wall-clock "done" stamp. Static — no breath, no counter, the completed mark
  * — because the turn is over; the screen clears it after a few seconds.
  */
-export function TurnSettledLine({ line, testID }: { line: string; testID?: string }) {
+export function TurnSettledLine({ line, testID, inset = true, leading = false, leadingGlyph = true, action }: {
+  line: string;
+  testID?: string;
+  inset?: boolean;
+  /** The external-send variant shares the thinking mark's optical alignment. */
+  leading?: boolean;
+  leadingGlyph?: boolean;
+  action?: { label: string; onPress(): void };
+}) {
   return (
-    <View accessibilityLabel={line} style={styles.bar} testID={testID}>
-      <View style={styles.row}>
-        <View style={styles.glyphCell} testID={testID ? `${testID}-glyph` : undefined}>
+    <View accessibilityLabel={line} accessibilityLiveRegion={leading ? 'polite' : undefined} style={inset ? styles.bar : [styles.bar, styles.insetBar]} testID={testID}>
+      <InlineRow style={[styles.row, action && !leadingGlyph && styles.actionRow]}>
+        {leadingGlyph ? <View style={leading ? [styles.glyphCell, styles.leadingGlyph] : styles.glyphCell} testID={testID ? `${testID}-glyph` : undefined}>
           <BeelineMarkSpinner />
-        </View>
-        <Text style={styles.label}>
+        </View> : null}
+        <Text numberOfLines={1} ellipsizeMode="tail" style={styles.label}>
           {line}
         </Text>
-      </View>
+        {action ? <>
+          <Text style={styles.counter}> · </Text>
+          <Button size="inline" variant="quiet" label={action.label}
+            appearance={{ control: styles.statusAction, label: styles.counter }}
+            onTouchEnd={event => event.stopPropagation()}
+            onPress={event => { event.stopPropagation(); action.onPress(); }}
+            testID={testID ? `${testID}-retry` : undefined} />
+        </> : null}
+      </InlineRow>
     </View>
   );
 }
@@ -237,6 +261,8 @@ const styles = StyleSheet.create((theme) => {
       paddingHorizontal: groknight.space.md,
     },
     insetBar: { paddingHorizontal: 0 },
+    actionRow: { gap: 0 },
+    statusAction: { minHeight: TURN_LINE_ROW_MIN_HEIGHT, justifyContent: 'center' },
     row: {
       minHeight: TURN_LINE_ROW_MIN_HEIGHT,
       minWidth: 0,

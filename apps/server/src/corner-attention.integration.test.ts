@@ -1,3 +1,4 @@
+import { advanceCorner } from './corner-lifecycle.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { cornerReportWaiting } from './corner-state.js';
 import { cornerWaitingReportSql } from './corner-waiting-report.js';
@@ -10,7 +11,7 @@ import { cornerOwedSchemaSql } from './corner-owed.js';
 import { migrate, PostgresDatabase, type SqlDatabase } from './database.js';
 import { Pool } from 'pg';
 import { randomUUID } from 'node:crypto';
-import { seedCornerOpening, PgliteDatabase, recordCornerRun, insertCornerFacts } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase, insertCornerFacts } from './test-support.js';
 import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';
 import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
@@ -89,8 +90,10 @@ beforeEach(async () => {
   await db.query(`DELETE FROM agent_turns WHERE room_id=$1`,[C]);
   await db.query("UPDATE rooms SET created_at=now()-interval '1 day' WHERE id=$1", [C]);
 });
-const state = async () =>
-  (await daemon.execute('getCornerRestoreState', { cornerId: C }, WORKER)).state;
+const state = async () => {
+  await refreshCornerAttention(db, C); // Drain the committed event in this isolated service fixture.
+  return (await daemon.execute('getCornerRestoreState', { cornerId: C }, WORKER)).state;
+};
 const wake = async (agentId = WORKER, id = 'new-work') =>
   createAgentCommand(db, {
     id,
@@ -157,13 +160,13 @@ async function end(agent = WORKER, age = 0) {
   await db.query(`UPDATE agent_turns SET ended_at=clock_timestamp()-make_interval(secs=>$2)
     WHERE room_id=$1 AND status<>'working' AND agent_id=$3`,[C,age,agent]);
 }
+/** Attention-only check facts have no current PR target; dispatch coverage uses explicit PR facts. */
 async function ci(checks: string) {
   await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
     C,
     JSON.stringify({
       lifecycle: 'in-review',
       checks,
-      pr: { number: 1, url: 'https://github.com/o/r/pull/1', headSha: 'head' },
       checksSummary: {
         status: checks,
         total: 1,
@@ -229,18 +232,18 @@ it.each(['pending', 'passing'])(
     );
     const { reportToCommander } = await import('./commander.js');
     await reportToCommander(db, C, WORKER, 'needs-decision: Please approve this merge?');
-    const expected = checks === 'pending' ? 'review' : 'waiting';
+    const expected = 'waiting';
     expect(await state()).toBe(expected);
     const deck = await phone.liveChatCornerStatus(ROOM, HUMAN);
-    expect(deck).toMatchObject({ waitingCornerCount: checks === 'pending' ? 0 : 1 });
+    expect(deck).toMatchObject({ waitingCornerCount: 1 });
     expect(deck!.openCorners[0].state).toBe(expected);
   },
 );
 it.each([
-  ['agent', 'pending', 'review'],
-  ['human', 'pending', 'review'],
-  ['agent', 'unreported', 'review'],
-  ['human', 'unreported', 'review'],
+  ['agent', 'pending', 'waiting'],
+  ['human', 'pending', 'waiting'],
+  ['agent', 'unreported', 'waiting'],
+  ['human', 'unreported', 'waiting'],
 ] as const)(
   'Reproduction R1: a %s commander blocked report during %s checks is %s',
   async (kind, checks, expected) => {
@@ -302,7 +305,7 @@ it.each(['pending', 'unreported'] as const)(
     );
   },
 );
-it('Reproduction R1: a human hold beside an older agent-commander report stays review under pending CI', async () => {
+it('Reproduction R1: a human hold beside an older agent-commander report stays waiting under pending CI', async () => {
   await ci('pending');
   const { reportToCommander } = await import('./commander.js');
   await reportToCommander(db, C, WORKER, 'blocked: awaiting CI and review');
@@ -311,12 +314,12 @@ it('Reproduction R1: a human hold beside an older agent-commander report stays r
     [C],
   );
   await phone.execute('setCornerHold', { cornerId: C }, HUMAN);
-  expect(await state()).toBe('review');
-  expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]).toMatchObject({ state: 'review' });
+  expect(await state()).toBe('waiting');
+  expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]).toMatchObject({ state: 'waiting' });
   expect(
     (await phone.readChats(WS, HUMAN))!.chats.find((chat) => chat.room.id === ROOM)?.openCorners?.[0]
       ?.state,
-  ).toBe('review');
+  ).toBe('waiting');
 });
 
 it.each(['blocked', 'needs-decision'] as const)(
@@ -352,8 +355,135 @@ it.each(['blocked', 'needs-decision'] as const)(
   },
 );
 
+it('two server instances observe one immediate idle notice without a deadline', async () => {
+  await turn();await end();
+  vi.useFakeTimers();
+  const live = new LiveHub(), errors: unknown[] = [];
+  const a = new CornerAttentionDeadlines(db,live,error=>errors.push(error));
+  const b = new CornerAttentionDeadlines(db,live,error=>errors.push(error));
+  try {
+    await Promise.all([a.start(),b.start()]);
+    expect(await commanderFlags()).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(errors).toEqual([]);
+  } finally {a.stop();b.stop();vi.useRealTimers();}
+});
+
+it('Reproduction IDLE-1: pending CI does not arm a deadline or an idle alert', async () => {
+  await ci('pending');
+  await db.query(
+    `UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checksSummary,updatedAt}',to_jsonb(extract(epoch FROM now()-interval '31 minutes'))) WHERE corner_id=$1`,
+    [C],
+  );
+  vi.useFakeTimers();
+  const live = new LiveHub();
+  const errors: unknown[] = [];
+  const deadlines = new CornerAttentionDeadlines(db, live, (error) => errors.push(error));
+  try {
+    await deadlines.start();
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(1801000);
+    await db.query('SELECT 1');
+    expect(await state()).toBe('review');
+    expect(await commanderFlags()).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(errors).toEqual([]);
+  } finally {
+    deadlines.stop();
+    vi.useRealTimers();
+  }
+});
+
+it('Reproduction CORNER-REVIEW-ROLE: a dispatched reviewer stays Review after Room settings change until its turn ends', async () => {
+  await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+    [C,JSON.stringify({lifecycle:'in-review',checks:'passing',pr:{number:1,headSha:'review-head'}})]);
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,system_event)
+    VALUES('review-source',$1,$2,'Review requested','system',$3::jsonb)`,
+    [C,COMMANDER,JSON.stringify({kind:'check-passed',object:{headSha:'review-head'}})]);
+  const dispatch=await createAgentCommand(db,{id:'review-dispatch',roomId:C,agentId:REVIEWER,
+    sourceMessageId:'review-source',reason:'corner_review_dispatch'});
+  expect(dispatch).toBeTruthy();
+  await db.query(`UPDATE agent_commands SET review_context=$2::jsonb WHERE id=$1`, [dispatch!.id,
+    JSON.stringify({cornerId:C,headSha:'review-head',pullRequest:1,briefRevision:0})]);
+  const serviceStates=async()=>[await state(),(await phone.readCorners(ROOM,HUMAN))!.corners[0]!.state];
+  // A queued reviewer keeps the corner in review during its pickup window.
+  expect(await serviceStates()).toEqual(['review','review']);
+  await daemon.execute('claimAgentCommand',{roomId:C,commandId:dispatch!.id,generationId:'review-proof'},REVIEWER);
+  expect(await serviceStates()).toEqual(['review','review']);
+  await db.query(`UPDATE rooms SET reviewer_agent_id=NULL WHERE id=$1`,[ROOM]);
+  expect(await serviceStates()).toEqual(['review','review']);
+  await runCornerAttention(db);
+  expect(await commanderFlags()).toHaveLength(0);
+  await end(REVIEWER,40);
+  // A terminal review without a verdict returns ownership to the implementer.
+  expect(await serviceStates()).toEqual(['working','working']);
+  console.info('Demonstrated CORNER-REVIEW-ROLE: getCornerRestoreState and PhoneService.readCorners preserve Review across reviewer settings changes, then leave Review on turn completion');
+});
+
 // The production attention entrypoint and command inbox are the stand-in for a
 // background production alert; no live corner is deliberately stalled here.
+it('Reproduction IDLE-1: incidental orders cannot redirect an idle alert from its opening commander', async () => {
+  await createAgentCommand(db, {
+    id: 'incidental-order', roomId: C, agentId: WORKER, sourceMessageId: null, reason: 'order',
+    privatePayload: { kind: 'order', text: 'Check something', authorId: REVIEWER, fromRoomId: ROOM },
+  });
+  await db.query("UPDATE agent_commands SET state='complete' WHERE id='incidental-order'");
+  await db.query('DELETE FROM agent_turns WHERE room_id=$1', [C]);
+  await runCornerAttention(db);
+  expect(await commanderFlags()).toHaveLength(1);
+  expect((await readAgentCommands(db, ROOM, REVIEWER)).commands).toHaveLength(0);
+  expect((await readAgentCommands(db, C, WORKER)).commands).toHaveLength(0);
+});
+it.each(['archived', 'closed', 'landed'])('Reproduction IDLE-1: %s corners never alert', async (kind) => {
+  if (kind === 'archived') await db.query('UPDATE rooms SET archived_at=now() WHERE id=$1', [C]);
+  else {
+    await advanceCorner(db, C, kind === 'closed' ? {kind:'closed'} : {kind:'merged',contents:{}});
+  }
+  await refreshCornerAttention(db, C);
+  expect(await commanderFlags()).toHaveLength(0);
+});
+it.each([WORKER, REVIEWER])('Reproduction IDLE-1: live turns suppress alerts (%s)', async (agent) => {
+  await turn(agent);
+  await runCornerAttention(db);
+  expect(await commanderFlags()).toHaveLength(0);
+  await end(agent, 40);
+  await runCornerAttention(db);
+  await runCornerAttention(db);
+  expect(await commanderFlags()).toHaveLength(1);
+});
+
+it('Reproduction IDLE-1: subscriptions alone do not hide real idle work', async () => {
+  await db.query(`INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,prompt)
+    VALUES(gen_random_uuid(),$1,$2,$3,'room','check-passed','Continue')`, [WS,C,WORKER]);
+  await runCornerAttention(db);
+  expect(await commanderFlags()).toHaveLength(1);
+});
+it.each(['expired', 'exhausted', 'removed'])('Reproduction IDLE-1: %s scheduled waits still allow real idle alerts', async (kind) => {
+  await db.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,message,cadence,next_run_at,max_runs,run_count)
+    VALUES(gen_random_uuid(),$1,$2,$3,$3,'Continue','{"kind":"interval","everySeconds":86400}',now()+interval '1 day',1,0)`, [WS,C,WORKER]);
+  await runCornerAttention(db);
+  expect(await commanderFlags()).toHaveLength(0);
+  if (kind === 'removed') await db.query('DELETE FROM agent_schedules WHERE room_id=$1',[C]);
+  else if (kind === 'expired') await db.query("UPDATE agent_schedules SET next_run_at=now()-interval '1 minute' WHERE room_id=$1",[C]);
+  else await db.query('UPDATE agent_schedules SET run_count=max_runs WHERE room_id=$1',[C]);
+  await runCornerAttention(db);
+  await runCornerAttention(db);
+  expect(await commanderFlags()).toHaveLength(1);
+});
+it('Reproduction IDLE-1: an unfetched new PR head stays quiet beyond the display deadline', async () => {
+  await ci('pending');
+  await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checksSummary}',
+    '{"status":"unknown","total":0}') WHERE corner_id=$1`, [C]);
+  await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checksSummary,updatedAt}',to_jsonb(extract(epoch FROM now()-interval '31 minutes'))) WHERE corner_id=$1`, [C]);
+  await runCornerAttention(db);
+  expect(await commanderFlags()).toHaveLength(0);
+});
+
+it('Reproduction IDLE-1: a running workflow label without a live turn still alerts', async () => {
+  await db.query(`UPDATE corner_github_cache SET lifecycle='{"lifecycle":"running"}' WHERE corner_id=$1`, [C]);
+  await runCornerAttention(db);
+  expect(await commanderFlags()).toHaveLength(1);
+});
 
 async function checksHead(sha: string, checks: 'pending' | 'failing') {
   await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
@@ -376,6 +506,245 @@ async function checksHead(sha: string, checks: 'pending' | 'failing') {
     }),
   ]);
 }
+
+it('Reproduction FIC-1: a live repair stays Working after an hour with no idle alert', async () => {
+  await ci('failing');
+  await turn(WORKER);
+  expect(await state()).toBe('working');
+  await db.query(
+    `UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checksSummary,updatedAt}',to_jsonb(extract(epoch FROM now()-interval '60 minutes'))) WHERE corner_id=$1`,
+    [C],
+  );
+  await runCornerAttention(db);
+  expect(await state()).toBe('working');
+  expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]!.state).toBe('working');
+  expect((await phone.liveChatCornerStatus(ROOM, HUMAN))!.openCorners[0]!.state).toBe('working');
+  const stalls = (await commanderFlags()).filter((command) => command.source.body.includes('is idle'));
+  expect(stalls).toHaveLength(0);
+  await runCornerAttention(db);
+  expect((await commanderFlags()).filter((command) => command.source.body.includes('is idle'))).toHaveLength(0);
+  const reviewer = (await readAgentCommands(db, C, REVIEWER)).commands;
+  expect(reviewer.filter((command) =>
+    command.reason === 'corner_review_dispatch' || command.reason === 'subscribed_event')).toHaveLength(0);
+});
+
+it('Reproduction RED-STALL-PARTIAL: three failed checks wake the implementer while five shards are still pending', async () => {
+  const heads = [1, 2, 3, 4].map((n) => n.toString(16).padStart(40, '0'));
+  for (const sha of heads) await checksHead(sha, 'pending');
+  const { reportToCommander } = await import('./commander.js');
+  await reportToCommander(
+    db,
+    C,
+    WORKER,
+    'blocked: Four pushes without PASS. The reviewer cannot start until checks are green.',
+  );
+  const sha = heads[3]!;
+  await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+    C,
+    JSON.stringify({
+      lifecycle: 'in-review',
+      checks: 'failing',
+      pr: { number: 2890, url: 'https://github.com/o/r/pull/2890', headSha: sha },
+      checksSummary: {
+        status: 'failing',
+        total: 8,
+        updatedAt: Date.now() / 1000,
+        failing: ['MOBILE SUITE', 'FRAME-BUDGET', 'STATE-UPGRADE'],
+        checks: [
+          { name: 'MOBILE SUITE', status: 'failed' },
+          { name: 'FRAME-BUDGET', status: 'failed' },
+          { name: 'STATE-UPGRADE', status: 'failed' },
+          { name: 'SERVER SUITE SHARD 1', status: 'pending' },
+          { name: 'SERVER SUITE SHARD 2', status: 'pending' },
+          { name: 'SERVER SUITE SHARD 3', status: 'pending' },
+          { name: 'SERVER SUITE SHARD 4', status: 'pending' },
+          { name: 'SERVER SUITE SHARD 5', status: 'pending' },
+        ],
+      },
+    }),
+  ]);
+  await systemLine(db, {
+    roomId: C,
+    authorId: WORKER,
+    subject: { kind: 'github', name: 'GitHub' },
+    verb: 'found failing checks on',
+    kind: 'check-failed',
+    object: { text: 'MOBILE SUITE, FRAME-BUDGET, STATE-UPGRADE', headSha: sha },
+    payload: { runInProgress: true },
+  });
+  const worker = (await readAgentCommands(db, C, WORKER)).commands;
+  const repair = worker.find((command) => command.reason === 'corner_check');
+  expect(repair?.source.body).toContain('MOBILE SUITE');
+  expect(repair?.source.body).toContain('FRAME-BUDGET');
+  expect(repair?.source.body).toContain('STATE-UPGRADE');
+  expect(repair?.source.body).toContain('Fix them and push now');
+  expect(repair?.source.body).toContain('still running');
+  const reviewer = (await readAgentCommands(db, C, REVIEWER)).commands;
+  expect(reviewer.filter((command) =>
+    command.reason === 'corner_review_dispatch' || command.reason === 'subscribed_event')).toHaveLength(0);
+  await daemon.execute('claimAgentCommand', {
+    roomId: C, commandId: repair!.id, generationId: 'partial-red',
+  }, WORKER);
+  await daemon.execute('postAgentTurnReceipt', {
+    roomId: C, requestId: repair!.turnRequestId, generationId: 'partial-red', status: 'complete',
+  }, WORKER);
+  await runCornerAttention(db);
+  await runCornerAttention(db);
+  // A genuine blocker stays visible while the remaining shards run.
+  expect(await state()).toBe('waiting');
+  expect((await commanderFlags()).filter(command => command.source.body.includes('is idle'))).toHaveLength(0);
+});
+
+it('Reproduction FIC-1: a blocked report stays visible during pending CI without an idle alert', async () => {
+  await ci('pending');
+  await runCornerAttention(db);
+  expect(await state()).toBe('review');
+  expect((await commanderFlags()).filter((command) => command.source.body.includes('is idle'))).toHaveLength(0);
+  const { reportToCommander } = await import('./commander.js');
+  await reportToCommander(db, C, WORKER, 'blocked: Waiting on the reviewer until checks are green.');
+  expect(await state()).toBe('waiting');
+  await runCornerAttention(db);
+  await runCornerAttention(db);
+  const stalls = (await commanderFlags()).filter((command) => command.source.body.includes('is idle'));
+  expect(stalls).toHaveLength(0);
+  const reviewer = (await readAgentCommands(db, C, REVIEWER)).commands;
+  expect(reviewer.filter((command) =>
+    command.reason === 'corner_review_dispatch' || command.reason === 'subscribed_event')).toHaveLength(0);
+});
+
+it.each(['blocked:', 'needs-decision:'])('FIC-1: red checks with an open %s report stay Waiting', async (prefix) => {
+  await ci('failing');
+  const { reportToCommander } = await import('./commander.js');
+  await reportToCommander(db, C, WORKER, `${prefix} Please resolve this decision.`);
+  expect(await state()).toBe('waiting');
+  expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]!.state).toBe('waiting');
+  await runCornerAttention(db);
+  await runCornerAttention(db);
+  expect((await commanderFlags()).filter(command => command.source.body.includes('is idle'))).toHaveLength(0);
+});
+
+
+it.each(['failed', 'complete'])('Reproduction IDLE-STORM: commander %s does not reopen its own idle episode', async (status) => {
+  await ci('passing');
+  await refreshCornerAttention(db, C);
+  expect(await commanderFlags()).toHaveLength(1);
+  await turn(COMMANDER);
+  await refreshCornerAttention(db, C);
+  await db.query(`UPDATE agent_turns SET status=$2 WHERE room_id=$1 AND agent_id=$3`, [C,status,COMMANDER]);
+  await refreshCornerAttention(db, C);
+  expect((await db.query(`SELECT id FROM agent_commands WHERE reason='report'`)).rows).toHaveLength(1);
+});
+
+it('Reproduction IDLE-STORM: a new worker result opens an idle episode immediately', async () => {
+  await refreshCornerAttention(db,C);
+  expect(await commanderFlags()).toHaveLength(1);
+  await db.query("UPDATE agent_commands SET state='complete' WHERE reason='report'");
+  await turn();await refreshCornerAttention(db,C);await end();
+  const immediate=await refreshCornerAttention(db,C);
+  expect(immediate).toEqual({parentId:ROOM});
+  expect(await commanderFlags()).toHaveLength(1);
+  expect((await db.query("SELECT id FROM agent_commands WHERE reason='report'")).rows).toHaveLength(2);
+});
+
+it.each(['human','push','check','reviewer'])('Reproduction IDLE-STORM: a real %s event can open a fresh idle episode', async (event) => {
+  await ci('passing');
+  await refreshCornerAttention(db,C);
+  await db.query("UPDATE agent_commands SET state='complete' WHERE reason='report'");
+  if (event === 'human') await post('human-change','Continue this work',HUMAN);
+  if (event === 'push') await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(jsonb_set(lifecycle,'{pr,headSha}','"new-head"'),'{checksSummary,updatedAt}',to_jsonb(extract(epoch FROM clock_timestamp()))) WHERE corner_id=$1`,[C]);
+  if (event === 'check') await ci('failing');
+  if (event === 'reviewer') {
+    await turn(REVIEWER); await refreshCornerAttention(db,C); await end(REVIEWER);
+    await refreshCornerAttention(db,C);
+
+  }
+  await refreshCornerAttention(db,C);
+  expect(await commanderFlags()).toHaveLength(1);
+  expect((await db.query("SELECT id FROM agent_commands WHERE reason='report'")).rows).toHaveLength(2);
+});
+
+it.each(['queued-review', 'hold-behind-report', 'pending-with-old-summary'])(
+  'Reproduction REVIEW-LOOP: %s never alerts the commander', async kind => {
+    await ci('passing');
+    if (kind === 'queued-review') {
+      await db.query(`UPDATE corner_github_cache SET lifecycle=lifecycle||'{"pr":{"number":1,"headSha":"head"}}'::jsonb WHERE corner_id=$1`,[C]);
+      const command = await wake(REVIEWER, 'queued-review');
+      await db.query(`UPDATE agent_commands SET review_context=$2::jsonb WHERE id=$1`,
+        [command!.id, JSON.stringify({ headSha: 'head', pullRequest: 1 })]);
+      await db.query(`UPDATE agent_turns SET created_at=now()-interval '2 minutes' WHERE room_id=$1`, [C]);
+
+    } else if (kind === 'hold-behind-report') {
+      const { reportToCommander } = await import('./commander.js');
+      await reportToCommander(db, C, WORKER, 'blocked: awaiting a decision');
+      await db.query(`INSERT INTO corner_merge_holds(corner_id,actor_id,standing) VALUES($1,$2,'owner')`, [C,HUMAN]);
+    } else {
+      await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`, [C]);
+    }
+    for (let cycle=0;cycle<3;cycle++) await refreshCornerAttention(db,C);
+    expect(await commanderFlags()).toHaveLength(0);
+  });
+
+it('Reproduction R1: a worker that ends its turn without a report reads idle at once and alerts its commander once', async () => {
+  // free-credits-film: Baby held an open order, said "continuing next", and
+  // ended its turn with no report and no wake. The corner kept saying working.
+  await wake(WORKER, 'r1-order');
+  await turn();
+  await runCornerAttention(db);
+  expect(await state()).toBe('working');
+  await end(WORKER, 0);
+  // The order was this turn. A still-pending order would correctly stay working.
+  await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id='r1-order'`);
+  expect(await state()).toBe('idle');
+  expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]).toMatchObject({ state: 'idle' });
+  expect(
+    (await phone.readChats(WS, HUMAN))!.chats.find((chat) => chat.room.id === ROOM)?.openCorners?.[0]?.state,
+  ).toBe('idle');
+  // The committed end is the idle signal; no grace timer runs.
+  await runCornerAttention(db);
+  expect((await commanderFlags()).filter((command) => command.source.body.includes('is idle'))).toHaveLength(1);
+  await runCornerAttention(db);
+  await runCornerAttention(db);
+  const stalls = (await commanderFlags()).filter((command) => command.source.body.includes('is idle'));
+  expect(stalls).toHaveLength(1);
+});
+
+it('Reproduction R1: a report filed before the turn ends shows waiting and sends no stall alert', async () => {
+  await turn();
+  await runCornerAttention(db);
+  const { reportToCommander } = await import('./commander.js');
+  await reportToCommander(db, C, WORKER, 'blocked: The signup needs a deposit.');
+  await end(WORKER, 40);
+  expect(await state()).toBe('waiting');
+  await runCornerAttention(db);
+  await runCornerAttention(db);
+  expect((await commanderFlags()).filter((command) => command.source.body.includes('is idle'))).toHaveLength(0);
+});
+
+it('Reproduction R1: a worker that ends its turn with a future schedule reads idle and sends no stall alert', async () => {
+  await wake(WORKER, 'r1-scheduled-order');
+  await turn();
+  await db.query(
+    `INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,message,cadence,next_run_at,max_runs)
+    VALUES(gen_random_uuid(),$1,$2,$3,$3,'Continue the film','{"kind":"interval","everyMinutes":10}',now()+interval '10 minutes',1)`,
+    [WS, C, WORKER],
+  );
+  await runCornerAttention(db);
+  expect(await state()).toBe('working');
+  await end(WORKER, 40);
+  expect(await state()).toBe('idle');
+  expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]).toMatchObject({ state: 'idle' });
+  expect(
+    (await phone.readChats(WS, HUMAN))!.chats.find((chat) => chat.room.id === ROOM)?.openCorners?.[0]?.state,
+  ).toBe('idle');
+  await runCornerAttention(db);
+  await runCornerAttention(db);
+  expect((await commanderFlags()).filter((command) => command.source.body.includes('is idle'))).toHaveLength(0);
+  // Once the schedule is spent, the stall is real again.
+  await db.query("UPDATE agent_schedules SET next_run_at=now()-interval '1 minute' WHERE room_id=$1", [C]);
+  expect(await state()).toBe('idle');
+  await runCornerAttention(db);
+  expect((await commanderFlags()).filter((command) => command.source.body.includes('is idle'))).toHaveLength(1);
+});
 
 // Isolated service reads stand in for the production phone and agent surfaces.
 it('Reproduction HEADER-STATE-1: reviewer on failing checks displays review', async () => {
@@ -403,12 +772,12 @@ it('Reproduction HEADER-STATE-5: a queued reviewer stays review until that comma
   expect(await state()).toBe('idle');
 });
 
-it('Reproduction HEADER-STATE-4: pending CI wins over a human question with a hold', async () => {
+it('Reproduction HEADER-STATE-4: a human question stays visible during pending CI with a hold', async () => {
   await post('scope-question', 'needs-decision: @owner Which scope should I implement?');
   await phone.execute('setCornerHold', { cornerId: C }, HUMAN);
   await ci('pending');
-  expect(await state()).toBe('review');
-  expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]!.state).toBe('review');
+  expect(await state()).toBe('waiting');
+  expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]!.state).toBe('waiting');
   await ci('passing');
   expect(await state()).toBe('waiting');
 });

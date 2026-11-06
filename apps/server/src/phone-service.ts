@@ -6310,8 +6310,6 @@ export class PhoneService {
       await createCornerFacts(database, id);
       await advanceCorner(database, id, {
         kind: 'open',
-        workspaceId: parent.workspace_id,
-        implementerAgentId: viewerId,
       });
       // Every new corner leaves a static opening in its Room. A resident
       // requesting message anchors it; scratch openings stay at their open time.

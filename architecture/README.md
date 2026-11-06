@@ -20,7 +20,7 @@ have zero exceptions. Command creation lives in `agent-command.ts`, including
 explicit connected-app commands minted and claimed in one transaction. All helper
 and MCP acquisition uses `claimAgentCommand`; only its successful working-turn
 write can claim input/resume work. Lease progress uses a generation-fenced owner
-operation. `archiveCornerState` alone runs corner archival cleanup. Subscriptions
+operation. `corner-lifecycle.ts` alone decides and runs corner archival cleanup. Subscriptions
 live in `agent_subscriptions`; legacy JSON may be read only by named upgrade
 functions. `membership-join.ts` owns
 membership SQL and its conflict policies; callers pass their current transaction
@@ -72,7 +72,9 @@ each app so a module cannot grow a second path for the same job.
 Non-strict invariant changes pass CI when the candidate satisfies its declared
 rules. Strict capability boundaries reject changes to their matching scope,
 owner functions, owned sink count or zero allowance; they cannot use the weekly
-warning path to reopen a second owner. `--base` reports those changes for the weekly audit;
+warning path to reopen a second owner. A one-for-one relocation or rename is
+allowed only when the complete owning function bodies are unchanged against the
+base, with the same owned sink count and matching boundary. `--base` reports those changes for the weekly audit;
 it adds no approval or merge gate. CI executes the candidate guard. The owner
 reviews invariant and guard diffs weekly after merging.
 

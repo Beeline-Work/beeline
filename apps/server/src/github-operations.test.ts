@@ -1,3 +1,4 @@
+import { advanceCorner } from './corner-lifecycle.js';
 import { createHash } from 'node:crypto';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cornerRunStateSql } from './corner-run.js';
@@ -174,12 +175,12 @@ describe('GitHub phone operations', () => {
       WHERE fact.corner_id=$1`, [corner])).rows[0]!;
     expect(state.lifecycle).toMatchObject({ outcome: 'landed',
       pr: { mergeCommitSha: 'f'.repeat(40) } });
-    expect(state.workflow_state).toBe('landed');
+    expect(state.workflow_state).toBe('archived');
     expect(state.archived_at).not.toBeNull();
     const terminalCards = () => database.query(`SELECT id,card FROM messages WHERE room_id=$1
       AND card_type='corner-workflow-handoff' AND card->>'toState'='landed' ORDER BY id`, [corner]);
     const committedCards = (await terminalCards()).rows;
-    expect(committedCards).toHaveLength(1);
+    expect(committedCards).toHaveLength(0);
     await operations.processWebhook('check_run', payload);
     expect((await terminalCards()).rows).toEqual(committedCards);
     expect((await database.query(`SELECT fact.lifecycle, ${cornerRunStateSql('fact.corner_id')} workflow_state,
@@ -870,9 +871,8 @@ describe('GitHub phone operations', () => {
     await operations.processWebhook('pull_request', prEvent('reopened', oldHead));
     expect((await facts()).rowCount).toBe(1);
     expect((await wakes()).rows).toEqual([{ agent_id: REVIEWER }]);
-    const run = (await database.query<{ head_sha: string }>(`SELECT
-      COALESCE(card->'contents'->>'headSha',card->>'headSha') head_sha FROM messages
-      WHERE room_id=$1 AND card->>'runId'=$1::text ORDER BY (card->>'seq')::int DESC LIMIT 1`, [corner])).rows[0];
+    const run = (await database.query<{ head_sha: string }>(`SELECT machine->>'headSha' head_sha
+      FROM corner_facts WHERE corner_id=$1`, [corner])).rows[0];
     expect(run?.head_sha).toBe(newHead);
     const daemon = new DaemonService(database, new LiveHub());
     Object.assign(daemon, { github: { assertCornerReviewerNotAuthor: async () => {} } });
@@ -905,7 +905,7 @@ describe('GitHub phone operations', () => {
     });
     expect(await rowState()).toBe('review');
 
-    // A completed fetch that finds no checks keeps the corner idle.
+    // The committed snapshot is visible after its machine event is drained.
     app.readPullRequest.mockResolvedValue({ number: 1, headSha: newHead,
       url: 'https://github.com/owner/widgets/pull/1', mergeability: 'clean' });
     app.readCommitCheckRollup.mockResolvedValueOnce({ state: 'passed', total: 0, failing: [], checks: [] });
@@ -915,6 +915,7 @@ describe('GitHub phone operations', () => {
     expect((await database.query<{ lifecycle: { checksSummary: unknown } }>(
       `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corner],
     )).rows[0]!.lifecycle.checksSummary).toMatchObject({ status: 'unknown', total: 0 });
+    await advanceCorner(database, corner, {kind:'reconcile'});
     expect(await rowState()).toBe('idle');
   });
 
@@ -1079,6 +1080,9 @@ describe('GitHub phone operations', () => {
     expect(self.reviewerWake.status).toBe('waiting');
     expect(self).not.toHaveProperty('rule');
     expect(self).not.toHaveProperty('reviewerIsAuthor');
+    // Finish the previous arrangement task before making the reviewer independent.
+    await database.query(`SELECT beeline_end_agent_turn(id,generation_id,'complete') FROM agent_commands
+      WHERE room_id=$1 AND state IN ('pending','claimed')`,[corners[0]]);
     await setCornerOwner(database, corners[0]!, null);
     await database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checks}','"unknown"') WHERE corner_id=$1`, [corners[0]]);
     const result = await operations.prChecksStatus({ cornerId: corners[0]! });

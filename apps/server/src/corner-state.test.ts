@@ -62,19 +62,19 @@ describe('observed corner states', () => {
       { lifecycle: { lifecycle: 'done', checks: 'passing', outcome: 'landed' } },
       'archived',
     ],
-    ['closed run', { run: { state: 'closed' } }, 'archived'],
+    ['legacy closed card is inert', { run: { state: 'closed' } }, 'idle'],
   ] as const)('%s', (_name, overrides, expected) => {
     expect(deriveCornerState({ ...facts, ...overrides })).toMatchObject({ state: expected });
   });
-  it('gives activity and pending CI precedence over blockers', () => {
+  it('keeps explicit blockers visible during activity and CI', () => {
     expect(
       deriveCornerState({ ...facts, reviewerActive: true, blocker: { reason: 'question' } }),
-    ).toEqual({ state: 'review' });
+    ).toEqual({ state: 'waiting', reason: 'question' });
     const unreported = { ...pushed, checksSummary: emptySummary };
     expect(deriveCornerState({ ...facts, lifecycle: unreported, turnRunning: true })).toEqual({ state: 'working' });
-    expect(deriveCornerState({ ...facts, lifecycle: unreported, blocker: { reason: 'question' } })).toEqual({ state: 'review' });
+    expect(deriveCornerState({ ...facts, lifecycle: unreported, blocker: { reason: 'question' } })).toEqual({ state: 'waiting', reason: 'question' });
     expect(deriveCornerState({ ...facts, reviewerActive: true, blocker: { reason: 'question' } })).toEqual({
-      state: 'review',
+      state: 'waiting', reason: 'question',
     });
   });
 });
@@ -90,7 +90,7 @@ it('failing checks without a turn or blocker fall through to idle', () => {
   expect(deriveCornerState({ ...facts,
     lifecycle: { lifecycle: 'in-review', checks: 'failing' } }).state).toBe('idle');
 });
-it('FIC-1: a blocked report while checks are pending or unreported stays review', () => {
+it('an explicit report stays waiting while checks are pending or unreported', () => {
   const unreported = {
     lifecycle: 'in-review' as const,
     checks: 'unknown' as const,
@@ -100,11 +100,11 @@ it('FIC-1: a blocked report while checks are pending or unreported stays review'
   expect(deriveCornerState({
     ...facts, blocker: { reason: 'question', blocker: { kind: 'report', personId: 'commander' } },
     lifecycle: { lifecycle: 'in-review', checks: 'pending' },
-  }).state).toBe('review');
+  }).state).toBe('waiting');
   expect(deriveCornerState({
     ...facts, blocker: { reason: 'question', blocker: { kind: 'report', personId: 'commander' } },
     lifecycle: unreported,
-  }).state).toBe('review');
+  }).state).toBe('waiting');
 });
 it('a blocked report with failing checks waits for the commander', () => {
   expect(deriveCornerState({
@@ -126,7 +126,7 @@ it.each([
   expect(deriveCornerState({...facts,lifecycle:{lifecycle:'in-review',checks}})).toEqual({state});
 });
 
-it('Reproduction R1: an agent-commander report stays review while checks run, and a human blocker also stays review', () => {
+it('Reproduction R1: an agent-commander report stays waiting while checks run, as does a human blocker', () => {
   const pending = { lifecycle: 'in-review' as const, checks: 'pending' as const };
   const agentReport = {
     reason: 'question' as const,
@@ -135,15 +135,15 @@ it('Reproduction R1: an agent-commander report stays review while checks run, an
   const unreported = { ...pushed, checksSummary: emptySummary };
   expect(deriveCornerState({
     ...facts, lifecycle: pending, blocker: agentReport,
-  })).toEqual({ state: 'review' });
+  })).toEqual({ state: 'waiting', ...agentReport });
   expect(deriveCornerState({
     ...facts, lifecycle: unreported, blocker: agentReport,
-  })).toEqual({ state: 'review' });
+  })).toEqual({ state: 'waiting', ...agentReport });
   expect(deriveCornerState({
     ...facts, lifecycle: pending,
     blocker: { reason: 'question', blocker: { kind: 'report', personId: 'human' } },
   })).toEqual({
-    state: 'review',
+    state: 'waiting', reason: 'question', blocker: { kind: 'report', personId: 'human' },
   });
   expect(deriveCornerState({
     ...facts,
@@ -156,7 +156,7 @@ it('Reproduction R1: an agent-commander report stays review while checks run, an
   expect(deriveCornerState({
     ...facts,
     lifecycle: pending, blocker: agentReport,
-  })).toEqual({ state: 'review' });
+  })).toEqual({ state: 'waiting', ...agentReport });
 });
 
 describe('Reproduction R1: a merge hold blocks only the merge', () => {
@@ -177,11 +177,11 @@ describe('Reproduction R1: a merge hold blocks only the merge', () => {
   it('a held corner without a pull request waits on the hold', () => {
     expect(deriveCornerState(held)).toEqual({ state: 'waiting', ...hold });
   });
-  it('a held corner with a human question shows review while checks run', () => {
+  it('a held corner with a human question waits while checks run', () => {
     const question = { reason: 'question' as const, blocker: { kind: 'message' as const, personId: 'human' } };
     expect(deriveCornerState({
       ...held, blocker: question, lifecycle: { lifecycle: 'in-review', checks: 'pending' },
-    })).toEqual({ state: 'review' });
+    })).toEqual({ state: 'waiting', ...question });
   });
 });
 
@@ -200,7 +200,7 @@ it('CI-MIXED-1: failed checks stay review until every check settles', () => {
   const mixed = { ...facts, lifecycle };
   const blocker = { reason: 'question' as const };
   expect(deriveCornerState(mixed)).toEqual({ state: 'review' });
-  expect(deriveCornerState({ ...mixed, blocker })).toEqual({ state: 'review' });
+  expect(deriveCornerState({ ...mixed, blocker })).toEqual({ state: 'waiting', ...blocker });
   expect(deriveCornerState({ ...mixed, turnRunning: true })).toEqual({ state: 'working' });
   const settled = {
     ...mixed,

@@ -36,7 +36,7 @@ import { phoneExecuteOperation } from './phone/operations.js';
 import { phoneMarkRead, phoneMarkUnread, phoneUploadMedia, phoneObserveSentMessage, phoneSendMessage, phoneSendReply, phoneReactToMessage, phoneDeleteRoomMessage, phoneSetMessageBookmark, phoneClearMessageBookmarks } from './phone/messages.js';
 import { phoneListRoomSchedules, phoneReadScheduledWork, phoneListRoomWorkflowRuns, phoneReadWorkflowRun, phoneDeleteRoomSchedule } from './phone/schedules.js';
 import { phoneReadNeedsYou, phoneReadTray, phoneCountNeedsYou, phoneClearNeedsYou, phoneClearNeedsYouSection, phoneListMessageBookmarks } from './phone/tray.js';
-import { phoneReceiptMessage, phoneActiveSteerAgentIds, phonePendingAgentCommandsForMessage, phoneNoteUnansweredMentions, phoneWriteMentionNotice, phoneUnansweredMentionPhrase, phoneUnansweredMentionTargets } from './phone/mention-notices.js';
+import { phoneReceiptMessage, phonePendingAgentCommandsForMessage, phoneNoteUnansweredMentions, phoneWriteMentionNotice, phoneUnansweredMentionPhrase, phoneUnansweredMentionTargets } from './phone/mention-notices.js';
 import { phoneCancelAgentTurn, phoneRequestCornerClose, phoneDecideApprovalCard, phoneDecidePermission } from './phone/approvals.js';
 import { phoneCreateWorkspace, phoneUpdateWorkspace, phoneLeaveWorkspace, phoneDeleteWorkspace } from './phone/workspace-writes.js';
 import { phoneCreateRoom, phoneCreateHumanCorner, phoneRenameCorner, phoneUpdateRoom, phoneDeleteRoom, phoneDeleteRoomRows, phoneLeaveRoom, phoneCloseChat, phoneReopenChat, phoneAddRoomMember, phoneRemoveRoomMember } from './phone/room-writes.js';
@@ -376,7 +376,6 @@ export class PhoneService {
   async clearNeedsYouSection(input: Input<'clearNeedsYouSection'>, viewerId: string): Promise<void> { return phoneClearNeedsYouSection(this, input, viewerId); }
   async listMessageBookmarks(input: Input<'listMessageBookmarks'>, viewerId: string): Promise<Output<'listMessageBookmarks'>> { return phoneListMessageBookmarks(this, input, viewerId); }
   async receiptMessage(roomId: string, viewerId: string, messageIdValue: string, database: SqlDatabase) { return phoneReceiptMessage(this, roomId, viewerId, messageIdValue, database); }
-  async activeSteerAgentIds(database: SqlDatabase, messageIdValue: string) { return phoneActiveSteerAgentIds(this, database, messageIdValue); }
   async pendingAgentCommandsForMessage(database: SqlDatabase, roomId: string, messageIdValue: string): Promise<NonNullable<RoomView['pendingAgentCommands']>> { return phonePendingAgentCommandsForMessage(this, database, roomId, messageIdValue); }
   async noteUnansweredMentions(roomId: string, senderId: string, agentIds: readonly string[], afterMessageId?: string): Promise<void> { return phoneNoteUnansweredMentions(this, roomId, senderId, agentIds, afterMessageId); }
   async writeMentionNotice(database: SqlDatabase, input: {

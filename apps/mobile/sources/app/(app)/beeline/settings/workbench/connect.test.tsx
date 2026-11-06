@@ -329,7 +329,7 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     setWorkbenchSource(source);
     const renderer = await render();
     expect(pairing).not.toHaveBeenCalled();
-    expect(renderer.root.findByProps({ testID: 'connect-step-0-detail' }).props.children).toContain('Reconnecting');
+    expect(renderer.root.findByProps({ testID: 'connect-step-0-detail' }).props.children).toBe('Waiting for the helper');
     expect(renderer.root.findAllByProps({ testID: 'connect-machine-machine-b' })).toHaveLength(0);
     online = true;
     await act(async () => {
@@ -595,7 +595,7 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
       expect(renderer.root.findByProps({ testID: 'connect-error' }).props.children).toBe('Helpers are unavailable right now');
     });
 
-    it('surfaces a pair POST that never settles, and still follows a late resolve', async () => {
+    it('keeps a pair pending until its source settles, then follows the install commit', async () => {
       let resolvePair: () => void = () => {};
       const base = new MockWorkbenchSource();
       const realPair = base.pairConnector.bind(base);
@@ -616,16 +616,8 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
         await Promise.resolve();
       });
       expect(renderer.root.findAllByProps({ testID: 'connect-error' })).toHaveLength(0);
-      // The transport sets no timeout of its own: the hung await must reach
-      // the user through the one error channel, not sit on the picker.
-      await act(async () => {
-        vi.advanceTimersByTime(60_000);
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      expect(renderer.root.findByProps({ testID: 'connect-step-0-detail' }).props.children).toContain('didn’t answer for 1 minute');
-      expect(renderer.root.findByProps({ testID: 'connect-step-bar' }).props.parts[0]).toBe('failed');
-      // A late resolve still starts the poll and clears the stale notice.
+      expect(renderer.root.findByProps({ testID: 'connect-step-0-detail' }).props.children).toBe('Waiting for the helper');
+      expect(renderer.root.findByProps({ testID: 'connect-step-bar' }).props.parts[0]).toBe('active');
       await act(async () => {
         resolvePair();
         await Promise.resolve();

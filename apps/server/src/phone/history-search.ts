@@ -1,3 +1,4 @@
+import { messageColumns } from '../message-columns.js';
 import type { MessageSearchView, RoomHistoryOutline, RoomHistoryView } from '@beeline/api-contract/phone';
 import { messageSearchTerms } from '@beeline/api-contract/phone';
 import { visibleMessageSql } from '../read-cursor.js';
@@ -108,11 +109,7 @@ import { phoneDecorateMessageCards } from './message-decoration.js';
   }
 
 
-  export async function phoneReadHistoryAround(ctx: PhoneContext,
-    roomId: string,
-    viewerId: string,
-    targetId: string,
-  ): Promise<RoomHistoryView | null> {
+  export async function phoneReadHistoryAround(ctx: PhoneContext, roomId: string, viewerId: string, targetId: string): Promise<RoomHistoryView | null> {
     const result = await ctx.database.query<{ rows: MessageRow[] }>(
       `WITH authorized AS (
         SELECT 1 FROM rooms room JOIN memberships room_member ON room_member.room_id=COALESCE(room.parent_id,room.id)
@@ -137,7 +134,7 @@ import { phoneDecorateMessageCards } from './message-decoration.js';
             AND ${visibleMessageSql('m')}
           ORDER BY m.created_at DESC,m.id DESC LIMIT 15)
        ), page AS (
-       SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
+       SELECT ${messageColumns('m')},i.kind author_kind,i.name author_name,i.handle author_handle,
          i.avatar author_avatar,i.face_id author_face,
          ${reactionIdentitiesSql('m')} reaction_identities,
          '{}'::text[] tagged_ids
@@ -152,18 +149,14 @@ import { phoneDecorateMessageCards } from './message-decoration.js';
     const loaded = result.rows[0];
     if (!loaded) return null;
     const rows = loaded.rows.map((row) => reviveDates(row, ['created_at','deleted_at']));
-    const attachmentFacts = await phoneEnrichHistoryRows(ctx, rows, viewerId);
+    const attachmentFacts = await ctx.enrichHistoryRows(rows, viewerId);
     const messages = rows.map((row) => projectedMessage(row, ctx.publicOrigin, viewerId));
-    const appMessages = await phoneDecorateMessageCards(ctx, roomId, messages, viewerId);
+    const appMessages = await ctx.decorateMessageCards(roomId, messages, viewerId);
     return { roomId, messages: decorateAttachments(appMessages, attachmentFacts) };
   }
 
 
-  export async function phoneReadHistoryAfter(ctx: PhoneContext,
-    roomId: string,
-    viewerId: string,
-    afterId: string,
-  ): Promise<RoomHistoryView | null> {
+  export async function phoneReadHistoryAfter(ctx: PhoneContext, roomId: string, viewerId: string, afterId: string): Promise<RoomHistoryView | null> {
     const result = await ctx.database.query<{ rows: MessageRow[]; cursor_exists: boolean }>(
       `WITH authorized AS (
         SELECT 1 FROM rooms room JOIN memberships room_member ON room_member.room_id=COALESCE(room.parent_id,room.id)
@@ -174,7 +167,7 @@ import { phoneDecorateMessageCards } from './message-decoration.js';
               AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
               AND workspace_member.removed_at IS NULL))
       ), page AS (
-      SELECT m.*,
+      SELECT ${messageColumns('m')},
          i.kind author_kind,i.name author_name,i.handle author_handle,
          i.avatar author_avatar,i.face_id author_face,
          ${reactionIdentitiesSql('m')} reaction_identities,
@@ -197,18 +190,14 @@ import { phoneDecorateMessageCards } from './message-decoration.js';
     const loaded = result.rows[0];
     if (!loaded || !loaded.cursor_exists) return null;
     const rows = loaded.rows.map((row) => reviveDates(row, ['created_at','deleted_at']));
-    const attachmentFacts = await phoneEnrichHistoryRows(ctx, rows, viewerId);
+    const attachmentFacts = await ctx.enrichHistoryRows(rows, viewerId);
     const messages = rows.map((row) => projectedMessage(row, ctx.publicOrigin, viewerId));
-    const appMessages = await phoneDecorateMessageCards(ctx, roomId, messages, viewerId);
+    const appMessages = await ctx.decorateMessageCards(roomId, messages, viewerId);
     return { roomId, messages: decorateAttachments(appMessages, attachmentFacts) };
   }
 
 
-  export async function phoneReadHistory(ctx: PhoneContext,
-    roomId: string,
-    viewerId: string,
-    before?: { createdAt: number; id: string },
-  ): Promise<RoomHistoryView | null> {
+  export async function phoneReadHistory(ctx: PhoneContext, roomId: string, viewerId: string, before?: { createdAt: number; id: string }): Promise<RoomHistoryView | null> {
     const result = await ctx.database.query<{ rows: MessageRow[] }>(
       `WITH authorized AS (
         SELECT 1 FROM rooms room
@@ -222,7 +211,7 @@ import { phoneDecorateMessageCards } from './message-decoration.js';
       ), cursor AS (
         SELECT created_at,id FROM messages WHERE room_id=$1 AND id=$3
       ), page AS (
-        SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
+        SELECT ${messageColumns('m')},i.kind author_kind,i.name author_name,i.handle author_handle,
           i.avatar author_avatar,i.face_id author_face,
           ${reactionIdentitiesSql('m')} reaction_identities,
           '{}'::text[] tagged_ids
@@ -242,12 +231,12 @@ import { phoneDecorateMessageCards } from './message-decoration.js';
     if (!loaded) return null;
     const rows = loaded.rows.map((row) => reviveDates(row, ['created_at','deleted_at']));
     const page = rows.slice(0, 30);
-    const attachmentFacts = await phoneEnrichHistoryRows(ctx, page, viewerId);
+    const attachmentFacts = await ctx.enrichHistoryRows(page, viewerId);
     const tail = page.at(-1);
     const messages = page
       .reverse()
       .map((row) => projectedMessage(row, ctx.publicOrigin, viewerId));
-    const appMessages = await phoneDecorateMessageCards(ctx, roomId, messages, viewerId);
+    const appMessages = await ctx.decorateMessageCards(roomId, messages, viewerId);
     return {
       roomId,
       messages: decorateAttachments(appMessages, attachmentFacts),

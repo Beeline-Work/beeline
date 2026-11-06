@@ -78,7 +78,7 @@ export async function requireScheduledWorkReader(db: SqlDatabase, roomId: string
 }
 
 /** Humans manage their own DMs; Rooms retain Workspace admin authority. */
-export async function requireScheduledWorkManager(db: SqlDatabase, roomId: string, viewerId: string, allowCorner = false, denialMessage = 'workspace admins only'): Promise<void> {
+export async function requireScheduledWorkManager(db: SqlDatabase, roomId: string, viewerId: string, allowCorner = false, denialMessage = 'workspace admins only', holdAuthority = false): Promise<void> {
   const room = (await db.query<{ parent_id: string | null; archived_at: Date | null }>(
     'SELECT parent_id,archived_at FROM rooms WHERE id=$1', [roomId])).rows[0];
   if (!room) throw new Error('room not found');
@@ -90,12 +90,23 @@ export async function requireScheduledWorkManager(db: SqlDatabase, roomId: strin
      WHERE room.id=$1 AND (room.parent_id IS NULL OR $3) AND room.archived_at IS NULL AND (
        (room.direct_participants IS NOT NULL AND room.direct_participants ? $2
          AND EXISTS (SELECT 1 FROM memberships member WHERE member.room_id=room.id
-           AND member.identity_id=$2 AND member.removed_at IS NULL))
+           AND member.identity_id=$2 AND member.removed_at IS NULL ${holdAuthority?'FOR SHARE OF member':''}))
        OR (room.direct_participants IS NULL AND EXISTS (
          SELECT 1 FROM memberships member WHERE member.workspace_id=room.workspace_id
            AND member.room_id IS NULL AND member.identity_id=$2 AND member.removed_at IS NULL
-           AND member.role IN ('owner','admin'))))`, [roomId, viewerId, allowCorner]);
+           AND member.role IN ('owner','admin') ${holdAuthority?'FOR SHARE OF member':''})))
+       ${holdAuthority?'FOR SHARE OF room,person':''}`, [roomId, viewerId, allowCorner]);
   if (!allowed.rowCount) throw new Error(denialMessage);
+}
+
+/** A DM participant's Workspace role still controls its read-only policy. */
+export async function requireScheduledStopManager(db:SqlDatabase,roomId:string,viewerId:string):Promise<void>{
+  await requireScheduledWorkManager(db,roomId,viewerId,false,'workspace admins only',true);
+  const roles=await db.query<{role:string}>(`SELECT member.role FROM memberships member
+    WHERE member.identity_id=$1 AND member.room_id IS NULL AND member.removed_at IS NULL
+      AND member.workspace_id=(SELECT workspace_id FROM rooms WHERE id=$2)
+    FOR SHARE OF member NOWAIT`,[viewerId,roomId]);
+  if(roles.rows.some(member=>member.role==='spectator'))throw new Error('spectator access is read-only (access denied)');
 }
 
 /** One authority check for both the commanding human and phone operations. */

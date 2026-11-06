@@ -1,3 +1,4 @@
+import { messageColumns } from '../message-columns.js';
 import { CommandScopedDatabase } from '../command-scoped-database.js';
 import { isMentionReplyInput } from '../owed-mentions.js';
 import { observeOnboardingMessage } from '../signin-funnel.js';
@@ -68,7 +69,7 @@ import { phoneReadLiveDelta, phoneLiveStarPrompt } from './live-reads.js';
   export async function phoneMarkUnread(ctx: PhoneContext, roomId: string, messageIdValue: string, viewerId: string): Promise<void> {
     const result = (await ctx.database.query<{ accessible: boolean; countable: boolean }>(
       `WITH accessible AS (
-         SELECT message.* FROM messages message
+         SELECT ${messageColumns('message')} FROM messages message
          JOIN rooms room ON room.id=message.room_id
          JOIN memberships room_member ON room_member.room_id=COALESCE(room.parent_id,room.id)
            AND room_member.identity_id=$2 AND room_member.removed_at IS NULL
@@ -77,7 +78,7 @@ import { phoneReadLiveDelta, phoneLiveStarPrompt } from './live-reads.js';
            AND workspace_member.removed_at IS NULL
          WHERE message.id=$1 AND room.id=$3
        ), target AS (
-         SELECT * FROM accessible message WHERE ${unreadMessageSql('message')}
+         SELECT accessible_row.* FROM accessible accessible_row WHERE ${unreadMessageSql('accessible_row')}
        ), previous AS (
          SELECT earlier.id,earlier.created_at FROM target
          JOIN messages earlier ON earlier.room_id=target.room_id

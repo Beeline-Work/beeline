@@ -1,8 +1,10 @@
+import { dropQueuedOrdersForStop } from '../agent-command-queue.js';
+import { lockAgentCommandQueue } from '../agent-command-queue.js';
 import { endAgentTurn } from '../agent-turn-end.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { deleteCornerBranchBestEffort } from '../corner-branch-cleanup.js';
 import { cornerKindSql } from '../corner-opening.js';
-import { dropQueuedOrdersForStop, lockAgentCommandQueue, type CommandRow } from '../agent-command.js';
+import { type CommandRow } from '../agent-command.js';
 import { type SqlDatabase } from '../database.js';
 import { lockCornerLifecycle, setCornerLockedFact } from '../corner-lifecycle.js';
 import { identitySubject, systemIdentityMention, systemLine } from '../system-line.js';
@@ -44,9 +46,9 @@ import { messageId, SPENDING_OWNER_AUTHORITY_MESSAGE } from './values.js';
    *      never start the very turn it exists to end.
    */
   export async function phoneCancelAgentTurn(ctx: PhoneContext, input: Input<'cancelAgentTurn'>, viewerId: string) {
-    if (!(await phoneHasRoomAccess(ctx, input.roomId, viewerId))) throw new Error('room access denied');
-    const stopper = await phoneRequireIdentity(ctx, viewerId);
-    const agent = await phoneRequireIdentity(ctx, input.agentId);
+    if (!(await ctx.hasRoomAccess(input.roomId, viewerId))) throw new Error('room access denied');
+    const stopper = await ctx.requireIdentity(viewerId);
+    const agent = await ctx.requireIdentity(input.agentId);
     await ctx.database.transaction(async (database) => {
       const member = (
         await database.query(
@@ -63,7 +65,7 @@ import { messageId, SPENDING_OWNER_AUTHORITY_MESSAGE } from './values.js';
       if (!member) throw new Error('room access denied');
       await lockAgentCommandQueue(database, input.roomId, input.agentId);
       const commands = await database.query<CommandRow>(
-        `SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3
+        `SELECT agent_commands.* FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3
          AND action IN ('input','resume') AND state IN ('pending','claimed')
          AND EXISTS(SELECT 1 FROM messages source WHERE source.id=agent_commands.root_source_message_id) ORDER BY created_at DESC,id DESC FOR UPDATE`,
         [input.roomId, input.agentId, input.requestId],

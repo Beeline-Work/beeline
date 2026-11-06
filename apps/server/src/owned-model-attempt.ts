@@ -6,8 +6,9 @@ import { performance } from 'node:perf_hooks';
 import { CommandRefusalError } from './command-refusal.js';
 import type { SqlDatabase } from './database.js';
 import type { OwnedModelCredentials, AuthenticatedOwnedModel, OwnedModelBinding } from './owned-model-credential.js';
-import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
+import { lockRoomAccess } from './room-access-lock.js';
 import { assertCurrentTurnOwner } from './turn-ownership.js';
+import { AllowanceRefusal } from './free-agent-accounting.js';
 
 /** Same body bound as the existing model HTTP endpoint, never a larger escape. */
 const MAX_PAYLOAD_BYTES = 8 * 1024 * 1024;
@@ -116,6 +117,11 @@ interface Row {
   request_digest: string; payload_digest: string; reservation: OwnedModelReservation;
   state: 'unknown' | 'succeeded' | 'refused'; evidence: OwnedModelEvidence | null; evidence_hash: string | null;
 }
+/** Roll back a competing speculative quota reservation before returning the
+ * already committed receipt. This never repeats a write or creates a permit. */
+class ReplayedAttempt extends Error {
+  constructor(readonly row: Row) { super('Owned model request already committed'); }
+}
 export class OwnedModelIdentityConflict extends CommandRefusalError {
   constructor() { super('Owned model request identity conflict', 409); }
 }
@@ -141,10 +147,6 @@ function evidence(value: OwnedModelEvidence): string {
       value.kind === 'provider-refused' && ![400, 401, 402, 403, 404, 413, 422, 429].includes(value.status)) throw new OwnedModelIdentityConflict();
   return createHash('sha256').update('beeline:owned-model:evidence:v1\0').update(canonicalOwnedModelPayload(value).body).digest('hex');
 }
-async function accountingLocks(database: SqlDatabase, ownerId: string): Promise<void> {
-  await database.query(`SELECT pg_advisory_xact_lock(hashtext('free-agent-global-budget'))`);
-  await database.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`free-agent-usage:${ownerId}`]);
-}
 type Settlement = (database: SqlDatabase, reservation: OwnedModelReservation, evidence: OwnedModelEvidence) => Promise<void>;
 
 export class OwnedModelAttempts {
@@ -160,8 +162,13 @@ export class OwnedModelAttempts {
     if (!requestId(id)) throw new OwnedModelIdentityConflict();
     const owned = this.credentials.actor(actor), canonical = canonicalOwnedModelPayload(semanticInput);
     const semantic = createHash('sha256').update('beeline:owned-model:request:v1\0').update(canonical.body).digest('hex');
-    const admitted = await this.database.transaction(async database => {
-      await accountingLocks(database, owned.ownerId);
+    const replay = async (database: SqlDatabase): Promise<void> => {
+      const row = (await database.query<Row>('SELECT * FROM owned_model_attempts WHERE credential_id=$1 AND model_request_id=$2', [owned.id,id])).rows[0];
+      if (!row) return;
+      if (row.request_digest !== semantic) throw new OwnedModelIdentityConflict();
+      throw new ReplayedAttempt(row);
+    };
+    const admitted: { row: Row; body?: string } = await this.database.transaction(async database => {
       // Serializes reservation COMMIT with a new claim generation. Otherwise
       // its UNKNOWN could appear just after a new credential was issued.
       await this.credentials.lockInvocation(database, actor);
@@ -175,16 +182,30 @@ export class OwnedModelAttempts {
         [owned.commandId, owned.generationId])).rowCount) throw new OwnedModelUnknownGeneration();
       if ((await database.query(`SELECT 1 FROM owned_model_attempts WHERE command_id=$1 AND generation_id=$2 AND request_digest=$3 AND state='unknown'`,
         [owned.commandId, owned.generationId, semantic])).rowCount) throw new OwnedModelUnknownPayload();
-      const prepared = await reserve(database, owned);
+      let prepared: Awaited<ReturnType<typeof reserve>>;
+      try { prepared = await reserve(database, owned); }
+      catch (error) {
+        // A competing same-ID request may have consumed the last allowance.
+        // Its committed receipt still owns this identity, rather than a new ask.
+        if (error instanceof AllowanceRefusal) await replay(database);
+        throw error;
+      }
+      await replay(database);
       reservation(prepared.reservation);
       const payload = canonicalOwnedModelPayload(prepared.payload);
       if (prepared.payload.model !== owned.model || prepared.payload.max_tokens !== prepared.reservation.maxOutput) throw new OwnedModelIdentityConflict();
-      if ((await database.query(`SELECT 1 FROM owned_model_attempts WHERE command_id=$1 AND generation_id=$2 AND payload_digest=$3 AND state='unknown'`,
-        [owned.commandId, owned.generationId, payload.digest])).rowCount) throw new OwnedModelUnknownPayload();
       const row = (await database.query<Row>(`INSERT INTO owned_model_attempts(credential_id,model_request_id,command_id,generation_id,agent_id,owner_id,
-        request_digest,payload_digest,reservation,state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,'unknown') RETURNING *`,
-      [owned.id, id, owned.commandId, owned.generationId, owned.agentId, owned.ownerId, semantic, payload.digest, JSON.stringify(prepared.reservation)])).rows[0]!;
+        request_digest,payload_digest,reservation,state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,'unknown')
+        ON CONFLICT(credential_id,model_request_id) DO NOTHING RETURNING *`,
+      [owned.id, id, owned.commandId, owned.generationId, owned.agentId, owned.ownerId, semantic, payload.digest, JSON.stringify(prepared.reservation)])).rows[0];
+      if (!row) { await replay(database); throw new OwnedModelUnknownPayload(); }
       return { row, body: payload.body };
+    }).catch((error: unknown) => {
+      if (error instanceof ReplayedAttempt) return { row:error.row };
+      const conflict = error as { code?: unknown; constraint?: unknown } | null;
+      if (conflict?.code === '23505' && (conflict.constraint === 'owned_model_unknown_request' || conflict.constraint === 'owned_model_unknown_payload'))
+        throw new OwnedModelUnknownPayload();
+      throw error;
     });
     if (admitted.body === undefined) return { receipt: receipt(admitted.row) };
     const permit = Object.freeze({}) as OwnedModelDispatchPermit;
@@ -206,7 +227,7 @@ export class OwnedModelAttempts {
     let completion: Promise<T> | undefined;
     try {
       await this.database.transaction(async database => {
-        await database.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', [ROUTER_AUTHORITY_LOCK]);
+        if (!await lockRoomAccess(database, [owned.roomId], [owned.agentId])) throw new OwnedModelRefusal();
         await assertCurrentTurnOwner(database, owned.agentId, { connectionId: owned.connectionId, epoch: owned.connectionEpoch });
         await this.credentials.lockInvocation(database, pending.actor);
         await database.query('SELECT agent_id FROM free_agents WHERE agent_id=$1 FOR SHARE NOWAIT', [owned.agentId]);
@@ -253,7 +274,6 @@ export class OwnedModelAttempts {
     const owned = this.credentials.actor(actor), digest = evidence(value);
     if (!requestId(id)) throw new OwnedModelIdentityConflict();
     return this.database.transaction(async database => {
-      await accountingLocks(database, owned.ownerId);
       const old = (await database.query<Row>('SELECT * FROM owned_model_attempts WHERE credential_id=$1 AND model_request_id=$2 FOR UPDATE', [owned.id, id])).rows[0];
       if (!old || old.command_id !== owned.commandId || old.generation_id !== owned.generationId || old.owner_id !== owned.ownerId ||
           old.evidence_hash && old.evidence_hash !== digest || old.state !== 'unknown' && old.state !== outcome) throw new OwnedModelIdentityConflict();

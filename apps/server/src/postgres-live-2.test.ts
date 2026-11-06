@@ -685,12 +685,11 @@ const scope1 = fixtureScope1();
         [WORKSPACE, roomId, agent],
       );
     }
-    for (const roomId of roomIds)
-      await scope1.database.query(
+    await scope1.database.query(
         `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
          VALUES($1,$2,'presence','presence',$3::jsonb)`,
         [
-          roomId,
+          roomIds[0],
           agent,
           JSON.stringify({
             status: 'online',

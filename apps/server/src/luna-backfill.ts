@@ -67,16 +67,15 @@ export async function backfillLuna(database: SqlDatabase, config: FreeAgentConfi
     if (!options.apply) { results.push({ ...target, result: target.luna_id ? 'already present' : 'would add Luna' }); continue; }
     if (!config) throw new Error('Free-agent configuration is required for --apply');
     const result = await database.transaction(async db => {
-      await db.query(`SELECT id FROM workspaces WHERE id=$1 FOR UPDATE`, [target.workspace_id]);
       const current = (await lunaBackfillTargets(db)).find(row => row.workspace_id === target.workspace_id && row.room_id === target.room_id);
       if (!current) return 'no longer eligible';
       if (current.luna_id) return 'already present';
-      await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`free-agent-create:${current.owner_id}`]);
       const luna = await createFreeAgentInWorkspace(db, {
         ...config, model: config.lunaModel ?? 'openai/gpt-6-luna',
       }, { workspaceId: current.workspace_id, creatorId: current.owner_id, roomId: current.room_id,
         name: 'Luna', silent: true, team: true });
-      if (!luna) return 'owner at agent limit';
+      if (!luna) return (await db.query(`SELECT 1 FROM free_agents WHERE workspace_id=$1 AND starter_role='luna'`,
+        [current.workspace_id])).rowCount ? 'already present' : 'owner at agent limit';
       for (const agent of [current.beebee_id, luna]) await setRoomEventSubscriptions(db, current.room_id, agent, FREE_AGENT_EVENT_SUBSCRIPTIONS);
       await db.query(`UPDATE free_agents SET starter_role='beebee' WHERE agent_id=$1 AND starter_role IS NULL`, [current.beebee_id]);
       await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4) ON CONFLICT(id) DO NOTHING`, [

@@ -1,3 +1,4 @@
+import { recordPostgresStatementError } from './postgres-error.js';
 export { messageSearchDocumentSql, MESSAGE_SEARCH_DOCUMENT_MAX_BYTES } from './message-search-document-sql.js';
 import { DATABASE_SCHEMA_WORKFLOW_BACKFILLS } from './database-schema-workflow-backfills.js';
 import { DATABASE_SCHEMA_INSTITUTIONAL_MEMORY_ITEMS } from './database-schema-institutional-memory-items.js';
@@ -9,7 +10,7 @@ import { createHash } from 'node:crypto';
 import { QueryProfiler } from './query-profile.js';
 import { DatabaseBackgroundWork } from './database-background-work.js';
 import { migrate, migrateData } from './database-migrate.js';
-import { backfillSquireApprovalExpiry, keywordsFromBody, retireStandingPreferences, MESSAGE_SEARCH_BACKFILL_BATCH, backfillMessageSearchDocuments, backfillConnectorMachineId, compactWebhookDeliveries, compactPushClaims, backfillAgentHandles, backfillInstitutionalMemoryRollout, backfillSystemEventKinds, backfillPerItemEventSubscriptions, backfillCornerOwed, measureDatabase, measureDatabaseBreakdown } from './database-backfill-squire-approval-expiry.js';
+import { backfillSquireApprovalExpiry, keywordsFromBody, retireStandingPreferences, MESSAGE_SEARCH_BACKFILL_BATCH, backfillMessageSearchDocuments, backfillConnectorMachineId, compactWebhookDeliveries, compactPushClaims, backfillInstitutionalMemoryRollout, backfillSystemEventKinds, backfillPerItemEventSubscriptions, backfillCornerOwed, measureDatabase, measureDatabaseBreakdown } from './database-backfill-squire-approval-expiry.js';
 
 
 
@@ -205,7 +206,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 46;
+export const REQUIRED_SCHEMA_VERSION = 48;
 
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
@@ -324,6 +325,7 @@ export class PostgresDatabase implements ClosableDatabase {
     try {
       return await work();
     } catch (caught) {
+      recordPostgresStatementError(caught,sql);
       error = caught;
       throw caught;
     } finally {
@@ -480,6 +482,7 @@ export class PostgresDatabase implements ClosableDatabase {
       this.#noteSuccess();
       return result;
     } catch (error) {
+      recordPostgresStatementError(error,'COMMIT');
       this.#noteFailure(error);
       if (isTransientDatabaseConnectionError(error))
         releaseError = error instanceof Error ? error : new Error('transaction connection failed');
@@ -560,7 +563,6 @@ export { backfillMessageSearchDocuments } from './database-backfill-squire-appro
 export { backfillConnectorMachineId } from './database-backfill-squire-approval-expiry.js';
 export { compactWebhookDeliveries } from './database-backfill-squire-approval-expiry.js';
 export { compactPushClaims } from './database-backfill-squire-approval-expiry.js';
-export { backfillAgentHandles } from './database-backfill-squire-approval-expiry.js';
 export { backfillInstitutionalMemoryRollout } from './database-backfill-squire-approval-expiry.js';
 export { backfillSystemEventKinds } from './database-backfill-squire-approval-expiry.js';
 export { backfillPerItemEventSubscriptions } from './database-backfill-squire-approval-expiry.js';

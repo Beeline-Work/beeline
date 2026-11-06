@@ -82,3 +82,15 @@ it('caps novel errors at 100 per rolling hour with bounded state and independent
   now++;
   expect(filter(event(101))).not.toBeNull();
 });
+
+it('keeps statement fingerprints and redacted PostgreSQL lock graphs without arbitrary contexts or key values',()=>{
+  const statement_fingerprint='a'.repeat(16);
+  const event=privateErrorEvent({contexts:{device:{name:'private'},postgresql:{code:'40P01',statement_fingerprint,
+    detail:'Process 10 waits on user@example.com Bearer private',sql:'SELECT private',parameters:['private']}}});
+  expect(event.contexts).toEqual({postgresql:{code:'40P01',statement_fingerprint,
+    detail:'Process 10 waits on [email] Bearer [redacted]'}});
+  const constraint=privateErrorEvent({contexts:{postgresql:{code:'23505',statement_fingerprint,detail:'Key (secret)=(private)'}}});
+  expect(constraint.contexts).toEqual({postgresql:{code:'23505',statement_fingerprint}});
+  expect(privateErrorEvent({contexts:{postgresql:{code:'40P01',statement_fingerprint:'SELECT private',detail:'private'}}}))
+    .not.toHaveProperty('contexts');
+});

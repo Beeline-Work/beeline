@@ -1,3 +1,4 @@
+import { storeGitHubInstallations } from './github-installation-store.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { deleteArchivedCornerBranch } from './corner-branch-cleanup.js';
 import { GitHubAppClient, GitHubHttpError, transientGitHubError } from '@beeline/auth/github';
@@ -480,36 +481,10 @@ import { GitHubOperations, CornerWebhookTarget, checkFact, jobErrorLines, text, 
   }
 
 
-  export async function gitHubOperationsSyncInstallation(ctx: GitHubOperations,
-    viewerId: string,
-    installationId: number,
-    transaction?: SqlDatabase,
-  ) {
-    const database = transaction ?? ctx.database;
-    // Every statement belongs to this one installation event. A contended
-    // statement fails the event; only another admitted event can run it again.
-    const account = await ctx.app.installationAccount(installationId);
-    await database.query(
-      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,account_avatar_url,repository_selection,status) VALUES($1,$2,$3,$4,$5,$6,$7,'active') ON CONFLICT(installation_id) DO UPDATE SET owner_id=EXCLUDED.owner_id,account_id=EXCLUDED.account_id,account_login=EXCLUDED.account_login,account_type=EXCLUDED.account_type,account_avatar_url=EXCLUDED.account_avatar_url,repository_selection=EXCLUDED.repository_selection,status='active',updated_at=now()
-       WHERE (github_installations.owner_id,github_installations.account_id,github_installations.account_login,github_installations.account_type,github_installations.account_avatar_url,github_installations.repository_selection,github_installations.status)
-         IS DISTINCT FROM (EXCLUDED.owner_id,EXCLUDED.account_id,EXCLUDED.account_login,EXCLUDED.account_type,EXCLUDED.account_avatar_url,EXCLUDED.repository_selection,EXCLUDED.status)`,
-      [
-        installationId,
-        viewerId,
-        account.id,
-        account.login,
-        account.type,
-        account.avatarUrl ?? null,
-        account.repositorySelection,
-      ],
-    );
-    const repositories = await ctx.app.listRepositories(installationId);
-    for (const repository of repositories) await ctx.storeRepository(repository, database);
-    await database.query(
-      `UPDATE github_repositories SET active=false,updated_at=now()
-       WHERE installation_id=$1 AND NOT (repository_id=ANY($2::bigint[])) AND active`,
-      [installationId, repositories.map((repository) => repository.id)],
-    );
+  export async function gitHubOperationsSyncInstallation(ctx: GitHubOperations, viewerId: string, installationId: number, transaction?: SqlDatabase) {
+    const account=await ctx.app.installationAccount(installationId);
+    const repositories=await ctx.app.listRepositories(installationId);
+    await storeGitHubInstallations(transaction??ctx.database,viewerId,[{id:installationId,account,repositories}]);
   }
 
   /**

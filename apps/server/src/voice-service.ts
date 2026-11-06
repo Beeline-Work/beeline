@@ -13,7 +13,7 @@ import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
 import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
-import { systemLine, restateSystemLine, ensureSystemIdentity } from './system-line.js';
+import { systemLine, restateSystemLine, restateSystemLines, ensureSystemIdentity } from './system-line.js';
 import { searchInstitutionalHistory } from './institutional-history.js';
 import { routeAgentResult, routeHumanMessage, type CommandRow } from './agent-command.js';
 import { assignVoiceAgents, type VoiceAgent, type VoiceBrain, type VoiceSearch, type VoiceSpeech, type VoiceSttFactory,
@@ -92,17 +92,17 @@ export class VoiceService {
 
   async endWorkspaceCalls(workspaceId: string) {
     const calls = await this.db.transaction(async db => {
-      // Serialize workspace endings, and recheck the day after acquiring it.
-      await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`voice-budget:${workspaceId}`]);
       if ((await this.budget.read(workspaceId, db)).remainingMs > 0) return [];
-      const calls = await db.query<CallRow>(`SELECT c.* FROM voice_calls c
-        JOIN rooms r ON r.id=c.room_id WHERE r.workspace_id=$1 AND c.ended_at IS NULL FOR UPDATE OF c`, [workspaceId]);
-      for (const call of calls.rows) {
-        const ended = (await db.query<CallRow>(`UPDATE voice_calls SET ended_at=now(),end_reason=$2
-          WHERE id=$1 RETURNING *`, [call.id, systemMessage("voice-service.today-s-60-minutes-are-used")])).rows[0]!;
-        await db.query('UPDATE voice_participants SET left_at=now() WHERE call_id=$1 AND left_at IS NULL', [call.id]);
-        await this.updateCard(ended, db);
-      }
+      const calls = await db.query<CallRow>(`UPDATE voice_calls call SET ended_at=now(),end_reason=$2
+        FROM rooms room WHERE room.id=call.room_id AND room.workspace_id=$1 AND call.ended_at IS NULL
+        RETURNING call.*`, [workspaceId,systemMessage("voice-service.today-s-60-minutes-are-used")]);
+      await db.query('UPDATE voice_participants SET left_at=now() WHERE call_id=ANY($1::uuid[]) AND left_at IS NULL',
+        [calls.rows.map(call => call.id)]);
+      await restateSystemLines(db,calls.rows.map(call => ({id:call.message_id,
+        phrase:{subject:{kind:'system',name:systemMessage("voice-service.call")},verb:systemMessage("voice-service.ended"),
+          consequence:voiceDuration((call.ended_at!.getTime()-call.started_at.getTime())/1000)+systemMessage("voice-service.separator",call.end_reason!)},
+        card:{id:call.id,roomId:call.room_id,startedAt:Math.floor(call.started_at.getTime()/1000),startedAtMs:call.started_at.getTime(),
+          endedAt:Math.floor(call.ended_at!.getTime()/1000),participants:[]},presentation:'system',createdAt:call.ended_at!})));
       return calls.rows;
     });
     // Use the same RTC/runtime cleanup as an ordinary call ending. Commit the
@@ -207,19 +207,23 @@ export class VoiceService {
     const row = await this.db.transaction(async db => {
       await this.access(roomId, humanId, db);
       const workspaceId = await this.workspaceId(roomId, db);
-      await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`voice-budget:${workspaceId}`]);
       await this.budget.require(workspaceId, db);
-      await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`voice:${roomId}`]);
-      let call = (await db.query<CallRow>(`SELECT * FROM voice_calls WHERE room_id=$1 AND ended_at IS NULL FOR UPDATE`, [roomId])).rows[0];
-      if (expectedCallId && call?.id !== expectedCallId) throw new Error('voice session ended');
-      if (!call) {
+      let call: CallRow;
+      if (expectedCallId) {
+        const current = await db.query<CallRow>(`UPDATE voice_calls SET room_id=room_id
+          WHERE id=$1 AND room_id=$2 AND ended_at IS NULL RETURNING *`, [expectedCallId,roomId]);
+        if (!current.rows[0]) throw new Error('voice session ended');
+        call=current.rows[0];
+      } else {
         await ensureSystemIdentity(db);
         const id = randomUUID(); const messageId = randomBytes(32).toString('hex');
         await systemLine(db, { id: messageId, roomId, authorId: SYSTEM_IDENTITY_ID,
           subject: { kind: 'system', name: systemMessage("voice-service.voice-call") }, verb: systemMessage("voice-service.started"), presentation: 'card',
           cardType: 'voice-call', card: { id, roomId, startedAt: Math.floor(Date.now() / 1000), participants: [] } });
-        call = (await db.query<CallRow>(`INSERT INTO voice_calls(id,room_id,message_id) VALUES($1,$2,$3) RETURNING *`,
+        call = (await db.query<CallRow>(`INSERT INTO voice_calls(id,room_id,message_id) VALUES($1,$2,$3)
+          ON CONFLICT(room_id) WHERE ended_at IS NULL DO UPDATE SET room_id=EXCLUDED.room_id RETURNING *`,
           [id, roomId, messageId])).rows[0]!;
+        if (call.message_id !== messageId) await db.query('DELETE FROM messages WHERE id=$1', [messageId]);
       }
       await db.query(`INSERT INTO voice_participants(call_id,identity_id,session_id) VALUES($1,$2,$3)
         ON CONFLICT(call_id,identity_id) DO UPDATE SET left_at=NULL,parked_at=NULL,joined_at=now(),session_id=excluded.session_id`, [call.id, humanId, sessionId]);
@@ -335,7 +339,6 @@ export class VoiceService {
         const left = await db.query(`UPDATE voice_participants SET left_at=now() WHERE call_id=$1 AND identity_id=$2
           AND ($3::text IS NULL OR session_id=$3) RETURNING identity_id`, [callId, humanId, sessionId ?? null]);
         if (!left.rowCount) return null;
-        await this.rooms.removeParticipant(`beeline-voice-${callId}`, humanId).catch(() => {});
       }
       if (!(await db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND left_at IS NULL`, [callId])).rowCount) {
         call.end_reason = inactivity ? systemMessage("voice-service.silence") : null;
@@ -346,6 +349,7 @@ export class VoiceService {
       return call;
     }).catch(error => { if (error === resumed) return null; throw error; });
     if (!row) return;
+    if (!inactivity) await this.rooms.removeParticipant(`beeline-voice-${callId}`, humanId).catch(() => {});
     (await this.runtimes.get(callId))?.participantLeft?.(humanId);
     if (row.ended_at && inactivity) { inactivity.ended = true; await (await this.runtimes.get(callId))?.stopCall(); }
     await (await this.runtimes.get(callId))?.countHumans().catch(() => {});

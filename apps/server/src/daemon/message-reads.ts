@@ -10,16 +10,16 @@ import { daemonReach } from './corner-messages.js';
 
 
   export async function daemonRoomMessage(ctx: DaemonContext, input: Input<'getRoomMessage'>, agentId: string): Promise<{ messageId: string; body: string; attachments: DaemonAttachment[]; nextOffset?: number }> {
-    if (input.attachmentId !== undefined) return daemonRoomAttachment(ctx, input, agentId);
+    if (input.attachmentId !== undefined) return ctx.roomAttachment(input, agentId);
     let borrowedSource = false;
-    await daemonAccess(ctx, input.roomId, agentId).catch(async (error: unknown) => {
+    await ctx.access(input.roomId, agentId).catch(async (error: unknown) => {
       if (!(error instanceof AccessDeniedError)) throw error;
       try {
-        await daemonReviewSourceAccess(ctx, input.roomId, agentId);
+        await ctx.reviewSourceAccess(input.roomId, agentId);
         borrowedSource = true;
       } catch (sourceError) {
         if (!(sourceError instanceof AccessDeniedError)) throw sourceError;
-        await daemonReach(ctx, input.roomId, agentId);
+        await ctx.reach(input.roomId, agentId);
       }
     });
     if (!input.messageId || input.messageId.length > 128) throw new Error('invalid message id');
@@ -75,7 +75,7 @@ import { daemonReach } from './corner-messages.js';
          JOIN rooms corner ON corner.id=$1 AND corner.archived_at IS NULL
          JOIN rooms source ON source.id=message.room_id AND source.workspace_id=corner.workspace_id
          JOIN corner_github_cache fact ON fact.corner_id=corner.id
-         JOIN LATERAL (SELECT * FROM corner_brief_revisions
+         JOIN LATERAL (SELECT corner_brief_revisions.* FROM corner_brief_revisions
            WHERE corner_id=corner.id ORDER BY revision DESC LIMIT 1) brief
            ON brief.source_room_id=message.room_id
          WHERE message.id=$3 AND message.deleted_at IS NULL AND message.presentation='message'
@@ -142,7 +142,7 @@ import { daemonReach } from './corner-messages.js';
       if (candidates.rows.length > 1)
         throw new Error(`ambiguous message id: ${candidates.rows.slice(0, 20).map(candidate => candidate.id).join(', ')}${candidates.rows.length > 20 ? ' (more matches; use a longer id)' : ''}`);
       if (candidates.rows.length === 1 && candidates.rows[0]!.id !== input.messageId)
-        return daemonRoomMessage(ctx, { ...input, messageId: candidates.rows[0]!.id }, agentId);
+        return ctx.roomMessage({ ...input, messageId: candidates.rows[0]!.id }, agentId);
       // Existing messages outside the readable scope are refusals, not misses:
       // download_attachment must preserve forbidden rather than not_found.
       const elsewhere = await ctx.database.query(
@@ -158,12 +158,12 @@ import { daemonReach } from './corner-messages.js';
     const nextOffset = offset + [...row.body].length;
     const attachments = markExpiredAttachments(
       row.attachments ?? [],
-      await daemonExpiredMediaIds(ctx, row.attachments ?? []),
+      await ctx.expiredMediaIds(row.attachments ?? []),
     );
     return {
       messageId: input.messageId,
       body: row.body,
-      attachments: await daemonWithStoredDigests(ctx, attachments),
+      attachments: await ctx.withStoredDigests(attachments),
       ...(nextOffset < row.total ? { nextOffset } : {}),
     };
   }

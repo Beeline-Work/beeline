@@ -123,13 +123,13 @@ import { daemonExpiredMediaIds } from './message-reads.js';
       name === 'getCornerCloseRequests'
         ? (input as unknown as { cornerId: string }).cornerId
         : input.roomId;
-    await daemonAccess(ctx, roomId, agentId).catch((error: unknown) => {
+    await ctx.access(roomId, agentId).catch((error: unknown) => {
       if (error instanceof AccessDeniedError &&
           (name === 'getRoomInbox' || name === 'getCornerCloseRequests'))
-        return daemonReach(ctx, roomId, agentId);
+        return ctx.reach(roomId, agentId);
       if (error instanceof AccessDeniedError && name === 'getRoomConversation')
-        return daemonReviewSourceAccess(ctx, roomId, agentId).catch((sourceError: unknown) => {
-          if (sourceError instanceof AccessDeniedError) return daemonReach(ctx, roomId, agentId);
+        return ctx.reviewSourceAccess(roomId, agentId).catch((sourceError: unknown) => {
+          if (sourceError instanceof AccessDeniedError) return ctx.reach(roomId, agentId);
           throw sourceError;
         });
       throw error;
@@ -191,12 +191,12 @@ import { daemonExpiredMediaIds } from './message-reads.js';
       // back in transcript order; the forward walk keeps its `limit + 1` probe
       // for whether another page exists.
       continuityPage
-        ? `SELECT * FROM (${conversationColumns}
+        ? `SELECT continuity.* FROM (${conversationColumns}
              FROM messages WHERE room_id=$1 AND presentation='message'
              ORDER BY cursor_ms DESC,id DESC LIMIT ${limit}) continuity
            ORDER BY cursor_ms,id`
         : newestPage
-          ? `SELECT * FROM (${conversationColumns}
+          ? `SELECT newest.* FROM (${conversationColumns}
              FROM messages WHERE room_id=$1
                ${before ? `AND (${MESSAGE_CURSOR_MS_SQL},id) < ($2::bigint,$3)` : ''}
              ORDER BY cursor_ms DESC,id DESC LIMIT ${limit}) newest
@@ -214,7 +214,7 @@ import { daemonExpiredMediaIds } from './message-reads.js';
           : [roomId],
     );
     const page = newestPage ? rows.rows : rows.rows.slice(0, limit);
-    const expiredMedia = await daemonExpiredMediaIds(ctx,
+    const expiredMedia = await ctx.expiredMediaIds(
       page.flatMap((row) => row.attachments ?? []),
     );
     const savedNarration =

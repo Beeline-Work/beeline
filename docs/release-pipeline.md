@@ -424,7 +424,10 @@ checks candidate and preceding serving/rollback source revisions. After both
 Machines update successfully, `run-contract-migrations.mjs` verifies the drained
 fleet and executes column contracts, including on a rerun that already serves
 the candidate image. Existing unrelated migrations retain their order. The
-incident columns remain compatibility storage in this release. Evidence and
+incident columns remain compatibility storage in this release. The locking cutover
+also leaves `agents.squire_report` and `messages.event_woken` in the schema
+without current readers or writers; `beeline-drop-retired-turn-schema` owns
+their later contract release. Evidence and
 limits: [November rollout replay](rollout-nov03-replay.md).
 
 The permanent GitHub Release is the pipeline's only memory. Each published

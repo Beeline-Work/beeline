@@ -1,3 +1,4 @@
+import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
 import { MEMBERSHIP_AUTHORITY_SCHEMA } from './membership-authority-schema.js';
 import { committedCommandNotificationSchema } from './postgres-live.js';
 import type { ServerResponse } from 'node:http';
@@ -5,12 +6,12 @@ import { createHash } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
 import type { McpPrincipal } from './rooms-mcp-oauth.js';
 import { subscribeCommandCompletion } from './command-completion.js';
-import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
+import { lockRoomAccess } from './room-access-lock.js';
 
 /** Separate rollout floor; enable only after real-PG source/authority proofs. */
 export { networkRouterEnabled as memberStreamEnabled } from './network-router-rollout.js';
 
-/** The retained authority rows/lock below belong to this separate MCP credential
+/** The authority rows below belong to this separate MCP credential
  * stream. Ordinary phone reads neither create nor consume certificates. */
 
 /** Compact causes share the existing commit-ordered journal and listener. No
@@ -53,17 +54,16 @@ BEGIN
  RETURN NULL;
 END; $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION beeline_mcp_authority_lock() RETURNS trigger AS $$
-DECLARE item jsonb; member text;
+DECLARE item jsonb;
 BEGIN
+ -- Preceding serving readers need this writer fence until this release drains.
  PERFORM pg_advisory_xact_lock(hashtextextended('${ROUTER_AUTHORITY_LOCK}',0));
  item:=CASE WHEN TG_OP='DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END;
- FOR member IN SELECT m.member_id FROM rooms_mcp_members m WHERE
-   (TG_TABLE_NAME='rooms_mcp_members' AND m.member_id=item->>'member_id') OR
-   (m.client_id=item->>'client_id' AND m.owner_id=item->>'identity_id')
- LOOP
-   INSERT INTO router_authority(scope) VALUES('mcp:'||member)
-     ON CONFLICT(scope) DO UPDATE SET epoch=router_authority.epoch+1;
- END LOOP;
+ INSERT INTO router_authority(scope)
+   SELECT DISTINCT 'mcp:'||m.member_id FROM rooms_mcp_members m WHERE
+     (TG_TABLE_NAME='rooms_mcp_members' AND m.member_id=item->>'member_id') OR
+     (m.client_id=item->>'client_id' AND m.owner_id=item->>'identity_id')
+   ORDER BY 1 ON CONFLICT(scope) DO UPDATE SET epoch=router_authority.epoch+1;
  IF TG_OP='DELETE' THEN RETURN OLD; END IF; RETURN NEW;
 END; $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS beeline_mcp_stream_source ON rooms_mcp_mentions;
@@ -105,14 +105,17 @@ interface McpStreamPage {
   nextCursor: string; more: boolean;
 }
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-async function currentCredential(db: SqlDatabase, principal: McpPrincipal): Promise<Date | undefined> {
+// Refuse a busy credential writer before enqueue rather than forming an
+// inverse wait with that writer's later membership or Room changes.
+async function currentCredential(db: SqlDatabase, principal: McpPrincipal, lock = false): Promise<Date | undefined> {
   return (await db.query<{expires_at: Date}>(`SELECT t.expires_at FROM rooms_mcp_tokens t
-    LEFT JOIN rooms_mcp_families f ON f.id=t.family_id
+    LEFT JOIN LATERAL (SELECT f.* FROM rooms_mcp_families f WHERE f.id=t.family_id ${lock ? 'FOR SHARE OF f NOWAIT' : ''}) f ON true
     JOIN rooms_mcp_connections c ON c.client_id=t.client_id AND c.identity_id=t.identity_id AND c.revoked_at IS NULL
     JOIN rooms_mcp_members m ON m.client_id=c.client_id AND m.owner_id=c.identity_id AND m.member_id=$4
     WHERE t.hash=$1 AND t.client_id=$2 AND t.identity_id=$3 AND t.revoked_at IS NULL AND t.expires_at>now()
       AND t.scope ~ '(^| )rooms:read( |$)' AND c.scope ~ '(^| )rooms:read( |$)'
-      AND (t.family_id IS NULL OR (f.id IS NOT NULL AND f.revoked_at IS NULL AND f.client_id=t.client_id AND f.identity_id=t.identity_id))`,
+      AND (t.family_id IS NULL OR (f.id IS NOT NULL AND f.revoked_at IS NULL AND f.client_id=t.client_id AND f.identity_id=t.identity_id))
+      ${lock ? 'FOR SHARE OF t,c,m NOWAIT' : ''}`,
     [principal.hash,principal.client_id,principal.identity_id,principal.member_id])).rows[0]?.expires_at;
 }
 async function scopes(db: SqlDatabase, member: string, rooms: readonly string[]) {
@@ -195,8 +198,8 @@ export async function serveMcpMemberStream(database: SqlDatabase, principal: Mcp
         if (!prepared || stopped) continue;
         await database.transaction(async db=>{
           await db.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
-          await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))',[ROUTER_AUTHORITY_LOCK]);
-          if (!await currentCredential(db,principal) || digest(await scopes(db,member,prepared.rooms))!==prepared.authority)
+          if (!await lockRoomAccess(db,prepared.rooms,[member]) || !await currentCredential(db,principal,true) ||
+              digest(await scopes(db,member,prepared.rooms))!==prepared.authority)
             throw new Error('member stream authority changed');
           if (!stopped) for (const frame of prepared.encoded) {
             if (response.writableLength+Buffer.byteLength(frame)>1024*1024) throw new Error('member stream backpressure capacity');

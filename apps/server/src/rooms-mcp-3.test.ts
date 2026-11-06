@@ -1,3 +1,4 @@
+import { migrate } from './database.js';
 import { phoneFetch, describe, expect, it, vi, MCP_ORDER_WAKE_HINT, MCP_REVIEW_WAKE_HINT, backfillMcpMemberRoomsAndAvatars, ensureMcpMember, randomBytes, createHash, randomUUID, Client, StreamableHTTPClientTransport, tokenHash, MCP_AGENT_EXCLUSIONS, MCP_APP_ROUTE_OPERATIONS, createAgentCommand, routeHumanMessage, routeAgentResult, openSecrets, deliverMcpMemberWebhooks, PREREGISTERED_MCP_CLIENTS, readFileSync, sharp, FACE_SOULS, USER, OTHER, AGENT, WORKSPACE, ROOM, PRIVATE, CORNER, opaque, fixtureScope1, fixtureScope2, fixtureScope3 } from './test-support-rooms-mcp.test-support.js';
 import { bundledMcpLogo } from './rooms-mcp-logos.js';
 
@@ -429,7 +430,7 @@ const scope1 = fixtureScope1();
     const flow = new URL(start.headers.get('location')!, scope1.origin).searchParams.get('flow')!;
     await phoneFetch(`${scope1.origin}/mcp/oauth/login?flow=${flow}&provider=google`, { headers: { cookie }, redirect: 'manual' });
     await phoneFetch(`${scope1.origin}/mcp/oauth/callback/google?state=${flow}&ticket=local-demo-ticket`, { headers: { cookie }, redirect: 'manual' });
-    await scope1.db.query(`UPDATE identities SET handle=$2 WHERE id=$1`, [AGENT, memberHandle]);
+    await scope1.db.query(`UPDATE identities SET handle=$2 WHERE id=$1`, [AGENT, memberHandle]); await migrate(scope1.db);
     const page = await (await phoneFetch(`${scope1.origin}/mcp/oauth/consent?flow=${flow}`, { headers: { cookie } })).text();
     expect(page).toContain(`Add ${app} to your team`);
     expect(page.includes('Would you like to run the following command?')).toBe(app === 'Codex');
@@ -440,7 +441,7 @@ const scope1 = fixtureScope1();
     // Another member in the Workspace holds the plain handle already.
     expect(page).toContain(`@${memberHandle}_2`);
     await scope1.db.query(`UPDATE identities SET handle='demo-agent' WHERE id=$1`, [AGENT]);
-    const allowed = await scope1.post('/mcp/oauth/consent', { flow, decision: 'allow', trust_app: '1', workspace_selection: '1', workspace_ids: [WORKSPACE] }, { cookie, origin: scope1.origin });
+    const allowed = await scope1.post('/mcp/oauth/consent', { flow, decision: 'allow', trust_app: '1', workspace_selection: '1', workspace_ids: [WORKSPACE] }, { cookie, origin:scope1.origin });
     const target = new URL(allowed.headers.get('location')!);
     expect(target.origin + target.pathname).toBe(handoff);
     // The person's browser lands on Beeline's own page, which keeps the code for the session.

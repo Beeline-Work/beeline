@@ -333,6 +333,21 @@ describe('one tap from a Connectors row', () => {
     await act(async () => row(renderer, 'vercel').props.onPress());
     expect(navigation.push.mock.calls).toEqual([[{ pathname: '/beeline/settings/workbench/service', params: { ...scope, service: 'vercel' } }]]);
   });
+  it('Reproduction AI-APP-PAGE: an AI app row opens its info page, never a Disconnect sheet', async () => {
+    const view = companyWorkbench([{ id: 'rooms:chatgpt', roomsClientId: 'chatgpt', name: 'ChatGPT', kind: 'company',
+      logo: { kind: 'image', uri: 'data:image/png;base64,AA==', plate: 'light' }, section: 'apps', subtitle: 'Connected as Pidoong',
+      state: 'connected', items: [], machines: [], alsoAvailable: [] }]);
+    serve({ ...view, companies: { ...view.companies!, hasConnections: true }, aiClients: [{ clientId: 'chatgpt', name: 'ChatGPT',
+      scopes: ['rooms:read', 'rooms:write'], connectedAt: 1, lastUsedAt: null, logo: 'data:image/png;base64,AA==',
+      agent: { id: 'agent-pidoong', name: 'Pidoong', handle: 'pidoong_2' } }] });
+    const renderer = await render();
+    const chatgpt = row(renderer, 'rooms:chatgpt');
+    expect(chatgpt.props.leading.props.mark).toEqual({ kind: 'image', uri: 'data:image/png;base64,AA==', plate: 'light' });
+    expect(renderer.root.findAll((node: any) => node.props?.children === 'Pidoong').length).toBeGreaterThan(0);
+    await act(async () => chatgpt.props.onPress());
+    expect(navigation.push.mock.calls).toEqual([[{ pathname: '/beeline/settings/workbench/service', params: { ...scope, service: 'rooms:chatgpt' } }]]);
+    expect(renderer.root.findAllByType('HullActionSheetModal').every((sheet: any) => !sheet.props.visible)).toBe(true);
+  });
   it('not connected: the suggestion starts its own connect flow', async () => {
     serve(companyWorkbench([], [companyOption('tailscale', 'Tailscale', 'tailscale')]));
     const renderer = await render();

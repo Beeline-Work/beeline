@@ -39,6 +39,8 @@ export interface WorkbenchSource {
   beginLinkSignIn(): Promise<{ authorizationUrl: string }>;
   cancelLinkSignIn(state?: string): Promise<void>;
   disconnectLinkSignIn(): Promise<void>;
+  /** Ends an AI app's Rooms access; its agent and messages stay. */
+  disconnectAiClient(input: { clientId: string }): Promise<void>;
   readWorkbench(input: {
     workspaceId: string;
     viewerId: string;
@@ -144,6 +146,10 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
 
   async disconnectLinkSignIn(): Promise<void> {
     await monolithPhoneOperation('disconnectLinkSignIn', {});
+  }
+
+  async disconnectAiClient(input: { clientId: string }): Promise<void> {
+    await monolithPhoneOperation('disconnectAiClient', input);
   }
 
   async readWorkbench(input: {

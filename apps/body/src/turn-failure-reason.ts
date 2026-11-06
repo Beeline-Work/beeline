@@ -4,7 +4,7 @@ import { classifyTurnSilence, type TurnReceiptReasonKind } from '@beeline/api-co
 /**
  * One distilled line for a failed turn receipt. The Room carries a plain
  * failure; the full error stays in the daemon log. Never a stack trace,
- * never a credential, at most 200 chars.
+ * at most 200 chars.
  */
 export const TURN_FAILURE_REASON_MAX = 200;
 
@@ -13,32 +13,9 @@ export interface DistilledTurnFailureReason {
   readonly kind?: TurnReceiptReasonKind;
 }
 
-/** Keep wire-visible tool detail useful without ever carrying credentials. */
-export function redactToolDetail(value: string): string {
-  return value
-    .replace(
-      /\b(["']?)(api[_-]?key|token|secret|password|passwd|authorization|credential|cookie|private[_-]?key)\1\s*[:=]\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,}\]]+)/gi,
-      '"$2": "[REDACTED]"',
-    )
-    .replace(
-      /\b(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*=(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+)/g,
-      (assignment) => `${assignment.slice(0, assignment.indexOf('='))}=[REDACTED]`,
-    )
-    .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,})\b/gi, '[REDACTED]')
-    .replace(/\b(?:bat|brt|bdt|bde)_[A-Za-z0-9_-]{43}\b/g, '[REDACTED]')
-    .replace(/\bbfmc_v1\.[a-f0-9]{32}\.[a-f0-9]{64}\b/gi, '[REDACTED]')
-    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]')
-    .replace(/\b(Bearer\s+)[^\s,]+/gi, '$1[REDACTED]')
-    .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, '[REDACTED]')
-    .replace(
-      /(--?(?:api[_-]?key|token|secret|password|authorization|credential|cookie)\s+)(?:"[^"]*"|'[^']*'|\S+)/gi,
-      '$1[REDACTED]',
-    );
-}
-
-/** Keep diagnostic stacks in the helper journal without their credential values. */
-export function redactTurnError(error: unknown): string {
-  return redactToolDetail(error instanceof Error ? error.stack || error.message : String(error));
+/** Preserve diagnostic stacks in the helper journal. */
+export function turnErrorDetail(error: unknown): string {
+  return error instanceof Error ? error.stack || error.message : String(error);
 }
 
 export function distillTurnFailureReason(error: unknown): DistilledTurnFailureReason {
@@ -67,11 +44,11 @@ export function distillTurnFailureReason(error: unknown): DistilledTurnFailureRe
   const firstLine = informative[0] ?? '';
   const stripped = firstLine.replace(/^(?:[A-Za-z]*Error|Error):\s*/, '').replace(/\s+/g, ' ');
   const classified = classifyTurnSilence(
-    redactToolDetail(informative.join(' ')).replace(/\s+/g, ' '),
+    informative.join(' ').replace(/\s+/g, ' '),
   );
   const clean = classified.kind === 'hiccup' && classified.fault?.startsWith("it couldn't start:")
     ? classified.fault
-    : redactToolDetail(stripped).trim();
+    : stripped.trim();
   const text = !clean
     ? 'turn failed'
     : clean.length > TURN_FAILURE_REASON_MAX

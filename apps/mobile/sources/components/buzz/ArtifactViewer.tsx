@@ -94,7 +94,7 @@ export function ArtifactViewerScreen({
   return (
     <View style={styles.screen} testID="artifact-viewer">
       <View style={[styles.header, { paddingTop: insets.top + theme.buzz.space.md }]}>
-        <PageHeaderTitle numberOfLines={1} style={styles.headerTitle}>
+        <PageHeaderTitle style={styles.headerTitle}>
           {format === 'game' ? `Interactive · ${title}` : title}
         </PageHeaderTitle>
         {format === 'code' && document ? (

@@ -98,13 +98,6 @@ export function setAppDisplay(
     applyRootBackground(themeName);
 }
 
-function setAppAppearance(
-    appearance: LocalSettings['appearance'],
-    uiSize: LocalSettings['uiSize'] = loadLocalSettings().uiSize,
-): void {
-    setAppDisplay(appearance, uiSize);
-}
-
 /** Settings → Appearance only. Text-size changes keep using setAppDisplay so
  *  the live theme and root chrome move without re-pinning the splash. */
 export function applyAppearanceChoice(

@@ -13,13 +13,7 @@ import { AppState, NativeEventEmitter, NativeModules, Platform } from 'react-nat
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import type { NostrEvent } from '@beeline/nostr';
 import type { LiveWireEvent, MonolithSurfaceEvent } from './monolith-rig-transport';
-import {
-  acceptCornerStatusFrame,
-  noteCornerLaneReleased,
-  noteCornerLaneSubscribed,
-  noteCornerSocketDropped,
-  noteRoomCornersChanged,
-} from '@/buzz/room-corner-store';
+import { publishPhoneLiveEvent } from './phone-live-events';
 import { subscribeClientReset } from '@/sync/client-reset';
 
 type MissedUpdates = { type: 'missed-updates'; roomIds: string[]; streams: string[]; workspace: boolean };
@@ -153,7 +147,7 @@ export class LiveConnection {
         if (remaining > 0) this.roomReferences.set(roomId, remaining);
         else {
           this.roomReferences.delete(roomId);
-          noteCornerLaneReleased(roomId);
+          publishPhoneLiveEvent({ type: 'room-released', roomId });
           if (isOpen(this.socket))
             this.socket.send(JSON.stringify({ type: 'unsubscribe', roomId }));
         }
@@ -350,7 +344,7 @@ export class LiveConnection {
     for (const request of [...this.requests.values()])
       request.reject(new PhoneSocketDisconnectedError());
     this.paintOwners.clear();
-    noteCornerSocketDropped();
+    publishPhoneLiveEvent({ type: 'socket-dropped' });
     for (const listener of this.disconnected) listener();
   }
   reconnectNow(): void {
@@ -434,16 +428,6 @@ export class LiveConnection {
           return;
         }
         break;
-      case 'corner-status':
-        if (!acceptCornerStatusFrame(live)) return;
-        break;
-      case 'subscribed':
-        noteCornerLaneSubscribed(live.roomId);
-        break;
-      case 'invalidate':
-        if (['corner-status', 'corner', 'resync'].includes(live.reason))
-          noteRoomCornersChanged(live.roomId);
-        break;
       case 'trace-painted': {
         const owner = this.paintOwners.get(live.id);
         this.paintOwners.delete(live.id);
@@ -451,6 +435,7 @@ export class LiveConnection {
         return;
       }
     }
+    publishPhoneLiveEvent(live);
     if (!('roomId' in live)) return;
     for (const registration of this.registrations) {
       if (

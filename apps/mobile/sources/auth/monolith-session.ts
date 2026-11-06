@@ -8,8 +8,6 @@ import { webRuntimeStorage } from '@/utils/web-storage';
 import { resetClientState } from '@/sync/client-reset';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
-import { markRoomOpen } from '@/buzz/room-open-trace';
-import { beginNetworkResponseTiming } from './network-response-timing';
 
 // Capture before OAuth leaves the landing URL; the shared first-party cookie survives it.
 loadXPixel(readWebXAttribution());
@@ -405,15 +403,11 @@ export class MonolithSession {
     init: RequestInit = {},
     options: {
       timeoutMs?: number;
-      idempotent?: boolean;
       fetchImpl?: typeof fetch;
     } = {},
   ): Promise<Response> {
     const sessionRevision = this.sessionRevision;
-    const dispatch = () =>
-      options.fetchImpl
-        ? this.perform(input, init, options.timeoutMs, options.fetchImpl)
-        : this.dispatch(input, init, options);
+    const dispatch = () => this.perform(input, init, options.timeoutMs, options.fetchImpl);
     let response = await dispatch();
     if (response.status !== 401) return response;
     if (sessionRevision !== this.sessionRevision) throw new MonolithSessionChangedError();
@@ -421,14 +415,6 @@ export class MonolithSession {
     this.accessRestoreAttempted = true;
     response = await dispatch();
     return response;
-  }
-
-  private async dispatch(
-    input: string,
-    init: RequestInit,
-    options: { timeoutMs?: number; idempotent?: boolean },
-  ): Promise<Response> {
-    return this.perform(input, init, options.timeoutMs);
   }
 
   private async perform(
@@ -451,8 +437,6 @@ export class MonolithSession {
     if (init.signal?.aborted) controller.abort();
     try {
       // Token restore or refresh can stall too; the deadline covers it.
-      const tracingRoom = /\/v1\/phone\/rooms\/[^/?]+$/.test(input);
-      if (tracingRoom) markRoomOpen('wire-authorizing');
       // A warm Room tap must dispatch before navigation starts rendering.
       // Awaiting an already available token lets that render hold the GET.
       const available = this.validAccessToken();
@@ -460,26 +444,14 @@ export class MonolithSession {
         available && !controller.signal.aborted
           ? available
           : await untilAborted(this.authorization(fetchImpl), controller.signal);
-      const finishTiming = tracingRoom ? beginNetworkResponseTiming(input) : undefined;
-      if (tracingRoom) markRoomOpen('wire-dispatch');
-      let response: Response;
-      try {
-        response = await fetchImpl(input, {
-          ...init,
-          signal: controller.signal,
-          headers: {
-            ...Object.fromEntries(new Headers(init.headers).entries()),
-            authorization: `Bearer ${authorized}`,
-          },
-        });
-      } catch (error) {
-        finishTiming?.();
-        throw error;
-      }
-      finishTiming?.();
-      if (tracingRoom) markRoomOpen('wire-headers');
-
-      return response;
+      return await fetchImpl(input, {
+        ...init,
+        signal: controller.signal,
+        headers: {
+          ...Object.fromEntries(new Headers(init.headers).entries()),
+          authorization: `Bearer ${authorized}`,
+        },
+      });
     } catch (error) {
       if (timedOut) throw new MonolithRequestTimeoutError();
       throw error;

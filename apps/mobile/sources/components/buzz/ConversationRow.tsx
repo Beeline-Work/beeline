@@ -149,14 +149,13 @@ export const ConversationRow = React.memo(
                   <PinGlyph color={styles.sigil.color} size={10} />
                 </View>
               )}
-              <Text numberOfLines={1} style={[styles.name, item.unread && styles.unreadName]}>
+              <Text style={[styles.name, item.unread && styles.unreadName]}>
                 <Text style={styles.sigil}>{name.sigil}</Text>
                 {name.name}
               </Text>
             </View>
             <View style={styles.previewLine}>
               <Text
-                numberOfLines={desktop ? 2 : 1}
                 style={[
                   styles.preview,
                   item.unread && !showReason && styles.unreadPreview,

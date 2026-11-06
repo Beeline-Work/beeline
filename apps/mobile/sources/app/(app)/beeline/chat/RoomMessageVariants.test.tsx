@@ -84,7 +84,6 @@ it('renders a workflow-closed question as a record without dead option boxes', (
   expect(cardProps().actions).toEqual([]);
   expect(cardProps().noteInput).toBeUndefined();
   expect(cardProps().subline).toBeUndefined();
-  expect(cardProps().wrapTitle).toBe(true);
 });
 
 it('shows the selected outcome and actor after an answer, without option boxes', () => {

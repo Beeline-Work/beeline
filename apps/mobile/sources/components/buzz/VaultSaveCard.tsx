@@ -84,7 +84,7 @@ export function VaultSaveCard({
           body: JSON.stringify({ cardId, roomId, values: submitted }),
           signal: controller.signal,
         },
-        { timeoutMs: 75_000, idempotent: false },
+        { timeoutMs: 75_000 },
       );
       const result = (await response.json()) as { status?: string; card?: unknown };
       const savedCard = readVaultSaveCard(result.card);
@@ -110,7 +110,6 @@ export function VaultSaveCard({
       tier={canType ? 'ask' : 'record'}
       title={`${agentName} wants a ${card.service} ${card.authStrategy === 'username_password' ? 'login' : 'entry'}`}
       stamp={stamp}
-      wrapTitle
       decisionNote
       identity={<IdentityMark kind="agent" seed={card.agentId} size={26} name={agentName} />}
       subline={isOwner ? 'to your vault · for you' : `to @${card.ownerName}'s vault`}

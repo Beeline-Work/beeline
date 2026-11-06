@@ -1,5 +1,6 @@
+import { ContentTarget } from '@/components/buzz/IndexRow';
 import React from 'react';
-import { Text, TouchableOpacity, View } from 'react-native';
+import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { WORKSPACE_SETTINGS_TILE, workspacePictureSeat } from '@/buzz/workspace-tile';
@@ -54,29 +55,28 @@ export function SettingsScopeTabs({
           const selected = scope === key;
           const action = selected ? tab.selectedAction : undefined;
           return (
-            <TouchableOpacity
+            <ContentTarget
               key={key}
               accessibilityHint={action?.accessibilityHint}
               accessibilityLabel={tab.accessibilityLabel}
               accessibilityRole="tab"
               accessibilityState={{ selected }}
-              activeOpacity={selected && !action ? 1 : 0.7}
               onPress={() => (selected ? action?.onPress() : onScopeChange(key))}
-              style={[styles.tab, selected && styles.tabSelected]}
+              style={({ pressed }) => [styles.tab, selected && styles.tabSelected, pressed && { opacity: selected && !action ? 1 : 0.7 }]}
               testID={tab.testID}
             >
               <View style={[styles.tile, selected && styles.tileSelected, !selected && styles.dimmed]}
                 testID={tab.tileTestID}>
                 <View style={styles.seat}>{tab.picture}</View>
               </View>
-              <Text numberOfLines={1} style={[styles.label, selected && styles.labelSelected]}>
+              <Text style={[styles.label, selected && styles.labelSelected]}>
                 {tab.label}
               </Text>
-            </TouchableOpacity>
+            </ContentTarget>
           );
         })}
       </View>
-      {caption ? <Text numberOfLines={2} style={styles.caption} testID="settings-scope-caption">{caption}</Text> : null}
+      {caption ? <Text style={styles.caption} testID="settings-scope-caption">{caption}</Text> : null}
     </View>
   );
 }

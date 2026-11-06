@@ -9,11 +9,12 @@ import * as SplashScreen from 'expo-splash-screen';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useUnistyles } from 'react-native-unistyles';
-import { setAppAppearance } from '../sources/unistyles';
+import { setAppDisplay } from '../sources/unistyles';
+import { loadLocalSettings } from '../sources/sync/persistence';
 import { ConnectorOfferCard } from '../sources/app/(app)/beeline/chat/RoomMessageVariants';
 import { Button } from '../sources/components/buzz/Button';
 const none = () => {};
-setAppAppearance('light');
+setAppDisplay('light', loadLocalSettings().uiSize);
 function Scene() {
   const [dark, setDark] = useState(false);
   const { theme } = useUnistyles();
@@ -47,7 +48,7 @@ function Scene() {
           <Button
             label="Theme"
             onPress={() => {
-              setAppAppearance(dark ? 'light' : 'dark');
+              setAppDisplay(dark ? 'light' : 'dark', loadLocalSettings().uiSize);
               setDark(!dark);
             }}
             testID="audit-native-theme"

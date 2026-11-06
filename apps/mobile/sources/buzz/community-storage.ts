@@ -2,7 +2,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const ACTIVE_COMMUNITY_PREFIX = '@beeline/community/active/';
 const LAST_CHANNEL_PREFIX = '@beeline/community/last-channel/';
-const PERSONAL_COMMUNITY_PREFIX = '@beeline/workspace/personal/';
 const STANDALONE_SCOPE = 'standalone';
 const activeCommunityListeners = new Map<string, Set<(communityId: string | null) => void>>();
 const activeCommunityValues = new Map<string, string | null>();
@@ -66,64 +65,6 @@ export function watchActiveCommunityId(
     stopped = true;
     stop();
   };
-}
-
-export async function loadPersonalCommunityId(pubkey: string): Promise<string | null> {
-  return AsyncStorage.getItem(`${PERSONAL_COMMUNITY_PREFIX}${pubkey}`);
-}
-
-async function savePersonalCommunityId(pubkey: string, communityId: string): Promise<void> {
-  await AsyncStorage.setItem(`${PERSONAL_COMMUNITY_PREFIX}${pubkey}`, communityId);
-}
-
-export async function clearPersonalCommunityId(pubkey: string): Promise<void> {
-  await AsyncStorage.removeItem(`${PERSONAL_COMMUNITY_PREFIX}${pubkey}`);
-}
-
-export type WorkspaceSelectionStorage = {
-  loadPersonalId: (pubkey: string) => Promise<string | null>;
-  saveActiveId: (pubkey: string, workspaceId: string | null) => Promise<void>;
-  clearPersonalId: (pubkey: string) => Promise<void>;
-};
-
-/**
- * Persist the selection produced by the single Workspace-set reconciliation
- * door. The returned Personal id is the value callers may safely project into
- * a later channel-list cache commit; an absent marker is cleared first so a
- * stale value cannot be written back from an older in-memory context.
- */
-async function reconcileStoredWorkspaceSelection(
-  pubkey: string,
-  workspaces: readonly { communityId: string }[],
-  activeWorkspaceId: string | null,
-  personalWorkspaceId: string | null | undefined,
-  storage: WorkspaceSelectionStorage = {
-    loadPersonalId: loadPersonalCommunityId,
-    saveActiveId: saveActiveCommunityId,
-    clearPersonalId: clearPersonalCommunityId,
-  },
-  reconciliation: 'authoritative' | 'preserve' = 'authoritative',
-): Promise<string | null> {
-  const persistedPersonalWorkspaceId =
-    personalWorkspaceId === undefined ? await storage.loadPersonalId(pubkey) : personalWorkspaceId;
-  const confirmedIds = new Set(workspaces.map((workspace) => workspace.communityId));
-  const nextPersonalWorkspaceId =
-    reconciliation === 'preserve' ||
-    (persistedPersonalWorkspaceId && confirmedIds.has(persistedPersonalWorkspaceId))
-      ? persistedPersonalWorkspaceId
-      : null;
-  if (persistedPersonalWorkspaceId && !nextPersonalWorkspaceId) {
-    await storage.clearPersonalId(pubkey);
-  }
-  await storage.saveActiveId(pubkey, activeWorkspaceId);
-  return nextPersonalWorkspaceId;
-}
-
-async function loadLastViewedChannel(
-  pubkey: string,
-  communityId: string | null,
-): Promise<string | null> {
-  return AsyncStorage.getItem(lastChannelKey(pubkey, communityId));
 }
 
 export async function saveLastViewedChannel(

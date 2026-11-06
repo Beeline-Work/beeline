@@ -28,7 +28,7 @@ import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { DECORATIVE_GLYPH_PROPS } from '@/components/buzz/decorative-glyph';
 import { ContentTarget, InlineRow } from '@/components/buzz/IndexRow';
-import { chromeStrokeWidth } from '@/components/buzz/MembersGlyph';
+import { chromeStrokeWidth } from '@/buzz/chrome-geometry';
 
 const DRAWER_WIDTH = 72;
 const DRAWER_DURATION_MS = 180;
@@ -401,7 +401,6 @@ function CommunityHeaderIdentity({
         </View>
       )}
       <Text
-        numberOfLines={1}
         style={styles.drawerTriggerName}
         testID={
           pickerTitle

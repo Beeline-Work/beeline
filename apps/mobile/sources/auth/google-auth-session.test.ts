@@ -133,7 +133,7 @@ describe('Google sign-in continuation', () => {
     'native user cancel', 'unexpected native failure', 'missing native start route',
     'missing Android client configuration', 'missing native complete route',
     'rejected native proof', 'malformed native configuration', 'malformed native completion', 'failed native cleanup',
-  ])('R-signin-fallback: completes browser sign-in after %s', async (failure) => {
+  ])('settles the native attempt after %s without starting a browser', async (failure) => {
     picker.enabled = true;
     picker.signIn.mockResolvedValue('signed-google-id-token');
     const pickerFailures: Record<string, unknown> = {
@@ -145,11 +145,9 @@ describe('Google sign-in continuation', () => {
       'failed native cleanup': new Error('native error'),
     };
     if (failure in pickerFailures) picker.signIn.mockRejectedValue(pickerFailures[failure]);
-    let nativeChallenge = '';
     const fetcher = vi.fn(async (url: string, options?: RequestInit) => {
       const body = JSON.parse(options!.body as string);
       if (url.endsWith('/native/start')) {
-        nativeChallenge = body.recoveryChallenge;
         if (failure === 'missing native start route') return new Response('{}', { status: 404 });
         if (failure === 'missing Android client configuration') return new Response('{}', { status: 503 });
         return new Response(JSON.stringify(failure === 'malformed native configuration' ? {} : {
@@ -166,23 +164,12 @@ describe('Google sign-in continuation', () => {
       return new Response('{}', { status: body.recoveryToken === recoveryToken ? 200 : 202 });
     });
     vi.stubGlobal('fetch', fetcher);
-    const open = vi.fn(async (url: string) => {
-      const browser = new URL(url);
-      expect(browser.pathname).toBe('/auth/oidc/start');
-      // The native flow row keeps its unique recovery hash after cancellation.
-      // Reusing it would reject this browser start even when cleanup succeeds.
-      expect(browser.searchParams.get('app_recovery_challenge')).not.toBe(nativeChallenge);
-      expect(browser.searchParams.get('app_state')).toBe(state);
-      expect(JSON.parse(storage.get('beeline.google-sign-in.v1')!)).toMatchObject({
-        recoveryToken, linkIdentity: 'existing-account',
-      });
-      return { type: 'opened' };
-    });
-    expect(await runGoogleSignIn({ state, recoveryToken, linkIdentity: 'existing-account', openAuthSession: open,
+    const open = vi.fn();
+    await expect(runGoogleSignIn({ state, recoveryToken, linkIdentity: 'existing-account', openAuthSession: open,
       subscribeToUrls: () => ({ remove() {} }),
-    })).toBe(recoveryToken);
-    expect(open).toHaveBeenCalledOnce();
-    expect(await pendingGoogleLinkIdentity()).toBe('existing-account');
+    })).rejects.toBeDefined();
+    expect(open).not.toHaveBeenCalled();
+    expect(await pendingGoogleLinkIdentity()).toBeNull();
   });
   it('recovers a lost callback with the persisted secret, then clears it after exchange', async () => {
     pending();

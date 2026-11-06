@@ -44,7 +44,7 @@ test('empty, stale, duplicate, missing evidence and oversized inputs cannot crea
   assert.throws(()=>buildLoopCard(input([{...tuple(1),problem:'x'.repeat(100),fix:'x'.repeat(100)}])),/one screen/);
 });
 test('all loop procedures retain the common gates and delegate the two existing methods', () => {
-  const slugs=['release-nightly','overnight-ci','overnight-codebase-health','overnight-errors','overnight-latency','morning-card','insight-loss','insight-workspace-walk','prompt-weekly'];
+  const slugs=['release-nightly','overnight-ci','overnight-codebase-health','overnight-errors','overnight-latency','morning-card','insight-loss','insight-workspace-walk'];
   for(const slug of slugs) {
     const source=readFileSync(`docs/loops/${slug}.md`,'utf8');
     for(const heading of ['1. Freshness gate','2. Fixed questions','3. Problem → fix output','4. Dedupe and handoff','5. Empty result']) assert.ok(source.includes(heading),`${slug}: ${heading}`);

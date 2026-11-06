@@ -28,13 +28,16 @@ Missing deployment evidence is **OPEN QUESTION**, never a clean bill of health.
 5. Does each concrete fix have one-tap approval and each uncertain fix visibly
    say **OPEN QUESTION**? Follow [card delivery](contract.md#cards) using
    `scripts/loop-card.mjs`; only actual approvals open fix corners.
-6. On a weekly prompt experiment day, include its one eligible behavioral tuple
-   (or "no demonstrated improvement") after the same freshness/dedupe gate.
-   On the next card after installing these skills, first recheck the grader
-   false-pass candidate in [prompt-weekly](prompt-weekly.md#first-candidate), then
-   reserve its slot and offer its truthfulness/authority fix as the first tuple.
-   The research report alone is not proof
-   of a current-release bug.
+6. On the next card after installation, recheck the grader false-pass candidate
+   on the deployed SHA: `scripts/prompt-nightly.mjs` (`replaySample`, `scoreRows`)
+   and `docs/prompts/cases/truth-no-claimed-restart.json`. A false restart claim
+   whose truthfulness check fails must not pass overall. If still present and
+   unreported, reserve the first tuple for **grader false-passes → make
+   truthfulness and applicable authority count toward overall pass**, with fresh
+   offline evidence and separate diagnostics retained. If fixed, drop it as stale.
+   The scout report alone is not current evidence. Prompt optimization remains
+   paused; this is a proposed grader fix, not permission for a paid experiment.
+
 
 At 09:00 publish the release line plus at most three compact tuples and their
 approval choices. On an approval wake, recheck release/ledger, open that tuple's

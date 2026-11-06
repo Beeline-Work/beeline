@@ -31,10 +31,10 @@ a current-release finding until reproduced on the pinned deployed checkout.
    Prove duplicate coverage using the behavior/assertions; line similarity alone
    does not justify deletion. Name the unique regression protection retained.
 6. Which new prompt failure cases validate offline against the current assembler
-   (`node --import tsx scripts/prompt-cases.ts`)? No nightly prompt search. Only
-   when new cases/drift justify it, run a fixed ten-case one-trial smoke on each
-   of two deployed profiles within existing caps; label simulation evidence.
-   Follow [prompt-weekly](prompt-weekly.md) for the weekly experiment.
+   (`node --import tsx scripts/prompt-cases.ts`)? Validate fixtures offline only.
+   Prompt optimization is paused: no nightly search, paid smoke or optimization
+   run. The revival conditions are in [README.md](README.md).
+
 
 Use at most two Vitest workers, one suite at a time. A rerun proves a flake only
 with the same inputs. Never mute a check, delete unique coverage, or raise a

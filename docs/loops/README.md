@@ -13,15 +13,13 @@ and a short honest empty answer. No runtime evidence is committed here.
 | 03:30 daily | [overnight-codebase-health](overnight-codebase-health.md): existing untangle-codebase + 14-day PR churn | firstmate_2 |
 | 04:15 daily | [overnight-ci](overnight-ci.md): CI/bloat/flakes + offline prompt-case intake | firstmate_2 |
 | 05:00 daily | [overnight-errors](overnight-errors.md): existing triage skill + current Sentry/feedback | Ruby |
-| 05:30 Sunday | [prompt-weekly](prompt-weekly.md): one bounded failure-driven experiment, if justified | firstmate_2 |
 | 09:00 daily | [morning-card](morning-card.md): release line + overnight tuples; one tap per fix | firstmate_2, existing owner-card destination |
 | 14:00 daily | [insight-loss](insight-loss.md) + [insight-workspace-walk](insight-workspace-walk.md), and no other sources | firstmate_2, existing owner-card destination |
 
 Each diagnostic hands its tuples to the card owner, who alone writes the ledger.
 The errors loop calls `beeline-triage` / `feedback-triage-steps` unchanged; codebase
 health calls the upstream `untangle-codebase` skill unchanged. Their assessment
-scope ends at proposed fixes until the card is approved. Prompt experiments may
-return `No demonstrated improvement.`; existing spend caps stay unchanged.
+scope ends at proposed fixes until the card is approved. Existing spend caps stay unchanged.
 
 After merge firstmate saves each `<slug>.md` as a procedure of the same slug with
 `remember(kind:procedure,action:save,slug,description,markdown)`, then updates
@@ -32,9 +30,9 @@ workflow runs until completed/cancelled, rather than orphaning their gates.
 
 Retire velocity, Loops writer, the separate 07:00 triage, 19:00 value loop and
 08:00 path-check/rival-scan wakes. Make X ads weekly, outside either card. Keep the
-Android sign-in one-off until its own success condition deletes it. The legacy
-prompt-nightly-replay schedule becomes the Sunday prompt-weekly schedule; no
-nightly paid hill-climb remains.
+Android sign-in one-off until its own success condition deletes it. Delete the 04:00 prompt-loop schedule `ea5594a0-42ec-49dd-8957-5582216ebedd`.
+
+Prompt optimization is paused; revive only after real outside usage exists and replay grading counts truthfulness/authority toward overall pass.
 
 Local checks (sequential): `node --test scripts/nightly-release.test.mjs`,
 `node --import tsx --test scripts/loop-card.test.mjs`, then

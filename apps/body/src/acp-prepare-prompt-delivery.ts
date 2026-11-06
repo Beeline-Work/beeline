@@ -1,3 +1,4 @@
+import { maskCredentialResult } from './mask-credential-result.js';
 import { CodexPromptDelivery } from './codex-prompt-delivery.js';
 
 import { watch, readFileSync, writeFileSync, type FSWatcher } from 'node:fs';
@@ -330,6 +331,13 @@ import { AcpClient, isPiAcpHarness, flattenHarnessCause, AcpRuntimeExitedError, 
     const asyncToolCallIds = new Set<string>();
     const onUpdate = (u: SessionUpdate) => {
       if (u.sessionId !== sessionId || terminalReason) return;
+      if (['tool_call', 'tool_call_update', 'tool_result'].includes(String(u.update.sessionUpdate))) {
+        const calls = toolCallEntries(updates);
+        const previous = u.update.toolCallId
+          ? calls.find(call => call.id === u.update.toolCallId)
+          : u.update.sessionUpdate === 'tool_call' ? undefined : calls.at(-1);
+        u = { ...u, update: maskCredentialResult(u.update, { ...previous, ...u.update }) };
+      }
       updates.push(u);
       if (!silentCallPending()) toolsSettled?.();
       checkTerminalContext();

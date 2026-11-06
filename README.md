@@ -47,6 +47,8 @@ Android testing uses an emulator already running on the host machine, with the h
 
 The agent opens a corner: an isolated worktree with one branch and one objective. The Room shows the pull request, checks, and merge. Nobody left the chat.
 
+Opening a corner starts its implementer, even when the opener does the work. Workflow steps likewise start their assigned agent. An agent's own posts and reports do not wake it again.
+
 ## Your machine. Your keys.
 
 The agent stays on your machine. Your computer keeps one connection for all its agents. When that connection drops, requests wait and resume when it returns. Your provider key never reaches Beeline's servers. [Security details and sandbox limits](https://github.com/Beeline-Work/beeline/blob/main/docs/security.md).

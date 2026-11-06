@@ -10,7 +10,7 @@ import { readsSourceText } from '../apps/server/scripts/test-selection.mjs';
 
 const roots = { server: 'apps/server', body: 'apps/body', mobile: 'apps/mobile' };
 const code = /\.(?:[cm]?[jt]sx?)$/;
-const fullInput = /^(?:\.github\/|scripts\/|packages\/api-contract\/|apps\/server\/scripts\/)|^apps\/body\/test-isolation\.ts$|^apps\/mobile\/sources\/test\/setupUnistyles\.ts$|(?:^|\/)(?:migrations?|schema)(?:\/|[.-])|(?:^|\/)[^/]*backfill[^/]*\.[cm]?[jt]s$|^apps\/server\/src\/database\.ts$|(?:^|\/)(?:package(?:-lock)?\.json|[^/]*config[^/]*\.[^/]+|\.npmrc)$/;
+const fullInput = /^(?:\.github\/|scripts\/|packages\/api-contract\/|apps\/server\/scripts\/)|^apps\/mobile\/sources\/test\/setupUnistyles\.ts$|(?:^|\/)(?:migrations?|schema)(?:\/|[.-])|(?:^|\/)[^/]*backfill[^/]*\.[cm]?[jt]s$|^apps\/server\/src\/database\.ts$|(?:^|\/)(?:package(?:-lock)?\.json|[^/]*config[^/]*\.[^/]+|\.npmrc)$/;
 const own = file => Object.entries(roots).find(([, root]) => file.startsWith(root + '/'))?.[0];
 const isDoc = file => file.startsWith('docs/') || /\.md$/.test(file);
 const quietDoc = file => isDoc(file) && !own(file) && !file.startsWith('packages/');

@@ -2,7 +2,7 @@
 
 Captured 2026-11-01T23:18:53.048Z from the GitHub Actions API for `Beeline-Work/beeline`. Requested the latest sixty completed successful or failed PR Checks runs from the most recent hundred API results; obtained 60. Canceled and unfinished runs are excluded. Window: 2026-11-01T04:35:52Z through 2026-11-01T22:45:06Z (UTC).
 
-Rerun with `node scripts/ci-baseline.mjs 60 > docs/ci-baseline-data.json` using authenticated `gh` with Actions read access. [Raw snapshot](ci-baseline-data.json) records commit SHAs, attempts, links and all measurements. The script reads workflow runs, paginated attempt jobs and logs through the GitHub API; it changes no workflows or runs.
+[Raw snapshot](ci-baseline-data.json) records commit SHAs, attempts, links and all measurements.
 
 Wall time is final-run `updated_at` minus the first attempt’s `run_started_at` (read from `attempts/1` for reruns), including queueing between jobs, rerun waiting and GitHub finalization. Runner minutes sum each non-skipped job’s `completed_at - started_at` across all attempts, including failed jobs and self-hosted runners. These are execution minutes, not billed minutes or OS multipliers. This mixed PR sample has different path filters and is an observational baseline, not a controlled speedup claim.
 

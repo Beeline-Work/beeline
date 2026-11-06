@@ -49,16 +49,12 @@ triggers; this path does not invent a separate notification mechanism.
 This is a feature, not a defect report. Run:
 
 ```
-npm run prove:operator-system-dm
-npm run test -w @beeline/server -- src/operator-system-dm.test.ts src/operator-system-dm-source.test.ts src/feedback.test.ts src/system-line.contract.test.ts --minWorkers=1 --maxWorkers=2
+npm run test -w @beeline/server -- src/operator-system-dm.test.ts src/operator-system-dm-source.test.ts src/feedback.test.ts --minWorkers=1 --maxWorkers=2
 npm run test -w @beeline/body -- src/minimal-tool-surface.test.ts
 npm run typecheck
 ```
 
-The compiled-service proof uses an isolated in-memory database, accepts an owner
-command through `DaemonService`, processes the queue, and asserts the exact text
-and System author in the recipient's `PhoneService.readRoom` response. Unit and
-service integration fixtures cover single, list and all sends, authority refusals,
+Unit and service integration fixtures cover single, list and all sends, authority refusals,
 audit records, partial failure and bounded batch continuation.
 The committed-source fixture covers idle-day zero queue reads, rollback without
 a wake, real committed capture and bounded recovery. The optional loopback

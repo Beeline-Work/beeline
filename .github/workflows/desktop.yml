@@ -272,11 +272,6 @@ jobs:
           env -u APPLE_API_KEY -u APPLE_API_ISSUER -u APPLE_API_KEY_PATH \
             npx tauri build --target "${{ matrix.target }}" ${config[@]+"${config[@]}"} \
             2>&1 | tee "$RUNNER_TEMP/tauri-build.log"
-      - name: Capture macOS native notification
-        if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && runner.os == 'macOS'
-        continue-on-error: true
-        timeout-minutes: 3
-        run: bash scripts/desktop-notification-proof-macos.sh
       - name: Capture Windows native notification
         if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && runner.os == 'Windows'
         continue-on-error: true

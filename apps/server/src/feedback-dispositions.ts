@@ -31,7 +31,15 @@ export async function applyFeedbackDispositions(db: SqlDatabase, command: Comman
       if (item.status !== 'closed') await db.query(`UPDATE feedback_items target SET
         occurrence_count=target.occurrence_count+source.occurrence_count,
         last_occurrence_at=GREATEST(target.last_occurrence_at,target.created_at,source.last_occurrence_at,source.created_at),
-        occurrences=target.occurrences || jsonb_build_array(jsonb_build_object('itemId',source.id,'agentId',source.reporter_identity_id,'createdAt',source.created_at)) || source.occurrences
+        occurrences=target.occurrences || jsonb_build_array(jsonb_build_object(
+          'itemId',source.id,'sourceKind',source.source_kind,'reporterIdentityId',source.reporter_identity_id,
+          'agentId',CASE WHEN source.source_kind='agent' THEN source.reporter_identity_id ELSE NULL END,
+          'ownerId',source.reporter_owner_id,'workspaceId',source.workspace_id,'roomId',source.room_id,
+          'triggerMessageId',source.trigger_message_id,'requestId',source.request_id,'messageIds',source.message_ids,
+          'promptSectionIds',source.prompt_section_ids,'summary',source.summary,'detail',source.detail,
+          'errorExcerpt',source.error_excerpt,'toolName',source.tool_name,'category',source.category,
+          'createdAt',source.created_at,'helperVersion',source.helper_version,'appVersion',source.app_version,
+          'appPlatform',source.app_platform,'harness',source.harness,'harnessVersion',source.harness_version)) || source.occurrences
         FROM feedback_items source WHERE target.id=$1 AND source.id=$2`, [reference, itemId]);
     }
     const status = disposition === 'fixed' ? 'resolved' : disposition === 'duplicate' ? 'closed' : disposition === 'linked' ? 'attached' : 'dismissed';

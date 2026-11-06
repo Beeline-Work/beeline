@@ -190,7 +190,9 @@ The workflow saves the assessment with its handoff in one transaction:
 
 - `linked` records an existing corner or PR and moves the item to `attached`.
 - `duplicate` names the canonical item, adds its occurrence count and evidence
-  there, and closes the duplicate row.
+  there, preserving the original report’s source, reporter, release versions and
+  context, and closes the duplicate row. Ranking counts agent and human evidence
+  against the delivered release even when their canonical report has another source.
 - `dismissed` records why no work is warranted.
 - `fixed` retains `resolved` after the existing merged-PR verification succeeds.
 

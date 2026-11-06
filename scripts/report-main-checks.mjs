@@ -29,11 +29,24 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const api = async (method, endpoint, body) => {
     const args = ['api', '--method', method, `repos/${process.env.GITHUB_REPOSITORY}/${endpoint}`];
     if (body) args.push('--input', '-');
-    const output = execFileSync('gh', args, { input: body ? JSON.stringify(body) : undefined, encoding: 'utf8', maxBuffer: 8 * 1024 ** 2 });
-    return output.trim() ? JSON.parse(output) : null;
+    let output;
+    try {
+      output = execFileSync('gh', args, { input: body ? JSON.stringify(body) : undefined,
+        encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 8 * 1024 ** 2 });
+    } catch {
+      throw new Error(`GitHub ${method} ${endpoint} failed`);
+    }
+    if (!output.trim()) return null;
+    try { return JSON.parse(output); }
+    catch { throw new Error(`GitHub ${method} ${endpoint} returned invalid JSON`); }
   };
-  const result = await reportMainChecks({ api, runId: process.env.CHECKS_RUN_ID });
-  console.log(JSON.stringify(result, null, 2));
-  if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY,
-    `Main Checks: ${result.skipped ? 'skipped: not a completed successful or failed main push' : `${result.failures.length} failed jobs; ${result.actions.length} issue updates`}\n`);
+  try {
+    const result = await reportMainChecks({ api, runId: process.env.CHECKS_RUN_ID });
+    console.log(JSON.stringify(result, null, 2));
+    if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY,
+      `Main Checks: ${result.skipped ? 'skipped: not a completed successful or failed main push' : `${result.failures.length} failed jobs; ${result.actions.length} issue updates`}\n`);
+  } catch (error) {
+    console.error(`Main Checks reporting failed: ${error.message.replace(/[\r\n]+/g, ' ')}`);
+    process.exitCode = 1;
+  }
 }

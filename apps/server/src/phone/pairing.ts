@@ -1,3 +1,4 @@
+import { agentHandleFromName } from '@beeline/api-contract/phone';
 import { assetUrl } from '../phone-identity.js';
 import { isSubscribableEventKind } from '@beeline/api-contract/phone';
 import { setRoomEventSubscriptions } from '../agent-subscriptions.js';
@@ -8,7 +9,6 @@ import type { AgentPairingClaimView, InviteView } from '@beeline/api-contract/ph
 import { assignSeededAgentIdentity, uniqueAgentHandle, isCommunityInviteToken, resolveFace } from '@beeline/api-contract/phone';
 import { type SqlDatabase } from '../database.js';
 import { ensureInvitedWorkspaceMembership, restorePairedWorkspaceMembership, joinRooms } from '../membership-join.js';
-import { lockIdentityHandleWorkspaces } from '../workspace-handles.js';
 import { grantSquireToOwnerMachineAgents } from '../workbench.js';
 import type { PhoneContext } from './context.js';
 import { hash, unix, normalizeAgentName, CONNECT_RENAME_WINDOW_MS } from './values.js';
@@ -88,17 +88,13 @@ import { hash, unix, normalizeAgentName, CONNECT_RENAME_WINDOW_MS } from './valu
     return ctx.database.transaction(async (database) => {
       const candidate = (
         await database.query<{ workspace_id: string; created_by: string }>(
-          `SELECT workspace_id,created_by FROM agent_pairing_codes WHERE code_hash=$1`,
-          [hash(code)],
+          `SELECT workspace_id,created_by FROM agent_pairing_codes WHERE code_hash=$1
+             AND EXISTS(SELECT 1 FROM identities WHERE id=$2 AND kind='agent')`,
+          [hash(code),agentId],
         )
       ).rows[0];
       if (!candidate) return null;
-      // Handle allocation takes its global lock before the Workspace row.
-      const lockedWorkspaces = lockIdentityHandleWorkspaces(database, agentId, [
-        candidate.workspace_id,
-      ]);
-      await lockedWorkspaces;
-      if (!(await phoneLockPairingIssuer(ctx, database, candidate.workspace_id, candidate.created_by)))
+      if (!(await ctx.lockPairingIssuer(database, candidate.workspace_id, candidate.created_by)))
         return null;
       const result = await database.query<{
         workspace_id: string;
@@ -110,31 +106,6 @@ import { hash, unix, normalizeAgentName, CONNECT_RENAME_WINDOW_MS } from './valu
       );
       const pairing = result.rows[0];
       if (!pairing || (pairing.claimed_by && pairing.claimed_by !== agentId)) return null;
-      const existingMembership = await database.query(
-        `SELECT 1 FROM memberships
-         WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL`,
-        [pairing.workspace_id, agentId],
-      );
-      if (!existingMembership.rowCount) {
-        const agent = (
-          await database.query<{ name: string }>(
-            `SELECT name FROM identities WHERE id=$1 AND kind='agent'`,
-            [agentId],
-          )
-        ).rows[0];
-        if (!agent) return null;
-        const handle = await phoneAvailableAgentHandle(ctx,
-          database,
-          pairing.workspace_id,
-          agentId,
-          agent.name,
-          lockedWorkspaces,
-        );
-        await database.query(`UPDATE identities SET handle=$2,updated_at=now() WHERE id=$1`, [
-          agentId,
-          handle,
-        ]);
-      }
       const joined = !pairing.claimed_by;
       if (joined)
         await database.query(
@@ -192,32 +163,9 @@ import { hash, unix, normalizeAgentName, CONNECT_RENAME_WINDOW_MS } from './valu
   }
 
 
-  export async function phoneAvailableAgentHandle(ctx: PhoneContext,
-    database: SqlDatabase,
-    workspaceId: string,
-    exceptIdentityId: string,
-    name: string,
-    lockedWorkspaces = lockIdentityHandleWorkspaces(database, exceptIdentityId, [workspaceId]),
-  ): Promise<string> {
-    database = new CornerAccessDatabase(database);
-    const workspaceIds = await lockedWorkspaces;
-    const rows = await database.query<{ handle: string }>(
-      `SELECT identity.handle
-       FROM memberships membership
-       JOIN identities identity ON identity.id=membership.identity_id
-       WHERE membership.workspace_id=ANY($1::uuid[]) AND membership.room_id IS NULL
-         AND membership.removed_at IS NULL AND identity.hidden_from_roster=false
-         AND identity.id<>$2 AND identity.handle IS NOT NULL`,
-      [workspaceIds, exceptIdentityId],
-    );
-    return uniqueAgentHandle(
-      name,
-      rows.rows.map((row) => row.handle),
-    );
-  }
+  
 
-  export async function phoneClaimAgentConnectPairing(ctx: PhoneContext,
-    input: {
+  export async function phoneClaimAgentConnectPairing(ctx: PhoneContext, input: {
       code: string;
       agentPubkey: string;
       model: string;
@@ -227,12 +175,10 @@ import { hash, unix, normalizeAgentName, CONNECT_RENAME_WINDOW_MS } from './valu
       deferJoin?: boolean;
       machineId?: string;
       machineName?: string;
-    },
-    createDaemonExchange?: (
+    }, createDaemonExchange?: (
       agentId: string,
       database: SqlDatabase,
-    ) => Promise<{ exchangeToken: string }>,
-  ): Promise<
+    ) => Promise<{ exchangeToken: string }>): Promise<
     | {
         status: 'claimed';
         workspaceId: string;
@@ -251,9 +197,7 @@ import { hash, unix, normalizeAgentName, CONNECT_RENAME_WINDOW_MS } from './valu
         `SELECT workspace_id,created_by FROM agent_pairing_codes WHERE code_hash=$1`, [hash(input.code)],
       )).rows[0];
       if (!candidate) return { status: 'not_found' };
-      const lockedWorkspaces = lockIdentityHandleWorkspaces(database, input.agentPubkey, [candidate.workspace_id]);
-      await lockedWorkspaces;
-      if (!(await phoneLockPairingIssuer(ctx, database, candidate.workspace_id, candidate.created_by)))
+      if (!(await ctx.lockPairingIssuer(database, candidate.workspace_id, candidate.created_by)))
         return { status: 'not_found' };
       const result = await database.query<{
         workspace_id: string;
@@ -275,32 +219,24 @@ import { hash, unix, normalizeAgentName, CONNECT_RENAME_WINDOW_MS } from './valu
       if (pairing.expires_at.getTime() <= Date.now()) return { status: 'expired' };
       if (pairing.claimed_by) return { status: 'already_claimed' };
 
-      const worn = await phoneWornSeededIdentity(ctx, database, pairing.workspace_id, input.agentPubkey);
+      const worn = await ctx.wornSeededIdentity(database, pairing.workspace_id, input.agentPubkey);
       const seeded = assignSeededAgentIdentity({
         seed: input.agentPubkey,
         takenFaces: worn.faces,
         takenNames: worn.names,
       });
-      const handle = await phoneAvailableAgentHandle(ctx,
-        database,
-        pairing.workspace_id,
-        input.agentPubkey,
-        seeded.name,
-        lockedWorkspaces,
-      );
-
       // Pairing a key whose agent was removed starts it over rather than
       // resurrecting it: the seeded name, animal and soul are assigned afresh
       // under the same dedup, and every retired setting is written back to its
       // freshly-paired value. A key that belongs to a person is never
       // overwritten into an agent.
       const identityRow = await database.query(
-        `INSERT INTO identities(id,kind,name,handle,face_id) VALUES($1,'agent',$2,$3,$4)
-         ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,handle=EXCLUDED.handle,face_id=EXCLUDED.face_id,
+        `INSERT INTO identities(id,kind,name,handle,face_id) VALUES($1,'agent',$2,beeline_identity_handle($1,$3),$4)
+         ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,face_id=EXCLUDED.face_id,
            avatar=NULL,hidden_from_roster=false,updated_at=now()
          WHERE identities.kind='agent'
          RETURNING id`,
-        [input.agentPubkey, seeded.name, handle, seeded.face],
+        [input.agentPubkey, seeded.name, agentHandleFromName(seeded.name), seeded.face],
       );
       if (!identityRow.rowCount) throw new Error('pairing key belongs to a person');
       await database.query(
@@ -354,9 +290,10 @@ import { hash, unix, normalizeAgentName, CONNECT_RENAME_WINDOW_MS } from './valu
       const machineId = input.machineId || input.agentPubkey;
       const squireOnMachine = await machineSquireReport(database, pairing.created_by, machineId);
       const squireInstalling = await database.query(
-        `SELECT 1 FROM agents a JOIN memberships m ON m.identity_id=a.agent_id
-         WHERE a.owner_id=$1 AND COALESCE(a.machine_id,a.agent_id)=$2
-           AND a.squire_work->>'install'='true'
+        `SELECT 1 FROM squire_machines source JOIN agents a ON a.agent_id=source.helper_agent_id
+         JOIN memberships m ON m.identity_id=a.agent_id
+         WHERE source.owner_id=$1 AND source.machine_id=$2
+           AND source.squire_work->>'install'='true'
            AND m.workspace_id=$3 AND m.room_id IS NULL AND m.removed_at IS NULL LIMIT 1`,
         [pairing.created_by, machineId, pairing.workspace_id],
       );
@@ -412,16 +349,9 @@ import { hash, unix, normalizeAgentName, CONNECT_RENAME_WINDOW_MS } from './valu
       if (!pairing?.claimed_by || !pairing.claimed_at) return { status: 'not_found' };
       if (Date.now() - pairing.claimed_at.getTime() > CONNECT_RENAME_WINDOW_MS)
         return { status: 'expired' };
-      const handle = await phoneAvailableAgentHandle(ctx,
-        database,
-        pairing.workspace_id,
+      await database.query(`UPDATE identities SET name=$2,updated_at=now() WHERE id=$1`, [
         pairing.claimed_by,
         name,
-      );
-      await database.query(`UPDATE identities SET name=$2,handle=$3,updated_at=now() WHERE id=$1`, [
-        pairing.claimed_by,
-        name,
-        handle,
       ]);
       await database.query(
         `UPDATE agents SET soul=jsonb_set(soul,'{name}',to_jsonb($2::text)),updated_at=now()

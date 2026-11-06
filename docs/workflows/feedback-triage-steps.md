@@ -46,7 +46,7 @@ items stay unresolved, so a later run with a System sender reports them.
 Run the read-only query through the vaulted Neon route:
 
 ```sql
-SELECT id, source_kind, category, summary, detail, tool_name, error_excerpt, created_at, last_occurrence_at, reporter_identity_id, occurrence_count, occurrences,
+SELECT id, source_kind, category, summary, detail, tool_name, error_excerpt, prompt_section_ids, created_at, last_occurrence_at, reporter_identity_id, occurrence_count, occurrences,
        helper_version, app_version, app_platform, harness, harness_version, latest.version AS latest_released_version,
        CASE WHEN helper_version IS NULL OR latest.version IS NULL THEN NULL
             ELSE helper_version = latest.version END AS helper_is_latest,

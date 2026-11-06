@@ -103,6 +103,8 @@ jobs:
         run: node --test scripts/prepare-corner.test.mjs scripts/ios-signin/capture.test.mjs
       - name: Test feedback grouping and ranking
         run: npm run test:feedback-signals
+      - name: Test nightly dispatch and main-failure reporting
+        run: node --test scripts/nightly-checks.test.mjs scripts/report-main-checks.test.mjs
       - name: Protect nightly latency history and measured Loops publication
         run: node --test --test-concurrency=1 scripts/latency-rig/nightly-*.test.mjs
       - name: Block unbounded outside requests and waiting-screen regressions

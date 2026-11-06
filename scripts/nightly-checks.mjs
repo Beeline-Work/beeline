@@ -34,10 +34,9 @@ export async function runNightly({ api, save, now = () => new Date(), manual = f
     if (hour === undefined) throw new Error(`Unknown Nightly Checks schedule: ${schedule}`);
     const intended = new Date(started);
     intended.setUTCHours(hour, 7, 0, 0);
-    // Select by the trigger, not the start hour: a delayed twin must never
-    // dispatch a second Checks run or raise a false late-start alarm.
+    // The date selects the DST trigger. GitHub may start either twin hours late;
+    // the runner's start hour says nothing about which trigger owns this date.
     if (!easternSlot(intended)) return;
-    if (!easternSlot(started)) throw new Error(`Nightly Checks missed the 03:00 America/New_York slot: schedule ${schedule} started at ${started.toISOString()}`);
   }
   if (!/^\d+$/.test(requestId)) throw new Error('Invalid nightly request identity');
   const releases = await api('GET', 'actions/workflows/unified-release.yml/runs?branch=main&per_page=100');

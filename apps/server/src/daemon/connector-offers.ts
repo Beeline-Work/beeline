@@ -52,10 +52,7 @@ import { daemonOfferContext } from './workbench.js';
 
 
   /** Exact Registry selection, owner+machine row creation, and optional one-link fallback. */
-  export async function daemonConnectMcpServer(ctx: DaemonContext,
-    input: Input<'connectMcpServer'>,
-    agentId: string,
-  ): Promise<Output<'connectMcpServer'>> {
+  export async function daemonConnectMcpServer(ctx: DaemonContext, input: Input<'connectMcpServer'>, agentId: string): Promise<Output<'connectMcpServer'>> {
     const serverName = typeof input.serverName === 'string' ? input.serverName.trim() : '';
     const version = typeof input.version === 'string' ? input.version.trim() : '';
     const reason = typeof input.reason === 'string' ? input.reason.trim().replace(/\s+/g, ' ') : '';
@@ -87,7 +84,7 @@ import { daemonOfferContext } from './workbench.js';
           : 'This Registry entry publishes packages only; package execution is not supported.',
       };
 
-    const context = await daemonOfferContext(ctx, input.roomId, agentId);
+    const context = await ctx.offerContext(input.roomId, agentId);
     const row = await ctx.database.transaction((database) =>
       armRegistryConnector(database, {
         workspaceId: context.workspaceId,
@@ -107,7 +104,7 @@ import { daemonOfferContext } from './workbench.js';
         status: 'unsupported',
         reason: `This server is already pinned to ${row.registry_version}; automatic upgrades are not supported.`,
       };
-    if (row.created) await notifyConnectorHelper(ctx.database, row.id);
+    if (row.status==='installing') await notifyConnectorHelper(ctx.database, row.id);
     if (row.status === 'connected') return { status: 'connected', connectorId: row.id };
 
     const signIn = row.sign_in;
@@ -162,11 +159,7 @@ import { daemonOfferContext } from './workbench.js';
    * (`acceptConnectorOffer`), so Squire's connect opens its sign-in page even
    * while the bound session is still valid.
    */
-  export async function daemonOfferConnector(ctx: DaemonContext,
-    input: Input<'offerConnector'>,
-    agentId: string,
-    unified = false,
-  ): Promise<Output<'offerConnector'>> {
+  export async function daemonOfferConnector(ctx: DaemonContext, input: Input<'offerConnector'>, agentId: string, unified = false): Promise<Output<'offerConnector'>> {
     if (typeof input.roomId !== 'string' || !input.roomId) throw new Error('roomId is required');
     if (!isOfferableConnectorKind(input.connectorType))
       throw new Error(
@@ -187,7 +180,7 @@ import { daemonOfferContext } from './workbench.js';
       );
     const intent = switching ? 'switch' : 'add';
     const provider = switching ? 'google' : undefined;
-    const offeredContext = await daemonOfferContext(ctx, input.roomId, agentId);
+    const offeredContext = await ctx.offerContext(input.roomId, agentId);
     const context = unified ? { ...offeredContext, addressee: offeredContext.owner, isCorner: false } : offeredContext;
     if (context.isCorner)
       throw new Error('connector offer is invalid: offer a tool from the Room, not from a corner');
@@ -225,49 +218,17 @@ import { daemonOfferContext } from './workbench.js';
         `connector offer conflict: ${context.addressee.name} already has ${connectorName} (${already.status}); check connectors_status`,
       );
     const result = await ctx.database.transaction(async (database) => {
-      // One open offer per Room+connector, even when two agents race: lock
-      // first, then read pending or connecting rows, matching the unique index
-      // (age does not create a second card).
-      await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-        `connector-offer:${input.roomId}:${connectorType}`,
-      ]);
-      const open = (
-        await database.query<{
-          id: string;
-          agent_id: string;
-          message_id: string | null;
-          intent: string;
-        }>(
-          `SELECT id,agent_id,message_id,intent FROM connector_offers
-           WHERE room_id=$1 AND connector_type=$2 AND status IN ('pending','connecting')
-           ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
-          [input.roomId, connectorType],
-        )
-      ).rows[0];
-      if (open && open.intent !== intent)
-        throw new Error(
-          `connector offer conflict: another ${connectorName} card is already open here; let that card be answered`,
-        );
-      if (open && open.agent_id === agentId && open.message_id)
-        return { offerId: open.id, messageId: open.message_id, joined: true };
-      if (open && open.agent_id !== agentId) {
-        const other = (
-          await database.query<{ name: string }>(`SELECT name FROM identities WHERE id=$1`, [
-            open.agent_id,
-          ])
-        ).rows[0];
-        throw new Error(
-          `connector offer conflict: ${other?.name ?? 'another agent'} already offered ${connectorName} here; let that card be answered`,
-        );
-      }
-      const offerId = randomUUID();
+      const requestedOfferId = randomUUID();
+      let offerId: string = requestedOfferId;
       const messageId = id();
       const created = (
-        await database.query<{ created_at: Date }>(
+        await database.query<{ id:string;agent_id:string;message_id:string|null;intent:string;created_at:Date }>(
           `INSERT INTO connector_offers(
              id,agent_id,workspace_id,room_id,addressee_id,connector_type,reason,machine_id,
              intent,provider
-           ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING created_at`,
+           ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+           ON CONFLICT(room_id,connector_type) WHERE status IN ('pending','connecting')
+           DO UPDATE SET room_id=EXCLUDED.room_id RETURNING id,agent_id,message_id,intent,created_at`,
           [
             offerId,
             agentId,
@@ -282,6 +243,16 @@ import { daemonOfferContext } from './workbench.js';
           ],
         )
       ).rows[0]!;
+      if (created.id !== requestedOfferId) {
+        if (created.intent !== intent) throw new Error(
+          `connector offer conflict: another ${connectorName} card is already open here; let that card be answered`);
+        if (created.agent_id !== agentId) {
+          const other=(await database.query<{name:string}>('SELECT name FROM identities WHERE id=$1',[created.agent_id])).rows[0];
+          throw new Error(`connector offer conflict: ${other?.name ?? 'another agent'} already offered ${connectorName} here; let that card be answered`);
+        }
+        if (created.message_id) return {offerId:created.id,messageId:created.message_id,joined:true};
+        offerId=created.id;
+      }
       const card: ConnectorOfferCardView = {
         offerId,
         agent: context.agent,

@@ -1,18 +1,10 @@
 import type { SqlDatabase } from './database.js';
 
-/** Take before exchange-row or membership locks; held until the caller commits. */
-export async function lockDaemonCredentialLifetime(
-  database: Pick<SqlDatabase, 'query'>,
-  agentId: string,
-) {
-  await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-    `daemon-credential-lifetime:${agentId}`,
-  ]);
-}
-
 /** Shared retirement/rollback/deletion primitive, inside the caller's transaction. */
 export async function revokeDaemonCredentials(database: SqlDatabase, agentId: string) {
-  await lockDaemonCredentialLifetime(database, agentId);
+  // Deleting an unused exchange orders retirement against its native consume.
+  // Keep token revocation in a fresh statement so a waiter sees a token just
+  // minted by the exchange transaction that committed ahead of it.
   await database.query(
     `DELETE FROM daemon_token_exchanges WHERE agent_id=$1 AND consumed_at IS NULL`,
     [agentId],

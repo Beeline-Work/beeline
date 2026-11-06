@@ -1,3 +1,5 @@
+import { dropQueuedOrdersForStop } from './agent-command-queue.js';
+import { lockAgentCommandQueue } from './agent-command-queue.js';
 import { cornerOpenedFromSql } from './corner-opening.js';
 import { cornerWaitingReportSql } from './corner-waiting-report.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
@@ -6,16 +8,7 @@ import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { normalizeAgentAsk } from './tray-approval-ask.js';
 import { createHash, randomBytes } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
-import {
-  createAgentCommand,
-  dropQueuedOrdersForStop,
-  lockAgentCommandQueue,
-  refuseVerdictedReviewerWake,
-  repairReviewerCornerMembership,
-  nextAgentDepth,
-  type CommandRow,
-  type PrivateCommandPayload,
-} from './agent-command.js';
+import { createAgentCommand, refuseVerdictedReviewerWake, repairReviewerCornerMembership, nextAgentDepth, type CommandRow, type PrivateCommandPayload } from './agent-command.js';
 import { resolveCurrentMemberMentions } from './message-mentions.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import { CommandRefusalError } from './command-refusal.js';
@@ -43,7 +36,8 @@ export async function commandOrder(db: SqlDatabase, command: CommandRow): Promis
   );
 }
 
-/** An address is a Room id (including corners and DMs). Reach stays membership based. */
+/** Reach stays membership based. Delegated orders recheck the issuing member
+ * at commit so this read never upgrades another recipient's queue fence. */
 export async function commandAddress(
   db: SqlDatabase,
   address: string,
@@ -59,7 +53,7 @@ export async function commandAddress(
      JOIN memberships member ON member.room_id=COALESCE(room.parent_id,room.id)
        AND member.identity_id=$2 AND member.removed_at IS NULL
      WHERE room.id=$1 AND ($3::boolean OR room.archived_at IS NULL)
-     LIMIT 1 FOR SHARE OF room,member`,
+     LIMIT 1 FOR SHARE OF room`,
       [address, agentId, allowArchived],
     )
   ).rows[0];
@@ -299,6 +293,38 @@ async function recordAgentCommandCard(db: SqlDatabase, input: {
 
 export const AGENT_COMMAND_CARD_TYPE = 'agent-command';
 
+/** Commanders come from the assignment at the question boundary and its recorded
+ * parents. Humans with current access outrank agents; peer activity never does.
+ * Expressions refer to the caller's question row, not to later replacement orders.
+ */
+export function commanderChainSql(corner: string, asker: string, askedAt: string): string {
+  return `WITH RECURSIVE assignment_chain AS (
+    SELECT seed.* FROM agent_commands seed WHERE seed.id IN (
+      (SELECT assigned.id FROM agent_commands assigned
+        WHERE assigned.room_id=${corner}.id AND assigned.agent_id=${asker}
+          AND assigned.created_at<=${askedAt}
+          AND (assigned.private_payload->>'kind'='order' OR assigned.reason='human_tag')
+        ORDER BY assigned.created_at DESC,assigned.id DESC LIMIT 1),
+      (SELECT opened.id FROM agent_commands opened WHERE opened.room_id=${corner}.id
+        AND opened.reason='corner_objective' ORDER BY opened.created_at,opened.id LIMIT 1))
+    UNION
+    SELECT parent.* FROM agent_commands parent JOIN assignment_chain child ON parent.id=child.parent_command_id
+  ), commanders AS (
+    SELECT ${corner}.created_by id
+    UNION SELECT assigned.private_payload->>'authorId' FROM assignment_chain assigned
+      WHERE assigned.private_payload->>'kind'='order'
+    UNION SELECT source.author_id FROM assignment_chain assigned
+      JOIN messages source ON source.id=assigned.source_message_id AND source.system_event IS NULL
+    UNION SELECT source.author_id FROM assignment_chain assigned
+      JOIN messages source ON source.id=assigned.root_source_message_id AND source.system_event IS NULL
+  ) SELECT member.identity_id id FROM room_access member JOIN identities identity ON identity.id=member.identity_id
+    WHERE member.room_id=${corner}.id AND member.removed_at IS NULL
+      AND identity.id<>'${SYSTEM_IDENTITY_ID}'
+      AND identity.id IS DISTINCT FROM (SELECT ${cornerImplementerSql('chain_fact', corner)}
+        FROM corner_facts chain_fact WHERE chain_fact.corner_id=${corner}.id)
+      AND (identity.kind='human' OR identity.id IN (SELECT id FROM commanders))`;
+}
+
 /** Derive the return route from the open command or the current order; no work ledger. */
 export async function reportToCommander(
   db: SqlDatabase,
@@ -330,13 +356,19 @@ export async function reportToCommander(
     console.error(`[commander] ${roomId}: cannot route report without recorded opening provenance`);
     return { id: reportId, createdAt: Math.floor(Date.now() / 1000), delivered: false };
   }
+  const wakeRoom = options.automatic && options.agentOnly && options.wakeInCorner && origin &&
+    (await db.query('SELECT 1 FROM room_access WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL',
+      [origin,recipient])).rowCount ? origin : returnRoom;
+  const recipientKind=(await db.query<{kind:string}>('SELECT kind FROM identities WHERE id=$1',[recipient])).rows[0]?.kind;
+  if(recipientKind==='agent')
+    await lockAgentCommandQueue(db,[{roomId:returnRoom,agentId:recipient},{roomId:wakeRoom,agentId:recipient}]);
   const member = (
     await db.query<{ kind: string }>(
       `SELECT identity.kind FROM memberships member JOIN identities identity ON identity.id=member.identity_id
      JOIN rooms room ON member.room_id=COALESCE(room.parent_id,room.id) AND room.archived_at IS NULL
-     WHERE room.id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL
+     WHERE room.id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL AND identity.kind=$3
      FOR SHARE OF member,room`,
-      [returnRoom, recipient],
+      [returnRoom, recipient,recipientKind??null],
     )
   ).rows[0];
   if (!member) {
@@ -381,13 +413,6 @@ export async function reportToCommander(
       // effective corner access: inherited parent-roster membership counts, and
       // this caller (refreshCornerAttention) runs on the raw database, so name
       // the effective view instead of relying on query rewriting.
-      const wakeRoom = options.automatic && options.agentOnly && options.wakeInCorner && origin &&
-        (await db.query(
-          'SELECT 1 FROM room_access WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL',
-          [origin, recipient],
-        )).rowCount
-        ? origin
-        : returnRoom;
       // System attention reports describe the worker's own work. Preserve that
       // source separately from the visible System author so shared admission
       // cannot wake a worker that is also its own commander.
@@ -588,7 +613,7 @@ export async function commanderReportAddress(db: SqlDatabase, roomId: string, co
       await db.query<{ created_by: string; return_room: string; parent_command: string | null }>(
         `SELECT room.created_by,COALESCE(parent.room_id,source.room_id,room.parent_id) return_room,
          parent.id parent_command FROM rooms room
-       LEFT JOIN LATERAL (SELECT * FROM agent_commands opened
+       LEFT JOIN LATERAL (SELECT opened.* FROM agent_commands opened
          WHERE opened.room_id=room.id AND opened.reason='corner_objective'
          ORDER BY opened.created_at,opened.id LIMIT 1) opened ON true
        LEFT JOIN agent_commands parent ON parent.id=opened.parent_command_id

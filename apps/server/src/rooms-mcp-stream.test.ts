@@ -42,7 +42,7 @@ describe.each(['pglite',...(postgresUrl?['postgres']:[])])('P12 MCP committed me
     // Minimal isolated fixture still installs the actual production journal and
     // every actual stream trigger; no test manually fabricates notifications.
     await db.query(`CREATE TABLE router_authority(scope text PRIMARY KEY,epoch bigint NOT NULL DEFAULT 1);
-      CREATE TABLE rooms(id uuid PRIMARY KEY,workspace_id uuid,archived_at timestamptz);
+      CREATE TABLE rooms(id uuid PRIMARY KEY,workspace_id uuid,archived_at timestamptz,parent_id uuid);
       CREATE TABLE room_access(room_id uuid,identity_id text,removed_at timestamptz);
       CREATE TABLE memberships(workspace_id uuid,room_id uuid,identity_id text,role text,removed_at timestamptz);
       CREATE TABLE rooms_mcp_mentions(seq bigserial PRIMARY KEY,member_id text,room_id uuid,message_id text,cleared_at timestamptz);
@@ -52,9 +52,9 @@ describe.each(['pglite',...(postgresUrl?['postgres']:[])])('P12 MCP committed me
       CREATE TABLE rooms_mcp_connections(client_id text,identity_id text,scope text,revoked_at timestamptz);
       CREATE TABLE rooms_mcp_families(id text,client_id text,identity_id text,revoked_at timestamptz);`);
     await db.query(COMMITTED_JOURNAL_SCHEMA);await db.query(MCP_MEMBER_STREAM_SCHEMA);
-    await db.query(`INSERT INTO rooms VALUES($1,$2,NULL)`,[room,workspace]);
+    await db.query(`INSERT INTO rooms(id,workspace_id,archived_at) VALUES($1,$2,NULL)`,[room,workspace]);
     await db.query(`INSERT INTO room_access VALUES($1,'member',NULL)`,[room]);
-    await db.query(`INSERT INTO memberships VALUES($1,NULL,'member','member',NULL)`,[workspace]);
+    await db.query(`INSERT INTO memberships VALUES($1,NULL,'member','member',NULL),($1,$2,'member','member',NULL)`,[workspace,room]);
     await db.query(`INSERT INTO rooms_mcp_members VALUES('client','owner','member');
       INSERT INTO rooms_mcp_connections VALUES('client','owner','rooms:read',NULL);
       INSERT INTO rooms_mcp_tokens(hash,client_id,identity_id,scope,expires_at) VALUES('synthetic-token','client','owner','rooms:read',now()+interval '2 days');`);

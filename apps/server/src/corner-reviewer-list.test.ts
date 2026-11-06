@@ -3,7 +3,6 @@ import { cornerRunOutcomeSql, cornerRunStateSql } from './corner-run.js';
 import { migrate, PostgresDatabase, type SqlDatabase } from './database.js';
 import { Pool } from 'pg';
 import { randomUUID } from 'node:crypto';
-import { workflowRunLockKey } from './workflow-runs.js';
 import { PgliteDatabase, assignCornerWorker, insertCornerFacts } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';

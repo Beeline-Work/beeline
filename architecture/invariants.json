@@ -649,8 +649,8 @@
       "apps/server/src",
       "apps/auth/src"
     ],
-    "bootstrapTotal": 1666,
-    "unusedTotal": 174,
+    "bootstrapTotal": 1664,
+    "unusedTotal": 175,
     "tables": {
       "agent_avatars": {
         "module": "Agent types",
@@ -957,7 +957,10 @@
           },
           "machine_id": "existing before the registry; weekly audit reviews",
           "machine_name": "existing before the registry; weekly audit reviews",
-          "squire_report": "existing before the registry; weekly audit reviews",
+          "squire_report": {
+            "reason": "Retired broker-copy storage retained for preceding serving and rollback images; canonical reports live in squire_machines.",
+            "drop": "docs/release-pipeline.md#release-memory — beeline-drop-retired-turn-schema contract release"
+          },
           "squire_work": "existing before the registry; weekly audit reviews",
           "harness": "existing before the registry; weekly audit reviews",
           "custom_tags": {
@@ -1289,7 +1292,8 @@
         "reason": "existing before the registry; weekly audit reviews",
         "columns": {
           "day": "existing before the registry; weekly audit reviews",
-          "usd": "existing before the registry; weekly audit reviews"
+          "usd": "existing before the registry; weekly audit reviews",
+          "allocation": "Exact grant produced by the latest atomic counter update, needed to return partial allocations without subtracting a stale pre-update snapshot."
         }
       },
       "free_agent_call_rate": {
@@ -1298,7 +1302,9 @@
         "columns": {
           "owner_id": "existing before the registry; weekly audit reviews",
           "minute": "existing before the registry; weekly audit reviews",
-          "calls": "existing before the registry; weekly audit reviews"
+          "calls": "existing before the registry; weekly audit reviews",
+          "lifetime_tokens": "Owner lifetime reservation counter, updated atomically with admission and settlement so cross-day concurrent writers cannot spend the same allowance.",
+          "last_grant": "Exact owner grant produced by the latest atomic UPDATE; PostgreSQL 16 cannot return the old row after waiting on another writer."
         }
       },
       "free_agent_events": {
@@ -1319,7 +1325,8 @@
           "owner_id": "existing before the registry; weekly audit reviews",
           "day": "existing before the registry; weekly audit reviews",
           "tokens": "existing before the registry; weekly audit reviews",
-          "reservation_credit": "existing before the registry; weekly audit reviews"
+          "reservation_credit": "existing before the registry; weekly audit reviews",
+          "allocation": "Exact grant produced by the latest atomic counter update, needed to return partial allocations without subtracting a stale pre-update snapshot."
         }
       },
       "free_agents": {
@@ -1895,7 +1902,10 @@
           "event_cause_id": "existing before the registry; weekly audit reviews",
           "event_root_cause_id": "existing before the registry; weekly audit reviews",
           "event_depth": "existing before the registry; weekly audit reviews",
-          "event_woken": "existing before the registry; weekly audit reviews",
+          "event_woken": {
+            "reason": "Retired cascade counter retained for preceding serving and rollback images; current event traces have no budget counter.",
+            "drop": "docs/release-pipeline.md#release-memory — beeline-drop-retired-turn-schema contract release"
+          },
           "agent_model": "existing before the registry; weekly audit reviews",
           "source_client": "existing before the registry; weekly audit reviews"
         }
@@ -2115,6 +2125,17 @@
         "columns": {
           "old_level": "existing before the registry; weekly audit reviews",
           "user_count": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "push_turn_context": {
+        "module": "Live fanout and push",
+        "reason": "One native aggregate per turn merges concurrent messages and keeps delivery on message primary keys.",
+        "columns": {
+          "room_id": "Room component of the native turn key.",
+          "author_id": "Agent component of the native turn key.",
+          "request_id": "Request component of the native turn key.",
+          "turn_ids": "Committed sibling message IDs for point reads without chat history scans.",
+          "expires_at": "Latest sibling expiry retires the aggregate with its delivery window."
         }
       },
       "push_message_context": {
@@ -3259,6 +3280,35 @@
           "settled_at": "Records when the first durable settlement committed so later evidence cannot renew it.",
           "created_at": "Records durable provider admission time independently of eventual settlement."
         }
+      },
+      "squire_machines": {
+        "reason": "Canonical owner and machine installation: generation, explicit unpair intent and the last applied broker report survive helper replacement.",
+        "columns": {
+          "owner_id": "Person whose physical-machine installation and explicit pairing intent this source records.",
+          "machine_id": "Stable physical-machine routing key; multiple helper agents share this source.",
+          "generation": "Current installation ceremony identity used to reject stale helper acknowledgements.",
+          "revision": "Compare-and-set revision for whole-machine report replacement and unpair intent.",
+          "helper_agent_id": "Helper assigned to the current installation ceremony; siblings must not perform it twice.",
+          "squire_work": "Current installation progress and owner unpair intent, independent of any helper inbox.",
+          "squire_report": "Last applied broker observation for this machine; failure preserves cached vault keys."
+        },
+        "module": "apps/server/src/squire-machine.ts"
+      },
+      "identity_handle_counters": {
+        "module": "Identity and sign-in",
+        "reason": "Assign stable automatic handle numbers with one native counter upsert.",
+        "columns": {
+          "name": "Canonical base name sharing one monotonically increasing sequence.",
+          "n": "Highest reserved number; existing addresses seed it and numbers are never reused."
+        }
+      },
+      "free_agent_creation_budget": {
+        "module": "Agent types",
+        "reason": "Atomically reserves the configured owner-funded starter Machine allowance before identities and memberships are created.",
+        "columns": {
+          "owner_id": "Selects the owner-funded Machine allowance shared by all of their Workspaces.",
+          "agents": "Counts reserved starter Machines so concurrent Workspace creation cannot overspend the existing owner allowance; losing Luna claims refund it."
+        }
       }
     },
     "jsonb": {
@@ -3300,6 +3350,7 @@
         "reportedAt": "existing before the registry; weekly audit reviews"
       },
       "squire_work": {
+        "signedInAs": "Account label reported by the selected machine installer; broker connectivity does not identify the signed-in account.",
         "disconnected": "existing before the registry; weekly audit reviews",
         "ops": "existing before the registry; weekly audit reviews",
         "install": "existing before the registry; weekly audit reviews",
@@ -3313,7 +3364,8 @@
         "aura-2": "existing before the registry; weekly audit reviews"
       },
       "detail": {
-        "usd": "existing before the registry; weekly audit reviews"
+        "usd": "existing before the registry; weekly audit reviews",
+        "warningId": "Warning event whose Add agent guide start this event records; the episode key prevents duplicate conversion events."
       },
       "manifests": {},
       "attachments": {},
@@ -3375,6 +3427,12 @@
       },
       "card": {
         "runStatus": "Workflow run start cards persist the committed live or terminal status so assignment admission cannot wake a finished run.",
+        "reason": "The terminal wallet verdict retains its original explanation when later provider observations arrive.",
+        "execution": "Server execution attribution distinguishes an initiated operation from provider-only transaction observations.",
+        "operation": "The initiating financial operation cannot be reconstructed from a provider transfer event alone.",
+        "amountText": "Execution-owned amount and asset labels must survive provider updates that lack the original intent.",
+        "counterparty": "Execution-owned destination or venue label must survive provider status-only updates.",
+        "transfers": "Per-log transfer amounts merge multiple observations of the same transaction without losing earlier logs.",
         "roleClasses": "existing before the registry; weekly audit reviews",
         "roleBindings": "existing before the registry; weekly audit reviews",
         "runId": "existing before the registry; weekly audit reviews",
@@ -3490,6 +3548,13 @@
         "usd": "Retains the observed model charge used for settled accounting.",
         "reason": "Records the exact proven nonentry cause without inferring it from elapsed time.",
         "status": "Preserves the provider refusal status that authorized settlement."
+      },
+      "allocation": {
+        "reserved": "Exact tokens granted by the latest atomic owner/day allocation.",
+        "maxOutput": "Exact output tokens granted by the latest atomic allocation.",
+        "credit": "Admission uncertainty credit granted by the daily counter update.",
+        "reservedUsd": "Exact dollars granted by the shared budget update.",
+        "limit": "Refusal reason from the atomic allocation; a refusal rolls the transaction back."
       }
     }
   }

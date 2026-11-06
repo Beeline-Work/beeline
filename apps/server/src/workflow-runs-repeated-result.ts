@@ -1,3 +1,5 @@
+import { claimRun } from './workflow-runs.js';
+import { SkillRevisionConflict } from './institutional-skills.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { applyFeedbackDispositions } from './feedback-dispositions.js';
 import { completeServiceReview } from './service-review.js';
@@ -82,12 +84,12 @@ export async function handoff(
         throw new Error(
           `${stateName} is a gate; a person answers it on its card in the Room, and it cannot be handed off`,
         );
-      await bindWorkflowStepOutput(db, command, input.runId);
       await settleWorkflowGate(db, {
         choiceId: answer.choiceId,
         viewerId: answer.viewerId,
         optionId: answer.optionId,
         sourceMessageId: command.source_message_id ?? undefined,
+        outputCommand: command,
       });
       const after = await openRun(db, command.room_id, input.runId);
       return {
@@ -112,6 +114,7 @@ export async function handoff(
           ? ['blocked needs contents.reason: why you cannot do this step, 1-500 characters'] : []),
       ];
       if (errors.length) throw new ExpectedRefusalError(errors.join('; '));
+      if (!await claimRun(db, scope)) return alreadyAdvanced(await openRun(db, command.room_id, input.runId));
       await bindWorkflowStepOutput(db, command, input.runId);
       const why = `${(reason as string).replace(/\s+/g, ' ').trim().slice(0, 200)}`;
       const result = await failOver(db, scope, {
@@ -148,6 +151,7 @@ export async function handoff(
         ? ', or blocked with contents.reason' : '';
       throw new ExpectedRefusalError(`${errors.join('; ')}; outcome must be one of: ${outcomes}${blocked}`);
     }
+    if (!await claimRun(db, scope)) return alreadyAdvanced(await openRun(db, command.room_id, input.runId));
     if (scope.contract.name === 'feedback-triage' && stateName === 'pull' && contentsState.requires.includes('dispositions') && ['ranked', 'nothing_new'].includes(input.outcome)) {
       await applyFeedbackDispositions(db, command, (input.contents as Record<string, unknown>).dispositions);
     }
@@ -229,7 +233,7 @@ export async function gateMessageAnswer(
  */
 export async function settleWorkflowGate(
   db: SqlDatabase,
-  input: { choiceId: string; viewerId: string; optionId?: string; note?: unknown; skip?: boolean; sourceMessageId?: string },
+  input: { choiceId: string; viewerId: string; optionId?: string; note?: unknown; skip?: boolean; sourceMessageId?: string; outputCommand?: CommandRow },
 ): Promise<{ choiceId: string; status: 'answered' | 'skipped'; roomId: string } | undefined> {
   const gate = (
     await db.query<{
@@ -257,6 +261,8 @@ export async function settleWorkflowGate(
     ? state.default!
     : gate.options.find((option) => option.optionId === input.optionId)?.label;
   if (!label || !Object.hasOwn(state.on, label)) throw new Error('choice option is invalid');
+  if (!await claimRun(db, scope)) throw new CommandRefusalError('choice conflict: this gate already advanced',409);
+  if (input.outputCommand) await bindWorkflowStepOutput(db,input.outputCommand,scope.runId);
   const settled = input.skip
     ? await skipRoomChoice(db, { choiceId: input.choiceId, viewerId: input.viewerId }, { wake: false })
     : await answerRoomChoice(
@@ -310,7 +316,7 @@ export async function abandonCornerWorkflowRuns(db: SqlDatabase, cornerId: strin
   for (const { id } of live.rows) {
     const scope = await openRun(db, cornerId, id);
     if (scope.ended) continue;
-    await closeRun(db, scope, {
+    const closed = await closeRun(db, scope, {
       status: 'abandoned',
       outcome: 'corner_closed',
       reason: 'corner closed',
@@ -322,7 +328,7 @@ export async function abandonCornerWorkflowRuns(db: SqlDatabase, cornerId: strin
         consequence: systemMessage("workflow-runs.as-abandoned-at-because-its-corner-closed", scope.stateName),
       },
     });
-    abandoned += 1;
+    if (closed) abandoned += 1;
   }
   return abandoned;
 }
@@ -350,9 +356,7 @@ export async function liveWorkflowRun(
 
 
 /** Serializes starts of one workflow in one Room, so the live-run check and the start card commit together. */
-export function workflowStartLockKey(roomId: string, workflowName: string): string {
-  return `workflow-start:${roomId}:${workflowName}`;
-}
+
 
 
 export async function saveWorkflow(
@@ -381,27 +385,20 @@ export async function saveWorkflow(
     );
     if (!member.rowCount)
       throw new Error('workflow saver must be a current agent member of this Room');
-    // Anyone may save a new workflow. Saving an active one unchanged is a
-    // no-op that writes nothing. Changing or reviving an existing saved
-    // workflow changes it for the whole Workspace, so only a human Workspace
-    // admin may. The revision lock is taken first, so a concurrent creation
-    // cannot slip between this read and the write.
-    await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-      `workspace-skill:${room.workspace_id}:${contract.name}`,
-    ]);
+    // New slugs are open to Room agents; changing an existing workflow
+    // requires a human admin. The save compares the version read here.
     const existing = (await db.query<{ unchanged: boolean; current_version: number }>(
       `SELECT skill.state='active' AND version.markdown=$3 unchanged,skill.current_version
        FROM workspace_skills skill
        LEFT JOIN workspace_skill_versions version ON version.skill_id=skill.id
          AND version.version=skill.current_version
-       WHERE skill.workspace_id=$1 AND skill.slug=$2 AND skill.kind='workflow'
-       FOR UPDATE OF skill`,
+       WHERE skill.workspace_id=$1 AND skill.slug=$2 AND skill.kind='workflow'`,
       [room.workspace_id, contract.name, markdown],
     )).rows[0];
     if (existing?.unchanged) return { slug: contract.name, version: existing.current_version };
     if (existing && !(await humanRoomAdmin(db, command.room_id, await workflowRequester(db, command))))
       throw new WorkflowAuthorizationError('workspace admins only: only a workspace admin can change this saved workflow', 403);
-    const { skillId, version } = await applySkillRevision(
+    const { version } = await applySkillRevision(
       db,
       {
         workspaceId: room.workspace_id,
@@ -411,10 +408,23 @@ export async function saveWorkflow(
         markdown,
         kind: 'workflow',
         sourceMessageIds: [command.root_source_message_id],
+        baseVersion: existing?.current_version ?? null,
       },
       afterCommit,
     );
     return { slug: contract.name, version };
+  }).catch(async (error: unknown) => {
+    if (!(error instanceof SkillRevisionConflict)) throw error;
+    const current = (await database.query<{ current_version: number; unchanged: boolean }>(
+      `SELECT skill.current_version,skill.state='active' AND version.markdown=$3 unchanged
+       FROM workspace_skills skill JOIN workspace_skill_versions version
+         ON version.skill_id=skill.id AND version.version=skill.current_version
+       WHERE skill.workspace_id=$1 AND skill.slug=$2 AND skill.kind='workflow'`,
+      [room.workspace_id, contract.name, markdown])).rows[0];
+    if (current?.unchanged) return { slug: contract.name, version: current.current_version };
+    if (!(await humanRoomAdmin(database, command.room_id, await workflowRequester(database, command))))
+      throw new WorkflowAuthorizationError('workspace admins only: only a workspace admin can change this saved workflow', 403);
+    throw new CommandRefusalError('saved workflow changed; no revision was written', 409);
   });
 }
 

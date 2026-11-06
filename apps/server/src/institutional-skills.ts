@@ -10,7 +10,6 @@ import {
   INSTITUTIONAL_MEMORY_ALIGN_MAX_DISTANCE,
   type LoadWorkspaceSkillInput,
   type LoadWorkspaceSkillResult,
-  type WorkspaceSkillProposal,
 } from '@beeline/api-contract/daemon';
 import type { CommandRow } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
@@ -18,8 +17,6 @@ import { scheduleEmbedWorkspaceSkillVersion, memoryEnvLimit, createDefaultEmbedF
   pgvectorLiteral, runAfterCommit, type AfterCommit, type EmbedFn,
 } from './institutional-memory-embeddings.js';
 
-export const WORKSPACE_SKILL_ACTIVE_MAX = 100;
-export const WORKSPACE_SKILL_ACTIVE_BYTES_MAX = 1024 * 1024;
 export const WORKSPACE_SKILL_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 const PROHIBITED_SKILL_PATTERNS = [
@@ -102,15 +99,11 @@ export async function authorizedWorkspaceSkillCandidates(
   ).rows;
 }
 
-/**
- * The write path shared by every SYNCHRONOUS, caller-versioned save: the
- * server auto-resolves the next version from the current row rather than
- * requiring a caller-supplied `baseVersion`, because a single tool call has
- * no concurrent extractor job to race. `save_workflow` and `save_skill` both
- * go through this; the async curator pipeline's `applyWorkspaceSkillProposal`
- * below keeps its own caller-supplied CAS, since concurrent extractor jobs
- * over the same slug are exactly what that one guards against.
- */
+export class SkillRevisionConflict extends Error {
+  constructor() { super('workspace skill revision changed'); }
+}
+
+/** A slug update and its immutable version are one atomic statement. */
 export async function applySkillRevision(
   database: SqlDatabase,
   input: {
@@ -121,6 +114,7 @@ export async function applySkillRevision(
     markdown: string;
     kind: 'procedure' | 'workflow';
     sourceMessageIds: readonly string[];
+    baseVersion?: number | null;
   },
   afterCommit?: AfterCommit,
 ): Promise<{ skillId: string; version: number }> {
@@ -128,86 +122,33 @@ export async function applySkillRevision(
   if (markdownBytes > WORKSPACE_SKILL_MARKDOWN_MAX_BYTES) {
     throw new Error(`workspace ${input.kind} markdown is too large`);
   }
-  const applied = await database.transaction(async (db) => {
-    await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-      `workspace-skill:${input.workspaceId}:${input.slug}`,
-    ]);
-    const current = (
-      await db.query<{
-        id: string;
-        kind: 'procedure' | 'workflow';
-        state: 'active' | 'stale' | 'archived';
-        current_version: number;
-        current_bytes: number;
-      }>(
-        `SELECT skill.id,skill.kind,skill.state,skill.current_version,
-                octet_length(convert_to(version.markdown,'UTF8')) current_bytes
-         FROM workspace_skills skill
-         JOIN workspace_skill_versions version
-           ON version.skill_id=skill.id AND version.version=skill.current_version
-         WHERE skill.workspace_id=$1 AND skill.slug=$2 FOR UPDATE OF skill`,
-        [input.workspaceId, input.slug],
-      )
-    ).rows[0];
-    if (current && current.kind !== input.kind) {
+  const row = (await database.query<{ skill_id: string; version: number }>(`
+    WITH revised AS (
+      INSERT INTO workspace_skills(id,workspace_id,slug,description,state,current_version,revision,source_room_id,
+        repository,target_commit,path,kind)
+      SELECT $1,$2,$3,$4,'active',1,1,$5,'','',NULL,$6
+      WHERE $11::boolean OR $12::int IS NULL OR EXISTS(SELECT 1 FROM workspace_skills
+        WHERE workspace_id=$2 AND slug=$3 AND current_version=$12)
+      ON CONFLICT(workspace_id,slug) DO UPDATE SET description=EXCLUDED.description,state='active',
+        current_version=workspace_skills.current_version+1,revision=workspace_skills.revision+1,
+        source_room_id=EXCLUDED.source_room_id,updated_at=now()
+      WHERE workspace_skills.kind=EXCLUDED.kind AND ($11 OR workspace_skills.current_version=$12)
+      RETURNING id,current_version
+    ) INSERT INTO workspace_skill_versions(skill_id,version,markdown,content_hash,source_job_id,source_message_ids,
+      repository,target_commit,path,extractor_version,model)
+      SELECT id,current_version,$7,$8,NULL,$9,'','',NULL,$10,'n/a' FROM revised
+      RETURNING skill_id,version`,
+  [randomUUID(),input.workspaceId,input.slug,input.description,input.sourceRoomId,input.kind,input.markdown,
+    createHash('sha256').update(input.markdown).digest('hex'),input.sourceMessageIds,`${input.kind}-save-v1`,
+    input.baseVersion === undefined, input.baseVersion ?? null])).rows[0];
+  if (!row) {
+    const current = (await database.query<{ kind: 'procedure' | 'workflow' }>(
+      'SELECT kind FROM workspace_skills WHERE workspace_id=$1 AND slug=$2',[input.workspaceId,input.slug])).rows[0];
+    if (current && current.kind !== input.kind)
       throw new Error(`a ${current.kind} with this name already exists; choose a different name`);
-    }
-    const totals = (
-      await db.query<{ active_count: string; active_bytes: string }>(
-        `SELECT count(*)::text active_count,
-                COALESCE(sum(octet_length(convert_to(version.markdown,'UTF8'))),0)::text active_bytes
-         FROM workspace_skills skill
-         JOIN workspace_skill_versions version
-           ON version.skill_id=skill.id AND version.version=skill.current_version
-         WHERE skill.workspace_id=$1 AND skill.state='active'`,
-        [input.workspaceId],
-      )
-    ).rows[0];
-    // A deleted (archived) or stale slug saved again adds to both totals.
-    const counted = current?.state === 'active';
-    if (!counted && Number(totals?.active_count ?? 0) >= WORKSPACE_SKILL_ACTIVE_MAX) {
-      throw new Error('workspace skill active-count cap exceeded');
-    }
-    const nextBytes =
-      Number(totals?.active_bytes ?? 0) - (counted ? current.current_bytes : 0) + markdownBytes;
-    if (nextBytes > WORKSPACE_SKILL_ACTIVE_BYTES_MAX) {
-      throw new Error('workspace skill active-byte cap exceeded');
-    }
-    const skillId = current?.id ?? randomUUID();
-    const version = (current?.current_version ?? 0) + 1;
-    if (current) {
-      await db.query(
-        `UPDATE workspace_skills
-         SET description=$2,state='active',current_version=$3,revision=revision+1,
-             source_room_id=$4,updated_at=now()
-         WHERE id=$1`,
-        [skillId, input.description, version, input.sourceRoomId],
-      );
-    } else {
-      await db.query(
-        `INSERT INTO workspace_skills
-         (id,workspace_id,slug,description,state,current_version,revision,source_room_id,
-          repository,target_commit,path,kind)
-         VALUES($1,$2,$3,$4,'active',$5,1,$6,'','',NULL,$7)`,
-        [skillId, input.workspaceId, input.slug, input.description, version, input.sourceRoomId, input.kind],
-      );
-    }
-    await db.query(
-      `INSERT INTO workspace_skill_versions
-       (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,
-        repository,target_commit,path,extractor_version,model)
-       VALUES($1,$2,$3,$4,NULL,$5,'','',NULL,$6,'n/a')`,
-      [
-        skillId,
-        version,
-        input.markdown,
-        createHash('sha256').update(input.markdown).digest('hex'),
-        input.sourceMessageIds,
-        `${input.kind}-save-v1`,
-      ],
-    );
-    return { skillId, version };
-  });
+    throw new SkillRevisionConflict();
+  }
+  const applied = { skillId: row.skill_id, version: row.version };
   // Event-driven, not polled: this save schedules its OWN row's embed once
   // the caller's transaction commits, on the pool. See
   // institutional-memory-embeddings.ts.
@@ -316,30 +257,23 @@ export async function deleteSkill(
     if (validSources.rowCount !== new Set(sources).size) {
       throw new Error('skill delete cites an unavailable source');
     }
-    await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-      `workspace-skill:${room.workspace_id}:${slug}`,
-    ]);
-    const current = (
-      await db.query<{ id: string; kind: 'procedure' | 'workflow'; current_version: number }>(
-        `SELECT id,kind,current_version FROM workspace_skills
-         WHERE workspace_id=$1 AND slug=$2 AND state IN ('active','stale') FOR UPDATE`,
+    const deleted = (await db.query<{ kind: 'procedure' | 'workflow' }>(
+      `UPDATE workspace_skills SET state='archived',revision=revision+1,updated_at=now(),
+         deleted_at=now(),deleted_by=$4,deleted_source_message_ids=$5
+       WHERE workspace_id=$1 AND slug=$2 AND current_version=$3 AND state IN ('active','stale')
+       RETURNING kind`, [room.workspace_id, slug, version, command.agent_id, sources],
+    )).rows[0];
+    if (!deleted) {
+      const current = (await db.query<{ current_version: number }>(
+        `SELECT current_version FROM workspace_skills WHERE workspace_id=$1 AND slug=$2 AND state IN ('active','stale')`,
         [room.workspace_id, slug],
-      )
-    ).rows[0];
-    if (!current) throw new Error(`no procedure or workflow is named ${slug}`);
-    if (current.current_version !== version) {
+      )).rows[0];
+      if (!current) throw new Error(`no procedure or workflow is named ${slug}`);
       throw new Error(
         `${slug} is at version ${current.current_version}, not ${version}; load it again before deleting`,
       );
     }
-    await db.query(
-      `UPDATE workspace_skills
-       SET state='archived',revision=revision+1,updated_at=now(),
-           deleted_at=now(),deleted_by=$2,deleted_source_message_ids=$3
-       WHERE id=$1`,
-      [current.id, command.agent_id, sources],
-    );
-    return { slug, kind: current.kind, version, deleted: true };
+    return { slug, kind: deleted.kind, version, deleted: true };
   });
 }
 
@@ -407,134 +341,6 @@ export async function vectorWorkspaceSkillCandidates(
       ],
     )
   ).rows;
-}
-
-/** Apply one immutable restricted-procedure revision under logical-key CAS. */
-export async function applyWorkspaceSkillProposal(
-  database: SqlDatabase,
-  input: {
-    workspaceId: string;
-    sourceRoomId: string;
-    sourceMessageIds: readonly string[];
-    sourceJobId: string;
-    usage: { readonly extractorVersion: string; readonly model: string };
-    proposal: WorkspaceSkillProposal;
-  },
-): Promise<{ skillId: string; version: number }> {
-  const markdownBytes = Buffer.byteLength(input.proposal.markdown, 'utf8');
-  if (markdownBytes > WORKSPACE_SKILL_MARKDOWN_MAX_BYTES) {
-    throw new Error('workspace skill markdown is too large');
-  }
-  await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-    `workspace-skill:${input.workspaceId}:${input.proposal.slug}`,
-  ]);
-  const current = (
-    await database.query<{
-      id: string;
-      state: 'active' | 'stale' | 'archived';
-      current_version: number;
-      current_bytes: number;
-      source_deleted_at: Date | null;
-    }>(
-      `SELECT skill.id,skill.state,skill.current_version,version.source_deleted_at,
-              octet_length(convert_to(version.markdown,'UTF8')) current_bytes
-       FROM workspace_skills skill
-       JOIN workspace_skill_versions version
-         ON version.skill_id=skill.id AND version.version=skill.current_version
-       WHERE skill.workspace_id=$1 AND skill.slug=$2 FOR UPDATE OF skill`,
-      [input.workspaceId, input.proposal.slug],
-    )
-  ).rows[0];
-  if (
-    (current &&
-      input.proposal.baseVersion !== current.current_version &&
-      !(current.source_deleted_at && input.proposal.baseVersion === null)) ||
-    (!current && input.proposal.baseVersion !== null)
-  ) {
-    throw new Error('workspace skill proposal CAS conflict');
-  }
-  const totals = (
-    await database.query<{ active_count: string; active_bytes: string }>(
-      `SELECT count(*)::text active_count,
-              COALESCE(sum(octet_length(convert_to(version.markdown,'UTF8'))),0)::text active_bytes
-       FROM workspace_skills skill
-       JOIN workspace_skill_versions version
-         ON version.skill_id=skill.id AND version.version=skill.current_version
-       WHERE skill.workspace_id=$1 AND skill.state='active'
-         AND version.source_deleted_at IS NULL`,
-      [input.workspaceId],
-    )
-  ).rows[0];
-  // Reviving a stale or source-deleted slug adds to both totals, so only a row
-  // those totals ALREADY counted may skip the count cap or discount its bytes.
-  const counted = current?.state === 'active' && current.source_deleted_at === null;
-  if (!counted && Number(totals?.active_count ?? 0) >= WORKSPACE_SKILL_ACTIVE_MAX) {
-    throw new Error('workspace skill active-count cap exceeded');
-  }
-  const nextBytes =
-    Number(totals?.active_bytes ?? 0) - (counted ? current.current_bytes : 0) + markdownBytes;
-  if (nextBytes > WORKSPACE_SKILL_ACTIVE_BYTES_MAX) {
-    throw new Error('workspace skill active-byte cap exceeded');
-  }
-
-  const skillId = current?.id ?? randomUUID();
-  const version = (current?.current_version ?? 0) + 1;
-  if (current) {
-    await database.query(
-      `UPDATE workspace_skills
-       SET description=$2,state='active',current_version=$3,revision=revision+1,
-           source_room_id=$4,repository=$5,target_commit=$6,path=$7,
-           updated_at=now()
-       WHERE id=$1`,
-      [
-        skillId,
-        input.proposal.description,
-        version,
-        input.sourceRoomId,
-        input.proposal.anchor.repository,
-        input.proposal.anchor.targetCommit,
-        input.proposal.anchor.path ?? null,
-      ],
-    );
-  } else {
-    await database.query(
-      `INSERT INTO workspace_skills
-       (id,workspace_id,slug,description,state,current_version,revision,source_room_id,
-        repository,target_commit,path)
-       VALUES($1,$2,$3,$4,'active',$5,1,$6,$7,$8,$9)`,
-      [
-        skillId,
-        input.workspaceId,
-        input.proposal.slug,
-        input.proposal.description,
-        version,
-        input.sourceRoomId,
-        input.proposal.anchor.repository,
-        input.proposal.anchor.targetCommit,
-        input.proposal.anchor.path ?? null,
-      ],
-    );
-  }
-  await database.query(
-    `INSERT INTO workspace_skill_versions
-     (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,
-      repository,target_commit,path,extractor_version,model)
-     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-    [
-      skillId,
-      version,
-      input.proposal.markdown,
-      createHash('sha256').update(input.proposal.markdown).digest('hex'),
-      input.sourceJobId,
-      input.sourceMessageIds,
-      input.proposal.anchor.repository,
-      input.proposal.anchor.targetCommit,
-      input.proposal.anchor.path ?? null,
-      input.usage.extractorVersion,
-      input.usage.model,
-    ],
-  );
-  return { skillId, version };
 }
 
 /**

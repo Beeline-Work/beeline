@@ -194,10 +194,9 @@ import { daemonWriteResult } from './corner-messages.js';
   export async function daemonMachineReport(ctx: DaemonContext, input: Input<'postAgentMachineReport'>, agentId: string) {
     await ctx.database.query(
       `UPDATE agents SET machine_id=$2,machine_name=$3,updated_at=now(),
-         squire_report=CASE WHEN COALESCE(machine_id,agent_id)=$2 THEN squire_report ELSE NULL END,
          squire_work=CASE WHEN COALESCE(machine_id,agent_id)=$2 THEN squire_work ELSE '{}'::jsonb END
        WHERE agent_id=$1`,
       [agentId, input.machineId, input.machineName],
     );
-    return daemonWriteResult(ctx);
+    return ctx.writeResult();
   }

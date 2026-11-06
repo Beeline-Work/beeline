@@ -10,7 +10,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { Agent, request as httpsRequest } from 'node:https';
-import { MCP_STARTER_ROUTINE, uniqueAgentHandle } from '@beeline/api-contract/phone';
+import { MCP_STARTER_ROUTINE, agentHandleFromName } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { fetchMcpLogo, mcpMemberAvatar, mcpClientName } from './rooms-mcp-logos.js';
 import { normalizeAvatar } from './durable-avatar.js';
@@ -94,7 +94,7 @@ async function replaceMcpMemberAvatar(db: SqlDatabase, memberId: string, avatar:
  */
 export async function ensureMcpMember(
   db: SqlDatabase,
-  input: { clientId: string; ownerId: string; modelLabel: string; workspaceIds?: string[] },
+  input: { clientId: string; ownerId: string; modelLabel: string; initialName?: string; workspaceIds?: string[] },
 ): Promise<string | undefined> {
   const client = (await db.query<{ name: string; redirects: string[]; logo: string | null }>(
     'SELECT name,redirects,logo FROM rooms_mcp_clients WHERE id=$1', [input.clientId])).rows[0];
@@ -134,18 +134,11 @@ export async function ensureMcpMember(
       `SELECT workspace_id FROM memberships WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL`, [memberId]);
     const addedWorkspaces = input.workspaceIds === undefined ? [] : workspaces.filter(
       id => !previousMemberships.rows.some(row => row.workspace_id === id));
-    const taken = await tx.query<{ handle: string }>(
-      `SELECT DISTINCT identity.handle FROM memberships membership
-       JOIN identities identity ON identity.id=membership.identity_id
-       WHERE membership.workspace_id=ANY($1::uuid[]) AND membership.removed_at IS NULL
-         AND identity.handle IS NOT NULL`,
-      [workspaces],
-    );
     const created = await tx.query(
-      `INSERT INTO identities(id,kind,name,handle,hidden_from_roster) VALUES($1,'agent',$2,$3,false)
+      `INSERT INTO identities(id,kind,name,handle,hidden_from_roster) VALUES($1,'agent',$2,beeline_identity_handle($1,$3),false)
        ON CONFLICT(id) DO UPDATE SET hidden_from_roster=false,updated_at=now()
        RETURNING id`,
-      [memberId, modelLabel, uniqueAgentHandle(modelLabel, taken.rows.map((row) => row.handle))],
+      [memberId, input.initialName??modelLabel, agentHandleFromName(input.initialName??modelLabel)],
     );
     if (!created.rowCount) return undefined;
     await tx.query(
@@ -503,23 +496,14 @@ export async function setMcpMemberProfile(
   // stored portrait, so an image is decoded and stored before anything changes.
   const avatar = rawAvatar ? await mcpAvatarBytes(rawAvatar) : undefined;
   return db.transaction(async (tx) => {
-    if (rawHandle !== undefined) {
-      // A member handle is unique in every Workspace where it belongs, like any agent.
-      const clash = await tx.query(
-        `SELECT 1 FROM identities identity
-         JOIN memberships membership ON membership.identity_id=identity.id AND membership.removed_at IS NULL
-         WHERE identity.handle=$1 AND identity.id<>$2 AND identity.hidden_from_roster=false
-           AND membership.workspace_id IN (
-             SELECT workspace_id FROM memberships WHERE identity_id=$2 AND room_id IS NULL AND removed_at IS NULL)
-         LIMIT 1`,
-        [rawHandle, memberId],
-      );
-      if (clash.rowCount) throw new McpToolError('Handle already taken');
-    }
-    await tx.query(
-      `UPDATE identities SET name=COALESCE($2,name),handle=COALESCE($3,handle),updated_at=now() WHERE id=$1`,
-      [memberId, name ?? null, rawHandle ?? null],
-    );
+    const changed=await tx.query(
+      `WITH target AS MATERIALIZED (SELECT id FROM identities WHERE id=$1 FOR UPDATE),
+      chosen AS MATERIALIZED (
+        SELECT CASE WHEN $3::text IS NULL THEN NULL ELSE beeline_identity_handle($1,$3,true) END handle FROM target
+      ) UPDATE identities SET name=COALESCE($2,name),handle=COALESCE(chosen.handle,identities.handle),updated_at=now()
+      FROM chosen WHERE identities.id=$1 AND ($3::text IS NULL OR chosen.handle=$3) RETURNING identities.id`,
+      [memberId,name??null,rawHandle??null]);
+    if(!changed.rowCount) throw new McpToolError('Handle already taken');
     const stored = avatar ? await replaceMcpMemberAvatar(tx, memberId, avatar) : undefined;
     if (byMember) await tx.query('UPDATE rooms_mcp_members SET profile_set=true WHERE member_id=$1', [memberId]);
     if (name !== undefined)

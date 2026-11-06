@@ -26,10 +26,7 @@ import { phoneViewerWorkbenchWorkspace } from './workbench-catalog.js';
    * A `'switch'` offer re-arms the same row with `force_relogin_provider`, so
    * Squire's connect signs in again even while the bound session is valid.
    */
-  export async function phoneAcceptConnectorOffer(ctx: PhoneContext,
-    input: Input<'acceptConnectorOffer'>,
-    viewerId: string,
-  ): Promise<Output<'acceptConnectorOffer'>> {
+  export async function phoneAcceptConnectorOffer(ctx: PhoneContext, input: Input<'acceptConnectorOffer'>, viewerId: string): Promise<Output<'acceptConnectorOffer'>> {
     if (typeof input.offerId !== 'string' || !input.offerId) throw new Error('offerId is required');
     const offer = (
       await ctx.database.query<{
@@ -58,7 +55,7 @@ import { phoneViewerWorkbenchWorkspace } from './workbench-catalog.js';
     if (!isOfferableConnectorKind(offer.connector_type))
       throw new Error(`connector offer is invalid: ${offer.connector_type} cannot be added`);
     const connectorType: ConnectorKind = offer.connector_type;
-    if (connectorType === 'wallet') return phoneAcceptWalletOffer(ctx, offer, viewerId);
+    if (connectorType === 'wallet') return ctx.acceptWalletOffer(offer, viewerId);
     if (offer.addressee_id !== viewerId) {
       const manager = await ctx.database.query(
         `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2
@@ -68,7 +65,7 @@ import { phoneViewerWorkbenchWorkspace } from './workbench-catalog.js';
       if (!manager.rowCount) throw new Error(CONNECTOR_OFFER_AUTHORITY_MESSAGE);
     }
     // The addressee decides only while they are still in the Workspace.
-    await phoneRequireWorkspaceMember(ctx, offer.workspace_id, viewerId);
+    await ctx.requireWorkspaceMember(offer.workspace_id, viewerId);
     if (offer.status === 'connecting' && offer.accepted_by !== viewerId && offer.intent !== 'reconnect')
       throw new Error('connector offer conflict: sign-in is already in progress');
     // The helper is the offering agent's machine; it must still be here to install.
@@ -81,28 +78,17 @@ import { phoneViewerWorkbenchWorkspace } from './workbench-catalog.js';
     );
     if (!helper.rowCount)
       throw new Error('connector offer conflict: the offering agent has left this Workspace');
-    // Vault reports lock the agent row before its owner-projection trigger
-    // takes router authority. Acceptance used to take that authority through
-    // the offer trigger first, then wait on the same agent in queueSquireWork.
-    // Serialize these machine operations on the report/unpair lock BEFORE
-    // either transaction takes an offer, agent or projection lock.
-    const lockSquireVault = async (database: SqlDatabase) => {
-      if (connectorType === 'trusty-squire')
-        await database.query('SELECT pg_advisory_xact_lock(hashtext($1))',
-          [`squire-vault:${helper.rows[0]!.owner_id}:${helper.rows[0]!.machine_id}`]);
-    };
-    const acceptor = await phoneRequireIdentity(ctx, viewerId);
+    const acceptor = await ctx.requireIdentity(viewerId);
     if (offer.intent === 'reconnect' && offer.status === 'connecting' && connectorType === 'trusty-squire') {
       if (offer.addressee_id !== viewerId) throw new Error(CONNECTOR_OFFER_AUTHORITY_MESSAGE);
       await ctx.database.transaction(async database => {
-        await lockSquireVault(database);
-        const claimed = await database.query(`UPDATE connector_offers SET accepted_by=$2,accepted_at=COALESCE(accepted_at,now())
-          WHERE id::text=$1 AND status='connecting' RETURNING id`, [input.offerId, viewerId]);
-        if (!claimed.rowCount) throw new Error('connector offer conflict: already completed');
         const work = await squireWorkStatus(database, offer.agent_id);
         if (work.status === 'error') await queueSquireWork(database, offer.agent_id,
           { install: true, forceReloginProvider: 'google' });
-        await phoneMarkConnectorOfferConnecting(ctx, database, { roomId: offer.room_id,
+        const claimed = await database.query(`UPDATE connector_offers SET accepted_by=$2,accepted_at=COALESCE(accepted_at,now())
+          WHERE id::text=$1 AND status='connecting' RETURNING id`, [input.offerId, viewerId]);
+        if (!claimed.rowCount) throw new Error('connector offer conflict: already completed');
+        await ctx.markConnectorOfferConnecting(database, { roomId: offer.room_id,
           offerId: input.offerId, acceptedBy: acceptor, acceptedAt: offer.accepted_at ?? new Date(),
           connectorId: squireMachineAddress(offer.machine_id) });
       });
@@ -110,34 +96,38 @@ import { phoneViewerWorkbenchWorkspace } from './workbench-catalog.js';
         connectorId: squireMachineAddress(offer.machine_id) };
     }
     const paired = await ctx.database.transaction(async (database) => {
-      await lockSquireVault(database);
-      await database.query('SELECT pg_advisory_xact_lock(hashtext($1))',
-        [`connector-offer:${offer.room_id}:${connectorType}`]);
+      // Installation admission precedes offer/card effects; a lost offer CAS
+      // rolls the installation back with this transaction.
+      const squirePairing = connectorType === 'trusty-squire' ? await ctx.armConnectorPairing(database, {
+        workspaceId: offer.workspace_id, ownerIdentityId: viewerId, connectorType,
+        helperAgentId: offer.agent_id, machineId: offer.machine_id,
+        ...(offer.intent === 'switch' && offer.provider ? { forceReloginProvider: offer.provider } : {}),
+      }) : undefined;
       if (offer.status === 'failed' && (await database.query(`SELECT 1 FROM connector_offers
         WHERE room_id=$1 AND connector_type=$2 AND id::text<>$3 AND status IN ('pending','connecting')`,
         [offer.room_id, connectorType, input.offerId])).rowCount)
         throw new Error('connector offer conflict: use the newer connection card');
       const updated = await database.query<{ accepted_at: Date }>(
-        `UPDATE connector_offers SET status='connecting',accepted_by=$2,
-             accepted_at=now()
-         WHERE id::text=$1 AND status IN ('pending','failed') RETURNING accepted_at`,
+        `UPDATE connector_offers offer SET status='connecting',accepted_by=$2,
+             accepted_at=CASE WHEN status='connecting' THEN accepted_at ELSE now() END
+         WHERE offer.id::text=$1 AND (offer.status IN ('pending','failed')
+           OR (offer.status='connecting' AND offer.accepted_by=$2))
+           AND (offer.status<>'failed' OR NOT EXISTS(SELECT 1 FROM connector_offers current_offer
+             WHERE current_offer.room_id=offer.room_id AND current_offer.connector_type=offer.connector_type
+               AND current_offer.id<>offer.id AND current_offer.status IN ('pending','connecting')))
+         RETURNING accepted_at`,
         [input.offerId, viewerId],
       );
-      const acceptedAt = updated.rows[0]?.accepted_at ?? offer.accepted_at;
-      if (!acceptedAt || (offer.status !== 'pending' && offer.status !== 'connecting' && offer.status !== 'failed'))
-        throw new Error('connector offer conflict: already accepted');
-      const pairing = await phoneArmConnectorPairing(ctx, database, {
+      if (!updated.rowCount) throw new Error('connector offer conflict: already accepted');
+      const acceptedAt = updated.rows[0]!.accepted_at;
+      const pairing = squirePairing ?? await ctx.armConnectorPairing(database, {
         workspaceId: offer.workspace_id,
         ownerIdentityId: viewerId,
         connectorType,
         helperAgentId: offer.agent_id,
         machineId: offer.machine_id,
       });
-      // The helper reads its assignment only after this transaction commits,
-      // so it sees the forced provider on the same install.
-      if (offer.intent === 'switch' && offer.provider && connectorType === 'trusty-squire') {
-        await queueSquireWork(database, offer.agent_id, { install: true, forceReloginProvider: offer.provider });
-      } else if (offer.intent === 'switch' && offer.provider)
+      if (offer.intent === 'switch' && offer.provider && connectorType !== 'trusty-squire')
         await database.query(
           `UPDATE workspace_connectors SET force_relogin_provider=$2 WHERE id=$1::uuid`,
           [pairing.connectorId, offer.provider],
@@ -146,7 +136,7 @@ import { phoneViewerWorkbenchWorkspace } from './workbench-catalog.js';
         input.offerId,
         connectorType === 'trusty-squire' ? null : pairing.connectorId,
       ]);
-      await phoneMarkConnectorOfferConnecting(ctx, database, {
+      await ctx.markConnectorOfferConnecting(database, {
         roomId: offer.room_id,
         offerId: input.offerId,
         acceptedBy: acceptor,
@@ -154,6 +144,10 @@ import { phoneViewerWorkbenchWorkspace } from './workbench-catalog.js';
         connectorId: pairing.connectorId,
       });
       return pairing;
+    }).catch(error=>{
+      if (error?.code==='23505' && error.constraint==='connector_offers_open_idx')
+        throw new Error('connector offer conflict: use the newer connection card');
+      throw error;
     });
     return {
       offerId: input.offerId,

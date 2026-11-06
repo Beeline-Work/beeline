@@ -70,7 +70,7 @@ it('defaults the server setting to Jellybean and validates configured agent keys
   expect(() => sentryWakeAgentFromEnv({BEELINE_SENTRY_TRIAGE_AGENT_ID:'invalid'})).toThrow('agent public key');
 });
 
-it('routes HTTP event digests immediately to the configured agent', async () => {
+it('R-NOISE-12: routes HTTP digests to the configured agent for the morning card', async () => {
   const agentId = sentryWakeAgentFromEnv({BEELINE_SENTRY_TRIAGE_AGENT_ID:'b'.repeat(64)});
   await fixture(agentId);
   await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Configured triager')`,[agentId]);
@@ -80,6 +80,10 @@ it('routes HTTP event digests immediately to the configured agent', async () => 
   expect((await post(issue())).status).toBe(200);
   expect((await post(issue('456'))).status).toBe(200);
   expect((await commands()).rows.map(row => row.agent_id)).toEqual([agentId, agentId]);
+  for (const command of (await commands()).rows) {
+    expect(command.private_payload.text).toContain('keep for the morning card');
+    expect(command.private_payload.text).not.toContain('open and own a fix corner');
+  }
   await flushSentryWakes(db,agentId);
   expect((await commands()).rows.map(row => row.agent_id)).toEqual([agentId,agentId]);
 }, postgresUrl ? 60_000 : 20_000);

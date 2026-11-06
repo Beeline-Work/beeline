@@ -10,7 +10,6 @@ import { skipRoomChoice } from './room-choice.js';
 import { ROUTER_COMMAND_SCHEMA, RouterCommandLedger } from './router-command-ledger.js';
 import { MEMBERSHIP_AUTHORITY_SCHEMA } from './membership-authority-schema.js';
 import { dispatchTrayDecisionCommand } from './tray-decision-command.js';
-import { workflowRunLockKey } from './workflow-runs.js';
 
 const url = process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
 if (url && !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(url).hostname))
@@ -35,6 +34,7 @@ async function rig(work: (reader: SqlDatabase, writer: SqlDatabase) => Promise<v
     await reader.query(`CREATE TABLE workspaces(id uuid PRIMARY KEY);
       CREATE TABLE identities(id text PRIMARY KEY,kind text,name text,handle text,avatar text,face_id text,hidden_from_roster boolean);
       CREATE TABLE rooms(id uuid PRIMARY KEY,workspace_id uuid,parent_id uuid,archived_at timestamptz);
+      CREATE TABLE corner_facts(corner_id uuid PRIMARY KEY);
       CREATE TABLE memberships(id bigserial PRIMARY KEY,workspace_id uuid,room_id uuid,identity_id text,role text,removed_at timestamptz);
       CREATE VIEW room_access AS SELECT member.* FROM memberships member
         WHERE member.room_id IS NULL OR EXISTS(SELECT 1 FROM rooms surface WHERE surface.id=member.room_id AND surface.parent_id IS NULL)
@@ -56,6 +56,7 @@ async function rig(work: (reader: SqlDatabase, writer: SqlDatabase) => Promise<v
     await reader.query(ROUTER_COMMAND_SCHEMA);
     await reader.query(`INSERT INTO workspaces VALUES($1)`, [W]);
     await reader.query(`INSERT INTO rooms(id,workspace_id,parent_id) VALUES($1,$3,NULL),($2,$3,$1)`, [ROOM, CORNER, W]);
+    await reader.query('INSERT INTO corner_facts(corner_id) VALUES($1)',[CORNER]);
     await reader.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'human','Other'),($3,'agent','Agent')`, [A, B, AGENT]);
     await reader.query(`INSERT INTO agents VALUES($1,$2)`, [AGENT, A]);
     await reader.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$3,'owner'),($1,$2,$3,'member')`, [W, ROOM, A]);
@@ -86,29 +87,6 @@ async function unchanged(reader: SqlDatabase, publish: unknown) {
 }
 
 describe.skipIf(!url)('real PostgreSQL selected Tray decision contention', () => {
-  it('refuses a legacy-held workflow lock before effects, then the legacy holder commits its actual skip/card change', async () => {
-    await rig(async (reader, writer) => {
-      const live = new LiveHub(), publish = vi.spyOn(live, 'publish'), held = deferred(), release = deferred();
-      const legacy = writer.transaction(async tx => {
-        await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [workflowRunLockKey(RUN)]);
-        held.resolve(); await release.promise;
-        // The source trigger requests this existing authority fence after the
-        // legacy run lock. The selected adapter must already have refused.
-        await skipRoomChoice(tx, { choiceId: CHOICE, viewerId: A }, { wake: false });
-      });
-      try {
-        await held.promise;
-        await expect(selected(reader, live)('busy-run')).rejects.toMatchObject({ status: 409, message: expect.stringContaining('busy') });
-        await unchanged(reader, publish);
-        release.resolve(); await legacy;
-        expect((await reader.query('SELECT status FROM room_choices WHERE id=$1', [CHOICE])).rows).toEqual([{ status: 'skipped' }]);
-        expect((await reader.query(`SELECT card->>'status' status FROM messages WHERE id='choice-card'`)).rows).toEqual([{ status: 'skipped' }]);
-        // Plain reads need no projection event; the committed write still owns the card.
-        expect((await reader.query(`SELECT count(*)::int count FROM live_journal WHERE event->>'sourceTable'='tray-projection'`)).rows[0]?.count).toBe(0);
-      } finally { release.resolve(); await legacy; }
-    });
-  });
-
   it('refuses NOWAIT source-row contention instead of deadlocking with a legacy source→authority writer', async () => {
     await rig(async (reader, writer) => {
       await reader.query(`UPDATE messages SET card=card-'runId' WHERE id='choice-card'`);

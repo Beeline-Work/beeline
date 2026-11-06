@@ -12,7 +12,7 @@ import type { SqlDatabase } from './database.js';
 import { repairReviewerCornerMembership, type CommandRow } from './agent-command.js';
 import { assertCornerBriefAllowsMerge } from './corner-brief.js';
 import { cornerImplementerSql } from './corner-worker.js';
-import { workflowRunLockKey } from './workflow-runs.js';
+
 import { advanceCorner } from './corner-lifecycle.js';
 import { CornerRow, loadCorner } from './corner-lifecycle-read-state.js';
 import { REVIEWER_NOT_PARENT_MEMBER, REVIEWER_NOT_CORNER_MEMBER, CORNER_LIFECYCLE_SLUG } from './corner-lifecycle-values.js';
@@ -20,7 +20,7 @@ import { REVIEWER_NOT_PARENT_MEMBER, REVIEWER_NOT_CORNER_MEMBER, CORNER_LIFECYCL
 
 
 export async function lockCornerLifecycle(db: SqlDatabase, cornerId: string): Promise<void> {
-  await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [workflowRunLockKey(cornerId)]);
+  await db.query('SELECT corner_id FROM corner_facts WHERE corner_id=$1 FOR UPDATE', [cornerId]);
 }
 
 
@@ -423,14 +423,14 @@ export async function confirmCornerMergeAuthority(
     return false;
   };
   return database.transaction(async (db) => {
-    await lockCornerLifecycle(db, cornerId);
-    const corner = await loadCorner(db, cornerId);
+    await db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    const corner = await loadCorner(db, cornerId, false);
     const pr = corner?.lifecycle.pr;
     if (!corner) return blocked('the corner no longer exists');
     if (corner.archived) return blocked('the corner is archived');
     if (!pr?.number) return blocked('the corner has no pull request');
     if (pr.headSha !== headSha) return blocked('the pull request head changed before the merge');
-    // A brief revised during the GitHub read is seen here: revisions take this lock.
+    // Brief, approval and hold are read from the same committed snapshot.
     await assertCornerBriefAllowsMerge(db, cornerId);
     const gate = await cornerMergeGate(db, cornerId, { number: pr.number, headSha });
     if (!gate.open)

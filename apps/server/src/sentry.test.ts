@@ -19,9 +19,11 @@ it.each([['server', false], ['body', false], ['server', true], ['body', true]] a
     const modulePath = resolve('../', surface, 'src/sentry.ts');
     const capture = surface === 'server' ? 'captureServerError' : 'captureHelperError';
     const flush = surface === 'server' ? 'flushServerErrors' : 'flushHelperErrors';
-    const thrown = `throw new Error('Beeline Sentry E2E test ${surface} Bearer private user@example.com');`;
+    const postgres=surface==='server'&&!fatal;
+    const thrown = `throw ${postgres?"Object.assign(":''}new Error('Beeline Sentry E2E test ${surface} Bearer private user@example.com')${postgres?",{code:'40P01',detail:'Process 10 waits for ShareLock on transaction 20.'})":''};`;
     const source = `import { ${capture}, ${flush} } from ${JSON.stringify(modulePath)};
-      ${fatal ? thrown : `try { ${thrown} } catch (error) { ${capture}(error); } await ${flush}();`}`;
+      ${postgres?`import {recordPostgresStatementError} from ${JSON.stringify(resolve('src/postgres-error.ts'))};`:''}
+      ${fatal ? thrown : `try { ${thrown} } catch (error) { ${postgres?"recordPostgresStatementError(error,'SELECT id FROM memberships WHERE identity_id=$1');":''}${capture}(error); } await ${flush}();`}`;
     const result = await new Promise<{ code: number | null; error: string }>((done, reject) => {
       const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source], {
         env: { ...process.env, SENTRY_DSN: `http://public@127.0.0.1:${port}/1`,
@@ -35,6 +37,8 @@ it.each([['server', false], ['body', false], ['server', true], ['body', true]] a
     const events = envelopes.flatMap(envelope => envelope.split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line)))
       .filter(item => item.exception);
     expect(events).toHaveLength(1);
+    if(postgres) expect(events[0].contexts.postgresql).toMatchObject({code:'40P01',
+      detail:'Process 10 waits for ShareLock on transaction 20.',statement_fingerprint:expect.stringMatching(/^[a-f0-9]{16}$/)});
     expect(events[0]).toMatchObject({ tags: { surface: surface === 'body' ? 'helper' : surface }, environment: 'test',
       exception: { values: [{ value: `Beeline Sentry E2E test ${surface} Bearer [redacted] [email]` }] } });
     expect(events[0].exception.values[0].stacktrace.frames.length).toBeGreaterThan(0);
@@ -574,7 +578,7 @@ it('WORKFLOW-ROLE-REFUSAL / BEELINE-SENTRY-REFUSALS / APP-REFUSAL-5 / VIDEO-PREV
             assert.deepEqual(mismatch,{status:503,body:{error:'unknown workflow role: reviewer'}});
             assert.deepEqual(await snapshot(),before);
           }
-          if (name === 'workspace-walk') await reserveServiceReviewWorkspaces(db,agent,runId,true);
+          if (name === 'workspace-walk') await reserveServiceReviewWorkspaces(db,agent,runId);
           const contents = name === 'workspace-walk' ? {receipts:(await db.query('SELECT * FROM service_review_targets($1,$2)',[agent,runId])).rows.map(row=>({workspace:row.workspace_id,rowsRead:0,firstMessageTime:null,lastMessageTime:null,findings:'none'}))} : {text:'x'.repeat(17000)};
           const result = await call({...input,runId,outcome:'reviewed',contents},'handoff');
           assert.match(result.body.error,name === 'workspace-walk' ? /workspace receipt must match/ : /contents exceeds 16 KB/);
@@ -623,8 +627,8 @@ it('WORKFLOW-ROLE-REFUSAL / BEELINE-SENTRY-REFUSALS / APP-REFUSAL-5 / VIDEO-PREV
         await flushServerErrors();
         providerFault = 'unexpected';
         const unexpected = await call({...input,appId:'app:slack',tool:'SLACK_FETCH',arguments:{}},'executeAppTool');
-        assert.equal(unexpected.status,503);
-        assert.ok(unexpected.body.error.includes('Insufficient Permission'));
+        assert.deepEqual(unexpected,{status:200,body:{status:'executed',data:{successful:false,
+          error:'App tool execution failed: '+JSON.stringify({error:{code:500,message:'Insufficient Permission',status:'INTERNAL'}})}}});
         providerFault = 'http500';
         const outage = await call({...input,appId:'app:slack',tool:'SLACK_FETCH',arguments:{}},'executeAppTool');
         assert.equal(outage.status,503);
@@ -650,10 +654,9 @@ it('WORKFLOW-ROLE-REFUSAL / BEELINE-SENTRY-REFUSALS / APP-REFUSAL-5 / VIDEO-PREV
     expect(result, result.error).toMatchObject({ code: 0 });
     const events = envelopes.flatMap(envelope => envelope.split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line)))
       .filter(item => item.exception);
-    expect(events).toHaveLength(4);
+    expect(events).toHaveLength(3);
     expect(events.map(event => event.exception.values[0].value).sort()).toEqual([
       'App provider request failed (500): upstream broken',
-      'App tool execution failed: '+JSON.stringify({error:{code:500,message:'Insufficient Permission',status:'INTERNAL'}}),
       'queued attachments exceed the size cap',
       'Show the video preview with Post and Cancel, and wait for the person to tap Post before uploading.',
     ].sort());

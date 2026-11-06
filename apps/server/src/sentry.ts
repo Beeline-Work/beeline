@@ -1,3 +1,4 @@
+import {postgresErrorContext} from './postgres-error.js';
 import { ExpectedRefusalError } from './command-refusal.js';
 import { GitHubCheckPermissionError, GitHubHttpError } from '@beeline/auth/github';
 import * as Sentry from '@sentry/node';
@@ -28,7 +29,9 @@ export function captureServerError(error: unknown, tags: Record<string, string> 
   if (error instanceof ExpectedRefusalError) return;
   if (error instanceof GitHubCheckPermissionError) return;
   if (error instanceof GitHubHttpError && error.rateLimited) return;
-  try { Sentry.captureException(error, { tags: { surface: 'server', ...tags } }); }
+  try { const database=postgresErrorContext(error);
+    Sentry.captureException(error, { tags: { surface: 'server', ...tags },
+    ...(database?{contexts:{postgresql:database}}:{}) }); }
   catch { /* Reporting must never change the original failure path. */ }
 }
 

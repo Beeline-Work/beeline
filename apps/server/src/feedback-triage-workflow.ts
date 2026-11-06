@@ -3,7 +3,7 @@ import type { WorkflowContract } from '@beeline/api-contract/daemon';
 import type { SqlDatabase } from './database.js';
 
 /** Daily sweep pull. Latest flags compare stored versions to the delivered helper bundle. */
-export const FEEDBACK_TRIAGE_PULL_SQL = `SELECT id, source_kind, category, summary, detail, tool_name, error_excerpt, created_at, last_occurrence_at, reporter_identity_id, occurrence_count, occurrences,
+export const FEEDBACK_TRIAGE_PULL_SQL = `SELECT id, source_kind, category, summary, detail, tool_name, error_excerpt, prompt_section_ids, created_at, last_occurrence_at, reporter_identity_id, occurrence_count, occurrences,
        helper_version, app_version, app_platform, harness, harness_version, latest.version AS latest_released_version,
        CASE WHEN helper_version IS NULL OR latest.version IS NULL THEN NULL
             ELSE helper_version = latest.version END AS helper_is_latest,

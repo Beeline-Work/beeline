@@ -333,22 +333,22 @@ it('R-RELEASE-CARD: built MCP tool dispatches through the daemon with a receipt 
   }
 });
 
-it('release channels: preserves explicit latest only for owners and defaults ordinary releases to nightly', async () => {
+it('release channels: preserves explicit latest only for owners and defaults ordinary releases to next', async () => {
   const dispatch = vi.fn(async (_inputs: Record<string, string>) => {});
   await productionReleaseDispatch(db, agent, { ...input, inputs: {} }, dispatch);
-  expect(JSON.parse(dispatch.mock.calls[0]![0].dispatched_by!)).toMatchObject({ channel: 'nightly' });
+  expect(JSON.parse(dispatch.mock.calls[0]![0].dispatched_by!)).toMatchObject({ channel: 'next' });
   await productionReleaseDispatch(db, agent, { ...input, inputs: { channel: 'latest' } }, dispatch);
   expect(dispatch.mock.calls[1]![0].channel).toBe('latest');
   expect(JSON.parse(dispatch.mock.calls[1]![0].dispatched_by!)).toMatchObject({ channel: 'latest' });
-  await expect(productionReleaseDispatch(db, agent, { ...input, inputs: { channel: 'typo' } }, dispatch))
-    .rejects.toThrow('channel must be nightly or latest');
+  await expect(productionReleaseDispatch(db, agent, { ...input, inputs: { channel: 'nightly' } }, dispatch))
+    .rejects.toThrow('channel must be next or latest');
   await db.query(`UPDATE memberships SET role='admin' WHERE identity_id=$1`, [human]);
   try {
     await expect(productionReleaseDispatch(db, agent, { ...input, inputs: { channel: 'latest' } }, dispatch))
       .rejects.toThrow('Latest promotion requires a workspace owner command');
     expect(dispatch).toHaveBeenCalledTimes(2);
-    await productionReleaseDispatch(db, agent, { ...input, inputs: { channel: 'nightly' } }, dispatch);
-    expect(dispatch.mock.calls[2]![0].channel).toBe('nightly');
+    await productionReleaseDispatch(db, agent, { ...input, inputs: { channel: 'next' } }, dispatch);
+    expect(dispatch.mock.calls[2]![0].channel).toBe('next');
   } finally {
     await db.query(`UPDATE memberships SET role='owner' WHERE identity_id=$1`, [human]);
   }

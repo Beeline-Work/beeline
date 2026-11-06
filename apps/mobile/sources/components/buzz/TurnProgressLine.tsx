@@ -56,7 +56,10 @@ export const STOP_HIT_SLOP = (44 - TURN_LINE_ROW_MIN_HEIGHT) / 2;
  * the control dims and the counter says `stopping` — before the cancelled
  * receipt lands; a failed stop enables it again.
  */
-export function TurnProgressLine(props: React.ComponentProps<typeof TurnProgressLineBody>) {
+export function TurnProgressLine(props: React.ComponentProps<typeof TurnProgressLineBody> & {
+  /** Accepted external sends use the same line without live motion. */
+  live?: boolean;
+}) {
   // A stream replaces its parent's Stop closure on every tick. Keep the paint
   // boundary stable while the action reads the latest committed turn.
   const stopRef = React.useRef(props.onStop);
@@ -64,7 +67,11 @@ export function TurnProgressLine(props: React.ComponentProps<typeof TurnProgress
     stopRef.current = props.onStop;
   });
   const stop = React.useCallback(() => stopRef.current?.(), []);
-  return <TurnProgressLineBody {...props} onStop={props.onStop ? stop : undefined} />;
+  return props.live === false ? (
+    <TurnSettledLine line={props.label} inset={props.inset} leading testID={props.testID} />
+  ) : (
+    <TurnProgressLineBody {...props} onStop={props.onStop ? stop : undefined} />
+  );
 }
 
 const TurnProgressLineBody = React.memo(function TurnProgressLineBody({
@@ -126,7 +133,7 @@ const TurnProgressLineBody = React.memo(function TurnProgressLineBody({
         >
           <BeelineMarkSpinner live />
         </View>
-        <Text numberOfLines={1} style={styles.label}>
+        <Text numberOfLines={1} ellipsizeMode="tail" style={styles.label}>
           {label}
         </Text>
         {counter != null && (
@@ -170,14 +177,20 @@ const TurnProgressLineBody = React.memo(function TurnProgressLineBody({
  * wall-clock "done" stamp. Static — no breath, no counter, the completed mark
  * — because the turn is over; the screen clears it after a few seconds.
  */
-export function TurnSettledLine({ line, testID }: { line: string; testID?: string }) {
+export function TurnSettledLine({ line, testID, inset = true, leading = false }: {
+  line: string;
+  testID?: string;
+  inset?: boolean;
+  /** The external-send variant shares the thinking mark's optical alignment. */
+  leading?: boolean;
+}) {
   return (
-    <View accessibilityLabel={line} style={styles.bar} testID={testID}>
+    <View accessibilityLabel={line} accessibilityLiveRegion={leading ? 'polite' : undefined} style={inset ? styles.bar : [styles.bar, styles.insetBar]} testID={testID}>
       <View style={styles.row}>
-        <View style={styles.glyphCell} testID={testID ? `${testID}-glyph` : undefined}>
+        <View style={leading ? [styles.glyphCell, styles.leadingGlyph] : styles.glyphCell} testID={testID ? `${testID}-glyph` : undefined}>
           <BeelineMarkSpinner />
         </View>
-        <Text numberOfLines={1} style={styles.label}>
+        <Text numberOfLines={1} ellipsizeMode="tail" style={styles.label}>
           {line}
         </Text>
       </View>

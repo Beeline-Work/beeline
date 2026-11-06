@@ -219,6 +219,7 @@ export function ChatSurfaceComposer({
                     {composerAck ? (
                       <TurnProgressLine
                         label={composerAck.label}
+                        live={composerAck.live}
                         startedAt={composerAck.startedAt}
                         received={composerAck.received}
                         stopping={stoppingThisTurn}
@@ -355,6 +356,7 @@ export function ChatSurfaceComposer({
                           <TurnProgressLine
                             inset={false}
                             label={composerAck.label}
+                            live={composerAck.live}
                             startedAt={composerAck.startedAt}
                             received={composerAck.received}
                             stopping={stoppingThisTurn}

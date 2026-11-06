@@ -20,7 +20,26 @@ import { phoneProjectPendingAgentCommands } from './message-enrichment.js';
     const delta = await phoneReadLiveDelta(ctx, roomId, viewerId, {
       type: 'message', messageId: messageIdValue,
     }, database);
-    return delta?.type === 'message-delta' ? { message: delta.message } : {};
+    // Routing records these mentions only for external MCP members, after
+    // membership and addressing policy pass. Never infer the kind from presence.
+    const recipients = await database.query<{ handle: string }>(
+      `SELECT DISTINCT identity.handle
+       FROM memberships membership
+       JOIN rooms_mcp_members external ON external.member_id=membership.identity_id
+       JOIN identities identity ON identity.id=external.member_id
+       WHERE membership.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=$1)
+         AND membership.removed_at IS NULL
+         AND NULLIF(identity.handle,'') IS NOT NULL
+         AND EXISTS(SELECT 1 FROM rooms_mcp_mentions mention
+           WHERE mention.member_id=external.member_id AND mention.message_id=$2
+             AND mention.room_id=$1)
+       ORDER BY identity.handle`,
+      [roomId, messageIdValue],
+    );
+    return {
+      ...(delta?.type === 'message-delta' ? { message: delta.message } : {}),
+      externalAgentHandles: recipients.rows.map((recipient) => recipient.handle),
+    };
   }
 
 

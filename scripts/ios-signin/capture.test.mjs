@@ -114,12 +114,37 @@ test('Xcode signs the Simulator executable and launch diagnostics precede provid
   assert.match(capture, /log show --last 5m/);
 });
 
-test('provider assertion rejects the recorded consent sheet and accepts provider addresses', async () => {
-  const { readFileSync } = await import('node:fs');
+test('recorded provider hierarchies cannot veto screenshot plus correlated server start', () => {
   const flow = readFileSync(resolve('scripts/ios-signin/provider.yaml'), 'utf8');
-  const selector = [...flow.matchAll(/visible: '([^']+)'/g)].at(-1)[1];
-  const matchesProvider = new RegExp(selector);
-  assert.equal(matchesProvider.test('“Beeline” Wants to Use “server.usebeeline.app” to Sign in'), false);
-  assert.equal(matchesProvider.test('github.com'), true);
-  assert.equal(matchesProvider.test('accounts.google.com'), true);
+  for (const provider of ['github', 'google']) {
+    const hierarchy = readFileSync(resolve(`scripts/ios-signin/fixtures/${provider}-42211008124.json`), 'utf8');
+    assert.equal(/github\.com|accounts\.google\.com/.test(hierarchy), false);
+  }
+  assert.doesNotMatch(flow, /visible:.*github/);
+  assert.match(flow, /takeScreenshot: 05-provider-page/);
+  const root = mkdtempSync(join(tmpdir(), 'signin-verification-'));
+  try {
+    const install = 'a14cf732-f7c2-41ec-b7e5-796b2c6f57e0';
+    writeFileSync(join(root, 'install-id.txt'), install);
+    for (const provider of ['github', 'google']) {
+      writeFileSync(join(root, `${provider}-final.png`), Buffer.from('89504e470d0a1a0a00000000', 'hex'));
+    }
+    const events = join(root, 'events.json');
+    const rows = [
+      { install_id: install, provider: 'github', event: 'provider_tapped', attempt_id: '4045c313-9369-484f-850b-3a8e3fc10293', recorded_at: '2026-11-06T12:53:28.209Z', server_at: '2026-11-06T12:53:45.097Z' },
+      { install_id: install, provider: 'google', event: 'provider_tapped', attempt_id: 'b906bdcc-6087-4b16-91a5-b878603a5782', recorded_at: '2026-11-06T12:56:09.840Z', server_at: '2026-11-06T12:56:26.045Z' },
+    ];
+    function verify(input) {
+      writeFileSync(events, JSON.stringify(input));
+      return spawnSync(process.execPath, [resolve('scripts/ios-signin/verify-capture.mjs'), root, '--events', events], { encoding: 'utf8' });
+    }
+    assert.equal(verify(rows).status, 0);
+    assert.notEqual(verify(rows.map(row => ({ ...row, server_at: null }))).status, 0);
+    assert.notEqual(verify(rows.map(row => ({ ...row, server_at: '2026-11-06T12:57:00Z' }))).status, 0);
+    assert.notEqual(verify(rows.map(row => ({ ...row, install_id: 'other-install' }))).status, 0);
+    rmSync(join(root, 'github-final.png'));
+    assert.notEqual(verify(rows).status, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

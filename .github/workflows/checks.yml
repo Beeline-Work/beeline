@@ -860,5 +860,7 @@ jobs:
   ios-signin-capture:
     if: github.event_name == 'workflow_dispatch' && inputs.suite == 'ios-signin-capture'
     uses: ./.github/workflows/ios-signin-capture.yml
+    secrets:
+      MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
     with:
       source_ref: ${{ github.ref }}

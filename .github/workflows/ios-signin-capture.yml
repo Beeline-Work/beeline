@@ -7,6 +7,9 @@ on:
         type: string
         default: main
   workflow_call:
+    secrets:
+      MIGRATION_DATABASE_URL:
+        required: true
     inputs:
       source_ref:
         type: string
@@ -27,6 +30,10 @@ jobs:
       EXPO_NO_TELEMETRY: '1'
       EXPO_PUBLIC_BUZZY_MONOLITH_URL: https://server.usebeeline.app
     steps:
+      - name: Check production read-only verification configuration
+        env:
+          CAPTURE_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
+        run: test -n "$CAPTURE_DATABASE_URL"
       - name: Set isolated evidence directory
         run: |
           evidence="$RUNNER_TEMP/ios-signin-${{ github.run_id }}-${{ github.run_attempt }}"
@@ -106,6 +113,10 @@ jobs:
           SOURCE_DIR: ${{ github.workspace }}/source
           HARNESS_DIR: ${{ github.workspace }}/harness
         run: bash harness/scripts/ios-signin/capture.sh
+      - name: Verify provider screenshots and correlated production starts
+        env:
+          CAPTURE_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
+        run: node harness/scripts/ios-signin/verify-capture.mjs "$EVIDENCE"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

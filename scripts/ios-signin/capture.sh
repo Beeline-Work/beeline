@@ -153,6 +153,20 @@ for provider in github google; do
     -e "PROVIDER=$provider" "$HARNESS_DIR/scripts/ios-signin/provider.yaml" \
     > "$EVIDENCE/$provider-maestro.log" 2>&1 || result=1
   xcrun simctl io "$device" screenshot "$EVIDENCE/$provider-final.png"
+  # App-only accessibility can omit the auth browser; keep it as evidence only.
+  node "$HARNESS_DIR/scripts/ios-signin/run-flow.mjs" 15000 maestro --device "$device" hierarchy \
+    > "$EVIDENCE/$provider-hierarchy.txt" 2>&1 || true
   xcrun simctl terminate "$device" app.usebeeline.mobile || true
 done
+container=$(xcrun simctl get_app_container "$device" app.usebeeline.mobile data)
+# Read only the funnel install identifier, never copy the app's storage to evidence.
+node --input-type=module - "$container" "$EVIDENCE" <<'INSTALL'
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+const [container, evidence] = process.argv.slice(2);
+const manifest = JSON.parse(readFileSync(join(container, 'Library/Application Support/app.usebeeline.mobile/RCTAsyncLocalStorage_V1/manifest.json'), 'utf8'));
+const install = manifest['beeline.funnel.install.v1'];
+if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(install ?? '')) throw new Error('Funnel install identifier unavailable');
+writeFileSync(join(evidence, 'install-id.txt'), install);
+INSTALL
 exit "$result"

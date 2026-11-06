@@ -1,13 +1,6 @@
-# On-demand full server coverage; main Checks records coverage on every merge.
-# This workflow records which
-# functions and files each server test file runs. The `server-coverage-map`
-# artifact is what SERVER SUITE on a pull request reads to run only the tests
-# its diff touches (apps/server/scripts/test-selection.mjs). Because PRs run a
-# subset, main Checks records full coverage after every merge; this is the manual path.
-#
-# No schedule or push trigger: main coverage is produced by checks.yml.
-# `gh workflow run checks.yml --ref <branch> -f suite=coverage-map` builds a
-# map for a branch; only PRs into that branch, or from it, will use it.
+# Manual full-coverage recovery path. Routine maps come from the full Checks
+# executions in unified-release.yml, with the exact release SHA as provenance.
+# PRs use the newest usable release/recovery map; no tests run after a merge.
 name: Server coverage map
 
 on:
@@ -68,7 +61,7 @@ jobs:
           node apps/server/scripts/test-selection.mjs build-map
           --records "$RUNNER_TEMP/coverage-records" --commit "$GITHUB_SHA"
           --out "$RUNNER_TEMP/server-coverage-map.json"
-      # Fails when a test read source code as text on main but the static scan
+      # Fails when a test read source code as text in the full run but the static scan
       # that keeps such tests in every PR's selection did not find it.
       - name: Check every test that reads source code is always run
         run: node apps/server/scripts/test-selection.mjs check-map "$RUNNER_TEMP/server-coverage-map.json"

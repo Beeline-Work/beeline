@@ -11,6 +11,10 @@ runs:
     - if: startsWith(runner.name, 'beeline-ci-squire-')
       shell: bash
       run: echo "$GITHUB_ACTION_PATH/bin" >> "$GITHUB_PATH"
+    - name: Resolve the checked-out commit for build provenance and caches
+      id: checkout
+      shell: bash
+      run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
     - uses: actions/setup-node@v4
       with:
         node-version: 22
@@ -50,13 +54,13 @@ runs:
           packages/*/dist/**
           apps/*/dist/**
           .beeline-ci-build.json
-        key: ci-build-v3-${{ runner.os }}-node22-${{ github.sha }}
+        key: ci-build-v3-${{ runner.os }}-node22-${{ steps.checkout.outputs.sha }}
       if: "!startsWith(runner.name, 'beeline-ci-squire-')"
     - uses: actions/cache@v4
       if: "!startsWith(runner.name, 'beeline-ci-squire-') && (steps.builds.outputs.cache-hit != 'true' || contains(fromJSON('[\"typecheck\",\"dead-code\"]'), github.job))"
       with:
         path: .turbo/cache
-        key: ci-turbo-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'turbo.json') }}-${{ github.job }}-${{ github.sha }}
+        key: ci-turbo-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'turbo.json') }}-${{ github.job }}-${{ steps.checkout.outputs.sha }}
         restore-keys: |
           ci-turbo-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'turbo.json') }}-${{ github.job }}-
           ci-turbo-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'turbo.json') }}-
@@ -68,7 +72,7 @@ runs:
           apps/*/.typecheck*.tsbuildinfo
           packages/*/.typecheck*.tsbuildinfo
           tsconfig.scripts.tsbuildinfo
-        key: ci-ts-state-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'apps/mobile/package-lock.json', 'apps/mobile/tsconfig.json') }}-${{ github.job }}-${{ github.sha }}
+        key: ci-ts-state-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'apps/mobile/package-lock.json', 'apps/mobile/tsconfig.json') }}-${{ github.job }}-${{ steps.checkout.outputs.sha }}
         restore-keys: |
           ci-ts-state-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'apps/mobile/package-lock.json', 'apps/mobile/tsconfig.json') }}-${{ github.job }}-
           ci-ts-state-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'apps/mobile/package-lock.json', 'apps/mobile/tsconfig.json') }}-
@@ -82,12 +86,12 @@ runs:
       if: steps.builds.outputs.cache-hit != 'true'
       shell: bash
       env:
-        CI_BUILD_SHA: ${{ github.sha }}
+        CI_BUILD_SHA: ${{ steps.checkout.outputs.sha }}
       run: node scripts/ci-build-provenance.mjs write "$CI_BUILD_SHA"
     - name: Verify exact-head compiled output provenance
       shell: bash
       env:
-        CI_BUILD_SHA: ${{ github.sha }}
+        CI_BUILD_SHA: ${{ steps.checkout.outputs.sha }}
       run: node scripts/ci-build-provenance.mjs verify "$CI_BUILD_SHA"
     - name: Verify compiled API exports
       id: verify-builds

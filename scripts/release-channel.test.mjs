@@ -194,7 +194,7 @@ test('promotion rebuilds helper and OTA with the final version at the rc commit'
 test('workflow rebuilds both channels and preserves native beta selection', () => {
   assert.deepEqual(workflow.on.workflow_dispatch.inputs.channel.options, ['next', 'latest']);
   assert.equal(workflow.on.workflow_dispatch.inputs.channel.default, 'next');
-  for (const name of ['helper_linux', 'helper_macos']) assert.equal(workflow.jobs[name].if, "needs.initialize.outputs.run_helper == 'true'");
+  for (const name of ['helper_linux', 'helper_macos']) assert.equal(workflow.jobs[name].if, "needs.release_validation.result == 'success' && needs.initialize.outputs.run_helper == 'true'");
   for (const name of ['mobile_ota', 'mobile_ota_after_proof']) {
     const action = workflow.jobs[name].steps.find(s => s.uses === './.github/actions/mobile-ota-leg');
     assert.match(action.with.channel, /channel == 'next' && 'next' \|\| 'production'/);

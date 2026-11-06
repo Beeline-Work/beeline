@@ -1,12 +1,12 @@
 // Picks the server test files a pull request must run.
 //
-// A coverage map from a full run on main records, per test file, which
+// A coverage map from the full release run records, per test file, which
 // repository functions ran and which repository files it read. A PR runs the
 // tests whose recorded functions or files its diff touches, plus every test
 // that reads source code as text. Anything this cannot reason about runs the
-// full suite. Main and the merge queue always run the full suite.
+// full suite. Releases and on-demand checks always run the full suite.
 //
-//   node scripts/test-selection.mjs build-map --records DIR --commit SHA --out MAP
+//   node scripts/test-selection.mjs build-map --records DIR --commit SHA --out MAP [--release-run ID]
 //   node scripts/test-selection.mjs check-map MAP
 //   node scripts/test-selection.mjs select --map MAP --out SELECTION
 import assert from 'node:assert/strict';
@@ -27,10 +27,10 @@ const codePattern = /\.(?:[cm]?[jt]sx?)$/;
 const testPattern = /\.test\.[cm]?[jt]sx?$/;
 
 // Changes here alter how every test runs or what the map means. Other
-// workflows do not run the server suite; tests that read them are in the map.
+// workflows do not control the server suite; tests that read them are in the map.
 const fullSuitePatterns = [
   /^packages\/api-contract\//,
-  /^\.github\/workflows\/(?:checks|server-coverage-map)\.yml$/,
+  /^\.github\/workflows\/(?:checks|unified-release|server-coverage-map)\.yml$/,
   /^\.github\/actions\//,
   /^apps\/server\/scripts\//,
   /^apps\/server\/vitest\.config\./,
@@ -40,7 +40,7 @@ const fullSuitePatterns = [
 ];
 
 // Paths that cannot start the server suite on their own (see `changes` in
-// checks.yml). If no test ran or read them on main, they cannot affect it.
+// checks.yml). If no test ran or read them in the full run, they cannot affect it.
 const outsideServerSuite = [/^apps\/mobile\//, /^apps\/body\//, /^docs\//, /\.md$/];
 
 const rootManifest = 'package.json';
@@ -164,7 +164,7 @@ export function sourcePath(file, exists = (path) => existsSync(join(repo, path))
 
 // `files` lists every tracked path at the map's commit, so a changed file the
 // map knows but no test ran or read selects nothing instead of everything.
-export function buildMap(records, { commit, createdAt, exists, files = [] } = {}) {
+export function buildMap(records, { commit, createdAt, exists, files = [], provenance } = {}) {
   const tests = [...new Set(records.map((record) => record.test))].sort();
   const index = new Map(tests.map((test, position) => [test, position]));
   const sources = {};
@@ -181,10 +181,10 @@ export function buildMap(records, { commit, createdAt, exists, files = [] } = {}
   }
   const sourceReaders = tests.filter((test) => records.some((record) => record.test === test
     && record.reads.some((file) => codePattern.test(file) && !testPattern.test(file))));
-  return { version: MAP_VERSION, commit, createdAt, tests, sources, reads, sourceReaders, files: [...files].sort() };
+  return { version: MAP_VERSION, commit, createdAt, tests, sources, reads, sourceReaders, files: [...files].sort(), ...(provenance ? { provenance } : {}) };
 }
 
-// Tests seen reading source on main that the static scan did not find.
+// Tests seen reading source in the full run that the static scan did not find.
 export function unscannedSourceReaders(map, alwaysRun) {
   return map.sourceReaders.filter((test) => !alwaysRun.includes(test));
 }
@@ -440,7 +440,7 @@ function fileNames(ts, fileName, text) {
 }
 
 // One entry per changed path: status, and for code, the changed functions.
-// New function declarations ran in no test on main, and their callers changed
+// New function declarations ran in no test in the full run, and their callers changed
 // too. New executable declarations can affect every test that loads the file.
 export function describeChange(ts, { path, status, before, after, hunks }) {
   if (status !== 'M' || !codePattern.test(path)) return { path, status, fileLevel: true, names: [] };
@@ -461,10 +461,10 @@ export function selectTests({ map, changes, alwaysRun, testFiles }) {
   const selected = new Set(alwaysRun);
   for (const test of map.sourceReaders) selected.add(test);
   const reasons = {};
-  // Tests main ran in other jobs, or new ones, have no coverage to go by.
+  // Test files missing from the full run have no coverage to go by.
   for (const test of testFiles) if (!map.tests.includes(test)) {
     selected.add(test);
-    reasons[test] = 'no coverage recorded on main';
+    reasons[test] = 'no coverage recorded in the full run';
   }
   const known = new Set(map.files);
   const pick = (tests, reason) => {
@@ -489,7 +489,7 @@ export function selectTests({ map, changes, alwaysRun, testFiles }) {
       // New files, code included, may be loaded or read at runtime by paths
       // the map cannot see, so they run everything.
       if (outsideServerSuite.some((pattern) => pattern.test(path))) continue;
-      // On main no test ran or read this file, in process or in a child.
+      // No test in the full run executed or read this file, in process or in a child.
       if (status !== 'A' && known.has(path)) continue;
       return full(`${path} is not in the coverage map`);
     }
@@ -657,7 +657,14 @@ function main() {
       .map((name) => JSON.parse(readFileSync(join(directory, name), 'utf8')));
     assert.ok(records.length > 0, 'no coverage records');
     const files = git(['ls-tree', '-r', '--full-tree', '--name-only', argument('--commit')]).trim().split('\n');
-    const map = buildMap(records, { commit: argument('--commit'), createdAt: new Date().toISOString(), files });
+    const commit = argument('--commit');
+    const runId = argument('--release-run');
+    if (runId) {
+      assert.match(runId, /^\d+$/, 'release run must be a GitHub run ID');
+      assert.equal(git(['rev-parse', 'HEAD']).trim(), commit, 'release coverage must describe the checked-out release SHA');
+    }
+    const map = buildMap(records, { commit, createdAt: new Date().toISOString(), files,
+      provenance: runId ? { kind: 'release', runId, commit } : undefined });
     writeFileSync(argument('--out'), JSON.stringify(map));
     console.log(`coverage map: ${map.tests.length} tests, ${Object.keys(map.sources).length} source files, ${Object.keys(map.reads).length} read files`);
     return;
@@ -670,7 +677,7 @@ function main() {
       console.error('Extend readsSourceText() in apps/server/scripts/test-selection.mjs so it finds them.');
       process.exit(1);
     }
-    console.log(`source-text scan covers all ${map.sourceReaders.length} tests seen reading source on main`);
+    console.log(`source-text scan covers all ${map.sourceReaders.length} tests seen reading source in the full run`);
     return;
   }
   if (command === 'select') {

@@ -3,8 +3,9 @@
 `.github/workflows/checks.yml` uses the isolated `beeline-ci` Linux pool for
 credential-free PR work. Desktop, Mac helper acceptance, privileged Body setup,
 PostgreSQL timing, Docker build/lint and production-corpus replay retain their
-existing platform or hosted runners. Main pushes run full Checks on the same bounded pool, retaining hosted
-privileged/timing jobs, and publish coverage from those server executions. Required check names stay stable.
+existing platform or hosted runners. Releases run full Checks on the same bounded pool at the exact release SHA,
+retaining hosted privileged/timing jobs, and publish coverage from those executions.
+Merging to main starts no workflow. Required check names stay stable.
 
 ## Routing and resource budget
 
@@ -147,15 +148,31 @@ or unknown-file selections execute full suites. Native fingerprint retains
 its existing isolated coverage and conditions. TYPECHECK and SHARED PACKAGE
 TESTS still execute on every PR.
 
-The existing coverage-map server selector remains authoritative for server
-files and always-running source readers. Body and mobile use the workspace
-file graph. Every main push executes full suites without cancelling an older
-merge. Those same server and timing jobs produce the next complete coverage
-map; the on-demand workflow remains available without duplicating main's full
-server work. The existing Nightly Checks reporter also consumes completed
-main runs, reports failures immediately to the existing fix-loop issue label,
-and does not rerun them before reporting. Its existing hosted route and
-permissions are retained; PR/foreign-branch events cannot publish main issues.
+The coverage-map server selector remains authoritative for server files and
+always-running source readers. Body and mobile use the workspace file graph.
+PRs select against the newest usable release map's embedded commit, including
+changes merged since that release. `SERVER COVERAGE MAP` now checks that map
+on PRs; if no map is usable, server selection falls back to the full suite.
+Map age, ancestry and distance limits remain conservative. Missing, expired,
+foreign-history or untrusted artifacts cannot narrow a selection.
+
+Merging to main starts no workflow. Unified release calls Checks once with
+`suite=all` and its pinned release SHA, with PR selection disabled. The same
+server shards, integration batches, e2e and corpus executions supply coverage;
+wall-clock suites run in the shards during release and in the hosted replay
+job during PRs, once in each case. PostgreSQL proofs contribute their records
+too. `RELEASE TESTS` validates and publishes the map with released-commit/run
+provenance before delivery can start. PR lookup validates that embedded SHA
+rather than the release workflow's dispatch head, so latest promotion can
+correctly test an older rc commit. Build-cache keys and compiled-output
+provenance also use the checked-out SHA.
+
+The manual coverage-map recovery suite and existing nightly dispatch/result
+workflows remain available. The obsolete main-push failure hook is removed.
+The release gate never dispatches a second Checks run or requests a rerun;
+its failure summary lists failing tests and likely commits touching their
+recorded files since the previous release. See [release validation and local
+checks](release-pipeline.md#release-tests-and-pr-selection).
 
 All CI-only workspace jobs prepend `.github/actions/ci-workspace/bin` to PATH.
 Its tar wrapper serializes only cache archives through the CI user's shared

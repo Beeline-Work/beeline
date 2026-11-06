@@ -27,14 +27,22 @@ export function RunnableArtifact({ attachment }: { attachment: AttachmentReferen
     const artifactId = mediaIdFromUrl(attachment.url);
     if (!artifactId) return;
     void funnelOnboarding('game_viewer_opened', undefined, artifactId);
-    return () => { void funnelOnboarding('game_viewer_closed', Math.min(86_400_000, Date.now() - started), artifactId); };
+    return () => {
+      void funnelOnboarding(
+        'game_viewer_closed',
+        Math.min(86_400_000, Date.now() - started),
+        artifactId,
+      );
+    };
   }, [attachment.url]);
   useEffect(() => {
     let live = true;
     const objectId = mediaIdFromUrl(attachment.url);
-    const stopAuthority = subscribeMediaCacheBoundary(event => {
+    const stopAuthority = subscribeMediaCacheBoundary((event) => {
       const objectId = mediaIdFromUrl(attachment.url);
-      live = false; setUrl(undefined); setFailed(true);
+      live = false;
+      setUrl(undefined);
+      setFailed(true);
     });
     setUrl(undefined);
     setFailed(false);
@@ -50,7 +58,8 @@ export function RunnableArtifact({ attachment }: { attachment: AttachmentReferen
       },
     );
     return () => {
-      live = false; stopAuthority();
+      live = false;
+      stopAuthority();
     };
   }, [attachment.url, attempt, recovery]);
   if (navigationStopped) {
@@ -70,8 +79,12 @@ export function RunnableArtifact({ attachment }: { attachment: AttachmentReferen
   }
   if (failed || (Platform.OS !== 'web' && status === 'unavailable')) {
     return (
-      <View style={styles.failureInset} >
-        <IndexRow inset="flush" title="Artifact stopped" description={"Stopped. Close and reopen it to try again."} />
+      <View style={styles.failureInset}>
+        <IndexRow
+          inset="flush"
+          title="Artifact stopped"
+          description={'Stopped. Close and reopen it to try again.'}
+        />
       </View>
     );
   }
@@ -82,40 +95,38 @@ export function RunnableArtifact({ attachment }: { attachment: AttachmentReferen
       </View>
     );
   }
-  // The frame stays mounted under the status so its load event can fire.
-  const loadingOverlay = pageLoaded ? null : (
-    <View style={styles.loadingOverlay} testID="runnable-artifact-loading">
-      <Text style={styles.loadingText}>Loading…</Text>
-    </View>
-  );
   if (Platform.OS === 'web') {
     const embeddedUrl = new URL(url);
     embeddedUrl.searchParams.set('embed', '1');
-    const frame = React.createElement('iframe', {
-      src: embeddedUrl.href,
-      sandbox: 'allow-scripts',
-      referrerPolicy: 'no-referrer',
-      allow: "camera 'none'; microphone 'none'; geolocation 'none'; fullscreen 'none'",
-      title: attachment.title ?? attachment.name,
-      style: { width: '100%', height: '100%', border: 0, flex: 1 },
-      'data-testid': 'runnable-artifact',
-      onLoad: (event: { currentTarget: HTMLIFrameElement }) => {
-        if (!loaded.current) {
-          loaded.current = true;
-          setPageLoaded(true);
-          event.currentTarget.contentWindow?.postMessage('beeline-start-game', '*');
-          return;
-        }
-        // Hide synchronously; React then removes the browsing context. This
-        // handler belongs to the trusted parent, outside the opaque frame.
-        event.currentTarget.style.visibility = 'hidden';
-        setNavigationStopped(true);
-      },
-    });
+    // The frame stays mounted under the status so its load event can fire.
     return (
       <View style={styles.stage}>
-        {frame}
-        {loadingOverlay}
+        {React.createElement('iframe', {
+          src: embeddedUrl.href,
+          sandbox: 'allow-scripts',
+          referrerPolicy: 'no-referrer',
+          allow: "camera 'none'; microphone 'none'; geolocation 'none'; fullscreen 'none'",
+          title: attachment.title ?? attachment.name,
+          style: { width: '100%', height: '100%', border: 0, flex: 1 },
+          'data-testid': 'runnable-artifact',
+          onLoad: (event: { currentTarget: HTMLIFrameElement }) => {
+            if (!loaded.current) {
+              loaded.current = true;
+              setPageLoaded(true);
+              event.currentTarget.contentWindow?.postMessage('beeline-start-game', '*');
+              return;
+            }
+            // Hide synchronously; React then removes the browsing context. This
+            // handler belongs to the trusted parent, outside the opaque frame.
+            event.currentTarget.style.visibility = 'hidden';
+            setNavigationStopped(true);
+          },
+        })}
+        {pageLoaded ? null : (
+          <View style={styles.loadingOverlay} testID="runnable-artifact-loading">
+            <Text style={styles.loadingText}>Loading…</Text>
+          </View>
+        )}
       </View>
     );
   }
@@ -156,7 +167,11 @@ export function RunnableArtifact({ attachment }: { attachment: AttachmentReferen
         style={styles.frame}
         testID="runnable-artifact"
       />
-      {loadingOverlay}
+      {pageLoaded ? null : (
+        <View style={styles.loadingOverlay} testID="runnable-artifact-loading">
+          <Text style={styles.loadingText}>Loading…</Text>
+        </View>
+      )}
     </View>
   );
 }

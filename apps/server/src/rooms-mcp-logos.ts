@@ -9,10 +9,7 @@ export async function fetchMcpLogo(value: string, size = 96): Promise<string> {
   const url = new URL(value);
   if (url.protocol !== 'https:' || url.username || url.password || url.port || url.hash || value.length > 2048)
     throw new Error('Invalid logo URL');
-  const signal = AbortSignal.timeout(3000);
-  const answers = await Promise.race([lookup(url.hostname, { all: true, verbatim: true }), new Promise<never>((_, reject) => {
-    signal.addEventListener('abort', () => reject(new Error('Logo DNS timeout')), { once: true });
-  })]);
+  const answers = await lookup(url.hostname, { all: true, verbatim: true });
   if (!answers.length || answers.some(a => !publicMcpAddress(a.address))) throw new Error('Non-public logo address');
   const address = answers[0]!;
   const agent = new Agent({ autoSelectFamily: false, lookup(host, _options, callback) {
@@ -21,7 +18,7 @@ export async function fetchMcpLogo(value: string, size = 96): Promise<string> {
   } });
   try {
     const bytes = await new Promise<Buffer>((resolve, reject) => {
-      const req = request(url, { agent, signal, headers: { accept: 'image/png,image/jpeg,image/webp' } }, res => {
+      const req = request(url, { agent, headers: { accept: 'image/png,image/jpeg,image/webp' } }, res => {
         if (res.statusCode !== 200 || !['image/png', 'image/jpeg', 'image/webp'].includes(res.headers['content-type']?.split(';')[0] ?? '')) {
           res.resume(); reject(new Error('Unsupported logo')); return;
         }

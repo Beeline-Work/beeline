@@ -133,7 +133,7 @@ describe('owner-command operator System DMs', () => {
     const result = await daemon.execute('readOperatorSystemDm', { ...await turn(), sendId: sent.sendId }, AGENT);
     expect(result).toMatchObject({ recipients: 2, delivered: 1, failed: 1, pending: 0 });
   });
-  it('bounds each worker batch and resumes the persisted queue', async () => {
+  it('drains all persisted recipients from one event', async () => {
     for (let n = 0; n < 12; n++) {
       const id = (100 + n).toString(16).padStart(64, '0');
       await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human',$1,$1)`, [id]);
@@ -141,10 +141,9 @@ describe('owner-command operator System DMs', () => {
     }
     const sent = await send('all');
     const first = await flushOperatorSystemDms(db);
-    expect(first).toBeGreaterThan(0);
-    expect(first).toBeLessThanOrEqual(10);
+    expect(first).toBe(15);
     let status = await daemon.execute('readOperatorSystemDm', { ...await turn(), sendId: sent.sendId }, AGENT);
-    expect(status.pending).toBeGreaterThan(0);
+    expect(status.pending).toBe(0);
     await drain();
     status = await daemon.execute('readOperatorSystemDm', { ...await turn(), sendId: sent.sendId }, AGENT);
     expect(status).toMatchObject({ recipients: 15, delivered: 15, failed: 0, pending: 0 });

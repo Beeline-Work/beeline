@@ -1,4 +1,6 @@
-import { readAgentCommands, claimAgentCommand } from './agent-command.js';
+import { claimAgentConnection } from './connection-presence.js';
+import { DaemonService } from './daemon-service.js';
+import { LiveHub } from './live.js';
 import { freeAgentModelTakesImages, IMAGE_TOKEN_RESERVATION } from './free-agent-image-input.js';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -94,6 +96,50 @@ describe('free agent model proxy', () => {
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
+
+  it.each(['home', 'another'] as const)('admits a model call after a real tag and helper claim in %s workspace', async place => {
+    const workspaceId = place === 'home' ? WORKSPACE : '33333333-3333-4333-8333-333333333333';
+    const roomId = place === 'home' ? ROOM : '44444444-4444-4444-8444-444444444444';
+    await db.query("UPDATE agent_commands SET state='complete',completed_at=now()");
+    await db.query("UPDATE identities SET handle='beebee' WHERE id=$1", [AGENT]);
+    await db.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)', [AGENT, OWNER]);
+    if (place === 'another') {
+      await db.query("INSERT INTO workspaces(id,name) VALUES($1,'Other workspace')", [workspaceId]);
+      await db.query("INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Other Room')", [roomId, workspaceId]);
+    }
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,NULL,$3,'owner'),($1,NULL,$4,'member'),($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+    [workspaceId, roomId, OWNER, AGENT]);
+    const live = new LiveHub();
+    await db.query("INSERT INTO live_server_instances(instance_id,renewed_at) VALUES('model-helper',clock_timestamp())");
+    const connectionId = 'model-helper-connection';
+    const epoch = await claimAgentConnection(db, live, AGENT, {}, { connectionId, instanceId: 'model-helper' });
+    const phone = new PhoneService(db, 'https://server.test');
+    const daemon = new DaemonService(db, live);
+    const sent = await phone.execute('sendRoomMessage', { roomId, text: '@beebee say hello' }, OWNER);
+    const commands = await daemon.execute('getAgentCommands', { roomId }, AGENT);
+    expect(commands.commands).toHaveLength(1);
+    const command = commands.commands[0]!;
+    expect(command.source.id).toBe(sent.messageId);
+    const claimed = await daemon.execute('claimAgentTurn', { roomId, commandId: command.id, generationId: 'model-generation' },
+      AGENT, { connectionId, epoch });
+    expect(claimed).not.toHaveProperty('modelCredential');
+    expect((await db.query('SELECT state,turn_owner_connection_id FROM agent_commands WHERE id=$1', [command.id])).rows)
+      .toEqual([{ state: 'claimed', turn_owner_connection_id: connectionId }]);
+    const response = await call({ messages: [{ role: 'user', content: 'say hello' }] });
+    expect({ status: response.status, body: await response.json() }).toMatchObject({
+      status: 200, body: { choices: [{ message: { content: 'done' } }] },
+    });
+    expect(upstream).toHaveLength(1);
+    expect(await freeAgentAllowance(db, OWNER, new Date())).toEqual({ today: 315, lifetime: 315 });
+
+    // The same token cannot use the old claim after its helper is replaced.
+    await claimAgentConnection(db, live, AGENT, {}, { connectionId: 'replacement-helper', instanceId: 'model-helper' });
+    const stale = await call({ messages: [] });
+    expect(stale.status).toBe(403);
+    expect((await stale.json()).error.message).toBe('free agent model access requires a live turn');
+    expect(upstream).toHaveLength(1);
+  });
 
   let turnSequence=0;
   const newTurn=async()=>{
@@ -670,6 +716,22 @@ describe('free agent model proxy', () => {
     const response = await call({ messages: [{ role: 'user', content: 'hi' }] });
     expect((await response.json()).error.message).toContain('(3M tokens)');
     expect(upstream).toHaveLength(1);
+  });
+
+  it('refuses the first expired upstream chunk without a clock or another request', async () => {
+    const now = Date.now(), clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+    reply = () => new Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        clock.mockReturnValue(now + DEFAULT_FREE_AGENT_LIMITS.maxTurnMs + 1);
+        controller.enqueue(new TextEncoder().encode('expired-authorized-content'));
+        controller.close();
+      },
+    }), { headers: { 'content-type': 'text/event-stream' } });
+    try {
+      const response = await call({ stream: true, messages: [] });
+      expect(await response.text()).not.toContain('expired-authorized-content');
+      expect(upstream).toHaveLength(1);
+    } finally { clock.mockRestore(); }
   });
 
   it('refunds tokens and dollars when the upstream connection fails', async () => {

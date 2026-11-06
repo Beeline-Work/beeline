@@ -50,9 +50,7 @@ No field differs from the dashboard shape.
 
 `operator-finances-wire.ts` is the single adaptation from private collection
 metadata in `operator-finances-details.ts`. The typed return and focused contract
-test prevent accidental wire fields. `npm run prove:operator-finances` builds the
-server and requests the actual authenticated HTTP route in isolation, exporting
-`docs/fixtures/operator-finances.json` from that response. Notify the UI corner
+test prevent accidental wire fields. Notify the UI corner
 before any later wire-shape change.
 
 ## Collection and durability

@@ -45,15 +45,16 @@ describe('LISTEN admission', () => {
     expect(factory).toHaveBeenCalledTimes(2);
   });
 
-  it('coalesces error/end into one replacement and does not replenish it merely by opening', async () => {
+  it('coalesces error/end into one replacement and parks a failed acquisition', async () => {
     vi.useFakeTimers();
     const first = new Client(), second = new Client(), third = new Client();
+    second.connect.mockRejectedValueOnce(new Error('replacement refused'));
     const { listener, factory, recover } = fixture([first, second, third]);
     await settle();
     first.emit('error', new Error('link lost')); first.emit('end');
     await settle();
     expect(factory).toHaveBeenCalledTimes(2);
-    expect(listener.projectionHealth().connected).toBe(true);
+    expect(listener.projectionHealth().connected).toBe(false);
     second.emit('end'); await settle();
     await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
     expect(factory).toHaveBeenCalledTimes(2);

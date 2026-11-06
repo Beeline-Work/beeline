@@ -153,7 +153,7 @@ export class McpRegistryClient {
       version: 'latest',
       limit: String(limit),
     }).toString();
-    const response = await this.transport(url, { signal: AbortSignal.timeout(10_000) });
+    const response = await this.transport(url, {  });
     if (!response.ok) throw new Error('MCP Registry search is unavailable');
     const body = await boundedJson(response);
     const rows = Array.isArray(body)
@@ -178,7 +178,7 @@ export class McpRegistryClient {
     for (let page = 0; page < 200; page++) {
       const url = new URL('/v0.1/servers', this.origin);
       url.search = new URLSearchParams({ version: 'latest', limit: '100', ...(cursor ? { cursor } : {}) }).toString();
-      const response = await this.transport(url, { signal: AbortSignal.timeout(10_000) });
+      const response = await this.transport(url, {  });
       if (!response.ok) throw new Error('MCP Registry catalog is unavailable');
       const body = record(await boundedJson(response));
       if (!Array.isArray(body?.servers)) throw new Error('MCP Registry catalog is invalid');
@@ -205,7 +205,7 @@ export class McpRegistryClient {
       `/v0.1/servers/${encodeURIComponent(serverName)}/versions/${encodeURIComponent(pinnedVersion)}`,
       this.origin,
     );
-    const response = await this.transport(url, { signal: AbortSignal.timeout(10_000) });
+    const response = await this.transport(url, {  });
     if (response.status === 404) return undefined;
     if (!response.ok) throw new Error('MCP Registry entry is unavailable');
     const manifest = normalizeRegistryServer(await boundedJson(response));

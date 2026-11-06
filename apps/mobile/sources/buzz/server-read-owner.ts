@@ -1,3 +1,4 @@
+import { NeedsYouLiveDelta, BookmarkDelta, Entry, Change, Slot, HiddenIntent } from './server-read-owner-types';
 import { useEffect, useSyncExternalStore, useCallback } from 'react';
 import { AppState } from 'react-native';
 import {
@@ -354,49 +355,12 @@ namespace ChatReads {
   export const reset = resetStores;
 }
 namespace TrayReads {
-  export type NeedsYouLiveDelta = {
-    readonly workspaceId: string;
-    readonly sourceRoomId: string;
-    readonly count: number;
-    readonly items: readonly NeedsYouItemView[];
-  };
-  export type BookmarkDelta = {
-    readonly messageId: string;
-    readonly bookmark: MessageBookmarkView | null;
-  };
   const GAP_REASONS = new Set([
     'needs-you-gap',
     'bookmark-gap',
     'reconnect',
     'postgres:memberships',
   ]);
-
-  type Entry = {
-    needs: readonly NeedsYouItemView[] | null;
-    saved: readonly MessageBookmarkView[] | null;
-    next?: string;
-  };
-  /** A covering read replays only later committed live changes. */
-  type Change = { at: number; kind: 'needs' | 'saved'; apply: (entry: Entry) => Entry };
-  type Slot = {
-    key: string;
-    relay: string;
-    pubkey: string;
-    workspaceId: string;
-    /** One order for both sections, covering reads and committed live changes. */
-    entry: Entry;
-    clock: number;
-    needsRead: number;
-    savedRead: number;
-    reads: Set<number>;
-    changes: Change[];
-    projectionRead?: Promise<readonly NeedsYouItemView[]>;
-    trayRead?: Promise<{ needsError?: string; savedError?: string }>;
-    needsStale?: number;
-    forgotten?: boolean;
-    seen?: Set<string>;
-    seeing?: Set<string>;
-  };
   const EMPTY: Entry = { needs: null, saved: null };
   const slots = new Map<string, Slot>();
   const listeners = new Set<() => void>();
@@ -752,8 +716,6 @@ namespace TrayReads {
       for (const kind of ['needs-you', 'bookmarks'] as const)
         void mobileSurfaceCache.remove(address(slot, kind)).catch(() => undefined);
   }
-  // Pending gestures contain IDs only. They never enter the response journal or disk.
-  type HiddenIntent = { ids: Set<string>; settled: boolean };
   const needsIntents = new Map<string, Set<HiddenIntent>>();
   const savedIntents = new Map<string, Set<HiddenIntent>>();
   const heldNeeds = new Map<string, ReadonlySet<string>>();

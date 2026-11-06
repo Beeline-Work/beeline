@@ -102,22 +102,11 @@ export class VoiceAudioMeter {
   private readonly reservations = new Set<() => void>();
   private readonly reservationDetails = new WeakMap<() => void, { milliseconds: number; bytes: number; transferred: boolean }>();
   private recovery = 0;
-  private timer?: ReturnType<typeof setTimeout>;
   constructor(private readonly store: VoiceBudgetStore, private readonly call: string,
     private readonly owner: string, private readonly workspace: string, initial: VoiceBudget,
     private readonly receipt: (budget: VoiceBudget | null) => void,
     private readonly log: (message: string) => void, private readonly now = Date.now) {
     this.budget = initial;
-  }
-
-  private armCheckpoint(): void {
-    if (this.closed || this.parked || this.fenced || this.timer || this.flushing ||
-      (!this.pending.length && !this.pendingFrames.length)) return;
-    this.timer = setTimeout(() => {
-      this.timer = undefined;
-      void this.flush().catch(() => {});
-    }, 250);
-    this.timer.unref();
   }
 
   /** Shared across authorization buffering, pending and in-flight delivery.
@@ -165,7 +154,7 @@ export class VoiceAudioMeter {
     let live = true;
     this.pendingFrames.push({ run: () => { if (live && copy && !this.closed && !this.fenced) deliver(copy); },
       release: () => { live = false; copy = undefined; release(); } });
-    this.armCheckpoint();
+    queueMicrotask(() => { void this.flush().catch(() => {}); });
   }
 
   audio(milliseconds: number, capturedAt = this.now()): number {
@@ -195,7 +184,7 @@ export class VoiceAudioMeter {
     if (tail && tail[1] === start) this.pending[this.pending.length - 1] = [tail[0], acceptedEnd];
     else this.pending.push([start, acceptedEnd]);
     this.lastEnd = acceptedEnd;
-    this.armCheckpoint();
+    queueMicrotask(() => { void this.flush().catch(() => {}); });
     return duration === elapsed ? milliseconds : Math.min(duration, milliseconds);
   }
 
@@ -213,7 +202,6 @@ export class VoiceAudioMeter {
   flush(): Promise<void> { return this.commit(false); }
   private commit(terminal: boolean): Promise<void> {
     if (this.flushing) return this.flushing;
-    clearTimeout(this.timer); this.timer = undefined;
     if (this.fenced || (!terminal && (this.closed || this.parked)) ||
       (!this.pending.length && !this.pendingFrames.length)) return Promise.resolve();
     const admittedRecovery = this.recovery;
@@ -263,7 +251,7 @@ export class VoiceAudioMeter {
       this.flushing = undefined;
       if (this.parked && !this.closed && !this.fenced && this.recovery > admittedRecovery) {
         this.parked = false; void this.flush().catch(() => {});
-      } else this.armCheckpoint();
+      } else if (this.pending.length || this.pendingFrames.length) void this.flush().catch(() => {});
     });
     return this.flushing;
   }
@@ -277,7 +265,7 @@ export class VoiceAudioMeter {
   close(): Promise<void> {
     if (this.closing) return this.closing;
     // Revoke delivery synchronously, before any database await can complete.
-    this.closed = true; clearTimeout(this.timer); this.timer = undefined;
+    this.closed = true;
     for (const frame of [...this.pendingFrames, ...this.inFlightFrames]) frame.release();
     for (const release of this.reservations) release();
     this.closing = (async () => {

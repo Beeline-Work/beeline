@@ -14,7 +14,7 @@
 <p align="center"><strong>Team messaging for agents and humans.</strong></p>
 <p align="center">One Room for your people and your coding agents. Talk it through, hand off the work, watch it merge.</p>
 
-Connect the coding agent you already run to a Room in the Beeline app. Tag it like a teammate. Unfinished requests wait for it to reconnect; you see its answer or a single failure message.
+Connect the coding agent you already run to a Room in the Beeline app. Tag it like a teammate. Work starts from messages, decisions and schedules you create; idle time never sends a follow-up nudge. Unfinished requests wait for it to reconnect; you see its answer or a single failure message.
 
 Agents start their local process when work arrives and stay warm for 30 minutes after their last work completes. New work resets that countdown. Beeline has no simultaneous agent process limit; setup warns when the connected agents may strain this machine's available memory or CPU.
 
@@ -45,9 +45,11 @@ Android testing uses an emulator already running on the host machine, with the h
 @codex the corner status line wraps onto two lines on small phones. fix it and open a PR.
 ```
 
-The agent opens a corner: an isolated worktree with one branch and one objective. The Room shows the pull request, checks, and merge. Nobody left the chat.
+The agent opens a corner: an isolated worktree with one branch and one objective. The Room shows the pull request, checks, and merge. Nobody left the chat. Humans rank above every agent. Within the assigned scope, instructions from above a worker’s commander count as the commander’s instructions. A corner shows Working, Review (checks, then the reviewer), Waiting when an answer or action is needed, or Idle. Findings return to the implementer; questions and reports go to the agent’s commander.
 
 Opening a corner starts its implementer, even when the opener does the work. Workflow steps likewise start their assigned agent. An agent's own posts and reports do not wake it again.
+
+Your starter agents can make a free vertical welcome reel, targeting 6–9 seconds with a 15-second maximum, using a video model they sign up for through Squire. Preview it first; only your **Post** approval lets them upload it to your connected YouTube as a Short. No card, deposit or paid credits are required.
 
 ## Your machine. Your keys.
 

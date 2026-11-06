@@ -134,6 +134,12 @@ it('dispatches green review to the corner reviewer and projects its reviewer sur
     kind: 'check-passed', object: { text: 'checks', headSha: HEAD } });
   await advanceCorner(db, C, { kind: 'checks', result: 'passing', sourceMessageId: note.id });
   const commands = await daemon.execute('getAgentCommands', { roomId: C }, REVIEWER_B);
-  expect(commands.commands.some(command => command.reason === 'corner_review_dispatch')).toBe(true);
+  expect(commands.commands.some(command => ['corner_review_dispatch','subscribed_event'].includes(command.reason))).toBe(true);
+  expect((await daemon.execute('getAgentCommands', {roomId:C}, REVIEWER_A)).commands).toEqual([]);
   expect(await daemon.execute('getAgentConfiguration', { roomId: C, agentId: REVIEWER_B }, REVIEWER_B)).toMatchObject({ isReviewer: true });
+  await daemon.execute('claimAgentCommand',{roomId:C,commandId:commands.commands[0]!.id,generationId:'review-switch'},REVIEWER_B);
+  await set('reviewera');
+  await daemon.execute('postAgentTurnReceipt',{roomId:C,requestId:commands.commands[0]!.turnRequestId,agentId:REVIEWER_B,generationId:'review-switch',status:'complete'},REVIEWER_B);
+  await advanceCorner(db,C,{kind:'reconcile'});
+  expect((await daemon.execute('getAgentCommands',{roomId:C},REVIEWER_A)).commands.some(command=>['corner_review_dispatch','subscribed_event'].includes(command.reason))).toBe(true);
 });

@@ -1,3 +1,4 @@
+import * as phoneLiveReads from './phone/live-reads.js';
 import { createCipheriv, createHash, randomBytes } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -287,7 +288,7 @@ it('counts only replies to a person, never cards', async () => {
 
 it('a reaction stays successful when optional prompt eligibility cannot be read', async () => {
   const messageId = await turn('reaction enrichment failure');
-  const eligibility = vi.spyOn(phone, 'liveStarPrompt').mockRejectedValueOnce(new Error('eligibility unavailable'));
+  const eligibility = vi.spyOn(phoneLiveReads, 'phoneLiveStarPrompt').mockRejectedValueOnce(new Error('eligibility unavailable'));
   try {
     const result = await phone.execute('reactToMessage', { roomId: R, messageId, emoji: '👍' }, H);
     expect(result).toMatchObject({ id: messageId, reactions: [expect.objectContaining({ emoji: '👍', reacted: true })] });

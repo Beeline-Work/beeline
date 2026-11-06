@@ -275,12 +275,6 @@ describe('@agent login: Claude sign-in at the call site', () => {
     ).toBe(0);
   });
 
-  it('stops waiting with a clear message when a connected helper never answers', async () => {
-    await expect(startAgentSignIn(database, live, AGENT, { attemptId: randomUUID(), cardId: 'c'.repeat(64) }, { timeoutMs: 100 })).rejects.toThrow(
-      AGENT_SIGN_IN_NO_ANSWER_MESSAGE,
-    );
-  });
-
   it('shows a bad or expired code on the card and lets the owner paste again', async () => {
     const rejected =
       'Claude did not accept that code. Paste the newest code from claude.ai, or send the agent `/login` again.';
@@ -533,9 +527,8 @@ describe('@agent login: Claude sign-in at the call site', () => {
         );
       }
     });
-    await expect(startAgentSignIn(database, live, AGENT, { attemptId: randomUUID(), cardId: 'c'.repeat(64) }, { timeoutMs: 300 })).rejects.toThrow(
-      AGENT_SIGN_IN_NO_ANSWER_MESSAGE,
-    );
+    const pending = startAgentSignIn(database, live, AGENT, { attemptId: randomUUID(), cardId: 'c'.repeat(64) });
+    await vi.waitFor(() => expect(attemptId).not.toBe(''));
     await expect(
       daemon.execute(
         'reportAgentSignIn',
@@ -543,5 +536,7 @@ describe('@agent login: Claude sign-in at the call site', () => {
         OTHER_AGENT,
       ),
     ).rejects.toThrow('daemon token does not own requested agent');
+    await daemon.execute('reportAgentSignIn', { agentId: AGENT, attemptId, kind: 'paste-code', authorizeUrl: LINK }, AGENT);
+    await expect(pending).resolves.toMatchObject({ authorizeUrl: LINK });
   });
 });

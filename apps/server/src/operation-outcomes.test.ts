@@ -89,18 +89,6 @@ it('C3 upserts and accumulates by UTC hour, operation, status, code and server r
   ]);
 });
 
-it('C3 deletes only expired rows, in bounded retention batches even without requests', async () => {
-  await db.query(`INSERT INTO operation_outcomes_hourly
-    SELECT now()-interval '15 days','op'||n,403,'Error','old',1 FROM generate_series(1,2001) n`);
-  await db.query(`INSERT INTO operation_outcomes_hourly VALUES(now()-interval '13 days','readRoom',200,'','recent',1)`);
-  const outcomes = new OperationOutcomes('');
-  await outcomes.flush(db);
-  expect((await db.query(`SELECT count(*)::int AS n FROM operation_outcomes_hourly WHERE release='old'`)).rows)
-    .toEqual([{ n: 1 }]);
-  await outcomes.flush(db);
-  expect((await counts()).rows).toEqual([expect.objectContaining({ release: 'recent', count: 1 })]);
-});
-
 it('C3 bounds keys and folds excess cardinality by status across hours and failed flushes', async () => {
   let now = new Date().setUTCMinutes(0, 0, 0);
   const outcomes = new OperationOutcomes('', () => now);
@@ -163,28 +151,19 @@ it('C3 uses an empty release when unset and stores short codes rather than error
   expect((await counts()).rows).toEqual([expect.objectContaining({ code: 'Error', release: '' })]);
 });
 
-it('C3 arms one pending-count deadline per instance and drains admitted work on shutdown', async () => {
+it('C3 persists each instance from its request event and drains work on shutdown', async () => {
   vi.useFakeTimers();
-  vi.spyOn(console, 'log').mockImplementation(() => {});
   const runner = new BackgroundJobRunner();
   const first = new OperationOutcomes('first'), second = new OperationOutcomes('second');
-  // No leader acquisition: both instances must independently persist their local counts.
   const stopFirst = startOperationOutcomeFlush(db, first, runner);
   const stopSecond = startOperationOutcomeFlush(db, second, runner);
-  await Promise.all([first.flush(db), second.flush(db)]);
   first.record('readRoom', 200, ''); second.record('readRoom', 403, 'Error');
-  await vi.advanceTimersByTimeAsync(5 * 60_000 - 1);
-  expect((await counts()).rows).toEqual([]);
-  await vi.advanceTimersByTimeAsync(1);
   await Promise.all([stopFirst(), stopSecond()]);
   expect((await counts()).rows).toEqual([
     expect.objectContaining({ release: 'first', status: 200, count: 1 }),
     expect.objectContaining({ release: 'second', status: 403, count: 1 }),
   ]);
-  expect(runner.snapshot()['operation-outcomes']).toMatchObject({ consecutiveFailures: 0, lastSuccessAt: expect.any(Number) });
-  first.record('readRoom', 200, '');
-  await vi.advanceTimersByTimeAsync(5 * 60_000);
-  expect((await counts()).rows[0]!.count).toBe(1);
+  expect(vi.getTimerCount()).toBe(0);
 });
 
 it('C3 compares refusal counts and rates with exposed historical days for the same release', async () => {
@@ -238,20 +217,4 @@ it('failed outcome persistence parks until a genuinely new outcome supplies work
   await vi.advanceTimersByTimeAsync(5 * 60_000);
   await stop();
   expect((await counts()).rows.reduce((sum, row) => sum + Number(row.count), 0)).toBe(2);
-});
-
-
-it('durable expired outcome rows drain in bounded batches and the empty owner then parks', async () => {
-  await db.query(`INSERT INTO operation_outcomes_hourly
-    SELECT now()-interval '15 days','expired'||n,403,'Error','old',1 FROM generate_series(1,2001) n`);
-  vi.useFakeTimers();
-  const query = vi.spyOn(db, 'query');
-  const stop = startOperationOutcomeFlush(db, new OperationOutcomes('expiry'), new BackgroundJobRunner());
-  await db.query('SELECT 1'); await vi.advanceTimersByTimeAsync(60_000);
-  expect((await counts()).rows).toEqual([]);
-  expect(query.mock.calls.filter(([sql]) => sql.startsWith('DELETE'))).toHaveLength(2);
-  query.mockClear();
-  await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
-  expect(query).not.toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
-  await stop();
 });

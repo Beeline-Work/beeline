@@ -28,7 +28,7 @@ soul. Existing free agents keep their names.
   stored model and instructions. The phone supplies its timezone at creation.
   Room entry starts playback: each accepted line follows a brief working state,
   then Beebee posts the fixed first-name hello and the repository, YouTube and
-  Something else choices. Invalid lines get one retry; a failed exchange or the
+  Something else choices. Invalid lines end the exchange; a failed exchange or the
   Room-entry deadline (20 seconds) falls back to the hello and choices.
   Repository choices reuse the repository/starters cards; YouTube uses the
   existing multipart connector and requires a preview Post tap before upload;
@@ -39,7 +39,7 @@ soul. Existing free agents keep their names.
   The legacy hello teaches Room replies, corners and connectors, then asks what the person is working on. It contains no repository card; the agent offers one only for coding or GitHub-connection intent.
   The hello tags the owner through the normal mention/push path and uses the
   agent's actual handle. It creates no model turn or Machine. The first real
-  queued work provisions the Machine through `FreeAgentService.kick` or committed deadline recovery.
+  queued work provisions the Machine through `FreeAgentService.kick` from its committed work event.
   A creator owns at most
   `BEELINE_FREE_AGENT_MAX_PER_OWNER` (default 3) free agents.
 - **First boot.** The image builds the thin Beeline helper and its MCP entrypoint
@@ -61,7 +61,7 @@ soul. Existing free agents keep their names.
   startup watchdogs.
 - **Sleep.** The helper admits one idle episode at `POST /v1/free-agents/sleep` 60 s after the
   last turn ends. The server refuses while a wake is pending or a connector
-  install/sign-in is active. The idle reaper respects the same connector work;
+  install/sign-in is active. The same connector work is checked at that request;
   completion, failure or disconnect releases that protection. A refused or uncertain helper request stays parked until actual activity
   or resume starts a new idle episode. Otherwise the server records
   `sleeping` and asks Fly to suspend the Machine. Suspend failures are reported
@@ -79,9 +79,9 @@ soul. Existing free agents keep their names.
   Every committed `agent_commands` INSERT for a free agent calls
   `FreeAgentService.wake`. A committed connector-assignment notification also
   wakes a free agent with active connector installation or sign-in work, through
-  the same budget and start-limit fences. Committed family sources and stored command, idle and retention
-  deadlines admit leader recovery; there is no 15-second sweep. A failed
-  provider observation parks until an actual input or recovery boundary. Wakes are never
+  the existing allowance checks. There is no leader sweep, retry deadline,
+  idle reaper or retention deletion. A failed provider call waits for another
+  actual request. Wakes are never
   suppressed for an offline Machine (`agentMachineOfflineSql` exempts free agents). A
   released connection keeps presence `online`, `held`, `asleep`, so mentions never get
   "its helper is offline". On resume the helper sees the wall clock jump past its
@@ -245,10 +245,7 @@ See [SUB0ZERO admission and instruction replay proof](free-agent-token-admission
 Free-agent ACP turns have a hard wall clock cap of **15 minutes**, measured from
 local command intake across prompt retries. Activity does not extend it. The
 helper cancels the prompt, publishes a short note inviting another message, and
-discards the session. The leader reaper cancels overdue claimed commands after
-the cap plus 60 seconds of grace and stops their Machine even if it is still
-reporting activity. Idle, hard-turn and deletion durations are unchanged; the leader arms stored
-record deadlines rather than recurring discovery intervals.
+discards the session. The server evaluates authorization/turn expiry on requests and streamed chunks; no server clock cancels a turn or reaps its Machine.
 
 Pi shell commands leave a delivery window before that cap. The generated
 `pi-turn-budget.ts` extension reads the current command intake time for each
@@ -403,22 +400,16 @@ Luna and a deterministic per-workspace intro message together. An existing Luna,
 including a removed one, is never duplicated. It makes no Fly or model calls.
 Normal subscribed membership notifications still apply to other agents.
 
-`npm run prove:onboarding:welcome` exercises the built MCP action, active-command
-service, and phone-read welcome → explanation → game → invite path in isolation.
-PGlite, in-memory storage, and a minimal HTTP adapter stand in for production;
-this proof does not claim a native app or live model run.
-
 ## Next-morning check-in
 
-The one-time outside-person check-in uses a normal starter-agent command, Room reply and push delivery. Configuration, email behavior and isolated proof: [next-morning check-in](next-day-checkin.md).
+There is no automatic next-day check-in.
 
 ## Hosted Squire install recovery
 
 Reproduction `fb_32e642993b10b09e8a03bb7f`: helper-reported install failure settles
 the connector offer as `failed`, resumes its waiting request and frees the open
 card slot. The person can Retry the same card, or the agent can offer again.
-The maintenance sweep fails connecting offers after fifteen minutes and releases
-stale helper install work. A newer open card takes precedence over an old Retry.
+There is no maintenance timeout or scheduled install retry. A newer open card takes precedence over an old Retry.
 
 Run `node --import tsx scripts/prove-hosted-squire-failure.mjs` after building the
 server to demonstrate connect → accept → helper failure → phone failed card →

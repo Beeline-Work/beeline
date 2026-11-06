@@ -187,9 +187,9 @@ export type IndexRowProps = {
   actionControl?: IndexRowActionControl;
   /** The trailing chevron of a row that opens something. */
   chevron?: 'right' | 'down' | 'up';
-  /** The full quiet copy under the title. */
+  /** The quiet line under the title: one short phrase, two lines at most. */
   description?: string;
-  /** A short fact before the wrapping description. */
+  /** A short fact kept whole before a one-line, ellipsized description tail. */
   descriptionLead?: string;
   /** Custom rendering for the description; `description` remains its spoken text. */
   descriptionContent?: React.ReactNode;
@@ -222,10 +222,14 @@ export type IndexRowProps = {
   /** The row's current state, on the trailing axis. Never in the title. */
   value?: string;
   valueTone?: 'danger' | 'accent';
-  /** The title keeps its full width before the trailing value wraps. */
+  /** The title keeps its full width; the trailing value ellipsizes instead. */
   wholeTitle?: boolean;
+  /** Recovery notices keep all copy visible, including at large text sizes. */
+  wrap?: boolean;
 };
 
+/** A page subtitle is one short phrase; a long one stops at two lines. */
+const DESCRIPTION_LINES = 2;
 
 /** The reserved width of a row's trailing column (DESIGN.md → Index rows). */
 const TRAILING_COLUMN = 72;
@@ -289,6 +293,7 @@ export function IndexRow({
   value,
   valueTone,
   wholeTitle = false,
+  wrap = false,
 }: IndexRowProps) {
   const inheritedInset = React.useContext(IndexRowInsetContext);
   const inset = ownInset ?? inheritedInset;
@@ -304,9 +309,13 @@ export function IndexRow({
   // A pressable toggle row IS the switch to a screen reader, so the control
   // itself is not announced a second time.
   const rowIsSwitch = Boolean(toggle && onPress);
+  // A page subtitle is one short phrase and stops at two lines; a sheet row's
+  // quiet line explains the choice, so it wraps whole (screenshot 1cfe27eb).
+  const descriptionLines = !wrap && density === 'page' ? DESCRIPTION_LINES : undefined;
+
   const trailingMark =
     action !== undefined ? (
-      <Text style={styles.action}>
+      <Text numberOfLines={wrap ? undefined : 1} style={styles.action}>
         {action}
       </Text>
     ) : shownValue !== undefined ? (
@@ -315,6 +324,7 @@ export function IndexRow({
           <StateDot kind={statusGlyph} testID={testID ? `${testID}-glyph` : undefined} />
         ) : null}
         <Text
+          numberOfLines={1}
           style={[
             styles.value,
             appBoard && styles.boardValue,
@@ -386,6 +396,7 @@ export function IndexRow({
       <View style={[styles.copy, wholeTitle && styles.wholeCopy]}>
         <View style={styles.titleLine}>
           <Text
+            numberOfLines={wrap ? undefined : 1}
             style={[
               styles.title,
               appBoard && styles.boardTitle,
@@ -397,7 +408,7 @@ export function IndexRow({
             {title}
           </Text>
           {titleAside ? (
-            <Text style={styles.titleAside}>
+            <Text numberOfLines={1} style={styles.titleAside}>
               {titleAside}
             </Text>
           ) : null}
@@ -406,6 +417,7 @@ export function IndexRow({
           <View style={[styles.descriptionRow, descriptionLead && styles.descriptionLeadRow]}>
             {descriptionLead ? (
               <Text
+                numberOfLines={1}
                 style={styles.descriptionLead}
                 testID={testID ? `${testID}-description-lead` : undefined}
               >
@@ -414,6 +426,7 @@ export function IndexRow({
             ) : null}
             {descriptionContent ?? (
               <Text
+                numberOfLines={wrap ? undefined : descriptionLead || descriptionAction ? 1 : descriptionLines}
                 style={[
                   descriptionLead ? styles.descriptionTail : styles.description,
                   descriptionTone === 'danger' && styles.descriptionDanger,
@@ -443,7 +456,7 @@ export function IndexRow({
             ]}
           >
             {descriptionDetailContent ?? (
-              <Text style={styles.description}>
+              <Text numberOfLines={wrap ? undefined : DESCRIPTION_LINES} style={styles.description}>
                 {descriptionDetail}
               </Text>
             )}

@@ -104,6 +104,7 @@ export function AgentProfileView({
       setWakeSaving(false);
     }
   };
+  const [expanded, setExpanded] = useState(false);
   const [linkError, setLinkError] = useState(false);
   const [olderWork, setOlderWork] = useState<NonNullable<AgentDetailView['recentWork']>>([]);
   const [nextCursor, setNextCursor] = useState<string | null | undefined>();
@@ -231,14 +232,25 @@ export function AgentProfileView({
                 />
               ) : (
                 <Text
+                  numberOfLines={expanded ? undefined : 5}
                   style={[styles.copy, styles.rowCopy]}
                   testID="agent-profile-soul"
                 >
                   {soul || 'No soul has been set.'}
                 </Text>
               )}
-              {canEdit && detail ? (
+              {(soul && !editing) || (canEdit && detail) ? (
                 <View style={styles.soulActions}>
+                  {soul && !editing && (
+                    <Button
+                      accessibilityRole="button"
+                      accessibilityState={{ expanded }}
+                      onPress={() => setExpanded((value) => !value)}
+                      label={expanded ? 'Show less' : 'Read full soul'}
+                      variant="quiet"
+                      appearance={{ control: styles.readMore, label: styles.accent }}
+                    />
+                  )}
                   {canEdit && detail && (
                     <SoulPortraitControls
                       key={identity.pubkey}

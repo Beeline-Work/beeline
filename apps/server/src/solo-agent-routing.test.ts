@@ -52,7 +52,8 @@ describe('solo-agent-untagged-silence', () => {
     phone = new PhoneService(measured(db), 'http://local.test');
     const commands = await send();
     // Each statement is another database round trip before the send receipt.
-    expect(statements).toHaveLength(9);
+    // The corner front door classifies the address with one indexed Room lookup.
+    expect(statements).toHaveLength(10);
     expect(commands).toHaveLength(1);
     expect(commands[0]).toMatchObject({ agent_id: AGENT, source_message_id: MESSAGE });
     await routeHumanMessage(db, MESSAGE);
@@ -66,7 +67,7 @@ describe('solo-agent-untagged-silence', () => {
     expect(JSON.stringify(view)).toContain('Hello back!');
   });
 
-  it.each(['sendRoomMessage','sendRoomReply'] as const)('%s keeps one receipt, command and MCP route on retry',async operation=>{
+  it.each(['sendRoomMessage','sendRoomReply'] as const)('%s keeps one receipt and command on retry without a phantom callback',async operation=>{
     const parent='f'.repeat(64);
     if(operation==='sendRoomReply')await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
       VALUES($1,$2,$3,'Question',now()-interval '1 hour')`,[parent,ROOM,AGENT]);
@@ -77,7 +78,7 @@ describe('solo-agent-untagged-silence', () => {
     expect(await phone.execute(operation,input,HUMAN,client)).toEqual(first);
     expect((await db.query(`SELECT id FROM messages WHERE id=$1`,[MESSAGE])).rows).toHaveLength(1);
     expect((await db.query(`SELECT id FROM agent_commands WHERE source_message_id=$1`,[MESSAGE])).rows).toHaveLength(1);
-    expect((await db.query(`SELECT message_id FROM rooms_mcp_pending_routes WHERE message_id=$1`,[MESSAGE])).rows).toHaveLength(1);
+    expect((await db.query(`SELECT message_id FROM rooms_mcp_webhook_outbox WHERE message_id=$1`,[MESSAGE])).rows).toHaveLength(0);
     expect((await db.query(`SELECT message_id FROM room_read_marks WHERE room_id=$1 AND identity_id=$2`,[ROOM,HUMAN])).rows)
       .toEqual([{message_id:MESSAGE}]);
     if(operation==='sendRoomReply')expect((await db.query(`SELECT reply_to_message_id,root_message_id FROM messages WHERE id=$1`,[MESSAGE])).rows)
@@ -86,7 +87,7 @@ describe('solo-agent-untagged-silence', () => {
     expect((await db.query(`SELECT text FROM messages WHERE id=$1`,[MESSAGE])).rows).toEqual([{text:'Please review'}]);
   });
 
-  it.each(['sendRoomMessage','sendRoomReply'] as const)('%s rolls back source, read mark and MCP route if routing fails',async operation=>{
+  it.each(['sendRoomMessage','sendRoomReply'] as const)('%s rolls back source, read mark and callback if routing fails',async operation=>{
     const parent='f'.repeat(64);
     if(operation==='sendRoomReply')await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
       VALUES($1,$2,$3,'Question',now()-interval '1 hour')`,[parent,ROOM,AGENT]);
@@ -100,7 +101,7 @@ describe('solo-agent-untagged-silence', () => {
     expect((await db.query(`SELECT id FROM messages WHERE id=$1`,[MESSAGE])).rows).toEqual([]);
     expect((await db.query(`SELECT id FROM agent_commands WHERE source_message_id=$1`,[MESSAGE])).rows).toEqual([]);
     expect((await db.query(`SELECT message_id FROM room_read_marks WHERE message_id=$1`,[MESSAGE])).rows).toEqual([]);
-    expect((await db.query(`SELECT message_id FROM rooms_mcp_pending_routes WHERE message_id=$1`,[MESSAGE])).rows).toEqual([]);
+    expect((await db.query(`SELECT message_id FROM rooms_mcp_webhook_outbox WHERE message_id=$1`,[MESSAGE])).rows).toEqual([]);
   });
 
   it.each([OTHER_HUMAN, OTHER_AGENT])('does not wake with an extra member %s', async extra => {

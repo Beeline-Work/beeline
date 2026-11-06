@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import { relative } from 'node:path';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { balanceFiles } from './ci-shards.mjs';
 import { readSelection, selected as chosen } from './selected-tests.mjs';
@@ -15,18 +15,18 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const vitest = fileURLToPath(new URL('../../../node_modules/vitest/vitest.mjs', import.meta.url));
 // On PRs, wall-clock budgets run in the existing hosted replay gate, outside
 // the shared CPU quota. Merge/dispatch runs retain them in their hosted shards.
-const isolated = ['src/voice-room-runtime.test.ts'];
+const isolated = ['src/production-corpus-width.test.ts', 'src/voice-room-runtime.test.ts',
+  'src/phone-service.read-room-latency.test.ts', 'src/daemon-service.completion-latency.test.ts'];
 // Fresh worker processes give socket replay and completion timing independent
 // engine/clock lifetimes. Replay remains on squire; the latency budget joins
 // the existing hosted wall-clock proofs on PRs.
-// Main removed the hosted timing suites; voice runtime still runs in its shard.
-const timingFiles = [];
+const timingFiles = [isolated[0], isolated[2], isolated[3]];
 const hostedTiming = process.env.SERVER_HOSTED_TIMING || 'false';
 assert.ok(['true', 'false'].includes(hostedTiming), 'SERVER_HOSTED_TIMING must be true or false');
 assert.ok(hostedTiming === 'false' || process.env.GITHUB_EVENT_NAME === 'pull_request'
   || (process.env.GITHUB_EVENT_NAME === 'push' && process.env.GITHUB_REF === 'refs/heads/main'),
   'only PRs and main pushes can move timing coverage to the required hosted replay gate');
-const exclusions = ['src/production-corpus-hot-reads.test.ts', 'src/integration.test.ts', 'src/agent-command.scaling.test.ts', ...isolated]
+const exclusions = ['src/production-corpus-hot-reads.test.ts', 'src/integration/*.test.ts', 'src/agent-command.scaling.test.ts', ...isolated]
   .flatMap((file) => ['--exclude', file]);
 function list(files = [], exclude = exclusions) {
   const result = spawnSync(process.execPath, [vitest, 'list', '--maxWorkers=1', '--minWorkers=1', ...files, '--filesOnly', '--json', ...exclude], {
@@ -38,6 +38,8 @@ function list(files = [], exclude = exclusions) {
 }
 // On a PR, only the files test-selection.mjs picked; otherwise every file.
 const selection = readSelection();
+const hasIntegration = readdirSync(join(root, 'src/integration'))
+  .some(file => file.endsWith('.test.ts') && chosen(selection, `src/integration/${file}`));
 const discovered = list();
 const files = discovered.filter((file) => chosen(selection, file));
 const timingData = JSON.parse(readFileSync(new URL('./ci-test-timings.json', import.meta.url), 'utf8'));
@@ -48,7 +50,7 @@ const isolatedFor = shard => isolated.filter((file, index) => !hostedFiles.inclu
 // voice shard and the slower integration batches received a full ordinary load.
 const reservedMilliseconds = Array.from({ length: count }, (_, index) =>
   isolatedFor(index + 1).reduce((sum, file) => sum + (timingData.files[file] || 0), 0)
-  + (count === 8 && chosen(selection, 'src/integration.test.ts')
+  + (count === 8 && hasIntegration
     ? timingData.integrationBatches?.[index + 1] || 0 : 0));
 const shards = balanceFiles(files, timingData.files, count, reservedMilliseconds);
 const selected = shards[position - 1];

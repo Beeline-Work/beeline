@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync,mkdirSync,writeFileSync,rmSync,readFileSync } from 'node:fs';
 import path from 'node:path';
-import { inspectMachineConnectionSource,machineConnectionSites,judgeMachineSites,checkMachineConnections } from './machine-connection-boundaries.mjs';
+import { inspectMachineConnectionSource,machineConnectionSites,judgeMachineSites,checkMachineConnections,mechanicalServerSinkMove } from './machine-connection-boundaries.mjs';
 
 test('new helper timers fail, including aliases, promises, native deadlines, and generated child code',()=>{
   for(const source of [
@@ -55,4 +55,19 @@ test('the sole warm countdown is pinned to AgentProcesses.workChanged',()=>{
   assert.deepEqual(inspectMachineConnectionSource(file,'class AgentProcesses { workChanged(){setTimeout(stop,60000)} }'),[]);
   assert.ok(inspectMachineConnectionSource(file,'class AgentProcesses { workChanged(){setTimeout(stop,60000);setTimeout(other,10)} }').length);
   assert.ok(inspectMachineConnectionSource(file,'class AgentProcesses { extra(){setTimeout(stop,60000)} }').length);
+});
+
+
+test('server shutdown sinks follow only an unchanged mechanical owner move',()=>{
+  const before='export function createBeelineServer(){ for(const client of webSockets.clients) client.terminate(); webSockets.close(); }';
+  assert.equal(mechanicalServerSinkMove(before,before),true);
+  assert.equal(mechanicalServerSinkMove(before,before.replace('webSockets.close()','other.close()')),false);
+  assert.equal(mechanicalServerSinkMove(before,before.replace('webSockets.close()','webSockets.close(); webSockets.close()')),false);
+  assert.equal(mechanicalServerSinkMove(before,before.replace('createBeelineServer','extra')),false);
+  const id='apps/server/src/server-create-beeline-server.ts::createBeelineServer::close';
+  const inventory={[id]:{count:1,reason:'shutdown'}};
+  const baseline={'apps/server/src/server.ts::createBeelineServer::close':{count:1,reason:'shutdown'}};
+  assert.ok(judgeMachineSites(new Map([[id,1]]),inventory,baseline).length);
+  assert.deepEqual(judgeMachineSites(new Map([[id,1]]),inventory,baseline,true),[]);
+  assert.ok(judgeMachineSites(new Map([[id,2]]),{[id]:{count:2,reason:'shutdown'}},baseline,true).length);
 });

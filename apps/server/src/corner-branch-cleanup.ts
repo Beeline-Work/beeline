@@ -1,5 +1,5 @@
 import { GitHubHttpError, type GitHubAppClient } from '@beeline/auth/github';
-import { cornerRunStateSql } from './corner-run.js';
+import { cornerRunOutcomeSql } from './corner-run.js';
 import type { SqlDatabase } from './database.js';
 import { cornerFeatureBranch, cornerFeatureBranchSql } from './corner-branch.js';
 
@@ -28,7 +28,7 @@ export async function deleteArchivedCornerBranch(
       archived_at: unknown; merged: boolean; merged_head: string | null; merged_at: string | null;
     }>(
       `SELECT repository.repository_id,repository.installation_id,repository.full_name,corner.archived_at,
-         ${cornerRunStateSql('corner.id')}='landed' merged,
+         ${cornerRunOutcomeSql('corner.id')}='landed' merged,
          fact.lifecycle->'pr'->>'headSha' merged_head,fact.lifecycle->'pr'->>'mergedAt' merged_at
        FROM rooms corner JOIN corner_github_cache fact ON fact.corner_id=corner.id
        JOIN rooms parent ON parent.id=corner.parent_id

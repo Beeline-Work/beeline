@@ -1,9 +1,6 @@
+import { commandOwnerExpiredSql } from './turn-ownership.js';
 import { endAgentTurn } from './agent-turn-end.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
-import { commandOwnerExpiredSql } from './turn-ownership.js';
-import { ServerLeaseDeadlines } from './server-lease-deadlines.js';
-import { startConnectionWork } from './background-work.js';
-import { CornerAttentionDeadlines } from './corner-attention.js';
 import { createHash, randomUUID } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
 import { LiveHub } from './live.js';
@@ -11,13 +8,8 @@ import { lockAgentMachine } from './machine-offline.js';
 import { freeAgentReachableSql } from './free-agents.js';
 import { systemLine } from './system-line.js';
 import { notifyAgentConnection } from './postgres-live.js';
-import { renudgeStrandedPendingCommands } from './agent-command.js';
 
 export const DELIVERY_PICKUP_WINDOW_MS = 90_000;
-export const PRESENCE_EVIDENCE_MIN_INTERVAL_MS = 30_000;
-/** How often a server instance renews its lease row. Constant per instance:
- *  no work here scales with agents or with heartbeat pings. */
-export const SERVER_LEASE_RENEW_MS = 30_000;
 /** A server that has not renewed for this long is gone; its connections are released. */
 export const SERVER_LEASE_EXPIRY_MS = 90_000;
 
@@ -34,155 +26,68 @@ interface HeldConnection {
   connectionId: string;
   instanceId: string;
 }
-/** Retain only evidence that can still affect a delivery deadline. */
-export class RecentIdentityTimes {
-  private readonly values = new Map<string, number>();
-
-  constructor(private readonly limit: number, private readonly ttlMs: number) {}
-
-  get(id: string): number | undefined { return this.values.get(id); }
-
-  set(id: string, at: number): void {
-    this.values.delete(id);
-    this.values.set(id, at);
-    for (const [oldestId, oldestAt] of this.values) {
-      if (this.values.size <= this.limit && oldestAt > at - this.ttlMs) break;
-      this.values.delete(oldestId);
-    }
-  }
-
-  clear(): void { this.values.clear(); }
-  get size(): number { return this.values.size; }
-}
-
-/** Presence follows authenticated connection claim/release. Delivery and turn
- * age never override a live connection or terminate its work. */
+/** Presence changes with authenticated traffic and connection lifecycle events. */
 export class ConnectionPresence {
-  readonly instanceId:string;
-  readonly #ownedConnections=new Map<string,string>();
-  readonly #serverLeaseDeadlines:ServerLeaseDeadlines;
-  readonly #attention:CornerAttentionDeadlines;
-  readonly #release:()=>void;
-  readonly #releaseResync:()=>void;
-  readonly #evidence=new Map<string,Promise<void>>();
-  readonly #leaseRenewMs:number;
-  #leaseTimer:(()=>void)|undefined;
-  #leaseWrite?:Promise<void>;
-  #lastLeaseAt=Number.NEGATIVE_INFINITY;
-  #phoneConnections=0;
-  #stopped=false;
-  constructor(private readonly database:SqlDatabase,private readonly live:LiveHub,
-    _pickupWindowMs=DELIVERY_PICKUP_WINDOW_MS,_evidenceMinimumIntervalMs=PRESENCE_EVIDENCE_MIN_INTERVAL_MS,
-    private readonly lease:{instanceId?:string;renewMs?:number;expiryMs?:number;connectionWork?:typeof startConnectionWork}={}) {
-    this.instanceId=lease.instanceId??randomUUID();
-    this.#leaseRenewMs=lease.renewMs??SERVER_LEASE_RENEW_MS;
-    this.#attention=new CornerAttentionDeadlines(database,live,this.report);
-    this.#serverLeaseDeadlines=new ServerLeaseDeadlines(database,lease.expiryMs??SERVER_LEASE_EXPIRY_MS,async()=>{
-      for(const agentId of await releaseStaleServerConnections(database,lease.expiryMs??SERVER_LEASE_EXPIRY_MS)){
-        await expireOwnedAgentTurns(database,live,agentId);
-        await broadcastAgentPresence(database,live,agentId);
-      }
-    },this.report);
-    this.#releaseResync=live.subscribeResync(()=>{void this.recoverServerLeases().catch(this.report);});
-    this.#release=live.subscribeAll(event=>{
-      if(event.type==='agent-connection')void expireOwnedAgentTurns(database,live,event.agentId).catch(this.report);
+  readonly instanceId: string;
+  private stopped = false;
+  private leaseWrite?: Promise<void>;
+  private readonly release: () => void;
+  private readonly evidenceWrites = new Map<string, Promise<void>>();
+  private readonly ownerChecks = new Map<string, Promise<void>>();
+  constructor(private readonly database: SqlDatabase, private readonly live: LiveHub,
+    lease: { instanceId?: string } = {}) {
+    this.instanceId = lease.instanceId ?? randomUUID();
+    this.release = live.subscribeAll(event => {
+      if (event.type === 'agent-connection') this.checkOwnedAgent(event.agentId);
     });
   }
-  private readonly report=(error:unknown)=>console.error('[presence] connection transition failed',error);
-  async start():Promise<void>{
-    await this.recoverServerLeases();await this.#attention.start();
-  }
-  /**
-   * Renew one aggregate owner row while this instance holds connections.
-   * Expired owners transition through their known one-shot deadlines; a
-   * renewal never discovers other connections or publishes phone state.
-   */
-  startLease(): void {
-    if (this.#leaseTimer || this.#stopped || (!this.#ownedConnections.size && !this.#phoneConnections)) return;
-    const tick = () => void this.renewLease().catch(this.report);
-    this.#leaseTimer = (this.lease.connectionWork ?? startConnectionWork)(tick, this.#leaseRenewMs);
-  }
-
-  /** A live phone or composed background owner retains the aggregate lease.
-   * Phones also own viewing/push suppression rows. Share the existing helper
-   * renewal with an idempotent release, never a separate evidence loop. */
-  holdServerConnection():()=>void {
-    if(this.#stopped)return ()=>{};
-    this.#phoneConnections++;
+  async start(): Promise<void> { await this.renewLease(); }
+  holdServerConnection(): () => void {
     void this.renewLease().catch(this.report);
-    this.startLease();
-    let released=false;
-    return ()=>{
-      if(released)return;released=true;
-      this.#phoneConnections=Math.max(0,this.#phoneConnections-1);
-      if(!this.#ownedConnections.size && !this.#phoneConnections){this.#leaseTimer?.();this.#leaseTimer=undefined;}
-    };
+    return () => {};
   }
-
   async renewLease(): Promise<void> {
-    if (this.#stopped) return;
-    if(this.#leaseWrite)return this.#leaseWrite;
-    if(Date.now()-this.#lastLeaseAt<this.#leaseRenewMs)return;
-    const pending=(async()=>{
-      await this.database.query(
-        `INSERT INTO live_server_instances(instance_id,renewed_at) VALUES($1,clock_timestamp())
-         ON CONFLICT(instance_id) DO UPDATE SET renewed_at=EXCLUDED.renewed_at`,
-        [this.instanceId],
-      );
-      this.#lastLeaseAt=Date.now();
-      this.#serverLeaseDeadlines.observe(this.instanceId,this.#lastLeaseAt);
-    })();
-    this.#leaseWrite=pending;
-    try{await pending;}finally{if(this.#leaseWrite===pending)this.#leaseWrite=undefined;}
+    if (this.stopped) return;
+    if (this.leaseWrite) return this.leaseWrite;
+    const work = this.database.query(`INSERT INTO live_server_instances(instance_id,renewed_at) VALUES($1,clock_timestamp())
+      ON CONFLICT(instance_id) DO UPDATE SET renewed_at=EXCLUDED.renewed_at`, [this.instanceId])
+      .then(() => {});
+    this.leaseWrite = work;
+    try { await work; } finally { this.leaseWrite = undefined; }
   }
-
-  recoverServerLeases(): Promise<void> { return this.#serverLeaseDeadlines.recover(); }
-  observeServerLease(instanceId:string,renewedAt:number,removed=false):void {
-    this.#serverLeaseDeadlines.observe(instanceId,renewedAt,removed);
-  }
-
-  /**
-   * A helper connection for this agent was accepted here. Returns its epoch:
-   * larger than every earlier connection's, on any server instance.
-   */
-  async claimConnection(
-    agentId: string,
-    metadata: PresenceMetadata & { connectionId: string },
-  ): Promise<number> {
-    if (this.#stopped) throw new Error('connection presence stopped');
-    const { connectionId, ...presence } = metadata;
-    // A real reconnect can prove recovery after a failed renewal. The local
-    // minimum interval coalesces concurrent registrations into one write.
+  async claimConnection(agentId: string, metadata: PresenceMetadata & { connectionId: string }): Promise<number> {
+    if (this.stopped) throw new Error('connection presence stopped');
     await this.renewLease();
-    const epoch=await claimAgentConnection(this.database, this.live, agentId, presence, {
-      connectionId,
-      instanceId: this.instanceId,
-    });
-    if(!this.#stopped){this.#ownedConnections.set(agentId,connectionId);this.startLease();}
-    return epoch;
+    const { connectionId, ...presence } = metadata;
+    return claimAgentConnection(this.database, this.live, agentId, presence, { connectionId, instanceId: this.instanceId });
   }
-
-
-  async releaseConnection(agentId:string,connectionId:string,forUpdate=false):Promise<void>{
-    if(this.#stopped)return;
-    if(this.#ownedConnections.get(agentId)===connectionId)this.#ownedConnections.delete(agentId);
-    if(!this.#ownedConnections.size&&!this.#phoneConnections){this.#leaseTimer?.();this.#leaseTimer=undefined;}
-    await releaseAgentConnection(this.database,this.live,agentId,connectionId,forUpdate);
+  async releaseConnection(agentId: string, connectionId: string, forUpdate = false): Promise<void> {
+    if (this.stopped) return;
+    await releaseAgentConnection(this.database, this.live, agentId, connectionId, forUpdate);
   }
-  async announce(roomId:string,agentId:string,metadata:PresenceMetadata={}):Promise<void>{
-    if(this.#stopped||!metadata.lifecycleId)return;
-    await announceAgentLifecycle(this.database,this.live,roomId,agentId,{...metadata,lifecycleId:metadata.lifecycleId});
+  async announce(roomId: string, agentId: string, metadata: PresenceMetadata = {}): Promise<void> {
+    if (!this.stopped && metadata.lifecycleId)
+      await announceAgentLifecycle(this.database, this.live, roomId, agentId, { ...metadata, lifecycleId: metadata.lifecycleId });
   }
-  evidence(roomId:string|undefined,agentId:string):Promise<void>{
-    if(this.#stopped)return Promise.resolve();
-    const current=this.#evidence.get(agentId);if(current)return current;
-    const work=recordAgentEvidence(this.database,this.live,roomId,agentId).finally(()=>{this.#evidence.delete(agentId);});
-    this.#evidence.set(agentId,work);return work;
+  async evidence(roomId: string | undefined, agentId: string): Promise<void> {
+    if (this.stopped) return;
+    await this.renewLease();
+    const running = this.evidenceWrites.get(agentId);
+    if (running) return running;
+    const work = recordAgentEvidence(this.database, this.live, roomId, agentId);
+    this.evidenceWrites.set(agentId, work);
+    try { await work; } finally { this.evidenceWrites.delete(agentId); }
   }
-  async stop():Promise<void>{
-    this.#stopped=true;this.#leaseTimer?.();this.#attention.stop();
-    this.#release();this.#releaseResync();await this.#leaseWrite?.catch(this.report);
-    await this.#serverLeaseDeadlines.stop();await Promise.allSettled(this.#evidence.values());
+  private checkOwnedAgent(agentId: string): void {
+    if (this.stopped || this.ownerChecks.has(agentId)) return;
+    const work = expireOwnedAgentTurns(this.database, this.live, agentId).then(() => {}, this.report)
+      .finally(() => this.ownerChecks.delete(agentId));
+    this.ownerChecks.set(agentId, work);
+  }
+  private readonly report = (error: unknown) => console.error('[presence] connection transition failed', error);
+  async stop(): Promise<void> {
+    this.stopped = true; this.release();
+    await Promise.all([this.leaseWrite, ...this.evidenceWrites.values(), ...this.ownerChecks.values()]);
   }
 }
 
@@ -238,7 +143,7 @@ export async function claimAgentConnection(
     // A free agent's Machine is serving again; the wake latency ends here.
     const freeAgent = await db.query<{ previous: string }>(
       `WITH old AS (SELECT agent_id,state FROM free_agents WHERE agent_id=$1 FOR UPDATE)
-       UPDATE free_agents f SET state='running',last_activity_at=now(),updated_at=now()
+       UPDATE free_agents f SET state='running',updated_at=now()
        FROM old WHERE f.agent_id=old.agent_id AND f.removed_at IS NULL AND f.state NOT IN ('failed','destroyed')
        RETURNING old.state previous`,
       [agentId],
@@ -254,7 +159,6 @@ export async function claimAgentConnection(
   await finishAgentAnnouncement(database, agentId, metadata, announcement);
   await notifyAgentConnection(database,agentId,epoch);
   live.publish({ type: 'agent-connection', roomId: '', agentId, epoch });
-  await renudgeStrandedPendingCommands(database,agentId);
   await broadcastAgentPresence(database, live, agentId);
   return epoch;
 }
@@ -319,36 +223,6 @@ function releasedPresenceSql(agentIdSql: string): string {
   return `(CASE WHEN ${freeAgentReachableSql(agentIdSql)}
     THEN jsonb_build_object('status','online','held',true,'asleep',true)
     ELSE jsonb_build_object('status','offline','held',false) END)`;
-}
-
-/** Release every connection held by a server instance whose lease expired. */
-export async function releaseStaleServerConnections(
-  database: SqlDatabase,
-  expiryMs: number,
-): Promise<string[]> {
-  const released = await database.query<{ agent_id: string }>(
-    `WITH stale AS (
-       UPDATE agent_connections connection SET released_at=clock_timestamp()
-       WHERE connection.released_at IS NULL AND NOT EXISTS(
-         SELECT 1 FROM live_server_instances server
-         WHERE server.instance_id=connection.instance_id
-           AND server.renewed_at>clock_timestamp()-make_interval(secs => $1::double precision / 1000))
-       RETURNING connection.agent_id,connection.connection_id
-     ), demoted AS (
-       UPDATE live_outputs presence SET body=presence.body || ${releasedPresenceSql('stale.agent_id')} || jsonb_build_object(
-         'observedAt',GREATEST($2::bigint,COALESCE((presence.body->>'observedAt')::bigint,0)+1)),
-         updated_at=clock_timestamp()
-       FROM stale
-       WHERE presence.agent_id=stale.agent_id AND presence.kind='presence'
-         AND presence.body->>'connectionId'=stale.connection_id
-       RETURNING presence.agent_id
-     ) SELECT DISTINCT agent_id FROM demoted`,
-    [expiryMs, Math.floor(Date.now() / 1000)],
-  );
-  await database.query(
-    `DELETE FROM live_server_instances WHERE renewed_at<clock_timestamp()-interval '1 day'`,
-  );
-  return released.rows.map((row) => row.agent_id);
 }
 
 /**

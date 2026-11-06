@@ -1,666 +1,180 @@
 import { CommandActivationContext } from './helper-activation-context.js';
-import { OwnedModelOutcomeUnknown, ownedModelPrompt, ownedModelEndReceipt } from './owned-model-turn.js';
-import { helperUsageBinding, postChangedAgentUsage } from './helper-usage-binding.js';
-import { agentBehavior } from './agent-command.js';
 import { FreeAgentContinuation } from './free-agent-continuation.js';
 import { subscriptionActionPrompt } from '@beeline/api-contract/daemon';
-import { addTurnTokenFigure, mergeHarnessTurnMetrics, type TurnTokenFigure } from './harness-turn-tokens.js';
+import { type TurnTokenFigure } from './harness-turn-tokens.js';
 import { TurnUsageAccumulator } from './turn-usage.js';
-import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
+import { CommandExecutionContext } from './server-command-intake.js';
 import type { InterruptedTurn } from './force-update-journal.js';
 import { SquireTaskRelay } from './squire-task-relay.js';
-import { installRoomGitHubLauncher } from './room-github-auth.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { resourceCallFacts } from './resource-mcp-facade.js';
-import { mkdir, readFile } from 'node:fs/promises';
 import { lstatSync, realpathSync } from 'node:fs';
-import { homedir, hostname } from 'node:os';
+import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { machineHost } from './machine-host.js';
-import { markWorkspaceLayoutLive, prepareCodexCacheTargets, preparePackageCacheTargets, preparePrivateAssets, prepareWorkspaceAssets, workspaceAssetPaths, workspaceCacheEnv } from './workspace-assets.js';
 import type { SharedAssetCategory } from '@beeline/api-contract/agent-grants';
-import { admitSharedAssets } from './shared-asset-capacity.js';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { parseGrantDecisionLine } from '@beeline/api-contract/agent-grants';
-import {
-  SCHEDULE_RAN_VERB,
-  SCHEDULE_SCHEDULER_NAME,
-} from '@beeline/api-contract/scheduled-prompts';
+import { SCHEDULE_RAN_VERB, SCHEDULE_SCHEDULER_NAME } from '@beeline/api-contract/scheduled-prompts';
 import { type SystemEvent } from '@beeline/api-contract/daemon';
-import {
-  AcpClient,
-  openAcpConversation,
-  agentTurnSteps,
-  type AcpPermissionDecision,
-  type AcpPermissionRequest,
-  type McpServerWire,
-  type PromptResult,
-  type ToolCallEntry,
-} from './acp.js';
-import {
-  expectedMountedImportedMcpServerNames,
-  grantedSquireHostBindPaths,
-  harnessStateDirsFromEnv,
-  hostImportedMcpDeclarations,
-  hostImportedMcpServerNames,
-  freshHarnessLoginLine,
-  isExpiredHarnessLoginError,
-  mountedImportedMcpServerNames,
-  prepareRoomAgentHome,
-  repairRoomAgentCredentialLinks,
-  watchRoomClaudeLogin,
-  writeBackRoomClaudeLogin,
-} from './agent-home.js';
-import {
-  grantedHostRouteWires,
-  grantedSquireHostRoute,
-  ungatedHostServers,
-} from './host-mcp-route.js';
-import { openRouterRoutingInput } from './openrouter-routing.js';
-import { agentOpenRouterKey, readOpenRouterKeyUsage } from './openrouter-key-usage.js';
-import { HarnessQuotaReader, quotaAxiProvider } from './harness-quota.js';
-import { agentCommandCatalogPublisher } from './agent-command-catalog.js';
-import {
-  attachmentImageBlocks,
-  attachmentMarkerLines,
-  attachmentPromptLines,
-  deliverAttachments,
-  promptWithImages,
-  withoutImageData,
-  type DeliveredAttachment,
-} from './attachment-delivery.js';
-import { installPiMcpBridge } from './pi-mcp-bridge.js';
-import { installPiTurnBudget } from './pi-turn-budget.js';
-import {
-  beelineAgentMcpServer,
-  sessionGrantedResources, writeSessionResourceAuth, recordSessionModelFallback, tracedAgentProcessLifecycle,
-  readOnlyMcpServer,
-} from './room-session.js';
-import { awaitInstitutionalContext, startInstitutionalContextFetch } from './institutional-context.js';
-import { modelContextWindowTokens } from './model-context-window.js';
-import {
-  codegraphFingerprintServers,
-  codegraphIndexDirectory,
-  codegraphMcpServer,
-  prepareCodegraphIndex,
-} from './codegraph.js';
-import { sessionConfigFingerprint } from './session-config-fingerprint.js';
-import { registryMcpHostBindPaths, registryMcpHostDeclarations } from './registry-mcp.js';
+import { AcpClient, type AcpPermissionDecision, type AcpPermissionRequest, type PromptResult, type ToolCallEntry } from './acp.js';
+import { HarnessQuotaReader } from './harness-quota.js';
+import { attachmentMarkerLines, attachmentPromptLines, type DeliveredAttachment } from './attachment-delivery.js';
 import { CODE_OWNED_HOST_MCP_NAMES } from './mcp-route-class.js';
-import {
-  isHostMcpPermissionRequest,
-  isMcpShapedPermissionRequest,
-  isMountedMcpToolPermissionRequest,
-  ROOM_MOUNTED_MCP_SERVERS,
-} from './read-only-policy.js';
-import {
-  credentialMaskPaths,
-  harnessHomeStateDirs,
-  siblingAgentMaskPaths,
-  wrapAgentCommand,
-} from './bwrap-sandbox.js';
-import { harnessIdentityLabel, sessionNewMcpServers } from './cursor-acp-bridge.js';
-import { bodyAgentCommand, type BodyConfig } from './config.js';
+import { isHostMcpPermissionRequest, isMcpShapedPermissionRequest, isMountedMcpToolPermissionRequest, ROOM_MOUNTED_MCP_SERVERS } from './read-only-policy.js';
+import { type BodyConfig } from './config.js';
 import { type DaemonApiClient } from './daemon-api-client.js';
-import {
-  explainEmptyAgentTurn,
-  isSilentCompletion,
-  isContextOverflowTurn,
-  nextPinnedProvider,
-  shouldFailOverProviderError,
-  shouldRetryEmptyTurn,
-  turnFailureReasonWithProvider,
-  type EmptyTurnExplanation,
-} from './empty-turn.js';
+import { type EmptyTurnExplanation } from './empty-turn.js';
 import type { GrantCommandRunner, GrantRunnerEndpoint, GrantWritePolicy } from './grant-runner.js';
-import { harnessSupportsNativeSessionResume, roomNativeIoProven, roomShellCapability } from './harness-capabilities.js';
-import {
-  agentArgsWithModelSelection,
-  applyAgentModelSelection,
-  filterAllowedModelConfigOptions,
-  parseAdvertisedConfigOptions,
-} from './model-config.js';
+import { harnessSupportsNativeSessionResume } from './harness-capabilities.js';
 import type { AgentRuntimeRecord } from './runtime.js';
-import { runtimeDirectory, runtimeIdentity } from './runtime.js';
-import {
-  assembleSessionPrompt,
-  assembleTurnPrompt,
-  roomMentionDirectory,
-  renderReplyContext,
-  type PromptSurface,
-} from './prompt-assembly.js';
-import { TurnStoppedError } from './turn-stop.js';
-import { AgentTurnStream, durableReplyText } from './turn-stream.js';
-import { roomReplySteps } from './room-turn-steps.js';
-import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
-import { isCompletedToolCall, isPrivateWorkToolCall, toolCallFailureLine } from './tool-call-failure.js';
-import { distillTurnFailureReason, redactTurnError, redactToolDetail } from './turn-failure-reason.js';
-import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
-import { AgentProcesses, startAgentProcess, stopAgentProcess, isAgentProcessExit, type AgentProcessLifecycle } from './agent-process.js';
+import { runtimeIdentity } from './runtime.js';
+import { type PromptSurface } from './prompt-assembly.js';
+import { TurnTrace, type TurnTraceSink } from './turn-trace.js';
+import { isCompletedToolCall } from './tool-call-failure.js';
+import { redactTurnError } from './turn-failure-reason.js';
+import { AgentProcesses, type AgentProcessLifecycle } from './agent-process.js';
 import { WarmTranscript } from './warm-transcript.js';
 import { PromptSectionBaseline } from './prompt-section-baseline.js';
 import type { RoomSupervisor } from './room-supervisor.js';
+import { monolithRoomTurnLoopConfigurationChanged, monolithRoomTurnLoopRequestReconciliation, monolithRoomTurnLoopIsBusy, monolithRoomTurnLoopPausedGrantRequestId, monolithRoomTurnLoopGrantWritePolicy, monolithRoomTurnLoopBeginTurnTrace, monolithRoomTurnLoopCurrentTurnForRunner, monolithRoomTurnLoopRequesterOf, monolithRoomTurnLoopRefreshPersonaForSoulUpdate, monolithRoomTurnLoopPrepareForForcedUpdateRestart, monolithRoomTurnLoopInterruptedTurn, monolithRoomTurnLoopInterruptForServerMinimum, monolithRoomTurnLoopForceRecoverRoom, monolithRoomTurnLoopCommandActivation, monolithRoomTurnLoopConfiguration, monolithRoomTurnLoopRoster, monolithRoomTurnLoopAcceptsImages, monolithRoomTurnLoopDeliver, monolithRoomTurnLoopRepositoryState, monolithRoomTurnLoopWriteBackClaudeLogin, monolithRoomTurnLoopPublishOpenRouterSpend, monolithRoomTurnLoopPublishHarnessQuota, monolithRoomTurnLoopCaptureTurnMetrics, monolithRoomTurnLoopWatchClaudeLogin, monolithRoomTurnLoopStopClaudeLoginWatch, monolithRoomTurnLoopDiscardSession, monolithRoomTurnLoopSessionIsCurrent, monolithRoomTurnLoopRefreshTurnCheckout, monolithRoomTurnLoopCurrentSessionFingerprint, monolithRoomTurnLoopGrantedResources, monolithRoomTurnLoopMountedMcpServers, monolithRoomTurnLoopActivate } from './monolith-room-turn-configuration-changed.js';
+import { monolithRoomTurnLoopActivateCold, monolithRoomTurnLoopLifecycle, monolithRoomTurnLoopServingProviders, monolithRoomTurnLoopExplainEmpty, monolithRoomTurnLoopRepinNextProvider, monolithRoomTurnLoopStartPrompt, monolithRoomTurnLoopStopTurn } from './monolith-room-turn-activate-cold.js';
+import { monolithRoomTurnLoopPrompt } from './monolith-room-turn-prompt.js';
+import { monolithRoomTurnLoopRun } from './monolith-room-turn-run.js';
 
-const execFileAsync = promisify(execFile);
-
-type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
-type RoomRepositoryState = DaemonOperationMap['getRoomRepositoryState']['output'];
-type RoomMessage = DaemonOperationMap['getRoomInbox']['output']['items'][number];
-type HumanMessage = Pick<
-  RoomMessage,
-  | 'id'
-  | 'authorId'
-  | 'body'
-  | 'createdAt'
-  | 'attachments'
-  | 'type'
-  | 'replyToMessageId'
-  | 'replyToAuthorId'
-  | 'replyToAuthorName'
-  | 'replyToExcerpt'
-  | 'requestAuthorId'
-  | 'agentHopCount'
->;
-
-/**
- * Rooms and corners share one rule for MCP: every tool call from a server the
- * host mounted into the session is approved. A host-classified server is kept
- * out of the isolated harness home until an owner grant rewrites the route in;
- * a call that reaches an ungated host identity stays refused here. Granted
- * names drop out of that host list so every capability on that server crosses.
- */
-export function isRoomMcpPermissionRequest(
-  request: AcpPermissionRequest,
-  mountedServers: readonly string[] = ROOM_MOUNTED_MCP_SERVERS,
-  hostServers: readonly string[] = CODE_OWNED_HOST_MCP_NAMES,
-): boolean {
-  if (isHostMcpPermissionRequest(request, hostServers)) return false;
-  return isMountedMcpToolPermissionRequest(request, mountedServers);
-}
-
-/**
- * A shell command, read from the only thing that identifies one: the `execute`
- * kind the harness itself declares. claude-agent-acp marks its native `Bash`
- * that way, which is the whole of what a Room shell needs; a title or a command
- * line that happens to contain the word `bash` is prose, not an identity, and
- * classifying on it moved the boundary with the user's wording. An MCP-shaped
- * request is never re-read as a shell: it was already decided above, so a
- * command line wearing an inspection tool's title stays refused instead of
- * crossing as the shell it also is.
- */
-function isRoomShellPermissionRequest(
-  request: AcpPermissionRequest,
-  hostServers: readonly string[],
-): boolean {
-  if (request.toolCall?.kind !== 'execute') return false;
-  return !isMcpShapedPermissionRequest(request, hostServers);
-}
-
-/** Every path a native file request names, or undefined when one is malformed. */
-function nativeRequestPaths(call: AcpPermissionRequest['toolCall']): string[] | undefined {
-  const paths: string[] = [];
-  if (call?.locations !== undefined) {
-    if (!Array.isArray(call.locations)) return undefined;
-    for (const location of call.locations) {
-      if (!location || typeof location.path !== 'string' || !location.path) return undefined;
-      paths.push(location.path);
-    }
-  }
-  const input = call?.rawInput;
-  if (input && typeof input === 'object') {
-    for (const key of ['file_path', 'notebook_path', 'path'] as const) {
-      if (!(key in input)) continue;
-      const value = (input as Record<string, unknown>)[key];
-      if (typeof value !== 'string' || !value) return undefined;
-      paths.push(value);
-    }
-  }
-  return paths;
-}
-
-const strictlyInside = (root: string, path: string): boolean => {
-  const suffix = relative(root, path);
-  return suffix !== '' && suffix !== '..' && !suffix.startsWith(`..${sep}`) && !isAbsolute(suffix);
-};
-
-/** Allow only existing files named entirely within this session's attachment tree. */
-function isAttachmentRead(request: AcpPermissionRequest, attachmentsDir?: string): boolean {
-  const call = request.toolCall;
-  if (!attachmentsDir || call?.kind !== 'read') return false;
-  const paths = nativeRequestPaths(call);
-  if (!paths?.length) return false;
-  try {
-    const root = resolve(attachmentsDir);
-    const realRoot = realpathSync(root);
-    return paths.every(path => isAbsolute(path) && strictlyInside(root, resolve(path)) &&
-      strictlyInside(realRoot, realpathSync(path)));
-  } catch {
-    return false;
-  }
-}
-
-/**
- * A path as the filesystem would resolve it on write: the nearest entry that
- * exists (a dangling symlink counts, and then fails realpath) is realpathed and
- * the not-yet-created remainder is appended, so a new file is judged by the
- * directory it lands in.
- */
-function realWriteTarget(path: string): string {
-  let existing = resolve(path);
-  const missing: string[] = [];
-  for (;;) {
-    try {
-      lstatSync(existing);
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      const parent = dirname(existing);
-      if (parent === existing) throw error;
-      missing.unshift(basename(existing));
-      existing = parent;
-    }
-  }
-  return join(realpathSync(existing), ...missing);
-}
-
-/** Allow a native write/edit only when every path it names lands inside the sandbox home. */
-function isSandboxHomeEdit(request: AcpPermissionRequest, sandboxHome?: string): boolean {
-  const call = request.toolCall;
-  if (!sandboxHome || call?.kind !== 'edit') return false;
-  const paths = nativeRequestPaths(call);
-  if (!paths?.length) return false;
-  try {
-    const root = resolve(sandboxHome);
-    const realRoot = realpathSync(root);
-    // Only an already-normal path: `resolve` folds `..` before symlinks are
-    // followed, so `home/link/../x` would be judged by a different directory
-    // than the one the filesystem writes through.
-    return paths.every(path => isAbsolute(path) && path === resolve(path) &&
-      strictlyInside(root, path) && strictlyInside(realRoot, realWriteTarget(path)));
-  } catch {
-    return false;
-  }
-}
-
-/**
- * The Room ACP client applies this host-owned decision fail-closed: a mounted
- * MCP tool call is approved; shell commands and native read/search requests
- * are approved while the OS sandbox wraps this session, as are native
- * writes/edits whose every path resolves inside the sandbox home (`$HOME`, the
- * `agent-home/user` directory the sandbox already binds writable for the
- * shell). Without the sandbox, only native reads confined to downloaded
- * attachments are approved. Other native writes/edits, deletes, moves and
- * unstructured requests remain refused.
- *
- * Shell is conditioned on the sandbox because the sandbox IS the Room's
- * read-only filesystem: unwrapped, `wrapAgentCommand` spawns the harness bare
- * and masks no credential path, so an approved command would write anywhere the
- * daemon account can. Codex keeps its own offline read-only mode in exactly
- * that case (`harness-capabilities.ts`), so requiring the wrap is what parity
- * means. `ensureBwrapSandbox` installs bubblewrap at daemon start so this is a
- * capability the host gains rather than a refusal it lives with, and the
- * session primer states the outcome either way. The same wrap is why a home
- * write is safe to approve: the native tool runs inside it, so a symlink the
- * agent swaps in after this check still reaches only what the shell could.
- */
-export function roomPermissionDecision(
-  request: AcpPermissionRequest,
-  options: {
-    mountedServers?: readonly string[];
-    hostServers?: readonly string[];
-    /** `config.bwrapPath`, set only when the sandbox self-test passed. */
-    shellSandboxed?: boolean;
-    /** The attachment subtree under BEELINE_ATTACH_SCRATCH_ROOT. */
-    attachmentsDir?: string;
-    /** The wrapped session's `$HOME` (`agent-home/user`), writable in the sandbox. */
-    sandboxHome?: string;
-  } = {},
-): AcpPermissionDecision {
-  const hostServers = options.hostServers ?? CODE_OWNED_HOST_MCP_NAMES;
-  const mountedServers = options.mountedServers ?? ROOM_MOUNTED_MCP_SERVERS;
-  if (isRoomMcpPermissionRequest(request, mountedServers, hostServers)) return 'allow';
-  if (!isMcpShapedPermissionRequest(request, hostServers)) {
-    if (options.shellSandboxed) {
-      if (request.toolCall?.kind === 'read' || request.toolCall?.kind === 'search') return 'allow';
-      if (isSandboxHomeEdit(request, options.sandboxHome)) return 'allow';
-    } else if (isAttachmentRead(request, options.attachmentsDir)) return 'allow';
-  }
-  if (!options.shellSandboxed) return 'reject';
-  return isRoomShellPermissionRequest(request, hostServers) ? 'allow' : 'reject';
-}
-
-/**
- * Whether this principal may start a turn. Agents are server-validated Room members
- * and are never gated; a human answers to the agent's access policy.
- *
- * The policy lives on the SERVER (`agent-access.ts`) and its verdict rides on the
- * authority round trip the intake loop already makes per candidate message — so an
- * owner's change in the members page takes effect on a helper that is already
- * running, on its next poll. `humanPermitted` is the runtime record's own reading,
- * used only against a server too old to answer.
- */
-/** Server-authored scheduled prompts arrive as system lines (`@scheduler ran a
- *  schedule for <agent> · <message>`) carrying the structured event; the
- *  scheduler is not a Room principal, so its lines skip the per-author
- *  authority check (schedule creation was already authority-gated). Recognised by
- *  the event's verb, never by the text.
- *
- *  Nothing here re-checks that the line is addressed to this agent. An inbox
- *  item exists BECAUSE the server routed it to this agent, so the item IS the
- *  address; asking the line to name the reader again only invites the two to
- *  disagree. */
-export function isScheduledPrompt(item: {
-  type: string;
-  body: string;
-  systemEvent?: SystemEvent;
-}): boolean {
-  if (item.type !== 'system') return false;
-  if (item.systemEvent?.kind) return item.systemEvent.kind === 'schedule-ran';
-  // One release of fallback: a line written before the server stamped kinds
-  // carries the verb and nothing else. Remove after the next release; the
-  // verb is display text and must not be a permanent contract.
-  return item.systemEvent?.verb === SCHEDULE_RAN_VERB;
-}
-
-/**
- * Who the harness is told an inbox item is from.
- *
- * An event line's subject is the person or agent the fact is ABOUT, and the
- * server put their display name on the structured event. A newcomer's join is
- * the case that needs it: the roster this turn was built from was read before
- * they arrived, so a lookup by author id finds nothing and the greeting comes
- * out addressed to a truncated public key instead of a name.
- */
-export function inboxItemAuthorName(
-  item: {
-    type: string;
-    authorId: string;
-    body: string;
-    systemEvent?: SystemEvent;
-  },
-  names: ReadonlyMap<string, string>,
-): string {
-  if (isScheduledPrompt(item)) return SCHEDULE_SCHEDULER_NAME;
-  const subject = item.systemEvent?.subject;
-  if (item.type === 'system' && subject?.name) return subject.name;
-  return names.get(item.authorId) ?? item.authorId.slice(0, 12);
-}
-
-/** What the harness is shown for an inbox item: a scheduled prompt's message
- *  itself (the event's consequence), otherwise the row's text. An event line's
- *  own sentence already carries the fact — `Ada joined Beeline Welcome` names
- *  the newcomer — so it is shown as written rather than restated. */
-export function inboxItemPromptBody(item: {
-  type: string;
-  body: string;
-  systemEvent?: SystemEvent;
-}): string {
-  if (item.systemEvent?.kind === 'subscription-fired') return subscriptionActionPrompt(item.systemEvent);
-  return isScheduledPrompt(item) ? (item.systemEvent?.consequence ?? item.body) : item.body;
-}
-
-/**
- * A `request_grant` or `offer_connector` call whose reply says the card is
- * posted pauses the turn: the person's answer on that card resumes it (a
- * `grant-decided` or `connector-offer-decided` RESUME kind).
- */
-type PendingCardKind = 'grant' | 'connector';
-function pendingCardKind(call: { title?: string; content?: unknown }): PendingCardKind | undefined {
-  if (/(?:^|[._:/-])connect$/i.test(call.title ?? '')) {
-    try {
-      let content = call.content;
-      if (content && typeof content === 'object' && 'content' in content) content = content.content;
-      if (Array.isArray(content)) content = content.find(item => item?.type === 'text')?.text;
-      const result = typeof content === 'string' ? JSON.parse(content) : content;
-      if (result && typeof result === 'object' && ['needs_sign_in', 'needs_approval'].includes(result.status))
-        return result.grantId ? 'grant' : 'connector';
-    } catch { /* An invalid reply does not pause the turn. */ }
-  }
-  const kind = /(?:^|[._:/-])(request_grant|request_shared_asset_isolation|offer_connector)$/i.exec(call.title ?? '')?.[1];
-  if (!kind || !/(?:pending|already offered), card (?:posted|still open)/i.test(
-    typeof call.content === 'string' ? call.content : JSON.stringify(call.content ?? ''),
-  )) return undefined;
-  return kind.toLowerCase() === 'offer_connector' ? 'connector' : 'grant';
-}
-
-export function pendingGrantToolCall(call: { title?: string; content?: unknown }): boolean {
-  return pendingCardKind(call) !== undefined;
-}
-
-/**
- * The device an instantly approved `request_grant` added this turn, if any.
- * bwrap fixes `/dev` when a session starts, so the turn loop runs the same turn
- * again in a fresh session that has it (`deviceGrantResumePrompt`).
- */
-export function approvedDeviceGrant(
-  calls: readonly { title?: string; content?: unknown }[],
-): string | undefined {
-  for (const call of calls) {
-    if (!/(?:^|[._:/-])request_grant$/i.test(call.title ?? '')) continue;
-    const text = typeof call.content === 'string' ? call.content : JSON.stringify(call.content ?? '');
-    const device = /approved: use (\/dev\/\S+) \[grant [^\]]*\]\. A running session cannot add a device/.exec(text)?.[1];
-    if (device) return device;
-  }
-  return undefined;
-}
-
-/** The prompt that continues a turn after an instantly approved device grant. */
-export function deviceGrantResumePrompt(device: string, earlierReply: string): string {
-  const earlier = earlierReply.trim();
-  return [
-    `Your device grant for ${device} was approved and ${device} is in this session now; this is the same turn continuing.`,
-    ...(earlier ? [`Your reply just before this was: ${earlier}`] : []),
-    'Continue the work that needed the device. Do not request it again or ask anyone to restart.',
-  ].join(' ');
-}
-
-/**
- * The resume prompt for the answer that woke a paused turn. A grant answer and
- * a connector-offer answer resume the same way (`RESUME_KINDS`), but the model
- * must be told which question was answered — the connector one arrives as
- * `<person> added <tool>`, and its right response is to acknowledge and carry
- * on with the work that needed the tool, not to look for a grant verdict.
- */
-export function resumePrompt(item: { body: string; systemEvent?: SystemEvent }): string {
-  if (item.systemEvent?.kind === 'squire-approval-decided') {
-    return [
-      `This is Trusty Squire's answer to the approval you were waiting on: ${item.body}.`,
-      'Your paused work resumes now.',
-      'If it was approved, continue exactly where you left off with Trusty Squire; do not ask the person to approve again, and do not restart the task.',
-      'If it was denied, stop that Trusty Squire action and say plainly what you cannot do.',
-      'If it got no answer, the approval expired; say so plainly, and ask again only if the person still wants it.',
-    ].join(' ');
-  }
-  if (item.systemEvent?.kind === 'connector-offer-decided') {
-    return [
-      `This is the answer to your connector offer: ${item.body}.`,
-      'Your paused work resumes now. The tool is being installed on your machine; its sign-in and status reach the person through the tool’s own status message, not through you.',
-      'Acknowledge in one short line (for example "Adding Trusty Squire now.") and continue the work that needed it, or say plainly what still has to happen before you can.',
-    ].join(' ');
-  }
-  const grant = parseGrantDecisionLine(item.body);
-  if (grant?.kind === 'device' && grant.decision !== 'deny') {
-    return [
-      'This is the answer to your grant request; your paused work resumes now.',
-      `The approved device ${grant.target} is in this session.`,
-      'Continue the paused work with it now; do not restart, schedule another turn, or request the device again.',
-    ].join(' ');
-  }
-  if (grant?.kind === 'mcp' && grant.decision !== 'deny') {
-    return [
-      'This is the answer to your grant request; your paused work resumes now.',
-      `The approved ${grant.target} route is mounted in this session.`,
-      'Continue the paused work with that tool now; do not restart, schedule another turn, or request the route again.',
-    ].join(' ');
-  }
-  return [
-    'This is the answer to your grant request; your paused work resumes now.',
-    'If it was approved and it is a command grant, run it with run_granted_command and the exact argv.',
-    'If it was declined, try another way or say plainly what you cannot do.',
-  ].join(' ');
-}
-
-/**
- * The Room's members and the one @spelling that reaches each of them.
- *
- * Everywhere else the prompt names people by DISPLAY name — the transcript's
- * bylines, `Current task selected by the server from <name>` — and nothing in it ever carried a
- * handle. So a model with something to say to someone had no authoritative
- * spelling to write and had to guess one, or copy one out of the conversation,
- * where a handle retired releases ago still sits in its own old messages. A
- * guessed tag resolves to nobody, and nobody is told it was written.
- *
- * Built from the roster this turn was fetched with, so a newcomer is taggable
- * on the turn they arrive. The server resolves tags in the final reply against
- * current Room membership when it stores the message.
- */
-interface ActiveTurn {
-  item: HumanMessage;
-  steers: HumanMessage[];
-  steerTail: Promise<void>;
-  resumeRequested: boolean;
-  /** The requester stopped this turn: publish nothing, settle nothing. */
-  cancelled: boolean;
-  phase: 'prompting' | 'finishing';
-  promise: Promise<void>;
-}
-
-export interface MonolithRoomTurnHealth {
-  poll(): void;
-}
-
-export interface MonolithRoomTurnOptions {
-  roomId: string;
-  workspaceId: string;
-  cwd: string;
-  /** Refresh the server-bound checkout before each admitted Room turn. */
-  refreshCheckout?: () => Promise<{
-    cwd: string;
-    branch?: string;
-    commit?: string;
-    githubToken?: string;
-  }>;
-  runtime: AgentRuntimeRecord;
-  config: BodyConfig;
-  api: DaemonApiClient;
-  scheduler: AgentProcesses;
-  health: MonolithRoomTurnHealth;
-  onSubscriptionState?: (connected: boolean) => void;
-  onIntakeError?: (error: unknown) => void;
-  signal?: AbortSignal;
-  createAcpClient?: (options: ConstructorParameters<typeof AcpClient>[0]) => AcpClient;
-  onCornerOpened?: () => void;
-  onRestartRequested?: () => Promise<void>;
-  canStartTurn?: () => boolean;
-  /** Keeps this Room's intake alive across failed reads. */
-  supervisor?: RoomSupervisor;
-  /** Attachment downloads (test seam). */
-  fetchImpl?: typeof fetch;
-  /** The daemon's command-grant runner; this Room registers its checkout and current turn. */
-  grantRunner?: GrantCommandRunner;
-  grantRunnerEndpoint?: GrantRunnerEndpoint;
-}
-
-/**
- * Monolith-only Room turn leaf.
- *
- * This module deliberately has no relay client, relay URL, Nostr event, or
- * BuzzClient dependency. The transport cutover is therefore structural: a
- * monolith Room cannot accidentally fall through to a retired relay call.
- */
 export class MonolithRoomTurnLoop {
-  private readonly commandContext: CommandExecutionContext;
-  private readonly activationContext: CommandActivationContext;
-  private readonly squireRelay: SquireTaskRelay;
-  private readonly agent: ReturnType<typeof runtimeIdentity>;
-  private wakeIntake?: () => void;
-  private recoverIntake?: () => void;
 
-  configurationChanged(): void {
-    this.recoverIntake?.();
-  }
+   readonly commandContext: CommandExecutionContext;
 
+   readonly activationContext: CommandActivationContext;
 
-  /** Wake the intake after reconciliation or a storage lease release. */
-  requestReconciliation(): void {
-    // Intake owns this stable notifier and clears it when it exits.
-    this.wakeIntake?.();
-  }
-  private client?: AcpClient;
-  private claudeLoginWatch?: { close(): void };
-  private sessionId?: string;
+   readonly squireRelay: SquireTaskRelay;
+
+   readonly agent: ReturnType<typeof runtimeIdentity>;
+
+   wakeIntake?: () => void;
+
+   recoverIntake?: () => void;
+configurationChanged(): void { return monolithRoomTurnLoopConfigurationChanged(this); }
+/** Wake the intake after reconciliation or a storage lease release. */
+requestReconciliation(): void { return monolithRoomTurnLoopRequestReconciliation(this); }
+
+   client?: AcpClient;
+
+   claudeLoginWatch?: { close(): void };
+
+   sessionId?: string;
+
   /** MCP subprocesses capture this generation-specific path at launch. */
-  private sessionContextPath?: string;
-  private sessionCwd?: string;
-  private sessionCommit?: string;
-  private sessionGitHubToken?: string;
-  private turnCheckout?: { branch?: string; commit?: string; githubToken?: string };
+   sessionContextPath?: string;
+
+   sessionCwd?: string;
+
+   sessionCommit?: string;
+
+   sessionGitHubToken?: string;
+
+   turnCheckout?: { branch?: string; commit?: string; githubToken?: string };
+
   /** The configuration the live session baked in; a change invalidates it. */
-  private sessionFingerprint?: string;
+   sessionFingerprint?: string;
+
   /** Whether CodeGraph preparation succeeded for the live session. */
-  private sessionCodegraphReady = false;
+   sessionCodegraphReady = false;
+
   /** The live session's environment, read back for pi's own turn record. */
-  private agentEnv: Record<string, string> = {};
+   agentEnv: Record<string, string> = {};
+
   /** This agent's own OpenRouter key when its model routes there. */
-  private openRouterKey?: string;
-  private openRouterSpendPublish: Promise<unknown> = Promise.resolve();
+   openRouterKey?: string;
+
+   openRouterSpendPublish: Promise<unknown> = Promise.resolve();
+
   /** Plan quota read through quota-axi, throttled per agent across loops. */
-  private harnessQuota?: HarnessQuotaReader;
-  private sharedAssetsActive = false;
-  private isolatedCategories: SharedAssetCategory[] = [];
+   harnessQuota?: HarnessQuotaReader;
+
+   sharedAssetsActive = false;
+
+   isolatedCategories: SharedAssetCategory[] = [];
+
   /**
    * The real size of the last settled prompt, captured while the session that
    * sent it is still alive — `discardSession` clears both the client and the id,
    * and the terminal receipt is posted on a path that may run after it.
    */
-  private turnMetrics: {
+   turnMetrics: {
     inputTokens?: number;
     promptBytes?: number;
     totalInputTokens?: number;
     modelCalls?: number;
     modelCallsWithoutUsage?: number;
   } = {};
-  private turnUsage = new TurnUsageAccumulator();
-  private harnessTokens: TurnTokenFigure | undefined;
-  /** OpenRouter providers this activation pinned, in order (C92). */
-  private pinnedProviders: string[] = [];
-  /** The one provider re-pinned after an empty completion, until the session ends. */
-  private pinnedProviderOverride?: string;
-  private busy = false;
-  private turnInstructionPrefix = '';
-  /** The session prompt's section ids, for `report_feedback` (with each turn's). */
-  private sessionPromptSectionIds: readonly string[] = [];
-  private sessionSurface: PromptSurface = 'room';
-  private activeTurn?: ActiveTurn;
-  private readonly queuedTurns: HumanMessage[] = [];
-  /** Session scratch directory attachments are downloaded into (`TMPDIR/beeline-attachments`). */
-  private attachmentDir?: string;
-  private modelContextTokens?: number;
-  /** Whether the pinned model takes images; `undefined` when the pin did not say. */
-  private modelTakesImages?: boolean;
-  /** The session's TMPDIR: writable to a granted command in a Room, as it is to the harness (C94). */
-  private sessionScratchDir?: string;
-  /** The `agent-home.ts` overlay this session writes into; a Room grant keeps it. */
-  private sessionStateDirs: string[] = [];
-  /** What this exact ACP session has already been prompted with (`warm-transcript.ts`). */
-  private readonly warmTranscript: WarmTranscript;
-  private readonly freeContinuation: FreeAgentContinuation;
-  /** What each turn section last sent to this exact ACP session hashed to (`prompt-section-baseline.ts`). */
-  private readonly sectionBaseline = new PromptSectionBaseline();
-  /** Local copies already delivered this session, by message id, so transcript renders reuse them. */
-  private readonly deliveredAttachments = new Map<string, DeliveredAttachment[]>();
-  /** Names from the latest roster read, for ledger bylines the runner writes. */
-  private memberNames = new Map<string, string>();
-  /** The request id of the turn that paused on a grant card, until its decision arrives. */
-  private pausedOnGrantRequestId?: string;
-  private pausedOnGrantKind?: PendingCardKind;
-  private readonly approvalDecisionWrites = new Set<Promise<void>>();
-  private readonly approvalDecisionFailures = new Map<string, unknown>();
-  /** Operator-local turn traces; built once when the daemon configured a directory. */
-  private turnTraceSink?: TurnTraceSink;
 
-  constructor(private readonly options: MonolithRoomTurnOptions) {
+   turnUsage = new TurnUsageAccumulator();
+
+   harnessTokens: TurnTokenFigure | undefined;
+
+  /** OpenRouter providers this activation pinned, in order (C92). */
+   pinnedProviders: string[] = [];
+
+  /** The one provider re-pinned after an empty completion, until the session ends. */
+   pinnedProviderOverride?: string;
+
+   busy = false;
+
+   turnInstructionPrefix = '';
+
+  /** The session prompt's section ids, for `report_feedback` (with each turn's). */
+   sessionPromptSectionIds: readonly string[] = [];
+
+   sessionSurface: PromptSurface = 'room';
+
+   activeTurn?: ActiveTurn;
+
+   readonly queuedTurns: HumanMessage[] = [];
+
+  /** Session scratch directory attachments are downloaded into (`TMPDIR/beeline-attachments`). */
+   attachmentDir?: string;
+
+   modelContextTokens?: number;
+
+  /** Whether the pinned model takes images; `undefined` when the pin did not say. */
+   modelTakesImages?: boolean;
+
+  /** The session's TMPDIR: writable to a granted command in a Room, as it is to the harness (C94). */
+   sessionScratchDir?: string;
+
+  /** The `agent-home.ts` overlay this session writes into; a Room grant keeps it. */
+   sessionStateDirs: string[] = [];
+
+  /** What this exact ACP session has already been prompted with (`warm-transcript.ts`). */
+   readonly warmTranscript: WarmTranscript;
+
+   readonly freeContinuation: FreeAgentContinuation;
+
+  /** What each turn section last sent to this exact ACP session hashed to (`prompt-section-baseline.ts`). */
+   readonly sectionBaseline = new PromptSectionBaseline();
+
+  /** Local copies already delivered this session, by message id, so transcript renders reuse them. */
+   readonly deliveredAttachments = new Map<string, DeliveredAttachment[]>();
+
+  /** Names from the latest roster read, for ledger bylines the runner writes. */
+   memberNames = new Map<string, string>();
+
+  /** The request id of the turn that paused on a grant card, until its decision arrives. */
+   pausedOnGrantRequestId?: string;
+
+   pausedOnGrantKind?: PendingCardKind;
+
+   readonly approvalDecisionWrites = new Set<Promise<void>>();
+
+   readonly approvalDecisionFailures = new Map<string, unknown>();
+
+  /** Operator-local turn traces; built once when the daemon configured a directory. */
+   turnTraceSink?: TurnTraceSink;
+
+
+  constructor( readonly options: MonolithRoomTurnOptions) {
     this.agent = runtimeIdentity(options.runtime.agent);
     const nativeResume = harnessSupportsNativeSessionResume(options.config.agentCommand ?? options.config.agentBinary);
     this.freeContinuation = new FreeAgentContinuation(options.config.agentHomeRoot
@@ -730,1661 +244,582 @@ export class MonolithRoomTurnLoop {
       },
     });
   }
-
-  isBusy(): boolean {
-    return this.busy;
-  }
-
-  /** The turn a `request_grant` paused, if any (cleared when its decision resumes it). */
-  pausedGrantRequestId(): string | undefined {
-    return this.pausedOnGrantRequestId;
-  }
-
-  /**
-   * What the grant runner may write here: the session's own scratch and home
-   * overlay and nothing else, enforced by the same read-only mount table the
-   * harness runs under. With no usable bwrap there is no way to keep that
-   * promise, so the policy carries no path and the runner refuses the run
-   * rather than widening the boundary.
-   */
-  private grantWritePolicy(): GrantWritePolicy {
-    const assetRoot = this.sharedAssetsActive ? this.options.config.agentSharedAssetRoot : undefined;
-    const runtimeDir = runtimeDirectory(this.options.runtime.supervisorRoot, this.options.runtime.agent.publicKey);
-    const privateAssetRoot = join(runtimeDir, 'private-assets');
-    return {
-      surface: 'room',
-      ...(this.options.config.bwrapPath ? { bwrapPath: this.options.config.bwrapPath } : {}),
-      ...(this.sessionScratchDir ? { scratch: this.sessionScratchDir } : {}),
-      ...(this.sessionStateDirs.length ? { harnessStateDirs: this.sessionStateDirs } : {}),
-      maskPaths: [
-        ...credentialMaskPaths(
-          this.options.config.sandboxMaskPaths,
-          this.options.config.operatorHome ?? homedir(),
-        ),
-        ...(assetRoot ? [] : siblingAgentMaskPaths(runtimeDir)),
-      ],
-      ...(assetRoot && this.options.config.agentHomeRoot
-        ? { sharedLayout: {
-            assetRoot,
-            agentRuntimeDir: runtimeDir,
-            privateHomeRoot: this.options.config.agentHomeRoot,
-            ...(this.options.config.agentPrivateRoot ? { privateRoot: this.options.config.agentPrivateRoot } : {}),
-            ...(agentBehavior(this.options.config.agentKind).codexCacheBindings && this.agentEnv.CODEX_HOME ? { codexHome: this.agentEnv.CODEX_HOME } : {}),
-            ...(this.agentEnv.HOME ? { packageHome: this.agentEnv.HOME } : {}),
-            privateAssetRoot,
-            isolatedCategories: this.isolatedCategories,
-          } }
-        : {}),
-      ...((assetRoot || this.isolatedCategories.includes('package-cache')) && this.agentEnv
-        ? { toolEnv: {
-            ...(this.agentEnv.HOME ? { HOME: this.agentEnv.HOME } : {}),
-            ...(this.agentEnv.PATH ? { PATH: this.agentEnv.PATH } : {}),
-            ...(this.agentEnv.GRADLE_USER_HOME ? { GRADLE_USER_HOME: this.agentEnv.GRADLE_USER_HOME } : {}),
-            ...(this.agentEnv.CARGO_HOME ? { CARGO_HOME: this.agentEnv.CARGO_HOME } : {}),
-            ...workspaceCacheEnv(workspaceAssetPaths(assetRoot ?? privateAssetRoot), undefined,
-              this.isolatedCategories.includes('package-cache') ? privateAssetRoot : undefined),
-          } }
-        : {}),
+isBusy(): boolean { return monolithRoomTurnLoopIsBusy(this); }
+/** The turn a `request_grant` paused, if any (cleared when its decision resumes it). */
+pausedGrantRequestId(): string | undefined { return monolithRoomTurnLoopPausedGrantRequestId(this); }
+/**
+ * What the grant runner may write here: the session's own scratch and home
+ * overlay and nothing else, enforced by the same read-only mount table the
+ * harness runs under. With no usable bwrap there is no way to keep that
+ * promise, so the policy carries no path and the runner refuses the run
+ * rather than widening the boundary.
+ */
+grantWritePolicy(): GrantWritePolicy { return monolithRoomTurnLoopGrantWritePolicy(this); }
+/**
+ * One turn's stopwatch. It is created for every turn — measuring is cheap —
+ * and only WRITES when the daemon configured a runtime directory to write
+ * into, so a standalone or test Body stays silent.
+ */
+beginTurnTrace(requestId: string): TurnTrace { return monolithRoomTurnLoopBeginTurnTrace(this, requestId); }
+currentTurnForRunner(): {
+    requestId: string;
+    requester?: {
+        pubkey: string;
+        name?: string;
     };
-  }
+} | undefined { return monolithRoomTurnLoopCurrentTurnForRunner(this); }
+requesterOf(authorId: string): {
+    pubkey: string;
+    name?: string;
+} { return monolithRoomTurnLoopRequesterOf(this, authorId); }
+async refreshPersonaForSoulUpdate(): Promise<void> { return monolithRoomTurnLoopRefreshPersonaForSoulUpdate(this); }
+async prepareForForcedUpdateRestart(): Promise<void> { return monolithRoomTurnLoopPrepareForForcedUpdateRestart(this); }
+interruptedTurn(): InterruptedTurn | undefined { return monolithRoomTurnLoopInterruptedTurn(this); }
+interruptForServerMinimum(): InterruptedTurn | undefined { return monolithRoomTurnLoopInterruptForServerMinimum(this); }
+async forceRecoverRoom(): Promise<void> { return monolithRoomTurnLoopForceRecoverRoom(this); }
+commandActivation() { return monolithRoomTurnLoopCommandActivation(this); }
+async configuration() { return monolithRoomTurnLoopConfiguration(this); }
+async roster(): Promise<WorkspaceRoster> { return monolithRoomTurnLoopRoster(this); }
+/**
+ * Whether a picture actually reaches the model this session. Both halves
+ * have to hold (C87): the harness must advertise `promptCapabilities.image`,
+ * AND — when the pin knows the model's modalities — the model must take
+ * images. `undefined` modalities mean the question was never settled, and
+ * the harness answer stands alone as before.
+ */
+acceptsImages(): boolean { return monolithRoomTurnLoopAcceptsImages(this); }
+/** Reuse successful local copies; a later delivery retries failed files. */
+async deliver(item: HumanMessage): Promise<DeliveredAttachment[]> { return monolithRoomTurnLoopDeliver(this, item); }
+async repositoryState(): Promise<RoomRepositoryState> { return monolithRoomTurnLoopRepositoryState(this); }
+/**
+ * Drop this Room's live harness process. The next activation starts cold.
+ * A rotation is a fact about one live session, so the pin goes with it.
+ */
+/**
+ * Claude Code may have refreshed its login during the prompt, detaching
+ * this Room's credential link. Share the rotated login now so other Rooms
+ * do not spend the old refresh token before this Room's next activation.
+ */
+async writeBackClaudeLogin(): Promise<void> { return monolithRoomTurnLoopWriteBackClaudeLogin(this); }
+/**
+ * After a turn, refresh the owner's view of this agent's OpenRouter key
+ * spend. `refused` marks a turn OpenRouter refused with 402.
+ */
+publishOpenRouterSpend(refused = false): void { return monolithRoomTurnLoopPublishOpenRouterSpend(this, refused); }
+/** After a turn, refresh the owner's view of this agent's plan quota. */
+publishHarnessQuota(): void { return monolithRoomTurnLoopPublishHarnessQuota(this); }
+async captureTurnMetrics() { return monolithRoomTurnLoopCaptureTurnMetrics(this); }
+/**
+ * Watch this client's Claude login so a refresh made while the
+ * Room is idle reaches other Rooms at once (see `watchRoomClaudeLogin`).
+ */
+watchClaudeLogin(): void { return monolithRoomTurnLoopWatchClaudeLogin(this); }
+stopClaudeLoginWatch(): void { return monolithRoomTurnLoopStopClaudeLoginWatch(this); }
+async discardSession(preserveConversation = false): Promise<void> { return monolithRoomTurnLoopDiscardSession(this, preserveConversation); }
+/**
+ * Whether the retained session still matches the agent's server-side
+ * configuration. Retention (C104) is a saving only while what it keeps is
+ * still current, and a session's persona, model pin, and mounted MCP set are
+ * fixed when it opens: they cannot be corrected in place, so a changed one
+ * has to cost a respawn. The check is one round trip — the roster half of
+ * which the turn was going to fetch anyway — against a cold spawn measured
+ * in seconds. A harness process that has exited (a memory-limit kill, a
+ * crash) is never current: handing it back fails the turn with
+ * `AcpClient not started` instead of spawning a fresh one.
+ */
+async sessionIsCurrent(): Promise<boolean> { return monolithRoomTurnLoopSessionIsCurrent(this); }
+async refreshTurnCheckout(): Promise<void> { return monolithRoomTurnLoopRefreshTurnCheckout(this); }
+async currentSessionFingerprint(): Promise<string> { return monolithRoomTurnLoopCurrentSessionFingerprint(this); }
+async grantedResources() { return monolithRoomTurnLoopGrantedResources(this); }
+mountedMcpServers(preparedEnv?: Record<string, string>): string[] { return monolithRoomTurnLoopMountedMcpServers(this, preparedEnv); }
+async activate(trace?: TurnTrace): Promise<string> { return monolithRoomTurnLoopActivate(this, trace); }
+async activateCold(trace: TurnTrace | undefined, startupStep: (step: string) => void): Promise<string> { return monolithRoomTurnLoopActivateCold(this, trace, startupStep); }
+/**
+ * The scheduler seam, and the only place that can see the boundary between
+ * waiting for the previous turn and spawning a harness: `queue-wait` closes when
+ * the process starts, and `cold` vs `warm` is decided by whether this
+ * Room already holds a live ACP client.
+ */
+lifecycle(trace?: TurnTrace): AgentProcessLifecycle { return monolithRoomTurnLoopLifecycle(this, trace); }
+/** The pinned providers a failure reason should name for this session. */
+servingProviders(): string[] { return monolithRoomTurnLoopServingProviders(this); }
+/** Why a turn carried no answer text, or undefined when it did. */
+async explainEmpty(result: PromptResult): Promise<EmptyTurnExplanation | undefined> { return monolithRoomTurnLoopExplainEmpty(this, result); }
+/**
+ * Re-pin the session to the next provider in the OpenRouter order and open a
+ * fresh session on it, so the retry of an empty completion or a failing
+ * provider is served — and named — by exactly one provider. Undefined when
+ * the pin has nowhere left to go.
+ */
+async repinNextProvider(trace?: TurnTrace, reason?: string): Promise<string | undefined> { return monolithRoomTurnLoopRepinNextProvider(this, trace, reason); }
+startPrompt(item: HumanMessage): void { return monolithRoomTurnLoopStartPrompt(this, item); }
+/**
+ * Obey a stop the requester already made a fact.
+ *
+ * A stop names ONE request id and touches only the turn that answers it. The
+ * turn in flight is cancelled at the harness and marked so its own run
+ * publishes nothing; a turn still queued is simply dropped, since starting
+ * work the person has already withdrawn is worse than never starting it.
+ * A stop for neither is ignored — it belongs to a turn that ended between
+ * the press and the delivery, and the server's own receipt already said so.
+ */
+stopTurn(requestId: string): void { return monolithRoomTurnLoopStopTurn(this, requestId); }
+async prompt(active: ActiveTurn): Promise<void> { return monolithRoomTurnLoopPrompt(this, active); }
+async run(): Promise<void> { return monolithRoomTurnLoopRun(this); }
+}
 
-  /**
-   * One turn's stopwatch. It is created for every turn — measuring is cheap —
-   * and only WRITES when the daemon configured a runtime directory to write
-   * into, so a standalone or test Body stays silent.
-   */
-  private beginTurnTrace(requestId: string): TurnTrace {
-    const directory = this.options.config.turnTraceDir;
-    if (directory) this.turnTraceSink ??= new TurnTraceFile(directory);
-    return new TurnTrace({
-      surface: 'room',
-      agentId: this.agent.publicKey,
-      roomId: this.options.roomId,
-      requestId,
-      ...(this.turnTraceSink ? { sink: this.turnTraceSink } : {}),
-    });
-  }
 
-  private currentTurnForRunner():
-    { requestId: string; requester?: { pubkey: string; name?: string } } | undefined {
-    const active = this.activeTurn;
-    if (!active) return undefined;
-    return { requestId: active.item.id, requester: this.requesterOf(active.item.authorId) };
-  }
 
-  private requesterOf(authorId: string): { pubkey: string; name?: string } {
-    const name = this.memberNames.get(authorId);
-    return { pubkey: authorId, ...(name ? { name } : {}) };
-  }
+export const execFileAsync = promisify(execFile);
 
-  async refreshPersonaForSoulUpdate(): Promise<void> {
-    await this.options.scheduler.stop(this.options.roomId);
-  }
 
-  async prepareForForcedUpdateRestart(): Promise<void> {
-    // Ordinary managed updates keep their existing idle/drain behavior.
-  }
+export type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
 
-  interruptedTurn(): InterruptedTurn | undefined {
-    const active = this.activeTurn;
-    if (!active || active.cancelled) return undefined;
-    return { roomId: this.options.roomId, requestId: active.item.id, generationId: this.commandContext.generationId };
-  }
+export type RoomRepositoryState = DaemonOperationMap['getRoomRepositoryState']['output'];
 
-  interruptForServerMinimum(): InterruptedTurn | undefined {
-    const active = this.activeTurn;
-    if (!active || active.cancelled) return undefined;
-    // A long-running prompt is active, not 30 minutes idle. Keep its native
-    // conversation eligible when the successor reclaims this journaled turn.
-    this.warmTranscript.complete(this.sessionId, []);
-    active.cancelled = true;
-    if (this.client && this.sessionId) this.client.sessionCancel(this.sessionId);
-    return {
-      roomId: this.options.roomId,
-      requestId: active.item.id,
-      generationId: this.commandContext.generationId,
-    };
-  }
+export type RoomMessage = DaemonOperationMap['getRoomInbox']['output']['items'][number];
 
-  async forceRecoverRoom(): Promise<void> {
-    if (this.client && this.sessionId) this.client.sessionCancel(this.sessionId);
-    await this.options.scheduler.stop(this.options.roomId, true);
-  }
+export type HumanMessage = Pick<
+  RoomMessage,
+  | 'id'
+  | 'authorId'
+  | 'body'
+  | 'createdAt'
+  | 'attachments'
+  | 'type'
+  | 'replyToMessageId'
+  | 'replyToAuthorId'
+  | 'replyToAuthorName'
+  | 'replyToExcerpt'
+  | 'requestAuthorId'
+  | 'agentHopCount'
+>;
 
-  private commandActivation(){
-    if(!this.options.api.channel?.isOpen)return Promise.resolve(undefined);
-    const command=this.commandContext?.current;
-    if(!command){
-      return Promise.reject(new Error('Activation requires a claimed command'));
-    }
-    return this.activationContext.read({agentId:this.agent.publicKey,workspaceId:this.options.workspaceId,
-      roomId:this.options.roomId,commandId:command.id,generationId:this.commandContext.generationId});
-  }
 
-  private async configuration(){
-    const activation=await this.commandActivation();
-    return activation?activation.configuration:this.options.api.execute('getAgentConfiguration',{agentId:this.agent.publicKey,roomId:this.options.roomId});
-  }
+/**
+ * Rooms and corners share one rule for MCP: every tool call from a server the
+ * host mounted into the session is approved. A host-classified server is kept
+ * out of the isolated harness home until an owner grant rewrites the route in;
+ * a call that reaches an ungated host identity stays refused here. Granted
+ * names drop out of that host list so every capability on that server crosses.
+ */
+export function isRoomMcpPermissionRequest(
+  request: AcpPermissionRequest,
+  mountedServers: readonly string[] = ROOM_MOUNTED_MCP_SERVERS,
+  hostServers: readonly string[] = CODE_OWNED_HOST_MCP_NAMES,
+): boolean {
+  if (isHostMcpPermissionRequest(request, hostServers)) return false;
+  return isMountedMcpToolPermissionRequest(request, mountedServers);
+}
 
-  private async roster(): Promise<WorkspaceRoster> {
-    const activation=await this.commandActivation();
-    const roster = activation?activation.roster:await this.options.api.execute('getWorkspaceRoster', {
-      agentId: this.agent.publicKey,
-      workspaceId: this.options.workspaceId,
-    });
-    this.memberNames = new Map(roster.members.map((member) => [member.identityId, member.name]));
-    return roster;
-  }
 
-  /**
-   * Whether a picture actually reaches the model this session. Both halves
-   * have to hold (C87): the harness must advertise `promptCapabilities.image`,
-   * AND — when the pin knows the model's modalities — the model must take
-   * images. `undefined` modalities mean the question was never settled, and
-   * the harness answer stands alone as before.
-   */
-  private acceptsImages(): boolean {
-    if (!(this.client?.canPromptWithImages() ?? false)) return false;
-    return this.modelTakesImages ?? true;
-  }
+/**
+ * A shell command, read from the only thing that identifies one: the `execute`
+ * kind the harness itself declares. claude-agent-acp marks its native `Bash`
+ * that way, which is the whole of what a Room shell needs; a title or a command
+ * line that happens to contain the word `bash` is prose, not an identity, and
+ * classifying on it moved the boundary with the user's wording. An MCP-shaped
+ * request is never re-read as a shell: it was already decided above, so a
+ * command line wearing an inspection tool's title stays refused instead of
+ * crossing as the shell it also is.
+ */
+export function isRoomShellPermissionRequest(
+  request: AcpPermissionRequest,
+  hostServers: readonly string[],
+): boolean {
+  if (request.toolCall?.kind !== 'execute') return false;
+  return !isMcpShapedPermissionRequest(request, hostServers);
+}
 
-  /** Reuse successful local copies; a later delivery retries failed files. */
-  private async deliver(item: HumanMessage): Promise<DeliveredAttachment[]> {
-    if (!item.attachments.length || !this.attachmentDir) return [];
-    const cached = this.deliveredAttachments.get(item.id);
-    if (cached?.length === item.attachments.length) return cached;
-    const delivered = await deliverAttachments(
-      item.attachments,
-      join(this.attachmentDir, item.id.replace(/[^\w-]/g, '_')),
-      this.options.fetchImpl,
-      cached,
-    );
-    this.deliveredAttachments.set(item.id, withoutImageData(delivered.filter((entry) => entry.path)));
-    return delivered;
-  }
 
-  private async repositoryState(): Promise<RoomRepositoryState> {
-    const activation=await this.commandActivation();
-    return activation?activation.repository:this.options.api.execute('getRoomRepositoryState', { roomId: this.options.roomId });
-  }
-
-  /**
-   * Drop this Room's live harness process. The next activation starts cold.
-   * A rotation is a fact about one live session, so the pin goes with it.
-   */
-  /**
-   * Claude Code may have refreshed its login during the prompt, detaching
-   * this Room's credential link. Share the rotated login now so other Rooms
-   * do not spend the old refresh token before this Room's next activation.
-   */
-  private async writeBackClaudeLogin(): Promise<void> {
-    if (!agentBehavior(this.options.config.agentKind).sharedLoginWriteBack || !this.options.config.agentHomeRoot) return;
-    await writeBackRoomClaudeLogin({
-      root: this.options.config.agentHomeRoot,
-      operatorHome: this.options.config.operatorHome,
-    }).catch((error: unknown) => {
-      console.error(`[thin-core] monolith Room ${this.options.roomId} could not write back a refreshed Claude login:`, error);
-    });
-  }
-
-  /**
-   * After a turn, refresh the owner's view of this agent's OpenRouter key
-   * spend. `refused` marks a turn OpenRouter refused with 402.
-   */
-  private publishOpenRouterSpend(refused = false): void {
-    const key = this.openRouterKey;
-    if (!key) return;
-    // One read at a time, so a later normal read cannot land over a 402 stop.
-    this.openRouterSpendPublish = this.openRouterSpendPublish
-      .then(() => readOpenRouterKeyUsage(key, {
-        ...(this.options.fetchImpl ? { fetchImpl: this.options.fetchImpl } : {}),
-        ...(refused ? { refused } : {}),
-      }))
-      .then((usage) => usage
-        ? postChangedAgentUsage(this.options.api,this.agent.publicKey,usage)
-        : undefined)
-      .catch((error) => console.error('[agent-usage] OpenRouter key read failed', error));
-  }
-
-  /** After a turn, refresh the owner's view of this agent's plan quota. */
-  private publishHarnessQuota(): void {
-    this.harnessQuota ??= new HarnessQuotaReader({
-      accountPublisher:helperUsageBinding(this.options.api),
-      agentId: this.agent.publicKey,
-      post: (usage) =>
-        postChangedAgentUsage(this.options.api,this.agent.publicKey,usage),
-    });
-    void this.harnessQuota.publish(
-      quotaAxiProvider(this.options.config.agentKind, Boolean(this.openRouterKey)),
-      this.agentEnv,
-    );
-  }
-
-  private async captureTurnMetrics() {
-    this.publishOpenRouterSpend();
-    this.publishHarnessQuota();
-    return mergeHarnessTurnMetrics(this.turnUsage.usage, this.harnessTokens, this.client?.lastPromptBytes);
-  }
-
-  /**
-   * Watch this client's Claude login so a refresh made while the
-   * Room is idle reaches other Rooms at once (see `watchRoomClaudeLogin`).
-   */
-  private watchClaudeLogin(): void {
-    this.stopClaudeLoginWatch();
-    if (!agentBehavior(this.options.config.agentKind).sharedLoginWriteBack || !this.options.config.agentHomeRoot) return;
-    this.claudeLoginWatch = watchRoomClaudeLogin({
-      root: this.options.config.agentHomeRoot,
-      operatorHome: this.options.config.operatorHome,
-    });
-  }
-
-  private stopClaudeLoginWatch(): void {
-    this.claudeLoginWatch?.close();
-    this.claudeLoginWatch = undefined;
-  }
-
-  private async discardSession(preserveConversation = false): Promise<void> {
-    if (!preserveConversation) this.warmTranscript.forgetSession();
-    const client = this.client;
-    this.stopClaudeLoginWatch();
-    this.client = undefined;
-    this.sessionId = undefined;
-    this.sessionContextPath = undefined;
-    this.sessionCwd = undefined;
-    this.sessionCommit = undefined;
-    this.sessionGitHubToken = undefined;
-    this.sessionFingerprint = undefined;
-    this.sessionCodegraphReady = false;
-    this.pinnedProviderOverride = undefined;
-    if (client) await stopAgentProcess(client);
-  }
-
-  /**
-   * Whether the retained session still matches the agent's server-side
-   * configuration. Retention (C104) is a saving only while what it keeps is
-   * still current, and a session's persona, model pin, and mounted MCP set are
-   * fixed when it opens: they cannot be corrected in place, so a changed one
-   * has to cost a respawn. The check is one round trip — the roster half of
-   * which the turn was going to fetch anyway — against a cold spawn measured
-   * in seconds. A harness process that has exited (a memory-limit kill, a
-   * crash) is never current: handing it back fails the turn with
-   * `AcpClient not started` instead of spawning a fresh one.
-   */
-  private async sessionIsCurrent(): Promise<boolean> {
-    if (!this.client?.isAlive || this.sessionContextPath !== this.commandContext.path) return false;
-    await this.refreshTurnCheckout();
-    return (
-      this.sessionCwd === this.options.cwd &&
-      this.sessionCommit === this.turnCheckout?.commit &&
-      this.sessionGitHubToken === this.turnCheckout?.githubToken &&
-      (await this.currentSessionFingerprint()) === this.sessionFingerprint
-    );
-  }
-
-  private async refreshTurnCheckout(): Promise<void> {
-    const checkout = await this.options.refreshCheckout?.();
-    if (!checkout) return;
-    this.turnCheckout = checkout;
-    if (checkout.cwd === this.options.cwd) return;
-    this.options.cwd = checkout.cwd;
-    this.options.grantRunner?.register(this.options.roomId, {
-      workspaceId: this.options.workspaceId,
-      cwd: checkout.cwd,
-      writePolicy: () => this.grantWritePolicy(),
-      turn: () => {
-        const turn = this.currentTurnForRunner();
-        return turn ? { ...turn, generationId: this.commandContext.generationId } : undefined;
-      },
-    });
-  }
-
-  private async currentSessionFingerprint(): Promise<string> {
-    const [configuration, roster, grants] = await Promise.all([
-      this.configuration(),
-      this.roster(),
-      this.grantedResources(),
-    ]);
-    const { hostRoutes: grantedHostRoutes, devices: grantedDevices, isolatedCategories } = grants;
-    const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
-    const registryRoutes = configuration.registryMcpRoutes ?? [];
-    return sessionConfigFingerprint({
-      devices: grantedDevices,
-      isolatedCategories,
-      model: configuration.model ?? this.options.config.modelSelection?.model,
-      effort: configuration.effort ?? this.options.config.modelSelection?.effort,
-      fastMode: configuration.fastMode,
-      soul: configuration.soul ?? self?.soul,
-      agentName: self?.name ?? this.agent.name,
-      mcpServers: codegraphFingerprintServers(
-        this.options.config,
-        [
-          ...expectedMountedImportedMcpServerNames({
-            operatorHome: this.options.config.operatorHome,
-            agentKind: this.options.config.agentKind,
-            grantedHostRoutes: [
-              ...grantedHostRoutes,
-              ...registryRoutes.map((route) => route.routeName),
-            ],
-          }),
-          ...registryRoutes.map((route) => route.routeName),
-        ],
-        this.sessionCodegraphReady,
-      ),
-    });
-  }
-
-  private async grantedResources() {
-    return sessionGrantedResources(this.options.config, async () => {
-      const activation = await this.commandActivation();
-      return activation ? activation.grants : this.options.api.execute('listAgentGrants', {
-        agentId: this.agent.publicKey,
-        roomId: this.options.roomId,
-      });
-    });
-  }
-
-  private mountedMcpServers(preparedEnv?: Record<string, string>): string[] {
-    return mountedImportedMcpServerNames({
-      operatorHome: this.options.config.operatorHome,
-      agentKind: this.options.config.agentKind,
-      preparedEnv,
-    });
-  }
-
-  private async activate(trace?: TurnTrace): Promise<string> {
-    if (this.options.config.agentProgramError) throw new Error(this.options.config.agentProgramError);
-    const startupAt = performance.now();
-    let previousStep = startupAt;
-    const startupStep = (step: string) => {
-      const now = performance.now();
-      console.info(`[body] session-start ${new Date().toISOString()} room=${this.options.roomId} step=${step} elapsedMs=${Math.round(now-startupAt)} stepMs=${Math.round(now-previousStep)}`);
-      previousStep = now;
-    };
-    await this.refreshTurnCheckout();
-    if (this.client?.isAlive && this.sessionId && this.sessionContextPath === this.commandContext.path) {
-      if (this.options.config.agentHomeRoot) {
-        await repairRoomAgentCredentialLinks({
-          root: this.options.config.agentHomeRoot,
-          operatorHome: this.options.config.operatorHome,
-          writeBackNewerClaudeLogin: agentBehavior(this.options.config.agentKind).sharedLoginWriteBack === true,
-        });
-      }
-      return this.sessionId;
-    }
-    // A client without a usable session still owns a harness process.
-    if (this.client) await this.discardSession(true);
-    try {
-      return await this.activateCold(trace, startupStep);
-    } catch (error) {
-      // Cleanup must not hide the activation failure that owns the receipt.
-      await this.discardSession(true).catch(cleanupError =>
-        console.error('[body] failed to stop harness after activation failure:', cleanupError),
-      );
-      throw error;
+/** Every path a native file request names, or undefined when one is malformed. */
+export function nativeRequestPaths(call: AcpPermissionRequest['toolCall']): string[] | undefined {
+  const paths: string[] = [];
+  if (call?.locations !== undefined) {
+    if (!Array.isArray(call.locations)) return undefined;
+    for (const location of call.locations) {
+      if (!location || typeof location.path !== 'string' || !location.path) return undefined;
+      paths.push(location.path);
     }
   }
-
-  private async activateCold(trace: TurnTrace | undefined, startupStep: (step: string) => void): Promise<string> {
-    trace?.noteActivation('cold');
-    this.sectionBaseline.reset();
-    const [configuration, roster, repositoryState, grants] =
-      await Promise.all([
-        this.configuration(),
-        this.roster(),
-        this.repositoryState(),
-        this.grantedResources(),
-        ]);
-    const { hostRoutes: grantedHostRoutes, devices: grantedDevices, isolatedCategories } = grants;
-    startupStep('configuration');
-    this.isolatedCategories = isolatedCategories;
-    const privateAssetRoot = join(runtimeDirectory(this.options.runtime.supervisorRoot,
-      this.options.runtime.agent.publicKey), 'private-assets');
-    const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
-    const directMessage =
-      Array.isArray(repositoryState.directParticipants) &&
-      repositoryState.directParticipants.length === 2;
-    await mkdir(this.options.cwd, { recursive: true });
-    const selectionModel = configuration.model ?? this.options.config.modelSelection?.model;
-    const selectionEffort = configuration.effort ?? this.options.config.modelSelection?.effort;
-    const selection = {
-      model: selectionModel,
-      effort: selectionEffort,
-      fastMode: configuration.fastMode,
-    };
-    this.openRouterKey = agentOpenRouterKey(
-      this.options.config.agentKind, selection.model, this.options.config.agentEnv,
-    );
-    const operatorHome = this.options.config.operatorHome ?? homedir();
-    const registryHostDeclarations = registryMcpHostDeclarations(
-      configuration.registryMcpRoutes,
-      this.commandContext.path,
-      this.options.config.registryMcpBrokerSocket,
-    );
-    const mountedHostRoutes = [...grantedHostRoutes, ...Object.keys(registryHostDeclarations)];
-    const squireScope = {
-      agentId: this.agent.publicKey,
-      roomId: this.options.roomId,
-      ...(grantedSquireHostRoute(mountedHostRoutes, {
-        ...hostImportedMcpDeclarations({ operatorHome, agentKind: this.options.config.agentKind }),
-        ...registryHostDeclarations,
-      })
-        ? { relay: await this.squireRelay.listen(this.commandContext.path) }
-        : {}),
-    };
-    const resourceAuthFile = await writeSessionResourceAuth(this.options.api, this.commandContext.path);
-    const homeOverlay = this.options.config.agentHomeRoot
-      ? await prepareRoomAgentHome({
-          root: this.options.config.agentHomeRoot,
-          squireScope,
-          sharedSkills: this.options.config.sharedSkills ?? [],
-          isReviewer: configuration.isReviewer === true,
-          grantedHostRoutes: mountedHostRoutes,
-          extraHostRoutes: registryHostDeclarations,
-          resourceAuthFile,
-          ...(this.options.config.agentKind ? { agentKind: this.options.config.agentKind } : {}),
-          ...(this.options.config.operatorHome
-            ? { operatorHome: this.options.config.operatorHome }
-            : {}),
-          ...openRouterRoutingInput(this.options.config, selection, this.options.fetchImpl, {
-            ...(this.pinnedProviderOverride
-              ? { providerOverride: this.pinnedProviderOverride }
-              : {}),
-            onDecision: (routing) => {
-              // The override pins one provider; keep the full order it came
-              // from so a later empty turn still knows what to rotate to.
-              if (!this.pinnedProviderOverride) this.pinnedProviders = [...routing.providers];
-              // A pinned model that takes no images is a fact about THIS
-              // session (C87): the harness still advertises the capability,
-              // so without this the turn would ship megabytes the model never
-              // sees and say nothing about why (`modelTakesImages`).
-              this.modelTakesImages = routing.input ? routing.input.includes('image') : undefined;
-            },
-          }),
-        })
-      : {};
-    const command = bodyAgentCommand(this.options.config);
-    startupStep('home');
-    const harnessLabel = harnessIdentityLabel({
-      kind: this.options.config.agentKind,
-      command,
-    });
-    let assets = this.options.config.agentSharedAssetRoot && this.options.config.bwrapPath && homeOverlay.HOME &&
-      await admitSharedAssets(this.options.runtime.supervisorRoot, 1024 ** 3)
-      ? await prepareWorkspaceAssets(this.options.config.agentSharedAssetRoot)
-      : undefined;
-    startupStep('asset-layout');
-    if (isolatedCategories.length)
-      await preparePrivateAssets(privateAssetRoot, isolatedCategories);
-
-    this.sharedAssetsActive = Boolean(assets);
-    startupStep('toolchain');
-    const cacheEnv = assets
-      ? workspaceCacheEnv(assets, undefined,
-          isolatedCategories.includes('package-cache') ? privateAssetRoot : undefined)
-      : isolatedCategories.includes('package-cache')
-        ? workspaceCacheEnv(workspaceAssetPaths(privateAssetRoot), undefined, privateAssetRoot)
-        : {};
-    if (assets && agentBehavior(this.options.config.agentKind).codexCacheBindings && homeOverlay.CODEX_HOME)
-      await prepareCodexCacheTargets(homeOverlay.CODEX_HOME);
-    if (assets && homeOverlay.HOME) await preparePackageCacheTargets(homeOverlay.HOME);
-    await Promise.all(
-      Object.values(cacheEnv).map((path) => mkdir(path, { recursive: true, mode: 0o700 })),
-    );
-    if (assets && this.options.config.agentPrivateRoot)
-      await mkdir(this.options.config.agentPrivateRoot, { recursive: true, mode: 0o700 });
-    const agentEnv: Record<string, string> = {
-      ...this.options.config.agentEnv,
-      ...homeOverlay,
-      ...cacheEnv,
-      BEELINE_TURN_CONTEXT_FILE: this.commandContext.path,
-    };
-    // Keep an explicitly configured credential ahead of the repository App.
-    // Tokens are not part of a persisted fingerprint or prompt.
-    const githubToken =
-      agentEnv.GH_TOKEN || agentEnv.GITHUB_TOKEN || this.turnCheckout?.githubToken;
-    if (githubToken) {
-      agentEnv.GH_TOKEN = githubToken;
-      agentEnv.GITHUB_TOKEN = githubToken;
-    }
-    if (this.turnCheckout?.githubToken && this.options.config.agentHomeRoot) {
-      const ghBinary = await execFileAsync('which', ['gh'], { env: agentEnv })
-        .then((result) => result.stdout.trim())
-        .catch(() => undefined);
-      if (ghBinary)
-        agentEnv.PATH = await installRoomGitHubLauncher({
-          root: this.options.config.agentHomeRoot,
-          ghBinary,
-          inheritedPath: agentEnv.PATH ?? '',
-          resourceAuthFile,
-          registryBrokerSocket: this.options.config.registryMcpBrokerSocket,
-          ...(squireScope.relay ? { relay: squireScope.relay } : {}),
-        });
-    }
-
-    const selectedCommand = command;
-    this.agentEnv = agentEnv;
-    this.modelContextTokens = await modelContextWindowTokens(
-      selectionModel,
-      agentEnv.PI_CODING_AGENT_DIR,
-    );
-    const agentArgs = agentArgsWithModelSelection(
-      {
-        kind: this.options.config.agentKind,
-        command,
-        args: this.options.config.agentArgs ?? [],
-      },
-      selection,
-    );
-    const { stateDirs, tmpDir } = harnessStateDirsFromEnv(agentEnv);
-    this.attachmentDir = tmpDir ? join(tmpDir, 'beeline-attachments') : undefined;
-    this.sessionScratchDir = tmpDir;
-    this.sessionStateDirs = stateDirs;
-    const homeStateDirs = harnessHomeStateDirs(harnessLabel, agentEnv.HOME ?? operatorHome);
-    await Promise.all(homeStateDirs.map((dir) => mkdir(dir, { recursive: true })));
-    // The same path handed to the MCP server as BEELINE_ATTACH_SCRATCH_ROOT
-    // (below): post_artifact can only post what write_scratch_file could write,
-    // so the sandbox must leave this writable too.
-    const attachScratchRoot = this.options.config.agentHomeRoot ?? tmpDir;
-    if (attachScratchRoot) await mkdir(attachScratchRoot, { recursive: true });
-    // Index before constructing the sandbox: a Room keeps the checkout
-    // read-only, but CodeGraph's SQLite WAL and connect-time reconciliation
-    // need its generated .codegraph directory writable while the MCP lives.
-    const codegraphReady = await prepareCodegraphIndex(this.options.config, this.options.cwd);
-    const fingerprint = sessionConfigFingerprint({
-      devices: grantedDevices,
-      isolatedCategories,
-      model: configuration.model ?? this.options.config.modelSelection?.model,
-      effort: configuration.effort ?? this.options.config.modelSelection?.effort,
-      fastMode: configuration.fastMode,
-      soul: configuration.soul ?? self?.soul,
-      agentName: self?.name ?? this.agent.name,
-      mcpServers: codegraphFingerprintServers(
-        this.options.config,
-        [
-          ...expectedMountedImportedMcpServerNames({
-            operatorHome: this.options.config.operatorHome,
-            agentKind: this.options.config.agentKind,
-            grantedHostRoutes: mountedHostRoutes,
-          }),
-          ...Object.keys(registryHostDeclarations),
-        ],
-        codegraphReady,
-      ),
-    });
-    const spawnCommand = wrapAgentCommand({
-      bwrapPath: this.options.config.bwrapPath,
-      spec: {
-        mode: 'readonly',
-        cwd: this.options.cwd,
-        harnessStateDirs: stateDirs,
-        harnessHomeStateDirs: homeStateDirs,
-        ...(tmpDir ? { tmpDir } : {}),
-        additionalWritablePaths: [
-          ...(this.options.config.browserShareHostSocket ? [dirname(this.options.config.browserShareHostSocket)] : []),
-          ...(attachScratchRoot ? [attachScratchRoot] : []),
-          ...(codegraphReady ? [codegraphIndexDirectory(this.options.cwd)] : []),
-          ...registryMcpHostBindPaths(
-            configuration.registryMcpRoutes,
-            this.options.config.registryMcpBrokerSocket,
-          ),
-          ...grantedSquireHostBindPaths({
-            operatorHome,
-            agentKind: this.options.config.agentKind,
-            grantedHostRoutes: mountedHostRoutes,
-          }),
-        ],
-        devices: grantedDevices,
-        maskPaths: [
-          ...credentialMaskPaths(this.options.config.sandboxMaskPaths, operatorHome),
-          ...(assets ? [] : siblingAgentMaskPaths(
-            runtimeDirectory(this.options.runtime.supervisorRoot, this.options.runtime.agent.publicKey),
-          )),
-        ],
-        ...(assets && this.options.config.agentHomeRoot
-          ? { sharedLayout: {
-              assetRoot: assets.root,
-              agentRuntimeDir: runtimeDirectory(this.options.runtime.supervisorRoot, this.options.runtime.agent.publicKey),
-              privateHomeRoot: this.options.config.agentHomeRoot,
-              ...(this.options.config.agentPrivateRoot ? { privateRoot: this.options.config.agentPrivateRoot } : {}),
-              ...(agentBehavior(this.options.config.agentKind).codexCacheBindings && agentEnv.CODEX_HOME ? { codexHome: agentEnv.CODEX_HOME } : {}),
-              ...(agentEnv.HOME ? { packageHome: agentEnv.HOME } : {}),
-              privateAssetRoot,
-              isolatedCategories,
-            } }
-          : {}),
-      },
-      command: selectedCommand,
-      args: agentArgs,
-    });
-    // Built before the client: the permission allowlist resolves a harness's
-    // own tool-dispatch envelope (grok's `use_tool`) against exactly the
-    // servers this session mounts, so it has to know them up front.
-    const shellCapability = roomShellCapability(harnessLabel, {
-      osSandbox: Boolean(this.options.config.bwrapPath),
-    });
-    const servers: McpServerWire[] = [
-      ...(shellCapability === 'runs'
-        ? []
-        : [
-            readOnlyMcpServer(
-              this.options.config,
-              this.options.cwd,
-              undefined,
-              githubToken,
-              agentEnv.PATH,
-            ),
-          ]),
-      beelineAgentMcpServer(this.options.config, this.options.api, {
-        roomId: this.options.roomId,
-        workspaceId: this.options.workspaceId,
-        attachRoot: this.options.cwd,
-        // The whole per-session overlay, not an enumerated subset: the agent
-        // never picks where a harness writes a file it generates (grok's own
-        // images dir, say), so anything inside the overlay it could possibly
-        // have written must be attachable, whatever subdirectory that is.
-        attachScratchRoot,
-        turnContextPath: this.commandContext.path,
-        directMessage,
-        nativeIoProven: roomNativeIoProven(harnessLabel, { osSandbox: Boolean(this.options.config.bwrapPath) }),
-        agentCommand: harnessLabel,
-        squireRelay: squireScope.relay,
-        ...(this.options.grantRunnerEndpoint && this.options.config.bwrapPath
-          ? { grantRunner: this.options.grantRunnerEndpoint }
-          : {}),
-      }),
-    ];
-    if (codegraphReady) {
-      const codegraph = codegraphMcpServer(this.options.config, this.options.cwd, {
-        readonly: true,
-      });
-      if (codegraph) servers.push(codegraph);
-    }
-    const hostDeclarations = hostImportedMcpDeclarations({
-      operatorHome,
-      agentKind: this.options.config.agentKind,
-    });
-    const grantedRouteServers = grantedHostRouteWires(
-      mountedHostRoutes,
-      operatorHome,
-      { ...hostDeclarations, ...registryHostDeclarations },
-      resourceAuthFile,
-      squireScope,
-    );
-    const sessionServers = sessionNewMcpServers<McpServerWire>(harnessLabel, servers, grantedRouteServers);
-    // Pi ACP ignores session/new MCP servers. The installer selects native
-    // mcp.json or the generated bridge for this executable and isolated home.
-    await installPiTurnBudget(agentEnv.PI_CODING_AGENT_DIR);
-    await installPiMcpBridge({
-      agentCommand: harnessLabel,
-      piHome: agentEnv.PI_CODING_AGENT_DIR,
-      piCommand: agentEnv.PI_ACP_PI_COMMAND ?? process.env.PI_ACP_PI_COMMAND,
-      agentEnv,
-      servers: [...servers, ...grantedRouteServers],
-    });
-    startupStep('mcp-bridge');
-    // What this session actually mounted, not only the Beeline-owned servers:
-    // the isolated home also holds every copied local import and every granted
-    // host route. A harness that names the tool but never the protocol (grok's
-    // `use_tool` envelope) can only be resolved against this list, so a name
-    // missing here is a mounted server the agent could never call.
-    const mountedServers = [
-      ...servers.map((server) => server.name),
-      ...grantedRouteServers.map((server) => server.name),
-      ...this.mountedMcpServers(agentEnv),
-    ];
-    const hostServers = ungatedHostServers(
-      hostImportedMcpServerNames({
-        operatorHome: this.options.config.operatorHome,
-        agentKind: this.options.config.agentKind,
-      }),
-      mountedHostRoutes,
-    );
-    const clientOptions: ConstructorParameters<typeof AcpClient>[0] = {
-      agentCommand: spawnCommand.command,
-      harnessCommand: selectedCommand,
-      agentArgs: spawnCommand.args,
-      agentEnv,
-      agentCwd: this.options.cwd,
-      agentLabel: harnessLabel,
-      // `bwrapPath` is set only when `detectBwrapSandbox` passed its self-test
-      // (`config.ts`), which is exactly when `wrapAgentCommand` above wraps.
-      osSandbox: Boolean(this.options.config.bwrapPath),
-      autoApprovePermissions: false,
-      permissionHandler: async (request) =>
-        roomPermissionDecision(request, {
-          mountedServers,
-          hostServers,
-          shellSandboxed: Boolean(this.options.config.bwrapPath),
-          attachmentsDir: attachScratchRoot ? join(attachScratchRoot, 'attachments') : undefined,
-          sandboxHome: homeOverlay.HOME,
-        }),
-      onUsage: (usage) => {
-        void postChangedAgentUsage(this.options.api,this.agent.publicKey,usage)
-          .catch(error => console.error('[agent-usage] publish failed', error));
-      },
-      onCommands: agentCommandCatalogPublisher({
-        api: this.options.api,
-        agentId: this.agent.publicKey,
-        workspaceId: this.options.workspaceId,
-      }),
-    };
-    this.client = (this.options.createAcpClient ?? ((value) => new AcpClient(value)))(
-      clientOptions,
-    );
-    await startAgentProcess(this.client);
-    startupStep('acp-initialize');
-    if (assets) await markWorkspaceLayoutLive(assets);
-    this.watchClaudeLogin();
-    const persona = configuration.soul ?? self?.soul;
-    const repositoryInfo =
-      repositoryState.resolution === 'repository' && repositoryState.key
-        ? {
-            name: repositoryState.key,
-            branch: repositoryState.targetBranch || 'main',
-          }
-        : undefined;
-    // Whether this session runs shell commands is a fact about the harness AND
-    // the sandbox: Codex executes them in its own read-only mode with no wrap at
-    // all, while a harness that asks depends on the gate above. An unmeasured
-    // harness states nothing (`roomShellCapability`).
-    const session = assembleSessionPrompt({
-      squireAvailable: Boolean(squireScope.relay),
-      surface: directMessage ? 'dm' : 'room',
-      agentName: self?.name ?? this.agent.name,
-      machineHost: await machineHost(),
-      ...(persona?.instructions
-        ? { soul: { name: persona.name, instructions: persona.instructions } }
-        : {}),
-      agentCommand: command,
-      ...(repositoryInfo ? { repository: repositoryInfo } : {}),
-      // The permission handler approves home writes only under the same wrap.
-      ...(this.options.config.bwrapPath && homeOverlay.HOME ? { writableHome: homeOverlay.HOME } : {}),
-      ...(shellCapability === 'runs'
-        ? { shell: { available: true } as const }
-        : shellCapability === 'refused'
-          ? {
-              shell: {
-                available: false,
-                ...(this.options.config.shellUnavailableDetail
-                  ? { detail: this.options.config.shellUnavailableDetail }
-                  : {}),
-              } as const,
-            }
-          : {}),
-    });
-    this.sessionSurface = directMessage ? 'dm' : 'room';
-    this.turnInstructionPrefix = session.turnPrefix;
-    this.sessionPromptSectionIds = session.report.map((section) => section.id);
-    const conversationFingerprint = JSON.stringify([fingerprint, command,
-      this.options.config.agentArgs, this.options.cwd, this.turnCheckout?.commit]);
-    startupStep('session-prompt');
-    const opened = await openAcpConversation({
-      client: this.client,
-      agentCommand: harnessLabel,
-      resumeSessionId: this.warmTranscript.resumeSessionId(conversationFingerprint),
-      cwd: this.options.cwd,
-      mcpServers: sessionServers,
-      mode: 'readonly',
-      create: () => this.client!.sessionNew({
-        cwd: this.options.cwd, mcpServers: sessionServers, mode: 'readonly', systemPrompt: session.systemPrompt,
-      }),
-      onResumeFailure: error => console.warn('[body] native conversation unavailable; starting cold:', error),
-    });
-    if (opened.kind === 'created') this.warmTranscript.forgetSession();
-    startupStep('session-new');
-    if (agentEnv.PI_CODING_AGENT_DIR) {
-      const discovery = await readFile(join(agentEnv.PI_CODING_AGENT_DIR, 'beeline-mcp-startup.json'), 'utf8').catch(() => undefined);
-      if (discovery) console.info('[body] session-tools', discovery);
-    }
-    this.warmTranscript.rememberSession(opened.sessionId, conversationFingerprint);
-    this.sessionId = opened.sessionId;
-    this.sessionContextPath = this.commandContext.path;
-    this.sessionCwd = this.options.cwd;
-    this.sessionCommit = this.turnCheckout?.commit;
-    this.sessionGitHubToken = this.turnCheckout?.githubToken;
-    this.sessionFingerprint = fingerprint;
-    this.sessionCodegraphReady = codegraphReady;
-    if (selection) {
-      const options = filterAllowedModelConfigOptions(
-        parseAdvertisedConfigOptions(opened.raw, selection.model),
-      );
-      const applied = await applyAgentModelSelection(this.client, opened.sessionId, options, selection);
-      if (
-        selection.model &&
-        applied.appliedSelection.model &&
-        applied.appliedSelection.model !== selection.model
-      ) {
-        recordSessionModelFallback(this.options.api, this.agent.publicKey, this.options.workspaceId,
-          applied.appliedSelection, applied.options, `Room ${this.options.roomId}`);
-      }
-    }
-    startupStep('model-selection');
-    return opened.sessionId;
-  }
-
-  /**
-   * The scheduler seam, and the only place that can see the boundary between
-   * waiting for the previous turn and spawning a harness: `queue-wait` closes when
-   * the process starts, and `cold` vs `warm` is decided by whether this
-   * Room already holds a live ACP client.
-   */
-  private lifecycle(trace?: TurnTrace): AgentProcessLifecycle {
-    return {
-      ...tracedAgentProcessLifecycle(() => this.activate(trace), () => this.sessionIsCurrent(), trace),
-      stop: () => this.discardSession(true),
-      isRunning: () => this.client?.isAlive === true,
-      onWorkChanged: listener => {
-        const client = this.client;
-        client?.on('session/update', listener);
-        client?.on('exit', listener);
-        return () => { client?.off('session/update', listener); client?.off('exit', listener); };
-      },
-    };
-  }
-
-  /** The pinned providers a failure reason should name for this session. */
-  private servingProviders(): string[] {
-    return this.pinnedProviderOverride ? [this.pinnedProviderOverride] : this.pinnedProviders;
-  }
-
-  /** Why a turn carried no answer text, or undefined when it did. */
-  private async explainEmpty(result: PromptResult): Promise<EmptyTurnExplanation | undefined> {
-    if (['no-reply', 'repeated-tool-call'].includes(result.stopReason)) return undefined;
-    if (durableReplyText(result.agentText)) return undefined;
-    // Passive browser updates owe no answer and must not start provider
-    // retries. Their receipt acknowledges delivery, even for a textless turn.
-    if (this.commandContext.current?.source.systemEvent?.kind === 'computer-session-activity') return undefined;
-    const explanation = await explainEmptyAgentTurn({
-      agentLabel: harnessIdentityLabel({
-        kind: this.options.config.agentKind,
-        command: this.options.config.agentCommand ?? this.options.config.agentBinary,
-      }),
-      agentEnv: this.agentEnv,
-      sessionId: this.sessionId!,
-      result,
-    });
-    // OpenRouter refuses a key past its limit with 402; show the stop now.
-    if (explanation.record?.kind === 'error' && explanation.record.status === 402)
-      this.publishOpenRouterSpend(true);
-    if (isSilentCompletion(result, explanation)) return undefined;
-    // Private delivery answers the command without a chat reply. Only an
-    // affirmative completed status counts; failed or unfinished calls still
-    // owe an answer. Keep any durable text recovered from pi's turn record.
-    if (result.toolCalls.some(isPrivateWorkToolCall) && !durableReplyText(explanation.recoveredText ?? '')) return undefined;
-    return explanation;
-  }
-
-  /**
-   * Re-pin the session to the next provider in the OpenRouter order and open a
-   * fresh session on it, so the retry of an empty completion or a failing
-   * provider is served — and named — by exactly one provider. Undefined when
-   * the pin has nowhere left to go.
-   */
-  private async repinNextProvider(trace?: TurnTrace, reason?: string): Promise<string | undefined> {
-    const next = nextPinnedProvider(this.pinnedProviders, this.pinnedProviderOverride);
-    if (!next) return undefined;
-    // The retry is its own timeline: everything from here — the fresh ACP
-    // handshake included — belongs to attempt two, never to attempt one's
-    // first-token time.
-    trace?.retry({ provider: next, ...(reason ? { reason } : {}) });
-    const client = this.client;
-    this.stopClaudeLoginWatch();
-    this.client = undefined;
-    this.sessionId = undefined;
-    this.sessionContextPath = undefined;
-    this.sessionFingerprint = undefined;
-    this.sessionCodegraphReady = false;
-    if (client) await stopAgentProcess(client);
-    this.pinnedProviderOverride = next;
-    await (trace ? trace.measure('activation', () => this.activate(trace)) : this.activate());
-    return next;
-  }
-
-  private startPrompt(item: HumanMessage): void {
-    const active: ActiveTurn = {
-      item,
-      steers: [],
-      steerTail: Promise.resolve(),
-      resumeRequested: false,
-      cancelled: false,
-      phase: 'prompting',
-      promise: Promise.resolve(),
-    };
-    this.activeTurn = active;
-    active.promise = this.prompt(active)
-      .catch((error) => {
-        console.error(`[thin-core] monolith Room ${this.options.roomId} turn failed:`, redactTurnError(error));
-      })
-      .finally(() => {
-        if (this.activeTurn === active) {
-          this.activeTurn = undefined;
-          this.wakeIntake?.();
-        }
-      });
-  }
-
-  /**
-   * Obey a stop the requester already made a fact.
-   *
-   * A stop names ONE request id and touches only the turn that answers it. The
-   * turn in flight is cancelled at the harness and marked so its own run
-   * publishes nothing; a turn still queued is simply dropped, since starting
-   * work the person has already withdrawn is worse than never starting it.
-   * A stop for neither is ignored — it belongs to a turn that ended between
-   * the press and the delivery, and the server's own receipt already said so.
-   */
-  private stopTurn(requestId: string): void {
-    if (this.pausedOnGrantRequestId === requestId) {
-      this.pausedOnGrantRequestId = undefined;
-      this.pausedOnGrantKind = undefined;
-    }
-    this.squireRelay.cancel(requestId);
-    for (let index = this.queuedTurns.length - 1; index >= 0; index -= 1)
-      if (this.queuedTurns[index]!.id === requestId) this.queuedTurns.splice(index, 1);
-    const active = this.activeTurn;
-    if (!active || active.item.id !== requestId) return;
-    active.cancelled = true;
-    if (this.client && this.sessionId) this.client.sessionCancel(this.sessionId);
-  }
-
-  private async prompt(active: ActiveTurn): Promise<void> {
-    const { item } = active;
-    const api = this.options.api;
-    // Admission is busy before the first awaited receipt write. The updater
-    // cannot observe an accepted/queued turn as idle in this window.
-    this.busy = true;
-    // A turn starts with no measured cost. Without this reset a turn that throws
-    // before its own prompt settles — the context fetch, `buildPrompt`, a
-    // rejected delivery — would report the PREVIOUS turn's token count and
-    // prompt size on its failure receipt, and the budget gate would read a
-    // number belonging to somebody else's prompt.
-    this.turnMetrics = {};
-    this.turnUsage = new TurnUsageAccumulator();
-    this.harnessTokens = undefined;
-    const trace = this.beginTurnTrace(item.id);
-    let timeLimited = false;
-    const freeAgent = Boolean(this.options.config.agentEnv?.BEELINE_FREE_AGENT_ID ||
-      this.options.config.agentEnv?.BEELINE_FREE_AGENT_MODEL_TOKEN);
-    const traceGenerationId = this.commandContext.generationId;
-    // Kicked off now, alongside activation rather than after it, so its own
-    // network round trip has somewhere to hide (see institutional-context.ts).
-    const institutionalContextFetch = startInstitutionalContextFetch(api, this.options.roomId);
-    // Best-effort read of this turn's search_memory call/miss counters before
-    // the trace writes — bounded so a slow or unreachable server never delays
-    // the turn's own completion over a diagnostic.
-    let statsPromise: Promise<{ searchCalls: number; searchMisses: number } | undefined> | undefined;
-    const startTraceStats = (): void => {
-      if (statsPromise) return;
-      statsPromise = api.execute('getInstitutionalMemoryTurnStats', {
-        roomId: this.options.roomId,
-        agentId: this.agent.publicKey,
-        requestId: item.id,
-      }).catch(() => undefined);
-    };
-    const finishTrace = async (
-      outcome: 'complete' | 'failed' | 'cancelled',
-      reason?: string,
-    ): Promise<void> => {
-      try {
-        const stats=await statsPromise;
-        if (stats) trace.noteSearchMemoryStats(stats.searchCalls, stats.searchMisses);
-      } catch {
-        // Losing this measurement must never affect the turn.
-      }
-      if (outcome === 'cancelled') {
-        await api.execute('postAgentTurnReceipt', {
-          agentId: this.agent.publicKey, roomId: this.options.roomId, requestId: item.id,
-          generationId: traceGenerationId, status: 'cancelled', trace: trace.replay(),
-        }).catch(() => console.warn('[turn-trace] trace dropped'));
-      }
-      await trace.finish(outcome, reason);
-    };
-    // The draft lane, held where the catch below can reach it: a turn that
-    // throws never reaches its settle, and only this reference can dissolve
-    // what the model had already written.
-    let liveStream: AgentTurnStream | undefined;
-    try {
-      if (freeAgent) await this.freeContinuation.begin(inboxItemPromptBody(item));
-      // The first row of the turn names who asked; learn the name once per session.
-      if (!this.memberNames.has(item.authorId)) await this.roster().catch(() => undefined);
-      await withTurnReceiptHeartbeat(
-        api,
-        {
-          agentId: this.agent.publicKey,
-          roomId: this.options.roomId,
-          requestId: item.id,
-          generationId: this.commandContext.generationId,
-        },
-        async () => {
-          await api.execute('postAgentActivity', {
-            agentId: this.agent.publicKey,
-            roomId: this.options.roomId,
-            requestId: item.id,
-            activity: [
-              {
-                kind: 'thinking',
-                title: 'Working',
-                status: 'in_progress',
-                requestedBy: this.requesterOf(item.authorId),
-              },
-            ],
-          });
-          trace.noteScheduler('queue', this.options.scheduler.snapshot());
-          trace.start('queue-wait');
-          this.turnCheckout = undefined;
-          await this.options.scheduler.run(
-            this.options.roomId,
-            this.lifecycle(trace),
-            async () => {
-              // Belt and braces: `activate`/`isCurrent` already closed the
-              // queue wait, and `end` on a closed phase is a no-op.
-              trace.end('queue-wait');
-              trace.noteScheduler('admission', this.options.scheduler.snapshot());
-              if (this.options.refreshCheckout && !this.turnCheckout) {
-                throw new Error('Room checkout refresh failed before this turn');
-              }
-              const checkout = this.turnCheckout;
-              const [conversation, roster, delivered, corners, institutionalContext, onboarding] =
-                await trace.measure('context-fetch', () =>
-                  Promise.all([
-                    api.execute('getRoomConversation', { roomId: this.options.roomId, limit: 200 }),
-                    this.roster(),
-                    this.deliver(item),
-                    api.execute('listRoomCorners', { roomId: this.options.roomId }),
-                    awaitInstitutionalContext(institutionalContextFetch, (message) =>
-                      console.warn(`[thin-core] Room ${this.options.roomId}: ${message}`),
-                    ),
-                    this.repositoryState().then(state => state.repositoryOnboarding === true, () => false),
-                  ]),
-                );
-              trace.noteInstitutionalMemory(institutionalContext.outcome);
-              if (institutionalContext.embeddingOutcome !== undefined) {
-                trace.noteInstitutionalMemoryEmbedding(
-                  institutionalContext.embeddingOutcome,
-                  institutionalContext.embeddingMs ?? 0,
-                );
-              }
-              const names = new Map(
-                roster.members.map((member) => [member.identityId, member.name]),
-              );
-              const transcriptRows = conversation.items
-                .filter(
-                  (message) =>
-                    (message.type === 'message' || message.systemEvent?.kind === 'computer-session-activity') &&
-                    message.id !== item.id &&
-                    !active.steers.some((steerItem) => steerItem.id === message.id),
-                )
-                .slice(-80)
-                .map((message) => ({
-                  id: message.id,
-                  authorId: message.authorId,
-                  line: transcriptMessagePrompt(
-                    names.get(message.authorId) ?? message.authorId.slice(0, 12),
-                    message.body,
-                    message.attachments,
-                    message.id,
-                    renderReplyContext(message),
-                  ),
-                }));
-              const command = this.commandContext.current;
-              const grantDecision = command?.action === 'resume';
-              const decisionKind = command?.source.systemEvent?.kind;
-              const decisionResume = grantDecision &&
-                command.turnRequestId === this.pausedOnGrantRequestId &&
-                ((decisionKind === 'grant-decided' && this.pausedOnGrantKind === 'grant') ||
-                  (decisionKind === 'connector-offer-decided' && this.pausedOnGrantKind === 'connector'));
-              const resumedRequestId = decisionResume ? this.pausedOnGrantRequestId : undefined;
-              if (decisionResume) {
-                this.pausedOnGrantRequestId = undefined;
-                this.pausedOnGrantKind = undefined;
-              }
-              // Built per ATTEMPT, never once per turn: a C92 re-pin runs the
-              // same turn against a NEW session id that holds none of this
-              // conversation, so it has to render the whole window again.
-              const openCorners = (corners.corners ?? []).filter((corner) => !corner.archived);
-              const closedSince = Math.floor(Date.now() / 1_000) - 24 * 60 * 60;
-              const closedCorners = (corners.corners ?? [])
-                .filter(
-                  (corner) =>
-                    corner.archived &&
-                    corner.closedAt !== undefined &&
-                    corner.closedAt >= closedSince,
-                )
-                .sort((a, b) => (b.closedAt ?? 0) - (a.closedAt ?? 0));
-              let deviceResume: string | undefined;
-              await this.client?.preparePromptDelivery(this.sessionId);
-              const buildPrompt = (): string => {
-                const transcript = this.warmTranscript.select(
-                  this.sessionId,
-                  transcriptRows,
-                  this.agent.publicKey,
-                );
-                const assembled = assembleTurnPrompt({
-                  delivery: this.client?.promptDelivery(this.sessionId),
-                  surface: this.sessionSurface,
-                  modelContextTokens: this.modelContextTokens,
-                  ...(freeAgent ? { timeLimitCheckpoint: this.freeContinuation.context } : {}),
-                  sessionPrefix: this.turnInstructionPrefix,
-                  ...(checkout?.branch && checkout.commit
-                    ? { checkout: { branch: checkout.branch, commit: checkout.commit } }
-                    : {}),
-                  transcript: {
-                    lines: transcript.rows.map((row) => row.line),
-                    sinceLastTurn: transcript.warm,
-                  },
-                  ...(deviceResume
-                    ? { resume: deviceResume }
-                    : grantDecision
-                      ? { resume: resumePrompt(item) }
-                      : {}),
-                  members: roomMentionDirectory(roster, this.agent.publicKey),
-                  memory: institutionalContext.text,
-                  corners: openCorners,
-                  closedCorners,
-                  onboarding,
-                  ...(['human_tag', 'direct_message', 'agent_tag'].includes(this.commandContext.current?.reason ?? '') ? {
-                    routing: { roomId: this.options.roomId, messageId: this.commandContext.current!.sourceMessageId,
-                      memberId: this.agent.publicKey, fromName: inboxItemAuthorName(item, names) },
-                  } : {}),
-                  task: {
-                    fromName: inboxItemAuthorName(item, names),
-                    commandReason: this.commandContext.current?.reason,
-                    reply: item,
-                    outsideEvent: this.commandContext.current?.source.systemEvent,
-                    body: roomMessagePrompt(
-                      '',
-                      inboxItemPromptBody(item),
-                      item.attachments,
-                      delivered,
-                      this.acceptsImages(),
-                      ['message', 'private'].includes(item.type) ? item.id : undefined,
-                    ),
-                  },
-                });
-                trace.notePromptSections(
-                  assembled.report,
-                  this.sectionBaseline.observe(this.sessionId, assembled.report),
-                );
-                trace.notePromptWindow(assembled.text, this.modelContextTokens);
-                this.commandContext.notePromptSections([
-                  ...this.sessionPromptSectionIds,
-                  ...assembled.report.map((section) => section.id),
-                ]);
-                return assembled.text;
-              };
-              // Rooms and corners stream through ONE presentation (C100): the
-              // provisional draft lane, the request-id handoff, and the single
-              // durable reply that dissolves it all live in `turn-stream.ts`.
-              const stream = new AgentTurnStream({
-                api,
-                commandId:this.commandContext.current?.id,
-                turnGeneration:this.commandContext.generationId,
-                agentId: this.agent.publicKey,
-                roomId: this.options.roomId,
-                requestId: item.id,
-                label: `monolith Room ${this.options.roomId}`,
-              });
-              liveStream = stream;
-              // One prompt run, steers and all. It is a closure because an empty
-              // completion re-pins the session to another provider and runs it
-              // again (C92) — against the NEW client and session id.
-              let loginRetryUsed = false;
-              const runPrompt = async (): Promise<PromptResult> => {
-                let nextPrompt = promptWithImages(
-                  buildPrompt(),
-                  attachmentImageBlocks(delivered, this.acceptsImages()),
-                );
-                let result: Awaited<ReturnType<AcpClient['sessionPrompt']>> | undefined;
-                for (;;) {
-                  let promptError: unknown;
-                  try {
-                    stream.beginRun();
-                    trace.promptSent();
-                    result = await this.turnUsage.measure(
-                      { agentEnv: this.agentEnv, sessionId: this.sessionId! },
-                      () => ownedModelPrompt(this.commandContext, () =>
-                        this.client!.sessionPrompt(
-                          this.sessionId!,
-                          nextPrompt,
-                          (delta, full, currentRun) => {
-                            trace.firstModelOutput();
-                            stream.onChunk(delta, full, currentRun);
-                          },
-                          undefined,
-                          (calls) => {
-                            trace.toolCalls(calls);
-                          },
-                        )),
-                    );
-                    this.harnessTokens = addTurnTokenFigure(this.harnessTokens, result?.tokenUsage);
-                  } catch (error) {
-                    promptError = error;
-                  }
-                  if (promptError instanceof OwnedModelOutcomeUnknown || isAgentProcessExit(promptError)) throw promptError;
-                  this.turnMetrics = await this.captureTurnMetrics();
-                  await this.writeBackClaudeLogin();
-                  if (result && ['no-reply', 'repeated-tool-call'].includes(result.stopReason)) break;
-                  const settledSteerTail = active.steerTail;
-                  await settledSteerTail;
-                  if (settledSteerTail !== active.steerTail) continue;
-                  if (promptError && isExpiredHarnessLoginError(promptError)) {
-                    if (!loginRetryUsed) {
-                      loginRetryUsed = true;
-                      console.warn(
-                        `[thin-core] monolith Room ${this.options.roomId} turn ${item.id}: ` +
-                          'harness login expired; repairing the shared credential and retrying once',
-                      );
-                      trace.retry({ reason: 'expired harness login' });
-                      if (this.options.config.agentHomeRoot) {
-                        await repairRoomAgentCredentialLinks({
-                          root: this.options.config.agentHomeRoot,
-                          operatorHome: this.options.config.operatorHome,
-                        });
-                      }
-                      await this.discardSession();
-                      await trace.measure('activation', () => this.activate(trace));
-                      continue;
-                    }
-                    return {
-                      stopReason: 'login-required',
-                      updates: [],
-                      agentText: freshHarnessLoginLine(this.options.config.agentKind, hostname()),
-                      toolCalls: [],
-                    };
-                  }
-                  if (!active.resumeRequested) {
-                    if (promptError) throw promptError;
-                    break;
-                  }
-                  active.resumeRequested = false;
-                  nextPrompt = [
-                    'The previous run was cancelled because its harness could not accept every live steer.',
-                    'Resume the same turn. Keep the original request and everything that happened before it was cancelled.',
-                    'Human messages that arrived after the original request, in transcript order:',
-                    ...active.steers.map((steerItem) =>
-                      roomMessagePrompt(
-                        steerItem.authorId.slice(0, 12),
-                        steerItem.body,
-                        steerItem.attachments,
-                        this.deliveredAttachments.get(steerItem.id),
-                        this.acceptsImages(),
-                        steerItem.type === 'message' ? steerItem.id : undefined,
-                        renderReplyContext(steerItem),
-                      ),
-                    ),
-                    'Continue now and answer the updated request without erasing the earlier context.',
-                  ].join('\n\n');
-                }
-                return result!;
-              };
-              let result = await runPrompt();
-              trace.promptSettled();
-              if (['order', 'corner_objective'].includes(this.commandContext.current?.reason ?? '') &&
-                ['repeated-tool-call', 'login-required'].includes(result.stopReason)) {
-                stream.close();
-                await this.discardSession();
-                const tool = result.toolCalls.at(-1)?.title;
-                throw new Error(`unreported_order: ${result.stopReason}${tool ? ` (${redactToolDetail(tool)})` : ''}; requested work is unconfirmed`);
-              }
-              if (result.stopReason === 'free-agent-time-limit') {
-                stream.close();
-                timeLimited = true;
-                let reply: string;
-                try { reply = await this.freeContinuation.stopped(result); }
-                finally { await this.discardSession(); }
-                if (['order', 'corner_objective'].includes(this.commandContext.current?.reason ?? '')) {
-                  await stream.retract();
-                  throw new Error('unreported_order: free-agent-time-limit; requested work is unfinished');
-                }
-                await stream.settle(reply, { triggerMessageId: item.id });
-                return;
-              }
-              if (['no-reply', 'repeated-tool-call'].includes(result.stopReason)) {
-                stream.close();
-                await stream.retract();
-                await this.discardSession();
-                return;
-              }
-              // An instantly approved device grant cannot reach the running
-              // sandbox: replace the session and continue this same turn there.
-              const grantedDevice = approvedDeviceGrant(result.toolCalls);
-              if (grantedDevice) {
-                trace.retry({ reason: 'device grant' });
-                if (!(await this.sessionIsCurrent())) {
-                  await this.discardSession();
-                  await trace.measure('activation', () => this.activate(trace));
-                }
-                deviceResume = deviceGrantResumePrompt(grantedDevice, result.agentText);
-                result = await runPrompt();
-                trace.promptSettled();
-              }
-              let openCornerCall = openCornerToolCall(result.toolCalls);
-              let cornerOpened = openedACorner(openCornerCall);
-              let explained = await this.explainEmpty(result);
-              // A stopped turn ends `aborted` with no text; that is the
-              // requester's answer, not a routing failure, and must not re-pin
-              // the session. A provider's 429/5xx moves the pin onward.
-              if (
-                !cornerOpened &&
-                !active.cancelled &&
-                explained &&
-                (shouldRetryEmptyTurn(explained) || shouldFailOverProviderError(explained))
-              ) {
-                const silent = this.servingProviders();
-                const next = await this.repinNextProvider(trace, explained.reason);
-                if (next) {
-                  console.warn(
-                    `[thin-core] monolith Room ${this.options.roomId} turn ${item.id}: ` +
-                      `${turnFailureReasonWithProvider(explained.reason, silent)}; retrying on ${next}`,
-                  );
-                  result = await runPrompt();
-                  trace.promptSettled();
-                  openCornerCall = openCornerToolCall(result.toolCalls);
-                  cornerOpened = openedACorner(openCornerCall);
-                  explained = await this.explainEmpty(result);
-                }
-              }
-              // A session whose history outgrew the model's window refuses
-              // every retry inside it. One retry in a fresh session; a second
-              // overflow fails the turn as `context-overflow`, never a hiccup.
-              if (!cornerOpened && explained && isContextOverflowTurn(explained)) {
-                console.warn(
-                  `[thin-core] monolith Room ${this.options.roomId} turn ${item.id}: ` +
-                    `${explained.reason}; retrying once in a fresh session`,
-                );
-                trace.retry({ reason: 'context overflow' });
-                await this.discardSession();
-                await trace.measure('activation', () => this.activate(trace));
-                result = await runPrompt();
-                trace.promptSettled();
-                openCornerCall = openCornerToolCall(result.toolCalls);
-                cornerOpened = openedACorner(openCornerCall);
-                explained = await this.explainEmpty(result);
-              }
-              if (['order', 'corner_objective'].includes(this.commandContext.current?.reason ?? '') && result.stopReason === 'repeated-tool-call') {
-                stream.close();
-                await this.discardSession();
-                throw new Error('unreported_order: repeated-tool-call; requested work is unconfirmed');
-              }
-              if (['no-reply', 'repeated-tool-call'].includes(result.stopReason)) {
-                stream.close();
-                await stream.retract();
-                await this.discardSession();
-                return;
-              }
-              // The requester stopped this turn while it ran. A stopped turn
-              // publishes nothing at all — no durable reply, no receipt, and no
-              // late write of any kind: the server settled the turn `cancelled`
-              // and wrote the attributed line before this helper even heard,
-              // and that line is the Room's whole record of the stop.
-              if (active.cancelled) {
-                stream.close();
-                throw new TurnStoppedError('turn stopped by the requester');
-              }
-              active.phase = 'finishing';
-              const pendingCard = result.toolCalls.map((call) => pendingCardKind(call)).find(Boolean);
-              if (pendingCard) {
-                this.pausedOnGrantRequestId = item.id;
-                this.pausedOnGrantKind = pendingCard;
-                console.log(
-                  `[thin-core] monolith Room ${this.options.roomId} turn ${item.id} paused on a grant card`,
-                );
-              } else if (resumedRequestId) {
-                console.log(
-                  `[thin-core] monolith Room ${this.options.roomId} turn ${resumedRequestId} resumed by card decision ${item.id}`,
-                );
-              }
-              if (openCornerCall) {
-                console.log(
-                  `[thin-core] monolith Room ${this.options.roomId} tool call: ${redactToolDetail(openCornerCall.title ?? '')} (${openCornerCall.status ?? 'no status'})`,
-                );
-                if (cornerOpened) this.options.onCornerOpened?.();
-              }
-              // A refusal the operator cannot read is a refusal that happens twice.
-              for (const call of result?.toolCalls ?? []) {
-                const failure = toolCallFailureLine(call);
-                if (failure) {
-                  console.warn(`[thin-core] monolith Room ${this.options.roomId} ${failure}`);
-                }
-              }
-              // Close the draft lane before the answer is published: the finished
-              // reply must never queue behind a draft nobody will read.
-              stream.close();
-              // The reply is the turn's last text run. Every earlier run rides
-              // on it as a note between the tool steps, so text written
-              // before a tool call is kept without leading the answer.
-              // Synthetic recovery replies stand alone, and an empty final
-              // result must not promote an abandoned draft into an answer.
-              let reply = durableReplyText(result.agentText);
-              const steps = reply
-                ? roomReplySteps(agentTurnSteps(result.updates ?? []), this.requesterOf(item.authorId))
-                : [];
-              if (!reply && explained?.recoveredText) {
-                // Text the harness recorded but never streamed. Kept on a
-                // corner-open turn too: it is the same reply the live lane
-                // would have shown, arriving only at settle. Sanitized first,
-                // because a recovered string that is only harness preamble or
-                // the scaffold echo leaves nothing to say.
-                reply = durableReplyText(explained.recoveredText);
-              }
-              if (!reply && explained && !cornerOpened) {
-                // A named reason (pi's provider refusal, an empty model answer,
-                // the stream's shape) carrying the provider that served the
-                // turn — never the bare "no reply" as the only fact. A corner
-                // that already opened is the Room's completion even without
-                // prose; do not fail that turn for emptiness.
-                throw new Error(
-                  turnFailureReasonWithProvider(explained.reason, this.servingProviders()),
-                );
-              }
-              if (reply && explained) {
-                console.warn(
-                  `[thin-core] monolith Room ${this.options.roomId} turn ${item.id}: ${explained.reason}`,
-                );
-              }
-              // The server's corner-open card and this reply are one
-              // completion: live prefixes of the same text, then that text
-              // written durably. An empty last run still settles through the
-              // card alone. Silence waits for `completed`, never merely for
-              // "not failed".
-              await trace.measure('publish', () =>
-                stream.settle(
-                  reply,
-                  reply
-                    ? {
-                        triggerMessageId: item.id,
-                        ...(steps.length ? { steps } : {}),
-                      }
-                    : {},
-                ),
-              );
-            },
-          );
-        },
-        (error) =>
-          console.error(
-            `[thin-core] monolith Room ${this.options.roomId} receipt heartbeat failed:`,
-            error,
-          ),
-        () => {
-          console.warn(
-            `[thin-core] monolith Room ${this.options.roomId} turn ${item.id} dropped: ` +
-              'the server revoked its output authority',
-          );
-          this.stopTurn(item.id);
-        },
-      );
-      await Promise.all(this.approvalDecisionWrites);
-      const decisionFailure = this.approvalDecisionFailures.get(item.id);
-      if (decisionFailure) throw new Error(`Squire approval decision was not published: ${distillTurnFailureReason(decisionFailure).text}`);
-      startTraceStats();
-      await api.execute('postAgentTurnReceipt', {
-        agentId: this.agent.publicKey,
-        roomId: this.options.roomId,
-        requestId: item.id,
-        status: timeLimited ? 'failed' : 'complete',
-        ...(!timeLimited ? {diagnosticsOnly:true} : {}),
-        ...(timeLimited ? { reason: 'free-agent-time-limit' } : {}),
-        generationId: this.commandContext.generationId,
-        toolCalls: trace.toolCallsTotal,
-        trace: trace.replay(),
-        ...this.turnMetrics,
-      });
-      if (freeAgent && !timeLimited) await this.freeContinuation.clear();
-      this.warmTranscript.complete(this.sessionId, [item.id, ...active.steers.map((steer) => steer.id)]);
-      // After the receipt: an operator artifact must never delay the answer,
-      // and it never becomes one — the trace has no way to post a Room row.
-      void finishTrace(timeLimited ? 'failed' : 'complete', timeLimited ? 'free-agent-time-limit' : undefined).catch(() => undefined);
-    } catch (error) {
-      // A stopped turn already has its ending — the server wrote `cancelled`
-      // and named who stopped it the moment it accepted the request. There is
-      // no receipt to post and nothing to blame the helper for, so the turn
-      // ends here quietly and only the operator's trace records it. It is also
-      // the one throw that retracts nothing: a stopped turn writes NOTHING
-      // after its authority ended, and the server stops serving that turn's
-      // draft the moment it settles the turn `cancelled` (`liveDraftSnapshot`
-      // reads working turns only).
-      if (error instanceof TurnStoppedError || active.cancelled) {
-        console.log(
-          `[thin-core] monolith Room ${this.options.roomId} turn ${item.id} stopped by the requester`,
-        );
-        void finishTrace('cancelled').catch(() => undefined);
-        return;
-      }
-      if (isAgentProcessExit(error)) {
-        liveStream?.close();
-        await liveStream?.retract().catch(retractError => console.error('[body] interrupted draft retract failed:', retractError));
-        await this.discardSession(true);
-        await api.execute('postAgentTurnReceipt', {
-          agentId: this.agent.publicKey, roomId: this.options.roomId, requestId: item.id,
-          status: 'failed', generationId: this.commandContext.generationId,
-          reason: 'agent process exited', reasonKind: 'process-exited',
-          trace: trace.replay(),
-        }).catch(receiptError => console.error('[body] process interruption receipt failed:', receiptError));
-        void finishTrace('failed', 'agent process exited').catch(() => undefined);
-        throw error;
-      }
-      if (error instanceof OwnedModelOutcomeUnknown) {
-        liveStream?.close(); await this.discardSession();
-        await api.execute('postAgentTurnReceipt', ownedModelEndReceipt(error, { agentId: this.agent.publicKey,
-          roomId: this.options.roomId, requestId: item.id, generationId: this.commandContext.generationId }));
-        throw error;
-      }
-      // A failed turn ends owning no live output. Only `settle` dissolves the
-      // draft on the way out and a throw never reaches one, so without this the
-      // last snapshot the model streamed stays live under a turn the Room has
-      // already reported failed — still pulsing, still claiming to be an answer
-      // on its way. The retract settles that row in place: the words the person
-      // was reading stay, and stop pretending to be in progress. Its own
-      // failure must never replace the error that actually ended the turn.
-      await liveStream?.retract().catch((retractError: unknown) => {
-        console.error(
-          `[thin-core] monolith Room ${this.options.roomId} draft retract failed:`,
-          retractError,
-        );
-      });
-      const reason = timeLimited ? { text: 'free-agent-time-limit' } : distillTurnFailureReason(error);
-      startTraceStats();
-      await api.execute('postAgentTurnReceipt', {
-        agentId: this.agent.publicKey,
-        roomId: this.options.roomId,
-        requestId: item.id,
-        status: 'failed',
-        generationId: this.commandContext.generationId,
-        reason: reason.text,
-        ...(reason.kind ? { reasonKind: reason.kind } : {}),
-        toolCalls: trace.toolCallsTotal,
-        trace: trace.replay(),
-        ...this.turnMetrics,
-      });
-      void finishTrace('failed', reason.text).catch(() => undefined);
-      throw error;
-    } finally {
-      this.approvalDecisionFailures.delete(item.id);
-      this.busy = false;
+  const input = call?.rawInput;
+  if (input && typeof input === 'object') {
+    for (const key of ['file_path', 'notebook_path', 'path'] as const) {
+      if (!(key in input)) continue;
+      const value = (input as Record<string, unknown>)[key];
+      if (typeof value !== 'string' || !value) return undefined;
+      paths.push(value);
     }
   }
+  return paths;
+}
 
-  async run(): Promise<void> {
-    const { api, roomId, signal, supervisor } = this.options;
-    const intake = (progress: () => void) =>
-      runServerCommandIntake({
-        api,
-        roomId,
-        agentId: this.agent.publicKey,
-        context: this.commandContext,
-        signal,
-        presence: {
-          ...(this.options.config.daemonReleaseVersion
-            ? { releaseVersion: this.options.config.daemonReleaseVersion }
-            : {}),
-          ...(this.options.config.daemonSourceSha
-            ? { sourceSha: this.options.config.daemonSourceSha }
-            : {}),
-          available: !this.options.config.modelUnavailable,
-        },
-        onWake: (wake) => {
-          this.wakeIntake = wake;
-        },
-        onRecovery: (recover) => { this.recoverIntake = recover; },
-        onPoll: () => {
-          progress();
-          this.options.health.poll();
-        },
-        onSubscriptionState: this.options.onSubscriptionState,
-        onError: (error) => {
-          this.options.onIntakeError?.(error);
-          console.error('[thin-core] Room command failed', redactTurnError(error));
-        },
-        // Marks this loop busy the instant it attempts to claim a real
-        // turn, before the claim's own network round trip and before
-        // context.enter()'s own file I/O - closing the window where
-        // RoomRuntimeCoordinator.reconcile's repository-revision restart
-        // could see a claiming-but-not-yet-`busy` Room as idle and stop it,
-        // cancelling a turn that had already begun (or was about to) (C112).
-        onClaiming: () => {
-          this.busy = true;
-        },
-        onClaimFailed: () => {
-          this.busy = false;
-        },
-        onEnter: (command) => this.squireRelay.activate(command, this.commandContext.generationId),
-        onLeave: (command) =>
-          this.squireRelay.deactivate(command.turnRequestId, this.pausedOnGrantRequestId),
-        stop: (requestId) => this.stopTurn(requestId),
-        restart: () => this.options.onRestartRequested?.(),
-        canStartTurn: this.options.canStartTurn,
-        run: async (command) => {
-          const item = {
-            ...command.source,
-            id: command.turnRequestId,
-            body:
-              command.action === 'resume'
-                ? `Resume the paused turn. The server supplied this answer: ${command.source.body}`
-                : command.source.body,
-          };
-          this.startPrompt(item);
-          await this.activeTurn?.promise;
-        },
-      });
-    try {
-      await (supervisor
-        ? supervisor.supervise(`Room ${roomId}`, signal, intake)
-        : intake(() => undefined));
-    } finally {
-      this.squireRelay.close();
-      this.options.grantRunner?.unregister(roomId);
-      await this.options.scheduler.stop(roomId);
-      this.options.scheduler.forget(roomId);
-    }
+
+export const strictlyInside = (root: string, path: string): boolean => {
+  const suffix = relative(root, path);
+  return suffix !== '' && suffix !== '..' && !suffix.startsWith(`..${sep}`) && !isAbsolute(suffix);
+};
+
+
+/** Allow only existing files named entirely within this session's attachment tree. */
+export function isAttachmentRead(request: AcpPermissionRequest, attachmentsDir?: string): boolean {
+  const call = request.toolCall;
+  if (!attachmentsDir || call?.kind !== 'read') return false;
+  const paths = nativeRequestPaths(call);
+  if (!paths?.length) return false;
+  try {
+    const root = resolve(attachmentsDir);
+    const realRoot = realpathSync(root);
+    return paths.every(path => isAbsolute(path) && strictlyInside(root, resolve(path)) &&
+      strictlyInside(realRoot, realpathSync(path)));
+  } catch {
+    return false;
   }
 }
+
+
+/**
+ * A path as the filesystem would resolve it on write: the nearest entry that
+ * exists (a dangling symlink counts, and then fails realpath) is realpathed and
+ * the not-yet-created remainder is appended, so a new file is judged by the
+ * directory it lands in.
+ */
+export function realWriteTarget(path: string): string {
+  let existing = resolve(path);
+  const missing: string[] = [];
+  for (;;) {
+    try {
+      lstatSync(existing);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      const parent = dirname(existing);
+      if (parent === existing) throw error;
+      missing.unshift(basename(existing));
+      existing = parent;
+    }
+  }
+  return join(realpathSync(existing), ...missing);
+}
+
+
+/** Allow a native write/edit only when every path it names lands inside the sandbox home. */
+export function isSandboxHomeEdit(request: AcpPermissionRequest, sandboxHome?: string): boolean {
+  const call = request.toolCall;
+  if (!sandboxHome || call?.kind !== 'edit') return false;
+  const paths = nativeRequestPaths(call);
+  if (!paths?.length) return false;
+  try {
+    const root = resolve(sandboxHome);
+    const realRoot = realpathSync(root);
+    // Only an already-normal path: `resolve` folds `..` before symlinks are
+    // followed, so `home/link/../x` would be judged by a different directory
+    // than the one the filesystem writes through.
+    return paths.every(path => isAbsolute(path) && path === resolve(path) &&
+      strictlyInside(root, path) && strictlyInside(realRoot, realWriteTarget(path)));
+  } catch {
+    return false;
+  }
+}
+
+
+/**
+ * The Room ACP client applies this host-owned decision fail-closed: a mounted
+ * MCP tool call is approved; shell commands and native read/search requests
+ * are approved while the OS sandbox wraps this session, as are native
+ * writes/edits whose every path resolves inside the sandbox home (`$HOME`, the
+ * `agent-home/user` directory the sandbox already binds writable for the
+ * shell). Without the sandbox, only native reads confined to downloaded
+ * attachments are approved. Other native writes/edits, deletes, moves and
+ * unstructured requests remain refused.
+ *
+ * Shell is conditioned on the sandbox because the sandbox IS the Room's
+ * read-only filesystem: unwrapped, `wrapAgentCommand` spawns the harness bare
+ * and masks no credential path, so an approved command would write anywhere the
+ * daemon account can. Codex keeps its own offline read-only mode in exactly
+ * that case (`harness-capabilities.ts`), so requiring the wrap is what parity
+ * means. `ensureBwrapSandbox` installs bubblewrap at daemon start so this is a
+ * capability the host gains rather than a refusal it lives with, and the
+ * session primer states the outcome either way. The same wrap is why a home
+ * write is safe to approve: the native tool runs inside it, so a symlink the
+ * agent swaps in after this check still reaches only what the shell could.
+ */
+export function roomPermissionDecision(
+  request: AcpPermissionRequest,
+  options: {
+    mountedServers?: readonly string[];
+    hostServers?: readonly string[];
+    /** `config.bwrapPath`, set only when the sandbox self-test passed. */
+    shellSandboxed?: boolean;
+    /** The attachment subtree under BEELINE_ATTACH_SCRATCH_ROOT. */
+    attachmentsDir?: string;
+    /** The wrapped session's `$HOME` (`agent-home/user`), writable in the sandbox. */
+    sandboxHome?: string;
+  } = {},
+): AcpPermissionDecision {
+  const hostServers = options.hostServers ?? CODE_OWNED_HOST_MCP_NAMES;
+  const mountedServers = options.mountedServers ?? ROOM_MOUNTED_MCP_SERVERS;
+  if (isRoomMcpPermissionRequest(request, mountedServers, hostServers)) return 'allow';
+  if (!isMcpShapedPermissionRequest(request, hostServers)) {
+    if (options.shellSandboxed) {
+      if (request.toolCall?.kind === 'read' || request.toolCall?.kind === 'search') return 'allow';
+      if (isSandboxHomeEdit(request, options.sandboxHome)) return 'allow';
+    } else if (isAttachmentRead(request, options.attachmentsDir)) return 'allow';
+  }
+  if (!options.shellSandboxed) return 'reject';
+  return isRoomShellPermissionRequest(request, hostServers) ? 'allow' : 'reject';
+}
+
+
+/**
+ * Whether this principal may start a turn. Agents are server-validated Room members
+ * and are never gated; a human answers to the agent's access policy.
+ *
+ * The policy lives on the SERVER (`agent-access.ts`) and its verdict rides on the
+ * authority round trip the intake loop already makes per candidate message — so an
+ * owner's change in the members page takes effect on a helper that is already
+ * running, on its next poll. `humanPermitted` is the runtime record's own reading,
+ * used only against a server too old to answer.
+ */
+/** Server-authored scheduled prompts arrive as system lines (`@scheduler ran a
+ *  schedule for <agent> · <message>`) carrying the structured event; the
+ *  scheduler is not a Room principal, so its lines skip the per-author
+ *  authority check (schedule creation was already authority-gated). Recognised by
+ *  the event's verb, never by the text.
+ *
+ *  Nothing here re-checks that the line is addressed to this agent. An inbox
+ *  item exists BECAUSE the server routed it to this agent, so the item IS the
+ *  address; asking the line to name the reader again only invites the two to
+ *  disagree. */
+export function isScheduledPrompt(item: {
+  type: string;
+  body: string;
+  systemEvent?: SystemEvent;
+}): boolean {
+  if (item.type !== 'system') return false;
+  if (item.systemEvent?.kind) return item.systemEvent.kind === 'schedule-ran';
+  // One release of fallback: a line written before the server stamped kinds
+  // carries the verb and nothing else. Remove after the next release; the
+  // verb is display text and must not be a permanent contract.
+  return item.systemEvent?.verb === SCHEDULE_RAN_VERB;
+}
+
+
+/**
+ * Who the harness is told an inbox item is from.
+ *
+ * An event line's subject is the person or agent the fact is ABOUT, and the
+ * server put their display name on the structured event. A newcomer's join is
+ * the case that needs it: the roster this turn was built from was read before
+ * they arrived, so a lookup by author id finds nothing and the greeting comes
+ * out addressed to a truncated public key instead of a name.
+ */
+export function inboxItemAuthorName(
+  item: {
+    type: string;
+    authorId: string;
+    body: string;
+    systemEvent?: SystemEvent;
+  },
+  names: ReadonlyMap<string, string>,
+): string {
+  if (isScheduledPrompt(item)) return SCHEDULE_SCHEDULER_NAME;
+  const subject = item.systemEvent?.subject;
+  if (item.type === 'system' && subject?.name) return subject.name;
+  return names.get(item.authorId) ?? item.authorId.slice(0, 12);
+}
+
+
+/** What the harness is shown for an inbox item: a scheduled prompt's message
+ *  itself (the event's consequence), otherwise the row's text. An event line's
+ *  own sentence already carries the fact — `Ada joined Beeline Welcome` names
+ *  the newcomer — so it is shown as written rather than restated. */
+export function inboxItemPromptBody(item: {
+  type: string;
+  body: string;
+  systemEvent?: SystemEvent;
+}): string {
+  if (item.systemEvent?.kind === 'subscription-fired') return subscriptionActionPrompt(item.systemEvent);
+  return isScheduledPrompt(item) ? (item.systemEvent?.consequence ?? item.body) : item.body;
+}
+
+
+/**
+ * A `request_grant` or `offer_connector` call whose reply says the card is
+ * posted pauses the turn: the person's answer on that card resumes it (a
+ * `grant-decided` or `connector-offer-decided` RESUME kind).
+ */
+export type PendingCardKind = 'grant' | 'connector';
+
+export function pendingCardKind(call: { title?: string; content?: unknown }): PendingCardKind | undefined {
+  if (/(?:^|[._:/-])connect$/i.test(call.title ?? '')) {
+    try {
+      let content = call.content;
+      if (content && typeof content === 'object' && 'content' in content) content = content.content;
+      if (Array.isArray(content)) content = content.find(item => item?.type === 'text')?.text;
+      const result = typeof content === 'string' ? JSON.parse(content) : content;
+      if (result && typeof result === 'object' && ['needs_sign_in', 'needs_approval'].includes(result.status))
+        return result.grantId ? 'grant' : 'connector';
+    } catch { /* An invalid reply does not pause the turn. */ }
+  }
+  const kind = /(?:^|[._:/-])(request_grant|request_shared_asset_isolation|offer_connector)$/i.exec(call.title ?? '')?.[1];
+  if (!kind || !/(?:pending|already offered), card (?:posted|still open)/i.test(
+    typeof call.content === 'string' ? call.content : JSON.stringify(call.content ?? ''),
+  )) return undefined;
+  return kind.toLowerCase() === 'offer_connector' ? 'connector' : 'grant';
+}
+
+
+export function pendingGrantToolCall(call: { title?: string; content?: unknown }): boolean {
+  return pendingCardKind(call) !== undefined;
+}
+
+
+/**
+ * The device an instantly approved `request_grant` added this turn, if any.
+ * bwrap fixes `/dev` when a session starts, so the turn loop runs the same turn
+ * again in a fresh session that has it (`deviceGrantResumePrompt`).
+ */
+export function approvedDeviceGrant(
+  calls: readonly { title?: string; content?: unknown }[],
+): string | undefined {
+  for (const call of calls) {
+    if (!/(?:^|[._:/-])request_grant$/i.test(call.title ?? '')) continue;
+    const text = typeof call.content === 'string' ? call.content : JSON.stringify(call.content ?? '');
+    const device = /approved: use (\/dev\/\S+) \[grant [^\]]*\]\. A running session cannot add a device/.exec(text)?.[1];
+    if (device) return device;
+  }
+  return undefined;
+}
+
+
+/** The prompt that continues a turn after an instantly approved device grant. */
+export function deviceGrantResumePrompt(device: string, earlierReply: string): string {
+  const earlier = earlierReply.trim();
+  return [
+    `Your device grant for ${device} was approved and ${device} is in this session now; this is the same turn continuing.`,
+    ...(earlier ? [`Your reply just before this was: ${earlier}`] : []),
+    'Continue the work that needed the device. Do not request it again or ask anyone to restart.',
+  ].join(' ');
+}
+
+
+/**
+ * The resume prompt for the answer that woke a paused turn. A grant answer and
+ * a connector-offer answer resume the same way (`RESUME_KINDS`), but the model
+ * must be told which question was answered — the connector one arrives as
+ * `<person> added <tool>`, and its right response is to acknowledge and carry
+ * on with the work that needed the tool, not to look for a grant verdict.
+ */
+export function resumePrompt(item: { body: string; systemEvent?: SystemEvent }): string {
+  if (item.systemEvent?.kind === 'squire-approval-decided') {
+    return [
+      `This is Trusty Squire's answer to the approval you were waiting on: ${item.body}.`,
+      'Your paused work resumes now.',
+      'If it was approved, continue exactly where you left off with Trusty Squire; do not ask the person to approve again, and do not restart the task.',
+      'If it was denied, stop that Trusty Squire action and say plainly what you cannot do.',
+      'If it got no answer, the approval expired; say so plainly, and ask again only if the person still wants it.',
+    ].join(' ');
+  }
+  if (item.systemEvent?.kind === 'connector-offer-decided') {
+    return [
+      `This is the answer to your connector offer: ${item.body}.`,
+      'Your paused work resumes now. The tool is being installed on your machine; its sign-in and status reach the person through the tool’s own status message, not through you.',
+      'Acknowledge in one short line (for example "Adding Trusty Squire now.") and continue the work that needed it, or say plainly what still has to happen before you can.',
+    ].join(' ');
+  }
+  const grant = parseGrantDecisionLine(item.body);
+  if (grant?.kind === 'device' && grant.decision !== 'deny') {
+    return [
+      'This is the answer to your grant request; your paused work resumes now.',
+      `The approved device ${grant.target} is in this session.`,
+      'Continue the paused work with it now; do not restart, schedule another turn, or request the device again.',
+    ].join(' ');
+  }
+  if (grant?.kind === 'mcp' && grant.decision !== 'deny') {
+    return [
+      'This is the answer to your grant request; your paused work resumes now.',
+      `The approved ${grant.target} route is mounted in this session.`,
+      'Continue the paused work with that tool now; do not restart, schedule another turn, or request the route again.',
+    ].join(' ');
+  }
+  return [
+    'This is the answer to your grant request; your paused work resumes now.',
+    'If it was approved and it is a command grant, run it with run_granted_command and the exact argv.',
+    'If it was declined, try another way or say plainly what you cannot do.',
+  ].join(' ');
+}
+
+
+/**
+ * The Room's members and the one @spelling that reaches each of them.
+ *
+ * Everywhere else the prompt names people by DISPLAY name — the transcript's
+ * bylines, `Current task selected by the server from <name>` — and nothing in it ever carried a
+ * handle. So a model with something to say to someone had no authoritative
+ * spelling to write and had to guess one, or copy one out of the conversation,
+ * where a handle retired releases ago still sits in its own old messages. A
+ * guessed tag resolves to nobody, and nobody is told it was written.
+ *
+ * Built from the roster this turn was fetched with, so a newcomer is taggable
+ * on the turn they arrive. The server resolves tags in the final reply against
+ * current Room membership when it stores the message.
+ */
+export interface ActiveTurn {
+  item: HumanMessage;
+  steers: HumanMessage[];
+  steerTail: Promise<void>;
+  resumeRequested: boolean;
+  /** The requester stopped this turn: publish nothing, settle nothing. */
+  cancelled: boolean;
+  phase: 'prompting' | 'finishing';
+  promise: Promise<void>;
+}
+
+
+export interface MonolithRoomTurnHealth {
+  poll(): void;
+}
+
+
+export interface MonolithRoomTurnOptions {
+  roomId: string;
+  workspaceId: string;
+  cwd: string;
+  /** Refresh the server-bound checkout before each admitted Room turn. */
+  refreshCheckout?: () => Promise<{
+    cwd: string;
+    branch?: string;
+    commit?: string;
+    githubToken?: string;
+  }>;
+  runtime: AgentRuntimeRecord;
+  config: BodyConfig;
+  api: DaemonApiClient;
+  scheduler: AgentProcesses;
+  health: MonolithRoomTurnHealth;
+  onSubscriptionState?: (connected: boolean) => void;
+  onIntakeError?: (error: unknown) => void;
+  signal?: AbortSignal;
+  createAcpClient?: (options: ConstructorParameters<typeof AcpClient>[0]) => AcpClient;
+  onCornerOpened?: () => void;
+  onRestartRequested?: () => Promise<void>;
+  canStartTurn?: () => boolean;
+  /** Keeps this Room's intake alive across failed reads. */
+  supervisor?: RoomSupervisor;
+  /** Attachment downloads (test seam). */
+  fetchImpl?: typeof fetch;
+  /** The daemon's command-grant runner; this Room registers its checkout and current turn. */
+  grantRunner?: GrantCommandRunner;
+  grantRunnerEndpoint?: GrantRunnerEndpoint;
+}
+
 
 /** This turn's `open_corner` call, under whatever prefix the harness titles it. */
-function openCornerToolCall(calls: readonly ToolCallEntry[]): ToolCallEntry | undefined {
+export function openCornerToolCall(calls: readonly ToolCallEntry[]): ToolCallEntry | undefined {
   return calls.find((call) => /(?:^|[._:/-])open_corner$/i.test(call.title ?? ''));
 }
+
 
 /**
  * True only for a corner this turn actually opened.
@@ -2396,15 +831,16 @@ function openCornerToolCall(calls: readonly ToolCallEntry[]): ToolCallEntry | un
  * corner: read as success it would let a turn that said nothing pass as
  * answered by a card that never comes.
  */
-function openedACorner(call: ToolCallEntry | undefined): boolean {
+export function openedACorner(call: ToolCallEntry | undefined): boolean {
   return !!call && isCompletedToolCall(call);
 }
+
 
 /**
  * An earlier transcript message: its attachments are markers the agent can
  * pass to download_attachment, never a download made while building the prompt.
  */
-function transcriptMessagePrompt(
+export function transcriptMessagePrompt(
   author: string,
   body: string,
   attachments: RoomMessage['attachments'],
@@ -2419,7 +855,8 @@ function transcriptMessagePrompt(
   ].join('\n');
 }
 
-function roomMessagePrompt(
+
+export function roomMessagePrompt(
   author: string,
   body: string,
   attachments: RoomMessage['attachments'],

@@ -1,6 +1,6 @@
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 import {migratedDatabase,type PgliteDatabase} from './test-support.js';
-import {ConnectionPresence,recordAgentEvidence,RecentIdentityTimes} from './connection-presence.js';
+import {ConnectionPresence,recordAgentEvidence} from './connection-presence.js';
 import {createAgentCommand,claimAgentCommand,createClaimedMcpAgentCommand} from './agent-command.js';
 import {randomUUID} from 'node:crypto';
 import {LiveHub} from './live.js';
@@ -68,10 +68,6 @@ it('evidence merges with a concurrent lifecycle announcement',async()=>{
   await presence.announce(ROOM,AGENT,{lifecycleId:'boot-1'});
   await Promise.all([presence.announce(ROOM,AGENT,{lifecycleId:'boot-2',releaseVersion:'v2.0.0'}),recordAgentEvidence(database,live,ROOM,AGENT)]);
   expect(await body()).toMatchObject({lifecycleId:'boot-2',releaseVersion:'v2.0.0',status:'online'});
-});
-it('bounded observation timestamps require no maintenance timer',()=>{
-  const times=new RecentIdentityTimes(2,100);times.set('one',1);times.set('two',2);times.set('three',3);
-  expect(times.size).toBe(2);expect(times.get('one')).toBeUndefined();times.set('four',200);expect(times.size).toBe(1);
 });
 
 it('registration recovers only its agent’s ownerless helper claims once and preserves live MCP claims',async()=>{

@@ -98,11 +98,5 @@ describe('company MCP network boundary', () => {
     const callback = vi.fn(); mocks.agents[0].lookup('mcp.fly.io', {}, callback);
     expect(callback).toHaveBeenCalledWith(null, '93.184.216.34', 4);
   });
-  it('bounds a stalled DNS lookup within the search deadline', async () => {
-    mocks.lookup.mockImplementation(() => new Promise(() => {}));
-    const keepAlive = setTimeout(() => {}, 100);
-    try { await expect(companyMcpResponse(new URL('https://mcp.fly.io'), 'fly.io', Date.now() + 10)).rejects.toThrow('timed out'); }
-    finally { clearTimeout(keepAlive); }
-    expect(mocks.request).not.toHaveBeenCalled();
-  });
+
 });

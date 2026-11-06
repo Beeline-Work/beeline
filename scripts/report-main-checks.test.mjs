@@ -29,6 +29,19 @@ test('PRs, foreign branches, unrelated workflows and incomplete runs never publi
   }
 });
 
+test('cancelled and other non-failure conclusions skip job reads and issue mutations', async () => {
+  for (const conclusion of ['cancelled', 'skipped', 'neutral', 'timed_out', 'action_required', null]) {
+    const calls = [];
+    const result = await reportMainChecks({ runId: 1, api: async (method, path) => {
+      calls.push([method, path]);
+      assert.equal(path, 'actions/runs/1');
+      return { ...run, conclusion };
+    } });
+    assert.equal(result.skipped, true);
+    assert.deepEqual(calls, [['GET', 'actions/runs/1']]);
+  }
+});
+
 test('a passing main result closes its own failure and leaves nightly failures alone', async () => {
   const mutations = [];
   const api = async (method, path, body) => {
@@ -45,7 +58,7 @@ test('a passing main result closes its own failure and leaves nightly failures a
   assert.deepEqual(mutations.map(x => x.path), ['issues/3/comments', 'issues/3']);
 });
 
-test('a manual successful rerun still reports the original main failure as flaky', async () => {
+test('a manual successful rerun classifies the original failure without opening or updating issues', async () => {
   const notes = [];
   const api = async (method, path, body) => {
     if (method !== 'GET') { notes.push(body); return {}; }
@@ -56,5 +69,5 @@ test('a manual successful rerun still reports the original main failure as flaky
   };
   const result = await reportMainChecks({ api, runId: 1 });
   assert.equal(result.flakyJobs.length, 1);
-  assert.equal(notes[0].title, 'Main Checks: SERVER SUITE is flaky');
+  assert.deepEqual(notes, []);
 });

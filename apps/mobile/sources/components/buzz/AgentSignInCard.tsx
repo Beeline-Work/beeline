@@ -184,6 +184,8 @@ export function AgentSignInCard({
         <Text style={styles.stepTitle}>{opened ? label.done : label.ahead}</Text>
         <InlineRow style={styles.linkLine}>
           <Text
+            ellipsizeMode="middle"
+            numberOfLines={1}
             style={styles.url}
             testID={`${testID}-url`}
           >

@@ -28,20 +28,14 @@ export async function generateStarterBanter(input: {
   const lines: BanterLine[] = [];
   for (const [index, agent] of [input.beebee, input.luna, input.beebee].entries()) {
     const tagged = index === 0 ? input.luna : index === 1 ? input.beebee : undefined;
-    let accepted = false;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      input.signal.throwIfAborted();
-      const exchange = lines.map(line => `${line.agentId === input.beebee.id ? input.beebee.name : input.luna.name}: ${line.text}`).join('\n');
-      const text = (await input.complete(agent, [
-        { role: 'system', content: agent.instructions },
-        { role: 'user', content: `${brief}\n\nExchange so far:\n${exchange || '(none)'}\nWrite line ${index + 1}.${attempt ? ' The previous attempt failed the checks. Follow every rule, including the first name and required handle.' : ''}` },
-      ], input.signal)).trim();
-      if (!validBanterLine(text, input.name, agent, tagged)) continue;
-      lines.push({ agentId: agent.id, text });
-      accepted = true;
-      break;
-    }
-    if (!accepted) return null;
+    input.signal.throwIfAborted();
+    const exchange = lines.map(line => `${line.agentId === input.beebee.id ? input.beebee.name : input.luna.name}: ${line.text}`).join('\n');
+    const text = (await input.complete(agent, [
+      { role: 'system', content: agent.instructions },
+      { role: 'user', content: `${brief}\n\nExchange so far:\n${exchange || '(none)'}\nWrite line ${index + 1}.` },
+    ], input.signal)).trim();
+    if (!validBanterLine(text, input.name, agent, tagged)) return null;
+    lines.push({ agentId: agent.id, text });
   }
   return lines;
 }
@@ -50,10 +44,7 @@ export async function generateStarterBanter(input: {
 export async function starterBanterBeforeDeadline(generation: Promise<BanterLine[] | null>, openedAt: number,
   signal: AbortController, now = Date.now): Promise<BanterLine[] | null> {
   if (now() >= openedAt + 20_000) { signal.abort(); return null; }
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([generation.catch(() => null), new Promise<null>(resolve => {
-      timer = setTimeout(() => { signal.abort(); resolve(null); }, Math.max(0, openedAt + 20_000 - now()));
-    })]);
-  } finally { if (timer) clearTimeout(timer); }
+  const result = await generation.catch(() => null);
+  if (now() >= openedAt + 20_000) { signal.abort(); return null; }
+  return result;
 }

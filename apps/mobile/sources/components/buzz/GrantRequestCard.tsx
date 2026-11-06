@@ -96,6 +96,7 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
             testID={`grant-${grant.grantId}`}
             askingAgent={request.agent}
             agent={agent}
+            wrapTitle
             title={
               <Text testID={`grant-${grant.grantId}-ask`}>
                 {`@${agentName.replace(/^@/, '')} wants to ${grant.kind === 'command' ? grant.purpose || grant.script ? 'run a script' : 'run a command' : `${grant.kind === 'mcp' && grant.target.startsWith('connection-install:') ? 'connect' : AGENT_GRANT_VERBS[grant.kind]} ${grant.appName ?? grant.target}`}`}

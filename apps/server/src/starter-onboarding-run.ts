@@ -1,5 +1,4 @@
 import { randomUUID, randomBytes } from 'node:crypto';
-import { setTimeout as delay } from 'node:timers/promises';
 import type { SqlDatabase } from './database.js';
 import type { FreeAgentModelProxyOptions } from './free-agent-model-proxy.js';
 import { completeStarterBanter } from './free-agent-model-proxy.js';
@@ -60,8 +59,6 @@ export class StarterOnboardingService {
       beebee, luna, signal: abort.signal,
       complete: (agent, messages, signal) => completeStarterBanter(model, run.id, agent.id, messages, signal),
     }).catch(() => null) : Promise.resolve(null);
-    const expiry = setTimeout(() => abort.abort(), 120_000);
-    void promise.finally(() => clearTimeout(expiry));
     this.generations.set(run.id, { promise, abort });
     void promise.then(async lines => {
       await this.database.query(`UPDATE starter_onboarding_runs SET lines=$2::jsonb,status='ready'
@@ -103,14 +100,6 @@ export class StarterOnboardingService {
     const generation = this.generations.get(run.id);
     let lines = run.lines;
     if (generation) lines = await starterBanterBeforeDeadline(generation.promise, new Date(run.opened_at).getTime(), generation.abort);
-    // A different server may own generation. The server job reads only this one run,
-    // and the deadline still bounds entry; phones never poll.
-    else while (!lines && Date.now() < new Date(run.opened_at).getTime() + 20_000) {
-      const state = (await this.database.query<{ lines: BanterLine[] | null; status: string }>(
-        `SELECT lines,status FROM starter_onboarding_runs WHERE id=$1`, [run.id])).rows[0];
-      if (!state || state.status === 'ready') { lines = state?.lines ?? null; break; }
-      await delay(200);
-    }
     this.generations.delete(run.id);
     const active = await this.database.query(`UPDATE starter_onboarding_runs SET status='playing' WHERE id=$1 AND status<>'complete'`, [run.id]);
     if (!active.rowCount) return;
@@ -119,7 +108,6 @@ export class StarterOnboardingService {
       if (lines) for (const line of lines) {
         await this.database.query(`INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
           VALUES($1,$2,$3,'working',$2) ON CONFLICT DO NOTHING`, [roomId, run.id, line.agentId]);
-        await delay(STARTER_BANTER_TYPING_MS);
         await this.database.transaction(async db => {
           const active = await db.query(`SELECT 1 FROM starter_onboarding_runs WHERE id=$1 AND status='playing' FOR UPDATE`, [run.id]);
           if (!active.rowCount) return;

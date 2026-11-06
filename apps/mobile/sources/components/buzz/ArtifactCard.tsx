@@ -129,7 +129,7 @@ export const ArtifactCard = React.memo(function ArtifactCard({
       >
         <View style={styles.docRow} testID="artifact-document-body">
           <Text style={styles.docGlyph}>▧</Text>
-          <Text style={styles.docName}>
+          <Text numberOfLines={1} style={styles.docName}>
             {activeAttachment.name} · {formatAttachmentSize(activeAttachment.size)}
           </Text>
         </View>
@@ -249,10 +249,10 @@ function ArtifactCardShell({
     <View style={styles.card} testID={testID}>
       {children}
       <View style={styles.caption}>
-        <Text style={styles.captionTitle} testID="artifact-title">
+        <Text numberOfLines={1} style={styles.captionTitle} testID="artifact-title">
           {title}
         </Text>
-        <Text style={styles.captionKind} testID="artifact-kind-line">
+        <Text numberOfLines={1} style={styles.captionKind} testID="artifact-kind-line">
           {kindLine}
         </Text>
       </View>

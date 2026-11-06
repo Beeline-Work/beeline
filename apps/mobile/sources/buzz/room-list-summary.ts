@@ -1,3 +1,7 @@
+/** Preview length that fills one line on the narrowest shipped phone without
+ * the trailing ellipsis landing mid-word on every row. */
+const PREVIEW_MAX_CHARS = 120;
+
 /**
  * Lines that are machine plumbing and must never reach a person-facing
  * preview. These mirror the shapes `summarizeGitFailure`
@@ -93,7 +97,7 @@ function flattenMarkdown(line: string): string {
  * message contains nothing a person would want to read, which the caller
  * treats as "not a preview" so the previous readable message keeps the row.
  */
-export function roomPreviewText(raw: string): string {
+export function roomPreviewText(raw: string, limit = PREVIEW_MAX_CHARS): string {
   const withoutCode = raw.replace(/```[\s\S]*?```/g, ' ').replace(/```[\s\S]*$/, ' ');
   const readable = withoutCode
     .split('\n')
@@ -105,5 +109,21 @@ export function roomPreviewText(raw: string): string {
     .join(' ');
   const collapsed = shortenShas(readable).replace(/\s+/g, ' ').trim();
   if (!collapsed || isMachinePreview(collapsed)) return '';
-  return collapsed;
+  return collapsed.length > limit ? `${collapsed.slice(0, limit - 1).trimEnd()}…` : collapsed;
+}
+
+/**
+ * Uppercase mono attribution for an index preview line — the same "who said
+ * this" label the transcript rows carry, so a Room row and the Room it opens
+ * read as one system.
+ *
+ * An author outside the current Workspace roster resolves to no name, and the
+ * caller renders the preview unattributed: a shouty truncated npub is worse
+ * than no label, and it is the one case where the index has nothing true to
+ * say about who spoke.
+ */
+function previewAuthorLabel(name: string | undefined, maxChars = 12): string {
+  const upper = name?.trim().toUpperCase();
+  if (!upper) return '';
+  return upper.length > maxChars ? `${upper.slice(0, maxChars - 1)}…` : upper;
 }

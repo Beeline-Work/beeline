@@ -6,7 +6,7 @@ import { createBeelineServer } from './server.js';
 import type { PhoneService } from './phone-service.js';
 import type { DaemonService } from './daemon-service.js';
 import type { LiveHub } from './live.js';
-import { deliverXSignups, dashboardXAds, nextXSignupDeliveryAt } from './x-ads.js';
+import { deliverXSignups, dashboardXAds } from './x-ads.js';
 import { syncXAdReports, type XAdsGet } from './x-ad-reports.js';
 
 describe('X web attribution user path (feature, not a defect report)', () => {
@@ -139,15 +139,7 @@ describe('X web attribution user path (feature, not a defect report)', () => {
       ).toEqual([]);
     },
   );
-  it('derives the next delivery only from a real pending row and parks missing credentials',async()=>{
-    expect(await nextXSignupDeliveryAt(db,'fixture')).toBeNull();
-    const first=await signup('github','deadline');
-    const due=await nextXSignupDeliveryAt(db,'fixture');expect(due).toBeInstanceOf(Date);
-    const query=vi.spyOn(db,'query');
-    expect(await nextXSignupDeliveryAt(db,'')).toBeNull();expect(query).not.toHaveBeenCalled();query.mockRestore();
-    await db.query(`UPDATE x_ad_signups SET sent_at=now() WHERE identity_id=$1`,[first.identityId]);
-    expect(await nextXSignupDeliveryAt(db,'fixture')).toBeNull();
-  });
+
   it('authenticates explicit report refresh before parsing or collecting provider state',async()=>{
     const refresh=(body:unknown,bearer='wrong')=>fetch(`${base}/v1/admin/dashboard/refresh`,{
       method:'POST',headers:{authorization:`Bearer ${bearer}`,'content-type':'application/json'},body:JSON.stringify(body)});
@@ -157,7 +149,7 @@ describe('X web attribution user path (feature, not a defect report)', () => {
     expect((await refresh({scope:'x-reports',poll:true},'dashboard-fixture-secret')).status).toBe(400);
     expect(query).not.toHaveBeenCalled();query.mockRestore();
   });
-  it('retries rejected/ambiguous delivery with the same conversion ID and never turns a UTM-only visit into an X conversion', async () => {
+  it('attempts each conversion once and never turns a UTM-only visit into an X conversion', async () => {
     const first = await signup('github', 'retry');
     const send = vi
       .fn<typeof fetch>()
@@ -165,8 +157,8 @@ describe('X web attribution user path (feature, not a defect report)', () => {
       .mockResolvedValue(new Response('{"data":{"conversions_processed":1}}'));
     expect(await deliverXSignups(db, 'fixture', send)).toBe(0);
     expect(await deliverXSignups(db, 'fixture', send)).toBe(0);
-    await db.query(`UPDATE x_ad_signups SET next_attempt_at=now()-interval '1 minute'`);
-    expect(await deliverXSignups(db, 'fixture', send)).toBe(1);
+    expect(send).toHaveBeenCalledOnce();
+    expect((await db.query('SELECT delivery_failed FROM x_ad_signups')).rows).toEqual([{ delivery_failed: true }]);
     for (const call of send.mock.calls)
       expect(JSON.parse(call[1]!.body as string).conversions[0].conversion_id).toBe(
         first.xSignup.conversionId,

@@ -93,7 +93,7 @@ export function createDashboardServices(
   let pending: Promise<ServiceRow[]> | undefined;
   async function json(url: string, key: string, body?: object): Promise<Record<string, unknown>> {
     const response = await fetchImpl(url, {
-      method: body ? 'POST' : 'GET', redirect: 'error', signal: AbortSignal.timeout(TIMEOUT_MS),
+      method: body ? 'POST' : 'GET', redirect: 'error',
       headers: { Authorization: `Bearer ${key}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
@@ -170,4 +170,3 @@ export function createDashboardServices(
     return { cacheSeconds: CACHE_MS / 1000, services: await pending };
   };
 }
-

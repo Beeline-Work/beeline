@@ -36,7 +36,7 @@ describe('actual activation registration and final socket enqueue',()=>{
       VALUES($1,$2,$3,NULL,'socket-turn','input','system',$1,'synthetic-source',0,'claimed',$4,now()+interval '1 day')`,
       [identity.commandId,room,agent,identity.generationId]);
     const live=new LiveHub();daemon=new DaemonService(db,live);
-    const presence={instanceId:'synthetic-activation',holdServerConnection:()=>()=>undefined,
+    const presence={instanceId:'synthetic-activation',holdServerConnection:()=>()=>undefined,renewLease:async()=>undefined,
       claimConnection:async(id:string,input:{connectionId:string})=>{
         epoch++;await db.query(`INSERT INTO agent_connections(agent_id,connection_id,epoch,instance_id) VALUES($1,$2,$3,'activation-test')
           ON CONFLICT(agent_id) DO UPDATE SET connection_id=EXCLUDED.connection_id,epoch=EXCLUDED.epoch,released_at=NULL`,[id,input.connectionId,epoch]);return epoch;

@@ -378,7 +378,7 @@
       "why": "Repository link shown in the app."
     },
     {
-      "file": "packages/api-contract/src/phone-guards.ts",
+      "file": "packages/api-contract/src/phone-guards-read-choice-card.ts",
       "kind": "origin:github.com",
       "count": 1,
       "fate": "link",
@@ -497,7 +497,7 @@
       "why": "RoomViewClient HTTP reads bundled through the @beeline/buzz-client index; phone Room reads move to the main live socket."
     },
     {
-      "file": "packages/api-contract/src/system-message-catalog.ts",
+      "file": "packages/api-contract/src/system-message-catalog-daemon-service.ts",
       "kind": "origin:github.com",
       "count": 1,
       "fate": "link",

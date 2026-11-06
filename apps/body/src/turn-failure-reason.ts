@@ -22,6 +22,10 @@ export function redactToolDetail(value: string): string {
       '"$2": "[REDACTED]"',
     )
     .replace(
+      /\b(password|passwd)(\s+)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s]+)/gi,
+      '$1$2[REDACTED]',
+    )
+    .replace(
       /\b(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*=(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+)/g,
       (assignment) => `${assignment.slice(0, assignment.indexOf('='))}=[REDACTED]`,
     )

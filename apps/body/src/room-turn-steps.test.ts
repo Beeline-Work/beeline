@@ -34,6 +34,27 @@ describe('roomReplySteps', () => {
     expect(JSON.stringify(rows)).not.toContain('planted-secret');
   });
 
+  it.each(['.netrc', '_netrc'])('hides synthetic credential-file reads of %s before persistence', (filename) => {
+    const rows = roomReplySteps([{ kind: 'tool', call: {
+      title: 'read_file', rawInput: { path: `/synthetic/${filename}` },
+      content: 'machine example.invalid login synthetic password planted-netrc-password',
+    } }]);
+    expect(rows[0]!.output).toBe('Output hidden: contains a secret.');
+    expect(JSON.stringify(rows)).not.toContain('planted-netrc-password');
+  });
+
+  it.each([
+    'machine example.invalid login synthetic password planted-netrc-password',
+    'machine example.invalid\nlogin synthetic\npassword\nplanted-netrc-password',
+    'machine example.invalid login synthetic passwd planted-netrc-password',
+    'machine example.invalid\nlogin synthetic\npasswd\nplanted-netrc-password',
+  ])('redacts synthetic netrc passwords before persistence: %s', (content) => {
+    const rows = roomReplySteps([{ kind: 'tool', call: { title: 'exec_command', content } }]);
+    expect(JSON.stringify(rows)).not.toContain('planted-netrc-password');
+    expect(rows[0]!.output).toContain('[REDACTED]');
+    expect(rows[0]!.output).toContain('machine example.invalid');
+  });
+
   it('keeps every note whole and in order between the tools', () => {
     expect(roomReplySteps([note('First.'), tool('a'), note('Second.'), tool('b')])).toEqual([
       { kind: 'note', title: 'Note', text: 'First.' },

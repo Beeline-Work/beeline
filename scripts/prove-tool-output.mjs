@@ -21,6 +21,8 @@ try {
     {kind:'tool',call:{title:'read_file',content:[{type:'text',text:'file contents\ntoken=planted-secret\n'+'x'.repeat(5000)}]}},
     {kind:'tool',call:{title:'fetch_credential',content:'planted-secret'}},
     {kind:'tool',call:{title:'old empty row'}},
+    ...['.netrc', '_netrc'].map(filename => ({kind:'tool',call:{title:'read_file',rawInput:{path:`/synthetic/${filename}`},content:'machine example.invalid login synthetic password planted-netrc-password'}})),
+    ...['password', 'passwd'].flatMap(keyword => [' ', '\n'].map(separator => ({kind:'tool',call:{title:'exec_command',content:['machine example.invalid','login synthetic',keyword,'planted-netrc-password'].join(separator)}}))),
   ], {pubkey:viewer,name:'Reader'});
   await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,activity) VALUES($1,$2,$3,'','activity',$4::jsonb)`, [message,room,agent,JSON.stringify(activity)]);
   const list = await readRoomTools(db,{roomId:room,anchor:message},viewer);
@@ -33,7 +35,12 @@ try {
   assert(output.output.endsWith('[cut off]'));
   assert.equal(secret.output,'Output hidden: contains a secret.');
   assert.equal(empty.output,undefined);
+  const netrcRows = tapped.messages[0].activity.slice(3);
+  assert(!JSON.stringify(netrcRows).includes('planted-netrc-password'));
+  assert(netrcRows.slice(0,2).every(row=>row.output==='Output hidden: contains a secret.'));
+  assert(netrcRows.slice(2).every(row=>row.output.includes('[REDACTED]')));
   console.log('TOOL-OUTPUT-1 PASS: stored redacted output is readable on tap; lists omit bodies; secret and empty calls have safe states.');
+  console.log('TOOL-OUTPUT-NETRC-1 PASS: tapped persisted credential reads are hidden; single-line and multiline netrc passwords are redacted.');
 } finally {
   await db.close();
 }

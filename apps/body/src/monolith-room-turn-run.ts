@@ -1,5 +1,5 @@
 import { runServerCommandIntake } from './server-command-intake.js';
-import { redactTurnError } from './turn-failure-reason.js';
+import { turnErrorDetail } from './turn-failure-reason.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
 
 
@@ -33,7 +33,7 @@ import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
         onSubscriptionState: ctx.options.onSubscriptionState,
         onError: (error) => {
           ctx.options.onIntakeError?.(error);
-          console.error('[thin-core] Room command failed', redactTurnError(error));
+          console.error('[thin-core] Room command failed', turnErrorDetail(error));
         },
         // Marks this loop busy the instant it attempts to claim a real
         // turn, before the claim's own network round trip and before

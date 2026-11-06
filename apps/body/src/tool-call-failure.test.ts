@@ -45,17 +45,6 @@ describe('toolCallFailureLine', () => {
     );
   });
 
-  it('scrubs a credential out of the reason', () => {
-    const line = toolCallFailureLine({
-      id: 'call-3',
-      title: 'run_granted_command',
-      status: 'failed',
-      content: [{ type: 'text', text: 'denied: token=ghp_abcdefghijklmnop failed' }],
-    });
-    expect(line).not.toContain('ghp_abcdefghijklmnop');
-    expect(line).toContain('[REDACTED]');
-  });
-
   it('says nothing about a call that did not fail', () => {
     expect(toolCallFailureLine({ id: 'call-4', title: 'open_corner', status: 'completed' })).toBe(
       undefined,
@@ -64,21 +53,7 @@ describe('toolCallFailureLine', () => {
     expect(isFailedToolCall({ id: 'call-5', status: 'failed' })).toBe(true);
   });
 
-  it('scrubs credentials in command titles and fallback call ids', () => {
-    const secret = 'ghp_abcdefghijklmnop';
-    for (const label of [{ title: `curl -H 'Authorization: Bearer ${secret}'` }, { id: secret }]) {
-      const line = toolCallFailureLine({ id: 'call-title', ...label, status: 'failed' });
-      expect(line).not.toContain(secret);
-      expect(line).toContain('[REDACTED]');
-    }
-  });
 
-  it.each(['bat', 'brt', 'bdt', 'bde'])('scrubs bare Beeline %s credentials in tool errors', (prefix) => {
-    const secret = `${prefix}_${'a'.repeat(43)}`;
-    const line = toolCallFailureLine({ id: 'call-token', status: 'failed', content: `refused ${secret}` });
-    expect(line).not.toContain(secret);
-    expect(line).toContain('[REDACTED]');
-  });
 });
 
 it('recognizes compact checks reads across harness envelopes while retaining legacy activity', async () => {

@@ -4,7 +4,7 @@ import { classifyTurnSilence, type TurnReceiptReasonKind } from '@beeline/api-co
 /**
  * One distilled line for a failed turn receipt. The Room carries a plain
  * failure; the full error stays in the daemon log. Never a stack trace,
- * never a credential, at most 200 chars.
+ * at most 200 chars.
  */
 export const TURN_FAILURE_REASON_MAX = 200;
 
@@ -45,9 +45,9 @@ export function redactToolDetail(value: string): string {
     );
 }
 
-/** Keep diagnostic stacks in the helper journal without their credential values. */
-export function redactTurnError(error: unknown): string {
-  return redactToolDetail(error instanceof Error ? error.stack || error.message : String(error));
+/** Preserve diagnostic stacks in the helper journal. */
+export function turnErrorDetail(error: unknown): string {
+  return error instanceof Error ? error.stack || error.message : String(error);
 }
 
 export function distillTurnFailureReason(error: unknown): DistilledTurnFailureReason {
@@ -76,11 +76,11 @@ export function distillTurnFailureReason(error: unknown): DistilledTurnFailureRe
   const firstLine = informative[0] ?? '';
   const stripped = firstLine.replace(/^(?:[A-Za-z]*Error|Error):\s*/, '').replace(/\s+/g, ' ');
   const classified = classifyTurnSilence(
-    redactToolDetail(informative.join(' ')).replace(/\s+/g, ' '),
+    informative.join(' ').replace(/\s+/g, ' '),
   );
   const clean = classified.kind === 'hiccup' && classified.fault?.startsWith("it couldn't start:")
     ? classified.fault
-    : redactToolDetail(stripped).trim();
+    : stripped.trim();
   const text = !clean
     ? 'turn failed'
     : clean.length > TURN_FAILURE_REASON_MAX

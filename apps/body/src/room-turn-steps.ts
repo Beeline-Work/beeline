@@ -30,7 +30,7 @@ function notePieces(text: string): string[] {
 
 /**
  * A Room turn's steps as the activity its reply carries: each earlier text
- * run as a note and each tool call as a redacted one-line ledger row, in the
+ * run as a note and each tool call as a one-line ledger row, in the
  * turn's own order.
  *
  * Notes are the agent's words and are never cut or dropped. A run longer

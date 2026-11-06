@@ -403,11 +403,6 @@ Luna and a deterministic per-workspace intro message together. An existing Luna,
 including a removed one, is never duplicated. It makes no Fly or model calls.
 Normal subscribed membership notifications still apply to other agents.
 
-`npm run prove:onboarding:welcome` exercises the built MCP action, active-command
-service, and phone-read welcome → explanation → game → invite path in isolation.
-PGlite, in-memory storage, and a minimal HTTP adapter stand in for production;
-this proof does not claim a native app or live model run.
-
 ## Next-morning check-in
 
 The one-time outside-person check-in uses a normal starter-agent command, Room reply and push delivery. Configuration, email behavior and isolated proof: [next-morning check-in](next-day-checkin.md).

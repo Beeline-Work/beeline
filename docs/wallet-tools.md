@@ -210,9 +210,3 @@ Each successful signature writes a Wallet audit card with the agent, account,
 domain, primary type and payload SHA-256. The reusable signature is returned only
 to the caller; it is not stored in the audit. Signing is not recorded as a
 transfer and does not change a balance.
-
-Run `npm run prove:wallet-tools`
-to exercise the built client through a local HTTP server with an unfunded fake
-CDP source. It demonstrates owner wallet reads, Workbench connection and harmless
-Exchange-domain signing with chainId 1337, and prints the result. It cannot
-establish live CDP policy acceptance. No orders, deposits or transfers are sent.

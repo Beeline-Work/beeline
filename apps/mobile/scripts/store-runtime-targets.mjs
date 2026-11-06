@@ -30,11 +30,11 @@ export function storeRuntimeTargets({ pins, stores, previouslyLive = [], previou
   return result;
 }
 
-export function playLiveBuilds(payload) {
-  if (!Array.isArray(payload?.releases)) throw new Error('Unreadable Play production releases');
+export function playLiveBuilds(payload, track = 'production') {
+  if (!Array.isArray(payload?.releases)) throw new Error(`Unreadable Play ${track} releases`);
   return payload.releases.filter(r => r.releaseLifecycleState === 'RELEASE_LIFECYCLE_STATE_PUBLISHED')
     .flatMap(r => {
-      if (r.track !== 'production' || !Array.isArray(r.activeArtifacts)) throw new Error('Invalid Play production release');
+      if (r.track !== track || !Array.isArray(r.activeArtifacts)) throw new Error(`Invalid Play ${track} release`);
       return r.activeArtifacts.map(a => String(a.versionCode));
     });
 }

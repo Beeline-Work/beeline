@@ -61,11 +61,17 @@ export async function readStores({ builds, env = process.env, fetchImpl = fetch,
     try {
       if (platform === 'android') {
         const token = await mintAccessToken(env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON, { fetchImpl });
-        const response = await fetchImpl('https://androidpublisher.googleapis.com/androidpublisher/v3/applications/app.usebeeline/tracks/production/releases', {
-          headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(30_000),
-        });
-        if (!response.ok) throw new Error(`Play production HTTP ${response.status}`);
-        numbers = playLiveBuilds(await response.json());
+        // Nightly's Play beta binary can have a runtime not yet in production.
+        // Include both tracks so every installed dogfood phone receives OTA.
+        const tracks = env.BEELINE_RELEASE_CHANNEL === 'nightly' ? ['production', 'beta'] : ['production'];
+        for (const track of tracks) {
+          const response = await fetchImpl(`https://androidpublisher.googleapis.com/androidpublisher/v3/applications/app.usebeeline/tracks/${track}/releases`, {
+            headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(30_000),
+          });
+          if (!response.ok) throw new Error(`Play ${track} HTTP ${response.status}`);
+          numbers.push(...playLiveBuilds(await response.json(), track));
+        }
+        numbers = [...new Set(numbers)];
       } else {
         const appleEnv = env.EXPO_ASC_API_KEY_P8?.includes('-----BEGIN')
           ? { ...env, EXPO_ASC_API_KEY_P8: Buffer.from(env.EXPO_ASC_API_KEY_P8).toString('base64') } : env;

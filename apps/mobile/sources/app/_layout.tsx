@@ -49,7 +49,6 @@ import {
   whenInitialLandingResolved,
 } from '@/navigation/initial-landing';
 import { createNotificationNavigator } from '@/navigation/notification-stack';
-import { armLaunchSplash } from '@/navigation/splash-watchdog';
 import { useTauriZoom } from '@/hooks/useTauriZoom';
 import { useTauriDrag } from '@/hooks/useTauriDrag';
 import { BrowserNavigationShortcuts } from '@/hooks/useBrowserNavigationShortcuts';
@@ -63,6 +62,7 @@ import {
   installWebPushForegroundResponder,
 } from '@/push/web-push-registration';
 import { subscribeClientReset } from '@/sync/client-reset';
+import { subscribePushTokenChanges } from '@/push/push-token-events';
 import { startPushRegistrationLifecycle } from '@/push/push-registration-lifecycle';
 import { reportRunningUpdateReceipt } from '@/push/update-receipt';
 import { getOpenBuzzChannelId } from '@/buzz/open-room-tracker';
@@ -171,7 +171,7 @@ import { RuntimeErrorView } from '@/components/buzz/RuntimeErrorBoundary';
 
 /** @public Expo Router consumes this named export through its filesystem convention. */
 export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
-  React.useEffect(() => { launchSplash.release(); }, []);
+  React.useEffect(() => { void SplashScreen.hideAsync(); }, []);
   return <RuntimeErrorView error={error} retry={() => void retry()} scope="app" />;
 }
 
@@ -182,12 +182,6 @@ SplashScreen.setOptions({
   duration: 0,
 });
 SplashScreen.preventAutoHideAsync();
-// Armed outside React: a root render error that unmounts the layout, or fonts
-// that never settle, must not keep the splash over the app.
-const launchSplash = armLaunchSplash(() => void SplashScreen.hideAsync(), {
-  log: (message) => console.warn(message),
-});
-
 // Set window background color - now handled by Unistyles
 // SystemUI.setBackgroundColorAsync('white');
 
@@ -276,7 +270,7 @@ export default function RootLayout() {
   const [drawn, setDrawn] = React.useState(false);
   const firstLayout = React.useRef<(() => void) | null>(null);
   const onContentLayout = React.useCallback(() => {
-    if (!firstLayout.current) firstLayout.current = afterFirstFrame(() => setDrawn(true));
+    if (!firstLayout.current) firstLayout.current = afterFirstFrame(() => { void SplashScreen.hideAsync(); setDrawn(true); });
   }, []);
   React.useEffect(() => () => { firstLayout.current?.(); firstLayout.current = null; }, []);
   useTauriZoom();
@@ -331,9 +325,6 @@ export default function RootLayout() {
   }
   React.useEffect(() => {
     void fontInitialization.finally(() => {
-      // The deck may already be laid out beneath the splash. Do not make
-      // revealing it wait for another root render and passive effect.
-      launchSplash.release();
       setInitialized(true);
     });
   }, []);
@@ -352,7 +343,7 @@ export default function RootLayout() {
       if (response?.actionIdentifier === Notifications.DEFAULT_ACTION_IDENTIFIER &&
           await routeVoiceResumeNotification(resumeUrl, async () => {
             await rootReady.current!.promise;
-            while (await whenInitialLandingResolved() === 'timeout') { /* Wait for the landing decision's next event. */ }
+            await whenInitialLandingResolved();
             suppressInitialLandingNavigation();
           })) {
         await Notifications.clearLastNotificationResponseAsync();
@@ -526,6 +517,8 @@ function BackgroundEffects() {
       stop = startPushRegistrationLifecycle({
         loadIdentity: loadBuzzIdentity,
         subscribeIdentityChange: subscribeClientReset,
+        subscribeTokenChange: subscribePushTokenChanges,
+        subscribeRecovery: listener => sharedLiveConnection().subscribeConnected(listener),
         subscribeForeground: (listener) => {
           const subscription = AppState.addEventListener('change', (state) => {
             if (state === 'active') listener();

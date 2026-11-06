@@ -151,22 +151,6 @@ function attachmentPreview(
   return attachment.mimeType.toLowerCase().startsWith('image/') ? 'Image' : 'Attachment';
 }
 
-/**
- * Whether the row's trailing brass square is lit. One square, one meaning:
- * this Room wants the viewer — a message newer than their read mark, or a
- * corner waiting on a human (`agentState === 'needs-you'`). A mention of the
- * viewer is attention only as part of unread: `mentionsViewer` is a fact about
- * the latest message's words and never clears on read. A working agent
- * is not attention; the square stays dark while it works. Unread is never
- * hidden behind agent state: an unread Room lights the square whatever its
- * agents are doing.
- */
-function roomRowNeedsAttention(
-  item: Pick<ChatListItem, 'unread' | 'agentState' | 'latestMessage'>,
-): boolean {
-  return item.unread || item.agentState === 'needs-you';
-}
-
 /** The one gold replacement line for a Room that asks the viewer to act. */
 export function roomRowAttentionReason(
   item: Pick<ChatListItem, 'unread' | 'agentState' | 'attentionReason' | 'latestMessage'>,

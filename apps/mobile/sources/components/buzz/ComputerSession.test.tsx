@@ -444,3 +444,19 @@ it('does not open an external browser when fresh card access is refused', async 
   expect(Modal.alert).toHaveBeenCalledWith('Could not open browser', 'The live browser is unavailable. Try again.');
   await act(async () => tree!.unmount());
 });
+
+it('settles an unfinished preview capture when the session ends', async () => {
+  phoneOperation.mockImplementationOnce(() => new Promise(() => {}));
+  let tree!: ReturnType<typeof create>;
+  await act(async () => { tree = create(<ComputerSessionCard messageId="message-1" roomId="computer-test" session={session} />); });
+  try {
+    const message = tree.root.findByType('WebView').props.onMessage;
+    const open = tree.root.findAllByType('Pressable').find((node: { props: Record<string, any> }) => node.props.testID === 'computer-session-open')!;
+    await act(async () => { await open.props.onPress(); });
+    const shown = vi.mocked(Modal.show).mock.calls[0]![0] as any;
+    const capture = shown.props.session.previewFrame;
+    expect(capture).toBeInstanceOf(Promise);
+    await act(async () => message({ nativeEvent: { data: JSON.stringify({ type: 'computer-ended', id: session.id }) } }));
+    await expect(capture).resolves.toBeNull();
+  } finally { await act(async () => tree.unmount()); }
+});

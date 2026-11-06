@@ -248,14 +248,13 @@ export function startDesktopNotifications(): () => void {
         );
         if (nextCornerKey !== cornerKey) {
           const marks = cornerParents.map((room) => cornerReadMark(room.room.id));
-          const cornerReads = await Promise.allSettled(
+          const cornerReads = await Promise.all(
             cornerParents.map((room) => reader.corners(room.room.id)),
           );
           if (disposed || current !== generation) return;
-          cornerReads.forEach((result, index) => {
-            if (result.status === 'fulfilled')
-              applyCornerListRead(cornerParents[index]!.room.id, result.value, marks[index]!);
-          });
+          cornerReads.forEach((result, index) =>
+            applyCornerListRead(cornerParents[index]!.room.id, result, marks[index]!),
+          );
           cornerKey = nextCornerKey;
         }
         const filters = [

@@ -22,6 +22,42 @@ function draft(text: string, request = requestId): Extract<LiveOverlay, { kind: 
 
 afterEach(() => store.reset());
 
+it('coalesces complete drafts on the host frame and cancels work when the visit hides', () => {
+  const frames = new Map<number, () => void>();
+  let next = 0;
+  const visit = createLiveDraftDrainStore({ clock: {
+    requestFrame(callback) { frames.set(++next, callback); return next; },
+    cancelFrame(id) { frames.delete(id); },
+  } });
+  const painted: string[] = [];
+  visit.attach('lane', { paint: value => painted.push(value.text), replace: value => painted.push(value.text) });
+  visit.publish('lane', 'one');
+  visit.publish('lane', 'one whole answer');
+  expect(painted).toEqual([]);
+  expect(frames.size).toBe(1);
+  const frame = frames.values().next().value!;
+  frames.clear(); frame();
+  expect(painted).toEqual(['one whole answer']);
+  visit.publish('lane', 'one whole answer, continued');
+  visit.setActive(false);
+  expect(frames.size).toBe(0);
+  visit.setActive(true);
+  expect(painted.at(-1)).toBe('one whole answer, continued');
+});
+
+it('keeps provisional text in its own Room visit without evicting another active lane', () => {
+  const visit = createLiveDraftDrainStore();
+  for (let index = 0; index < 40; index++) {
+    visit.publish(String(index), `answer ${index}`);
+    visit.finalize(String(index));
+  }
+  expect(visit.takeProvisionalDraft('0')).toBe('answer 0');
+  expect(visit.takeProvisionalDraft('0')).toBeUndefined();
+  expect(createLiveDraftDrainStore().takeProvisionalDraft('39')).toBeUndefined();
+  visit.reset();
+  expect(visit.getReceived('39')).toBe('');
+});
+
 describe('draft baseline initialization', () => {
   it('does not create a transcript lane for Ruby’s empty baseline with no durable message', () => {
     const current: readonly LiveOverlay[] = [];

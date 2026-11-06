@@ -106,8 +106,8 @@ function ToolLedgerLineRow({
         accessibilityHint: 'Opens this call’s output' } : undefined}>
       <InlineRow style={styles.toolCopy}>
         {!hasNamedAction || line.outcome === 'failure' ? <Text style={[styles.toolVerb, line.outcome === 'failure' && styles.groupFailed]}>{verb}</Text> : null}
-        <Text ellipsizeMode="middle" numberOfLines={1} style={styles.callObject}>{line.label}</Text>
-        {line.reason ? <Text numberOfLines={1} style={styles.callReason}>{line.reason}</Text> : null}
+        <Text style={styles.callObject}>{line.label}</Text>
+        {line.reason ? <Text style={styles.callReason}>{line.reason}</Text> : null}
         {duration ? <Text style={styles.callDuration}>{duration}</Text> : null}
         {showVerdict && hasNamedAction && line.outcome === 'failure' ? <Text accessibilityElementsHidden style={[styles.callVerdictText, styles.groupFailed]} testID={`activity-verdict-${line.id}`}>✗</Text> : null}
         {showVerdict && line.outcome === 'running' ? <View testID={`activity-verdict-${line.id}`}><BeelineMarkSpinner live /></View> : null}
@@ -160,7 +160,6 @@ function ToolRunGroupRow({
   onPressLine?: (line: ToolLedgerLine) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [showAll, setShowAll] = useState(false);
   const [loaded,setLoaded]=useState<ToolLedgerLine[]>([]);
   const [remoteIndex,setRemoteIndex]=useState(0);
   const [cursor,setCursor]=useState<string|undefined>();
@@ -184,7 +183,7 @@ function ToolRunGroupRow({
   const steps = run.count > 0 || run.notes === 0;
   return (
     <LedgerLogGroup testID={`tool-run-container-${run.id}`}>
-      <LedgerDisclosure expanded={expanded} onPress={() => { if (expanded) setShowAll(false); else if(remote.length&&!loaded.length)load(); setExpanded(value => !value); }}
+      <LedgerDisclosure expanded={expanded} onPress={() => { if(!expanded&&remote.length&&!loaded.length)load(); setExpanded(value => !value); }}
         accessibilityLabel={`${summary}, expandable`} accessibilityState={{ expanded }} rowTestID={`tool-run-group-${run.id}`}>
         {steps ? `${run.count} ${run.count === 1 ? 'step' : 'steps'}` : null}
         {run.failed ? <Text style={styles.groupFailed}>{` · ${run.failed} failed`}</Text> : null}
@@ -192,7 +191,7 @@ function ToolRunGroupRow({
         {duration ? ` · ${duration}` : null}
       </LedgerDisclosure>
       {expanded
-        ? (remote.length||showAll || lines.length <= 3 ? lines : lines.slice(0, 2)).map((line, index) => (
+        ? lines.map((line, index) => (
             <ToolLedgerLineRow
               key={line.id}
               line={line}
@@ -202,11 +201,11 @@ function ToolRunGroupRow({
             />
           ))
         : null}
-      {expanded && (hasRemote||!showAll&&lines.length>3) ? <LedgerDisclosure
+      {expanded && hasRemote ? <LedgerDisclosure
         expanded={false} accessibilityState={{ expanded: false }}
-        accessibilityLabel={`${run.lines.length - 2} more steps`} onPress={() => hasRemote?load():setShowAll(true)}
+        accessibilityLabel={`${run.lines.length - 2} more steps`} onPress={load}
         rowTestID={`tool-run-more-${run.id}`}>
-        {loading?'Loading…':failed?'Retry':hasRemote?`${Math.max(0,run.count-loaded.length)} more`:`${lines.length-2} more`}
+        {loading?'Loading…':failed?'Retry':`${Math.max(0,run.count-loaded.length)} more`}
       </LedgerDisclosure> : null}
     </LedgerLogGroup>
   );

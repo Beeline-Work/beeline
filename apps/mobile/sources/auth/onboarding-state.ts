@@ -181,10 +181,6 @@ export async function waitForAuthCallbackResult({
   }
 }
 
-async function waitForAuthCallback(input: WaitForAuthCallbackInput): Promise<string> {
-  return (await waitForAuthCallbackResult(input)).url;
-}
-
 /** React Native rejects an unanswerable fetch with a bare TypeError, not a typed error. */
 function isNetworkFailure(error: unknown): boolean {
   return (

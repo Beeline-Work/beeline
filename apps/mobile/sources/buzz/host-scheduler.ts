@@ -15,18 +15,12 @@ export function cancelScheduledAnimationFrame(handle: number): void {
   globalThis.cancelAnimationFrame(handle);
 }
 
-/**
- * Let the host paint a React update before more JavaScript runs.
- * Frame callbacks resume as microtasks, which still run before that paint,
- * so the work continues on a timer after the frame callbacks return.
- * Tests with no frame pump yield a macrotask instead of hanging.
- */
+/** Resume after a host frame has had an opportunity to paint the update. */
 export function yieldToNextPaint(): Promise<void> {
-  return new Promise((resolve) => {
-    const resume = () => setTimeout(resolve, 0);
+  return new Promise(resolve => {
+    const resume = () => resolve();
     if (scheduleAnimationFrame(() => {
       if (scheduleAnimationFrame(resume) === false) resume();
-    })) return;
-    setTimeout(resolve, 0);
+    }) === false) resume();
   });
 }

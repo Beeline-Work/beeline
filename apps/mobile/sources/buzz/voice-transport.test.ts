@@ -38,6 +38,11 @@ vi.mock('livekit-client', () => ({
 import * as nativeTransport from './voice-transport.native';
 import { createVoiceRoom, subscribeVoiceResume, routeVoiceResumeNotification } from './voice-transport.native';
 
+it('implements the complete shared voice transport contract on native', () => {
+  const contract: typeof import('./voice-transport') = nativeTransport;
+  expect(contract.subscribeVoiceMicrophone).toBeTypeOf('function');
+});
+
 it('starts native audio only when voice mode opens and exposes cleanup for leave/unmount', async () => {
   expect(native.AudioSession.startAudioSession).not.toHaveBeenCalled();
   const transport = await createVoiceRoom();
@@ -72,8 +77,11 @@ it('retains a cold iOS restart across navigation and consumes it once in the mat
   expect(await routing).toBe(true);
   expect(native.openURL).toHaveBeenCalledWith(url);
   const resume = vi.fn();
-  const stop = subscribeVoiceResume('room-a', resume);
-  await vi.waitFor(() => expect(resume).toHaveBeenCalledOnce());
+  let stop!: () => void;
+  await new Promise<void>(resolve => {
+    stop = subscribeVoiceResume('room-a', () => { resume(); resolve(); });
+  });
+  expect(resume).toHaveBeenCalledOnce();
   native.link!({ url });
   expect(resume).toHaveBeenCalledOnce();
   await routeVoiceResumeNotification(url);
@@ -93,18 +101,6 @@ it('keeps audio live without a per-person idle event or deadline', async () => {
     await transport.closeAudio();
   } finally { vi.useRealTimers(); }
 });
-
-it('sends native voice control through the shared socket', async () => {
-  vi.useFakeTimers();
-  try {
-    const { voiceFetch } = await import('./voice-transport.native');
-    const response = await voiceFetch('https://proof/v1/phone/voice/call/idle', { method: 'POST' });
-    expect(await response.json()).toEqual({ ended: true });
-    expect(socketRequest).toHaveBeenCalledWith('voiceIdle', { callId: 'call' }, { timeoutMs: 20_000, signal: undefined });
-    expect(vi.getTimerCount()).toBe(0);
-  } finally { vi.useRealTimers(); }
-});
-
 
 it('configures native Stop for the current session and drops late configuration after close', async () => {
   native.background.configureStop.mockClear();

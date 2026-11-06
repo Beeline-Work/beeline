@@ -37,7 +37,7 @@ describe('roomReplySteps', () => {
   it.each(['.netrc', '_netrc', '.pgpass', '.git-credentials', '.npmrc', '.pypirc', '.docker/config.json', '.aws/credentials', '.env', '.envrc', '.env.local', 'id_rsa', 'id_ed25519', 'service.pem', 'service.key'])('hides synthetic credential-file reads of %s before persistence', (filename) => {
     for (const call of [
       { title: 'read_file', rawInput: { path: `/synthetic/${filename}` } },
-      ...['cat', 'head', 'tail', 'less'].map(command => ({ title: 'exec_command', rawInput: { cmd: `${command} /synthetic/${filename}` } })),
+      ...['cat', 'head', 'tail', 'less', 'sed', 'awk', 'xxd', 'cp', 'python -c'].map(command => ({ title: 'exec_command', rawInput: { cmd: `${command} /synthetic/${filename}` } })),
     ]) {
       const rows = roomReplySteps([{ kind: 'tool', call: {
         ...call,
@@ -46,6 +46,15 @@ describe('roomReplySteps', () => {
       expect(rows[0]!.output).toBe('Output hidden: contains a secret.');
       expect(JSON.stringify(rows)).not.toContain('planted-netrc-password');
     }
+  });
+
+  it('hides a synthetic sed pgpass read before persistence', () => {
+    const rows = roomReplySteps([{ kind: 'tool', call: {
+      title: 'exec_command', rawInput: { cmd: "sed -n '1,10p' /synthetic/.pgpass" },
+      content: 'example.invalid:5432:synthetic:reader:planted-pgpass-password',
+    } }]);
+    expect(rows[0]!.output).toBe('Output hidden: contains a secret.');
+    expect(JSON.stringify(rows)).not.toContain('planted-pgpass-password');
   });
 
   it.each([

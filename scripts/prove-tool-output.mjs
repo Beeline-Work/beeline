@@ -23,6 +23,7 @@ try {
     {kind:'tool',call:{title:'old empty row'}},
     ...['.netrc', '_netrc'].map(filename => ({kind:'tool',call:{title:'read_file',rawInput:{path:`/synthetic/${filename}`},content:'machine example.invalid login synthetic password planted-netrc-password'}})),
     ...['password', 'passwd'].flatMap(keyword => [' ', '\n'].map(separator => ({kind:'tool',call:{title:'exec_command',content:['machine example.invalid','login planted-netrc-login',keyword,'planted-netrc-password'].join(separator)}}))),
+    {kind:'tool',call:{title:'exec_command',rawInput:{cmd:"sed -n '1,10p' /synthetic/.pgpass"},content:'example.invalid:5432:synthetic:reader:planted-pgpass-password'}},
   ], {pubkey:viewer,name:'Reader'});
   await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,activity) VALUES($1,$2,$3,'','activity',$4::jsonb)`, [message,room,agent,JSON.stringify(activity)]);
   const list = await readRoomTools(db,{roomId:room,anchor:message},viewer);
@@ -35,13 +36,17 @@ try {
   assert(output.output.endsWith('[cut off]'));
   assert.equal(secret.output,'Output hidden: contains a secret.');
   assert.equal(empty.output,undefined);
-  const netrcRows = tapped.messages[0].activity.slice(3);
+  const pgpassRow = tapped.messages[0].activity.at(-1);
+  assert.equal(pgpassRow.output,'Output hidden: contains a secret.');
+  assert(!JSON.stringify(tapped).includes('planted-pgpass-password'));
+  const netrcRows = tapped.messages[0].activity.slice(3,-1);
   assert(!JSON.stringify(netrcRows).includes('planted-netrc-password'));
   assert(!JSON.stringify(netrcRows).includes('planted-netrc-login'));
   assert(netrcRows.slice(0,2).every(row=>row.output==='Output hidden: contains a secret.'));
   assert(netrcRows.slice(2).every(row=>row.output.includes('[REDACTED]')));
   console.log('TOOL-OUTPUT-1 PASS: stored redacted output is readable on tap; lists omit bodies; secret and empty calls have safe states.');
   console.log('TOOL-OUTPUT-NETRC-1 PASS: tapped persisted credential reads are hidden; single-line and multiline netrc passwords are redacted.');
+  console.log('TOOL-OUTPUT-SED-PGPASS-1 PASS: synthetic sed credential output is hidden through Body, isolated persistence and production tap projection.');
 } finally {
   await db.close();
 }

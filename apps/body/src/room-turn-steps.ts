@@ -1,6 +1,5 @@
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import type { AgentTurnStep } from './acp.js';
-import { redactToolDetail } from './turn-failure-reason.js';
 
 type DaemonActivity = DaemonOperationMap['postAgentActivity']['input']['activity'][number];
 
@@ -29,7 +28,7 @@ function notePieces(text: string): string[] {
 
 /**
  * A Room turn's steps as the activity its reply carries: each earlier text
- * run as a note and each tool call as a redacted one-line ledger row, in the
+ * run as a note and each tool call as a one-line ledger row, in the
  * turn's own order.
  *
  * Notes are the agent's words and are never cut or dropped. A run longer
@@ -70,7 +69,7 @@ export function roomReplySteps(
       return;
     }
     const operation = oneLine(step.call.kind ?? '') || 'tool';
-    const title = oneLine(redactToolDetail(step.call.title ?? '')) || `${operation} tool`;
+    const title = oneLine(step.call.title ?? '') || `${operation} tool`;
     rows.push({
       kind: 'tool',
       title: title.slice(0, 240),

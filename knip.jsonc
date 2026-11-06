@@ -70,8 +70,6 @@
         "scripts/prove-report-post-delivery.mjs",
         // BRIEF-CITATION invokes the isolated built Body/HTTP proof by path.
         "scripts/prove-brief-citation.mjs",
-        // CHAIN-WAIT in the corner guide invokes this isolated built-service proof by path.
-        "scripts/prove-chain-wait.mjs",
         // The corner membership migration guide invokes the owner-shaped HTTP/socket proof by path.
         "scripts/prove-archived-corner-memberships.mjs",
         "scripts/prove-tray-inline.ts",

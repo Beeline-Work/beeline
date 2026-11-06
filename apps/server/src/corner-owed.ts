@@ -1,7 +1,6 @@
 import { cornerImplementerSql, cornerOwnerSql } from './corner-worker.js';
 import { cornerCommissionerSql } from './corner-opening.js';
 import { cornerWaitingReportSql, humanReportCornerSql, cornerHumanReportsSql } from './corner-waiting-report.js';
-import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { CHOICE_CARD_TYPE } from '@beeline/api-contract/phone';
 import {
   CORNER_AGENT_UNREACHABLE_CARD_TYPE,
@@ -183,7 +182,7 @@ function cornerOwedRowsSql(where: string, bulk: boolean, corner?: string, parent
         : ''
     }
     WHERE item.deleted_at IS NULL AND (${where})
-      ${historical ? '' : `AND item.card->>'waitingAnswered' IS DISTINCT FROM 'true'`}
+      ${historical ? '' : `AND (item.card->>'reportToId' IS NULL OR item.card->>'waitingAnswered' IS DISTINCT FROM 'true')`}
       AND (item.room_id=owed_corner.id OR EXISTS (
         SELECT 1 FROM memberships source_member WHERE source_member.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=item.room_id)
           AND source_member.identity_id=person.id AND source_member.removed_at IS NULL))
@@ -378,61 +377,6 @@ export function cornerOwedSchemaSql(): string {
 CREATE INDEX IF NOT EXISTS corner_private_reports_origin ON agent_commands
   ((private_payload->>'fromRoomId'),(private_payload->>'authorId'),created_at DESC,id DESC)
   WHERE private_payload->>'kind'='report';
--- Follow recorded assignment provenance once on the write path, never on list reads.
-CREATE OR REPLACE FUNCTION corner_question_authority(question_corner uuid, asker text, asked_at timestamptz, responder text)
-RETURNS boolean LANGUAGE sql STABLE AS $authority$
-  WITH RECURSIVE chain AS (
-    SELECT seed.* FROM agent_commands seed WHERE seed.id IN (
-      (SELECT assignment.id FROM agent_commands assignment
-        WHERE assignment.room_id=question_corner AND assignment.agent_id=asker
-          AND assignment.created_at<=asked_at
-          AND (assignment.private_payload->>'kind'='order' OR assignment.reason='human_tag')
-        ORDER BY assignment.inbox_sequence DESC LIMIT 1),
-      (SELECT opening.id FROM agent_commands opening WHERE opening.room_id=question_corner
-        AND opening.reason='corner_objective' ORDER BY opening.created_at,opening.id LIMIT 1))
-    UNION
-    SELECT parent.* FROM agent_commands parent JOIN chain child ON parent.id=child.parent_command_id
-  ) SELECT responder IS DISTINCT FROM (SELECT ${cornerImplementerSql('authority_fact', 'authority_corner')}
-    FROM rooms authority_corner JOIN corner_facts authority_fact ON authority_fact.corner_id=authority_corner.id
-    WHERE authority_corner.id=question_corner) AND responder<>'${SYSTEM_IDENTITY_ID}' AND (
-    EXISTS (SELECT 1 FROM identities person JOIN room_access member ON member.identity_id=person.id
-      WHERE person.id=responder AND person.kind='human' AND member.removed_at IS NULL
-        AND member.room_id IN (question_corner,(SELECT parent_id FROM rooms WHERE id=question_corner)))
-    OR (EXISTS (SELECT 1 FROM identities agent WHERE agent.id=responder AND agent.kind='agent') AND EXISTS (
-    SELECT 1 FROM chain LEFT JOIN messages source ON source.id=chain.root_source_message_id
-    LEFT JOIN messages direct ON direct.id=chain.source_message_id
-    WHERE chain.private_payload->>'authorId'=responder
-      OR source.author_id=responder OR direct.author_id=responder
-  )))
-$authority$;
-CREATE OR REPLACE FUNCTION clear_corner_question_blockers() RETURNS trigger LANGUAGE plpgsql AS $question$
-DECLARE answer_corner uuid; responder text; answered_at timestamptz;
-BEGIN
-  IF TG_TABLE_NAME='agent_commands' THEN
-    IF NEW.private_payload->>'kind' IS DISTINCT FROM 'order' AND NEW.reason<>'corner_brief_revision' THEN RETURN NULL; END IF;
-    answer_corner=NEW.room_id; answered_at=NEW.created_at;
-    IF NEW.agent_id IS DISTINCT FROM (SELECT ${cornerImplementerSql('target_fact', 'target_corner')}
-      FROM rooms target_corner JOIN corner_facts target_fact ON target_fact.corner_id=target_corner.id
-      WHERE target_corner.id=answer_corner) THEN RETURN NULL; END IF;
-    responder=COALESCE(NEW.private_payload->>'authorId',(SELECT author_id FROM messages WHERE id=NEW.source_message_id));
-  ELSE
-    IF NEW.presentation<>'message' OR NEW.system_event IS NOT NULL OR NEW.deleted_at IS NOT NULL THEN RETURN NULL; END IF;
-    answer_corner=NEW.room_id; responder=NEW.author_id; answered_at=NEW.created_at;
-  END IF;
-  -- Indexed open projection candidates; approval cards and merge holds are untouched.
-  UPDATE messages question SET card=jsonb_set(COALESCE(question.card,'{}'::jsonb),'{waitingAnswered}','true')
-    WHERE question.id IN (SELECT owed.message_id FROM corner_owed owed
-      WHERE owed.corner_id=answer_corner AND owed.blocking AND owed.answerable)
-      AND question.card_type IS NULL AND question.card->>'reportToId' IS NULL
-      AND question.created_at<answered_at
-      AND question.text ~ '^(needs-decision|blocked):'
-      AND corner_question_authority(answer_corner,question.author_id,question.created_at,responder);
-  RETURN NULL;
-END $question$;
-DROP TRIGGER IF EXISTS corner_question_order ON agent_commands;
-CREATE TRIGGER corner_question_order AFTER INSERT ON agent_commands FOR EACH ROW EXECUTE FUNCTION clear_corner_question_blockers();
-DROP TRIGGER IF EXISTS corner_question_answer ON messages;
-CREATE TRIGGER corner_question_answer AFTER INSERT ON messages FOR EACH ROW EXECUTE FUNCTION clear_corner_question_blockers();
 CREATE OR REPLACE FUNCTION clear_corner_report_blockers() RETURNS trigger LANGUAGE plpgsql AS $report$
 DECLARE scope uuid; answer_author text; answer_at timestamptz; answer_room uuid; candidate_ids uuid[];
 BEGIN
@@ -440,12 +384,12 @@ BEGIN
     IF NEW.presentation<>'message' OR NEW.system_event IS NOT NULL OR NEW.deleted_at IS NOT NULL THEN RETURN NULL; END IF;
     answer_author=NEW.author_id; answer_at=NEW.created_at; answer_room=NEW.room_id;
   ELSIF TG_TABLE_NAME='agent_commands' THEN
-    IF NEW.private_payload->>'kind' IS DISTINCT FROM 'order' AND NEW.reason<>'corner_brief_revision' THEN RETURN NULL; END IF;
-    scope=NEW.room_id; answer_at=NEW.created_at;
-    IF NEW.agent_id IS DISTINCT FROM (SELECT ${cornerImplementerSql('target_fact', 'target_corner')}
-      FROM rooms target_corner JOIN corner_facts target_fact ON target_fact.corner_id=target_corner.id
-      WHERE target_corner.id=scope) THEN RETURN NULL; END IF;
-    answer_author=COALESCE(NEW.private_payload->>'authorId',(SELECT author_id FROM messages WHERE id=NEW.source_message_id));
+    IF NEW.private_payload->>'kind' IS DISTINCT FROM 'order' THEN RETURN NULL; END IF;
+    scope=NEW.room_id; answer_author=NEW.private_payload->>'authorId';
+  ELSE
+    IF NEW.lifecycle->'pr'->>'headSha' IS NOT DISTINCT FROM OLD.lifecycle->'pr'->>'headSha'
+      OR NEW.lifecycle->'pr'->>'headSha' IS NULL THEN RETURN NULL; END IF;
+    scope=NEW.corner_id;
   END IF;
   -- Most Room inserts cannot answer a corner report. Resolve the small indexed
   -- candidate set before planning/evaluating the full waiting-report projection.
@@ -459,13 +403,14 @@ BEGIN
   ), answered AS MATERIALIZED (
     SELECT DISTINCT waiting.report_id,waiting.message_id,waiting.card_id
     FROM report_corners report_corner CROSS JOIN LATERAL (${cornerWaitingReportSql('report_corner')}) waiting
-    WHERE ((TG_TABLE_NAME='agent_commands' AND waiting.created_at<answer_at
-          AND (waiting.commander_id=answer_author OR corner_question_authority(waiting.corner_id,
-            (SELECT ${cornerImplementerSql('authority_fact', 'report_corner')} FROM corner_facts authority_fact WHERE authority_fact.corner_id=report_corner.id),waiting.created_at,answer_author)))
+    WHERE (TG_TABLE_NAME='corner_github_cache'
+        OR (TG_TABLE_NAME='agent_commands' AND waiting.commander_id=answer_author)
         OR (TG_TABLE_NAME='messages' AND waiting.created_at<answer_at
           AND (waiting.corner_id=answer_room OR waiting.return_room_id=answer_room)
-          AND (waiting.commander_id=answer_author OR corner_question_authority(waiting.corner_id,
-            (SELECT ${cornerImplementerSql('authority_fact', 'report_corner')} FROM corner_facts authority_fact WHERE authority_fact.corner_id=report_corner.id),waiting.created_at,answer_author))))
+          AND (waiting.commander_id=answer_author OR EXISTS (
+            SELECT 1 FROM room_access member JOIN identities author ON author.id=member.identity_id
+            WHERE member.room_id=waiting.corner_id AND member.removed_at IS NULL
+              AND author.id=answer_author AND author.kind='human'))))
   ), commands AS (
     UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{waitingAnswered}','true')
       WHERE id IN (SELECT report_id FROM answered) RETURNING id
@@ -482,7 +427,7 @@ DROP TRIGGER IF EXISTS corner_report_order ON agent_commands;
 CREATE TRIGGER corner_report_order AFTER INSERT ON agent_commands FOR EACH ROW EXECUTE FUNCTION clear_corner_report_blockers();
 DROP TRIGGER IF EXISTS corner_report_push ON corner_facts;
 DROP TRIGGER IF EXISTS corner_report_push ON corner_github_cache;
-
+CREATE TRIGGER corner_report_push AFTER UPDATE OF lifecycle ON corner_github_cache FOR EACH ROW EXECUTE FUNCTION clear_corner_report_blockers();
 -- A queued automatic wake predating the report is not new input either.
 CREATE OR REPLACE FUNCTION quiet_corner_report_wakes() RETURNS trigger LANGUAGE plpgsql AS $quiet$
 DECLARE corner uuid; ignored bigint;

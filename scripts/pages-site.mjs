@@ -140,7 +140,7 @@ export async function validateBundleDirectory(bundleRoot, { expectedSha, expecte
 export async function buildPagesSite({
   sourceRoot = DEFAULT_SOURCE_ROOT,
   bundleRoot,
-  nightlyBundleRoot,
+  nextBundleRoot,
   outputRoot,
   expectedSha,
   expectedVersion,
@@ -170,12 +170,12 @@ export async function buildPagesSite({
   for (const file of bundle.files) await copyFile(join(bundleRoot, file), join(outputDl, file));
   await writeFile(join(outputDl, 'manifest.json'), bundle.manifestBytes);
 
-  if (nightlyBundleRoot) {
-    const nightly = await validateBundleDirectory(nightlyBundleRoot);
-    const nightlyDl = join(outputDl, 'nightly');
-    await mkdir(nightlyDl, { recursive: true });
-    for (const file of nightly.files) await copyFile(join(nightlyBundleRoot, file), join(nightlyDl, file));
-    await writeFile(join(nightlyDl, 'manifest.json'), nightly.manifestBytes);
+  if (nextBundleRoot) {
+    const next = await validateBundleDirectory(nextBundleRoot);
+    const nextDl = join(outputDl, 'next');
+    await mkdir(nextDl, { recursive: true });
+    for (const file of next.files) await copyFile(join(nextBundleRoot, file), join(nextDl, file));
+    await writeFile(join(nextDl, 'manifest.json'), next.manifestBytes);
   }
 
   for (const file of ['apple-app-site-association', 'assetlinks.json']) {
@@ -193,7 +193,7 @@ async function main() {
   const manifest = await buildPagesSite({
     sourceRoot: option('--source-dir', DEFAULT_SOURCE_ROOT),
     bundleRoot: option('--bundle-dir'),
-    nightlyBundleRoot: option('--nightly-bundle-dir'),
+    nextBundleRoot: option('--next-bundle-dir'),
     outputRoot: option('--output-dir'),
     expectedSha: option('--sha'),
     expectedVersion: option('--version'),

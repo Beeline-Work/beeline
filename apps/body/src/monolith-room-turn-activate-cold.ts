@@ -31,7 +31,7 @@ import { assembleSessionPrompt } from './prompt-assembly.js';
 import { durableReplyText } from './turn-stream.js';
 import { TurnTrace } from './turn-trace.js';
 import { isPrivateWorkToolCall } from './tool-call-failure.js';
-import { redactTurnError } from './turn-failure-reason.js';
+import { turnErrorDetail } from './turn-failure-reason.js';
 import { startAgentProcess, stopAgentProcess, type AgentProcessLifecycle } from './agent-process.js';
 import { MonolithRoomTurnLoop, execFileAsync, roomPermissionDecision, HumanMessage, ActiveTurn } from './monolith-room-turn.js';
 
@@ -571,7 +571,7 @@ import { MonolithRoomTurnLoop, execFileAsync, roomPermissionDecision, HumanMessa
     ctx.activeTurn = active;
     active.promise = ctx.prompt(active)
       .catch((error) => {
-        console.error(`[thin-core] monolith Room ${ctx.options.roomId} turn failed:`, redactTurnError(error));
+        console.error(`[thin-core] monolith Room ${ctx.options.roomId} turn failed:`, turnErrorDetail(error));
       })
       .finally(() => {
         if (ctx.activeTurn === active) {

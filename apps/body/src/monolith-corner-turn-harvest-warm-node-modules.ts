@@ -2,7 +2,7 @@ import { tryWithKernelLock } from './kernel-lock.js';
 import { runServerCommandIntake } from './server-command-intake.js';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { redactTurnError } from './turn-failure-reason.js';
+import { turnErrorDetail } from './turn-failure-reason.js';
 import { syncCornerBranch } from './corner-branch-sync.js';
 import { harvestWarmNodeModules, mobileNodeModulesStoreDir, warmNodeModulesStoreDir } from './warm-node-modules.js';
 import { MonolithCornerTurnLoop, execFileAsync } from './monolith-corner-turn.js';
@@ -140,7 +140,7 @@ import { MonolithCornerTurnLoop, execFileAsync } from './monolith-corner-turn.js
         onSubscriptionState: ctx.options.onSubscriptionState,
         onError: (error) => {
           ctx.options.onIntakeError?.(error);
-          console.error('[thin-core] corner command failed', redactTurnError(error));
+          console.error('[thin-core] corner command failed', turnErrorDetail(error));
         },
         // See monolith-room-turn.ts (C112): mark busy the instant a claim
         // attempt starts, before its own network round trip and before

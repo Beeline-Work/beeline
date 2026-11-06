@@ -1,0 +1,1 @@
+export class MMKV {values=new Map(); getString(k){return this.values.get(k)} set(k,v){this.values.set(k,v)} delete(k){this.values.delete(k)} getAllKeys(){return [...this.values.keys()]} getBoolean(){return false} getNumber(){return undefined} contains(k){return this.values.has(k)} addOnValueChangedListener(){return {remove(){}}}}

@@ -1,5 +1,4 @@
 import { IndexRow } from '@/components/buzz/IndexRow';
-import { AiClientsSection } from '@/components/buzz/AiClientsSection';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import React, { useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
@@ -17,6 +16,7 @@ import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { ServiceMark } from '@/components/buzz/ServiceMark';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
+import { Typography } from '@/constants/Typography';
 import { ConnectorsSearchSheet } from './workbench/connect-app';
 
 function first(value: string | string[] | undefined) { return Array.isArray(value) ? value[0] : value; }
@@ -31,7 +31,7 @@ export default function WorkbenchScreen() {
   const desktop = useIsDesktop();
   const insets = useSafeAreaInsets();
   const { theme } = useUnistyles();
-  const { value: view, error, refresh, refreshAfterChange } = useSharedWorkbench(scope.viewerId ? scope : null);
+  const { value: view, error, refresh } = useSharedWorkbench(scope.viewerId ? scope : null);
   const index = view?.companies;
   const [searchOpen, setSearchOpen] = useState(false);
   const actions = useConnectCompanyApp(scope);
@@ -55,11 +55,10 @@ export default function WorkbenchScreen() {
           return rows.length ? <View key={section} testID={`connectors-${section}`}>
             <RoomListSectionHeader title={title} inset="content" spacing="flush" />
             {rows.map(row => {
-              if (row.roomsClientId) return <AiClientsSection key={row.id}
-                clients={(view?.aiClients ?? []).filter(client => client.clientId === row.roomsClientId)} onChanged={refreshAfterChange} />;
               const state = connectionViewState(row);
               return <SettingsRow appBoard key={row.id} title={row.name}
                 description={state === 'error' && row.status ? `${row.status} · ${row.subtitle}` : row.subtitle}
+                descriptionContent={row.roomsClientId ? <AiClientSubtitle agent={view?.aiClients?.find(client => client.clientId === row.roomsClientId)?.agent?.name} /> : undefined}
                 leading={<ServiceMark company={row.name} domain={row.domain} mark={row.logo} />}
                 action={section === 'attention' ? 'Reconnect' : state === 'connect' ? 'Connect' : undefined}
                 value={state === 'error' ? row.status : state === 'connected' && row.kind === 'sign-in-service' ? row.status : undefined}
@@ -75,7 +74,13 @@ export default function WorkbenchScreen() {
     <ConnectorsSearchSheet visible={searchOpen} onClose={() => setSearchOpen(false)} scope={scope} view={view} />
   </View>;
 }
+/** "Connected as <agent>", the agent name a step darker than the line. */
+function AiClientSubtitle({ agent }: { agent?: string }) {
+  return <Text numberOfLines={1} style={styles.aiSubtitle}>{agent ? <>Connected as <Text style={styles.aiAgent}>{agent}</Text></> : 'Connected'}</Text>;
+}
 const styles = StyleSheet.create(theme => ({
+  aiSubtitle: { ...Typography.default(), ...theme.buzz.type.meta, flex: 1, minWidth: 0, color: theme.buzz.textMuted },
+  aiAgent: { color: theme.buzz.textSecondary },
     failureInset: { paddingHorizontal: theme.buzz.roomList.edge },
   container: { flex: 1, backgroundColor: theme.buzz.appCanvas }, content: { flex: 1 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },

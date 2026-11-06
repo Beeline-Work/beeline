@@ -1,4 +1,6 @@
 import { MCP_SCOPES } from '../rooms-mcp-connections.js';
+import { mcpClientLogo } from '../rooms-mcp-logos.js';
+import { assetUrl } from '../phone-identity.js';
 import { registryServerAppKey, registryServerDomain } from '@beeline/api-contract/workbench';
 import { companyForMcp } from '../company-mcp-discovery.js';
 import { COMPANY_APPS, resolveCompany } from '../company-registry.js';
@@ -250,15 +252,27 @@ import { seconds } from './values.js';
         [viewerId],
       )
     ).rows[0];
-    const aiClients = (await ctx.database.query<{
-      client_id: string; name: string; logo: string | null; connected_at: Date; last_used_at: Date | null;
-    }>(`SELECT c.client_id,app.name,app.logo,c.connected_at,c.last_used_at FROM rooms_mcp_connections c
-      JOIN rooms_mcp_clients app ON app.id=c.client_id WHERE c.identity_id=$1 AND c.revoked_at IS NULL
+    // Each connection acts as the member made at sign-in; rows from before members have none.
+    const aiClientRows = (await ctx.database.query<{
+      client_id: string; name: string; redirects: string[]; logo: string | null; connected_at: Date; last_used_at: Date | null;
+      agent_id: string | null; agent_name: string | null; agent_handle: string | null; agent_avatar: string | null;
+    }>(`SELECT c.client_id,app.name,app.redirects,app.logo,c.connected_at,c.last_used_at,
+        agent.id agent_id,agent.name agent_name,agent.handle agent_handle,agent.avatar agent_avatar
+      FROM rooms_mcp_connections c
+      JOIN rooms_mcp_clients app ON app.id=c.client_id
+      LEFT JOIN rooms_mcp_members member ON member.client_id=c.client_id AND member.owner_id=c.identity_id
+      LEFT JOIN identities agent ON agent.id=member.member_id
+      WHERE c.identity_id=$1 AND c.revoked_at IS NULL
       AND EXISTS(SELECT 1 FROM rooms_mcp_families f WHERE f.client_id=c.client_id AND f.identity_id=c.identity_id AND f.revoked_at IS NULL)
       ORDER BY c.connected_at DESC LIMIT 100`, [viewerId])).rows;
+    const aiClients = await Promise.all(aiClientRows.map(async c => ({
+      clientId: c.client_id, name: c.name, logo: await mcpClientLogo(c.name, c.redirects, c.logo), scopes: [...MCP_SCOPES],
+      connectedAt: seconds(c.connected_at), lastUsedAt: c.last_used_at ? seconds(c.last_used_at) : null,
+      ...(c.agent_id && c.agent_name ? { agent: { id: c.agent_id, name: c.agent_name,
+        ...(c.agent_handle ? { handle: c.agent_handle } : {}), ...(c.agent_avatar ? { avatar: assetUrl(c.agent_avatar, ctx.publicOrigin) } : {}) } } : {}),
+    })));
     const view: Output<'readWorkbench'> = {
-      aiClients: aiClients.map(c => ({ clientId: c.client_id, name: c.name, ...(c.logo ? { logo: c.logo } : {}), scopes: [...MCP_SCOPES],
-        connectedAt: seconds(c.connected_at), lastUsedAt: c.last_used_at ? seconds(c.last_used_at) : null })),
+      aiClients,
       workspaceId: input.workspaceId,
       ...(linkAccount ? { linkAccount } : {}),
       catalog: connectorCatalog(),

@@ -106,7 +106,7 @@ export default {
             }
         },
         android: {
-            runtimeVersion: runtimeVersionOverride || "47",
+            runtimeVersion: runtimeVersionOverride || "48",
             versionCode: 27,
             adaptiveIcon: {
                 foregroundImage: "./sources/assets/images/icon-adaptive.png",

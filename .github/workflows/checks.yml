@@ -31,6 +31,7 @@ on:
           - auth-image
           - mirror-ci-images
           - coverage-map
+          - ios-signin-capture
 permissions:
   contents: read
 concurrency:
@@ -736,3 +737,9 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Mirror the pinned upstream indexes
         run: ./scripts/mirror-ci-images.sh
+
+  ios-signin-capture:
+    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'ios-signin-capture'
+    uses: ./.github/workflows/ios-signin-capture.yml
+    with:
+      source_ref: ${{ github.ref }}

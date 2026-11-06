@@ -1,0 +1,28 @@
+appId: app.usebeeline.mobile
+name: iOS provider start
+---
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: onboarding-${PROVIDER}-sign-in
+    timeout: 30000
+- takeScreenshot: 01-onboarding
+- tapOn:
+    id: onboarding-${PROVIDER}-sign-in
+- takeScreenshot: 02-after-provider-tap
+# Capture the consent prompt before deliberately continuing. If it is absent,
+# preserve the actual screen and continue to capture the observable outcome.
+- runFlow:
+    when:
+      visible: '.*wants to use.*'
+    commands:
+      - takeScreenshot: 03-system-consent
+      - tapOn: Continue
+- waitForAnimationToEnd:
+    timeout: 10000
+- takeScreenshot: 04-after-consent
+# A provider page is the stopping point. No passwords or accounts are entered.
+- extendedWaitUntil:
+    visible: '.*(Sign in to GitHub|Sign in|Choose an account|Email or phone).*'
+    timeout: 20000
+- takeScreenshot: 05-provider-page

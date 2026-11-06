@@ -39,12 +39,12 @@ runs:
         script: |
           const { downloadPagesChannel } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/pages-channel.mjs`);
           await downloadPagesChannel({ github, repo: context.repo, directory: `${process.env.RUNNER_TEMP}/pages-latest` });
-          // Only a missing release tag is allowed before the first nightly;
+          // Only a missing release tag is allowed before the first next release;
           // missing/corrupt assets in an existing channel still fail closed.
-          await downloadPagesChannel({ github, repo: context.repo, channel: 'nightly', allowMissing: true,
-            directory: `${process.env.RUNNER_TEMP}/pages-nightly` });
-    - name: Preserve the last latest website during a nightly helper deployment
-      if: inputs.channel == 'nightly'
+          await downloadPagesChannel({ github, repo: context.repo, channel: 'next', allowMissing: true,
+            directory: `${process.env.RUNNER_TEMP}/pages-next` });
+    - name: Preserve the last latest website during a next helper deployment
+      if: inputs.channel == 'next'
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
@@ -62,8 +62,8 @@ runs:
       run: |
         set -euo pipefail
         args=(build --bundle-dir "$RUNNER_TEMP/pages-latest" --output-dir "$RUNNER_TEMP/usebeeline-pages")
-        if [ -f "$RUNNER_TEMP/pages-nightly/manifest.json" ]; then args+=(--nightly-bundle-dir "$RUNNER_TEMP/pages-nightly"); fi
-        if [ "$CHANNEL" = nightly ]; then args+=(--source-dir "$RUNNER_TEMP/pages-stable-source/web"); fi
+        if [ -f "$RUNNER_TEMP/pages-next/manifest.json" ]; then args+=(--next-bundle-dir "$RUNNER_TEMP/pages-next"); fi
+        if [ "$CHANNEL" = next ]; then args+=(--source-dir "$RUNNER_TEMP/pages-stable-source/web"); fi
         node scripts/pages-site.mjs "${args[@]}"
     - uses: actions/configure-pages@v5
     # One release run can deploy Pages from both the website and helper legs,

@@ -1,50 +1,52 @@
 # Production release pipeline
 
 `Unified production release` is the only workflow that releases current
-`main` to nightly, or promotes its last successful nightly to latest. It is manually dispatched; merges do not trigger a production release.
+`main` to `next`, or promotes its last successful `next` release to `latest`. It is manually dispatched; merges do not trigger a production release.
 
-## Nightly and latest
+## Next and latest
 
-The workflow has one channel selector: `channel=nightly` (default) or
-`channel=latest`. Routine and authorized recurring releases use nightly.
+The workflow has one channel selector: `channel=next` (default) or
+`channel=latest`. Routine and authorized recurring releases use `next`.
+`next` and `latest` are the only release channel names.
 Only an explicit workspace owner command promotes the current successful
-nightly to latest; merges never publish either channel. Both modes use the
-existing workflow and concurrency group. No release, store build, promotion,
-or schedule change runs merely by installing this implementation.
+`next` release to `latest`; merges never publish either channel. Both modes use the
+existing workflow and concurrency group. The scheduled 2 a.m. run is still
+called the nightly release and targets `next`. No release, store build,
+promotion, or schedule change runs merely by installing this implementation.
 
-| Component | Nightly | Latest promotion |
+| Component | Next | Latest promotion |
 | --- | --- | --- |
 | Server | Deploy the shared production server; preserve compatibility with the previous app | Carry the already deployed server |
-| Phone OTA | Publish an immutable `release-<version>` branch and point `nightly` at it | Point `production` at that exact branch, with its recorded runtime targets; no rebundle |
-| Android native | Only explicit `store_track=beta`; same app id/signing, build-time `nightly-ci` profile with nightly OTA channel | Only explicit `store_track=production`; production OTA channel |
+| Phone OTA | Publish an immutable `release-<version>` branch and point `next` at it | Point `production` at that exact branch, with its recorded runtime targets; no rebundle |
+| Android native | Only explicit `store_track=beta`; same app id/signing, build-time `next-ci` profile with `next` OTA channel | Only explicit `store_track=production`; production OTA channel |
 | iOS native | No build | Only explicit `store_track=production` |
-| Helpers | Build changed bundles, publish `/dl/nightly/manifest.json`; leave latest untouched | Copy the exact nightly bundle bytes to `/dl/manifest.json`; no native helper rebuild |
-| Desktop and website | Carry latest | Build from the promoted nightly commit |
+| Helpers | Build changed bundles, publish `/dl/next/manifest.json`; leave latest untouched | Copy the exact `next` bundle bytes to `/dl/manifest.json`; no native helper rebuild |
+| Desktop and website | Carry latest | Build from the promoted `next` commit |
 
-A nightly GitHub release is a prerelease (`--latest=false`). Promotion reuses
+A `next` GitHub release is a prerelease (`--latest=false`). Promotion reuses
 its version and SHA, publishes the stable installers, and clears prerelease
-before marking it latest. The next nightly compares against the newest
-published version, including nightlies; production OTA rollback reads latest,
-while server rollback reads the newest nightly because the server is shared.
+before marking it latest. The following `next` release compares against the newest
+published version, including next releases; production OTA rollback reads latest,
+while server rollback reads the newest `next` release because the server is shared.
 A promotion refuses a different `release_sha` or `release_version`.
 
-Nightly prepares OTA bundles for both platforms so promotion can use the same
-bytes. Only Android beta binaries subscribe to `nightly`; iOS and production
+A `next` release prepares OTA bundles for both platforms so promotion can use the same
+bytes. Only Android beta binaries subscribe to `next`; iOS and production
 Android binaries remain on `production` until latest promotion. The optional
 existing device proof still uses its separate `beta` channel and never moves
 production before it succeeds. It adds no wait unless explicitly requested.
 Android OTA targeting includes published Play beta runtimes alongside
 production runtimes, including when the beta runtime is newer than production.
 
-Store publishing remains explicit (`store_track=none` by default). Nightly
+Store publishing remains explicit (`store_track=none` by default). The `next` channel
 rejects production store submissions and native recovery without `beta`;
 latest rejects the beta track. Runtime-pin changes alone never add a native
 build. Play listing uploads remain locked unless explicitly commanded by the
 owner. iOS production submits the verified build to App Review with automatic
 release after approval, through the existing store submission path.
 
-The Android job injects `nightly-ci` (`extends: production-ci`, `channel:
-nightly`) into its temporary EAS build workspace immediately before building.
+The Android job injects `next-ci` (`extends: production-ci`, `channel:
+next`) into its temporary EAS build workspace immediately before building.
 Committed `eas.json`, app config, plugins, native files, fingerprint policy and
 runtime pins remain identical to main. No profile environment override is used.
 Pinned `eas-cli 22.2.0` maps the selected build profile channel to the Android
@@ -55,11 +57,11 @@ header-only runtime override without an anti-bricking flag, but this workflow
 uses build-time selection and needs no app setting.
 
 One-time rollout after merge (firstmate, on the owner's command): dispatch
-`channel=nightly, store_track=beta` to replace the Play private beta binary with
-the same application id and nightly OTA subscription; update the authorized
-2 a.m. schedule to use the default nightly channel. Desktop/iOS have no
-nightly installation. Configure the squire helper as described in the
-[helper channel runbook](cli-bundle-channel.md#following-nightly).
+`channel=next, store_track=beta` to replace the Play private beta binary with
+the same application id and next OTA subscription; update the authorized
+2 a.m. nightly release schedule to use the default `next` channel. Desktop/iOS have no
+`next` installation. Configure the squire helper as described in the
+[helper channel runbook](cli-bundle-channel.md#following-next).
 
 Offline plan and channel-selection proof (no external release calls):
 
@@ -69,7 +71,7 @@ npm test -w @beeline/body -- src/self-update-channel.test.ts
 npm test -w @beeline/server -- src/production-release-dispatch.test.ts
 ```
 
-The plan tests print nightly and latest component plans and exercise restoration
+The plan tests print next and latest component plans and exercise restoration
 of the workflow's scalar outputs. Pages tests verify both channel manifests,
 checksums and exact promoted bytes while preserving the stable website.
 
@@ -101,7 +103,7 @@ Firstmate calls the first-party `dispatch_release` agent tool with `{}`, without
 creating a release worker or requesting a command grant. This path creates no
 command-approval card.
 
-For nightly, pass no inputs. For owner-commanded promotion, pass
+For `next`, pass no inputs. For owner-commanded promotion, pass
 `inputs: { channel: "latest" }`. Run inside an authenticated Beeline agent turn citing a human
 release command from a workspace owner or admin. The tool uses the existing
 repository workflow dispatch path on the server. The server derives
@@ -147,17 +149,17 @@ resumes that draft's version, so every leg sees what the attempt already
 shipped; a dispatch of another commit skips the draft's version and is never
 blocked by it. A successful release deletes the drafts below its version.
 
-Nightly pins current `main`, includes every merge at that
+A `next` release pins current `main`, includes every merge at that
 HEAD, selects the server and changed helper/OTA components, uses `store_track=none`,
-and publishes nightly OTA without a device proof (recorded UNPROVEN unless
+and publishes `next` OTA without a device proof (recorded UNPROVEN unless
 `run_release_proof=true`), publishes one release record, runs component checks,
-and reports the result in the workflow summary. The channel selects nightly or latest promotion. Other operator-selected inputs are
+and reports the result in the workflow summary. The channel selects next or latest promotion. Other operator-selected inputs are
 recovery- and consent-only (the server supplies attribution): operators use them to continue an existing identity,
 explicitly request the device proof, or make a deliberate store submission -
 never for a routine release.
 
 The helper leg smoke-tests the exact local npm tarball before publishing it.
-The exact CLI package publishes with npm tag `nightly`. A successful
+The exact CLI package publishes with npm tag `next`. A successful
 `npm publish`, or an already existing version, completes that leg
 without waiting for npm's registry listing. A publish failure still fails the
 release. The final job records the helper version and publishes the GitHub
@@ -182,7 +184,7 @@ memory* below) and writes `release-plan.json`. Its explicit path map is
 independently. `selection=all` is a recovery-only, deliberate full-release
 override. An explicit compatible store track selects `mobile-native`. Automatic selection with
 `store_track=none` never builds native binaries, even when native inputs changed.
-Nightly native builds require explicit `store_track=beta`; latest native builds
+`next` native builds require explicit `store_track=beta`; latest native builds
 require explicit `store_track=production`. iOS store uploads require an explicit store track and only
 `production` submits for App Review. Android listing text/images remain locked unless the
 owner explicitly commands a listing publish. The pre-commit gate stops on any
@@ -498,11 +500,11 @@ stage-timing files.
 
 ## Phone OTA by channel pointer
 
-Each nightly publishes to its own EAS branch, `release-<version>`, one update
-per runtime live in the stores, and points the `nightly` channel at it. Latest promotion
+Each `next` release publishes to its own EAS branch, `release-<version>`, one update
+per runtime live in the stores, and points the `next` channel at it. Latest promotion
 points the `production` channel at the same branch
 (`eas channel:edit production --branch release-<version>`), so production
-serves the exact bundles prepared by nightly, on every live runtime at once. Every live
+serves the exact bundles prepared by `next`, on every live runtime at once. Every live
 runtime must be on the branch before any channel moves. A rerun publishes only
 the runtimes the branch lacks and skips a channel that already points at it; a
 branch never mixes two source commits.
@@ -521,7 +523,7 @@ concurrency group and has a `dry_run` mode.
 - OTA targets include each platform's newest live store runtime and the two
   newest older runtimes confirmed live on that store. A current pin still in
   review gets no OTA target. OTA history, uploads and TestFlight do not count as store publication.
-  Nightly reads both `applications/app.usebeeline/tracks/production/releases`
+  The `next` channel reads both `applications/app.usebeeline/tracks/production/releases`
   and `tracks/beta/releases`, using their
   `PUBLISHED` lifecycle state (not edit-track `completed`, which can await review).
   ASC uses distributed iOS versions and their exact build identities. Build
@@ -587,7 +589,7 @@ listeners there. The failure/redelivery fixture is its pre-merge stand-in.
 ## Minimum supported store versions
 
 The optional `mobile_store_minimum` workflow input writes platform policy only
-after successful delivery. Leave it empty for routine and nightly OTA releases.
+after successful delivery. Leave it empty for routine and next OTA releases.
 For an explicitly required store update, pass JSON such as
 `{"android":{"minVersion":"0.2.24","reason":"This version can no longer sign in."}}`.
 Only named platforms change; the database starts with no minimums. Use the same

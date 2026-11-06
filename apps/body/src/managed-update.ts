@@ -68,7 +68,7 @@ export class ReleaseTransaction {
     return this.#preparing ?? this.#handingOff;
   }
   notify(_releaseKey?: string, minimum?: string): void {
-    // The same build can be announced once for nightly and again for latest.
+    // The same build can be announced once for next and again for latest.
     // Re-read this helper's manifest; preparation coalesces in-flight notices.
     if (minimum && (!this.#minimum || !versionAtLeast(this.#minimum, minimum))) {
       this.#minimum = minimum;

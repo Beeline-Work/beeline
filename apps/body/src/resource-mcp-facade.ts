@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
+import { TurnStoppedError } from './turn-stop.js';
 
 export const RESOURCE_FACADE_FLAG = '--resource-mcp-facade';
 export function resourceFacadeArgs(): string[] {
@@ -529,6 +530,7 @@ export async function authorizeResourceMessage(
   authFile: string,
   spendsGrant = true,
   fetchImpl: typeof fetch = fetch,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   if (!message || Array.isArray(message) || typeof message !== 'object') return false;
   if (typeof message.method !== 'string') return false;
@@ -547,7 +549,7 @@ export async function authorizeResourceMessage(
       (value) => typeof value === 'string' && value.length > 0,
     )
   )
-    return false;
+    throw new TurnStoppedError('resource generation is no longer active');
   const response = await fetchImpl(
     new URL('/v1/daemon/operations/authorizeResourceCall', auth.baseUrl),
     {
@@ -563,10 +565,14 @@ export async function authorizeResourceMessage(
         ...(spendsGrant && !NON_CONSUMING.has(message.method) ? {} : { consume: false }),
         ...resourceCallFacts(message),
       }),
-      signal: undefined,
+      signal,
     },
   );
-  return response.ok && ((await response.json()) as { allowed?: boolean }).allowed === true;
+  const result = await response.json() as { allowed?: boolean; error?: string };
+  if (response.status === 403 && [
+    'command output authority rejected', 'command turn cancelled', 'command already completed',
+  ].includes(result.error ?? '')) throw new TurnStoppedError(result.error);
+  return response.ok && result.allowed === true;
 }
 
 export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
@@ -612,6 +618,20 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
   };
   const authorizedResponseIds = new Set<string>();
   let child: ReturnType<typeof spawn> | undefined;
+  let stopped = false;
+  const transport = new AbortController();
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    transport.abort();
+    lines.close();
+    process.stdin.destroy();
+    squireRequests.clear();
+    authorizedResponseIds.clear();
+    // Keep this transport in the harness's process group/resource scope so
+    // turn cancellation also tears down any resource grandchildren.
+    child?.kill('SIGKILL');
+  };
   let responsePending = Promise.resolve();
   const resourceChild = () => {
     if (child) return child;
@@ -623,6 +643,7 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
     const output = createInterface({ input: started.stdout });
     output.on('line', (line) => {
       responsePending = responsePending.then(async () => {
+        if (stopped) return;
         try {
           const message = JSON.parse(line) as Record<string, unknown>;
           const key = messageIdKey(message.id);
@@ -636,11 +657,11 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
     });
     started.on('error', () => {
       process.exitCode = 1;
-      process.stdin.destroy();
+      stop();
     });
     started.on('exit', (code) => {
       process.exitCode = code ?? 1;
-      process.stdin.destroy();
+      stop();
     });
     return started;
   };
@@ -650,6 +671,7 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
   let pending = Promise.resolve();
   lines.on('line', (line) => {
     pending = pending.then(async () => {
+      if (stopped) return;
       let message: Record<string, unknown>;
       try {
         message = JSON.parse(line) as Record<string, unknown>;
@@ -657,7 +679,7 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
         return;
       }
       try {
-        if (!(await authorizeResourceMessage(message, target, authFile, spendsGrant)))
+        if (!(await authorizeResourceMessage(message, target, authFile, spendsGrant, fetch, transport.signal)))
           throw new Error('resource approval required');
         if (target === 'squire' && message.method === 'tools/call') {
           const call = record(message.params);
@@ -690,7 +712,7 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
             ...(session ? { 'mcp-session-id': session } : {}),
           },
           body: line,
-          signal: undefined,
+          signal: transport.signal,
         });
         if (!response.ok) throw new Error('resource transport refused the call');
         session = response.headers.get('mcp-session-id') ?? session;
@@ -734,21 +756,23 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
             process.stdout.write(`${await boundToolResponse(result as Record<string, unknown>)}\n`);
           }
         }
-      } catch {
+      } catch (error) {
         if (message.id !== undefined)
           process.stdout.write(
             `${JSON.stringify({ jsonrpc: '2.0', id: message.id, error: { code: -32001, message: 'Resource access requires approval from its owner for this requester, or the resource is unavailable.' } })}\n`,
           );
+        if (error instanceof TurnStoppedError) {
+          process.exitCode = 1;
+          stop();
+        }
       }
     });
   });
   lines.on('close', () => {
-    void pending.finally(() => child?.stdin?.end());
+    void pending.finally(stop);
   });
-  process.on('SIGTERM', () => {
-    child?.kill();
-    process.exit();
-  });
+  process.on('SIGTERM', stop);
+  process.on('SIGINT', stop);
 }
 
 if (/resource-mcp-facade\.(?:js|ts)$/.test(process.argv[1] ?? '')) runResourceFacade();

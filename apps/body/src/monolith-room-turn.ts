@@ -1685,7 +1685,10 @@ export class MonolithRoomTurnLoop {
     const active = this.activeTurn;
     if (!active || active.item.id !== requestId) return;
     active.cancelled = true;
-    if (this.client && this.sessionId) this.client.sessionCancel(this.sessionId);
+    // Cancellation ends the process tree, including MCP keepalives. A harness
+    // notification alone leaves tools running under the revoked generation.
+    void this.options.scheduler.stop(this.options.roomId, true).catch(error =>
+      console.error('[body] cancelled Room process cleanup failed:', error));
   }
 
   private async prompt(active: ActiveTurn): Promise<void> {

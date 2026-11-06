@@ -26,7 +26,11 @@ jobs:
       EXPO_PUBLIC_BUZZY_MONOLITH_URL: https://server.usebeeline.app
     steps:
       - name: Set isolated evidence directory
-        run: echo "EVIDENCE=$RUNNER_TEMP/ios-signin-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_ENV"
+        run: |
+          evidence="$RUNNER_TEMP/ios-signin-${{ github.run_id }}-${{ github.run_attempt }}"
+          mkdir -p "$evidence"
+          echo "EVIDENCE=$evidence" >> "$GITHUB_ENV"
+          sw_vers > "$evidence/runner.txt"
       - uses: actions/checkout@v4
         with:
           path: harness
@@ -44,9 +48,30 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: '3.3'
+      - name: Select user-installed Ruby
+        run: |
+          for ruby_bin in /usr/local/opt/ruby/bin /usr/local/opt/ruby@3.3/bin /opt/homebrew/opt/ruby/bin; do
+            if [[ -x "$ruby_bin/ruby" ]]; then
+              export PATH="$ruby_bin:$PATH"
+              break
+            fi
+          done
+          if ! ruby -e 'exit(Gem::Version.new(RUBY_VERSION) >= Gem::Version.new("3.1") ? 0 : 1)'; then
+            if [[ -x /usr/local/bin/brew ]]; then
+              brew_bin=/usr/local/bin/brew
+            elif command -v brew; then
+              brew_bin=$(command -v brew)
+            else
+              echo 'Missing required tool: Homebrew (needed to install user-space Ruby)' >&2
+              exit 127
+            fi
+            HOMEBREW_NO_AUTO_UPDATE=1 "$brew_bin" install ruby@3.3
+            ruby_bin="$($brew_bin --prefix ruby@3.3)/bin"
+            export PATH="$ruby_bin:$PATH"
+          fi
+          command -v ruby
+          ruby --version
+          echo "$(ruby -rrbconfig -e 'puts RbConfig::CONFIG["bindir"]')" >> "$GITHUB_PATH"
       - name: Install CocoaPods without changing runner gems
         run: |
           mkdir -p "$EVIDENCE"

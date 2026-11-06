@@ -3,7 +3,7 @@ import { isWorkspaceListView, type RoomViewIdentity } from '@beeline/buzz-client
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { clientResetGeneration } from '@/sync/client-reset';
-import { MonolithWorkbenchSource } from './workbench-source';
+import { projectWorkbenchDisplay } from '@beeline/api-contract/workbench';
 import { isWorkbenchView, noteWorkbenchAnswer } from './workbench-surface';
 import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
 
@@ -86,7 +86,7 @@ export async function readIdentitySettings(workspaceId?: string) {
         result.workspaces.workspaces[0];
       if (selected && result.workbench) {
         const scope = { workspaceId: selected.id, viewerId: pubkey };
-        const view = await new MonolithWorkbenchSource().readWorkbench(scope, result.workbench);
+        const view = projectWorkbenchDisplay(result.workbench, pubkey);
         const address = surfaceAddress(relay, pubkey, '/workspace/:id/workbench', scope);
         noteWorkbenchAnswer(address);
         await mobileSurfaceCache.write(address, view, isWorkbenchView);

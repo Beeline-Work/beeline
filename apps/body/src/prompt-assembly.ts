@@ -525,7 +525,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
           (githubCli === 'rest'
             ? `${push} Open it with \`gh pr create\` and read it with \`gh pr view\`; this host has no gh, so the Beeline launcher answers both over the GitHub REST API with the app token.`
             : `${push} Open the pull request with gh.`),
-        repositoryWork && '4 pushes to one PR without PASS: stop; report blocked: to commander, cause: moving target, unreliable test tool, or PR too big / racing other PRs.',
+        repositoryWork && '4 pushes to one PR without PASS: stop unless a human Room member allows more; else report blocked: to commander, cause: moving target, unreliable test tool, or PR too big / racing other PRs. In-scope human orders apply now: report what changed and the human message ID to your commander; no brief edit or relay needed.',
         repositoryWork && 'Add tests only if they fail without your change, even for new behavior. Read tests first; extend or parameterize instead of duplicating the same failure. List skipped tests and why in PR body or handover.',
         repositoryWork ? CORNER_AUTHOR_CONTRACT : CORNER_RUNTIME_AUTHOR_CONTRACT,
         repositoryWork &&

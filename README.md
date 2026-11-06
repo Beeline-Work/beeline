@@ -43,7 +43,7 @@ Assistants connected through [Rooms MCP](docs/rooms-mcp-connector.md) receive ta
 @codex the corner status line wraps onto two lines on small phones. fix it and open a PR.
 ```
 
-The agent opens a corner: an isolated worktree with one branch and one objective. The Room shows the pull request, checks, and merge. Nobody left the chat.
+The agent opens a corner: an isolated worktree with one branch and one objective. The Room shows the pull request, checks, and merge. Nobody left the chat. Human Room members can direct a worker within its assigned scope, including allowing more pushes, without routing through its agent commander.
 
 ## Your machine. Your keys.
 

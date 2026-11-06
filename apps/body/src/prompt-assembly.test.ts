@@ -903,11 +903,15 @@ describe('corner role prompts (PR #2224: a reviewer that opened its corner pushe
     expect(text).not.toContain('Remove a test only with');
   });
 
-  it('stops after four pushes without PASS and names the three escalation causes', () => {
-    const text = prompt('code-corner-reviewed');
-    expect(text).toContain('4 pushes to one PR without PASS: stop; report blocked: to commander');
-    expect(text).toContain('cause: moving target, unreliable test tool, or PR too big / racing other PRs.');
-  });
+  it.each(['code-corner-reviewed', 'code-corner-no-reviewer', 'code-corner-reviewer'])(
+    'honors direct human allowances before escalating four pushes without PASS in %s',
+    (name) => {
+      const text = prompt(name);
+      expect(text).toContain('4 pushes to one PR without PASS: stop unless a human Room member allows more');
+      expect(text).toContain('In-scope human orders apply now: report what changed and the human message ID to your commander; no brief edit or relay needed.');
+      expect(text).toContain('cause: moving target, unreliable test tool, or PR too big / racing other PRs.');
+    },
+  );
 
   it('appends the reviewer rules only for the Room reviewer, after the implementer rules', () => {
     for (const name of ['code-corner-reviewed', 'code-corner-no-reviewer'])

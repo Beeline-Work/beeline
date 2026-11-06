@@ -238,7 +238,7 @@ export const TurnStepsLine = React.memo(function TurnStepsLine({
         detail={sheetLine?.detail}
         error={sheetError}
         onClose={closeLine}
-        subtitle={sheetLine?.requester ?? (sheetLine?.outcome === 'failure' ? sheetLine?.reason : undefined)}
+        subtitle={sheetLine?.outcome === 'failure' ? sheetLine.reason : sheetLine?.requester}
         title={sheetLine?.label ?? 'Output'}
         visible={Boolean(sheetLine)}
       />
@@ -310,7 +310,7 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
         detail={sheetLine?.detail}
         error={sheetError}
         onClose={closeLine}
-        subtitle={sheetLine?.requester ?? (sheetLine?.outcome === 'failure' ? sheetLine?.reason : undefined)}
+        subtitle={sheetLine?.outcome === 'failure' ? sheetLine.reason : sheetLine?.requester}
         title={sheetLine?.label ?? 'Output'}
         visible={Boolean(sheetLine)}
       />

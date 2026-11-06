@@ -935,3 +935,16 @@ it('F07: collapsed 200-step summary reads zero; disclosure and output presses ea
   expect(renderer.root.findByProps({testID:'tool-output-text'}).props.children).toBe('x'.repeat(32768));
   await act(async()=>renderer.unmount());
 });
+
+
+it.each([ActivityTimeline, TurnStepsLine])('shows a requested failed tool reason in the sheet (%s)', (Component) => {
+  const renderer = render(<Component items={[{
+    kind: 'tool', id: 'requested-failure', title: 'Bash', toolKind: 'execute',
+    command: 'pnpm fast-gate', status: 'failed', output: 'sh: 1: pnpm: not found',
+    requestedBy: { pubkey: 'abc123', name: 'lunchbox' },
+  }]} />);
+  expandRun(renderer, 'requested-failure');
+  act(() => renderer.root.findByProps({ testID: 'tool-ledger-line-requested-failure' }).props.onPress());
+  expect(renderer.root.findByType('HullActionSheetModal').props.subtitle).toBe('command not found: pnpm');
+  expect(renderer.root.findByProps({ testID: 'tool-output-text' }).props.children).toContain('command not found: pnpm');
+});

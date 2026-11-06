@@ -69,7 +69,7 @@ describe('toolLedgerLines', () => {
     expect(shown!.durationMs).toBe(2100);
   });
 
-  it('keeps copyable output separate from the reason and file metadata', () => {
+  it('keeps reason, file lines and output in the sheet detail', () => {
     const [line] = toolLedgerLines([
       step({
         id: 'd',
@@ -81,7 +81,7 @@ describe('toolLedgerLines', () => {
       }),
     ]);
     expect(line!.detail).toBe(
-      ['first', 'second'].join('\n'),
+      ['permission denied', 'M sources/Ledger.tsx', 'first', 'second'].join('\n'),
     );
   });
 

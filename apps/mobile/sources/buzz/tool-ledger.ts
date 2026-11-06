@@ -127,8 +127,8 @@ export function toolLedgerLines(
 
 function detailOf(step: TurnActivityAction): Pick<ToolLedgerLine, 'detail' | 'requester'> | {} {
   const parts: string[] = [];
-  if (step.kind !== 'tool' && step.reason) parts.push(step.reason);
-  for (const file of step.kind === 'tool' ? [] : step.files ?? []) {
+  if (step.reason) parts.push(step.reason);
+  for (const file of step.files ?? []) {
     parts.push(file.status ? `${file.status} ${file.path}` : file.path);
   }
   const output = toolCallOutput(step.output).join('\n');

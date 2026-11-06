@@ -142,12 +142,12 @@ result=0
 for provider in github google; do
   date -u '+%Y-%m-%dT%H:%M:%SZ' > "$EVIDENCE/$provider-started.txt"
   # Record deliberate system-consent cancellation separately from provider start.
-  maestro --device "$device" test --test-output-dir "$EVIDENCE/$provider-cancel" \
+  node "$HARNESS_DIR/scripts/ios-signin/run-flow.mjs" 180000 maestro --device "$device" test --test-output-dir "$EVIDENCE/$provider-cancel" \
     -e "PROVIDER=$provider" "$HARNESS_DIR/scripts/ios-signin/cancel.yaml" \
     > "$EVIDENCE/$provider-cancel-maestro.log" 2>&1 || result=1
   xcrun simctl terminate "$device" app.usebeeline.mobile || true
   # One provider's failure must not suppress capture of the other.
-  maestro --device "$device" test --test-output-dir "$EVIDENCE/$provider" \
+  node "$HARNESS_DIR/scripts/ios-signin/run-flow.mjs" 180000 maestro --device "$device" test --test-output-dir "$EVIDENCE/$provider" \
     -e "PROVIDER=$provider" "$HARNESS_DIR/scripts/ios-signin/provider.yaml" \
     > "$EVIDENCE/$provider-maestro.log" 2>&1 || result=1
   xcrun simctl io "$device" screenshot "$EVIDENCE/$provider-final.png"

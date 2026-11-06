@@ -5,6 +5,16 @@ import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
+test('a stuck capture flow ends so the next provider can run', () => {
+  const runner = resolve('scripts/ios-signin/run-flow.mjs');
+  const stuck = spawnSync(process.execPath, [runner, '150', process.execPath, '-e', 'setInterval(() => {}, 1000)'], { encoding: 'utf8', timeout: 5000 });
+  assert.equal(stuck.status, 124, stuck.stderr);
+  assert.match(stuck.stderr, /Capture flow timed out/);
+  const next = spawnSync(process.execPath, [runner, '2000', process.execPath, '-e', 'console.log("next provider")'], { encoding: 'utf8', timeout: 5000 });
+  assert.equal(next.status, 0, next.stderr);
+  assert.match(next.stdout, /next provider/);
+});
+
 for (const missing of ['pod', 'codesign']) {
 test(`missing ${missing} is named before prebuild or simulator work starts`, () => {
   const root = mkdtempSync(join(tmpdir(), 'signin-preflight-'));

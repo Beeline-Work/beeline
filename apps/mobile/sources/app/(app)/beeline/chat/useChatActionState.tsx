@@ -1,3 +1,4 @@
+import { type PendingComposerAck } from '@/buzz/room-indicators';
 import { focusComposerSelection } from '@/buzz/composer-selection';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import React, { useEffect, useLayoutEffect, useState, useRef, useCallback } from 'react';
@@ -43,8 +44,8 @@ export function useChatActionState([
   setParticipantPickerKind: React.Dispatch<React.SetStateAction<"agent" | "person" | null>>,
   setParticipantPickerVisible: React.Dispatch<React.SetStateAction<boolean>>,
   targetBranchActionId: string | null,
-  pendingAck: { sentAt: number; requestId?: string; } | null,
-  setPendingAck: React.Dispatch<React.SetStateAction<{ sentAt: number; requestId?: string; } | null>>,
+  pendingAck: PendingComposerAck | null,
+  setPendingAck: React.Dispatch<React.SetStateAction<PendingComposerAck | null>>,
   receivedSteer: { agentPubkey: string; turnRequestId: string; receivedAt: number; } | null,
   setReceivedSteer: React.Dispatch<React.SetStateAction<{ agentPubkey: string; turnRequestId: string; receivedAt: number; } | null>>,
   setPermissionActionId: React.Dispatch<React.SetStateAction<string | null>>,
@@ -208,7 +209,7 @@ export function useChatActionState([
   // sent, so the composer never shows dead air waiting on the real WORKING
   // receipt (API write + pickup + receipt + refetch). See
   // `selectComposerAckState`.
-  const [pendingAck, setPendingAck] = useState<{ sentAt: number; requestId?: string } | null>(null);
+  const [pendingAck, setPendingAck] = useState<PendingComposerAck | null>(null);
 
   const [receivedSteer, setReceivedSteer] = useState<{
     agentPubkey: string;

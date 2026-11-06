@@ -15,7 +15,8 @@ import { androidReleaseProfile } from './android-release-channel.mjs';
 import { computeTargets } from '../apps/mobile/scripts/ota-release.mjs';
 
 const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-const previousSha = execFileSync('git', ['rev-parse', 'HEAD^'], { encoding: 'utf8' }).trim();
+// Unit fixture identities must work in CI's single-commit checkout.
+const previousSha = 'a'.repeat(40);
 const delivered = (version = 'v0.1.1', sourceSha = previousSha) => {
   const record = initializeRelease({ version, sourceSha });
   record.state = 'delivered';
@@ -70,6 +71,9 @@ test('nightly release records cannot become GitHub latest; identities include re
 
 for (const channel of ['nightly', 'latest']) test(`offline workflow plan: ${channel}`, () => fixture(directory => {
   const previous = delivered();
+  // The CLI reads native pins with git show. Both fixture releases use the
+  // current pins, so HEAD supplies that input without requiring its parent.
+  previous.sourceSha = sha;
   const nightly = nightlyRecord();
   writeFileSync(join(directory, 'previous.json'), JSON.stringify(previous));
   writeFileSync(join(directory, 'nightly.json'), JSON.stringify(nightly));

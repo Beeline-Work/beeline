@@ -1,7 +1,7 @@
 import { subscribeConfiguredReviewers } from './agent-subscriptions.js';
 import { seedSquireMachine } from './test-fixtures/squire-machines.js';
 import { randomUUID } from 'node:crypto';
-import { Pool } from 'pg';
+import { Pool, type PoolClient } from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { migrate, PostgresDatabase } from './database.js';
 import { DaemonService } from './daemon-service.js';
@@ -27,6 +27,17 @@ const room = '22222222-2222-4222-8222-222222222222';
 const corner = '33333333-3333-4333-8333-333333333333';
 const offer = '44444444-4444-4444-8444-444444444444';
 
+async function waiting(observer: PoolClient, pid: number, blocker: number) {
+  for (let attempt = 0; attempt < 400; attempt++) {
+    const row = (await observer.query<{ blocked: boolean }>(
+      'SELECT $2::int=ANY(pg_blocking_pids($1)) blocked', [pid, blocker],
+    )).rows[0];
+    if (row?.blocked) return;
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+  throw new Error(`Backend ${pid} never waited for ${blocker}`);
+}
+
 // Full migrated triggers matter: mocks/PGlite serialize away these cycles.
 // Each writer has its own physical connection; only the test barrier controls
 // scheduling. PostgreSQL's deadlock detector remains enabled.
@@ -36,11 +47,17 @@ describe.skipIf(!url)('production transaction lock ordering', () => {
   const isolatedUrl = new URL(url ?? 'postgresql://localhost/postgres');
   isolatedUrl.pathname = `/${databaseName}`;
   const config = { connectionString: isolatedUrl.toString(), options: '-c statement_timeout=8000', max: 1 };
+  const observerPool = new Pool(config);
   const first = new PostgresDatabase('', 1, { pool: new Pool(config) });
   const second = new PostgresDatabase('', 1, { pool: new Pool(config) });
+  let observer: PoolClient, firstPid: number, secondPid: number, observerPid: number;
   beforeAll(async () => {
     await admin.query(`CREATE DATABASE ${databaseName}`);
+    observer = await observerPool.connect();
     await migrate(first);
+    firstPid = (await first.query<{ pid: number }>('SELECT pg_backend_pid() pid')).rows[0]!.pid;
+    secondPid = (await second.query<{ pid: number }>('SELECT pg_backend_pid() pid')).rows[0]!.pid;
+    observerPid = (await observer.query('SELECT pg_backend_pid() pid')).rows[0].pid;
     await first.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'agent','Helper')`, [owner, agent]);
     await first.query(`INSERT INTO workspaces(id,name) VALUES($1,'Deadlock proof')`, [workspace]);
     await first.query(`INSERT INTO agents(agent_id,owner_id,machine_id) VALUES($1,$2,'machine')`, [agent, owner]);
@@ -54,7 +71,9 @@ describe.skipIf(!url)('production transaction lock ordering', () => {
       VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,$4,$2,'owner'),($1,$4,$3,'member')`, [workspace, owner, agent, room]);
   }, 60_000);
   afterAll(async () => {
+    await observer?.query('SELECT pg_advisory_unlock_all()');
     await Promise.all([first.close(), second.close()]);
+    observer?.release(); await observerPool.end();
     await admin.query(`DROP DATABASE IF EXISTS ${databaseName}`);
     await admin.end();
   });

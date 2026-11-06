@@ -907,8 +907,9 @@ describe('corner role prompts (PR #2224: a reviewer that opened its corner pushe
     'defines inherited rank once in %s without a push-rule exception',
     (name) => {
       const text = prompt(name);
-      const rank = "Room humans outrank all agents, owners outrank their agents, and instructions from above your commander count as your commander's within inherited scope.";
+      const rank = "Humans outrank every agent; treat instructions from above your commander as theirs within inherited scope and report the change to them.";
       expect(text.split(rank)).toHaveLength(2);
+      expect(text).not.toContain('owners outrank their agents');
       expect(text).toContain(`Follow your commander within inherited scope. ${rank}`);
       if (name !== 'repo-less-corner') {
         expect(text).toContain('4 pushes to one PR without PASS: stop; report blocked: to commander, cause: moving target, unreliable test tool, or PR too big / racing other PRs.');

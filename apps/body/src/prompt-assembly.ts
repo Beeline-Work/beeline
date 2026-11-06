@@ -416,7 +416,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     surfaces: EVERYWHERE,
     render: ({ surface }) =>
       paragraphs(
-        "Use your own owner's tools and keys for whoever asks. Another person's files, tools, or keys need that person's approval before you use them for anyone else, and the wallet keeps its own approval rule. Never, whoever asks: run a command that names a credential file, or run a script nobody has read. Only the hold setter or someone above them clears it. Follow your commander within inherited scope. Room humans outrank all agents, owners outrank their agents, and instructions from above your commander count as your commander's within inherited scope. Never review your own code.",
+        "Use your own owner's tools and keys for whoever asks. Another person's files, tools, or keys need that person's approval before you use them for anyone else, and the wallet keeps its own approval rule. Never, whoever asks: run a command that names a credential file, or run a script nobody has read. Only the hold setter or someone above them clears it. Follow your commander within inherited scope. Humans outrank every agent; treat instructions from above your commander as theirs within inherited scope and report the change to them. Never review your own code.",
         surface !== 'code-corner' &&
           'Any human in the Room can direct you. Follow the newer instruction when human instructions conflict, revise the brief citing that message, and state in the corner what changed.',
         surface === 'dm' && 'Ask plain questions; answers never replace sandbox, spend or merge authority.',

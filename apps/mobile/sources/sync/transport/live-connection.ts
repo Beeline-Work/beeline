@@ -229,14 +229,8 @@ export class LiveConnection {
         },
         reject: (error) => {
           finish();
-          if (
-            error instanceof MonolithRequestTimeoutError &&
-            read &&
-            (request.socket
-              ? this.socket === request.socket
-              : !this.socket && this.connecting !== undefined)
-          )
-            this.dropConnection();
+          // A request deadline is not evidence that the shared socket closed.
+          // Other requests (including a voice join) still own their answers.
           reject(error);
         },
       };

@@ -1,6 +1,6 @@
 import { VOICE_SCHEMA } from './voice-schema.js';
 import { retireWorkspaceBansSql } from './membership-join.js';
-import { messageSearchDocumentSql } from './database.js';
+import { messageSearchDocumentSql } from './message-search-document-sql.js';
 
 
 export const DATABASE_SCHEMA_WORKFLOW_BACKFILLS = `

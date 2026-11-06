@@ -6,7 +6,8 @@ import { perItemMembershipSubscriptionCleanupSql } from './membership-join.js';
 import { TERMINAL_PUSH_CLAIMS_SQL } from './push-claim-cleanup.js';
 import { cornerOwedBackfillSql } from './corner-owed.js';
 import { runMigrationStep } from './migration-steps.js';
-import { SqlDatabase, messageSearchDocumentSql, QueryResult } from './database.js';
+import { SqlDatabase, QueryResult } from './database.js';
+import { messageSearchDocumentSql } from './message-search-document-sql.js';
 
 
 

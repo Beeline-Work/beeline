@@ -10,6 +10,8 @@ import { setRoomEventSubscriptions } from './agent-subscriptions.js';
 import { systemLine } from './system-line.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { refreshCornerAttention } from './corner-attention.js';
+import { describedWorkflow } from './test-support.js';
+import { saveWorkflow, startWorkflow } from './workflow-runs.js';
 
 const HUMAN = 'a'.repeat(64),
   AGENT = 'b'.repeat(64),
@@ -43,7 +45,7 @@ beforeAll(async () => {
 }, 30_000);
 afterAll(async () => db?.close());
 
-it('SELF-OUTPUT: opening and reporting to its own corner creates zero extra wakes', async () => {
+it('SELF-OUTPUT: its own corner assignment queues once; posts and reports queue no extra turns', async () => {
   const source = randomBytes(32).toString('hex');
   await phone.execute(
     'sendRoomMessage',
@@ -58,17 +60,15 @@ it('SELF-OUTPUT: opening and reporting to its own corner creates zero extra wake
     { roomId: ROOM, commandId: incoming.id, generationId: 'self-proof' },
     AGENT,
   );
-  const { cornerId } = await daemon.execute(
-    'createCorner',
-    {
+  const input = {
       roomId: ROOM,
       requestId: incoming.turnRequestId,
       generationId: 'self-proof',
       name: 'Glyph-alignment',
       objective: 'Align the glyphs',
-    },
-    AGENT,
-  );
+    };
+  const { cornerId } = await daemon.execute('createCorner', input, AGENT);
+  expect((await daemon.execute('createCorner', input, AGENT)).cornerId).toBe(cornerId);
   const opening = (
     await db.query<CommandRow>(
       `SELECT * FROM agent_commands WHERE room_id=$1 AND reason='corner_objective'`,
@@ -76,9 +76,14 @@ it('SELF-OUTPUT: opening and reporting to its own corner creates zero extra wake
     )
   ).rows[0]!;
   expect(opening).toBeDefined(); // The order still owns corner provenance and idempotency.
-  expect((await daemon.execute('getAgentCommands', { roomId: cornerId }, AGENT)).commands).toEqual(
-    [],
-  );
+  expect((await daemon.execute('getAgentCommands', { roomId: cornerId }, AGENT)).commands.map(c => c.id))
+    .toEqual([opening.id]);
+  await daemon.execute('claimAgentCommand', { roomId: cornerId, commandId: opening.id,
+    generationId: 'own-corner-work' }, AGENT);
+  await daemon.execute('postCornerMessage', { roomId: cornerId, cornerId,
+    requestId: opening.turn_request_id, generationId: 'own-corner-work', text: '@worker mock ready' }, AGENT);
+  await daemon.execute('postAgentTurnReceipt', { roomId: cornerId,
+    requestId: opening.turn_request_id, generationId: 'own-corner-work', status: 'complete' }, AGENT);
   expect(
     await reportToCommander(db, cornerId, AGENT, 'done: mock ready', opening, 'self-report-proof'),
   ).toMatchObject({ delivered: true });
@@ -103,6 +108,8 @@ it('SELF-OUTPUT: opening and reporting to its own corner creates zero extra wake
       )
     ).rowCount,
   ).toBe(0);
+  expect((await db.query(`SELECT count(*)::int total FROM agent_commands
+    WHERE room_id=$1 AND reason='corner_objective'`, [cornerId])).rows).toEqual([{ total: 1 }]);
   expect(
     (
       await db.query(
@@ -222,6 +229,28 @@ it('SELF-OUTPUT: external lifecycle events still wake a self-opening implementer
     reason: 'subscribed_event',
   });
   expect(command?.state).toBe('pending');
+});
+
+it('SELF-OUTPUT: workflow assignment wakes only its assignee, not its self-subscribed author', async () => {
+  await setRoomEventSubscriptions(db, ROOM, AGENT, ['workflow-handoff']);
+  const source = randomBytes(32).toString('hex');
+  await phone.execute('sendRoomMessage', { roomId: ROOM, messageId: source, text: '@worker start the steps' }, HUMAN);
+  const command = (await db.query<CommandRow>(`SELECT * FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2`, [source, AGENT])).rows[0]!;
+  await saveWorkflow(db, command, { contract: describedWorkflow({ version: 1, name: 'assignment-only',
+    description: 'Assign work without echoing to the author', roles: ['worker'], start: 'work', handoffs: {
+      work: { role: 'worker', requires: [], on: { done: 'done' } }, done: { kind: 'terminal', status: 'done' },
+    } }) });
+  const { runId } = await startWorkflow(db, command, { name: 'assignment-only', roleBindings: { worker: OTHER } });
+  expect((await db.query(`SELECT agent_id,state FROM agent_commands WHERE source_message_id=$1 ORDER BY agent_id`, [runId])).rows)
+    .toEqual([{ agent_id: AGENT, state: 'complete' }, { agent_id: OTHER, state: 'pending' }]);
+  await saveWorkflow(db, command, { contract: describedWorkflow({ version: 1, name: 'own-assignment',
+    description: 'Assign the author without an extra subscription turn', roles: ['worker'], start: 'work', handoffs: {
+      work: { role: 'worker', requires: [], on: { done: 'done' } }, done: { kind: 'terminal', status: 'done' },
+    } }) });
+  const own = await startWorkflow(db, command, { name: 'own-assignment', roleBindings: { worker: AGENT } });
+  expect((await db.query(`SELECT agent_id,state FROM agent_commands WHERE source_message_id=$1`, [own.runId])).rows)
+    .toEqual([{ agent_id: AGENT, state: 'pending' }]);
+  await setRoomEventSubscriptions(db, ROOM, AGENT, []);
 });
 
 it('SELF-OUTPUT: connected apps receive no webhook or MCP event for their own output', async () => {

@@ -50,7 +50,7 @@ jobs:
           set -euo pipefail
           flyctl machine list --app beeline-server --json > "$RUNNER_TEMP/server-machines.json"
           record=()
-          if node scripts/release-record.mjs previous --output "$RUNNER_TEMP/record/release.json"; then
+          if node scripts/release-record.mjs previous --channel nightly --output "$RUNNER_TEMP/record/release.json"; then
             record=(--record "$RUNNER_TEMP/record/release.json")
           fi
           node scripts/release-record.mjs server-rollback-image "${record[@]}" \

@@ -224,6 +224,8 @@ export type IndexRowProps = {
   valueTone?: 'danger' | 'accent';
   /** The title keeps its full width; the trailing value ellipsizes instead. */
   wholeTitle?: boolean;
+  /** Recovery notices keep all copy visible, including at large text sizes. */
+  wrap?: boolean;
 };
 
 /** A page subtitle is one short phrase; a long one stops at two lines. */
@@ -291,6 +293,7 @@ export function IndexRow({
   value,
   valueTone,
   wholeTitle = false,
+  wrap = false,
 }: IndexRowProps) {
   const inheritedInset = React.useContext(IndexRowInsetContext);
   const inset = ownInset ?? inheritedInset;
@@ -308,11 +311,11 @@ export function IndexRow({
   const rowIsSwitch = Boolean(toggle && onPress);
   // A page subtitle is one short phrase and stops at two lines; a sheet row's
   // quiet line explains the choice, so it wraps whole (screenshot 1cfe27eb).
-  const descriptionLines = density === 'page' ? DESCRIPTION_LINES : undefined;
+  const descriptionLines = !wrap && density === 'page' ? DESCRIPTION_LINES : undefined;
 
   const trailingMark =
     action !== undefined ? (
-      <Text numberOfLines={1} style={styles.action}>
+      <Text numberOfLines={wrap ? undefined : 1} style={styles.action}>
         {action}
       </Text>
     ) : shownValue !== undefined ? (
@@ -393,7 +396,7 @@ export function IndexRow({
       <View style={[styles.copy, wholeTitle && styles.wholeCopy]}>
         <View style={styles.titleLine}>
           <Text
-            numberOfLines={1}
+            numberOfLines={wrap ? undefined : 1}
             style={[
               styles.title,
               appBoard && styles.boardTitle,
@@ -423,7 +426,7 @@ export function IndexRow({
             ) : null}
             {descriptionContent ?? (
               <Text
-                numberOfLines={descriptionLead || descriptionAction ? 1 : descriptionLines}
+                numberOfLines={wrap ? undefined : descriptionLead || descriptionAction ? 1 : descriptionLines}
                 style={[
                   descriptionLead ? styles.descriptionTail : styles.description,
                   descriptionTone === 'danger' && styles.descriptionDanger,
@@ -453,7 +456,7 @@ export function IndexRow({
             ]}
           >
             {descriptionDetailContent ?? (
-              <Text numberOfLines={DESCRIPTION_LINES} style={styles.description}>
+              <Text numberOfLines={wrap ? undefined : DESCRIPTION_LINES} style={styles.description}>
                 {descriptionDetail}
               </Text>
             )}

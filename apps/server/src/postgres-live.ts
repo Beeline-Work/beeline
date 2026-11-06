@@ -1041,7 +1041,9 @@ export class PostgresLiveListener {
       if (payload.squireReportChanged)
         this.live.publish({ type: 'resource-change', roomId: '', ownerId: payload.ownerId,
           resource: 'workbench' });
-      if (payload.squireWorkChanged && payload.squireAddress)
+      // Install status reads both the ceremony and the machine's vault report.
+      // The successful vault read can commit after installConnector completes.
+      if ((payload.squireWorkChanged || payload.squireReportChanged) && payload.squireAddress)
         this.live.publish({ type: 'resource-change', roomId: '', ownerId: payload.ownerId,
           resource: 'install', resourceId: payload.squireAddress });
       return;

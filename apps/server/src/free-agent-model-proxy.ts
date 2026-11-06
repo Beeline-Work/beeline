@@ -393,9 +393,6 @@ export async function handleFreeAgentModelRequest(
          AND turn.request_id=command.turn_request_id
        WHERE command.agent_id=$1 AND command.state='claimed'
          AND command.action IN ('input','resume') AND ${commandOwnerLiveSql('command', '$2')}
-         -- A per-agent model token does not identify a new connection's execution.
-         -- The owned cohort stays closed until this transport binds that actor.
-         AND command.turn_owner_connection_id IS NULL
        ORDER BY started DESC LIMIT 1`,
     [agent.agent_id, now],
   )).rows[0];

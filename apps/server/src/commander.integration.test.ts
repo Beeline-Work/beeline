@@ -910,14 +910,17 @@ it('Reproduction corner-ancestor-rule: corner orders reach self, siblings and ch
     await expect(daemon.execute('reviseCornerBrief', { ...authority(grandchildTurn), cornerId, expectedRevision: 1,
       brief: { spec: 'Ancestor work', change: 'Attempt', approval: { sourceMessageId: turn.sourceMessageId } } }, WORKER))
       .rejects.toThrow("Corners can't order their parent Room. Report to your commander instead.");
-    await expect(daemon.execute('archiveCorner', { ...authority(grandchildTurn), cornerId }, WORKER))
-      .rejects.toThrow("Corners can't order their parent Room. Report to your commander instead.");
   }
   console.log('[corner-ancestor-rule] sibling/self/child/parent Room orders delivered; ancestors and DM/agent addresses rejected; broadcasts and nonmembers refused');
   await daemon.execute('reviseCornerBrief', { ...authority(turn), cornerId: grandchild.cornerId, expectedRevision: 1,
     brief: { spec: 'Clarified grandchild widget', change: 'Clarify', repositoryWork: false,
       approval: { sourceMessageId: grandchildTurn.sourceMessageId } } }, WORKER);
   await daemon.execute('archiveCorner', { ...authority(turn), cornerId: grandchild.cornerId }, WORKER);
+  // Closing is cleanup rather than an order: even the ended grandchild turn
+  // can close an ancestor through the same current parent Room membership.
+  await daemon.execute('archiveCorner', { ...authority(grandchildTurn), cornerId: opened.cornerId }, WORKER);
+  expect((await db.query(`SELECT archived_at IS NOT NULL archived FROM rooms WHERE id=$1`, [opened.cornerId])).rows[0])
+    .toEqual({ archived: true });
 
 });
 it('issues-triage can order and revise fix corners while opening cannot escape its Room', async () => {

@@ -575,95 +575,6 @@ export class DaemonService {
     if (turnOwner && name !== 'claimAgentCommand' && name !== 'postAgentTurnReceipt' && name !== 'acknowledgeAgentCommand' && name !== 'getAgentCommands')
       throw new Error('Turn ownership operation unavailable');
     if(name==='readCommandActivation')throw new Error('Activation context requires the negotiated machine socket');
-    input = { ...input };
-    const candidate = input as Record<string, unknown>;
-    if (typeof candidate.agentId === 'string' && candidate.agentId !== authenticatedAgentId)
-      throw new Error('daemon token does not own requested agent');
-    // A corner operation is authorized on that corner, never on a roomId the
-    // caller also sends; otherwise any Room the caller belongs to would open it.
-    const scopedRoom =
-      CORNER_REACH_OPERATIONS.has(name) && typeof candidate.cornerId === 'string'
-        ? candidate.cornerId
-        : typeof candidate.roomId === 'string'
-          ? candidate.roomId
-          : typeof candidate.cornerId === 'string'
-            ? candidate.cornerId
-            : undefined;
-    const walletCall = [
-      'getWalletToolState',
-      'getWalletToolBalance',
-      'getWalletToolChains',
-      'getWalletToolHistory',
-      'getWalletToolQuote',
-      'walletPay',
-      'walletSwap',
-      'walletContractCall',
-      'walletSignTypedData',
-    ].includes(name);
-    if (walletCall && !scopedRoom) throw new Error('wallet access requires an active Room command');
-    let cornerReviewer = false;
-    let isCorner = false;
-    let privateCommand = false;
-    let voiceAgentName: string | null | undefined;
-    if (scopedRoom && name !== 'ensureAgentMembership' && !this.commandTransaction)
-      ({ cornerReviewer, isCorner, privateCommand, voiceAgentName } = await this.access(scopedRoom, authenticatedAgentId, candidate.requestId ?? candidate.turnId).catch(
-        (error: unknown) => {
-          if (error instanceof AccessDeniedError &&
-              (name === 'getRoomConversation' || name === 'getRoomMessage'))
-            return this.reviewSourceAccess(scopedRoom, authenticatedAgentId).then(() => ({
-              cornerReviewer: false, isCorner: false, privateCommand: false, voiceAgentName: null,
-            })).catch((sourceError: unknown) => {
-              if (sourceError instanceof AccessDeniedError)
-                return this.reach(scopedRoom, authenticatedAgentId).then(() => ({
-                  cornerReviewer: false, isCorner: true, privateCommand: false, voiceAgentName: null,
-                }));
-              throw sourceError;
-            });
-          // Reachable corner operations also admit a parent Room member.
-          if (error instanceof AccessDeniedError &&
-              (CORNER_REACH_OPERATIONS.has(name) || CORNER_CLEANUP_OPERATIONS.has(name)))
-            return this.reach(scopedRoom, authenticatedAgentId).then(() => ({
-              cornerReviewer: false,
-              isCorner: true,
-              privateCommand: false,
-              voiceAgentName: null,
-            }));
-          throw error;
-        },
-      ));
-    let ownedIntent = Boolean(turnOwner || this.authorizedCommand?.turn_owner_connection_id);
-    if (!this.commandTransaction && scopedRoom && typeof candidate.generationId === 'string' &&
-        typeof (candidate.requestId ?? candidate.turnId) === 'string') {
-      ownedIntent ||= Boolean((await this.database.query(`SELECT 1 FROM agent_commands command
-        JOIN agent_command_generation_owners binding ON binding.command_id=command.id
-          AND binding.generation_id=$4 AND binding.connection_id IS NOT NULL
-        WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3 LIMIT 1`,
-        [scopedRoom, authenticatedAgentId, candidate.requestId ?? candidate.turnId, candidate.generationId])).rowCount);
-    }
-    // An owned claim must not remove existing tools. Operations without a
-    // dedicated adapter keep their established provider/permission path while
-    // retaining the command's generation and final commit fences below.
-    // Provider reads happen before the command transaction. Reports may be
-    // delivered in the commander's Room, so refresh their origin corners too.
-    if (!(ownedIntent && usesOwnedTurnAdapter(String(name))) && !this.commandTransaction && scopedRoom && this.github) {
-      if (['getAgentCommands', 'claimAgentCommand'].includes(name)) {
-        const origins = await this.database.query<{ corner_id: string }>(
-          `SELECT DISTINCT COALESCE(review_context->>'cornerId',room_id::text) corner_id
-           FROM agent_commands WHERE room_id=$1 AND agent_id=$2
-             AND review_context IS NOT NULL AND state IN ('pending','claimed')`,
-          [scopedRoom, authenticatedAgentId]);
-        for (const origin of origins.rows) await this.github.refreshCornerReviewHead?.(origin.corner_id);
-      } else if (isCorner && !cornerReviewer && name === 'report' && candidate.status === 'done') {
-        await this.github.resolveUnregisteredCornerPullRequest(scopedRoom, authenticatedAgentId);
-      } else if (isCorner && (['order', 'report', 'postCornerMessage'].includes(name) ||
-        name === 'postRoomMessage' && candidate.relay === undefined)) {
-        await this.github.refreshCornerReviewHead?.(scopedRoom);
-      }
-    }
-    if (voiceAgentName && typeof candidate.text === 'string')
-      candidate.text = cleanVoiceReply(candidate.text, voiceAgentName);
-    if (name === 'postRoomMessage' && candidate.relay !== undefined)
-      throw new CommandRefusalError('relay cards are retired; use order and report', 410);
     const turnWrites = new Set([
       'postVaultSaveCard',
       'postAgentAvatar',
@@ -741,6 +652,99 @@ export class DaemonService {
       'sendOperatorSystemDm',
       'readOperatorSystemDm',
     ]);
+    input = { ...input };
+    const candidate = input as Record<string, unknown>;
+    if (typeof candidate.agentId === 'string' && candidate.agentId !== authenticatedAgentId)
+      throw new Error('daemon token does not own requested agent');
+    // Command writes authorize their source before the operation checks its
+    // target. Lifecycle and read operations authorize the addressed corner,
+    // independently of any source context the helper also supplies.
+    const scopedRoom =
+      CORNER_REACH_OPERATIONS.has(name) && typeof candidate.cornerId === 'string'
+        ? candidate.cornerId
+        : typeof candidate.roomId === 'string'
+          ? candidate.roomId
+          : typeof candidate.cornerId === 'string'
+            ? candidate.cornerId
+            : undefined;
+    const addressedRoom = !turnWrites.has(name) && typeof candidate.cornerId === 'string'
+      ? candidate.cornerId : scopedRoom;
+    const walletCall = [
+      'getWalletToolState',
+      'getWalletToolBalance',
+      'getWalletToolChains',
+      'getWalletToolHistory',
+      'getWalletToolQuote',
+      'walletPay',
+      'walletSwap',
+      'walletContractCall',
+      'walletSignTypedData',
+    ].includes(name);
+    if (walletCall && !scopedRoom) throw new Error('wallet access requires an active Room command');
+    let cornerReviewer = false;
+    let isCorner = false;
+    let privateCommand = false;
+    let voiceAgentName: string | null | undefined;
+    if (addressedRoom && name !== 'ensureAgentMembership' && !this.commandTransaction)
+      ({ cornerReviewer, isCorner, privateCommand, voiceAgentName } = await this.access(addressedRoom, authenticatedAgentId, candidate.requestId ?? candidate.turnId).catch(
+        (error: unknown) => {
+          if (error instanceof AccessDeniedError &&
+              (name === 'getRoomConversation' || name === 'getRoomMessage'))
+            return this.reviewSourceAccess(addressedRoom, authenticatedAgentId).then(() => ({
+              cornerReviewer: false, isCorner: false, privateCommand: false, voiceAgentName: null,
+            })).catch((sourceError: unknown) => {
+              if (sourceError instanceof AccessDeniedError)
+                return this.reach(addressedRoom, authenticatedAgentId).then(() => ({
+                  cornerReviewer: false, isCorner: true, privateCommand: false, voiceAgentName: null,
+                }));
+              throw sourceError;
+            });
+          // Reachable corner operations also admit a parent Room member.
+          if (error instanceof AccessDeniedError &&
+              (CORNER_REACH_OPERATIONS.has(name) || CORNER_CLEANUP_OPERATIONS.has(name)))
+            return this.reach(addressedRoom, authenticatedAgentId).then(() => ({
+              cornerReviewer: false,
+              isCorner: true,
+              privateCommand: false,
+              voiceAgentName: null,
+            }));
+          throw error;
+        },
+      ));
+    let ownedIntent = Boolean(turnOwner || this.authorizedCommand?.turn_owner_connection_id);
+    if (!this.commandTransaction && scopedRoom && typeof candidate.generationId === 'string' &&
+        typeof (candidate.requestId ?? candidate.turnId) === 'string') {
+      ownedIntent ||= Boolean((await this.database.query(`SELECT 1 FROM agent_commands command
+        JOIN agent_command_generation_owners binding ON binding.command_id=command.id
+          AND binding.generation_id=$4 AND binding.connection_id IS NOT NULL
+        WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3 LIMIT 1`,
+        [scopedRoom, authenticatedAgentId, candidate.requestId ?? candidate.turnId, candidate.generationId])).rowCount);
+    }
+    // An owned claim must not remove existing tools. Operations without a
+    // dedicated adapter keep their established provider/permission path while
+    // retaining the command's generation and final commit fences below.
+    // Provider reads happen before the command transaction. Reports may be
+    // delivered in the commander's Room, so refresh their origin corners too.
+    if (!(ownedIntent && usesOwnedTurnAdapter(String(name))) && !this.commandTransaction && scopedRoom && this.github) {
+      if (['getAgentCommands', 'claimAgentCommand'].includes(name)) {
+        const origins = await this.database.query<{ corner_id: string }>(
+          `SELECT DISTINCT COALESCE(review_context->>'cornerId',room_id::text) corner_id
+           FROM agent_commands WHERE room_id=$1 AND agent_id=$2
+             AND review_context IS NOT NULL AND state IN ('pending','claimed')`,
+          [scopedRoom, authenticatedAgentId]);
+        for (const origin of origins.rows) await this.github.refreshCornerReviewHead?.(origin.corner_id);
+      } else if (isCorner && !cornerReviewer && name === 'report' && candidate.status === 'done') {
+        await this.github.resolveUnregisteredCornerPullRequest(scopedRoom, authenticatedAgentId);
+      } else if (isCorner && (['order', 'report', 'postCornerMessage'].includes(name) ||
+        name === 'postRoomMessage' && candidate.relay === undefined)) {
+        await this.github.refreshCornerReviewHead?.(scopedRoom);
+      }
+    }
+    if (voiceAgentName && typeof candidate.text === 'string')
+      candidate.text = cleanVoiceReply(candidate.text, voiceAgentName);
+    if (name === 'postRoomMessage' && candidate.relay !== undefined)
+      throw new CommandRefusalError('relay cards are retired; use order and report', 410);
+
     if (
       !this.commandTransaction &&
       !ownedIntent &&
@@ -8830,18 +8834,12 @@ export class DaemonService {
   }
   private async archiveCorner(input: Input<'archiveCorner'>, agentId: string) {
     const { cornerId } = input;
-    // The generic gate checks the turn's roomId; the target corner needs its own check.
-    await this.reach(cornerId, agentId);
     const authorize = async (database: SqlDatabase) => {
       await lockCornerLifecycle(database, cornerId);
       await lockCornerArchivalAuthority(database);
-      if (input.requestId) {
-        const command = await authorizeCommandOutput(database, input.roomId ?? cornerId,
-          agentId, input.requestId, input.generationId);
-        await assertCornerCommandTarget(database, command.room_id, cornerId);
-      } else if (input.roomId) {
-        await assertCornerCommandTarget(database, input.roomId, cornerId);
-      }
+      // Closing is lifecycle cleanup, not command output. A completed turn or
+      // an unrelated source place cannot revoke current parent Room access.
+      await this.reach(cornerId, agentId, database);
       if ((await database.query(
         `SELECT 1 FROM corner_facts WHERE corner_id=$1 AND locked`, [cornerId],
       )).rowCount) {
@@ -8944,7 +8942,8 @@ export class DaemonService {
          JOIN identities identity ON identity.id=command.agent_id
          WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3
          ORDER BY command.created_at DESC,command.id DESC LIMIT 1) voice_agent_name
-       FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
+       FROM memberships WHERE room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=$1)
+         AND identity_id=$2 AND removed_at IS NULL`,
       [roomId, agentId, typeof requestId === 'string' ? requestId : null],
     );
     if (!result.rowCount) throw new AccessDeniedError();

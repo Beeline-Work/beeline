@@ -1,19 +1,5 @@
 import type { AgentActivityItem } from '@/sync/transport/rig-transport';
 
-export type ActivityTimelineEntry =
-  | {
-      kind: 'reasoning';
-      title: string;
-      detail: string;
-      count: number;
-    }
-  | {
-      kind: 'action';
-      title: string;
-      detail?: string;
-      count: number;
-    };
-
 /**
  * How a single tool call reaches the reader.
  *
@@ -111,14 +97,6 @@ function oneLine(value: string): string {
 function clamp(value: string, limit: number): string {
   if (value.length <= limit) return value;
   return `${value.slice(0, Math.max(0, limit - 1)).trimEnd()}…`;
-}
-
-function phaseTitle(text: string | undefined): string | undefined {
-  if (!text) return undefined;
-  const markdownBold = text.match(/^\s*\*\*([^*\n]+)\*\*/)?.[1];
-  const markdownHeading = text.match(/^\s*#{1,6}\s+([^\n]+)/)?.[1];
-  const candidate = oneLine(markdownBold ?? markdownHeading ?? '');
-  return candidate ? clamp(candidate.replace(/[.:]+$/, ''), MAX_ACTION_TITLE) : undefined;
 }
 
 function cleanTitle(value: string): string {
@@ -358,16 +336,6 @@ function actionTitle(item: AgentActivityItem): string | undefined {
   }
   if (normalized === 'output' || item.kind === 'output') return 'Agent update';
   return clamp(redactPaths(title || 'Completed an action'), MAX_ACTION_TITLE);
-}
-
-function appendDistinctDetail(
-  current: string | undefined,
-  next: string | undefined,
-): string | undefined {
-  if (!next) return current;
-  if (!current) return next;
-  if (current === next || current.endsWith(next)) return current;
-  return `${current}\n${next}`;
 }
 
 function mergeToolActivity(

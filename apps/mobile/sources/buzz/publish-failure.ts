@@ -9,14 +9,3 @@ export class RawPhotoDecodeError extends Error {
     this.name = 'RawPhotoDecodeError';
   }
 }
-
-export type PublishFailurePresentation = {
-  message: string;
-  retryable: boolean;
-};
-
-function errorMessage(error: unknown): string | undefined {
-  if (error instanceof Error) return error.message.trim() || undefined;
-  if (typeof error === 'string') return error.trim() || undefined;
-  return undefined;
-}

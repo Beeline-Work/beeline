@@ -3,8 +3,6 @@ import { cornerShortTitle, cornerTitle, roomTitle } from '@beeline/api-contract/
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 import type { ChatDisplayMessage, CornerProcessState } from '@/buzz/room-view-presentation';
 
-export type CornerSessionState = 'working' | 'idle' | 'done';
-
 /**
  * What the chat screen knows about the channel it is showing before its own
  * metadata read lands. `unknown` is a real state — a notification deep link or

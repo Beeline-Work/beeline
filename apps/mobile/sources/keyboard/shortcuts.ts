@@ -13,25 +13,6 @@ export interface KeyboardShortcutEvent {
     getModifierState?: (key: string) => boolean;
 }
 
-export type SessionActionShortcutId =
-    | 'details'
-    | 'resume'
-    | 'fork'
-    | 'duplicate'
-    | 'copy-metadata'
-    | 'copy-metadata-and-logs'
-    | 'archive';
-
-export type SidebarPickerShortcutId = 'changes' | 'allFiles' | 'newSideChat';
-
-export interface ShortcutChord {
-    key: string;
-    code: string;
-    keyLabel: string;
-    altKey?: boolean;
-    shiftKey?: boolean;
-}
-
 export const GLOBAL_SHORTCUTS: ReadonlyArray<{
     id: GlobalShortcutId;
     key: string;

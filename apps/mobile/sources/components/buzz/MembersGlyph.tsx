@@ -18,16 +18,3 @@ export const CHROME_STROKE_REF_SIZE = 16;
 export function chromeStrokeWidth(size: number): number {
   return MEMBERS_GLYPH_STROKE_WIDTH * (CHROME_STROKE_REF_SIZE / size);
 }
-
-const HEAD_CX = 12;
-const HEAD_CY = 7.85;
-const HEAD_R = 5.45;
-/** Apex sits on the head circle at the bottom centre. */
-const APEX_X = HEAD_CX;
-const APEX_Y = HEAD_CY + HEAD_R;
-/**
- * Right-isosceles body: equal legs from the apex, 90° at the apex, horizontal
- * base. The vertical drop equals the half-width so the legs are perpendicular.
- */
-const LEG = 7.6;
-const BODY_POINTS = `${APEX_X} ${APEX_Y} ${APEX_X + LEG} ${APEX_Y + LEG} ${APEX_X - LEG} ${APEX_Y + LEG}`;

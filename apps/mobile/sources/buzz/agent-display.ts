@@ -81,24 +81,6 @@ export function resolvePendingAgentDisplay(
   return hydrated ? resolveAgentDisplayIdentity(pubkey, agent) : null;
 }
 
-type NameableAgent = Pick<Agent, 'pubkey' | 'displayName' | 'soulProfile'>;
-
-/**
- * Whether this roster entry can actually name its agent, or is just a row.
- *
- * Pairing (`redeemAgentPairingCode`) registers every fresh agent with
- * `displayName: fallbackAgentName(pubkey)` — the identical seed placeholder
- * `resolveAgentDisplayIdentity` would produce with no roster entry at all.
- * Treating that as "named" defeats the whole point of the gap-filling merge
- * below: an agent registered (but never given a soul) in one Workspace the
- * viewer belongs to would permanently lock in its own placeholder and block a
- * later Workspace's real soul name for the same pubkey from ever winning.
- */
-function namesItsAgent(agent: NameableAgent): boolean {
-  const displayName = agent.displayName?.trim();
-  return Boolean(displayName) && displayName !== fallbackAgentName(agent.pubkey);
-}
-
 /**
  * A corner-status card's `agentPubkey` is declared data (an `agent` tag on
  * the body-control event) and can miss the registered-agent roster even when

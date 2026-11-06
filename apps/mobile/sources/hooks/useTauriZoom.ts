@@ -4,8 +4,6 @@ import { isTauri } from '@/utils/isTauri';
 import { useLocalSetting } from '@/sync/storage';
 import { APP_UI_SIZE_SCALE } from '@/ui-size';
 
-export const BROWSER_APP_ZOOM = 1.0;
-
 const MIN_APP_ZOOM = 0.5;
 const MAX_APP_ZOOM = 2.5;
 const WEB_ZOOM_CLASS = 'happy-app-zoomed';

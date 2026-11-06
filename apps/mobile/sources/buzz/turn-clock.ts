@@ -1,16 +1,4 @@
-/**
- * The thinking line's clock: spinner glyph, per-turn verb, elapsed duration,
- * and the settled "done" line. Pure functions so the per-second contract is
- * testable without a renderer.
- *
- * Modeled on the Claude Code status line: a spinner frame cycling back and
- * forth, a gerund verb, then elapsed time ticking once per second from
- * the server receipt's own time. On completion the line settles briefly to
- * "<Past> for Ns · done h:MM" before the transcript resumes its silence.
- */
 
-/** Spinner frames, ping-ponged (0→5→0) like the reference animation. */
-export const SPINNER_FRAMES = ['\u00b7', '\u2722', '\u2733', '\u2736', '\u273d', '\u273b'] as const;
 
 /** One spinner step, ~8 steps per second. */
 export const SPINNER_STEP_MS = 125;
@@ -45,15 +33,6 @@ function hashString(value: string): number {
  */
 export function pickTurnVerb(turnKey: string): TurnVerb {
   return TURN_VERBS[hashString(turnKey) % TURN_VERBS.length]!;
-}
-
-/** Ping-pong the frame index: 0..n-1 then back down, never jumping. */
-export function spinnerFrameIndexAt(elapsedMs: number): number {
-  if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) return 0;
-  const count = SPINNER_FRAMES.length;
-  const cycle = count * 2 - 2;
-  const step = Math.floor(elapsedMs / SPINNER_STEP_MS) % cycle;
-  return step < count ? step : cycle - step;
 }
 
 /** Whole seconds elapsed since the receipt's server time, floored at zero. */

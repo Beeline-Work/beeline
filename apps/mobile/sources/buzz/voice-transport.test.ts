@@ -2,7 +2,10 @@ const socketRequest = vi.hoisted(() => vi.fn(async () => ({ ended: true })));
 vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ request: socketRequest }) }));
 vi.mock('./runtime-config', () => ({ getBuzzRuntimeConfig: () => ({ monolithUrl: 'http://proof' }) }));
 import { expect, it, vi } from 'vitest';
-const native = vi.hoisted(() => ({ roomFailure: null as Error | null, registerGlobals: vi.fn(),
+const native = vi.hoisted(() => ({
+  volumeListener: undefined as ((event: { id: string; volume: number }) => void) | undefined,
+  removeVolumeListener: vi.fn(),
+  meter: { createVolumeProcessor: vi.fn(() => 'meter-1'), deleteVolumeProcessor: vi.fn() }, roomFailure: null as Error | null, registerGlobals: vi.fn(),
   roomOptions: undefined as any,
   link: undefined as ((event: {url: string}) => void) | undefined,
   response: undefined as ((event: any) => void) | undefined,
@@ -15,7 +18,10 @@ vi.mock('expo-notifications', () => ({
   addNotificationResponseReceivedListener: (listener: (event: any) => void) => { native.response = listener; return { remove: vi.fn() }; },
   getLastNotificationResponseAsync: async () => null,
 }));
-vi.mock('react-native', () => ({ Linking: {
+vi.mock('react-native', () => ({
+  NativeModules: { LivekitReactNativeModule: native.meter },
+  NativeEventEmitter: class { addListener(_name: string, listener: typeof native.volumeListener) { native.volumeListener = listener; return { remove: native.removeVolumeListener }; } },
+  Linking: {
   addEventListener: (_type: string, listener: (event: {url: string}) => void) => { native.link = listener; return { remove: vi.fn() }; },
   getInitialURL: async () => null, openURL: native.openURL,
 }, Platform: { OS: 'android' }, PermissionsAndroid: {
@@ -26,7 +32,10 @@ vi.mock('expo-modules-core', () => ({
   requireNativeModule: () => native.background,
   requireOptionalNativeModule: () => native.background,
 }));
-vi.mock('livekit-client', () => ({ Room: class { constructor(options: unknown) { native.roomOptions = options; if (native.roomFailure) throw native.roomFailure; } async startAudio() {} } }));
+vi.mock('livekit-client', () => ({
+  RoomEvent: { LocalTrackPublished: 'published', LocalTrackUnpublished: 'unpublished', TrackSubscribed: 'subscribed', TrackUnsubscribed: 'unsubscribed', ParticipantDisconnected: 'disconnected', TrackMuted: 'muted', TrackUnmuted: 'unmuted' },
+  Room: class { constructor(options: unknown) { native.roomOptions = options; if (native.roomFailure) throw native.roomFailure; } async startAudio() {} } }));
+import * as nativeTransport from './voice-transport.native';
 import { createVoiceRoom, subscribeVoiceResume, routeVoiceResumeNotification } from './voice-transport.native';
 
 it('starts native audio only when voice mode opens and exposes cleanup for leave/unmount', async () => {
@@ -113,4 +122,19 @@ it('disables timed SDK reconnects in the browser adapter too', async () => {
   await createBrowserVoiceRoom();
   for (const retryCount of [0, 1, 1000])
     expect(native.roomOptions.reconnectPolicy.nextRetryDelayInMs({ retryCount })).toBeNull();
+});
+
+
+it('starts the native microphone meter through the adapter used by conversation join', async () => {
+  const track = { isMuted: false, mediaStreamTrack: { id: 'microphone', _peerConnectionId: 3 } };
+  const room = { localParticipant: { audioTrackPublications: new Map([['mic', { track }]]) },
+    remoteParticipants: new Map(), on: vi.fn(), off: vi.fn() };
+  const level = vi.fn();
+  const stop = nativeTransport.subscribeVoiceMicrophone(room as any, level);
+  expect(native.meter.createVolumeProcessor).toHaveBeenCalledWith(3, 'microphone');
+  native.volumeListener!({ id: 'meter-1', volume: 0.7 });
+  expect(level).toHaveBeenLastCalledWith(0.7);
+  stop();
+  expect(native.meter.deleteVolumeProcessor).toHaveBeenCalledWith('meter-1', 3, 'microphone');
+  expect(native.removeVolumeListener).toHaveBeenCalledOnce();
 });

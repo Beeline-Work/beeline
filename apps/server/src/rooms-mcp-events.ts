@@ -199,7 +199,7 @@ export function mcpCommandWakeSql(first: number): { cte: string; join: string; p
             AND wake_connection.identity_id=wake.owner_id AND wake_connection.revoked_at IS NULL
           WHERE wake.member_id=command.agent_id AND wake.event_name='wake' AND wake.expires_at>now())))
       JOIN rooms_mcp_connections c ON c.client_id=s.client_id AND c.identity_id=s.owner_id AND c.revoked_at IS NULL
-      WHERE command.action IN ('input','resume') AND command.reason<>'mcp_call'
+      WHERE command.state='pending' AND command.action IN ('input','resume') AND command.reason<>'mcp_call'
       ON CONFLICT(subscription_id,command_id) WHERE command_id IS NOT NULL DO NOTHING
       RETURNING room_id
     )`,

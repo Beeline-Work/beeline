@@ -146,16 +146,14 @@ across event types are suppressed for six hours from that digest, except a new
 regression or changed level. Suppressed alerts still refresh metadata and do not
 extend the suppression window. `sentry_wake_state` serializes ingestion and dispatch across server
 machines. Every accepted issue, including handled errors, queues a private command
-for Jellybean in issues-triage immediately when no batch has committed in the
-previous five minutes. Later arrivals of any severity share that durable deadline
-and coalesce into one trailing digest. Fatal and unhandled metadata remains
-recorded without changing handled errors into urgent issues.
-The command and acknowledgement commit together. The existing background leader
-reads the durable five-minute deadline after restart and PostgreSQL notifications
-re-arm it after arrivals. Pending rows from the former daily policy use this same
-deadline, so a deployment drains that backlog without another webhook. The legacy
-`last_daily_wake_at` column is retained for schema compatibility but no longer
-controls dispatch. Deadline delays use the database clock, independent of host clock skew.
+for Jellybean in issues-triage on arrival. Pending issue metadata coalesces when
+an unavailable recipient becomes eligible again. Fatal and unhandled metadata
+remains recorded without changing handled errors into urgent issues.
+The command and acknowledgement commit together. Startup and committed
+PostgreSQL notifications admit a delivery pass; there is no five-minute batch
+clock or trailing digest timer. The legacy `last_daily_wake_at` column is retained
+for schema compatibility, and `last_wake_at` records the last dispatch for diagnostics;
+neither controls dispatch.
 An unavailable target keeps rows pending. Empty, refused or failed observations
 park without a recurring sweep or retry timer. A committed arrival, relevant
 recipient membership, triage authority or blocking-report change, or actual database/listener

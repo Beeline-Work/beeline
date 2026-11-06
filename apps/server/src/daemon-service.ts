@@ -1647,7 +1647,7 @@ export class DaemonService {
             sourceMessageId: null, parent: origin, retainDepth: true,
             reason: 'corner_background_tool',
             privatePayload: {
-              kind: 'lifecycle', authorId: authenticatedAgentId, fromRoomId: completion.roomId,
+              kind: 'lifecycle', authorId: SYSTEM_IDENTITY_ID, fromRoomId: completion.roomId,
               text: `Your background tool ${completion.title.slice(0, 500)} (${completion.toolCallId}) ${completion.status}. Continue the work from its result.`,
             },
           });

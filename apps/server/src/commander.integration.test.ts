@@ -437,7 +437,7 @@ it('Reproduction R1: elapsed time keeps work queued behind a claimed turn', asyn
   // The second wake arrives just before the first claim (the production race).
   const queued = await createAgentCommand(db, { roomId: opened.cornerId, agentId: WORKER,
     sourceMessageId: null, reason: 'corner_background_tool',
-    privatePayload: { kind: 'lifecycle', text: 'Background tool completed', authorId: WORKER, fromRoomId: opened.cornerId } });
+    privatePayload: { kind: 'lifecycle', text: 'Background tool completed', authorId: SYSTEM_IDENTITY_ID, fromRoomId: opened.cornerId } });
 
   expect((await db.query(`SELECT generation_id FROM agent_turns WHERE request_id=$1`, [queued!.turn_request_id])).rows)
     .toEqual([{ generation_id: 'pending:' + queued!.id }]);
@@ -1846,59 +1846,39 @@ it('WAKE-STORM: a later delegate report publishes its reply without re-answering
     .toEqual(['done: coordination finished', 'The reviewer still needs to sign in.']);
 });
 
-it('Reproduction SELF-1: orders itself in another Room and corner, refuses the current place', async () => {
-  await daemon.execute('order', { ...authority(order), address: ROOM, agent: 'ruby', text: 'Continue in the Room' }, RUBY);
-  const roomTurn = (await commands(ROOM, RUBY)).find(c => c.reason === 'order')!;
-  expect(roomTurn.source.body).toBe('Continue in the Room');
-  await claim(roomTurn);
-  await expect(daemon.execute('order', { ...authority(roomTurn), address: ROOM, agent: 'ruby', text: 'Recurse' }, RUBY))
-    .rejects.toThrow('current place');
-  await expect(daemon.execute('order', { ...authority(roomTurn), address: ROOM.toUpperCase(), agent: 'ruby', text: 'Recurse uppercase' }, RUBY))
-    .rejects.toThrow('current place');
+it('Reproduction SELF-1: self-orders in another Room and corner retain receipts without wakes', async () => {
+  const receipt = await daemon.execute('order', { ...authority(order), address: ROOM, agent: 'ruby', text: 'Continue in the Room' }, RUBY);
+  expect(receipt.accepted).toBe(true);
+  expect(await commands(ROOM, RUBY)).toEqual([]);
+  expect((await db.query(`SELECT state FROM agent_commands WHERE id=$1`,[receipt.id])).rows).toEqual([{state:'complete'}]);
   const opened = await daemon.execute('createCorner', { ...authority(order), targetRoomId: ROOM,
     name: 'self-work', objective: 'Continue own work', implementer: 'ruby',
     brief: { spec: 'Continue own work', repositoryWork: false } }, RUBY);
   await daemon.execute('order', { ...authority(order), address: opened.cornerId, text: 'Resume own corner' }, RUBY);
-  const ownCornerTurn = (await commands(opened.cornerId, RUBY)).find(c => c.reason === 'order')!;
-  expect(ownCornerTurn.source.body).toBe('Resume own corner');
-  await claim(ownCornerTurn);
-  await expect(daemon.execute('order', { ...authority(ownCornerTurn), address: opened.cornerId, text: 'Recurse' }, RUBY))
+  expect(await commands(opened.cornerId, RUBY)).toEqual([]);
+  await expect(daemon.execute('order', { ...authority(order), address: DM, agent: 'ruby', text: 'Recurse' }, RUBY))
     .rejects.toThrow('current place');
-  console.info('Demonstrated SELF-1: own Room and corner receive private orders; same-place recursion refused');
 });
 
-it('Reproduction SELF-1: cross-place self-tags wake, same-place self-tags do not, and ping-pong ends', async () => {
+it('Reproduction SELF-1: cross-place self-tags never start a ping-pong chain', async () => {
   const opened = await open();
-  const post = async (turn: AgentCommand, cornerId: string) => daemon.execute('postCornerMessage', {
-    ...authority(turn), cornerId, text: '@ruby continue here',
-  }, RUBY);
-  expect((await post(order, ROOM)).woken).toEqual(['ruby']);
-  let turn = (await commands(ROOM, RUBY)).find(c => c.reason === 'agent_tag')!;
-  await claim(turn);
-  expect((await post(turn, ROOM)).woken).toEqual([]);
-  expect((await post(turn, ROOM.toUpperCase())).woken).toEqual([]);
-  expect((await post(turn, opened.cornerId)).woken).toEqual(['ruby']);
-  turn = (await commands(opened.cornerId, RUBY)).find(c => c.reason === 'agent_tag')!;
-  await claim(turn);
-  expect((await post(turn, ROOM)).woken).toEqual(['ruby']);
-  turn = (await commands(ROOM, RUBY)).find(c => c.reason === 'agent_tag' && c.parentCommandId === turn.id)!;
-  await claim(turn);
-  expect((await post(turn, opened.cornerId)).notWoken).toContainEqual({ handle: 'ruby', reason: 'agent tag chain depth limit reached' });
-  console.info('Demonstrated SELF-1: public cross-place self-tags wake; same-place and depth-bound tags wake nobody');
-});
-
-it('Reproduction SELF-1: self-order ping-pong consumes the existing depth budget', async () => {
-  let turn = order;
-  for (const address of [ROOM, DM, ROOM]) {
-    await daemon.execute('order', { ...authority(turn), address, agent: 'ruby', text: 'Continue elsewhere' }, RUBY);
-    turn = (await commands(address, RUBY)).find(c => c.reason === 'order' && c.parentCommandId === turn.id)!;
-    await claim(turn);
+  for (const cornerId of [ROOM, opened.cornerId, ROOM, opened.cornerId]) {
+    const posted = await daemon.execute('postCornerMessage', {...authority(order),cornerId,text:'@ruby continue here'}, RUBY);
+    expect(posted.woken).toEqual([]);
+    expect(await commands(cornerId,RUBY)).toEqual([]);
   }
-  await expect(daemon.execute('order', { ...authority(turn), address: DM, agent: 'ruby', text: 'Continue elsewhere' }, RUBY))
-    .rejects.toThrow('depth limit');
 });
 
-it('Reproduction SELF-2: own brief revision and background shell completion can finish silently', async () => {
+it('Reproduction SELF-1: replaying a self-order retains one completed receipt and zero wakes', async () => {
+  const input = {...authority(order),address:ROOM,agent:'ruby',text:'Continue elsewhere'};
+  const first = await daemon.execute('order',input,RUBY);
+  const replay = await daemon.execute('order',input,RUBY);
+  expect(replay.id).toBe(first.id);
+  expect(await commands(ROOM,RUBY)).toEqual([]);
+  expect((await db.query(`SELECT state FROM agent_commands WHERE id=$1`,[first.id])).rows).toEqual([{state:'complete'}]);
+});
+
+it('Reproduction SELF-2: own brief revisions stay quiet while external shell completions can finish silently', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
   await daemon.execute('postBackgroundToolCompletion', { ...authority(turn), toolCallId: 'shell', title: 'Run tests', status: 'completed' }, WORKER);
   const shell = (await commands(opened.cornerId, WORKER)).find(c => c.reason === 'corner_background_tool')!;
@@ -1910,10 +1890,10 @@ it('Reproduction SELF-2: own brief revision and background shell completion can 
   await db.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence','{"status":"online"}'::jsonb)`, [own.cornerId, RUBY]);
   await daemon.execute('reviseCornerBrief', { ...authority(order), cornerId: own.cornerId, expectedRevision: 1,
     brief: { spec: 'Build the clarified widget', change: 'Clarify work' } }, RUBY);
-  const revision = (await commands(own.cornerId, RUBY)).find(c => c.reason === 'corner_brief_revision')!;
-  await claim(revision);
-  await daemon.execute('markAgentTurnSilent', authority(revision), RUBY);
-  console.info('Demonstrated SELF-2: completion and revision continuations accept silence without filler');
+  expect((await commands(own.cornerId,RUBY)).filter(c=>c.reason==='corner_brief_revision')).toEqual([]);
+  expect((await db.query(`SELECT state FROM agent_commands WHERE room_id=$1 AND reason='corner_brief_revision'`,[own.cornerId])).rows)
+    .toEqual([{state:'complete'}]);
+
 });
 
 it.each([

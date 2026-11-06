@@ -131,16 +131,20 @@ async function joinCommand(args: string[], env: NodeJS.ProcessEnv): Promise<void
   const server = serverUrl(args, env);
   const existing = readState(dir).sessions.find(s => s.key === key && s.server === server);
   if (existing) {
+    let connected = false;
     try {
       await accessToken(dir, key);
       await updateState(dir, state => {
         const s = state.sessions.find(x => x.key === key);
         if (s) { s.sessionId = own.sessionId ?? s.sessionId; s.pid = own.pid ?? s.pid; }
       });
-      ensureBridge(dir, run, env);
+      connected = true;
+    } catch { /* Disconnected: sign in again below. */ }
+    if (connected) {
+      await ensureBridge(dir, run, env);
       console.log(`This ${agentLabel(own.agent)} session is on Beeline as @${existing.handle ?? existing.name}. Tags in its Rooms arrive here.`);
       return;
-    } catch { /* Disconnected: sign in again below. */ }
+    }
   }
   const taken = new Set(readState(dir).sessions.filter(s => s.key !== key).map(s => s.name));
   const name = pickName(flag(args, '--name') ?? own.chosen, defaultName(own.agent, own.cwd, gitRoot(own.cwd)), n => taken.has(n));
@@ -226,7 +230,7 @@ async function finishJoinOwned(file: string, env: NodeJS.ProcessEnv): Promise<vo
       if (prompt >= 0) changes.splice(prompt, 1);
       changes.push('Trusted only Beeline’s SessionStart hook, pinned to its current Codex hash.');
     }
-    ensureBridge(dir, run, env);
+    await ensureBridge(dir, run, env);
     const rooms = me.rooms.map(r => r.name).slice(0, 5).join(', ');
     await announce(joined, `Beeline: you joined as @${joined.handle ?? joined.name}${rooms ? ` in ${rooms}` : ''}. When someone tags you there, the message arrives here with the command that answers it.${changes.length ? `\n(${changes.join('; ')})` : ''}\n\n${renderRules(joined, run)}`, dir);
   }catch(error){retain=!(error instanceof SignInEndedError);throw error;}
@@ -295,7 +299,7 @@ async function session(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
         rules: joined => renderRules(joined, runner(dir, env)),
         pid: process.ppid, env });
       if (out) process.stdout.write(out + '\n');
-      if (event === 'session-start' && readState(dir).sessions.length) ensureBridge(dir, runner(dir, env), env);
+      if (event === 'session-start' && readState(dir).sessions.length) await ensureBridge(dir, runner(dir, env), env);
     } catch { /* silent */ }
     return;
   }

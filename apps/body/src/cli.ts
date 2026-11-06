@@ -275,6 +275,11 @@ async function main(): Promise<void> {
     // `--machine` hosts every paired agent; `--config` hosts exactly one, for
     // a development checkout or a test that runs one helper by hand.
     if (configPath && process.env.BEELINE_LAB !== '1') throw new Error('daemon --config requires explicit BEELINE_LAB=1 and an isolated state root');
+    if (startupLayout && !configPath) {
+      const { refreshJoinedSessionBridge } = await import('./session-join/bridge.js');
+      await refreshJoinedSessionBridge(resolve(startupLayout.libDir, 'lib/beeline/recovery-cli.mjs'))
+        .catch(error => console.warn('[helper] joined-session bridge upgrade failed:', error));
+    }
     const { reason, lifecycle } = await runMachineHelper(
       configPath ? { configPaths: [resolve(configPath)] } : {},
     );

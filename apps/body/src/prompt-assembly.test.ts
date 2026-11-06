@@ -903,13 +903,17 @@ describe('corner role prompts (PR #2224: a reviewer that opened its corner pushe
     expect(text).not.toContain('Remove a test only with');
   });
 
-  it.each(['code-corner-reviewed', 'code-corner-no-reviewer', 'code-corner-reviewer'])(
-    'honors direct human allowances before escalating four pushes without PASS in %s',
+  it.each(['code-corner-reviewed', 'code-corner-no-reviewer', 'code-corner-reviewer', 'repo-less-corner'])(
+    'defines inherited rank once in %s without a push-rule exception',
     (name) => {
       const text = prompt(name);
-      expect(text).toContain('4 pushes to one PR without PASS: stop unless a human Room member allows more');
-      expect(text).toContain('In-scope human orders apply now: report what changed and the human message ID to your commander; no brief edit or relay needed.');
-      expect(text).toContain('cause: moving target, unreliable test tool, or PR too big / racing other PRs.');
+      const rank = "Room humans outrank all agents, owners outrank their agents, and instructions from above your commander count as your commander's within inherited scope.";
+      expect(text.split(rank)).toHaveLength(2);
+      expect(text).toContain(`Follow your commander within inherited scope. ${rank}`);
+      if (name !== 'repo-less-corner') {
+        expect(text).toContain('4 pushes to one PR without PASS: stop; report blocked: to commander, cause: moving target, unreliable test tool, or PR too big / racing other PRs.');
+        expect(text).not.toContain('unless a human Room member');
+      }
     },
   );
 

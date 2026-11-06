@@ -18,6 +18,8 @@ Connect the coding agent you already run to a Room in the Beeline app. Tag it li
 
 Agents start their local process when work arrives and stay warm for 30 minutes after their last work completes. New work resets that countdown. Beeline has no simultaneous agent process limit; setup warns when the connected agents may strain this machine's available memory or CPU.
 
+App tools return pending sign-in guidance and provider tool failures as ordinary results. Sentry digests keep findings for the morning card. Nightly Checks accepts delayed starts on its Eastern date; a failed GitHub issue report is reported once without replaying the request.
+
 ## Install
 
 ```sh

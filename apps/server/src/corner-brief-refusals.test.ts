@@ -1,3 +1,4 @@
+import * as daemonWorkbench from './daemon/workbench.js';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import * as Sentry from '@sentry/node';
@@ -28,7 +29,7 @@ it('Reproduction R1 / ask-refusal: corner brief and ask refusals do not reach Se
   const room = '22222222-2222-4222-8222-222222222222';
   const live = new LiveHub();
   const daemon = new DaemonService(db, live);
-  vi.spyOn(daemon, 'warmConnectorIndex').mockResolvedValue();
+  vi.spyOn(daemonWorkbench, 'daemonWarmConnectorIndex').mockResolvedValue();
   const server = createBeelineServer({ database: db, daemon, live,
     auth: new TokenAuth(db, async () => { throw new Error('unused'); }),
     phone: new PhoneService(db, 'http://test'), mediaMaximumBytes: 1 });

@@ -12,8 +12,10 @@
       "owners": [
         "apps/mobile/sources/sync/transport/live-connection.ts",
         "apps/server/src/phone-operations.ts",
-        "apps/server/src/server.ts",
-        "apps/server/src/rooms-mcp.ts"
+        "apps/server/src/rooms-mcp.ts",
+        "apps/server/src/server-authenticated-routes.ts",
+        "apps/server/src/server-route.ts",
+        "apps/server/src/server.ts"
       ],
       "ownerFunctions": {
         "apps/mobile/sources/sync/transport/live-connection.ts": [
@@ -23,12 +25,17 @@
           "execute",
           "effect"
         ],
-        "apps/server/src/server.ts": [
-          "httpPhoneOperation",
-          "route"
-        ],
         "apps/server/src/rooms-mcp.ts": [
           "call"
+        ],
+        "apps/server/src/server-authenticated-routes.ts": [
+          "routeAuthenticated"
+        ],
+        "apps/server/src/server-route.ts": [
+          "route"
+        ],
+        "apps/server/src/server.ts": [
+          "httpPhoneOperation"
         ]
       },
       "ownerSites": 16,
@@ -53,8 +60,8 @@
       "strict": true,
       "ownerFunctions": {
         "apps/server/src/agent-command.ts": [
-          "insertAgentCommand",
-          "createClaimedMcpAgentCommand"
+          "createClaimedMcpAgentCommand",
+          "insertAgentCommand"
         ]
       },
       "ownerSites": 2
@@ -69,10 +76,10 @@
         "apps/server/src"
       ],
       "owners": [
-        "apps/server/src/agent-command.ts"
+        "apps/server/src/agent-command-route-agent-result.ts"
       ],
       "ownerFunctions": {
-        "apps/server/src/agent-command.ts": [
+        "apps/server/src/agent-command-route-agent-result.ts": [
           "claimAgentCommand"
         ]
       },
@@ -91,10 +98,10 @@
         "apps/server/src"
       ],
       "owners": [
-        "apps/server/src/agent-command.ts"
+        "apps/server/src/agent-command-route-agent-result.ts"
       ],
       "ownerFunctions": {
-        "apps/server/src/agent-command.ts": [
+        "apps/server/src/agent-command-route-agent-result.ts": [
           "claimAgentCommand"
         ]
       },
@@ -173,10 +180,13 @@
         "apps/server/src"
       ],
       "owners": [
-        "apps/server/src/github-operations.ts",
+        "apps/server/src/corner-close.ts",
         "apps/server/src/corner-github-cache.ts",
         "apps/server/src/corner-lifecycle.ts",
-        "apps/server/src/corner-close.ts"
+        "apps/server/src/github-operations-begin-identity.ts",
+        "apps/server/src/github-operations-read-pr-checks-status.ts",
+        "apps/server/src/github-operations-reconcile-queued-corners.ts",
+        "apps/server/src/github-operations-refresh-check-rollup.ts"
       ],
       "total": 0,
       "fix": "Write the cache through apps/server/src/corner-github-cache.ts (writeCornerGithubCache, recordHelperRemoteState) or GitHubOperations in apps/server/src/github-operations.ts; read it with cornerLifecycleSql."
@@ -243,7 +253,7 @@
         "apps/body/src"
       ],
       "owners": [
-        "apps/server/src/github-operations.ts"
+        "apps/server/src/github-operations-read-pr-checks-status.ts"
       ],
       "total": 0,
       "fix": "Merge through GitHubOperations.landCorner, the only merge path (AGENTS.md merge authority); it checks the exact-head yes, green checks and holds."
@@ -258,6 +268,7 @@
         "apps/server/src"
       ],
       "owners": [
+        "apps/server/src/postgres-live-schema.ts",
         "apps/server/src/postgres-live.ts"
       ],
       "total": 0,
@@ -591,23 +602,46 @@
         "apps/body/src"
       ],
       "owners": [
-        "apps/body/src/agent-process.ts",
-        "apps/body/src/acp.ts"
+        "apps/body/src/acp.ts",
+        "apps/body/src/agent-process.ts"
       ],
       "ownerFunctions": {
-        "apps/body/src/agent-process.ts": [
-          "startAgentProcess",
-          "stopAgentProcess"
-        ],
         "apps/body/src/acp.ts": [
           "startProcess",
           "stopProcess"
+        ],
+        "apps/body/src/agent-process.ts": [
+          "startAgentProcess",
+          "stopAgentProcess"
         ]
       },
       "ownerSites": 5,
       "strict": true,
       "total": 0,
       "fix": "Use startAgentProcess/stopAgentProcess in apps/body/src/agent-process.ts. Do not add another ACP process lifecycle caller."
+    },
+    {
+      "id": "code.file-lines",
+      "kind": "file-lines",
+      "module": "Code complexity",
+      "invariant": "Tracked code files have at most 1000 lines.",
+      "scope": [
+        "apps",
+        "packages",
+        "scripts",
+        "tools"
+      ],
+      "limit": 1000,
+      "generated": [
+        "apps/mobile/sources/vendor/pdfjs/pdfjs.gen.ts",
+        "apps/server/src/email-art/animals.ts",
+        "apps/server/src/email-art/logo.ts",
+        "apps/server/src/email-art/palette.ts",
+        "apps/server/src/face-palette.generated.ts",
+        "packages/net/src/generated-helper-shapes.ts",
+        "packages/net/src/generated-wire-shapes.ts"
+      ],
+      "fix": "Split the file by domain without changing behavior."
     }
   ],
   "storage": {

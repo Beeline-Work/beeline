@@ -42,13 +42,15 @@ it('rejects extra connection surfaces, mounts and triggers, including inside own
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-it('rejects a planted phone write backdoor, including inside the HTTP server owner file', () => {
+it('rejects a planted phone write backdoor, including inside an HTTP write owner file', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'phone-write-door-'));
   const rule = readInvariants(process.cwd()).rules.find(rule => rule.id === 'phone.write-door');
   const sources = {
     'apps/mobile/sources/sync/transport/live-connection.ts': "class LiveConnection { sendRequest() { return {t:'req'}; } }",
     'apps/server/src/phone-operations.ts': 'const execute = () => { phone.execute(); phone.markRead(); phone.markUnread(); options.voice.join(); options.voice.leave(); options.voice.idle(); options.voice.resume(); options.voice.profiles.save(); options.voice.profiles.preview(); }; const effect = () => phone.stopScheduledWorkCommand();',
-    'apps/server/src/server.ts': 'const httpPhoneOperation = () => dispatchPhoneOperation(); async function route() { phone.uploadMedia(); return options.voice.nativeStop(); }',
+    'apps/server/src/server.ts': 'const httpPhoneOperation = () => dispatchPhoneOperation();',
+    'apps/server/src/server-authenticated-routes.ts': 'async function routeAuthenticated() { phone.uploadMedia(); }',
+    'apps/server/src/server-route.ts': 'async function route() { return options.voice.nativeStop(); }',
     'apps/server/src/rooms-mcp.ts': 'class RoomsMcp { call() { this.phone.execute(); this.phone.execute(); } }',
   };
   try {
@@ -58,11 +60,11 @@ it('rejects a planted phone write backdoor, including inside the HTTP server own
     }
     assert.deepEqual(judgeTree(root, { rules: [rule] }), []);
     for (const backdoor of ['options.phone.execute(name,input,viewer)', 'dispatchPhoneOperation(name,input,viewer)', 'options.phone.markUnread(room,viewer)', 'options.voice.join(room,viewer)']) {
-      writeFileSync(path.join(root, 'apps/server/src/server.ts'),
-        sources['apps/server/src/server.ts'] + `\nasync function route() { return ${backdoor}; }`);
+      writeFileSync(path.join(root, 'apps/server/src/server-route.ts'),
+        sources['apps/server/src/server-route.ts'] + `\nasync function route() { return ${backdoor}; }`);
       assert.match(judgeTree(root, { rules: [rule] }).join('\n'), /phone\.write-door/);
     }
-    writeFileSync(path.join(root, 'apps/server/src/server.ts'), sources['apps/server/src/server.ts']);
+    writeFileSync(path.join(root, 'apps/server/src/server-route.ts'), sources['apps/server/src/server-route.ts']);
     writeFileSync(path.join(root, 'apps/mobile/sources/feature.ts'), "socket.send(JSON.stringify({t:'req',op:'sendFromWallet',args:{}}))");
     assert.match(judgeTree(root, { rules: [rule] }).join('\n'), /phone\.write-door/);
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -145,6 +147,73 @@ it('allows removing an owner and its sink without allowing new terminal owners',
   const tightened = {...before,ownerFunctions:{'owner.ts':['claim']},ownerSites:1};
   assert.deepEqual(strictRelaxations('',{rules:[before]},{rules:[tightened]}),[]);
   assert.notDeepEqual(strictRelaxations('',{rules:[tightened]},{rules:[before]}),[]);
+});
+
+
+
+it('rejects a tracked 1001-line file through the architecture check', async () => {
+  const { execFileSync, spawnSync } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const root = mkdtempSync(path.join(tmpdir(), 'architecture-file-lines-'));
+  const rule = readInvariants(process.cwd()).rules.find(rule => rule.id === 'code.file-lines');
+  const file = 'apps/server/src/planted.ts';
+  const write = (name, source) => {
+    mkdirSync(path.dirname(path.join(root, name)), { recursive: true });
+    writeFileSync(path.join(root, name), source);
+  };
+  const check = () => spawnSync(process.execPath, [fileURLToPath(new URL('./check-architecture.mjs', import.meta.url)), '--root', root], { encoding: 'utf8' });
+  try {
+    execFileSync('git', ['init', '-q', root]);
+    write('architecture/invariants.json', JSON.stringify({ rules: [rule] }));
+    write('architecture/machine-connection-sinks.json', '{}');
+    write(file, '// planted\n'.repeat(1001));
+    execFileSync('git', ['add', '.'], { cwd: root });
+    let result = check();
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /planted\.ts: 1001 lines exceeds 1000/);
+    write(file, '// planted\n'.repeat(1000));
+    assert.equal(check().status, 0);
+    // Exact generated exclusions do not exempt neighboring source files.
+    write(rule.generated[0], '// generated\n'.repeat(1001));
+    execFileSync('git', ['add', '.'], { cwd: root });
+    assert.equal(check().status, 0);
+    write(file, '// planted\n'.repeat(1000) + '// last line without newline');
+    assert.match(check().stderr, /1001 lines exceeds 1000/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+
+
+it('permits identical sink moves while rejecting changed statements and empty new owners', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const { strictRelaxations } = await import('./architecture-invariants.mjs');
+  const root = mkdtempSync(path.join(tmpdir(), 'architecture-owner-move-'));
+  const oldFile = 'apps/server/src/old.ts', newFile = 'apps/server/src/moved.ts';
+  const write = (file, source) => {
+    mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    writeFileSync(path.join(root, file), source);
+  };
+  const was = { id: 'sink', strict: true, pattern: 'database\\.query\\s*\\(', scope: ['apps/server/src'],
+    owners: [oldFile], ownerFunctions: { [oldFile]: ['effect'] }, ownerSites: 1, total: 0 };
+  const next = { ...was, owners: [newFile], ownerFunctions: { [newFile]: ['movedEffect'] } };
+  const check = rule => strictRelaxations(root, { rules: [was] }, { rules: [rule] }, 'HEAD');
+  try {
+    execFileSync('git', ['init', '-q', root]);
+    write(oldFile, 'function effect(database) { return database.query("original"); }');
+    execFileSync('git', ['add', '.'], { cwd: root });
+    execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture'], { cwd: root });
+    write(newFile, 'export function movedEffect(database) { return database.query("original"); }');
+    assert.deepEqual(check(next), []);
+    write(newFile, 'export function movedEffect(database) { return database.query("changed"); }');
+    assert.match(check(next).join('\n'), /owners changed/);
+    write(newFile, 'export function movedEffect(database) { database.query("original"); return database.query("original"); }');
+    assert.match(check(next).join('\n'), /owners changed/);
+    write(newFile, 'export function movedEffect(database) { return database.query("original"); }');
+    const empty = 'apps/server/src/empty.ts';
+    write(empty, 'export const empty = true;');
+    assert.match(check({ ...next, owners: [newFile, empty] }).join('\n'), /owners changed/);
+    assert.match(check({ ...next, pattern: 'query' }).join('\n'), /pattern changed/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 it('permits relocating unchanged strict functions, never altered bodies or a second owner', async () => {

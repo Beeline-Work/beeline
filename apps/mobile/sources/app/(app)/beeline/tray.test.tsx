@@ -1,381 +1,15 @@
+import { layout, appState, navigation, route, workspaceSet, phoneOperation, liveRegistrations, roomRead, prefetchRoom, theme, safeArea, applyNeedsYouLiveDelta, person, bookmark, need, serve, returnToForeground, textOf, mountedTrees, renderTray, fixtureScope1, fixtureScope7 } from "../../../test/fixtures/tray.test-support";
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-
-// These fixtures exercise the negotiated legacy compatibility path. The actual
-// router owner/negotiation path has independent integration coverage.
-const trayProtocol = vi.hoisted(() => ({
-  mode: 'legacy' as 'legacy' | 'router' | 'pending',
-  value: null as any,
-  continuation: vi.fn(),
-  admit: vi.fn(),
-  paint: vi.fn(),
-  prepare: vi.fn(),
-  deliver: vi.fn(),
-  cancel: vi.fn(),
-  retry: vi.fn(),
-}));
-
-vi.mock('@/buzz/router-chat-list', () => ({
-  acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy(),
-}));
-
-const layout = vi.hoisted(() => ({ os: 'web', width: 1200 }));
-const appState = vi.hoisted(() => ({
-  current: 'active',
-  listeners: new Set<(state: string) => void>(),
-}));
-const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
-const route = vi.hoisted(() => ({
-  params: { communityId: 'ws', workspaceName: 'Clover Workspace' } as {
-    communityId?: string;
-    workspaceName?: string;
-  },
-}));
-const workspaceSet = vi.hoisted(() => ({
-  active: null as string | null,
-  workspaces: [] as { id: string }[],
-}));
-const openExternal = vi.hoisted(() => vi.fn(async () => undefined));
-const phoneOperation = vi.hoisted(() => vi.fn());
-const liveRegistrations = vi.hoisted(() => new Set<(event: unknown) => void>());
-const roomRead = vi.hoisted(() => vi.fn());
-const prefetchRoom = vi.hoisted(() => vi.fn());
-const auth = vi.hoisted(() => ({
-  getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
-  loadBuzzIdentity: vi.fn(async () => ({ publicKey: 'viewer' })),
-}));
-
-vi.mock('react-native', async () => {
-  const ReactModule = await import('react');
-  const host = (name: string) => (props: any) =>
-    ReactModule.createElement(name, props, props.children);
-  return {
-    AccessibilityInfo: { announceForAccessibility: vi.fn() },
-    AppState: {
-      get currentState() {
-        return appState.current;
-      },
-      addEventListener: (_type: string, listener: (state: string) => void) => {
-        appState.listeners.add(listener);
-        return { remove: () => appState.listeners.delete(listener) };
-      },
-    },
-    FlatList: (props: any) =>
-      ReactModule.createElement(
-        'FlatList',
-        props,
-        props.ListEmptyComponent,
-        ...(props.data ?? []).map((item: any, index: number) =>
-          ReactModule.createElement(
-            ReactModule.Fragment,
-            { key: props.keyExtractor(item, index) },
-            props.renderItem({ item, index }),
-          ),
-        ),
-      ),
-    Platform: {
-      get OS() {
-        return layout.os;
-      },
-    },
-    Pressable: host('Pressable'),
-    TouchableOpacity: host('TouchableOpacity'),
-    Text: host('Text'),
-    View: host('View'),
-    useWindowDimensions: () => ({ width: layout.width, height: 900 }),
-  };
-});
-
-const theme = vi.hoisted(() => ({
-  buzz: {
-    bgBase: '#14091a',
-    bgHighlight: '#1e1326',
-    bgTerminal: '#0d0712',
-    border: '#333',
-    borderStrong: '#555',
-    accent: '#b08a4a',
-    radius: 3,
-    textPrimary: '#f0f0f3',
-    textSecondary: '#c9c9d1',
-    ledgerQuiet: '#90909b',
-    ledgerGhost: '#6c6c76',
-    brassWash: 'rgba(176,138,74,0.18)',
-    space: { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, xxl: 48 },
-    type: { body: {}, bodyStrong: {}, meta: {}, sectionHead: {} },
-    // Choice options reuse the transcript card's plate, which sizes from these metrics.
-    transcriptCard: new Proxy({}, { get: () => 0 }),
-  },
-}));
-vi.mock('react-native-unistyles', () => ({
-  StyleSheet: {
-    hairlineWidth: 1,
-    create: (factory: any) => (typeof factory === 'function' ? factory(theme) : factory),
-  },
-}));
-vi.mock('expo-router', () => ({
-  useFocusEffect: (effect: () => void | (() => void)) => React.useEffect(effect, [effect]),
-  useLocalSearchParams: () => route.params,
-  useRouter: () => navigation,
-}));
-const safeArea = vi.hoisted(() => ({ bottom: 0 }));
-vi.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: safeArea.bottom, left: 0 }),
-}));
-vi.mock('@expo/vector-icons', async () => {
-  const ReactModule = await import('react');
-  return { Ionicons: (props: any) => ReactModule.createElement('Ionicons', props) };
-});
-vi.mock('@/auth/buzz-identity-storage', () => auth);
-vi.mock('@/buzz/surface-storage', () => ({
-  surfaceAddress: (_relay: string, _viewer: string, endpoint: string) => endpoint,
-  mobileSurfaceCache: {
-    read: vi.fn(async () => null),
-    write: vi.fn(async () => undefined),
-    remove: vi.fn(async () => undefined),
-  },
-}));
-vi.mock('@/utils/open-external-url', () => ({ openExternalUrl: openExternal }));
-vi.mock('@/components/buzz/MonoHull', async () => {
-  const ReactModule = await import('react');
-  return { PixelLoader: (props: any) => ReactModule.createElement('PixelLoader', props) };
-});
-vi.mock('expo-haptics', () => ({ impactAsync: vi.fn(), ImpactFeedbackStyle: { Light: 'light' } }));
-vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation, readServerSurface: (_authority: unknown, ...args: unknown[]) => phoneOperation(...args) }));
-vi.mock('@/sync/transport/live-connection', () => ({
-  sharedLiveConnection: () => ({
-    register: async (_filters: unknown, listener: (event: unknown) => void) => {
-      liveRegistrations.add(listener);
-      return () => liveRegistrations.delete(listener);
-    },
-  }),
-}));
-vi.mock('@/push/push-room-prefetch', () => ({ prefetchPushRoom: prefetchRoom }));
-vi.mock('@/sync/transport/room-view-client', () => ({
-  RoomViewClient: class {
-    room = roomRead;
-    workspace = vi.fn(async () => ({ workspace: { id: 'ws', name: 'Clover Workspace' } }));
-    workspaces = vi.fn(async () => ({ workspaces: workspaceSet.workspaces }));
-  },
-}));
-vi.mock('@/buzz/community-storage', () => ({
-  loadActiveCommunityId: vi.fn(async () => workspaceSet.active),
-  watchActiveCommunityId: vi.fn((_pubkey: string, listener: (id: string | null) => void) => {
-    void Promise.resolve(workspaceSet.active).then(listener);
-    return () => undefined;
-  }),
-}));
-vi.mock('@/components/DesktopRoomInspector', async () => {
-  const ReactModule = await import('react');
-  return {
-    DesktopRoomInspector: (props: any) => ReactModule.createElement('DesktopRoomInspector', props),
-  };
-});
-vi.mock('react-native-gesture-handler', async () => {
-  const ReactModule = await import('react');
-  return {
-    Swipeable: (props: any) => ReactModule.createElement('Swipeable', props, props.children),
-  };
-});
-vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
-  const ReactModule = await import('react');
-  return {
-    SurfaceGlyphLoader: (props: any) => ReactModule.createElement('SurfaceGlyphLoader', props),
-  };
-});
-
+import { describe, expect, it, vi } from 'vitest';
 import TrayScreen from './tray';
-import { ButtonRow } from '@/components/buzz/ButtonRow';
 import { NeedsYouCell } from '@/components/buzz/NeedsYouCell';
 import * as needFormatting from '@/buzz/needs-you';
-import {
-  useNeedsYouCount,
-  useTrayList,
-  holdNeedsYou,
-  acknowledgePaintedNeedsYou,
-} from '@/buzz/needs-you-store';
-import { resetClientState } from '@/sync/client-reset';
+import { useNeedsYouCount, useTrayList, holdNeedsYou, acknowledgePaintedNeedsYou } from '@/buzz/needs-you-store';
 import { mobileSurfaceCache } from '@/buzz/surface-storage';
 
-function applyNeedsYouLiveDelta(delta: unknown) {
-  for (const listener of liveRegistrations) listener({ monolithLive: { ...(delta as object), type: 'needs-you-delta' } });
-}
-const person = {
-  pubkey: 'person-1',
-  kind: 'human' as const,
-  name: 'Avery',
-  handle: 'avery',
-};
-const parentRoom = {
-  room: {
-    id: 'room-1',
-    workspaceId: 'ws',
-    name: 'Clover',
-    archived: false,
-    createdAt: 1,
-    updatedAt: 2,
-  },
-  parent: undefined,
-  members: [],
-  messages: [],
-  latestAgentTurns: [],
-  viewer: { identity: person, role: 'owner', permissions: { send: true, manage: true } },
-  repositoryResolution: 'none',
-  watchFilters: [],
-};
-const parentCorner = {
-  corner: {
-    id: 'corner-1',
-    workspaceId: 'ws',
-    name: 'Fix fixture',
-    about: 'Repair it.',
-    archived: false,
-    createdAt: 1,
-    updatedAt: 2,
-  },
-  state: 'working',
-  stateAt: 2,
-};
-const cornerRoom = {
-  ...parentRoom,
-  room: parentCorner.corner,
-  parent: parentRoom.room,
-  messages: [
-    {
-      id: 'msg-1',
-      text: 'The bookmarked line.',
-      createdAt: 5,
-      author: person,
-      presentation: 'message',
-    },
-  ],
-};
 
-function bookmark(overrides: Record<string, unknown> = {}) {
-  return {
-    messageId: 'msg-1',
-    workspaceId: 'ws',
-    roomId: 'corner-1',
-    roomName: 'Fix fixture',
-    roomKind: 'corner',
-    messageCreatedAt: 1_700_000_000,
-    bookmarkedAt: 1_700_000_100,
-    available: true,
-    author: person,
-    text: 'The bookmarked line.',
-    ...overrides,
-  };
-}
-
-function need(overrides: Record<string, unknown> = {}) {
-  return {
-    messageId: 'ask-1',
-    workspaceId: 'ws',
-    roomId: 'room-1',
-    roomName: 'Launch room',
-    roomKind: 'room' as const,
-    text: 'can you confirm the review note?',
-    createdAt: 1_700_000_000,
-    expiresAt: 1_700_080_000,
-    author: person,
-    ...overrides,
-  };
-}
-
-/** The phone operations the tray reads, answered by name. */
-function serve({
-  needs = [] as unknown[],
-  bookmarks = [] as unknown[],
-}: { needs?: unknown[]; bookmarks?: unknown[] } = {}) {
-  phoneOperation.mockImplementation(async (name: string) => {
-    if (name === 'readTray') return { needs: { items: needs }, saved: { bookmarks } };
-    if (name === 'readNeedsYou') return { items: needs };
-    if (name === 'listMessageBookmarks') return { bookmarks };
-    if (name === 'clearNeedsYouSection') {
-      needs = [];
-      return undefined;
-    }
-    if (name === 'clearMessageBookmarks') {
-      bookmarks = [];
-      return undefined;
-    }
-    return undefined;
-  });
-}
-
-/** A socket gap asks the held tray for one covering read. */
-async function returnToForeground() {
-  await act(async () => {
-    for (const listener of [...liveRegistrations])
-      listener({ monolithLive: { type: 'invalidate', roomId: '', reason: 'reconnect' } });
-  });
-  await act(async () => undefined);
-}
-
-function textOf(tree: ReactTestRenderer): string {
-  return tree.root
-    .findAllByType('Text' as any)
-    .flatMap((node: any) => node.props.children)
-    .join(' ')
-    .replace(/\s+/g, ' ');
-}
-
-beforeAll(() => {
-  vi.stubGlobal('requestAnimationFrame', (callback: () => void) => setTimeout(callback, 0));
-  vi.stubGlobal('cancelAnimationFrame', clearTimeout);
-  (
-    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
-  ).IS_REACT_ACT_ENVIRONMENT = true;
-  vi.spyOn(console, 'error').mockImplementation((message?: unknown) => {
-    if (typeof message === 'string' && message.startsWith('react-test-renderer is deprecated'))
-      return;
-  });
-});
-afterAll(() => vi.restoreAllMocks());
-beforeEach(() => {
-  trayProtocol.mode = 'legacy';
-  trayProtocol.value = null;
-  trayProtocol.admit.mockReset().mockReturnValue({ wire: { operation: 'clearNeedsYouSection' } });
-  trayProtocol.paint.mockReset().mockReturnValue([]);
-  trayProtocol.prepare.mockReset().mockResolvedValue({ id: 'prepared-tray' });
-  trayProtocol.deliver.mockReset().mockResolvedValue(undefined);
-  trayProtocol.cancel.mockReset().mockResolvedValue(undefined);
-  trayProtocol.retry.mockReset();
-  liveRegistrations.clear();
-  resetClientState();
-  auth.loadBuzzIdentity.mockImplementation(async () => ({ publicKey: 'viewer' }));
-  layout.os = 'web';
-  layout.width = 1200;
-  navigation.back.mockReset();
-  navigation.push.mockReset();
-  navigation.replace.mockReset();
-  route.params = { communityId: 'ws', workspaceName: 'Clover Workspace' };
-  workspaceSet.active = null;
-  workspaceSet.workspaces = [];
-  phoneOperation.mockReset();
-  openExternal.mockClear();
-  roomRead.mockReset();
-  prefetchRoom.mockReset();
-  serve({ bookmarks: [bookmark()] });
-  roomRead.mockImplementation(async (id: string) => (id === 'room-1' ? parentRoom : cornerRoom));
-});
-
-/** Trees still mounted at a test's end; a left-over tray would hold its list in the store. */
-const mountedTrees: ReactTestRenderer[] = [];
-afterEach(async () => {
-  for (const tree of mountedTrees.splice(0)) await act(async () => tree.unmount());
-});
-
-async function renderTray(): Promise<ReactTestRenderer> {
-  let tree!: ReactTestRenderer;
-  await act(async () => {
-    tree = create(<TrayScreen />);
-  });
-  mountedTrees.push(tree);
-  await act(async () => undefined);
-  return tree;
-}
 
 it('renders only the changed Needs-you cell when a projection replaces unchanged DTOs', () => {
   const render = vi.spyOn(needFormatting, 'needsYouExpiryLabel');
@@ -410,19 +44,13 @@ it('renders only the changed Needs-you cell when a projection replaces unchanged
     render.mockRestore();
   }
 });
-
 describe.each([
   { surface: 'desktop', os: 'web', width: 1200, remove: true },
   { surface: 'mobile', os: 'ios', width: 390, remove: false },
   { surface: 'R12a compact web', os: 'web', width: 760, remove: false },
 ])('Bookmarks $surface rows', ({ os, width, remove }) => {
-  const texts = (node: any): string[] =>
-    node.findAllByType('Text' as any).map((textNode: any) =>
-      [textNode.props.children]
-        .flat(Infinity)
-        .filter((part: unknown) => typeof part === 'string')
-        .join(''),
-    );
+const scope1 = fixtureScope1({ os, width, remove });
+
 
   it('Reproduction R1: reads like a Needs you cell: who and age, the quoted words, then where', async () => {
     layout.os = os;
@@ -457,8 +85,8 @@ describe.each([
         const row = tree.root.findByProps({ testID: `bookmark-${id}` });
         const head = row.findByProps({ testID: `bookmark-save-line-${id}` });
         // The age alone at the right, as in Needs you: no SAVED stamp, no OPEN.
-        expect(texts(head)).toEqual([who, age]);
-        const words = texts(row);
+        expect(scope1.texts(head)).toEqual([who, age]);
+        const words = scope1.texts(row);
         expect(words.join(' ')).not.toMatch(/SAVED|OPEN/);
         expect(words.filter((word) => word === age)).toHaveLength(1);
         expect(words).not.toContain(id === 'gone' ? '1d' : '2h');
@@ -479,7 +107,7 @@ describe.each([
             ? ['bookmark-save-line', 'bookmark-source']
             : ['bookmark-save-line', 'bookmark-text', 'bookmark-source'],
         );
-        expect(texts(row.findByProps({ testID: `bookmark-source-${id}` })).join('')).toBe(
+        expect(scope1.texts(row.findByProps({ testID: `bookmark-source-${id}` })).join('')).toBe(
           'Fix fixture',
         );
       }
@@ -506,7 +134,6 @@ describe.each([
     }
   });
 });
-
 describe('Tray opened without a communityId', () => {
   it('reads the Tray of the active Workspace', async () => {
     route.params = {};
@@ -517,6 +144,7 @@ describe('Tray opened without a communityId', () => {
     expect(tree.root.findAllByProps({ testID: 'tray-loader' })).toHaveLength(0);
     expect(tree.root.findByProps({ testID: 'bookmark-msg-1' })).toBeTruthy();
   });
+
 
   it('shows a way back to Rooms when no Workspace resolves', async () => {
     route.params = {};
@@ -530,7 +158,6 @@ describe('Tray opened without a communityId', () => {
     expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
   });
 });
-
 describe('Bookmarks desktop second pane', () => {
   it('shows the workspace above Tray with no counters beside it', async () => {
     const tree = await renderTray();
@@ -538,6 +165,7 @@ describe('Bookmarks desktop second pane', () => {
     const words = header.findAllByType('Text' as any).map((node: any) => node.props.children);
     expect(words).toEqual(['Clover Workspace', 'Tray']);
   });
+
   it('opens a clicked corner bookmark in DesktopRoomInspector at that message', async () => {
     serve({
       bookmarks: [
@@ -562,6 +190,7 @@ describe('Bookmarks desktop second pane', () => {
     expect(textOf(tree)).not.toContain('OPEN IN');
     expect(tree.root.findAllByProps({ testID: 'tray-pane' })).toHaveLength(0);
   });
+
 
   it('does not restate an unavailable bookmark in the second pane', async () => {
     serve({
@@ -592,7 +221,6 @@ describe('Bookmarks desktop second pane', () => {
     expect(roomRead).not.toHaveBeenCalled();
   });
 });
-
 describe('Bookmarks mobile list', () => {
   it('lets its last item scroll clear of the system navigation bar', async () => {
     safeArea.bottom = 48;
@@ -610,6 +238,7 @@ describe('Bookmarks mobile list', () => {
       safeArea.bottom = 0;
     }
   });
+
 
   it('keeps the removed-bookmark undo clear of the system navigation bar', async () => {
     safeArea.bottom = 48;
@@ -630,7 +259,6 @@ describe('Bookmarks mobile list', () => {
     }
   });
 });
-
 describe('Bookmarks empty state', () => {
   it('tells a desktop reader about the strip its pointer reaches, and nothing about long press', async () => {
     serve({ bookmarks: [] });
@@ -648,6 +276,7 @@ describe('Bookmarks empty state', () => {
     expect(empty).toContain('Hover a message and press its bookmark mark.');
     expect(empty).not.toContain('Long press');
   });
+
 
   it('tells a touch reader to long press, and nothing about a desktop strip', async () => {
     layout.os = 'ios';
@@ -669,7 +298,6 @@ describe('Bookmarks empty state', () => {
     expect(empty).not.toContain('Hover');
   });
 });
-
 describe('Bookmarks mobile open', () => {
   it('keeps a live removal while an older saved page finishes loading', async () => {
     let finishPage!: (value: { bookmarks: ReturnType<typeof bookmark>[] }) => void;
@@ -717,6 +345,7 @@ describe('Bookmarks mobile open', () => {
     ).toHaveLength(1);
   });
 
+
   it('keeps a live removal when an older covering read finishes afterward', async () => {
     let finishSaved!: (value: { bookmarks: ReturnType<typeof bookmark>[] }) => void;
     phoneOperation.mockImplementation((name: string) =>
@@ -754,6 +383,7 @@ describe('Bookmarks mobile open', () => {
     expect(tree.root.findAllByProps({ testID: 'bookmark-msg-1' })).toHaveLength(0);
   });
 
+
   it('applies a saved-row removal from live without another list read', async () => {
     const tree = await renderTray();
     const reads = phoneOperation.mock.calls.filter(
@@ -776,6 +406,7 @@ describe('Bookmarks mobile open', () => {
       phoneOperation.mock.calls.filter(([name]) => name === 'listMessageBookmarks'),
     ).toHaveLength(reads);
   });
+
   it('opens the original message in its room from a compact tap', async () => {
     layout.os = 'ios';
     layout.width = 390;
@@ -799,6 +430,7 @@ describe('Bookmarks mobile open', () => {
     expect(tree.root.findAllByType('DesktopRoomInspector' as any)).toHaveLength(0);
   });
 
+
   it('shows No Workspace instead of stale items once the person leaves the Workspace', async () => {
     layout.os = 'ios';
     layout.width = 390;
@@ -820,6 +452,7 @@ describe('Bookmarks mobile open', () => {
       expect(textOf(tree)).not.toContain('Retry');
     }
   });
+
 
   it('keeps No Workspace when a refresh after membership loss fails for another reason', async () => {
     {
@@ -850,6 +483,7 @@ describe('Bookmarks mobile open', () => {
     }
   });
 
+
   it('keeps the items and offers Retry when a refresh fails for another reason', async () => {
     {
       const tree = await renderTray();
@@ -865,90 +499,34 @@ describe('Bookmarks mobile open', () => {
     }
   });
 });
-
 describe('Needs-you badge and tray', () => {
-  /** The badge a Room list or sidebar paints, beside an optionally mounted tray. */
-  function BadgeAndTray({ tray }: { tray: boolean }) {
-    const count = useNeedsYouCount('ws', 1);
-    return (
-      <>
-        {React.createElement('Text', { testID: 'badge' }, String(count))}
-        {tray ? <TrayScreen /> : null}
-      </>
-    );
-  }
+const scope7 = fixtureScope7();
 
-  function badge(tree: ReactTestRenderer): number {
-    return Number(tree.root.findByProps({ testID: 'badge' }).props.children);
-  }
-
-  function rows(tree: ReactTestRenderer): number {
-    return tree.root.findAll(
-      (node: any) =>
-        /^needs-you-ask-\d$/.test(String(node.props.testID ?? '')) && typeof node.type === 'string',
-    ).length;
-  }
-
-  /** The server: `needs` is what a list read sees; the count is its length. */
-  function serveNeeds(state: { needs: unknown[]; failClear?: boolean }) {
-    phoneOperation.mockImplementation(async (name: string, input: { messageId?: string }) => {
-      if (name === 'readTray') return { needs: { items: state.needs }, saved: { bookmarks: [] } };
-      if (name === 'readNeedsYou') return { items: state.needs };
-      if (name === 'countNeedsYou') return { count: state.needs.length };
-      if (name === 'listMessageBookmarks') return { bookmarks: [] };
-      if (name === 'clearNeedsYou') {
-        if (state.failClear) throw new Error('clear refused');
-        state.needs = state.needs.filter((item: any) => item.messageId !== input.messageId);
-      }
-      return undefined;
-    });
-  }
-
-  async function render(tray: boolean): Promise<ReactTestRenderer> {
-    let tree!: ReactTestRenderer;
-    await act(async () => {
-      tree = create(<BadgeAndTray tray={tray} />);
-    });
-    mountedTrees.push(tree);
-    await act(async () => undefined);
-    return tree;
-  }
-
-  async function swipe(tree: ReactTestRenderer, id: string) {
-    await act(async () => {
-      tree.root.findByProps({ testID: `needs-you-swipe-${id}` }).props.onSwipeableOpen('left');
-    });
-    await act(async () => undefined);
-  }
-
-  beforeEach(() => {
-    layout.os = 'android';
-    layout.width = 390;
-  });
 
   it.each([0, 1, 2, 9, 12])(
     'TRAY-CACHED-EMPTY-1: cold badge read seeds %i rows despite stale disk',
     async (count) => {
       const needs = Array.from({ length: count }, (_, i) => need({ messageId: `ask-${i}` }));
-      serveNeeds({ needs });
+      scope7.serveNeeds({ needs });
       vi.mocked(mobileSurfaceCache.read).mockResolvedValue({ items: [], bookmarks: [] } as never);
-      const tree = await render(false);
-      expect(badge(tree)).toBe(count);
-      await act(async () => tree.update(<BadgeAndTray tray />));
+      const tree = await scope7.render(false);
+      expect(scope7.badge(tree)).toBe(count);
+      await act(async () => tree.update(<scope7.BadgeAndTray tray />));
       const visible = tree.root.findAll(
         (node: any) =>
           typeof node.type === 'string' &&
           /^needs-you-ask-\d+$/.test(String(node.props.testID ?? '')),
       ).length;
-      expect([visible, badge(tree)]).toEqual([count, count]);
+      expect([visible, scope7.badge(tree)]).toEqual([count, count]);
       expect(phoneOperation.mock.calls.filter(([name]) => name === 'readNeedsYou')).toHaveLength(1);
       expect(phoneOperation.mock.calls.map(([name]) => name)).toEqual(['readNeedsYou']);
       vi.mocked(mobileSurfaceCache.read).mockResolvedValue(null);
     },
   );
 
+
   it('keeps badge and local rows equal through live changes and held removals', async () => {
-    serveNeeds({ needs: [need()] });
+    scope7.serveNeeds({ needs: [need()] });
     function Probe() {
       const count = useNeedsYouCount('ws', 1);
       const { needs } = useTrayList('ws');
@@ -980,8 +558,9 @@ describe('Needs-you badge and tray', () => {
     expect(pair()).toBe('1:1');
   });
 
+
   it('BACK-BURST-1: leaves count badges idle when live rows keep the same count', async () => {
-    serveNeeds({ needs: [] });
+    scope7.serveNeeds({ needs: [] });
     let badgeRenders = 0;
     function CountBadge() {
       badgeRenders += 1;
@@ -1034,6 +613,7 @@ describe('Needs-you badge and tray', () => {
     expect(tree.root.findByProps({ testID: 'live-rows' }).props.children).toBe('Updated question?');
   });
 
+
   it('shares concurrent badge reads and replays live rows that arrive during the read', async () => {
     let answer!: (value: { items: unknown[] }) => void;
     phoneOperation.mockImplementation((name: string) => {
@@ -1070,10 +650,11 @@ describe('Needs-you badge and tray', () => {
     expect(tree.root.findByProps({ testID: 'pair' }).props.children).toBe('2:2:2');
   });
 
+
   it('acknowledges exactly painted unseen questions once; badge and reopening send none', async () => {
     const unseen = need({ expiresAt: undefined });
     const offscreen = need({ messageId: 'ask-2', expiresAt: undefined });
-    serveNeeds({ needs: [unseen, offscreen] });
+    scope7.serveNeeds({ needs: [unseen, offscreen] });
     const original = phoneOperation.getMockImplementation()!;
     phoneOperation.mockImplementation(async (name: string, input: any) =>
       name === 'markNeedsYouSeen'
@@ -1085,9 +666,9 @@ describe('Needs-you badge and tray', () => {
           }
         : original(name, input),
     );
-    const tree = await render(false);
+    const tree = await scope7.render(false);
     expect(phoneOperation.mock.calls.map(([name]) => name)).toEqual(['readNeedsYou']);
-    await act(async () => tree.update(<BadgeAndTray tray />));
+    await act(async () => tree.update(<scope7.BadgeAndTray tray />));
     const painted = () =>
       tree.root.findByType('FlatList' as never).props.onViewableItemsChanged({
         viewableItems: [{ isViewable: true, item: { type: 'needs', item: unseen } }],
@@ -1099,8 +680,8 @@ describe('Needs-you badge and tray', () => {
     expect(phoneOperation.mock.calls.filter(([name]) => name === 'markNeedsYouSeen')).toEqual([
       ['markNeedsYouSeen', { workspaceId: 'ws', messageIds: ['ask-1'] }],
     ]);
-    await act(async () => tree.update(<BadgeAndTray tray={false} />));
-    await act(async () => tree.update(<BadgeAndTray tray />));
+    await act(async () => tree.update(<scope7.BadgeAndTray tray={false} />));
+    await act(async () => tree.update(<scope7.BadgeAndTray tray />));
     await act(async () => {
       painted();
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -1115,13 +696,14 @@ describe('Needs-you badge and tray', () => {
     );
   });
 
+
   it('batches viewable unseen questions and does not acknowledge background paint or seen rows', async () => {
     const questions = [
       need({ expiresAt: undefined }),
       need({ messageId: 'ask-2', expiresAt: undefined }),
     ];
     const seen = need({ messageId: 'ask-3' });
-    serveNeeds({ needs: [...questions, seen] });
+    scope7.serveNeeds({ needs: [...questions, seen] });
     const original = phoneOperation.getMockImplementation()!;
     phoneOperation.mockImplementation(async (name: string, input: any) =>
       name === 'markNeedsYouSeen'
@@ -1133,7 +715,7 @@ describe('Needs-you badge and tray', () => {
           }
         : original(name, input),
     );
-    const tree = await render(true);
+    const tree = await scope7.render(true);
     const callback = tree.root.findByType('FlatList' as never).props.onViewableItemsChanged;
     const viewableItems = [...questions, seen].map((item) => ({
       isViewable: true,
@@ -1163,41 +745,45 @@ describe('Needs-you badge and tray', () => {
     ]);
   });
 
+
   it('Reproduction NEEDS-YOU-BADGE-1: a dismiss drops the badge with the list', async () => {
-    serveNeeds({ needs: [need(), need({ messageId: 'ask-2' })] });
-    const tree = await render(true);
-    expect([rows(tree), badge(tree)]).toEqual([2, 2]);
-    await swipe(tree, 'ask-1');
-    expect([rows(tree), badge(tree)]).toEqual([1, 1]);
+    scope7.serveNeeds({ needs: [need(), need({ messageId: 'ask-2' })] });
+    const tree = await scope7.render(true);
+    expect([scope7.rows(tree), scope7.badge(tree)]).toEqual([2, 2]);
+    await scope7.swipe(tree, 'ask-1');
+    expect([scope7.rows(tree), scope7.badge(tree)]).toEqual([1, 1]);
   });
+
 
   it('a failed clear puts the cell back in the list and the badge', async () => {
-    serveNeeds({ needs: [need(), need({ messageId: 'ask-2' })], failClear: true });
-    const tree = await render(true);
-    await swipe(tree, 'ask-1');
-    expect([rows(tree), badge(tree)]).toEqual([2, 2]);
+    scope7.serveNeeds({ needs: [need(), need({ messageId: 'ask-2' })], failClear: true });
+    const tree = await scope7.render(true);
+    await scope7.swipe(tree, 'ask-1');
+    expect([scope7.rows(tree), scope7.badge(tree)]).toEqual([2, 2]);
   });
 
+
   it('a held section clear hides the cells from the badge until Undo', async () => {
-    serveNeeds({ needs: [need(), need({ messageId: 'ask-2' })] });
-    const tree = await render(true);
+    scope7.serveNeeds({ needs: [need(), need({ messageId: 'ask-2' })] });
+    const tree = await scope7.render(true);
     await act(async () => tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress());
-    expect([rows(tree), badge(tree)]).toEqual([0, 0]);
+    expect([scope7.rows(tree), scope7.badge(tree)]).toEqual([0, 0]);
     await act(async () =>
       tree.root
         .findByProps({ testID: 'tray-clear-undo' })
         .findByProps({ accessibilityRole: 'button' })
         .props.onPress(),
     );
-    expect([rows(tree), badge(tree)]).toEqual([2, 2]);
+    expect([scope7.rows(tree), scope7.badge(tree)]).toEqual([2, 2]);
   });
+
 
   it('a reconnect after the tray closed counts again instead of keeping the old list', async () => {
     const server = { needs: [need(), need({ messageId: 'ask-2' })] as unknown[] };
-    serveNeeds(server);
-    const tree = await render(true);
-    expect(badge(tree)).toBe(2);
-    await act(async () => tree.update(<BadgeAndTray tray={false} />));
+    scope7.serveNeeds(server);
+    const tree = await scope7.render(true);
+    expect(scope7.badge(tree)).toBe(2);
+    await act(async () => tree.update(<scope7.BadgeAndTray tray={false} />));
     server.needs = [need()];
     await act(async () => {
       for (const listener of [...liveRegistrations])
@@ -1207,1008 +793,6 @@ describe('Needs-you badge and tray', () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    expect(badge(tree)).toBe(1);
-  });
-
-  it('an open tray re-reads on a gap and the badge follows it', async () => {
-    const server = { needs: [need(), need({ messageId: 'ask-2' })] as unknown[] };
-    serveNeeds(server);
-    const tree = await render(true);
-    server.needs = [need()];
-    await act(async () => {
-      for (const listener of [...liveRegistrations])
-        listener({ monolithLive: { type: 'invalidate', roomId: '', reason: 'needs-you-gap' } });
-    });
-    await act(async () => undefined);
-    expect([rows(tree), badge(tree)]).toEqual([1, 1]);
-  });
-
-  it('Reproduction NEEDS-YOU-READ-ORDER-1: an older gap read that finishes last does not undo a newer one', async () => {
-    serveNeeds({ needs: [need(), need({ messageId: 'ask-2' })] });
-    const tree = await render(true);
-    const answers: Array<(value: { items: unknown[] }) => void> = [];
-    phoneOperation.mockImplementation((name: string) => {
-      if (name === 'readNeedsYou')
-        return new Promise((resolve) => {
-          answers.push(resolve);
-        });
-      if (name === 'listMessageBookmarks') return Promise.resolve({ bookmarks: [] });
-      return Promise.resolve(undefined);
-    });
-    for (let gap = 0; gap < 2; gap += 1) {
-      await act(async () => {
-        for (const listener of [...liveRegistrations])
-          listener({ monolithLive: { type: 'invalidate', roomId: '', reason: 'needs-you-gap' } });
-      });
-      await act(async () => undefined);
-    }
-    expect(answers).toHaveLength(2);
-    await act(async () => answers[1]({ items: [need()] }));
-    await act(async () => undefined);
-    expect([rows(tree), badge(tree)]).toEqual([1, 1]);
-    await act(async () => answers[0]({ items: [need(), need({ messageId: 'ask-2' })] }));
-    await act(async () => undefined);
-    expect([rows(tree), badge(tree)]).toEqual([1, 1]);
-  });
-
-  it('Reproduction NEEDS-YOU-READ-CLEAR-1: a gap read started before a dismiss does not bring the cell back', async () => {
-    serveNeeds({ needs: [need(), need({ messageId: 'ask-2' })] });
-    const tree = await render(true);
-    const answers: Array<(value: { items: unknown[] }) => void> = [];
-    phoneOperation.mockImplementation((name: string) => {
-      if (name === 'readNeedsYou')
-        return new Promise((resolve) => {
-          answers.push(resolve);
-        });
-      if (name === 'listMessageBookmarks') return Promise.resolve({ bookmarks: [] });
-      return Promise.resolve(undefined);
-    });
-    await act(async () => {
-      for (const listener of [...liveRegistrations])
-        listener({ monolithLive: { type: 'invalidate', roomId: '', reason: 'needs-you-gap' } });
-    });
-    await act(async () => undefined);
-    expect(answers).toHaveLength(1);
-    await swipe(tree, 'ask-2');
-    expect([rows(tree), badge(tree)]).toEqual([1, 1]);
-    await act(async () => answers[0]({ items: [need(), need({ messageId: 'ask-2' })] }));
-    await act(async () => undefined);
-    expect([rows(tree), badge(tree)]).toEqual([1, 1]);
-  });
-
-  /** Clears and list reads wait until the test answers them; a read sees `server.needs`. */
-  function holdClearsAndReads(server: { needs: unknown[] }) {
-    const clears: Array<{ ok(): void; fail(): void }> = [];
-    const reads: Array<() => void> = [];
-    phoneOperation.mockImplementation((name: string) => {
-      if (name === 'readNeedsYou') {
-        const items = server.needs;
-        return new Promise((resolve) => {
-          reads.push(() => resolve({ items }));
-        });
-      }
-      if (name === 'clearNeedsYou' || name === 'clearNeedsYouSection')
-        return new Promise((resolve, reject) => {
-          clears.push({
-            ok: () => resolve(undefined),
-            fail: () => reject(new Error('clear refused')),
-          });
-        });
-      if (name === 'listMessageBookmarks') return Promise.resolve({ bookmarks: [] });
-      return Promise.resolve(undefined);
-    });
-    return { clears, reads };
-  }
-
-  async function gap() {
-    await act(async () => {
-      for (const listener of [...liveRegistrations])
-        listener({ monolithLive: { type: 'invalidate', roomId: '', reason: 'needs-you-gap' } });
-    });
-    await act(async () => undefined);
-  }
-
-  it('Reproduction NEEDS-YOU-READ-CLEAR-2: a gap read started during a pending dismiss does not bring the cell back', async () => {
-    const server = { needs: [need(), need({ messageId: 'ask-2' })] as unknown[] };
-    serveNeeds(server);
-    const tree = await render(true);
-    const held = holdClearsAndReads(server);
-    await swipe(tree, 'ask-2');
-    expect(held.clears).toHaveLength(1);
-    // The read starts before the server applies the clear, so it still sees both cells.
-    await gap();
-    expect(held.reads).toHaveLength(1);
-    await act(async () => held.clears[0]!.ok());
-    await act(async () => held.reads[0]!());
-    await act(async () => undefined);
-    expect([rows(tree), badge(tree)]).toEqual([1, 1]);
-  });
-
-  it('a gap read that answers while a dismiss is still pending leaves the cell out', async () => {
-    const server = { needs: [need(), need({ messageId: 'ask-2' })] as unknown[] };
-    serveNeeds(server);
-    const tree = await render(true);
-    const held = holdClearsAndReads(server);
-    await swipe(tree, 'ask-2');
-    await gap();
-    await act(async () => held.reads[0]!());
-    await act(async () => undefined);
-    expect([rows(tree), badge(tree)]).toEqual([1, 1]);
-    await act(async () => held.clears[0]!.ok());
-    expect([rows(tree), badge(tree)]).toEqual([1, 1]);
-  });
-
-  it('a dismiss that fails while a gap read is pending puts the cell back once', async () => {
-    const server = { needs: [need(), need({ messageId: 'ask-2' })] as unknown[] };
-    serveNeeds(server);
-    const tree = await render(true);
-    const held = holdClearsAndReads(server);
-    await swipe(tree, 'ask-2');
-    await gap();
-    await act(async () => held.clears[0]!.fail());
-    await act(async () => undefined);
-    expect([rows(tree), badge(tree)]).toEqual([2, 2]);
-    await act(async () => held.reads[0]!());
-    await act(async () => undefined);
-    expect([rows(tree), badge(tree)]).toEqual([2, 2]);
-  });
-
-  it('a gap read started during a pending section clear does not bring the cells back', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    try {
-      const server = { needs: [need(), need({ messageId: 'ask-2' })] as unknown[] };
-      serveNeeds(server);
-      const tree = await render(true);
-      const held = holdClearsAndReads(server);
-      await act(async () => tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress());
-      await act(async () => {
-        vi.advanceTimersByTime(6_000);
-      });
-      expect(held.clears).toHaveLength(1);
-      await gap();
-      await act(async () => held.clears[0]!.ok());
-      await act(async () => held.reads[0]!());
-      await act(async () => undefined);
-      expect([rows(tree), badge(tree)]).toEqual([0, 0]);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("a client reset forgets the previous account's pending clears", async () => {
-    const server = { needs: [need(), need({ messageId: 'ask-2' })] as unknown[] };
-    serveNeeds(server);
-    const treeA = await render(true);
-    holdClearsAndReads(server);
-    await swipe(treeA, 'ask-2');
-    await act(async () => treeA.unmount());
-    // B's server holds a cell with the same id; A's pending clear must not hide it.
-    serveNeeds(server);
-    auth.loadBuzzIdentity.mockImplementation(async () => ({ publicKey: 'other-viewer' }));
-    await act(async () => resetClientState());
-    const treeB = await render(true);
-    expect([rows(treeB), badge(treeB)]).toEqual([2, 2]);
-  });
-
-  it('a live delta moves the badge and the list together', async () => {
-    serveNeeds({ needs: [need()] });
-    const tree = await render(true);
-    await act(async () =>
-      applyNeedsYouLiveDelta({
-        workspaceId: 'ws',
-        sourceRoomId: 'room-2',
-        count: 2,
-        items: [need({ messageId: 'ask-2', roomId: 'room-2' })] as never,
-      }),
-    );
-    expect([rows(tree), badge(tree)]).toEqual([2, 2]);
-  });
-
-  it("an account switch never shows the previous account's count", async () => {
-    const server = { needs: [need(), need({ messageId: 'ask-2' })] as unknown[] };
-    serveNeeds(server);
-    const tree = await render(false);
-    expect(badge(tree)).toBe(2);
-    let answerCount!: (value: { items: unknown[] }) => void;
-    phoneOperation.mockImplementation((name: string) =>
-      name === 'readNeedsYou'
-        ? new Promise((resolve) => {
-            answerCount = resolve;
-          })
-        : Promise.resolve(undefined),
-    );
-    auth.loadBuzzIdentity.mockImplementation(async () => ({ publicKey: 'other-viewer' }));
-    await act(async () => {
-      resetClientState();
-    });
-    await act(async () => undefined);
-    expect(badge(tree)).toBe(0);
-    await act(async () => answerCount({ items: [] }));
-    expect(badge(tree)).toBe(0);
-  });
-
-  it('a projection read for the previous account writes nothing after a client reset', async () => {
-    const answers: Array<(value: { items: unknown[] }) => void> = [];
-    phoneOperation.mockImplementation((name: string) =>
-      name === 'readNeedsYou'
-        ? new Promise((resolve) => {
-            answers.push(resolve);
-          })
-        : Promise.resolve(undefined),
-    );
-    const tree = await render(false);
-    expect(answers).toHaveLength(1);
-    auth.loadBuzzIdentity.mockImplementation(async () => ({ publicKey: 'other-viewer' }));
-    await act(async () => resetClientState());
-    await act(async () => undefined);
-    // The reset dropped the shared request, so the new account asks on its own.
-    expect(answers).toHaveLength(2);
-    await act(async () =>
-      answers[0]!({ items: Array.from({ length: 7 }, (_, i) => need({ messageId: `ask-${i}` })) }),
-    );
-    expect(badge(tree)).toBe(0);
-    await act(async () => answers[1]!({ items: [need()] }));
-    expect(badge(tree)).toBe(1);
-  });
-
-  /** A's clears wait on `fail`; after the switch B's server holds one other cell. */
-  function serveSwitch() {
-    let fail!: () => void;
-    const refused = new Promise<never>((_resolve, reject) => {
-      fail = () => reject(new Error('clear refused'));
-    });
-    refused.catch(() => undefined);
-    const server = { needs: [need(), need({ messageId: 'ask-2' })] as unknown[] };
-    phoneOperation.mockImplementation(async (name: string) => {
-      if (name === 'readTray') return { needs: { items: server.needs }, saved: { bookmarks: [] } };
-      if (name === 'readNeedsYou') return { items: server.needs };
-      if (name === 'countNeedsYou') return { count: server.needs.length };
-      if (name === 'listMessageBookmarks') return { bookmarks: [] };
-      if (name === 'clearNeedsYou' || name === 'clearNeedsYouSection') return refused;
-      return undefined;
-    });
-    return {
-      fail,
-      async switchToB(): Promise<ReactTestRenderer> {
-        server.needs = [need({ messageId: 'ask-3' })];
-        auth.loadBuzzIdentity.mockImplementation(async () => ({ publicKey: 'other-viewer' }));
-        await act(async () => resetClientState());
-        return render(true);
-      },
-    };
-  }
-
-  it('a clear that fails after an account switch leaves the new account alone', async () => {
-    const a = serveSwitch();
-    const treeA = await render(true);
-    await swipe(treeA, 'ask-1');
-    expect([rows(treeA), badge(treeA)]).toEqual([1, 1]);
-    await act(async () => treeA.unmount());
-    const treeB = await a.switchToB();
-    expect([rows(treeB), badge(treeB)]).toEqual([1, 1]);
-    await act(async () => a.fail());
-    await act(async () => undefined);
-    expect([rows(treeB), badge(treeB)]).toEqual([1, 1]);
-  });
-
-  it('a section clear that fails after an account switch leaves the new account alone', async () => {
-    const a = serveSwitch();
-    const treeA = await render(true);
-    await act(async () => treeA.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress());
-    // Leaving the tray sends the held clear at once.
-    await act(async () => treeA.update(<BadgeAndTray tray={false} />));
-    expect(phoneOperation.mock.calls.some(([name]) => name === 'clearNeedsYouSection')).toBe(true);
-    await act(async () => treeA.unmount());
-    const treeB = await a.switchToB();
-    expect([rows(treeB), badge(treeB)]).toEqual([1, 1]);
-    await act(async () => a.fail());
-    await act(async () => undefined);
-    expect([rows(treeB), badge(treeB)]).toEqual([1, 1]);
-  });
-});
-
-describe('Tray Needs you', () => {
-  function cleared() {
-    return phoneOperation.mock.calls.filter(([name]) => name === 'clearNeedsYou');
-  }
-
-  it('shows Needs you then Saved, each question cell its asker, sentence and source', async () => {
-    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_300_000);
-    serve({
-      needs: [need(), need({ messageId: 'ask-2', roomKind: 'corner', roomName: 'signing' })],
-      bookmarks: [bookmark()],
-    });
-    try {
-      const tree = await renderTray();
-      const order = tree.root
-        .findAll((node: any) =>
-          /^(tray-section-|needs-you-ask|bookmark-msg)/.test(String(node.props.testID ?? '')),
-        )
-        .map((node: any) => node.props.testID)
-        .filter((id: string, index: number, all: string[]) => all.indexOf(id) === index)
-        .filter((id: string) => !/^needs-you-(text|head|age)-/.test(id));
-      expect(order).toEqual([
-        'tray-section-needs',
-        'needs-you-ask-1',
-        'needs-you-ask-2',
-        'tray-section-saved',
-        'bookmark-msg-1',
-      ]);
-      const cell = tree.root.findByProps({ testID: 'needs-you-text-ask-1' });
-      expect(cell.props.children).toBe('can you confirm the review note?');
-      expect(textOf(tree)).not.toContain('@');
-      expect(textOf(tree)).toContain('Launch room');
-      expect(tree.root.findByProps({ testID: 'needs-you-age-ask-1' }).props.children).toBe('5m');
-    } finally {
-      clock.mockRestore();
-    }
-  });
-
-  it('lists approvals before questions in one Needs you section, and opening one leaves it in the tray', async () => {
-    layout.os = 'ios';
-    layout.width = 390;
-    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000 + 2 * 86_400_000);
-    serve({
-      needs: [
-        need({
-          messageId: 'grant-1',
-          roomKind: 'corner',
-          roomName: 'sec-filing-desk',
-          parentRoomName: 'experiments',
-          text: 'Allow running git push --force-with-lease?',
-          expiresAt: undefined,
-          approval: {
-            kind: 'grant',
-            actor: 'BBC',
-            ask: 'asks to run',
-            subject: 'git push --force-with-lease',
-            literal: true,
-            detail: 'Push ledger fixes to feat/ledger.',
-            forName: 'Johnny',
-          },
-        }),
-        need({ createdAt: 1_700_000_000 + 2 * 86_400 - 300 }),
-      ],
-    });
-    try {
-      const tree = await renderTray();
-      const sections = tree.root
-        .findAll((node: any) => /^tray-section-/.test(String(node.props.testID ?? '')))
-        .map((node: any) => node.props.testID)
-        .filter((id: string, index: number, all: string[]) => all.indexOf(id) === index);
-      expect(sections).toEqual(['tray-section-needs', 'tray-section-saved']);
-      const cells = tree.root
-        .findAll((node: any) => /^needs-you-(grant|ask)-1$/.test(String(node.props.testID ?? '')))
-        .map((node: any) => node.props.testID)
-        .filter((id: string, index: number, all: string[]) => all.indexOf(id) === index);
-      expect(cells).toEqual(['needs-you-grant-1', 'needs-you-ask-1']);
-      const head = tree.root.findByProps({ testID: 'needs-you-head-grant-1' });
-      const [actor, ask] = head.props.children;
-      expect(actor.props.children).toBe('BBC');
-      expect(ask).toBe(' asks to run');
-      expect(tree.root.findByProps({ testID: 'needs-you-text-grant-1' }).props.children).toBe(
-        'git push --force-with-lease',
-      );
-      expect(tree.root.findByProps({ testID: 'needs-you-detail-grant-1' }).props.children).toBe(
-        'Push ledger fixes to feat/ledger.',
-      );
-      expect(textOf(tree)).toContain('experiments/sec-filing-desk · for @Johnny');
-      // Older than a day: the age takes the warning tone.
-      expect(textOf(tree)).toContain('2d');
-      // Opening an approval leaves it; a separate swipe can dismiss its tray row.
-      expect(
-        tree.root.findAllByProps({ testID: 'needs-you-swipe-grant-1' }).length,
-      ).toBeGreaterThan(0);
-      await act(async () => {
-        tree.root.findByProps({ testID: 'needs-you-grant-1' }).props.onPress();
-      });
-      expect(cleared()).toEqual([]);
-      expect(navigation.push).toHaveBeenCalledWith(
-        expect.objectContaining({
-          params: expect.objectContaining({ notificationMessageId: 'grant-1' }),
-        }),
-      );
-      expect(tree.root.findAllByProps({ testID: 'needs-you-grant-1' }).length).toBeGreaterThan(0);
-    } finally {
-      clock.mockRestore();
-    }
-  });
-
-  it('shows the countdown only in a cell’s last six hours', async () => {
-    const now = 1_700_000_000_000;
-    const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
-    serve({
-      needs: [
-        need({ expiresAt: now / 1000 + 5.5 * 3600 }),
-        need({ messageId: 'ask-2', expiresAt: now / 1000 + 20 * 3600 }),
-      ],
-    });
-    try {
-      const text = textOf(await renderTray());
-      expect(text).toContain('expires in 6h');
-      expect(text.match(/expires in/g)).toHaveLength(1);
-    } finally {
-      clock.mockRestore();
-    }
-  });
-
-  it('opening a cell on the phone clears it and lands on that exact message', async () => {
-    layout.os = 'ios';
-    layout.width = 390;
-    serve({ needs: [need()] });
-    const tree = await renderTray();
-    await act(async () => {
-      tree.root.findByProps({ testID: 'needs-you-ask-1' }).props.onPress();
-    });
-    expect(cleared()).toEqual([['clearNeedsYou', { workspaceId: 'ws', messageId: 'ask-1' }]]);
-    expect(navigation.push).toHaveBeenCalledWith({
-      pathname: '/beeline/chat/[channelId]',
-      params: {
-        channelId: 'room-1',
-        communityId: 'ws',
-        notificationResponseId: 'needs-you:ask-1',
-        notificationMessageId: 'ask-1',
-      },
-    });
-    expect(tree.root.findAllByProps({ testID: 'needs-you-ask-1' })).toHaveLength(0);
-    expect(tree.root.findByProps({ testID: 'needs-you-empty' })).toBeDefined();
-  });
-
-  it('a phone swipe right dismisses the cell without opening it', async () => {
-    layout.os = 'ios';
-    layout.width = 390;
-    serve({ needs: [need()] });
-    const tree = await renderTray();
-    await act(async () => {
-      tree.root.findByProps({ testID: 'needs-you-swipe-ask-1' }).props.onSwipeableOpen('left');
-    });
-    expect(cleared()).toHaveLength(1);
-    expect(navigation.push).not.toHaveBeenCalled();
-    expect(tree.root.findAllByProps({ testID: 'needs-you-ask-1' })).toHaveLength(0);
-  });
-
-  it('a phone swipe dismisses an approval without deciding it', async () => {
-    layout.os = 'ios';
-    layout.width = 390;
-    serve({
-      needs: [
-        need({
-          messageId: 'grant-1',
-          approval: {
-            kind: 'grant',
-            actor: 'BBC',
-            ask: 'asks to run',
-            subject: 'git push',
-            literal: true,
-          },
-        }),
-      ],
-    });
-    const tree = await renderTray();
-    await act(async () => {
-      tree.root.findByProps({ testID: 'needs-you-swipe-grant-1' }).props.onSwipeableOpen('left');
-    });
-    expect(cleared()).toEqual([
-      ['clearNeedsYou', { workspaceId: 'ws', messageId: 'grant-1', dismissReminder: true }],
-    ]);
-    expect(navigation.push).not.toHaveBeenCalled();
-    expect(tree.root.findByProps({ testID: 'needs-you-empty' })).toBeDefined();
-  });
-
-  it('a desktop hover offers DISMISS for an approval', async () => {
-    serve({
-      needs: [
-        need({
-          messageId: 'grant-1',
-          approval: {
-            kind: 'grant',
-            actor: 'BBC',
-            ask: 'asks to run',
-            subject: 'git push',
-            literal: true,
-          },
-        }),
-      ],
-    });
-    const tree = await renderTray();
-    await act(async () => tree.root.findByProps({ testID: 'needs-you-grant-1' }).props.onHoverIn());
-    await act(async () =>
-      tree.root
-        .findByProps({ testID: 'needs-you-dismiss-grant-1' })
-        .props.onPress({ stopPropagation: () => undefined }),
-    );
-    expect(cleared()).toEqual([
-      ['clearNeedsYou', { workspaceId: 'ws', messageId: 'grant-1', dismissReminder: true }],
-    ]);
-    expect(navigation.push).not.toHaveBeenCalled();
-  });
-
-  it('a desktop click clears the cell and keeps its message open in the pane', async () => {
-    serve({ needs: [need()] });
-    const tree = await renderTray();
-    await act(async () => {
-      tree.root.findByProps({ testID: 'needs-you-ask-1' }).props.onPress();
-    });
-    await act(async () => undefined);
-    expect(cleared()).toHaveLength(1);
-    const pane = tree.root.findByType('DesktopRoomInspector' as any);
-    expect(pane.props.focusMessageId).toBe('ask-1');
-    expect(navigation.push).not.toHaveBeenCalled();
-  });
-
-  it('a desktop hover reveals DISMISS in place of the chevron', async () => {
-    serve({ needs: [need()] });
-    const tree = await renderTray();
-    const cell = () => tree.root.findByProps({ testID: 'needs-you-ask-1' });
-    expect(tree.root.findAllByProps({ testID: 'needs-you-dismiss-ask-1' })).toHaveLength(0);
-    await act(async () => cell().props.onHoverIn());
-    await act(async () => {
-      tree.root
-        .findByProps({ testID: 'needs-you-dismiss-ask-1' })
-        .props.onPress({ stopPropagation: () => undefined });
-    });
-    expect(cleared()).toHaveLength(1);
-    expect(tree.root.findAllByType('DesktopRoomInspector' as any)).toHaveLength(0);
-  });
-
-  it('an open tray drops a cell cleared on another device from a typed delta', async () => {
-    {
-      serve({ needs: [need()] });
-      const tree = await renderTray();
-      expect(tree.root.findAllByProps({ testID: 'needs-you-ask-1' }).length).toBeGreaterThan(0);
-      await act(async () =>
-        applyNeedsYouLiveDelta({ workspaceId: 'ws', sourceRoomId: 'room-1', count: 0, items: [] }),
-      );
-      expect(tree.root.findAllByProps({ testID: 'needs-you-ask-1' })).toHaveLength(0);
-      expect(tree.root.findByProps({ testID: 'needs-you-empty' })).toBeDefined();
-    }
-  });
-
-  it('an open tray applies a new cell without a timer or HTTP read', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'] });
-    try {
-      serve({ needs: [need()] });
-      await renderTray();
-      const reads = () =>
-        phoneOperation.mock.calls.filter(([name]) => name === 'readNeedsYou').length;
-      const opened = reads();
-      await act(async () => {
-        vi.advanceTimersByTime(30 * 60_000);
-      });
-      expect(reads()).toBe(opened);
-      await act(async () =>
-        applyNeedsYouLiveDelta({
-          workspaceId: 'ws',
-          sourceRoomId: 'room-1',
-          count: 2,
-          items: [need(), need({ messageId: 'ask-2', text: 'please check this too' })],
-        }),
-      );
-      await act(async () => undefined);
-      expect(reads()).toBe(opened);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-  it('puts a cell back when the server refuses to clear it', async () => {
-    layout.os = 'ios';
-    layout.width = 390;
-    serve({ needs: [need()] });
-    const tree = await renderTray();
-    phoneOperation.mockImplementation(async (name: string) => {
-      if (name === 'clearNeedsYou') throw new Error('message is not available');
-      return undefined;
-    });
-    await act(async () => {
-      tree.root.findByProps({ testID: 'needs-you-swipe-ask-1' }).props.onSwipeableOpen('left');
-    });
-    expect(tree.root.findAllByProps({ testID: 'needs-you-ask-1' }).length).toBeGreaterThan(0);
-    expect(textOf(tree)).toContain('message is not available');
-  });
-});
-
-describe('Tray section CLEAR', () => {
-  const approval = () =>
-    need({
-      messageId: 'grant-1',
-      approval: { kind: 'grant', actor: 'BBC', ask: 'asks to run', subject: 'git push' },
-    });
-  const calls = (name: string) => phoneOperation.mock.calls.filter(([called]) => called === name);
-  const ids = (tree: ReactTestRenderer, pattern: RegExp) =>
-    tree.root
-      .findAll((node: any) => pattern.test(String(node.props.testID ?? '')))
-      .map((node: any) => node.props.testID)
-      .filter((id: string, index: number, all: string[]) => all.indexOf(id) === index);
-
-  beforeEach(() => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
-  });
-  afterEach(() => vi.useRealTimers());
-
-  it.each([
-    { surface: 'desktop', os: 'web', width: 1200 },
-    { surface: 'mobile', os: 'ios', width: 390 },
-  ])(
-    'clears every question and approval on $surface after the Undo window',
-    async ({ os, width }) => {
-      layout.os = os;
-      layout.width = width;
-      serve({ needs: [approval(), need(), need({ messageId: 'ask-2' })] });
-      const tree = await renderTray();
-      await act(async () => tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress());
-      expect(ids(tree, /^needs-you-(grant|ask)-\d$/)).toEqual([]);
-      expect(textOf(tree)).toContain('Cleared 3 items');
-      expect(calls('clearNeedsYouSection')).toEqual([]);
-      await act(async () => {
-        vi.advanceTimersByTime(6_000);
-      });
-      expect(calls('clearNeedsYouSection')).toEqual([
-        ['clearNeedsYouSection', { workspaceId: 'ws' }],
-      ]);
-      expect(tree.root.findAllByProps({ testID: 'tray-clear-undo' })).toHaveLength(0);
-      expect(tree.root.findByProps({ testID: 'needs-you-empty' })).toBeDefined();
-      expect(tree.root.findAllByProps({ testID: 'tray-clear-needs' })).toHaveLength(0);
-    },
-  );
-
-  it('shows CLEAR with approvals alone and dismisses all of them', async () => {
-    serve({ needs: [approval(), need({ ...approval(), messageId: 'grant-2' })] });
-    const tree = await renderTray();
-    expect(tree.root.findByProps({ testID: 'tray-clear-needs' })).toBeDefined();
-    await act(async () => tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress());
-    expect(ids(tree, /^needs-you-grant-\d$/)).toEqual([]);
-    await act(async () => {
-      vi.advanceTimersByTime(6_000);
-    });
-    expect(calls('clearNeedsYouSection')).toHaveLength(1);
-    expect(tree.root.findByProps({ testID: 'needs-you-empty' })).toBeDefined();
-  });
-
-  it('UNDO brings every bookmark back and sends nothing', async () => {
-    serve({ bookmarks: [bookmark(), bookmark({ messageId: 'msg-2' })] });
-    const tree = await renderTray();
-    await act(async () => tree.root.findByProps({ testID: 'tray-clear-saved' }).props.onPress());
-    expect(ids(tree, /^bookmark-msg-\d$/)).toEqual([]);
-    expect(tree.root.findByProps({ testID: 'bookmarks-empty' })).toBeDefined();
-    const undo = tree.root.findByProps({ testID: 'tray-clear-undo' });
-    expect(textOf(tree)).toContain('Cleared 2 bookmarks');
-    await act(async () => undo.findByProps({ accessibilityRole: 'button' }).props.onPress());
-    await act(async () => {
-      vi.advanceTimersByTime(6_000);
-    });
-    expect(ids(tree, /^bookmark-msg-\d$/)).toEqual(['bookmark-msg-1', 'bookmark-msg-2']);
-    expect(calls('clearMessageBookmarks')).toEqual([]);
-  });
-
-  it('sends one Workspace operation for many bookmarks and stays empty after a reload', async () => {
-    serve({
-      bookmarks: Array.from({ length: 45 }, (_, index) => bookmark({ messageId: `msg-${index}` })),
-    });
-    const tree = await renderTray();
-    await act(async () => tree.root.findByProps({ testID: 'tray-clear-saved' }).props.onPress());
-    await act(async () => {
-      vi.advanceTimersByTime(6_000);
-    });
-    expect(calls('clearMessageBookmarks')).toEqual([
-      ['clearMessageBookmarks', { workspaceId: 'ws' }],
-    ]);
-    expect(tree.root.findByProps({ testID: 'bookmarks-empty' })).toBeDefined();
-    await act(async () => {
-      vi.advanceTimersByTime(60_000);
-    });
-    expect(tree.root.findByProps({ testID: 'bookmarks-empty' })).toBeDefined();
-  });
-
-  it('puts back a bookmark the server refuses to clear', async () => {
-    serve({ bookmarks: [bookmark(), bookmark({ messageId: 'msg-2' })] });
-    const tree = await renderTray();
-    phoneOperation.mockImplementation(async (name: string, input: any) => {
-      if (name === 'clearMessageBookmarks') throw new Error('bookmark is locked');
-      return undefined;
-    });
-    await act(async () => tree.root.findByProps({ testID: 'tray-clear-saved' }).props.onPress());
-    await act(async () => {
-      vi.advanceTimersByTime(6_000);
-    });
-    await act(async () => undefined);
-    expect(calls('clearMessageBookmarks')).toEqual([
-      ['clearMessageBookmarks', { workspaceId: 'ws' }],
-    ]);
-    expect(ids(tree, /^bookmark-msg-\d$/)).toEqual(['bookmark-msg-1', 'bookmark-msg-2']);
-    expect(textOf(tree)).toContain('bookmark is locked');
-  });
-
-  it('Reproduction TRAY-UNDO-1: a second CLEAR keeps the first clear undoable for its full window', async () => {
-    serve({ needs: [need()], bookmarks: [bookmark()] });
-    const tree = await renderTray();
-    await act(async () => tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress());
-    await act(async () => {
-      vi.advanceTimersByTime(1_000);
-    });
-    await act(async () => tree.root.findByProps({ testID: 'tray-clear-saved' }).props.onPress());
-    expect(calls('clearNeedsYouSection')).toEqual([]);
-    expect(textOf(tree)).toContain('Cleared 1 bookmark');
-    // UNDO takes back the newest clear; the older one, still in its window, shows next.
-    await act(async () =>
-      tree.root
-        .findByProps({ testID: 'tray-clear-undo' })
-        .findByProps({ accessibilityRole: 'button' })
-        .props.onPress(),
-    );
-    expect(textOf(tree)).toContain('Cleared 1 item');
-    await act(async () =>
-      tree.root
-        .findByProps({ testID: 'tray-clear-undo' })
-        .findByProps({ accessibilityRole: 'button' })
-        .props.onPress(),
-    );
-    await act(async () => {
-      vi.advanceTimersByTime(6_000);
-    });
-    expect(ids(tree, /^(needs-you-ask|bookmark-msg)-\d$/)).toEqual([
-      'needs-you-ask-1',
-      'bookmark-msg-1',
-    ]);
-    expect(calls('clearNeedsYouSection')).toEqual([]);
-    expect(calls('clearMessageBookmarks')).toEqual([]);
-  });
-
-  it('sends each held clear when its own six seconds end', async () => {
-    serve({ needs: [need()], bookmarks: [bookmark()] });
-    const tree = await renderTray();
-    await act(async () => tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress());
-    await act(async () => {
-      vi.advanceTimersByTime(1_000);
-    });
-    await act(async () => tree.root.findByProps({ testID: 'tray-clear-saved' }).props.onPress());
-    await act(async () => {
-      vi.advanceTimersByTime(4_999);
-    });
-    expect(calls('clearNeedsYouSection')).toEqual([]);
-    await act(async () => {
-      vi.advanceTimersByTime(1);
-    });
-    expect(calls('clearNeedsYouSection')).toHaveLength(1);
-    expect(calls('clearMessageBookmarks')).toEqual([]);
-    await act(async () => {
-      vi.advanceTimersByTime(1_000);
-    });
-    expect(calls('clearMessageBookmarks')).toHaveLength(1);
-  });
-
-  it('drops both held sections on account reset without sending either clear', async () => {
-    serve({ needs: [need()], bookmarks: [bookmark()] });
-    const tree = await renderTray();
-    await act(async () => tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress());
-    await act(async () => tree.root.findByProps({ testID: 'tray-clear-saved' }).props.onPress());
-    await act(async () => resetClientState());
-    expect(tree.root.findAllByProps({ testID: 'tray-clear-undo' })).toHaveLength(0);
-    await act(async () => {
-      vi.advanceTimersByTime(6_000);
-    });
-    expect(calls('clearNeedsYouSection')).toEqual([]);
-    expect(calls('clearMessageBookmarks')).toEqual([]);
-  });
-
-  it('REMOVE during the Undo window does not send the held clear', async () => {
-    layout.os = 'android';
-    layout.width = 390;
-    serve({
-      needs: [need()],
-      bookmarks: [bookmark({ messageId: 'gone', available: false, text: undefined })],
-    });
-    const tree = await renderTray();
-    await act(async () => tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress());
-    await act(async () => {
-      await tree.root
-        .findByProps({ accessibilityLabel: 'Remove unavailable bookmark' })
-        .props.onPress();
-    });
-    expect(calls('clearNeedsYouSection')).toEqual([]);
-    await act(async () => {
-      vi.advanceTimersByTime(6_000);
-    });
-    expect(calls('clearNeedsYouSection')).toHaveLength(1);
-  });
-
-  it('Reproduction TRAY-UNDO-REMOVE-1: bulk UNDO stays on screen after a REMOVE', async () => {
-    layout.os = 'android';
-    layout.width = 390;
-    serve({
-      needs: [need()],
-      bookmarks: [bookmark({ messageId: 'gone', available: false, text: undefined })],
-    });
-    const tree = await renderTray();
-    await act(async () => tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress());
-    await act(async () => {
-      vi.advanceTimersByTime(1_000);
-    });
-    await act(async () => {
-      await tree.root
-        .findByProps({ accessibilityLabel: 'Remove unavailable bookmark' })
-        .props.onPress();
-    });
-    expect(ids(tree, /^(bookmark|tray-clear)-undo$/)).toEqual(['bookmark-undo', 'tray-clear-undo']);
-    const undo = tree.root.findByProps({ testID: 'tray-clear-undo' });
-    expect(textOf(tree)).toContain('Cleared 1 item');
-    const bottom = (node: any) =>
-      Object.assign({}, ...[node.props.style].flat(Infinity as 1)).bottom;
-    expect(bottom(undo)).toBeGreaterThan(
-      bottom(tree.root.findByProps({ testID: 'bookmark-undo' })),
-    );
-    await act(async () => {
-      vi.advanceTimersByTime(4_000);
-    });
-    await act(async () => undo.findByProps({ accessibilityRole: 'button' }).props.onPress());
-    await act(async () => {
-      vi.advanceTimersByTime(6_000);
-    });
-    expect(ids(tree, /^needs-you-ask-\d$/)).toEqual(['needs-you-ask-1']);
-    expect(calls('clearNeedsYouSection')).toEqual([]);
-  });
-
-  it('keeps the desktop Undo bar inside the list column', async () => {
-    layout.os = 'web';
-    layout.width = 1200;
-    serve({ bookmarks: [bookmark()] });
-    const tree = await renderTray();
-    await act(async () => tree.root.findByProps({ testID: 'tray-clear-saved' }).props.onPress());
-    const undo = tree.root.findByProps({ testID: 'tray-clear-undo' });
-    const style = Object.assign({}, ...[undo.props.style].flat(Infinity as 1));
-    expect(style.left + style.maxWidth).toBeLessThanOrEqual(390 - 16);
-  });
-
-  it('sends a held clear when the Tray closes', async () => {
-    serve({ needs: [need()] });
-    const tree = await renderTray();
-    await act(async () => tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress());
-    await act(async () => tree.unmount());
-    expect(calls('clearNeedsYouSection')).toHaveLength(1);
-  });
-});
-
-describe('inline approval decisions in the tray', () => {
-  const approvalItem = (actions: unknown[], extra = {}) =>
-    need({
-      messageId: 'inline-1',
-      roomId: 'system-dm',
-      roomKind: 'direct',
-      roomName: 'System',
-      approval: {
-        kind: 'grant',
-        actor: 'Hoots',
-        ask: 'asks to run',
-        subject: 'npm test',
-        literal: true,
-        actions,
-        ...extra,
-      },
-    });
-  const clickAction = async (tree: ReactTestRenderer, index = 0) => {
-    await act(async () => {
-      await tree.root
-        .findByProps({ testID: `needs-you-action-inline-1-${index}` })
-        .props.onPress({ stopPropagation() {} });
-    });
-  };
-
-  it.each([
-    {
-      action: { kind: 'grant', label: 'Approve once', grantId: 'grant-1', decision: 'once' },
-      operation: 'decideAgentGrant',
-      input: { grantId: 'grant-1', decision: 'once' },
-    },
-    {
-      action: { kind: 'grant', label: 'Deny', grantId: 'grant-1', decision: 'deny' },
-      operation: 'decideAgentGrant',
-      input: { grantId: 'grant-1', decision: 'deny' },
-    },
-    {
-      action: {
-        kind: 'write-access',
-        label: 'Approve',
-        permissionId: 'p1',
-        requestId: 'r1',
-        agentId: 'a1',
-        repository: 'owner/repo',
-        decision: 'allow',
-      },
-      operation: 'decideWritePermission',
-      input: {
-        roomId: 'system-dm',
-        permissionId: 'p1',
-        requestId: 'r1',
-        agentId: 'a1',
-        repository: 'owner/repo',
-        decision: 'allow',
-      },
-    },
-    {
-      action: {
-        kind: 'write-access',
-        label: 'Deny',
-        permissionId: 'p1',
-        requestId: 'r1',
-        agentId: 'a1',
-        repository: 'owner/repo',
-        decision: 'deny',
-      },
-      operation: 'decideWritePermission',
-      input: {
-        roomId: 'system-dm',
-        permissionId: 'p1',
-        requestId: 'r1',
-        agentId: 'a1',
-        repository: 'owner/repo',
-        decision: 'deny',
-      },
-    },
-    {
-      action: { kind: 'choice', label: 'Ship', choiceId: 'c1', optionId: 'A' },
-      operation: 'answerChoice',
-      input: { choiceId: 'c1', optionId: 'A' },
-    },
-    {
-      action: { kind: 'skip-choice', label: 'Skip', choiceId: 'c1' },
-      operation: 'skipChoice',
-      input: { choiceId: 'c1' },
-    },
-  ])(
-    'sends $operation directly without navigation or dismissal',
-    async ({ action, operation, input }) => {
-      layout.os = 'ios';
-      layout.width = 390;
-      let needs = [approvalItem([action])];
-      phoneOperation.mockImplementation(async (name: string) => {
-        if (name === 'readTray') return { needs: { items: needs }, saved: { bookmarks: [] } };
-        if (name === 'readNeedsYou') return { items: needs };
-        if (name === operation) needs = [];
-      });
-      const tree = await renderTray();
-      await clickAction(tree);
-      expect(phoneOperation).toHaveBeenCalledWith(operation, input);
-      expect(phoneOperation).not.toHaveBeenCalledWith('clearNeedsYou', expect.anything());
-      expect(navigation.push).not.toHaveBeenCalled();
-      expect(tree.root.findAllByProps({ testID: 'needs-you-inline-1' })).toHaveLength(0);
-    },
-  );
-
-  it('opens the Squire ceremony directly and leaves the item pending', async () => {
-    const url = 'https://trustysquire.ai/vault/pay/pending';
-    serve({
-      needs: [approvalItem([{ kind: 'external', label: 'Approve', url }], { kind: 'squire' })],
-    });
-    const tree = await renderTray();
-    // Squire's link is the cell's one primary Button, trailing in the action row.
-    const row = tree.root.findAll((node: any) => node.type === ButtonRow)[0]!;
-    expect(row.props.actions).toEqual([
-      expect.objectContaining({
-        label: 'Approve',
-        variant: 'primary',
-        accessibilityRole: 'button',
-        destination: 'external',
-      }),
-    ]);
-    phoneOperation.mockClear();
-    await clickAction(tree);
-    expect(openExternal).toHaveBeenCalledWith(url);
-    expect(phoneOperation).not.toHaveBeenCalled();
-    expect(navigation.push).not.toHaveBeenCalled();
-    expect(tree.root.findAllByProps({ testID: 'needs-you-inline-1' }).length).toBeGreaterThan(0);
-  });
-
-  it('keeps a refused decision in the tray and explains the refusal', async () => {
-    serve({
-      needs: [
-        approvalItem([{ kind: 'grant', label: 'Deny', grantId: 'grant-1', decision: 'deny' }]),
-      ],
-    });
-    const tree = await renderTray();
-    phoneOperation.mockImplementation(async () => {
-      throw new Error('grant decision conflict: already decided');
-    });
-    await clickAction(tree);
-    expect(textOf(tree)).toContain('grant decision conflict: already decided');
-    expect(tree.root.findAllByProps({ testID: 'needs-you-inline-1' }).length).toBeGreaterThan(0);
+    expect(scope7.badge(tree)).toBe(1);
   });
 });

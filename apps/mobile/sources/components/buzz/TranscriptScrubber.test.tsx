@@ -307,10 +307,10 @@ describe('TranscriptScrubber on the Room transcript', () => {
 
   it('feeds the transcript list size into the bar', () => {
     const surface = readFileSync(
-      resolve(__dirname, '../../app/(app)/beeline/chat/_chat-surface.tsx'),
+      resolve(__dirname, '../../app/(app)/beeline/chat/ChatSurfaceTranscript.tsx'),
       'utf8',
     );
-    expect(surface).toContain('positions: transcriptPositions,');
+    expect(readFileSync(resolve(__dirname, '../../app/(app)/beeline/chat/useChatRoomPresentation.tsx'), 'utf8')).toContain('positions: transcriptPositions,');
     expect(surface).toContain('transcriptPositions.observeScroll(event.nativeEvent);');
     expect(surface).toContain('transcriptPositions.observeContentSize(height);');
     expect(surface).toContain('positions={transcriptPositions}');

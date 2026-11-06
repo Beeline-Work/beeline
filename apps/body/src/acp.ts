@@ -1,5 +1,12 @@
-import { CodexPromptDelivery } from './codex-prompt-delivery.js';
-import { readUsageWindow, type AgentUsage, type UsageWindow } from '@beeline/api-contract/daemon';
+import { STDERR_TAIL_MAX_CHARS, flattenHarnessCause, AcpRuntimeExitedError, isPiAcpHarness, killChildProcessGroup } from './acp-stderr-tail-max-chars.js';
+
+
+
+import { piStartupEnvironment } from './pi-startup.js';
+
+import { explainAgentProgramFailure } from './agent-command.js';
+import { delimiter, dirname, isAbsolute } from 'node:path';
+import { realpathSync } from 'node:fs';
 /**
  * Minimal ACP client over stdio for an ACP coding agent.
  *
@@ -15,658 +22,23 @@ import { readUsageWindow, type AgentUsage, type UsageWindow } from '@beeline/api
  * therefore drives the selected ACP server directly so session modes/MCP mounts
  * stay enforceable and multi-user activity projection remains possible.
  */
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { acpClientPreparePromptDelivery, acpClientPromptDelivery, acpClientHandleChildExit, acpClientFailRuntime, acpClientProcessPid, acpClientSessionCommandsFor, acpClientCanLoadSession, acpClientCanPromptWithImages, acpClientSessionNew, acpClientSessionLoad, acpClientApplySessionMode, acpClientSessionPrompt } from './acp-prepare-prompt-delivery.js';
+import { acpClientSessionSteer, acpClientActiveRunId, acpClientSessionCancel, acpClientSetConfigOption, acpClientSetModel, acpClientOnData, acpClientHandleMessage, acpClientActiveRunIdFromUpdate, acpClientWaitForActiveRun, acpClientHandlePermission, acpClientRequest, acpClientNotify, acpClientWrite } from './acp-session-steer.js';
+import { CodexPromptDelivery } from './codex-prompt-delivery.js';
+import { readUsageWindow, type AgentUsage, type UsageWindow } from '@beeline/api-contract/daemon';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { watch, readFileSync, realpathSync, writeFileSync, type FSWatcher } from 'node:fs';
-import { delimiter, dirname, isAbsolute } from 'node:path';
-import { explainAgentProgramFailure } from './agent-command.js';
-import { harnessTurnTokens, type TurnTokenFigure } from './harness-turn-tokens.js';
-import { piStartupEnvironment } from './pi-startup.js';
-import { PiSessionInstructions, piCompactionMarker } from './pi-session-instructions.js';
+import { PiSessionInstructions } from './pi-session-instructions.js';
 import { McpLaunchFiles } from './mcp-launch-files.js';
 import { AcpResourceScope } from './acp-resource-scope.js';
 import type { SessionMode } from './config.js';
-import {
-  cornerAutonomyModeCandidates,
-  roomModeCandidates,
-  harnessSupportsNativeSessionResume,
-} from './harness-capabilities.js';
-import { harnessReadsMetaSystemPrompt, sessionToolScopeMeta } from './harness-tool-scope.js';
-import {
-  cgroupOomKillProbe,
-  OomKillTracker,
-  type OomKillDetector,
-} from './oom-kill.js';
+import { harnessSupportsNativeSessionResume } from './harness-capabilities.js';
+import { cgroupOomKillProbe, OomKillTracker, type OomKillDetector } from './oom-kill.js';
+import { SessionUpdate, ToolCallEntry, AcpPermissionRequest, AcpAvailableCommand, AcpPermissionHandler, AcpPermissionAllowlist, McpServerWire, AcpPromptBlock, AcpTextChunkHandler, AcpStreamHandler, PromptResult, SteerResult } from './acp-stderr-tail-max-chars.js';
+export { STDERR_TAIL_MAX_CHARS, meaningfulHarnessStderr, flattenHarnessCause, AcpRequestError, AcpRuntimeExitedError, AcpResourceLimitError, killChildProcessGroup, type McpServerWire, type SessionUpdate, type ToolCallEntry, type PromptResult, type AcpPromptBlock, type SteerResult, type AcpPermissionOption, type AcpAvailableCommand, parseAvailableCommands, type AcpPermissionRequest, type AcpPermissionDecision, type AcpPermissionHandler, type AcpPermissionAllowlist, type AcpTextChunkHandler, type AcpStreamSnapshot, type AcpStreamHandler, agentMessageChunkText, isPiAcpHarness, agentMessageRuns, isPureRetryNarration, finalAgentMessageText, type AgentTurnStep, agentTurnSteps, describeEmptyTurn, agentStreamSnapshot } from './acp-stderr-tail-max-chars.js';
 
-/** Bound on the stderr tail kept for an exit-failure error message. */
-const STDERR_TAIL_MAX_CHARS = 2_000;
 
-function braceDelta(line: string): number {
-  let delta = 0;
-  for (const char of line) {
-    if (char === '{') delta += 1;
-    else if (char === '}') delta -= 1;
-  }
-  return delta;
-}
-
-/**
- * Harness stderr worth carrying into a failure reason.
- *
- * pi-acp 0.0.33 answers our ACP `notifications/initialized` with `-32601
- * Method not found` and dumps the whole notification to stderr on EVERY
- * session, then serves the session fine. Gluing that block onto every timeout
- * made each pi failure read as a handshake fault it never was, so a dumped
- * notification-handling block is dropped here and the client no longer sends
- * that notification to pi at all. Anything else the harness wrote is kept: a
- * real cause still belongs in the reason.
- */
-export function meaningfulHarnessStderr(tail: string): string {
-  const lines = tail.split(/\r?\n/);
-  const kept: string[] = [];
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index]!;
-    if (!/error handling notification/i.test(line)) {
-      kept.push(line);
-      continue;
-    }
-    const block = [line];
-    let depth = braceDelta(line);
-    // The dumped notification is either braced on the header line or on the
-    // lines that follow it; consume the whole object either way.
-    if (depth === 0 && lines[index + 1]?.trimStart().startsWith('{')) {
-      index += 1;
-      block.push(lines[index]!);
-      depth = braceDelta(lines[index]!);
-    }
-    while (depth > 0 && index + 1 < lines.length) {
-      index += 1;
-      block.push(lines[index]!);
-      depth += braceDelta(lines[index]!);
-    }
-    if (!/notifications\/initialized/.test(block.join('\n'))) kept.push(...block);
-  }
-  return kept.join('\n').trim();
-}
-
-/** One Room line: a multiline quota dump must keep its reset time through first-line distill. */
-function flattenHarnessCause(tail: string): string {
-  return meaningfulHarnessStderr(tail).replace(/\s+/g, ' ').trim();
-}
-
-/** Preserve the remote JSON-RPC code for callers classifying a precise refusal. */
-export class AcpRequestError extends Error {
-  constructor(readonly code: number | undefined, message: string) {
-    super(message);
-  }
-}
-
-export class AcpRuntimeExitedError extends Error {
-  override readonly cause = 'runtime_exited';
-  constructor(detail: string) {
-    super(`runtime_exited: ${detail}`);
-    this.name = 'AcpRuntimeExitedError';
-  }
-}
-
-export class AcpResourceLimitError extends Error {
-  override readonly cause = 'resource_limit';
-  constructor(memoryMaxBytes: number) {
-    super(`resource_limit: ACP session likely hit its ${Math.floor(memoryMaxBytes / 1024 / 1024)} MiB memory limit (exit 137 or signal 9)`);
-    this.name = 'AcpResourceLimitError';
-  }
-}
-
-function killChildProcessGroup(
-  child: ChildProcessWithoutNullStreams,
-  signal: NodeJS.Signals,
-): void {
-  if (!child.pid) return;
-  try {
-    if (process.platform === 'win32') child.kill(signal);
-    else process.kill(-child.pid, signal);
-  } catch (error) {
-    // The harness may have exited between the liveness check and the signal.
-    if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
-  }
-}
-
-export interface McpServerWire {
-  name: string;
-  command: string;
-  args?: string[];
-  env?: Array<{ name: string; value: string }>;
-}
-
-export interface SessionUpdate {
-  sessionId: string;
-  update: Record<string, unknown>;
-}
-
-export interface ToolCallEntry {
-  id?: string;
-  name?: string;
-  title?: string;
-  kind?: string;
-  status?: string;
-  resultReceived?: boolean;
-  rawInput?: unknown;
-  content?: unknown;
-  /** Some harnesses (grok) put a failed call's reason here and nowhere else. */
-  rawOutput?: unknown;
-  locations?: unknown;
-}
-
-export interface PromptResult {
-  stopReason: string;
-  updates: SessionUpdate[];
-  /** Concatenated agent text from message chunks. */
-  agentText: string;
-  toolCalls: ToolCallEntry[];
-  /** Present only when the harness result included a token figure. */
-  tokenUsage?: TurnTokenFigure;
-}
-
-/** One `session/prompt` content block: text, or an inline image for a harness that advertises `promptCapabilities.image`. */
-export type AcpPromptBlock =
-  { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string };
-
-export interface SteerResult {
-  runId: string;
-  messageId: string;
-}
-
-export interface AcpPermissionOption {
-  kind?: string;
-  optionId?: string;
-  name?: string;
-}
-
-/** One command/skill an ACP harness advertises via `available_commands_update`. */
-export interface AcpAvailableCommand {
-  name: string;
-  description?: string;
-  inputHint?: string;
-}
-
-/**
- * Defensively parse an `available_commands_update` payload. Malformed entries
- * are dropped, never thrown — a harness advertising junk must not break the
- * session-update pipeline that activity projection rides on.
- */
-export function parseAvailableCommands(value: unknown): AcpAvailableCommand[] {
-  if (!Array.isArray(value)) return [];
-  const seen = new Set<string>();
-  const result: AcpAvailableCommand[] = [];
-  for (const entry of value) {
-    if (!entry || typeof entry !== 'object') continue;
-    const record = entry as Record<string, unknown>;
-    const rawName = typeof record.name === 'string' ? record.name.trim().replace(/^\/+/, '') : '';
-    if (!rawName || rawName.length > 80 || seen.has(rawName)) continue;
-    seen.add(rawName);
-    const description =
-      typeof record.description === 'string' && record.description.trim()
-        ? record.description.trim().slice(0, 300)
-        : undefined;
-    const input = record.input as { hint?: unknown } | undefined;
-    const hintRaw = input && typeof input.hint === 'string' ? input.hint : undefined;
-    const inputHint = hintRaw && hintRaw.trim() ? hintRaw.trim().slice(0, 120) : undefined;
-    result.push({
-      name: rawName,
-      ...(description ? { description } : {}),
-      ...(inputHint ? { inputHint } : {}),
-    });
-    if (result.length >= 200) break;
-  }
-  return result;
-}
-
-export interface AcpPermissionRequest {
-  sessionId?: string;
-  toolCall?: {
-    toolCallId?: string;
-    title?: string;
-    kind?: string;
-    rawInput?: unknown;
-    [key: string]: unknown;
-  };
-  options?: AcpPermissionOption[];
-  [key: string]: unknown;
-}
-
-export type AcpPermissionDecision = 'allow' | 'reject';
-export type AcpPermissionHandler = (
-  request: AcpPermissionRequest,
-) => Promise<AcpPermissionDecision>;
-/** A fail-closed list of host-owned permission requests for restricted sessions. */
-export type AcpPermissionAllowlist = (request: AcpPermissionRequest) => boolean;
-
-/** Invoked once per incremental `agent_message_chunk` delta during a live prompt. */
-export type AcpTextChunkHandler = (
-  delta: string,
-  fullTextSoFar: string,
-  /** The normalized assistant-message run currently accumulating. */
-  currentRun?: string,
-  runs?: readonly string[],
-) => void;
-
-export type AcpStreamSnapshot = {
-  /** The one currently accumulating durable answer run. */
-  messageText: string;
-  /** The latest replace-in-place reasoning/progress line. */
-  thoughtText?: string;
-};
-
-/** Invoked on every ACP update so a tool boundary can move progress out of message. */
-export type AcpStreamHandler = (snapshot?: AcpStreamSnapshot) => void;
-
-/**
- * True when an `agent_message_chunk` is pi-acp's own relay of a Pi extension's
- * `ctx.ui.notify()` call (tagged `_meta.piAcp.notify`), not model output. Pi's
- * bundled MCP extension calls `notify()` with "MCP servers need attention:
- * …\nRun /mcp to fix." whenever a mounted server (CodeGraph among them) is
- * `failed` or `needs-auth` at session start, and pi-acp has no ACP vocabulary
- * for an extension-level notice other than `agent_message_chunk` — so without
- * this check that infrastructure text is indistinguishable from the model's
- * own words and can stand in as the agent's entire reply when it is the only
- * chunk the turn produced.
- */
-function isHarnessNotifyChunk(update: Record<string, unknown>): boolean {
-  const meta = update._meta as Record<string, unknown> | undefined;
-  const piAcp = meta?.piAcp as Record<string, unknown> | undefined;
-  return Boolean(piAcp?.notify);
-}
-
-/** Extract the text delta of an `agent_message_chunk` update, harness-agnostic. */
-function agentMessageChunkText(update: Record<string, unknown>): string {
-  if (update.sessionUpdate !== 'agent_message_chunk') return '';
-  if (isHarnessNotifyChunk(update)) return '';
-  const content = update.content as { type?: string; text?: string } | undefined;
-  if (content?.type === 'text') return content.text ?? '';
-  if (typeof update.content === 'string') return update.content;
-  return '';
-}
-
-/**
- * A delta that binds to the word right before it, so it can only be a
- * continuation of the same sentence and never the start of a fresh thought:
- * an elided-word apostrophe ("I" + "'ll"), a hyphen, closing or sentence
- * punctuation, or its own leading whitespace (which already separates the two
- * runs on its own).
- *
- * This is the stream-head defect that made a corner's first message render as
- * `'ll take a look at the README first.` — a non-text update landing between
- * the model's first token and its second one earned a synthetic paragraph
- * break mid-word, and the growing draft then presented the one-character head
- * (`I`) as if it were a complete thought.
- */
-const CHUNK_CONTINUES_PREVIOUS_WORD = /^[\s'\u2018\u2019\u02bc.,!?;:%)\]}-]/;
-
-/**
- * Whether `delta` continues the word `current` stops on, so the non-text
- * update between them was interleaved metadata rather than a message
- * boundary. Only `CHUNK_CONTINUES_PREVIOUS_WORD` qualifies — a head that
- * binds backwards and cannot open a message. A letter or digit head does
- * not; see UNRESOLVED PROTOCOL AMBIGUITY below before widening this.
- *
- * ── UNRESOLVED PROTOCOL AMBIGUITY: a word-character resume ────────────────
- *
- * When a run stops part-way through a word and the next delta opens with a
- * letter or a digit, the two readings are indistinguishable, in either case:
- *
- *     "Using Git"        + tool_call + "Hub works."        → one name, split
- *     "Checking Docker"  + tool_call + "Found it."         → two messages
- *     "The ans"          + tool_call + "wer is 42."        → one word, split
- *     "Checking package" + tool_call + "npm test passes."  → two messages
- *
- * Same text; from a harness that emits a bare `tool_call`, the same update
- * stream. Capitalization does not separate the first pair and lowercase does
- * not separate the second — `npm`, `ls` and `git` open messages exactly as
- * `Found` does. A single string-valued final message therefore has three
- * possible values at that seam, and all three were built and run end to end
- * on the branch that added this guard:
- *
- *   1. join with no separator — fuses two real messages ("DockerFound it.")
- *   2. end the run — the split word loses its head ("Hub works.")   ← chosen
- *   3. join across a paragraph break — keeps both, but promotes unpunctuated
- *      interim narration into the reply, changing the final-message contract
- *
- * Reading 2 is in force by decision, to hold that contract: interim
- * narration stays in the live draft and only the final post-tool message is
- * the reply. The cost is real and is asserted in `leaves a word-character
- * resume ambiguous instead of guessing at it` — a word split across such a
- * seam still loses its head, exactly as before this guard existed.
- *
- * Resolving it needs a structural signal, and the repository was searched
- * for one before settling on reading 2. There is none to be had today:
- *
- *   - Nothing in ACP groups message deltas. `toolCallId` is exactly the key
- *     message chunks lack, which is why `toolCallEntries` below is trivially
- *     correct and this function cannot be.
- *   - The only verbatim harness captures held here are
- *     `fixtures/grok-use-tool-permissions.ts` and
- *     `fixtures/claude-agent-acp-permissions.ts`, both `tool_call` and
- *     `session/request_permission` frames. Neither records a message chunk.
- *   - The `_meta` a real harness does send is tool identity (`x.ai/tool`) or
- *     per-turn identity (`goose.activeRunId`, read at
- *     `activeRunIdFromUpdate`). Neither is per-message. `messageId` exists in
- *     ACP only as a steer RPC's result, never on a stream update.
- *   - The `_meta.goose.created` stamp that appears in `acp.test.ts` is
- *     invented by a hand-written fake; no production code reads it.
- *   - PRODUCTION-CORPUS REPLAY does not cover this. Its fixture is sanitized
- *     relay events whose ACP payloads were replaced before commit.
- *
- * A harness message id or stop marker on `agent_message_chunk` would end the
- * ambiguity outright, since two deltas of one message would then be
- * identifiable as such. Settling whether any installed harness already sends
- * one means capturing raw `session/update` frames per harness — the old
- * `scripts/capture-acp-permissions.mjs` (deleted; see git history) did
- * exactly that and is the shape of the job.
- *
- * Until then do not reach for the text. Capitalization was tried four ways —
- * the word's own case, a prefix allowlist, the fragment's length, whether
- * the word had already turned over — and lowercase once; each reading
- * resolved one pair above by corrupting the other.
- */
-function continuesPreviousWord(current: string, delta: string, afterTool = false): boolean {
-  if (/\s$/.test(current)) return false;
-  // A tool call ends a message when the text that resumes opens on a line
-  // break: a word cannot continue across one, so the break is the model
-  // starting its next text block. Claude's post-tool text can open with
-  // `\n\n`, and joining it kept the pre-tool sentence at the top of the
-  // reply. Other metadata keeps the old reading.
-  if (afterTool && /^\r?\n/.test(delta)) return false;
-  return CHUNK_CONTINUES_PREVIOUS_WORD.test(delta);
-}
-
-const TOOL_UPDATE_TYPES = new Set(['tool_call', 'tool_call_update', 'tool_result']);
-
-const PI_ACP_HARNESS = /(^|[/\\])pi-acp(?:\.[a-z]+)?$/i;
-
-/** Whether the configured harness label is pi's ACP adapter (`pi-acp`). */
-export function isPiAcpHarness(agentLabel: string | undefined): boolean {
-  return Boolean(agentLabel && PI_ACP_HARNESS.test(agentLabel));
-}
-
-/**
- * pi-acp 0.0.33 forwards the model's text deltas verbatim (`handlePiEvent` →
- * `text_delta` → `text: ame.delta`, no line-ending framing), so no
- * normalization is needed. This remains the named seam for the stream-delta
- * pipeline; the previous `withoutOneTrailingLineEnding` framing workaround
- * was deleted after that check — it ate authored line endings and glued
- * numbered-list items together.
- */
-function normalizeStreamDelta(text: string, _agentLabel?: string): string {
-  return text;
-}
-
-/** Group streaming text into assistant-message runs separated by tool,
- * reasoning, or plan updates. Consecutive deltas are one message. A resuming
- * delta that binds to the prior word remains in that message too, since some
- * harnesses interleave metadata in the middle of a token.
- *
- * The split is decided when the next delta arrives, never when the non-text
- * update lands: a tool call used to close the run on sight, so a tool call
- * between a word's first and second token broke the word in two and the head
- * stopped being part of the final message. Whether the run ended is only
- * knowable from what resumes it. */
-export function agentMessageRuns(updates: readonly SessionUpdate[], agentLabel?: string): string[] {
-  return agentMessageRunSpans(updates, agentLabel).map((run) => run.text);
-}
-
-/** Each message run with the index of the update that opened it. */
-function agentMessageRunSpans(
-  updates: readonly SessionUpdate[],
-  agentLabel?: string,
-): { text: string; at: number }[] {
-  const runs: { text: string; at: number }[] = [];
-  let current = '';
-  let at = 0;
-  let lastWasText = false;
-  let toolSinceText = false;
-  for (const [index, u] of updates.entries()) {
-    const delta = normalizeStreamDelta(agentMessageChunkText(u.update), agentLabel);
-    if (!delta) {
-      lastWasText = false;
-      if (TOOL_UPDATE_TYPES.has(u.update.sessionUpdate as string)) toolSinceText = true;
-      continue;
-    }
-    if (!lastWasText && current && !continuesPreviousWord(current, delta, toolSinceText)) {
-      runs.push({ text: current, at });
-      current = '';
-    }
-    if (!current) at = index;
-    current += delta;
-    lastWasText = true;
-    toolSinceText = false;
-  }
-  if (current) runs.push({ text: current, at });
-
-  // A reconnecting or noisy harness can replay a completed message run. Keep
-  // the first occurrence so both the live draft and final selection are
-  // stable for a turn, while repeated token text inside one uninterrupted run
-  // ("very very") remains untouched.
-  const seen = new Set<string>();
-  return runs.filter((run) => {
-    if (seen.has(run.text)) return false;
-    seen.add(run.text);
-    return true;
-  });
-}
-
-/**
- * Harness retry/backoff narration (pi flaking mid-turn is the live case:
- * `Retrying (attempt 1/3, waiting 2s)...Retrying...Retry finished, resuming.`)
- * arrives as ordinary `agent_message_chunk` text, so structurally it is
- * indistinguishable from prose. Classification is therefore by CONTENT, and
- * deliberately narrow: a message counts as pure narration only when, after
- * removing recognized retry-narration fragments, nothing but separators
- * remains. A genuine answer that merely mentions retries keeps most of its
- * words and never classifies as narration.
- */
-const RETRY_NARRATION_FRAGMENTS: RegExp[] = [
-  // `Retrying (attempt 2/3, waiting 4s)` — the pi/ox-alpha shape.
-  /retrying\s*\((?:attempt|try)\s*\d+\s*\/\s*\d+(?:,\s*(?:waiting|backoff)\s*\d+(?:\.\d+)?s)?\)/gi,
-  // A bare `(attempt 2/3...)` or `[attempt 2/3]` qualifier on its own.
-  /[([](?:attempt|try)\s*\d+\s*\/\s*\d+(?:,\s*(?:waiting|backoff)\s*\d+(?:\.\d+)?s)?[))]\s*/gi,
-  // Standalone narration words with their optional trailing ellipsis.
-  /retrying\s*\.{0,3}/gi,
-  /retried\s*\.{0,3}/gi,
-  /retry\s+finished,?\s*/gi,
-  /retry\s+failed,?\s*/gi,
-  /resuming\.?/gi,
-  /waiting\s+\d+(?:\.\d+)?s/gi,
-];
-
-/** True only when the WHOLE text is harness retry/backoff narration. Empty
- *  text is not narration (callers treat emptiness separately), and any message
- *  with a single word of its own content left over is genuine prose. */
-export function isPureRetryNarration(text: string): boolean {
-  const trimmed = text.trim();
-  if (!trimmed) return false;
-  let rest = trimmed;
-  for (const fragment of RETRY_NARRATION_FRAGMENTS) {
-    rest = rest.replace(fragment, '');
-  }
-  return !/[\w]/.test(rest);
-}
-
-/** Only the LAST assistant-message run is the turn's durable final output;
- *  earlier runs are progress narration around tool work and never join it
- *  (a corner may record those runs independently as durable output activity).
- *  Retry/backoff narration can never be the answer either: classify that last
- *  run and return empty when it is pure narration, so a flaked turn selects
- *  nothing (the caller treats the turn as failed and stays retryable) while
- *  genuine prose — including prose that merely mentions retries — is kept.
- *  Never scan backwards past the last run: an earlier pre-tool progress
- *  sentence is not the answer just because the turn later degraded into
- *  retry narration. */
-export function finalAgentMessageText(
-  updates: readonly SessionUpdate[],
-  agentLabel?: string,
-): string {
-  const runs = agentMessageRunSpans(updates, agentLabel);
-  const last = runs[finalRunIndex(runs)]?.text;
-  if (!last || isPureRetryNarration(last)) return '';
-  return last;
-}
-
-/** The last run with any text in it: a whitespace-only run is not an answer. */
-function finalRunIndex(runs: readonly { text: string }[]): number {
-  for (let index = runs.length - 1; index >= 0; index -= 1) {
-    if (runs[index]!.text.trim()) return index;
-  }
-  return -1;
-}
-
-/** One step of a turn, in stream order: an earlier text run or a tool call. */
-export type AgentTurnStep =
-  | { kind: 'note'; text: string }
-  | { kind: 'tool'; call: ToolCallEntry };
-
-/**
- * Everything a turn did besides its reply, in the order it happened: every
- * text run except the final one (`finalAgentMessageText`) as a note, and
- * every tool call. A Room posts the final run as the reply and these as the
- * reply's steps, so text written before a tool call is kept without leading
- * the answer. Retry narration is harness noise, not the agent's text, and is
- * dropped.
- */
-export function agentTurnSteps(
-  updates: readonly SessionUpdate[],
-  agentLabel?: string,
-): AgentTurnStep[] {
-  const runs = agentMessageRunSpans(updates, agentLabel);
-  const final = finalRunIndex(runs);
-  const steps: { at: number; step: AgentTurnStep }[] = runs.flatMap((run, index) =>
-    index === final || !run.text.trim() || isPureRetryNarration(run.text)
-      ? []
-      : [{ at: run.at, step: { kind: 'note' as const, text: run.text.trim() } }],
-  );
-  const calls = toolCallEntries(updates);
-  const opened = toolCallOpenings(updates);
-  calls.forEach((call, index) => {
-    steps.push({ at: opened[index] ?? updates.length, step: { kind: 'tool', call } });
-  });
-  return steps.sort((left, right) => left.at - right.at).map(({ step }) => step);
-}
-
-/** The update index that opened each entry of `toolCallEntries`, same order. */
-function toolCallOpenings(updates: readonly SessionUpdate[]): number[] {
-  const opened = new Map<string, number>();
-  let anonymous = 0;
-  let activeAnonymous: string | undefined;
-  for (const [index, { update }] of updates.entries()) {
-    const sessionUpdate = update.sessionUpdate as string | undefined;
-    if (!sessionUpdate || !TOOL_UPDATE_TYPES.has(sessionUpdate)) continue;
-    const id = typeof update.toolCallId === 'string' ? update.toolCallId : undefined;
-    if (id) activeAnonymous = undefined;
-    if (!id && (sessionUpdate === 'tool_call' || !activeAnonymous)) {
-      activeAnonymous = `anonymous-${anonymous++}`;
-    }
-    const key = id ?? activeAnonymous!;
-    if (!opened.has(key)) opened.set(key, index);
-    if (!id && sessionUpdate === 'tool_result') activeAnonymous = undefined;
-  }
-  return [...opened.values()];
-}
-
-/**
- * The stream-level fact about a turn that ended with no answer text, for a
- * failure reason: what the harness said the stop was, what the stream carried
- * instead (reasoning only, tool calls only, nothing at all), and whether the
- * last message run was retry narration. Never the bare "no reply".
- */
-export function describeEmptyTurn(result: PromptResult, agentLabel?: string): string {
-  const counts = new Map<string, number>();
-  for (const { update } of result.updates) {
-    const kind = typeof update.sessionUpdate === 'string' ? update.sessionUpdate : 'unknown';
-    if (kind === 'session_info_update' || kind === 'available_commands_update') continue;
-    counts.set(kind, (counts.get(kind) ?? 0) + 1);
-  }
-  const stream = counts.size
-    ? `the stream carried only ${[...counts].map(([kind, count]) => `${kind}×${count}`).join(', ')}`
-    : 'the stream carried no content updates';
-  const lastRun = agentMessageRuns(result.updates, agentLabel).at(-1);
-  const narration =
-    lastRun && isPureRetryNarration(lastRun)
-      ? `; the last message was retry narration "${lastRun.trim().slice(0, 80)}"`
-      : '';
-  return `harness ended the turn (${result.stopReason}) with no answer text; ${stream}${narration}`;
-}
-
-function updateText(update: Record<string, unknown>): string {
-  const content = update.content as { type?: string; text?: string } | string | undefined;
-  if (typeof content === 'string') return content;
-  return content?.type === 'text' ? (content.text ?? '') : '';
-}
-
-const THOUGHT_UPDATE_TYPES = new Set([
-  'agent_thought_chunk',
-  'agent_thought',
-  'reasoning',
-  'reasoning_chunk',
-  'thinking',
-  'thinking_chunk',
-  'analysis',
-  'analysis_chunk',
-  'progress',
-  'progress_update',
-]);
-
-/** Derive the three-lane live view from the exact ordered ACP update stream. */
-export function agentStreamSnapshot(
-  updates: readonly SessionUpdate[],
-  agentLabel?: string,
-): AcpStreamSnapshot {
-  const completedMessages: string[] = [];
-  let messageText = '';
-  let lastWasMessage = false;
-  let thoughtText = '';
-  let thoughtRunOpen = false;
-  let toolSinceMessage = false;
-  for (const { update } of updates) {
-    const kind = typeof update.sessionUpdate === 'string' ? update.sessionUpdate : '';
-    if (kind === 'agent_message_chunk') {
-      const delta = normalizeStreamDelta(agentMessageChunkText(update), agentLabel);
-      if (!delta) continue;
-      if (
-        !lastWasMessage &&
-        messageText &&
-        !continuesPreviousWord(messageText, delta, toolSinceMessage)
-      ) {
-        if (!completedMessages.includes(messageText)) completedMessages.push(messageText);
-        messageText = '';
-      }
-      messageText += delta;
-      lastWasMessage = true;
-      thoughtRunOpen = false;
-      toolSinceMessage = false;
-      continue;
-    }
-    if (TOOL_UPDATE_TYPES.has(kind)) toolSinceMessage = true;
-    if (lastWasMessage && messageText) {
-      if (!completedMessages.includes(messageText)) completedMessages.push(messageText);
-      messageText = '';
-    }
-    lastWasMessage = false;
-    if (THOUGHT_UPDATE_TYPES.has(kind)) {
-      const delta = normalizeStreamDelta(updateText(update), agentLabel);
-      if (!delta) continue;
-      if (!thoughtRunOpen) thoughtText = '';
-      thoughtText += delta;
-      thoughtRunOpen = true;
-    } else {
-      thoughtRunOpen = false;
-    }
-  }
-  return {
-    messageText,
-    ...(thoughtText || completedMessages.length
-      ? { thoughtText: thoughtText || completedMessages.at(-1)! }
-      : {}),
-  };
-}
 
 /** Collapse ACP's start/update/result notifications into one physical tool call. */
 export function toolCallEntries(updates: readonly SessionUpdate[]): ToolCallEntry[] {
@@ -707,15 +79,17 @@ export function toolCallEntries(updates: readonly SessionUpdate[]): ToolCallEntr
   return [...calls.values()];
 }
 
-interface Pending {
+
+export interface Pending {
   resolve: (v: unknown) => void;
   reject: (e: Error) => void;
   sessionId?: string;
 }
 
+
 /** Claude ACP's negotiated asyncTasks extension keeps background Bash lifecycle
  * separate from the tool call, which is already completed once Bash detaches. */
-function asyncTaskCall(update: Record<string, unknown>): ToolCallEntry | undefined {
+export function asyncTaskCall(update: Record<string, unknown>): ToolCallEntry | undefined {
   if (typeof update.asyncTaskId !== 'string' || !update.asyncTaskId ||
       !['async_task_spawned', 'async_task_progress', 'async_task_state_update'].includes(String(update.sessionUpdate)))
     return undefined;
@@ -729,41 +103,50 @@ function asyncTaskCall(update: Record<string, unknown>): ToolCallEntry | undefin
   };
 }
 
+
 export class AcpClient extends EventEmitter {
-  private child: ChildProcessWithoutNullStreams | null = null;
-  private buf = '';
-  private nextId = 1;
-  private pending = new Map<number, Pending>();
-  private activeRunIds = new Map<string, string>();
-  private activePromptSessions = new Set<string>();
-  private detachedTools = new Map<string, {
+
+   child: ChildProcessWithoutNullStreams | null = null;
+
+   buf = '';
+
+   nextId = 1;
+
+   pending = new Map<number, Pending>();
+
+   activeRunIds = new Map<string, string>();
+
+   activePromptSessions = new Set<string>();
+
+   detachedTools = new Map<string, {
     call: ToolCallEntry;
     complete: (call: ToolCallEntry) => void;
   }>();
+
   /** Tool metadata arrives in session/update just before a sparse permission request. */
-  private toolCallMetadata = new Map<string, AcpPermissionRequest['toolCall']>();
+   toolCallMetadata = new Map<string, AcpPermissionRequest['toolCall']>();
+
   /** Latest `available_commands_update` per session, keyed by sessionId. */
-  private sessionCommands = new Map<string, AcpAvailableCommand[]>();
-  private supportsStandardSteering = false;
-  private supportsSessionLoading = false;
-  private supportsImagePrompts = false;
-  private supportsStructuredSystemPrompt = false;
-  private codexBlockDelivery = false;
-  private piDeliveryMarkers = new Map<string, string>();
-  private readonly promptDeliveries = new Map<string, CodexPromptDelivery>();
+   sessionCommands = new Map<string, AcpAvailableCommand[]>();
 
-  async preparePromptDelivery(sessionId: string | undefined): Promise<void> {
-    if (!sessionId || !isPiAcpHarness(this.agentLabel)) return;
-    const marker = await piCompactionMarker(sessionId, this.agentEnv);
-    if (marker === undefined || this.piDeliveryMarkers.get(sessionId) !== marker)
-      this.promptDeliveries.get(sessionId)?.invalidate();
-    if (marker !== undefined) this.piDeliveryMarkers.set(sessionId, marker);
-  }
+   supportsStandardSteering = false;
 
-  promptDelivery(sessionId: string | undefined): CodexPromptDelivery | undefined {
-    return sessionId ? this.promptDeliveries.get(sessionId) : undefined;
-  }
-  private alive = false;
+   supportsSessionLoading = false;
+
+   supportsImagePrompts = false;
+
+   supportsStructuredSystemPrompt = false;
+
+   codexBlockDelivery = false;
+
+   piDeliveryMarkers = new Map<string, string>();
+
+   readonly promptDeliveries = new Map<string, CodexPromptDelivery>();
+  async preparePromptDelivery(sessionId: string | undefined): Promise<void> { return acpClientPreparePromptDelivery(this, sessionId); }
+  promptDelivery(sessionId: string | undefined): CodexPromptDelivery | undefined { return acpClientPromptDelivery(this, sessionId); }
+
+   alive = false;
+
   /**
    * Byte length of the last prompt handed to the harness, measured here because
    * this is the boundary that actually sends it. The rollout budget gate turns
@@ -771,34 +154,58 @@ export class AcpClient extends EventEmitter {
    * by dividing through this exact figure, so it may not be estimated anywhere
    * else.
    */
-  private lastPromptByteCount: number | undefined;
+   lastPromptByteCount: number | undefined;
+
   /** Bounded tail of recent stderr, so a spawn/exit failure's rejection text
    *  carries the real reason (e.g. a harness's own "missing API key" notice)
    *  instead of just the bare exit code, in the daemon's log. */
-  private stderrTail = '';
-  private agentEnv: Record<string, string>;
-  private readonly piSessionInstructions = new PiSessionInstructions();
-  private harnessCommand: string;
-  private agentCommand: string;
-  private agentLabel: string;
-  private agentArgs: string[];
-  private agentCwd?: string;
-  private inheritProcessEnv: boolean;
-  private autoApprove: boolean;
-  private backgroundTasks: boolean;
-  private osSandbox: boolean;
-  private permissionHandler?: AcpPermissionHandler;
-  private permissionAllowlist?: AcpPermissionAllowlist;
-  private usageHandler?: (usage: AgentUsage) => void;
-  private sessionUsage = new Map<string, AgentUsage>();
-  private commandsHandler?: (commands: readonly AcpAvailableCommand[]) => void;
-  private oomKills: OomKillDetector;
-  private readonly useResourceScope: boolean;
-  private readonly resourceScopeMemoryMaxBytes?: number;
-  private resourceScope?: AcpResourceScope;
+   stderrTail = '';
+
+   agentEnv: Record<string, string>;
+
+   readonly piSessionInstructions = new PiSessionInstructions();
+
+   harnessCommand: string;
+
+   agentCommand: string;
+
+   agentLabel: string;
+
+   agentArgs: string[];
+
+   agentCwd?: string;
+
+   inheritProcessEnv: boolean;
+
+   autoApprove: boolean;
+
+   backgroundTasks: boolean;
+
+   osSandbox: boolean;
+
+   permissionHandler?: AcpPermissionHandler;
+
+   permissionAllowlist?: AcpPermissionAllowlist;
+
+   usageHandler?: (usage: AgentUsage) => void;
+
+   sessionUsage = new Map<string, AgentUsage>();
+
+   commandsHandler?: (commands: readonly AcpAvailableCommand[]) => void;
+
+   oomKills: OomKillDetector;
+
+   readonly useResourceScope: boolean;
+
+   readonly resourceScopeMemoryMaxBytes?: number;
+
+   resourceScope?: AcpResourceScope;
+
   /** A deliberate stop owns its SIGKILL; that exit is never labelled OOM. */
-  private stopping = false;
-  private readonly mcpLaunchFiles = new McpLaunchFiles();
+   stopping = false;
+
+   readonly mcpLaunchFiles = new McpLaunchFiles();
+
 
   constructor(opts: {
     /** Legacy bare-binary option. Prefer agentCommand + agentArgs. */
@@ -879,7 +286,6 @@ export class AcpClient extends EventEmitter {
         process.env.BEELINE_MANAGED_BY_SYSTEMD === '1');
     this.resourceScopeMemoryMaxBytes = opts.resourceScopeMemoryMaxBytes;
   }
-
   async startProcess(): Promise<void> {
     if (this.alive) return;
     this.promptDeliveries.clear();
@@ -1020,60 +426,14 @@ export class AcpClient extends EventEmitter {
     // a harness that rejects it.
     if (!isPiAcpHarness(this.agentLabel)) this.notify('notifications/initialized', {});
   }
-
   /**
-   * One child exit: reject every in-flight request so the turn fails and is
-   * reported instead of hanging, then publish the exit. A scoped SIGKILL/137
-   * is a likely memory-limit hit, while an unscoped SIGKILL uses the daemon
-   * cgroup's OOM counter to distinguish it from a deliberate kill.
-   */
-  private async handleChildExit(
-    code: number | null,
-    signal: NodeJS.Signals | null,
-  ): Promise<void> {
-    const child = this.child;
-    this.alive = false;
-    const scope = this.resourceScope;
-    const memoryLimitLikely = Boolean(scope && !this.stopping &&
-      (signal === 'SIGKILL' || code === 137));
-    const exitText = `ACP agent ${this.agentLabel} exited code=${code} signal=${signal}`;
-    if (!scope && signal === 'SIGKILL' && !this.stopping)
-      void this.oomKills.consume().then(killed => {
-        if (killed) this.emit('stderr', `ACP agent ${this.agentLabel} was killed by the kernel OOM killer`);
-      }).catch(() => undefined);
-    const meaningful = flattenHarnessCause(this.stderrTail);
-    const stderrSuffix = meaningful ? `: ${meaningful}` : '';
-    for (const [, p] of this.pending) {
-      p.reject(memoryLimitLikely
-        ? new AcpResourceLimitError(scope!.memoryMaxBytes)
-        : new AcpRuntimeExitedError(`${exitText}${stderrSuffix}`));
-    }
-    this.pending.clear();
-    this.activeRunIds.clear();
-    this.activePromptSessions.clear();
-    this.detachedTools.clear();
-    this.toolCallMetadata.clear();
-    this.sessionCommands.clear();
-    if (scope) {
-      await scope.stop().then(() => {
-        if (this.resourceScope === scope) this.resourceScope = undefined;
-        if (this.child === child) this.child = null;
-      }).catch((error) => console.error('[acp] resource scope cleanup failed:', error));
-    }
-    this.emit('exit', { code, signal });
-  }
-
-  private failRuntime(detail: string): void {
-    this.alive = false;
-    for (const p of this.pending.values()) {
-      p.reject(new AcpRuntimeExitedError(detail));
-    }
-    this.pending.clear();
-    this.emit('exit', { code: null, signal: null });
-    if (this.resourceScope) void this.resourceScope.stop().catch((error) =>
-      console.error('[acp] resource scope cleanup failed:', error));
-  }
-
+ * One child exit: reject every in-flight request so the turn fails and is
+ * reported instead of hanging, then publish the exit. A scoped SIGKILL/137
+ * is a likely memory-limit hit, while an unscoped SIGKILL uses the daemon
+ * cgroup's OOM counter to distinguish it from a deliberate kill.
+ */
+async handleChildExit(code: number | null, signal: NodeJS.Signals | null): Promise<void> { return acpClientHandleChildExit(this, code, signal); }
+  failRuntime(detail: string): void { return acpClientFailRuntime(this, detail); }
   async stopProcess(): Promise<void> {
     const child = this.child;
     const scope = this.resourceScope;
@@ -1107,700 +467,97 @@ export class AcpClient extends EventEmitter {
     this.toolCallMetadata.clear();
   }
 
+
   get isAlive(): boolean {
     return this.alive;
   }
-
   /** Host pid of the harness wrapper (bwrap when enabled). */
-  processPid(): number | undefined {
-    return this.child?.pid;
-  }
-
+processPid(): number | undefined { return acpClientProcessPid(this); }
   /** The latest command list this harness advertised for a session, if any. */
-  sessionCommandsFor(sessionId: string): AcpAvailableCommand[] {
-    return this.sessionCommands.get(sessionId) ?? [];
-  }
-
+sessionCommandsFor(sessionId: string): AcpAvailableCommand[] { return acpClientSessionCommandsFor(this, sessionId); }
   /** Whether this live ACP process advertised the stable `session/load` method. */
-  canLoadSession(): boolean {
-    return this.supportsSessionLoading;
-  }
-
+canLoadSession(): boolean { return acpClientCanLoadSession(this); }
   /** Whether this live ACP process accepts `image` prompt blocks (`promptCapabilities.image`). */
-  canPromptWithImages(): boolean {
-    return this.supportsImagePrompts;
-  }
-
+canPromptWithImages(): boolean { return acpClientCanPromptWithImages(this); }
   async sessionNew(opts: {
     cwd: string;
     mcpServers?: McpServerWire[];
     systemPrompt?: string;
     /** Ask agents with ACP modes to enforce the Body session boundary. */
     mode?: SessionMode;
-    /** Bounded startup probes use a shorter fail-fast deadline. */
-  }): Promise<{ sessionId: string; raw: unknown }> {
-    const params: Record<string, unknown> = {
-      cwd: opts.cwd,
-      mcpServers: this.mcpLaunchFiles.prepare(opts.mcpServers ?? [], this.agentEnv.HOME).map((s) => ({
-        name: s.name,
-        command: s.command,
-        args: s.args ?? [],
-        env: s.env ?? [],
-      })),
-    };
-    if (opts.systemPrompt) {
-      // Current ACP SDKs validate the standard field and reject the legacy
-      // string with -32602. Older harnesses retain their existing wire form.
-      params.systemPrompt = this.supportsStructuredSystemPrompt
-        ? { mode: 'append', content: [{ type: 'text', text: opts.systemPrompt }] }
-        : opts.systemPrompt;
-    }
-    // The tool-scope lockdown is applied HERE, not at the call sites, so a new
-    // session path cannot ship without it: every session/new this daemon sends
-    // pins the harness to the servers listed on the same request. See
-    // `harness-tool-scope.ts` for what each harness actually honours.
-    //
-    // `agentLabel`, NOT `agentCommand`: under the OS sandbox the spawn command
-    // is `bwrap` and the harness is only an argument to it, so matching on the
-    // command would classify every sandboxed session as an unknown harness and
-    // silently send no lockdown at all.
-    const meta: Record<string, unknown> = {
-      ...(sessionToolScopeMeta(this.agentLabel, this.agentEnv.CLAUDE_CODE_TERMINAL_MCP_TOOLS) ?? {}),
-    };
-    // Older claude-agent-acp reads only `_meta.systemPrompt`. Keep its fallback;
-    // versions advertising the standard field give that field precedence.
-    if (opts.systemPrompt && harnessReadsMetaSystemPrompt(this.agentLabel)) {
-      meta.systemPrompt = { append: opts.systemPrompt };
-    }
-    if (Object.keys(meta).length > 0) params._meta = meta;
-    const raw = (await this.request('session/new', params).catch(async error => { throw await explainAgentProgramFailure(error, this.agentEnv); })) as Record<
-      string,
-      unknown
-    >;
-    const sessionId = raw.sessionId as string | undefined;
-    if (!sessionId) throw new Error('session/new missing sessionId');
-    if (/(^|[/\\])pi-acp(\.[a-z]+)?$/i.test(this.agentLabel) && opts.systemPrompt)
-      this.piSessionInstructions.remember(sessionId, opts.systemPrompt);
-    await this.applySessionMode(sessionId, raw, opts.mode);
-    if (this.codexBlockDelivery)
-      this.promptDeliveries.set(sessionId, new CodexPromptDelivery(isPiAcpHarness(this.agentLabel) ? undefined : opts.systemPrompt));
-    return { sessionId, raw };
-  }
-
+}): Promise<{
+    sessionId: string;
+    raw: unknown;
+}> { return acpClientSessionNew(this, opts); }
   /**
-   * Reopen a provider-persisted logical conversation in this new ACP process.
-   * Unlike `session/new`, load accepts no system prompt: the harness restores
-   * its own conversation and instructions instead of receiving transcript
-   * text from Body again.
-   */
-  async sessionLoad(opts: {
+ * Reopen a provider-persisted logical conversation in this new ACP process.
+ * Unlike `session/new`, load accepts no system prompt: the harness restores
+ * its own conversation and instructions instead of receiving transcript
+ * text from Body again.
+ */
+async sessionLoad(opts: {
     sessionId: string;
     cwd: string;
     mcpServers?: McpServerWire[];
     mode?: SessionMode;
-  }): Promise<{ sessionId: string; raw: unknown }> {
-    if (!this.supportsSessionLoading) {
-      throw new Error('ACP agent does not advertise session/load');
-    }
-    const params: Record<string, unknown> = {
-      sessionId: opts.sessionId,
-      cwd: opts.cwd,
-      mcpServers: this.mcpLaunchFiles.prepare(opts.mcpServers ?? [], this.agentEnv.HOME).map((server) => ({
-        name: server.name,
-        command: server.command,
-        args: server.args ?? [],
-        env: server.env ?? [],
-      })),
-    };
-    const meta = sessionToolScopeMeta(this.agentLabel);
-    if (meta) params._meta = meta;
-    this.promptDeliveries.delete(opts.sessionId);
-    const result = await this.request('session/load', params);
-    const raw = result && typeof result === 'object' ? (result as Record<string, unknown>) : {};
-    await this.applySessionMode(opts.sessionId, raw, opts.mode);
-    if (this.codexBlockDelivery)
-      this.promptDeliveries.set(opts.sessionId, new CodexPromptDelivery());
-    return { sessionId: opts.sessionId, raw };
-  }
+}): Promise<{
+    sessionId: string;
+    raw: unknown;
+}> { return acpClientSessionLoad(this, opts); }
+  async applySessionMode(sessionId: string, raw: Record<string, unknown>, mode: SessionMode | undefined): Promise<void> { return acpClientApplySessionMode(this, sessionId, raw, mode); }
 
-  private async applySessionMode(
-    sessionId: string,
-    raw: Record<string, unknown>,
-    mode: SessionMode | undefined,
-  ): Promise<void> {
-    if (!mode) return;
-    // OpenCode exposes its build/plan agents as a config axis rather than ACP
-    // `modes`. Select it at the same lifecycle boundary as other harness modes.
-    if (/(^|[/\\])opencode(\.[a-z]+)?$/i.test(this.agentLabel)) {
-      const options = raw.configOptions as
-        | Array<{
-            id?: string;
-            category?: string;
-            currentValue?: string;
-            options?: Array<{ value?: string }>;
-          }>
-        | undefined;
-      const axis = options?.find((option) => option.id === 'mode' && option.category === 'mode');
-      // A free starter agent's Fly Machine is its own computer: Room work
-      // there writes files in its home (the OS sandbox still keeps the rest
-      // of the filesystem read-only), so it builds instead of only planning.
-      const desired = mode === 'readonly' && !process.env.BEELINE_FREE_AGENT_ID ? 'plan' : 'build';
-      if (!axis?.options?.some((option) => option.value === desired)) {
-        if (mode === 'readonly' && !this.osSandbox) {
-          throw new Error('OpenCode did not advertise plan mode for an unsandboxed Room');
-        }
-        return;
-      }
-      if (axis.currentValue !== desired) {
-        await this.request('session/set_config_option', {
-          sessionId,
-          configId: 'mode',
-          value: desired,
-        });
-      }
-      return;
-    }
-    const modes = raw.modes as
-      | {
-          availableModes?: Array<{ id?: string }>;
-          currentModeId?: string;
-        }
-      | undefined;
-    const candidates =
-      mode === 'readonly'
-        ? roomModeCandidates(this.agentLabel, { osSandbox: this.osSandbox })
-        : cornerAutonomyModeCandidates(this.agentLabel);
-    const target = modes?.availableModes?.find(
-      (candidate) => candidate.id && candidates.includes(candidate.id),
-    )?.id;
-    if (!target || modes?.currentModeId === target) return;
-    await this.request('session/set_mode', { sessionId, modeId: target });
-  }
 
   /** Tool progress and process exit arrive through the ACP stream. */
   get hasBackgroundTools(): boolean {
     return this.detachedTools.size > 0;
   }
 
+
   get lastPromptBytes(): number | undefined {
     return this.lastPromptByteCount;
   }
-
-  async sessionPrompt(
-    sessionId: string,
-    text: string | readonly AcpPromptBlock[],
-    onChunk?: AcpTextChunkHandler,
-    onActivity?: AcpStreamHandler,
-    onToolCalls?: (calls: readonly ToolCallEntry[]) => void,
-    onBackgroundToolCompletion?: (call: ToolCallEntry) => void,
-  ): Promise<PromptResult> {
-    if (typeof text === 'string') text = await this.piSessionInstructions.prepare(sessionId, text, this.agentEnv);
-    else {
-      const blocks = [...text];
-      const index = blocks.findIndex(block => block.type === 'text');
-      const block = blocks[index];
-      if (block?.type === 'text') blocks[index] = { ...block,
-        text: await this.piSessionInstructions.prepare(sessionId, block.text, this.agentEnv) };
-      else {
-        const prefix = await this.piSessionInstructions.prepare(sessionId, '', this.agentEnv);
-        if (prefix) blocks.unshift({ type: 'text', text: prefix });
-      }
-      text = blocks;
-    }
-    this.lastPromptByteCount =
-      typeof text === 'string' ? Buffer.byteLength(text, 'utf8') : undefined;
-    const updates: SessionUpdate[] = [];
-    let promptRunId: string | undefined;
-    let completed = false;
-    let terminalReason: string | undefined;
-    let endTurn!: (result: { stopReason: string }) => void;
-    const terminal = new Promise<{ stopReason: string }>(resolve => { endTurn = resolve; });
-    const contextPath = this.agentEnv.BEELINE_TURN_CONTEXT_FILE;
-    const stop = (reason: string) => {
-      if (terminalReason) return;
-      terminalReason = reason;
-      this.terminalSessions.add(sessionId);
-      if (contextPath) {
-        try {
-          const context = JSON.parse(readFileSync(contextPath, 'utf8'));
-          writeFileSync(contextPath, JSON.stringify({ ...context, terminalReason: reason }), { mode: 0o600 });
-        } catch (error) {
-          this.emit('terminal/context-error', error);
-        }
-      }
-      endTurn({ stopReason: reason });
-      this.sessionCancel(sessionId);
-    };
-    const isSilentCall = (call: ToolCallEntry) =>
-      /^(?:(?:mcp__)?beeline[-_]agent__|mcp\.beeline-agent\.)?no_reply_needed$/.test(call.title ?? '');
-    const silentCallPending = () => toolCallEntries(updates).some(call =>
-      isSilentCall(call) && !call.resultReceived && !['completed', 'failed'].includes(call.status ?? ''));
-    let toolsSettled: (() => void) | undefined;
-    const checkTerminalContext = () => {
-      if (!contextPath || terminalReason) return;
-      try {
-        const context = JSON.parse(readFileSync(contextPath, 'utf8'));
-        // Keep the originating authority until the MCP result has reached the
-        // harness. Cancelling earlier turns a successful silence into a failed
-        // background call, whose completion would otherwise wake another turn.
-        if (context.terminalReason === 'no-reply' && silentCallPending()) return;
-        if (context.terminalReason) stop(context.terminalReason);
-      } catch { /* A context rewrite can briefly be empty. */ }
-    };
-    let watcher: FSWatcher | undefined;
-    if (contextPath) watcher = watch(contextPath, checkTerminalContext);
-    const stable = (value: unknown): unknown => {
-      if (Array.isArray(value)) return value.map(stable);
-      if (value && typeof value === 'object') return Object.fromEntries(
-        Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, stable(item)]),
-      );
-      return value;
-    };
-    const asyncTasks = new Map<string, ToolCallEntry>();
-    const asyncToolCallIds = new Set<string>();
-    const onUpdate = (u: SessionUpdate) => {
-      if (u.sessionId !== sessionId || terminalReason) return;
-      updates.push(u);
-      if (!silentCallPending()) toolsSettled?.();
-      checkTerminalContext();
-      if (terminalReason) return;
-      const task = asyncTaskCall(u.update);
-      if (task?.id) {
-        asyncTasks.set(task.id, { ...asyncTasks.get(task.id), ...task });
-        if (typeof u.update.toolCallId === 'string') asyncToolCallIds.add(u.update.toolCallId);
-      }
-      promptRunId ??= this.activeRunIdFromUpdate(u.update);
-      onActivity?.(agentStreamSnapshot(updates, this.agentLabel));
-      const calls = toolCallEntries(updates);
-      onToolCalls?.(calls);
-      let previous: string | undefined;
-      let repeats = 0;
-      for (const call of calls) {
-        if (!call.title || (!call.resultReceived && !['completed', 'failed'].includes(call.status ?? ''))) {
-          previous = undefined;
-          repeats = 0;
-          continue;
-        }
-        const key = JSON.stringify([call.title, stable(call.rawInput ?? {}),
-          call.status === 'failed', stable(call.content), stable(call.rawOutput)]);
-        repeats = key === previous ? repeats + 1 : 1;
-        previous = key;
-        if (repeats === 5) {
-          stop('repeated-tool-call');
-          return;
-        }
-      }
-      if (onChunk) {
-        const delta = agentMessageChunkText(u.update);
-        if (delta) {
-          const runs = agentMessageRuns(updates, this.agentLabel);
-          onChunk(delta, runs.join('\n\n'), runs.at(-1), runs);
-        }
-      }
-    };
-    this.on('session/update', onUpdate);
-    this.activePromptSessions.add(sessionId);
-
-    try {
-      const result = (await Promise.race([terminal, this.request(
-        'session/prompt',
-        {
-          sessionId,
-          prompt: typeof text === 'string' ? [{ type: 'text', text }] : [...text],
-        },
-      )])) as { stopReason?: string };
-
-      // Some harnesses return end_turn before background MCP calls finish.
-      // Silence is part of this turn, never a detached job or a new trigger.
-      if (!terminalReason && silentCallPending()) {
-        let runtimeExited: (() => void) | undefined;
-        try {
-          await Promise.race([terminal, new Promise<void>((resolve, reject) => {
-            toolsSettled = resolve;
-            runtimeExited = () => reject(new AcpRuntimeExitedError('runtime exited awaiting no_reply_needed result'));
-            this.once('exit', runtimeExited);
-            if (!this.alive) runtimeExited();
-          })]);
-        } finally {
-          if (runtimeExited) this.off('exit', runtimeExited);
-          toolsSettled = undefined;
-        }
-      }
-      checkTerminalContext();
-      const agentText = terminalReason === 'free-agent-time-limit'
-        ? agentMessageRuns(updates, this.agentLabel).join('\n\n')
-        : terminalReason ? '' : finalAgentMessageText(updates, this.agentLabel);
-
-      const toolCalls = toolCallEntries(updates);
-      completed = !terminalReason;
-      const tokenUsage = harnessTurnTokens(result, updates);
-
-      return {
-        stopReason: terminalReason ?? result?.stopReason ?? 'end_turn',
-        updates,
-        agentText,
-        toolCalls,
-        ...(tokenUsage ? { tokenUsage } : {}),
-      };
-    } finally {
-      this.promptDeliveries.get(sessionId)?.complete(completed);
-      if (!completed) this.piSessionInstructions.failed(sessionId);
-      watcher?.close();
-      for (const [id, pending] of this.pending) {
-        if (terminalReason && pending.sessionId === sessionId) {
-          this.pending.delete(id);
-          pending.resolve({ stopReason: terminalReason });
-        }
-      }
-      this.activePromptSessions.delete(sessionId);
-      this.emit('prompt/end', { sessionId });
-      if (promptRunId && this.activeRunIds.get(sessionId) === promptRunId) {
-        this.activeRunIds.delete(sessionId);
-      }
-      this.off('session/update', onUpdate);
-      if (onBackgroundToolCompletion) {
-        for (const call of [...toolCallEntries(updates), ...asyncTasks.values()]) {
-          if (!isSilentCall(call) && call.id && !asyncToolCallIds.has(call.id) && !call.id.startsWith('anonymous-') &&
-              !['completed', 'failed'].includes(call.status ?? '') && !call.resultReceived) {
-            const key = `${sessionId}\0${call.id}`;
-            // Progress during another turn must retain the job's original order.
-            if (!this.detachedTools.has(key)) this.detachedTools.set(key, {
-              call, complete: onBackgroundToolCompletion,
-            });
-          }
-        }
-      }
-    }
-  }
-
+  async sessionPrompt(sessionId: string, text: string | readonly AcpPromptBlock[], onChunk?: AcpTextChunkHandler, onActivity?: AcpStreamHandler, onToolCalls?: (calls: readonly ToolCallEntry[]) => void, onBackgroundToolCompletion?: (call: ToolCallEntry) => void): Promise<PromptResult> { return acpClientSessionPrompt(this, sessionId, text, onChunk, onActivity, onToolCalls, onBackgroundToolCompletion); }
   /**
-   * Inject follow-up input into the prompt currently running for this session.
-   * buzz-agent advertises the target run through ACP session metadata; binding
-   * the request to that id prevents a late message from steering a newer turn.
-   */
-  async sessionSteer(sessionId: string, text: string): Promise<SteerResult> {
-    if (this.supportsStandardSteering) {
-      const raw = (await this.request(
-        '_session/steering',
-        {
-          sessionId,
-          prompt: [{ type: 'text', text }],
-        },
-      )) as { outcome?: string };
-      if (!raw.outcome || raw.outcome === 'failed') {
-        throw new Error('ACP session steering failed');
-      }
-      return {
-        runId: this.activeRunId(sessionId) ?? `session:${sessionId}`,
-        messageId: raw.outcome,
-      };
-    }
-    const expectedRunId = await this.waitForActiveRun(sessionId);
-    const raw = (await this.request(
-      '_goose/unstable/session/steer',
-      {
-        sessionId,
-        prompt: [{ type: 'text', text }],
-        expectedRunId,
-      },
-    )) as { runId?: string; messageId?: string };
-    if (!raw.runId || !raw.messageId) {
-      throw new Error('ACP session steer response missing runId or messageId');
-    }
-    return { runId: raw.runId, messageId: raw.messageId };
-  }
-
+ * Inject follow-up input into the prompt currently running for this session.
+ * buzz-agent advertises the target run through ACP session metadata; binding
+ * the request to that id prevents a late message from steering a newer turn.
+ */
+async sessionSteer(sessionId: string, text: string): Promise<SteerResult> { return acpClientSessionSteer(this, sessionId, text); }
   /** Active ACP run for a session, if the agent has advertised one. */
-  activeRunId(sessionId: string): string | undefined {
-    return (
-      this.activeRunIds.get(sessionId) ??
-      (this.activePromptSessions.has(sessionId) ? `session:${sessionId}` : undefined)
-    );
-  }
-
-  sessionCancel(sessionId: string): void {
-    this.notify('session/cancel', { sessionId });
-  }
-
+activeRunId(sessionId: string): string | undefined { return acpClientActiveRunId(this, sessionId); }
+  sessionCancel(sessionId: string): void { return acpClientSessionCancel(this, sessionId); }
   /**
-   * The portable model/effort setter, confirmed round-tripping on pi/codex/
-   * claude (report `data/buzzy-multiagent-runtimes/report.md` §3.2). The
-   * param is `configId`, not `optionId`. Harnesses that advertise this shape
-   * must use it; `session/set_model` is reserved for the distinct standard
-   * `session/new.models` shape. Returns the runtime's updated `configOptions`.
-   * Callers must validate `configId`/`value` against the
-   * allow-listed catalog before calling this — see
-   * `apps/body/src/model-config.ts`'s `assertModelConfigOptionAllowed`; this
-   * method performs no policy checks of its own.
-   */
-  async setConfigOption(sessionId: string, configId: string, value: string): Promise<unknown> {
-    return this.request('session/set_config_option', { sessionId, configId, value });
-  }
-
+ * The portable model/effort setter, confirmed round-tripping on pi/codex/
+ * claude (report `data/buzzy-multiagent-runtimes/report.md` §3.2). The
+ * param is `configId`, not `optionId`. Harnesses that advertise this shape
+ * must use it; `session/set_model` is reserved for the distinct standard
+ * `session/new.models` shape. Returns the runtime's updated `configOptions`.
+ * Callers must validate `configId`/`value` against the
+ * allow-listed catalog before calling this — see
+ * `apps/body/src/model-config.ts`'s `assertModelConfigOptionAllowed`; this
+ * method performs no policy checks of its own.
+ */
+async setConfigOption(sessionId: string, configId: string, value: string): Promise<unknown> { return acpClientSetConfigOption(this, sessionId, configId, value); }
   /**
-   * Standard ACP model setter used only when `session/new.models` supplied the
-   * corresponding safe model axis. Most Beeline harnesses use configOptions;
-   * Grok currently exposes models through this standard method instead.
-   */
-  async setModel(sessionId: string, modelId: string): Promise<unknown> {
-    return this.request('session/set_model', { sessionId, modelId });
-  }
+ * Standard ACP model setter used only when `session/new.models` supplied the
+ * corresponding safe model axis. Most Beeline harnesses use configOptions;
+ * Grok currently exposes models through this standard method instead.
+ */
+async setModel(sessionId: string, modelId: string): Promise<unknown> { return acpClientSetModel(this, sessionId, modelId); }
+  onData(chunk: string): void { return acpClientOnData(this, chunk); }
+  handleMessage(msg: Record<string, unknown>): void { return acpClientHandleMessage(this, msg); }
+  activeRunIdFromUpdate(update: Record<string, unknown>): string | undefined { return acpClientActiveRunIdFromUpdate(this, update); }
+  waitForActiveRun(sessionId: string): Promise<string> { return acpClientWaitForActiveRun(this, sessionId); }
 
-  private onData(chunk: string): void {
-    this.buf += chunk;
-    let nl: number;
-    while ((nl = this.buf.indexOf('\n')) >= 0) {
-      const line = this.buf.slice(0, nl).trim();
-      this.buf = this.buf.slice(nl + 1);
-      if (!line) continue;
-      let msg: Record<string, unknown>;
-      try {
-        msg = JSON.parse(line) as Record<string, unknown>;
-      } catch {
-        continue;
-      }
-      this.handleMessage(msg);
-    }
-  }
 
-  private handleMessage(msg: Record<string, unknown>): void {
-    const id = msg.id;
-    const method = msg.method as string | undefined;
-    // Response to our request.
-    if (id !== undefined && !method) {
-      const n = Number(id);
-      const p = this.pending.get(n);
-      if (!p) return;
-      this.pending.delete(n);
-      if (msg.error) {
-        const err = msg.error as { code?: number; message?: string; data?: { details?: unknown } };
-        const details =
-          typeof err.data?.details === 'string' && err.data.details.trim()
-            ? err.data.details.replace(/\s+/g, ' ').trim()
-            : '';
-        const meaningful = flattenHarnessCause(this.stderrTail);
-        const extra = [details, meaningful ? `harness stderr: ${meaningful}` : '']
-          .filter(Boolean)
-          .join('; ');
-        p.reject(new AcpRequestError(err.code, `ACP error ${err.code}: ${err.message}${extra ? `; ${extra}` : ''}`));
-      } else {
-        p.resolve(msg.result);
-      }
-      return;
-    }
-
-    // Agent → client request (has id + method).
-    if (method && id !== undefined) {
-      if (method === 'session/request_permission') {
-        void this.handlePermission(id, msg.params);
-        return;
-      }
-      // Unknown request — cancel/empty result.
-      this.write({ jsonrpc: '2.0', id, result: {} });
-      return;
-    }
-
-    // Notifications (no id).
-    if (method === 'session/update') {
-      const params = msg.params as { sessionId?: string; update?: Record<string, unknown> };
-      if (params?.sessionId && params.update) {
-        if (params.update.sessionUpdate === 'compaction_update' ||
-            params.update.sessionUpdate === 'compaction_summary_chunk')
-          this.promptDeliveries.get(params.sessionId)?.invalidate();
-        // Harness-advertised slash commands/skills: captured here so the daemon
-        // can republish them as the agent's durable command list (see
-        // `agent-commands.ts` in buzz-client). Arrival is adapter-driven — all
-        // shipped adapters push it at session start and on mid-session change.
-        if (params.update.sessionUpdate === 'usage_update') {
-          const usage = parseAcpUsage(params.update, this.sessionUsage.get(params.sessionId));
-          if (usage) {
-            this.sessionUsage.set(params.sessionId, usage);
-            this.usageHandler?.(usage);
-          }
-        }
-        if (params.update.sessionUpdate === 'available_commands_update') {
-          const commands = parseAvailableCommands(params.update.availableCommands);
-          this.sessionCommands.set(params.sessionId, commands);
-          this.commandsHandler?.(commands);
-          this.emit('commands', { sessionId: params.sessionId, commands });
-        }
-        const toolCallId = params.update.toolCallId;
-        const sessionUpdate = params.update.sessionUpdate;
-        if (
-          typeof toolCallId === 'string' &&
-          (sessionUpdate === 'tool_call' || sessionUpdate === 'tool_call_update')
-        ) {
-          const metadataKey = `${params.sessionId}\0${toolCallId}`;
-          const status = params.update.status;
-          if (status === 'completed' || status === 'failed') {
-            this.toolCallMetadata.delete(metadataKey);
-          } else {
-            const existing = this.toolCallMetadata.get(metadataKey);
-            this.toolCallMetadata.set(metadataKey, {
-              ...existing,
-              toolCallId,
-              ...(typeof params.update.name === 'string' ? { name: params.update.name } : {}),
-              ...(typeof params.update.title === 'string' ? { title: params.update.title } : {}),
-              ...(typeof params.update.kind === 'string' ? { kind: params.update.kind } : {}),
-              ...('rawInput' in params.update ? { rawInput: params.update.rawInput } : {}),
-              // `content`/`locations` carry the touched file paths for adapters
-              // whose permission request omits them (codex-acp's file-change
-              // request has no rawInput at all) — the corner worktree guard in
-              // `session-sandbox.ts` reads them.
-              ...('content' in params.update ? { content: params.update.content } : {}),
-              ...('locations' in params.update ? { locations: params.update.locations } : {}),
-            });
-          }
-        }
-        const u: SessionUpdate = {
-          sessionId: params.sessionId,
-          update: params.update,
-        };
-        const activeRunId = this.activeRunIdFromUpdate(params.update);
-        if (activeRunId) this.activeRunIds.set(params.sessionId, activeRunId);
-        const task = asyncTaskCall(params.update);
-        const key = `${params.sessionId}\0${task?.id ?? String(params.update.toolCallId ?? '')}`;
-        const detached = this.detachedTools.get(key);
-        if (detached) {
-          detached.call = { ...detached.call, ...(task ?? toolCallEntries([u])[0]) };
-          if (detached.call.status === 'completed' || detached.call.status === 'failed' ||
-              detached.call.resultReceived) {
-            this.detachedTools.delete(key);
-            detached.complete(detached.call);
-          }
-        }
-        this.emit('session/update', u);
-      }
-      return;
-    }
-  }
-
-  private activeRunIdFromUpdate(update: Record<string, unknown>): string | undefined {
-    const meta = update._meta as Record<string, unknown> | undefined;
-    const goose = meta?.goose as Record<string, unknown> | undefined;
-    return typeof goose?.activeRunId === 'string' && goose.activeRunId
-      ? goose.activeRunId
-      : undefined;
-  }
-
-  private waitForActiveRun(sessionId: string): Promise<string> {
-    const current = this.activeRunIds.get(sessionId);
-    if (current) return Promise.resolve(current);
-    if (!this.activePromptSessions.has(sessionId)) return Promise.reject(new Error('No active prompt to steer'));
-
-    return new Promise((resolve, reject) => {
-      const onUpdate = (update: SessionUpdate) => {
-        if (update.sessionId !== sessionId) return;
-        const runId = this.activeRunIdFromUpdate(update.update);
-        if (!runId) return;
-        cleanup();
-        resolve(runId);
-      };
-      const exited = () => { cleanup(); reject(new AcpRuntimeExitedError('runtime exited before an active run was advertised')); };
-      const ended = (event: { sessionId: string }) => { if (event.sessionId === sessionId) { cleanup(); reject(new Error('Prompt ended before an active run was advertised')); } };
-      const cleanup = () => {
-        this.off('session/update', onUpdate);
-        this.off('exit', exited);
-        this.off('prompt/end', ended);
-      };
-      this.on('prompt/end', ended);
-      this.once('exit', exited);
-      this.on('session/update', onUpdate);
-    });
-  }
-
-  private readonly terminalSessions = new Set<string>();
-
-  private async handlePermission(id: unknown, params: unknown): Promise<void> {
-    const p = (params ?? {}) as AcpPermissionRequest;
-    if (p.sessionId && this.terminalSessions.has(p.sessionId)) {
-      this.write({ jsonrpc: '2.0', id, result: { outcome: { outcome: 'cancelled' } } });
-      return;
-    }
-    const toolCallId = p.toolCall?.toolCallId;
-    const metadataKey = p.sessionId && toolCallId ? `${p.sessionId}\0${toolCallId}` : undefined;
-    const tracked = metadataKey ? this.toolCallMetadata.get(metadataKey) : undefined;
-    if (tracked) p.toolCall = { ...tracked, ...p.toolCall };
-    let decision: AcpPermissionDecision = this.autoApprove ? 'allow' : 'reject';
-    if (!this.autoApprove && this.permissionAllowlist) {
-      try {
-        decision = this.permissionAllowlist(p) ? 'allow' : 'reject';
-      } catch (error) {
-        this.emit('permission/error', error);
-        decision = 'reject';
-      }
-    } else if (this.permissionHandler) {
-      try {
-        decision = await this.permissionHandler(p);
-      } catch (error) {
-        this.emit('permission/error', error);
-        decision = 'reject';
-      }
-    }
-    if (p.sessionId && this.terminalSessions.has(p.sessionId)) decision = 'reject';
-    if (decision === 'allow') {
-      const allow =
-        p?.options?.find((o) => o.kind === 'allow_once' || o.kind === 'allow_always') ??
-        p?.options?.[0];
-      if (allow?.optionId) {
-        if (metadataKey) this.toolCallMetadata.delete(metadataKey);
-        this.write({
-          jsonrpc: '2.0',
-          id,
-          result: {
-            outcome: { outcome: 'selected', optionId: allow.optionId },
-          },
-        });
-        return;
-      }
-    }
-    // Reject if we cannot approve.
-    const reject = p?.options?.find((o) => o.kind === 'reject_once' || o.kind === 'reject_always');
-    if (reject?.optionId) {
-      if (metadataKey) this.toolCallMetadata.delete(metadataKey);
-      this.write({
-        jsonrpc: '2.0',
-        id,
-        result: {
-          outcome: { outcome: 'selected', optionId: reject.optionId },
-        },
-      });
-      return;
-    }
-    if (metadataKey) this.toolCallMetadata.delete(metadataKey);
-    this.write({
-      jsonrpc: '2.0',
-      id,
-      result: { outcome: { outcome: 'cancelled' } },
-    });
-  }
-
+   readonly terminalSessions = new Set<string>();
+  async handlePermission(id: unknown, params: unknown): Promise<void> { return acpClientHandlePermission(this, id, params); }
   /** Responses and transport loss settle requests; silence never starts a retry. */
-  private request(method: string, params: unknown): Promise<unknown> {
-    if (!this.child || !this.alive)
-      return Promise.reject(new AcpRuntimeExitedError('ACP process is not running'));
-    const id = this.nextId++;
-    return new Promise((resolve, reject) => {
-      const sessionId = (params as { sessionId?: string })?.sessionId;
-      this.pending.set(id, { resolve, reject, ...(sessionId ? { sessionId } : {}) });
-      this.write({ jsonrpc: '2.0', id, method, params });
-    });
-  }
-
-  private notify(method: string, params: unknown): void {
-    this.write({ jsonrpc: '2.0', method, params });
-  }
-
-  private write(obj: unknown): void {
-    if (!this.child?.stdin.writable) {
-      if (this.child) this.failRuntime(`ACP agent ${this.agentLabel} stdin pipe closed`);
-      return;
-    }
-    this.child.stdin.write(JSON.stringify(obj) + '\n', (error) => {
-      if (error) this.failRuntime(`stdin: ${error.message}`);
-    });
-  }
+request(method: string, params: unknown): Promise<unknown> { return acpClientRequest(this, method, params); }
+  notify(method: string, params: unknown): void { return acpClientNotify(this, method, params); }
+  write(obj: unknown): void { return acpClientWrite(this, obj); }
 }
+
 
 export interface OpenAcpConversationOptions {
   client: AcpClient;
@@ -1816,11 +573,13 @@ export interface OpenAcpConversationOptions {
   onResumeFailure?(error: unknown): void;
 }
 
+
 export type OpenAcpConversationResult = {
   sessionId: string;
   raw: unknown;
   kind: 'resumed' | 'created';
 };
+
 
 /**
  * Prefer the harness's own persisted conversation on an idle wake or helper restart.
@@ -1852,6 +611,7 @@ export async function openAcpConversation(
   const created = await options.create();
   return { ...created, kind: 'created' };
 }
+
 
 /** claude-agent-acp forwards SDK rate_limit_event.rate_limit_info here. */
 export function parseAcpUsage(update: Record<string, unknown>, previous?: AgentUsage): AgentUsage | undefined {

@@ -1,3 +1,4 @@
+import * as daemonWorkbench from './daemon/workbench.js';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import type { AddressInfo } from 'node:net';
 import { migrate } from './database.js';
@@ -21,7 +22,7 @@ const corner = '33333333-3333-4333-8333-333333333333';
 const head = 'c'.repeat(40);
 const live = new LiveHub();
 const daemon = new DaemonService(db, live);
-vi.spyOn(daemon, 'warmConnectorIndex').mockResolvedValue();
+vi.spyOn(daemonWorkbench, 'daemonWarmConnectorIndex').mockResolvedValue();
 let server: ReturnType<typeof createBeelineServer>;
 let origin: string;
 

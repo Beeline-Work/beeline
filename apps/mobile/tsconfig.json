@@ -44,6 +44,8 @@
     "nativewind-env.d.ts"
   ],
   "exclude": [
+    "**/*.test-support.ts",
+    "**/*.test-support.tsx",
     "**/*.spec.ts",
     "**/*.test.ts",
     "android",

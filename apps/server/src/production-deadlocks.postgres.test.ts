@@ -1,11 +1,17 @@
+import { subscribeConfiguredReviewers } from './agent-subscriptions.js';
+import { seedSquireMachine } from './test-fixtures/squire-machines.js';
 import { randomUUID } from 'node:crypto';
-import { Pool, type PoolClient } from 'pg';
+import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { migrate, PostgresDatabase } from './database.js';
 import { DaemonService } from './daemon-service.js';
 import { GitHubOperations } from './github-operations.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { LiveHub } from './live.js';
+import {concurrentWriters} from './test-fixtures/concurrent-writers.js';
+import {reconcileConfiguredCornerReviewers} from './agent-command.js';
+import {postgresErrorContext} from './postgres-error.js';
+import {announceAgentLifecycle,claimAgentConnection,releaseAgentConnection} from './connection-presence.js';
 import { PhoneService } from './phone-service.js';
 
 const url = process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
@@ -17,17 +23,6 @@ const room = '22222222-2222-4222-8222-222222222222';
 const corner = '33333333-3333-4333-8333-333333333333';
 const offer = '44444444-4444-4444-8444-444444444444';
 
-async function waiting(observer: PoolClient, pid: number, blocker: number) {
-  for (let attempt = 0; attempt < 400; attempt++) {
-    const row = (await observer.query<{ blocked: boolean }>(
-      'SELECT $2::int=ANY(pg_blocking_pids($1)) blocked', [pid, blocker],
-    )).rows[0];
-    if (row?.blocked) return;
-    await new Promise(resolve => setTimeout(resolve, 5));
-  }
-  throw new Error(`Backend ${pid} never waited for ${blocker}`);
-}
-
 // Full migrated triggers matter: mocks/PGlite serialize away these cycles.
 // Each writer has its own physical connection; only the test barrier controls
 // scheduling. PostgreSQL's deadlock detector remains enabled.
@@ -37,17 +32,11 @@ describe.skipIf(!url)('production transaction lock ordering', () => {
   const isolatedUrl = new URL(url ?? 'postgresql://localhost/postgres');
   isolatedUrl.pathname = `/${databaseName}`;
   const config = { connectionString: isolatedUrl.toString(), options: '-c statement_timeout=8000', max: 1 };
-  const observerPool = new Pool(config);
   const first = new PostgresDatabase('', 1, { pool: new Pool(config) });
   const second = new PostgresDatabase('', 1, { pool: new Pool(config) });
-  let observer: PoolClient, firstPid: number, secondPid: number, observerPid: number;
   beforeAll(async () => {
     await admin.query(`CREATE DATABASE ${databaseName}`);
-    observer = await observerPool.connect();
     await migrate(first);
-    firstPid = (await first.query<{ pid: number }>('SELECT pg_backend_pid() pid')).rows[0]!.pid;
-    secondPid = (await second.query<{ pid: number }>('SELECT pg_backend_pid() pid')).rows[0]!.pid;
-    observerPid = (await observer.query('SELECT pg_backend_pid() pid')).rows[0].pid;
     await first.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'agent','Helper')`, [owner, agent]);
     await first.query(`INSERT INTO workspaces(id,name) VALUES($1,'Deadlock proof')`, [workspace]);
     await first.query(`INSERT INTO agents(agent_id,owner_id,machine_id) VALUES($1,$2,'machine')`, [agent, owner]);
@@ -61,48 +50,118 @@ describe.skipIf(!url)('production transaction lock ordering', () => {
       VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,$4,$2,'owner'),($1,$4,$3,'member')`, [workspace, owner, agent, room]);
   }, 60_000);
   afterAll(async () => {
-    await observer?.query('SELECT pg_advisory_unlock_all()');
     await Promise.all([first.close(), second.close()]);
-    observer?.release(); await observerPool.end();
     await admin.query(`DROP DATABASE IF EXISTS ${databaseName}`);
     await admin.end();
   });
 
+  it('concurrent connections keep monotonic epochs and stale releases cannot erase the latest presence',async()=>{
+    await first.query(`INSERT INTO live_server_instances(instance_id) VALUES('connection-proof') ON CONFLICT DO NOTHING`);
+    let sequence=0;
+    const epochs=await concurrentWriters(first,second,db=>claimAgentConnection(db,new LiveHub(),agent,
+      {lifecycleId:'live-'+sequence},{connectionId:'connection-'+sequence++,instanceId:'connection-proof'}),
+      'INSERT INTO agent_connections(');
+    expect(epochs[1]).toBe(epochs[0]!+1);
+    const results=await Promise.all([
+      releaseAgentConnection(first,new LiveHub(),agent,'connection-0'),
+      announceAgentLifecycle(second,new LiveHub(),room,agent,{releaseVersion:'new-release'}),
+    ]);
+    expect(results[0]).toBe(false);
+    expect((await first.query(`SELECT body FROM live_outputs WHERE agent_id=$1 AND kind='presence'`,[agent])).rows)
+      .toMatchObject([{body:{held:true,connectionId:'connection-1',releaseVersion:'new-release',status:'online'}}]);
+  });
+
+  it('concurrent first presence announcements in different Rooms choose one persistent row',async()=>{
+    const otherRoom=randomUUID(),newAgent=randomUUID().replaceAll('-','').repeat(2);
+    await first.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Presence')`,[newAgent]);
+    await first.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)',[newAgent,owner]);
+    await first.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Other presence')`,[otherRoom,workspace]);
+    let sequence=0;
+    await concurrentWriters(first,second,db=>announceAgentLifecycle(db,new LiveHub(),sequence++===0?room:otherRoom,newAgent,
+      {releaseVersion:'fixture'}),'INSERT INTO live_outputs(');
+    const rows=await first.query<{body:{observedAt:number}}>(`SELECT body FROM live_outputs WHERE agent_id=$1 AND kind='presence'`,[newAgent]);
+    expect(rows.rowCount).toBe(1);expect(rows.rows[0]!.body.observedAt).toBeGreaterThan(0);
+    await first.query('DELETE FROM live_outputs WHERE agent_id=$1',[newAgent]);
+    await first.query('DELETE FROM agents WHERE agent_id=$1',[newAgent]);
+    await first.query('DELETE FROM identities WHERE id=$1',[newAgent]);
+    await first.query('DELETE FROM rooms WHERE id=$1',[otherRoom]);
+  });
+
+  it.each([true,false])('Sentry 3Z: access and view replacement have no lock inversion (planted old view=%s)',async oldView=>{
+    const command=randomUUID(),message=randomUUID();
+    await first.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Access ordering proof')`,[message,room,owner]);
+    await first.query(`INSERT INTO agent_commands(id,room_id,agent_id,source_message_id,turn_request_id,action,reason,
+      root_command_id,root_source_message_id,agent_depth,state)
+      VALUES($1,$2,$3,$4,$1,'input','human_tag',$1,$4,0,'pending')`,[command,room,agent,message]);
+    let announceReader!:()=>void,announceView!:()=>void;
+    const readerHeld=new Promise<void>(resolve=>{announceReader=resolve;});
+    const viewHeld=new Promise<void>(resolve=>{announceView=resolve;});
+    const reading=first.transaction(async db=>{
+      await db.query(`UPDATE agent_commands SET cancellation_reason='access-proof' WHERE id=$1`,[command]);
+      announceReader(); await viewHeld;
+      if(oldView) await db.query('SELECT 1 FROM room_access WHERE room_id=$1 AND identity_id=$2',[room,agent]);
+      else {
+        const service=new DaemonService(db,new LiveHub()) as unknown as {access(room:string,agent:string):Promise<{isCorner:boolean}>};
+        expect(await service.access(room,agent)).toMatchObject({isCorner:false});
+      }
+    });
+    const replacement=readerHeld.then(()=>second.transaction(async db=>{
+      await db.query('ALTER VIEW room_access SET (security_barrier=true)');
+      announceView();
+      await db.query(`UPDATE agent_commands SET cancellation_reason='replacement-proof' WHERE id=$1`,[command]);
+    }));
+    const results=await Promise.allSettled([reading,replacement]);
+    if(oldView){
+      const failure=results.find(result=>result.status==='rejected');
+      expect(failure).toMatchObject({status:'rejected',reason:{code:'40P01'}});
+      if(failure?.status==='rejected') expect(postgresErrorContext(failure.reason)).toMatchObject({
+        code:'40P01',detail:expect.stringContaining('Process'),statement_fingerprint:expect.stringMatching(/^[a-f0-9]{16}$/)});
+    } else expect(results.map(result=>result.status)).toEqual(['fulfilled','fulfilled']);
+    await first.query('ALTER VIEW room_access RESET(security_barrier)');
+    await first.query('DELETE FROM agent_commands WHERE id=$1',[command]);
+    await first.query('DELETE FROM messages WHERE id=$1',[message]);
+  });
+
+  it('Sentry 40: reviewer reconciliation is one native subscription batch and does not lock the access view',async()=>{
+    const otherRoom=randomUUID(),overridden=randomUUID(),ids=[room,otherRoom,overridden];
+    await first.query('UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1',[room,agent]);
+    await first.query(`INSERT INTO rooms(id,workspace_id,name,reviewer_agent_id,parent_id)
+      VALUES($1,$3,'Second parent',$4,NULL),($2,$3,'Override',NULL,$5)`,[otherRoom,overridden,workspace,agent,room]);
+    await first.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,[workspace,otherRoom,agent]);
+    await first.query(`INSERT INTO corner_person_state(corner_id,identity_id,subscriptions_overridden) VALUES($1,$2,true)`,[overridden,agent]);
+    await first.query(`DELETE FROM agent_subscriptions WHERE room_id=ANY($1::uuid[]) AND event='check-passed'`,[ids]);
+    const results=await concurrentWriters(first,second,db=>db.transaction(tx=>reconcileConfiguredCornerReviewers(tx)),
+      'WITH configured AS MATERIALIZED');
+    expect(results).toEqual([{subscriptions:2,commands:0},{subscriptions:0,commands:0}]);
+    expect((await first.query(`SELECT room_id FROM agent_subscriptions WHERE room_id=ANY($1::uuid[]) AND event='check-passed'`,[ids])).rows
+      .map(row=>row.room_id).sort()).toEqual([...ids].sort());
+    await first.query(`DELETE FROM agent_subscriptions WHERE room_id=ANY($1::uuid[]) AND event='check-passed'`,[ids]);
+    await first.transaction(async db=>{
+      await db.query('ALTER VIEW room_access SET (security_barrier=true)');
+      expect((await subscribeConfiguredReviewers(second,[null])).rowCount).toBe(2);
+    });
+    await first.query('ALTER VIEW room_access RESET(security_barrier)');
+    await first.query(`DELETE FROM agent_subscriptions WHERE room_id=ANY($1::uuid[]) AND event='check-passed'`,[ids]);
+    await first.query('DELETE FROM rooms WHERE id=ANY($1::uuid[])',[[otherRoom,overridden]]);
+    await first.query('UPDATE rooms SET reviewer_agent_id=NULL WHERE id=$1',[room]);
+  });
+
   it.each(['pending', 'reconnect'] as const)('vault report and %s connector acceptance both commit without agent-row / authority-lock inversion', async mode => {
     await first.query('DELETE FROM connector_offers');
-    await first.query(`UPDATE agents SET squire_report=NULL,squire_work=$2::jsonb WHERE agent_id=$1`,
-      [agent, JSON.stringify(mode === 'reconnect' ? { errorMessage: 'Retry sign-in' } : {})]);
+    await seedSquireMachine(first, agent, { squire_report: null, squire_work: mode === 'reconnect' ? { errorMessage: 'Retry sign-in' } : {} });
     await first.query(`INSERT INTO connector_offers(id,agent_id,workspace_id,room_id,addressee_id,connector_type,reason,machine_id)
       VALUES($1,$2,$3,$4,$5,'trusty-squire','Proof','machine')`, [offer, agent, workspace, room, owner]);
     if (mode === 'reconnect') await first.query(`UPDATE connector_offers
       SET status='connecting',intent='reconnect',accepted_by=$2,accepted_at=now() WHERE id=$1`, [offer, owner]);
-    await observer.query(`CREATE FUNCTION pause_vault_report() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
-      IF NEW.squire_report IS DISTINCT FROM OLD.squire_report THEN PERFORM pg_advisory_xact_lock(730001,1); END IF;
-      RETURN NEW; END $$;
-      CREATE TRIGGER aa_pause_vault_report BEFORE UPDATE ON agents FOR EACH ROW EXECUTE FUNCTION pause_vault_report();
-      SELECT pg_advisory_lock(730001,1);`);
-    const daemon = new DaemonService(first, new LiveHub());
-    const report = daemon.execute('postConnectorVault', { connections: [],
-      ...(mode === 'reconnect' ? { errorMessage: 'Broker unavailable' } : {}) }, agent);
-    void report.catch(() => {});
-    const results: PromiseSettledResult<unknown>[] = [];
-    let acceptance: Promise<unknown> | undefined;
-    try {
-      await waiting(observer, firstPid, observerPid);
-      // acceptConnectorOffer claims the offer (its BEFORE trigger takes the
-      // router authority lock) before armConnectorPairing queues agent work.
-      acceptance = new PhoneService(second, 'https://beeline.invalid').execute('acceptConnectorOffer', { offerId: offer }, owner);
-      void acceptance.catch(() => {});
-      await waiting(observer, secondPid, firstPid);
-    } finally {
-      await observer.query('SELECT pg_advisory_unlock(730001,1)');
-      results.push(...await Promise.allSettled([report, ...(acceptance ? [acceptance] : [])]));
-      await observer.query('DROP TRIGGER aa_pause_vault_report ON agents; DROP FUNCTION pause_vault_report()');
-    }
-    for (const result of results) if (result.status === 'rejected') console.error('vault lock cycle', result.reason);
-    expect(results).toEqual([{ status: 'fulfilled', value: expect.anything() }, { status: 'fulfilled', value: expect.objectContaining({ status: 'connecting' }) }]);
-    expect((await first.query<{ status: string }>(`SELECT squire_report->>'status' status FROM agents WHERE agent_id=$1`, [agent])).rows[0]?.status).toBe(mode === 'reconnect' ? 'error' : 'connected');
-    expect((await first.query<{ install: string }>(`SELECT squire_work->>'install' install FROM agents WHERE agent_id=$1`, [agent])).rows[0]?.install).toBe('true');
+    let writer=0;
+    const results=await concurrentWriters<unknown>(first,second,db=>writer++===0
+      ? new DaemonService(db,new LiveHub()).execute('postConnectorVault',{connections:[],
+          ...(mode==='reconnect'?{errorMessage:'Broker unavailable'}:{})},agent)
+      : new PhoneService(db,'https://beeline.invalid').execute('acceptConnectorOffer',{offerId:offer},owner),
+      'UPDATE squire_machines');
+    expect(results).toEqual([expect.anything(),expect.objectContaining({status:'connecting'})]);
+    expect((await first.query<{ status: string }>(`SELECT squire_report->>'status' status FROM squire_machines WHERE (owner_id,machine_id)=(SELECT owner_id,COALESCE(machine_id,agent_id) FROM agents WHERE agent_id=$1)`, [agent])).rows[0]?.status).toBe(mode === 'reconnect' ? 'error' : 'connected');
+    expect((await first.query<{ install: string }>(`SELECT squire_work->>'install' install FROM squire_machines WHERE (owner_id,machine_id)=(SELECT owner_id,COALESCE(machine_id,agent_id) FROM agents WHERE agent_id=$1)`, [agent])).rows[0]?.install).toBe('true');
   });
 
   it('merged webhook and merge reconciliation commit one repository note without message-id / journal inversion', async () => {
@@ -111,39 +170,24 @@ describe.skipIf(!url)('production transaction lock ordering', () => {
     await first.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [corner, JSON.stringify({
       pr: { number: 1, headSha: '1'.repeat(40), url: 'https://github.com/owner/widgets/pull/1' },
     })]);
-    await observer.query(`CREATE FUNCTION pause_repository_note() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
-      IF NEW.card_type='github-event' THEN PERFORM pg_advisory_xact_lock(730001,2); END IF;
-      RETURN NEW; END $$;
-      CREATE TRIGGER aa_pause_repository_note AFTER INSERT ON messages FOR EACH ROW EXECUTE FUNCTION pause_repository_note();
-      SELECT pg_advisory_lock(730001,2);`);
     const app = {} as GitHubAppClient;
-    const webhook = new GitHubOperations(first, {} as GitHubOAuthClient, app, 'secret');
     const reconciliation = new GitHubOperations(second, {} as GitHubOAuthClient, app, 'secret');
     vi.spyOn(reconciliation, 'deleteCornerBranch').mockResolvedValue(undefined);
     const pullRequest = { repository: 'owner/widgets', branch: 'feature/proof', title: 'Proof',
       url: 'https://github.com/owner/widgets/pull/1', number: 1, targetBranch: 'main',
       headSha: '1'.repeat(40), mergedBy: 'owner', commits: 1, files: 1 };
-    const delivery = webhook['processRepositoryEvent']('pull_request', {
-      action: 'closed', repository: { full_name: pullRequest.repository }, sender: { login: 'owner' },
-      pull_request: { merged: true, title: pullRequest.title, html_url: pullRequest.url,
-        head: { ref: pullRequest.branch }, base: { ref: 'main' } },
-    }, 77);
-    void delivery.catch(() => {});
-    let merged: Promise<unknown> | undefined;
-    let results: PromiseSettledResult<unknown>[] = [];
-    try {
-      await waiting(observer, firstPid, observerPid);
-      merged = reconciliation['mergeCorner']({ corner_id: corner, parent_id: room, author_id: agent,
-        corner_name: 'Corner', summary: '', repository_id: '101', installation_id: '77' }, pullRequest);
-      void merged.catch(() => {});
-      await waiting(observer, secondPid, firstPid);
-    } finally {
-      await observer.query('SELECT pg_advisory_unlock(730001,2)');
-      results = await Promise.allSettled([delivery, ...(merged ? [merged] : [])]);
-      await observer.query('DROP TRIGGER aa_pause_repository_note ON messages; DROP FUNCTION pause_repository_note()');
-    }
-    for (const result of results) if (result.status === 'rejected') console.error('GitHub lock cycle', result.reason);
-    expect(results).toEqual([{ status: 'fulfilled', value: undefined }, { status: 'fulfilled', value: undefined }]);
+    let writer=0;
+    const results=await concurrentWriters(first,second,db=>{
+      const operations=new GitHubOperations(db,{} as GitHubOAuthClient,app,'secret');
+      vi.spyOn(operations,'deleteCornerBranch').mockResolvedValue(undefined);
+      return writer++===0 ? operations['processRepositoryEvent']('pull_request',{
+        action:'closed',repository:{full_name:pullRequest.repository},sender:{login:'owner'},
+        pull_request:{merged:true,title:pullRequest.title,html_url:pullRequest.url,
+          head:{ref:pullRequest.branch},base:{ref:'main'}},
+      },77) : operations['mergeCorner']({corner_id:corner,parent_id:room,author_id:agent,
+        corner_name:'Corner',summary:'',repository_id:'101',installation_id:'77'},pullRequest);
+    },'INSERT INTO messages(');
+    expect(results).toEqual([undefined,undefined]);
     expect((await first.query(`SELECT count(*)::int count FROM messages WHERE card_type='github-event'`)).rows).toEqual([{ count: 1 }]);
     expect((await first.query(`SELECT archived_at IS NOT NULL archived FROM rooms WHERE id=$1`, [corner])).rows[0]?.archived).toBe(true);
     await first.query(`DELETE FROM messages WHERE card_type='github-event'`);

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { backfillAgentHandles, migrate, migrateData, MIGRATION_LOCK_TIMEOUT_MS, PostgresDatabase } from './database.js';
+import { migrate, migrateData, MIGRATION_LOCK_TIMEOUT_MS, PostgresDatabase } from './database.js';
 import { alreadyNoOp, alreadySatisfied, normalizeDefault, lockedTables, noOpCheck, logLockHolders, normalizeTriggerDefinition, runMigrationStep, satisfiedCheck, splitMigrationStatements, triggerAlreadyCurrent, triggerPair } from './migration-steps.js';
 
 const postgresUrl = process.env.BEELINE_MIGRATION_LOCK_TEST_POSTGRES_URL;
@@ -85,9 +85,6 @@ describe('release-owned migration steps', () => {
         { name: 'welcome video workflow', table: 'workflow_backfills',
           matches: (sql: string, values: unknown[]) => sql.startsWith('SELECT name FROM workflow_backfills') && values[0] === 'welcome-video-v2',
           run: () => migrateData(database) },
-        { name: 'agent handle candidates', table: 'identities',
-          matches: (sql: string, _values: unknown[]) => sql.startsWith('SELECT id,created_at FROM identities'),
-          run: () => backfillAgentHandles(database) },
       ];
       for (const step of steps) {
         let calls = 0;

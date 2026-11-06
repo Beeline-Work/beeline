@@ -1,3 +1,4 @@
+import { seedSquireMachine } from './test-fixtures/squire-machines.js';
 import { phoneFetch, ensureSystemDirectMessageRoom, SYSTEM_IDENTITY_ID, createHash, randomUUID, describe, expect, it, migrate, companyPopularity, applyVaultList, HUMAN, RECIPIENT, HELPER, OTHER_HELPER, WORKSPACE, fixtureScope1 } from './test-support-workbench.integration.test-support.js';
 
 describe('workbench connectors', () => {
@@ -35,7 +36,7 @@ const scope1 = fixtureScope1();
       ).rows,
     ).toEqual([{ reference: 'github.com/acme/tooling' }]);
     expect(
-      (await scope1.database.query(`SELECT squire_report FROM agents WHERE agent_id=$1`, [HELPER]))
+      (await scope1.database.query(`SELECT squire_report FROM squire_machines WHERE (owner_id,machine_id)=(SELECT owner_id,COALESCE(machine_id,agent_id) FROM agents WHERE agent_id=$1)`, [HELPER]))
         .rows[0],
     ).toMatchObject({ squire_report: { status: 'connected' } });
     const view = (await scope1.phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as {
@@ -192,31 +193,21 @@ const scope1 = fixtureScope1();
   });
 
 
-  it('Reproduction R1: stale sibling work loses to health, fresh reconnect failure wins', async () => {
+  it('reads one machine authority despite obsolete helper-local installation fields', async () => {
     await scope1.database.query("UPDATE agents SET owner_id=$1,machine_id='squire'", [HUMAN]);
-    await scope1.database.query("UPDATE agents SET squire_report=$2::jsonb WHERE agent_id=$1",
-      [HELPER, JSON.stringify({ status: 'connected', reportedAt: 200 })]);
-    for (const [reportedAt, status] of [[100, 'connected'], [300, 'error']] as const) {
-      await scope1.database.query('UPDATE agents SET squire_work=$2::jsonb WHERE agent_id=$1',
-        [OTHER_HELPER, JSON.stringify({ install: true, reportedAt, forceReloginProvider: 'google', errorMessage: 'Expired sign-in' })]);
-      const view = await scope1.phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as any;
-      expect(view.helpers).toHaveLength(1);
-      expect(view.helpers[0].squire.status).toBe(status);
-      expect(view.helpers[0].squire.googleSessionExpired).toBe(status === 'error');
-    }
-    await scope1.database.query("UPDATE agents SET squire_work=squire_work-'reportedAt',updated_at=to_timestamp(100) WHERE agent_id=$1", [OTHER_HELPER]);
-    const legacy = await scope1.phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as any;
-    expect(legacy.helpers[0].squire.status).toBe('connected');
-    await scope1.database.query('UPDATE agents SET updated_at=to_timestamp(300) WHERE agent_id=$1', [OTHER_HELPER]);
-    const unrelatedUpdate = await scope1.phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as any;
-    expect(unrelatedUpdate.helpers[0].squire.status).toBe('connected');
-    await scope1.database.query("UPDATE agents SET squire_report='{\"status\":\"error\",\"reportedAt\":400,\"errorMessage\":\"Broker unavailable\"}'::jsonb");
-    const broken = await scope1.phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as any;
-    expect(broken.helpers[0].squire.status).toBe('error');
-    await scope1.database.query('UPDATE agents SET squire_report=$2::jsonb WHERE agent_id=$1',
-      [HELPER, JSON.stringify({ status: 'connected', reportedAt: 500 })]);
+    await seedSquireMachine(scope1.database, HELPER, { squire_report: { status: 'connected', reportedAt: 200 } });
+    await scope1.database.query('UPDATE agents SET squire_work=$2::jsonb WHERE agent_id=$1',
+      [OTHER_HELPER, JSON.stringify({ install: true, reportedAt: 300, forceReloginProvider: 'google', errorMessage: 'Obsolete failure' })]);
+    let view = await scope1.phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as any;
+    expect(view.helpers).toHaveLength(1);
+    expect(view.helpers[0].squire.status).toBe('connected');
+    await seedSquireMachine(scope1.database, HELPER, { squire_work: { forceReloginProvider: 'google', errorMessage: 'Expired sign-in' } });
+    view = await scope1.phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as any;
+    expect(view.helpers[0].squire.status).toBe('error');
+    expect(view.helpers[0].squire.googleSessionExpired).toBe(true);
     await scope1.database.query('UPDATE identities SET hidden_from_roster=true WHERE id=$1', [OTHER_HELPER]);
-    const view = await scope1.phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as any;
+    await seedSquireMachine(scope1.database, HELPER, { squire_work: {} });
+    view = await scope1.phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as any;
     expect(view.helpers[0].squire.status).toBe('connected');
   });
 
@@ -232,7 +223,7 @@ const scope1 = fixtureScope1();
 
   it('Reproduction squire-false-card: reconnect work overrides a connected broker report in the phone view', async () => {
     await scope1.daemonOperation('postConnectorVault', { connections: [] });
-    await scope1.database.query(`UPDATE agents SET squire_work='{"install":true,"generation":1,"signedInAs":"owner@example.com"}'::jsonb WHERE agent_id=$1`, [HELPER]);
+    await seedSquireMachine(scope1.database, HELPER, { generation: 1, squire_work: { install: true, signedInAs: 'owner@example.com' } });
     const view = await scope1.phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as any;
     const machine = view.companies.rows.find((row: any) => row.kind === 'sign-in-service').machines[0];
     expect(machine).toMatchObject({ reconnecting: true, signedInAs: 'owner@example.com', statusText: 'Waiting for sign-in' });
@@ -243,8 +234,7 @@ const scope1 = fixtureScope1();
     await scope1.daemonOperation('postConnectorVault', { connections: [] });
     const roomId = await ensureSystemDirectMessageRoom(scope1.database, WORKSPACE, HUMAN);
     await scope1.database.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence','{"status":"online"}')`, [roomId, HELPER]);
-    await scope1.database.query(`UPDATE agents SET squire_work=$2::jsonb WHERE agent_id=$1`, [HELPER,
-      JSON.stringify({ install: true, generation: 1, forceReloginProvider: 'google', errorMessage: 'Google reconnect failed' })]);
+    await seedSquireMachine(scope1.database, HELPER, { generation: 1, squire_work: { install: true, forceReloginProvider: 'google', errorMessage: 'Google reconnect failed' } });
     const view = await scope1.phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as any;
     const service = view.companies.rows.find((row: any) => row.kind === 'sign-in-service');
     expect(service.section).toBe('attention');
@@ -306,8 +296,8 @@ const scope1 = fixtureScope1();
       .toEqual(Array.from({ length: 3 }, () => ({ connection_id: keysAfter[0]!.id })));
     await migrate(scope1.database);
     expect((await scope1.database.query('SELECT id FROM workspace_connections')).rows).toHaveLength(1);
-    expect((await scope1.database.query('SELECT squire_report FROM agents WHERE agent_id=$1', [HELPER])).rows[0])
-      .toEqual({ squire_report: null });
+    expect((await scope1.database.query('SELECT squire_report FROM squire_machines WHERE (owner_id,machine_id)=(SELECT owner_id,COALESCE(machine_id,agent_id) FROM agents WHERE agent_id=$1)', [HELPER])).rows[0])
+      .toBeUndefined();
   });
 
 
@@ -430,7 +420,7 @@ const scope1 = fixtureScope1();
     expect(agentFailed.body.machine.squire).toMatchObject({
       status: 'error', errorMessage: 'Squire broker unavailable',
     });
-    expect((await scope1.database.query(`SELECT squire_report FROM agents WHERE agent_id=$1`, [OTHER_HELPER])).rows[0])
+    expect((await scope1.database.query(`SELECT squire_report FROM squire_machines WHERE (owner_id,machine_id)=(SELECT owner_id,COALESCE(machine_id,agent_id) FROM agents WHERE agent_id=$1)`, [OTHER_HELPER])).rows[0])
       .toMatchObject({ squire_report: { status: 'connected' } });
 
     await scope1.daemonOperation('postConnectorVault', { connections: [{

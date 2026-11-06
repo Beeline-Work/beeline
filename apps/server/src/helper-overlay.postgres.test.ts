@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { describe, expect, it } from 'vitest';
 import type { HelperOverlayFrame } from '@beeline/api-contract/helper-overlay';
-import { PostgresDatabase } from './database.js';
+import { PostgresDatabase, type SqlDatabase } from './database.js';
 import { HELPER_OVERLAY_SCHEMA, HelperOverlayViewer, applyHelperOverlay, fenceHelperOverlayEnqueue, subscribeHelperOverlayDemand } from './helper-overlay.js';
 import { LiveHub, type LiveEvent } from './live.js';
 import { postgresLiveSchema, PostgresLiveListener } from './postgres-live.js';
@@ -32,7 +32,7 @@ describe.skipIf(!url)('overlay real PostgreSQL remote listener and viewer fences
       const revision=(normalized as {overlayV1?:{revision:number}}).overlayV1?.revision;if(revision)waits.get(revision)?.();
     },'reader');
     try{
-      await writer.query(`CREATE TABLE rooms(id uuid PRIMARY KEY,workspace_id uuid,archived_at timestamptz);
+      await writer.query(`CREATE TABLE rooms(id uuid PRIMARY KEY,workspace_id uuid,archived_at timestamptz,parent_id uuid);
         CREATE TABLE room_access(room_id uuid,identity_id text,removed_at timestamptz);
         CREATE TABLE memberships(workspace_id uuid,room_id uuid,identity_id text,role text,removed_at timestamptz);
         CREATE TABLE room_push_views(room_id uuid,identity_id text,session_id text,instance_id text,expires_at timestamptz);
@@ -49,9 +49,9 @@ describe.skipIf(!url)('overlay real PostgreSQL remote listener and viewer fences
       await writer.query(`CREATE TRIGGER beeline_notify_live_live_outputs AFTER INSERT OR UPDATE OR DELETE ON live_outputs FOR EACH ROW EXECUTE FUNCTION beeline_notify_live()`);
       await writer.query(TURN_OWNERSHIP_SCHEMA);
     await writer.query(HELPER_OVERLAY_SCHEMA);
-      await writer.query(`INSERT INTO rooms VALUES($1,$2,NULL)`,[room,workspace]);
+      await writer.query(`INSERT INTO rooms(id,workspace_id,archived_at) VALUES($1,$2,NULL)`,[room,workspace]);
       await writer.query(`INSERT INTO room_access VALUES($1,'agent',NULL),($1,'reader',NULL)`,[room]);
-      await writer.query(`INSERT INTO memberships VALUES($1,NULL,'agent','member',NULL),($1,NULL,'reader','member',NULL)`,[workspace]);
+      await writer.query(`INSERT INTO memberships VALUES($1,NULL,'agent','member',NULL),($1,NULL,'reader','member',NULL),($1,$2,'agent','member',NULL),($1,$2,'reader','member',NULL)`,[workspace,room]);
       if(mode==='wire')await writer.query(`INSERT INTO room_push_views VALUES($1,'reader','phone-on-reader-instance',NULL,NULL)`,[room]);
       await writer.query(`INSERT INTO live_server_instances VALUES('owner-server',clock_timestamp());
       INSERT INTO agent_connections VALUES('agent','connection',1,NULL,'owner-server');
@@ -115,6 +115,28 @@ describe.skipIf(!url)('overlay real PostgreSQL remote listener and viewer fences
       const ended=waitFrame(6);await applyHelperOverlay(writer,'agent',owner,frame({type:'end',revision:6,runGeneration:1,text:'',viewingRevision:3}));await ended;
       expect(frames.at(-1)).toMatchObject({type:'retract',overlayV1:{revision:6,runGeneration:1}});
       expect((await applyHelperOverlay(writer,'agent',owner,frame({revision:7,runGeneration:0,text:'late baseline',viewingRevision:3}))).ack).toEqual({accepted:false,reason:'stale'});
+      // The archival writer already owns the command. A final enqueue must
+      // wait there before locking the Room, so the writer can archive it.
+      const commandHeld=deferred(),commandRequested=deferred(),releaseClose=deferred();
+      const closing=writer.transaction(async tx=>{
+        await tx.query(`SELECT id FROM agent_commands WHERE id='command' FOR UPDATE`);
+        commandHeld.resolve();await releaseClose.promise;
+        await tx.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`,[room]);
+      });
+      let queryError:unknown,lateEnqueued=false;
+      const observed:SqlDatabase={query:(sql,values)=>reader.query(sql,values),transaction:work=>reader.transaction(tx=>work({
+        query:(sql,values)=>{const result=tx.query(sql,values).catch(error=>{queryError=error;throw error;});if(sql.includes('FOR UPDATE OF command'))commandRequested.resolve();return result;},
+        transaction:nested=>tx.transaction(nested),
+      }))};
+      let late:Promise<void>|undefined;
+      try{
+        await commandHeld.promise;
+        const beforeClose=frames.length;
+        late=fenceHelperOverlayEnqueue(observed,frames.at(-1)!,()=>{lateEnqueued=true;},'reader');
+        await commandRequested.promise;releaseClose.resolve();
+        await Promise.all([closing,late]);expect(frames).toHaveLength(beforeClose);
+        expect(queryError).toBeUndefined();expect(lateEnqueued).toBe(false);
+      }finally{releaseClose.resolve();await Promise.allSettled([closing,...(late?[late]:[])]);}
       await writer.query(`UPDATE agent_commands SET state='complete';UPDATE agent_turns SET status='complete'`);
       const before=frames.length;await forward(frames[0]!);expect(frames).toHaveLength(before);
     }finally{

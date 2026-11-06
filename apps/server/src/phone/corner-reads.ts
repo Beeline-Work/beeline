@@ -1,3 +1,4 @@
+import { messageColumns } from '../message-columns.js';
 import { assetUrl, phoneIdentity as identity, type PhoneIdentityRow as IdentityRow } from '../phone-identity.js';
 import { roomMessageTagsSql } from '../room-router-read.js';
 import { workingTurnFreshSql } from '../turn-ownership.js';
@@ -213,7 +214,7 @@ import { phoneOptionalEnrichment } from './optional-enrichment.js';
          ), active_turn_rows AS (
            SELECT agent_id,created_at FROM projected_turn_rows WHERE status='working'
          ), transcript_rows AS (
-           SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
+           SELECT ${messageColumns('m')},i.kind author_kind,i.name author_name,i.handle author_handle,
              i.avatar author_avatar,i.face_id author_face,
              ${reactionIdentitiesSql('m')} reaction_identities,
              (room.parent_id IS NULL AND EXISTS(SELECT 1 FROM message_bookmarks bookmark
@@ -223,14 +224,14 @@ import { phoneOptionalEnrichment } from './optional-enrichment.js';
              '{}'::text[] tagged_ids
            FROM authorized_room room
            JOIN LATERAL (
-             SELECT m.* FROM messages m WHERE m.room_id=room.id
+             SELECT ${messageColumns('m')} FROM messages m WHERE m.room_id=room.id
                AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
                AND ${visibleMessageSql('m')}
              ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_MESSAGE_LIMIT}
            ) m ON true
            JOIN identities i ON i.id=m.author_id
          ), activity_rows AS (
-           SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
+           SELECT ${messageColumns('m')},i.kind author_kind,i.name author_name,i.handle author_handle,
              i.avatar author_avatar,i.face_id author_face,
              ${reactionIdentitiesSql('m')} reaction_identities,
              (room.parent_id IS NULL AND EXISTS(SELECT 1 FROM message_bookmarks bookmark
@@ -240,7 +241,7 @@ import { phoneOptionalEnrichment } from './optional-enrichment.js';
              '{}'::text[] tagged_ids
            FROM authorized_room room
            JOIN LATERAL (
-             SELECT m.* FROM messages m JOIN active_turn_rows turn ON turn.agent_id=m.author_id
+             SELECT ${messageColumns('m')} FROM messages m JOIN active_turn_rows turn ON turn.agent_id=m.author_id
                AND m.created_at>=date_trunc('second',turn.created_at)
              WHERE m.room_id=room.id AND m.presentation='activity' AND m.durable_fact IS NULL
                ${('')}
@@ -248,13 +249,13 @@ import { phoneOptionalEnrichment } from './optional-enrichment.js';
            ) m ON true
            JOIN identities i ON i.id=m.author_id
          ), corner_tool_rows AS (
-           SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
+           SELECT ${messageColumns('m')},i.kind author_kind,i.name author_name,i.handle author_handle,
              i.avatar author_avatar,i.face_id author_face,
              ${reactionIdentitiesSql('m')} reaction_identities,
              false bookmarked,false feedback_reported,'{}'::text[] tagged_ids
            FROM authorized_room room
            JOIN LATERAL (
-             SELECT m.* FROM messages m WHERE m.room_id=room.id
+             SELECT ${messageColumns('m')} FROM messages m WHERE m.room_id=room.id
                AND room.parent_id IS NOT NULL ${('')} AND m.presentation='activity'
                AND m.durable_fact IS NULL AND EXISTS(
                  SELECT 1 FROM jsonb_array_elements(m.activity) item
@@ -263,13 +264,13 @@ import { phoneOptionalEnrichment } from './optional-enrichment.js';
            ) m ON true
            JOIN identities i ON i.id=m.author_id
          ), corner_briefing_rows AS (
-           SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
+           SELECT ${messageColumns('m')},i.kind author_kind,i.name author_name,i.handle author_handle,
              i.avatar author_avatar,i.face_id author_face,
              ${reactionIdentitiesSql('m')} reaction_identities,
              false bookmarked,false feedback_reported,'{}'::text[] tagged_ids
            FROM authorized_room room
            JOIN LATERAL (
-             SELECT m.* FROM messages m WHERE m.room_id=room.parent_id
+             SELECT ${messageColumns('m')} FROM messages m WHERE m.room_id=room.parent_id
                AND room.parent_id IS NOT NULL AND m.created_at<=room.created_at
              ORDER BY m.created_at DESC,m.id ASC LIMIT ${ROOM_VIEW_BRIEFING_LIMIT}
            ) m ON true
@@ -342,7 +343,7 @@ import { phoneOptionalEnrichment } from './optional-enrichment.js';
     }
     const repositoryId = row.room.repository_key?.match(/^github:(\d+)$/)?.[1];
     const [cursor, presence, tags, autoMerge] = await Promise.all([
-      phoneOptionalEnrichment(ctx,
+      ctx.optionalEnrichment(
         'read-cursor',
         ctx.enrichmentDatabase.query<{
           read_cursor: NonNullable<RoomView['viewer']['readCursor']>;
@@ -351,7 +352,7 @@ import { phoneOptionalEnrichment } from './optional-enrichment.js';
           viewerId,
         ], 'phone-room-1'),
       ),
-      phoneOptionalEnrichment(ctx,
+      ctx.optionalEnrichment(
         'presence',
         ctx.enrichmentDatabase.query<{
           id: string;
@@ -370,7 +371,7 @@ import { phoneOptionalEnrichment } from './optional-enrichment.js';
           [roomId], 'phone-room-2',
         ),
       ),
-      phoneOptionalEnrichment(ctx,
+      ctx.optionalEnrichment(
         'message-tags',
         ctx.enrichmentDatabase.query<{ id: string; tagged_ids: string[] }>(
           `SELECT m.id,${roomMessageTagsSql('m')} tagged_ids
@@ -379,7 +380,7 @@ import { phoneOptionalEnrichment } from './optional-enrichment.js';
         ),
       ),
       repositoryId
-        ? phoneOptionalEnrichment(ctx,
+        ? ctx.optionalEnrichment(
             'repository-auto-merge',
             ctx.enrichmentDatabase
               .query<{ allow_auto_merge: boolean | null }>(

@@ -53,7 +53,7 @@ import { cornerImplementerSql, cornerOwnerSql } from './corner-worker.js';
 
 import { cornerRunStateSql } from './corner-run.js';
 
-import { getWorkflowRun, liveWorkflowRun, saveWorkflow, startWorkflow, workflowRunLockKey } from './workflow-runs.js';
+import { getWorkflowRun, liveWorkflowRun, saveWorkflow, startWorkflow } from './workflow-runs.js';
 
 
 /** Records every SQL statement issued, in order — matches workflow-runs.test.ts's own. */
@@ -942,7 +942,7 @@ export { createAgentCommand, repairReviewerCornerMembership, queueCornerMergeCon
 export { CORNER_LIFECYCLE_CARD_TYPE } from './room-choice.js';
 export { cornerImplementerSql, cornerOwnerSql } from './corner-worker.js';
 export { cornerRunStateSql } from './corner-run.js';
-export { getWorkflowRun, liveWorkflowRun, saveWorkflow, startWorkflow, workflowRunLockKey } from './workflow-runs.js';
+export { getWorkflowRun, liveWorkflowRun, saveWorkflow, startWorkflow } from './workflow-runs.js';
 export type { QueryResultRow } from 'pg';
 export type { QueryResult, SqlDatabase } from './database.js';
 export type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';

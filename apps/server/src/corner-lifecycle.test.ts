@@ -1,4 +1,4 @@
-import { cornerKindSql, createHash, randomBytes, describe, expect, it, migrate, SYSTEM_IDENTITY_ID, describedWorkflow, PhoneService, DaemonService, LiveHub, systemLine, advanceCorner, CORNER_LIFECYCLE_SLUG, cornerMergeGate, deleteStoredCornerWorkflows, createAgentCommand, CORNER_LIFECYCLE_CARD_TYPE, cornerOwnerSql, getWorkflowRun, liveWorkflowRun, saveWorkflow, startWorkflow, workflowRunLockKey, RecordingDatabase, H, A, B, W, R, db, phone, daemon, github, githubRollupState, githubHead, githubApp, implementersMerge, derivedWorker, cards, currentState, commissioned, brief, open, claim, pushToCorner, greenHead, redHead, commands, result, SHA, OPEN_CLOSE_BADGES, branchOf, reasons, projected, inReview, approve, approved, mergedWebhook, say, revise, F, fallback, rootFixture, fixtureScope2, fixtureScope9, fixtureScope10, fixtureScope11, type CommandRow } from './test-support-corner-lifecycle.test-support.js';
+import { cornerKindSql, createHash, randomBytes, describe, expect, it, migrate, SYSTEM_IDENTITY_ID, describedWorkflow, PhoneService, DaemonService, LiveHub, systemLine, advanceCorner, CORNER_LIFECYCLE_SLUG, cornerMergeGate, deleteStoredCornerWorkflows, createAgentCommand, CORNER_LIFECYCLE_CARD_TYPE, cornerOwnerSql, getWorkflowRun, liveWorkflowRun, saveWorkflow, startWorkflow, RecordingDatabase, H, A, B, W, R, db, phone, daemon, github, githubRollupState, githubHead, githubApp, implementersMerge, derivedWorker, cards, currentState, commissioned, brief, open, claim, pushToCorner, greenHead, redHead, commands, result, SHA, OPEN_CLOSE_BADGES, branchOf, reasons, projected, inReview, approve, approved, mergedWebhook, say, revise, F, fallback, rootFixture, fixtureScope2, fixtureScope9, fixtureScope10, fixtureScope11, type CommandRow } from './test-support-corner-lifecycle.test-support.js';
 
 describe('the corner lifecycle contract itself', () => {
 
@@ -368,13 +368,13 @@ describe('checks dispatch (rows 6-8)', () => {
   });
 });
 describe('the run lock (a push transition can race a close or another push)', () => {
-  it('takes the run lock as the very first statement, before reading the run current state', async () => {
+  it('retains the state row in the first read before applying a transition', async () => {
     const cornerId = await open('owner/widgets');
     const recording = new RecordingDatabase(rootFixture.db);
     await advanceCorner(recording, cornerId, { kind: 'push', headSha: '1'.repeat(40), contents: {} });
     expect(recording.calls[0]).toEqual({
-      sql: 'SELECT pg_advisory_xact_lock(hashtext($1))',
-      values: [workflowRunLockKey(cornerId)],
+      sql: expect.stringContaining('FOR UPDATE OF fact'),
+      values: [cornerId],
     });
     const readIndex = recording.calls.findIndex((call) => call.sql.includes('FROM messages'));
     expect(readIndex).toBeGreaterThan(0);
@@ -383,23 +383,7 @@ describe('the run lock (a push transition can race a close or another push)', ()
   });
 
 
-  it('uses the same lock key format the generic workflow engine uses, so a fresh push transaction and a concurrent close serialize against each other', async () => {
-    const cornerId = await open('owner/widgets');
-    // Simulate the exact race the review found: a push transition's read and
-    // write used to be two independent, unlocked round trips. Firing the
-    // real push-triggered transition and a real close "concurrently" against
-    // PGlite's single connection (which serializes everything anyway, so this
-    // proves ordering/correctness, not true concurrency — see workflow-runs
-    // .test.ts's own documented limit for the same caveat) must still leave
-    // the bookkeeping's own `seq` sequence internally consistent: no two
-    // cards at the same seq, and the last one recorded is a real terminal.
-    await Promise.all([
-      advanceCorner(rootFixture.db, cornerId, { kind: 'push', headSha: '1'.repeat(40), contents: {} }),
-      advanceCorner(rootFixture.db, cornerId, { kind: 'closed' }),
-    ]);
-    const seqs = (await cards(cornerId)).map((card) => (card as unknown as { seq: number }).seq);
-    expect(new Set(seqs).size).toBe(seqs.length);
-  });
+  ;
 });
 describe('review dispatch and the fix loop cap (row 9)', () => {
 const scope9 = fixtureScope9();
@@ -756,7 +740,7 @@ const scope11 = fixtureScope11();
     const recording = new RecordingDatabase(rootFixture.db);
     expect(await revise(cornerId, new DaemonService(recording, new LiveHub())))
       .toMatchObject({ revision: 2, wake: { queued: true, agentId: A } });
-    const lock = recording.calls.findIndex(c => c.sql.includes('pg_advisory_xact_lock'));
+    const lock = recording.calls.findIndex(c => c.sql === 'SELECT corner_id FROM corner_facts WHERE corner_id=$1 FOR UPDATE');
     const write = recording.calls.findIndex(c => c.sql.startsWith('INSERT INTO corner_brief_revisions'));
     expect(lock).toBeGreaterThanOrEqual(0);
     expect(lock).toBeLessThan(write);

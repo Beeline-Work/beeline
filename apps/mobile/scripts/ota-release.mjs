@@ -280,7 +280,7 @@ function pointChannel(channel, branch, { dryRun } = {}) {
 // previous release record supplies identities of store builds this pipeline
 // uploaded and the runtimes it last served (used only if a store is
 // unreadable). No guess replaces a store answer.
-export function computeTargets({ memory = {}, stores, pins }) {
+export function computeTargets({ memory = {}, stores, pins, includeAllAndroidLive = false }) {
   const observedLive = RELEASE_PLATFORMS.flatMap((platform) =>
     stores?.[platform]?.status === 'readable'
       ? [...stores[platform].live, ...(stores[platform].historical ?? [])]
@@ -294,6 +294,12 @@ export function computeTargets({ memory = {}, stores, pins }) {
     previouslyLive,
     previousTargets: memory.previousTargets ?? [],
   });
+  if (includeAllAndroidLive && stores?.android?.status === 'readable') {
+    for (const live of stores.android.live) {
+      if (!targets.some(target => targetKey(target) === targetKey(live)))
+        targets.push({ platform: 'android', runtimeVersion: live.runtimeVersion });
+    }
+  }
   if (targets.length === 0) fail('no live store runtime is known; refusing to publish an OTA nobody can receive');
   for (const platform of RELEASE_PLATFORMS) {
     if (!targets.some((target) => target.platform === platform)) fail(`no live ${platform} runtime is known; refusing a one-platform release`);
@@ -343,6 +349,7 @@ function targetsCommand(options) {
   memory.previouslyLive = [...(memory.previouslyLive ?? []), ...(status.previouslyLive ?? [])];
   const { targets, previouslyLive } = computeTargets({
     memory, stores: status.stores, pins: readPinnedRuntimeVersion(process.cwd()),
+    includeAllAndroidLive: process.env.BEELINE_RELEASE_CHANNEL === 'nightly',
   });
   console.log(`ota_targets=${targets.map(targetKey).join(',')}`);
   const result = { targets, storeRuntime: { builds: status.builds ?? memory.builds ?? [], previouslyLive } };

@@ -35,6 +35,14 @@
         "EXPO_UPDATES_CHANNEL": "beta",
         "SHARP_IGNORE_GLOBAL_LIBVIPS": "1"
       }
+    },
+    "nightly-ci": {
+      "extends": "production-ci",
+      "channel": "nightly",
+      "env": {
+        "EXPO_UPDATES_CHANNEL": "nightly",
+        "SHARP_IGNORE_GLOBAL_LIBVIPS": "1"
+      }
     }
   },
   "submit": {

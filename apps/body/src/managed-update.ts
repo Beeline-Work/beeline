@@ -43,7 +43,6 @@ export class ReleaseTransaction {
   #interruptAt: number | undefined;
   #deadlineAt: number | undefined;
   #handingOff: Promise<void> | undefined;
-  #notice: string | undefined;
   #completed = false;
   #draining = false;
   constructor(
@@ -68,9 +67,9 @@ export class ReleaseTransaction {
   get pending(): Promise<void> | undefined {
     return this.#preparing ?? this.#handingOff;
   }
-  notify(releaseKey?: string, minimum?: string): void {
-    if (releaseKey && releaseKey === this.#notice) return;
-    this.#notice = releaseKey;
+  notify(_releaseKey?: string, minimum?: string): void {
+    // The same build can be announced once for nightly and again for latest.
+    // Re-read this helper's manifest; preparation coalesces in-flight notices.
     if (minimum && (!this.#minimum || !versionAtLeast(this.#minimum, minimum))) {
       this.#minimum = minimum;
       this.#handoffAt = this.now();

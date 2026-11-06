@@ -1,8 +1,16 @@
 name: Unified production release
-run-name: Production release · @${{ fromJSON(inputs.dispatched_by || '{}').handle || 'unknown' }} · ${{ fromJSON(inputs.dispatched_by || '{}').auditMessageId }}
+run-name: ${{ inputs.channel || 'nightly' }} release · @${{ fromJSON(inputs.dispatched_by || '{}').handle || 'unknown' }} · ${{ fromJSON(inputs.dispatched_by || '{}').auditMessageId }}
 on:
   workflow_dispatch:
     inputs:
+      channel:
+        description: Nightly dogfood release (default), or owner-commanded promotion of the current nightly to latest
+        type: choice
+        default: nightly
+        options:
+          - nightly
+          - latest
+        required: true
       dispatched_by:
         description: Server-recorded agent, place, human command and audit receipt
         type: string
@@ -21,7 +29,7 @@ on:
         default: auto
         required: true
       store_track:
-        description: Android binaries default to production; routine releases keep none for OTA; beta requires an explicit owner choice
+        description: Explicit store build only - nightly requires beta (Android); latest allows production
         type: choice
         default: none
         options:
@@ -64,6 +72,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      channel: ${{ steps.plan.outputs.channel }}
+      ota_branch: ${{ steps.plan.outputs.ota_branch }}
+      ota_sha: ${{ steps.plan.outputs.ota_sha }}
+      ota_version: ${{ steps.plan.outputs.ota_version }}
+      ota_targets: ${{ steps.plan.outputs.ota_targets }}
+      helper_sha: ${{ steps.plan.outputs.helper_sha }}
+      helper_version: ${{ steps.plan.outputs.helper_version }}
       release_sha: ${{ steps.identity.outputs.release_sha }}
       release_version: ${{ steps.identity.outputs.version }}
       release_id: ${{ steps.identity.outputs.version }}-${{ steps.identity.outputs.release_sha }}
@@ -130,18 +145,26 @@ jobs:
       - name: Read the previous release and assign this release's identity
         id: identity
         env:
+          CHANNEL: ${{ inputs.channel || 'nightly' }}
           REQUESTED_SHA: ${{ inputs.release_sha || '' }}
           REQUESTED_VERSION: ${{ inputs.release_version || '' }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           . scripts/gh-release-retry.sh
-          release_sha=$(git rev-parse --verify "${REQUESTED_SHA:-$GITHUB_SHA}^{commit}")
+          release_sha=''
+          if [ "$CHANNEL" = nightly ]; then
+            release_sha=$(git rev-parse --verify "${REQUESTED_SHA:-$GITHUB_SHA}^{commit}")
+          elif [ -n "$REQUESTED_SHA" ]; then
+            release_sha=$(git rev-parse --verify "$REQUESTED_SHA^{commit}")
+          fi
+          node scripts/release-record.mjs identity --sha "$release_sha" --requested "$REQUESTED_VERSION" \
+            --channel "$CHANNEL" --nightly "$RUNNER_TEMP/nightly-release.json" \
+            --previous "$RUNNER_TEMP/previous/release.json" > "$RUNNER_TEMP/identity.txt"
+          release_sha=$(sed -n 's/^release_sha=//p' "$RUNNER_TEMP/identity.txt")
           git merge-base --is-ancestor "$release_sha" origin/main || {
             echo "release SHA is not a commit on main: $release_sha" >&2; exit 1;
           }
-          node scripts/release-record.mjs identity --sha "$release_sha" --requested "$REQUESTED_VERSION" \
-            --previous "$RUNNER_TEMP/previous/release.json" > "$RUNNER_TEMP/identity.txt"
           cat "$RUNNER_TEMP/identity.txt"
           version=$(sed -n 's/^version=//p' "$RUNNER_TEMP/identity.txt")
           has_release=$(sed -n 's/^has_release=//p' "$RUNNER_TEMP/identity.txt")
@@ -159,6 +182,7 @@ jobs:
         env:
           RELEASE_SHA: ${{ steps.identity.outputs.release_sha }}
           RELEASE_VERSION: ${{ steps.identity.outputs.version }}
+          CHANNEL: ${{ inputs.channel || 'nightly' }}
           SELECTION: ${{ inputs.selection || 'auto' }}
           STORE_TRACK: ${{ inputs.store_track || 'none' }}
         run: |
@@ -181,10 +205,11 @@ jobs:
           fi
           args=(plan --version "$RELEASE_VERSION" --sha "$RELEASE_SHA"
             --paths "$RUNNER_TEMP/release-paths.txt" --component-paths "$RUNNER_TEMP/release-component-paths.json"
-            --selection "$SELECTION" --store-track "$STORE_TRACK"
+            --selection "$SELECTION" --store-track "$STORE_TRACK" --channel "$CHANNEL"
             --state "$RUNNER_TEMP/unified-release.json" --summary "$RUNNER_TEMP/release-plan.json"
             --outputs "$GITHUB_OUTPUT")
           if [ -f "$previous" ]; then args+=(--previous "$previous"); fi
+          if [ "$CHANNEL" = latest ]; then args+=(--nightly "$RUNNER_TEMP/nightly-release.json"); fi
           node scripts/unified-release.mjs "${args[@]}"
           tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/release-plan.json"
       - name: Mint a Play token to read this release's store builds
@@ -286,7 +311,7 @@ jobs:
         run: echo "completed_at=$(date +%s)" >> "$GITHUB_OUTPUT"
   helper_linux:
     needs: initialize
-    if: needs.initialize.outputs.run_helper == 'true'
+    if: needs.initialize.outputs.run_helper == 'true' && needs.initialize.outputs.channel == 'nightly'
     runs-on: ubuntu-22.04
     permissions:
       contents: read
@@ -308,7 +333,7 @@ jobs:
       - name: Ask Pages whether this helper already shipped
         id: shipped
         env:
-          MANIFEST_URL: ${{ vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
+          MANIFEST_URL: ${{ needs.initialize.outputs.channel == 'nightly' && 'https://beeline-work.github.io/beeline/dl/nightly/manifest.json' || vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
           RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
           RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
         run: |
@@ -368,7 +393,7 @@ jobs:
   helper_macos:
     name: HELPER BUILD (${{ matrix.platform }})
     needs: initialize
-    if: needs.initialize.outputs.run_helper == 'true'
+    if: needs.initialize.outputs.run_helper == 'true' && needs.initialize.outputs.channel == 'nightly'
     runs-on: ${{ matrix.runs_on }}
     permissions:
       contents: read
@@ -397,7 +422,7 @@ jobs:
       - name: Ask Pages whether this helper already shipped
         id: shipped
         env:
-          MANIFEST_URL: ${{ vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
+          MANIFEST_URL: ${{ needs.initialize.outputs.channel == 'nightly' && 'https://beeline-work.github.io/beeline/dl/nightly/manifest.json' || vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
           RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
           RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
         run: |
@@ -423,7 +448,7 @@ jobs:
         with:
           script: |
             const { downloadPagesChannel } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/pages-channel.mjs`);
-            await downloadPagesChannel({ github, repo: context.repo, directory: process.env.CHANNEL_DIR });
+            await downloadPagesChannel({ github, repo: context.repo, channel: '${{ needs.initialize.outputs.channel }}', directory: process.env.CHANNEL_DIR });
       - name: Carry the verified Mac payload into this release
         id: carry_bundle
         if: steps.shipped.outputs.shipped != 'true' && steps.previous_bundle.outcome == 'success'
@@ -469,7 +494,7 @@ jobs:
       - helper_linux
       - helper_macos
       - delivery_result
-    if: "!cancelled() && needs.initialize.outputs.run_helper == 'true' && needs.helper_linux.result == 'success' && needs.helper_macos.result == 'success'"
+    if: "!cancelled() && needs.initialize.outputs.run_helper == 'true' && (needs.initialize.outputs.channel == 'latest' || (needs.helper_linux.result == 'success' && needs.helper_macos.result == 'success'))"
     runs-on:
       - self-hosted
       - beeline-prod-host
@@ -497,25 +522,27 @@ jobs:
           tools: git curl tar
       - run: bash scripts/npm-ci-timed.sh
       - uses: actions/download-artifact@v4
+        if: needs.initialize.outputs.channel == 'nightly'
         with:
           name: helper-linux-${{ needs.initialize.outputs.release_id }}
           path: ${{ runner.temp }}/helper-linux
       - name: Restore the Linux-built CLI bytes
+        if: needs.initialize.outputs.channel == 'nightly'
         run: |
           mkdir -p packages/usebeeline/dist
           cp -a "$RUNNER_TEMP/helper-linux/cli/." packages/usebeeline/dist/
       - uses: actions/download-artifact@v4
-        if: needs.helper_linux.outputs.shipped != 'true'
+        if: needs.initialize.outputs.channel == 'nightly' && needs.helper_linux.outputs.shipped != 'true'
         with:
           name: daemon-darwin-arm64-${{ needs.initialize.outputs.release_id }}
           path: ${{ runner.temp }}/daemon-darwin-arm64
       - uses: actions/download-artifact@v4
-        if: needs.helper_linux.outputs.shipped != 'true'
+        if: needs.initialize.outputs.channel == 'nightly' && needs.helper_linux.outputs.shipped != 'true'
         with:
           name: daemon-darwin-x64-${{ needs.initialize.outputs.release_id }}
           path: ${{ runner.temp }}/daemon-darwin-x64
       - uses: ./.github/actions/daemon-leg
-        if: needs.helper_linux.outputs.shipped != 'true'
+        if: needs.initialize.outputs.channel == 'nightly' && needs.helper_linux.outputs.shipped != 'true'
         with:
           phase: collect
           release_sha: ${{ needs.initialize.outputs.release_sha }}
@@ -523,6 +550,18 @@ jobs:
           linux_bundle_dir: ${{ format('{0}/helper-linux/bundle', runner.temp) }}
           darwin_arm64_bundle_dir: ${{ format('{0}/daemon-darwin-arm64', runner.temp) }}
           darwin_x64_bundle_dir: ${{ format('{0}/daemon-darwin-x64', runner.temp) }}
+      - name: Reuse the exact nightly helper for promotion
+        if: needs.initialize.outputs.channel == 'latest'
+        uses: actions/github-script@v7
+        env:
+          HELPER_SHA: ${{ needs.initialize.outputs.helper_sha }}
+          HELPER_VERSION: ${{ needs.initialize.outputs.helper_version }}
+        with:
+          script: |
+            const { downloadPagesChannel } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/pages-channel.mjs`);
+            const manifest = await downloadPagesChannel({ github, repo: context.repo, channel: 'nightly', directory: `${process.env.RUNNER_TEMP}/daemon-release` });
+            if (manifest.sourceCommit !== process.env.HELPER_SHA || manifest.version !== process.env.HELPER_VERSION)
+              throw new Error('nightly helper channel differs from the published nightly release');
       - name: Prepare packages for the Pages update proof
         run: |
           set -euo pipefail
@@ -530,14 +569,16 @@ jobs:
           npm run build -w @beeline/api-contract
           npm run build -w @beeline/buzz-client && npm run build -w @beeline/net
       - uses: ./.github/actions/daemon-leg
-        if: needs.helper_linux.outputs.shipped != 'true'
+        if: needs.initialize.outputs.channel == 'latest' || needs.helper_linux.outputs.shipped != 'true'
         with:
           phase: promote
-          release_sha: ${{ needs.initialize.outputs.release_sha }}
-          release_version: ${{ needs.initialize.outputs.release_version }}
-          pages_manifest_url: ${{ vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
+          channel: ${{ needs.initialize.outputs.channel }}
+          release_sha: ${{ needs.initialize.outputs.helper_sha || needs.initialize.outputs.release_sha }}
+          release_version: ${{ needs.initialize.outputs.helper_version || needs.initialize.outputs.release_version }}
+          pages_manifest_url: ${{ needs.initialize.outputs.channel == 'nightly' && 'https://beeline-work.github.io/beeline/dl/nightly/manifest.json' || vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
       - name: Pack and smoke the exact helper CLI package
         id: helper_package
+        if: needs.initialize.outputs.channel == 'nightly'
         timeout-minutes: 5
         env:
           RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
@@ -551,13 +592,14 @@ jobs:
           node scripts/smoke-helper-package.mjs "$tarball" "${RELEASE_VERSION#v}"
           echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
       - name: Publish the exact helper CLI package
+        if: needs.initialize.outputs.channel == 'nightly'
         env:
           RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
           HELPER_TARBALL: ${{ steps.helper_package.outputs.tarball }}
         run: |
           set -euo pipefail
           npm install --global npm@^11.15.0
-          npm view "usebeeline@${RELEASE_VERSION#v}" version >/dev/null 2>&1 || npm publish --no-provenance "$HELPER_TARBALL"
+          npm view "usebeeline@${RELEASE_VERSION#v}" version >/dev/null 2>&1 || npm publish --tag nightly --no-provenance "$HELPER_TARBALL"
   release_proof:
     needs: initialize
     if: needs.initialize.outputs.run_mobile_ota == 'true' && inputs.run_release_proof == true
@@ -596,6 +638,11 @@ jobs:
         uses: ./.github/actions/mobile-ota-leg
         with:
           promote: "false"
+          mode: ${{ needs.initialize.outputs.channel == 'latest' && 'promote' || 'publish' }}
+          production_channel: beta
+          branch: ${{ needs.initialize.outputs.ota_branch }}
+          source_sha: ${{ needs.initialize.outputs.ota_sha }}
+          targets: ${{ needs.initialize.outputs.ota_targets }}
           sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
@@ -607,7 +654,7 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           BEELINE_REVIEW_SECRET: ${{ secrets.BEELINE_REVIEW_SECRET }}
-          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
+          RELEASE_SHA: ${{ needs.initialize.outputs.ota_sha || needs.initialize.outputs.release_sha }}
         timeout-minutes: 5
         run: |
           timeout --signal=TERM --kill-after=10s 280s node scripts/release-proof.mjs --ota --sha "$RELEASE_SHA" --targets "$RUNNER_TEMP/ota/targets.json"
@@ -652,6 +699,12 @@ jobs:
       - uses: ./.github/actions/mobile-ota-leg
         id: ota
         with:
+          mode: ${{ needs.initialize.outputs.channel == 'latest' && 'promote' || 'publish' }}
+          beta_channel: nightly
+          promote: 'false'
+          branch: ${{ needs.initialize.outputs.ota_branch }}
+          source_sha: ${{ needs.initialize.outputs.ota_sha }}
+          targets: ${{ needs.initialize.outputs.ota_targets }}
           sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
@@ -700,6 +753,12 @@ jobs:
       - uses: ./.github/actions/mobile-ota-leg
         id: ota
         with:
+          mode: ${{ needs.initialize.outputs.channel == 'latest' && 'promote' || 'publish' }}
+          beta_channel: nightly
+          promote: 'false'
+          branch: ${{ needs.initialize.outputs.ota_branch }}
+          source_sha: ${{ needs.initialize.outputs.ota_sha }}
+          targets: ${{ needs.initialize.outputs.ota_targets }}
           sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
@@ -751,7 +810,7 @@ jobs:
       - uses: ./.github/actions/pages-leg
         if: needs.initialize.outputs.run_helper != 'true'
         with:
-          manifest_url: ${{ vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
+          manifest_url: ${{ needs.initialize.outputs.channel == 'nightly' && 'https://beeline-work.github.io/beeline/dl/nightly/manifest.json' || vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
       - uses: ./.github/actions/web-app-leg
         with:
           sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
@@ -811,6 +870,7 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           EAS_SKIP_AUTO_FINGERPRINT: "1"
+          ANDROID_BUILD_PROFILE: ${{ needs.initialize.outputs.channel == 'nightly' && 'nightly-ci' || 'production-ci' }}
           EXPO_PUBLIC_BUZZY_MONOLITH_URL: https://server.usebeeline.app
         run: |
           set -euo pipefail
@@ -827,7 +887,7 @@ jobs:
           echo "Android SDK: $ANDROID_HOME on $(hostname)"
           export PATH="$ANDROID_HOME/platform-tools:$PATH"
           bash ../../scripts/npm-ci-timed.sh
-          "$EAS_CLI_PATH" build --local --platform android --profile production-ci --non-interactive --output "$RUNNER_TEMP/beeline.aab"
+          "$EAS_CLI_PATH" build --local --platform android --profile "$ANDROID_BUILD_PROFILE" --non-interactive --output "$RUNNER_TEMP/beeline.aab"
           test -s "$RUNNER_TEMP/beeline.aab" || { echo 'local EAS build did not produce a non-empty aab' >&2; exit 1; }
           node ../../scripts/assert-mobile-release-origin.mjs "$RUNNER_TEMP/beeline.aab"
           unzip -p "$RUNNER_TEMP/beeline.aab" BUNDLE-METADATA/com.android.tools.build.obfuscation/proguard.map > "$RUNNER_TEMP/mapping.txt"
@@ -1127,7 +1187,12 @@ jobs:
         if: needs.initialize.outputs.has_previous == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/release-record.mjs previous --output "$RUNNER_TEMP/previous/release.json"
+        run: node scripts/release-record.mjs previous --channel "${{ needs.initialize.outputs.channel }}" --output "$RUNNER_TEMP/previous/release.json"
+      - name: Read the nightly being promoted
+        if: needs.initialize.outputs.channel == 'latest'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release-record.mjs previous --channel nightly --output "$RUNNER_TEMP/nightly-release.json"
       - name: Record each component job's result and classify the attempt
         id: result
         env:
@@ -1142,7 +1207,9 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/release" "$RUNNER_TEMP/previous"
           state="$RUNNER_TEMP/release/release.json"
-          if ! node scripts/unified-release.mjs restore-job-state --state "$state" --previous "$RUNNER_TEMP/previous/release.json"; then
+          restore=(restore-job-state --state "$state" --previous "$RUNNER_TEMP/previous/release.json")
+          if [ '${{ needs.initialize.outputs.channel }}' = latest ]; then restore+=(--nightly "$RUNNER_TEMP/nightly-release.json"); fi
+          if ! node scripts/unified-release.mjs "${restore[@]}"; then
             exit 0 # Classified metadata failure; the final reporting step fails the job.
           fi
           printf '%s' "$NEEDS" > "$RUNNER_TEMP/needs.json"
@@ -1200,7 +1267,7 @@ jobs:
           path: ${{ runner.temp }}/desktop-release
           merge-multiple: true
       - name: Preserve the previous updater manifest for publication rollback
-        if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true'
+        if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true' && needs.initialize.outputs.channel == 'latest'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1248,7 +1315,7 @@ jobs:
           node scripts/release-delivery.mjs record "$state"
           node -e 'const fs=require("node:fs");const p=process.argv[1];const r=JSON.parse(fs.readFileSync(p,"utf8"));r.runId=Number(process.env.GITHUB_RUN_ID);fs.writeFileSync(p,JSON.stringify(r,null,2)+"\n")' "$state"
       - name: Publish the one GitHub release record with its release.json and stable desktop downloads
-        if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true'
+        if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true' && needs.initialize.outputs.channel == 'latest'
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
@@ -1329,6 +1396,15 @@ jobs:
           [ "$verified" = true ] || { echo 'desktop updater manifest did not converge' >&2; exit 1; }
           manifest_committed=true
           trap - EXIT
+      - name: Publish the nightly record without changing GitHub latest or desktop downloads
+        if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true' && needs.initialize.outputs.channel == 'nightly'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
+        run: |
+          . scripts/gh-release-retry.sh
+          ghr_upload_verified "$RELEASE_VERSION" "$RUNNER_TEMP/release/release.json"
+          gh release edit "$RELEASE_VERSION" --draft=false --prerelease --latest=false --notes 'Nightly dogfood release; production OTA, desktop and website await owner-commanded latest promotion.'
       - name: Remove drafts this release supersedes
         if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true'
         continue-on-error: true
@@ -1351,9 +1427,9 @@ jobs:
         if: "!cancelled() && needs.initialize.outputs.no_op != 'true'"
         continue-on-error: true
         env:
-          MANIFEST_URL: ${{ vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
-          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
-          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
+          MANIFEST_URL: ${{ needs.initialize.outputs.channel == 'nightly' && 'https://beeline-work.github.io/beeline/dl/nightly/manifest.json' || vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
+          RELEASE_VERSION: ${{ needs.initialize.outputs.helper_version || needs.initialize.outputs.release_version }}
+          RELEASE_SHA: ${{ needs.initialize.outputs.helper_sha || needs.initialize.outputs.release_sha }}
           BEELINE_RELEASE_NOTIFY_SECRET: ${{ secrets.BEELINE_RELEASE_NOTIFY_SECRET }}
         run: node scripts/unified-release.mjs notify --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" --manifest-url "$MANIFEST_URL" --repository "$GITHUB_REPOSITORY" --output "$RUNNER_TEMP/release-notification.json"
       - name: Surface release outcome and duration
@@ -1388,7 +1464,7 @@ jobs:
           console.log(`- Selected: ${release.plan.selected.join(', ') || 'none'}`);
           console.log(`- Carried: ${release.plan.carried.join(', ') || 'none'}`);
           const ota = release.components['mobile-ota'];
-          if (ota?.otaBranch) console.log(`- Phone OTA: production -> ${ota.otaBranch} (${(ota.otaTargets ?? []).join(', ') || 'targets carried'}); rollback -> ${ota.previousOtaBranch ?? 'none recorded'}`);
+          if (ota?.otaBranch) console.log(`- Phone OTA: ${release.channel === 'nightly' ? 'nightly' : 'production'} -> ${ota.otaBranch} (${(ota.otaTargets ?? []).join(', ') || 'targets carried'}); rollback -> ${ota.previousOtaBranch ?? 'none recorded'}`);
           if (release.components.server?.imageRef) console.log(`- Server: ${release.components.server.imageRef}; rollback -> ${release.components.server.previousImageRef ?? 'none recorded'}`);
           const signingSecrets = [
             'MACOS_APPLE_CERTIFICATE',

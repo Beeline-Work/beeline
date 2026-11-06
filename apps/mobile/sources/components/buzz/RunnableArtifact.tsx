@@ -19,6 +19,7 @@ export function RunnableArtifact({ attachment }: { attachment: AttachmentReferen
   const [navigationStopped, setNavigationStopped] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const loaded = useRef(false);
+  const [pageLoaded, setPageLoaded] = useState(false);
   const WebView = useSandboxWebView();
   const status = useSandboxWebViewStatus();
   useEffect(() => {
@@ -38,6 +39,7 @@ export function RunnableArtifact({ attachment }: { attachment: AttachmentReferen
     setUrl(undefined);
     setFailed(false);
     setNavigationStopped(false);
+    setPageLoaded(false);
     loaded.current = false;
     void runnableArtifactUrl(attachment).then(
       (value) => {
@@ -75,15 +77,21 @@ export function RunnableArtifact({ attachment }: { attachment: AttachmentReferen
   }
   if (!url || (Platform.OS !== 'web' && !WebView)) {
     return (
-      <View style={styles.placeholder}>
-        <Text style={styles.text}>Opening…</Text>
+      <View style={styles.placeholder} testID="runnable-artifact-loading">
+        <Text style={styles.loadingText}>Loading…</Text>
       </View>
     );
   }
+  // The frame stays mounted under the status so its load event can fire.
+  const loadingOverlay = pageLoaded ? null : (
+    <View style={styles.loadingOverlay} testID="runnable-artifact-loading">
+      <Text style={styles.loadingText}>Loading…</Text>
+    </View>
+  );
   if (Platform.OS === 'web') {
     const embeddedUrl = new URL(url);
     embeddedUrl.searchParams.set('embed', '1');
-    return React.createElement('iframe', {
+    const frame = React.createElement('iframe', {
       src: embeddedUrl.href,
       sandbox: 'allow-scripts',
       referrerPolicy: 'no-referrer',
@@ -94,6 +102,7 @@ export function RunnableArtifact({ attachment }: { attachment: AttachmentReferen
       onLoad: (event: { currentTarget: HTMLIFrameElement }) => {
         if (!loaded.current) {
           loaded.current = true;
+          setPageLoaded(true);
           event.currentTarget.contentWindow?.postMessage('beeline-start-game', '*');
           return;
         }
@@ -103,48 +112,71 @@ export function RunnableArtifact({ attachment }: { attachment: AttachmentReferen
         setNavigationStopped(true);
       },
     });
+    return (
+      <View style={styles.stage}>
+        {frame}
+        {loadingOverlay}
+      </View>
+    );
   }
   const NativeWebView = WebView!;
   return (
-    <NativeWebView
-      source={{ uri: url }}
-      javaScriptEnabled
-      // Whitelist every scheme so the library always consults our guard instead
-      // of handing a rejected link to Linking.openURL before calling the guard.
-      originWhitelist={['*']}
-      onShouldStartLoadWithRequest={(request: { url: string }) => {
-        try {
-          return new URL(request.url).origin === new URL(url).origin;
-        } catch {
-          return false;
-        }
-      }}
-      setSupportMultipleWindows={false}
-      javaScriptCanOpenWindowsAutomatically={false}
-      allowFileAccess={false}
-      allowFileAccessFromFileURLs={false}
-      allowUniversalAccessFromFileURLs={false}
-      domStorageEnabled={false}
-      sharedCookiesEnabled={false}
-      thirdPartyCookiesEnabled={false}
-      geolocationEnabled={false}
-      mediaCapturePermissionGrantType="deny"
-      mediaPlaybackRequiresUserAction
-      allowsFullscreenVideo={false}
-      mixedContentMode="never"
-      onRenderProcessGone={() => setFailed(true)}
-      onContentProcessDidTerminate={() => setFailed(true)}
-      onError={() => setFailed(true)}
-      onHttpError={() => setFailed(true)}
-      style={styles.frame}
-      testID="runnable-artifact"
-    />
+    <View style={styles.stage}>
+      <NativeWebView
+        source={{ uri: url }}
+        javaScriptEnabled
+        // Whitelist every scheme so the library always consults our guard instead
+        // of handing a rejected link to Linking.openURL before calling the guard.
+        originWhitelist={['*']}
+        onShouldStartLoadWithRequest={(request: { url: string }) => {
+          try {
+            return new URL(request.url).origin === new URL(url).origin;
+          } catch {
+            return false;
+          }
+        }}
+        setSupportMultipleWindows={false}
+        javaScriptCanOpenWindowsAutomatically={false}
+        allowFileAccess={false}
+        allowFileAccessFromFileURLs={false}
+        allowUniversalAccessFromFileURLs={false}
+        domStorageEnabled={false}
+        sharedCookiesEnabled={false}
+        thirdPartyCookiesEnabled={false}
+        geolocationEnabled={false}
+        mediaCapturePermissionGrantType="deny"
+        mediaPlaybackRequiresUserAction
+        allowsFullscreenVideo={false}
+        mixedContentMode="never"
+        onRenderProcessGone={() => setFailed(true)}
+        onContentProcessDidTerminate={() => setFailed(true)}
+        onError={() => setFailed(true)}
+        onHttpError={() => setFailed(true)}
+        onLoadEnd={() => setPageLoaded(true)}
+        style={styles.frame}
+        testID="runnable-artifact"
+      />
+      {loadingOverlay}
+    </View>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
   failureInset: { paddingHorizontal: theme.buzz.roomList.edge },
   frame: { flex: 1 },
+  stage: { flex: 1 },
+  loadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.buzz.bgBase,
+  },
+  // Same placeholder text style as the plain artifact viewer's "Loading…".
+  loadingText: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   placeholder: {
     flex: 1,
     justifyContent: 'center',

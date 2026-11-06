@@ -1,25 +1,7 @@
 import { applyLiveOverlay, type LiveOverlay } from '@beeline/buzz-client';
-import { provisionalDraftKey, rememberProvisionalDraft } from './draft-settle';
+import { provisionalDraftKey } from './draft-settle';
 
-/**
- * The one scheduler for every live draft lane.
- *
- * This is the latest-value half of the streaming design: arrivals only replace
- * the lane's pending snapshot, and each eligible frame commits the WHOLE latest
- * value — never a rate-limited slice. There is no character budget and no
- * reveal timer, so a lane stops painting the moment the producer stops. The
- * fixed 33 ms tick is the gate; because every tick commits the entire pending
- * snapshot, no value is ever held past the 50 ms deadline.
- *
- * The row-local invalidation boundary stays where it was: a cumulative arrival
- * mutates only this keyed store, and React state changes once to open or close
- * a lane, never for text (see `useRoomSurfaceSession.ts`).
- */
-export const LIVE_DRAFT_TICK_MS = 33;
-/** A pending snapshot is never held longer than this; a full commit is catch-up. */
-export const LIVE_DRAFT_DEADLINE_MS = 50;
-const MAX_RETAINED_LANES = 32;
-
+/** Latest whole snapshots paint on the host frame owned by the visible visit. */
 export type LiveDraftPresentation = {
   readonly text: string;
 };
@@ -39,21 +21,13 @@ export interface LiveDraftSink {
 }
 
 export interface LiveDraftClock {
-  now(): number;
-  setTimer(callback: () => void, delayMs: number): number;
-  clearTimer(id: number): void;
+  requestFrame(callback: () => void): number;
+  cancelFrame(id: number): void;
 }
 
-const monotonicNow = () => globalThis.performance?.now?.() ?? Date.now();
-
 const defaultClock: LiveDraftClock = {
-  now: monotonicNow,
-  setTimer(callback, delayMs) {
-    return setTimeout(callback, delayMs) as unknown as number;
-  },
-  clearTimer(id) {
-    clearTimeout(id);
-  },
+  requestFrame: callback => globalThis.requestAnimationFrame(callback),
+  cancelFrame: id => globalThis.cancelAnimationFrame(id),
 };
 
 type MutableMetrics = {
@@ -68,11 +42,8 @@ type Lane = {
   received: string;
   /** The whole value currently on the row: text React has already painted. */
   committed: string;
-  /** When the pending value first arrived, for the 50 ms catch-up bound. */
-  pendingSince: number;
   sink?: LiveDraftSink;
   metrics: MutableMetrics;
-  touchedAt: number;
 };
 
 const EMPTY_PRESENTATION: LiveDraftPresentation = { text: '' };
@@ -107,6 +78,8 @@ export interface LiveDraftDrainStore {
   getPresentation(key: string): LiveDraftPresentation;
   getReceived(key: string): string;
   getMetrics(key: string): LiveDraftMetrics;
+  rememberProvisionalDraft(key: string, text: string): void;
+  takeProvisionalDraft(key: string): string | undefined;
   reset(): void;
 }
 
@@ -114,23 +87,24 @@ export function createLiveDraftDrainStore({
   clock = defaultClock,
 }: { clock?: LiveDraftClock } = {}): LiveDraftDrainStore {
   const lanes = new Map<string, Lane>();
+  const provisional = new Map<string, string>();
+  const rememberProvisionalDraft = (key: string, text: string) => {
+    if (text) provisional.set(key, text);
+  };
   const completedMetrics = new Map<string, LiveDraftMetrics>();
   const commitListeners = new Set<(key: string) => void>();
-  let timerId: number | undefined;
+  let frameId: number | undefined;
   let active = true;
 
   const laneFor = (key: string): Lane => {
     const current = lanes.get(key);
     if (current) {
-      current.touchedAt = clock.now();
       return current;
     }
     const lane: Lane = {
       received: '',
       committed: '',
-      pendingSince: clock.now(),
       metrics: { ...EMPTY_METRICS },
-      touchedAt: clock.now(),
     };
     lanes.set(key, lane);
     return lane;
@@ -139,30 +113,15 @@ export function createLiveDraftDrainStore({
   const hasPendingWork = () =>
     [...lanes.values()].some((lane) => lane.sink && lane.received !== lane.committed);
 
-  /**
-   * The 33 ms gate, capped by the 50 ms deadline: a lane whose oldest pending
-   * snapshot has already waited most of its budget flushes on the next tick
-   * rather than waiting out the full gate.
-   */
-  const pendingDelay = () => {
-    const now = clock.now();
-    let delay = LIVE_DRAFT_TICK_MS;
-    for (const lane of lanes.values()) {
-      if (!lane.sink || lane.received === lane.committed) continue;
-      delay = Math.min(delay, Math.max(0, LIVE_DRAFT_DEADLINE_MS - (now - lane.pendingSince)));
-    }
-    return delay;
-  };
-
   const schedule = () => {
-    if (!active || timerId !== undefined || !hasPendingWork()) return;
-    timerId = clock.setTimer(tick, pendingDelay());
+    if (!active || frameId !== undefined || !hasPendingWork()) return;
+    frameId = clock.requestFrame(tick);
   };
 
-  const stopTimer = () => {
-    if (timerId === undefined) return;
-    clock.clearTimer(timerId);
-    timerId = undefined;
+  const cancelFrame = () => {
+    if (frameId === undefined) return;
+    clock.cancelFrame(frameId);
+    frameId = undefined;
   };
 
   const notifyCommit = (key: string) => {
@@ -174,7 +133,6 @@ export function createLiveDraftDrainStore({
     if (!lane.sink || lane.received === lane.committed) return;
     const grew = lane.received.length - lane.committed.length;
     lane.committed = lane.received;
-    lane.pendingSince = clock.now();
     lane.metrics.paints += 1;
     lane.metrics.paintedCharacters += grew;
     if (method === 'replace') lane.sink.replace({ text: lane.received });
@@ -187,7 +145,7 @@ export function createLiveDraftDrainStore({
   };
 
   function tick() {
-    timerId = undefined;
+    frameId = undefined;
     if (!active) return;
     commitAll('paint');
     schedule();
@@ -196,26 +154,11 @@ export function createLiveDraftDrainStore({
   const archive = (key: string, lane: Lane) => {
     rememberProvisionalDraft(key, lane.received);
     completedMetrics.set(key, snapshotMetrics(lane.metrics));
-    if (completedMetrics.size > MAX_RETAINED_LANES) {
-      completedMetrics.delete(completedMetrics.keys().next().value as string);
-    }
   };
 
-  const prune = () => {
-    if (lanes.size <= MAX_RETAINED_LANES) return;
-    const removable = [...lanes.entries()]
-      .filter(([, lane]) => !lane.sink)
-      .sort((left, right) => left[1].touchedAt - right[1].touchedAt);
-    while (lanes.size > MAX_RETAINED_LANES && removable.length) {
-      const [key, lane] = removable.shift()!;
-      archive(key, lane);
-      lanes.delete(key);
-    }
-  };
-
-  const cancelIdleTimer = () => {
-    if (timerId === undefined || hasPendingWork()) return;
-    stopTimer();
+  const cancelIdleFrame = () => {
+    if (frameId === undefined || hasPendingWork()) return;
+    cancelFrame();
   };
 
   return {
@@ -223,50 +166,44 @@ export function createLiveDraftDrainStore({
       const lane = laneFor(key);
       if (lane.received === cumulativeText) return;
       lane.metrics.arrivals += 1;
-      lane.touchedAt = clock.now();
 
       if (!cumulativeText.startsWith(lane.received)) {
         // A harness rewrote what it had written. Honesty rule: commit the
         // replacement immediately and whole, with no reveal.
         lane.received = cumulativeText;
         lane.committed = cumulativeText;
-        lane.pendingSince = clock.now();
         lane.metrics.paints += 1;
         lane.metrics.rewrites += 1;
         lane.metrics.paintedCharacters += cumulativeText.length;
         lane.sink?.replace({ text: cumulativeText });
         if (lane.sink) notifyCommit(key);
-        cancelIdleTimer();
-        prune();
+        cancelIdleFrame();
         return;
       }
 
-      const wasPending = lane.received !== lane.committed;
       lane.received = cumulativeText;
-      if (!wasPending) lane.pendingSince = clock.now();
       schedule();
-      prune();
     },
     stop(key) {
       const lane = lanes.get(key);
       if (!lane) return;
       commitLane(key, lane, 'paint');
       rememberProvisionalDraft(key, lane.received);
-      cancelIdleTimer();
+      cancelIdleFrame();
     },
     finalize(key) {
       const lane = lanes.get(key);
       if (!lane) return;
       lane.committed = lane.received;
       archive(key, lane);
-      cancelIdleTimer();
+      cancelIdleFrame();
     },
     remove(key) {
       const lane = lanes.get(key);
       if (!lane) return;
       archive(key, lane);
       lanes.delete(key);
-      cancelIdleTimer();
+      cancelIdleFrame();
     },
     attach(key, sink) {
       const lane = laneFor(key);
@@ -276,18 +213,18 @@ export function createLiveDraftDrainStore({
       return () => {
         const current = lanes.get(key);
         if (current?.sink === sink) current.sink = undefined;
-        cancelIdleTimer();
+        cancelIdleFrame();
       };
     },
     setActive(next) {
       if (active === next) return;
       active = next;
       if (!active) {
-        stopTimer();
+        cancelFrame();
         return;
       }
       commitAll('replace');
-      cancelIdleTimer();
+      cancelIdleFrame();
     },
     subscribeCommit(listener) {
       commitListeners.add(listener);
@@ -304,11 +241,18 @@ export function createLiveDraftDrainStore({
       const lane = lanes.get(key);
       return lane ? snapshotMetrics(lane.metrics) : (completedMetrics.get(key) ?? EMPTY_METRICS);
     },
+    rememberProvisionalDraft,
+    takeProvisionalDraft(key) {
+      const text = provisional.get(key);
+      provisional.delete(key);
+      return text;
+    },
     reset() {
-      stopTimer();
+      cancelFrame();
       active = true;
       lanes.clear();
       completedMetrics.clear();
+      provisional.clear();
       commitListeners.clear();
     },
   };

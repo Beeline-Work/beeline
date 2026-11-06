@@ -50,13 +50,7 @@ export async function cancelCornerAgentCommands(database: SqlDatabase, cornerId:
       retainDepth: true,
     });
   await database.query(
-    `UPDATE agent_commands SET state='cancelled',completed_at=now()
-     WHERE room_id=$1 AND action IN ('input','resume','restart') AND state IN ('pending','claimed')`,
-    [cornerId],
-  );
-  await database.query(
-    `UPDATE agent_turns SET status='cancelled',created_at=now()
-     WHERE room_id=$1 AND status='working'`,
+    `SELECT (terminal.ended).* FROM (SELECT beeline_end_agent_turn(agent_commands.id,agent_commands.generation_id,'cancelled',NULL,NULL) ended FROM agent_commands WHERE room_id=$1 AND action IN ('input','resume','restart') AND state IN ('pending','claimed')) terminal`,
     [cornerId],
   );
   await database.query(`DELETE FROM agent_pending_attachments WHERE room_id=$1`, [cornerId]);
@@ -65,34 +59,10 @@ export async function cancelCornerAgentCommands(database: SqlDatabase, cornerId:
 /** Release migration: old archived corners cannot have an active assignment. */
 export async function cancelArchivedCornerAssignments(database: SqlDatabase): Promise<void> {
   await database.query(
-    `UPDATE agent_commands command SET state='cancelled',completed_at=now()
-     FROM rooms corner WHERE corner.id=command.room_id
+    `SELECT (terminal.ended).* FROM (SELECT beeline_end_agent_turn(command.id,command.generation_id,'cancelled',NULL,NULL) ended FROM agent_commands command ,rooms corner WHERE corner.id=command.room_id
        AND corner.parent_id IS NOT NULL AND corner.archived_at IS NOT NULL
-       AND command.state IN ('pending','claimed')`,
+       AND command.state IN ('pending','claimed')) terminal`,
   );
-  await database.query(
-    `UPDATE agent_turns turn SET status='cancelled'
-     FROM rooms corner WHERE corner.id=turn.room_id
-       AND corner.parent_id IS NOT NULL AND corner.archived_at IS NOT NULL
-       AND turn.status='working'`,
-  );
-}
-
-/**
- * Release migration: stops created for corners that are long closed. Close used to
- * create a stop for commands that never started; no helper polls an archived
- * corner for them, so they stayed pending. A recent stop may still reach a helper
- * finishing its turn, so only day-old ones are settled.
- */
-export async function cancelStaleClosedCornerStops(database: SqlDatabase): Promise<number> {
-  const cancelled = await database.query(
-    `UPDATE agent_commands command SET state='cancelled',completed_at=now()
-     FROM rooms corner WHERE corner.id=command.room_id
-       AND corner.parent_id IS NOT NULL AND corner.archived_at IS NOT NULL
-       AND command.action='stop' AND command.state='pending'
-       AND command.created_at<now()-interval '1 day'`,
-  );
-  return cancelled.rowCount;
 }
 
 /** GitHub failure must never prevent a person or agent from closing a corner. */

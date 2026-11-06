@@ -1,7 +1,7 @@
 import React from 'react';
 import Svg, { Path } from 'react-native-svg';
 import { DECORATIVE_GLYPH_PROPS } from './decorative-glyph';
-import { chromeStrokeWidth } from './MembersGlyph';
+import { chromeStrokeWidth } from '@/buzz/chrome-geometry';
 
 /**
  * The shared "leaves Beeline" mark: an open box with an arrow out of its

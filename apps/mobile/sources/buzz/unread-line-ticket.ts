@@ -35,8 +35,3 @@ export function spendUnreadLine(roomId: string): void {
 export function issueUnreadLine(roomId: string): void {
   spent.delete(roomId);
 }
-
-/** Tests own the process, so they need a way back to a clean ledger. */
-function resetUnreadLineTickets(): void {
-  spent.clear();
-}

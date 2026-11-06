@@ -16,6 +16,7 @@ export class PhoneSocketError extends Error {
 }
 
 export class PhoneSocketDisconnectedError extends Error {
+  readonly socketRequest = true;
   constructor() {
     super('The connection closed before the server answered. The result is unknown.');
     this.name = 'PhoneSocketDisconnectedError';

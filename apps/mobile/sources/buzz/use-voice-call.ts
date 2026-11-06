@@ -4,24 +4,14 @@ import { AppState, Platform } from 'react-native';
 import { RoomEvent, Track, type Room } from 'livekit-client';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { VOICE_DATA_TOPIC, type VoiceBudget, type VoiceJoin, type VoiceSignal, type VoiceCall, type RoomViewIdentity } from '@beeline/api-contract/phone';
-import { getBuzzRuntimeConfig } from './runtime-config';
-import { createVoiceRoom, subscribeVoiceMicrophone, subscribeVoiceResume, voiceFetch } from './voice-transport';
+import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
+import { createVoiceRoom, subscribeVoiceMicrophone, subscribeVoiceResume } from './voice-transport';
 import { reportClientError } from './client-error-report';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { voiceWaveformLevel } from './waveform-level';
 
 function dailyLimitMessage(budget: VoiceBudget): string {
   return `Calls resume at ${new Date(budget.resetAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: budget.timeZone })}`;
-}
-
-async function voiceRequest<T>(id: string, action: 'join' | 'leave' | 'current' | 'state', sessionId?: string, expectedCallId?: string): Promise<T> {
-  const response = await voiceFetch(`${getBuzzRuntimeConfig().monolithUrl}/v1/phone/voice/${id}/${action}${action === 'state' && sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`,
-    { method: action === 'current' || action === 'state' ? 'GET' : 'POST',
-      ...((sessionId || expectedCallId) && action !== 'state' ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId, expectedCallId }) } : {}) });
-  const value = await response.json() as T & { error?: string; code?: string; budget?: VoiceBudget };
-  if (!response.ok) throw Object.assign(new Error(value.code === 'voice-daily-limit' && value.budget
-    ? dailyLimitMessage(value.budget) : value.error ?? 'Conversation mode could not connect'), { status: response.status });
-  return value;
 }
 
 async function closeVoiceTransport(transport: { room: Room; closeAudio(): Promise<void> } | undefined | null) {
@@ -42,14 +32,7 @@ function queueKeepAwake(change: (tag: string) => Promise<void>) {
 }
 
 export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: readonly RoomViewIdentity[] = NO_AGENTS) {
-  const [endingDeadline, setEndingDeadline] = React.useState<number | null>(null);
   const [endingSeconds, setEndingSeconds] = React.useState<number | null>(null);
-  React.useEffect(() => {
-    if (endingDeadline === null) { setEndingSeconds(null); return; }
-    const update = () => setEndingSeconds(Math.max(0, Math.ceil((endingDeadline - Date.now()) / 1000)));
-    update(); const timer = setInterval(update, 1000);
-    return () => clearInterval(timer);
-  }, [endingDeadline]);
   const [call, setCall] = React.useState<VoiceCall | null>(null);
   const [joinedAgents, setJoinedAgents] = React.useState<{ roomId: string; agents: readonly RoomViewIdentity[] } | null>(null);
   const agents = joinedAgents?.roomId === roomId ? joinedAgents.agents : roomAgents;
@@ -86,14 +69,14 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
     const current = session.current; session.current = null;
     const cancelJoin = joiningCleanup.current; joiningCleanup.current = null;
     mutedRef.current = false; setMuted(false);
-    setEndingDeadline(null); setCall(null); setSpeaker(null); setLevel(0); setConnecting(false); setError(null);
+    setEndingSeconds(null); setCall(null); setSpeaker(null); setLevel(0); setConnecting(false); setError(null);
     transientReplyError.current = false;
     setJoinedAgents(null); setTarget(null); targetRef.current = null; setHumans(1);
     speakerRef.current = null;
     if (cancelJoin) await cancelJoin();
     if (!current) return;
     await closeVoiceTransport(current);
-    try { await voiceRequest(current.callId, 'leave', current.sessionId); } catch { /* RTC disconnect also removes the participant server-side. */ }
+    try { await monolithPhoneOperation('voiceLeave', { callId: current.callId, sessionId: current.sessionId }); } catch { /* RTC disconnect also removes the participant server-side. */ }
   }, []);
   React.useEffect(() => () => { void end(); }, [roomId, end]);
   React.useEffect(() => { if (!enabled) void end(); }, [enabled, end]);
@@ -122,18 +105,14 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
     let closing: Promise<void> | undefined;
     const release = () => closing ??= closeVoiceTransport(transport);
     const current = () => version === revision.current;
-    const request = async <T,>(id: string, action: Parameters<typeof voiceRequest>[1], sessionId?: string, expectedCallId?: string): Promise<T> => {
-      if (!current()) throw new Error('Conversation mode ended');
-      return voiceRequest<T>(id, action, sessionId, expectedCallId);
-    };
     try {
       transport = await createVoiceRoom(() => { void end(); }, roomId);
       joiningCleanup.current = release;
       if (version !== revision.current) { await release(); return; }
-      joined = await request<VoiceJoin>(roomId, 'join');
-      if (version !== revision.current) { await release(); await voiceRequest(joined.call.id, 'leave', joined.sessionId); return; }
+      joined = await monolithPhoneOperation('voiceJoin', { roomId });
+      if (version !== revision.current) { await release(); await monolithPhoneOperation('voiceLeave', { callId: joined.call.id, sessionId: joined.sessionId }); return; }
       await transport.configureStop(joined.call.id, joined.stopToken);
-      if (version !== revision.current) { await release(); await voiceRequest(joined.call.id, 'leave', joined.sessionId); return; }
+      if (version !== revision.current) { await release(); await monolithPhoneOperation('voiceLeave', { callId: joined.call.id, sessionId: joined.sessionId }); return; }
       setJoinedAgents({ roomId, agents: joined.agents });
       const { room } = transport;
       const stopMeter = subscribeVoiceMicrophone(room, amplitude => {
@@ -172,9 +151,9 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
           }
           if (data.type === 'stop') { void end(); return; }
           if (data.type === 'ending') {
-            if (data.deadline === null) setEndingDeadline(null);
+            if (data.deadline === null) setEndingSeconds(null);
             else if (Number.isFinite(data.deadline) && Number.isFinite(data.serverNow))
-              setEndingDeadline(Date.now() + Math.max(0, data.deadline - data.serverNow));
+              setEndingSeconds(Math.max(0, Math.ceil((data.deadline - data.serverNow) / 1000)));
           }
           if (data.type === 'speaker') {
             speakerRef.current = data.agentId; setSpeaker(data.agentId);
@@ -204,44 +183,13 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
         });
         room.on(RoomEvent.TrackUnsubscribed, track => track.detach().forEach(el => el.remove()));
       }
-      let recovering = false, replacementUsed = false;
       room.on(RoomEvent.Disconnected, () => {
-        if (version !== revision.current || mode.current !== 'active' || session.current?.room !== room || recovering) return;
-        // One replacement for this call; a brief connection never renews admission.
-        if (replacementUsed) { void end(); return; }
-        replacementUsed = true;
-        recovering = true; microphonePublished = false; updateReadiness();
-        void (async () => {
-          // A full reconnect after token expiry needs a freshly authorized token.
-          const fresh = await request<VoiceJoin>(roomId, 'join', undefined, joined!.call.id);
-          if (version !== revision.current) { await voiceRequest(fresh.call.id, 'leave', fresh.sessionId).catch(() => {}); return; }
-          if (fresh.call.id !== joined!.call.id) { await voiceRequest(fresh.call.id, 'leave', fresh.sessionId); await end(); return; }
-          joined = fresh;
-          humanCount = fresh.call.participants.filter(p => p.kind === 'human').length; setHumans(humanCount);
-          await transport!.configureStop(fresh.call.id, fresh.stopToken);
-          if (version !== revision.current) { await voiceRequest(fresh.call.id, 'leave', fresh.sessionId).catch(() => {}); return; }
-          if (session.current?.room === room) { session.current.callId = fresh.call.id; session.current.sessionId = fresh.sessionId; }
-          setCall(fresh.call);
-          await room.connect(fresh.url, fresh.token, { maxRetries: 0 });
-          if (version !== revision.current) { await release(); await voiceRequest(fresh.call.id, 'leave', fresh.sessionId).catch(() => {}); return; }
-          const agentId = targetRef.current;
-          await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify(agentId
-            ? { type: 'target', agentId, tap: true } : { type: 'unpin' })),
-            { reliable: true, topic: VOICE_DATA_TOPIC });
-          await room.localParticipant.setMicrophoneEnabled(!quotaRef.current && !mutedRef.current, { echoCancellation: true, noiseSuppression: true, autoGainControl: false });
-          microphonePublished = true;
-          await room.startAudio();
-          updateReadiness();
-          if (version !== revision.current) await release();
-        })().catch(cause => {
-          if (version !== revision.current) return;
-          void reportClientError('voice-join', cause);
-          void end();
-          setError(appErrorCopy(cause, 'Conversation mode could not start'));
-        }).finally(() => { recovering = false; });
+        if (version !== revision.current || mode.current !== 'active' || session.current?.room !== room) return;
+        void end();
+        setError('Conversation mode disconnected.');
       });
       await room.connect(joined.url, joined.token, { maxRetries: 0 });
-      if (version !== revision.current) { await release(); await voiceRequest(joined.call.id, 'leave', joined.sessionId); return; }
+      if (version !== revision.current) { await release(); await monolithPhoneOperation('voiceLeave', { callId: joined.call.id, sessionId: joined.sessionId }); return; }
       const playbackReady = room.startAudio();
       const defaultTarget = joined.agents.find(a => a.pubkey === targetRef.current)?.pubkey;
       if (defaultTarget) await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'target', agentId: defaultTarget, tap: true })),
@@ -252,14 +200,15 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
       await playbackReady;
       updateReadiness();
       if (quotaRef.current) await room.localParticipant.setMicrophoneEnabled(false);
-      if (version !== revision.current) { await release(); await voiceRequest(joined.call.id, 'leave', joined.sessionId); return; }
+      if (version !== revision.current) { await release(); await monolithPhoneOperation('voiceLeave', { callId: joined.call.id, sessionId: joined.sessionId }); return; }
       joiningCleanup.current = null;
       session.current = { ...transport, callId: joined.call.id, sessionId: joined.sessionId };
       setCall(joined.call); setTarget(defaultTarget ?? null); targetRef.current = defaultTarget ?? null;
       const live = sharedLiveConnection();
       const reconcile = () => {
         const active = joined!;
-        void request<{ state: string }>(active.call.id, 'state', active.sessionId).then(state => {
+        if (!current()) return;
+        void monolithPhoneOperation('voiceState', { callId: active.call.id, sessionId: active.sessionId }).then(state => {
           if (current() && joined === active && state.state === 'ended') {
             void end();
           }
@@ -272,7 +221,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
     } catch (cause) {
       if (version === revision.current) void reportClientError('voice-join', cause);
       await release();
-      if (joined) await voiceRequest(joined.call.id, 'leave', joined.sessionId).catch(() => {});
+      if (joined) await monolithPhoneOperation('voiceLeave', { callId: joined.call.id, sessionId: joined.sessionId }).catch(() => {});
       if (version === revision.current) { setError(appErrorCopy(cause, 'Conversation mode could not start')); setConnecting(false); }
     } finally {
       if (joiningCleanup.current === release) joiningCleanup.current = null;

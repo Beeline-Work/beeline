@@ -1,4 +1,3 @@
-export { voiceFetch } from './voice-request';
 import { Room, RoomEvent, Track } from 'livekit-client';
 
 export async function createVoiceRoom(_onStop: () => void = () => {}, _roomId?: string): Promise<{ room: Room; closeAudio(): Promise<void>; configureStop(callId: string, token: string): Promise<void> }> {

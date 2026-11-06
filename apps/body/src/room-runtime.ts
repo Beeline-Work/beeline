@@ -521,7 +521,6 @@ export class RoomRuntimeCoordinator {
   /** Runtime refusals wait for a server configuration/sign-in change. */
   private readonly standingRuntimeStartFaults = new Set<string>();
   /** Per corner, the requests whose start failure has already been said out loud. */
-  private readonly reportedCornerStartFailures = new Map<string, Set<string>>();
   /** Standing workspace-configuration faults: the config that failed, and how. */
   private readonly standingCornerStartFaults = new Map<string, { configKey: string; error: unknown }>();
   private readonly scheduler: AgentProcesses;
@@ -1274,7 +1273,6 @@ export class RoomRuntimeCoordinator {
       }
       if (previousStanding) {
         this.standingCornerStartFaults.delete(corner.cornerId);
-        this.reportedCornerStartFailures.delete(corner.cornerId);
       }
       if (repository.resolution === 'unverified') {
         throw new Error('corner parent Room repository state is not verified yet');
@@ -1433,7 +1431,6 @@ export class RoomRuntimeCoordinator {
         ...(!repositoryBacked ? { scratch: { path: workspacePath, cornerId: corner.cornerId } } : {}),
       });
       this.standingCornerStartFaults.delete(corner.cornerId);
-      this.reportedCornerStartFailures.delete(corner.cornerId);
       console.log(
         worktree
           ? `[thin-core] serving corner ${corner.cornerId} on ${featureBranch} at ${workspacePath}`
@@ -1613,51 +1610,35 @@ export class RoomRuntimeCoordinator {
     }
   }
 
-  /**
-   * An agent addressed in a corner it then could not restore must not be
-   * silent about it.
-   *
-   * The corner never starts, so no turn ever runs. Report against the actual
-   * pending command — never a fabricated generation — so the server can
-   * authorize the failed receipt and inscribe the Room line. Every pending
-   * request is told once, so a person who asks again while the corner still
-   * cannot start sees the failure under the new message too. Standing
-   * workspace-configuration faults are not retried until that configuration
-   * changes; clone/network failures keep retrying.
-   */
+  /** A real startup failure is a result of an owned command, never an
+   * unclaimed receipt. Terminal commands disappear from the pending queue. */
   private async reportCornerStartFailure(cornerId: string, error: unknown): Promise<boolean> {
+    const api = this.options.daemonApi;
+    const generationId = randomUUID();
+    let claimed = false;
     try {
-      const { commands } = await this.options.daemonApi.execute('getAgentCommands', {
-        roomId: cornerId,
+      const pending = (await api.execute('getAgentCommands', {roomId:cornerId})).commands
+        .find(command => command.action === 'input' || command.action === 'resume');
+      if (!pending) return false;
+      const result = await api.execute('claimAgentTurn', {
+        roomId:cornerId,commandId:pending.id,generationId,
       });
-      const requests = new Set(
-        commands
-          .filter((command) => command.action === 'input' || command.action === 'resume')
-          .map((command) => command.turnRequestId),
-      );
-      if (!requests.size) return false;
-      const reported = this.reportedCornerStartFailures.get(cornerId) ?? new Set<string>();
-      this.reportedCornerStartFailures.set(cornerId, reported);
+      claimed = true;
       const diagnostic = error && typeof error === 'object' && 'stderr' in error &&
         typeof error.stderr === 'string' && error.stderr.trim() ? error.stderr : error;
       const reason = distillTurnFailureReason(diagnostic);
-      for (const requestId of requests) {
-        if (reported.has(requestId)) continue;
-        await this.options.daemonApi.execute('postAgentTurnReceipt', {
-          agentId: this.agent.publicKey,
-          roomId: cornerId,
-          requestId,
-          status: 'failed',
-          reason: reason.text,
-          reasonKind: 'workspace-failure',
-          trace: { totalMs: 0, attempts: [], reason: redactReplayError(reason.text), reasonKind: 'workspace-failure' },
-        });
-        reported.add(requestId);
-      }
+      for (const command of result.commands) await api.execute('postAgentTurnReceipt', {
+        agentId:this.agent.publicKey,roomId:cornerId,requestId:command.turnRequestId,generationId,
+        status:'failed',reason:reason.text,reasonKind:'workspace-failure',
+        trace:{totalMs:0,attempts:[],reason:redactReplayError(reason.text),reasonKind:'workspace-failure'},
+      });
       return true;
     } catch (reportError) {
       console.error(`[thin-core] corner ${cornerId} start-failure report failed:`, reportError);
       return false;
+    } finally {
+      if (claimed) await api.execute('releaseAgentTurn', {roomId:cornerId,generationId})
+        .catch(reportError => console.error(`[thin-core] corner ${cornerId} claim release failed:`,reportError));
     }
   }
 

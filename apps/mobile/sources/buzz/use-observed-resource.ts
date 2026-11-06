@@ -125,12 +125,11 @@ export function isSystemOrCardMessage(message: RoomViewMessage): boolean {
  * socket that reconnected and may have missed either. Prose, tool rows,
  * turn progress and an invalidation whose delta follows read nothing; the
  * live connection already wrote each committed row to the Room's message
- * records, and `onTurn` hears turn progress without a read.
+ * records.
  */
 export function observeRoomResource(
   roomId: string,
   changes: (message: RoomViewMessage) => boolean = isSystemOrCardMessage,
-  onTurn?: (turn: RoomViewAgentTurn) => void,
 ) {
   return (invalidate: () => void, refresh: () => void) => {
     return sharedLiveConnection().register([{ '#h': [roomId] }], (event) => {
@@ -139,8 +138,7 @@ export function observeRoomResource(
       if (!('roomId' in live) || live.roomId !== roomId) return;
       if (live.type === 'message-delta') {
         if (changes(live.message)) invalidate();
-      } else if (live.type === 'turn-delta') {
-        onTurn?.(live.turn);
+
       } else if (live.type === 'invalidate' && !live.deliveryId) {
         invalidate();
       }

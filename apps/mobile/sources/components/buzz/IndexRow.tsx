@@ -187,9 +187,9 @@ export type IndexRowProps = {
   actionControl?: IndexRowActionControl;
   /** The trailing chevron of a row that opens something. */
   chevron?: 'right' | 'down' | 'up';
-  /** The quiet line under the title: one short phrase, two lines at most. */
+  /** The full quiet copy under the title. */
   description?: string;
-  /** A short fact kept whole before a one-line, ellipsized description tail. */
+  /** A short fact before the wrapping description. */
   descriptionLead?: string;
   /** Custom rendering for the description; `description` remains its spoken text. */
   descriptionContent?: React.ReactNode;
@@ -222,12 +222,10 @@ export type IndexRowProps = {
   /** The row's current state, on the trailing axis. Never in the title. */
   value?: string;
   valueTone?: 'danger' | 'accent';
-  /** The title keeps its full width; the trailing value ellipsizes instead. */
+  /** The title keeps its full width before the trailing value wraps. */
   wholeTitle?: boolean;
 };
 
-/** A page subtitle is one short phrase; a long one stops at two lines. */
-const DESCRIPTION_LINES = 2;
 
 /** The reserved width of a row's trailing column (DESIGN.md → Index rows). */
 const TRAILING_COLUMN = 72;
@@ -306,13 +304,9 @@ export function IndexRow({
   // A pressable toggle row IS the switch to a screen reader, so the control
   // itself is not announced a second time.
   const rowIsSwitch = Boolean(toggle && onPress);
-  // A page subtitle is one short phrase and stops at two lines; a sheet row's
-  // quiet line explains the choice, so it wraps whole (screenshot 1cfe27eb).
-  const descriptionLines = density === 'page' ? DESCRIPTION_LINES : undefined;
-
   const trailingMark =
     action !== undefined ? (
-      <Text numberOfLines={1} style={styles.action}>
+      <Text style={styles.action}>
         {action}
       </Text>
     ) : shownValue !== undefined ? (
@@ -321,7 +315,6 @@ export function IndexRow({
           <StateDot kind={statusGlyph} testID={testID ? `${testID}-glyph` : undefined} />
         ) : null}
         <Text
-          numberOfLines={1}
           style={[
             styles.value,
             appBoard && styles.boardValue,
@@ -393,7 +386,6 @@ export function IndexRow({
       <View style={[styles.copy, wholeTitle && styles.wholeCopy]}>
         <View style={styles.titleLine}>
           <Text
-            numberOfLines={1}
             style={[
               styles.title,
               appBoard && styles.boardTitle,
@@ -405,7 +397,7 @@ export function IndexRow({
             {title}
           </Text>
           {titleAside ? (
-            <Text numberOfLines={1} style={styles.titleAside}>
+            <Text style={styles.titleAside}>
               {titleAside}
             </Text>
           ) : null}
@@ -414,7 +406,6 @@ export function IndexRow({
           <View style={[styles.descriptionRow, descriptionLead && styles.descriptionLeadRow]}>
             {descriptionLead ? (
               <Text
-                numberOfLines={1}
                 style={styles.descriptionLead}
                 testID={testID ? `${testID}-description-lead` : undefined}
               >
@@ -423,7 +414,6 @@ export function IndexRow({
             ) : null}
             {descriptionContent ?? (
               <Text
-                numberOfLines={descriptionLead || descriptionAction ? 1 : descriptionLines}
                 style={[
                   descriptionLead ? styles.descriptionTail : styles.description,
                   descriptionTone === 'danger' && styles.descriptionDanger,
@@ -453,7 +443,7 @@ export function IndexRow({
             ]}
           >
             {descriptionDetailContent ?? (
-              <Text numberOfLines={DESCRIPTION_LINES} style={styles.description}>
+              <Text style={styles.description}>
                 {descriptionDetail}
               </Text>
             )}

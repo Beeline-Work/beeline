@@ -9,14 +9,15 @@ import * as SplashScreen from 'expo-splash-screen';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useUnistyles } from 'react-native-unistyles';
-import { setAppAppearance } from '../sources/unistyles';
+import { setAppDisplay } from '../sources/unistyles';
+import { loadLocalSettings } from '../sources/sync/persistence';
 import { CommunityRail } from '../sources/components/buzz/CommunityRail';
 import { RepoPicker } from '../sources/components/buzz/RepoPicker';
 import { Button } from '../sources/components/buzz/Button';
 import { CommunityRail as BeforeRail } from '../sources/components/buzz/CommunityRail.audit-before';
 import { RepoPicker as BeforeRepo } from '../sources/components/buzz/RepoPicker.audit-before';
 const none = () => {};
-setAppAppearance('light');
+setAppDisplay('light', loadLocalSettings().uiSize);
 function Scene() {
   const [state, setState] = useState<'rail' | 'search'>('rail');
   const [before, setBefore] = useState(false);
@@ -57,7 +58,7 @@ function Scene() {
           <Button
             label="Theme"
             onPress={() => {
-              setAppAppearance(dark ? 'light' : 'dark');
+              setAppDisplay(dark ? 'light' : 'dark', loadLocalSettings().uiSize);
               setDark(!dark);
             }}
             testID="audit-native-theme"

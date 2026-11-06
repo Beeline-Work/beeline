@@ -50,8 +50,7 @@ function connectorNameFor(connectorId: string): string {
 
 /**
  * Connect a machine tool — one page for pairing, installation and the sign-in
- * hand-off (Trusty Squire mock v3): four fixed steps, a step bar, a one-minute
- * limit on reaching the computer, and one primary action in the footer.
+ * hand-off: server-reported steps, a step bar, and the existing footer action.
  */
 export default function ConnectTrustySquireScreen() {
   useLatencyRouteFrame('/beeline/settings/workbench/connect');
@@ -74,17 +73,9 @@ function LegacyGoogleAppRedirect({ workspaceId, viewerId }: { workspaceId: strin
 /** One row of the connect stepper, already in the words the person reads. */
 type StepView = { key: string; title: string; state: ConnectStepState; detail?: string; error?: boolean };
 
-/** Step 1 stops after this long without an answer from the computer. */
-const REACH_TIMEOUT_MS = 60_000;
-
 const SQUIRE_PHASE: Record<string, string> = {
   reach: 'Reaching', install: 'Installing', pair: 'Pairing', 'sign-in': 'Google sign-in',
 };
-
-function clock(ms: number): string {
-  const seconds = Math.max(0, Math.floor(ms / 1000));
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
-}
 
 /** The helper's own wording for an ended sign-in page never reaches the person. */
 function stepReason(reason: string | undefined): string | undefined {
@@ -93,21 +84,19 @@ function stepReason(reason: string | undefined): string | undefined {
 }
 
 /** The four Trusty Squire stages in the mock's words (Trusty Squire mock v3). */
-function squireSteps(install: ConnectorInstallState | null, machine: string, elapsedMs: number,
-  timedOut: boolean): StepView[] {
+function squireSteps(install: ConnectorInstallState | null, machine: string): StepView[] {
   const steps = install?.steps ?? [];
   const version = steps.map((step) => /^trusty-squire (\S+) installed$/i.exec(step.label.trim())?.[1]).find(Boolean);
   const stages = squirePairingStages(steps, machine, Boolean(install?.signIn));
   return stages.filter((stage) => stage.key !== 'other').map((stage) => {
-    const failed = stage.status === 'failed' || (stage.key === 'reach' && stage.status === 'current' && timedOut);
+    const failed = stage.status === 'failed';
     const reason = stepReason(stage.reason);
     if (stage.key === 'reach') {
       return { key: 'reach', title: `Reach ${machine}`,
         state: stage.status === 'done' ? 'done' : failed ? 'failed' : 'current',
         detail: stage.status === 'done' ? 'Helper online'
-          : timedOut || stage.status === 'failed'
-            ? reason ?? `${machine} didn’t answer for 1 minute. Check it is on and online.`
-            : `Reconnecting · ${clock(elapsedMs)} · stops at ${clock(REACH_TIMEOUT_MS)}` };
+          : failed ? reason ?? `${machine} could not be reached. Check it is on and online.`
+            : 'Waiting for the helper' };
     }
     const state: ConnectStepState = stage.status === 'done' ? 'done' : stage.status === 'failed' ? 'failed'
       : stage.status === 'pending' ? 'todo'
@@ -166,8 +155,6 @@ function ConnectToolFlow() {
   const [selectedHelperName, setSelectedHelperName] = useState<string | null>(null);
   const [errorCause, setError] = useState<string | null>(null);
   const error = errorCause ? connectorSetupErrorCopy(errorCause) : null;
-  const [startedAt, setStartedAt] = useState(() => Date.now());
-  const [now, setNow] = useState(() => Date.now());
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const desktopPageLayout = useDesktopPageLayout();
@@ -196,8 +183,6 @@ function ConnectToolFlow() {
       stopObserving();
       setError(null);
       setInstall(null);
-      setStartedAt(Date.now());
-      setNow(Date.now());
       pairedHelperRef.current = helperId;
       setSelectedHelperName(helpers?.find((helper) => helper.id === helperId)?.name ?? null);
       try {
@@ -231,8 +216,6 @@ function ConnectToolFlow() {
 
   const retry = useCallback(() => {
     setError(null);
-    setStartedAt(Date.now());
-    setNow(Date.now());
     if (observed.error && !observed.installMissing) {
       void observed.retry();
       return;
@@ -265,34 +248,19 @@ function ConnectToolFlow() {
   const choosing = !offerCeremony && !requestedHelperId && !pairedHelperRef.current && onlineHelpers.length > 1;
   const showSteps = offerCeremony || Boolean(requestedHelperId || pairedHelperRef.current || install);
 
-  const steps = squire ? squireSteps(install, machineName, now - startedAt, false)
+  const counted = squire ? squireSteps(install, machineName)
     : genericSteps(install?.steps ?? [], Boolean(install?.signIn));
-  const reachPending = squire && steps[0]?.key === 'reach' && steps[0].state === 'current';
-  const timedOut = reachPending && now - startedAt >= REACH_TIMEOUT_MS;
-  const counted = squire ? squireSteps(install, machineName, now - startedAt, timedOut) : steps;
   // A failed request or read stops the step it was on and says why there.
   const stoppedAt = counted.findIndex((step) => step.state !== 'done');
   const shown = error && !counted.some((step) => step.state === 'failed') && stoppedAt >= 0
     ? counted.map((step, index) => index === stoppedAt ? { ...step, state: 'failed' as const, detail: connectorSetupErrorCopy(error), error: true } : step)
     : counted;
-  // Step 1 counts its own minute, then stops; nothing on this page spins forever.
-  useEffect(() => {
-    if (!reachPending || timedOut || error) return;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [reachPending, timedOut, error]);
-
   const failedIndex = shown.findIndex((step) => step.state === 'failed');
   const activeIndex = failedIndex >= 0 ? failedIndex
     : shown.findIndex((step) => step.state === 'current' || step.state === 'waiting');
   const stepNumber = activeIndex >= 0 ? activeIndex + 1 : shown.length;
   const parts: ConnectBarPart[] = shown.map((_, index) => index < stepNumber - 1 ? 'filled'
     : index === stepNumber - 1 ? (failedIndex >= 0 ? 'failed' : activeIndex >= 0 ? 'active' : 'filled') : 'empty');
-  useEffect(() => {
-    if (!squire || activeIndex < 0 || shown[activeIndex]?.state !== 'current' || shown[activeIndex]?.key === 'reach') return;
-    const timer = setTimeout(() => setError('This step has not finished. Try again.'), 120_000);
-    return () => clearTimeout(timer);
-  }, [squire, activeIndex, shown[activeIndex]?.state, shown[activeIndex]?.key]);
   // An error with no step to stop (no steps reported yet) still ends the run visibly.
   const errorUnplaced = Boolean(error) && !shown.some((step) => step.error);
   const failed = failedIndex >= 0 || errorUnplaced;

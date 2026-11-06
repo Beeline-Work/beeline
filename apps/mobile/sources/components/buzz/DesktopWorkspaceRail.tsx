@@ -234,7 +234,7 @@ export function DesktopWorkspaceRail({
                       style={styles.label}
                       testID="desktop-workspace-label"
                     >
-                      <Text numberOfLines={1} style={styles.labelName}>
+                      <Text style={styles.labelName}>
                         {workspace.name}
                       </Text>
                       <Text style={styles.labelMeta}>
@@ -314,7 +314,7 @@ export function DesktopWorkspaceRail({
                   style={styles.label}
                   testID="desktop-workspace-account-label"
                 >
-                  <Text numberOfLines={1} style={styles.labelName}>
+                  <Text style={styles.labelName}>
                     Settings
                   </Text>
                   {viewerName ? <Text style={styles.labelMeta}>{viewerName}</Text> : null}
@@ -434,7 +434,6 @@ const stylesheet = StyleSheet.create((theme) => {
     labelMeta: {
       ...hull.type.meta,
       color: hull.textMuted,
-      ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' } : {}),
     } as any,
     separator: { width: 32, height: 1, marginVertical: 4, backgroundColor: hull.borderStrong },
     addTile: {

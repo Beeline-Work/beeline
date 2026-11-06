@@ -43,7 +43,7 @@ export function DesktopRoomCorners({
             testID={`desktop-corner-${corner.id}`}
           >
             <CornerGlyph size={CORNER_META_SIZE} testID={`desktop-corner-glyph-${corner.id}`} />
-            <Text numberOfLines={1} style={styles.name}>
+            <Text style={styles.name}>
               {cornerShortTitle(item.room.name, corner.name, corner.id)}
             </Text>
             <CornerWaitingPulse state={corner.state}>

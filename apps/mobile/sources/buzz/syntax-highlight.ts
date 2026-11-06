@@ -413,10 +413,3 @@ export function tokenizeCode(code: string, language: string | null): TokenizedLi
   const lines = code.split('\n');
   return lines.map((line) => tokenizeLine(line));
 }
-
-/**
- * Test helper that flattens tokenized output back to the original text.
- */
-function flattenTokens(lines: TokenizedLine[]): string {
-  return lines.map((line) => line.map((s) => s.text).join('')).join('\n');
-}

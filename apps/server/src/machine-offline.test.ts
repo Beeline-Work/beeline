@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { claimAgentConnection, releaseAgentConnection, releaseStaleServerConnections } from './connection-presence.js';
-import { noteCornerAgentUnreachable } from './agent-command.js';
 import { PushDeliveryLoop } from './background.js';
 import { LiveHub } from './live.js';
 
@@ -54,7 +53,6 @@ describe('machine disconnect notices', () => {
     expect((await db.query(`SELECT 1 FROM agent_connections WHERE released_at IS NOT NULL`)).rowCount).toBe(2);
     expect(await push.runOnce()).toBe(0);
     for (let i = 0; i < 10; i++) {
-      await noteCornerAgentUnreachable(db, ROOM, AGENTS[0]!, `wake-${i}`);
       await releaseAgentConnection(db, live, AGENTS[1]!, 'second');
     }
     await claim(AGENTS[0]!, 'new');

@@ -43,7 +43,6 @@ function storedRegistrationState(overrides: Record<string, unknown> = {}): strin
     registered: false,
     retryable: true,
     phase: 'network-failed',
-    failedAttempts: 1,
     updatedAt: Date.now() - 60 * 60 * 1000,
     ...overrides,
   });
@@ -113,7 +112,7 @@ describe('Buzz push preference', () => {
     const logged = allLogs().join('\n');
     expect(logged).toContain('[beeline-push] FCM token acquired fingerprint=');
     expect(logged).toContain(`length=${FCM_TOKEN.length}`);
-    expect(logged).toContain('POST https://push.example/registrations -> HTTP 200');
+    expect(logged).toContain('registerPushDevice accepted');
     expect(logged).not.toContain(FCM_TOKEN);
   });
 
@@ -123,26 +122,19 @@ describe('Buzz push preference', () => {
     expect(operation).toHaveBeenCalledWith('sendPushTest', {});
   });
 
-  it('surfaces a token-acquisition timeout as a distinct retryable phase', async () => {
-    vi.useFakeTimers();
-    notifications.getDevicePushTokenAsync.mockReturnValue(new Promise(() => undefined));
-
-    const pending = registerBuzzPushNotifications(identity);
-    await vi.advanceTimersByTimeAsync(7_500);
-    const result = await pending;
-
-    expect(result).toMatchObject({
-      registered: false,
-      retryable: true,
-      phase: 'token-timed-out',
+  it('waits for the native token result and settles its failure once', async () => {
+    let refuse!: (error: Error) => void;
+    let requested!: () => void;
+    const started = new Promise<void>(resolve => { requested = resolve; });
+    notifications.getDevicePushTokenAsync.mockImplementation(() => {
+      requested(); return new Promise((_resolve, reject) => { refuse = reject; });
     });
-    expect(storage.setItem).toHaveBeenCalledWith(
-      REGISTRATION_STATE_KEY,
-      expect.stringContaining('"failedAttempts":1'),
-    );
-    expect(
-      warnSpy.mock.calls.some((parts) => parts.join(' ').includes('phase=token-timed-out')),
-    ).toBe(true);
+    const pending = registerBuzzPushNotifications(identity);
+    await started;
+    expect(operation).not.toHaveBeenCalled();
+    refuse(new Error('Native token acquisition failed'));
+    expect(await pending).toMatchObject({ registered: false, retryable: true, phase: 'token-failed' });
+    expect(notifications.getDevicePushTokenAsync).toHaveBeenCalledOnce();
   });
 
   it('classifies a generic FCM token failure before contacting the gateway', async () => {
@@ -183,10 +175,10 @@ describe('Buzz push preference', () => {
     );
   });
 
-  it('does not count a permission gap against the retry backoff', async () => {
+  it('persists permission gaps without a failure counter', async () => {
     storage.getItem.mockImplementation(async (key: string) =>
       key === REGISTRATION_STATE_KEY
-        ? storedRegistrationState({ phase: 'permission-denied', failedAttempts: 3 })
+        ? storedRegistrationState({ phase: 'permission-denied', })
         : null,
     );
     notifications.getPermissionsAsync.mockResolvedValue({
@@ -204,7 +196,7 @@ describe('Buzz push preference', () => {
 
     expect(storage.setItem).toHaveBeenCalledWith(
       REGISTRATION_STATE_KEY,
-      expect.stringContaining('"failedAttempts":3'),
+      expect.stringContaining('"phase":"permission-denied"'),
     );
   });
 
@@ -216,7 +208,6 @@ describe('Buzz push preference', () => {
               registered: true,
               retryable: false,
               phase: 'registered',
-              failedAttempts: 0,
             })
           : null,
       );
@@ -225,18 +216,18 @@ describe('Buzz push preference', () => {
       expect(notifications.getDevicePushTokenAsync).not.toHaveBeenCalled();
     });
 
-    it('backs off while the retry window has not elapsed', async () => {
+    it('reconciles on foreground immediately after a failed attempt', async () => {
       storage.getItem.mockImplementation(async (key: string) =>
         key === REGISTRATION_STATE_KEY
-          ? storedRegistrationState({ failedAttempts: 2, updatedAt: Date.now() - 10_000 })
+          ? storedRegistrationState({ updatedAt: Date.now() - 10_000 })
           : null,
       );
 
-      await expect(retryBuzzPushRegistration(identity)).resolves.toBeNull();
-      expect(notifications.getDevicePushTokenAsync).not.toHaveBeenCalled();
+      await expect(retryBuzzPushRegistration(identity)).resolves.toMatchObject({ registered: true });
+      expect(notifications.getDevicePushTokenAsync).toHaveBeenCalledOnce();
     });
 
-    it('retries without prompting once the backoff window has elapsed', async () => {
+    it('reconciles a foreground event without prompting', async () => {
       notifications.getPermissionsAsync.mockResolvedValue({
         granted: false,
         canAskAgain: true,
@@ -244,7 +235,7 @@ describe('Buzz push preference', () => {
       });
       storage.getItem.mockImplementation(async (key: string) =>
         key === REGISTRATION_STATE_KEY
-          ? storedRegistrationState({ failedAttempts: 2, updatedAt: Date.now() - 60_000 })
+          ? storedRegistrationState({ updatedAt: Date.now() - 60_000 })
           : null,
       );
 
@@ -302,13 +293,13 @@ describe('Buzz push preference', () => {
   it('reads back a persisted registration state for the settings UI', async () => {
     storage.getItem.mockImplementation(async (key: string) =>
       key === REGISTRATION_STATE_KEY
-        ? storedRegistrationState({ phase: 'token-timed-out', failedAttempts: 2 })
+        ? storedRegistrationState({ phase: 'token-timed-out', })
         : null,
     );
 
     const state = await getBuzzPushRegistrationState(identity.publicKey);
 
-    expect(state).toMatchObject({ registered: false, phase: 'token-timed-out', failedAttempts: 2 });
+    expect(state).toMatchObject({ registered: false, phase: 'token-timed-out', });
   });
 
   it('tolerates a corrupt persisted registration state', async () => {
@@ -364,7 +355,6 @@ describe('Buzz push preference on iOS', () => {
       registered: false,
       retryable: false,
       phase: 'unsupported-platform',
-      failedAttempts: 0,
     });
     expect(warnSpy).not.toHaveBeenCalled();
 
@@ -403,7 +393,7 @@ describe('Buzz push preference on iOS', () => {
   it('retries an unregistered but retryable iOS attempt on foreground', async () => {
     storage.getItem.mockImplementation(async (key: string) =>
       key === REGISTRATION_STATE_KEY
-        ? storedRegistrationState({ failedAttempts: 2, updatedAt: Date.now() - 60_000 })
+        ? storedRegistrationState({ updatedAt: Date.now() - 60_000 })
         : null,
     );
 

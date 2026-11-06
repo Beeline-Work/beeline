@@ -2,7 +2,7 @@ import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { Button } from './Button';
 import React from 'react';
-import { Animated, Platform, ScrollView, Text, View, useWindowDimensions } from 'react-native';
+import { Animated, FlatList, Platform, Text, View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AttachmentReference } from '@beeline/buzz-client';
@@ -33,7 +33,7 @@ export function ViewerConversationDock({
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
-  const transcriptScroll = React.useRef<ScrollView>(null);
+  const transcriptScroll = React.useRef<FlatList<Entry>>(null);
   const scrollToNewest = () => {
     const scroll = () => transcriptScroll.current?.scrollToEnd({ animated: false });
     // Native layout commits after the content-size callback; web layout is already available.
@@ -92,7 +92,7 @@ export function ViewerConversationDock({
       id: message.id,
       speaker: message.author.handle ?? message.author.name,
       text: message.text,
-    }))].slice(-8));
+    }))]);
   }, [conversation?.messages, currentAgent]);
 
   React.useEffect(() => {
@@ -130,7 +130,7 @@ export function ViewerConversationDock({
       if (!succeeded) { sentToAgent.current = previouslySent; return false; }
       setEntries((current) => [...current, {
         id: `local:${Date.now()}`, speaker: 'You', text, context,
-      }].slice(-8));
+      }]);
       setDraft('');
       draftRef.current = '';
       setHeight(COMPOSER_SINGLE_LINE_INPUT_HEIGHT);
@@ -146,7 +146,7 @@ export function ViewerConversationDock({
   };
   const agentReplies = entries.filter((entry) => entry.speaker !== 'You');
   const showTranscript = Boolean(error || (open && entries.length) || (tickerVisible && agentReplies.length));
-  const recent = open ? entries.slice(-3) : agentReplies.slice(-2);
+  const latestReply = agentReplies.at(-1);
   return (
     <View pointerEvents="box-none" style={styles.overlay} testID="viewer-conversation-dock"
     onLayout={(event) => setAvailableWidth(event.nativeEvent.layout.width - 24)}>
@@ -157,31 +157,32 @@ export function ViewerConversationDock({
     >
           <Text style={styles.transcriptHeading}>Recent conversation · {currentAgent ?? 'agent'}</Text>
           {open ? (
-            <ScrollView ref={transcriptScroll} style={styles.transcriptScroll}
+            <FlatList ref={transcriptScroll} style={styles.transcriptScroll}
+              data={entries} keyExtractor={entry => entry.id}
               testID="viewer-conversation-scroll" keyboardShouldPersistTaps="handled"
-              onLayout={scrollToNewest} onContentSizeChange={scrollToNewest}>
-              {recent.map((entry) => (
-                <View key={entry.id} style={styles.transcriptEntry}>
+              onLayout={scrollToNewest} onContentSizeChange={scrollToNewest}
+              renderItem={({ item: entry }) => (
+                <View style={styles.transcriptEntry}>
                   <Text style={styles.transcriptSpeaker}>{entry.speaker}</Text>
                   <MonoMarkdown markdown={entry.text} textStyle={styles.transcriptText} />
                   {entry.context ? (
                     <TranscriptReference viewer>{viewerContextLabel(entry.context)}</TranscriptReference>
                   ) : null}
                 </View>
-              ))}
-              {error ? <ErrorBanner inline title={error} /> : null}
-            </ScrollView>
+              )}
+              ListFooterComponent={error ? <ErrorBanner inline title={error} /> : null}
+            />
           ) : (
             <>
-              {recent.map((entry) => (
-                <View key={entry.id} style={styles.transcriptEntry}>
-                  <Text style={styles.transcriptSpeaker}>{entry.speaker}</Text>
-                  <Text numberOfLines={2} style={styles.transcriptText}>{entry.text}</Text>
-                  {entry.context ? (
-                    <TranscriptReference viewer>{viewerContextLabel(entry.context)}</TranscriptReference>
+              {latestReply ? (
+                <View style={styles.transcriptEntry}>
+                  <Text style={styles.transcriptSpeaker}>{latestReply.speaker}</Text>
+                  <Text style={styles.transcriptText}>{latestReply.text}</Text>
+                  {latestReply.context ? (
+                    <TranscriptReference viewer>{viewerContextLabel(latestReply.context)}</TranscriptReference>
                   ) : null}
                 </View>
-              ))}
+              ) : null}
               {error ? <Text style={styles.error}>{error}</Text> : null}
             </>
           )}

@@ -1,3 +1,4 @@
+import { subscribePhoneLiveEvents } from '@/sync/transport/phone-live-events';
 import { useCallback, useMemo, useSyncExternalStore } from 'react';
 import type {
   ChatListCorner,
@@ -426,3 +427,16 @@ export function useRoomCornerSummaries(): ReadonlyMap<string, RoomCornerSummary>
   return useMemo(() => new Map([...records.entries()].flatMap(([id, record]) =>
     record.summary ? [[id, record.summary] as const] : [])), [revision]);
 }
+
+subscribePhoneLiveEvents(event => {
+  switch (event.type) {
+    case 'corner-status': acceptCornerStatusFrame(event); break;
+    case 'subscribed': noteCornerLaneSubscribed(event.roomId); break;
+    case 'room-released': noteCornerLaneReleased(event.roomId); break;
+    case 'socket-dropped': noteCornerSocketDropped(); break;
+    case 'invalidate':
+      if (event.reason === 'corner-status' || event.reason === 'corner' || event.reason === 'resync')
+        noteRoomCornersChanged(event.roomId);
+      break;
+  }
+});

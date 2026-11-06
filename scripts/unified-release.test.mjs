@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { parse } from 'yaml';
 import {
   RELEASE_COMPONENTS,
   changedPathsFromPublishedInputs,
@@ -84,4 +89,58 @@ test('explicit recovery selection still controls which components rebuild', () =
   const paths = componentPaths(['apps/mobile/sources/app/index.tsx']);
   assert.deepEqual(selectReleaseComponentsFromPublishedInputs(paths, { selection: 'server' }), ['server']);
   assert.deepEqual(selectReleaseComponentsFromPublishedInputs(componentPaths(), { selection: 'desktop' }), ['desktop']);
+});
+
+// The free-agent image must use the release's existing rollout; publishing
+// after completion used to restart every server a second time and drop phones.
+test('free-agent image publication stages its digest before the sole server rollout', () => {
+  assert.equal(existsSync('.github/workflows/free-agent-image.yml'), false);
+  const workflow = parse(readFileSync('.github/workflows/unified-release.yml', 'utf8'));
+  const steps = parse(readFileSync('.github/actions/server-leg/action.yml', 'utf8')).runs.steps;
+  const publish = steps.findIndex(step => step.id === 'free_agent_image');
+  const stage = steps.findIndex(step => step.name?.startsWith('Stage the free starter'));
+  const rollout = steps.findIndex(step => step.name?.startsWith('Canary one Machine'));
+  const verify = steps.findIndex(step => step.name?.startsWith('Verify the free starter image'));
+  assert.ok(publish < stage && stage < rollout && rollout < verify);
+  for (const index of [publish, stage, verify]) assert.equal(steps[index].if, "steps.fleet.outputs.shipped != 'true'");
+  const updates = steps.filter(step => /flyctl machine update/.test(step.run ?? ''));
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0], steps[rollout]);
+  assert.match(steps[publish].run, /--build-only --push/);
+  const call = workflow.jobs.server.steps.find(step => step.uses === './.github/actions/server-leg');
+  assert.equal(call.with.free_agent_image_token, '${{ secrets.FLY_FREE_AGENT_IMAGE_TOKEN }}');
+
+  const root = mkdtempSync(join(tmpdir(), 'beeline-image-stage-'));
+  try {
+    mkdirSync(join(root, 'bin')); mkdirSync(join(root, 'scripts'));
+    writeFileSync(join(root, 'scripts/stage-free-agent-helper.sh'), 'exit 0\n');
+    const image = `registry.fly.io/beeline-free-agents:1.2.3-${releaseSha.slice(0, 12)}@sha256:${'c'.repeat(64)}`;
+    writeFileSync(join(root, 'bin/docker'), `#!/bin/sh\nprintf '%s\\n' '{"Descriptor":{"digest":"sha256:${'c'.repeat(64)}"}}'\n`, { mode: 0o755 });
+    writeFileSync(join(root, 'bin/flyctl'), `#!/bin/sh
+printf '%s\\n' "$*" >> "$CALLS"
+case "$1 $2" in
+  'machine list') printf '%s\\n' '[{"id":"one","state":"started"},{"id":"two","state":"started"}]' ;;
+  'machine exec') if [ "$6" = 'printenv FLY_FREE_AGENT_IMAGE' ]; then printf '%s\\n' "\${ACTUAL_IMAGE:-$IMAGE_REF}"; fi ;;
+esac
+`, { mode: 0o755 });
+    const output = join(root, 'output');
+    const env = { ...process.env, PATH: `${root}/bin:${process.env.PATH}`, RUNNER_TEMP: root,
+      RELEASE_SHA: releaseSha, RELEASE_VERSION: 'v1.2.3', GITHUB_OUTPUT: output,
+      IMAGE_REF: image, CALLS: join(root, 'calls') };
+    execFileSync('bash', ['-c', steps[publish].run], { cwd: root, env });
+    assert.equal(readFileSync(output, 'utf8').trim(), `image_ref=${image}`);
+    execFileSync('bash', ['-c', steps[stage].run], { cwd: root, env });
+    mkdirSync(join(root, 'server-release'));
+    execFileSync('bash', ['-c', steps[verify].run], { cwd: root, env });
+    const calls = readFileSync(env.CALLS, 'utf8');
+    assert.match(calls, /secrets set --app beeline-server --stage FLY_FREE_AGENT_IMAGE=registry/);
+    assert.equal(calls.includes('machine update'), false);
+    assert.match(calls, /machine exec one --app beeline-server printenv FLY_FREE_AGENT_IMAGE/);
+    assert.match(calls, /machine exec two --app beeline-server printenv FLY_FREE_AGENT_IMAGE/);
+    assert.match(calls, /--refresh-free-agents/);
+    assert.throws(() => execFileSync('bash', ['-c', steps[verify].run], {
+      cwd: root, env: { ...env, ACTUAL_IMAGE: 'older-image' }, stdio: 'pipe',
+    }), /Command failed/);
+    assert.equal(readFileSync(env.CALLS, 'utf8').includes('machine update'), false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

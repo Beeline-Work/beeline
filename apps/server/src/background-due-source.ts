@@ -12,20 +12,12 @@ export const BACKGROUND_SOURCES = [
   ['push', 'push_devices', 'token,identity_id,platform'],
   ['push', 'room_read_marks', 'message_id'],
   ['free-agents', 'free_agents', 'state,fly_machine_id,last_activity_at,wake_requested_at,removed_at'],
-  ['free-agents', 'agent_commands', 'state,claimed_at,completed_at,wake_after,startup_wake_after'],
+  ['free-agents', 'agent_commands', 'state,claimed_at,completed_at'],
   ['free-agents', 'agent_turns', 'status,started_at'],
   ['free-agents', 'agent_connections', 'connection_id,released_at'],
   ['free-agents', 'agents', 'squire_work'],
   ['free-agents', 'workspace_connectors', 'helper_agent_id,status'],
   ['voice-call-recovery', 'voice_calls', 'ended_at,runtime_owner,runtime_until'],
-  ['corner-reviewers', 'corner_github_cache', 'lifecycle'],
-  ['corner-reviewers', 'memberships', 'removed_at,role'],
-  ['corner-reviewers', 'corner_facts', ''],
-  ['corner-reviewers', 'agent_commands', 'state'],
-  ['corner-checks-blocked', 'corner_github_cache', 'lifecycle'],
-  ['corner-checks-blocked', 'agent_commands', 'state,created_at,claimed_at'],
-  ['expired-command-leases', 'agent_commands', 'state,lease_expires_at,turn_owner_connection_id'],
-  ['mention-notices', 'pending_mention_notices', 'due_at,notified_at'],
   ['institutional-curator', 'institutional_memory_items', 'updated_at,last_used_at,state,deleted_at'],
   ['institutional-curator', 'workspace_skills', 'updated_at'],
   ['unfinished-app-sign-ins', 'workspace_apps', 'authorised_at,composio_link_expires_at,sign_in_error,composio_account_id'],
@@ -59,7 +51,6 @@ export const RETENTION_RULES = [
   ['live_outputs', "updated_at+interval '2 hours'", "kind<>'presence'", 'updated_at,kind'],
   ['github_auth_flows', "expires_at+interval '1 day'", 'true', 'expires_at'],
   ['daemon_token_exchanges', "expires_at+interval '1 day'", 'true', 'expires_at'],
-  ['pending_mention_notices', "due_at+interval '30 days'", 'true', 'due_at'],
 ] as const;
 
 const sources = [...BACKGROUND_SOURCES, ...RETENTION_RULES.map(([table, , , columns]) => [`retention:${table}`, table, columns] as const)];
@@ -81,8 +72,6 @@ BEGIN
  IF family='free-agents' AND TG_TABLE_NAME<>'free_agents' AND NOT EXISTS(SELECT 1 FROM free_agents WHERE agent_id=COALESCE(item->>'agent_id',item->>'helper_agent_id')) THEN RETURN NULL;END IF;
  IF family='next-day-checkin' AND TG_TABLE_NAME='agent_commands' AND NOT EXISTS(SELECT 1 FROM next_day_checkins WHERE command_id=item->>'id' AND measured_at IS NULL) THEN RETURN NULL;END IF;
  IF family='next-day-checkin' AND TG_TABLE_NAME IN ('push_delivery_claims','push_outbox_retirements') AND NOT EXISTS(SELECT 1 FROM next_day_checkins WHERE message_id=item->>'message_id' AND measured_at IS NULL) THEN RETURN NULL;END IF;
- IF family IN ('corner-reviewers','corner-checks-blocked') AND TG_TABLE_NAME='agent_commands' AND NOT EXISTS(SELECT 1 FROM rooms WHERE id=(item->>'room_id')::uuid AND parent_id IS NOT NULL) THEN RETURN NULL;END IF;
- IF family='expired-command-leases' AND (item->>'turn_owner_connection_id' IS NOT NULL OR item->>'action' NOT IN ('input','resume')) THEN RETURN NULL;END IF;
  IF family='retention:live_outputs' AND item->>'kind'='presence' THEN RETURN NULL;END IF;
  IF TG_OP='UPDATE' AND family='retention:live_outputs' AND (item->>'updated_at')::timestamptz>=(to_jsonb(OLD)->>'updated_at')::timestamptz THEN RETURN NULL;END IF;
  IF family='voice-call-recovery' THEN

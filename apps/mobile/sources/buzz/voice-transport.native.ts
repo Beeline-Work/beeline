@@ -1,5 +1,4 @@
 import { getBuzzRuntimeConfig } from './runtime-config';
-export { voiceFetch } from './voice-request';
 import { Room, RoomEvent, Track } from 'livekit-client';
 import { Linking, NativeEventEmitter, NativeModules, PermissionsAndroid, Platform, TurboModuleRegistry } from 'react-native';
 
@@ -160,7 +159,7 @@ export function subscribeVoiceResume(roomId: string, resume: () => void): () => 
 
 
 /** Use the same native processor for the microphone and every remote audio track. */
-function subscribeVoiceMicrophone(room: Room, onLevel: (level: number) => void): () => void {
+export function subscribeVoiceMicrophone(room: Room, onLevel: (level: number) => void): () => void {
   const native = NativeModules.LivekitReactNativeModule;
   const meters = new Map<Track, { id: string; connection: number; mediaId: string; level: number }>();
   const publish = () => onLevel(Math.max(0, ...[...meters.values()].map(meter => meter.level)));

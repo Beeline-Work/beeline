@@ -110,7 +110,7 @@ export function CodeBlock({
     <View style={styles.frame}>
       {long && routed ? (
         <View style={styles.inscription}>
-          <Text numberOfLines={1} style={styles.inscriptionText} testID="code-inscription">
+          <Text style={styles.inscriptionText} testID="code-inscription">
             {inscription}
           </Text>
           <Button

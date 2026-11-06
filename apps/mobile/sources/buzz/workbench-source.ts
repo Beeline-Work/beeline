@@ -120,14 +120,14 @@ function toSteps(
 }
 
 /**
- * The real source: one signed `readWorkbench` projection per poll, resolved
+ * The real source: one signed `readWorkbench` projection per read, resolved
  * through the session's own viewer on the server.
  */
 export class MonolithWorkbenchSource implements WorkbenchSource {
   async readConnectApp(input: { workspaceId: string; viewerId: string }) {
     const result = await monolithPhoneOperation('readConnectApp', { workspaceId: input.workspaceId });
     return {
-      ...(result.workbench ? { view: await this.readWorkbench(input, result.workbench) } : {}),
+      ...(result.workbench ? { view: projectWorkbenchDisplay(result.workbench, input.viewerId) } : {}),
       ...(result.suggestions ? { suggestions: result.suggestions } : {}),
       ...(result.workbenchError ? { workbenchError: result.workbenchError } : {}),
       ...(result.suggestionsError ? { suggestionsError: result.suggestionsError } : {}),
@@ -156,8 +156,8 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
     workspaceId: string;
     viewerId: string;
     refreshVault?: boolean;
-  }, supplied?: WorkbenchDto): Promise<WorkbenchView> {
-    const dto = supplied ?? await monolithPhoneOperation('readWorkbench', {
+  }): Promise<WorkbenchView> {
+    const dto = await monolithPhoneOperation('readWorkbench', {
       workspaceId: input.workspaceId,
       ...(input.refreshVault ? { refreshVault: true } : {}),
     });

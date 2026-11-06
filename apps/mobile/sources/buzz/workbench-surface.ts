@@ -13,72 +13,45 @@ import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset
 import {useSurfaceFocus} from './use-surface-focus';
 
 export type WorkbenchScope = { workspaceId: string; viewerId: string };
-/** Bound every foreground and live read, including the cache's shared flight. */
-async function readWorkbenchWithTimeout(scope: WorkbenchScope & { refreshVault?: boolean }) {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  return Promise.race([getWorkbenchSource().readWorkbench(scope), new Promise<never>((_, reject) => {
-    timeout = setTimeout(() => reject(new Error('Connections did not answer. Try again.')), 15_000);
-  })]).finally(() => clearTimeout(timeout));
-}
 export const isWorkbenchView = (value: unknown): value is WorkbenchView => {
   if (!value || typeof value !== 'object') return false;
   const view = value as Partial<WorkbenchView>;
   return Array.isArray(view.apps) && Array.isArray(view.helpers) &&
     Array.isArray(view.connectors) && Array.isArray(view.connections) &&
     (view.companies === undefined || isWorkbenchCompanyIndex(view.companies)) &&
-    (view.aiClients === undefined || (Array.isArray(view.aiClients) && view.aiClients.length <= 100 && view.aiClients.every(client =>
-      client && typeof client.clientId === 'string' && client.clientId.length <= 100 &&
-      typeof client.name === 'string' && client.name.length <= 120 &&
+    (view.aiClients === undefined || (Array.isArray(view.aiClients) && view.aiClients.every(client =>
+      client && typeof client.clientId === 'string' &&
+      typeof client.name === 'string' &&
       Array.isArray(client.scopes) && client.scopes.every((scope: unknown) => scope === 'rooms:read' || scope === 'rooms:write') &&
       Number.isFinite(client.connectedAt) && (client.lastUsedAt === null || Number.isFinite(client.lastUsedAt)) &&
-      (client.logo === undefined || (typeof client.logo === 'string' && client.logo.length <= 400000 && client.logo.startsWith('data:image/png;base64,'))) &&
+      (client.logo === undefined || (typeof client.logo === 'string' && client.logo.startsWith('data:image/png;base64,'))) &&
       (client.agent === undefined || (typeof client.agent === 'object' && client.agent !== null &&
-        typeof client.agent.id === 'string' && typeof client.agent.name === 'string' && client.agent.name.length <= 200 &&
+        typeof client.agent.id === 'string' && typeof client.agent.name === 'string' &&
         (client.agent.handle === undefined || typeof client.agent.handle === 'string') &&
         (client.agent.avatar === undefined || typeof client.agent.avatar === 'string'))))));
 };
-const heldWorkbench = new Map<string, { address: SurfaceCacheAddress; scope: WorkbenchScope; consumers: number; dirty: boolean }>();
-/** Workbench views the server answered this session; a stored view outside it may be stale. */
-const answeredWorkbench = new Set<string>();
+const heldWorkbench = new Map<string, { address: SurfaceCacheAddress; scope: WorkbenchScope; consumers: number }>();
 const ownerErrors = new Map<string, Set<(error: string | null) => void>>();
 let workbenchStop: (() => void) | undefined;
 let workbenchStarting = false;
 subscribeClientReset(() => {
-  heldWorkbench.clear(); answeredWorkbench.clear(); workbenchStop?.(); workbenchStop = undefined;
+  heldWorkbench.clear(); workbenchStop?.(); workbenchStop = undefined;
   workbenchStarting = false;
 });
-/** A server answer written outside this module, such as the one inside the Settings read. */
-export function noteWorkbenchAnswer(address: SurfaceCacheAddress) {
-  answeredWorkbench.add(JSON.stringify(address));
-}
 function reportOwnerError(key: string, error: string | null) {
   for (const listener of ownerErrors.get(key) ?? []) listener(error);
 }
 export function holdSharedWorkbench(address: SurfaceCacheAddress, scope: WorkbenchScope) {
   const key = JSON.stringify(address);
-  const owner = heldWorkbench.get(key) ?? { address, scope, consumers: 0, dirty: false };
+  const owner = heldWorkbench.get(key) ?? { address, scope, consumers: 0 };
   owner.consumers++;
   heldWorkbench.set(key, owner);
   const release = () => {
     owner.consumers = Math.max(0, owner.consumers - 1);
-    if (!owner.consumers) owner.dirty = true;
-    for (const [heldKey, held] of heldWorkbench) {
-      if (heldWorkbench.size <= 8) break;
-      if (held.consumers) continue;
-      heldWorkbench.delete(heldKey);
-      answeredWorkbench.delete(heldKey);
-    }
+    if (owner.consumers) return;
+    heldWorkbench.delete(key);
+    if (!heldWorkbench.size) { workbenchStop?.(); workbenchStop = undefined; }
   };
-  // Focus reconciles changes missed while hidden, including a disconnected socket.
-  if (!answeredWorkbench.has(key) || owner.dirty) {
-    answeredWorkbench.add(key);
-    owner.dirty = false;
-    void mobileSurfaceCache.read(address, isWorkbenchView).then((stored) => {
-      if (!owner.consumers) { owner.dirty = true; return; }
-      if (stored) return mobileSurfaceCache.fetch(address, isWorkbenchView, () => readWorkbenchWithTimeout(scope))
-        .then(() => reportOwnerError(key, null), (cause) => reportOwnerError(key, appErrorCopy(cause)));
-    });
-  }
   if (workbenchStop || workbenchStarting) return release;
   workbenchStarting = true;
   const generation = clientResetGeneration();
@@ -89,23 +62,21 @@ export function holdSharedWorkbench(address: SurfaceCacheAddress, scope: Workben
         ['workbench', 'install', 'agent'].includes(live.resource)) ||
         (live.type === 'invalidate' && live.roomId === '' && live.reason === 'reconnect')) {
       for (const [key, owner] of heldWorkbench) {
-        owner.dirty = true;
         if (!owner.consumers) continue;
-        owner.dirty = false;
         void mobileSurfaceCache.fetch(owner.address, isWorkbenchView,
-          () => readWorkbenchWithTimeout(owner.scope))
+          () => getWorkbenchSource().readWorkbench(owner.scope))
           .then(() => reportOwnerError(key, null), (cause) => reportOwnerError(key, appErrorCopy(cause)));
       }
     }
   }).then((stop) => { if (generation !== clientResetGeneration()) stop();
-    else { workbenchStarting = false; workbenchStop = stop; } },
+    else { workbenchStarting = false; if (heldWorkbench.size) workbenchStop = stop; else stop(); } },
     () => { if (generation === clientResetGeneration()) workbenchStarting = false; });
   return release;
 }
 
 export function useSharedWorkbench(scope: WorkbenchScope | null) {
   const focused=useSurfaceFocus();
-  const request = useCallback(() => readWorkbenchWithTimeout(scope!),
+  const request = useCallback(() => getWorkbenchSource().readWorkbench(scope!),
     [scope?.workspaceId, scope?.viewerId]);
   const resource = useSharedSurface('/workspace/:id/workbench', scope ?? undefined,
     isWorkbenchView, request, (Boolean(scope?.viewerId)&&focused));
@@ -124,7 +95,7 @@ export function useSharedWorkbench(scope: WorkbenchScope | null) {
   const refreshAfterChange = useCallback(async () => {
 
     if (!resource.address) return null;
-    const next = await readWorkbenchWithTimeout(scope!);
+    const next = await getWorkbenchSource().readWorkbench(scope!);
     await mobileSurfaceCache.write(resource.address, next, isWorkbenchView);
     return next;
   }, [resource.address, scope?.workspaceId, scope?.viewerId]);
@@ -159,14 +130,12 @@ export async function readSharedWorkbench(scope: WorkbenchScope, options?: {
   if (!identity) throw new Error('Identity unavailable');
   const address = surfaceAddress(relay, identity.publicKey, '/workspace/:id/workbench', scope);
   // Imperative reads do not keep a hidden screen subscribed.
-  const owner = heldWorkbench.get(JSON.stringify(address));
-  if (owner) owner.dirty = true;
   if (!options?.refresh) {
     const held = await mobileSurfaceCache.read(address, isWorkbenchView);
     if (held) return held;
   }
   const next = await mobileSurfaceCache.fetch(address, isWorkbenchView, () =>
-    readWorkbenchWithTimeout({ ...scope,
+    getWorkbenchSource().readWorkbench({ ...scope,
       ...(options?.refreshVault ? { refreshVault: true } : {}) }));
   if (!next) {
     const held = mobileSurfaceCache.peek(address, isWorkbenchView);

@@ -15,13 +15,12 @@ import { SERVER_LEASE_DEADLINE_SCHEMA } from './server-lease-deadlines.js';
 import { commandCompletionSchema } from './command-completion.js';
 import { ROUTER_COMMAND_SCHEMA } from './router-command-ledger.js';
 import { backfillWelcomeVideoWorkflow } from './welcome-video-workflow.js';
-import { closeCompletedCommandTurns } from './migrations/completed-command-turns.js';
+import { AGENT_TURN_END_SCHEMA } from './agent-turn-end.js';
 import { clearConnectedAppPlaceholders } from './migrations/connected-app-turns.js';
 import { AGENT_CORNER_HOLDS_SCHEMA } from './migrations/agent-corner-holds.js';
 import { MOBILE_MINIMUM_SCHEMA } from './mobile-minimum.js';
 import { STARTER_ONBOARDING_SCHEMA } from './starter-onboarding-run.js';
 import { NEXT_DAY_CHECKIN_SCHEMA } from './next-day-checkin.js';
-import { STARTUP_WAKE_BACKOFF_SCHEMA } from './startup-wake-backoff.js';
 import { ROOMS_MCP_SCHEMA } from './rooms-mcp-schema.js';
 import { backfillMcpMemberRoomsAndAvatars, backfillMcpMembers } from './rooms-mcp-members.js';
 import { seedPreregisteredMcpClients } from './rooms-mcp-preregistered.js';
@@ -54,8 +53,6 @@ import {
 import { workflowRunIsLiveSql, workflowRunStatusUnsavedSql } from './workflow-run-saved-status.js';
 import {
   AGENT_COMMAND_SCHEMA,
-  reconcileConfiguredCornerReviewers,
-  reconcileCornerMergeBlockers,
 } from './agent-command.js';
 import { GITHUB_STAR_PROMPT_SCHEMA } from './github-star-prompt.js';
 import {
@@ -85,7 +82,7 @@ import { COMPUTER_EXPIRY_SCHEMA } from './computer-expiry-schema.js';
 import { CHOICE_EXPIRY_SCHEMA } from './choice-expiry-schema.js';
 import { TERMINAL_PUSH_CLAIMS_SQL } from './push-claim-cleanup.js';
 import { askingMessageSql, cardExpiresAtSql, EXPIRING_CARD_TYPES } from './needs-you.js';
-import { cancelArchivedCornerAssignments, cancelStaleClosedCornerStops } from './corner-close.js';
+import { cancelArchivedCornerAssignments } from './corner-close.js';
 import { cornerOwedBackfillSql, cornerOwedSchemaSql } from './corner-owed.js';
 import { cornerWaitingFunctionSql } from './corner-waiting-report.js';
 import { CORNER_ATTENTION_SCHEMA } from './corner-attention.js';
@@ -1099,14 +1096,7 @@ CREATE TABLE IF NOT EXISTS needs_you_marks (
 -- cascade-delete.
 CREATE INDEX IF NOT EXISTS needs_you_marks_message_idx ON needs_you_marks(message_id);
 CREATE INDEX IF NOT EXISTS needs_you_marks_workspace_idx ON needs_you_marks(workspace_id);
--- A mention to a helper that is unreachable right now stays durably queued
--- (agent_commands); the Room is told "did not answer - its helper is offline"
--- only after AGENT_MENTION_NOTICE_GRACE_MS, and that terminal line is
--- withdrawn when the helper answers. This row is the deferred notice: one per
--- source message, so a reconnect inside the grace window drops exactly the
--- mention it belongs to and nothing else. notice_id is set once the line is
--- written so a later answer can delete it without re-deriving the window
--- bucket.
+-- Inert until the next release drains servers that still use this schema.
 CREATE TABLE IF NOT EXISTS pending_mention_notices (
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   agent_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
@@ -3266,6 +3256,7 @@ export async function migrate(
   );
   await ddlScript('agent command schema', AGENT_COMMAND_SCHEMA);
   await ddlScript('turn ownership schema', TURN_OWNERSHIP_SCHEMA);
+  await ddlScript('agent turn ending', AGENT_TURN_END_SCHEMA);
   // The phone reads source rows directly. Disable old capture triggers on
   // upgraded databases; keep stored rows available to an older server rollback.
   await ddlScript('remove retired phone read capture', `
@@ -3302,7 +3293,17 @@ export async function migrate(
     END $$;
   `);
   await ddlScript('router command identity', ROUTER_COMMAND_SCHEMA);
-  await ddlScript('startup wake backoff', STARTUP_WAKE_BACKOFF_SCHEMA);
+  await ddlScript('retired turn recovery schema', `
+    CREATE TABLE IF NOT EXISTS agent_startup_backoff (
+      agent_id text PRIMARY KEY REFERENCES agents(agent_id) ON DELETE CASCADE,
+      failures integer NOT NULL DEFAULT 0,
+      window_started_at timestamptz NOT NULL DEFAULT now(),
+      paused_until timestamptz
+    );
+    ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS startup_outcome text;
+    DROP TRIGGER IF EXISTS defer_startup_wake ON agent_commands;
+    DROP FUNCTION IF EXISTS defer_startup_wake();
+  `);
   await ddlScript('free agents schema', FREE_AGENTS_SCHEMA);
   await ddlScript('owned model credentials', OWNED_MODEL_CREDENTIAL_SCHEMA);
   await ddlScript('owned model attempts', OWNED_MODEL_ATTEMPT_SCHEMA);
@@ -3746,12 +3747,8 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     workflowBackfillOnce(database, 'webhook-retention-v1', compactWebhookDeliveries));
   await dataStep('archived corner assignments', () =>
     workflowBackfillOnce(database, 'archived-corner-assignments-v1', cancelArchivedCornerAssignments));
-  await dataStep('stale closed corner stops', () =>
-    workflowBackfillOnce(database, 'closed-corner-stops-v1', cancelStaleClosedCornerStops));
   await dataStep('archived corner wakes', () =>
     workflowBackfillOnce(database, 'archived-corner-wakes-v1', deleteArchivedCornerWakeSources));
-  await dataStep('completed command turns', () =>
-    workflowBackfillOnce(database, 'completed-command-turns-v1', closeCompletedCommandTurns));
   await dataStep('connected app dispatch placeholders', () =>
     workflowBackfillOnce(database, 'connected-app-placeholders-v1', clearConnectedAppPlaceholders));
   await dataStep('terminal push claims', () =>
@@ -3801,17 +3798,6 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     workflowBackfillOnce(database, 'abandoned-workflow-endings-v1', reportAbandonedWorkflowEndings));
   // A timer lost after any release stalls its run; re-arm missing ones every boot.
   await dataStep('workflow run timers', () => backfillWorkflowRunTimers(database));
-  const blockers = await dataStep('corner merge blockers', () =>
-    reconcileCornerMergeBlockers(database));
-  if (blockers)
-    console.log(`reconcileCornerMergeBlockers: dispatched ${blockers} implementer command(s)`);
-  // Agent class retirement completed before the audit cleanup. Compatibility
-  // columns remain until serving and rollback images no longer read them.
-  const reviewers = await dataStep('corner reviewers', () =>
-    reconcileConfiguredCornerReviewers(database));
-  console.log(
-    `reconcileConfiguredCornerReviewers: restored ${reviewers.subscriptions} subscription(s), dispatched ${reviewers.commands} review(s)`,
-  );
   const syncedRoomRoles = await dataStep('top-level Room roles', () =>
     syncTopLevelSharedRoomRoles(database));
   console.log(`syncTopLevelSharedRoomRoles: updated ${syncedRoomRoles} stale Room role(s)`);

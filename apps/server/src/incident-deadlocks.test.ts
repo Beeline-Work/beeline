@@ -12,7 +12,7 @@ import { lockCornerLifecycle } from './corner-lifecycle.js';
 import { createAgentCommand } from './agent-command.js';
 import { claimAgentConnection } from './connection-presence.js';
 import { TokenAuth } from './auth.js';
-import { flushSentryWakes, runSentryWakeDeadline } from './sentry-wake.js';
+import { flushSentryWakes, runSentryWakes } from './sentry-wake.js';
 
 const url = process.env.BEELINE_INCIDENT_TEST_POSTGRES_URL;
 if (url && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(url).hostname))
@@ -241,7 +241,7 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
       await tx.query(`SET LOCAL lock_timeout='30ms'`); return work(tx);
     }) };
     try {
-      await expect(runSentryWakeDeadline(bounded,A)).resolves.toBeUndefined();
+      await expect(runSentryWakes(bounded,A)).resolves.toBeUndefined();
       expect((await db.query(`SELECT pending FROM sentry_wake_issues`)).rows).toEqual([{ pending: true }]);
     } finally { release.resolve(); await blocker; }
     await flushSentryWakes(bounded,A);

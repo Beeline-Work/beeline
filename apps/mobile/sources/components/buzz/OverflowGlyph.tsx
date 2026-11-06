@@ -2,7 +2,7 @@ import React from 'react';
 import Svg, { Circle } from 'react-native-svg';
 import { DECORATIVE_GLYPH_PROPS } from './decorative-glyph';
 import brand from '@/buzz/brand.json';
-import { CHROME_STROKE_REF_SIZE } from './MembersGlyph';
+import { CHROME_STROKE_REF_SIZE } from '@/buzz/chrome-geometry';
 
 /**
  * The overflow mark, drawn rather than typed. `•••` sat its ink below its own

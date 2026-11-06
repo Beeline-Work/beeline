@@ -550,7 +550,6 @@ export interface MonolithRoomTurnOptions {
   onSubscriptionState?: (connected: boolean) => void;
   onIntakeError?: (error: unknown) => void;
   signal?: AbortSignal;
-  pollMs?: number;
   createAcpClient?: (options: ConstructorParameters<typeof AcpClient>[0]) => AcpClient;
   onCornerOpened?: () => void;
   onRestartRequested?: () => Promise<void>;
@@ -1756,7 +1755,6 @@ export class MonolithRoomTurnLoop {
       if (freeAgent) await this.freeContinuation.begin(inboxItemPromptBody(item));
       // The first row of the turn names who asked; learn the name once per session.
       if (!this.memberNames.has(item.authorId)) await this.roster().catch(() => undefined);
-      let deliberateNoReply = false;
       await withTurnReceiptHeartbeat(
         api,
         {
@@ -2050,7 +2048,6 @@ export class MonolithRoomTurnLoop {
                 return;
               }
               if (['no-reply', 'repeated-tool-call'].includes(result.stopReason)) {
-                deliberateNoReply = result.stopReason === 'no-reply';
                 stream.close();
                 await stream.retract();
                 await this.discardSession();
@@ -2118,7 +2115,6 @@ export class MonolithRoomTurnLoop {
                 throw new Error('unreported_order: repeated-tool-call; requested work is unconfirmed');
               }
               if (['no-reply', 'repeated-tool-call'].includes(result.stopReason)) {
-                deliberateNoReply = result.stopReason === 'no-reply';
                 stream.close();
                 await stream.retract();
                 await this.discardSession();
@@ -2235,8 +2231,8 @@ export class MonolithRoomTurnLoop {
         roomId: this.options.roomId,
         requestId: item.id,
         status: timeLimited ? 'failed' : 'complete',
+        ...(!timeLimited ? {diagnosticsOnly:true} : {}),
         ...(timeLimited ? { reason: 'free-agent-time-limit' } : {}),
-        ...(deliberateNoReply ? { completionKind: 'no-reply' as const } : {}),
         generationId: this.commandContext.generationId,
         toolCalls: trace.toolCallsTotal,
         trace: trace.replay(),
@@ -2326,7 +2322,6 @@ export class MonolithRoomTurnLoop {
         agentId: this.agent.publicKey,
         context: this.commandContext,
         signal,
-        pollMs: this.options.pollMs,
         presence: {
           ...(this.options.config.daemonReleaseVersion
             ? { releaseVersion: this.options.config.daemonReleaseVersion }

@@ -24,19 +24,9 @@ const NEXT_RUN = new Intl.DateTimeFormat(undefined, {
   minute: '2-digit',
 });
 
-/** The longest a prompt's first sentence runs on a list row before it ellipsizes. */
-const PROMPT_LEAD = 48;
-
-/**
- * A prompt's first sentence, cut to fit a list row, so the row can still say
- * when it runs after it.
- */
+/** The complete prompt, with whitespace normalized for a list row. */
 export function promptLead(message: string): string {
-  const text = message.replace(/\s+/g, ' ').trim();
-  const sentence = text.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? text;
-  const bare = sentence.replace(/[.!?]$/, '');
-  if (bare.length > PROMPT_LEAD) return `${bare.slice(0, PROMPT_LEAD - 1).trimEnd()}…`;
-  return bare.length < text.replace(/[.!?]$/, '').length ? `${bare}…` : bare;
+  return message.replace(/\s+/g, ' ').trim();
 }
 
 /**
@@ -54,23 +44,11 @@ export function scheduleWhere(
     : isDirectMessage ? 'this DM' : 'this Room';
 }
 
-/** The longest a derived schedule title runs before it stops at a word boundary. */
-const SCHEDULE_TITLE_WORDS = 4;
-
-/**
- * The first few words of a prompt, so a nameless schedule still names itself.
- * One to four words, never a whole sentence, matching the server's derivation.
- */
 export function promptTitle(message: string): string {
-  const words = message.replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
-  return words
-    .slice(0, SCHEDULE_TITLE_WORDS)
-    .join(' ')
-    .replace(/[.!?,;:]+$/, '')
-    .trim();
+  return promptLead(message).replace(/[.!?,;:]+$/, '');
 }
 
-/** Line 1 of a schedule row: what it runs, ellipsized by the row if needed. */
+/** What the schedule runs, named by the server. */
 export function scheduleTitle(schedule: RoomScheduleView): string {
   const stored = schedule.title?.trim();
   // A server before this derivation sent the generic label for a nameless
@@ -216,22 +194,21 @@ function holdScheduledWork(roomId: string, address: SurfaceCacheAddress): { firs
  * Only focused consumers retain a live observer. A new visible residency
  * makes one covering read; retained/unmounted screens make no requests.
  */
-export function useScheduledWork(roomId: string | undefined,legacyTargetValid=true) {
+export function useScheduledWork(roomId: string | undefined) {
   const focused = useSurfaceFocus();
   const request = useCallback(() => monolithPhoneOperation('readScheduledWork', { roomId: roomId! }), [roomId]);
   const { value, address, loading, error, setError, refresh } = useSharedSurface(
-    '/room/:id/scheduled-work', roomId&&legacyTargetValid ? { roomId } : undefined, isScheduledWork, request, (Boolean(roomId)&&legacyTargetValid&&focused), true);
+    '/room/:id/scheduled-work', roomId ? { roomId } : undefined, isScheduledWork, request, (Boolean(roomId)&&focused));
   useEffect(() => {
     if ((!focused) || !roomId || !address) return;
     const owner = holdScheduledWork(roomId, address);
-    if (owner.first && AppState.currentState === 'active') void refresh();
     return owner.release;
   }, [address, roomId, focused, refresh]);
   const selected=(value);
   const work = useMemo<ScheduledWork | null>(() => selected && ({roomName:selected.roomName,isDirectMessage:selected.isDirectMessage===true,
     agentNames:new Map(selected.agentNames),schedules:selected.schedules,subscriptions:selected.subscriptions}),[selected]);
   return { work,loading:(loading&&!value),
-    error:roomId&&((legacyTargetValid))?((error)):'Schedules target is missing.',
+    error:roomId ? error:'Schedules target is missing.',
     setError,retry:()=>{if((focused)&&AppState.currentState==='active')void refresh();} };
 }
 

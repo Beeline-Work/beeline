@@ -34,8 +34,8 @@ BEGIN
    PERFORM beeline_mcp_stream(item->>'member_id',jsonb_build_object('kind','mention','id',item->>'message_id'));
  ELSIF TG_TABLE_NAME='agent_commands' THEN
    IF item->>'reason'='mcp_call' THEN RETURN NULL; END IF;
-   IF TG_OP='UPDATE' AND ROW(NEW.state,NEW.hiccup_attempts,NEW.private_payload,NEW.source_message_id)
-     IS NOT DISTINCT FROM ROW(OLD.state,OLD.hiccup_attempts,OLD.private_payload,OLD.source_message_id) THEN RETURN NULL; END IF;
+   IF TG_OP='UPDATE' AND ROW(NEW.state,NEW.private_payload,NEW.source_message_id)
+     IS NOT DISTINCT FROM ROW(OLD.state,OLD.private_payload,OLD.source_message_id) THEN RETURN NULL; END IF;
    IF EXISTS(SELECT 1 FROM rooms_mcp_members WHERE member_id=item->>'agent_id') THEN
      PERFORM beeline_mcp_stream(item->>'agent_id',jsonb_build_object('kind','wake','id',item->>'id'));
    END IF;
@@ -182,7 +182,7 @@ export async function serveMcpMemberStream(database: SqlDatabase, principal: Mcp
             for (const wake of current.wakes) {
               if (wakeIds.has(wake.id)) continue;
               wakeIds.add(wake.id); roomIds.add(wake.address);
-              frames.push({v:1,type:'delivery',deliveryId:`wake:${wake.id}:${wake.deliveryVersion ?? 0}`,mentions:[],wakes:[wake],mentionCursor:current.nextCursor});
+              frames.push({v:1,type:'delivery',deliveryId:`wake:${wake.id}`,mentions:[],wakes:[wake],mentionCursor:current.nextCursor});
             }
             after=current.nextCursor;
             if (!current.more) break;

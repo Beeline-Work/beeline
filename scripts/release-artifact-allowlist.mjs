@@ -19,7 +19,6 @@ export const RELEASE_WORKFLOWS = [
   '.github/workflows/mobile-ota-rollback.yml',
   '.github/workflows/server-rollback.yml',
   '.github/workflows/server-image.yml',
-  '.github/workflows/free-agent-image.yml',
   '.github/workflows/release-preflight.yml',
   '.github/workflows/release-failure.yml',
 ];

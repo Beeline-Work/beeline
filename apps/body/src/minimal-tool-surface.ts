@@ -1,3 +1,4 @@
+import { HOST_EMULATOR_RULE } from './host-emulator.js';
 import {
   ARTIFACT_MIME_TYPES,
   INSTITUTIONAL_HISTORY_QUERY_SCHEMA,
@@ -1067,7 +1068,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "request_grant",
-    "description": "Request or list scoped grants. Shared-asset isolation uses kind shared_asset and a cache-category target. Existing human approvals and exact command/secret safeguards apply; listing reveals no secrets.",
+    "description": "Request or list scoped grants. Shared-asset isolation uses kind shared_asset and a cache-category target. Existing human approvals and exact command/secret safeguards apply; listing reveals no secrets. " + HOST_EMULATOR_RULE,
     "inputSchema": {
       "type": "object",
       "properties": {

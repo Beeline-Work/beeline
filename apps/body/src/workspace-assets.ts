@@ -1,6 +1,5 @@
-import { waitForPathRemoval } from './filesystem-change.js';
-import { createHash, randomUUID } from 'node:crypto';
-import { cp, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { lstat, mkdir, realpath, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { isSharedAssetCategory, type SharedAssetCategory } from '@beeline/api-contract/agent-grants';
 
@@ -16,8 +15,6 @@ export interface WorkspaceAssetPaths {
   root: string;
   cache: string;
   tools: string;
-  avdBase: string;
-  staging: string;
 }
 
 export const SHARED_LAYOUT_MARKER = 'layout-live-v1.json';
@@ -70,8 +67,6 @@ export function workspaceAssetPaths(root: string): WorkspaceAssetPaths {
     root: absolute,
     cache: resolve(absolute, 'cache'),
     tools: resolve(absolute, 'tools'),
-    avdBase: resolve(absolute, 'avd-base'),
-    staging: resolve(absolute, 'staging'),
   };
 }
 
@@ -92,8 +87,6 @@ export async function prepareWorkspaceAssets(root: string): Promise<WorkspaceAss
     resolve(paths.cache, 'cargo', 'registry'),
     ...PACKAGE_CACHE_DIRS.map((suffix) => resolve(paths.cache, suffix)),
     paths.tools,
-    paths.avdBase,
-    paths.staging,
   ];
   for (const path of chain) {
     await mkdir(path, { recursive: true, mode: 0o700 });
@@ -150,67 +143,4 @@ export function workspaceCacheEnv(paths: WorkspaceAssetPaths, cornerRoot?: strin
     PUPPETEER_CACHE_DIR: resolve(cache, 'browser/puppeteer'),
     ...(cornerRoot ? { CARGO_TARGET_DIR: resolve(cornerRoot, '.beeline-cargo-target') } : {}),
   };
-}
-
-async function processExists(pid: number): Promise<boolean> {
-  try { process.kill(pid, 0); return true; }
-  catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }
-}
-
-async function withGenerationLock<T>(lock: string, work: () => Promise<T>): Promise<T> {
-  const deadline = Date.now() + 10 * 60_000;
-  for (;;) {
-    try {
-      await mkdir(lock, { mode: 0o700 });
-      await writeFile(resolve(lock, 'pid'), String(process.pid));
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      const owner = Number(await readFile(resolve(lock, 'pid'), 'utf8').catch(() => ''));
-      const age = Date.now() - (await stat(lock)).mtimeMs;
-      if (age > 60_000 && (!Number.isSafeInteger(owner) || !(await processExists(owner)))) {
-        await rm(lock, { recursive: true, force: true });
-        continue;
-      }
-      if (Date.now() >= deadline) throw new Error('timed out waiting for Workspace asset generation');
-      await waitForPathRemoval(lock);
-    }
-  }
-  try { return await work(); }
-  finally { await rm(lock, { recursive: true, force: true }); }
-}
-
-/** AVD metadata is small; mutable userdata never enters this base generation. */
-export async function prepareWorkspaceAvdBase(paths: WorkspaceAssetPaths, sourceAvdHome: string): Promise<string> {
-  const source = await realpath(sourceAvdHome);
-  const entries = (await readdir(source)).filter((entry) => entry.endsWith('.ini')).sort();
-  const hash = createHash('sha256');
-  for (const entry of entries) {
-    hash.update(entry);
-    hash.update(await readFile(resolve(source, entry)));
-    hash.update(await readFile(resolve(source, entry.slice(0, -4) + '.avd', 'config.ini')).catch(() => ''));
-  }
-  const digest = hash.digest('hex').slice(0, 24);
-  const published = resolve(paths.avdBase, digest);
-  if ((await stat(published).catch(() => undefined))?.isDirectory()) return published;
-  return withGenerationLock(resolve(paths.staging, `avd-${digest}.lock`), async () => {
-    if ((await stat(published).catch(() => undefined))?.isDirectory()) return published;
-    const staged = resolve(paths.staging, `avd-${digest}-${randomUUID()}`);
-    try {
-      await mkdir(staged, { recursive: true, mode: 0o700 });
-      for (const entry of entries) {
-        const config = resolve(source, entry.slice(0, -4) + '.avd', 'config.ini');
-        await cp(resolve(source, entry), resolve(staged, entry));
-        if ((await stat(config).catch(() => undefined))?.isFile()) {
-          const dest = resolve(staged, entry.slice(0, -4) + '.avd');
-          await mkdir(dest);
-          await cp(config, resolve(dest, 'config.ini'));
-        }
-      }
-      await rename(staged, published);
-      return published;
-    } finally {
-      await rm(staged, { recursive: true, force: true });
-    }
-  });
 }

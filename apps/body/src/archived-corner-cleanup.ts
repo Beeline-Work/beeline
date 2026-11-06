@@ -4,7 +4,6 @@ import { promisify } from 'node:util';
 import { lstat, readdir, rm } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import { ordinaryDirectory, storageTree, hasMount, type WholeStorageOptions, type StorageReclaimEntry } from './helper-storage.js';
-import { stopKeptCornerEmulator } from './corner-emulator.js';
 import { canonicalStoragePath } from './storage-filesystem.js';
 const exec = promisify(execFile);
 
@@ -179,7 +178,6 @@ export async function removeArchivedCornerData(supervisorRoot: string, cornerId:
   const existing: string[] = [];
   for (const path of roots) if (await ordinaryDirectory(path)) existing.push(path);
   if (!options.dryRun) {
-    await stopKeptCornerEmulator(supervisorRoot, cornerId, 'corner archived');
     if (existing.length) {
       if (process.platform !== 'linux' && process.platform !== 'darwin') throw new Error('unsupported archived process attribution platform');
       if (process.platform === 'darwin') {

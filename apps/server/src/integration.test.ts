@@ -503,7 +503,9 @@ describe('monolith integration', () => {
       }
     ).id;
     const unrelatedApproval = await turnIn(unrelated);
-    const agentApproval = await turnIn(corner, AGENT);
+    const agentApproval = { messageId: createHash('sha256').update('triage-agent-approval').digest('hex') };
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Agent approval')`,
+      [agentApproval.messageId, corner, AGENT]);
     const attachments = new Map<string, { objectId: string; purpose: string; required: boolean }>();
     for (const [index, sourceRoomId] of [ROOM, cornerId, corner, unrelated].entries()) {
       const objectId = `65432109-0000-4000-8000-00000000000${index}`;
@@ -11024,7 +11026,7 @@ describe('monolith integration', () => {
     const { messageId: root } = await source.json() as { messageId: string };
     const requestId = createHash('sha256').update('grant-src-1-turn').digest('hex');
     await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Agent request')`,
-      [requestId, ROOM, AGENT]);
+      [requestId, ROOM, SYSTEM_IDENTITY_ID]);
     const command = await createAgentCommand(database, {
       roomId: ROOM, agentId: AGENT, sourceMessageId: requestId,
       turnRequestId: requestId, reason: 'fixture',
@@ -11478,9 +11480,10 @@ describe('monolith integration', () => {
       )
     ).rows[0]!;
     const delegated = createHash('sha256').update('delegated-resource-task').digest('hex');
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Delegating agent')`, [WELCOME_AGENT]);
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES($1,$2,$3,'delegated task','message')`,
-      [delegated, ROOM, AGENT],
+      [delegated, ROOM, WELCOME_AGENT],
     );
     await createAgentCommand(database, {
       roomId: ROOM,
@@ -12746,6 +12749,35 @@ describe('monolith integration', () => {
       ).toEqual([]);
     },
   );
+
+  it('host emulator refusal stays visible to the agent without granting access', async () => {
+    const ask = (await (await daemonOperation('requestAgentGrant', {
+      roomId: ROOM, kind: 'host', target: '127.0.0.1:5037',
+      reason: 'Test the Android app', purpose: 'Use an existing host emulator',
+    })).json()) as { grantId: string };
+    expect((await operation('decideAgentGrant', { grantId: ask.grantId, decision: 'deny' })).status).toBe(200);
+    const live = await (await daemonOperation('listAgentGrants', { roomId: ROOM })).json();
+    expect(live).toEqual({ grants: [] });
+    const history = await (await daemonOperation('listAgentGrantRequests', { roomId: ROOM })).json() as { grants: Array<{ grantId: string; status: string }> };
+    expect(history.grants).toEqual([expect.objectContaining({ grantId: ask.grantId, status: 'denied' })]);
+  });
+
+  it.each([false, true])('host emulator requires the owner human Allow even with yolo=%s', async yolo => {
+    await database.query(`UPDATE agents SET yolo_mode=$2 WHERE agent_id=$1`, [AGENT, yolo]);
+    const ask = (await (await daemonOperation('requestAgentGrant', {
+      roomId: ROOM, kind: 'host', target: '127.0.0.1:5037',
+      reason: 'Test the Android app', purpose: 'Use an existing host emulator',
+    })).json()) as { grantId: string; status: string; auto: boolean; messageId: string };
+    expect(ask).toMatchObject({ status: 'pending', auto: false });
+    expect(ask.messageId).toEqual(expect.any(String));
+    const read = async () => (await (await daemonOperation('listAgentGrants', { roomId: ROOM })).json()) as { grants: Array<{ grantId: string }> };
+    expect((await read()).grants).toEqual([]);
+    expect((await operation('decideAgentGrant', { grantId: ask.grantId, decision: 'always' })).status).toBe(200);
+    expect((await read()).grants).toEqual([expect.objectContaining({ grantId: ask.grantId })]);
+    // Automatic owner-machine host grants cannot supply emulator consent.
+    await database.query(`UPDATE agent_grants SET auto=true WHERE id=$1`, [ask.grantId]);
+    expect((await read()).grants).toEqual([]);
+  });
 
   it('approves grants on the spot under yolo with auto=true and no card, for the owner; rejects retired budget prompts', async () => {
     await database.query(`UPDATE agents SET yolo_mode=true WHERE agent_id=$1`, [AGENT]);

@@ -25,6 +25,21 @@ vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () =>
 vi.mock('./client-error-report', () => ({ reportClientError: async () => {} }));
 import { useVoiceCall } from './use-voice-call';
 
+it('MOBILE-11 leaves a dropped join ready for an explicit next attempt', async () => {
+  fixture.request.mockRejectedValueOnce(Object.assign(new Error('The connection closed before the server answered.'), { socketRequest: true }));
+  let state!: ReturnType<typeof useVoiceCall>;
+  function Screen() { state = useVoiceCall('room', true); return null; }
+  let tree: any;
+  await act(async () => { tree = create(<Screen />); });
+  try {
+    await act(async () => { await state.join(); });
+    expect(state.connecting).toBe(false);
+    expect(state.call).toBeNull();
+    expect(state.error).toBe('Conversation mode could not start');
+    expect(fixture.request).toHaveBeenCalledTimes(1);
+  } finally { await act(async () => tree.unmount()); fixture.request.mockReset(); fixture.disconnect.mockClear(); fixture.closeAudio.mockClear(); }
+});
+
 it('settles an RTC disconnect without joining the call a second time', async () => {
   fixture.request.mockImplementation(async name => name === 'voiceJoin' ? {
     call: { id: 'call', participants: [] }, sessionId: 'session', stopToken: 'stop',

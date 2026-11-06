@@ -36,6 +36,21 @@ it('keeps ordinary call errors on the existing OK dialog', () => {
   showVoiceJoinError('Microphone permission is required.');
   expect(show).toHaveBeenCalledWith(expect.objectContaining({ message: 'Microphone permission is required.', buttons: [{ text: 'OK' }] }));
 });
+it('MOBILE-11 renders a Retry action that joins only when tapped', async () => {
+  let config!: AlertModalConfig;
+  const retry = vi.fn();
+  Modal.setFunctions(value => { config = { ...value, id: 'retry' } as AlertModalConfig; return 'retry'; }, () => {}, () => {});
+  showVoiceJoinError('Conversation mode could not start', retry);
+  let renderer: any;
+  await act(async () => { renderer = create(React.createElement(WebAlertModal, { config, onClose: () => {} })); });
+  try {
+    const dialog = renderer.root.findByType('HullDialog');
+    expect(dialog.props.actions.map((action: any) => action.label)).toEqual(['OK', 'Retry']);
+    expect(retry).not.toHaveBeenCalled();
+    await act(async () => dialog.props.actions[1].onPress());
+    expect(retry).toHaveBeenCalledOnce();
+  } finally { await act(async () => renderer.unmount()); }
+});
 it('iphone-022-gate: joining from the header presents the update instruction in the existing dialog', async () => {
   const show = vi.fn(() => 'update');
   Modal.setFunctions(show, () => {}, () => {});

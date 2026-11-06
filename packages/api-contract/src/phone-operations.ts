@@ -406,6 +406,8 @@ export type InviteMembershipResult = MembershipResult & {
 export type MessageWriteResult = { readonly messageId: string };
 /** Active turns that received a server-created command with this human message. */
 export type AgentMessageWriteResult = MessageWriteResult & {
+  /** External recipients recorded with this message; storage is not proof of pickup. */
+  readonly externalAgentHandles?: readonly string[];
   /** Optional so a newer phone remains compatible during a rolling server deploy. */
   readonly activeSteerAgentIds?: readonly string[];
   /** Canonical row for local settlement when the write commits before its live delta. */

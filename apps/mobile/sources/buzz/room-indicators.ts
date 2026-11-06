@@ -83,16 +83,28 @@ export function selectWorkingAgents(input: WorkingAgentsInput): Readonly<Record<
 /** How long a locally-armed "buzzing" ack waits for the real WORKING receipt
  * before it must stop implying the daemon is still on its way. */
 export const COMPOSER_ACK_BOUND_MS = 15_000;
+/** Brief confirmation of storage, without implying an external agent picked it up. */
+export const EXTERNAL_SENT_VISIBLE_MS = 3_000;
+export type PendingComposerAck = {
+  sentAt: number;
+  requestId?: string;
+  externalHandles?: readonly string[];
+};
 /** How long a committed mid-turn steer acknowledgement remains visible. */
 export const STEER_RECEIVED_VISIBLE_MS = 6_000;
 
-export type ComposerAckState = { kind: 'thinking'; agentPubkey: string } | { kind: 'buzzing' };
+export type ComposerAckState =
+  | { kind: 'thinking'; agentPubkey: string }
+  | { kind: 'sent'; handles: readonly string[] }
+  | { kind: 'buzzing' };
 
 export type ComposerAckInput = TurnProgressInput & {
   /** Set the instant a message addressed to an agent is sent; cleared once
    * the server accepts the write, the real receipt lands, a fresher send
    * re-arms it, or nothing addressed an agent this turn. */
   pendingAckSentAt?: number;
+  /** Present only after the server accepts a send addressed to external members. */
+  externalHandles?: readonly string[];
   now: number;
 };
 
@@ -113,6 +125,8 @@ export type ComposerAckPresentationInput = ComposerAckInput & {
 
 export type ComposerAckPresentation = {
   label: string;
+  /** Storage acknowledgement uses the same line without live motion. */
+  live?: false;
   /** Present only when a real server receipt drives the line. */
   startedAt?: number;
   turnKey?: string;
@@ -177,6 +191,11 @@ export function selectComposerAckState(input: ComposerAckInput): ComposerAckStat
   if (input.pendingAckSentAt == null) return null;
   const elapsed = input.now - input.pendingAckSentAt;
   if (elapsed < 0) return null;
+  if (input.externalHandles?.length) {
+    return elapsed < EXTERNAL_SENT_VISIBLE_MS
+      ? { kind: 'sent', handles: input.externalHandles }
+      : null;
+  }
   return elapsed < COMPOSER_ACK_BOUND_MS ? { kind: 'buzzing' } : null;
 }
 
@@ -191,6 +210,9 @@ export function selectComposerAckPresentation(
 ): ComposerAckPresentation | null {
   const state = selectComposerAckState(input);
   if (!state) return null;
+  if (state.kind === 'sent') {
+    return { label: `Sent to ${state.handles.map((handle) => `@${handle}`).join(', ')}`, live: false };
+  }
   if (state.kind === 'thinking') {
     const agent =
       agentFromConversationIdentity(input.conversationIdentities?.get(state.agentPubkey)) ??

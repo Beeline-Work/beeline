@@ -1,41 +1,77 @@
 # Production release pipeline
 
 `Unified production release` is the only workflow that releases current
-`main`. It is manually dispatched; merges do not trigger a production release.
+`main` to nightly, or promotes its last successful nightly to latest. It is manually dispatched; merges do not trigger a production release.
 
-## Release policy (consent gates)
+## Nightly and latest
 
-- **OTA is the default delivery.** A routine release promotes mobile OTA
-  updates only. It never publishes to the App Store or Play Store and never
-  requires the emulator device proof.
-- **Store publishing is explicit and consent-gated.** `store_track` stays
-  `none` unless the project owner explicitly dispatches with a track
-  (`production`, or `beta` only by the owner's explicit choice). Every release
-  that builds a new Android binary publishes it
-  to Play production as `completed` and sends the build for review automatically,
-  including explicit native recovery selection with `store_track=none`; an
-  explicit `store_track=beta` sends that release to Play beta instead. A
-  runtime-pin change does not change
-  this: the release still finishes, the OTA goes to every runtime live in the
-  stores today, and the new runtime waits for a store release the owner
-  chooses. Planning prints a notice; it never fails and never adds a store leg.
-- **iOS production includes App Review.** After Apple confirms the exact uploaded
-  build is VALID, `store_track=production` attaches it to the matching App Store
-  version, sets release notes from the committed store metadata, and submits it
-  for review with automatic release after approval. Apple API or
-  submission-state errors fail the native job;
-  successful evidence includes the review submission ID. See the
-  [store runbook](../apps/mobile/docs/store-submission.md) for retry constraints.
-- **The device proof is opt-in.** Request the existing rig's Play-reviewer OTA launch check with `inputs: { run_release_proof: true }`; default `false` adds no device wait.
-  The lane stages the candidate on beta, uses an existing `beta-apk` for a live
-  Android store runtime (never a native build from the candidate), signs in
-  through `BEELINE_REVIEW_SECRET` into Beeline Review, and verifies the candidate
-  source SHA plus a cold start to its Room list with no native crash or JS fatal.
-  The device step has a five-minute ceiling including lock wait and download;
-  missing rig, reviewer secret, matching prebuilt beta APK, or candidate evidence
-  fails closed. Only OTA promotion waits for this lane; server/helper proceed
-  independently. It checks Android; the fast static native-import gate covers
-  both platforms. An OTA promoted without the optional proof is recorded UNPROVEN.
+The workflow has one channel selector: `channel=nightly` (default) or
+`channel=latest`. Routine and authorized recurring releases use nightly.
+Only an explicit workspace owner command promotes the current successful
+nightly to latest; merges never publish either channel. Both modes use the
+existing workflow and concurrency group. No release, store build, promotion,
+or schedule change runs merely by installing this implementation.
+
+| Component | Nightly | Latest promotion |
+| --- | --- | --- |
+| Server | Deploy the shared production server; preserve compatibility with the previous app | Carry the already deployed server |
+| Phone OTA | Publish an immutable `release-<version>` branch and point `nightly` at it | Point `production` at that exact branch, with its recorded runtime targets; no rebundle |
+| Android native | Only explicit `store_track=beta`; same app id/signing, build-time `nightly-ci` profile with nightly OTA channel | Only explicit `store_track=production`; production OTA channel |
+| iOS native | No build | Only explicit `store_track=production` |
+| Helpers | Build changed bundles, publish `/dl/nightly/manifest.json`; leave latest untouched | Copy the exact nightly bundle bytes to `/dl/manifest.json`; no native helper rebuild |
+| Desktop and website | Carry latest | Build from the promoted nightly commit |
+
+A nightly GitHub release is a prerelease (`--latest=false`). Promotion reuses
+its version and SHA, publishes the stable installers, and clears prerelease
+before marking it latest. The next nightly compares against the newest
+published version, including nightlies; production OTA rollback reads latest,
+while server rollback reads the newest nightly because the server is shared.
+A promotion refuses a different `release_sha` or `release_version`.
+
+Nightly prepares OTA bundles for both platforms so promotion can use the same
+bytes. Only Android beta binaries subscribe to `nightly`; iOS and production
+Android binaries remain on `production` until latest promotion. The optional
+existing device proof still uses its separate `beta` channel and never moves
+production before it succeeds. It adds no wait unless explicitly requested.
+Android OTA targeting includes published Play beta runtimes alongside
+production runtimes, including when the beta runtime is newer than production.
+
+Store publishing remains explicit (`store_track=none` by default). Nightly
+rejects production store submissions and native recovery without `beta`;
+latest rejects the beta track. Runtime-pin changes alone never add a native
+build. Play listing uploads remain locked unless explicitly commanded by the
+owner. iOS production submits the verified build to App Review with automatic
+release after approval, through the existing store submission path.
+
+The Android job injects `nightly-ci` (`extends: production-ci`, `channel:
+nightly`) into its temporary EAS build workspace immediately before building.
+Committed `eas.json`, app config, plugins, native files, fingerprint policy and
+runtime pins remain identical to main. No profile environment override is used.
+Pinned `eas-cli 22.2.0` maps the selected build profile channel to the Android
+job's `updates.channel`; pinned `@expo/build-tools 22.0.0` writes that channel
+to the generated Android manifest's `expo-channel-name` header, replacing the
+production header only in the build workspace. The installed `expo-updates 55.0.26` also supports the
+header-only runtime override without an anti-bricking flag, but this workflow
+uses build-time selection and needs no app setting.
+
+One-time rollout after merge (firstmate, on the owner's command): dispatch
+`channel=nightly, store_track=beta` to replace the Play private beta binary with
+the same application id and nightly OTA subscription; update the authorized
+2 a.m. schedule to use the default nightly channel. Desktop/iOS have no
+nightly installation. Configure the squire helper as described in the
+[helper channel runbook](cli-bundle-channel.md#following-nightly).
+
+Offline plan and channel-selection proof (no external release calls):
+
+```sh
+node --test scripts/release-channel.test.mjs scripts/unified-release.test.mjs
+npm test -w @beeline/body -- src/self-update-channel.test.ts
+npm test -w @beeline/server -- src/production-release-dispatch.test.ts
+```
+
+The plan tests print nightly and latest component plans and exercise restoration
+of the workflow's scalar outputs. Pages tests verify both channel manifests,
+checksums and exact promoted bytes while preserving the stable website.
 
 ## Production origin checks
 
@@ -59,13 +95,14 @@ OTA targets.
 
 ## Routine release
 
-Desktop installer builds run during release or explicit tester dispatch, while PRs retain the light desktop icon checks. Intel Mac helper storage, launchd and Room acceptance run in the release’s `helper_macos` leg before its archive can be promoted; the pairing acceptance uses an installation of that exact candidate archive.
+Desktop installer builds run during latest promotion or explicit tester dispatch, while PRs retain the light desktop icon checks. Intel Mac helper storage, launchd and Room acceptance run in the release’s `helper_macos` leg before its archive can be promoted; the pairing acceptance uses an installation of that exact candidate archive.
 
 Firstmate calls the first-party `dispatch_release` agent tool with `{}`, without
 creating a release worker or requesting a command grant. This path creates no
 command-approval card.
 
-Pass no inputs. Run inside an authenticated Beeline agent turn citing a human
+For nightly, pass no inputs. For owner-commanded promotion, pass
+`inputs: { channel: "latest" }`. Run inside an authenticated Beeline agent turn citing a human
 release command from a workspace owner or admin. The tool uses the existing
 repository workflow dispatch path on the server. The server derives
 agent id and handle, place, and the root human command message from the active
@@ -110,17 +147,18 @@ resumes that draft's version, so every leg sees what the attempt already
 shipped; a dispatch of another commit skips the draft's version and is never
 blocked by it. A successful release deletes the drafts below its version.
 
-The workflow pins current `main`, includes every merge at that
-HEAD, keeps automatic component selection, uses the established `store_track=none`
-policy, promotes the OTA without a device proof (recorded UNPROVEN unless
+Nightly pins current `main`, includes every merge at that
+HEAD, selects the server and changed helper/OTA components, uses `store_track=none`,
+and publishes nightly OTA without a device proof (recorded UNPROVEN unless
 `run_release_proof=true`), publishes one release record, runs component checks,
-and reports the result in the workflow summary. The operator-selected workflow inputs are
+and reports the result in the workflow summary. The channel selects nightly or latest promotion. Other operator-selected inputs are
 recovery- and consent-only (the server supplies attribution): operators use them to continue an existing identity,
 explicitly request the device proof, or make a deliberate store submission -
 never for a routine release.
 
 The helper leg smoke-tests the exact local npm tarball before publishing it.
-A successful `npm publish`, or an already existing version, completes that leg
+The exact CLI package publishes with npm tag `nightly`. A successful
+`npm publish`, or an already existing version, completes that leg
 without waiting for npm's registry listing. A publish failure still fails the
 release. The final job records the helper version and publishes the GitHub
 release even while npm is processing the package; npm makes that same version
@@ -142,12 +180,10 @@ memory* below) and writes `release-plan.json`. Its explicit path map is
 `COMPONENT_PATH_RULES` in `scripts/unified-release.mjs`. The plan selects
 `server`, `helper`, `mobile-ota`, `mobile-native`, `desktop`, and `website`
 independently. `selection=all` is a recovery-only, deliberate full-release
-override. A
-non-`none` store track always selects `mobile-native`. Automatic selection with
+override. An explicit compatible store track selects `mobile-native`. Automatic selection with
 `store_track=none` never builds native binaries, even when native inputs changed.
-Explicit recovery selection (`all` or `mobile-native`) also publishes every new
-Android binary to Play production by default; only explicit `store_track=beta`
-chooses Play beta. iOS store uploads require an explicit store track and only
+Nightly native builds require explicit `store_track=beta`; latest native builds
+require explicit `store_track=production`. iOS store uploads require an explicit store track and only
 `production` submits for App Review. Android listing text/images remain locked unless the
 owner explicitly commands a listing publish. The pre-commit gate stops on any
 listing change; a passing build edit commits without `changesNotSentForReview`.
@@ -459,11 +495,11 @@ stage-timing files.
 
 ## Phone OTA by channel pointer
 
-Each release publishes to its own EAS branch, `release-<version>`, one update
-per runtime live in the stores, and points the `beta` channel at it. Promotion
+Each nightly publishes to its own EAS branch, `release-<version>`, one update
+per runtime live in the stores, and points the `nightly` channel at it. Latest promotion
 points the `production` channel at the same branch
 (`eas channel:edit production --branch release-<version>`), so production
-serves the exact bundles beta got, on every live runtime at once. Every live
+serves the exact bundles prepared by nightly, on every live runtime at once. Every live
 runtime must be on the branch before any channel moves. A rerun publishes only
 the runtimes the branch lacks and skips a channel that already points at it; a
 branch never mixes two source commits.
@@ -482,7 +518,8 @@ concurrency group and has a `dry_run` mode.
 - OTA targets include each platform's newest live store runtime and the two
   newest older runtimes confirmed live on that store. A current pin still in
   review gets no OTA target. OTA history, uploads and TestFlight do not count as store publication.
-  Play uses `applications/app.usebeeline/tracks/production/releases` and its
+  Nightly reads both `applications/app.usebeeline/tracks/production/releases`
+  and `tracks/beta/releases`, using their
   `PUBLISHED` lifecycle state (not edit-track `completed`, which can await review).
   ASC uses distributed iOS versions and their exact build identities. Build
   numbers map to runtime pins through the committed

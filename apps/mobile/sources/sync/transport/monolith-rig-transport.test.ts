@@ -299,10 +299,10 @@ describe('monolith Room send path', () => {
     );
   });
 
-  it('returns the server-backed active-steer acknowledgement', async () => {
+  it('returns server-backed active-steer and external-recipient acknowledgements', async () => {
     controls.fetch.mockResolvedValueOnce(
       new Response(
-        JSON.stringify({ messageId: '07'.repeat(32), activeSteerAgentIds: ['agent-1'] }),
+        JSON.stringify({ messageId: '07'.repeat(32), activeSteerAgentIds: ['agent-1'], externalAgentHandles: ['atlas', 'nova'] }),
         { status: 200 },
       ),
     );
@@ -312,6 +312,7 @@ describe('monolith Room send path', () => {
     await expect(transport.publishPreparedMessage(event)).resolves.toEqual({
       messageId: event.id,
       activeSteerAgentIds: ['agent-1'],
+      externalAgentHandles: ['atlas', 'nova'],
     });
   });
 

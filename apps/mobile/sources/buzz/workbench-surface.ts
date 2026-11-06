@@ -24,7 +24,11 @@ export const isWorkbenchView = (value: unknown): value is WorkbenchView => {
       typeof client.name === 'string' &&
       Array.isArray(client.scopes) && client.scopes.every((scope: unknown) => scope === 'rooms:read' || scope === 'rooms:write') &&
       Number.isFinite(client.connectedAt) && (client.lastUsedAt === null || Number.isFinite(client.lastUsedAt)) &&
-      (client.logo === undefined || (typeof client.logo === 'string' && client.logo.startsWith('data:image/png;base64,'))))));
+      (client.logo === undefined || (typeof client.logo === 'string' && client.logo.startsWith('data:image/png;base64,'))) &&
+      (client.agent === undefined || (typeof client.agent === 'object' && client.agent !== null &&
+        typeof client.agent.id === 'string' && typeof client.agent.name === 'string' &&
+        (client.agent.handle === undefined || typeof client.agent.handle === 'string') &&
+        (client.agent.avatar === undefined || typeof client.agent.avatar === 'string'))))));
 };
 const heldWorkbench = new Map<string, { address: SurfaceCacheAddress; scope: WorkbenchScope; consumers: number }>();
 const ownerErrors = new Map<string, Set<(error: string | null) => void>>();

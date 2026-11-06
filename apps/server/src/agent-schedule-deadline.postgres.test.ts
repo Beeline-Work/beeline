@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { Pool } from 'pg';
 import { describe, expect, it, vi } from 'vitest';
 import { AgentScheduleLoop } from './agent-schedules.js';
-import type { SqlDatabase } from './database.js';
+import { SCHEMA, type SqlDatabase } from './database.js';
 
 const url = process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
 if (url && !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(url).hostname)) {
@@ -29,8 +28,8 @@ describe.skipIf(!url)('Persisted schedule clock admission', () => {
           owner_id text,workflow_slug text,human_command_message_id text,cadence jsonb,message text,
           max_runs int,run_count int DEFAULT 0,next_run_at timestamptz,updated_at timestamptz DEFAULT now(),
           paused_at timestamptz,failed_due_at timestamptz,failed_revision timestamptz);`);
-      const source = readFileSync(new URL('./database.ts', import.meta.url), 'utf8');
-      const index = source.match(/CREATE INDEX IF NOT EXISTS agent_schedules_admitted_due_idx[^;]+;/)?.[0];
+      // Use the assembled production schema regardless of how its SQL is split across files.
+      const index = SCHEMA.match(/CREATE INDEX IF NOT EXISTS agent_schedules_admitted_due_idx[^;]+;/)?.[0];
       expect(index).toBeTruthy(); await pool.query(index!);
       await pool.query('INSERT INTO rooms(id) VALUES($1)', [room]);
       await pool.query("INSERT INTO identities(id,kind) VALUES('agent','agent'),('human','human')");

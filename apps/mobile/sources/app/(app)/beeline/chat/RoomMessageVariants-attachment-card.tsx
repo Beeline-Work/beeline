@@ -255,18 +255,18 @@ export function SwipeToReply({
       {children}
     </Pressable>
   ) : (
-    <Pressable
+    <ContentTarget
       // The long press is the row's action sheet — reactions, copy, reply,
       // forward — so it deliberately claims what native text selection once
       // held on this row; Copy on the sheet is the way to the full text now.
-      // Touch end keeps its composer-dismissal job.
+      // A normal press opens unsent-message actions or dismisses the composer.
       delayLongPress={450}
       onLongPress={onActions}
-      onTouchEnd={onPress}
+      onPress={onPress}
       testID={`copy-message-${messageId}`}
     >
       {children}
-    </Pressable>
+    </ContentTarget>
   );
   if (isDesktop) {
     return (
@@ -414,6 +414,7 @@ export interface OrdinaryLedgerMessageProps {
   channelIndex: ChannelReferenceIndex;
   deliveryFailed: boolean;
   sendState?: MessageSendState;
+  sendFailureIds?: readonly string[];
   untaggedHint?: boolean;
   onChannelReference(target: ChannelReferenceTarget): void;
   codeRoomId?: string;
@@ -438,7 +439,7 @@ export interface OrdinaryLedgerMessageProps {
   cornerProposalAction?: 'open' | 'cancel' | null;
   /** The human reply that answered this corner proposal, once one exists. */
   cornerProposalAnswer?: { decision: 'open' | 'cancel' | null; handle: string } | null;
-  onRetry?(eventId: string): void;
+  onRetry?(eventIds: readonly string[]): void;
   onDismiss(eventId: string): void;
   /** Read-only @system DMs are a full-width announcement feed, not a chat. */
   announcementFeed?: boolean;

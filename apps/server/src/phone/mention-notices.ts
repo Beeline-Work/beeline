@@ -16,28 +16,49 @@ import { phoneProjectPendingAgentCommands } from './message-enrichment.js';
    * in one transaction, so the phone can distinguish a server-accepted steer
    * from text that merely looked addressed locally.
    */
-  export async function phoneReceiptMessage(ctx: PhoneContext, roomId: string, viewerId: string, messageIdValue: string, database: SqlDatabase) {
+  export async function phoneReceiptMessage(ctx: PhoneContext, roomId: string, viewerId: string, messageIdValue: string, database: SqlDatabase, mayRoute = true) {
     const delta = await phoneReadLiveDelta(ctx, roomId, viewerId, {
       type: 'message', messageId: messageIdValue,
     }, database);
-    return delta?.type === 'message-delta' ? { message: delta.message } : {};
+    // Read both routing facts in the existing steer-receipt round trip.
+    // Routing records MCP mentions only after membership and addressing policy
+    // pass; presence never determines whether a recipient is external.
+    const routing = (await database.query<{
+      active_steer_agent_ids: string[];
+      external_agent_handles: string[];
+    }>(
+      `SELECT ARRAY(
+         SELECT DISTINCT command.agent_id
+         FROM agent_commands command
+         JOIN agent_turns turn ON turn.room_id=command.room_id
+           AND turn.agent_id=command.agent_id AND turn.status='working'
+           AND COALESCE(turn.generation_id,'') NOT LIKE 'pending:%'
+           AND turn.request_id<>command.turn_request_id
+         WHERE $3::boolean AND command.source_message_id=$2 AND command.action='input'
+         ORDER BY command.agent_id
+       ) active_steer_agent_ids,
+       ARRAY(
+         SELECT DISTINCT identity.handle
+         FROM memberships membership
+         JOIN rooms_mcp_members external ON external.member_id=membership.identity_id
+         JOIN identities identity ON identity.id=external.member_id
+         WHERE membership.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=$1)
+           AND membership.removed_at IS NULL
+           AND NULLIF(identity.handle,'') IS NOT NULL
+           AND EXISTS(SELECT 1 FROM rooms_mcp_mentions mention
+             WHERE mention.member_id=external.member_id AND mention.message_id=$2
+               AND mention.room_id=$1)
+         ORDER BY identity.handle
+       ) external_agent_handles`,
+      [roomId, messageIdValue, mayRoute],
+    )).rows[0];
+    return {
+      ...(delta?.type === 'message-delta' ? { message: delta.message } : {}),
+      activeSteerAgentIds: routing?.active_steer_agent_ids ?? [],
+      externalAgentHandles: routing?.external_agent_handles ?? [],
+    };
   }
 
-
-  export async function phoneActiveSteerAgentIds(ctx: PhoneContext, database: SqlDatabase, messageIdValue: string) {
-    const commands = await database.query<{ agent_id: string }>(
-      `SELECT DISTINCT command.agent_id
-       FROM agent_commands command
-       JOIN agent_turns turn ON turn.room_id=command.room_id
-         AND turn.agent_id=command.agent_id AND turn.status='working'
-         AND COALESCE(turn.generation_id,'') NOT LIKE 'pending:%'
-         AND turn.request_id<>command.turn_request_id
-       WHERE command.source_message_id=$1 AND command.action='input'
-       ORDER BY command.agent_id`,
-      [messageIdValue],
-    );
-    return commands.rows.map((command) => command.agent_id);
-  }
 
   export async function phonePendingAgentCommandsForMessage(ctx: PhoneContext,
     database: SqlDatabase,

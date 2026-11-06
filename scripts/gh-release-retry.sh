@@ -156,11 +156,11 @@ ghr_publish() {
   local notes="$2"
   local attempt=1
   while :; do
-    if gh release edit "$release" --notes-file "$notes" --draft=false --latest &&
-       [ "$(gh release view "$release" --json isDraft --jq .isDraft)" = false ]; then
+    if gh release edit "$release" --notes-file "$notes" --draft=false --prerelease=false --latest &&
+       [ "$(gh release view "$release" --json isDraft,isPrerelease --jq '(.isDraft or .isPrerelease)')" = false ]; then
       return 0
     fi
-    if [ "$(gh release view "$release" --json isDraft --jq .isDraft 2>/dev/null)" = false ]; then
+    if [ "$(gh release view "$release" --json isDraft,isPrerelease --jq '(.isDraft or .isPrerelease)' 2>/dev/null)" = false ]; then
       return 0
     fi
     if [ "$attempt" -ge 3 ]; then

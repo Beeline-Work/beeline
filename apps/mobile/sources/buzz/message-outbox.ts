@@ -3,9 +3,8 @@ import type { NostrEvent } from '@beeline/nostr';
 import type { AgentMessageWriteResult } from '@beeline/api-contract/phone';
 import { isUnsignedMonolithMessage } from './unsigned-monolith-message';
 
-export type MessageOutboxRecord = SignedOutboxRecord & { queuedAt: number; reason?: string; offlineSince?: number; seen?: boolean };
-export type MessageSendState = { kind: 'sending' | 'offline' | 'refused'; text: string };
-export const OUTBOX_OFFLINE_CUTOFF_MS = 120_000;
+export type MessageOutboxRecord = SignedOutboxRecord & { queuedAt: number; reason?: string; failure?: 'connection' | 'refused'; seen?: boolean };
+export type MessageSendState = { kind: 'sending' | 'offline' | 'refused'; text: string; reason?: string };
 export const outboxRoomId = (record: Pick<MessageOutboxRecord, 'event'>) => record.event.tags.find(tag => tag[0] === 'h')?.[1];
 
 /** The app owns delivery; Room handles only select records for presentation. */
@@ -15,7 +14,6 @@ export class MessageOutbox {
   private writes: Promise<void> = Promise.resolve();
   private readonly listeners = new Set<() => void>();
   private readonly flights = new Map<string, Promise<AgentMessageWriteResult | undefined>>();
-  private cutoff?: ReturnType<typeof setTimeout>;
   private connected = false;
   private disposed = false;
   private epoch = 0;
@@ -35,7 +33,6 @@ export class MessageOutbox {
     const write = this.writes.catch(() => undefined).then(() => this.deps.save(this.records));
     this.writes = write;
     this.publish();
-    this.scheduleCutoff();
     return write;
   }
   restore(): Promise<void> {
@@ -46,7 +43,7 @@ export class MessageOutbox {
       this.records = [...new Map(validator.list().filter(record => outboxRoomId(record)).map(record => [record.event.id, {
         ...record, queuedAt: (record as MessageOutboxRecord).queuedAt ?? this.now(),
         // Old failed records represented exhausted network retries, not refusals.
-        status: (record as MessageOutboxRecord).reason ? 'failed' as const : 'pending' as const,
+        status: (record as MessageOutboxRecord).reason || (record as MessageOutboxRecord).failure ? 'failed' as const : 'pending' as const,
       }])).values()];
       await this.save();
     })();
@@ -67,13 +64,11 @@ export class MessageOutbox {
           status: 'pending',
           attempts: 0,
           queuedAt: this.now(),
-          ...(!this.connected ? { offlineSince: this.now() } : {}),
         };
         // Only durable records may be published, delivered, or included in later saves.
         await this.deps.save([...this.records, record]);
         this.records = [...this.records, record];
         this.publish();
-        this.scheduleCutoff();
       });
     this.writes = write;
     await write;
@@ -89,25 +84,47 @@ export class MessageOutbox {
     await this.save();
   }
   async fail(id: string, reason?: string) {
-    if (!reason) return; // A transport failure never rejects a message.
-    this.records = this.records.map(record => record.event.id === id ? { ...record, status: 'failed', reason } : record);
+    if (this.disposed) return;
+    this.records = this.records.map(record => record.event.id === id
+      ? { ...record, status: 'failed', failure: reason ? 'refused' : 'connection', reason } : record);
     await this.save();
+  }
+  async retry(ids: readonly string[]): Promise<readonly (AgentMessageWriteResult | undefined)[]> {
+    await this.restore();
+    await Promise.all(ids.map(id => this.flights.get(id)));
+    const selected = new Set(ids);
+    let failedIds: string[] = [];
+    const write = this.writes.catch(() => undefined).then(async () => {
+      if (this.disposed) return;
+      const failed = new Set(this.records.filter(record => selected.has(record.event.id) && record.status === 'failed').map(record => record.event.id));
+      if (!failed.size) return;
+      const next = this.records.map(record => failed.has(record.event.id)
+        ? { ...record, status: 'pending' as const, failure: undefined, reason: undefined, seen: undefined } : record);
+      await this.deps.save(next);
+      this.records = this.records.map(record => failed.has(record.event.id)
+        ? { ...record, status: 'pending', failure: undefined, reason: undefined, seen: undefined } : record);
+      failedIds = [...failed];
+      this.publish();
+    });
+    this.writes = write;
+    await write;
+    // A person's explicit Retry owns an attempt even while the socket is down.
+    return Promise.all(failedIds.map(id => this.startDelivery(id, 'send', true)));
   }
   state(id: string): MessageSendState | undefined {
     const record = this.get(id);
     if (!record) return;
-    if (record.reason) return { kind: 'refused', text: `Not sent · ${record.reason}` };
-    if (record.offlineSince !== undefined && this.now() - record.offlineSince >= OUTBOX_OFFLINE_CUTOFF_MS)
-      return { kind: 'offline', text: 'Not sent yet' };
+    if (record.reason) return { kind: 'refused', text: `Not sent: ${record.reason}`, reason: record.reason };
+    if (record.status === 'failed') return { kind: 'offline', text: 'Not sent' };
     return { kind: 'sending', text: 'Sending' };
   }
   /** Called by the shared connection owner on open and observed transport loss. */
   async connectionChanged(connected: boolean): Promise<void> {
     await this.restore();
     if (this.disposed) return;
+    // A confirming answer on an already connected socket is not a new epoch.
+    if (connected && !this.connected) this.epoch += 1;
     this.connected = connected;
-    if (connected) this.epoch += 1;
-    this.records = this.records.map(record => ({ ...record, offlineSince: connected ? undefined : record.offlineSince ?? this.now() }));
     await this.save();
     if (connected) await this.flush();
   }
@@ -117,15 +134,18 @@ export class MessageOutbox {
     await Promise.all(this.records.filter(record => record.status === 'pending').map(record => this.send(record.event.id, 'reconnect')));
   }
   send(id: string, cause: 'send' | 'reconnect' = 'send'): Promise<AgentMessageWriteResult | undefined> {
+    return this.startDelivery(id, cause);
+  }
+  private startDelivery(id: string, cause: 'send' | 'reconnect', allowDisconnected = false): Promise<AgentMessageWriteResult | undefined> {
     const held = this.flights.get(id);
     if (held) return held;
-    const work = this.deliver(id, cause).finally(() => this.flights.delete(id));
+    const work = this.deliver(id, cause, allowDisconnected).finally(() => this.flights.delete(id));
     this.flights.set(id, work);
     return work;
   }
-  private async deliver(id: string, cause: 'send' | 'reconnect'): Promise<AgentMessageWriteResult | undefined> {
+  private async deliver(id: string, cause: 'send' | 'reconnect', allowDisconnected = false): Promise<AgentMessageWriteResult | undefined> {
     await this.restore();
-    if (!this.connected || this.disposed) return;
+    if ((!this.connected && !allowDisconnected) || this.disposed) return;
     const record = this.get(id);
     if (!record || record.status !== 'pending') return;
     const epoch = this.epoch;
@@ -141,15 +161,9 @@ export class MessageOutbox {
       if (reason) await this.fail(id, reason);
       // A reconnect may have arrived while the old request was settling.
       else if (this.connected && epoch !== this.epoch) return this.deliver(id, 'reconnect');
+      else if (cause === 'reconnect') await this.fail(id);
       return;
     }
   }
-  private scheduleCutoff() {
-    if (this.cutoff) clearTimeout(this.cutoff);
-    const future = this.records.filter(record => !record.reason && record.offlineSince !== undefined)
-      .map(record => record.offlineSince! + OUTBOX_OFFLINE_CUTOFF_MS - this.now()).filter(delay => delay > 0);
-    if (!future.length || this.disposed) return;
-    this.cutoff = setTimeout(() => { this.records = [...this.records]; this.publish(); this.scheduleCutoff(); }, Math.min(...future));
-  }
-  dispose() { this.disposed = true; if (this.cutoff) clearTimeout(this.cutoff); this.listeners.clear(); }
+  dispose() { this.disposed = true; this.listeners.clear(); }
 }

@@ -281,6 +281,11 @@ export function useChatMessageActions([
   const handleDeleteMessage = useCallback(
     async (message: ChatDisplayMessage) => {
       if (!canDeleteMessage(message)) return;
+      if (outbox.current()?.get(message.id)) {
+        outbox.dismiss(message.id);
+        AccessibilityInfo.announceForAccessibility('Message deleted');
+        return;
+      }
       const confirmed = await Modal.confirm(
         'Delete message?',
         'The message text and attachments will be removed. A deleted-message record will remain in this Room.',
@@ -313,7 +318,7 @@ export function useChatMessageActions([
         );
       }
     },
-    [applyRoomMessageResult, canDeleteMessage, decodedId],
+    [applyRoomMessageResult, canDeleteMessage, decodedId, outbox],
   );
 
   const openMessageActions = useCallback((message: ChatDisplayMessage) => {

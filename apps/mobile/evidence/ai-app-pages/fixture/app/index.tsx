@@ -1,0 +1,1 @@
+export {default} from '../../../../sources/app/(app)/beeline/settings/workbench';

@@ -88,6 +88,7 @@ vi.mock('react-native', async () => { const R = await import('react');
 });
 vi.mock('@/components/buzz/PageHeader', () => ({ PageHeader: (props: any) => React.createElement('PageHeader', props) }));
 vi.mock('@/components/buzz/ServiceMark', () => ({ ServiceMark: (props: any) => React.createElement('ServiceMark', props) }));
+vi.mock('@/components/buzz/IdentityMark', () => ({ IdentityMark: (props: any) => React.createElement('IdentityMark', props) }));
 vi.mock('@/components/buzz/SettingsRow', () => ({ SettingsRow: (props: any) => React.createElement('SettingsRow', props) }));
 vi.mock('@/components/buzz/Button', () => ({ Button: (props: any) => React.createElement('Button', props) }));
 vi.mock('@/components/buzz/HullActionSheet', () => ({
@@ -144,6 +145,53 @@ describe('company detail', () => {
     const renderer = await render(); await act(async () => renderer.root.findByProps({ testID: 'squire-computer-machine-one' }).props.onPress());
     await act(async () => renderer.root.findByType('HullActionSheetRow').props.onPress());
     expect(disconnect).toHaveBeenCalledWith({ workspaceId: 'ws', connectorId: 'squire:machine-one' }); expect(read.mock.calls.length).toBeGreaterThan(1);
+  });
+});
+
+describe('AI app info page', () => {
+  const chatgpt = (agent = true): import('@/buzz/workbench').WorkbenchView => {
+    const view = companyWorkbench([{ id: 'rooms:chatgpt', roomsClientId: 'chatgpt', name: 'ChatGPT', kind: 'company',
+      logo: { kind: 'image', uri: 'data:image/png;base64,AA==', plate: 'light' }, section: 'apps',
+      subtitle: agent ? 'Connected as Pidoong' : 'Connected', state: 'connected', items: [], machines: [], alsoAvailable: [] }]);
+    const today = Math.floor(Date.now() / 1000);
+    return { ...view, aiClients: [{ clientId: 'chatgpt', name: 'ChatGPT', scopes: ['rooms:read', 'rooms:write'],
+      connectedAt: Math.floor(new Date(2026, 9, 31, 12).getTime() / 1000), lastUsedAt: today, logo: 'data:image/png;base64,AA==',
+      ...(agent ? { agent: { id: 'agent-pidoong', name: 'Pidoong', handle: 'pidoong_2', avatar: 'https://server.test/v1/agent-avatars/00000000-0000-4000-8000-000000000000' } } : {}) }] };
+  };
+  it('Reproduction AI-APP-PAGE: shows status, agent, abilities and dates, and disconnects from the Status sheet', async () => {
+    params.service = 'rooms:chatgpt';
+    const source = new MockWorkbenchSource(); let view = chatgpt(); source.readWorkbench = async () => view; setWorkbenchSource(source);
+    const disconnect = vi.spyOn(source, 'disconnectAiClient').mockImplementation(async () => { view = companyWorkbench([]); });
+    navigation.back.mockClear(); navigation.push.mockClear();
+    const renderer = await render();
+    const status = renderer.root.findByProps({ testID: 'connector-info-status' });
+    expect(status.props).toMatchObject({ title: 'ChatGPT', value: 'Connected', chevron: 'right' });
+    expect(status.props.leading.props.mark).toEqual({ kind: 'image', uri: 'data:image/png;base64,AA==', plate: 'light' });
+    expect(renderer.root.findByProps({ testID: 'connector-info-agents' }).props.children)
+      .toBe('Pidoong uses ChatGPT to read your Rooms and post. It posts as Pidoong, not as you.');
+    expect(renderer.root.findByProps({ testID: 'ai-client-agent' }).props).toMatchObject({ title: 'Pidoong', description: '@pidoong_2' });
+    expect(renderer.root.findByProps({ testID: 'ai-client-can-read' }).props.title).toBe('Read messages in your Rooms');
+    expect(renderer.root.findByProps({ testID: 'ai-client-can-post' }).props.title).toBe('Post and reply as Pidoong');
+    expect(renderer.root.findByProps({ testID: 'ai-client-dates' }).props.children).toBe('Connected Oct 31 · last used today.');
+    expect(renderer.root.findAllByProps({ testID: 'connector-squire-vault' })).toHaveLength(0);
+    await act(async () => renderer.root.findByProps({ testID: 'ai-client-agent' }).props.onPress());
+    expect(navigation.push).toHaveBeenCalledWith({ pathname: '/beeline/agent-profile', params: { communityId: 'ws', agentId: 'agent-pidoong' } });
+    expect(renderer.root.findAllByType('HullActionSheetModal').every((sheet: any) => !sheet.props.visible)).toBe(true);
+    await act(async () => status.props.onPress());
+    const sheet = renderer.root.findAllByType('HullActionSheetModal').find((node: any) => node.props.visible)!;
+    expect(sheet.props.title).toBe('ChatGPT');
+    await act(async () => renderer.root.findByProps({ testID: 'ai-client-disconnect' }).props.onPress());
+    expect(disconnect).toHaveBeenCalledWith({ clientId: 'chatgpt' });
+    expect(navigation.back).toHaveBeenCalled();
+  });
+  it('keeps the page without an Agent section for a connection made before agents', async () => {
+    params.service = 'rooms:chatgpt';
+    const source = new MockWorkbenchSource(); source.readWorkbench = async () => chatgpt(false); setWorkbenchSource(source);
+    const renderer = await render();
+    expect(renderer.root.findAllByProps({ testID: 'ai-client-agent' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'connector-info-agents' }).props.children)
+      .toBe('ChatGPT reads your Rooms and posts as its own agent, not as you.');
+    expect(renderer.root.findByProps({ testID: 'ai-client-can-post' }).props.title).toBe('Post and reply as its agent');
   });
 });
 

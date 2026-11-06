@@ -50,7 +50,7 @@ type Props = [
   messageRecordScopeRef: import("react/index").RefObject<string | null>,
   setRoomSurface: import("react/index").Dispatch<import("react/index").SetStateAction<RoomView | null>>,
   setPresenceNow: import("react/index").Dispatch<import("react/index").SetStateAction<number>>,
-  outboxRef: import("react/index").RefObject<{ restore: () => Promise<void>; list: () => readonly import("@/buzz/message-outbox").MessageOutboxRecord[]; get: (id: string) => import("@/buzz/message-outbox").MessageOutboxRecord | undefined; enqueue: (event: import("@beeline/nostr").NostrEvent, row: RoomViewMessage) => Promise<void>; fail: (id: string, reason?: string) => Promise<void>; remove: (id: string) => Promise<void>; reconcile: (ids: ReadonlySet<string>) => Promise<void>; send: (id: string, cause?: "send" | "reconnect") => Promise<import("@beeline/api-contract/phone").AgentMessageWriteResult | undefined>; state: (id: string) => MessageSendState | undefined; acknowledgeFailures: () => Promise<void>; subscribe: (listener: () => void) => () => void; } | null>,
+  outboxRef: import("react/index").RefObject<ReturnType<typeof createRoomOutbox> | null>,
   scheduleCacheWriteRef: import("react/index").RefObject<(() => void) | undefined>,
   notificationResponseId: string | undefined,
   readCursorViewerRef: import("react/index").RefObject<string>,
@@ -688,13 +688,12 @@ export function useRoomSurfaceSubscription([
         const updateOutbox = () => {
           if (cancelled) return;
           if (isFocusedRef.current && AppState.currentState === 'active') void outbox.acknowledgeFailures();
-          // Rows display failures, never the delivery queue. Healthy sends must
-          // not rerender the whole Room before the receipt can paint.
+          // Pending rows keep the muted treatment until committed server data arrives.
           const states = new Map<string, MessageSendState>();
           const failed = new Set<string>();
           for (const record of outbox.list()) {
             const state = outbox.state(record.event.id);
-            if (state && state.kind !== 'sending') states.set(record.event.id, state);
+            if (state) states.set(record.event.id, state);
             if (record.status === 'failed') failed.add(record.event.id);
           }
           setOutboxStates(current => current.size === states.size && [...states].every(([id, state]) =>

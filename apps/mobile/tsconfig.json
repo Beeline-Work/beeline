@@ -44,6 +44,7 @@
     "nativewind-env.d.ts"
   ],
   "exclude": [
+    "evidence",
     "**/*.test-support.ts",
     "**/*.test-support.tsx",
     "**/*.spec.ts",

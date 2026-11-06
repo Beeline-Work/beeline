@@ -137,9 +137,14 @@ export async function explainHotRead(
   if (statement) await database.query(`PREPARE ${statement} AS ${sql}`);
   const samples: ExplainSample[] = [];
   try {
-    // Warm the query path once so cold planning and initialization do not
-    // become a latency sample. Both corpus shapes still gate all five timed reads.
-    await database.query<QueryResultRow>(explain, bound);
+    // PostgreSQL's auto mode first tries five custom plans, then builds and
+    // compares a generic plan on execution six. Finish that initial selection
+    // before timing a hot prepared read; leave the server's plan choice intact.
+    // Unnamed reads still warm once. Every timed sample keeps the same gates.
+    const warmupCount = statement ? 6 : 1;
+    for (let warmup = 0; warmup < warmupCount; warmup++) {
+      await database.query<QueryResultRow>(explain, bound);
+    }
     for (let sample = 0; sample < sampleCount; sample += 1) {
       const startedAt = performance.now();
       const explained = await database.query<QueryResultRow>(explain, bound);

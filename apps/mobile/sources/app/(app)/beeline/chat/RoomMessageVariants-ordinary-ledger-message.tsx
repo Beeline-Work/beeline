@@ -1,7 +1,7 @@
 import { useArtifactRowVisible } from '@/buzz/artifact-viewport';
 import { Ionicons } from '@expo/vector-icons';
 import { LedgerUntaggedHint } from '@/components/buzz/Ledger';
-import { ErrorBanner } from '@/components/buzz/ErrorBanner';
+import { TurnSettledLine } from '@/components/buzz/TurnProgressLine';
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -57,6 +57,8 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   channelIndex,
   deliveryFailed,
   sendState,
+  sendFailureIds,
+  onRetry,
   untaggedHint = false,
   onChannelReference,
   codeRoomId,
@@ -414,6 +416,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             precededByDayCaption={dayOpener}
             byline={byline}
             bodyText={viewerMessage.body}
+            pending={Boolean(sendState)}
             mentionHandles={mentionHandles}
             onMention={handleMention}
             channelIndex={channelIndex}
@@ -532,14 +535,11 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
           (message.pubkey ?? indexedAuthor?.pubkey) === viewerPubkey ? (
           <LedgerUntaggedHint messageId={message.id} />
         ) : null}
-        {/* A pending send looks sent; only a failure gets a line. */}
-        {message.isUser && sendState && sendState.kind !== 'sending' ? (
-          <ErrorBanner inline
-            title={sendState.text}
-            icon={<Ionicons name="alert-circle-outline" size={13} color={styles.sendFailure.color} />}
-            secondaryAction={{ label: 'Dismiss', onPress: () => onDismiss(message.id) }}
-            testID={`outbox-delivery-failed-${message.id}`}
-          />
+        {message.isUser && sendState && sendState.kind !== 'sending' && sendFailureIds?.length ? (
+          <TurnSettledLine inset={false} leadingGlyph={false}
+            line={sendFailureIds.length > 1 ? `${sendFailureIds.length} not sent` : sendState.text}
+            action={onRetry ? { label: sendFailureIds.length > 1 ? 'Retry all' : 'Retry', onPress: () => onRetry(sendFailureIds) } : undefined}
+            testID={`outbox-delivery-failed-${message.id}`} />
         ) : null}
         {message.reactions?.length ? (
           <View style={styles.reactionChips} testID={`reaction-chips-${message.id}`}>
@@ -563,7 +563,9 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       messageId={message.id}
       onLongPress={() => onCopy(message.text)}
       onActions={onMessageActions ? () => onMessageActions(message) : undefined}
-      {...(onTapOutsideComposer ? { onPress: onTapOutsideComposer } : {})}
+      {...(sendState && onMessageActions
+        ? { onPress: () => onMessageActions(message) }
+        : onTapOutsideComposer ? { onPress: onTapOutsideComposer } : {})}
       onReply={replyAvailable ? () => onReply(message) : undefined}
       onReact={(emoji) => onReact(message, emoji)}
       onForward={() => onForward(message)}

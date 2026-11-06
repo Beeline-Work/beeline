@@ -242,7 +242,7 @@ export type CornerMachineFacts = CornerStateFacts & {
   approved?: boolean;
   mergeHeld?: boolean;
   mergeConflictDelivered?: boolean;
-  checkDelivered?: boolean;
+  lostEffects?: string[];
   draftReadyFailure?: boolean;
   waitReason?: 'blocked' | 'user_action' | 'question';
   reviewerConfigured?: boolean;
@@ -334,10 +334,11 @@ export function transitionCorner(
       ? current.headSha : undefined);
   const pullRequest = f.lifecycle?.pr?.number;
   const redKey = `red:${headSha}:${f.checkAttempt ?? 0}:${f.checkFollowup || (event.kind === 'checks' && event.followup) ? f.checkSourceId : 'first'}`;
+  // A receipt cannot suppress a wake whose durable command was lost.
   const effects = (current.headSha === headSha && current.pullRequest === pullRequest
     ? [...(current.effects ?? [])] : [])
     .filter(key => (key !== `merge-conflict:${headSha ?? ''}` || f.mergeConflictDelivered !== false) &&
-      (key !== redKey || f.checkDelivered !== false));
+      !(f.lostEffects ?? []).includes(key));
   const base = {
     ...(headSha ? { headSha } : {}),
     ...(pullRequest ? { pullRequest } : {}),
@@ -687,10 +688,12 @@ export async function advanceCorner(
           )
         ).rows[0]?.text
       : undefined;
-    const attempt = (corner.lifecycle.checksSummary as { attempt?: number } | undefined)?.attempt ?? 0;
-    const cachedCheckId = createHash('sha256').update(`cached-checks:${cornerId}:${corner.lifecycle.pr?.number}:${head}:${attempt}`).digest('hex');
+    // Completed commands still prove delivery; only missing IDs invalidate their receipts.
+    const receipts = (corner.machine?.effects ?? []).filter(key => key.startsWith('command:red:')).map(marker => ({
+      marker, key: marker.slice('command:'.length, marker.lastIndexOf(':')), id: marker.slice(marker.lastIndexOf(':') + 1),
+    }));
     const active = (
-      await db.query<{ worker: boolean; reviewer: boolean; conflict: boolean; checks: boolean }>(
+      await db.query<{ worker: boolean; reviewer: boolean; conflict: boolean; retained: string[] | null }>(
         `SELECT
       EXISTS(SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2
         AND state IN ('pending','claimed') AND action IN ('input','resume') AND reason<>'report' AND ${currentCornerCommandTargetSql('agent_commands')}) worker,
@@ -703,16 +706,14 @@ export async function advanceCorner(
       EXISTS(SELECT 1 FROM agent_commands delivered JOIN messages source ON source.id=delivered.source_message_id
         WHERE delivered.room_id=$1 AND delivered.reason='corner_merge_conflict'
           AND source.system_event->'object'->>'headSha'=$4) conflict,
-      EXISTS(SELECT 1 FROM agent_commands delivered WHERE delivered.room_id=$1 AND delivered.reason='corner_check'
-        AND (delivered.source_message_id=$6 OR delivered.id=$7)) checks`,
+      (SELECT array_agg(id) FROM agent_commands WHERE id=ANY($6::text[])) retained`,
         [
           cornerId,
           corner.worker_agent_id,
           corner.configured_reviewer_id,
           head ?? null,
           JSON.stringify(corner.lifecycle.pr?.number ?? null),
-          event.kind === 'checks' ? event.sourceMessageId : checkSource?.id ?? null,
-          cachedCheckId,
+          receipts.map(receipt => receipt.id),
         ],
       )
     ).rows[0];
@@ -740,7 +741,7 @@ export async function advanceCorner(
       approved: gate?.approved,
       mergeHeld: gate?.held,
       mergeConflictDelivered: active?.conflict,
-      checkDelivered: active?.checks,
+      lostEffects: receipts.filter(receipt => !active?.retained?.includes(receipt.id)).flatMap(receipt => [receipt.key, receipt.marker]),
       draftReadyFailure: (corner.lifecycle as CornerLifecycleView & { draftReadyFailure?: { headSha?: string } }).draftReadyFailure?.headSha === head && Boolean(head),
       reviewerConfigured: independentReviewerConfigured(corner),
       ...(/^blocked:/.test(waitText ?? '') ? { waitReason: 'blocked' as const } : {}),
@@ -870,6 +871,7 @@ export async function advanceCorner(
                   text: `Failing checks on head ${head}: ${corner.lifecycle.checksSummary?.failing.length ? corner.lifecycle.checksSummary.failing.join(', ') : 'the recorded checks failed; read the current checks for details'}. Fix these recorded failures.` } } : {}),
               reason: 'corner_check',
             });
+            if (command) effects.push(`command:${effect.key}:${command.id}`);
             if (command && !sourceId) await db.query(`UPDATE agent_commands SET review_context=jsonb_build_object(
               'cornerId',$2::text,'headSha',$3::text,'pullRequest',$4::int,'briefRevision',
               COALESCE((SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=$2::uuid),0),'purpose','repair') WHERE id=$1`,

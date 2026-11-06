@@ -1214,11 +1214,11 @@ it('routes subscribed events, grants and changed corner checks through actions',
   expect(await commands(B, C)).toHaveLength(1);
 
   await db.query(`DELETE FROM agent_commands`);
-  await phone.execute('updateRoom', { roomId: R, reviewerAgentId: null }, H);
   await db.query(
     `UPDATE corner_github_cache SET lifecycle='{"checks":"passing","pr":{"number":1,"headSha":"action-head"}}' WHERE corner_id=$1`,
     [C],
   );
+  await phone.execute('updateRoom', { roomId: R, reviewerAgentId: null }, H);
   await systemLine(db, {
     roomId: C,
     subject: { kind: 'person', id: H, name: 'Human' },
@@ -1266,6 +1266,7 @@ it('holds the green review wake while the corner worker still holds a live turn'
 
   // Only the worker result releases the review wake.
   await daemon.execute('postAgentTurnReceipt',{roomId:C,requestId:workerCommand!.turnRequestId,generationId:'gw',status:'complete'},B,await helperOwner(B));
+  await advanceCorner(db, C, { kind: 'reconcile' });
   expect(await commands(A, C)).toHaveLength(1);
 
   // This suite shares one store, so leave none of the above behind.

@@ -1743,7 +1743,7 @@ describe('Reproduction CI-1: a red head wakes the implementer before checks fini
       reason === 'corner_review_dispatch' || reason === 'subscribed_event')).toHaveLength(0);
   });
 
-  it('wakes again when the run finishes and deduplicates a replay', async () => {
+  it('wakes again when the run finishes, deduplicates replay and recovers a lost followup', async () => {
     const cornerId = await redWhileRunning();
     githubApp.readCommitCheckRollup.mockResolvedValueOnce(finished);
     await checkRun(cornerId, 'Server suite', 'success');
@@ -1753,6 +1753,15 @@ describe('Reproduction CI-1: a red head wakes the implementer before checks fini
     await reconcileCornerMergeBlockers(db, cornerId);
     expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_check')).toHaveLength(2);
     expect(await currentState(cornerId)).toBe('working');
+    // A retained first-failure command cannot mask a deleted followup wake.
+    await db.query(`UPDATE agent_commands SET state='complete' WHERE room_id=$1`, [cornerId]);
+    await db.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1`, [cornerId]);
+    await db.query(`DELETE FROM agent_commands command USING messages source WHERE command.room_id=$1
+      AND command.reason='corner_check' AND source.id=command.source_message_id
+      AND (source.system_event->'payload'->>'followup')::boolean`, [cornerId]);
+    await expect(reconcileCornerMergeBlockers(db, cornerId)).resolves.toBe(1);
+    await expect(reconcileCornerMergeBlockers(db, cornerId)).resolves.toBe(0);
+    expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_check')).toHaveLength(2);
   });
 
   it('the implementer takes the fix turn and its push reaches review with no person in the loop', async () => {

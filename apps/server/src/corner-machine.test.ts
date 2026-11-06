@@ -114,8 +114,8 @@ describe('corner transition table', () => {
     const red = { ...green, lifecycle: { ...green.lifecycle!, checks: 'failing' as const }, checkSourceId: 'red' };
     const first = run(red);
     const delivered = { ...first.state, effects: [first.wakes[0]!.key] };
-    expect(run({ ...red, checkDelivered: true }, observe, delivered).wakes).toEqual([]);
-    expect(run({ ...red, checkDelivered: false }, observe, delivered).wakes.map(wake => wake.kind))
+    expect(run(red, observe, delivered).wakes).toEqual([]);
+    expect(run({ ...red, lostEffects: delivered.effects }, observe, delivered).wakes.map(wake => wake.kind))
       .toEqual(['checks-failed']);
   });
   it('rejects old-head and duplicate check deliveries', () => {

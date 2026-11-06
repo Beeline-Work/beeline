@@ -9992,8 +9992,9 @@ describe('monolith integration', () => {
         `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
          VALUES('brief-question',$1,$2,'Choose a label','card','choice',$3::jsonb)`,
         [cornerId, worker, JSON.stringify({ mode: 'question', status: 'open', requester: { pubkey: HUMAN } })]);
-      await advanceCorner(database, cornerId, state === 'landed' ? { kind: 'merged', contents: {} }
+      const seeded = await advanceCorner(database, cornerId, state === 'landed' ? { kind: 'merged', contents: {} }
         : state === 'closed' ? { kind: 'closed' } : { kind: 'reconcile' });
+      expect(seeded.state).toBe(['landed', 'closed'].includes(state) ? 'archived' : state.startsWith('review-') ? 'review' : state);
       if (health === 'offline')
         await database.query(`DELETE FROM live_outputs WHERE agent_id=$1`, [worker]);
       if (health === 'removed')

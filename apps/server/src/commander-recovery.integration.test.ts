@@ -430,6 +430,8 @@ it('routes zero-check completion through a durable lifecycle fact', async () => 
     WORKER,
   );
   await zero.execute('postAgentTurnReceipt', { ...authority(turn), agentId: WORKER, status: 'complete' }, WORKER);
+  expect((await db.query(`SELECT lifecycle->>'checks' checks FROM corner_github_cache WHERE corner_id=$1`, [opened.cornerId])).rows[0]?.checks).toBe('passing');
+  await advanceCorner(db, opened.cornerId, { kind: 'reconcile' });
   expect(
     (await commands(DM, RUBY)).some(
       (c) => c.reason === 'report' && c.source.body.includes('foreign key constraint'),

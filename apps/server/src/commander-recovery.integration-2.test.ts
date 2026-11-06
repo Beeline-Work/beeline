@@ -64,12 +64,18 @@ it('keeps the originating corner waiting for a decision returned to its parent R
   expect(
     (await rootFixture.db.query(`SELECT 1 FROM corner_owed WHERE corner_id=$1`, [opened.cornerId])).rowCount,
   ).toBe(0);
+  expect(await state()).toBe('waiting');
+  await rootFixture.phone.execute(
+    'sendRoomMessage',
+    { roomId: opened.cornerId, messageId: randomBytes(32).toString('hex'), text: 'Use endpoint v2' },
+    HUMAN,
+  );
   expect(await state()).toBe('idle');
   await rootFixture.db.query('SELECT corner_owed_refresh($1,$2)', [opened.cornerId, HUMAN]);
   expect(await state()).toBe('idle');
   await rootFixture.db.query(
     `UPDATE messages SET deleted_at=now() WHERE room_id=$1 AND text IN ('Use endpoint v2','@ruby Use endpoint v2')`,
-    [ROOM],
+    [opened.cornerId],
   );
   expect(await state()).toBe('waiting');
 });

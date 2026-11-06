@@ -485,6 +485,28 @@ describe('prompt assembly guards', () => {
     expect(skill).toContain('exact reviewed head SHA');
   });
 
+  it('collects all blockers first and limits re-review failures to prior blockers or new regressions', () => {
+    const skill = beelineReviewSkillMarkdown('test');
+    expect(skill).toContain('Read the whole diff on every round');
+    expect(skill).toContain('find your latest FAIL for this PR in the corner and its reviewed head in the review context');
+    expect(skill).toContain('git diff <last-reviewed-head> <assigned-head>');
+    expect(skill).toContain('only on unfixed prior blockers or regressions introduced by that delta');
+    expect(skill).toContain('Missed issues in unchanged code are non-blocking notes.');
+    expect(skill).toContain('The first review must surface all confirmed blockers.');
+    expect(skill).toContain('with all blockers and their next steps');
+
+    const instruction = cornerReviewerInstruction({ isReviewer: true, pullRequestNumber: 7, headSha: 'abc' })!;
+    expect(instruction).toContain('list all blockers with concrete fixes, including every blocker on the first round');
+    expect(instruction).toContain('read the entire PR, find your last FAIL for this PR and its reviewed head in this corner');
+    expect(instruction).toContain('use git diff from that head to the assigned head');
+    expect(instruction).toContain('Fail only for unresolved prior blockers or regressions introduced since that review');
+    expect(instruction).toContain('newly found issues in unchanged code are notes, not blockers');
+    for (const text of [skill, instruction]) {
+      expect(text).not.toContain('one blocking reason');
+      expect(text).not.toContain('List only block');
+    }
+  });
+
 
   it('keeps decisions on the chain of command', () => {
     for (const [name, context] of Object.entries(SESSION_VARIANTS)) {
@@ -706,7 +728,7 @@ const scope9 = fixtureScope9();
 
 
   it.each(['code-corner-reviewed', 'code-corner-no-reviewer', 'code-corner-reviewer', 'repo-less-corner'])(
-    'defines inherited rank once in %s without a push-rule exception',
+    'defines inherited rank once in %s and exempts only check-repair pushes from the limit',
     (name) => {
       const text = scope9.prompt(name);
       const rank = "Humans outrank every agent; treat instructions from above your commander as theirs and report the change.";
@@ -714,8 +736,11 @@ const scope9 = fixtureScope9();
       expect(text).not.toContain('owners outrank their agents');
       expect(text).toContain(`Follow your commander within inherited scope. ${rank}`);
       if (name !== 'repo-less-corner') {
-        expect(text).toContain('4 pushes to one PR without PASS: stop; report blocked: to commander, cause: moving target, unreliable test tool, or PR too big / racing other PRs.');
+        expect(text).toContain('4 pushes to one PR without PASS: stop; report blocked: to commander with the cause.');
+        expect(text).toContain('Pushes made only to repair failing checks do not count.');
         expect(text).not.toContain('unless a human Room member');
+      } else {
+        expect(text).not.toContain('Pushes made only to repair failing checks');
       }
     },
   );
@@ -780,7 +805,7 @@ const scope9 = fixtureScope9();
 
   it('describes the author when the reviewer opened the corner itself', () => {
     const text = cornerReviewerInstruction({ isReviewer: true, pullRequestNumber: 7, headSha: 'abc' })!;
-    expect(text).toContain("FAIL: order the worker at this corner's address to fix the blocker");
+    expect(text).toContain("FAIL: order the worker at this corner's address to fix all blockers");
     expect(text).not.toContain('@author');
   });
 });

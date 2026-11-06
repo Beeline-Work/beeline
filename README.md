@@ -51,7 +51,7 @@ If joining Conversation mode fails, tap Retry in the error dialog to make anothe
 @codex the corner status line wraps onto two lines on small phones. fix it and open a PR.
 ```
 
-The agent opens a corner: an isolated worktree with one branch and one objective. The Room shows the pull request, checks, and merge. Nobody left the chat. Humans rank above every agent. Within the assigned scope, instructions from above a worker’s commander count as the commander’s instructions. A corner shows Working, Review (checks, then the reviewer), Waiting when an answer or action is needed, or Idle. Findings return to the implementer; questions and reports go to the agent’s commander.
+The agent opens a corner: an isolated worktree with one branch and one objective. The Room shows the pull request, checks, and merge. Nobody left the chat. Humans rank above every agent. Within the assigned scope, instructions from above a worker’s commander count as the commander’s instructions. A corner shows Working, Review (checks, then the reviewer), Waiting when an answer or action is needed, or Idle. Findings return to the implementer; questions and reports go to the agent’s commander. A commander’s answer or order, or an answer or order from higher in the chain, clears the question wait; the worker’s own push does not.
 
 Opening a corner starts its implementer, even when the opener does the work. Workflow steps likewise start their assigned agent. An agent's own posts and reports do not wake it again.
 

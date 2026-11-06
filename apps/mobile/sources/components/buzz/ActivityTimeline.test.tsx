@@ -146,7 +146,7 @@ describe('one-line tool ledger', () => {
     expect(text).not.toContain('pnpm: not found');
   });
 
-  it('a transport envelope is not output: the line has nothing to open onto', () => {
+  it('a transport envelope opens the empty output state', () => {
     const renderer = render(
       <ActivityTimeline
         items={[
@@ -177,7 +177,9 @@ describe('one-line tool ledger', () => {
     ).toHaveLength(1);
     expect(
       renderer.root.findByProps({ testID: 'tool-ledger-line-shell' }).props.onPress,
-    ).toBeUndefined();
+    ).toBeTypeOf('function');
+    act(() => renderer.root.findByProps({ testID: 'tool-ledger-line-shell' }).props.onPress());
+    expect(renderer.root.findByProps({ testID: 'tool-output-text' }).props.children).toBe('No output saved');
   });
 
   it('names failed steps in brass and omits settled verdict glyphs', () => {
@@ -212,7 +214,7 @@ describe('one-line tool ledger', () => {
     expect(spinner.props.children.props.live).toBe(true);
   });
 
-  it('every line is a 44-minimum tap target, and pressable only when it has output', () => {
+  it('every line is a 44-minimum tap target and opens its output state', () => {
     const renderer = render(
       <ActivityTimeline
         active={false}
@@ -230,7 +232,9 @@ describe('one-line tool ledger', () => {
     expect(renderer.root.findByProps({ testID: 'tool-ledger-line-read' }).findByType('Pressable').props.accessibilityRole).toBe('button');
     expect(
       renderer.root.findByProps({ testID: 'tool-ledger-line-bare' }).props.onPress,
-    ).toBeUndefined();
+    ).toBeTypeOf('function');
+    act(() => renderer.root.findByProps({ testID: 'tool-ledger-line-bare' }).props.onPress());
+    expect(renderer.root.findByProps({ testID: 'tool-output-text' }).props.children).toBe('No output saved');
     expect(renderedText(renderer)).toContain('project task');
   });
 

@@ -44,7 +44,7 @@ describe('lifecycle-1: stored GitHub lifecycle summaries', () => {
     const items = run(messages).items;
     // Committed events remain available in the expanded run and for read cursors.
     expect(items).toHaveLength(messages.length);
-    expect(lifecycleSummary(items)).toBe('1 PR opened · 1 PR merged · 2 PRs closed · 1 issue filed · 1 issue closed');
+    expect(lifecycleSummary(items)).toBe('1 PR opened · 1 merged · 2 closed · 1 issue filed · 1 closed');
     expect(lifecycleSummary(run([...messages].reverse()).items)).toBe(lifecycleSummary(items));
     expect(lifecycleItem(messages[1])?.state.toLowerCase()).toBe('closed');
   });
@@ -62,6 +62,27 @@ describe('lifecycle-1: stored GitHub lifecycle summaries', () => {
     expect(lifecycleSummary(run(messages).items)).toBe(expected);
   });
 
+  it('names each GitHub group once using its first count', () => {
+    const messages = [
+      ...Array.from({ length: 3 }, (_, i) => event(`open-${i}`, 'pull-request', 'opened', i)),
+      ...Array.from({ length: 4 }, (_, i) => event(`merge-${i}`, 'pull-request', 'merged', i)),
+      ...Array.from({ length: 12 }, (_, i) => event(`file-${i}`, 'issue', 'opened', i)),
+      ...Array.from({ length: 28 }, (_, i) => event(`close-${i}`, 'issue', 'closed', i)),
+    ];
+    expect(lifecycleSummary(run(messages).items)).toBe('3 PRs opened · 4 merged · 12 issues filed · 28 closed');
+  });
+
+  it.each(['check', 'payment', 'wallet', 'corner', 'notice'] as const)(
+    'names the %s group once across states', (kind) => {
+      const item = { id: 'a', title: '', kindLine: '', actor: '', updatedBy: 'a', kind };
+      expect(lifecycleSummary([
+        { ...item, state: 'Opened' },
+        { ...item, state: 'Closed' },
+        { ...item, state: 'Closed' },
+      ])).toBe(`2 ${kind}s closed · 1 opened`);
+    },
+  );
+
   it('keeps repositories, lifecycle kinds and runs distinct', () => {
     const closed = event('closed', 'pull-request', 'closed', 42);
     const otherRepo = event('other-repo', 'pull-request', 'closed', 42);
@@ -70,7 +91,7 @@ describe('lifecycle-1: stored GitHub lifecycle summaries', () => {
       closed, otherRepo, event('issue', 'issue', 'closed', 42),
       event('opened', 'pull-request', 'opened', 42),
       subscription('duplicate', 'closed pull request', 42),
-    ]).items)).toBe('1 PR opened · 2 PRs closed · 1 issue closed');
+    ]).items)).toBe('1 PR opened · 2 closed · 1 issue closed');
     const folded = foldPrLifecycleRuns([closed, { id: 'chat', text: 'Hello', timestamp: 2 }, subscription('later', 'closed pull request', 42)]);
     expect(folded).toHaveLength(3);
     for (const index of [0, 2]) {
@@ -87,7 +108,7 @@ describe('lifecycle-1: stored GitHub lifecycle summaries', () => {
       event('commented', 'pull-request', 'commented', 43),
       event('closed', 'pull-request', 'closed', 42), duplicate,
     ]).items;
-    expect(lifecycleSummary(items)).toBe('1 PR closed · 1 issue reopened · 1 PR commented');
+    expect(lifecycleSummary(items)).toBe('1 PR closed · 1 issue reopened · 1 commented');
     expect(lifecycleSummary([])).toBe('');
   });
 

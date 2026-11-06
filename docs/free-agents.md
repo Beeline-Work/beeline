@@ -315,12 +315,15 @@ turns. `infra/free-agent/resume-proof-helper.mjs` supplies that entry and
 `infra/free-agent/hosted-service-state.mjs` records redacted state/sign-in results.
 
 
-After a server release, `.github/workflows/free-agent-image.yml` builds
-`infra/free-agent/Dockerfile`, publishes its immutable digest, stages that digest
-as the server's `FLY_FREE_AGENT_IMAGE`, and updates server Machines one at a time.
-It verifies the running image setting on each server and fails on an older ref.
-Image publication failures fail this independent workflow without holding the
-main release open. `scripts/build-free-agent-image.sh` builds the same image by hand.
+The server release leg (`.github/actions/server-leg/action.yml`) builds
+`infra/free-agent/Dockerfile` from the release checkout, publishes its immutable
+digest, and stages that digest as `FLY_FREE_AGENT_IMAGE` before the release's
+existing server rollout. Each server receives it during that rollout; no
+post-release job restarts server Machines. Publication failure stops the leg
+before deployment. After rollout, the leg verifies the setting on each server
+and refreshes the free-agent helpers. A fully shipped rerun skips image
+publication and server updates. `scripts/build-free-agent-image.sh` builds the
+same image by hand.
 `npm run prove:free-agent:docker-machines` stands in for the Machines API with
 Docker for a local end-to-end run (suspend = `docker pause`). `npm run
 prove:free-agent` runs the end-to-end proof and the rewake latency measurement

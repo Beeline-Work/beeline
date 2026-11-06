@@ -14,7 +14,7 @@ vi.mock('@/auth/monolith-session', () => ({
   monolithSession: { authorization: async () => 'fixture-access', invalidateAuthorization: vi.fn() },
 }));
 vi.mock('react', () => ({ useSyncExternalStore: (_subscribe: unknown, snapshot: () => unknown) => snapshot() }));
-import { LiveConnection, useConnectionFailure, subscribeNetworkOnline, sharedLiveConnection, resetSharedLiveConnection } from './live-connection';
+import { LiveConnection, useConnectionFailure, subscribeNetworkOnline, sharedLiveConnection, resetSharedLiveConnection, reconnectNow } from './live-connection';
 import { PhoneSocketDisconnectedError } from './phone-socket-error';
 
 class Socket {
@@ -226,6 +226,49 @@ describe('the one phone socket',()=>{
     const {connection}=setup();await connection.register([],()=>{});const first=await open();
     first.readyState=3;connection.reconnectNow();const second=await open();
     expect(second).not.toBe(first);expect(connection.diagnostics().state).toBe(1);
+  });
+  it('a late failure on a closed old socket cannot restore the banner after the replacement read', async () => {
+    const { connection } = setup();
+    const oldRead = connection.request('readRoom', { roomId: 'a' }, { timeoutMs: 100 }).catch(error => error);
+    const oldSocket = await open();
+    // Android has closed the socket but has not delivered its close callback.
+    oldSocket.readyState = 3;
+    const nextRead = connection.request('readRoom', { roomId: 'a' });
+    const replacement = await open();
+    replacement.reply({ room: { id: 'a' } });
+    await nextRead;
+    expect(useConnectionFailure()).toBe(false);
+    await vi.advanceTimersByTimeAsync(100);
+    await oldRead;
+    expect(useConnectionFailure()).toBe(false);
+  });
+  it('a screen registration settles a native-closed socket before replacing it', async () => {
+    const { connection } = setup();
+    const oldRead = connection.request('readRoom', { roomId: 'a' }, { timeoutMs: 100 }).catch(error => error);
+    const oldSocket = await open(); oldSocket.readyState = 3;
+    await connection.register([{ '#h': ['b'] }], () => {});
+    const replacement = await open();
+    expect(await oldRead).toBeInstanceOf(PhoneSocketDisconnectedError);
+    const nextRead = connection.request('readRoom', { roomId: 'b' });
+    replacement.reply({ room: { id: 'b' } }); await nextRead;
+    await vi.advanceTimersByTimeAsync(100);
+    expect(useConnectionFailure()).toBe(false);
+  });
+  it('Reconnect clears the banner on its read and notifies media even on an already open socket', async () => {
+    const connection = sharedLiveConnection();
+    const failed = connection.request('reactToMessage', { roomId: 'a', messageId: 'm', emoji: '👍' }, { timeoutMs: 100 }).catch(error => error);
+    const socket = await open();
+    await vi.advanceTimersByTimeAsync(100); await failed;
+    expect(useConnectionFailure()).toBe(true);
+    const recovered = vi.fn(); connection.subscribeConnected(recovered);
+    const generation = connection.commandState().generation;
+    reconnectNow();
+    expect(useConnectionFailure()).toBe(true);
+    socket.reply({ workspaces: [] }, 1); await tick();
+    expect(useConnectionFailure()).toBe(false);
+    expect(connection.commandState().generation).toBeGreaterThan(generation);
+    expect(recovered).toHaveBeenCalledOnce();
+    expect(Socket.instances).toHaveLength(1);
   });
   it('a lost native close callback is handled by the next explicit request',async()=>{
     const {connection}=setup();const listener=vi.fn();await connection.register([],listener);

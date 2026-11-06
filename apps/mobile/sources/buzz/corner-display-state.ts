@@ -122,9 +122,3 @@ export function cornerHeaderAgent(input: CornerHeaderAgentInput): CornerHeaderAg
     ownerWorking: input.ownerPubkey !== undefined && input.activeTurnPubkeys.includes(input.ownerPubkey),
   };
 }
-
-function cornerDisplayItems<T extends CornerDisplayItem>(
-  corners: readonly T[],
-): Array<{ readonly item: T; readonly display: CornerDisplayState }> {
-  return corners.map((item) => ({ item, display: cornerDisplayState(item) }));
-}

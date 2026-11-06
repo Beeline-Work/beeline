@@ -4,7 +4,7 @@ import { cornerObjectiveSql } from './corner-objective.js';
 import { commandOwnerLiveSql } from './turn-ownership.js';
 import { NotificationWork } from './notification-work.js';
 import { cornerOwnerSql } from './corner-worker.js';
-import { cornerRunOutcomeSql, cornerRunStateSql } from './corner-run.js';
+import { cornerRunOutcomeSql } from './corner-run.js';
 import { CommandRefusalError } from './command-refusal.js';
 import { cornerReviewerSql } from './corner-reviewer.js';
 import type { RepositorySignals } from './repository-onboarding.js';
@@ -31,6 +31,11 @@ import { archiveCornerState, lockCornerArchivalAuthority } from './corner-close.
 import { captureServerError } from './sentry.js';
 import {
   advanceCorner,
+  planCornerCheckObservation,
+  cornerReviewWokenSql,
+  checksSettled,
+  checksRestarted,
+  actionsJobId,
   blockingReview,
   confirmCornerMergeAuthority,
   lockCornerLifecycle,
@@ -43,7 +48,6 @@ import {
   routeSystemCommand,
 } from './agent-command.js';
 import { roomAgentHealth } from './agent-health.js';
-import { dispatchPromptReplay } from './prompt-replay.js';
 import { fireRepositorySubscriptions } from './agent-subscriptions.js';
 
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
@@ -188,30 +192,6 @@ interface CornerWebhookTarget {
   summary: string;
   repository_id: string;
   installation_id: string;
-}
-
-/** No check on the head is still running. */
-function checksSettled(checks: readonly { status: string }[] | undefined): boolean {
-  return !checks?.some((check) => check.status === 'pending');
-}
-
-/** A new Actions job also identifies a rerun whose start webhook was missed. */
-function checksRestarted(
-  previous: readonly { name: string; status: string; url?: string }[] | undefined,
-  current: readonly { name: string; status: string; url?: string }[],
-): boolean {
-  if (!previous?.length || !checksSettled(previous)) return false;
-  return !checksSettled(current) || current.some(check => {
-    const before = previous.find(item => item.name === check.name);
-    return Boolean(before?.url && check.url && actionsJobId(before.url) &&
-      actionsJobId(check.url) && actionsJobId(before.url) !== actionsJobId(check.url));
-  });
-}
-
-function actionsJobId(url: string | undefined): number | undefined {
-  const match = url?.match(/^https:\/\/github\.com\/[^/]+\/[^/]+\/actions\/runs\/\d+\/job\/(\d+)(?:[/?#]|$)/);
-  const id = match ? Number(match[1]) : undefined;
-  return id && Number.isSafeInteger(id) ? id : undefined;
 }
 
 function jobErrorLines(log: string): string {
@@ -1079,7 +1059,7 @@ export class GitHubOperations {
         `SELECT r.parent_id,parent.workspace_id,f.lifecycle,
                 COALESCE(${cornerOwnerSql('r.id')},r.created_by,parent.created_by) author_id,r.name corner_name,
                 r.archived_at IS NOT NULL archived,
-                (${cornerRunStateSql('r.id')}='review' AND ${cornerRunOutcomeSql('r.id')} IS DISTINCT FROM 'no_reviewer') review_woken,
+                ${cornerReviewWokenSql('r.id')} review_woken,
                 ${cornerReviewerSql('r')} configured_reviewer_id,
                 reviewer_identity.id reviewer_identity_id,
                 parent_member.identity_id parent_reviewer_id,
@@ -1174,7 +1154,7 @@ export class GitHubOperations {
       { name: 'Pull request checks', status: 'pending', headSha: pr.headSha }, this.database,
       { quiet: true, snapshot: { rollup, pr, fetchStartedAt, token: target.token } });
       corner.review_woken = (await this.database.query<{ review_woken: boolean }>(
-        `SELECT ${cornerRunStateSql('$1::uuid')}='review' AND ${cornerRunOutcomeSql('$1::uuid')} IS DISTINCT FROM 'no_reviewer' review_woken`,
+        `SELECT ${cornerReviewWokenSql('$1::uuid')} review_woken`,
         [input.cornerId],
       )).rows[0]?.review_woken ?? false;
     }
@@ -1206,7 +1186,7 @@ export class GitHubOperations {
            AND command.review_context->>'purpose' IS NULL`,
         [input.cornerId,pr.headSha,JSON.stringify(number)])).rows[0];
       if (delivery?.ended && !delivery.live && !await blockingReview(this.database,input.cornerId,pr.headSha))
-        reviewerWake = {status:'waiting',detail:'The reviewer ended without a verdict; bounded recovery retries this head or reports the review blocker.'};
+        reviewerWake = {status:'waiting',detail:'The reviewer ended without a verdict; ownership returns to the implementer or commander once.'};
     }
     const mergeDecision = cornerMergeability({
       checks,
@@ -1492,7 +1472,7 @@ export class GitHubOperations {
            AND repository.active AND lower(repository.full_name)=lower(regexp_replace(regexp_replace(
              COALESCE(parent.repository_remote,parent.repository_key,''),
              '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
-         WHERE corner.id=$1 AND ${cornerRunStateSql('corner.id')} IS DISTINCT FROM 'landed'`,
+         WHERE corner.id=$1 AND ${cornerRunOutcomeSql('corner.id')} IS DISTINCT FROM 'landed'`,
         [cornerId],
       )
     ).rows[0];
@@ -1531,7 +1511,7 @@ export class GitHubOperations {
              CASE WHEN corner.archived_at IS NULL THEN '{"lifecycle":"working","checks":"unknown"}'::jsonb
                ELSE '{}'::jsonb END
          FROM rooms corner WHERE fact.corner_id=$1 AND corner.id=fact.corner_id
-           AND ${cornerRunStateSql('fact.corner_id')} IS DISTINCT FROM 'landed'
+           AND ${cornerRunOutcomeSql('fact.corner_id')} IS DISTINCT FROM 'landed'
            AND (fact.lifecycle->'pr'->>'number')::int=$2
          RETURNING corner.archived_at IS NOT NULL archived`,
         [cornerId, number],
@@ -1599,16 +1579,6 @@ export class GitHubOperations {
       // even though this handler has no branch of its own for that action.
       if (event === 'installation' || event === 'installation_repositories') {
         this.invalidateInstallationRoomTokens(install.id);
-      }
-      if (event === 'pull_request' && ['opened', 'synchronize', 'reopened'].includes(String(body.action))) {
-        const pr = record(body.pull_request);
-        const number = integer(pr?.number);
-        const repository = repositoryName(body);
-        const head = text(record(pr?.head)?.sha);
-        if (repository && number && head) {
-          const changed = await dispatchPromptReplay(this.database, this.app, { installationId: install.id, repository, number, head });
-          if (changed) this.onRoomChanged?.(changed);
-        }
       }
       if (deliveryId) {
         const changed = await fireRepositorySubscriptions(this.database, install.id, event, body, deliveryId);
@@ -2452,44 +2422,12 @@ export class GitHubOperations {
             updatedAt: Math.floor(fetchStartedAt),
             fetchStartedAt,
           };
-          const priorReport = current.checksSummary as (typeof current.checksSummary & {
-            reportedHeadSha?: string; reportedFailing?: readonly string[]; failureFollowupSent?: boolean;
-            partialRepairSent?: boolean; attempt?: number;
-          }) | undefined;
-          const sameReportedHead = priorReport?.reportedHeadSha === checkHeadSha;
-          const newAttempt = sameReportedHead && checksRestarted(priorReport.checks, summary.checks);
-          const attempt = sameReportedHead ? (priorReport.attempt ?? 0) + (newAttempt ? 1 : 0) : 0;
-          const reported = sameReportedHead && !newAttempt ? priorReport.reportedFailing ?? [] : [];
-          const newFailures = summary.failing.filter(name => !reported.includes(name));
-          const workerBusy = (await database.query(
-            `SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason='corner_check'
-               AND state IN ('pending','claimed') LIMIT 1`,
-            [target.corner_id],
-          )).rowCount > 0;
-          const firstFailure = summary.status === 'failing' && newFailures.length > 0 && !reported.length;
-          const followup = summary.status === 'failing' && reported.length > 0 &&
-            checksSettled(summary.checks) && !checksSettled(priorReport?.checks ?? []) &&
-            !(sameReportedHead && !newAttempt && priorReport.failureFollowupSent);
-          // A later failed job, after the first repair turn has ended, wakes
-          // once without waiting for the checks that are still running.
-          const partialRepair = !followup && summary.status === 'failing' && !checksSettled(summary.checks) &&
-            reported.length > 0 && newFailures.length > 0 && !workerBusy &&
-            !(sameReportedHead && !newAttempt && priorReport.partialRepairSent);
-          const reportFailure = firstFailure || followup || partialRepair;
-          const storedSummary = {
-            ...summary,
-            // Repeated reads of an unchanged status do not start new idle work.
-            statusChangedAt: current.pr?.headSha === checkHeadSha && priorReport?.status === summary.status
-              && !newAttempt && JSON.stringify((priorReport.checks ?? []).map(check => [check.name,check.status]).sort()) ===
-                JSON.stringify(summary.checks.map(check => [check.name,check.status]).sort())
-              ? (priorReport as typeof priorReport & { statusChangedAt?: number })?.statusChangedAt ?? priorReport.fetchStartedAt ?? priorReport.updatedAt
-              : summary.fetchStartedAt,
-            attempt,
-            reportedHeadSha: checkHeadSha,
-            reportedFailing: reportFailure ? [...reported, ...newFailures] : reported,
-            failureFollowupSent: Boolean((sameReportedHead && !newAttempt && priorReport.failureFollowupSent) || followup),
-            partialRepairSent: Boolean((sameReportedHead && !newAttempt && priorReport.partialRepairSent) || partialRepair),
-          };
+          const priorReport = current.checksSummary;
+          const workerBusy = (await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason='corner_check'
+            AND state IN ('pending','claimed') LIMIT 1`, [target.corner_id])).rowCount > 0;
+          const { sameReportedHead, newAttempt, attempt, newFailures, followup, partialRepair, reportFailure, storedSummary } =
+            planCornerCheckObservation({ headSha: checkHeadSha, previousHeadSha: current.pr?.headSha,
+              prior: priorReport, next: summary, workerBusy });
           await this.updateLifecycle(
             target.corner_id,
             {

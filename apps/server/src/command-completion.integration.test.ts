@@ -23,7 +23,7 @@ describe('F26 committed completion capture', () => {
       readStarted();
       return row?.status === 'connected' ? row.status : undefined;
     });
-    const waiting = waitForConnection(read, 1000, { principal: 'connector', operation: 'status', commandId: 'connector-1' });
+    const waiting = waitForConnection(read, { principal: 'connector', operation: 'status', commandId: 'connector-1' });
     await started;
     expect(read).toHaveBeenCalledTimes(1);
     await db.query("UPDATE workspace_connectors SET status='connected' WHERE id='connector-1'");
@@ -33,7 +33,7 @@ describe('F26 committed completion capture', () => {
   it('completion before interest is recovered by the single initial inspection', async () => {
     await db.query("INSERT INTO workspace_connectors VALUES('already','connected',NULL,NULL)");
     const read = vi.fn(async () => (await db.query<{ status: string }>("SELECT status FROM workspace_connectors WHERE id='already'")).rows[0]?.status);
-    expect(await waitForConnection(read, 1000, { principal: 'connector', operation: 'status', commandId: 'already' })).toBe('connected');
+    expect(await waitForConnection(read, { principal: 'connector', operation: 'status', commandId: 'already' })).toBe('connected');
     expect(read).toHaveBeenCalledTimes(1);
   });
   it('does not publish a rolled back completion and coalesces unrelated updates', async () => {

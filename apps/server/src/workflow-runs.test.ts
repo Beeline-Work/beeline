@@ -370,15 +370,15 @@ describe('start_workflow', () => {
     expect(card.rows[0]?.card.roleBindings.reviewer).toBe(REVIEWER);
   });
 
-  it('posts a run, wakes the start role agent, and names the run in the wake and card', async () => {
+  it.each([IMPLEMENTER, REVIEWER])('retains run guidance and wakes the start-role assignee once (%s)', async target => {
     const command = await commandFor(IMPLEMENTER);
     await saveWorkflow(database, command, { contract: describedWorkflow(CONTRACT)});
     const started = await startWorkflow(database, command, {
       name: 'corner',
-      roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+      roleBindings: { implementer: target, reviewer: REVIEWER, approver: APPROVER },
     });
     expect(started.state).toBe('implement');
-    expect(await pendingCommandsFor(IMPLEMENTER)).toBeGreaterThan(0);
+    expect(await pendingCommandsFor(target)).toBe(1);
     const card = await database.query<{ card_type: string; text: string; card: { runId: string } }>(
       `SELECT card_type,text,card FROM messages WHERE id=$1`,
       [started.runId],
@@ -387,8 +387,10 @@ describe('start_workflow', () => {
     // The phone renders this text column for workflow-handoff cards.
     expect(card.rows[0]?.text).toBe(`Impy started workflow corner · run ${started.runId.slice(0, 8)}`);
     expect(card.rows[0]?.card.runId).toBe(started.runId);
-    const inbox = await readAgentCommands(database, ROOM, IMPLEMENTER);
+    const inbox = await readAgentCommands(database, ROOM, target);
     const woken = inbox.commands.find((c) => c.sourceMessageId === started.runId);
+    expect((await database.query(`SELECT state FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2`,
+      [started.runId,target])).rows).toEqual([{state:'pending'}]);
     expect(woken?.source.body).toContain(
       `You are in run ${started.runId} of corner. Continue this run; do not start a new one.`,
     );

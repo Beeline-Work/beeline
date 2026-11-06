@@ -50,14 +50,6 @@
       "phase": "M5"
     },
     {
-      "id": "apps/body/src/android-emulator-lease.ts::import:node:net",
-      "file": "apps/body/src/android-emulator-lease.ts",
-      "kind": "import:node:net",
-      "count": 1,
-      "compatibility": "legacy-only",
-      "phase": "M5"
-    },
-    {
       "id": "apps/body/src/attachment-delivery.ts::fetch",
       "file": "apps/body/src/attachment-delivery.ts",
       "kind": "fetch",
@@ -141,14 +133,6 @@
       "id": "apps/body/src/connector-squire.ts::fetch",
       "file": "apps/body/src/connector-squire.ts",
       "kind": "fetch",
-      "count": 1,
-      "compatibility": "legacy-only",
-      "phase": "M5"
-    },
-    {
-      "id": "apps/body/src/corner-emulator.ts::import:node:net",
-      "file": "apps/body/src/corner-emulator.ts",
-      "kind": "import:node:net",
       "count": 1,
       "compatibility": "legacy-only",
       "phase": "M5"

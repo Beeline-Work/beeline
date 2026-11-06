@@ -16,7 +16,7 @@ import { findSession, liveSessions, machineSources, type LiveSession, type Sourc
 import { pidAlive, queueInbox, queueInboxOnce, readState, takeInbox, updateState, type JoinedSession } from './store.js';
 
 export interface Mention { memberId?: string; replyRule?: string; id: string; room_id: string; room_name?: string; author_handle?: string | null; author_name?: string | null; text: string }
-export interface Wake { id: string; deliveryVersion?: number; address: string; reason: string; kind?: string; text?: string; createdAt: string; next?: string }
+export interface Wake { id: string; address: string; reason: string; kind?: string; text?: string; createdAt: string; next?: string }
 
 /** How the session runs Beeline commands: the stable bundle copy and this member's id. */
 export interface Runner { node: string; bundle: string }
@@ -114,12 +114,10 @@ export async function acceptMemberDelivery(dir:string,key:string,runner:Runner,r
     const joined=state.sessions.find(session=>session.key===key); if(!joined)return 0;
     let queued=0;
     if(frame.type==='delivery'){
-      const wakeKey=(wake:Wake)=>wake.deliveryVersion===undefined?wake.id:`${wake.id}:${wake.deliveryVersion}`;
       const parts=[...frame.mentions.map(mention=>renderMention(mention,joined,runner)),
-        ...frame.wakes.filter(wake=>!joined.deliveredWakes.includes(wakeKey(wake))&&
-          !(wake.deliveryVersion===0&&joined.deliveredWakes.includes(wake.id))).map(wake=>renderWake(wake,joined,runner))];
+        ...frame.wakes.filter(wake=>!joined.deliveredWakes.includes(wake.id)).map(wake=>renderWake(wake,joined,runner))];
       if(parts.length&&queueInboxOnce(dir,key,frame.deliveryId,parts.join('\n\n')))queued=parts.length;
-      joined.deliveredWakes=[...new Set([...joined.deliveredWakes,...frame.wakes.map(wakeKey)])];
+      joined.deliveredWakes=[...new Set([...joined.deliveredWakes,...frame.wakes.map(wake=>wake.id)])];
     }else{
       const old=joined.streamCursor;
       if(old?.epoch===frame.cursor.epoch&&old.through>frame.cursor.through)throw new Error('Beeline stream cursor moved backwards');

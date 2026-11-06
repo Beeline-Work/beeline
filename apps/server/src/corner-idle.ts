@@ -1,9 +1,8 @@
 import {commandOwnerLiveSql} from './turn-ownership.js';
 import { cornerOwedAnswerTimesSql, cornerReportAnswerTimesSql } from './corner-owed.js';
-import { cornerRunOutcomeSql, cornerRunStateSql } from './corner-run.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
-import { cornerBlockerSql, cornerRowState, cornerScheduledWaitSql, cornerWorkSql,
+import { cornerBlockerSql, cornerScheduledWaitSql, cornerWorkSql,
   type CornerStateRow } from './chat-corner-counts.js';
 
 export type CornerIdleRow = CornerStateRow & {
@@ -20,22 +19,13 @@ export type CornerIdleRow = CornerStateRow & {
  * Deleted schedules have no surviving end timestamp; expired schedules alone,
  * without another event, do not open a new idle episode.
  */
-export function cornerIdleSql(cornerId: string): string {
+export function cornerIdleSql(cornerId: string, includeCommander = false): string {
   return `WITH live_corner AS MATERIALIZED (
     SELECT * FROM rooms WHERE id=${cornerId} AND parent_id IS NOT NULL AND archived_at IS NULL
   ) SELECT snapshot.*,
-    NOT (archived_at IS NOT NULL OR
-      NOT COALESCE(locked,false) AND (
-        COALESCE(workflow_state IN ('landed','closed'),false)
-        OR lower(btrim(COALESCE(lifecycle->>'lifecycle','')))='done'
-        OR COALESCE(lifecycle->>'outcome' IN ('landed','abandoned'),false)
-        OR NULLIF(lifecycle->'pr'->>'mergedAt','') IS NOT NULL) OR
-      worker_active OR reviewer_active OR blocking OR suppressed OR
-      COALESCE(lifecycle->'checksSummary'->>'status',lifecycle->>'checks','')='pending' OR
-      COALESCE(lifecycle->'checksSummary'->'checks','[]'::jsonb) @> '[{"status":"pending"}]'::jsonb
-    ) idle_eligible
-    FROM (SELECT c.id,c.name,c.parent_id,c.archived_at,gh.lifecycle,f.locked,
-      ${cornerRunStateSql('c.id')} workflow_state,${cornerRunOutcomeSql('c.id')} workflow_outcome,
+    (machine->>'state'='idle' AND archived_at IS NULL
+      AND NOT (worker_active OR reviewer_active OR blocking OR suppressed)) idle_eligible
+    FROM (SELECT c.id,c.name,c.parent_id,c.archived_at,gh.lifecycle,f.locked,f.machine,
       activity.worker_active,activity.reviewer_active,NULL::text latest_turn_status,
       blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,
       blocker.reason waiting_reason,blocker.kind waiting_kind,blocker.person_id waiting_person_id,
@@ -44,9 +34,6 @@ export function cornerIdleSql(cornerId: string): string {
         to_timestamp(COALESCE(gh.lifecycle->'checksSummary'->>'statusChangedAt',
           gh.lifecycle->'checksSummary'->>'updatedAt')::double precision)))::text idle_since,
       (${cornerScheduledWaitSql('c')}
-        OR EXISTS(SELECT 1 FROM agent_commands unresolved JOIN agent_command_owner_ends ended_owner
-          ON ended_owner.command_id=unresolved.id AND ended_owner.generation_id=unresolved.generation_id
-          WHERE unresolved.room_id=c.id AND unresolved.state='claimed')
         OR EXISTS(SELECT 1 FROM corner_merge_holds WHERE corner_id=c.id AND released_at IS NULL)
         OR EXISTS(SELECT 1 FROM agent_commands queued WHERE queued.room_id=c.id AND queued.action='input'
           AND (queued.state='pending' OR (queued.state='claimed' AND ${commandOwnerLiveSql('queued')}))
@@ -58,7 +45,7 @@ export function cornerIdleSql(cornerId: string): string {
       ) IS TRUE suppressed
       FROM live_corner c JOIN corner_facts f ON f.corner_id=c.id
       LEFT JOIN corner_github_cache gh ON gh.corner_id=c.id
-      ${cornerWorkSql(true)} ${cornerBlockerSql()}
+      ${cornerWorkSql(!includeCommander)} ${cornerBlockerSql()}
       LEFT JOIN LATERAL (SELECT turn.ended_at,turn.status FROM agent_turns turn
         WHERE turn.room_id=c.id AND turn.agent_id IS DISTINCT FROM c.created_by
           AND COALESCE(turn.generation_id,'') NOT LIKE 'pending:%'
@@ -77,10 +64,6 @@ export function cornerIdleSql(cornerId: string): string {
         (SELECT max(ended_at) FROM (${cornerReportAnswerTimesSql('c.id')}) answered_report)
       ) at OFFSET 0) boundary
       ) snapshot`;
-}
-
-export function cornerCanReportIdle(row: CornerIdleRow): boolean {
-  return !row.suppressed && !row.worker_active && !row.reviewer_active && cornerRowState(row).state === 'idle';
 }
 
 /** Delivery and claim require the same idle start and absence of every idle disqualifier. */

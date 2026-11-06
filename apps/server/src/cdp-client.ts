@@ -720,7 +720,7 @@ export class CdpWalletClient implements CdpWalletSource {
 
 /** One admitted observation. A pending response schedules no further source read. */
 async function inspectReceipt(chain: WalletChainId, txHash: string): Promise<boolean> {
-  const receipt = await rpc(chain, 'eth_getTransactionReceipt', [txHash], AbortSignal.timeout(20_000))
+  const receipt = await rpc(chain, 'eth_getTransactionReceipt', [txHash], undefined)
     .catch(() => null) as { status?: string } | null;
   if (receipt?.status === '0x0') throw new Error(`transaction ${txHash} reverted`);
   return receipt?.status === '0x1';

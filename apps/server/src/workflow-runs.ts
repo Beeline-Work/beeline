@@ -1,11 +1,9 @@
 import { resourceRequester } from './resource-requester.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
-import { commandOwnerExpiredSql } from './turn-ownership.js';
 import { WELCOME_VIDEO_SLUG } from './welcome-video-workflow.js';
 import { reserveServiceReviewWorkspaces, completeServiceReview } from './service-review.js';
 import { CommandRefusalError, ExpectedRefusalError } from './command-refusal.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
-import { workflowTimerId } from './workflow-timer-id.js';
 import { workflowRunIsLiveSql } from './workflow-run-saved-status.js';
 import { humanRoomAdmin, humanRoomMember, WorkflowAuthorizationError } from './workflow-admin.js';
 import { createHash, randomBytes } from 'node:crypto';
@@ -17,7 +15,6 @@ import {
   type WorkflowReceiptInput,
   isAgentIdentityReference,
   WORKFLOW_BLOCKED_OUTCOME,
-  WORKFLOW_DEFAULT_DEADLINE_SECONDS,
   WORKFLOW_ROLE_AGENTS_MAX,
   type WorkflowContract,
   type WorkflowReadContract,
@@ -64,9 +61,6 @@ import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
  */
 export const WORKFLOW_HANDOFF_CARD_TYPE = 'workflow-handoff';
 
-/** Agent steps pinned before timeouts were required still get a bounded lease. */
-export const WORKFLOW_LEGACY_STEP_TIMEOUT_SECONDS = 3600;
-
 /** One agent tried during a state visit, and why it left the step. */
 type TriedAgent = { agentId: string; reason: string };
 
@@ -93,7 +87,6 @@ type WorkflowRunCard = {
   requesterId?: string;
   /** Start card only: the person notices go to (see `resolveRunOwner`). */
   ownerId?: string | null;
-  deadlineSeconds?: number;
   cancellation?: { reason: string; actorId: string };
   /** An engine close that is not a person's cancellation, such as a passed deadline. */
   closure?: { reason: string };
@@ -232,8 +225,6 @@ async function resolveRoleBinding(
 
 const HEALTH_LABEL: Record<AgentHealthReason, string> = {
   offline: systemMessage("workflow-runs.offline"),
-  'recent-failure': systemMessage("workflow-runs.recent-failure"),
-  'out-of-credit': systemMessage("workflow-runs.out-of-credit"),
 };
 
 /** Every agent on a role list with why it cannot take the step now. */
@@ -621,99 +612,19 @@ async function openRun(db: SqlDatabase, roomId: string, runId: string): Promise<
   };
 }
 
-/** Cancel pending and expired-lease wakes; an already executing turn retains its output binding. */
+/** Cancel pending wakes; an already executing turn retains its output binding. */
 async function cancelRunWakes(db: SqlDatabase, roomId: string, runId: string): Promise<void> {
   await db.query(
     `WITH due AS MATERIALIZED (
        SELECT command.id FROM agent_commands command
        JOIN messages message ON message.id=command.source_message_id
        WHERE command.room_id=$1 AND message.card->>'runId'=$2
-         AND (command.state='pending' OR (command.state='claimed' AND ${commandOwnerExpiredSql('command')}))
+         AND command.state='pending'
        FOR UPDATE OF command SKIP LOCKED
      ), cancelled AS (
-       UPDATE agent_commands command SET state='cancelled',completed_at=now(),cancellation_reason='workflow_attempt_advanced'
-       FROM due WHERE command.id=due.id
-       RETURNING command.room_id,command.agent_id,command.turn_request_id
-     ) UPDATE agent_turns turn SET status='cancelled',failure_reason='Workflow attempt advanced',created_at=now()
-       FROM cancelled WHERE turn.room_id=cancelled.room_id AND turn.agent_id=cancelled.agent_id
-         AND turn.request_id=cancelled.turn_request_id AND turn.status='working'`,
+       SELECT (terminal.ended).* FROM (SELECT beeline_end_agent_turn(command.id,command.generation_id,'cancelled','workflow_attempt_advanced',NULL) ended FROM agent_commands command ,due WHERE command.id=due.id) terminal) SELECT * FROM cancelled`,
     [roomId, runId],
   );
-}
-
-type WorkflowTimerKind = 'step' | 'deadline';
-/**
- * An engine timer is an `agent_schedules` row with `workflow_run` set, owned
- * by the system identity rather than any agent, so it fires whether or not
- * the step's agent is still in the Room and survives a restart.
- * `AgentScheduleLoop` hands due rows to `fireWorkflowTimer`, using the
- * timer kind and current attempt.
- */
-type WorkflowTimer = { runId: string; workflowSlug: string; timer: WorkflowTimerKind; attempt?: number; retryRoleList?: boolean };
-
-async function scheduleRunTimer(
-  db: SqlDatabase,
-  input: {
-    workspaceId: string;
-    roomId: string;
-    runId: string;
-    workflowSlug: string;
-    timer: WorkflowTimerKind;
-    seconds: number;
-    attempt?: number;
-    retryRoleList?: boolean;
-    fireAt?: Date;
-  },
-): Promise<void> {
-  await ensureSystemIdentity(db);
-  const fireAt = input.fireAt ?? new Date(Date.now() + input.seconds * 1_000);
-  const cadence = {
-    kind: 'interval' as const,
-    everyMinutes: Math.max(1, Math.ceil(input.seconds / 60)),
-    startsAt: Math.floor(fireAt.getTime() / 1_000),
-  };
-  const timer: WorkflowTimer = {
-    runId: input.runId,
-    workflowSlug: input.workflowSlug,
-    timer: input.timer,
-    ...(input.attempt !== undefined ? { attempt: input.attempt } : {}),
-    ...(input.retryRoleList ? { retryRoleList: true } : {}),
-  };
-  await db.query(
-    `INSERT INTO agent_schedules
-       (id,workspace_id,room_id,agent_id,creator_id,cadence,message,max_runs,next_run_at,workflow_run)
-     VALUES($1,$2,$3,$4,$4,$5::jsonb,$6,1,$7,$8::jsonb)
-     ON CONFLICT(id) DO UPDATE
-       SET cadence=EXCLUDED.cadence,message=EXCLUDED.message,next_run_at=EXCLUDED.next_run_at,
-           workflow_run=EXCLUDED.workflow_run,run_count=0,updated_at=now()`,
-    [
-      workflowTimerId(input.runId, input.timer),
-      input.workspaceId,
-      input.roomId,
-      SYSTEM_IDENTITY_ID,
-      JSON.stringify(cadence),
-      input.timer === 'deadline'
-        ? `workflow run ${input.runId} deadline`
-        : `workflow run ${input.runId} step timeout for attempt ${input.attempt}`,
-      fireAt,
-      JSON.stringify(timer),
-    ],
-  );
-}
-
-async function cancelStepTimer(db: SqlDatabase, runId: string): Promise<void> {
-  await db.query(`DELETE FROM agent_schedules WHERE id=ANY($1::uuid[])`, [
-    [workflowTimerId(runId, 'step')],
-  ]);
-}
-
-async function cancelRunTimers(db: SqlDatabase, runId: string): Promise<void> {
-  await db.query(`DELETE FROM agent_schedules WHERE id=ANY($1::uuid[])`, [
-    [
-      workflowTimerId(runId, 'step'),
-      workflowTimerId(runId, 'deadline'),
-    ],
-  ]);
 }
 
 function isHandoffState(state: WorkflowReadState | undefined): state is WorkflowHandoffState {
@@ -725,18 +636,10 @@ export function workflowGatePrompt(contract: Pick<WorkflowReadContract, 'name'>,
   return `${contract.name}: ${stateName}`.slice(0, 120);
 }
 
-function durationText(seconds: number): string {
-  if (seconds % 3600 === 0) return systemMessage("workflow-runs.h", seconds / 3600);
-  if (seconds % 60 === 0) return systemMessage("workflow-runs.min", seconds / 60);
-  return systemMessage("workflow-runs.s", seconds);
-}
-
 /**
  * Posts the gate's ask_choice card, for every run however it was started,
  * asked by the gate role's agent and carrying the run id and attempt. A
- * person's answer or Skip settles it through `settleWorkflowGate`; nothing
- * wakes the role's agent at a gate. A declared `timeoutSeconds` arms the
- * step timer that applies `default`.
+ * A person's answer or Skip settles it through `settleWorkflowGate`.
  */
 async function postWorkflowGate(
   db: SqlDatabase,
@@ -761,9 +664,6 @@ async function postWorkflowGate(
     mode: 'question',
     prompt: (input.state.does?.replace(/\s+/g, systemMessage("workflow-runs.space")).trim() ||
       systemMessage("workflow-runs.choose-the-next-step-for", input.contract.name.replace(/[-_]/g, systemMessage("workflow-runs.space")))).slice(0, 120),
-    ...(input.state.default && input.state.timeoutSeconds
-      ? { constraint: systemMessage("workflow-runs.no-answer-in-applies", durationText(input.state.timeoutSeconds), input.state.default) }
-      : {}),
     options: Object.entries(input.state.on).map(([outcome, target]) => ({
       label: outcome,
       consequence: (input.contract.handoffs[target]?.does?.replace(/\s+/g, systemMessage("workflow-runs.space")).trim() ||
@@ -779,20 +679,9 @@ async function postWorkflowGate(
       ...(input.state.hint ? { receiptHint: input.state.hint } : {}),
     })],
   );
-  if (input.state.timeoutSeconds && input.state.default) {
-    await scheduleRunTimer(db, {
-      workspaceId: input.workspaceId,
-      roomId: input.roomId,
-      runId: input.runId,
-      workflowSlug: input.contract.name,
-      timer: 'step',
-      seconds: input.state.timeoutSeconds,
-      attempt: input.attempt,
-    });
-  }
 }
 
-/** What a newly entered state needs after its card is written: a gate card, a step timer, or the exhausted line. */
+/** What a newly entered state needs after its card is written: a gate card or the exhausted line. */
 async function dispatchState(
   db: SqlDatabase,
   input: {
@@ -834,77 +723,6 @@ async function dispatchState(
     });
     return;
   }
-  // A parked handoff state keeps its timer too: when it fires, the engine
-  // looks for an eligible agent again and otherwise applies `timeout`.
-  if (isHandoffState(state)) {
-    await scheduleRunTimer(db, {
-      workspaceId: input.workspaceId,
-      roomId: input.roomId,
-      runId: input.runId,
-      workflowSlug: input.contract.name,
-      timer: 'step',
-      seconds: state.timeoutSeconds ?? WORKFLOW_LEGACY_STEP_TIMEOUT_SECONDS,
-      attempt: input.attempt,
-    });
-  }
-}
-
-/** Restore missing timers without resetting a live lease or changing its pinned workflow. */
-export async function backfillWorkflowRunTimers(database: SqlDatabase): Promise<number> {
-  const starts = await database.query<{ id: string; room_id: string; created_at: Date }>(
-    `SELECT id,room_id,created_at FROM messages
-     WHERE card_type='workflow-handoff' AND id=card->>'runId'
-       AND ${workflowRunIsLiveSql('card')}`,
-  );
-  let armed = 0;
-  for (const start of starts.rows) {
-    try {
-      armed += await database.transaction(async (db) => {
-        const scope = await openRun(db, start.room_id, start.id);
-        if (scope.ended) return 0;
-        const deadlineId = workflowTimerId(start.id, 'deadline');
-        const stepId = workflowTimerId(start.id, 'step');
-        const existing = await db.query<{ id: string }>(
-          `SELECT id FROM agent_schedules WHERE id=ANY($1::uuid[])`,
-          [[deadlineId, stepId]],
-        );
-        const ids = new Set(existing.rows.map((row) => row.id));
-        let changed = 0;
-        if (!ids.has(deadlineId)) {
-          const seconds = scope.contract.deadlineSeconds ?? WORKFLOW_DEFAULT_DEADLINE_SECONDS;
-          await scheduleRunTimer(db, {
-            workspaceId: scope.workspaceId,
-            roomId: scope.roomId,
-            runId: start.id,
-            workflowSlug: scope.run.workflowSlug,
-            timer: 'deadline',
-            seconds,
-            fireAt: new Date(Math.max(Date.now(), start.created_at.getTime() + seconds * 1_000)),
-          });
-          changed++;
-        }
-        if (isHandoffState(scope.state) && !ids.has(stepId)) {
-          // Give the current attempt a full lease from recovery, so an old
-          // timestamp cannot expire a step immediately while its agent works.
-          await scheduleRunTimer(db, {
-            workspaceId: scope.workspaceId,
-            roomId: scope.roomId,
-            runId: start.id,
-            workflowSlug: scope.run.workflowSlug,
-            timer: 'step',
-            seconds: scope.state.timeoutSeconds ?? WORKFLOW_LEGACY_STEP_TIMEOUT_SECONDS,
-            attempt: scope.run.seq,
-          });
-          changed++;
-        }
-        return changed;
-      });
-    } catch (error) {
-      console.error(`backfillWorkflowRunTimers: failed to recover run ${start.id}`, error);
-    }
-  }
-  if (armed) console.log(`backfillWorkflowRunTimers: armed ${armed} missing workflow timer(s)`);
-  return armed;
 }
 
 type CardLine = {
@@ -955,8 +773,7 @@ async function enterState(
   const isTerminal = nextState.kind === 'terminal';
   const isGate = nextState.kind === 'gate';
   await cancelRunWakes(db, roomId, runId);
-  if (isTerminal) await cancelRunTimers(db, runId);
-  else await cancelStepTimer(db, runId);
+
   // Leaving a gate or ending the run must not strand an open gate choice: it
   // would refuse every later gate this agent asks in this Room.
   if (state.kind === 'gate' || isTerminal) await closeRunChoices(db, roomId, runId);
@@ -979,6 +796,7 @@ async function enterState(
   const attempt = run.seq + 1;
   const cardId = randomBytes(32).toString('hex');
   const status = isTerminal ? (nextState as { status: 'done' | 'failed' }).status : undefined;
+  await ensureSystemIdentity(db);
   await systemLine(db, {
     id: cardId,
     roomId,
@@ -1041,7 +859,6 @@ async function moveRole(
   const from = run.roleBindings[input.role];
   const names = await mentionsFor(db, [input.picked, ...(from ? [from] : [])]);
   await cancelRunWakes(db, roomId, runId);
-  await cancelStepTimer(db, runId);
   if (state.kind === 'gate') await closeRunChoices(db, roomId, runId);
   const attempt = run.seq + 1;
   const cardId = randomBytes(32).toString('hex');
@@ -1102,7 +919,6 @@ async function closeRun(
 ): Promise<void> {
   const { run, roomId, runId, stateName } = scope;
   await cancelRunWakes(db, roomId, runId);
-  await cancelRunTimers(db, runId);
   await closeRunChoices(db, roomId, runId);
   await ensureSystemIdentity(db);
   await systemLine(db, {
@@ -1160,21 +976,21 @@ async function roleList(db: SqlDatabase, scope: RunScope, role: string): Promise
  * unhealthy or no longer in the Room. With nobody left, `timeout` applies the
  * step's `timeout` outcome as the system (when it declares one); otherwise,
  * and always for `wait`, the run posts each agent's reason and waits.
- * Without a timeout outcome, retry the whole list after another full lease.
+ * Exhaustion waits for an explicit event or reassignment.
  */
 async function failOver(
   db: SqlDatabase,
   scope: RunScope,
-  input: { leaving?: string; why: string; whenExhausted: 'timeout' | 'wait'; retryRoleList?: boolean },
+  input: { leaving?: string; why: string; whenExhausted: 'timeout' | 'wait' },
 ): Promise<{ state: string; attempt: number; status?: 'done' | 'failed' }> {
   const state = scope.state as WorkflowHandoffState;
   const role = state.role;
-  const tried = input.retryRoleList ? [] : [
+  const tried = [
     ...(scope.run.tried ?? []).filter((entry) => entry.agentId !== input.leaving),
     ...(input.leaving ? [{ agentId: input.leaving, reason: input.why }] : []),
   ];
   const list = await roleList(db, scope, role);
-  const cursor = input.retryRoleList ? undefined : input.leaving ?? scope.run.roleBindings[role];
+  const cursor = input.leaving ?? scope.run.roleBindings[role];
   const start = cursor && list.includes(cursor) ? list.indexOf(cursor) + 1 : 0;
   const picked = await pickWorkflowAgent(
     db, scope.roomId, list.slice(start), tried.map((entry) => entry.agentId), scope.run.workflowSlug,
@@ -1206,18 +1022,6 @@ async function failOver(
     tried,
     ...(cursor ? { cursor } : {}),
   });
-  if (!Object.hasOwn(state.on, 'timeout')) {
-    await scheduleRunTimer(db, {
-      workspaceId: scope.workspaceId,
-      roomId: scope.roomId,
-      runId: scope.runId,
-      workflowSlug: scope.run.workflowSlug,
-      timer: 'step',
-      seconds: state.timeoutSeconds ?? WORKFLOW_LEGACY_STEP_TIMEOUT_SECONDS,
-      attempt: scope.run.seq,
-      retryRoleList: true,
-    });
-  }
   return { state: scope.stateName, attempt: scope.run.seq };
 }
 
@@ -1311,21 +1115,14 @@ async function provenanceAttempt(
   roomId: string,
   runId: string,
   sourceMessageId: string | null | undefined,
-  digestCommandId?: string,
 ): Promise<number | undefined> {
-  if (!sourceMessageId && !digestCommandId) return undefined;
+  if (!sourceMessageId) return undefined;
   const source = (
     await db.query<{ card_type: string | null; card: WorkflowRunCard | null; created_at: Date }>(
       `SELECT source.card_type,source.card,source.created_at FROM messages source
        WHERE source.room_id=$2 AND source.card->>'runId'=$3
-         AND (source.id=$1 OR EXISTS (
-           SELECT 1 FROM agent_commands absorbed
-           LEFT JOIN agent_commands parent ON parent.id=absorbed.parent_command_id
-           WHERE absorbed.room_id=$2 AND absorbed.cancellation_reason='coalesced_into:'||$4
-             AND (absorbed.source_message_id=source.id OR (absorbed.action='resume' AND parent.source_message_id=source.id))
-         ))
-       ORDER BY (source.id=$1) DESC NULLS LAST,source.created_at,source.id LIMIT 1`,
-      [sourceMessageId ?? null, roomId, runId, digestCommandId ?? null],
+         AND source.id=$1`,
+      [sourceMessageId, roomId, runId],
     )
   ).rows[0];
   if (!source?.card || source.card.runId !== runId) return undefined;
@@ -1412,7 +1209,7 @@ export async function handoff(
     const current = run.seq;
     let attempt =
       input.attempt ??
-      (await provenanceAttempt(db, command.room_id, input.runId, command.source_message_id, command.id));
+      (await provenanceAttempt(db, command.room_id, input.runId, command.source_message_id));
     if (attempt === undefined) {
       // No wake from this run: a bound agent's handoff acts on the current
       // card, once per command.
@@ -1649,138 +1446,6 @@ export async function settleWorkflowGate(
     });
   }
   return { choiceId: settled.choiceId, status: input.skip ? 'skipped' : 'answered', roomId: settled.roomId };
-}
-
-/** A gate whose timeout passed takes its default as the system, and the run owner gets one notice. */
-async function expireGate(db: SqlDatabase, scope: RunScope, state: WorkflowGateState): Promise<void> {
-  const label = state.default!;
-  const attempt = scope.run.seq;
-  const after = durationText(state.timeoutSeconds!);
-  await enterState(db, scope, {
-    outcome: label,
-    contents: { decision: label, defaultedBy: 'system' },
-    actorId: SYSTEM_IDENTITY_ID,
-    line: (toState) => ({
-      authorId: SYSTEM_IDENTITY_ID,
-      subject: { kind: 'system', name: systemMessage("workflow-runs.the-workflow") },
-      verb: systemMessage("workflow-runs.applied"),
-      object: label,
-      consequence: systemMessage("workflow-runs.at-and-went-to-because-nobody-answered-in-in-run-of", scope.stateName, toState, after, shortRunId(scope.runId), scope.run.workflowSlug),
-    }),
-  });
-  await noticeRunOwner(db, scope, `gate-default:${attempt}`, {
-    subject: { kind: 'system', name: systemMessage("workflow-runs.the-gate-of", scope.stateName, scope.run.workflowSlug) },
-    verb: systemMessage("workflow-runs.took-its-default"),
-    object: label,
-    consequence: systemMessage("workflow-runs.nobody-answered-in-in-run", after, shortRunId(scope.runId)),
-  });
-}
-
-/**
- * One due engine timer, under the run lock. A step timer for an older
- * attempt is stale and does nothing. A handoff step moves to its next
- * eligible agent (`lease expired`), and once the list is used up the engine
- * applies `timeout`; a gate applies its default; a deadline closes the run as
- * failed. Returns whether the run changed.
- */
-export async function fireWorkflowTimer(
-  database: SqlDatabase,
-  row: { id: string; room_id: string; workflow_run: WorkflowTimer; next_run_at: Date; due_revision: string; updated_at: string },
-): Promise<boolean> {
-  const timer = row.workflow_run;
-  const claim = (db: SqlDatabase) => db.query(`DELETE FROM agent_schedules schedule
-    WHERE schedule.id=$1 AND schedule.room_id=$2 AND schedule.next_run_at=$3
-      AND schedule.updated_at=$4::timestamptz AND schedule.workflow_run=$5::jsonb
-      AND (schedule.failed_due_at IS DISTINCT FROM schedule.next_run_at
-        OR schedule.failed_revision IS DISTINCT FROM schedule.updated_at)
-    RETURNING schedule.id`, [row.id,row.room_id,row.due_revision,row.updated_at,JSON.stringify(timer)]);
-  if (!timer?.runId) {
-    await claim(database);
-    return false;
-  }
-  return database.transaction(async (db) => {
-    await lockWorkflowRun(db, timer.runId);
-    const claimed = await claim(db);
-    if (!claimed.rowCount) return false;
-    const scope = await openRun(db, row.room_id, timer.runId).catch(() => undefined);
-    if (!scope || scope.ended || !scope.state) return false;
-    if (timer.timer === 'deadline') {
-      const seconds = (await loadRunStart(db, scope.roomId, scope.runId)).card.deadlineSeconds;
-      const after = seconds ? systemMessage("workflow-runs.of", durationText(seconds)) : '';
-      await closeRun(db, scope, {
-        status: 'failed',
-        outcome: 'deadline',
-        reason: 'deadline',
-        line: {
-          authorId: SYSTEM_IDENTITY_ID,
-          subject: { kind: 'system', name: systemMessage("workflow-runs.the-workflow") },
-          verb: systemMessage("workflow-runs.closed"),
-          object: systemMessage("workflow-runs.run-of", shortRunId(scope.runId), scope.run.workflowSlug),
-          consequence: systemMessage("workflow-runs.as-failed-at-because-it-passed-its-deadline", scope.stateName, after),
-        },
-      });
-      return true;
-    }
-    if (timer.attempt !== scope.run.seq) return false;
-    if (scope.state.kind === 'gate') {
-      if (!scope.state.default) return false;
-      await expireGate(db, scope, scope.state);
-      return true;
-    }
-    if (!isHandoffState(scope.state)) return false;
-    await failOver(db, scope, {
-      leaving: scope.run.roleBindings[scope.state.role],
-      why: 'its lease expired',
-      whenExhausted: 'timeout',
-      retryRoleList: timer.retryRoleList,
-    });
-    return true;
-  });
-}
-
-/**
- * A turn that answered the step's current attempt ended and the run did not
- * move: the agent did not hand off, so the step moves on as `blocked` with
- * reason no handoff. A turn woken by anything else, or by an older attempt,
- * is unrelated and changes nothing. Called from the turn's terminal
- * `complete` receipt, in a separate transaction after completion commits.
- */
-export async function failOverUnansweredTurn(
-  db: SqlDatabase,
-  input: { roomId: string; agentId: string; sourceMessageId: string },
-): Promise<void> {
-  const scope = await unansweredRun(db, input);
-  if (!scope) return;
-  await failOver(db, scope, {
-    leaving: input.agentId,
-    why: 'its turn ended with no handoff',
-    whenExhausted: 'timeout',
-  });
-}
-
-/** Both turn hooks act only on the current holder answering the current attempt. */
-async function unansweredRun(
-  db: SqlDatabase,
-  input: { roomId: string; agentId: string; sourceMessageId: string },
-): Promise<RunScope | undefined> {
-  const source = (
-    await db.query<{ run_id: string }>(
-      `SELECT card->>'runId' run_id FROM messages WHERE id=$1 AND room_id=$2 AND card->>'runId' IS NOT NULL`,
-      [input.sourceMessageId, input.roomId],
-    )
-  ).rows[0];
-  if (!source) return undefined;
-  const run = await db.query(
-    `SELECT 1 FROM messages WHERE id=$1 AND room_id=$2 AND card_type=$3`,
-    [source.run_id, input.roomId, WORKFLOW_HANDOFF_CARD_TYPE],
-  );
-  if (!run.rowCount) return undefined;
-  const scope = await openRun(db, input.roomId, source.run_id);
-  if (scope.ended || !isHandoffState(scope.state)) return undefined;
-  if (scope.run.roleBindings[scope.state.role] !== input.agentId) return undefined;
-  const attempt = await provenanceAttempt(db, input.roomId, scope.runId, input.sourceMessageId);
-  if (attempt !== scope.run.seq) return undefined;
-  return scope;
 }
 
 /** A closing corner abandons every live saved run inside it. Call within the close transaction. */
@@ -2086,7 +1751,6 @@ export async function startWorkflow(
       runId,
     });
     const exhausted = 'exhausted' in resolution;
-    const deadlineSeconds = contract.deadlineSeconds ?? WORKFLOW_DEFAULT_DEADLINE_SECONDS;
     await systemLine(db, {
       id: runId,
       roomId: command.room_id,
@@ -2107,7 +1771,6 @@ export async function startWorkflow(
         workflowVersion: skill.current_version,
         requesterId: await workflowRequester(db, command),
         ownerId: await resolveRunOwner(db, command),
-        deadlineSeconds,
         startKind:
           starter?.kind === 'human'
             ? 'human_admin'
@@ -2127,14 +1790,6 @@ export async function startWorkflow(
       ) UPDATE agent_subscriptions subscription SET fired_count=subscription.fired_count
         FROM linked WHERE subscription.id=linked.subscription_id`,
       [command.source_message_id, runId]);
-    await scheduleRunTimer(db, {
-      workspaceId: room.workspace_id,
-      roomId: command.room_id,
-      runId,
-      workflowSlug: contract.name,
-      timer: 'deadline',
-      seconds: deadlineSeconds,
-    });
     await dispatchState(db, {
       workspaceId: room.workspace_id,
       roomId: command.room_id,
@@ -2148,34 +1803,6 @@ export async function startWorkflow(
       exhausted,
     });
     return { runId, state: contract.start };
-  });
-}
-
-/**
- * The one hook a failed/silent turn goes through to fail a workflow step over
- * to the next eligible agent on its role list. Called unconditionally from
- * `turn-silence-notice.ts`'s `noteFirstSilence`, BEFORE its own human-trigger
- * requirement — a workflow dispatch's triggering message is normally
- * agent-authored, so gating this on "a human is further up the chain" would
- * silently never fire for the ordinary case. Keyed on the attempt: the turn
- * fails over only when the wake it answered (a dispatch card, or any other
- * wake citing the run) belongs to the step's current attempt and its agent
- * still holds it. With nobody left the run names each agent's reason and
- * waits; the step timer, if any, then applies `timeout`. A no-op for a stale
- * wake or a turn that was never a workflow dispatch; it must never throw into
- * the ordinary silence-notice path.
- */
-export async function reassignFailedWorkflowRole(
-  db: SqlDatabase,
-  input: { roomId: string; requestId: string; agentId: string; reason?: string | null },
-): Promise<void> {
-  const scope = await unansweredRun(db, { ...input, sourceMessageId: input.requestId }).catch(() => undefined);
-  if (!scope) return;
-  const reason = (input.reason ?? '').replace(/\s+/g, ' ').trim().slice(0, 100);
-  await failOver(db, scope, {
-    leaving: input.agentId,
-    why: reason ? `its turn failed (${reason})` : 'its turn failed',
-    whenExhausted: 'wait',
   });
 }
 

@@ -1,24 +1,19 @@
-import { useEffect, useState } from 'react';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
+import { sharedLiveConnection } from '@/sync/transport/live-connection';
+import { useObservedResource } from './use-observed-resource';
 
-/** Read rollout eligibility without coupling GitHub-only sign-in to provider discovery. */
 export async function readRepositoryOnboardingEligibility(): Promise<boolean> {
-  try {
-    return (await monolithPhoneOperation('getAuthCapabilities', {}))?.repositoryOnboarding === true;
-  } catch {
-    return false;
-  }
+  return (await monolithPhoneOperation('getAuthCapabilities', {})).repositoryOnboarding === true;
 }
 
-/** Fail closed: only a server response for the signed-in viewer enables new UI. */
+/** A failed read stays unknown until an actual recovery reads the server answer. */
 export function useRepositoryOnboarding(): boolean | null {
-  const [enabled, setEnabled] = useState<boolean | null>(null);
-  useEffect(() => {
-    let alive = true;
-    void readRepositoryOnboardingEligibility().then(result => {
-      if (alive) setEnabled(result);
-    }).catch(() => { if (alive) setEnabled(false); });
-    return () => { alive = false; };
-  }, []);
-  return enabled;
+  const resource = useObservedResource('repository-onboarding', {
+    load: readRepositoryOnboardingEligibility,
+    subscribe: async (_invalidate, refresh) => sharedLiveConnection().register([], event => {
+      if ('monolithLive' in event && event.monolithLive.type === 'invalidate' &&
+          event.monolithLive.reason === 'reconnect') refresh();
+    }),
+  });
+  return resource.data ?? null;
 }

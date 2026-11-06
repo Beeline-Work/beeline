@@ -73,9 +73,7 @@ export default function ScheduledWork() {
   }>();
   const roomId = first(params.roomId);
   const workspaceId = first(params.workspaceId);
-  const { work, loading, error, retry } = useScheduledWork(
-    roomId,Boolean(workspaceId),
-  );
+  const { work, loading, error, retry } = useScheduledWork(roomId);
   useLatencyRouteFrame('/beeline/settings/schedules', !loading, true);
   const schedules = work?.schedules ?? [];
   const subscriptions = work?.subscriptions ?? [];

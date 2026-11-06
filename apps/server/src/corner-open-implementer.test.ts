@@ -128,8 +128,8 @@ it('Reproduction O1-1: naming Beta assigns the work to Beta and keeps Alpha as a
     )
   ).rows[0];
   expect(card?.system_event.subject.id).toBe(A);
-  const workflow = (await db.query(`SELECT card FROM messages WHERE id=$1`, [cornerId])).rows[0];
-  expect(workflow?.card.roleBindings.implementer).toBe(B);
+  expect((await db.query(`SELECT agent_id FROM agent_commands WHERE room_id=$1 AND reason='corner_objective'`, [cornerId])).rows)
+    .toEqual([{ agent_id: B }]);
   const beforeReplay = await openingCounts();
   expect(await daemon.execute('createCorner', request, A)).toEqual({
     cornerId,

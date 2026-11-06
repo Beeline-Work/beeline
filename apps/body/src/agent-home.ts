@@ -73,7 +73,6 @@ import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { NATIVE_SHELL_OUTPUT_SCRIPT, nativeShellHookCommand, nativeShellHookConfig } from './native-shell-output.js';
 import { DRAW_AVATAR_SKILL_NAME, drawAvatarSkillMarkdown } from './draw-avatar-skill.js';
 import { AGENT_BEHAVIORS, IMPORTED_MCP_KINDS, SHARED_CREDENTIALS, agentBehavior, type AgentKind } from './agent-command.js';
-import { androidAgentEnv } from './android-agent-env.js';
 import {
   BEELINE_REVIEW_SKILL_NAME,
   BEELINE_SPEC_SKILL_NAME,
@@ -315,8 +314,6 @@ export interface RoomAgentHomeInput {
   squireScope?: { readonly agentId: string; readonly roomId: string; readonly relay?: { readonly url: string; readonly token: string; readonly contextFile: string } };
   /** Operator's real home directory; defaults to the daemon's. */
   operatorHome?: string;
-  /** The agent's PATH before this overlay; the Android SDK tools are prepended. */
-  inheritedPath?: string;
   failClosed?: boolean;
   /**
    * Release id stamped into the managed Beeline skills. Defaults to
@@ -673,11 +670,6 @@ export async function prepareRoomAgentHome(
   return {
     ...env,
     ...(agentBehavior(input.agentKind).sharedLoginWriteBack === true ? sharedClaudeLoginEnv(operatorHome) : {}),
-    ...androidAgentEnv({
-      root,
-      operatorHome,
-      ...(input.inheritedPath ? { inheritedPath: input.inheritedPath } : {}),
-    }),
   };
 }
 

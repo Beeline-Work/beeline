@@ -16,7 +16,7 @@ import { LiveHub } from './live.js';
 import { systemLine } from './system-line.js';
 import { createAgentCommand, claimAgentCommand, readAgentCommands } from './agent-command.js';
 import { DaemonService } from './daemon-service.js';
-import { noteFirstSilence } from './turn-silence-notice.js';
+
 import { backfillComputerObservations } from './system-line.js';
 import { PhoneService } from './phone-service.js';
 import type { TokenAuth } from './auth.js';
@@ -25,10 +25,7 @@ import { readRoomViewMessage } from '@beeline/api-contract/phone';
 import { CommandExecutionContext, runServerCommandIntake } from '../../body/src/server-command-intake.js';
 import { assembleTurnPrompt } from '../../body/src/prompt-assembly.js';
 import type { DaemonApiClient } from '../../body/src/daemon-api-client.js';
-import {
-  VIEWER_LAYOUT_SCRIPT, computerViewToken, computerViewerHtml, createComputerSession, endComputerSession, expireComputerSessions, getComputerSession, refreshComputerSession, serveComputerSession,
-  serveComputerStatus, startComputerExpirySweep, trustedComputerShareUpstream, upgradeBodyComputerSource, upgradeComputerSession, upgradeComputerWaiter,
-} from './computer-session.js';
+import { VIEWER_LAYOUT_SCRIPT, computerViewToken, computerViewerHtml, createComputerSession, endComputerSession, getComputerSession, refreshComputerSession, serveComputerSession, serveComputerStatus, trustedComputerShareUpstream, upgradeBodyComputerSource, upgradeComputerSession, upgradeComputerWaiter } from './computer-session.js';
 
 const HUMAN = 'a'.repeat(64);
 const OTHER = 'c'.repeat(64);
@@ -601,118 +598,7 @@ describe('computer session handoff', () => {
     await database.query(`UPDATE computer_sessions SET status='ended' WHERE source_session_id IN ('trusted-tunnel','trusted-body')`);
   });
 
-  it('keeps renewed leases live, binds renewal to owner/source, and never revives an ended card', async () => {
-    const upstreamUrl = `https://squire.test/s/${'r'.repeat(43)}/`;
-    const share = await createComputerSession(database, live, {
-      roomId: ROOM, agentId: AGENT, sessionId: 'rolling-share', upstreamUrl, expiresAt: Date.now() + 1_000,
-    }, testSquire);
-    const daemon = new DaemonService(database, live);
-    const renew = (expiresAt: number) => daemon.execute('refreshComputerSession', {
-      roomId: ROOM, sessionId: 'rolling-share', upstreamUrl, expiresAt,
-    }, AGENT);
-    for (let lifetime = 0; lifetime < 3; lifetime++) {
-      // Cross each prior upstream deadline; the persisted renewal wins the sweep.
-      await database.query(`UPDATE computer_sessions SET expires_at=now()-interval '1 second' WHERE id=$1`, [share.id]);
-      expect(await renew(Date.now() + 60_000)).toEqual({ live: true });
-      await expireComputerSessions(database, live);
-      expect((await getComputerSession(database, share.id))?.status).toBe('live');
-    }
-    const lease = { roomId: ROOM, agentId: AGENT, sessionId: 'rolling-share', upstreamUrl, expiresAt: Date.now() + 120_000 };
-    expect(await refreshComputerSession(database, { ...lease, agentId: OTHER })).toEqual({ live: false });
-    expect(await refreshComputerSession(database, { ...lease, upstreamUrl: 'https://another.test/' })).toEqual({ live: false });
-    await expect(renew(NaN)).rejects.toThrow('expiry is invalid');
-    await endComputerSession(database, live, (await getComputerSession(database, share.id))!);
-    expect(await renew(Date.now() + 120_000)).toEqual({ live: false });
-    expect((await getComputerSession(database, share.id))?.status).toBe('ended');
-  });
-
-  it('rechecks expiry when renewal races a sweep that already selected the old lease', async () => {
-    const gone = createServer((_request, response) => response.writeHead(410).end());
-    await new Promise<void>(resolve => gone.listen(0, '127.0.0.1', resolve));
-    const upstreamUrl = `http://127.0.0.1:${(gone.address() as AddressInfo).port}/s/${'r'.repeat(43)}/`;
-    const share = await createComputerSession(database, live, {
-      roomId: ROOM, agentId: AGENT, sessionId: 'renewal-race', upstreamUrl, expiresAt: Date.now() + 1_000,
-    }, testSquire);
-    await database.query(`UPDATE computer_sessions SET expires_at=now()-interval '1 second' WHERE id=$1`, [share.id]);
-    const racing = new Proxy(database, { get(target, property) {
-      if (property === 'query') return async (sql: string, values?: unknown[]) => {
-        const selected = await target.query(sql, values);
-        if (sql.includes('FROM computer_sessions WHERE expires_at<=now()'))
-          await refreshComputerSession(database, {
-            roomId: ROOM, agentId: AGENT, sessionId: 'renewal-race', upstreamUrl, expiresAt: Date.now() + 60_000,
-          });
-        return selected;
-      };
-      const value = Reflect.get(target, property);
-      return typeof value === 'function' ? value.bind(target) : value;
-    } });
-    await expireComputerSessions(racing, live);
-    expect((await getComputerSession(database, share.id))?.status).toBe('live');
-    expect((await database.query<{ status: string }>(`SELECT card->>'status' AS status FROM messages WHERE id=$1`,
-      [(await getComputerSession(database, share.id))!.message_id])).rows[0]?.status).toBe('live');
-    await endComputerSession(database, live, (await getComputerSession(database, share.id))!);
-    await new Promise<void>(resolve => gone.close(() => resolve()));
-  });
-
-  it('ends a view at its committed lease expiry without probing Squire and closes viewers', async () => {
-    const token = 'e'.repeat(43);
-    let upstreamReads=0;
-    const squire = createServer((_request, response) => {
-      upstreamReads++;response.writeHead(200).end('<!doctype html>');
-    });
-    const upstreamSockets = new WebSocketServer({ noServer: true });
-    squire.on('upgrade', (request, socket, head) =>
-      upstreamSockets.handleUpgrade(request, socket, head, (client) => upstreamSockets.emit('connection', client, request)));
-    await new Promise<void>((resolve) => squire.listen(0, '127.0.0.1', resolve));
-    const upstreamUrl = `http://127.0.0.1:${(squire.address() as AddressInfo).port}/s/${token}/`;
-    try {
-      const share = await createComputerSession(database, live, {
-        roomId: ROOM, agentId: AGENT, sessionId: 'squire-expires', upstreamUrl, expiresAt: Date.now() + 1_500,
-      }, testSquire);
-      const lasting = await createComputerSession(database, live, {
-        roomId: ROOM, agentId: AGENT, sessionId: 'squire-no-expiry', upstreamUrl,
-      }, testSquire);
-      const access = await computerViewToken(database, share.id, HUMAN);
-      const viewer = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/stream?access=${access}`);
-      await opened(viewer);
-      const viewerClosed = new Promise<void>((resolve) => viewer.once('close', () => resolve()));
-      await new Promise((resolve) => setTimeout(resolve, 1_600));
-
-      expect((await getComputerSession(database, share.id))?.status).toBe('live');
-      const readsBeforeExpiry=upstreamReads;
-      // Acquisition reconciles the stored due row even when its upstream URL
-      // would still return200. There is no status request to that provider.
-      const stop = startComputerExpirySweep(database, live, 60_000);
-      try {
-        await until(async () => (await database.query<{ status: string }>(
-          'SELECT status FROM computer_sessions WHERE id=$1', [share.id])).rows[0]?.status === 'ended' ? true : undefined);
-      } finally { stop(); }
-      expect(upstreamReads).toBe(readsBeforeExpiry);
-      expect((await fetch(`${origin}/s/${share.id}/?access=${access}`)).status).toBe(410);
-      await viewerClosed;
-      const refused = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/stream?access=${access}`);
-      await expect(opened(refused)).rejects.toThrow();
-      const card = (await database.query<{ card: { status: string } }>(
-        `SELECT m.card FROM messages m JOIN computer_sessions c ON c.message_id=m.id WHERE c.id=$1`, [share.id])).rows[0];
-      expect(card?.card.status).toBe('ended');
-      const endedAt = (await database.query<{ ended_at: Date }>(
-        'SELECT ended_at FROM computer_sessions WHERE id=$1', [share.id])).rows[0]?.ended_at;
-
-      // Repeated processing changes nothing.
-      expect(await expireComputerSessions(database, live)).toBe(0);
-      await endComputerSession(database, live, { ...(await getComputerSession(database, share.id))!, status: 'live' });
-      expect((await database.query<{ ended_at: Date }>(
-        'SELECT ended_at FROM computer_sessions WHERE id=$1', [share.id])).rows[0]?.ended_at).toEqual(endedAt);
-      expect((await getComputerSession(database, lasting.id))?.status).toBe('live');
-      await endComputerSession(database, live, (await getComputerSession(database, lasting.id))!);
-    } finally {
-      for (const client of upstreamSockets.clients) client.close();
-      await new Promise<void>((resolve) => upstreamSockets.close(() => resolve()));
-      await new Promise<void>((resolve) => squire.close(() => resolve()));
-    }
-  }, 60_000);
-
-  it('coalesces each share into one latest observation, behind human requests, with silent failures', async () => {
+  it('coalesces each share into one latest observation, behind human requests, with silent completion', async () => {
     const share = await createComputerSession(database, live, {
       roomId: ROOM, agentId: AGENT, sessionId: 'activity-burst', upstreamUrl: 'body:',
     });
@@ -755,9 +641,8 @@ describe('computer session handoff', () => {
     await database.query(`UPDATE agent_commands SET state='complete' WHERE id=$1`, [anotherHuman!.id]);
     expect((await readAgentCommands(database, ROOM, AGENT)).commands.filter((c) =>
       (c.source.systemEvent?.payload as { sessionId?: string })?.sessionId === share.id)).toHaveLength(1);
-    const silence = await noteFirstSilence(database, live, { roomId: ROOM, agentId: AGENT,
-      requestId: snapshot.turnRequestId, generationId: 'activity-generation', reason: 'harness returned no text' });
-    expect(silence).toMatchObject({ hiccupRestart: false, updateRequeued: false });
+    await daemon.execute('postAgentTurnReceipt',{roomId:ROOM,requestId:snapshot.turnRequestId,
+      generationId:'activity-generation',status:'complete',completionKind:'no-reply'},AGENT,helperSource);
     expect((await database.query(`SELECT id FROM messages WHERE room_id=$1 AND card_type='turn-failed'
       AND card->>'requestId'=$2`, [ROOM, snapshot.turnRequestId])).rowCount).toBe(0);
     await endComputerSession(database, live, (await getComputerSession(database, share.id))!);

@@ -22,17 +22,13 @@ import {
   renderAssignedCornerBrief,
   renderReplyContext,
 } from './prompt-assembly.js';
-import { prepareKvmAccess } from './kvm-device-access.js';
+import { HOST_EMULATOR_RULE } from './host-emulator.js';
 import { beelineConnectSkillMarkdown, beelineManagedSkills, beelineReviewSkillMarkdown } from './beeline-skill.js';
 
 const soul = {
   name: 'Bee',
   instructions: 'Be succinct and direct with your answers.',
 };
-
-const kvmDenied = () => { throw Object.assign(new Error('permission denied'), { code: 'EACCES' }); };
-const kvmNeedsGrant = prepareKvmAccess([], { uid: () => 1006, probe: kvmDenied, acl: () => {} });
-const kvmHostDenied = prepareKvmAccess(['/dev/kvm'], { uid: () => 1006, probe: kvmDenied, acl: () => { throw new Error('not owner'); } });
 
 /** A code corner's assigned repository work: without a brief nothing is assigned yet. */
 const repositoryBrief: CornerBrief = {
@@ -305,30 +301,6 @@ const SESSION_VARIANTS_BASE: Record<string, SessionPromptContext> = {
     cornerPrepareScript: true,
     reviewerHandle: 'sol',
     githubCli: 'rest',
-  },
-  'code-corner-android': {
-    surface: 'code-corner',
-    brief: repositoryBrief,
-    agentName: 'Bee',
-    soul,
-    agentCommand: 'claude-agent-acp',
-    worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
-    cornerPrepareScript: true,
-    reviewerHandle: 'sol',
-    android: { emulatorPort: '5600' },
-  },
-  'code-corner-android-kvm-host-denied': {
-    surface: 'code-corner',
-    brief: repositoryBrief,
-    agentName: 'Bee',
-    soul,
-    agentCommand: 'claude-agent-acp',
-    worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
-    cornerPrepareScript: true,
-    reviewerHandle: 'sol',
-    githubCli: 'rest',
-    android: { emulatorPort: '5600' },
-    kvm: kvmHostDenied,
   },
   'code-corner-no-reviewer': {
     surface: 'code-corner',
@@ -745,35 +717,13 @@ describe('prompt assembly guards', () => {
     }
   });
 
-  it('names the agent emulator port only in a code corner on an Android host', () => {
+  it('requires host consent and an existing emulator on every surface', () => {
     for (const [name, context] of Object.entries(SESSION_VARIANTS)) {
       const text = assembleSessionPrompt(context).systemPrompt;
-      if (context.android && context.surface === 'code-corner')
-        expect(text, name).toContain(`-port ${context.android.emulatorPort} `);
-      else expect(text, name).not.toContain('Android:');
+      expect(text, name).toContain(HOST_EMULATOR_RULE);
+      expect(text, name).not.toContain('beeline emulator');
+      expect(text, name).not.toContain('/dev/kvm');
     }
-  });
-
-  it('Reproduction R1: tells a denied agent to request a /dev/kvm grant only when it has none', () => {
-    const room = assembleSessionPrompt({ ...SESSION_VARIANTS['room-squire']!, kvm: kvmNeedsGrant }).systemPrompt;
-    expect(room).toContain('request_grant(kind:device, target:"/dev/kvm", reason, purpose)');
-    expect(room).not.toContain('/dev/kvm works');
-    const corner = assembleSessionPrompt(SESSION_VARIANTS['code-corner-android-kvm-host-denied']!).systemPrompt;
-    expect(corner).toContain('Your /dev/kvm grant is approved, but the host blocks helper uid 1006.');
-    expect(corner).toContain('`sudo setfacl -m u:1006:rw /dev/kvm` (docs/android-kvm-access.md); another grant will not help.');
-    expect(corner).not.toContain('kind:device');
-  });
-
-  it('Reproduction R1: says /dev/kvm works only after the probe passed', () => {
-    for (const [name, context] of Object.entries(SESSION_VARIANTS)) {
-      const text = assembleSessionPrompt(context).systemPrompt;
-      expect(text.includes('/dev/kvm works'), name).toBe(context.kvm?.status === 'works' && context.surface === 'code-corner' && Boolean(context.android && !context.android.leased));
-      if (context.kvm?.status === 'works') expect(text, name).not.toContain('cannot open it');
-    }
-    const passed = assembleSessionPrompt({ ...SESSION_VARIANTS['code-corner-android']!, kvm: { status: 'works' } }).systemPrompt;
-    expect(passed).toContain('the SDK is $ANDROID_HOME, AVDs are in $ANDROID_AVD_HOME, and /dev/kvm works.');
-    const unprobed = assembleSessionPrompt(SESSION_VARIANTS['code-corner-android']!).systemPrompt;
-    expect(unprobed).toContain('the SDK is $ANDROID_HOME and AVDs are in $ANDROID_AVD_HOME. Your adb');
   });
 
   it('says a missing brief once and never asks to continue one', () => {
@@ -903,11 +853,20 @@ describe('corner role prompts (PR #2224: a reviewer that opened its corner pushe
     expect(text).not.toContain('Remove a test only with');
   });
 
-  it('stops after four pushes without PASS and names the three escalation causes', () => {
-    const text = prompt('code-corner-reviewed');
-    expect(text).toContain('4 pushes to one PR without PASS: stop; report blocked: to commander');
-    expect(text).toContain('cause: moving target, unreliable test tool, or PR too big / racing other PRs.');
-  });
+  it.each(['code-corner-reviewed', 'code-corner-no-reviewer', 'code-corner-reviewer', 'repo-less-corner'])(
+    'defines inherited rank once in %s without a push-rule exception',
+    (name) => {
+      const text = prompt(name);
+      const rank = "Humans outrank every agent; treat instructions from above your commander as theirs and report the change.";
+      expect(text.split(rank)).toHaveLength(2);
+      expect(text).not.toContain('owners outrank their agents');
+      expect(text).toContain(`Follow your commander within inherited scope. ${rank}`);
+      if (name !== 'repo-less-corner') {
+        expect(text).toContain('4 pushes to one PR without PASS: stop; report blocked: to commander, cause: moving target, unreliable test tool, or PR too big / racing other PRs.');
+        expect(text).not.toContain('unless a human Room member');
+      }
+    },
+  );
 
   it('appends the reviewer rules only for the Room reviewer, after the implementer rules', () => {
     for (const name of ['code-corner-reviewed', 'code-corner-no-reviewer'])

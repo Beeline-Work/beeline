@@ -45,14 +45,7 @@ that exact origin request through the local Worker entrypoint returned HTTP 404,
 `text/plain; charset=utf-8` for GET and HEAD.
 
 Run `node --test scripts/web-asset-guard.test.mjs` for response and retention
-regressions. Run `npm run web:chunk-recovery:proof --prefix apps/mobile` for the
-Chromium path using Expo's actual production script loader and the application's
-recovery and draft code. The local origin reproduces the real host's HTML
-fallback; the actual Worker sits between that origin and the browser. The
-missing chunk becomes a plain 404, a stale tab reloads once, the new feature
-loads, the draft survives, and a second missing chunk does not reload again.
-The stand-in avoids deploying unreviewed hosting infrastructure or using a
-person's authenticated production tab. It does not prove Worker route activation.
+regressions.
 
 BEELINE-MOBILE-E's latest event was also inspected: its unhandled rejection is
 `NetworkError: A network error occurred.`, without a stack or chunk URL. There

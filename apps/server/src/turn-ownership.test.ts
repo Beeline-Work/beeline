@@ -26,11 +26,11 @@ describe('effective command ownership', () => {
     `SELECT command.id,${commandOwnerLiveSql('command')} active,${commandOwnerExpiredSql('command')} expired
       FROM agent_commands command ORDER BY command.id`)).rows;
 
-  it('keeps legacy null/expiry semantics and a disabled admission gate cannot reinterpret an owned row', async () => {
+  it('ignores command expiry timestamps and a disabled admission gate cannot reinterpret an owned row', async () => {
     vi.stubEnv('BEELINE_NETWORK_ROUTER_V1', '0'); expect(turnOwnershipEnabled()).toBe(false);
     expect(await active(db)).toEqual([
-      { id: 'legacy-dead', active: false, expired: true }, { id: 'legacy-live', active: true, expired: false },
-      { id: 'legacy-null', active: null, expired: null }, { id: 'owned', active: true, expired: false },
+      { id: 'legacy-dead', active: true, expired: false }, { id: 'legacy-live', active: true, expired: false },
+      { id: 'legacy-null', active: false, expired: true }, { id: 'owned', active: true, expired: false },
     ]);
   });
   it('fences replacement epoch, explicit release and actual server lease expiry', async () => {

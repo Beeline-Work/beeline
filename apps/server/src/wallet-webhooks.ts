@@ -170,7 +170,7 @@ export async function ingestWalletWebhook(
       // Wallet lifecycle payloads only contain the hash/account. Enrich once from that transaction.
       // A missing transaction is retryable (non-2xx); do not acknowledge away its amount/venue.
       const tx = object(
-        await rpc(chain, 'eth_getTransactionByHash', [hash], AbortSignal.timeout(10_000)),
+        await rpc(chain, 'eth_getTransactionByHash', [hash], undefined),
       );
       if (
         !tx ||
@@ -211,7 +211,7 @@ export async function ingestWalletWebhook(
     ) {
       // A trade's token legs live in its receipt, not in the native transaction value.
       const receipt = object(
-        await rpc(chain, 'eth_getTransactionReceipt', [hash], AbortSignal.timeout(10_000)),
+        await rpc(chain, 'eth_getTransactionReceipt', [hash], undefined),
       );
       if (!receipt || !Array.isArray(receipt.logs))
         throw new Error('wallet webhook receipt not available');

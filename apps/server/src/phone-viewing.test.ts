@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AddressInfo } from 'node:net';
 import WebSocket from 'ws';
 import { PushDeliveryLoop } from './background.js';
-import { clearStalePhoneViews, PhoneViewing } from './phone-viewing.js';
+import { PhoneViewing } from './phone-viewing.js';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { createBeelineServer } from './server.js';
 import { LiveHub } from './live.js';
@@ -126,25 +126,6 @@ describe('phone viewing over the live socket', () => {
     interval.mockRestore();
   });
 
-  it('clears the previous process on restart while preserving a live peer', async () => {
-    await viewing.view('old-socket', person, room, true);
-    await db.query(`INSERT INTO live_server_instances(instance_id) VALUES('fly-b:process-1')`);
-    const peer = new PhoneViewing(db, 'fly-b:process-1');
-    await peer.view('peer-socket', person, room, true);
-
-    await clearStalePhoneViews(db, 'fly-a:process-2');
-    expect(await views()).toEqual([
-      { session_id: 'peer-socket', instance_id: 'fly-b:process-1', expires_at: null },
-    ]);
-  });
-
-  it('clears a crashed peer whose instance record is stale', async () => {
-    await viewing.view('old-socket', person, room, true);
-    await db.query(`UPDATE live_server_instances SET renewed_at=now()-interval '2 minutes'`);
-    await clearStalePhoneViews(db, 'fly-b:process-1');
-    expect(await views()).toEqual([]);
-  });
-
   it('resumes pushes when a crashed process loses its existing instance lease', async () => {
     const loop = new PushDeliveryLoop(db, { send });
     await loop.runOnce();
@@ -167,7 +148,7 @@ describe('phone viewing over the live socket', () => {
       phone: {} as PhoneService,
       daemon: {} as DaemonService,
       live: new LiveHub(),
-      connectionPresence: { instanceId: instance, holdServerConnection: () => () => {} } as ConnectionPresence,
+      connectionPresence: { instanceId: instance, holdServerConnection: () => () => {}, renewLease: async () => {} } as ConnectionPresence,
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as AddressInfo).port;

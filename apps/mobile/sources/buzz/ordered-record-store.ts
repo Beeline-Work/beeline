@@ -69,14 +69,3 @@ export class OrderedRecordStore<T> {
       for (const listener of [...(this.listeners.get(key) ?? [])]) listener();
   }
 }
-
-/** Replay changes observed after a read began, in their arrival order. */
-function replayAfter<T, D>(
-  base: T,
-  mark: RecordMark,
-  changes: readonly { readonly clock: number; readonly delta: D }[],
-  fold: (value: T, delta: D) => T,
-): T {
-  return changes.reduce((value, change) =>
-    change.clock > mark.clock ? fold(value, change.delta) : value, base);
-}

@@ -20,17 +20,3 @@ export const CHANGES_LABEL = `${CORNER_LABEL}s`;
  * identity marks. `members-glyph.test.ts` holds that rule.
  */
 export const MEMBERS_LABEL = 'Members';
-
-/**
- * "N corner"/"N corners" for a Room row's meta line, or `null` when there are
- * none to report. The server count already excludes terminal corners (landed,
- * closed, archived), matching what the corner dropdown and pinned line show —
- * so a Room whose corners are all terminal renders no corner count at all
- * rather than a stale "0 corners". An absent count means this bundle could not
- * read one, and an unknown number is likewise reported as nothing rather than
- * guessed at.
- */
-function formatRoomCornerCount(count: number | undefined): string | null {
-  if (count === undefined || count <= 0) return null;
-  return `${count} ${count === 1 ? CORNER_LABEL : CHANGES_LABEL}`;
-}

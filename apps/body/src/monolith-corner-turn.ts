@@ -29,19 +29,10 @@ import {
   preparePrivateAssets,
   markWorkspaceLayoutLive,
   prepareWorkspaceAssets,
-  prepareWorkspaceAvdBase,
   workspaceAssetPaths,
   workspaceCacheEnv,
 } from './workspace-assets.js';
-import { admitSharedAssets, SharedAssetCapacityError } from './shared-asset-capacity.js';
-import {
-  androidLeaseShellBindings,
-  prepareCornerAdb,
-  cornerEmulatorHostFromEnv,
-  cornerEmulatorSocketName,
-  listenCornerEmulator,
-  stopKeptCornerEmulator,
-} from './corner-emulator.js';
+import { admitSharedAssets } from './shared-asset-capacity.js';
 import { type DaemonAttachment, type DaemonOperationMap } from '@beeline/api-contract/daemon';
 import {
   AcpClient,
@@ -82,7 +73,7 @@ import {
   promptWithImages,
   type DeliveredAttachment,
 } from './attachment-delivery.js';
-import { isCornerStatusRestatement, isDeliberateCornerNoReply } from './reply-sanitizer.js';
+import { isCornerStatusRestatement } from './reply-sanitizer.js';
 import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { isCompletedToolCall, isPrChecksRead, toolCallFailureLine } from './tool-call-failure.js';
@@ -108,7 +99,6 @@ import {
   siblingAgentMaskPaths,
   wrapAgentCommand,
 } from './bwrap-sandbox.js';
-import { prepareKvmAccess } from './kvm-device-access.js';
 import { harnessIdentityLabel, sessionNewMcpServers } from './cursor-acp-bridge.js';
 import {
   approvedDeviceGrant,
@@ -462,7 +452,6 @@ export interface MonolithCornerTurnOptions {
   api: DaemonApiClient;
   scheduler: AgentProcesses;
   signal?: AbortSignal;
-  pollMs?: number;
   /** Close-request recovery interval (test seam); defaults to the jittered 10 min. */
   closePollMs?: number;
   onPoll(): void;
@@ -685,19 +674,12 @@ export class MonolithCornerTurnLoop {
       // branch and a pull request, and host work belongs here, next to the
       // transcript that explains it. A granted command runs unwrapped (C94).
       writePolicy: () => {
-        // A granted `beeline emulator` runs outside the sandbox. It still needs
-        // the same lease variables as the corner shell, or it exits before boot.
-        const toolEnv = Object.fromEntries(
-          androidLeaseShellBindings(this.agentEnv)
-            .map((entry) => [entry.name, entry.value]),
-        );
         return {
           surface: this.options.repository?.readOnly ? 'room' as const : 'corner' as const,
           ...(this.options.repository?.readOnly ? { bwrapPath: this.options.config.bwrapPath,
             harnessStateDirs: [this.options.config.agentHomeRoot, this.options.config.agentPrivateRoot].filter((path): path is string => Boolean(path)),
           } : {}),
           ...(this.sessionScratchDir ? { scratch: this.sessionScratchDir } : {}),
-          ...(Object.keys(toolEnv).length ? { toolEnv } : {}),
         };
       },
       turn: () =>
@@ -769,7 +751,8 @@ export class MonolithCornerTurnLoop {
       this.stoppedTurns.delete(this.stoppedTurns.values().next().value!);
     if (this.currentTurn?.requestId !== requestId) return;
     this.branchSyncController?.abort();
-    if (this.client && this.sessionId) this.client.sessionCancel(this.sessionId);
+    void this.options.scheduler.stop(this.options.cornerId, true).catch(error =>
+      console.error('[body] cancelled corner process cleanup failed:', error));
   }
 
   private commandActivation(){
@@ -1076,9 +1059,6 @@ export class MonolithCornerTurnLoop {
           grantedHostRoutes: mountedHostRoutes,
           extraHostRoutes: registryHostDeclarations,
           resourceAuthFile,
-          ...(this.options.config.agentEnv.PATH
-            ? { inheritedPath: this.options.config.agentEnv.PATH }
-            : {}),
           ...(this.options.config.agentKind ? { agentKind: this.options.config.agentKind } : {}),
           ...(this.options.config.operatorHome
             ? { operatorHome: this.options.config.operatorHome }
@@ -1136,23 +1116,13 @@ export class MonolithCornerTurnLoop {
       githubEnv = launchers.env;
       this.cornerGitHubCli = launchers.githubCli;
     }
-    let assets = this.options.config.agentSharedAssetRoot && this.options.config.bwrapPath && homeOverlay.HOME &&
+    const assets = this.options.config.agentSharedAssetRoot && this.options.config.bwrapPath && homeOverlay.HOME &&
       await admitSharedAssets(this.options.runtime.supervisorRoot, 1024 ** 3)
       ? await prepareWorkspaceAssets(this.options.config.agentSharedAssetRoot)
       : undefined;
     if (isolatedCategories.length)
       await preparePrivateAssets(privateAssetRoot, isolatedCategories);
 
-    let androidAssets: { avdBase: string } | undefined;
-    if (assets && homeOverlay.ANDROID_HOME && homeOverlay.ANDROID_AVD_HOME &&
-      existsSync(homeOverlay.ANDROID_AVD_HOME)) {
-      try {
-        androidAssets = { avdBase: await prepareWorkspaceAvdBase(assets, homeOverlay.ANDROID_AVD_HOME) };
-      } catch (error) {
-        if (!(error instanceof SharedAssetCapacityError)) throw error;
-        assets = undefined; // private legacy paths remain available this turn
-      }
-    }
     const cacheEnv = assets
       ? workspaceCacheEnv(assets, this.options.worktreePath,
           isolatedCategories.includes('package-cache') ? privateAssetRoot : undefined)
@@ -1189,12 +1159,6 @@ export class MonolithCornerTurnLoop {
       ...agentGitIdentityEnv(this.agent),
       ...cacheEnv,
       BEELINE_TURN_CONTEXT_FILE: this.commandContext.path,
-      ...(androidAssets && this.options.config.agentHomeRoot
-        ? {
-            ANDROID_AVD_HOME: androidAssets.avdBase,
-            ANDROID_EMULATOR_HOME: resolve(this.options.config.agentHomeRoot, 'android-emulator'),
-          }
-        : {}),
       npm_config_cache: npmCacheDir,
       // pnpm reads its settings from PNPM_CONFIG_* environment variables and
       // hardlinks packages out of this content-addressable store.
@@ -1204,38 +1168,8 @@ export class MonolithCornerTurnLoop {
       HF_HOME: hfHomeDir,
       HUGGINGFACE_HUB_CACHE: assets || isolatedCategories.includes('package-cache')
         ? modelCacheDir : join(modelCacheDir, 'hub'),
-      ...(assets && androidAssets && this.options.config.agentHomeRoot
-        ? {
-            BEELINE_ANDROID_LEASE_ROOT: resolve(assets.cache, 'android-leases'),
-            BEELINE_ANDROID_INSTANCE_ROOT: resolve(this.options.config.agentHomeRoot, 'android-instances'),
-            BEELINE_ANDROID_BASE_AVD_HOME: androidAssets.avdBase,
-            BEELINE_ANDROID_EMULATOR_BINARY: resolve(homeOverlay.ANDROID_HOME!, 'emulator/emulator'),
-          }
-        : {}),
     };
 
-    const emulatorHost = cornerEmulatorHostFromEnv(agentEnv);
-    if (emulatorHost) {
-      await prepareCornerAdb(this.options.config.agentHomeRoot!, this.options.cornerId, agentEnv);
-      await Promise.all([
-        mkdir(emulatorHost.leaseRoot, { recursive: true, mode: 0o700 }),
-        mkdir(emulatorHost.instanceRoot, { recursive: true, mode: 0o700 }),
-        mkdir(agentEnv.ANDROID_EMULATOR_HOME!, { recursive: true, mode: 0o700 }),
-      ]);
-      const socketPath = cornerEmulatorSocketName(this.options.cornerId);
-      try {
-        await listenCornerEmulator(socketPath, this.options.cornerId, emulatorHost);
-        agentEnv.BEELINE_CORNER_EMULATOR_SOCKET = socketPath;
-        agentEnv.BEELINE_CORNER_ID = this.options.cornerId;
-      } catch (error) {
-        // Another helper for this corner is already listening. This turn can
-        // still ask it to keep the emulator.
-        if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE') {
-          agentEnv.BEELINE_CORNER_EMULATOR_SOCKET = socketPath;
-          agentEnv.BEELINE_CORNER_ID = this.options.cornerId;
-        } else console.error('[body] corner emulator supervisor unavailable:', error);
-      }
-    }
     await mkdir(hfHomeDir, { recursive: true, mode: 0o700 });
     this.agentEnv = agentEnv;
     const selectedCommand = command;
@@ -1263,8 +1197,6 @@ export class MonolithCornerTurnLoop {
     // protected supervisorRoot above, so it needs its own re-bind.
     const attachScratchRoot = this.options.config.agentHomeRoot ?? tmpDir;
     if (attachScratchRoot) await mkdir(attachScratchRoot, { recursive: true });
-    const kvm = prepareKvmAccess(grantedDevices);
-    if ('advice' in kvm) console.error(`[body] ${kvm.advice}`);
     const dependencyPaths: string[] = [];
     const sandboxSpec: SandboxSessionSpec = {
         mode: this.options.repository?.readOnly ? 'readonly' : 'edit',
@@ -1442,9 +1374,6 @@ export class MonolithCornerTurnLoop {
                 { name: 'HF_HOME', value: hfHomeDir },
                 { name: 'HUGGINGFACE_HUB_CACHE', value: assets || isolatedCategories.includes('package-cache')
                   ? modelCacheDir : join(modelCacheDir, 'hub') },
-                // The implementer's task shell is this server. It must see every
-                // Android lease variable the harness shell already has.
-                ...androidLeaseShellBindings(agentEnv),
               ],
             },
           ]
@@ -1499,7 +1428,6 @@ export class MonolithCornerTurnLoop {
       squireAvailable: Boolean(squireScope.relay),
       ...this.sessionPromptContext!,
       machineHost: await machineHost(),
-      kvm,
       githubCli: this.cornerGitHubCli,
       ...(persona?.instructions
         ? { soul: { name: persona.name, instructions: persona.instructions } }
@@ -1512,10 +1440,6 @@ export class MonolithCornerTurnLoop {
               targetBranch: repository.targetBranch,
             },
           }
-        : {}),
-      ...(agentEnv.BEELINE_ANDROID_EMULATOR_PORT
-        ? { android: { emulatorPort: agentEnv.BEELINE_ANDROID_EMULATOR_PORT,
-            leased: Boolean(agentEnv.BEELINE_ANDROID_LEASE_ROOT) } }
         : {}),
     });
     this.turnSessionPrefix = session.turnPrefix;
@@ -1796,7 +1720,6 @@ export class MonolithCornerTurnLoop {
       }
       await trace.finish(outcome, reason);
     };
-    let deliberateNoReply = false;
     try {
       if (freeAgent) await this.freeContinuation.begin(this.commandContext.current?.source.body ?? trigger);
       await withTurnReceiptHeartbeat(
@@ -2348,7 +2271,6 @@ export class MonolithCornerTurnLoop {
                   return true;
                 }
                 if (!['no-reply', 'repeated-tool-call'].includes(result.stopReason)) return false;
-                deliberateNoReply = result.stopReason === 'no-reply';
                 stream.close();
                 await flushToolCalls(result.toolCalls, '', true);
                 await stream.retract();
@@ -2557,7 +2479,6 @@ export class MonolithCornerTurnLoop {
                   (saved) => spoken(durableReplyText(saved)) === durableReply,
                 ),
               );
-              deliberateNoReply = !activityTurn && (repeatedNarration || isDeliberateCornerNoReply(reply, restates));
               await trace.measure('publish', () =>
                 stream.settle(
                   repeatedNarration ? '' : durableReply,
@@ -2586,8 +2507,8 @@ export class MonolithCornerTurnLoop {
         roomId: cornerId,
         requestId,
         status: timeLimited ? 'failed' : 'complete',
+        ...(!timeLimited ? {diagnosticsOnly:true} : {}),
         ...(timeLimited ? { reason: 'free-agent-time-limit' } : {}),
-        ...(deliberateNoReply ? { completionKind: 'no-reply' as const } : {}),
         generationId: this.commandContext.generationId,
         toolCalls: trace.toolCallsTotal,
         trace: trace.replay(),
@@ -2756,7 +2677,6 @@ export class MonolithCornerTurnLoop {
         agentId: this.agent.publicKey,
         context: this.commandContext,
         signal,
-        pollMs: this.options.pollMs,
         presence: {
           ...(this.options.config.daemonReleaseVersion
             ? { releaseVersion: this.options.config.daemonReleaseVersion }
@@ -2796,12 +2716,8 @@ export class MonolithCornerTurnLoop {
         restart: () => this.options.onRestartRequested?.(),
         canStartTurn: this.options.canStartTurn,
         closed: async () => {
-          const stopEmulator = () => stopKeptCornerEmulator(
-            this.options.runtime.supervisorRoot, cornerId, `corner close requested; stopped by agent ${this.agent.publicKey}`)
-            .catch((error) => console.error(`[body] corner ${cornerId} emulator stop failed:`, error));
           if (this.closePushed) {
             this.closePushed = false;
-            await stopEmulator();
             await this.harvest;
             await this.options.onCloseRequested();
             return true;
@@ -2813,7 +2729,6 @@ export class MonolithCornerTurnLoop {
           const state = await api.execute('getCornerRestoreState', { cornerId });
           if (!state.closeRequested) return false;
           // The reap deletes the worktree a harvest is still reading.
-          await stopEmulator();
           await this.harvest;
           await this.options.onCloseRequested();
           return true;

@@ -2,7 +2,7 @@ import React, { useId } from 'react';
 import Svg, { Circle, Defs, Mask, Rect } from 'react-native-svg';
 import brand from '@/buzz/brand.json';
 import { DECORATIVE_GLYPH_PROPS } from './decorative-glyph';
-import { chromeStrokeWidth } from './MembersGlyph';
+import { chromeStrokeWidth } from '@/buzz/chrome-geometry';
 
 /** A person behind an agent, with transparent separation at their overlap. */
 export function MembersAgentsGlyph({

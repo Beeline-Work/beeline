@@ -239,8 +239,8 @@ export function describedWorkflow(value: unknown): unknown {
 
 
 /**
- * Records a corner run state as its newest handoff card, the way
- * `corner-lifecycle.ts` writes one; the card is the run state (`corner-run.ts`).
+ * Seeds an inert historical lifecycle card for compatibility fixtures.
+ * Current state belongs to `corner-lifecycle.ts`; this does not transition it.
  */
 export async function recordCornerRun(
   db: SqlDatabase, cornerId: string, toState: string, outcome?: string,
@@ -263,8 +263,8 @@ export async function recordCornerRun(
  * code now derives them. An owner with a commissioner is an opening order. An
  * owner alone becomes the corner's creator, or a person's first tag when the
  * corner already has a creator: either names it the worker without making the
- * corner agent-opened. A different worker is a later tag; the run state is a
- * handoff card. Objectives live on briefs and opening orders (`writeCornerObjective`).
+ * corner agent-opened. A different worker is a later tag; workflowState seeds a
+ * historical card. Objectives live on briefs and opening orders (`writeCornerObjective`).
  */
 export async function insertCornerFacts(db: SqlDatabase, input: {
   cornerId: string;

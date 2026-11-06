@@ -1,7 +1,0 @@
-// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
-
-exports[`a merge hold shows Waiting with its real message and sends no extra wake > approved hold source line 1`] = `
-{
-  "text": "@owner set a merge hold",
-}
-`;

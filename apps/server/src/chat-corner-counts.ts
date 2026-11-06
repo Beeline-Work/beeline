@@ -1,6 +1,7 @@
-import { commandOwnerExpiredSql, commandOwnerLiveSql } from './turn-ownership.js';
+import { currentCornerCommandTargetSql } from './agent-command.js';
+import type { CornerMachine } from './corner-lifecycle.js';
+import { commandOwnerLiveSql, workingTurnFreshSql } from './turn-ownership.js';
 import { cornerReviewerSql } from './corner-reviewer.js';
-import { cornerRunOutcomeSql, cornerRunStateSql } from './corner-run.js';
 import { cornerWaitingReportSql } from './corner-waiting-report.js';
 import { createHash } from 'node:crypto';
 import { deriveCornerState, type DerivedCornerState } from './corner-state.js';
@@ -18,12 +19,13 @@ export const OPEN_CORNER_PREVIEW = 8;
 
 /** The facts every corner row derives its state and Mine flag from. */
 export type CornerStateRow = {
+  machine?: CornerMachine | null;
   waiting_kind?: 'message' | 'merge-hold' | 'report' | null;
   waiting_person_name?: string | null;
   archived_at: Date | null;
   locked?: boolean;
   lifecycle: CornerLifecycleView | null;
-  /** The corner run's state: its newest handoff card (`corner-run.ts`). */
+  /** Internal read aliases of the persisted machine state and terminal outcome. */
   workflow_state?: string | null;
   workflow_outcome?: string | null;
   latest_turn_status: string | null;
@@ -40,14 +42,11 @@ export type CornerStateRow = {
 };
 
 export function cornerRowState(row: CornerStateRow): DerivedCornerState {
-  return deriveCornerState({
+  const observed = deriveCornerState({
     archived: Boolean(row.archived_at),
     locked: row.locked,
     turnRunning: row.worker_active === true,
     reviewerActive: row.reviewer_active,
-    ...(row.workflow_state
-      ? { run: { state: row.workflow_state, outcome: row.workflow_outcome ?? undefined } }
-      : {}),
     lifecycle: row.lifecycle ?? undefined,
     ...(row.waiting_item_id && row.waiting_reason
       ? {
@@ -78,6 +77,9 @@ export function cornerRowState(row: CornerStateRow): DerivedCornerState {
         }
       : {}),
   });
+  return row.machine ? { state: row.machine.state, ...(row.machine.state === 'waiting' ? {
+    reason: observed.reason, itemId: observed.itemId, blocker: observed.blocker,
+  } : {}) } : observed;
 }
 
 /** Mine is followed or owed to this viewer. */
@@ -108,7 +110,7 @@ export function cornerFactsSql(viewerExpr: string): {
   member: string;
 } {
   return {
-    columns: `f.locked,gh.lifecycle,${cornerRunStateSql('f.corner_id')} workflow_state,${cornerRunOutcomeSql('f.corner_id')} workflow_outcome,
+    columns: `f.locked,f.machine,gh.lifecycle,
       activity.worker_active,activity.reviewer_active,
       ${cornerLastTurnEndSql('c')} last_turn_ended_at,
       blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,blocker.reason waiting_reason,
@@ -133,25 +135,21 @@ export function cornerFactsSql(viewerExpr: string): {
   };
 }
 
-/** A command the helper will still deliver. Long delayed wakes and paused startups stay out.
- * A wake due within 20 seconds still counts, so a short checkout retry does not flash idle. */
+/** A pending command the helper will deliver. */
 export function deliverableCommandSql(command: string): string {
   return `${command}.action IN ('input','resume')
     AND NOT ${command}.avatar_job
     AND ${command}.reason NOT IN ('computer_activity','report')
-    AND (${command}.wake_after IS NULL OR ${command}.wake_after<=now()+interval '20 seconds')
-    AND (${command}.startup_wake_after IS NULL OR ${command}.startup_wake_after<=now())
-    AND (${command}.state='pending' OR (${command}.state='claimed' AND ${commandOwnerExpiredSql(command)}))`;
+    AND ${command}.state='pending'`;
 }
 
-/** Claimed, lease still live, and no working turn yet: the helper has the order and has not started. */
+/** Claimed on a live connection, and no working turn yet: the helper has the order and has not started. */
 function heldCommandSql(command: string): string {
   return `${command}.state='claimed' AND ${commandOwnerLiveSql(command)}
     AND ${command}.action IN ('input','resume')
     AND NOT ${command}.avatar_job
     AND ${command}.reason NOT IN ('computer_activity','report')
-    AND (${command}.wake_after IS NULL OR ${command}.wake_after<=now()+interval '20 seconds')
-    AND (${command}.startup_wake_after IS NULL OR ${command}.startup_wake_after<=now())`;
+`;
 }
 
 /** A running turn, or a command still waiting for one, retains the review role recorded by its dispatch. */
@@ -165,33 +163,36 @@ export function cornerWorkSql(ignoreCommander = false): string {
       LEFT JOIN messages source ON source.id=dispatched.source_message_id
       WHERE dispatched.room_id=t.room_id AND dispatched.agent_id=t.agent_id
         AND dispatched.turn_request_id=t.request_id
-        AND (dispatched.reason='corner_review_dispatch'
+        AND ((dispatched.review_context IS NOT NULL AND dispatched.review_context->>'purpose' IS NULL)
+          OR dispatched.reason='corner_review_dispatch'
           OR (dispatched.reason='subscribed_event' AND ${checkPassed('source')}))))`;
   const reviewerCommand = `(command.agent_id=${reviewerAgent}
+    OR (command.review_context IS NOT NULL AND command.review_context->>'purpose' IS NULL)
     OR command.reason='corner_review_dispatch'
     OR (command.reason='subscribed_event' AND EXISTS(
       SELECT 1 FROM messages source WHERE source.id=command.source_message_id AND ${checkPassed('source')})))`;
   const noLiveTurn = `NOT EXISTS (
             SELECT 1 FROM agent_turns live
             WHERE live.room_id=command.room_id AND live.agent_id=command.agent_id
-              AND live.request_id=command.turn_request_id
+              AND live.request_id=command.turn_request_id AND live.status='working'
+              AND ${workingTurnFreshSql('live')}
               AND COALESCE(live.generation_id,'') NOT LIKE 'pending:%')`;
   return `LEFT JOIN rooms parent ON parent.id=c.parent_id
     LEFT JOIN LATERAL (WITH activity_rows AS (
         SELECT ${reviewerTurn} AS review
-        FROM agent_turns t WHERE t.room_id=c.id AND t.status='working'
+        FROM agent_turns t WHERE t.room_id=c.id AND t.status='working' AND ${workingTurnFreshSql('t')}
           ${ignoreCommander ? 'AND t.agent_id IS DISTINCT FROM c.created_by' : ''}
           AND COALESCE(t.generation_id,'') NOT LIKE 'pending:%'
         UNION ALL
         SELECT ${reviewerCommand}
         FROM agent_commands command
-        WHERE command.room_id=c.id AND ${deliverableCommandSql('command')}
+        WHERE command.room_id=c.id AND ${deliverableCommandSql('command')} AND ${currentCornerCommandTargetSql('command')}
           ${ignoreCommander ? 'AND command.agent_id IS DISTINCT FROM c.created_by' : ''}
           AND ${noLiveTurn}
         UNION ALL
         SELECT ${reviewerCommand}
         FROM agent_commands command
-        WHERE command.room_id=c.id AND ${heldCommandSql('command')}
+        WHERE command.room_id=c.id AND ${heldCommandSql('command')} AND ${currentCornerCommandTargetSql('command')}
           ${ignoreCommander ? 'AND command.agent_id IS DISTINCT FROM c.created_by' : ''}
           AND ${noLiveTurn}
       )
@@ -262,7 +263,7 @@ export function roomWorkingSql(room: string): string {
     SELECT ${room}.id UNION ALL
     SELECT id FROM rooms WHERE parent_id=${room}.id AND archived_at IS NULL
   ) scope(id) CROSS JOIN LATERAL (
-    SELECT 1 FROM agent_turns t WHERE t.room_id=scope.id AND t.status='working'
+    SELECT 1 FROM agent_turns t WHERE t.room_id=scope.id AND t.status='working' AND ${workingTurnFreshSql('t')}
       AND COALESCE(t.generation_id,'') NOT LIKE 'pending:%'
     UNION ALL
     SELECT 1 FROM agent_commands command
@@ -270,7 +271,8 @@ export function roomWorkingSql(room: string): string {
       AND NOT EXISTS (
         SELECT 1 FROM agent_turns live
         WHERE live.room_id=command.room_id AND live.agent_id=command.agent_id
-          AND live.request_id=command.turn_request_id
+          AND live.request_id=command.turn_request_id AND live.status='working'
+              AND ${workingTurnFreshSql('live')}
           AND COALESCE(live.generation_id,'') NOT LIKE 'pending:%')
     UNION ALL
     SELECT 1 FROM agent_commands command
@@ -278,7 +280,8 @@ export function roomWorkingSql(room: string): string {
       AND NOT EXISTS (
         SELECT 1 FROM agent_turns live
         WHERE live.room_id=command.room_id AND live.agent_id=command.agent_id
-          AND live.request_id=command.turn_request_id
+          AND live.request_id=command.turn_request_id AND live.status='working'
+              AND ${workingTurnFreshSql('live')}
           AND COALESCE(live.generation_id,'') NOT LIKE 'pending:%')
     LIMIT 1 OFFSET 0
   ) working)`;

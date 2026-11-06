@@ -2,8 +2,8 @@ import { phoneFetch } from '../../../tests/helpers/phone-operation.js';
 import { setRoomEventSubscriptions, migrateMembershipSubscriptions } from './agent-subscriptions.js';
 import { cornerObjectiveSql } from './corner-objective.js';
 import { cornerCommissionerSql, cornerKindSql, cornerRequestSql } from './corner-opening.js';
-import { ConnectorOfferExpiryLoop } from './connector-offer-expiry.js';
 import { cornerRunStateSql } from './corner-run.js';
+import { advanceCorner } from './corner-lifecycle.js';
 import * as approvalSources from './approval-card-source.js';
 import * as serverSentry from './sentry.js';
 import { createAgentCommand, claimAgentCommand } from './agent-command.js';
@@ -18,7 +18,7 @@ import WebSocket from 'ws';
 import { EventEmitter } from 'node:events';
 import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
 import { FACE_NAMES, FACE_SOULS, isFaceId, type FaceId } from '@beeline/api-contract/phone';
-import { AGENT_MENTION_NOTICE_GRACE_MS } from '@beeline/api-contract/agent-access';
+
 import { CORNER_BRIEF_SPEC_MAX_LENGTH } from '@beeline/api-contract/daemon';
 import { migrate } from './database.js';
 import { upgradeGrantPolicy } from './grant-policy-upgrade.js';
@@ -30,7 +30,7 @@ import { PhoneService, REVIEW_LOCKED_OPERATIONS } from './phone-service.js';
 import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';
 import { LiveHub } from './live.js';
 import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
-import { MediaExpiryLoop, PushDeliveryLoop } from './background.js';
+import { PushDeliveryLoop } from './background.js';
 import { GitHubOperations } from './github-operations.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { GitHubHttpError } from '@beeline/auth/github';
@@ -52,7 +52,6 @@ import { REVIEW_IDENTITY_ID, ReviewAccess } from './review-access.js';
 import { announceAgentLifecycle } from './connection-presence.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { taggedIdentityIdsSql } from './message-mentions.js';
-import { closeExpiredChoices } from './room-choice.js';
 
 /** Who a message tags, read the way every surface reads it: from its own text. */
 async function taggedBy(database: PgliteDatabase, messageId: string): Promise<string[]> {
@@ -503,7 +502,9 @@ describe('monolith integration', () => {
       }
     ).id;
     const unrelatedApproval = await turnIn(unrelated);
-    const agentApproval = await turnIn(corner, AGENT);
+    const agentApproval = { messageId: createHash('sha256').update('triage-agent-approval').digest('hex') };
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Agent approval')`,
+      [agentApproval.messageId, corner, AGENT]);
     const attachments = new Map<string, { objectId: string; purpose: string; required: boolean }>();
     for (const [index, sourceRoomId] of [ROOM, cornerId, corner, unrelated].entries()) {
       const objectId = `65432109-0000-4000-8000-00000000000${index}`;
@@ -658,14 +659,9 @@ describe('monolith integration', () => {
   // These fixtures test projections and lifecycle behavior downstream of intake.
   // Supply an explicit command first. Routing/refusal tests call DaemonService
   // directly in agent-command.integration.test.ts and never use this helper.
-  const settleCornerWorkPastGap = async (cornerId: string) => {
+  const settleCornerWork = async (cornerId: string) => {
     await database.query(`UPDATE agent_commands SET state='complete' WHERE room_id=$1`, [cornerId]);
     await database.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1`, [cornerId]);
-    // These projection fixtures begin after the approved turn gap has elapsed.
-    await database.query(
-      `UPDATE agent_turns SET ended_at=now()-interval '40 seconds' WHERE room_id=$1 AND status<>'working'`,
-      [cornerId],
-    );
   };
   const daemonOperation = async (name: string, payload: unknown, token = daemonToken) => {
     const input = { ...(payload as Record<string, unknown>) };
@@ -2991,13 +2987,14 @@ describe('monolith integration', () => {
       .items;
     expect(conversationItems.at(-1)?.body).toBe('@bee What is your soul?');
     expect(conversationItems.some((item) => item.body.includes('did not answer'))).toBe(false);
-    // Both human inputs queued before claim form one turn owned by the oldest input.
+    // Each human input keeps its own pending command.
     const queued = (await database.query<{ id: string }>(
       `SELECT id FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND source_message_id=$3`,
       [ROOM, AGENT, messageId],
     )).rows[0];
     const claimed = await claimAgentCommand(database, ROOM, AGENT, queued.id, 'fixture-generation');
-    expect(claimed.coalesced_context).toContain(threadedMessageId);
+    expect(claimed.source_message_id).toBe(messageId);
+    expect((await database.query('SELECT state FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2', [threadedMessageId, AGENT])).rows).toEqual([{state:'pending'}]);
     const delivered = next(socket, 'message-delta');
     const reply = await daemonOperation(
       'postRoomMessage',
@@ -4754,59 +4751,6 @@ describe('monolith integration', () => {
     expect(notices.rows).toEqual([]);
   });
 
-  it('notifies only an explicitly addressed agent on a direct reply', async () => {
-    const peer = 'd'.repeat(64);
-    const parentId = 'e'.repeat(64);
-    await database.query(
-      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Peer','peer')`,
-      [peer],
-    );
-    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [peer, HUMAN]);
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
-      [WORKSPACE, peer, ROOM],
-    );
-    await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text)
-       VALUES($1,$2,$3,'Direct parent answer.')`,
-      [parentId, ROOM, AGENT],
-    );
-    await database.query(`UPDATE agents SET access_policy=$2::jsonb WHERE agent_id=$1`, [
-      AGENT,
-      JSON.stringify({ type: 'allowlist', allow: [] }),
-    ]);
-
-    const sent = await operation('sendRoomReply', {
-      roomId: ROOM,
-      messageId: 'a'.repeat(64),
-      parentMessageId: parentId,
-      text: '@peer Please take over.',
-    });
-    expect(sent.status).toBe(200);
-    // An unreachable helper leaves the mention queued with no immediate line.
-    const notices = await database.query<{ text: string }>(
-      `SELECT text FROM messages WHERE room_id=$1 AND presentation='system'`,
-      [ROOM],
-    );
-    expect(notices.rows).toEqual([]);
-    // Only after the grace window with the helper still gone does its line
-    // appear — and still nothing for the parent author the reply did not tag.
-    await new PhoneService(database, origin).flushPendingMentionNotices(
-      Date.now() + AGENT_MENTION_NOTICE_GRACE_MS + 1_000,
-    );
-    const flushed = await database.query<{ text: string }>(
-      `SELECT text FROM messages WHERE room_id=$1 AND presentation='system'`,
-      [ROOM],
-    );
-    expect(flushed.rows.map((row) => row.text)).toContainEqual(
-      expect.stringContaining('@peer did not answer'),
-    );
-    expect(flushed.rows.map((row) => row.text)).not.toContainEqual(
-      expect.stringContaining('Bee did not answer'),
-    );
-  });
-
   it('stays silent for parentless continuity outside the conversation window', async () => {
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)
@@ -5990,101 +5934,6 @@ describe('monolith integration', () => {
       body: Buffer.alloc(1024 * 1024 + 1),
     });
     expect(tooLarge.status).toBe(400);
-  });
-
-  it('expires attachment bytes after the TTL and keeps the message that carried them', async () => {
-    const upload = await phoneFetch(`${origin}/v1/phone/media`, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${accessToken}`,
-        'content-type': 'text/plain',
-        'x-file-name': 'receipt.txt',
-      },
-      body: Buffer.from('receipt-bytes'),
-    });
-    expect(upload.status).toBe(201);
-    const attachment = (await upload.json()) as { url: string };
-    const sent = await request('/v1/phone/operations/sendRoomMessage', 'POST', {
-      roomId: ROOM,
-      text: 'the receipt',
-      attachments: [{ url: attachment.url, name: 'receipt.txt', mimeType: 'text/plain', size: 13 }],
-    });
-    expect(sent.status).toBe(200);
-
-    await database.query(`UPDATE objects SET expires_at=now()-interval '1 minute'`);
-    expect(
-      await new MediaExpiryLoop(database, 24, 0, {
-        storage: objectStorage.asStorage(),
-        service: objectService,
-      }).runOnce(),
-    ).toBeGreaterThan(0);
-
-    // The bytes are gone for good, and the endpoint says so in one status.
-    const gone = await phoneFetch(attachment.url, {
-      headers: { authorization: `Bearer ${accessToken}` },
-    });
-    expect(gone.status).toBe(410);
-    expect(await gone.json()).toMatchObject({ error: 'media_expired', ttlHours: 24 });
-    // An id that never existed is still absent, not expired.
-    expect(
-      (
-        await phoneFetch(`${origin}/v1/media/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`, {
-          headers: { authorization: `Bearer ${accessToken}` },
-        })
-      ).status,
-    ).toBe(404);
-
-    // The message survives with its metadata, and the projection states the loss.
-    const roomView = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
-    expect(isRoomView(roomView)).toBe(true);
-    const carried = roomView.messages.find((message) => message.text === 'the receipt');
-    expect(carried?.attachments?.[0]).toMatchObject({
-      name: 'receipt.txt',
-      mimeType: 'text/plain',
-      size: 13,
-      expired: true,
-    });
-    const history = (await (await request(`/v1/phone/rooms/${ROOM}/history`)).json()) as {
-      messages: RoomView['messages'];
-    };
-    expect(
-      history.messages.find((message) => message.text === 'the receipt')?.attachments?.[0],
-    ).toMatchObject({ expired: true });
-
-    // And an agent is told the bytes expired rather than handed a dead URL.
-    const inbox = (await (
-      await daemonOperation('getRoomConversation', { roomId: ROOM })
-    ).json()) as { items: { body: string; attachments: { expired?: boolean }[] }[] };
-    expect(inbox.items.find((item) => item.body === 'the receipt')?.attachments[0]).toMatchObject({
-      expired: true,
-    });
-
-    // Posting a file again is an upload: identical bytes deduplicate, and the
-    // window restarts rather than the new message inheriting an old row's age.
-    const repost = async () =>
-      (await (
-        await phoneFetch(`${origin}/v1/phone/media`, {
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${accessToken}`,
-            'content-type': 'text/plain',
-            'x-file-name': 'receipt.txt',
-          },
-          body: Buffer.from('receipt-bytes'),
-        })
-      ).json()) as { url: string };
-    const reposted = await repost();
-    await database.query(`UPDATE objects SET expires_at=now()-interval '1 minute'`);
-    expect((await repost()).url).toBe(reposted.url);
-    expect(
-      await new MediaExpiryLoop(database, 24, 0, {
-        storage: objectStorage.asStorage(),
-        service: objectService,
-      }).runOnce(),
-    ).toBe(0);
-    expect(
-      (await phoneFetch(reposted.url, { headers: { authorization: `Bearer ${accessToken}` } })).status,
-    ).toBe(200);
   });
 
   it('retires the agent bytea-media upload and still drains queued attachments', async () => {
@@ -8408,7 +8257,7 @@ describe('monolith integration', () => {
           [ROOM, requestId],
         )
       ).rows[0],
-    ).toEqual({ status: 'cancelled', failure_reason: null });
+    ).toEqual({ status: 'cancelled', failure_reason: 'stop' });
     expect(
       (
         await database.query(
@@ -8511,7 +8360,7 @@ describe('monolith integration', () => {
     ).toEqual([expect.objectContaining({ woke: [AGENT], request_id: requestId })]);
   });
 
-  it('silently reopens the original command after a hiccup', async () => {
+  it('ends an explicit hiccup failure once without reopening its command', async () => {
     const requestId = '8'.repeat(64);
     await operation('sendRoomMessage', {
       roomId: ROOM,
@@ -8528,7 +8377,7 @@ describe('monolith integration', () => {
       reasonKind: 'hiccup',
     });
     expect(failed.status).toBe(200);
-    expect(await failed.json()).toMatchObject({ hiccupRestart: true, hiccupAttempt: 1 });
+    expect(await failed.json()).not.toHaveProperty('hiccupRestart');
     expect(
       (
         await database.query(
@@ -8550,24 +8399,30 @@ describe('monolith integration', () => {
         [ROOM],
       );
     const first = (await lines()).rows;
-    expect(first).toEqual([]);
+    expect(first).toHaveLength(1);
+    expect(first[0]!.text).toBe('@bee could not finish this request · provider error 429 concurrency_limit');
     expect(
       (
-        await database.query<{ state: string; hiccup_attempts: number }>(
-          `SELECT state,hiccup_attempts FROM agent_commands WHERE turn_request_id=$1 AND agent_id=$2`,
+        await database.query<{ state: string }>(
+          `SELECT state FROM agent_commands WHERE turn_request_id=$1 AND agent_id=$2`,
           [requestId, AGENT],
         )
       ).rows[0],
-    ).toEqual({ state: 'pending', hiccup_attempts: 1 });
+    ).toEqual({ state: 'complete' });
+    const replay=await daemonOperation('postAgentTurnReceipt',{roomId:ROOM,requestId,status:'failed',reason:'provider error 429 concurrency_limit',reasonKind:'hiccup'});
+    expect(replay.status).toBe(200);
+    expect((await lines()).rows).toHaveLength(1);
+    const commands=await (await daemonOperation('getAgentCommands',{roomId:ROOM})).json() as {commands:{turnRequestId:string}[]};
+    expect(commands.commands.some(command=>command.turnRequestId===requestId)).toBe(false);
     const room = (await new PhoneService(database, origin).readRoom(ROOM, HUMAN))!;
-    expect(room.messages.some(message => message.cardType === 'turn-failed')).toBe(false);
+    expect(room.messages.filter(message=>message.id===first[0]!.id).map(message=>message.text)).toEqual([first[0]!.text]);
     await daemonOperation('postAgentTurnReceipt', {
       roomId: ROOM,
       requestId: '9'.repeat(64),
       status: 'failed',
       reason: 'ACP agent exited (code 1)',
     });
-    expect((await lines()).rows).toHaveLength(0);
+    expect((await lines()).rows).toHaveLength(2);
   });
 
   it('does not restart a standing wrong-model failure', async () => {
@@ -8598,7 +8453,7 @@ describe('monolith integration', () => {
         )
       ).rows[0],
     ).toEqual({
-      text: "@bee could not answer · the selected model isn't available. Pick another in the agent's settings.",
+      text: '@bee could not finish this request · model selection unavailable',
       state: 'complete',
     });
     expect(
@@ -9193,7 +9048,7 @@ describe('monolith integration', () => {
       objective: 'Pick a shape for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
-    await settleCornerWorkPastGap(cornerId);
+    await settleCornerWork(cornerId);
     // Someone else started it: the viewer neither commissioned nor follows it.
     await database.query(`UPDATE agent_commands SET root_source_message_id='agent-initiated' WHERE room_id=$1 AND reason='corner_objective'`, [
       cornerId,
@@ -9202,8 +9057,9 @@ describe('monolith integration', () => {
       cornerId,
       HUMAN,
     ]);
-    const listed = async () =>
-      (
+    const listed = async () => {
+      await advanceCorner(database, cornerId, { kind: 'reconcile' });
+      return (
         (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
           chats: Array<{
             room: { id: string };
@@ -9213,6 +9069,7 @@ describe('monolith integration', () => {
       ).chats
         .find((item) => item.room.id === ROOM)
         ?.openCorners.find((item) => item.id === cornerId);
+    };
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)
        VALUES('chat-mine-untagged',$1,$2,'Still thinking.',now()+interval '1 second')`,
@@ -9251,14 +9108,15 @@ describe('monolith integration', () => {
       objective: 'Pick a size for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
-    await settleCornerWorkPastGap(cornerId);
+    await settleCornerWork(cornerId);
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)
        VALUES('busy-chatter',$1,$2,'Chatter.',now()+interval '5 seconds')`,
       [busy, AGENT],
     );
-    const listed = async () =>
-      (
+    const listed = async () => {
+      await advanceCorner(database, cornerId, { kind: 'reconcile' });
+      return (
         (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
           chats: Array<{
             room: { id: string };
@@ -9266,6 +9124,7 @@ describe('monolith integration', () => {
           }>;
         }
       ).chats;
+    };
     const order = async () =>
       (await listed()).map((item) => item.room.id).filter((id) => id === ROOM || id === busy);
     expect(await order()).toEqual([busy, ROOM]);
@@ -9296,9 +9155,10 @@ describe('monolith integration', () => {
       objective: 'Pick a finish for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
-    await settleCornerWorkPastGap(cornerId);
-    const listed = async () =>
-      (
+    await settleCornerWork(cornerId);
+    const listed = async () => {
+      await advanceCorner(database, cornerId, { kind: 'reconcile' });
+      return (
         (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
           chats: Array<{
             room: { id: string };
@@ -9308,6 +9168,7 @@ describe('monolith integration', () => {
       ).chats
         .find((item) => item.room.id === ROOM)
         ?.openCorners?.find((item) => item.id === cornerId);
+    };
     const page = async () =>
       (await new PhoneService(database, origin).readCorners(ROOM, HUMAN))?.corners.find(
         (item) => item.corner.id === cornerId,
@@ -9357,11 +9218,13 @@ describe('monolith integration', () => {
       objective: 'Pick a box for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
-    await settleCornerWorkPastGap(cornerId);
-    const state = async () =>
-      (await new PhoneService(database, origin).readCorners(ROOM, HUMAN))?.corners.find(
+    await settleCornerWork(cornerId);
+    const state = async () => {
+      await advanceCorner(database, cornerId, { kind: 'reconcile' });
+      return (await new PhoneService(database, origin).readCorners(ROOM, HUMAN))?.corners.find(
         (item) => item.corner.id === cornerId,
       )?.state;
+    };
     const old = "now()-interval '25 hours'";
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)
@@ -9416,11 +9279,13 @@ describe('monolith integration', () => {
       objective: 'Pick a lid for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
-    await settleCornerWorkPastGap(cornerId);
-    const state = async () =>
-      (await new PhoneService(database, origin).readCorners(ROOM, HUMAN))?.corners.find(
+    await settleCornerWork(cornerId);
+    const state = async () => {
+      await advanceCorner(database, cornerId, { kind: 'reconcile' });
+      return (await new PhoneService(database, origin).readCorners(ROOM, HUMAN))?.corners.find(
         (item) => item.corner.id === cornerId,
       )?.state;
+    };
     let updates = 0;
     const crowd = async () => {
       for (let index = 0; index < 21; index += 1) {
@@ -9699,12 +9564,6 @@ describe('monolith integration', () => {
     await database.query(`UPDATE objects SET expires_at=now()-interval '1 minute' WHERE id=$1`, [
       mediaId,
     ]);
-    expect(
-      await new MediaExpiryLoop(database, 24, 0, {
-        storage: objectStorage.asStorage(),
-        service: objectService,
-      }).runOnce(),
-    ).toBe(0);
     expect((await phoneFetch(`${origin}/v1/media/${mediaId}`)).status).toBe(200);
     await database.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
       VALUES($1,$2,'presence','presence','{"status":"online"}')`, [ROOM, AGENT]);
@@ -10094,9 +9953,9 @@ describe('monolith integration', () => {
   });
 
   it.each([
-    ...['opened', 'implement', 'checks', 'review', 'ask_human', 'landed', 'closed']
+    ...['idle', 'working', 'review-checks', 'review-reviewer', 'waiting', 'landed', 'closed']
       .map(state => ({ state, health: 'healthy' })),
-    ...['implement', 'ask_human'].flatMap(state =>
+    ...['working', 'waiting'].flatMap(state =>
       ['offline', 'removed', 'recent-failure', 'out-of-credit'].map(health => ({ state, health }))),
   ])(
     'Reproduction BR-01: brief revision from $state with $health worker', async ({ state, health }) => {
@@ -10123,7 +9982,19 @@ describe('monolith integration', () => {
         createHash('sha256').update(`failure-${state}`).digest('hex'), ROOM, HUMAN,
         JSON.stringify({ requestId: 'opener-failed', agentId: AGENT, silenceKind: 'allowance-spent' }),
       ]);
-      await database.query(`UPDATE messages SET card=jsonb_set(card,'{toState}',to_jsonb($2::text)) WHERE id=(SELECT id FROM messages WHERE room_id=$1 AND card_type='corner-workflow-handoff' ORDER BY (card->>'seq')::int DESC LIMIT 1)`, [cornerId, state]);
+      if (state !== 'working') await settleCornerWork(cornerId);
+      if (state.startsWith('review-')) {
+        await database.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [ROOM, AGENT]);
+        await database.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [cornerId,
+          JSON.stringify({ checks: state === 'review-checks' ? 'pending' : 'passing', pr: { number: 42, headSha: 'brief-head' } })]);
+      }
+      if (state === 'waiting') await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+         VALUES('brief-question',$1,$2,'Choose a label','card','choice',$3::jsonb)`,
+        [cornerId, worker, JSON.stringify({ mode: 'question', status: 'open', requester: { pubkey: HUMAN } })]);
+      const seeded = await advanceCorner(database, cornerId, state === 'landed' ? { kind: 'merged', contents: {} }
+        : state === 'closed' ? { kind: 'closed' } : { kind: 'reconcile' });
+      expect(seeded.state).toBe(['landed', 'closed'].includes(state) ? 'archived' : state.startsWith('review-') ? 'review' : state);
       if (health === 'offline')
         await database.query(`DELETE FROM live_outputs WHERE agent_id=$1`, [worker]);
       if (health === 'removed')
@@ -10141,14 +10012,21 @@ describe('monolith integration', () => {
         roomId: ROOM, cornerId, requestId: 'worker-brief-correction', expectedRevision: 1,
         brief: { content: 'Keep the corrected behavior.', change: 'Corrected behavior' },
       });
+      const terminal = state === 'landed' || state === 'closed';
+      if (terminal) {
+        expect(revised.status).toBe(403);
+        expect((await database.query(`SELECT revision FROM corner_brief_revisions WHERE corner_id=$1`, [cornerId])).rows)
+          .toEqual([{ revision: 1 }]);
+        expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason='corner_brief_revision'`, [cornerId])).rowCount).toBe(0);
+        return;
+      }
       expect(revised.status).toBe(200);
       const result = await revised.json();
       const wakes = (await database.query<{ agent_id: string }>(
         `SELECT command.agent_id FROM agent_commands command JOIN messages note ON note.id=command.source_message_id
          WHERE command.room_id=$1 AND note.text LIKE '%revised the corner brief%'`, [cornerId],
       )).rows.map(row => row.agent_id);
-      const terminal = state === 'landed' || state === 'closed';
-      const shouldWake = !terminal && health === 'healthy';
+      const shouldWake = !['offline','removed'].includes(health);
       console.info(`Reproduction BR-01: HTTP reviseCornerBrief from ${state}, worker ${health}; expected=${shouldWake ? 'current worker' : 'none'}; observed=${wakes.map(id => id === worker ? 'current worker' : 'opener').join(',') || 'none'}; revision=${result.revision}`);
       expect(result).toMatchObject({ revision: 2, wake: shouldWake ? { queued: true, agentId: worker } : { queued: false, reason: expect.any(String) } });
       expect(wakes).toEqual(shouldWake ? [worker] : []);
@@ -10156,7 +10034,7 @@ describe('monolith integration', () => {
       expect((await database.query<{ worker_agent_id: string; workflow_state: string }>(
         `SELECT ${cornerImplementerSql('fact', 'corner')} worker_agent_id,${cornerRunStateSql('fact.corner_id')} workflow_state FROM corner_facts fact
          JOIN rooms corner ON corner.id=fact.corner_id WHERE fact.corner_id=$1`, [cornerId],
-      )).rows[0]).toEqual({ worker_agent_id: worker, workflow_state: state === 'ask_human' && shouldWake ? 'implement' : state });
+      )).rows[0]).toEqual({ worker_agent_id: worker, workflow_state: state === 'waiting' ? 'waiting' : 'working' });
     },
   );
 
@@ -10210,14 +10088,13 @@ describe('monolith integration', () => {
       `SELECT agent_id,reason FROM agent_commands WHERE room_id=$1 AND reason IN ('corner_brief_revision','corner_check') ORDER BY agent_id`,
       [cornerId],
     );
-    // A brief edit never sends the corner back to review: the reviewer is not
-    // woken, and the run stays where it was.
+    // The implementer works on the revised brief before another review is admitted.
     expect(commands.rows.filter((row) => row.agent_id === reviewerId)).toEqual([]);
     expect(
       (await database.query<{ workflow_state: string }>(
         `SELECT ${cornerRunStateSql('$1::uuid')} workflow_state`, [cornerId],
       )).rows[0]?.workflow_state,
-    ).toBe('implement');
+    ).toBe('working');
     expect(
       await (await daemonOperation('getCornerRestoreState', { cornerId })).json(),
     ).toMatchObject({
@@ -11070,7 +10947,7 @@ describe('monolith integration', () => {
     const { messageId: root } = await source.json() as { messageId: string };
     const requestId = createHash('sha256').update('grant-src-1-turn').digest('hex');
     await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Agent request')`,
-      [requestId, ROOM, AGENT]);
+      [requestId, ROOM, SYSTEM_IDENTITY_ID]);
     const command = await createAgentCommand(database, {
       roomId: ROOM, agentId: AGENT, sourceMessageId: requestId,
       turnRequestId: requestId, reason: 'fixture',
@@ -11524,9 +11401,10 @@ describe('monolith integration', () => {
       )
     ).rows[0]!;
     const delegated = createHash('sha256').update('delegated-resource-task').digest('hex');
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Delegating agent')`, [WELCOME_AGENT]);
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES($1,$2,$3,'delegated task','message')`,
-      [delegated, ROOM, AGENT],
+      [delegated, ROOM, WELCOME_AGENT],
     );
     await createAgentCommand(database, {
       roomId: ROOM,
@@ -12793,6 +12671,35 @@ describe('monolith integration', () => {
     },
   );
 
+  it('host emulator refusal stays visible to the agent without granting access', async () => {
+    const ask = (await (await daemonOperation('requestAgentGrant', {
+      roomId: ROOM, kind: 'host', target: '127.0.0.1:5037',
+      reason: 'Test the Android app', purpose: 'Use an existing host emulator',
+    })).json()) as { grantId: string };
+    expect((await operation('decideAgentGrant', { grantId: ask.grantId, decision: 'deny' })).status).toBe(200);
+    const live = await (await daemonOperation('listAgentGrants', { roomId: ROOM })).json();
+    expect(live).toEqual({ grants: [] });
+    const history = await (await daemonOperation('listAgentGrantRequests', { roomId: ROOM })).json() as { grants: Array<{ grantId: string; status: string }> };
+    expect(history.grants).toEqual([expect.objectContaining({ grantId: ask.grantId, status: 'denied' })]);
+  });
+
+  it.each([false, true])('host emulator requires the owner human Allow even with yolo=%s', async yolo => {
+    await database.query(`UPDATE agents SET yolo_mode=$2 WHERE agent_id=$1`, [AGENT, yolo]);
+    const ask = (await (await daemonOperation('requestAgentGrant', {
+      roomId: ROOM, kind: 'host', target: '127.0.0.1:5037',
+      reason: 'Test the Android app', purpose: 'Use an existing host emulator',
+    })).json()) as { grantId: string; status: string; auto: boolean; messageId: string };
+    expect(ask).toMatchObject({ status: 'pending', auto: false });
+    expect(ask.messageId).toEqual(expect.any(String));
+    const read = async () => (await (await daemonOperation('listAgentGrants', { roomId: ROOM })).json()) as { grants: Array<{ grantId: string }> };
+    expect((await read()).grants).toEqual([]);
+    expect((await operation('decideAgentGrant', { grantId: ask.grantId, decision: 'always' })).status).toBe(200);
+    expect((await read()).grants).toEqual([expect.objectContaining({ grantId: ask.grantId })]);
+    // Automatic owner-machine host grants cannot supply emulator consent.
+    await database.query(`UPDATE agent_grants SET auto=true WHERE id=$1`, [ask.grantId]);
+    expect((await read()).grants).toEqual([]);
+  });
+
   it('approves grants on the spot under yolo with auto=true and no card, for the owner; rejects retired budget prompts', async () => {
     await database.query(`UPDATE agents SET yolo_mode=true WHERE agent_id=$1`, [AGENT]);
     const auto = (await (
@@ -13057,7 +12964,7 @@ describe('monolith integration', () => {
     expect((await phone.readRoom(ROOM, HUMAN))?.messages.find(message => message.id === messageId)?.connectorOffer?.status).toBe('accepted');
   });
 
-  it.each([['reported','trusty-squire'], ['timeout','trusty-squire'], ['reported','tailscale'], ['timeout','tailscale']] as const)('HOSTED-SQUIRE: %s %s install failure settles the phone card, resumes and retries', async (failure, connectorType) => {
+  it.each(['trusty-squire', 'tailscale'] as const)('HOSTED-SQUIRE: %s reported install failure settles the phone card and allows an explicit retry', async (connectorType) => {
     await database.query(`UPDATE agents SET machine_id='proof-machine' WHERE agent_id=$1`, [AGENT]);
     const asked = (await (await operation('sendRoomMessage', { roomId: ROOM, text: '@bee connect Trusty Squire', mentions: [AGENT] })).json()) as { messageId: string };
     const offered = await daemonOperation('offerConnector', { roomId: ROOM, requestId: asked.messageId,
@@ -13069,22 +12976,10 @@ describe('monolith integration', () => {
     const { connectorId } = await accepted.json() as { connectorId: string };
     const assignments = await (await daemonOperation('getConnectorAssignments', { agentId: AGENT })).json() as {
       assignments: Array<{ pairingGeneration: number }> };
-    if (failure === 'reported') {
       const report = await daemonOperation('postConnectorStatus', { connectorId,
         pairingGeneration: assignments.assignments[0]!.pairingGeneration, steps: [], errorMessage: 'Squire MCP connection closed' });
       expect(report.status).toBe(200);
-    } else {
-      const expiry = new ConnectorOfferExpiryLoop(database);
-      const delay = await expiry.runOnce();
-      expect(delay).toBeGreaterThan(14 * 60_000);
-      expect(delay).toBeLessThanOrEqual(15 * 60_000);
-      await database.query(`UPDATE connector_offers SET accepted_at=now()-interval '16 minutes' WHERE id=$1`, [offerId]);
-      await database.query(`UPDATE agents SET squire_work=jsonb_set(squire_work,'{reportedAt}',
-        to_jsonb(extract(epoch FROM now())-960)) WHERE agent_id=$1`, [AGENT]);
-      if (connectorType !== 'trusty-squire') await database.query(`UPDATE workspace_connectors SET updated_at=now()-interval '16 minutes' WHERE id=$1`, [connectorId]);
-      expect(await expiry.runOnce()).toBeUndefined();
-      expect(await expiry.runOnce()).toBeUndefined();
-    }
+
     const room = await phone.readRoom(ROOM, HUMAN);
     expect(isRoomView(room)).toBe(true);
     expect(room?.messages.find(message => message.id === messageId)?.connectorOffer?.status).toBe('failed');
@@ -14256,40 +14151,6 @@ describe('monolith integration', () => {
     ).toEqual(
       expect.objectContaining({ mode: 'poll', status: 'closed', outcome: 'tie', votedCount: 2 }),
     );
-  });
-
-  it('expires an unanswered question as skipped and shows the skip as a line', async () => {
-    const posted = await daemonOperation('askRoomChoice', {
-      roomId: ROOM,
-      prompt: 'Which paper API?',
-      ttlSeconds: 300,
-      options: [
-        { label: 'Kraken paper', consequence: 'plugin auth' },
-        { label: 'Keep waiting', consequence: 'blocked' },
-      ],
-    });
-    expect(posted.status).toBe(200);
-    const body = (await posted.json()) as { choiceId: string };
-    await database.query(
-      `UPDATE room_choices SET closes_at=now() - interval '1 second' WHERE id=$1`,
-      [body.choiceId],
-    );
-    expect(await closeExpiredChoices(database)).toBe(1);
-    const room = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
-    expect(isRoomView(room)).toBe(true);
-    expect(room.messages.find((message) => message.choice)?.choice).toEqual(
-      expect.objectContaining({ status: 'skipped', footer: 'expired · no answer' }),
-    );
-    const skippedLine = room.messages.find(
-      (message) => message.systemEvent?.kind === 'choice-skipped',
-    );
-    expect(skippedLine?.text).toBe('@bee asked · expired · no answer');
-    const skippedRow = await database.query<{ id: string }>(
-      `SELECT id FROM messages WHERE room_id=$1 AND card_type='choice-skipped'`,
-      [ROOM],
-    );
-    expect(skippedRow.rows).toHaveLength(1);
-    expect(await wokenBy(database, skippedRow.rows[0]!.id)).toEqual([AGENT]);
   });
 });
 

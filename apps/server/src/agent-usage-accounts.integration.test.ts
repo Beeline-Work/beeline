@@ -319,9 +319,9 @@ describe('R-USAGE-5: a refresh always answers', () => {
     await Promise.all(posted);
   });
 
-  it("answers no_answer when a connected helper never replies", async () => {
+  it("answers no_answer when no completion event feed is available", async () => {
     await db.query(`INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id) VALUES($1,1,'c','i')`, [RUBY]);
     const { requestUsageRefresh } = await import('./agent-usage.js');
-    await expect(requestUsageRefresh(db, live, RUBY, { timeoutMs: 50 })).resolves.toEqual({ status: 'no_answer' });
+    await expect(requestUsageRefresh(db, undefined, RUBY)).resolves.toEqual({ status: 'no_answer' });
   });
 });

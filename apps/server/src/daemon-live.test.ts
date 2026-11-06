@@ -129,7 +129,7 @@ describe('one machine socket for every agent on a helper machine', () => {
     try{
       const owner='e'.repeat(64),execute=vi.fn(async()=>({id:'synthetic-receipt',createdAt:1}));
       const database={query:vi.fn(async()=>({rows:[{owner_id:owner}],rowCount:1})),transaction:vi.fn()} as unknown as SqlDatabase;
-      const presence={instanceId:'synthetic-registration',holdServerConnection:()=>()=>undefined,
+      const presence={instanceId:'synthetic-registration',holdServerConnection:()=>()=>undefined,renewLease:async()=>undefined,
         claimConnection:vi.fn(async()=>7),releaseConnection:vi.fn(async()=>undefined)} as unknown as ConnectionPresence;
       const {port}=await start({database,connectionPresence:presence,daemon:{execute,negotiateOwnedModel:async()=>({freeAgent:false})} as unknown as DaemonService});
       const client=await machine(port);
@@ -387,8 +387,8 @@ describe('held presence for a live connection', () => {
     const database = await seeded();
     // One hub stands in for the PostgreSQL listener both instances share.
     const live = new LiveHub();
-    const first = new ConnectionPresence(database, live, undefined, undefined, { instanceId: 'server-1' });
-    const second = new ConnectionPresence(database, live, undefined, undefined, { instanceId: 'server-2' });
+    const first = new ConnectionPresence(database, live, { instanceId: 'server-1' });
+    const second = new ConnectionPresence(database, live, { instanceId: 'server-2' });
     try {
       const one = await start({ database, live, connectionPresence: first });
       const two = await start({ database, live, connectionPresence: second });
@@ -422,8 +422,8 @@ describe('held presence for a live connection', () => {
   it('survives a server restart: the connection stays held until the helper reconnects', async () => {
     const database = await seeded();
     const live = new LiveHub();
-    const restarting = new ConnectionPresence(database, live, undefined, undefined, { instanceId: 'server-old' });
-    const successor = new ConnectionPresence(database, live, undefined, undefined, { instanceId: 'server-new' });
+    const restarting = new ConnectionPresence(database, live, { instanceId: 'server-old' });
+    const successor = new ConnectionPresence(database, live, { instanceId: 'server-new' });
     try {
       const old = await start({ database, live, connectionPresence: restarting });
       const client = await machine(old.port);
@@ -445,37 +445,6 @@ describe('held presence for a live connection', () => {
     } finally {
       await restarting.stop();
       await successor.stop();
-      await database.close();
-    }
-  });
-
-  it('releases the connections of a server that stopped renewing its lease', async () => {
-    const database = await seeded();
-    const live = new LiveHub();
-    const crashed = new ConnectionPresence(database, live, undefined, undefined, {
-      instanceId: 'server-gone', expiryMs: 200,
-    });
-    const survivor = new ConnectionPresence(database, live, undefined, undefined, {
-      instanceId: 'server-up', expiryMs: 200,
-    });
-    try {
-      await crashed.renewLease();
-      const gone = await start({ database, live, connectionPresence: crashed });
-      const client = await machine(gone.port);
-      await register(client, AGENT_A, 'bdt_a');
-      await new Promise<void>((resolve) => gone.server.close(() => resolve()));
-      servers.splice(servers.indexOf(gone.server), 1);
-      await crashed.stop();
-
-      // Inside the lease the agent is still held online.
-      await survivor.renewLease();
-      await survivor.recoverServerLeases();
-      expect(await presenceBody(database)).toMatchObject({ status: 'online', held: true });
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      expect(await presenceBody(database)).toMatchObject({ status: 'offline', held: false });
-    } finally {
-      await crashed.stop();
-      await survivor.stop();
       await database.close();
     }
   });
@@ -579,7 +548,7 @@ it('rechecks token revocation before an ordinary operation on an already registe
 it('dispatches turn controls with the registered machine owner through the ordinary request path',async()=>{
   const database=new PgliteDatabase();await database.query(ROUTER_COMMAND_SCHEMA);
   const daemon={execute:vi.fn(async()=>({id:'ok',createdAt:1})),negotiateOwnedModel:async()=>({freeAgent:false})} as unknown as DaemonService;
-  const presence={instanceId:'operation-owner',claimConnection:async()=>7,releaseConnection:async()=>{}} as unknown as ConnectionPresence;
+  const presence={instanceId:'operation-owner',renewLease:async()=>undefined,claimConnection:async()=>7,releaseConnection:async()=>{}} as unknown as ConnectionPresence;
   try{
     const {port}=await start({daemon,database,connectionPresence:presence});const client=await machine(port);
     client.send({type:'register',agentId:AGENT_A,token:'bdt_a',daemonOperationsV1:true,turnOwnershipV1:true});

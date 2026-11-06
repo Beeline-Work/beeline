@@ -17,22 +17,26 @@ describe('starter banter', () => {
   it.each(['@luna42 Alex is fresh kill', '', 'Alex, he is here @luna42', 'Alex told her @luna42', 'Alex and Beebee @luna42', 'Alex @luna', '@luna42 Alexis arrived', `Alex @luna42 ${'word '.repeat(23)}`])('rejects invalid line %s', text => {
     expect(validBanterLine(text, 'Alex', beebee, luna)).toBe(false);
   });
-  it('regenerates once then falls back without posting partial banter', async () => {
+  it('rejects an invalid first line without a retry or partial banter', async () => {
     const complete = vi.fn().mockResolvedValue('');
+    expect(await generateStarterBanter({ name: 'Alex', time: 'Monday', beebee, luna, complete, signal: new AbortController().signal, brief: '' })).toBeNull();
+    expect(complete).toHaveBeenCalledTimes(1);
+  });
+  it('rejects an invalid later line without returning partial banter', async () => {
+    const complete = vi.fn().mockResolvedValueOnce(good[0]).mockResolvedValueOnce('');
     expect(await generateStarterBanter({ name: 'Alex', time: 'Monday', beebee, luna, complete, signal: new AbortController().signal, brief: '' })).toBeNull();
     expect(complete).toHaveBeenCalledTimes(2);
   });
-  it('accepts the regenerated line and continues', async () => {
-    const complete = vi.fn().mockResolvedValueOnce('').mockResolvedValueOnce(good[0]).mockResolvedValueOnce(good[1]).mockResolvedValueOnce(good[2]);
-    expect(await generateStarterBanter({ name: 'Alex', time: 'Monday', beebee, luna, complete, signal: new AbortController().signal, brief: '' })).toHaveLength(3);
-  });
-  it('aborts at twenty seconds from opening, even when generation is still running', async () => {
+  it('rejects a late result on completion without an idle abort', async () => {
     vi.useFakeTimers();
     const control = new AbortController();
-    const result = starterBanterBeforeDeadline(new Promise(() => {}), Date.now(), control);
+    let finish!: (value: []) => void;
+    const result = starterBanterBeforeDeadline(new Promise<[]>((resolve) => { finish = resolve; }), Date.now(), control);
     await vi.advanceTimersByTimeAsync(19_999);
     expect(control.signal.aborted).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
+    expect(control.signal.aborted).toBe(false);
+    finish([]);
     expect(await result).toBeNull();
     expect(control.signal.aborted).toBe(true);
   });

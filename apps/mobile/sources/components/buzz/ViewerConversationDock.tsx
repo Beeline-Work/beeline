@@ -2,7 +2,7 @@ import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { Button } from './Button';
 import React from 'react';
-import { Animated, Platform, ScrollView, Text, View, useWindowDimensions } from 'react-native';
+import { Animated, FlatList, Platform, Text, View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AttachmentReference } from '@beeline/buzz-client';
@@ -33,7 +33,7 @@ export function ViewerConversationDock({
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
-  const transcriptScroll = React.useRef<ScrollView>(null);
+  const transcriptScroll = React.useRef<FlatList<Entry>>(null);
   const scrollToNewest = () => {
     const scroll = () => transcriptScroll.current?.scrollToEnd({ animated: false });
     // Native layout commits after the content-size callback; web layout is already available.
@@ -157,20 +157,21 @@ export function ViewerConversationDock({
     >
           <Text style={styles.transcriptHeading}>Recent conversation · {currentAgent ?? 'agent'}</Text>
           {open ? (
-            <ScrollView ref={transcriptScroll} style={styles.transcriptScroll}
+            <FlatList ref={transcriptScroll} style={styles.transcriptScroll}
+              data={recent} keyExtractor={entry => entry.id}
               testID="viewer-conversation-scroll" keyboardShouldPersistTaps="handled"
-              onLayout={scrollToNewest} onContentSizeChange={scrollToNewest}>
-              {recent.map((entry) => (
-                <View key={entry.id} style={styles.transcriptEntry}>
+              onLayout={scrollToNewest} onContentSizeChange={scrollToNewest}
+              renderItem={({ item: entry }) => (
+                <View style={styles.transcriptEntry}>
                   <Text style={styles.transcriptSpeaker}>{entry.speaker}</Text>
                   <MonoMarkdown markdown={entry.text} textStyle={styles.transcriptText} />
                   {entry.context ? (
                     <TranscriptReference viewer>{viewerContextLabel(entry.context)}</TranscriptReference>
                   ) : null}
                 </View>
-              ))}
-              {error ? <ErrorBanner inline title={error} /> : null}
-            </ScrollView>
+              )}
+              ListFooterComponent={error ? <ErrorBanner inline title={error} /> : null}
+            />
           ) : (
             <>
               {recent.map((entry) => (

@@ -24,7 +24,7 @@ vi.mock('livekit-server-sdk', async original => {
 const H = 'a'.repeat(64), SECOND = 'd'.repeat(64), A = 'b'.repeat(64), B = 'c'.repeat(64);
 const W = '11111111-1111-4111-8111-111111111111', R = '22222222-2222-4222-8222-222222222222';
 const db = new PgliteDatabase(); const live = new LiveHub();
-const service = new VoiceService(db, live, { url: 'ws://localhost:7880', apiKey: 'devkey', apiSecret: 'secret',
+const service = new VoiceService(db, live, { url: 'ws://localhost:7880', apiKey: 'devkey', apiSecret: 'secret', publicOrigin: 'http://proof',
   brain: { answer: vi.fn() }, speech: { synthesize: vi.fn() }, stt: vi.fn() });
 beforeAll(async () => {
   await migrate(db);
@@ -747,4 +747,20 @@ it('F17: a committed exact call-card source reaches the held runtime participant
     expect(runtime.refresh).toHaveBeenCalledTimes(3);
     expect(runtime.countHumans).toHaveBeenCalledOnce();
   }finally{await service.leave(joined.call.id,H);await db.query('DELETE FROM rooms WHERE id=$1',[room]);}
+});
+
+
+it('projects the same assigned face and generated portrait in voice and Room identities', async () => {
+  const portrait = '/v1/agent-avatars/33333333-3333-4333-8333-333333333333';
+  await db.query('UPDATE identities SET face_id=$2,avatar=$3 WHERE id=$1', [A, 'bat', portrait]);
+  try {
+    const joined = await service.join(R, H);
+    const room = await new PhoneService(db, 'http://proof').readRoom(R, H);
+    const agent = room!.members.find(member => member.identity.pubkey === A)!.identity;
+    expect(agent).toMatchObject({ face: 'bat', avatar: `http://proof${portrait}` });
+    expect(joined.agents.find(candidate => candidate.pubkey === A)).toEqual(agent);
+    await service.leave(joined.call.id, H);
+  } finally {
+    await db.query('UPDATE identities SET face_id=NULL,avatar=NULL WHERE id=$1', [A]);
+  }
 });

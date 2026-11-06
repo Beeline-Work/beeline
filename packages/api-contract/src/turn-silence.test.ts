@@ -1,28 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import {
-  type ClassifiedTurnSilence,
-  classifyTurnSilence,
-  HICCUP_ATTEMPT_LIMIT,
-  phraseTurnSilence,
-  shouldCompletePendingFailedCommand,
-  shouldRestartHiccup,
-  TURN_SILENCE_LINE_MAX,
-} from './turn-silence.js';
+import { classifyTurnSilence } from './turn-silence.js';
 
 describe('turn silence classification', () => {
   it.each(['-32600', '-32601', '-32602'])('WAKE-STORM: ACP %s is a standing adapter failure even on a legacy hiccup receipt', code => {
     const classified = classifyTurnSilence(`ACP error ${code}: Invalid params`, 'hiccup');
     expect(classified.kind).toBe('helper-out-of-date');
-    expect(shouldRestartHiccup(classified.kind, 1, classified.fault)).toBe(false);
+
   });
 
-  it('harness-node-missing-path: gives old helper receipts the same recovery command', () => {
+  it('harness-node-missing-path: retains the interpreter diagnostic', () => {
     const reason = 'runtime_exited: ACP agent /nvm/bin/codex-acp exited code=127: env: node: No such file or directory';
     const classified = classifyTurnSilence(reason, 'hiccup');
-    expect(phraseTurnSilence('@codex', classified, { givingUp: true }).consequence)
-      .toContain("background service can't find Node");
-    expect(phraseTurnSilence('@codex', classified, { givingUp: true }).consequence)
-      .toContain('`beeline connect`');
+    expect(classified.fault).toContain("background service can't find Node");
     expect(classifyTurnSilence('tool failed: env: node: No such file or directory').fault)
       .toContain('tool failed');
   });
@@ -31,12 +20,10 @@ describe('turn silence classification', () => {
     const reason = 'resource_limit: ACP session exceeded its 8192 MiB memory limit';
     expect(classifyTurnSilence(reason)).toEqual({ kind: 'resource-limit' });
     expect(classifyTurnSilence(reason, 'resource-limit')).toEqual({ kind: 'resource-limit' });
-    expect(shouldRestartHiccup('resource-limit', 1)).toBe(false);
-    expect(shouldCompletePendingFailedCommand('resource-limit')).toBe(true);
+
+
     expect(classifyTurnSilence('resource_limit: ACP session likely hit its 8192 MiB memory limit'))
       .toEqual({ kind: 'resource-limit' });
-    expect(phraseTurnSilence('Bee', { kind: 'resource-limit' }).consequence)
-      .toContain('likely hit its memory limit');
   });
 
   it('names a context-window overflow and never restarts it as a hiccup', () => {
@@ -46,17 +33,11 @@ describe('turn silence classification', () => {
     expect(classifyTurnSilence('turn failed', 'context-overflow')).toEqual({
       kind: 'context-overflow',
     });
-    expect(shouldRestartHiccup('context-overflow', 1)).toBe(false);
-    expect(shouldCompletePendingFailedCommand('context-overflow')).toBe(true);
-    const phrase = phraseTurnSilence('Ronnie', { kind: 'context-overflow' });
-    expect(phrase.verb).toBe('could not answer');
-    expect(phrase.consequence).toBe(
-      "the request no longer fits the model's context window. Start a new corner, or pick a model with a larger window.",
-    );
-    expect(phrase.consequence).not.toContain('Restarting');
+
+
   });
 
-  it('maps the four hiccup causes onto one restart class', () => {
+  it('classifies transient faults without scheduling recovery', () => {
     expect(classifyTurnSilence(undefined).kind).toBe('hiccup');
     expect(classifyTurnSilence('the turn stalled').kind).toBe('hiccup');
     expect(
@@ -125,188 +106,5 @@ describe('turn silence classification', () => {
       kind: 'hiccup',
       fault: 'temporary failure',
     });
-  });
-});
-
-describe('turn silence phrasing', () => {
-  it('names a busy checkout as a wait, including after the retry budget', () => {
-    const fault = 'corner checkout is in use by another agent; retry after its turn and background tools finish';
-    const line = phraseTurnSilence('Jellybean', { kind: 'hiccup', fault }, { givingUp: true });
-    expect(`${line.verb} · ${line.consequence}`).toBe(`is waiting · ${fault}`);
-    expect(line.consequence).not.toContain('offline');
-    expect(line.consequence).not.toContain('Stopped retrying');
-  });
-
-  it('uses the approved remedies and stays inside the 200-character cap', () => {
-    const lines = [
-      phraseTurnSilence('Candy', { kind: 'hiccup', fault: 'the turn stalled' }),
-      phraseTurnSilence('Candy', { kind: 'wrong-model' }),
-      phraseTurnSilence('Candy', {
-        kind: 'allowance-spent',
-        allowanceUntil: 'Sep 19th, 2026 4:09 AM',
-      }),
-      phraseTurnSilence('Candy', { kind: 'not-signed-in' }),
-      phraseTurnSilence('Candy', { kind: 'workspace-failure', repo: 'acme/widgets' }),
-      phraseTurnSilence('Candy', { kind: 'helper-out-of-date' }),
-      phraseTurnSilence('Candy', { kind: 'offline' }),
-      phraseTurnSilence('Candy', { kind: 'update-interrupted' }),
-    ];
-    expect(lines.map((line) => `Candy ${line.verb} · ${line.consequence}`)).toEqual([
-      'Candy could not answer · the turn stalled. Resending your message.',
-      "Candy could not answer · the selected model isn't available. Pick another in the agent's settings.",
-      'Candy could not answer · the provider allowance is spent until Sep 19th, 2026 4:09 AM. Top up, or move the agent to another provider.',
-      "Candy could not answer · the helper could not authenticate with the provider. Check its log for the failed turn; if its login expired, run `beeline connect` on the helper's machine.",
-      "Candy could not answer · the helper couldn't get a working copy of acme/widgets. Check the repository is reachable.",
-      "Candy could not answer · the helper is out of date. Run `beeline start` on the helper's machine.",
-      "Candy is offline · the helper is unreachable. If it stays offline, run `beeline start` on its machine.",
-      'Candy was interrupted by an update · the request is queued to resume.',
-    ]);
-    for (const line of lines) {
-      expect(`Candy ${line.verb} · ${line.consequence}`.length).toBeLessThanOrEqual(
-        TURN_SILENCE_LINE_MAX,
-      );
-    }
-  });
-
-  it('leads a Claude sign-in failure with @agent login, keeping beeline connect after it', () => {
-    const line = phraseTurnSilence('@candy', { kind: 'not-signed-in' }, {
-      login: { handle: 'candy', harness: 'claude' },
-    });
-    const text = `@candy ${line.verb} · ${line.consequence}`;
-    expect(text).toBe(
-      '@candy needs a Claude sign-in · send @candy login here. If that fails, its owner can run `beeline connect` on its machine.',
-    );
-    expect(text.length).toBeLessThanOrEqual(TURN_SILENCE_LINE_MAX);
-    // A ~390px phone shows two lines (about 80 characters) before More.
-    expect(text.indexOf('@candy login') + '@candy login'.length).toBeLessThanOrEqual(80);
-  });
-
-  it('names the service, or the key, for every harness that signs in from a Room', () => {
-    const line = (harness: 'codex' | 'grok' | 'cursor' | 'pi') => {
-      const phrase = phraseTurnSilence('@candy', { kind: 'not-signed-in' }, {
-        login: { handle: 'candy', harness },
-      });
-      return `@candy ${phrase.verb} · ${phrase.consequence}`;
-    };
-    expect(line('codex')).toMatch(/^@candy needs a ChatGPT sign-in · send @candy login here\. /);
-    expect(line('grok')).toMatch(/^@candy needs a Grok sign-in · send @candy login here\. /);
-    expect(line('cursor')).toMatch(/^@candy needs a Cursor sign-in · send @candy login here\. /);
-    expect(line('pi')).toBe(
-      '@candy needs a new provider key · send @candy login here. If that fails, its owner can run `beeline connect` on its machine.',
-    );
-  });
-
-  it('keeps the login command when a long name or handle leaves no room for the fallback', () => {
-    const name = 'MoonScannerAI Research Assistant Prime Number Two Of The Fleet';
-    const handle = 'moonscannerai-research-assistant-prime-number-two-fleet';
-    const line = phraseTurnSilence(name, { kind: 'not-signed-in' }, {
-      login: { handle, harness: 'codex' },
-    });
-    const text = `${name} ${line.verb} · ${line.consequence}`;
-    expect(text.length).toBeLessThanOrEqual(TURN_SILENCE_LINE_MAX);
-    expect(line.consequence).toBe(`send @${handle} login here.`);
-  });
-
-  it('never assigns the agent pronouns', () => {
-    const kinds: ClassifiedTurnSilence[] = [
-      { kind: 'hiccup', fault: 'the turn stalled' },
-      { kind: 'wrong-model' },
-      { kind: 'allowance-spent' },
-      { kind: 'allowance-spent', allowanceUntil: 'Sep 19th, 2026 4:09 AM' },
-      { kind: 'not-signed-in' },
-      { kind: 'workspace-failure' },
-      { kind: 'helper-out-of-date' },
-      { kind: 'offline' },
-      { kind: 'update-interrupted' },
-    ];
-    for (const kind of kinds) {
-      const line = phraseTurnSilence('Candy', kind);
-      expect(`${line.verb} · ${line.consequence}`).not.toMatch(
-        /\b(she|she's|her|hers|herself|he|he's|him|his|himself)\b/i,
-      );
-    }
-  });
-
-  it('keeps the provider, not the model, as the allowance remedy', () => {
-    const line = phraseTurnSilence('Candy', { kind: 'allowance-spent' });
-    expect(line.consequence).toContain('Top up, or move the agent to another provider.');
-    expect(line.consequence).not.toMatch(/model/i);
-  });
-
-  it("leads a provider outage with the way out: the agent's model picker", () => {
-    // Candy, 2026-10-04 13:17. A phone shows two lines of this row, so the
-    // pointer comes before the fault, never after it.
-    const fault = 'provider error 429: Provider returned error · served by baseten';
-    const line = phraseTurnSilence('Candy', classifyTurnSilence(fault), { givingUp: true });
-    expect(`Candy ${line.verb} · ${line.consequence}`).toBe(
-      "Candy could not answer · its provider is failing; switch its model in the agent's settings. provider error 429: Provider returned error · served by baseten. Stopped retrying after three tries.",
-    );
-    for (const outage of ['provider error 503: Service Unavailable', 'provider error 408']) {
-      expect(phraseTurnSilence('Candy', classifyTurnSilence(outage)).consequence).toMatch(
-        /^its provider is failing; switch its model in the agent's settings\. /,
-      );
-    }
-    expect(
-      phraseTurnSilence('Candy', classifyTurnSilence('provider error 400: bad request')).consequence,
-    ).toBe('provider error 400: bad request. Resending your message.');
-  });
-
-  it('says so once when hiccup retries are exhausted', () => {
-    expect(
-      phraseTurnSilence(
-        'Candy',
-        { kind: 'hiccup', fault: 'ACP agent exited (code 1)' },
-        { givingUp: true },
-      ).consequence,
-    ).toBe('ACP agent exited (code 1). Stopped retrying after three tries.');
-  });
-
-  it('does not promise a helper restart when none was authorized', () => {
-    const line = phraseTurnSilence(
-      'Candy',
-      {
-        kind: 'hiccup',
-        fault: 'Command failed: git clone https://github.example/acme/widgets.git',
-      },
-      { restarting: false },
-    );
-    expect(line.consequence).toBe(
-      'Command failed: git clone https://github.example/acme/widgets.git.',
-    );
-    expect(line.consequence).not.toMatch(/restarting|resending/i);
-  });
-});
-
-describe('pending failed-command completion', () => {
-  it('completes standing configuration and leaves transient clone recoverable', () => {
-    expect(
-      shouldCompletePendingFailedCommand(
-        'workspace-failure',
-        'corner parent Room repository state is not verified yet',
-      ),
-    ).toBe(true);
-    expect(
-      shouldCompletePendingFailedCommand(
-        'workspace-failure',
-        'Command failed: git clone https://github.example/acme/widgets.git',
-      ),
-    ).toBe(false);
-    expect(shouldCompletePendingFailedCommand('hiccup', 'the turn stalled')).toBe(false);
-    expect(shouldCompletePendingFailedCommand('update-interrupted')).toBe(false);
-    expect(shouldCompletePendingFailedCommand('wrong-model')).toBe(true);
-  });
-});
-
-describe('hiccup restart budget', () => {
-  it('restarts the first two silences and gives up on the third', () => {
-    expect(shouldRestartHiccup('hiccup', 1, 'turn_backstop: idle')).toBe(true);
-    expect(shouldRestartHiccup('hiccup', 2, 'turn_backstop: idle')).toBe(false);
-    expect(shouldRestartHiccup('hiccup', 1)).toBe(true);
-    expect(shouldRestartHiccup('hiccup', 2)).toBe(true);
-    expect(shouldRestartHiccup('hiccup', HICCUP_ATTEMPT_LIMIT)).toBe(false);
-    expect(shouldRestartHiccup('wrong-model', 1)).toBe(false);
-    expect(shouldRestartHiccup('allowance-spent', 1)).toBe(false);
-    expect(shouldRestartHiccup('not-signed-in', 1)).toBe(false);
-    expect(shouldRestartHiccup('workspace-failure', 1)).toBe(false);
   });
 });

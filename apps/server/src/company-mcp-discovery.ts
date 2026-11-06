@@ -36,16 +36,9 @@ export function publicMcpAddress(address: string): boolean {
 /** Resolve once, reject every non-public answer and pin the socket against DNS rebinding. */
 export const companyMcpResponse: CompanyMcpTransport = async (url, domain, deadline, method = 'GET') => {
   if (!companyMcpUrl(url.toString(), domain)) throw new Error('Invalid company MCP URL');
-  const signal = AbortSignal.timeout(Math.max(1, deadline - Date.now()));
-  const answers = await new Promise<{ address: string; family: number }[]>((resolve, reject) => {
-    const abort = () => reject(new Error('Company MCP DNS timed out'));
-    signal.addEventListener('abort', abort, { once: true });
-    lookup(url.hostname, { all: true, verbatim: true }).then(value => {
-      signal.removeEventListener('abort', abort); resolve(value);
-    }, reject);
-  });
+  const answers = await lookup(url.hostname, { all: true, verbatim: true });
   if (!answers.length || answers.some(a => !publicMcpAddress(a.address))) throw new Error('Non-public company MCP address');
-  if (signal.aborted) throw new Error('Company MCP timed out');
+  if (Date.now() >= deadline) throw new Error('Company MCP timed out');
   const address = answers[0]!;
   const agent = new Agent({ autoSelectFamily: false, lookup(host, _options, callback) {
     if (host !== url.hostname) return callback(new Error('MCP hostname mismatch'), '', 4);
@@ -53,7 +46,7 @@ export const companyMcpResponse: CompanyMcpTransport = async (url, domain, deadl
   } });
   try {
     return await new Promise<ProbeResponse>((resolve, reject) => {
-      const req = request(url, { agent, method, signal, headers: { accept: 'application/json, text/event-stream',
+      const req = request(url, { agent, method, headers: { accept: 'application/json, text/event-stream',
         ...(method === 'POST' ? { 'content-type': 'application/json' } : {}) } }, res => {
         const chunks: Buffer[] = []; let size = 0;
         res.on('data', (chunk: Buffer) => { size += chunk.length; if (size > MAX_BYTES) req.destroy(new Error('Company MCP response too large')); else chunks.push(chunk); });

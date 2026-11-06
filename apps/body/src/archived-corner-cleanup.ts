@@ -4,7 +4,6 @@ import { promisify } from 'node:util';
 import { lstat, readdir, rm } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import { ordinaryDirectory, storageTree, hasMount, type WholeStorageOptions, type StorageReclaimEntry } from './helper-storage.js';
-import { stopKeptCornerEmulator } from './corner-emulator.js';
 import { canonicalStoragePath } from './storage-filesystem.js';
 const exec = promisify(execFile);
 
@@ -176,41 +175,45 @@ export async function removeArchivedCornerData(supervisorRoot: string, cornerId:
   for (const agent of await readdir(resolve(base, 'agents')).catch(() => [])) {
     if (/^[a-f0-9]{64}$/.test(agent)) roots.push(resolve(base, 'agents', agent, 'rooms', cornerId));
   }
-  const existing: string[] = [];
-  for (const path of roots) if (await ordinaryDirectory(path)) existing.push(path);
-  if (!options.dryRun) {
-    await stopKeptCornerEmulator(supervisorRoot, cornerId, 'corner archived');
-    if (existing.length) {
-      if (process.platform !== 'linux' && process.platform !== 'darwin') throw new Error('unsupported archived process attribution platform');
-      if (process.platform === 'darwin') {
-        const stopped = await stopDarwinProcesses(existing);
+  const entries: StorageReclaimEntry[] = [];
+  try {
+    const existing: string[] = [];
+    for (const path of roots) if (await ordinaryDirectory(path)) existing.push(path);
+    if (!options.dryRun) {
+      if (existing.length) {
+        if (process.platform !== 'linux' && process.platform !== 'darwin') throw new Error('unsupported archived process attribution platform');
+        if (process.platform === 'darwin') {
+          const stopped = await stopDarwinProcesses(existing);
+          console.log(`[helper] archived corner ${cornerId} stopped ${stopped} attributed processes`);
+        } else {
+        const result = await exec('/usr/bin/python3', ['-c', STOP, JSON.stringify(existing), String(process.pid)], { timeout: 30_000, maxBuffer: 1024 });
+        const { stopped } = JSON.parse(result.stdout) as { stopped: number };
         console.log(`[helper] archived corner ${cornerId} stopped ${stopped} attributed processes`);
-      } else {
-      const result = await exec('/usr/bin/python3', ['-c', STOP, JSON.stringify(existing), String(process.pid)], { timeout: 30_000, maxBuffer: 1024 });
-      const { stopped } = JSON.parse(result.stdout) as { stopped: number };
-      console.log(`[helper] archived corner ${cornerId} stopped ${stopped} attributed processes`);
+        }
       }
     }
-  }
-  const entries: StorageReclaimEntry[] = [];
-  for (const path of existing) {
-    // A remaining mount is an operational failure to retry, never permission
-    // to walk into an unrelated mounted filesystem.
-    if (await hasMount(path)) throw new Error(`archived corner mount still present: ${path}`);
-    let allocatedBytes = 0, freedBytes = 0;
-    const tree = await storageTree(path, options.progress).catch(() => undefined);
-    const seen = new Map<string, { bytes: number; links: number; count: number; directory: boolean }>();
-    for (const item of tree?.values() ?? []) {
-      const key = `${item.dev}:${item.ino}`;
-      const inode = seen.get(key) ?? { bytes: item.blocks, links: item.links, count: 0, directory: item.directory };
-      inode.count++; seen.set(key, inode);
+    for (const path of existing) {
+      // A remaining mount is an operational failure, never permission
+      // to walk into an unrelated mounted filesystem.
+      if (await hasMount(path)) throw new Error(`archived corner mount still present: ${path}`);
+      let allocatedBytes = 0, freedBytes = 0;
+      const tree = await storageTree(path, options.progress).catch(() => undefined);
+      const seen = new Map<string, { bytes: number; links: number; count: number; directory: boolean }>();
+      for (const item of tree?.values() ?? []) {
+        const key = `${item.dev}:${item.ino}`;
+        const inode = seen.get(key) ?? { bytes: item.blocks, links: item.links, count: 0, directory: item.directory };
+        inode.count++; seen.set(key, inode);
+      }
+      for (const item of seen.values()) { allocatedBytes += item.bytes; if (item.directory || item.count >= item.links) freedBytes += item.bytes; }
+      if (!options.dryRun) await rm(path, { recursive: true, force: true });
+      const entry: StorageReclaimEntry = { roomId: cornerId, path, kind: 'archived', allocatedBytes, freedBytes };
+      entries.push(entry); options.log?.(entry);
     }
-    for (const item of seen.values()) { allocatedBytes += item.bytes; if (item.directory || item.count >= item.links) freedBytes += item.bytes; }
-    if (!options.dryRun) await rm(path, { recursive: true, force: true, maxRetries: 3 });
-    const entry: StorageReclaimEntry = { roomId: cornerId, path, kind: 'archived', allocatedBytes, freedBytes };
-    entries.push(entry); options.log?.(entry);
+    // Missing roots are already clean, including after an interrupted prior pass.
+    if (!options.dryRun && await lstat(checkout).catch(() => undefined)) throw new Error('archived checkout survived cleanup');
+  } catch (error) {
+    // One attempt per caller trigger. A leftover must not stall the host sweep.
+    console.warn(`[helper] archived corner ${cornerId} cleanup failed:`, error);
   }
-  // Missing roots are already clean, including after an interrupted prior pass.
-  if (!options.dryRun && await lstat(checkout).catch(() => undefined)) throw new Error('archived checkout survived cleanup');
   return entries;
 }

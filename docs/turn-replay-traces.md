@@ -75,13 +75,3 @@ WHERE t.created_at >= now() - interval '24 hours'
 GROUP BY tool->>'name'
 ORDER BY refusals DESC;
 ```
-
-## Isolated service proof
-
-Run `npm run prove:turn-replay` to build workspaces and replay the Room and corner
-paths through built turn loops and server services, then read the reply through
-the phone API and query the diagnostic row. The harness responses are scripted;
-the database, command claims, refused output write, reply publishing and phone
-projection are real. This does not claim a production rollout or a live model
-session. The same suite covers silent/multiple replies, write failure isolation,
-cancellation authority and retention.

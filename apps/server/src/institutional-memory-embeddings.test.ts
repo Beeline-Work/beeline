@@ -7,12 +7,10 @@ import {
   createDefaultEmbedFn,
   createDefaultEmbedBatchFn,
   pgvectorLiteral,
-  withDeadline,
   embedOneInstitutionalMemoryItem,
   embedOneWorkspaceSkillVersion,
   scheduleEmbedInstitutionalMemoryItem,
   scheduleEmbedWorkspaceSkillVersion,
-  backfillInstitutionalMemoryEmbeddingsOnce,
   warnIfEmbeddingKeyMissing,
   resetEmbeddingFailureLogForTests,
   OPENROUTER_EMBEDDINGS_URL,
@@ -160,35 +158,6 @@ describe('createDefaultEmbedFn', () => {
     // First failure (#1) and the 100th both log; the 98 in between stay quiet.
     expect(errorSpy).toHaveBeenCalledTimes(2);
     errorSpy.mockRestore();
-  });
-});
-
-describe('withDeadline', () => {
-  it('aborts the underlying embedding request at its deadline', async () => {
-    let aborted = false;
-    const bounded = withDeadline((_text, _type, signal) =>
-      new Promise((resolve) => signal?.addEventListener('abort', () => {
-        aborted = true;
-        resolve({ outcome: 'timed-out', ms: 1 });
-      }, { once: true })), 10);
-    expect((await bounded('text', 'query')).outcome).toBe('timed-out');
-    expect(aborted).toBe(true);
-  });
-  it('passes through a fast, successful embed unchanged', async () => {
-    const fast = async () => ({ outcome: 'served' as const, vector: VECTOR, ms: 1 });
-    const bounded = withDeadline(fast, 1_000);
-    const result = await bounded('x', 'query');
-    expect(result.outcome).toBe('served');
-  });
-
-  it('reports timed-out when the embedder takes longer than the deadline, and never rejects', async () => {
-    const slow = () =>
-      new Promise<{ outcome: 'served'; vector: number[]; ms: number }>((resolve) =>
-        setTimeout(() => resolve({ outcome: 'served', vector: VECTOR, ms: 500 }), 500),
-      );
-    const bounded = withDeadline(slow, 20);
-    const result = await bounded('x', 'query');
-    expect(result.outcome).toBe('timed-out');
   });
 });
 
@@ -411,154 +380,6 @@ describe('one embedding attempt per actual save', () => {
   });
 });
 
-describe('backfillInstitutionalMemoryEmbeddingsOnce (one pass, never repeats itself)', () => {
-  it('runs only one embedding pass when this process starts it twice', async () => {
-    const database = new PgliteDatabase();
-    await seed(database);
-    const itemId='ffffffff-ffff-4fff-8fff-fffffffffeff';
-    await insertItem(database,itemId);
-    let release!: () => void;
-    const embedBatch=vi.fn(async () => {
-      await new Promise<void>((resolve) => { release=resolve; });
-      return [VECTOR];
-    });
-    const first=backfillInstitutionalMemoryEmbeddingsOnce(database,embedBatch,1);
-    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
-    const second=backfillInstitutionalMemoryEmbeddingsOnce(database,embedBatch,1);
-    release();
-    const results=await Promise.all([first,second]);
-    expect(results.reduce((sum,result) => sum+result.itemsEmbedded,0)).toBe(1);
-    expect(embedBatch).toHaveBeenCalledTimes(1);
-  });
-  it('skips when another machine holds the backfill lock, and releases its own lock and session', async () => {
-    const database = new PgliteDatabase();
-    await seed(database);
-    await insertItem(database, 'ffffffff-ffff-4fff-8fff-fffffffffefe');
-    const statements: string[] = [];
-    let released = 0;
-    const withSession = (lockHeldElsewhere: boolean) => Object.assign(database, {
-      connectDedicated: async () => ({
-        query: async (sql: string, values?: unknown[]) => {
-          statements.push(sql);
-          if (lockHeldElsewhere && sql.includes('pg_try_advisory_lock')) {
-            return { rows: [{ acquired: false }], rowCount: 1 };
-          }
-          return database.query(sql, values);
-        },
-        release: () => { released += 1; },
-      }),
-    });
-    const embedBatch = vi.fn(async (texts: readonly string[]) => texts.map(() => VECTOR));
-    expect(await backfillInstitutionalMemoryEmbeddingsOnce(withSession(true), embedBatch))
-      .toEqual({
-        itemsEmbedded: 0, itemsAttempted: 0, itemsFailed: 0,
-        skillsEmbedded: 0, skillsAttempted: 0, skillsFailed: 0,
-        skipped: true,
-      });
-    expect(embedBatch).not.toHaveBeenCalled();
-    expect(released).toBe(1);
-    statements.length = 0;
-    expect(await backfillInstitutionalMemoryEmbeddingsOnce(withSession(false), embedBatch))
-      .toMatchObject({ itemsEmbedded: 1 });
-    expect(statements.some((sql) => sql.includes('pg_try_advisory_lock('))).toBe(true);
-    expect(statements.at(-1)).toContain('pg_advisory_unlock(');
-    expect(statements.some((sql) => /\bBEGIN\b/i.test(sql))).toBe(false);
-    expect(released).toBe(2);
-  });
-  it('stops after three batches in a row fail entirely', async () => {
-    const database = new PgliteDatabase();
-    await seed(database);
-    for (const suffix of ['b1', 'b2', 'b3', 'b4', 'b5']) {
-      await insertItem(database, `ffffffff-ffff-4fff-8fff-ffffffffff${suffix}`);
-    }
-    const embedBatch = vi.fn(async () => undefined);
-    expect(await backfillInstitutionalMemoryEmbeddingsOnce(database, embedBatch, 1))
-      .toMatchObject({ itemsEmbedded: 0 });
-    expect(embedBatch).toHaveBeenCalledTimes(3);
-  });
-  it('continues past a failed row to embed later rows', async () => {
-    const database = new PgliteDatabase();
-    await seed(database);
-    for (const suffix of ['a1','a2','a3']) {
-      await insertItem(database, `ffffffff-ffff-4fff-8fff-ffffffffff${suffix}`);
-    }
-    let calls = 0;
-    const counts = await backfillInstitutionalMemoryEmbeddingsOnce(database, async () => {
-      calls++;
-      return calls === 1 ? [undefined] : [VECTOR];
-    }, 1);
-    expect(counts.itemsEmbedded).toBe(2);
-    expect(calls).toBe(3);
-  });
-  it('embeds every row missing a current embedding, across more than one batch, then stops', async () => {
-    const database = new PgliteDatabase();
-    await seed(database);
-    const ids = Array.from(
-      { length: 3 },
-      (_, index) => `ffffffff-ffff-4fff-8fff-fffffffffe0${index}`,
-    );
-    for (const id of ids) await insertItem(database, id);
-    const embedBatch = vi.fn(async (texts: readonly string[]) => texts.map(() => VECTOR));
-    const counts = await backfillInstitutionalMemoryEmbeddingsOnce(database, embedBatch, 2);
-    expect(counts.itemsEmbedded).toBe(3);
-    // batchSize=2 over 3 rows: two calls (2 then 1), never a third scan once empty.
-    expect(embedBatch).toHaveBeenCalledTimes(2);
-    for (const id of ids) {
-      const row = (
-        await database.query<{ embedding_model: string | null }>(
-          `SELECT embedding_model FROM institutional_memory_items WHERE id=$1`,
-          [id],
-        )
-      ).rows[0];
-      expect(row?.embedding_model).toBe('voyageai/voyage-4-lite');
-    }
-  });
-
-  it('does not repeat: a second call finds nothing left and makes no embedder call', async () => {
-    const database = new PgliteDatabase();
-    await seed(database);
-    const itemId = 'ffffffff-ffff-4fff-8fff-fffffffffff7';
-    await insertItem(database, itemId);
-    await backfillInstitutionalMemoryEmbeddingsOnce(database, async (texts) =>
-      texts.map(() => VECTOR),
-    );
-    const secondPass = vi.fn();
-    const counts = await backfillInstitutionalMemoryEmbeddingsOnce(database, secondPass);
-    expect(counts).toEqual({
-      itemsEmbedded: 0, itemsAttempted: 0, itemsFailed: 0,
-      skillsEmbedded: 0, skillsAttempted: 0, skillsFailed: 0,
-    });
-    expect(secondPass).not.toHaveBeenCalled();
-  });
-
-  it('reports how many rows it attempted and how many failed, alongside how many embedded', async () => {
-    const database = new PgliteDatabase();
-    await seed(database);
-    for (const suffix of ['c1', 'c2', 'c3']) {
-      await insertItem(database, `ffffffff-ffff-4fff-8fff-ffffffffff${suffix}`);
-    }
-    let calls = 0;
-    const counts = await backfillInstitutionalMemoryEmbeddingsOnce(database, async () => {
-      calls++;
-      return calls === 1 ? [undefined] : [VECTOR];
-    }, 1);
-    expect(counts.itemsAttempted).toBe(3);
-    expect(counts.itemsFailed).toBe(1);
-    expect(counts.itemsEmbedded).toBe(2);
-  });
-
-  it('covers workspace_skills too, re-embedding a version bump', async () => {
-    const database = new PgliteDatabase();
-    await seed(database);
-    const skillId = 'ffffffff-ffff-4fff-8fff-fffffffffff8';
-    await insertSkill(database, skillId, 'ffffffff-ffff-4fff-8fff-ffffffffffe1');
-    const counts = await backfillInstitutionalMemoryEmbeddingsOnce(database, async (texts) =>
-      texts.map(() => VECTOR),
-    );
-    expect(counts.skillsEmbedded).toBe(1);
-  });
-});
-
 describe('no timer-driven or periodic database sweep', () => {
   it('the embeddings module sets no interval anywhere', () => {
     const source = readFileSync(
@@ -580,6 +401,6 @@ describe('no timer-driven or periodic database sweep', () => {
     expect(source).not.toMatch(/InstitutionalMemoryEmbeddingLoop/);
     expect(source).not.toMatch(/institutional-memory-embedding['"]/);
     // Only the ordinary server start runs a network backfill.
-    expect(source.match(/backfillInstitutionalMemoryEmbeddingsOnce\(/g)).toHaveLength(1);
+    expect(source).not.toContain("backfillInstitutionalMemoryEmbeddingsOnce");
   });
 });

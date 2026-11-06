@@ -2,7 +2,6 @@ import { cornerOpenedFromSql } from './corner-opening.js';
 import { cornerWaitingReportSql } from './corner-waiting-report.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { commandOwnerLiveSql } from './turn-ownership.js';
-import { lockCommanderWakes } from './commander-wakes.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { normalizeAgentAsk } from './tray-approval-ask.js';
 import { createHash, randomBytes } from 'node:crypto';
@@ -24,7 +23,7 @@ import { systemIdentityMention, systemLine } from './system-line.js';
 import { mediaIdFromUrl } from './media-ttl.js';
 export { CommandRefusalError } from './command-refusal.js';
 
-/** A report/lifecycle wake resumes the recipient's original incoming order. */
+/** Follow provenance to the order that selects this command's return route. */
 export async function commandOrder(db: SqlDatabase, command: CommandRow): Promise<CommandRow> {
   if (command.private_payload?.kind === 'order') return command;
   return (
@@ -167,8 +166,8 @@ export async function sendOrder(
   }
   if (worker === agentId && target.id === command.room_id)
     throw new CommandRefusalError('an agent cannot order itself in its current place', 400);
-  // Self-wakes across places and peer recruitment consume the existing depth
-  // budget; handoffs to another implementer retain it.
+  // Peer recruitment consumes the existing depth budget; handoffs to another
+  // implementer retain it. Self-addressed output remains a completed receipt.
   const peerOrder = worker === agentId || Boolean(source?.parent_id && (!target.parent_id || worker !== target.worker));
   if (peerOrder && nextAgentDepth(command.agent_depth) === undefined)
     throw new CommandRefusalError('agent order chain depth limit reached', 400);
@@ -189,7 +188,9 @@ export async function sendOrder(
     await recordAgentCommandCard(db, { id: queued.id, cornerId: address, kind: 'order', authorId: agentId, recipientId: worker, text });
   return { id: queued.id, createdAt: Math.floor(Date.now() / 1000),
     effect: 'order', address, agent: worker, visibility: 'private', reportsAssignment: false,
-    accepted: true, executionConfirmed: false, receipt: 'Order queued privately; not confirmation of execution.' };
+    accepted: true, executionConfirmed: false, receipt: queued.state === 'complete'
+      ? 'Own output recorded; no additional turn queued.'
+      : 'Order queued privately; not confirmation of execution.' };
 }
 
 /**
@@ -235,17 +236,8 @@ export async function stopCommandedTurn(
     [address, worker.id])).rows[0];
   if (!running)
     return { stopped: false, address, agent: worker.id, receipt: 'No running turn to stop. Send an order; it runs now.' };
-  // A digest turn runs every folded source; any order among them grants stop.
-  const heads = [...new Set([running.id, (await commandOrder(db, running)).id])];
-  const sources = (await db.query<CommandRow>(
-    `SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2
-     AND (id=ANY($3::text[]) OR cancellation_reason=ANY($4::text[]))`,
-    [address, worker.id, heads, heads.map((id) => `coalesced_into:${id}`)])).rows;
-  let ordered = false;
-  for (const source of sources) {
-    const order = await commandOrder(db, source);
-    if (order.private_payload?.kind === 'order' && order.private_payload.authorId === agentId) { ordered = true; break; }
-  }
+  const order=await commandOrder(db,running);
+  const ordered=order.private_payload?.kind==='order'&&order.private_payload.authorId===agentId;
   const commandsCorner = !ordered && Boolean(target.parent_id) && Boolean((await db.query(
     'SELECT 1 FROM rooms WHERE id=$1 AND created_by=$2', [address, agentId])).rowCount);
   if (!ordered && !commandsCorner)
@@ -258,15 +250,10 @@ export async function stopCommandedTurn(
     privatePayload: { text: 'Stop the running turn for the commander.', authorId: agentId,
       fromRoomId: command.room_id, kind: 'lifecycle' },
   });
-  await db.query(
-    `UPDATE agent_turns SET status='cancelled',created_at=now()
-     WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working'`,
-    [address, worker.id, running.turn_request_id]);
   const dropped = await dropQueuedOrdersForStop(db, running);
   await db.query(
-    `UPDATE agent_commands SET state='cancelled',completed_at=now()
-     WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3
-       AND action IN ('input','resume') AND state IN ('pending','claimed')`,
+    `SELECT (terminal.ended).* FROM (SELECT beeline_end_agent_turn(agent_commands.id,agent_commands.generation_id,'cancelled',NULL,NULL) ended FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3
+       AND action IN ('input','resume') AND state IN ('pending','claimed')) terminal`,
     [address, worker.id, running.turn_request_id]);
   // Approved by lunchboxfortwo: "@commander stopped @worker's running turn".
   await systemLine(db, {
@@ -320,55 +307,14 @@ export async function reportToCommander(
   text: string,
   command?: CommandRow,
   reportId = randomBytes(32).toString('hex'),
-  options: { directRecipient?: string; automatic?: boolean; agentOnly?: boolean; ask?: string; attachments?: PrivateCommandPayload['attachments']; digestSource?: boolean; wakeInCorner?: boolean; idleSince?: string; wakeAfter?: number } = {},
-): Promise<{ id: string; createdAt: number; delivered?: boolean; receipt?: string; skipped?: boolean; retryAt?: number }> {
+  options: { directRecipient?: string; automatic?: boolean; agentOnly?: boolean; ask?: string; attachments?: PrivateCommandPayload['attachments']; wakeInCorner?: boolean; idleSince?: string } = {},
+): Promise<{ id: string; createdAt: number; delivered?: boolean; receipt?: string; skipped?: boolean }> {
   if ((!options.automatic && !/^(done|blocked|needs-decision|failed):\s*\S/.test(text)) || !text.trim() || text.length > 16_000)
     throw new CommandRefusalError(
       'report must begin done:, blocked:, needs-decision: or failed:',
       400,
     );
   const ask = options.ask === undefined ? undefined : normalizeAgentAsk(options.ask);
-  if (!options.directRecipient && command?.coalesced_context !== null && command?.coalesced_context !== undefined && !options.digestSource) {
-    const sources = (await db.query<CommandRow>(
-      `SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2
-       AND (id=$3 OR cancellation_reason='coalesced_into:'||$3) ORDER BY inbox_sequence`,
-      [roomId, agentId, command.id])).rows;
-    const routes = new Map<string, { source: CommandRow; urls: Set<string> }>();
-    const carriedUrls = new Set(sources.flatMap(source => (source.private_payload?.attachments ?? []).map(attachment => attachment.url)));
-    for (const source of sources) {
-      const order = await commandOrder(db, source);
-      // Standalone system facts have no orderer. Explicit orders and incoming
-      // messages retain their own return route even when their source was folded.
-      if (order.private_payload?.kind !== 'order' && !(order.source_message_id &&
-        (await db.query('SELECT 1 FROM messages WHERE id=$1 AND system_event IS NULL', [order.source_message_id])).rowCount)) continue;
-      const route = await commanderReportAddress(db, roomId, source, false, text);
-      if (route.recipient && route.returnRoom) {
-        const key = `${route.returnRoom}:${route.recipient}`;
-        const target = routes.get(key) ?? { source, urls: new Set<string>() };
-        target.source = source;
-        for (const attachment of source.private_payload?.attachments ?? []) target.urls.add(attachment.url);
-        routes.set(key, target);
-      }
-    }
-    if (routes.size) {
-      let first: Awaited<ReturnType<typeof reportToCommander>> | undefined;
-      let delivered = true;
-      const reportOptions = options;
-      for (const [route, { source, urls }] of routes) {
-        // Files carried by a batched source follow that source's return route.
-        // Files uploaded in the current turn retain their normal delivery.
-        const attachments = reportOptions.attachments?.filter(attachment =>
-          !carriedUrls.has(attachment.url) || urls.has(attachment.url));
-        const options = { ...reportOptions, attachments };
-        const result = await reportToCommander(db, roomId, agentId, text, source,
-          first ? createHash('sha256').update(`${reportId}:${route}`).digest('hex') : reportId,
-          { ...options, digestSource: true });
-        first ??= result;
-        delivered &&= result.delivered !== false;
-      }
-      return { ...first!, delivered };
-    }
-  }
   const strict = Boolean(command) && !options.automatic;
   const route = await commanderReportAddress(db, roomId, command, options.automatic === true && options.agentOnly === true && agentId === SYSTEM_IDENTITY_ID, text);
   const { recipient, returnRoom, parent, origin, incoming } = options.directRecipient
@@ -379,33 +325,6 @@ export async function reportToCommander(
   if (origin && (await db.query(`SELECT 1 FROM rooms corner
     WHERE corner.id=$1 AND corner.archived_at IS NOT NULL`, [origin])).rowCount)
     return { id: reportId, createdAt: Math.floor(Date.now() / 1000), delivered: true, skipped: true };
-  // A standing failure can be observed by many dispatch attempts. Its wake
-  // identity belongs to the corner and failure, not the failed attempt.
-  if (origin && text.startsWith('failed:')) {
-    const recovery = (await db.query<{ id: string }>(`SELECT request_id id FROM agent_turns
-      WHERE agent_id=$1 AND status='complete' ORDER BY created_at DESC,request_id DESC LIMIT 1`, [agentId])).rows[0]?.id;
-    reportId = createHash('sha256').update(`corner-failure:${origin}:${agentId}:${recipient}:${returnRoom}:${text}:${recovery ?? ''}:${JSON.stringify(command?.review_context?.reviewerConfiguration ?? null)}`).digest('hex');
-  }
-  const order = command ? await commandOrder(db, command) : undefined;
-  const assignment = !options.directRecipient && order?.agent_id === agentId && (order.private_payload?.kind === 'order' ||
-    (!order.private_payload && order.source_message_id && (await db.query(
-      `SELECT 1 FROM messages source JOIN identities author ON author.id=source.author_id
-       WHERE source.id=$1 AND author.kind='human' AND source.presentation='message' AND source.system_event IS NULL`, [order.source_message_id])).rowCount)) ? order : undefined;
-  if (assignment) {
-    // The obligation belongs to the order, across generations and later
-    // continuations. Keep explicit new blockers possible, but a terminal
-    // result or final prose cannot continually re-answer a discharged order.
-    const saved = (await db.query<{ report_outcome: string | null; result_message_id: string | null; no_reply: boolean; previously_reported: boolean }>(
-      `SELECT report_outcome,result_message_id,
-       COALESCE(private_payload->>'reportedGenerationId'=generation_id,false) previously_reported,
-       EXISTS(SELECT 1 FROM agent_turns turn
-        WHERE turn.room_id=command.room_id AND turn.agent_id=command.agent_id
-          AND turn.request_id=command.turn_request_id AND turn.completion_kind='no-reply') no_reply
-       FROM agent_commands command WHERE id=$1 FOR UPDATE`, [assignment.id])).rows[0];
-    if ((options.automatic && (saved?.report_outcome || saved?.result_message_id || saved?.no_reply || saved?.previously_reported)) ||
-      (/^(done|failed):/.test(text) && ['done','failed'].includes(saved?.report_outcome ?? '')))
-      return { id: reportId, createdAt: Math.floor(Date.now() / 1000), delivered: true, skipped: true };
-  }
   if (!recipient || !returnRoom) {
     if (strict) throw new CommandRefusalError('this order has no commander return address', 409);
     console.error(`[commander] ${roomId}: cannot route report without recorded opening provenance`);
@@ -469,34 +388,14 @@ export async function reportToCommander(
         )).rowCount
         ? origin
         : returnRoom;
-      // Reserve the same per-corner/recipient budget under the dispatch lock.
-      // The durable commands are both the reservations and the delivery history.
-      let notBefore = options.wakeAfter ?? 0;
-      if (options.automatic && origin) {
-        await lockCommanderWakes(db, wakeRoom, recipient);
-        await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`automatic-report:${origin}:${recipient}`]);
-        if (options.idleSince) await db.query(`UPDATE agent_commands SET state='cancelled',completed_at=now(),
-            cancellation_reason='idle_episode_ended'
-          WHERE reason='report' AND state='pending' AND wake_after IS NOT NULL AND agent_id=$3
-            AND private_payload->>'originCornerId'=$1 AND private_payload->>'idleSince' IS NOT NULL
-            AND private_payload->>'idleSince' IS DISTINCT FROM $2`,
-          [origin,options.idleSince,recipient]);
-        const existing = (await db.query<{ wake_after: Date | null }>(
-          'SELECT wake_after FROM agent_commands WHERE id=$1', [reportId])).rows[0];
-        if (existing) return { id: reportId, createdAt: Math.floor(Date.now()/1000), delivered: true,
-          ...(existing.wake_after ? { retryAt: new Date(existing.wake_after).getTime() } : {}) };
-        const next = (await db.query<{ next_at: Date | null }>(
-          `SELECT max(COALESCE(to_timestamp(
-            (report.private_payload->>'automaticNotBefore')::double precision/1000),report.created_at))+interval '3 minutes' next_at
-           FROM agent_commands report WHERE report.agent_id=$2 AND report.reason='report'
-             AND COALESCE(report.private_payload->>'originCornerId',report.private_payload->>'fromRoomId')=$1
-             AND (report.private_payload->>'automatic'='true' OR report.private_payload->>'authorId'=$3)
-             AND (report.state<>'cancelled' OR report.wake_after IS NULL OR report.cancellation_reason LIKE 'coalesced_into:%')`,
-          [origin,recipient,SYSTEM_IDENTITY_ID])).rows[0]?.next_at;
-        notBefore = Math.max(notBefore, next ? new Date(next).getTime() : 0);
-        if (!options.idleSince && notBefore > Date.now())
-          return { id: reportId, createdAt: Math.floor(Date.now()/1000), delivered: true, skipped: true, retryAt: notBefore };
-      }
+      // System attention reports describe the worker's own work. Preserve that
+      // source separately from the visible System author so shared admission
+      // cannot wake a worker that is also its own commander.
+      const sourceAgentId = options.automatic && agentId === SYSTEM_IDENTITY_ID && origin
+        ? (await db.query<{ agent_id: string }>(`SELECT ${cornerImplementerSql('fact', 'corner')} agent_id
+            FROM rooms corner JOIN corner_facts fact ON fact.corner_id=corner.id WHERE corner.id=$1`,
+          [origin])).rows[0]?.agent_id
+        : undefined;
       const queued = await createAgentCommand(db, {
         id: reportId,
         roomId: wakeRoom,
@@ -505,15 +404,15 @@ export async function reportToCommander(
         privatePayload: {
           text,
           authorId: agentId,
+          ...(sourceAgentId ? { sourceAgentId } : {}),
           fromRoomId: roomId,
           kind: 'report',
           ask,
           attachments,
           originCornerId: origin,
-          ...(options.automatic ? { automatic: true, automaticNotBefore: Math.max(Date.now(),notBefore) } : {}),
+          ...(options.automatic ? { automatic: true } : {}),
           ...(options.idleSince ? { idleSince: options.idleSince } : {}),
         },
-        wakeAfter: notBefore,
         parent,
         reportSource: command,
         retainDepth: true,
@@ -527,8 +426,7 @@ export async function reportToCommander(
           return { id: reportId, createdAt: Math.floor(Date.now() / 1000), delivered: true, skipped: true };
         throw new CommandRefusalError('commander could not receive report', 409);
       }
-      if (options.idleSince) return { id: reportId, createdAt: Math.floor(Date.now()/1000), delivered: true,
-        ...(queued.wake_after ? { retryAt: new Date(queued.wake_after).getTime() } : {}) };
+
     });
     if (delivery) return delivery;
   } else {
@@ -548,7 +446,7 @@ export async function reportToCommander(
         agentId,
         text,
         JSON.stringify(attachments ?? []),
-        incoming?.id ?? null,
+        command?.id ?? incoming?.id ?? null,
         ask || /^(needs-decision|blocked):/.test(text)
           ? JSON.stringify({ ...(ask ? { ask } : {}), ...(/^(needs-decision|blocked):/.test(text) ? { reportToId: recipient } : {}) })
           : null,
@@ -570,9 +468,8 @@ export async function reportToCommander(
     `UPDATE agent_commands SET review_context=jsonb_set(review_context,'{reportIds}',
        COALESCE(review_context->'reportIds','[]'::jsonb)||jsonb_build_array($2::text)) WHERE id=$1`,
     [command.id,reportId]);
-  if (assignment) await db.query(`UPDATE agent_commands SET report_outcome=
-    CASE WHEN report_outcome IN ('done','failed') THEN report_outcome ELSE $2 END WHERE id=$1`,
-    [assignment.id, /^(done|blocked|failed|needs-decision):/.exec(text)?.[1] ?? 'reported']);
+  if (command) await db.query('UPDATE agent_commands SET report_outcome=$2 WHERE id=$1',
+    [command.id, /^(done|blocked|failed|needs-decision):/.exec(text)?.[1] ?? 'reported']);
   return { id: reportId, createdAt: Math.floor(Date.now() / 1000), delivered: true,
     receipt: member.kind === 'agent' ? 'Report queued privately; not confirmation of execution.' : 'Report stored and visible.' };
 }

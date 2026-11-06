@@ -17,8 +17,7 @@ import type { InitialLandingResult } from '@/navigation/initial-landing';
  * on Activity onCreate, including a launcher reopen), the default-action check,
  * the wait for the app root's landing decision (see
  * `navigation/initial-landing.ts` — a push routed before that decision lands
- * is overwritten by it), the suppression of a landing replace still pending
- * after that wait times out, and the navigation itself.
+ * is overwritten by it), the suppression of a pending landing replace, and the navigation itself.
  */
 
 export type TappedNotificationResponse = {
@@ -65,11 +64,13 @@ function parseConsumedResponseIds(raw: string | null): string[] {
   }
 }
 
-function readIdentifier(response: TappedNotificationResponse): string | undefined {
-  const data = response.notification?.request?.content?.data as
-    { messageId?: unknown; collapseId?: unknown } | undefined;
-  if (typeof data?.collapseId === 'string' && typeof data.messageId === 'string' && data.messageId)
-    return data.messageId;
+/**
+ * Use the same decoded payload for deduplication, prefetch and navigation.
+ * Expo's request identifier may be a reused Android notification slot.
+ */
+export function getNotificationResponseId(response: TappedNotificationResponse): string | undefined {
+  const target = getBuzzNotificationTargetFromData(response.notification?.request?.content?.data);
+  if (target?.messageId) return target.messageId;
   const identifier = response.notification?.request?.identifier;
   return typeof identifier === 'string' && identifier ? identifier : undefined;
 }
@@ -109,7 +110,7 @@ async function dispatchNotificationResponse(
   active: () => boolean,
 ): Promise<void> {
   markRoomOpen('push-entry-dispatch');
-  const id = readIdentifier(response);
+  const id = getNotificationResponseId(response);
   if (id && entries.consumedResponses && (await entries.consumedResponses.has(id))) {
     entries.log?.(`[PUSH ROUTING] Skipping leftover ${entry} notification response: ${id}`);
     return;
@@ -156,7 +157,7 @@ export type NotificationResponseRouting = {
   defaultActionIdentifier: string;
   /** Route only after the root navigator has rendered; prefetch may run sooner. */
   waitForRootReady?: () => Promise<void>;
-  /** Resolves once the landing route has committed, or reports a timeout. */
+  /** Resolves once the landing route has committed. */
   waitForInitialLanding: () => Promise<InitialLandingResult>;
   /** Claims the destination for this push: the app root's pending landing replace must not run. */
   suppressPendingInitialLanding: () => void;
@@ -169,14 +170,6 @@ export type NotificationResponseRouting = {
   consumedResponses?: ConsumedNotificationResponseStore;
   log?: (message: string) => void;
 };
-
-async function waitForCommittedLanding(routing: NotificationResponseRouting, log: (message: string) => void): Promise<void> {
-  while ((await routing.waitForInitialLanding()) === 'timeout') {
-    // Keep the response pending while Home shows its retry surface. Suppressing
-    // Home here would strand a cold tap on the empty index route.
-    log('[PUSH ROUTING] Initial landing still pending; retaining pushed destination');
-  }
-}
 
 function stringifyNotificationPayload(value: unknown): string {
   try {
@@ -204,7 +197,7 @@ export async function routeBuzzNotificationResponse(
 
   log('[PUSH ROUTING] Full notification response:\n' + stringifyNotificationPayload(response));
 
-  const responseId = readIdentifier(response);
+  const responseId = getNotificationResponseId(response);
   if (responseId) {
     if (routing.handled.has(responseId)) {
       log(`[PUSH ROUTING] Duplicate notification response ignored: ${responseId}`);
@@ -256,7 +249,7 @@ export async function routeBuzzNotificationResponse(
     // the landing route has committed. Root navigator readiness alone can
     // precede that first usable destination on a killed-app push.
     if (directRoom && buzzTarget) {
-      await waitForCommittedLanding(routing, log);
+      await routing.waitForInitialLanding();
       // This payload already has the exact top-level Room and Workspace. Its
       // route carries the Workspace id, and the Room's own read persists
       // server truth. A cold AsyncStorage selection write need not keep the
@@ -272,7 +265,7 @@ export async function routeBuzzNotificationResponse(
     }
 
     if (!directRoom) {
-      await waitForCommittedLanding(routing, log);
+      await routing.waitForInitialLanding();
     }
 
     if (buzzTarget) {

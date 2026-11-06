@@ -12,7 +12,7 @@ import { lockCornerLifecycle } from './corner-lifecycle.js';
 import { createAgentCommand } from './agent-command.js';
 import { claimAgentConnection } from './connection-presence.js';
 import { TokenAuth } from './auth.js';
-import { flushSentryWakes, runSentryWakeDeadline } from './sentry-wake.js';
+import { flushSentryWakes } from './sentry-wake.js';
 
 const url = process.env.BEELINE_INCIDENT_TEST_POSTGRES_URL;
 if (url && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(url).hostname))
@@ -94,7 +94,7 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
       await admin.query(`DROP DATABASE IF EXISTS ${databaseName}`);
       await admin.end();
     }
-  });
+  }, 60_000);
   beforeEach(async () => {
     await db.query(`DELETE FROM workspaces WHERE id=$1`, [W]);
     await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES
@@ -129,7 +129,7 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
     // Fly logs show command-row waits before the checkout failures.
     const isolated = new URL(url!); isolated.pathname = `/${databaseName}`;
     const appDb = new PostgresDatabase('', 2, { pool: new Pool({ connectionString: isolated.toString(), max: 2,
-      connectionTimeoutMillis: 50, statement_timeout: 2000 }), transactionDeadlineMs: 1000 });
+      connectionTimeoutMillis: 50, statement_timeout: 2000 }) });
     const source = 'e'.repeat(64);
     await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Work')`, [source,R,H]);
     const command = await createAgentCommand(db, { roomId: R, agentId: A, sourceMessageId: source, reason: 'human_tag' });
@@ -181,7 +181,6 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
       const results = await settled;
       await appDb.close();
       expect(results.map(result => result.status)).toEqual(Array(8).fill('fulfilled'));
-      expect(appDb.transactionDeadlineCount()).toBe(0);
     }
   }, 20_000);
 
@@ -191,7 +190,7 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
     // writer must not consume the next writer's transaction deadline.
     const isolated = new URL(url!); isolated.pathname = `/${databaseName}`;
     const appDb = new PostgresDatabase('', 4, { pool: new Pool({ connectionString: isolated.toString(), max: 4,
-      connectionTimeoutMillis: 2000, statement_timeout: 2000 }), transactionDeadlineMs: 1000 });
+      connectionTimeoutMillis: 2000, statement_timeout: 2000 }) });
     const source = 'e'.repeat(64);
     await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Work')`, [source,R,H]);
     const command = await createAgentCommand(db, { roomId: R, agentId: A, sourceMessageId: source, reason: 'human_tag' });
@@ -214,15 +213,13 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
       }, A, helperSource)));
       const errors = results.flatMap(result => result.status === 'rejected' ? [String(result.reason)] : []);
       expect(errors).toEqual([]);
-      expect(appDb.transactionDeadlineCount()).toBe(0);
     } finally { await appDb.close(); }
   });
 
-  it.each(['dispatch','singleton','insert'])('SERVER-25: a busy %s leaves the Sentry batch pending and delivers it once after release', async kind => {
+  it.each(['singleton','insert'])('SERVER-25: a busy %s leaves the Sentry batch pending and delivers it once after release', async kind => {
     const triage = 'a914716f-cd6c-4663-b42a-6e1044dc2bb9';
     await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,created_by) VALUES($1,$2,$3,'Triage',$4)`, [triage,W,R,A]);
     await db.query(`DELETE FROM sentry_wake_issues`);
-    await db.query(`UPDATE sentry_wake_state SET last_wake_at=NULL`);
     await db.query(`INSERT INTO sentry_wake_issues(issue_id,event_type,title,level,culprit,permalink,first_seen,last_seen,event_count,delivery_hash)
       VALUES('7825612495','issue.created','canceling statement due to lock timeout','error','createAgentCommand',
         'https://beeline-bt.sentry.io/issues/7825612495/',now(),now(),1,'534f2fb1712b472fb6d3210b4b4aac0c')`);
@@ -231,8 +228,7 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
       BEGIN IF NEW.reason='subscribed_event' THEN PERFORM pg_advisory_xact_lock(739125); END IF; RETURN NEW; END $$;
       CREATE TRIGGER sentry_insert_contention BEFORE INSERT ON agent_commands FOR EACH ROW EXECUTE FUNCTION sentry_insert_contention()`);
     const blocker = db.transaction(async tx => {
-      if (kind === 'dispatch') await tx.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`commander-wakes:${triage}:${A}`]);
-      else if (kind === 'singleton') await tx.query(`SELECT singleton FROM sentry_wake_state WHERE singleton FOR UPDATE`);
+      if (kind === 'singleton') await tx.query(`SELECT singleton FROM sentry_wake_state WHERE singleton FOR UPDATE`);
       else await tx.query(`SELECT pg_advisory_xact_lock(739125)`);
       locked.resolve(); await release.promise;
     });
@@ -241,7 +237,7 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
       await tx.query(`SET LOCAL lock_timeout='30ms'`); return work(tx);
     }) };
     try {
-      await expect(runSentryWakeDeadline(bounded,A)).resolves.toBeUndefined();
+      await expect(flushSentryWakes(bounded,A)).resolves.toBe(false);
       expect((await db.query(`SELECT pending FROM sentry_wake_issues`)).rows).toEqual([{ pending: true }]);
     } finally { release.resolve(); await blocker; }
     await flushSentryWakes(bounded,A);

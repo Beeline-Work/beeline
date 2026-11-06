@@ -69,14 +69,14 @@ describe('chat corner counts', () => {
       { ...row(), blocking: true, waiting_item_id: 'question', waiting_reason: 'question' as const, waiting_kind: 'message' as const, owed_viewer: true, attention: false },
       { ...row({}, 'working'), blocking: true, waiting_item_id: 'question', waiting_reason: 'question' as const, waiting_kind: 'message' as const, owed_viewer: true, attention: true },
     ]);
-    expect(result.get('room')).toMatchObject({ cornerCount: 4, waitingCornerCount: 2 });
+    expect(result.get('room')).toMatchObject({ cornerCount: 4, waitingCornerCount: 3 });
     expect(
       result.get('room')?.openCorners.map(({ state, mine, attention }) => [state, mine, attention]),
     ).toEqual([
       ['idle', true, undefined],
       ['waiting', true, true],
       ['waiting', true, undefined],
-      ['working', true, undefined],
+      ['waiting', true, true],
     ]);
   });
   it("stamps only the viewer's waiting corners with when they handed back", () => {

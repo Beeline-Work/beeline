@@ -438,7 +438,7 @@ export class ComposioApps {
         ...(data ? { 'content-type': 'application/json' } : {}),
       },
       ...(data ? { body: JSON.stringify(data) } : {}),
-      signal: AbortSignal.timeout(20_000),
+
     });
     if (!response.ok) {
       const body = await readBoundedBody(response);
@@ -717,7 +717,7 @@ export class ComposioApps {
     if (!url.startsWith('https://')) throw new Error('App provider returned an invalid upload location');
     const uploaded = await this.transport(url, {
       method: 'PUT', headers: { 'content-type': mimetype }, body: bytes,
-      signal: AbortSignal.timeout(APP_FILE_UPLOAD_TIMEOUT_MS),
+
     }).catch(() => undefined);
     if (!uploaded?.ok) throw new Error('App file upload failed');
     return { name: file.name, mimetype, s3key };

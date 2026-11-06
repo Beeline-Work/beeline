@@ -24,7 +24,6 @@ export function useSharedSurface<T>(
   guard: Guard<T>,
   request: () => Promise<T>,
   enabled = true,
-  refreshOnOpen = false,
 ) {
   const [resolved, setResolved] = useState<{ key: string; address: SurfaceCacheAddress } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -68,10 +67,14 @@ export function useSharedSurface<T>(
     void mobileSurfaceCache.read(address, guard).then((cached) => {
       if (cancelled) return;
       if (cached) setLoading(false);
-      else if (!refreshOnOpen) void refresh();
-    }).catch(() => { if (!cancelled && !refreshOnOpen) void refresh(); });
+
+    }).catch(cause => { if (!cancelled) setError(appErrorCopy(cause)); });
     return () => { cancelled = true; };
-  }, [address, guard, refresh, refreshOnOpen]);
+  }, [address, guard]);
+
+  useFocusEffect(useCallback(() => {
+    if (address) void refresh();
+  }, [address, refresh]));
 
   return { value, address, loading, error, setError, refresh };
 }
@@ -84,11 +87,8 @@ export function useFreshWorkbenchSurface<T>(
   request: () => Promise<T>,
   enabled = true,
 ) {
-  const resource = useSharedSurface(endpoint, params, guard, request, enabled, true);
+  const resource = useSharedSurface(endpoint, params, guard, request, enabled);
   const { address, refresh } = resource;
-  useFocusEffect(useCallback(() => {
-    if (address) void refresh();
-  }, [address, refresh]));
   useFocusEffect(useCallback(() => {
     if (!address) return;
     let cancelled = false;

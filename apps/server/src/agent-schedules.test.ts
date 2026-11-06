@@ -1,4 +1,3 @@
-import { BackgroundWork, startBackgroundWork } from './background-work.js';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createAgentCommand } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
@@ -320,23 +319,6 @@ describe('agent schedule background posting', () => {
       // deadline even though its original due remains in the past.
       await database.query('DELETE FROM agent_schedules WHERE id=$1', [healthyId]);
       await expect(loop.nextDelayMs()).resolves.toBeUndefined();
-      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-      let started!: () => void;
-      const settled = new Promise<void>(resolve => { started = resolve; });
-      const work = new BackgroundWork();
-      const run = vi.fn(async () => {
-        await loop.runOnce(now); const due = await loop.nextDelayMs(); started();
-        return due;
-      });
-      work.addDeadline('schedules', run);
-      const stop = startBackgroundWork(work);
-      try {
-        await settled;
-        await vi.advanceTimersByTimeAsync(86_400_000);
-        expect(run).toHaveBeenCalledOnce();
-        expect(vi.getTimerCount()).toBe(0);
-      } finally { await stop(); vi.useRealTimers(); }
-
       await database.query(`UPDATE agent_schedules SET cadence=$2::jsonb,updated_at=updated_at+interval '1 second' WHERE id=$1`,
         [failedId, JSON.stringify({ kind: 'interval', everyMinutes: 5 })]);
       await expect(loop.runOnce(new Date(now.getTime() + 60_000))).resolves.toBe(1);
@@ -393,29 +375,6 @@ describe('agent schedule background posting', () => {
       }
     },
   );
-
-  it('parks a rolled-back workflow timer across owner replacement without rewriting its due', async () => {
-    const database = await fixture();
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const id = '44444444-4444-4444-8444-444444444444', due = new Date('2026-09-01T12:00:00Z');
-    try {
-      await database.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,workflow_run)
-        VALUES($1,$2,$3,$4,$5,'{"kind":"interval","everyMinutes":5}','Synthetic',$6,
-          '{"runId":"synthetic-run","timer":"deadline"}')`, [id,WORKSPACE,ROOM,AGENT,OWNER,due]);
-      const transaction = vi.spyOn(database, 'transaction').mockRejectedValueOnce(new Error('timer transaction failed'));
-      await expect(new AgentScheduleLoop(database).runOnce(due)).resolves.toBe(0);
-      transaction.mockClear();
-      const replacement = new AgentScheduleLoop(database);
-      await expect(replacement.nextDelayMs()).resolves.toBeUndefined();
-      await expect(replacement.runOnce(new Date(due.getTime()+86_400_000))).resolves.toBe(0);
-      expect(transaction).not.toHaveBeenCalled();
-      expect((await database.query('SELECT next_run_at,failed_due_at FROM agent_schedules WHERE id=$1', [id])).rows)
-        .toEqual([{next_run_at:due,failed_due_at:due}]);
-      await database.query("UPDATE agent_schedules SET updated_at=updated_at+interval '1 second' WHERE id=$1", [id]);
-      await expect(replacement.nextDelayMs()).resolves.toBe(0);
-      transaction.mockRestore();
-    } finally { error.mockRestore(); await database.close(); }
-  });
 
   it('does not arm a past deadline for an ineligible schedule and admits restored membership', async () => {
     const database = await fixture();

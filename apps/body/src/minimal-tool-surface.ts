@@ -1,3 +1,4 @@
+import { HOST_EMULATOR_RULE } from './host-emulator.js';
 import {
   ARTIFACT_MIME_TYPES,
   INSTITUTIONAL_HISTORY_QUERY_SCHEMA,
@@ -82,7 +83,7 @@ export const CAPABILITY_TOOLS: Record<string, Record<string, ToolDefinition>> = 
     },
     "start": {
       "name": "start",
-      "description": "Read tool:describe with the workflow slug before starting. Start a run of a saved workflow, binding its named roles to current members of this Room (by agent id, or by a handle from your member list - a word matching a member's handle binds that member, with or without the @). Starting dispatches the first state. Posts one message whose id is the run id and pins the contract version; read the current run before you call app_tool(app:beeline:workflow, tool:advance, args:...) with that runId to move the run forward. Every declared role needs a binding: one current Room member agent, or an ordered list of up to 16 agents. A list role goes to the first healthy agent on the list when it is first dispatched, skipping offline/recently-failed/out-of-credit agents, and stays with that agent for the rest of the run unless it later fails or goes silent, in which case it moves to the next healthy agent on the list automatically. If nobody on the list is healthy, the run names this in the Room and waits for a human (see app_tool(app:beeline:workflow, tool:rebind, args:...)). Refused while another run of the same workflow is live in this Room; the refusal names that run and its state. How to write and run workflows: https://github.com/Beeline-Work/beeline/blob/main/docs/workflows/README.md",
+      "description": "Read tool:describe with the workflow slug before starting. Start a run of a saved workflow, binding its named roles to current members of this Room (by agent id, or by a handle from your member list - a word matching a member's handle binds that member, with or without the @). Starting dispatches the first state. Posts one message whose id is the run id and pins the contract version; read the current run before you call app_tool(app:beeline:workflow, tool:advance, args:...) with that runId to move the run forward. Every declared role needs a binding: one current Room member agent, or an ordered list of up to 16 agents. A list role goes to its first available agent when dispatched. Assignments persist across connection loss; a declared handoff, declared step timeout or explicit role rebind changes them. If nobody on the list is available, the run names this in the Room and waits for a human (see app_tool(app:beeline:workflow, tool:rebind, args:...)). Refused while another run of the same workflow is live in this Room; the refusal names that run and its state. How to write and run workflows: https://github.com/Beeline-Work/beeline/blob/main/docs/workflows/README.md",
       "inputSchema": {
         "type": "object",
         "required": ["name", "roleBindings"],
@@ -1067,7 +1068,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "request_grant",
-    "description": "Request or list scoped grants. Shared-asset isolation uses kind shared_asset and a cache-category target. Existing human approvals and exact command/secret safeguards apply; listing reveals no secrets.",
+    "description": "Request or list scoped grants. Shared-asset isolation uses kind shared_asset and a cache-category target. Existing human approvals and exact command/secret safeguards apply; listing reveals no secrets. " + HOST_EMULATOR_RULE,
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1366,8 +1367,8 @@ export function scratchTools(quota: boolean): ToolDefinition[] {
 
 /** Full input contract, retained independently of provider schema restrictions. */
 export function toolValidationSchema(name: string): Record<string, unknown> | undefined {
-  const schema = [...ORDINARY_TOOLS, ...REPOSITORY_TOOLS, ...SCRATCH_TOOLS].find(tool => tool.name === name)?.inputSchema;
-  return schema ? structuredClone(schema) : undefined;
+  const tool = [...ORDINARY_TOOLS, ...REPOSITORY_TOOLS, ...SCRATCH_TOOLS].find(tool => tool.name === name);
+  return tool ? structuredClone(invocationTool(tool).inputSchema) : undefined;
 }
 
 /**
@@ -1376,7 +1377,14 @@ export function toolValidationSchema(name: string): Record<string, unknown> | un
  * remain visible in the description and mandatory in server-side validation.
  * Nested schemas are left intact. Never depend on a harness feature flag.
  */
+function invocationTool(tool: ToolDefinition): ToolDefinition {
+  return {...tool,inputSchema:{...tool.inputSchema,properties:{
+    ...(tool.inputSchema.properties as Record<string,unknown>),
+    requestId:{type:'string',minLength:1,description:'The claimed request this tool serves.'},
+  }}};
+}
 function providerCompatibleTool(tool: ToolDefinition): ToolDefinition {
+  tool = invocationTool(tool);
   const { anyOf, oneOf, allOf, ...inputSchema } = tool.inputSchema;
   const combinations = { ...(anyOf ? { anyOf } : {}), ...(oneOf ? { oneOf } : {}), ...(allOf ? { allOf } : {}) };
   return Object.keys(combinations).length
@@ -1397,11 +1405,11 @@ export function agentToolsFor(
   if (!agentSurface) return repositoryTools();
   const tools = minimalTools(cornerTurn).filter(tool =>
     institutionalMemoryEnabled || !['search', 'remember'].includes(tool.name));
-  if (commandRunnerAvailable) tools.push(RUNNER_TOOL);
+  if (commandRunnerAvailable) tools.push(invocationTool(RUNNER_TOOL));
   // no_reply_needed mounts on every harness: it is the only silence path, so a
   // nonhuman wake must always be able to end without posting prose. The tool
   // itself refuses human wakes.
-  tools.push(SILENT_TOOL);
+  tools.push(invocationTool(SILENT_TOOL));
   if (!nativeIoProven) tools.push(...scratchTools(cornerTurn && !repositoryCorner));
   return tools;
 }

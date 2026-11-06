@@ -1,4 +1,3 @@
-import { flushDueCommanderWakes } from './commander-wakes.js';
 import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
@@ -128,8 +127,8 @@ async function merge(cornerId: string) {
 
 /** The opener's merge wakes in the parent Room, whichever route queued them. */
 async function mergeWakes() {
-  await db.query(`UPDATE agent_commands SET wake_after=now() WHERE wake_after IS NOT NULL`);
-  await flushDueCommanderWakes(db);
+
+
   return (await readAgentCommands(db, R, A)).commands.filter(
     (c) => c.source.systemEvent?.kind === 'merged',
   );

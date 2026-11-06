@@ -10,7 +10,6 @@ import { COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion } from './command-c
 import { MCP_MEMBER_STREAM_SCHEMA, serveMcpMemberStream } from './rooms-mcp-stream.js';
 import type { PostgresDatabase, SqlDatabase } from './database.js';
 import { groupBPostgresDatabase } from './test-fixtures/test-support-router-group-b-postgres.js';
-import { GroupBClock } from './test-fixtures/router-group-b-clock.js';
 import { acceptMemberDelivery } from '../../body/src/session-join/bridge.js';
 import { queueInboxOnce, readState, takeInbox, updateState } from '../../body/src/session-join/store.js';
 
@@ -46,7 +45,7 @@ describe.each(['pglite',...(postgresUrl?['postgres']:[])])('P12 MCP committed me
       CREATE TABLE rooms(id uuid PRIMARY KEY,workspace_id uuid,archived_at timestamptz);
       CREATE TABLE room_access(room_id uuid,identity_id text,removed_at timestamptz);
       CREATE TABLE memberships(workspace_id uuid,room_id uuid,identity_id text,role text,removed_at timestamptz);
-      CREATE TABLE rooms_mcp_mentions(seq bigserial PRIMARY KEY,member_id text,room_id uuid,message_id text,cleared_at timestamptz,rewakes integer DEFAULT 0);
+      CREATE TABLE rooms_mcp_mentions(seq bigserial PRIMARY KEY,member_id text,room_id uuid,message_id text,cleared_at timestamptz);
       CREATE TABLE agent_commands(id text,agent_id text,reason text,state text,hiccup_attempts integer,private_payload jsonb,source_message_id text);
       CREATE TABLE rooms_mcp_members(client_id text,owner_id text,member_id text);
       CREATE TABLE rooms_mcp_tokens(hash text,client_id text,identity_id text,family_id text,scope text,expires_at timestamptz,revoked_at timestamptz,calls integer DEFAULT 0);
@@ -63,23 +62,22 @@ describe.each(['pglite',...(postgresUrl?['postgres']:[])])('P12 MCP committed me
   afterEach(()=>{for(const reply of replies.splice(0))reply.end();vi.useRealTimers();});
   afterAll(async()=>{await release?.();await closeDatabase?.();});
   const page=()=>vi.fn(async(transaction:SqlDatabase,after:string)=>{
-    const mentions=(await transaction.query<{id:string;room_id:string;deliveryCursor:string;rewakes:number}>(
-      `SELECT message_id id,room_id,'Synthetic committed message' text,seq::text "deliveryCursor",rewakes FROM rooms_mcp_mentions
+    const mentions=(await transaction.query<{id:string;room_id:string;deliveryCursor:string}>(
+      `SELECT message_id id,room_id,'Synthetic committed message' text,seq::text "deliveryCursor" FROM rooms_mcp_mentions
        WHERE member_id='member' AND seq>$1 AND cleared_at IS NULL ORDER BY seq`,[after])).rows;
     return {mentions,wakes:[],nextCursor:mentions.at(-1)?.deliveryCursor??after,more:false};
   });
   const reply=()=>{const result=new Reply();replies.push(result);return result;};
 
   it('has no idle reads or empty frames for a day, then captures the real committed source',async()=>{
-    vi.useFakeTimers({toFake:['Date']});const clock=new GroupBClock();
+    vi.useFakeTimers({toFake:['Date']});
     const output=reply(),read=page();
-    await serveMcpMemberStream(db,principal,output as unknown as ServerResponse,{mentionCursor:'0'},read as never,clock);
+    await serveMcpMemberStream(db,principal,output as unknown as ServerResponse,{mentionCursor:'0'},read as never);
     expect(output.frames).toHaveLength(1);expect(read).toHaveBeenCalledTimes(1);
     const queries=vi.spyOn(db,'query'),transactions=vi.spyOn(db,'transaction');
-    vi.setSystemTime(Date.now()+24*60*60*1000);clock.advanceBy(24*60*60*1000);
+    vi.setSystemTime(Date.now()+24*60*60*1000);
     expect(output.frames).toHaveLength(1);expect(read).toHaveBeenCalledTimes(1);
     expect(queries).not.toHaveBeenCalled();expect(transactions).not.toHaveBeenCalled();
-    expect(clock.size).toBe(1); // Only the stored credential's terminal expiry.
     queries.mockRestore();transactions.mockRestore();vi.useRealTimers();
     const delivered=output.until(3);
     await db.query(`INSERT INTO rooms_mcp_mentions(member_id,room_id,message_id) VALUES('member',$1,'first')`,[room]);

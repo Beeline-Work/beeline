@@ -6,7 +6,6 @@ import type { SqlDatabase } from './database.js';
 import type { McpPrincipal } from './rooms-mcp-oauth.js';
 import { subscribeCommandCompletion } from './command-completion.js';
 import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
-import type { WorkTimers } from './background-work.js';
 
 /** Separate rollout floor; enable only after real-PG source/authority proofs. */
 export { networkRouterEnabled as memberStreamEnabled } from './network-router-rollout.js';
@@ -30,12 +29,12 @@ DECLARE item jsonb; member text;
 BEGIN
  item:=CASE WHEN TG_OP='DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END;
  IF TG_TABLE_NAME='rooms_mcp_mentions' THEN
-   IF TG_OP='UPDATE' AND ROW(NEW.cleared_at,NEW.rewakes) IS NOT DISTINCT FROM ROW(OLD.cleared_at,OLD.rewakes) THEN RETURN NULL; END IF;
+   IF TG_OP='UPDATE' AND NEW.cleared_at IS NOT DISTINCT FROM OLD.cleared_at THEN RETURN NULL; END IF;
    PERFORM beeline_mcp_stream(item->>'member_id',jsonb_build_object('kind','mention','id',item->>'message_id'));
  ELSIF TG_TABLE_NAME='agent_commands' THEN
    IF item->>'reason'='mcp_call' THEN RETURN NULL; END IF;
-   IF TG_OP='UPDATE' AND ROW(NEW.state,NEW.hiccup_attempts,NEW.private_payload,NEW.source_message_id)
-     IS NOT DISTINCT FROM ROW(OLD.state,OLD.hiccup_attempts,OLD.private_payload,OLD.source_message_id) THEN RETURN NULL; END IF;
+   IF TG_OP='UPDATE' AND ROW(NEW.state,NEW.private_payload,NEW.source_message_id)
+     IS NOT DISTINCT FROM ROW(OLD.state,OLD.private_payload,OLD.source_message_id) THEN RETURN NULL; END IF;
    IF EXISTS(SELECT 1 FROM rooms_mcp_members WHERE member_id=item->>'agent_id') THEN
      PERFORM beeline_mcp_stream(item->>'agent_id',jsonb_build_object('kind','wake','id',item->>'id'));
    END IF;
@@ -133,13 +132,12 @@ async function scopes(db: SqlDatabase, member: string, rooms: readonly string[])
  * an idle stream makes no reads, writes, empty responses or heartbeat frames. */
 export async function serveMcpMemberStream(database: SqlDatabase, principal: McpPrincipal, response: ServerResponse,
   input: { cursor?: McpStreamCursor; mentionCursor: string },
-  page: (db: SqlDatabase, after: string) => Promise<McpStreamPage>, timers: WorkTimers = { setTimeout, clearTimeout }): Promise<void> {
+  page: (db: SqlDatabase, after: string) => Promise<McpStreamPage>): Promise<void> {
   if (!principal.member_id || !principal.scope.split(' ').includes('rooms:read')) throw new Error('member stream unavailable');
   const member = principal.member_id, stream = `mcp:${member}`;
   let stopped = false, running = false, dirty = true, initial = true, position = input.cursor, mentionCursor = input.mentionCursor;
-  let expiry: ReturnType<typeof setTimeout> | undefined;
   const close = (reason?: 'expired' | 'unavailable') => {
-    if (stopped) return; stopped=true; release(); if (expiry) timers.clearTimeout(expiry);
+    if (stopped) return; stopped=true; release();
     if (reason && !response.destroyed && !response.writableEnded) response.write(JSON.stringify({v:1,type:'ended',reason})+'\n');
     if (!response.writableEnded) response.end();
   };
@@ -177,12 +175,12 @@ export async function serveMcpMemberStream(database: SqlDatabase, principal: Mcp
             const current = await page(db,after);
             for (const mention of current.mentions) {
               roomIds.add(mention.room_id);
-              frames.push({v:1,type:'delivery',deliveryId:`mention:${mention.id}:${mention.rewakes ?? 0}`,mentions:[mention],wakes:[],mentionCursor:String(mention.deliveryCursor ?? after)});
+              frames.push({v:1,type:'delivery',deliveryId:`mention:${mention.id}:0`,mentions:[mention],wakes:[],mentionCursor:String(mention.deliveryCursor ?? after)});
             }
             for (const wake of current.wakes) {
               if (wakeIds.has(wake.id)) continue;
               wakeIds.add(wake.id); roomIds.add(wake.address);
-              frames.push({v:1,type:'delivery',deliveryId:`wake:${wake.id}:${wake.deliveryVersion ?? 0}`,mentions:[],wakes:[wake],mentionCursor:current.nextCursor});
+              frames.push({v:1,type:'delivery',deliveryId:`wake:${wake.id}`,mentions:[],wakes:[wake],mentionCursor:current.nextCursor});
             }
             after=current.nextCursor;
             if (!current.more) break;
@@ -206,8 +204,6 @@ export async function serveMcpMemberStream(database: SqlDatabase, principal: Mcp
           }
         });
         position=prepared.to; mentionCursor=prepared.after; initial=false;
-        if (expiry) timers.clearTimeout(expiry);
-        expiry=timers.setTimeout(()=>close('expired'),Math.max(0,prepared.expiresAt.getTime()-Date.now())); expiry.unref?.();
       }
     } catch { close('unavailable'); } finally { running=false; }
   };

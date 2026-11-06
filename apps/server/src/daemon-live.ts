@@ -385,7 +385,7 @@ export class DaemonAgentSession {
               return {error:'activation_source_mismatch',status:409};
             return {result:await this.deps.daemon.readCommandActivation(parsed,this.agentId)};
           }
-          const owned=['claimAgentCommand','acknowledgeAgentCommand','postAgentTurnReceipt'].includes(operation);
+          const owned=['claimAgentCommand','claimAgentTurn','acknowledgeAgentCommand','postAgentTurnReceipt','releaseAgentTurn'].includes(operation);
           return {result:await this.deps.daemon.execute(operation,input,this.agentId,
             owned ? this.turnSource : undefined,owned ? this.#ownedModelCapability : undefined)};
         } catch(error) {
@@ -400,6 +400,7 @@ export class DaemonAgentSession {
   }
 
   async #process(item: Record<string, unknown>): Promise<void> {
+    await this.deps.connectionPresence?.renewLease();
     if (!this.transport.admit(item)) return;
     if (item.type === 'turn-operation') {
       const operation = item.operation;
@@ -579,6 +580,7 @@ export class DaemonAgentSession {
       try {
         while (commandsRequested && active && transport.isOpen() && !this.#closed) {
           commandsRequested = false;
+          await this.deps.connectionPresence?.renewLease();
           const page = await daemon.execute('getAgentCommands', { roomId }, agentId,
             this.turnOwnershipV1 ? this.turnSource : undefined);
           if (!active || this.#closed || !transport.isOpen()) return;

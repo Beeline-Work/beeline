@@ -1222,7 +1222,7 @@ describe('institutional memory authority for agent-started turns', () => {
     const scheduleRoot = 'schedule-wake-root';
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'daily triage sweep: check the release migration marker')`,
-      [scheduleRoot, ROOM, AGENT],
+      [scheduleRoot, ROOM, OTHER_AGENT],
     );
     const scheduleTurn = await openTurn('schedule-turn', scheduleRoot);
     const context = await liveDaemon().execute('getInstitutionalContext', scheduleTurn, AGENT);

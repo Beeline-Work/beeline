@@ -1,11 +1,9 @@
+import { advanceCorner } from './corner-lifecycle.js';
 import { notifyCornerStateSql } from './postgres-live.js';
-import { createHash } from 'node:crypto';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
-import { cornerIdleSql, cornerCanReportIdle, type CornerIdleRow } from './corner-idle.js';
 import { humanReportCornerSql } from './corner-waiting-report.js';
-import { reportToCommander } from './commander.js';
 
 export const CORNER_ATTENTION_SCHEMA = `
 ALTER TABLE needs_you_marks ADD COLUMN IF NOT EXISTS reminder_dismissed_at timestamptz;
@@ -53,8 +51,10 @@ DECLARE corner uuid;
 BEGIN
   IF TG_TABLE_NAME='agent_commands' THEN
     -- A worker's explicit report starts or answers a derived wait.
-    IF NEW.private_payload->>'kind' IS DISTINCT FROM 'report' THEN RETURN NULL; END IF;
-    SELECT id INTO corner FROM rooms WHERE id::text=NEW.private_payload->>'fromRoomId';
+    corner=COALESCE(NEW.room_id,OLD.room_id);
+    IF NEW.private_payload->>'kind'='report' THEN
+      SELECT id INTO corner FROM rooms WHERE id::text=COALESCE(NEW.private_payload->>'originCornerId',NEW.private_payload->>'fromRoomId');
+    END IF;
   ELSIF TG_TABLE_NAME IN ('agent_turns','agent_schedules','messages') THEN
     corner=COALESCE(NEW.room_id,OLD.room_id);
   ELSE corner=COALESCE(NEW.corner_id,OLD.corner_id); END IF;
@@ -75,12 +75,14 @@ DROP TRIGGER IF EXISTS corner_activity_human ON messages;
 CREATE TRIGGER corner_activity_human AFTER INSERT OR UPDATE OF card,text,deleted_at ON messages
  FOR EACH ROW EXECUTE FUNCTION notify_corner_activity();
 DROP TRIGGER IF EXISTS corner_activity_report ON agent_commands;
-CREATE TRIGGER corner_activity_report AFTER INSERT OR UPDATE OF private_payload ON agent_commands
+CREATE TRIGGER corner_activity_report AFTER INSERT OR UPDATE OF private_payload,state,review_context,result_message_id,report_outcome OR DELETE ON agent_commands
  FOR EACH ROW EXECUTE FUNCTION notify_corner_activity();
 DROP TRIGGER IF EXISTS corner_activity_turn ON agent_turns;
 CREATE TRIGGER corner_activity_turn AFTER INSERT OR UPDATE OF status OR DELETE ON agent_turns
  FOR EACH ROW EXECUTE FUNCTION notify_corner_activity();
 DROP TRIGGER IF EXISTS corner_activity_facts ON corner_facts;
+CREATE TRIGGER corner_activity_facts AFTER INSERT OR UPDATE ON corner_facts
+ FOR EACH ROW EXECUTE FUNCTION notify_corner_activity();
 DROP TRIGGER IF EXISTS corner_activity_github ON corner_github_cache;
 CREATE TRIGGER corner_activity_github AFTER INSERT OR UPDATE OF lifecycle ON corner_github_cache
  FOR EACH ROW EXECUTE FUNCTION notify_corner_activity();
@@ -93,53 +95,51 @@ CREATE TRIGGER corner_activity_owed AFTER INSERT OR UPDATE OR DELETE ON corner_o
 DROP TRIGGER IF EXISTS corner_activity_schedule ON agent_schedules;
 CREATE TRIGGER corner_activity_schedule AFTER INSERT OR UPDATE OR DELETE ON agent_schedules
  FOR EACH ROW EXECUTE FUNCTION notify_corner_activity();
+
+-- Configuration and reachability changes invalidate affected corners once per
+-- committed transaction, just like command/receipt changes. No polling repair.
+CREATE OR REPLACE FUNCTION notify_corner_configuration() RETURNS trigger LANGUAGE plpgsql AS $config$
+DECLARE parent_room uuid; corner uuid;
+BEGIN
+  IF TG_TABLE_NAME='rooms' THEN parent_room=COALESCE(NEW.id,OLD.id);
+  ELSE parent_room=COALESCE(NEW.room_id,OLD.room_id); END IF;
+  FOR corner IN SELECT id FROM rooms WHERE parent_id=parent_room AND archived_at IS NULL LOOP
+    PERFORM ${notifyCornerStateSql('corner')};
+  END LOOP;
+  RETURN NULL;
+END $config$;
+DROP TRIGGER IF EXISTS corner_configuration_room ON rooms;
+CREATE TRIGGER corner_configuration_room AFTER UPDATE OF reviewer_agent_id ON rooms
+ FOR EACH ROW EXECUTE FUNCTION notify_corner_configuration();
+DROP TRIGGER IF EXISTS corner_configuration_membership ON memberships;
+CREATE TRIGGER corner_configuration_membership AFTER INSERT OR UPDATE OF removed_at OR DELETE ON memberships
+ FOR EACH ROW EXECUTE FUNCTION notify_corner_configuration();
 `;
 
-/** Commands are the once-per-episode claim; the recipient queue lock reserves its budget. */
-export async function refreshCornerAttention(
-  db: SqlDatabase,
-  cornerId: string,
-): Promise<{ parentId: string; deadlines: number[] } | undefined> {
-  return db.transaction(async (tx) => {
-    const row = (await tx.query<CornerIdleRow>(cornerIdleSql('$1'), [cornerId])).rows[0];
-    if (!row) return;
-    const current = cornerCanReportIdle(row) ? row.idle_since : null;
-    // A queued alert for an episode that has ended is withdrawn before anyone
-    // claims it; a claimed or delivered alert keeps its history.
-    await tx.query(
-      `UPDATE agent_commands SET state='cancelled',completed_at=now(),cancellation_reason='stale_idle_alert'
-       WHERE state='pending' AND reason='report'
-         AND private_payload->>'authorId'=$3
-         AND private_payload->>'idleSince' IS NOT NULL
-         AND COALESCE(private_payload->>'originCornerId',private_payload->>'fromRoomId')=$1::text
-         AND private_payload->>'idleSince' IS DISTINCT FROM $2::text`,
-      [cornerId, current, SYSTEM_IDENTITY_ID],
-    );
-    if (!current) return { parentId: row.parent_id, deadlines: [] };
-    const id = createHash('sha256').update(`idle:${cornerId}:${row.idle_since}`).digest('hex');
-    const due = row.last_turn_ended_at ? new Date(row.last_turn_ended_at).getTime() + 30_000 : 0;
-    const report = await reportToCommander(tx, cornerId, SYSTEM_IDENTITY_ID,
-      `blocked: Corner ${row.name} is idle. Resume it, set a hold, or close it.`, undefined, id,
-      { automatic: true, agentOnly: true, wakeInCorner: true, idleSince: row.idle_since, wakeAfter: due });
-    return { parentId: row.parent_id, deadlines: report.retryAt ? [report.retryAt] : [] };
-  });
+/** A committed fact enters the one corner runtime. */
+export async function refreshCornerAttention(db: SqlDatabase, cornerId: string): Promise<{ parentId: string } | undefined> {
+  await advanceCorner(db, cornerId, { kind: 'reconcile' });
+  const row = (await db.query<{ parent_id: string }>('SELECT parent_id FROM rooms WHERE id=$1 AND parent_id IS NOT NULL', [cornerId])).rows[0];
+  return row ? { parentId: row.parent_id } : undefined;
 }
+
+const CORNER_RECOVERY_SQL = `SELECT corner.id FROM rooms corner LEFT JOIN corner_facts fact ON fact.corner_id=corner.id
+  WHERE corner.parent_id IS NOT NULL AND (corner.archived_at IS NULL OR fact.machine->>'state' IS DISTINCT FROM 'archived')`;
 
 /** Startup recovery only; ordinary events address one corner. */
 export async function runCornerAttention(db: SqlDatabase): Promise<void> {
   const rows = (
-    await db.query<{ id: string }>(
-      `SELECT id FROM rooms WHERE parent_id IS NOT NULL AND archived_at IS NULL`,
-    )
+    await db.query<{ id: string }>(CORNER_RECOVERY_SQL)
   ).rows;
   for (const row of rows) await refreshCornerAttention(db, row.id);
 }
 
-/** Event adapter only. CommanderWakeDeadlines owns every durable report deadline. */
-export class CornerAttentionDeadlines {
+/** Event adapter for the corner machine. Coalesces committed facts; never schedules a timer. */
+export class CornerMachineEvents {
   private release: () => void;
   private resync: () => void;
   private stopped = false;
+  private recovery?: Promise<void>;
   private readonly refreshing = new Map<string, { again: boolean; done: Promise<void> }>();
   constructor(
     private db: SqlDatabase,
@@ -154,13 +154,14 @@ export class CornerAttentionDeadlines {
       void this.start().catch(report);
     });
   }
-  async start(): Promise<void> {
-    const rows = (
-      await this.db.query<{ id: string }>(
-        `SELECT id FROM rooms WHERE parent_id IS NOT NULL AND archived_at IS NULL`,
-      )
-    ).rows;
-    for (const row of rows) await this.refresh(row.id);
+  start(): Promise<void> {
+    if (this.stopped) return Promise.resolve();
+    return this.recovery ??= (async () => {
+      try {
+        const rows = (await this.db.query<{ id: string }>(CORNER_RECOVERY_SQL)).rows;
+        for (const row of rows) await this.refresh(row.id);
+      } finally { this.recovery = undefined; }
+    })();
   }
   async refresh(id: string): Promise<void> {
     if (this.stopped) return;
@@ -181,9 +182,10 @@ export class CornerAttentionDeadlines {
     try { await state.done; } finally { this.refreshing.delete(id); }
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     this.stopped = true;
     this.release();
     this.resync();
+    await Promise.allSettled([this.recovery, ...[...this.refreshing.values()].map(state => state.done)]);
   }
 }

@@ -102,7 +102,6 @@ export class ThinDaemonCore {
   }
   async run(
     opts: {
-      pollMs?: number;
       signal?: AbortSignal;
       onEstablished?: () => void | Promise<void>;
       onProgress?: (status: string, fault?: unknown) => void | Promise<void>;

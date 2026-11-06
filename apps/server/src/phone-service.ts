@@ -1,4 +1,5 @@
-import { recordPersonInteraction } from './away-auto-pause.js';
+import { endAgentTurn } from './agent-turn-end.js';
+import { assetUrl, phoneIdentity as identity, type PhoneIdentityRow as IdentityRow } from './phone-identity.js';
 import { isSubscribableEventKind } from '@beeline/api-contract/phone';
 import { setRoomEventSubscriptions, unsubscribeRoomReviewer, subscribeRoomReviewer } from './agent-subscriptions.js';
 import { roomMessageTagsSql } from './room-router-read.js';
@@ -104,7 +105,6 @@ import {
   type ConnectorOfferStatus,
 } from '@beeline/api-contract/connector-offers';
 import {
-  AGENT_MENTION_NOTICE_GRACE_MS,
   AGENT_REACHABLE_HORIZON_MS,
   MAX_ACCESS_ALLOWLIST_ENTRIES,
   agentAccessPolicyRecord,
@@ -270,7 +270,6 @@ export function parseArchivedCornerCursor(
   );
   return parsed ? { micros: parsed[1]!, id: parsed[2]! } : undefined;
 }
-export const OPTIONAL_ENRICHMENT_DEADLINE_MS = 1_000;
 const ENRICHMENT_LOG_INTERVAL_MS = 60_000;
 function normalizeAgentName(value: string): string {
   const name = value.trim().replace(/\s+/g, ' ');
@@ -315,14 +314,6 @@ function roomFilters(
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
 type Output<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['output'];
 
-interface IdentityRow {
-  id: string;
-  kind: 'human' | 'agent';
-  name: string;
-  handle: string | null;
-  avatar: string | null;
-  face_id: string | null;
-}
 interface RoomRow {
   id: string;
   workspace_id: string;
@@ -595,19 +586,6 @@ function reviveDates<Row extends object>(row: Row, fields: readonly string[]): R
     if (typeof value === 'string') mutable[field] = new Date(value);
   }
   return row;
-}
-function assetUrl(value: string, publicOrigin: string) {
-  return value.startsWith('/') ? `${publicOrigin}${value}` : value;
-}
-function identity(row: IdentityRow, publicOrigin: string): RoomViewIdentity {
-  return {
-    pubkey: row.id,
-    kind: row.kind,
-    name: row.name,
-    ...(row.handle ? { handle: row.handle } : {}),
-    ...(row.avatar ? { avatar: assetUrl(row.avatar, publicOrigin) } : {}),
-    ...(row.face_id ? { face: row.face_id } : {}),
-  };
 }
 
 function selectedModelLabel(
@@ -1031,18 +1009,8 @@ export class PhoneService {
 
   private async optionalEnrichment<T>(name: string, work: Promise<T>): Promise<T | undefined> {
 
-    let deadline: ReturnType<typeof setTimeout> | undefined;
     try {
-      return await Promise.race([
-        work,
-        new Promise<never>((_resolve, reject) => {
-          deadline = setTimeout(
-            () => reject(new Error(`optional ${name} enrichment timed out`)),
-            OPTIONAL_ENRICHMENT_DEADLINE_MS,
-          );
-          deadline.unref?.();
-        }),
-      ]);
+      return await work;
     } catch (error) {
       const now = Date.now();
       if (now - (this.lastEnrichmentLogAt.get(name) ?? 0) >= ENRICHMENT_LOG_INTERVAL_MS) {
@@ -1056,8 +1024,6 @@ export class PhoneService {
         );
       }
       return undefined;
-    } finally {
-      if (deadline) clearTimeout(deadline);
     }
   }
 
@@ -1075,7 +1041,6 @@ export class PhoneService {
     if (viewerId === REVIEW_IDENTITY_ID && REVIEW_LOCKED_OPERATIONS.has(operation)) throw new Error(REVIEW_IDENTITY_MESSAGE);
     if (operation === 'decideAgentGrant') {
       await this.decideAgentGrant(input as Input<'decideAgentGrant'>, viewerId, defer);
-      await recordPersonInteraction(this.database, viewerId);
     }
     else if (operation === 'decideWritePermission') await this.execute(operation, input as Input<'decideWritePermission'>, viewerId);
     else if (operation === 'skipChoice') await this.execute(operation, input as Input<'skipChoice'>, viewerId);
@@ -1098,7 +1063,7 @@ export class PhoneService {
       if(!(this.database as CommandScopedDatabase).active)throw new Error('Scheduled stop requires its durable command transaction');
       await authorize(this.database);
       await this.database.query(`DELETE FROM agent_schedules schedule USING rooms surface WHERE schedule.id=$1
-        AND surface.id=schedule.room_id AND(surface.id=$2 OR surface.parent_id=$2) AND schedule.workflow_run IS NULL`,[input.scheduleId,input.roomId]);
+        AND surface.id=schedule.room_id AND(surface.id=$2 OR surface.parent_id=$2)`,[input.scheduleId,input.roomId]);
       return;
     }
     const trigger=await this.database.transaction(async db=>{
@@ -1225,7 +1190,8 @@ export class PhoneService {
            LEFT JOIN identities requester ON requester.id=trigger.author_id
              AND requester.kind='human'
            WHERE room.id=$1 AND EXISTS(SELECT 1 FROM authorized)
-           ORDER BY turn.created_at DESC,turn.request_id DESC LIMIT 1`,
+             AND (turn.status<>'working' OR ${workingTurnFreshSql('turn')})
+           ORDER BY (turn.status='working') DESC,turn.created_at DESC,turn.request_id DESC LIMIT 1`,
           [roomId, viewers, target.agentId],
         )
       ).rows[0];
@@ -2867,8 +2833,8 @@ export class PhoneService {
            FROM authorized_room room
            CROSS JOIN LATERAL (
              SELECT DISTINCT ON(agent_id) * FROM agent_turns
-             WHERE room_id=room.id
-             ORDER BY agent_id,created_at DESC,request_id DESC
+             WHERE room_id=room.id AND (status<>'working' OR ${workingTurnFreshSql('agent_turns')})
+             ORDER BY agent_id,(status='working') DESC,created_at DESC,request_id DESC
            ) turn
            LEFT JOIN messages trigger ON trigger.id=${turnRootMessageSql('turn')}
            LEFT JOIN identities requester ON requester.id=trigger.author_id AND requester.kind='human'
@@ -4118,10 +4084,6 @@ export class PhoneService {
     deferPostCommitObservation = false,
   ): Promise<Output<Name>> {
     const result = await this.executeOperation(name, input, viewerId, sourceClient, familyId, deferPostCommitObservation);
-    if (['sendRoomMessage', 'sendRoomReply', 'reactToMessage', 'answerChoice', 'skipChoice',
-      'decideApprovalCard', 'decideWritePermission', 'decideAgentGrant', 'acceptConnectorOffer',
-      'actOnRepositoryCard', 'answerStarPrompt'].includes(name))
-      await recordPersonInteraction(this.database, viewerId);
     return result;
   }
 
@@ -4950,7 +4912,6 @@ export class PhoneService {
       [roomId, viewerId, messageIdValue],
     )).rows[0];
     if (!result?.eligible) throw new Error('message not found');
-    await recordPersonInteraction(this.database, viewerId);
     // The committed row's PostgreSQL notification reconciles every reader
     // device, including those on this server. Publishing here duplicates it.
   }
@@ -5100,10 +5061,7 @@ export class PhoneService {
          WHERE (EXCLUDED.message_created_at,EXCLUDED.message_id)>
            (room_read_marks.message_created_at,room_read_marks.message_id)
          RETURNING 1
-       ), pending_route AS (
-         INSERT INTO rooms_mcp_pending_routes(message_id,room_id,member_id)
-         SELECT id,room_id,$3 FROM inserted WHERE $7::jsonb IS NOT NULL
-         ON CONFLICT(message_id) DO NOTHING RETURNING 1
+
        )
        SELECT EXISTS(SELECT 1 FROM inserted) inserted,
          EXISTS(SELECT 1 FROM messages message
@@ -5159,7 +5117,7 @@ export class PhoneService {
        FROM agent_schedules schedule
        JOIN rooms surface ON surface.id=schedule.room_id
        WHERE (surface.id=$1 OR surface.parent_id=$1) AND surface.archived_at IS NULL
-         AND schedule.workflow_run IS NULL
+
        ORDER BY schedule.created_at,schedule.id`,
       [roomId],
     );
@@ -5210,7 +5168,7 @@ export class PhoneService {
     const deleted = await this.database.query(
       `DELETE FROM agent_schedules schedule USING rooms surface
        WHERE schedule.id=$1 AND surface.id=schedule.room_id
-         AND (surface.id=$2 OR surface.parent_id=$2) AND schedule.workflow_run IS NULL`,
+         AND (surface.id=$2 OR surface.parent_id=$2)`,
       [input.scheduleId, input.roomId],
     );
     if (!deleted.rowCount) throw new Error('schedule not found');
@@ -5262,10 +5220,7 @@ export class PhoneService {
        INSERT INTO messages(id,room_id,author_id,text,attachments,reply_to_message_id,root_message_id,source_client)
        VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8::jsonb) ON CONFLICT(id) DO NOTHING
        RETURNING id,room_id
-     ), pending_route AS (
-       INSERT INTO rooms_mcp_pending_routes(message_id,room_id,member_id)
-       SELECT id,room_id,$3 FROM inserted WHERE $8::jsonb IS NOT NULL
-       ON CONFLICT(message_id) DO NOTHING RETURNING 1
+
      ) SELECT id FROM inserted`,
       [...values, sourceClient ? JSON.stringify(sourceClient) : null],
     );
@@ -5379,11 +5334,7 @@ export class PhoneService {
         ],
       );
       await tombstoneInstitutionalMemoryForMessage(database, input.messageId);
-      // A deleted mention has no words left for a helper to answer, so its
-      // deferred offline notice is dropped with it rather than written later.
-      await database.query(`DELETE FROM pending_mention_notices WHERE source_message_id=$1`, [
-        input.messageId,
-      ]);
+
     });
     const delta = await this.readLiveDelta(input.roomId, viewerId, {
       type: 'message', messageId: input.messageId,
@@ -5646,13 +5597,8 @@ export class PhoneService {
         owner_handle: string | null;
         member: boolean;
         corner: boolean;
-        reachable: boolean;
       }>(
-        // Reachability is a fact about the HELPER, not about this Room. A
-        // mention in a corner may rely on the same daemon's lifecycle fact
-        // in a top-level Room, so the presence lookup intentionally has no
-        // room filter.
-        `SELECT identity.id agent_id,COALESCE(NULLIF(identity.name,''),$4::text) agent_name,
+        `SELECT identity.id agent_id,COALESCE(NULLIF(identity.name,''),$3::text) agent_name,
                 identity.handle agent_handle,
                 a.access_policy,a.owner_id,owner.handle owner_handle,
                 EXISTS(SELECT 1 FROM rooms room WHERE room.id=$2 AND room.parent_id IS NOT NULL) corner,
@@ -5660,41 +5606,18 @@ export class PhoneService {
                   SELECT 1 FROM memberships membership
                   WHERE membership.room_id=$2 AND membership.identity_id=identity.id
                     AND membership.removed_at IS NULL
-                ) member,
-                COALESCE((SELECT lo.body->>'status'='online'
-                    AND (lo.body->>'held'='true'
-                      OR lo.updated_at >= now()-make_interval(secs => $3::double precision / 1000))
-                  FROM live_outputs lo
-                  WHERE lo.agent_id=identity.id AND lo.kind='presence'
-                  ORDER BY lo.updated_at DESC LIMIT 1),false) reachable
+                ) member
          FROM identities identity
          LEFT JOIN agents a ON a.agent_id=identity.id
          LEFT JOIN identities owner ON owner.id=a.owner_id
          WHERE identity.id=ANY($1::text[]) AND identity.kind='agent'
            AND NOT EXISTS(SELECT 1 FROM rooms_mcp_members WHERE member_id=identity.id)`,
-        [[...agentIds], roomId, AGENT_REACHABLE_HORIZON_MS, systemMessage("system-line.agent-name")],
+        [[...agentIds], roomId, systemMessage("system-line.agent-name")],
       );
       const bucket = accessNoticeBucket(Date.now());
       for (const agent of agents.rows) {
         const phrase = this.unansweredMentionPhrase(agent, sender, senderId);
         if (!phrase) continue;
-        // An unreachable helper is the ONLY reason a mention can still be
-        // answered later: the durable `agent_commands` row is waiting for it.
-        // A restart, an update or a brief socket drop must not be read as
-        // "did not answer", so the terminal line waits out the grace window
-        // and is withdrawn if the helper answers first. Every other reason
-        // (policy refusal, a corner the agent never joined) cannot change, so
-        // it is inscribed now.
-        if (phrase.reason === 'unreachable' && afterMessageId) {
-          await this.deferMentionNotice({
-            roomId,
-            agentId: agent.agent_id,
-            senderId,
-            sourceMessageId: afterMessageId,
-            reason: phrase.reason,
-          });
-          continue;
-        }
         await this.writeMentionNotice(this.database, {
           roomId,
           id: mentionNoticeId(roomId, agent.agent_id, senderId, phrase.reason, bucket),
@@ -5707,34 +5630,6 @@ export class PhoneService {
     } catch (error) {
       console.error('[server] could not inscribe an unanswered mention:', error);
     }
-  }
-
-  /**
-   * One durable deferred notice for a mention whose helper is unreachable now.
-   * The row is the queue; `flushPendingMentionNotices` turns it into a line
-   * once the grace window has passed with the helper still gone.
-   */
-  private async deferMentionNotice(input: {
-    readonly roomId: string;
-    readonly agentId: string;
-    readonly senderId: string;
-    readonly sourceMessageId: string;
-    readonly reason: string;
-  }): Promise<void> {
-    await this.database.query(
-      `INSERT INTO pending_mention_notices(
-         room_id,agent_id,sender_id,source_message_id,reason,due_at
-       ) VALUES($1,$2,$3,$4,$5,now()+($6::double precision / 1000) * interval '1 second')
-       ON CONFLICT(room_id,agent_id,source_message_id,reason) DO NOTHING`,
-      [
-        input.roomId,
-        input.agentId,
-        input.senderId,
-        input.sourceMessageId,
-        input.reason,
-        AGENT_MENTION_NOTICE_GRACE_MS,
-      ],
-    );
   }
 
   private async writeMentionNotice(
@@ -5764,137 +5659,6 @@ export class PhoneService {
     });
   }
 
-  /**
-   * Turn every deferred notice whose grace window has passed into its terminal
-   * line, and drop the deferrals whose helper came back or whose mention is no
-   * longer explained by the current facts. Returns how many lines were written.
-   *
-   * This is the ONE place an uncleanly-offline helper's mention becomes
-   * `did not answer · its helper is offline`. It reads the same reachability
-   * truth the send path does — the newest `live_outputs kind='presence'` row,
-   * `online` and no older than `AGENT_REACHABLE_HORIZON_MS` — so a helper that
-   * reconnected inside the grace window is never called offline.
-   */
-  async flushPendingMentionNotices(now = Date.now()): Promise<number> {
-    try {
-      const due = await this.database.query<{
-        room_id: string;
-        agent_id: string;
-        sender_id: string;
-        source_message_id: string;
-        reason: string;
-        agent_name: string;
-        agent_handle: string | null;
-        access_policy: unknown;
-        owner_id: string | null;
-        owner_handle: string | null;
-        member: boolean;
-        corner: boolean;
-        reachable: boolean;
-        sender_kind: 'human' | 'agent';
-        sender_handle: string | null;
-      }>(
-        // The source-message guard drops a deferral whose message was later
-        // deleted outright: there is nobody left to answer, but the writer
-        // already retracted the words, so the Room owes no explanation.
-        `SELECT d.room_id,d.agent_id,d.sender_id,d.source_message_id,d.reason,
-                COALESCE(NULLIF(agent.name,''),$3::text) agent_name,
-                agent.handle agent_handle,
-                a.access_policy,a.owner_id,owner.handle owner_handle,
-                EXISTS(SELECT 1 FROM rooms room
-                  WHERE room.id=d.room_id AND room.parent_id IS NOT NULL) corner,
-                EXISTS(SELECT 1 FROM memberships membership
-                  WHERE membership.room_id=d.room_id AND membership.identity_id=d.agent_id
-                    AND membership.removed_at IS NULL) member,
-                COALESCE((SELECT lo.body->>'status'='online'
-                    AND (lo.body->>'held'='true'
-                      OR lo.updated_at >= now()-make_interval(secs => $2::double precision / 1000))
-                  FROM live_outputs lo
-                  WHERE lo.agent_id=d.agent_id AND lo.kind='presence'
-                  ORDER BY lo.updated_at DESC LIMIT 1),false) reachable,
-                sender.kind sender_kind,sender.handle sender_handle
-         FROM pending_mention_notices d
-         JOIN identities agent ON agent.id=d.agent_id
-         JOIN identities sender ON sender.id=d.sender_id
-         LEFT JOIN agents a ON a.agent_id=d.agent_id
-         LEFT JOIN identities owner ON owner.id=a.owner_id
-         JOIN messages source ON source.id=d.source_message_id AND source.deleted_at IS NULL
-         WHERE d.notified_at IS NULL AND d.due_at <= $1
-           AND NOT EXISTS(SELECT 1 FROM rooms_mcp_members WHERE member_id=d.agent_id)`,
-        [new Date(now), AGENT_REACHABLE_HORIZON_MS, systemMessage("system-line.agent-name")],
-      );
-      if (!due.rows.length) return 0;
-      const bucket = accessNoticeBucket(now);
-      let written = 0;
-      for (const row of due.rows) {
-        const phrase = this.unansweredMentionPhrase(
-          {
-            agent_id: row.agent_id,
-            agent_name: row.agent_name,
-            agent_handle: row.agent_handle,
-            access_policy: row.access_policy,
-            owner_id: row.owner_id,
-            owner_handle: row.owner_handle,
-            member: row.member,
-            corner: row.corner,
-            reachable: row.reachable,
-          },
-          { kind: row.sender_kind, handle: row.sender_handle },
-          row.sender_id,
-        );
-        if (!phrase) {
-          await this.database.query(
-            `DELETE FROM pending_mention_notices
-             WHERE room_id=$1 AND agent_id=$2 AND source_message_id=$3 AND reason=$4`,
-            [row.room_id, row.agent_id, row.source_message_id, row.reason],
-          );
-          continue;
-        }
-        const noticeId = mentionNoticeId(
-          row.room_id,
-          row.agent_id,
-          row.sender_id,
-          phrase.reason,
-          bucket,
-        );
-        // The reply path deletes this deferral in the same transaction that
-        // settles the turn. Claim it under a row lock and recheck it before
-        // writing, so a reply that landed after the unlocked SELECT above can
-        // never leave a false permanent `did not answer` line behind it.
-        const claimed = await this.database.transaction(async (tx) => {
-          const still = await tx.query(
-            `SELECT 1 FROM pending_mention_notices
-             WHERE room_id=$1 AND agent_id=$2 AND source_message_id=$3 AND reason=$4
-               AND notified_at IS NULL
-             FOR UPDATE`,
-            [row.room_id, row.agent_id, row.source_message_id, row.reason],
-          );
-          if (!still.rowCount) return false;
-          await this.writeMentionNotice(tx, {
-            roomId: row.room_id,
-            id: noticeId,
-            agentId: row.agent_id,
-            agentName: row.agent_name,
-            phrase,
-            afterMessageId: row.source_message_id,
-          });
-          await tx.query(
-            `UPDATE pending_mention_notices SET notice_id=$5,notified_at=now()
-             WHERE room_id=$1 AND agent_id=$2 AND source_message_id=$3 AND reason=$4`,
-            [row.room_id, row.agent_id, row.source_message_id, row.reason, noticeId],
-          );
-          return true;
-        });
-        if (claimed) written++;
-      }
-      return written;
-    } catch (error) {
-      console.error('[server] could not flush deferred mention notices:', error);
-      return 0;
-    }
-  }
-
-  /** The one reason this mention goes unanswered, or nothing when it will be. */
   private unansweredMentionPhrase(
     agent: {
       agent_id: string;
@@ -5905,7 +5669,6 @@ export class PhoneService {
       owner_handle: string | null;
       member: boolean;
       corner: boolean;
-      reachable: boolean;
     },
     sender: { kind: 'human' | 'agent'; handle: string | null },
     senderId: string,
@@ -5952,13 +5715,7 @@ export class PhoneService {
         consequence: systemMessage("phone-service.only-may-address-ask-the-user-for-permission-to-access-the-agent", personMention(agent.owner_handle) ?? systemMessage("phone-service.the-owner"), agentMention),
       };
     }
-    if (agent.reachable) return undefined;
-    return {
-      reason: 'unreachable',
-      verb: systemMessage("phone-service.did-not-answer"),
-      ...(object ? { object } : {}),
-      consequence: systemMessage("phone-service.its-helper-is-offline"),
-    };
+    return undefined;
   }
   /**
    * The agents this message tries to reach, for the sole purpose of saying so
@@ -6089,45 +5846,15 @@ export class PhoneService {
       ).rows[0];
       if (!member) throw new Error('room access denied');
       await lockAgentCommandQueue(database, input.roomId, input.agentId);
-      // Resolve folded Stop handles and validate the running turn under the
-      // claim queue lock, held through cancellation.
-      const folded = (await database.query<{ turn_request_id: string }>(
-        `SELECT head.turn_request_id FROM agent_commands source
-         JOIN agent_commands head ON source.cancellation_reason='coalesced_into:'||head.id
-           AND head.room_id=source.room_id AND head.agent_id=source.agent_id
-         WHERE source.room_id=$1 AND source.agent_id=$2 AND source.turn_request_id=$3
-           AND source.reason IN ('human_tag','direct_message') AND source.state='cancelled'
-           AND head.state='claimed' ORDER BY head.created_at DESC LIMIT 1`,
-        [input.roomId, input.agentId, input.requestId])).rows[0];
-      if (folded) input = { ...input, requestId: folded.turn_request_id };
-      const running = (
-        await database.query<{ author_id: string }>(
-          `SELECT trigger.author_id
-           FROM agent_turns turn
-           JOIN agent_commands command ON command.room_id=turn.room_id AND command.agent_id=turn.agent_id
-             AND command.turn_request_id=turn.request_id
-           JOIN messages trigger ON trigger.id=command.root_source_message_id
-           WHERE turn.room_id=$1 AND turn.request_id=$2 AND turn.agent_id=$3
-             AND turn.status='working'`,
-          [input.roomId, input.requestId, input.agentId],
-        )
-      ).rows[0];
-      if (!running) throw new Error('running turn not found');
-
       const commands = await database.query<CommandRow>(
         `SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3
-         AND action IN ('input','resume') ORDER BY created_at DESC,id DESC FOR UPDATE`,
+         AND action IN ('input','resume') AND state IN ('pending','claimed')
+         AND EXISTS(SELECT 1 FROM messages source WHERE source.id=agent_commands.root_source_message_id) ORDER BY created_at DESC,id DESC FOR UPDATE`,
         [input.roomId, input.agentId, input.requestId],
       );
-      const stopped = await database.query(
-        `UPDATE agent_turns SET status='cancelled',created_at=now()
-         WHERE room_id=$1 AND request_id=$2 AND agent_id=$3 AND status='working'`,
-        [input.roomId, input.requestId, input.agentId],
-      );
-      // Lost the race with the turn's own settling receipt: it answered, and
-      // there is nothing left to stop. Nothing is written, so no line claims a
-      // stop that never happened.
-      if (!stopped.rowCount) throw new Error('running turn not found');
+      const command = commands.rows[0];
+      if (!command || !await endAgentTurn(database, command, 'cancelled', 'stop'))
+        throw new Error('running turn not found');
       const dropped = commands.rows[0] ? await dropQueuedOrdersForStop(database, commands.rows[0]) : 0;
       await systemLine(database, {
         roomId: input.roomId,
@@ -6583,8 +6310,6 @@ export class PhoneService {
       await createCornerFacts(database, id);
       await advanceCorner(database, id, {
         kind: 'open',
-        workspaceId: parent.workspace_id,
-        implementerAgentId: viewerId,
       });
       // Every new corner leaves a static opening in its Room. A resident
       // requesting message anchors it; scratch openings stay at their open time.
@@ -8856,14 +8581,8 @@ export class PhoneService {
     if (!this.composio) return [];
     return Promise.all(
       [...new Set(keys)].map(async (appKey) => {
-        let timeout: ReturnType<typeof setTimeout> | undefined;
         try {
-          const metadata = await Promise.race([
-            this.composio!.toolkit(appKey),
-            new Promise<undefined>((resolve) => {
-              timeout = setTimeout(() => resolve(undefined), 1500);
-            }),
-          ]);
+          const metadata = await this.composio!.toolkit(appKey);
           if (!metadata) return { appKey };
           return {
             appKey,
@@ -8873,8 +8592,6 @@ export class PhoneService {
           };
         } catch {
           return { appKey };
-        } finally {
-          clearTimeout(timeout);
         }
       }),
     );
@@ -9603,7 +9320,7 @@ export class PhoneService {
           [row.id, viewerId],
         )).rows[0];
         return current && (current.sign_in?.url || current.status === 'connected' || current.status === 'error') ? current : undefined;
-      }, 15_000, { principal: 'connector', operation: 'status', commandId: row.id });
+      }, { principal: 'connector', operation: 'status', commandId: row.id });
       if (ready?.status === 'error') throw new Error('The MCP connection could not start. Reconnect to retry.');
       return {
         appId: installed.id,

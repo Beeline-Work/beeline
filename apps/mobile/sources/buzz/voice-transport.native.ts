@@ -1,5 +1,4 @@
 import { getBuzzRuntimeConfig } from './runtime-config';
-export { voiceFetch } from './voice-request';
 import { Room, RoomEvent, Track } from 'livekit-client';
 import { Linking, NativeEventEmitter, NativeModules, PermissionsAndroid, Platform, TurboModuleRegistry } from 'react-native';
 

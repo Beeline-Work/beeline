@@ -102,18 +102,6 @@ it('keeps audio live without a per-person idle event or deadline', async () => {
   } finally { vi.useRealTimers(); }
 });
 
-it('sends native voice control through the shared socket', async () => {
-  vi.useFakeTimers();
-  try {
-    const { voiceFetch } = await import('./voice-transport.native');
-    const response = await voiceFetch('https://proof/v1/phone/voice/call/idle', { method: 'POST' });
-    expect(await response.json()).toEqual({ ended: true });
-    expect(socketRequest).toHaveBeenCalledWith('voiceIdle', { callId: 'call' }, { timeoutMs: 20_000, signal: undefined });
-    expect(vi.getTimerCount()).toBe(0);
-  } finally { vi.useRealTimers(); }
-});
-
-
 it('configures native Stop for the current session and drops late configuration after close', async () => {
   native.background.configureStop.mockClear();
   const transport = await createVoiceRoom();

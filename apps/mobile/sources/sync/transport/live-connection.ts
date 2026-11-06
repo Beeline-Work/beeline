@@ -100,6 +100,7 @@ export class LiveConnection {
   private readonly paintOwners = new Map<string, Registration>();
   private requestId = 0;
   private socketEpoch = 0;
+  private socketGeneration = 0;
   // Identity protects against old authorization completing after sign-out.
   private identity = 0;
   // An old screen's release must not hide a new identity's view of the same Room.
@@ -277,6 +278,7 @@ export class LiveConnection {
         if (this.connecting !== connection || identity !== this.identity) return;
         const socket = new WebSocket(this.deps.liveUrl(), [`bearer.${token}`]);
         this.socket = socket;
+        this.socketGeneration++;
         socket.onopen = () => {
           if (this.socket !== socket) return;
           this.connecting = undefined;
@@ -350,6 +352,18 @@ export class LiveConnection {
   reconnectNow(): void {
     if (this.socket && this.socket.readyState > 1) this.dropConnection();
     if (!this.socket) void this.ensureSocket().catch(() => undefined);
+  }
+
+  /** One failed explicit send may replace its socket, then refresh open screens. */
+  reconnectAfterFailedSend(generation: number): Promise<void> {
+    // Concurrent failures share recovery; an old outcome cannot drop a new socket.
+    if (this.disposed) return Promise.resolve();
+    if (this.connecting) return this.connecting.promise;
+    if (generation !== this.socketGeneration) return Promise.resolve();
+    this.dropConnection();
+    const opening = this.ensureSocket();
+    this.refreshRoom();
+    return opening;
   }
 
   view(roomId: string): () => void {
@@ -458,8 +472,8 @@ export class LiveConnection {
       });
     }
   }
-  diagnostics(): { state: number | null; connecting: boolean } {
-    return { state: this.socket?.readyState ?? null, connecting: Boolean(this.connecting) };
+  diagnostics(): { state: number | null; connecting: boolean; generation: number } {
+    return { state: this.socket?.readyState ?? null, connecting: Boolean(this.connecting), generation: this.socketGeneration };
   }
   dispose(): void {
     this.disposed = true;

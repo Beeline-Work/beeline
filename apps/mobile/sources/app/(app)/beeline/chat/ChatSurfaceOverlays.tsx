@@ -40,6 +40,7 @@ type Props = {
   pasteImage: () => Promise<void>;
   setMessageActionsTarget: React.Dispatch<React.SetStateAction<ChatDisplayMessage | null>>;
   messageActionsTarget: ChatDisplayMessage | null;
+  outbox: import('./useRoomSurfaceSession').RoomSurfaceOutboxHandle;
   handleReactToMessage: (message: ChatDisplayMessage, emoji: MessageReactionEmoji) => Promise<void>;
   messageIsBookmarked: (message: ChatDisplayMessage) => boolean;
   handleBookmarkMessage: (message: ChatDisplayMessage) => Promise<void>;
@@ -149,6 +150,7 @@ export function ChatSurfaceOverlays({
   pasteImage,
   setMessageActionsTarget,
   messageActionsTarget,
+  outbox,
   handleReactToMessage,
   messageIsBookmarked,
   handleBookmarkMessage,
@@ -262,8 +264,16 @@ export function ChatSurfaceOverlays({
         onClose={() => setMessageActionsTarget(null)}
         testID="message-actions-sheet"
         title="Message"
+        subtitle={messageActionsTarget ? outbox.states.get(messageActionsTarget.id)?.reason : undefined}
         visible={Boolean(messageActionsTarget)}
       >
+        {messageActionsTarget && outbox.states.get(messageActionsTarget.id)?.kind !== 'sending' && outbox.current()?.get(messageActionsTarget.id) ? (
+          <HullActionSheetRow label="Retry" testID="message-retry-action" onPress={() => {
+            const target = messageActionsTarget;
+            setMessageActionsTarget(null);
+            void outbox.retry([target.id]);
+          }} />
+        ) : null}
         {messageActionsTarget && !messageActionsTarget.isAgentActivity ? (
           // The reaction entry point is the emoji scroll itself — the sheet's
           // top cell, with no React row and nothing to expand above it.

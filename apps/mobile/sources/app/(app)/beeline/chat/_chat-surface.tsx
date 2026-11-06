@@ -736,6 +736,7 @@ export function BuzzChatSurface({
   pasteImage={pasteImage}
   setMessageActionsTarget={setMessageActionsTarget}
   messageActionsTarget={messageActionsTarget}
+  outbox={outbox}
   handleReactToMessage={handleReactToMessage}
   messageIsBookmarked={messageIsBookmarked}
   handleBookmarkMessage={handleBookmarkMessage}

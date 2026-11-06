@@ -25,6 +25,7 @@ export type RoomMessagePresentation = {
   /** Width-class changes must cross the memo boundary to repaint row controls. */
   desktopLayout?: boolean;
   sendState?: MessageSendState;
+  sendFailureIds?: readonly string[];
   firstBylineOfDay?: boolean;
   untaggedHint?: boolean;
   deliveryFailed?: boolean;
@@ -80,6 +81,22 @@ export type RoomMessagePresentation = {
   /** This row's proposal choices accept a tap. Absent when the row is not a proposal. */
   cornerProposalEnabled?: boolean;
 };
+
+/** Only the newest row in each visible consecutive failure run owns its action. */
+export function messageFailureGroups(
+  messages: readonly Pick<ChatDisplayMessage, 'id' | 'isUser'>[],
+  states: ReadonlyMap<string, MessageSendState>,
+): ReadonlyMap<string, readonly string[]> {
+  const groups = new Map<string, readonly string[]>();
+  let run: string[] = [];
+  for (const message of messages) {
+    const state = states.get(message.id);
+    if (message.isUser && state && state.kind !== 'sending') run.push(message.id);
+    else if (run.length) { groups.set(run[run.length - 1], run); run = []; }
+  }
+  if (run.length) groups.set(run[run.length - 1], run);
+  return groups;
+}
 
 /** Parent state that can change a card's buttons without changing its message. */
 export type LiveCardInputs = {

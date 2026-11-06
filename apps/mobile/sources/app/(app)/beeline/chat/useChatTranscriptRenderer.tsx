@@ -1,6 +1,6 @@
 import { VaultSaveCard } from '@/components/buzz/VaultSaveCard';
 import { RepositoryOnboardingCard } from './RepositoryOnboardingCard';
-import React, { useCallback } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { View, Text } from 'react-native';
 import { router } from 'expo-router';
 import { Modal } from '@/modal';
@@ -15,7 +15,7 @@ import { ComputerSessionCard } from '@/components/buzz/ComputerSession';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { messageJumpHref } from '@/buzz/corner-navigation';
 import { type MessageReplyDisplayTarget } from '@/buzz/message-reply';
-import { archiveActionPresentation, liveCardPresentation, messageRosterPresentation, useRoomMessageRenderItem } from '@/buzz/room-message-cell';
+import { archiveActionPresentation, liveCardPresentation, messageFailureGroups, messageRosterPresentation, useRoomMessageRenderItem } from '@/buzz/room-message-cell';
 import type { RoomMessagePresentation, RoomMessageRenderContext } from '@/buzz/room-message-cell';
 import { GitHubEventCard, NotificationLifecycleCard, DaemonFactCard, GrantRequestCard, SquireApprovalCard, ConnectorOfferCard, AppSignInCard, ChoiceCard, WalletCards, agentCommandTranscriptMessage, OrdinaryLedgerMessage, TargetBranchProposalCard, WritePermissionCard } from './RoomMessageVariants';
 import { monolithPhoneOperation, phoneOperationFailureReason } from '@/sync/transport/monolith-operation';
@@ -132,6 +132,7 @@ export function useChatTranscriptRenderer([
         deliveryFailed = false,
         desktopLayout: rowDesktopLayout = false,
         sendState,
+        sendFailureIds,
         speakerWorking: rowSpeakerWorking = false,
         cornerProposalAnswer,
         cornerProposalAction: rowCornerProposalAction,
@@ -496,6 +497,8 @@ export function useChatTranscriptRenderer([
           untaggedHint={untaggedHint}
           deliveryFailed={deliveryFailed}
           sendState={sendState}
+          sendFailureIds={sendFailureIds}
+          onRetry={outbox.retry}
           onChannelReference={rowActions.handleOpenChannelReference}
           codeRoomId={decodedId}
           onOpenCode={handleOpenCode}
@@ -580,6 +583,7 @@ export function useChatTranscriptRenderer([
       viewerIsAgent,
       beginReply,
       dismissOutboxMessage,
+      outbox.retry,
       replyTargetForMessage,
       channelReferenceIndex,
       dismissComposerKeyboard,
@@ -599,12 +603,14 @@ export function useChatTranscriptRenderer([
   // Resolve changing transcript-wide indexes before the memo boundary. A new
   // hint, byline opener, working speaker, or this row's roster paint changes
   // only that row's props.
+  const failureGroups = useMemo(() => messageFailureGroups(visibleMessages, outbox.states), [visibleMessages, outbox.states]);
   const presentationForMessage = useCallback((item: ChatDisplayMessage): RoomMessagePresentation => ({
     desktopLayout: isDesktop,
     firstBylineOfDay: bylineOpeners.has(item.id),
     untaggedHint: hintMessageIds.has(item.id),
     deliveryFailed: failedOutboxIds.has(item.id),
     sendState: outbox.states?.get(item.id),
+    sendFailureIds: failureGroups.get(item.id),
     speakerWorking: Boolean(item.pubkey && speakerWorking[item.pubkey]),
     cornerProposalAnswer: answerByMessageId.get(item.relayId ?? item.id) ?? null,
     cornerProposalAction: cornerProposalAction?.messageId === item.id ? cornerProposalAction.decision : null,
@@ -643,6 +649,7 @@ export function useChatTranscriptRenderer([
     hintMessageIds,
     failedOutboxIds,
     outbox.states,
+    failureGroups,
     speakerWorking,
     answerByMessageId,
     cornerProposalAction,

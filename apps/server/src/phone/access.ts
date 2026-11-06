@@ -1,11 +1,12 @@
+import { type PhoneIdentityRow as IdentityRow, phoneIdentity as identity } from '../phone-identity.js';
 import type { AgentGrantView } from '@beeline/api-contract/phone';
 import { type AgentGrantStatus } from '@beeline/api-contract/agent-grants';
 import { type SqlDatabase } from '../database.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { PhoneContext } from './context.js';
 import { AGENT_OWNER_AUTHORITY_MESSAGE, WORKSPACE_ADMIN_AUTHORITY_MESSAGE } from './values.js';
-import { IdentityRow } from './types.js';
-import { identity } from './read-projection.js';
+
+
 
 
 

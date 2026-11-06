@@ -1,11 +1,12 @@
+import { type PhoneIdentityRow as IdentityRow, phoneIdentity as identity } from '../phone-identity.js';
 import { mcpClientName } from '../rooms-mcp-logos.js';
 import { agentUsageColumns, projectAgentUsage } from '../agent-usage.js';
 import { ROOM_VIEW_CHAT_LIMIT, WORKSPACE_MEMBER_PAGE_SIZE } from '@beeline/api-contract/phone';
 import type { RoomViewIdentity, RoomViewMember, WorkspaceAgentView, WorkspaceMemberListQuery, WorkspaceMemberListView } from '@beeline/api-contract/phone';
 import type { PhoneContext } from './context.js';
-import { IdentityRow, MemberRow, RosterAgentRow, mcpClientIdentitySql } from './types.js';
+import { MemberRow, RosterAgentRow, mcpClientIdentitySql } from './types.js';
 import { phoneOptionalEnrichment } from './optional-enrichment.js';
-import { reviveDates, identity, selectedModelLabel, projectAgentPresence } from './read-projection.js';
+import { reviveDates, selectedModelLabel, projectAgentPresence } from './read-projection.js';
 
 
 

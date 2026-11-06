@@ -224,8 +224,6 @@ vi.mock('@/components/buzz/MemberRosterRow', () => hostModule('MemberRosterRow')
 
 vi.mock('@/components/buzz/MemberPickerSheet', () => hostModule('MemberPickerSheet'));
 
-vi.mock('@/components/buzz/MembersGlyph', () => hostModule('MembersGlyph'));
-
 vi.mock('@/components/buzz/Button', () => hostModule('Button'));
 
 vi.mock('@/components/buzz/NewRoomDialog', () => hostModule('NewRoomDialog'));

@@ -1,3 +1,4 @@
+import { type PhoneIdentityRow as IdentityRow } from '../phone-identity.js';
 import { withdrawMergeApprovalsBy } from '../corner-merge-approval.js';
 import { cornerOwnerSql } from '../corner-worker.js';
 import { collapseTombstonedCornerHolds } from '../corner-holds.js';
@@ -10,7 +11,7 @@ import { closeCornerState, lockCornerArchivalAuthority, markOwnedCornersAbandone
 import { DELETED_ACCOUNT_IDENTITY_ID, DELETED_ACCOUNT_NAME, SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { PhoneContext } from './context.js';
 import { phoneRequireIdentity } from './access.js';
-import { Input, IdentityRow } from './types.js';
+import { Input } from './types.js';
 import { phoneManagedIdentity } from './repositories.js';
 
 

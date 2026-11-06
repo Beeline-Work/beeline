@@ -1,3 +1,4 @@
+import { phoneIdentity as identity } from '../phone-identity.js';
 import { registryServerAppKey, registryServerDomain } from '@beeline/api-contract/workbench';
 import { companyForMcp } from '../company-mcp-discovery.js';
 import { COMPANY_REGISTRY } from '../company-registry.js';
@@ -7,7 +8,7 @@ import { appIdentity } from '@beeline/api-contract/workbench';
 import type { PhoneContext } from './context.js';
 import { Input, Output } from './types.js';
 import { phoneReadWorkbench } from './workbench-reads.js';
-import { identity } from './read-projection.js';
+
 
 
   /**

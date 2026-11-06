@@ -12,8 +12,8 @@ import { CHANNEL_MENTION_HANDLE, SYSTEM_MENTION_HANDLE, hasChannelMentionToken }
 import { SYSTEM_IDENTITY_PUBKEY } from '@/buzz/system-identity';
 import { emojiTextStyle } from '@/buzz/emoji-text';
 import { shouldShowReplyReference } from '@/buzz/reply-reference';
-import { draftRequestId, provisionalDraftKey, rememberProvisionalDraft, takeProvisionalDraft } from '@/buzz/draft-settle';
-import { liveDraftDrainStore } from '@/buzz/live-draft-drain';
+import { draftRequestId, provisionalDraftKey } from '@/buzz/draft-settle';
+import { RoomPresentationContext } from '@/buzz/room-presentation-context';
 import { splitLedgerText } from '@/buzz/ledger-text';
 import { splitViewerContext } from '@/buzz/viewer-conversation';
 import { parseConnectorReceipt } from '@/buzz/connector-receipt';
@@ -36,8 +36,6 @@ import { TranscriptCard } from '@/components/buzz/TranscriptCard';
 import { forwardedMessageParts } from '@/buzz/message-forward';
 import { agentMessageJsonMarkdown } from '@/buzz/agent-message-json';
 import { OrdinaryLedgerMessageProps, agentBylineLabel, SwipeToReply, ConnectorReceiptCard, AttachmentCard, ViewerContextReference } from './RoomMessageVariants-attachment-card';
-
-
 
 export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   message,
@@ -80,6 +78,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   announcementFeed = false,
   desktopLayout = false,
 }: OrdinaryLedgerMessageProps) {
+  const liveDraftDrainStore = React.useContext(RoomPresentationContext);
   const artifactVisible = useArtifactRowVisible(message.id, Boolean(message.attachments?.some(attachment => !attachment.expired)));
   const replyAvailable = canBeginReply(message, codeRoomId ?? message.reference?.channelId ?? '');
   const isOwn = message.isUser;
@@ -201,15 +200,15 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
         ? liveDraftDrainStore.getReceived(message.agentMessageDraftKey)
         : '');
     if (!text) return;
-    rememberProvisionalDraft(provisionalDraftKey(message.pubkey, draftKey), text);
-  }, [draftKey, message.agentMessageDraft, message.agentMessageDraftKey, message.pubkey]);
+    liveDraftDrainStore.rememberProvisionalDraft(provisionalDraftKey(message.pubkey, draftKey), text);
+  }, [draftKey, liveDraftDrainStore, message.agentMessageDraft, message.agentMessageDraftKey, message.pubkey]);
   // Spent once per settled reply, and decided once per mounted row: a
   // re-render mid-transition must not restart or cancel the dissolve.
   const settleRef = useRef<string | undefined>(undefined);
   if (settleRef.current === undefined) {
     settleRef.current =
       isAgent && message.requestId && message.pubkey && !message.isAgentActivity
-        ? (takeProvisionalDraft(provisionalDraftKey(message.pubkey, message.requestId)) ?? '')
+        ? (liveDraftDrainStore.takeProvisionalDraft(provisionalDraftKey(message.pubkey, message.requestId)) ?? '')
         : '';
   }
   const settleFrom = settleRef.current || undefined;
@@ -439,7 +438,6 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
               />
             }
             title={`Proposed ${CORNER_LABEL}: ${cornerProposal.title}`}
-            wrapTitle
             subline={cornerProposal.objective}
             stamp={ledgerStamp(message.timestamp)}
             body={cornerProposal.warnings.length ? cornerProposal.warnings.join('\n') : undefined}
@@ -473,7 +471,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             footerNoteTestID={`corner-proposal-footer-${message.id}`}
           />
         ) : message.awayWarning ? (
-          <TranscriptCard tier="record" testID="away-warning-card" wrapTitle
+          <TranscriptCard tier="record" testID="away-warning-card"
             title="Schedules and subscriptions will pause in 1 day"
             body={message.text} stamp={ledgerStamp(message.timestamp)} />
         ) : (message.authorIdentity?.pubkey ?? message.pubkey) === SYSTEM_IDENTITY_PUBKEY ? (

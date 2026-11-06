@@ -1,3 +1,4 @@
+import { type PhoneIdentityRow as IdentityRow, phoneIdentity as identity } from '../phone-identity.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { scheduleDisplayTitle } from '../schedule-title.js';
 import { modelChoiceLabel, readRepositoryOnboardingCard } from '@beeline/api-contract/phone';
@@ -6,7 +7,7 @@ import { cornerDisplayName, formatSystemLine, MESSAGE_REACTION_EMOJIS, type Arti
 import { isAgentReachable } from '@beeline/api-contract/agent-access';
 import { mediaIdFromUrl } from '../media-ttl.js';
 import { readVaultSaveCard } from '@beeline/api-contract/phone';
-import { MemberRow, IdentityRow, RoomHeaderRow, AttachmentFacts, MessageRow, RoomScheduleRow } from './types.js';
+import { MemberRow, RoomHeaderRow, AttachmentFacts, MessageRow, RoomScheduleRow } from './types.js';
 import { unix } from './values.js';
 
 
@@ -72,21 +73,6 @@ export function reviveDates<Row extends object>(row: Row, fields: readonly strin
     if (typeof value === 'string') mutable[field] = new Date(value);
   }
   return row;
-}
-
-export function assetUrl(value: string, publicOrigin: string) {
-  return value.startsWith('/') ? `${publicOrigin}${value}` : value;
-}
-
-export function identity(row: IdentityRow, publicOrigin: string): RoomViewIdentity {
-  return {
-    pubkey: row.id,
-    kind: row.kind,
-    name: row.name,
-    ...(row.handle ? { handle: row.handle } : {}),
-    ...(row.avatar ? { avatar: assetUrl(row.avatar, publicOrigin) } : {}),
-    ...(row.face_id ? { face: row.face_id } : {}),
-  };
 }
 
 

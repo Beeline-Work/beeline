@@ -3,6 +3,109 @@ import { describe, expect, it, vi, generateKeyPair, exportPKCS8, GitHubAppClient
 describe('GitHub phone operations', () => {
 const scope1 = fixtureScope1();
 
+  it('Reproduction MERGE-WEBHOOK-2: an edited event for another pull request cannot re-point the corner before its merge', async () => {
+    const workspace = '11111111-1111-4111-8111-111111111111';
+    const room = '22222222-2222-4222-8222-222222222222';
+    const corner = '33333333-3333-4333-8333-333333333333';
+    const branch = 'feature/corner-333333333333';
+    const headSha = '3'.repeat(40);
+    await scope1.database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+    await scope1.database.query(
+      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
+       VALUES(77,$1,'42','owner','User','selected','active')`,
+      [HUMAN],
+    );
+    await scope1.database.query(
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch)
+       VALUES(101,77,'owner/widgets','main')`,
+    );
+    await scope1.database.query(
+      `INSERT INTO rooms(id,workspace_id,created_by,name,repository_remote,github_installation_id)
+       VALUES($1,$2,$3,'General','https://github.com/owner/widgets.git',77)`,
+      [room, workspace, HUMAN],
+    );
+    await scope1.database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
+       VALUES($1,$2,$3,$4,'Two PRs')`,
+      [corner, workspace, room, HUMAN],
+    );
+    await insertCornerFacts(scope1.database, { cornerId: corner, lifecycle: JSON.stringify({
+          checks: 'passing',
+          pr: {
+            number: 100,
+            url: 'https://github.com/owner/widgets/pull/100',
+            headSha,
+          },
+        }) });
+    const app = {
+      installationToken: vi.fn(async () => ({ token: 'room-token' })),
+      readCommitCheckRollup: vi.fn(async () => ({
+        state: 'passed',
+        total: 1,
+        failing: [],
+        checks: [{ name: 'build', status: 'passed' }],
+      })),
+      branchDeletionSafety: vi.fn(async () => ({ defaultBranch: 'main', aheadBy: 0, protected: false })),
+      openPullRequestsForBranch: vi.fn(async () => []),
+      deleteBranch: vi.fn(async () => undefined),
+    } as unknown as GitHubAppClient;
+    const operations = new GitHubOperations(scope1.database, {} as GitHubOAuthClient, app, 'secret');
+    // The corner's own PR #100 is still open; #200 merely shares its head branch.
+    // An edit to #200 arrives first and must not replace the recorded #100.
+    await operations.processWebhook('pull_request', {
+      action: 'edited',
+      installation: { id: 77 },
+      repository: { id: 101, full_name: 'owner/widgets' },
+      pull_request: {
+        number: 200,
+        title: 'Another PR',
+        html_url: 'https://github.com/owner/widgets/pull/200',
+        head: { ref: branch, sha: '2'.repeat(40) },
+        base: { ref: 'main', sha: '4'.repeat(40) },
+        mergeable_state: 'clean',
+      },
+    });
+    await operations.processWebhook('pull_request', {
+      action: 'closed',
+      installation: { id: 77 },
+      repository: { id: 101, full_name: 'owner/widgets' },
+      pull_request: {
+        number: 200,
+        title: 'Another PR',
+        html_url: 'https://github.com/owner/widgets/pull/200',
+        head: { ref: branch, sha: '2'.repeat(40) },
+        base: { ref: 'main' },
+        merged: true,
+        merged_at: '2026-09-30T14:00:00Z',
+        merge_commit_sha: 'f'.repeat(40),
+        merged_by: { login: 'owner' },
+      },
+    });
+    const cornerRow = (
+      await scope1.database.query<{ archived_at: string | null }>(
+        `SELECT archived_at FROM rooms WHERE id=$1`,
+        [corner],
+      )
+    ).rows[0];
+    const recorded = (
+      await scope1.database.query<{ number: string | null }>(
+        `SELECT lifecycle->'pr'->>'number' number FROM corner_facts WHERE corner_id=$1`,
+        [corner],
+      )
+    ).rows[0];
+    const mergedNotes = await scope1.database.query(
+      `SELECT 1 FROM messages WHERE room_id=$1 AND system_event->>'verb'='merged'`,
+      [corner],
+    );
+    console.info(
+      `Reproduction MERGE-WEBHOOK-2: corner PR=#100 edited+merged webhook=#200 recorded=#${recorded?.number} archived=${cornerRow?.archived_at ?? 'no'} mergedNotes=${mergedNotes.rowCount}`,
+    );
+    expect(recorded).toMatchObject({ number: '100' });
+    expect(cornerRow).toMatchObject({ archived_at: null });
+    expect(mergedNotes.rowCount).toBe(0);
+    expect(app.deleteBranch).not.toHaveBeenCalled();
+  });
+
   it('Reproduction MERGE-WEBHOOK-3: a merge event cannot archive for a number recorded after its branch lookup', async () => {
     const workspace = '11111111-1111-4111-8111-111111111111';
     const room = '22222222-2222-4222-8222-222222222222';
@@ -682,116 +785,5 @@ const scope1 = fixtureScope1();
     expect((await scope1.database.query(`SELECT * FROM github_repositories`)).rows).toEqual([]);
     expect((await scope1.database.query(`SELECT consumed_at FROM github_auth_flows WHERE purpose='installation'`)).rows)
       .toEqual([{ consumed_at: null }]);
-  });
-
-
-  it('keeps a listed repository token available while its installation sync is in progress', async () => {
-    const workspace = '11111111-1111-4111-8111-111111111111';
-    const room = '22222222-2222-4222-8222-222222222222';
-    await scope1.database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
-    await scope1.database.query(
-      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
-       VALUES(77,$1,'42','owner','User','selected','active')`,
-      [HUMAN],
-    );
-    await scope1.database.query(
-      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch)
-       VALUES(101,77,'owner/widgets','main'),(102,77,'owner/removed','main')`,
-    );
-    await scope1.database.query(
-      `INSERT INTO rooms(id,workspace_id,name,repository_key,repository_remote,repository_resolution,github_installation_id)
-       VALUES($1,$2,'General','owner/widgets','https://github.com/owner/widgets.git','repository',77)`,
-      [room, workspace],
-    );
-    const app = {
-      installationAccount: vi.fn(async () => ({
-        id: '42',
-        login: 'owner',
-        type: 'User' as const,
-        repositorySelection: 'selected' as const,
-      })),
-      listRepositories: vi.fn(async () => [
-        {
-          id: 101,
-          installationId: 77,
-          fullName: 'owner/widgets',
-          defaultBranch: 'main',
-        },
-      ]),
-      installationToken: vi.fn(async () => ({
-        token: 'scoped-token',
-        expiresAt: '2030-01-01T00:00:00Z',
-      })),
-    } as unknown as GitHubAppClient;
-    const operations = new GitHubOperations(scope1.database, {} as GitHubOAuthClient, app, 'secret');
-    const query = scope1.database.query.bind(scope1.database);
-    let tokenDuringSync: string | undefined;
-    vi.spyOn(scope1.database, 'query').mockImplementation(async (sql, values) => {
-      if (sql.startsWith('INSERT INTO github_repositories(')) {
-        tokenDuringSync = (await operations.roomToken(room)).token;
-      }
-      return query(sql, values);
-    });
-
-    await operations.processWebhook('installation', {
-      action: 'created',
-      installation: { id: 77 },
-    });
-
-    expect(tokenDuringSync).toBe('scoped-token');
-    expect(await operations.roomToken(room)).toMatchObject({ token: 'scoped-token' });
-    expect(
-      (
-        await scope1.database.query<{ repository_id: number; active: boolean }>(
-          `SELECT repository_id,active FROM github_repositories WHERE installation_id=77 ORDER BY repository_id`,
-        )
-      ).rows,
-    ).toEqual([
-      { repository_id: 101, active: true },
-      { repository_id: 102, active: false },
-    ]);
-  });
-
-  it('does not publish repository changes for an identical installation refresh', async () => {
-    await scope1.database.query(
-      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status,updated_at)
-       VALUES(77,$1,'42','owner','User','selected','active','2020-01-01')`,
-      [HUMAN],
-    );
-    await scope1.database.query(
-      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch,updated_at)
-       VALUES(101,77,'owner/widgets','main','2020-01-01')`,
-    );
-    let defaultBranch = 'main';
-    const app = {
-      installationAccount: vi.fn(async () => ({
-        id: '42', login: 'owner', type: 'User' as const,
-        repositorySelection: 'selected' as const,
-      })),
-      listRepositories: vi.fn(async () => [{
-        id: 101, installationId: 77, fullName: 'owner/widgets', defaultBranch,
-      }]),
-    } as unknown as GitHubAppClient;
-    const operations = new GitHubOperations(scope1.database, {} as GitHubOAuthClient, app, 'secret');
-    const refresh = () => operations.processWebhook('installation', {
-      action: 'created', installation: { id: 77 },
-    });
-
-    await refresh();
-    const dates = async () => ({
-      installation: (await scope1.database.query<{ updated_at: Date }>(
-        `SELECT updated_at FROM github_installations WHERE installation_id=77`,
-      )).rows[0]!.updated_at,
-      repository: (await scope1.database.query<{ updated_at: Date }>(
-        `SELECT updated_at FROM github_repositories WHERE repository_id=101`,
-      )).rows[0]!.updated_at,
-    });
-    expect(await dates()).toEqual({
-      installation: new Date('2020-01-01'), repository: new Date('2020-01-01'),
-    });
-
-    defaultBranch = 'trunk';
-    await refresh();
-    expect((await dates()).repository.getTime()).toBeGreaterThan(new Date('2020-01-01').getTime());
   });
 });

@@ -1,3 +1,4 @@
+import { type PhoneIdentityRow as IdentityRow } from '../phone-identity.js';
 import { type AgentUsageRow } from '../agent-usage.js';
 import { type CornerBriefRow } from '../corner-brief.js';
 import type { AgentGrantView, AgentDetailView, RoomView, RoomScheduleView, RoomViewMessage, SystemEvent } from '@beeline/api-contract/phone';
@@ -12,16 +13,6 @@ import { reviveDates } from './read-projection.js';
 export type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
 
 export type Output<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['output'];
-
-
-export interface IdentityRow {
-  id: string;
-  kind: 'human' | 'agent';
-  name: string;
-  handle: string | null;
-  avatar: string | null;
-  face_id: string | null;
-}
 
 export interface RoomRow {
   id: string;

@@ -1,3 +1,4 @@
+import { assetUrl } from '../phone-identity.js';
 import { isSubscribableEventKind } from '@beeline/api-contract/phone';
 import { setRoomEventSubscriptions } from '../agent-subscriptions.js';
 import { CornerAccessDatabase } from '../corner-access-database.js';
@@ -11,7 +12,7 @@ import { lockIdentityHandleWorkspaces } from '../workspace-handles.js';
 import { grantSquireToOwnerMachineAgents } from '../workbench.js';
 import type { PhoneContext } from './context.js';
 import { hash, unix, normalizeAgentName, CONNECT_RENAME_WINDOW_MS } from './values.js';
-import { assetUrl } from './read-projection.js';
+
 
 
 

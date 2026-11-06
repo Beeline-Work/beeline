@@ -1,3 +1,5 @@
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+
 import { cornerReportWaiting } from './corner-state.js';
 
 import { cornerWaitingReportSql } from './corner-waiting-report.js';
@@ -125,7 +127,7 @@ export const wake = async (agentId = WORKER, id = 'new-work') =>
     agentId,
     sourceMessageId: null,
     reason: 'order',
-    privatePayload: { kind: 'order', text: 'Continue', authorId: COMMANDER, fromRoomId: ROOM },
+    privatePayload: { kind: 'order', text: 'Continue', authorId: agentId === COMMANDER ? HUMAN : COMMANDER, fromRoomId: ROOM },
   });
 
 export const post = async (id: string, text: string, author = WORKER, age = '0 hours') =>
@@ -221,6 +223,7 @@ get daemon(){return daemon;}, set daemon(value: typeof daemon){daemon=value;},
 get phone(){return phone;}, set phone(value: typeof phone){phone=value;},
 };
 
+export { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 export { cornerReportWaiting } from './corner-state.js';
 export { cornerWaitingReportSql } from './corner-waiting-report.js';
 export { cornerIdleSql } from './corner-idle.js';

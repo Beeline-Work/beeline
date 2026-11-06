@@ -188,7 +188,7 @@ export function ChatSurfaceHeaderView({
               ) : (
                 <ChannelHeaderTitle
                   kind={headerTitleKind}
-                  numberOfLines={1}
+
                   onLongPress={canRenameTitle ? startRenameFromTitle : undefined}
                   onPress={
                     !isCorner && !isDirectMessage ? () => setRoomActionsVisible(true) : undefined

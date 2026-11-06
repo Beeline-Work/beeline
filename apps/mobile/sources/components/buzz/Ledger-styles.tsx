@@ -3,8 +3,6 @@ import { StyleSheet } from 'react-native-unistyles';
 import { BYLINE_DOT_SIZE } from './Ledger-ledger-steer';
 import { LEDGER_MARGINALIA_WIDTH } from './Ledger';
 
-
-
 export const styles = StyleSheet.create((theme) => ({
   untaggedHint: {
     ...theme.buzz.type.meta,
@@ -190,15 +188,7 @@ export const styles = StyleSheet.create((theme) => ({
     fontFamily: theme.buzz.proseRegular,
     color: theme.buzz.ledgerQuiet,
   },
-  systemLineMeasurement: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    opacity: 0,
-  },
   systemLineName: { fontFamily: theme.buzz.proseRegular, color: theme.buzz.accent },
-  systemLineToggle: { fontFamily: theme.buzz.proseMedium, color: theme.buzz.accent },
   systemLineLink: {
     fontFamily: theme.buzz.proseRegular,
     color: theme.buzz.ledgerBody,

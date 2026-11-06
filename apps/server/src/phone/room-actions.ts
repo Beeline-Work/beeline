@@ -1,3 +1,4 @@
+import { phoneIdentity as identity } from '../phone-identity.js';
 import { WELCOME_VIDEO_SLUG } from '../welcome-video-workflow.js';
 import { postStarterGame } from '../starter-onboarding.js';
 import { postStarterInviteOffer } from '../starter-invite.js';
@@ -9,7 +10,7 @@ import { answerRoomChoice, postRoomChoice, skipRoomChoice } from '../room-choice
 import type { PhoneContext } from './context.js';
 import { Input, Output } from './types.js';
 import { phoneHasRoomAccess, phoneAssertRoomIsWritable, phoneRequireRoomWorkspaceManager, phoneRequireTopLevelChatMember, phoneRequireGitHub } from './access.js';
-import { identity } from './read-projection.js';
+
 import { messageId } from './values.js';
 import { PhoneService } from '../phone-service.js';
 

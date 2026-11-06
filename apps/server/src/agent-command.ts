@@ -16,8 +16,6 @@ import { createAgentCommand, TAGGED_AGENT_LIFECYCLE_COMMANDS, TaggedAgentLifecyc
 import { readAgentCommands, commandInbox, routeSystemCommand, queueCornerMergeConflict, reconcileCornerMergeBlockers } from './agent-command-read-agent-commands.js';
 import { reconcileConfiguredCornerReviewers } from './agent-command-reconcile-configured-corner-reviewers.js';
 
-
-
 export function checkFailureLogBody(event: { kind?: string; payload?: unknown } | null): string {
   if (event?.kind !== 'check-failed') return '';
   const payload = event.payload as { failedJobs?: unknown; runInProgress?: unknown } | undefined;
@@ -160,7 +158,6 @@ DROP TRIGGER IF EXISTS show_dispatched_agent_work ON agent_commands;
 CREATE TRIGGER show_dispatched_agent_work AFTER INSERT OR UPDATE OF state
   ON agent_commands FOR EACH ROW EXECUTE FUNCTION show_dispatched_agent_work();
 `;
-
 /** Transport data only: orders and reports never become transcript messages. */
 export type PrivateCommandPayload = {
   /** Stable tool-call key on the corner's opening order. */
@@ -171,6 +168,8 @@ export type PrivateCommandPayload = {
   idleSince?: string;
   text: string;
   authorId: string;
+  /** Agent whose work a server-authored report describes; prevents self-wakes. */
+  sourceAgentId?: string;
   fromRoomId: string;
   kind: 'order' | 'report' | 'lifecycle';
   attachments?: RoomInboxResult['items'][number]['attachments'];

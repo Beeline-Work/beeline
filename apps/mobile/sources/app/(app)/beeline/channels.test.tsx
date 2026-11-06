@@ -191,7 +191,7 @@ const scope3 = fixtureScope3();
 
   it('shows the shared Retry after a failed discovery and reads on Retry', async () => {
     deck.selectedWorkspace=null;deck.workspacesResponse={workspaces:[],viewer,truncated:false,watchFilters:[]};
-    deck.workspaceFailures=[new RoomViewHttpError(0,'timeout')];
+    deck.workspaceFailures=[Object.assign(new Error('Socket request failed'), { socketRequest: true })];
     let renderer!:ReactTestRenderer;
     await act(async()=>{renderer=create(React.createElement(BuzzChannels));});await quiet();
     expect(deck.workspaceReads).toBe(1);
@@ -251,7 +251,7 @@ const scope3 = fixtureScope3();
   });
 
   it('does not add a second recovery surface for a socket read timeout', async () => {
-    deck.selectedWorkspace=null;deck.workspaceFailures=[new RoomViewHttpError(0,'timeout')];
+    deck.selectedWorkspace=null;deck.workspaceFailures=[Object.assign(new Error('Socket request failed'), { socketRequest: true })];
     let renderer!:ReactTestRenderer;
     try {
       await act(async()=>{renderer=create(React.createElement(BuzzChannels));});await quiet();

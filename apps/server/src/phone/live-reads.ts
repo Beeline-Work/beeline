@@ -1,3 +1,4 @@
+import { phoneIdentity as identity, assetUrl, type PhoneIdentityRow as IdentityRow } from '../phone-identity.js';
 import { workingTurnFreshSql } from '../turn-ownership.js';
 import { readHelperOverlayFrame } from '@beeline/api-contract/helper-overlay';
 import { CommandScopedDatabase } from '../command-scoped-database.js';
@@ -16,10 +17,10 @@ import { visibleMessageSql, visibleChatMessageSql, viewerReadCursorSql } from '.
 import { readStarPrompt } from '../github-star-prompt.js';
 import type { PhoneContext } from './context.js';
 import { phoneDecorateCornerOpenCards } from './message-decoration.js';
-import { projectedMessage, decorateAttachments, reactionIdentitiesSql, identity, assetUrl } from './read-projection.js';
+import { projectedMessage, decorateAttachments, reactionIdentitiesSql } from './read-projection.js';
 import { phoneAttachmentFacts, phoneProjectAgentTurns, phoneProjectPendingAgentCommands } from './message-enrichment.js';
 import { messageId, unix } from './values.js';
-import { AgentTurnRow, MessageRow, IdentityRow, deckCornerSummary } from './types.js';
+import { AgentTurnRow, MessageRow, deckCornerSummary } from './types.js';
 import { phoneLoadCorners } from './corner-reads.js';
 import { phoneCanReadRooms } from './access.js';
 import { phoneListRoomWorkflowRuns } from './schedules.js';

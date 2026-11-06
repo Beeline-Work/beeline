@@ -12,18 +12,19 @@ import { offerRoomTurns, roomTurns, writeRoomMessage, writeRoomTurn } from '@/bu
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
 import { ReadCursorAdvancer } from '@/buzz/read-cursor-advance';
 import { liveDraftRowId } from '@/buzz/draft-settle';
-import { applyLiveOverlayStructure, liveDraftDrainKey, liveDraftDrainStore } from '@/buzz/live-draft-drain';
+import { applyLiveOverlayStructure, liveDraftDrainKey, type LiveDraftDrainStore } from '@/buzz/live-draft-drain';
 import { createRoomOutbox, mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { identityScope } from '@/buzz/identity-records';
 import { currentSurfaceStamp } from '@/buzz/surface-clock';
 import { BuzzRigTransport } from '@/sync/transport';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
-import { AGENT_TURN_FRESHNESS_MS, mergeAgentPresenceBatch, type RoomAgentPresence } from '@/buzz/agent-presence';
+import { mergeAgentPresenceBatch, type RoomAgentPresence } from '@/buzz/agent-presence';
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 import { takePrefetchedPushRoom } from '@/push/push-room-prefetch';
 import { LIVE_CACHE_WRITE_DELAY_MS, ROOM_READ_UNCHANGED_REASONS, ReceivedLiveTrace, logLiveTrace, queueNewestFrameMark, yieldToPaint, logLivePaintAck, eventTag, eventMarkers, reopenIfDismissed, RoomSurfaceSessionBindings } from './useRoomSurfaceSession';
 
 type Props = [
+  liveDraftDrainStore: LiveDraftDrainStore,
   channelId: string,
   sessionActivated: boolean,
   isCornerRef: import("react/index").RefObject<boolean>,
@@ -63,6 +64,7 @@ type Props = [
   hydrationAttempt: number,
 ];
 export function useRoomSurfaceSubscription([
+  liveDraftDrainStore,
   channelId, sessionActivated, isCornerRef, setFirstUnreadMessageId, isFocusedRef,
   sessionStartedRef, openingCache, agentPresencesRef, reconnectGraceRef, setAgentPresences,
   setPresenceReconnectGrace, setPresenceResolved, liveOverlaysRef, setLiveOverlays,
@@ -543,16 +545,13 @@ export function useRoomSurfaceSubscription([
 
           const markers = eventMarkers(event);
           const requestId = eventTag(event, 'request');
-          const replayedFreshWorkingReceipt =
-            replaying &&
-            eventTag(event, 'status') === 'working' &&
-            Math.abs(Date.now() - event.created_at * 1_000) < AGENT_TURN_FRESHNESS_MS;
+          const replayedWorkingReceipt = replaying && eventTag(event, 'status') === 'working';
           if (
             event.kind === 9 &&
             eventTag(event, 'h') === channelId &&
             markers.includes('agent-turn') &&
             requestId &&
-            (!replaying || replayedFreshWorkingReceipt)
+            (!replaying || replayedWorkingReceipt)
           ) {
             readVisibleRoom();
             return;

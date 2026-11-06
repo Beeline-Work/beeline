@@ -1,9 +1,10 @@
+import { type PhoneIdentityRow as IdentityRow, phoneIdentity as identity, assetUrl } from '../phone-identity.js';
 import { composioToolkitForApp } from '../composio-apps.js';
 import type { RoomViewIdentity, RoomViewMessage } from '@beeline/api-contract/phone';
 import type { PhoneContext } from './context.js';
 import { UUID_PATTERN } from './values.js';
-import { IdentityRow } from './types.js';
-import { identity, assetUrl } from './read-projection.js';
+
+
 import { phoneOptionalEnrichment } from './optional-enrichment.js';
 import { phoneReadAppCatalog } from './workbench-catalog.js';
 

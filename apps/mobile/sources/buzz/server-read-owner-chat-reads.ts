@@ -1,33 +1,18 @@
 import { AppState } from 'react-native';
-
 import { isChatListView, type ChatListView, type SurfaceCacheAddress } from '@beeline/buzz-client';
-
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-
 import { subscribeClientReset } from '@/sync/client-reset';
-
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
-
 import { isDraftFrame } from '@/sync/transport/live-frames';
-
 import { RoomViewClient } from '@/sync/transport/room-view-client';
-
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
-
 import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
-
 import { chatWatchFiltersKey, withoutCornerFacts, withCornerFacts, applyChatListDelta, chatListDeltaNeedsRead, keepUnavailableChatFacts } from './chat-list-delta';
-
 import { applyChatListCorners, cornerStoreClock, getRoomCornerSummary } from './room-corner-store';
-
 import { cacheRoomMessageDelta } from './cache-room-message-delta';
-
 import { currentSurfaceStamp } from './surface-clock';
-
 import { markRoomOpen } from './room-open-trace';
 import type { ChatListKey, ChatListConsumer, ChatListHandle } from './server-read-owner';
-
-
 
 // Existing plain read stores keep the last server answer while the next read runs.
 export namespace ChatReads {
@@ -287,9 +272,6 @@ export namespace ChatReads {
   }
   subscribeClientReset(resetStores);
 
-  export function acquireChatList(key: ChatListKey, consumer: ChatListConsumer): ChatListHandle {
-    return acquireWireChatList(key, consumer);
-  }
   export function liveChatList(key: ChatListKey): ChatListView | null {
 
     const store = stores.get(idOf(key));
@@ -303,7 +285,7 @@ export namespace ChatReads {
     stores.get(idOf(key))?.force();
   }
 
-  function acquireWireChatList(key: ChatListKey, consumer: ChatListConsumer): ChatListHandle {
+  export function acquireChatList(key: ChatListKey, consumer: ChatListConsumer): ChatListHandle {
     const id = idOf(key);
     let store = stores.get(id);
     if (!store) {

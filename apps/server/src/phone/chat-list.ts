@@ -1,3 +1,4 @@
+import { type PhoneIdentityRow as IdentityRow, assetUrl, phoneIdentity as identity } from '../phone-identity.js';
 import type { ChatListView, ChatListItem, RoomViewMessage } from '@beeline/api-contract/phone';
 import { chatActivityAt } from '@beeline/api-contract/phone';
 import { AGENT_REACHABLE_HORIZON_MS, isAgentReachable } from '@beeline/api-contract/agent-access';
@@ -5,8 +6,8 @@ import { tagsKnownIdentitySql } from '../message-mentions.js';
 import { chatCornerCounts, openCornerFactsSql, roomAttentionActorSql, roomNeedsYouSql, roomWorkingSql, type OpenCornerFactsRow } from '../chat-corner-counts.js';
 import { unreadMessageSql, visibleChatMessageSql } from '../read-cursor.js';
 import type { PhoneContext } from './context.js';
-import { IdentityRow, RoomRow, MessageRow } from './types.js';
-import { reviveDates, assetUrl, roomHeader, identity } from './read-projection.js';
+import { RoomRow, MessageRow } from './types.js';
+import { reviveDates, roomHeader } from './read-projection.js';
 import { phoneOptionalEnrichment } from './optional-enrichment.js';
 import { unix } from './values.js';
 

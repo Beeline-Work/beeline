@@ -1,7 +1,89 @@
-import { describe, expect, it, vi, GitHubAppClient, GitHubOAuthClient, insertCornerFacts, setCornerOwner, GitHubOperations, cornerFactsSql, cornerRowState, HUMAN, fixtureScope1, type SqlDatabase, type CornerStateRow } from './github-operations.test-support.js';
+import { describe, expect, it, vi, GitHubAppClient, GitHubOAuthClient, insertCornerFacts, setCornerOwner, GitHubOperations, DaemonService, cornerFactsSql, cornerRowState, LiveHub, readFileSync, runInNewContext, transformSync, HUMAN, REVIEWER, fixtureScope1, type SqlDatabase, type CornerStateRow } from './github-operations.test-support.js';
 
 describe('GitHub phone operations', () => {
 const scope1 = fixtureScope1();
+
+
+  it.each(['green on reopen', 'green after reopen', 'prior head green'])('R1: close, push, stale reopen — %s dispatches once with current card totals', async timing => {
+    const { corners, headSha: oldHead, app, payload } = await scope1.checksFixture();
+    const corner = corners[0]!;
+    // Reopen dispatch requires a reviewer distinct from the implementer.
+    const implementer = 'c'.repeat(64);
+    await scope1.database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Implementer')`, [implementer]);
+    await scope1.database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [implementer, HUMAN]);
+    await setCornerOwner(scope1.database, corner, implementer);
+    const newHead = '2'.repeat(40);
+    const operations = new GitHubOperations(scope1.database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    const prEvent = (action: string, sha: string) => ({
+      ...payload, action, pull_request: {
+        number: 1, title: 'Fix checks', html_url: 'https://github.com/owner/widgets/pull/1',
+        head: { ref: 'feature/corner-333333330001', sha }, base: { ref: 'main' }, mergeable_state: 'clean',
+      },
+    });
+    await operations.processWebhook('pull_request', prEvent('closed', oldHead));
+    await operations.processWebhook('push', {
+      ...payload, ref: 'refs/heads/feature/corner-333333330001', after: newHead,
+    });
+    // Old-head CI can arrive while the PR association is absent.
+    app.readCommitCheckRollup.mockResolvedValue({ state: timing === 'prior head green' ? 'passed' : 'pending', total: 40, failing: [],
+      checks: [{ name: 'old job', status: timing === 'prior head green' ? 'passed' : 'pending' }] });
+    await operations.processWebhook('check_run', payload);
+    app.readPullRequest.mockResolvedValue({ number: 1, headSha: newHead,
+      url: 'https://github.com/owner/widgets/pull/1', mergeability: 'clean' });
+    const green = { state: 'passed', total: 31, failing: [],
+      checks: Array.from({ length: 31 }, (_, i) => ({ name: `job ${i}`, status: 'passed' })) };
+    app.readCommitCheckRollup.mockResolvedValue(timing !== 'green after reopen' ? green : {
+      ...green, state: 'pending', checks: green.checks.map(c => ({ ...c, status: 'pending' })),
+    });
+    // A delayed reopen payload can still name the pre-push head.
+    await operations.processWebhook('pull_request', prEvent('reopened', oldHead));
+    if (timing === 'green after reopen') {
+      app.readCommitCheckRollup.mockResolvedValue(green);
+      await operations.processWebhook('check_run', { ...payload,
+        check_run: { ...payload.check_run, head_sha: newHead,
+          check_suite: { head_branch: 'feature/corner-333333330001', head_sha: newHead } } });
+    }
+    const lifecycle = (await scope1.database.query<{ lifecycle: import('@beeline/api-contract/phone').CornerLifecycleView }>(
+      `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corner],
+    )).rows[0]!.lifecycle;
+    expect(lifecycle).toMatchObject({ pr: { headSha: newHead }, checks: 'passing',
+      checksSummary: { total: 31, status: 'passing' } });
+    // Exercise the exact formatter used by the visible corner header.
+    // Server CI does not install Expo. Compile the pure formatter without
+    // loading the mobile app's Expo tsconfig through Vite.
+    const formatter = transformSync(readFileSync(new URL('../../mobile/sources/buzz/corner-status-line.ts', import.meta.url), 'utf8'), {
+      loader: 'ts', format: 'cjs', tsconfigRaw: {},
+    });
+    const module = { exports: {} };
+    runInNewContext(formatter.code, { module, exports: module.exports });
+    const { cornerStatusLine } = module.exports as typeof import('../../mobile/sources/buzz/corner-status-line.js');
+    expect(cornerStatusLine(lifecycle, false)).toBe('PR #1 · all 31 tests passed');
+    const facts = () => scope1.database.query(`SELECT 1 FROM messages WHERE room_id=$1
+      AND system_event->>'kind'='check-passed' AND system_event->'object'->>'headSha'=$2`, [corner, newHead]);
+    const wakes = () => scope1.database.query(`SELECT command.agent_id FROM agent_commands command
+      JOIN messages source ON source.id=command.source_message_id WHERE command.room_id=$1
+      AND source.system_event->>'kind'='check-passed'
+      AND source.system_event->'object'->>'headSha'=$2`, [corner, newHead]);
+    expect((await facts()).rowCount).toBe(1);
+    expect((await wakes()).rows).toEqual([{ agent_id: REVIEWER }]);
+    await operations.processWebhook('pull_request', prEvent('reopened', oldHead));
+    expect((await facts()).rowCount).toBe(1);
+    expect((await wakes()).rows).toEqual([{ agent_id: REVIEWER }]);
+    const run = (await scope1.database.query<{ head_sha: string }>(`SELECT
+      COALESCE(card->'contents'->>'headSha',card->>'headSha') head_sha FROM messages
+      WHERE room_id=$1 AND card->>'runId'=$1::text ORDER BY (card->>'seq')::int DESC LIMIT 1`, [corner])).rows[0];
+    expect(run?.head_sha).toBe(newHead);
+    const daemon = new DaemonService(scope1.database, new LiveHub());
+    Object.assign(daemon, { github: { assertCornerReviewerNotAuthor: async () => {} } });
+    await expect(daemon.execute('approveCornerMerge', { cornerId: corner, headSha: oldHead }, REVIEWER))
+      .rejects.toThrow(/^STALE_HEAD:/);
+    await expect(daemon.execute('approveCornerMerge', { cornerId: corner, headSha: newHead }, REVIEWER))
+      .resolves.toMatchObject({ status: 'approved', headSha: newHead });
+    expect((await scope1.database.query(`SELECT head_sha FROM corner_merge_approvals WHERE corner_id=$1`, [corner])).rows)
+      .toEqual([{ head_sha: newHead }]);
+    await expect(daemon.execute('approveCornerMerge', { cornerId: corner, headSha: oldHead }, REVIEWER))
+      .rejects.toThrow(/^STALE_HEAD:/);
+  });
 
 
   it('shows a pushed PR head as Review until GitHub reports its checks', async () => {
@@ -618,109 +700,6 @@ const scope1 = fixtureScope1();
     console.info(
       `Reproduction MERGE-WEBHOOK-1: corner PR=#100 merged webhook=#200 archived=${cornerRow?.archived_at ?? 'no'} mergedNotes=${mergedNotes.rowCount}`,
     );
-    expect(cornerRow).toMatchObject({ archived_at: null });
-    expect(mergedNotes.rowCount).toBe(0);
-    expect(app.deleteBranch).not.toHaveBeenCalled();
-  });
-
-  it('Reproduction MERGE-WEBHOOK-2: an edited event for another pull request cannot re-point the corner before its merge', async () => {
-    const workspace = '11111111-1111-4111-8111-111111111111';
-    const room = '22222222-2222-4222-8222-222222222222';
-    const corner = '33333333-3333-4333-8333-333333333333';
-    const branch = 'feature/corner-333333333333';
-    const headSha = '3'.repeat(40);
-    await scope1.database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
-    await scope1.database.query(
-      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
-       VALUES(77,$1,'42','owner','User','selected','active')`,
-      [HUMAN],
-    );
-    await scope1.database.query(
-      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch)
-       VALUES(101,77,'owner/widgets','main')`,
-    );
-    await scope1.database.query(
-      `INSERT INTO rooms(id,workspace_id,created_by,name,repository_remote,github_installation_id)
-       VALUES($1,$2,$3,'General','https://github.com/owner/widgets.git',77)`,
-      [room, workspace, HUMAN],
-    );
-    await scope1.database.query(
-      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
-       VALUES($1,$2,$3,$4,'Two PRs')`,
-      [corner, workspace, room, HUMAN],
-    );
-    await insertCornerFacts(scope1.database, { cornerId: corner, lifecycle: JSON.stringify({
-          checks: 'passing',
-          pr: {
-            number: 100,
-            url: 'https://github.com/owner/widgets/pull/100',
-            headSha,
-          },
-        }) });
-    const app = {
-      installationToken: vi.fn(async () => ({ token: 'room-token' })),
-      readCommitCheckRollup: vi.fn(async () => ({
-        state: 'passed',
-        total: 1,
-        failing: [],
-        checks: [{ name: 'build', status: 'passed' }],
-      })),
-      branchDeletionSafety: vi.fn(async () => ({ defaultBranch: 'main', aheadBy: 0, protected: false })),
-      openPullRequestsForBranch: vi.fn(async () => []),
-      deleteBranch: vi.fn(async () => undefined),
-    } as unknown as GitHubAppClient;
-    const operations = new GitHubOperations(scope1.database, {} as GitHubOAuthClient, app, 'secret');
-    // The corner's own PR #100 is still open; #200 merely shares its head branch.
-    // An edit to #200 arrives first and must not replace the recorded #100.
-    await operations.processWebhook('pull_request', {
-      action: 'edited',
-      installation: { id: 77 },
-      repository: { id: 101, full_name: 'owner/widgets' },
-      pull_request: {
-        number: 200,
-        title: 'Another PR',
-        html_url: 'https://github.com/owner/widgets/pull/200',
-        head: { ref: branch, sha: '2'.repeat(40) },
-        base: { ref: 'main', sha: '4'.repeat(40) },
-        mergeable_state: 'clean',
-      },
-    });
-    await operations.processWebhook('pull_request', {
-      action: 'closed',
-      installation: { id: 77 },
-      repository: { id: 101, full_name: 'owner/widgets' },
-      pull_request: {
-        number: 200,
-        title: 'Another PR',
-        html_url: 'https://github.com/owner/widgets/pull/200',
-        head: { ref: branch, sha: '2'.repeat(40) },
-        base: { ref: 'main' },
-        merged: true,
-        merged_at: '2026-09-30T14:00:00Z',
-        merge_commit_sha: 'f'.repeat(40),
-        merged_by: { login: 'owner' },
-      },
-    });
-    const cornerRow = (
-      await scope1.database.query<{ archived_at: string | null }>(
-        `SELECT archived_at FROM rooms WHERE id=$1`,
-        [corner],
-      )
-    ).rows[0];
-    const recorded = (
-      await scope1.database.query<{ number: string | null }>(
-        `SELECT lifecycle->'pr'->>'number' number FROM corner_facts WHERE corner_id=$1`,
-        [corner],
-      )
-    ).rows[0];
-    const mergedNotes = await scope1.database.query(
-      `SELECT 1 FROM messages WHERE room_id=$1 AND system_event->>'verb'='merged'`,
-      [corner],
-    );
-    console.info(
-      `Reproduction MERGE-WEBHOOK-2: corner PR=#100 edited+merged webhook=#200 recorded=#${recorded?.number} archived=${cornerRow?.archived_at ?? 'no'} mergedNotes=${mergedNotes.rowCount}`,
-    );
-    expect(recorded).toMatchObject({ number: '100' });
     expect(cornerRow).toMatchObject({ archived_at: null });
     expect(mergedNotes.rowCount).toBe(0);
     expect(app.deleteBranch).not.toHaveBeenCalled();

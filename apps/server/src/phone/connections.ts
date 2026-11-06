@@ -1,3 +1,4 @@
+import { phoneIdentity as identity } from '../phone-identity.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { waitForConnection } from '../connection-wait.js';
 import { registryServerAppKey, registryServerDomain } from '@beeline/api-contract/workbench';
@@ -19,7 +20,7 @@ import { APP_INPUT_MAX_LENGTH, CONNECTOR_ADAPTER_DENIED, connectorAdapter, conne
 import type { PhoneContext } from './context.js';
 import { Input, Output } from './types.js';
 import { phoneViewerWorkbenchWorkspace, phoneAssertWorkbenchViewer } from './workbench-catalog.js';
-import { identity } from './read-projection.js';
+
 import { phoneResolveViewerHelper } from './workbench-reads.js';
 import { phoneResolveDirectMessage } from './members-invites.js';
 import { phoneSendMessage } from './messages.js';

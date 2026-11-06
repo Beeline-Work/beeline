@@ -1,3 +1,4 @@
+import { phoneIdentity as identity } from '../phone-identity.js';
 import { cornerOwnerSql } from '../corner-worker.js';
 import { mcpClientName } from '../rooms-mcp-logos.js';
 import { agentUsageColumns, projectAgentUsage, type AgentUsageRow } from '../agent-usage.js';
@@ -11,7 +12,7 @@ import { MemberRow, AgentGrantRow, McpClientIdentity, mcpClientIdentitySql } fro
 import { PROFILE_GRANT_LIMIT, unix, MemberGrantRow } from './values.js';
 import { phoneOptionalEnrichment } from './optional-enrichment.js';
 import { phoneProjectMembers } from './roster.js';
-import { identity, reviveDates } from './read-projection.js';
+import { reviveDates } from './read-projection.js';
 
 
 

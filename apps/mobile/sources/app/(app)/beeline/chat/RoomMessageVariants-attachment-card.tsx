@@ -30,8 +30,6 @@ import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { ALIVE_RING_PAD } from '@/buzz/identity-mark';
 import { styles } from './RoomMessageVariants-ordinary-ledger-message';
 
-
-
 /**
  * Attachment bytes are kept for 24 hours (`apps/server/src/media-ttl.ts`); the
  * message that carried them is kept forever. Past the window the server marks
@@ -79,10 +77,10 @@ export function AttachmentCard({
           <Text style={[styles.attachmentFileGlyphText, styles.attachmentExpired]}>▧</Text>
         </View>
         <View style={styles.attachmentCopy}>
-          <Text numberOfLines={1} style={[styles.attachmentName, styles.attachmentExpired]}>
+          <Text style={[styles.attachmentName, styles.attachmentExpired]}>
             {attachment.name}
           </Text>
-          <Text numberOfLines={1} style={styles.attachmentMeta}>
+          <Text style={styles.attachmentMeta}>
             EXPIRED · {metadata}
           </Text>
         </View>
@@ -128,10 +126,10 @@ export function AttachmentCard({
         </View>
       )}
       <View style={styles.attachmentCopy}>
-        <Text numberOfLines={1} style={styles.attachmentName}>
+        <Text style={styles.attachmentName}>
           {attachment.name}
         </Text>
-        <Text numberOfLines={1} style={styles.attachmentMeta}>
+        <Text style={styles.attachmentMeta}>
           {metadata}
         </Text>
       </View>

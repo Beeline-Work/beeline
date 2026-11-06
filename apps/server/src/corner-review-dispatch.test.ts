@@ -668,10 +668,10 @@ describe('corner message attribution', () => {
     try {
       const assignment = async (revision: number, queue = true) => {
         await rootFixture.db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,content,spec,author_id,source_room_id)
-          VALUES($1,$2,'Brief',$3,$4,$5)`, [C, revision, `Brief at ${revision}`, A, R]);
+          VALUES($1,$2,'Brief',$3,$4,$5)`, [C, revision, `Brief at ${revision}`, H, R]);
         if (!queue) return;
         const line = await systemLine(rootFixture.db, { roomId: C,
-          subject: { kind: 'agent', id: A, name: 'Hoots' }, verb: 'revised the corner brief',
+          subject: { kind: 'person', id: H, name: 'Ada' }, verb: 'revised the corner brief',
           object: { text: `Revision ${revision}`, id: C } });
         await createAgentCommand(rootFixture.db, { roomId: C, agentId: A, sourceMessageId: line.id,
           reason: 'corner_brief_revision' });
@@ -683,7 +683,7 @@ describe('corner message attribution', () => {
       expect((await commands(A, C)).map(c => c.id)).toContain(old!.id);
       const human = await rootFixture.phone.execute('sendRoomMessage', { roomId: C, text: '@hoots keep this instruction' }, H);
       const line = await systemLine(rootFixture.db, { roomId: C,
-        subject: { kind: 'agent', id: A, name: 'Hoots' }, verb: 'revised the corner brief',
+        subject: { kind: 'person', id: H, name: 'Ada' }, verb: 'revised the corner brief',
         object: { text: 'Revision 2', id: C } });
       const replacement = await createAgentCommand(rootFixture.db, { roomId: C, agentId: A,
         sourceMessageId: line.id, reason: 'corner_brief_revision' });
@@ -715,10 +715,10 @@ describe('corner message attribution', () => {
     // its system line, and the corner_brief_revision assignment command.
     const assignment = async (revision: number) => {
       await rootFixture.db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,content,spec,author_id,source_room_id)
-        VALUES($1,$2,'Brief',$3,$4,$5)`, [C, revision, `Brief at ${revision}`, A, R]);
+        VALUES($1,$2,'Brief',$3,$4,$5)`, [C, revision, `Brief at ${revision}`, H, R]);
       const line = await systemLine(rootFixture.db, {
         roomId: C,
-        subject: { kind: 'agent', id: A, name: 'Hoots' },
+        subject: { kind: 'person', id: H, name: 'Ada' },
         verb: 'revised the corner brief',
         object: { text: `Revision ${revision}`, id: C },
       });

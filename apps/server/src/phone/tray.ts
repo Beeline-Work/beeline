@@ -1,9 +1,10 @@
+import { phoneIdentity as identity } from '../phone-identity.js';
 import { readMessageBookmarks } from '../tray-projection.js';
 import { CommandRefusalError } from '../command-refusal.js';
 import { clearNeedsYouQuestions, countNeedsYouItems, needsYouItems } from '../needs-you.js';
 import type { PhoneContext } from './context.js';
 import { Input, Output } from './types.js';
-import { identity } from './read-projection.js';
+
 import { phoneRequireWorkspaceMember } from './access.js';
 import { messageId } from './values.js';
 

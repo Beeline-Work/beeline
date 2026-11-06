@@ -1,4 +1,4 @@
-import { cornerReportWaiting, cornerIdleSql, cornerOwedAnswerTimesSql, expect, it, PgliteDatabase, insertCornerFacts, createAgentCommand, CORNER_ATTENTION_SCHEMA, refreshCornerAttention, WS, ROOM, C, HUMAN, COMMANDER, WORKER, REVIEWER, db, daemon, phone, state, wake, post, commanderFlags, turn, end, ci, rootFixture } from './corner-attention.integration.test-support.js';
+import { SYSTEM_IDENTITY_ID, cornerReportWaiting, cornerIdleSql, cornerOwedAnswerTimesSql, expect, it, PgliteDatabase, insertCornerFacts, createAgentCommand, CORNER_ATTENTION_SCHEMA, refreshCornerAttention, WS, ROOM, C, HUMAN, COMMANDER, WORKER, REVIEWER, db, daemon, phone, state, wake, post, commanderFlags, turn, end, ci, rootFixture } from './corner-attention.integration.test-support.js';
 
 
 
@@ -79,7 +79,7 @@ it.each(['agent', 'human'] as const)('REPORT-WAITING-DERIVED: %s report quiets w
     for (const input of ['return-room-answer', 'commander-order', 'new-head'] as const) {
       const automatic = await createAgentCommand(rootFixture.db, { id: `automatic-${input}`, roomId: C, agentId: WORKER,
         sourceMessageId: null, reason: 'corner_lifecycle',
-        privatePayload: { kind: 'lifecycle', authorId: WORKER, fromRoomId: C, text: 'Continue automatically' } });
+        privatePayload: { kind: 'lifecycle', authorId: SYSTEM_IDENTITY_ID, fromRoomId: C, text: 'Continue automatically' } });
       expect(automatic).toBeDefined();
       expect((await rootFixture.db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2`, [C,automatic!.turn_request_id])).rows)
         .toEqual([{ status: 'working' }]);

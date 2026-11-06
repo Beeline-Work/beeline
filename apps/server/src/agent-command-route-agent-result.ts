@@ -13,8 +13,6 @@ import { CORNER_LIFECYCLE_CARD_TYPE } from './room-choice.js';
 import { CommandRow, nextAgentDepth, commandValidityCtes, reviewerQuietSql, waitingReportSql, ordinaryWakeSql } from './agent-command.js';
 import { createAgentCommand } from './agent-command-create-agent-command.js';
 
-
-
 export async function routeAgentResult(
   db: SqlDatabase,
   parent: CommandRow | undefined,
@@ -84,8 +82,9 @@ export async function routeAgentResult(
         return command;
       })
       : await dispatch(db);
-    if (dispatched) woken.push(mention.handle);
-    else notWoken.push({ handle: mention.handle, reason: parent && nextAgentDepth(parent.agent_depth) === undefined
+    if (dispatched && (dispatched.state === 'pending' || dispatched.state === 'claimed')) woken.push(mention.handle);
+    else notWoken.push({ handle: mention.handle, reason: dispatched?.state === 'complete'
+      ? 'own output does not start another turn' : parent && nextAgentDepth(parent.agent_depth) === undefined
       ? 'agent tag chain depth limit reached' : 'agent or place is no longer available' });
   }
   return { woken, notWoken };

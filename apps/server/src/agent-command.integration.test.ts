@@ -192,7 +192,7 @@ it('Reproduction stop-queued-orders: Stop drains the queued orders and reports o
 
 it('Stop preserves other senders, source Rooms, targets, human mentions and newer orders', async () => {
   const { queued, root } = await queueStopOrders();
-  for (const [authorId, fromRoomId, agentId] of [[H, R, A], [B, C, A], [B, R, B]]) {
+  for (const [authorId, fromRoomId, agentId] of [[H, R, A], [B, C, A], [H, R, B]]) {
     await createAgentCommand(rootFixture.db, { roomId: R, agentId: agentId!, sourceMessageId: null,
       privatePayload: { kind: 'order', authorId: authorId!, fromRoomId: fromRoomId!, text: 'survivor' }, reason: 'order' });
   }
@@ -433,8 +433,8 @@ it('Reproduction workflow-corner-objective: a corner objective rooted on a paren
     [
       parentHandoffId,
       R,
-      B,
-      'Goosy handed off workflow feedback-triage',
+      A,
+      'Hoots handed off workflow feedback-triage',
       JSON.stringify({
         runId: parentRunId,
         workflowSlug: 'feedback-triage',
@@ -472,8 +472,8 @@ it('a workflow wake for a run in the turn’s own Room still carries the run ins
     [
       handoffId,
       C,
-      B,
-      'Goosy handed off workflow feedback-triage',
+      A,
+      'Hoots handed off workflow feedback-triage',
       JSON.stringify({
         runId,
         workflowSlug: 'feedback-triage',

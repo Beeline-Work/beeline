@@ -1,11 +1,12 @@
+import { type PhoneIdentityRow as IdentityRow, phoneIdentity as identity } from '../phone-identity.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { createHash, randomBytes } from 'node:crypto';
 import { HUMAN_CORNER_TITLE_MAX_LENGTH } from '@beeline/api-contract/phone';
 import type { AgentGrantView, RoomViewMember } from '@beeline/api-contract/phone';
 import { type AgentGrantStatus } from '@beeline/api-contract/agent-grants';
 import { type SqlDatabase } from '../database.js';
-import { IdentityRow } from './types.js';
-import { identity } from './read-projection.js';
+
+
 
 
 export const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);

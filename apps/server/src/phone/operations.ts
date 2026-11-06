@@ -1,3 +1,4 @@
+import { phoneIdentity as identity } from '../phone-identity.js';
 import { prepareMentionReplyInput } from '../owed-mentions.js';
 import { setMcpMemberWebhook, McpToolError } from '../rooms-mcp-members.js';
 import { disconnectMcp } from '../rooms-mcp-connections.js';
@@ -43,7 +44,7 @@ import { phoneReadAgent } from './agent-reads.js';
 import { phoneUpdateAgentYolo, phoneUpdateAgentAccessPolicy, phoneRemoveAgent } from './agent-removal.js';
 import { phoneUpdateProfile, phoneUpdateFace, phoneUpdateRoomPushState, phoneUpdatePushLevel, phoneDeleteAccount } from './account-profile.js';
 import { phoneManagedIdentity, phoneSetRepository, phoneSetTargetBranch, phoneRemoveRepositoryBinding, phoneIdentityRecovery, phoneAdoptGitHubHandle, phoneClaimManagedHandle, phoneListRepositories, phoneRepositoryAccess } from './repositories.js';
-import { identity } from './read-projection.js';
+
 import { phoneReadWorkspaces, phoneReadWorkspace } from './workspaces.js';
 import { phoneReadWorkbench, phoneReadConnectorInstall } from './workbench-reads.js';
 import { phoneRegisterPush, phoneReportUpdate } from './push-updates.js';

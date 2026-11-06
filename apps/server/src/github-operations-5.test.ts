@@ -1,7 +1,582 @@
-import { describe, expect, it, vi, GitHubAppClient, GitHubOAuthClient, GitHubOperations, readAgentCommands, HUMAN, REVIEWER, fixtureScope1, fixtureScope2 } from './github-operations.test-support.js';
+import { describe, expect, it, vi, GitHubAppClient, GitHubOAuthClient, seedCornerOpening, insertCornerFacts, GitHubOperations, HUMAN, REVIEWER, fixtureScope1 } from './github-operations.test-support.js';
 
 describe('GitHub phone operations', () => {
 const scope1 = fixtureScope1();
+
+  it("rejects the older overlapping webhook fetch and stores GitHub's latest rollup", async () => {
+    const workspace = '11111111-1111-4111-8111-111111111111';
+    const room = '22222222-2222-4222-8222-222222222222';
+    const corner = '33333333-3333-4333-8333-333333333333';
+    const headSha = '1'.repeat(40);
+    await scope1.database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+    await scope1.database.query(
+      `INSERT INTO github_installations(
+         installation_id,owner_id,account_id,account_login,account_type,repository_selection,status
+       ) VALUES(77,$1,'42','owner','User','selected','active')`,
+      [HUMAN],
+    );
+    await scope1.database.query(
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch)
+       VALUES(101,77,'owner/widgets','main')`,
+    );
+    await scope1.database.query(
+      `INSERT INTO rooms(
+         id,workspace_id,created_by,name,repository_key,repository_remote,
+         repository_resolution,github_installation_id
+       ) VALUES($1,$2,$3,'General','owner/widgets','https://github.com/owner/widgets.git','repository',77)`,
+      [room, workspace, HUMAN],
+    );
+    await scope1.database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
+       VALUES($1,$2,$3,$4,'Checks')`,
+      [corner, workspace, room, HUMAN],
+    );
+    await insertCornerFacts(scope1.database, { cornerId: corner, lifecycle: JSON.stringify({
+          lifecycle: 'in-review',
+          branch: 'feature/corner-333333333333',
+          checks: 'unknown',
+          pr: {
+            number: 1,
+            url: 'https://github.com/owner/widgets/pull/1',
+            title: 'Fix checks',
+            targetBranch: 'main',
+            headSha,
+            mergeability: 'clean',
+          },
+        }) });
+    await scope1.database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Reviewer')`, [
+      REVIEWER,
+    ]);
+    await scope1.database.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [room, REVIEWER]);
+    for (const roomId of [room])
+      await scope1.database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         VALUES($1,$2,$3,'member')`,
+        [workspace, roomId, REVIEWER],
+      );
+    let started!: () => void;
+    let release!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const releaseFirst = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const readCommitCheckRollup = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        started();
+        await releaseFirst;
+        return { state: 'pending', total: 2, failing: [], checks: [] };
+      })
+      .mockResolvedValueOnce({
+        state: 'passed',
+        total: 2,
+        failing: [],
+        checks: [
+          { name: 'lint', status: 'passed' },
+          { name: 'typecheck', status: 'passed' },
+        ],
+      });
+    const app = {
+      installationToken: vi.fn(async () => ({
+        token: 'room-token',
+        expiresAt: '2030-01-01T00:00:00Z',
+      })),
+      readCommitCheckRollup,
+      readPullRequest: vi.fn(async () => ({
+        number: 1,
+        url: 'https://github.com/owner/widgets/pull/1',
+        headSha,
+        mergeability: 'unknown' as const,
+      })),
+      readBranchHead: vi.fn(async () => '4'.repeat(40)),
+    } as unknown as GitHubAppClient;
+    const operations = new GitHubOperations(scope1.database, {} as GitHubOAuthClient, app, 'secret');
+    const payload = (name: string, status: 'in_progress' | 'completed') => ({
+      action: status === 'completed' ? 'completed' : 'in_progress',
+      installation: { id: 77 },
+      repository: { full_name: 'owner/widgets' },
+      check_run: {
+        name,
+        status,
+        ...(status === 'completed' ? { conclusion: 'success' } : {}),
+        check_suite: { head_branch: 'feature/corner-333333333333', head_sha: headSha },
+      },
+    });
+    const first = operations.processWebhook('check_run', payload('lint', 'completed'));
+    await firstStarted;
+    // The aggregate turns green on another delivery for the same check. The
+    // first delivery already used its ordinary GitHub note's deterministic ID.
+    // Local admission is serial; independent servers still overlap their fetches.
+    const otherServer = new GitHubOperations(scope1.database, {} as GitHubOAuthClient, app, 'secret');
+    const second = otherServer.processWebhook('check_run', payload('lint', 'completed'));
+    try {
+      await second;
+      expect(readCommitCheckRollup).toHaveBeenCalledTimes(2);
+    } finally { release(); await first; }
+
+    expect(
+      (
+        await scope1.database.query<{ lifecycle: { checks: string; checksSummary: { status: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle,
+    ).toMatchObject({
+      checks: 'passing',
+      checksSummary: {
+        status: 'passing',
+        total: 2,
+        checks: [{ name: 'lint' }, { name: 'typecheck' }],
+      },
+    });
+    expect(
+      (
+        await scope1.database.query<{ source_kind: string; agent_id: string }>(
+          `SELECT command.agent_id,message.system_event->>'kind' source_kind
+           FROM agent_commands command JOIN messages message ON message.id=command.source_message_id
+           WHERE command.room_id=$1`,
+          [corner],
+        )
+      ).rows,
+    ).toEqual([{ agent_id: REVIEWER, source_kind: 'check-passed' }]);
+    // A re-run on the same head reopens checks, and its green dispatches the
+    // reviewer again even though this head's green note was already written.
+    await scope1.database.query(`DELETE FROM agent_commands WHERE room_id=$1`, [corner]);
+    readCommitCheckRollup.mockResolvedValue({
+      state: 'pending',
+      total: 2,
+      failing: [],
+      checks: [{ name: 'lint', status: 'pending' }],
+    });
+    await operations.processWebhook('check_run', payload('lint', 'completed'));
+    readCommitCheckRollup.mockResolvedValue({
+      state: 'passed',
+      total: 2,
+      failing: [],
+      checks: [{ name: 'lint', status: 'passed' }],
+    });
+    await operations.processWebhook('check_run', payload('lint', 'completed'));
+    expect(
+      (
+        await scope1.database.query<{ agent_id: string }>(
+          `SELECT agent_id FROM agent_commands WHERE room_id=$1`,
+          [corner],
+        )
+      ).rows,
+    ).toEqual([{ agent_id: REVIEWER }]);
+    await scope1.database.query(`DELETE FROM agent_commands WHERE room_id=$1`, [corner]);
+    // The reviewer opened this corner, so it is the one woken for the conflict.
+    await seedCornerOpening(scope1.database, { cornerId: corner, agentId: REVIEWER });
+    await scope1.database.query(`UPDATE rooms SET created_by=$2 WHERE id=$1`, [corner, REVIEWER]);
+    const dirty = {
+      action: 'synchronize',
+      installation: { id: 77 },
+      repository: { full_name: 'owner/widgets' },
+      pull_request: {
+        number: 1,
+        title: 'Fix checks',
+        html_url: 'https://github.com/owner/widgets/pull/1',
+        head: { ref: 'feature/corner-333333333333', sha: headSha },
+        base: { ref: 'main' },
+        mergeable_state: 'dirty',
+        merged: false,
+      },
+    };
+    // A webhook alone never wakes; the live read confirms the conflict.
+    const readPullRequest = app.readPullRequest as ReturnType<typeof vi.fn>;
+    const confirmDirty = {
+      number: 1,
+      url: dirty.pull_request.html_url,
+      headSha,
+      mergeability: 'dirty' as const,
+    };
+    readPullRequest.mockResolvedValueOnce(confirmDirty);
+    await operations.processWebhook('pull_request', dirty);
+    expect(
+      (
+        await scope1.database.query<{ reason: string }>(
+          `SELECT reason FROM agent_commands WHERE room_id=$1 AND reason<>'corner_objective'`,
+          [corner],
+        )
+      ).rows,
+    ).toEqual([{ reason: 'corner_merge_conflict' }]);
+    readPullRequest.mockResolvedValueOnce(confirmDirty);
+    await operations.processWebhook('pull_request', dirty);
+    expect(
+      (await scope1.database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason<>'corner_objective'`, [corner])).rowCount,
+    ).toBe(1);
+    await scope1.database.query(`DELETE FROM agent_commands WHERE room_id=$1 AND reason<>'corner_objective'`, [corner]);
+    readPullRequest.mockResolvedValueOnce(confirmDirty);
+    await operations.processWebhook('pull_request', dirty);
+    expect(
+      (await scope1.database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason<>'corner_objective'`, [corner])).rowCount,
+    ).toBe(1);
+    readCommitCheckRollup.mockResolvedValue({
+      state: 'failed',
+      total: 1,
+      failing: ['lint'],
+      checks: [{ name: 'lint', status: 'failed' }],
+    });
+    const failed = payload('lint', 'completed');
+    failed.check_run.conclusion = 'failure';
+    await operations.processWebhook('check_run', failed);
+    expect(
+      (
+        await scope1.database.query<{ reason: string }>(
+          `SELECT reason FROM agent_commands WHERE room_id=$1 AND reason='corner_check'`,
+          [corner],
+        )
+      ).rows,
+    ).toEqual([{ reason: 'corner_check' }]);
+    // A redelivered failure moves nothing: the one wake already went out with
+    // the transition to implement.
+    await operations.processWebhook('check_run', failed);
+    expect(
+      (
+        await scope1.database.query<{ reason: string }>(
+          `SELECT reason FROM agent_commands WHERE room_id=$1 AND reason='corner_check'`,
+          [corner],
+        )
+      ).rows,
+    ).toEqual([{ reason: 'corner_check' }]);
+    const nextHead = '2'.repeat(40);
+    const unknown = {
+      ...dirty,
+      pull_request: {
+        ...dirty.pull_request,
+        head: { ...dirty.pull_request.head, sha: nextHead },
+        mergeable_state: 'unknown',
+      },
+    };
+    readPullRequest.mockResolvedValueOnce({
+      number: 1,
+      url: dirty.pull_request.html_url,
+      headSha: nextHead,
+      mergeability: 'unknown',
+    });
+    await operations.processWebhook('pull_request', unknown);
+    expect(
+      (
+        await scope1.database.query<{ lifecycle: { pr: { mergeability: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle.pr.mergeability,
+    ).toBe('unknown');
+    expect(
+      (
+        await scope1.database.query(
+          `SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason='corner_merge_conflict'
+      AND source_message_id<>$2`,
+          [
+            corner,
+            (
+              await scope1.database.query<{ source_message_id: string }>(
+                `SELECT source_message_id FROM agent_commands WHERE room_id=$1 AND reason='corner_merge_conflict' LIMIT 1`,
+                [corner],
+              )
+            ).rows[0]?.source_message_id,
+          ],
+        )
+      ).rowCount,
+    ).toBe(0);
+    readPullRequest.mockResolvedValueOnce({
+      number: 1,
+      url: dirty.pull_request.html_url,
+      headSha: nextHead,
+      mergeability: 'dirty',
+    });
+    await operations.refreshStaleMergeability(corner);
+    expect(
+      (
+        await scope1.database.query<{ reason: string }>(
+          `SELECT reason FROM agent_commands WHERE room_id=$1 AND reason='corner_merge_conflict'`,
+          [corner],
+        )
+      ).rows,
+    ).toEqual([{ reason: 'corner_merge_conflict' }, { reason: 'corner_merge_conflict' }]);
+    await operations.processWebhook('pull_request', unknown);
+    expect(
+      (
+        await scope1.database.query(
+          `SELECT 1 FROM agent_commands WHERE room_id=$1
+      AND reason='corner_merge_conflict'`,
+          [corner],
+        )
+      ).rowCount,
+    ).toBe(2);
+    const newestHead = '3'.repeat(40);
+    readPullRequest.mockResolvedValueOnce({
+      number: 1,
+      url: dirty.pull_request.html_url,
+      headSha: nextHead,
+      mergeability: 'dirty',
+    });
+    await operations.processWebhook('pull_request', {
+      ...unknown,
+      pull_request: {
+        ...unknown.pull_request,
+        head: { ...unknown.pull_request.head, sha: newestHead },
+      },
+    });
+    expect(
+      (
+        await scope1.database.query<{ lifecycle: { pr: { headSha: string; mergeability: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle.pr,
+    ).toMatchObject({ headSha: newestHead, mergeability: 'unknown' });
+    expect(
+      (
+        await scope1.database.query(
+          `SELECT 1 FROM agent_commands WHERE room_id=$1
+      AND reason='corner_merge_conflict'`,
+          [corner],
+        )
+      ).rowCount,
+    ).toBe(2);
+    readPullRequest.mockResolvedValueOnce({
+      number: 1,
+      url: dirty.pull_request.html_url,
+      headSha: newestHead,
+      mergeability: 'other',
+    });
+    await operations.refreshStaleMergeability(corner);
+    expect(
+      (
+        await scope1.database.query<{ lifecycle: { pr: { mergeability: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle.pr.mergeability,
+    ).toBe('other');
+    const readsAfterSettlement = readPullRequest.mock.calls.length;
+    await operations.refreshStaleMergeability(corner);
+    // An addressed refresh also rechecks a settled verdict against live GitHub.
+    expect(readPullRequest).toHaveBeenCalledTimes(readsAfterSettlement + 1);
+    await operations.processWebhook('pull_request', {
+      ...unknown,
+      pull_request: {
+        ...unknown.pull_request,
+        head: { ...unknown.pull_request.head, sha: newestHead },
+        mergeable_state: 'behind',
+      },
+    });
+    expect(
+      (
+        await scope1.database.query<{ lifecycle: { pr: { mergeability: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle.pr.mergeability,
+    ).toBe('other');
+    // The synchronize webhook verifies its check verdict against the live PR
+    // even though the mergeability verdict was already settled, in addition
+    // to the explicit addressed refresh above.
+    expect(readPullRequest).toHaveBeenCalledTimes(readsAfterSettlement + 2);
+    const newBaseSha = '4'.repeat(40);
+    readPullRequest.mockResolvedValueOnce({
+      number: 1,
+      url: dirty.pull_request.html_url,
+      headSha: newestHead,
+      baseSha: newBaseSha,
+      mergeability: 'unknown',
+    });
+    const basePush = {
+      installation: { id: 77 },
+      repository: { full_name: 'owner/widgets' },
+      ref: 'refs/heads/main',
+      after: newBaseSha,
+    };
+    await operations.processWebhook('push', basePush);
+    expect(
+      (
+        await scope1.database.query<{ lifecycle: { pr: { baseSha: string; mergeability: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle.pr,
+    ).toMatchObject({ baseSha: newBaseSha, mergeability: 'unknown' });
+    const readsBeforeLatePush = readPullRequest.mock.calls.length;
+    const delayedOldBaseSha = '6'.repeat(40);
+    await operations.processWebhook('push', { ...basePush, after: delayedOldBaseSha });
+    expect(
+      (
+        await scope1.database.query<{ lifecycle: { pr: { baseSha: string; mergeability: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle.pr,
+    ).toMatchObject({ baseSha: newBaseSha, mergeability: 'unknown' });
+    expect(readPullRequest).toHaveBeenCalledTimes(readsBeforeLatePush);
+    readPullRequest.mockResolvedValueOnce({
+      number: 1,
+      url: dirty.pull_request.html_url,
+      headSha: newestHead,
+      baseSha: newBaseSha,
+      mergeability: 'unknown',
+    });
+    await operations.processWebhook('pull_request', {
+      ...unknown,
+      pull_request: {
+        ...unknown.pull_request,
+        head: { ...unknown.pull_request.head, sha: newestHead },
+        mergeable_state: 'clean',
+      },
+    });
+    expect(
+      (
+        await scope1.database.query<{ lifecycle: { pr: { mergeability: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle.pr.mergeability,
+    ).toBe('unknown');
+    readPullRequest.mockResolvedValueOnce({
+      number: 1,
+      url: dirty.pull_request.html_url,
+      headSha: newestHead,
+      baseSha: '5'.repeat(40),
+      mergeability: 'clean',
+    });
+    await operations.refreshStaleMergeability(corner);
+    expect(
+      (
+        await scope1.database.query<{ lifecycle: { pr: { mergeability: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle.pr.mergeability,
+    ).toBe('unknown');
+    readPullRequest.mockResolvedValueOnce({
+      number: 1,
+      url: dirty.pull_request.html_url,
+      headSha: newestHead,
+      baseSha: newBaseSha,
+      mergeability: 'dirty',
+    });
+    await operations.refreshStaleMergeability(corner);
+    expect(
+      (
+        await scope1.database.query<{ lifecycle: { pr: { mergeability: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle.pr.mergeability,
+    ).toBe('dirty');
+    expect(
+      (
+        await scope1.database.query(
+          `SELECT 1 FROM agent_commands WHERE room_id=$1
+      AND reason='corner_merge_conflict'`,
+          [corner],
+        )
+      ).rowCount,
+    ).toBe(3);
+    const readsAfterRecovery = readPullRequest.mock.calls.length;
+    await operations.processWebhook('push', basePush);
+    expect(readPullRequest).toHaveBeenCalledTimes(readsAfterRecovery);
+
+    const raceHead = '9'.repeat(40);
+    await operations.processWebhook('pull_request', {
+      ...unknown,
+      pull_request: {
+        ...unknown.pull_request,
+        head: { ...unknown.pull_request.head, sha: raceHead },
+        base: { ref: 'main', sha: newBaseSha },
+        mergeable_state: 'clean',
+      },
+    });
+    const readBranchHead = app.readBranchHead as ReturnType<typeof vi.fn>;
+    const selectedBase = '7'.repeat(40);
+    const advancedBase = '8'.repeat(40);
+    readBranchHead.mockResolvedValueOnce(selectedBase).mockResolvedValueOnce(advancedBase);
+    readPullRequest.mockResolvedValueOnce({
+      number: 1,
+      url: dirty.pull_request.html_url,
+      headSha: raceHead,
+      baseSha: advancedBase,
+      mergeability: 'dirty',
+    });
+    await operations.processWebhook('push', { ...basePush, after: selectedBase });
+    expect(
+      (
+        await scope1.database.query<{ lifecycle: { pr: { baseSha: string; mergeability: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle.pr,
+    ).toMatchObject({ baseSha: advancedBase, mergeability: 'dirty' });
+    expect(
+      (
+        await scope1.database.query(
+          `SELECT 1 FROM agent_commands WHERE room_id=$1
+      AND reason='corner_merge_conflict'`,
+          [corner],
+        )
+      ).rowCount,
+    ).toBe(4);
+
+    let releaseOlderRead!: () => void;
+    let olderReadStarted!: () => void;
+    const olderRead = new Promise<void>((resolve) => {
+      olderReadStarted = resolve;
+    });
+    const releaseOlder = new Promise<void>((resolve) => {
+      releaseOlderRead = resolve;
+    });
+    const olderCandidate = 'a'.repeat(40);
+    const newerCandidate = 'b'.repeat(40);
+    readBranchHead
+      .mockImplementationOnce(async () => {
+        olderReadStarted();
+        await releaseOlder;
+        return olderCandidate;
+      })
+      .mockResolvedValueOnce(newerCandidate);
+    readPullRequest.mockResolvedValueOnce({
+      number: 1,
+      url: dirty.pull_request.html_url,
+      headSha: raceHead,
+      baseSha: newerCandidate,
+      mergeability: 'unknown',
+    });
+    const firstPush = operations.processWebhook('push', { ...basePush, after: olderCandidate });
+    await olderRead;
+    await otherServer.processWebhook('push', { ...basePush, after: newerCandidate });
+    releaseOlderRead();
+    await firstPush;
+    expect(
+      (
+        await scope1.database.query<{ lifecycle: { pr: { baseSha: string; mergeability: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle.pr,
+    ).toMatchObject({ baseSha: newerCandidate, mergeability: 'unknown' });
+    readPullRequest.mockResolvedValueOnce({
+      number: 1,
+      url: dirty.pull_request.html_url,
+      headSha: raceHead,
+      baseSha: newerCandidate,
+      mergeability: 'dirty',
+    });
+    await operations.refreshStaleMergeability(corner);
+    // The same head is already woken; a later live read against a newer base
+    // does not add a second conflict wake for it.
+    expect(
+      (
+        await scope1.database.query(
+          `SELECT 1 FROM agent_commands WHERE room_id=$1
+      AND reason='corner_merge_conflict'`,
+          [corner],
+        )
+      ).rowCount,
+    ).toBe(4);
+  });
 
   it("reconverges a stored-dirty PR to GitHub's cleared verdict and stops the conflict wake", async () => {
     const { corners, headSha, app } = await scope1.checksFixture();
@@ -219,581 +794,4 @@ const scope1 = fixtureScope1();
     console.info(`Reproduction C2-1: failing wake body="${command?.body ?? ''}"`);
     expect(command?.body).toContain('typecheck');
   });
-
-  it('CHECK-DEADLOCK-1: wakes on first failure and settled followup once across rollback and a new explicit event', async () => {
-    const { corners, headSha, app, payload } = await scope1.checksFixture();
-    const corner = corners[0]!;
-    const checks = [
-      { name: 'TYPECHECK', status: 'failed' as const, url: 'https://github.com/owner/widgets/actions/runs/10/job/101', jobId: 101 },
-      { name: 'desktop', status: 'pending' as const },
-      { name: 'lint', status: 'pending' as const },
-    ];
-    app.readCommitCheckRollup.mockImplementation(async () => ({
-      state: checks.some(c => c.status === 'pending') ? 'pending' as const : 'failed' as const,
-      failing: checks.filter(c => c.status === 'failed').map(c => c.name), checks: [...checks],
-    }));
-    const readJobLog = vi.fn(async (_token: string, _repo: string, jobId: number) => {
-      if (jobId === 102) throw new Error('log temporarily unavailable');
-      return 'earlier context\n##[error]TS2345 bad type\n';
-    });
-    Object.assign(app, { readJobLog });
-    const operations = new GitHubOperations(scope1.database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
-    const failure = (name: string) => ({ ...payload, check_run: {
-      ...payload.check_run, name, conclusion: 'failure',
-      details_url: `https://github.com/owner/widgets/actions/runs/10/job/${name === 'TYPECHECK' ? 101 : 102}`,
-    } });
-    const wakes = async () => (await scope1.database.query<{ body: string }>(
-      `SELECT message.text body FROM agent_commands command JOIN messages message
-       ON message.id=command.source_message_id WHERE command.room_id=$1 AND command.reason='corner_check'
-       ORDER BY message.created_at,message.id`, [corner],
-    )).rows;
-
-    const transaction = scope1.database.transaction.bind(scope1.database);
-    let replay = true;
-    vi.spyOn(scope1.database, 'transaction').mockImplementation(work => transaction(async tx => {
-      const result = await work(tx);
-      if (replay) {
-        replay = false;
-        throw Object.assign(new Error('deadlock detected'), { code: '40P01' });
-      }
-      return result;
-    }));
-    await expect(operations.processWebhook('check_run', failure('TYPECHECK'))).rejects.toMatchObject({ code: '40P01' });
-    expect(await wakes()).toHaveLength(0);
-    await operations.processWebhook('check_run', failure('TYPECHECK'));
-    expect((await wakes())).toHaveLength(1);
-    expect((await wakes())[0]?.body).toContain('TYPECHECK');
-    expect((await scope1.database.query<{ body: string }>(
-      `SELECT system_event->'payload'->'failedJobs'->0->>'errorLines' body FROM messages
-       WHERE room_id=$1 AND system_event->>'kind'='check-failed'`, [corner],
-    )).rows[0]?.body).toContain('##[error]TS2345 bad type');
-    expect(readJobLog).toHaveBeenCalledWith('room-token', 'owner/widgets', 101);
-    const inbox = await readAgentCommands(scope1.database, corner, REVIEWER);
-    expect(inbox.commands[0]?.source.body).toContain('> ##[error]TS2345 bad type');
-    expect(inbox.commands[0]?.source.body).toContain('untrusted outside data');
-
-    checks[1] = { name: 'desktop', status: 'failed', url: 'https://github.com/owner/widgets/actions/runs/10/job/102', jobId: 102 };
-    await operations.processWebhook('check_run', failure('desktop'));
-    expect((await wakes())).toHaveLength(1);
-    checks[2] = { name: 'lint', status: 'passed' };
-    replay = true;
-    await expect(operations.processWebhook('check_run', payload)).rejects.toMatchObject({ code: '40P01' });
-    expect(await wakes()).toHaveLength(1);
-    await operations.processWebhook('check_run', payload);
-    expect((await wakes())).toHaveLength(2);
-    expect((await wakes())[1]?.body).toContain('desktop');
-    const followupInbox = await readAgentCommands(scope1.database, corner, REVIEWER);
-    expect(followupInbox.commands.some(command => command.source.body.includes('https://github.com/owner/widgets/actions/runs/10/job/102'))).toBe(true);
-    await operations.processWebhook('check_run', payload);
-    expect((await wakes())).toHaveLength(2);
-    expect(readJobLog).toHaveBeenCalledTimes(4);
-  });
-
-  it('completes a one-use PKCE account bind and stores only an encrypted user token', async () => {
-    const fetchMock = vi.fn(async (input: string | URL | Request) => {
-      const url = String(input);
-      if (url === 'https://github.test/token')
-        return new Response(JSON.stringify({ access_token: 'secret-user-token' }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      if (url === 'https://api.github.test/user')
-        return new Response(JSON.stringify({ id: 42, login: 'owner', name: 'Owner Name' }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      throw new Error(`unexpected fetch ${url}`);
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    const oauth = new GitHubOAuthClient({
-      clientId: 'client',
-      clientSecret: 'secret',
-      authorizationEndpoint: 'https://github.test/authorize',
-      tokenEndpoint: 'https://github.test/token',
-      apiBaseUrl: 'https://api.github.test',
-    });
-    const app = new GitHubAppClient({ appId: '1', slug: 'beeline-test', privateKey: 'not-used' });
-    const operations = new GitHubOperations(scope1.database, oauth, app, 'secret');
-    const started = await operations.beginIdentity(HUMAN, {
-      redirectUri: 'beeline://callback',
-      state: 'verifier-state',
-    });
-    expect(new URL(started.url).searchParams.get('code_challenge_method')).toBe('S256');
-    await expect(
-      operations.completeIdentity(
-        HUMAN,
-        { challenge: 'oauth-code', proof: 'verifier-state' },
-        false,
-      ),
-    ).resolves.toEqual({ personId: HUMAN, recovered: false });
-    const token = await scope1.database.query<{ encrypted_token: string }>(
-      `SELECT encrypted_token FROM github_user_tokens WHERE subject='42'`,
-    );
-    expect(token.rows[0]?.encrypted_token).not.toContain('secret-user-token');
-    await expect(
-      operations.completeIdentity(
-        HUMAN,
-        { challenge: 'oauth-code', proof: 'verifier-state' },
-        false,
-      ),
-    ).rejects.toThrow('not found or expired');
-  });
-
-  it('reuses the cached provider proof for an explicit identity recovery', async () => {
-    const previous = 'c'.repeat(64);
-    await scope1.database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Previous')`, [
-      previous,
-    ]);
-    await scope1.database.query(
-      `INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience) VALUES('github','42',$1,'https://github.com','client')`,
-      [previous],
-    );
-    const fetchMock = vi.fn(async (input: string | URL | Request) =>
-      String(input).endsWith('/token')
-        ? new Response(JSON.stringify({ access_token: 'secret-user-token' }), {
-            status: 200,
-            headers: { 'content-type': 'application/json' },
-          })
-        : new Response(JSON.stringify({ id: 42, login: 'owner', name: 'Owner' }), {
-            status: 200,
-            headers: { 'content-type': 'application/json' },
-          }),
-    );
-    vi.stubGlobal('fetch', fetchMock);
-    const oauth = new GitHubOAuthClient({
-      clientId: 'client',
-      clientSecret: 'secret',
-      authorizationEndpoint: 'https://github.test/authorize',
-      tokenEndpoint: 'https://github.test/token',
-      apiBaseUrl: 'https://api.github.test',
-    });
-    const operations = new GitHubOperations(
-      scope1.database,
-      oauth,
-      new GitHubAppClient({ appId: '1', slug: 'beeline-test', privateKey: 'not-used' }),
-      'secret',
-    );
-    await operations.beginIdentity(HUMAN, {
-      redirectUri: 'beeline://callback',
-      state: 'recovery-state',
-    });
-    await expect(
-      operations.completeIdentity(
-        HUMAN,
-        { challenge: 'oauth-code', proof: 'recovery-state' },
-        false,
-      ),
-    ).rejects.toThrow('already linked');
-    await expect(
-      operations.completeIdentity(
-        HUMAN,
-        { challenge: 'oauth-code', proof: 'recovery-state' },
-        true,
-      ),
-    ).resolves.toEqual({ personId: HUMAN, recovered: true });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(
-      (
-        await scope1.database.query<{ identity_id: string }>(
-          `SELECT identity_id FROM identity_external_links WHERE subject='42'`,
-        )
-      ).rows[0]?.identity_id,
-    ).toBe(HUMAN);
-  });
-
-
-  it('returns the mobile completion shape after persisting an installation and its repositories', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: string | URL | Request) =>
-        String(input) === 'https://github.test/token'
-          ? new Response(JSON.stringify({ access_token: 'secret-user-token' }), { status: 200 })
-          : new Response(JSON.stringify({ id: 42, login: 'owner', name: 'Owner' }), {
-              status: 200,
-            }),
-      ),
-    );
-    const oauth = new GitHubOAuthClient({
-      clientId: 'client',
-      clientSecret: 'secret',
-      authorizationEndpoint: 'https://github.test/authorize',
-      tokenEndpoint: 'https://github.test/token',
-      apiBaseUrl: 'https://api.github.test',
-    });
-    const app = {
-      installationUrl: vi.fn(
-        (state: string) => `https://github.test/install?state=${encodeURIComponent(state)}`,
-      ),
-      userCanAccessInstallation: vi.fn(async () => true),
-      installationAccount: vi.fn(async () => ({
-        id: '42',
-        login: 'owner',
-        type: 'User' as const,
-        repositorySelection: 'all' as const,
-      })),
-      listRepositories: vi.fn(async () => [
-        {
-          id: 9,
-          installationId: 77,
-          name: 'beeline',
-          fullName: 'owner/beeline',
-          remote: 'https://github.com/owner/beeline.git',
-          defaultBranch: 'main',
-        },
-      ]),
-    } as unknown as GitHubAppClient;
-    const operations = new GitHubOperations(scope1.database, oauth, app, 'secret');
-    await operations.beginIdentity(HUMAN, {
-      redirectUri: 'beeline://github-callback',
-      state: 'callback-state',
-    });
-    await operations.completeIdentity(
-      HUMAN,
-      { challenge: 'oauth-code', proof: 'callback-state' },
-      false,
-    );
-    const started = await operations.beginInstallation(HUMAN, {
-      redirectUri: 'beeline://github-installation',
-    });
-    const state = new URL(started.url).searchParams.get('state');
-
-    await expect(operations.completeInstallation(state!, 77)).resolves.toBe(
-      'beeline://github-installation?installed=1',
-    );
-    expect(
-      (
-        await scope1.database.query<{ full_name: string }>(
-          `SELECT full_name FROM github_repositories WHERE installation_id=77 AND active`,
-        )
-      ).rows,
-    ).toEqual([{ full_name: 'owner/beeline' }]);
-  });
-
-
-  it('opens select-target when a connected user explicitly adds an organization', async () => {
-    const app = scope1.orgInstallationApp('allow');
-    const { operations } = await scope1.boundInstallationOperations(app, 'select-target-state');
-    await operations.beginInstallation(HUMAN, {
-      redirectUri: 'beeline://github-installation', selectTarget: true,
-    });
-    expect(app.installationUrl).toHaveBeenLastCalledWith(expect.any(String), true);
-  });
-
-
-  it('completes an organization installation even when the user-token listing cannot verify it', async () => {
-    const app = scope1.orgInstallationApp('throw-404');
-    const { operations, installState } = await scope1.boundInstallationOperations(app);
-
-    await expect(operations.completeInstallation(installState, 78)).resolves.toBe(
-      'beeline://github-installation?installed=1',
-    );
-    expect(
-      (
-        await scope1.database.query<{
-          account_type: string;
-          account_login: string;
-          status: string;
-        }>(
-          `SELECT account_type,account_login,status FROM github_installations WHERE installation_id=78`,
-        )
-      ).rows,
-    ).toEqual([{ account_type: 'Organization', account_login: 'acme', status: 'active' }]);
-    expect(
-      (
-        await scope1.database.query<{ full_name: string }>(
-          `SELECT full_name FROM github_repositories WHERE installation_id=78 AND active`,
-        )
-      ).rows,
-    ).toEqual([{ full_name: 'acme/widgets' }]);
-  });
-
-
-  it('refuses an organization installation the user listing definitively denies', async () => {
-    const app = scope1.orgInstallationApp('deny');
-    const { operations, installState } = await scope1.boundInstallationOperations(app, 'org-deny-state');
-
-    await expect(operations.completeInstallation(installState, 78)).rejects.toThrow(
-      'GitHub installation access denied',
-    );
-    expect(
-      (
-        await scope1.database.query(
-          `SELECT installation_id FROM github_installations WHERE installation_id=78`,
-        )
-      ).rows,
-    ).toEqual([]);
-  });
-
-
-  it('still refuses a user installation when the user-token listing throws', async () => {
-    const app = scope1.orgInstallationApp('throw-404', 'User');
-    const { operations, installState } = await scope1.boundInstallationOperations(app, 'user-404-state');
-
-    await expect(operations.completeInstallation(installState, 78)).rejects.toThrow(
-      'GitHub user installations failed: HTTP 404',
-    );
-    expect(
-      (
-        await scope1.database.query(
-          `SELECT installation_id FROM github_installations WHERE installation_id=78`,
-        )
-      ).rows,
-    ).toEqual([]);
-  });
-
-
-  it('reconciles installations missing from the monolith database via the App JWT listing', async () => {
-    const fetchMock = vi.fn(async (input: string | URL | Request) => {
-      const url = String(input);
-      if (url === 'https://github.test/token') {
-        return new Response(JSON.stringify({ access_token: 'secret-user-token' }), { status: 200 });
-      }
-      if (url === 'https://api.github.test/user') {
-        return new Response(JSON.stringify({ id: 42, login: 'owner', name: 'Owner' }), {
-          status: 200,
-        });
-      }
-      throw new Error(`unexpected fetch ${url}`);
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    const oauth = new GitHubOAuthClient({
-      clientId: 'client',
-      clientSecret: 'secret',
-      authorizationEndpoint: 'https://github.test/authorize',
-      tokenEndpoint: 'https://github.test/token',
-      apiBaseUrl: 'https://api.github.test',
-    });
-    const app = {
-      listUserInstallationIds: vi.fn(async () => [78]),
-      // Installation 79 is omitted from that listing, so membership decides
-      // it — and this user is in no organization but the listed one.
-      organizationMembership: vi.fn(async () => 'none' as const),
-      listInstallations: vi.fn(async () => [
-        {
-          installationId: 77,
-          account: {
-            id: '42',
-            login: 'owner',
-            type: 'User' as const,
-            repositorySelection: 'all' as const,
-          },
-        },
-        {
-          installationId: 78,
-          account: {
-            id: '84',
-            login: 'Beeline-Work',
-            type: 'Organization' as const,
-            repositorySelection: 'selected' as const,
-          },
-        },
-        {
-          installationId: 79,
-          account: {
-            id: '126',
-            login: 'someone-else',
-            type: 'Organization' as const,
-            repositorySelection: 'all' as const,
-          },
-        },
-      ]),
-      installationAccount: vi.fn(async (installationId: number) =>
-        installationId === 77
-          ? {
-              id: '42',
-              login: 'owner',
-              type: 'User' as const,
-              repositorySelection: 'all' as const,
-            }
-          : {
-              id: '84',
-              login: 'Beeline-Work',
-              type: 'Organization' as const,
-              repositorySelection: 'selected' as const,
-            },
-      ),
-      listRepositories: vi.fn(async (installationId: number) => [
-        {
-          id: installationId + 100,
-          installationId,
-          name: `repo-${installationId}`,
-          fullName: `${installationId === 77 ? 'owner' : 'Beeline-Work'}/repo-${installationId}`,
-          remote: `https://github.com/example/repo-${installationId}.git`,
-          defaultBranch: 'main',
-        },
-      ]),
-    } as unknown as GitHubAppClient;
-    const operations = new GitHubOperations(scope1.database, oauth, app, 'secret');
-    await operations.beginIdentity(HUMAN, {
-      redirectUri: 'beeline://github-callback',
-      state: 'reconcile-state',
-    });
-    await operations.completeIdentity(
-      HUMAN,
-      { challenge: 'oauth-code', proof: 'reconcile-state' },
-      false,
-    );
-
-    const sealedUserToken = (
-      await scope1.database.query<{ encrypted_token: string }>(
-        `DELETE FROM github_user_tokens WHERE subject='42' RETURNING encrypted_token`,
-      )
-    ).rows[0]?.encrypted_token;
-    const resolveSealedUserToken = vi.fn(async () => sealedUserToken);
-    const reconciler = new GitHubOperations(scope1.database, oauth, app, 'secret', resolveSealedUserToken);
-
-    await reconciler.refresh(HUMAN);
-
-    expect(app.listInstallations).toHaveBeenCalledOnce();
-    expect(resolveSealedUserToken).toHaveBeenCalledWith('42');
-    expect(app.listUserInstallationIds).toHaveBeenCalledWith('secret-user-token');
-    expect(app.organizationMembership).toHaveBeenCalledWith('secret-user-token', 'someone-else');
-    expect(
-      (
-        await scope1.database.query<{ installation_id: string }>(
-          `SELECT installation_id FROM github_installations ORDER BY installation_id`,
-        )
-      ).rows.map((row) => Number(row.installation_id)),
-    ).toEqual([77, 78]);
-    expect(
-      (
-        await scope1.database.query<{ full_name: string }>(
-          `SELECT full_name FROM github_repositories ORDER BY full_name`,
-        )
-      ).rows.map((row) => row.full_name),
-    ).toEqual(['Beeline-Work/repo-78', 'owner/repo-77']);
-  });
-
-
-  it('applies installation repository removal and revocation webhooks to the monolith catalog', async () => {
-    await scope1.database.query(
-      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status) VALUES(77,$1,'42','owner','User','selected','active')`,
-      [HUMAN],
-    );
-    await scope1.database.query(
-      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch) VALUES(101,77,'owner/removed','main')`,
-    );
-    const app = {
-      installationAccount: vi.fn(async () => ({
-        id: '42',
-        login: 'owner',
-        type: 'User' as const,
-        repositorySelection: 'selected' as const,
-      })),
-      listRepositories: vi.fn(async () => []),
-    } as unknown as GitHubAppClient;
-    const operations = new GitHubOperations(scope1.database, {} as GitHubOAuthClient, app, 'secret');
-
-    await operations.processWebhook('installation_repositories', {
-      action: 'removed',
-      installation: { id: 77 },
-      repositories_removed: [{ id: 101, full_name: 'owner/removed' }],
-    });
-    expect(
-      (
-        await scope1.database.query<{ active: boolean }>(
-          `SELECT active FROM github_repositories WHERE repository_id=101`,
-        )
-      ).rows[0]?.active,
-    ).toBe(false);
-
-    await scope1.database.query(`UPDATE github_repositories SET active=true WHERE repository_id=101`);
-    await operations.processWebhook('installation', {
-      action: 'deleted',
-      installation: { id: 77 },
-    });
-    expect(
-      (
-        await scope1.database.query<{ status: string }>(
-          `SELECT status FROM github_installations WHERE installation_id=77`,
-        )
-      ).rows[0]?.status,
-    ).toBe('revoked');
-    expect(
-      (
-        await scope1.database.query<{ active: boolean }>(
-          `SELECT active FROM github_repositories WHERE repository_id=101`,
-        )
-      ).rows[0]?.active,
-    ).toBe(false);
-  });
-describe('user token rotation', () => {
-const scope2 = fixtureScope2(scope1);
-
-
-    it('rotates an expired user token with its refresh grant before listing installations', async () => {
-      const operations = scope2.operationsFor(scope1.database);
-      const { tokenBodies, fetchMock } = await scope2.bindIdentity(scope1.database);
-      await operations.beginIdentity(HUMAN, {
-        redirectUri: 'beeline://callback',
-        state: 'rotation-state',
-      });
-      await expect(
-        operations.completeIdentity(
-          HUMAN,
-          { challenge: 'oauth-code', proof: 'rotation-state' },
-          false,
-        ),
-      ).resolves.toEqual({ personId: HUMAN, recovered: false });
-      // The 8-hour expiry has passed: the next refresh must rotate first.
-      await scope1.database.query(
-        `UPDATE github_user_tokens SET expires_at = now() - interval '1 minute' WHERE subject='42'`,
-      );
-      tokenBodies.length = 0;
-      await expect(operations.refresh(HUMAN)).resolves.toEqual({});
-      expect(tokenBodies).toEqual([expect.objectContaining({ grant_type: 'refresh_token' })]);
-      expect(tokenBodies[0]).toMatchObject({ refresh_token: 'refresh-1' });
-      const stored = (
-        await scope1.database.query<{
-          expires_at: string | Date;
-          expires_in: number;
-        }>(`SELECT encrypted_refresh_token, expires_at FROM github_user_tokens WHERE subject='42'`)
-      ).rows[0];
-      expect(stored?.encrypted_refresh_token).toBeDefined();
-      expect(new Date(stored!.expires_at).getTime()).toBeGreaterThan(Date.now());
-      expect(
-        (
-          await scope1.database.query<{ installation_id: number | string }>(
-            `SELECT installation_id FROM github_installations WHERE owner_id=$1`,
-            [HUMAN],
-          )
-        ).rows[0]?.installation_id,
-      ).toEqual(77);
-      // The installation listing must use the rotated token, not the expired one.
-      const userInstallations = fetchMock.mock.calls.find(([input]) =>
-        String(input).includes('/user/installations'),
-      );
-      expect((userInstallations?.[1]?.headers as Record<string, string>).authorization).toBe(
-        'Bearer fresh-user-token',
-      );
-    });
-
-
-    it('claims an organization installation the user listing omits once membership confirms it', async () => {
-      const operations = scope2.operationsFor(scope1.database);
-      const { fetchMock } = await scope2.bindIdentity(scope1.database);
-      await operations.beginIdentity(HUMAN, {
-        redirectUri: 'beeline://callback',
-        state: 'org-membership',
-      });
-      await operations.completeIdentity(
-        HUMAN,
-        { challenge: 'code', proof: 'org-membership' },
-        false,
-      );
-      await scope1.database.query(
-        `UPDATE github_user_tokens SET expires_at=now()-interval '1 minute' WHERE subject='42'`,
-      );
-      await scope2.withOmittedOrgInstallation(
-        fetchMock,
-        new Response(JSON.stringify({ state: 'active', role: 'member' }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        }),
-      );
-
-      await expect(operations.refresh(HUMAN)).resolves.toEqual({});
-      await expect(scope2.ownedInstallationIds(HUMAN)).resolves.toEqual([77, 88]);
-    });
-});
 });

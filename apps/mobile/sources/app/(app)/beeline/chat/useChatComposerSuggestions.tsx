@@ -214,16 +214,8 @@ export function useChatComposerSuggestions([
   // Every agent answering right now, not just the first: two agents asked in
   // one message run two concurrent turns and each owns its own live lane.
   const rawActiveAgentTurns = useMemo(
-    () =>
-      agentTurnMarkers.filter((turn) =>
-        isAgentTurnActive(
-          turn,
-          agentPresences[turn.agentPubkey],
-          presenceNow,
-          presenceReconnectGrace[turn.agentPubkey],
-        ),
-      ),
-    [agentTurnMarkers, agentPresences, presenceNow, presenceReconnectGrace],
+    () => agentTurnMarkers.filter(isAgentTurnActive),
+    [agentTurnMarkers],
   );
 
   // A filter rebuilds its array on every presence tick even when it selected

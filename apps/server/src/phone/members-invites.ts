@@ -1,3 +1,4 @@
+import { phoneIdentity as identity } from '../phone-identity.js';
 import { observeOnboardingInvite } from '../signin-funnel.js';
 import { randomBytes } from 'node:crypto';
 import { createCommunityInviteToken, isCommunityInviteToken } from '@beeline/api-contract/phone';
@@ -11,7 +12,7 @@ import { Input } from './types.js';
 import { phoneRequireWorkspaceManager, phoneRequireIdentity, phoneRequireWorkspaceMember } from './access.js';
 import { WORKSPACE_ADMIN_AUTHORITY_MESSAGE, token, hash } from './values.js';
 import { phoneAvailableAgentHandle } from './pairing.js';
-import { identity } from './read-projection.js';
+
 
 
   export async function phoneAddWorkspaceMember(ctx: PhoneContext, input: Input<'addWorkspaceMember'>, viewerId: string) {

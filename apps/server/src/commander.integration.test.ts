@@ -1,4 +1,4 @@
-import { readCornerObjective, AgentScheduleLoop, advanceCorner, randomUUID, randomBytes, describe, expect, it, vi, insertCornerFacts, DaemonService, LiveHub, GitHubOperations, createAgentCommand, GITHUB_SUBJECT, systemLine, unreadMessageSql, HUMAN, RUBY, WORKER, WS, ROOM, DM, db, daemon, phone, order, claim, authority, commands, open, worker, rootFixture, fixtureScope1, type CommandRow, type GitHubAppClient, type GitHubOAuthClient } from './commander.integration.test-support.js';
+import { readCornerObjective, SYSTEM_IDENTITY_ID, AgentScheduleLoop, advanceCorner, randomUUID, randomBytes, describe, expect, it, vi, insertCornerFacts, DaemonService, LiveHub, GitHubOperations, createAgentCommand, GITHUB_SUBJECT, systemLine, unreadMessageSql, HUMAN, RUBY, WORKER, WS, ROOM, DM, db, daemon, phone, order, claim, authority, commands, open, worker, rootFixture, fixtureScope1, type CommandRow, type GitHubAppClient, type GitHubOAuthClient } from './commander.integration.test-support.js';
 
 
 it('opens in an unrelated member Room from a DM and records the caller as commander', async () => {
@@ -380,7 +380,7 @@ it('Reproduction R1: elapsed time keeps work queued behind a claimed turn', asyn
   // The second wake arrives just before the first claim (the production race).
   const queued = await createAgentCommand(rootFixture.db, { roomId: opened.cornerId, agentId: WORKER,
     sourceMessageId: null, reason: 'corner_background_tool',
-    privatePayload: { kind: 'lifecycle', text: 'Background tool completed', authorId: WORKER, fromRoomId: opened.cornerId } });
+    privatePayload: { kind: 'lifecycle', text: 'Background tool completed', authorId: SYSTEM_IDENTITY_ID, fromRoomId: opened.cornerId } });
 
   expect((await rootFixture.db.query(`SELECT generation_id FROM agent_turns WHERE request_id=$1`, [queued!.turn_request_id])).rows)
     .toEqual([{ generation_id: 'pending:' + queued!.id }]);

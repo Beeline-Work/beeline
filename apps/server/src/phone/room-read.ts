@@ -1,3 +1,4 @@
+import { phoneIdentity as identity } from '../phone-identity.js';
 import { projectCornerBrief } from '../corner-brief.js';
 import { ROOM_VIEW_MEMBER_LIMIT } from '@beeline/api-contract/phone';
 import type { RoomView } from '@beeline/api-contract/phone';
@@ -7,7 +8,7 @@ import type { PhoneContext } from './context.js';
 import { phoneRoomRows, phoneCornerRoomEnrichment } from './corner-reads.js';
 import { phoneProjectAgentTurns, phoneProjectPendingAgentCommands, phoneProjectRoomMessages, phoneAttachmentFacts } from './message-enrichment.js';
 import { phoneProjectMembers } from './roster.js';
-import { roomHeader, projectedMessage, messageOrder, decorateAttachments, identity } from './read-projection.js';
+import { roomHeader, projectedMessage, messageOrder, decorateAttachments } from './read-projection.js';
 import { phoneDecorateCornerOpenCards, phoneDecorateMessageCards } from './message-decoration.js';
 import { unix, roomFilters, SLOW_ROOM_READ_MS, messageId } from './values.js';
 

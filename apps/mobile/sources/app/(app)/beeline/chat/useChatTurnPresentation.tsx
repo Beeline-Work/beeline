@@ -13,7 +13,7 @@ import { formatTerminalTurnOverlay, type TurnVerb } from '@/buzz/turn-clock';
 import { useScrollFollowOnLayoutChange } from '@/buzz/room-scroll-follow';
 import { composerBottomPadding } from '@/buzz/composer-keyboard';
 import { monolithPhoneOperation, phoneOperationFailureReason } from '@/sync/transport/monolith-operation';
-import { nextAgentPresenceTransitionAt, nextAgentTurnExpiryAt } from '@/buzz/agent-presence';
+import { nextAgentPresenceTransitionAt } from '@/buzz/agent-presence';
 import { sameMessageRefMap, sameRecordValueMap, sameStringSet, useStable } from '@/buzz/use-stable';
 
 type Props = [
@@ -371,13 +371,7 @@ export function useChatTurnPresentation([
     // someone was typing, which made the foreground intermittently unresponsive.
     const now = Date.now();
     const presenceDeadline = nextAgentPresenceTransitionAt(agentPresences, now);
-    const turnDeadline = nextAgentTurnExpiryAt(agentTurnMarkers, now);
-    const deadline =
-      presenceDeadline === undefined
-        ? turnDeadline
-        : turnDeadline === undefined
-          ? presenceDeadline
-          : Math.min(presenceDeadline, turnDeadline);
+    const deadline = presenceDeadline;
     if (deadline === undefined) return;
     const delay = Math.max(1, deadline - now + 1);
     const timer = setTimeout(() => setPresenceNow(Date.now()), delay);

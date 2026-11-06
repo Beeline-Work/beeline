@@ -1,12 +1,13 @@
+import { assetUrl, phoneIdentity as identity, type PhoneIdentityRow as IdentityRow } from '../phone-identity.js';
 import { ROOM_VIEW_CHAT_LIMIT, WORKSPACE_MEMBER_PAGE_SIZE } from '@beeline/api-contract/phone';
 import type { WorkspaceListView, WorkspaceMemberListQuery, WorkspaceMemberListView, WorkspaceView } from '@beeline/api-contract/phone';
 import { roomNeedsYouSql } from '../chat-corner-counts.js';
 import { unreadMessageSql } from '../read-cursor.js';
 import type { PhoneContext } from './context.js';
-import { assetUrl, identity, reviveDates } from './read-projection.js';
+import { reviveDates } from './read-projection.js';
 import { unix, MemberGrantRow, PROFILE_GRANT_LIMIT } from './values.js';
 import { phoneWorkspaceRoster, phoneProjectMembers, phoneProjectWorkspaceAgents } from './roster.js';
-import { IdentityRow, MemberRow, RosterAgentRow, mcpClientIdentitySql } from './types.js';
+import { MemberRow, RosterAgentRow, mcpClientIdentitySql } from './types.js';
 import { phoneOptionalEnrichment } from './optional-enrichment.js';
 import { phoneProjectMemberGrantRows } from './agent-reads.js';
 

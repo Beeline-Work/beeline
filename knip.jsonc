@@ -61,6 +61,8 @@
         "scripts/ci-baseline.mjs",
         // Play upload and commit shell scripts invoke the CD listing lock by path.
         "scripts/play-listing-lock.mjs",
+        // The iOS Simulator capture harness (capture.sh) bounds each Maestro flow through this CLI by path.
+        "scripts/ios-signin/run-flow.mjs",
         // Discovery spawns launch/MCP helpers; its runbook invokes the grading CLI by path.
         "scripts/discovery-{launch,mcp,grade}.mjs",
         "scripts/cutover-hooks/{generate-daemon-exchanges,production-e2e}.mjs",

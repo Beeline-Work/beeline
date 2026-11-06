@@ -52,7 +52,6 @@ import { liveChatList } from '@/buzz/chat-list-store';
 import { BuzzRigTransport } from '@/sync/transport';
 import type { LiveWireTrace, MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import {
-  AGENT_TURN_FRESHNESS_MS,
   mergeAgentPresence,
   mergeAgentPresenceBatch,
   type RoomAgentPresence,
@@ -1031,16 +1030,13 @@ export function useRoomSurfaceSession({
 
           const markers = eventMarkers(event);
           const requestId = eventTag(event, 'request');
-          const replayedFreshWorkingReceipt =
-            replaying &&
-            eventTag(event, 'status') === 'working' &&
-            Math.abs(Date.now() - event.created_at * 1_000) < AGENT_TURN_FRESHNESS_MS;
+          const replayedWorkingReceipt = replaying && eventTag(event, 'status') === 'working';
           if (
             event.kind === 9 &&
             eventTag(event, 'h') === channelId &&
             markers.includes('agent-turn') &&
             requestId &&
-            (!replaying || replayedFreshWorkingReceipt)
+            (!replaying || replayedWorkingReceipt)
           ) {
             readVisibleRoom();
             return;

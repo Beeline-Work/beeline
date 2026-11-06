@@ -1,3 +1,4 @@
+import { messageColumns } from './message-columns.js';
 import { captureServerError } from './sentry.js';
 import { DatabaseTransactionStartError, type SqlDatabase } from './database.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
@@ -14,7 +15,6 @@ import {
 import { apnsReadClearBatch } from './apns-push.js';
 import { firebaseReadClearBatch } from './firebase-push.js';
 import { cornerFactsSql, cornerRowState, type CornerStateRow } from './chat-corner-counts.js';
-import { addressedToPersonSql } from './corner-owed.js';
 import { pushDirectAttentionSql } from './push-attention.js';
 import { SERVER_LEASE_EXPIRY_MS } from './connection-presence.js';
 
@@ -130,7 +130,7 @@ export function isUnregisteredPushToken(error: unknown): boolean {
 /** The lateral boundary prevents sibling filters from becoming history index scans. */
 function messagePointsSql(ids: string, alias: string): string {
   return `unnest(${ids}) ${alias}_ids(id)
-    CROSS JOIN LATERAL (SELECT * FROM messages WHERE id=${alias}_ids.id OFFSET 0) ${alias}`;
+    CROSS JOIN LATERAL (SELECT ${messageColumns('stored')} FROM messages stored WHERE id=${alias}_ids.id OFFSET 0) ${alias}`;
 }
 
 /**
@@ -141,8 +141,9 @@ function messagePointsSql(ids: string, alias: string): string {
  */
 function earlierTurnPushSql(message: string, deviceToken: string): string {
   return `EXISTS (
-    SELECT 1 FROM ${messagePointsSql(`COALESCE((SELECT context.turn_ids FROM push_message_context context
-      WHERE context.message_id=${message}.id),ARRAY[]::text[])`, 'sibling')}
+    SELECT 1 FROM ${messagePointsSql(`COALESCE((SELECT turn.turn_ids FROM push_turn_context turn
+      WHERE turn.room_id=${message}.room_id AND turn.author_id=${message}.author_id AND turn.request_id=${message}.request_id),
+      (SELECT context.turn_ids FROM push_message_context context WHERE context.message_id=${message}.id),ARRAY[]::text[])`, 'sibling')}
     JOIN identities sibling_author ON sibling_author.id=sibling.author_id
       AND sibling_author.kind='agent'
     JOIN push_delivery_claims sibling_claim ON sibling_claim.message_id=sibling.id
@@ -199,7 +200,7 @@ export class PushDeliveryLoop {
                FROM (
                  SELECT message.id,message.created_at
                  FROM push_delivery_claims claim
-                 JOIN LATERAL (SELECT * FROM messages WHERE id=claim.message_id OFFSET 0) message ON true
+                 JOIN LATERAL (SELECT ${messageColumns('stored')} FROM messages stored WHERE id=claim.message_id OFFSET 0) message ON true
                  WHERE claim.device_token=device.token AND claim.status='delivered'
                    AND claim.read_cleared_at IS NULL
                    AND message.room_id=mark.room_id AND message.created_at>=device.registered_at
@@ -211,7 +212,7 @@ export class PushDeliveryLoop {
            WHERE mark.identity_id=device.identity_id
              AND EXISTS (
                SELECT 1 FROM push_delivery_claims claim
-               JOIN LATERAL (SELECT * FROM messages WHERE id=claim.message_id OFFSET 0) message ON true
+               JOIN LATERAL (SELECT ${messageColumns('stored')} FROM messages stored WHERE id=claim.message_id OFFSET 0) message ON true
                WHERE claim.device_token=device.token AND claim.status='delivered'
                  AND claim.read_cleared_at IS NULL
                  AND message.room_id=mark.room_id AND message.created_at>=device.registered_at
@@ -292,10 +293,11 @@ export class PushDeliveryLoop {
     }>(`
       -- Only leased message/device IDs enter eligibility and title projection.
       WITH queued_messages AS MATERIALIZED (
-        SELECT m.*,context.turn_ids,context.burst_ids,d.token push_token,d.identity_id push_identity_id
+        SELECT m.*,COALESCE(turn.turn_ids,context.turn_ids) turn_ids,d.token push_token,d.identity_id push_identity_id
         FROM jsonb_to_recordset($1::jsonb) queued(message_id text,device_token text)
-        JOIN LATERAL (SELECT * FROM messages WHERE id=queued.message_id OFFSET 0) m ON true
+        JOIN LATERAL (SELECT ${messageColumns('stored')} FROM messages stored WHERE id=queued.message_id OFFSET 0) m ON true
         JOIN push_message_context context ON context.message_id=m.id
+        LEFT JOIN push_turn_context turn ON turn.room_id=m.room_id AND turn.author_id=m.author_id AND turn.request_id=m.request_id
         JOIN push_delivery_floors floor ON floor.id='message-delivery'
         JOIN push_devices d ON d.token=queued.device_token AND m.created_at>=d.registered_at
         JOIN LATERAL (SELECT 1 FROM room_access member
@@ -328,7 +330,7 @@ export class PushDeliveryLoop {
           AND NOT (m.presentation IN ('system','card') AND m.request_id IS NOT NULL
             AND EXISTS (SELECT 1 FROM agent_turns t WHERE t.room_id=m.room_id
               AND t.request_id=m.request_id AND t.agent_id=m.author_id AND t.status='complete')
-            AND EXISTS (SELECT 1 FROM ${messagePointsSql('context.turn_ids', 'final')} WHERE final.room_id=m.room_id
+            AND EXISTS (SELECT 1 FROM ${messagePointsSql('COALESCE(turn.turn_ids,context.turn_ids)', 'final')} WHERE final.room_id=m.room_id
               AND final.author_id=m.author_id AND final.request_id=m.request_id
               AND final.presentation='message' AND final.deleted_at IS NULL))
           -- Durable chat from agents waits for completion and selects final prose.
@@ -336,7 +338,7 @@ export class PushDeliveryLoop {
             OR NOT EXISTS (SELECT 1 FROM identities a WHERE a.id=m.author_id AND a.kind='agent')
             OR (NOT EXISTS (SELECT 1 FROM agent_turns t WHERE t.room_id=m.room_id
                 AND t.request_id=m.request_id AND t.agent_id=m.author_id AND t.status='working')
-              AND NOT EXISTS (SELECT 1 FROM ${messagePointsSql('context.turn_ids', 'newer')} WHERE newer.room_id=m.room_id
+              AND NOT EXISTS (SELECT 1 FROM ${messagePointsSql('COALESCE(turn.turn_ids,context.turn_ids)', 'newer')} WHERE newer.room_id=m.room_id
                 AND newer.author_id=m.author_id AND newer.request_id=m.request_id
                 AND newer.presentation='message' AND newer.card_type IS NULL AND newer.deleted_at IS NULL
                 AND (newer.created_at,newer.id)>(m.created_at,m.id))))
@@ -375,16 +377,7 @@ export class PushDeliveryLoop {
           m.card->'grants'->0->>'target' grant_target,
           m.card->'agent'->>'name' grant_agent_name,
           COALESCE(NULLIF(author.name,''),'Someone') author_name,
-          CASE WHEN attention.direct OR m.presentation<>'message' THEN
-            CASE WHEN author.kind='human' AND m.presentation='message' THEN (
-              SELECT burst.id FROM ${messagePointsSql('m.burst_ids', 'burst')}
-              WHERE burst.room_id=m.room_id AND burst.author_id=m.author_id
-                AND burst.presentation='message' AND burst.deleted_at IS NULL
-                AND burst.created_at>=m.created_at-interval '20 seconds'
-                AND (burst.created_at,burst.id)<=(m.created_at,m.id)
-                AND (room.direct_participants IS NOT NULL OR ${addressedToPersonSql('burst', 'recipient.id', 'recipient.handle', 'recipient.kind', false)})
-              ORDER BY burst.created_at,burst.id LIMIT 1)
-            ELSE m.id END
+          CASE WHEN attention.direct OR m.presentation<>'message' THEN m.id
           -- Keep human prose visible when a subsequent agent summary replaces its slot.
           ELSE CASE WHEN author.kind='human' THEN room.id::text ELSE 'agent:'||room.id::text END
           END collapse_id,

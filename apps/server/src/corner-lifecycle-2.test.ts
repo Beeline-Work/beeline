@@ -1,4 +1,4 @@
-import { randomBytes, describe, expect, it, vi, assignCornerWorker, PhoneService, DaemonService, GitHubOperations, LiveHub, systemLine, advanceCorner, cornerMergeGate, createAgentCommand, queueCornerMergeConflict, reconcileCornerMergeBlockers, CORNER_LIFECYCLE_CARD_TYPE, cornerOwnerSql, workflowRunLockKey, RecordingDatabase, H, A, B, R, db, phone, daemon, github, githubRollupState, githubHead, githubApp, implementersMerge, cards, currentState, commissioned, brief, open, claim, pushToCorner, greenHead, redHead, resumeWorker, commands, result, terminalResult, orderRepairsFromRoom, SHA, branchOf, reasons, projected, inReview, approve, approved, mergedWebhook, say, revise, F, fallback, rootFixture, fixtureScope14, fixtureScope18, fixtureScope19, fixtureScope20, type GitHubAppClient, type GitHubOAuthClient } from './test-support-corner-lifecycle.test-support.js';
+import { randomBytes, describe, expect, it, vi, assignCornerWorker, PhoneService, DaemonService, GitHubOperations, LiveHub, systemLine, advanceCorner, cornerMergeGate, createAgentCommand, queueCornerMergeConflict, reconcileCornerMergeBlockers, CORNER_LIFECYCLE_CARD_TYPE, cornerOwnerSql, RecordingDatabase, H, A, B, R, db, phone, daemon, github, githubRollupState, githubHead, githubApp, implementersMerge, cards, currentState, commissioned, brief, open, claim, pushToCorner, greenHead, redHead, resumeWorker, commands, result, terminalResult, orderRepairsFromRoom, SHA, branchOf, reasons, projected, inReview, approve, approved, mergedWebhook, say, revise, F, fallback, rootFixture, fixtureScope14, fixtureScope18, fixtureScope19, fixtureScope20, type GitHubAppClient, type GitHubOAuthClient } from './test-support-corner-lifecycle.test-support.js';
 
 describe('Reproduction S-07: every reviewer waits for a quiet corner', () => {
   it.each([B])('holds a review for %s until the worker releases its lease', async (reviewerId) => {
@@ -74,17 +74,14 @@ describe('Reproduction R5a: entry paths lock the run before corner rows', () => 
       await rootFixture.db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checks}','"failing"') WHERE corner_id=$1`, [cornerId]);
       await reconcileCornerMergeBlockers(recording, cornerId);
     }
-    const lock = recording.calls.findIndex(call => call.sql === 'SELECT pg_advisory_xact_lock(hashtext($1))'
-      && call.values?.[0] === workflowRunLockKey(lockId));
-    const rowLock = recording.calls.findIndex(call => /FOR (UPDATE|KEY SHARE)/.test(call.sql) && /FROM (corner_facts|rooms)|JOIN corner_facts/.test(call.sql)
-      || /^UPDATE rooms/.test(call.sql));
-    expect(rowLock, 'path exercised a corner row lock or update').toBeGreaterThanOrEqual(0);
-    expect(lock, 'corner run lock was taken').toBeGreaterThanOrEqual(0);
-    expect(lock, 'run lock precedes corner row locks').toBeLessThan(rowLock);
-    if (path === 'blocker reconciliation') {
-      const write = recording.calls.findIndex(call => /^INSERT INTO messages|^UPDATE corner_facts/.test(call.sql));
-      expect(write, 'reconciliation performed a write').toBeGreaterThanOrEqual(0);
-      expect(lock, 'run lock precedes foreign-key writes').toBeLessThan(write);
+    const retained = recording.calls.findIndex(call => call.values?.[0] === lockId
+      && (/FROM corner_facts/.test(call.sql) && /FOR UPDATE/.test(call.sql) || /^INSERT INTO corner_facts/.test(call.sql)));
+    const write = recording.calls.findIndex(call => /^UPDATE corner_facts|^INSERT INTO corner_(?:brief_revisions|merge_holds|merge_approvals)/.test(call.sql));
+    expect(retained, 'native state row was retained').toBeGreaterThanOrEqual(0);
+    if (path === 'zero-check') expect(write, 'zero-check is read-only').toBe(-1);
+    else {
+      expect(write, 'path wrote its corner effect').toBeGreaterThanOrEqual(0);
+      expect(retained, 'state retention precedes effects').toBeLessThan(write);
     }
   });
 });

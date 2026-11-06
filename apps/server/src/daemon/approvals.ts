@@ -1,3 +1,4 @@
+import { CommandRefusalError } from '../commander.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { squireApprovalAction } from '@beeline/api-contract/phone';
 import { approvalCardSource } from '../approval-card-source.js';
@@ -270,10 +271,7 @@ import { daemonWriteResult } from './corner-messages.js';
 
 
   /** Only an expired shared Google session needs an owner-facing reconnect. */
-  export async function daemonSquireLoginWall(ctx: DaemonContext,
-    input: Input<'postSquireLoginWall'>,
-    agentId: string,
-  ): Promise<Output<'postSquireLoginWall'>> {
+  export async function daemonSquireLoginWall(ctx: DaemonContext, input: Input<'postSquireLoginWall'>, agentId: string): Promise<Output<'postSquireLoginWall'>> {
     if (typeof input.roomId !== 'string' || !input.roomId) throw new Error('roomId is required');
     if (
       input.wall !== 'google_session' &&
@@ -286,16 +284,13 @@ import { daemonWriteResult } from './corner-messages.js';
     const notActioned = { id: '', createdAt: Math.floor(Date.now() / 1000), cardPosted: false };
     if (input.wall !== 'google_session') return notActioned;
     const provider = 'google';
-    const context = await daemonOfferContext(ctx, input.roomId, agentId);
+    const context = await ctx.offerContext(input.roomId, agentId);
     const connectorType: ConnectorKind = 'trusty-squire';
     const connectorName = connectorDisplayName(connectorType);
     const reason = squireLoginWallConsequence(provider);
+    const joined = new Error('Squire reconnect offer already exists');
+    let joinedId: string | undefined;
     const result = await ctx.database.transaction(async (database) => {
-      // Same lock `offerConnector` takes: one open offer per Room+connector,
-      // even when two turns on the same stale session race.
-      await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-        `connector-offer:${input.roomId}:${connectorType}`,
-      ]);
       // An open offer is checked BEFORE the connector's own status: the first
       // trigger already moved that row off 'connected' into 'installing', so
       // a second stuck turn on the SAME reconnect must still join the open
@@ -304,7 +299,7 @@ import { daemonWriteResult } from './corner-messages.js';
         await database.query<{ id: string }>(
           `SELECT id FROM connector_offers
            WHERE room_id=$1 AND connector_type=$2 AND status IN ('pending','connecting')
-           ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
+           ORDER BY created_at DESC LIMIT 1`,
           [input.roomId, connectorType],
         )
       ).rows[0];
@@ -312,15 +307,25 @@ import { daemonWriteResult } from './corner-messages.js';
       const report = await machineSquireReport(database, context.owner.pubkey, context.machine.machineId);
       if (report?.status !== 'connected') return undefined;
       const connected = { id: squireMachineAddress(context.machine.machineId), machine_id: context.machine.machineId };
+      try { await queueSquireWork(database,agentId,{install:true,forceReloginProvider:provider}); }
+      catch (error) {
+        if (error instanceof CommandRefusalError && error.status===409) {
+          const current=(await database.query<{id:string}>(`SELECT id FROM connector_offers
+            WHERE room_id=$1 AND connector_type=$2 AND status IN ('pending','connecting')`,[input.roomId,connectorType])).rows[0];
+          if (current) return {offerId:current.id,cardPosted:false};
+        }
+        throw error;
+      }
       const offerId = randomUUID();
       const messageId = id();
       const created = (
-        await database.query<{ created_at: Date }>(
+        await database.query<{ id:string;created_at:Date }>(
           `INSERT INTO connector_offers(
              id,agent_id,workspace_id,room_id,addressee_id,connector_type,reason,machine_id,
              intent,provider,status,accepted_by,accepted_at,connector_id
            ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'reconnect',$9,'connecting',NULL,NULL,$10)
-           RETURNING created_at`,
+           ON CONFLICT(room_id,connector_type) WHERE status IN ('pending','connecting')
+           DO UPDATE SET room_id=EXCLUDED.room_id RETURNING id,created_at`,
           [
             offerId,
             agentId,
@@ -335,6 +340,7 @@ import { daemonWriteResult } from './corner-messages.js';
           ],
         )
       ).rows[0]!;
+      if (created.id !== offerId) { joinedId=created.id; throw joined; }
       const card: ConnectorOfferCardView = {
         offerId,
         agent: context.agent,
@@ -365,8 +371,10 @@ import { daemonWriteResult } from './corner-messages.js';
         offerId,
         messageId,
       ]);
-      await queueSquireWork(database, agentId, { install: true, forceReloginProvider: provider });
       return { offerId, cardPosted: true };
+    }).catch(error=>{
+      if (error===joined) return {offerId:joinedId!,cardPosted:false};
+      throw error;
     });
     if (!result) return notActioned;
     await notifyConnectorAssignment(ctx.database, agentId);

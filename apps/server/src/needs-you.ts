@@ -1,3 +1,4 @@
+import { messageColumns } from './message-columns.js';
 import { squireApprovalAction } from '@beeline/api-contract/phone';
 import { approvalAsk } from './tray-approval-ask.js';
 import {
@@ -317,7 +318,7 @@ return [
    JOIN permission_authority permission ON permission.room_id=room.id
      AND permission.status='pending'
    CROSS JOIN LATERAL (
-     SELECT * FROM messages m WHERE m.room_id=room.id AND m.card_type='permission'
+     SELECT ${messageColumns('m')} FROM messages m WHERE m.room_id=room.id AND m.card_type='permission'
        AND m.card->>'permissionId'=permission.permission_id AND m.card->>'status'='pending'
        AND m.deleted_at IS NULL OFFSET 0
    ) m
@@ -429,7 +430,7 @@ const needsYouCandidates=(projection:CandidateProjection,scoped=false)=>`WITH ${
       AND ${grantDecidedBySql('grant_row', '$2')}
   ),
   candidates AS (
-    SELECT * FROM (${questionBranch(projection)}) questions
+    SELECT questions.* FROM (${questionBranch(projection)}) questions
     UNION ALL
     ${approvalBranches(projection).join('\n    UNION ALL\n')}
   )`;
@@ -509,7 +510,7 @@ export async function needsYouItems(database: SqlDatabase, workspaceId: string, 
     authorized: boolean;
   }>(
     `${roomIds?needsYouCandidates('cells',true):NEEDS_YOU_CANDIDATES},
-     visible AS MATERIALIZED (SELECT * FROM candidates WHERE ${VISIBLE_CANDIDATE}),
+     visible AS MATERIALIZED (SELECT candidates.* FROM candidates WHERE ${VISIBLE_CANDIDATE}),
      started AS (
        ${markSeen ? `INSERT INTO needs_you_marks(identity_id,message_id,workspace_id)
        SELECT $2,message_id,$1 FROM visible

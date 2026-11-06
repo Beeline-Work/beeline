@@ -25,7 +25,7 @@ import { AccessDeniedError, id } from './values.js';
        FROM rooms source
        JOIN rooms corner ON corner.workspace_id=source.workspace_id AND corner.archived_at IS NULL
        JOIN corner_github_cache fact ON fact.corner_id=corner.id
-       JOIN LATERAL (SELECT * FROM corner_brief_revisions
+       JOIN LATERAL (SELECT corner_brief_revisions.* FROM corner_brief_revisions
          WHERE corner_id=corner.id ORDER BY revision DESC LIMIT 1) brief
          ON brief.source_room_id=source.id
        JOIN agent_commands command ON command.room_id=corner.id AND command.agent_id=$2
@@ -53,11 +53,7 @@ import { AccessDeniedError, id } from './values.js';
    * the review handoff asks its own question only for them, and an ordinary
    * Room reply — the hottest write in the product — pays nothing for it.
    */
-  export async function daemonAccess(ctx: DaemonContext,
-    roomId: string,
-    agentId: string,
-    requestId?: unknown,
-  ): Promise<{ cornerReviewer: boolean; isCorner: boolean; privateCommand: boolean; voiceAgentName?: string | null }> {
+  export async function daemonAccess(ctx: DaemonContext, roomId: string, agentId: string, requestId?: unknown): Promise<{ cornerReviewer: boolean; isCorner: boolean; privateCommand: boolean; voiceAgentName?: string | null }> {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(roomId))
       throw new AccessDeniedError();
     const result = await ctx.database.query<{ corner_reviewer: boolean; is_corner: boolean; private_command: boolean; voice_agent_name: string | null }>(
@@ -74,8 +70,10 @@ import { AccessDeniedError, id } from './values.js';
          JOIN identities identity ON identity.id=command.agent_id
          WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3
          ORDER BY command.created_at DESC,command.id DESC LIMIT 1) voice_agent_name
-       FROM memberships WHERE room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=$1)
-         AND identity_id=$2 AND removed_at IS NULL`,
+       FROM rooms addressed
+       JOIN memberships parent_member ON parent_member.room_id=COALESCE(addressed.parent_id,addressed.id)
+         AND parent_member.identity_id=$2 AND parent_member.removed_at IS NULL
+       WHERE addressed.id=$1`,
       [roomId, agentId, typeof requestId === 'string' ? requestId : null],
     );
     if (!result.rowCount) throw new AccessDeniedError();

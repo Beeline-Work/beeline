@@ -94,7 +94,7 @@ describe('opaque token ceremony', () => {
     await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Other')`, [other]);
     await expect(auth.linkGoogleOidc(other, 'google')).rejects.toThrow('already linked');
   });
-  it('E16: uses email handles, the smallest collision suffix, reserved names and the 30-character limit', async () => {
+  it('E16: uses stable numbered email handles without reusing numbers', async () => {
     const emails = [
       'Alex.Chen@gmail.com',
       'alex.chen@work.example',
@@ -129,21 +129,12 @@ describe('opaque token ceremony', () => {
           .handle,
       );
     }
-    expect(handles).toEqual([
-      'alex.chen',
-      'alex.chen2',
-      'alex.chen3',
-      'channel2',
-      'play-review2',
-      'person',
-      'a'.repeat(30),
-      `${'a'.repeat(29)}2`,
-    ]);
+    expect(handles).toEqual(['alex.chen','alex.chen_2','alex.chen_3','channel_2','play-review_2','person','a'.repeat(35),'a'.repeat(35)+'_2']);
     const github = await auth.exchangeGitHubOidc('github');
     expect(
       (await db.query('SELECT name,handle,avatar FROM identities WHERE id=$1', [github.identityId]))
         .rows[0],
-    ).toEqual({ name: 'GitHub Name', handle: 'alex.chen4', avatar: 'https://example.com/github' });
+    ).toEqual({ name: 'GitHub Name', handle: 'alex.chen_4', avatar: 'https://example.com/github' });
     await db.query('UPDATE identities SET name=$2,handle=$3,avatar=$4 WHERE id=$1', [
       github.identityId,
       'Chosen',

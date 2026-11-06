@@ -398,7 +398,7 @@ BEGIN
   SELECT array_agg(report_corner.id) INTO candidate_ids FROM rooms report_corner WHERE ${reportScope};
   IF candidate_ids IS NULL THEN RETURN NULL; END IF;
   WITH report_corners AS MATERIALIZED (
-    SELECT * FROM rooms report_corner WHERE report_corner.id=ANY(candidate_ids)
+    SELECT report_corner.* FROM rooms report_corner WHERE report_corner.id=ANY(candidate_ids)
       AND report_corner.parent_id IS NOT NULL AND report_corner.archived_at IS NULL
   ), answered AS MATERIALIZED (
     SELECT DISTINCT waiting.report_id,waiting.message_id,waiting.card_id

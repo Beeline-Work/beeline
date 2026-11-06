@@ -200,7 +200,6 @@ export async function advanceCorner(
     return { state: current.state, accepted: Boolean(command), ...(command ? { command } : {}) };
   });
   return database.transaction(async (db) => {
-    await lockCornerLifecycle(db, cornerId);
     const corner = await loadCorner(db, cornerId);
     if (!corner) return { accepted: false, state: undefined };
     const head = corner.lifecycle.pr?.headSha ?? (event.kind === 'push' ? event.headSha : undefined);

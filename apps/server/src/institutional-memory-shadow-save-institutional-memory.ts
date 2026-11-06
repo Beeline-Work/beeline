@@ -16,35 +16,6 @@ export async function saveInstitutionalMemory(
   const saved = await database.transaction(async (db) => {
     const authority = await memoryWriteAuthority(db, command, input);
     const proposal = memoryProposal(command, authority, input);
-    await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-      [
-        'institutional-memory-item',
-        authority.workspaceId,
-        proposal.memoryKind,
-        proposal.subjectIdentityId ?? '',
-        proposal.canonicalKey,
-        proposal.audience,
-      ].join(':'),
-    ]);
-    const current = (
-      await db.query<{ id: string; version: number }>(
-        `SELECT id,version FROM institutional_memory_items
-         WHERE workspace_id=$1 AND kind=$2 AND subject_identity_id IS NOT DISTINCT FROM $3
-           AND canonical_key=$4 AND audience_kind=$5 AND state='active'`,
-        [
-          authority.workspaceId,
-          proposal.memoryKind,
-          proposal.subjectIdentityId ?? null,
-          proposal.canonicalKey,
-          proposal.audience,
-        ],
-      )
-    ).rows[0];
-    if (current) {
-      throw new Error(
-        `institutional memory already has item ${current.id} (version ${current.version}) under this key; skip this save if it says the same, or update_memory that item`,
-      );
-    }
     const itemId = await insertMemoryItem(db, command, authority.workspaceId, proposal, {
       version: 1,
       explicitSave: input.personAsked,

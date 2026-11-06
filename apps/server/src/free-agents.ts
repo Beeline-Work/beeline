@@ -1,8 +1,10 @@
+import {FREE_AGENT_CREATION_SCHEMA,reserveStarterAgents,refundStarterAgent} from './free-agent-creation.js';
+import { FREE_AGENT_ACCOUNTING_SCHEMA } from './free-agent-accounting.js';
 import { setRoomEventSubscriptions } from './agent-subscriptions.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { createCipheriv, createDecipheriv, createECDH, createHash, randomBytes } from 'node:crypto';
-import { assignSeededAgentIdentity, resolveFace, uniqueAgentHandle } from '@beeline/api-contract/phone';
+import { assignSeededAgentIdentity, resolveFace, agentHandleFromName } from '@beeline/api-contract/phone';
 import { createAgentCommand } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
 import type { FreeAgentMachines } from './fly-machines.js';
@@ -12,7 +14,6 @@ import { DEFAULT_FREE_AGENT_LIMITS, freeAgentDailyTokenCapFromEnv, freeAgentFirs
 import { createInvitedWorkspaceMembership, joinRooms } from './membership-join.js';
 import { captureServerError } from './sentry.js';
 import { ensureSystemIdentity, systemLine } from './system-line.js';
-import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
 import { createStarterOnboardingRun } from './starter-onboarding-run.js';
 
 /**
@@ -81,6 +82,8 @@ CREATE TABLE IF NOT EXISTS free_agent_events (
   detail jsonb
 );
 CREATE INDEX IF NOT EXISTS free_agent_events_agent ON free_agent_events(agent_id, at);
+${FREE_AGENT_ACCOUNTING_SCHEMA}
+${FREE_AGENT_CREATION_SCHEMA}
 `;
 
 export const FREE_AGENT_HARNESS = 'pi';
@@ -279,41 +282,34 @@ ${FREE_AGENT_APP_CONNECT_GUIDE}`;
  * its exact hello. Its Machine boots only when work arrives.
  * Returns undefined when the creator already owns the maximum.
  */
-export async function createFreeAgentInWorkspace(
-  database: SqlDatabase,
-  config: FreeAgentConfig,
-  input: { workspaceId: string; creatorId: string; roomId: string; name?: 'Beebee' | 'Luna'; silent?: boolean; team?: boolean },
-): Promise<string | undefined> {
-  const owned = await database.query<{ count: number }>(
-    `SELECT count(*)::int count FROM free_agents WHERE owner_id=$1`,
-    [input.creatorId],
-  );
-  if ((owned.rows[0]?.count ?? 0) >= config.maxPerOwner) return undefined;
+type FreeAgentCreationInput={workspaceId:string;creatorId:string;roomId:string;name?:'Beebee'|'Luna';silent?:boolean;team?:boolean};
+
+export async function createFreeAgentInWorkspace(database:SqlDatabase,config:FreeAgentConfig,
+  input:FreeAgentCreationInput):Promise<string|undefined>{
+  if (!await reserveStarterAgents(database,input.creatorId,1,config.maxPerOwner)) return undefined;
+  return createReservedFreeAgent(database,config,input);
+}
+
+async function createReservedFreeAgent(database:SqlDatabase,config:FreeAgentConfig,
+  input:FreeAgentCreationInput):Promise<string|undefined>{
   const name = input.name ?? 'Beebee';
   const agent = generateAgentKeypair();
   const body = generateAgentKeypair();
-  const lockedWorkspaces = await lockIdentityHandleWorkspaces(database, agent.publicKey, [
-    input.workspaceId,
-  ]);
   const roster = await database.query<{ id: string; name: string; face_id: string | null; handle: string | null }>(
     `SELECT i.id,i.name,i.face_id,i.handle FROM memberships m JOIN identities i ON i.id=m.identity_id
      WHERE m.workspace_id=ANY($1::uuid[]) AND m.room_id IS NULL AND m.removed_at IS NULL
        AND i.hidden_from_roster=false`,
-    [lockedWorkspaces],
+    [[input.workspaceId]],
   );
   const seeded = assignSeededAgentIdentity({
     seed: agent.publicKey,
     takenFaces: roster.rows.map((row) => resolveFace(row.face_id, row.id)),
     takenNames: roster.rows.map((row) => row.name),
   });
-  const handle = uniqueAgentHandle(
-    name,
-    roster.rows.flatMap((row) => (row.handle ? [row.handle] : [])),
-  );
-  await database.query(
-    `INSERT INTO identities(id,kind,name,handle,face_id) VALUES($1,'agent',$2,$3,$4)`,
-    [agent.publicKey, name, handle, seeded.face],
-  );
+  const handle=(await database.query<{handle:string}>(
+    `INSERT INTO identities(id,kind,name,handle,face_id) VALUES($1,'agent',$2,beeline_identity_handle($1,$3),$4) RETURNING handle`,
+    [agent.publicKey, name, agentHandleFromName(name), seeded.face],
+  )).rows[0]!.handle;
   await database.query(
     `INSERT INTO agents(agent_id,owner_id,soul,selected_model,machine_id,machine_name,harness)
      VALUES($1,$2,$3::jsonb,$4,$5,'Beeline cloud',$6)`,
@@ -330,10 +326,9 @@ export async function createFreeAgentInWorkspace(
       FREE_AGENT_HARNESS,
     ],
   );
-  await createInvitedWorkspaceMembership(database, [input.workspaceId, agent.publicKey, input.creatorId]);
-  await database.query(
+  const claimed = await database.query(
     `INSERT INTO free_agents(agent_id,workspace_id,owner_id,sealed_keys,model,starter_role)
-     VALUES($1,$2,$3,$4,$5,$6)`,
+     VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(workspace_id) WHERE starter_role='luna' DO NOTHING RETURNING agent_id`,
     [
       agent.publicKey,
       input.workspaceId,
@@ -343,6 +338,14 @@ export async function createFreeAgentInWorkspace(
       input.team ? name.toLowerCase() : null,
     ],
   );
+  if (!claimed.rowCount) {
+    await refundStarterAgent(database,input.creatorId);
+    // No membership, hello, key exchange or provisioning can observe a loser.
+    await database.query('DELETE FROM agents WHERE agent_id=$1', [agent.publicKey]);
+    await database.query('DELETE FROM identities WHERE id=$1', [agent.publicKey]);
+    return undefined;
+  }
+  await createInvitedWorkspaceMembership(database, [input.workspaceId, agent.publicKey, input.creatorId]);
   await joinRooms(database, {
     workspaceId: input.workspaceId,
     identityId: agent.publicKey,
@@ -471,7 +474,7 @@ export const FREE_AGENT_START_WINDOW_MINUTES = 10;
 
 /** Durable install/sign-in work ends on completion, failure, or disconnect. */
 const connectorWorkSql = (agent: string): string => `(
-  EXISTS (SELECT 1 FROM agents helper WHERE helper.agent_id=${agent}
+  EXISTS (SELECT 1 FROM squire_machines helper WHERE helper.helper_agent_id=${agent}
     AND helper.squire_work->>'install'='true'
     AND COALESCE(helper.squire_work->>'errorMessage','')='')
   OR EXISTS (SELECT 1 FROM workspace_connectors connector
@@ -541,13 +544,8 @@ export class FreeAgentService {
     database: SqlDatabase,
     input: { workspaceId: string; creatorId: string; roomId: string; team?: boolean; timeZone?: string },
   ): Promise<string | undefined> {
-    // Serialize owner creation so simultaneous Workspaces cannot exceed the cap.
-    await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`free-agent-create:${input.creatorId}`]);
-    if (!input.team) return createFreeAgentInWorkspace(database, this.config, input);
-    const owned = (await database.query<{ count: number }>(
-      `SELECT count(*)::int count FROM free_agents WHERE owner_id=$1`, [input.creatorId],
-    )).rows[0]?.count ?? 0;
-    if (owned + 2 > this.config.maxPerOwner) {
+    if (!input.team) return createFreeAgentInWorkspace(database,this.config,input);
+    if (!await reserveStarterAgents(database,input.creatorId,2,this.config.maxPerOwner)) {
       const existing = (await database.query<{ name: string; workspace_name: string }>(
         `SELECT identity.name,workspace.name workspace_name FROM free_agents free
          JOIN identities identity ON identity.id=free.agent_id
@@ -563,8 +561,8 @@ export class FreeAgentService {
         consequence: systemMessage("free-agents.your-account-has-reached-its-free-agent-limit") });
       return undefined;
     }
-    const beebee = await createFreeAgentInWorkspace(database, this.config, { ...input, silent: true, team: true });
-    const luna = await createFreeAgentInWorkspace(database, {
+    const beebee = await createReservedFreeAgent(database, this.config, { ...input, silent: true, team: true });
+    const luna = await createReservedFreeAgent(database, {
       ...this.config, model: this.config.lunaModel ?? 'openai/gpt-6-luna',
     }, { ...input, name: 'Luna', silent: true, team: true });
     if (!beebee || !luna) throw new Error('starter team provisioning failed');

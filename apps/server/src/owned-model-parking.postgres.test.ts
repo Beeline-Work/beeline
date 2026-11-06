@@ -31,7 +31,7 @@ async function fixture() {
       CREATE TABLE agent_commands(id text PRIMARY KEY,room_id uuid,agent_id text,turn_request_id text,action text,reason text,
         root_command_id text,root_source_message_id text,agent_depth integer,state text,generation_id text,claimed_at timestamptz,
         lease_expires_at timestamptz,created_at timestamptz DEFAULT now());
-      CREATE TABLE agent_turns(room_id uuid,request_id text,agent_id text,status text,generation_id text);
+      CREATE TABLE agent_turns(room_id uuid,request_id text,agent_id text,status text,generation_id text,started_at timestamptz);
       CREATE TABLE live_outputs(room_id uuid,agent_id text,turn_id text,kind text,body jsonb);`);
     await left.query(COMMITTED_JOURNAL_SCHEMA); await left.query(MEMBERSHIP_AUTHORITY_SCHEMA); await left.query(TURN_OWNERSHIP_SCHEMA);
     const seeded = await seedOwnedModelFixture(left);
@@ -47,7 +47,7 @@ describe.skipIf(!url)('real PostgreSQL causal model owner end', () => {
       const reserved = await attempts.reserve(f.actor, ONE, { model: MODEL, messages: [] }, async () => ({
         reservation: { day: '2026-11-02', reserved: 16, maxOutput: 8, reservedUsd: 0.01, credit: 0 }, payload: { model: MODEL, messages: [], max_tokens: 8 },
       }));
-      await f.left.query(`INSERT INTO agent_turns VALUES($1,'synthetic-request',$2,'working',$3)`, [MODEL_ROOM, MODEL_AGENT, MODEL_CLAIM.generationId]);
+      await f.left.query(`INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id) VALUES($1,'synthetic-request',$2,'working',$3)`, [MODEL_ROOM, MODEL_AGENT, MODEL_CLAIM.generationId]);
       park = f.left.transaction(async tx => {
         await parkOwnedModelTerminal(tx, { roomId: MODEL_ROOM, agentId: MODEL_AGENT, requestId: 'synthetic-request', generationId: MODEL_CLAIM.generationId,
           status: 'failed', modelOwnerEnd: { requestId: ONE } }, MODEL_AGENT, MODEL_SOURCE);
@@ -73,7 +73,9 @@ describe.skipIf(!url)('real PostgreSQL causal model owner end', () => {
       expect(entries).toBe(0);
       expect((await f.right.query('SELECT state,generation_id FROM agent_commands')).rows).toEqual([{ state: 'claimed', generation_id: MODEL_CLAIM.generationId }]);
       expect((await f.right.query('SELECT state FROM owned_model_attempts')).rows).toEqual([{ state: 'unknown' }]);
-      expect((await f.right.query('SELECT * FROM agent_turns')).rowCount).toBe(0);
+      // Parking ends model authority; the receipt's terminal owner ends the turn.
+      expect((await f.right.query('SELECT status,generation_id FROM agent_turns')).rows)
+        .toEqual([{status:'working',generation_id:MODEL_CLAIM.generationId}]);
     } finally { release.resolve(); await Promise.allSettled([park, claim].filter((value): value is Promise<unknown> => value !== undefined)); await f.close(); }
   }, 20_000);
 });

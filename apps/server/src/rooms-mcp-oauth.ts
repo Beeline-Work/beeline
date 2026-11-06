@@ -10,7 +10,7 @@ import type { TokenAuth } from './auth.js';
 import { tokenHash } from './auth.js';
 import { connectMcp, refreshMcp, MCP_FULL_SCOPE } from './rooms-mcp-connections.js';
 import { setMcpMemberWebhook, McpToolError, ensureMcpMember, mcpMemberId, setMcpMemberProfile } from './rooms-mcp-members.js';
-import { MCP_STARTER_ROUTINE, agentHandleFromName, uniqueAgentHandle } from '@beeline/api-contract/phone';
+import { MCP_STARTER_ROUTINE, agentHandleFromName } from '@beeline/api-contract/phone';
 import { subscribeCommandCompletion,waitForCommittedChange } from './command-completion.js';
 
 export const MCP_READ = 'rooms:read';
@@ -401,14 +401,11 @@ export class RoomsMcpOAuth {
             ? (await this.database.query<{ name: string; handle: string | null; avatar_base64: string | null }>(`SELECT i.name,i.handle,encode(a.bytes,'base64') avatar_base64 FROM identities i LEFT JOIN agent_avatars a ON a.agent_id=i.id AND i.avatar='/v1/agent-avatars/'||a.id::text WHERE i.id=$1`, [member])).rows[0]
             : undefined;
           const name = flow.joiner_name ?? existing?.name ?? flow.name;
-          let handle = flow.joiner_handle ?? existing?.handle ?? agentHandleFromName(name);
-          if (!flow.joiner_handle && !existing && flow.joiner_name) {
-            // A proposed name gets a handle no one in the person's Workspaces holds yet, kept for Allow.
-            const taken = await this.database.query<{ handle: string }>(`SELECT DISTINCT i.handle FROM memberships owner
-              JOIN memberships m ON m.workspace_id=owner.workspace_id AND m.removed_at IS NULL JOIN identities i ON i.id=m.identity_id
-              WHERE owner.identity_id=$1 AND owner.room_id IS NULL AND owner.removed_at IS NULL AND i.handle IS NOT NULL`, [flow.identity_id]);
-            handle = uniqueAgentHandle(name, taken.rows.map(row => row.handle));
-            await this.database.query('UPDATE rooms_mcp_flows SET joiner_handle=$2 WHERE id=$1', [flow.id, handle]);
+          let handle = flow.joiner_handle ?? existing?.handle;
+          if(!handle){
+            const base=agentHandleFromName(name).replace(/(_[0-9]+)+$/,'');
+            handle=(await this.database.query<{handle:string}>(`SELECT CASE WHEN n=1 THEN $1 ELSE $1||'_'||n::text END handle
+              FROM (SELECT beeline_next_handle_number($1) n) next`,[base])).rows[0]!.handle;
           }
           const who = `<p class="who">Signed in as <b>${escape(flow.identity_name ?? 'Beeline user')}</b></p>`;
           if (url.searchParams.get('edit') === '1') {
@@ -478,7 +475,7 @@ export class RoomsMcpOAuth {
               || workspaceIds.some(id => typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)))
               throw new Refusal('invalid_request', 'workspaces_invalid');
             try {
-              await ensureMcpMember(db, { clientId: flow.client_id, ownerId: flow.identity_id, modelLabel: flow.name,
+              await ensureMcpMember(db, { clientId: flow.client_id, ownerId: flow.identity_id, modelLabel: flow.name, initialName:flow.joiner_name??undefined,
                 workspaceIds: workspaceIds.map(id => (id as string).toLowerCase()) });
             } catch (error) {
               if (error instanceof McpToolError) throw new Refusal('invalid_request', 'workspaces_invalid');

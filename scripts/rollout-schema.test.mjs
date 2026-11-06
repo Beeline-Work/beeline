@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { assertDrained } from './rollout-schema.mjs';
+import { assertDrained, schemaProblems, sourceTrees } from './rollout-schema.mjs';
 
 const release = { version: 'v0.1.200', sourceSha: 'a'.repeat(40) };
 const machines = [
@@ -71,4 +71,14 @@ test('drain fails closed on readiness, HTTP, network, timeout or malformed versi
   ]) {
     await assert.rejects(assertDrained(machines, release, probe(overrides).fetchImpl), refused);
   }
+});
+
+
+test('current server has no dependency on the approved retired turn columns', () => {
+  const { current } = sourceTrees('HEAD');
+  current['apps/server/contracts/retired-turn-probe.sql'] = `
+    ALTER TABLE agents DROP COLUMN squire_report;
+    ALTER TABLE messages DROP COLUMN event_woken;
+  `;
+  assert.deepEqual(schemaProblems(current, {}), []);
 });

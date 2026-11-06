@@ -132,28 +132,6 @@ function mergeWindows(previous: AgentUsage | undefined, usage: AgentUsage, recei
   return [...windows.values()];
 }
 
-/**
- * An account record after one quota-axi read. A fresh read replaces the whole
- * window set; a cached (stale) one replaces it only when it is not older than
- * what is stored. Either way the record says how the latest read went.
- */
-export function applyAccountRead(previous: AgentUsage | undefined, usage: AgentUsage, receivedAt: number): AgentUsage {
-  const windows = usage.windows.map((w) => ({ ...w, updatedAt: Math.min(w.updatedAt, receivedAt) }));
-  const readAt = shownAt({ ...usage, windows, updatedAt: Math.min(usage.updatedAt, receivedAt) });
-  const replace = usage.read?.status === 'fresh' ||
-    (readAt !== undefined && readAt >= (shownAt(previous) ?? -Infinity));
-  const kept = replace ? { windows, plan: usage.plan, credits: usage.credits }
-    : { windows: previous?.windows ?? [], plan: previous?.plan, credits: previous?.credits };
-  const read = usage.read ? { ...usage.read, at: Math.min(usage.read.at, receivedAt) } : previous?.read;
-  return {
-    updatedAt: oldest(kept.windows) ?? (replace ? Math.min(usage.updatedAt, receivedAt) : (previous?.updatedAt ?? receivedAt)),
-    windows: kept.windows,
-    ...(kept.plan ? { plan: kept.plan } : {}),
-    ...(kept.credits ? { credits: kept.credits } : {}),
-    ...(read ? { read } : {}),
-  };
-}
-
 /** The plan part of a usage record, as an account stores it. */
 export const accountRecord = (usage: AgentUsage | undefined): AgentUsage => ({
   updatedAt: usage?.updatedAt ?? 0,
@@ -205,10 +183,12 @@ export async function saveAgentUsage(
       const seed = previous?.spend ? undefined : previous;
       account = (
         await db.query<{ id: string; usage: unknown }>(
-          `INSERT INTO usage_accounts(owner_id,provider,account_key,usage) VALUES($1,$2,$3,$4::jsonb)
-           ON CONFLICT (owner_id,provider,account_key) DO UPDATE SET owner_id=EXCLUDED.owner_id
+          `INSERT INTO usage_accounts(owner_id,provider,account_key,usage) VALUES($1,$2,$3,beeline_account_read($4::jsonb,$5::jsonb,$6))
+           ON CONFLICT (owner_id,provider,account_key) DO UPDATE SET (usage,updated_at)=(SELECT merged.usage,
+             CASE WHEN usage_accounts.usage IS DISTINCT FROM merged.usage THEN now() ELSE usage_accounts.updated_at END
+             FROM (SELECT beeline_account_read(usage_accounts.usage,$5::jsonb,$6) usage) merged)
            RETURNING id::text,usage`,
-          [agent.owner_id, usage.account.provider, usage.account.key, JSON.stringify(accountRecord(seed))],
+          [agent.owner_id, usage.account.provider, usage.account.key, JSON.stringify(accountRecord(seed)),JSON.stringify(usage),receivedAt],
         )
       ).rows[0];
     } else if (agent.usage_account_id) {
@@ -220,18 +200,13 @@ export async function saveAgentUsage(
       ).rows[0];
     }
     if (account) {
-      const stored = readAgentUsage(account.usage);
-      const next = usage.account
-        ? applyAccountRead(stored, usage, receivedAt)
-        : (() => {
-            // Claude's in-turn limits update the account they were spent on.
-            const windows = mergeWindows(stored, usage, receivedAt);
-            return { ...accountRecord(stored), updatedAt: oldest(windows) ?? stored?.updatedAt ?? receivedAt, windows };
-          })();
-      await db.query(`UPDATE usage_accounts SET usage=$2::jsonb,updated_at=now() WHERE id=$1::bigint AND usage IS DISTINCT FROM $2::jsonb`, [
-        account.id,
-        JSON.stringify(next),
-      ]);
+      if(!usage.account){
+        const stored=readAgentUsage(account.usage);
+        const windows=mergeWindows(stored,usage,receivedAt);
+        const next={...accountRecord(stored),windows,updatedAt:oldest(windows)??stored?.updatedAt??receivedAt};
+        await db.query('UPDATE usage_accounts SET usage=$2::jsonb,updated_at=now() WHERE id=$1::bigint AND usage IS DISTINCT FROM $2::jsonb',
+          [account.id,JSON.stringify(next)]);
+      }
       await writeSnapshot(previous && !previous.spend ? accountRecord(previous) : { updatedAt: receivedAt, windows: [] }, account.id);
       return true;
     }

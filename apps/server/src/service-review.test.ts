@@ -28,19 +28,19 @@ async function receipts(run: string) {
   }));
 }
 it('walk-scope: a later invalid receipt cannot advance any workspace cursor', async () => {
-  await reserveServiceReviewWorkspaces(db,agent,'failed',true);
+  await reserveServiceReviewWorkspaces(db,agent,'failed');
   const rows = await receipts('failed');
   rows[1]!.rowsRead = 0;
   await expect(completeServiceReview(db,agent,'failed',rows)).rejects.toThrow('receipt must match');
   expect((await db.query(`SELECT * FROM service_review_visits WHERE completed_at IS NOT NULL`)).rows).toHaveLength(0);
-  await reserveServiceReviewWorkspaces(db,agent,'retry',true);
+  await reserveServiceReviewWorkspaces(db,agent,'retry');
   expect(await receipts('retry')).toHaveLength(2);
   await completeServiceReview(db,agent,'retry',await receipts('retry'));
-  expect(await reserveServiceReviewWorkspaces(db,agent,'next',true)).toEqual([]);
+  expect(await reserveServiceReviewWorkspaces(db,agent,'next')).toEqual([]);
 });
 it('walk-scope: internal workspaces are excluded at reservation, read, and validation', async () => {
   await db.query('UPDATE workspaces SET internal=true WHERE id=$1',[workspaces[0]]);
-  expect(await reserveServiceReviewWorkspaces(db,agent,'external',true)).toEqual([workspaces[1]]);
+  expect(await reserveServiceReviewWorkspaces(db,agent,'external')).toEqual([workspaces[1]]);
   // A pre-migration reservation cannot reopen internal content or require its receipt.
   await db.query(`INSERT INTO service_review_visits(workspace_id,agent_id,run_id,read_from,read_through)
     VALUES($1,$2,'external',now()-interval '1 day',now())`,[workspaces[0],agent]);
@@ -52,16 +52,16 @@ it('walk-scope: internal workspaces are excluded at reservation, read, and valid
   await expect(completeServiceReview(db,agent,'external',[...externalReceipts,{workspace:workspaces[0]}])).rejects.toThrow('receipt is required');
 });
 it('walk-scope: unread backlog survives failed days, including the first reservation', async () => {
-  await reserveServiceReviewWorkspaces(db,agent,'interrupted',true);
+  await reserveServiceReviewWorkspaces(db,agent,'interrupted');
   // Advance the fixture's clock by moving its timestamps back, including its reserved window.
   await db.query(`UPDATE messages SET created_at=created_at-interval '3 days'`);
   await db.query(`UPDATE service_review_visits SET visited_at=visited_at-interval '3 days',
     read_from=read_from-interval '3 days',read_through=read_through-interval '3 days'`);
-  expect(await reserveServiceReviewWorkspaces(db,agent,'catchup',true)).toHaveLength(2);
+  expect(await reserveServiceReviewWorkspaces(db,agent,'catchup')).toHaveLength(2);
   const caughtUp = await receipts('catchup');
   expect(caughtUp.map(row=>row.rowsRead)).toEqual([1,1]);
   await completeServiceReview(db,agent,'catchup',caughtUp);
-  expect(await reserveServiceReviewWorkspaces(db,agent,'caught-up',true)).toEqual([]);
+  expect(await reserveServiceReviewWorkspaces(db,agent,'caught-up')).toEqual([]);
 });
 it('walk-scope: first reads are bounded, paginate fully, and the next window includes only new messages and turns', async () => {
   await db.query(`UPDATE workspaces SET allow_fix_sweep=false WHERE id=$1`,[workspaces[1]]);
@@ -69,7 +69,7 @@ it('walk-scope: first reads are bounded, paginate fully, and the next window inc
     VALUES('old',$1,$2,'Old request',now()-interval '2 days')`,[rooms[0],human]);
   await db.query(`INSERT INTO messages(id,room_id,author_id,text)
     SELECT 'page-'||n,$1,$2,'Synthetic request' FROM generate_series(1,205) n`,[rooms[0],human]);
-  await reserveServiceReviewWorkspaces(db,agent,'pages',true);
+  await reserveServiceReviewWorkspaces(db,agent,'pages');
   let after='', count=0;
   for (;;) {
     const page = await readServiceReviewPage(db,agent,'pages',workspaces[0]!,after);
@@ -83,7 +83,7 @@ it('walk-scope: first reads are bounded, paginate fully, and the next window inc
   await completeServiceReview(db,agent,'pages',[{workspace:workspaces[0],rowsRead:count,firstMessageTime:times.first.toISOString(),lastMessageTime:times.last.toISOString(),findings:'none'}]);
   await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Synthetic agent')`,[agent]);
   await db.query(`INSERT INTO agent_turns(room_id,request_id,agent_id,status) VALUES($1,'new-turn',$2,'failed')`,[rooms[0],agent]);
-  expect(await reserveServiceReviewWorkspaces(db,agent,'turn-only',true)).toEqual([workspaces[0]]);
+  expect(await reserveServiceReviewWorkspaces(db,agent,'turn-only')).toEqual([workspaces[0]]);
   const next = await readServiceReviewPage(db,agent,'turn-only',workspaces[0]!);
   expect(next.rows).toHaveLength(1);
   expect(next.rows[0]!.activity).toMatchObject({rowKind:'turn',status:'failed'});
@@ -112,7 +112,7 @@ it('walk-authors: SQL pages identify people and agent owners without conflating 
   await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Synthetic agent')`,[agent]);
   await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`,[agent,human]);
   await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('agent-reply',$1,$2,'Synthetic reply')`,[rooms[0],agent]);
-  await reserveServiceReviewWorkspaces(db,agent,'authors',true);
+  await reserveServiceReviewWorkspaces(db,agent,'authors');
   const page = await readServiceReviewPage(db,agent,'authors',workspaces[0]!);
   expect(page.rows.find(row=>row.id==='message-0')!.activity).toMatchObject({authorId:human,authorKind:'human',ownerId:null});
   expect(page.rows.find(row=>row.id==='agent-reply')!.activity).toMatchObject({authorId:agent,authorKind:'agent',ownerId:human});
@@ -120,13 +120,13 @@ it('walk-authors: SQL pages identify people and agent owners without conflating 
 
 it('walk-fortnight: weekly reads reopen completed history, page it, and recheck consent', async () => {
   await db.query(`UPDATE messages SET created_at=now()-interval '5 days'`);
-  expect(await reserveServiceReviewWorkspaces(db,agent,'daily-empty',true)).toEqual([]);
+  expect(await reserveServiceReviewWorkspaces(db,agent,'daily-empty')).toEqual([]);
   await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
     SELECT 'history-'||n,$1,$2,'Synthetic history',now()-interval '13 days' FROM generate_series(1,205) n`,[rooms[0],human]);
   await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
     VALUES('outside',$1,$2,'Outside window',now()-interval '15 days')`,[rooms[0],human]);
   await db.query(`UPDATE workspaces SET internal=true WHERE id=$1`,[workspaces[1]]);
-  expect(await reserveServiceReviewWorkspaces(db,agent,'weekly',true,14)).toEqual([workspaces[0]]);
+  expect(await reserveServiceReviewWorkspaces(db,agent,'weekly',14)).toEqual([workspaces[0]]);
   let after='',count=0;
   const times:string[]=[];
   for (;;) {
@@ -141,8 +141,20 @@ it('walk-fortnight: weekly reads reopen completed history, page it, and recheck 
   expect(count).toBe(206);
   times.sort();
   await completeServiceReview(db,agent,'weekly',[{workspace:workspaces[0],rowsRead:count,firstMessageTime:times[0],lastMessageTime:times.at(-1),findings:'none'}]);
-  expect(await reserveServiceReviewWorkspaces(db,agent,'daily-after-weekly',true)).toEqual([]);
-  expect(await reserveServiceReviewWorkspaces(db,agent,'weekly-again',true,14)).toEqual([workspaces[0]]);
+  expect(await reserveServiceReviewWorkspaces(db,agent,'daily-after-weekly')).toEqual([]);
+  expect(await reserveServiceReviewWorkspaces(db,agent,'weekly-again',14)).toEqual([workspaces[0]]);
   await db.query(`UPDATE workspaces SET allow_fix_sweep=false WHERE id=$1`,[workspaces[0]]);
   expect((await readServiceReviewPage(db,agent,'weekly-again',workspaces[0]!)).rows).toEqual([]);
+});
+
+it('reservations are not limited by another run today or a recent unfinished visit',async()=>{
+  const more=await db.query<{id:string}>(`INSERT INTO workspaces(id,name)
+    SELECT gen_random_uuid(),'Opted in' FROM generate_series(1,6) RETURNING id`);
+  for(const {id} of more.rows){
+    const room=(await db.query<{id:string}>(`INSERT INTO rooms(id,workspace_id,name) VALUES(gen_random_uuid(),$1,'Room') RETURNING id`,[id])).rows[0]!.id;
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Review me')`,[room,room,human]);
+  }
+  expect(await reserveServiceReviewWorkspaces(db,agent,'first')).toHaveLength(8);
+  expect(await reserveServiceReviewWorkspaces(db,agent,'second')).toHaveLength(8);
+  expect(await reserveServiceReviewWorkspaces(db,agent,'first')).toEqual([]);
 });

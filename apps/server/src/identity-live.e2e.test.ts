@@ -157,7 +157,11 @@ describe('live Workspace and identity changes across sessions', () => {
     expect((await phone.readWorkspace(WORKSPACE, VIEWER))?.managerSettings?.allowFixSweep).toBe(true);
   });
 
-  it('browses without a notice today, skips opted-out workspaces and rotates visits', async () => {
+  it('browses workspaces with content once per run and rechecks opt-in', async () => {
+    for(const workspace of [WORKSPACE,ELSEWHERE]){
+      const room=(await database.query<{id:string}>(`INSERT INTO rooms(id,workspace_id,name) VALUES(gen_random_uuid(),$1,'Review room') RETURNING id`,[workspace])).rows[0]!.id;
+      await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Review content')`,[room,room,VIEWER]);
+    }
     const phone = new PhoneService(database, 'http://local.test');
     await phone.execute('updateWorkspace', { workspaceId: WORKSPACE, allowFixSweep: false }, VIEWER);
     expect(await reserveServiceReviewWorkspaces(database,REVIEW_AGENT,'test-run')).toEqual([ELSEWHERE]);

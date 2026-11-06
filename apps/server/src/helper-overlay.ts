@@ -8,7 +8,7 @@ import { assertCurrentTurnOwner, registerOwnedEffectFence } from './turn-ownersh
 import { subscribeCommandCompletion } from './command-completion.js';
 import type { SqlDatabase } from './database.js';
 import type { LiveEvent } from './live.js';
-import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
+import { lockRoomAccess } from './room-access-lock.js';
 import { SERVER_LEASE_EXPIRY_MS } from './connection-presence.js';
 
 /** Independent deployment gate. Never infer support from native/helper version. */
@@ -114,9 +114,9 @@ export async function applyHelperOverlay(db:SqlDatabase,authenticatedAgentId:str
   const {text:_text,...control}=frame;
   const metadata:HelperOverlayMetadata={...control,text:'',connectionId:owner.connectionId,connectionEpoch:owner.epoch};
   try{return await db.transaction(async tx=>{
-    await tx.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))',[ROUTER_AUTHORITY_LOCK]);
     const command=await currentOwner(tx,metadata);
     if(!command)return {ack:{accepted:false,reason:'stale'}};
+    if(!await lockRoomAccess(tx,[frame.roomId],[frame.agentId]))return {ack:{accepted:false,reason:'stale'}};
     if(!(await tx.query(`SELECT 1 FROM room_access access JOIN rooms room ON room.id=access.room_id
       JOIN memberships workspace ON workspace.workspace_id=room.workspace_id AND workspace.identity_id=access.identity_id
       AND workspace.room_id IS NULL AND workspace.removed_at IS NULL
@@ -157,8 +157,10 @@ export async function fenceHelperOverlayEnqueue(db:SqlDatabase,event:LiveEvent,e
   if(!metadata){enqueue();return;}
   if(Buffer.byteLength(JSON.stringify(event))+256>HELPER_OVERLAY_MAX_FRAME_BYTES)return;
   try{await db.transaction(async tx=>{
-    await tx.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))',[ROUTER_AUTHORITY_LOCK]);
+    // Archival takes command rows before updating the Room. Match that order
+    // so a close cannot hold a command while waiting on our shared Room row.
     if(!readerId||!await currentOwner(tx,metadata))return;
+    if(!await lockRoomAccess(tx,[metadata.roomId],[metadata.agentId,readerId]))return;
     if(!(await tx.query(`SELECT 1 FROM room_access access JOIN rooms room ON room.id=access.room_id
       JOIN memberships workspace ON workspace.workspace_id=room.workspace_id AND workspace.identity_id=access.identity_id
         AND workspace.room_id IS NULL AND workspace.removed_at IS NULL

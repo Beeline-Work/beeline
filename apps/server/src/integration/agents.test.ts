@@ -682,7 +682,7 @@ const fixture = monolithFixture();
     }));
     expect(
       (await fixture.database.query(`SELECT name,handle FROM identities WHERE id=$1`, [AGENT])).rows,
-    ).toEqual([{ name: 'Honeybee', handle: 'honeybee' }]);
+    ).toEqual([{ name: 'Honeybee', handle: 'bee' }]);
 
     await fixture.database.query(`UPDATE agents SET model_catalog=$2::jsonb WHERE agent_id=$1`, [
       AGENT,
@@ -820,7 +820,7 @@ const fixture = monolithFixture();
   });
 
 
-  it('assigns a unique handle when a legacy pairing joins another Workspace', async () => {
+  it('preserves the existing handle when a pairing joins another Workspace', async () => {
     const secondWorkspace = '66666666-6666-4666-8666-666666666666';
     const lumen = 'f'.repeat(64);
     const agentAccessToken = 'bat_agent_handle_pairing';
@@ -856,6 +856,6 @@ const fixture = monolithFixture();
     expect(claimed.status).toBe(200);
     expect(
       (await fixture.database.query(`SELECT handle FROM identities WHERE id=$1`, [AGENT])).rows,
-    ).toEqual([{ handle: 'lumen_2' }]);
+    ).toEqual([{ handle: 'nora' }]);
   });
 });

@@ -2,7 +2,6 @@ import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { createHash, randomBytes } from 'node:crypto';
 import {
   FEEDBACK_AGENT_CATEGORIES,
-  FEEDBACK_AGENT_DAILY_CAP,
   FEEDBACK_DEFAULT_REPOSITORY,
   FEEDBACK_DETAIL_MAX_BYTES,
   FEEDBACK_ERROR_EXCERPT_MAX_BYTES,
@@ -236,8 +235,8 @@ async function roomWorkspace(database: SqlDatabase, roomId: string): Promise<str
 
 /**
  * `report_feedback`, from inside the agent's authorized turn. The same
- * category, tool and normalized summary match any open agent item. Reports
- * beyond the daily safety ceiling share one bounded overflow item.
+ * category, tool and normalized summary match any open agent item. Every
+ * explicit report retains its evidence as an occurrence.
  */
 export async function reportAgentFeedback(
   database: SqlDatabase,
@@ -263,125 +262,29 @@ export async function reportAgentFeedback(
   if (containsSecret([summary, detail, errorExcerpt, toolName].filter(Boolean).join('\n')))
     throw new Error('feedback contains a secret-shaped value; describe the problem without it');
   const summaryKey = feedbackSummaryKey(summary) || summary.toLowerCase();
-  const versions = await agentReportVersions(database, agentId);
-  await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`feedback:${agentId}`]);
-  await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-    `feedback-match:${JSON.stringify([input.category, summaryKey, toolName ?? null])}`,
+  const versions = await agentReportVersions(database,agentId);
+  const owner = (await database.query<{owner_id:string}>(
+    'SELECT owner_id FROM agents WHERE agent_id=$1',[agentId])).rows[0]?.owner_id;
+  const workspaceId=await roomWorkspace(database,command.room_id);
+  const messageIds=await evidenceMessageIds(database,command.room_id,command.source_message_id);
+  const occurrence={agentId,roomId:command.room_id,triggerMessageId:command.source_message_id,
+    requestId:command.turn_request_id,messageIds,promptSectionIds,summary,detail:detail??null,errorExcerpt:errorExcerpt??null,
+    helperVersion:versions.helperVersion,harness:versions.harness,harnessVersion:versions.harnessVersion};
+  const stored = await database.query<{id:string;occurrence_count:number}>(`INSERT INTO feedback_items(
+    id,source_kind,reporter_identity_id,reporter_owner_id,workspace_id,room_id,
+    trigger_message_id,message_ids,request_id,category,summary,summary_key,detail,
+    tool_name,error_excerpt,prompt_section_ids,helper_version,app_version,app_platform,harness,harness_version,last_occurrence_at)
+    VALUES($1,'agent',$2,$3,$4,$5,$6,$7::text[],$8,$9,$10,$11,$12,$13,$14,$15::text[],$16,$17,$18,$19,$20,now())
+    ON CONFLICT(category,summary_key,tool_name) WHERE source_kind='agent' AND status IN ('new','filed','attached')
+      DO UPDATE SET occurrence_count=feedback_items.occurrence_count+1,last_occurrence_at=now(),
+        occurrences=feedback_items.occurrences || jsonb_build_array($21::jsonb || jsonb_build_object('createdAt',now()))
+    RETURNING id,occurrence_count`,[
+    feedbackItemId(),agentId,owner??null,workspaceId,command.room_id,command.source_message_id,messageIds,
+    command.turn_request_id,input.category,summary,summaryKey,detail??null,toolName??null,errorExcerpt??null,
+    promptSectionIds,versions.helperVersion,versions.appVersion,versions.appPlatform,versions.harness,versions.harnessVersion,
+    JSON.stringify(occurrence),
   ]);
-  const existing = (
-    await database.query<{ id: string }>(
-      `SELECT id FROM feedback_items
-       WHERE source_kind='agent' AND category=$1 AND summary_key=$2
-         AND tool_name IS NOT DISTINCT FROM $3::text
-         AND status IN ('new','filed','attached')
-       ORDER BY created_at,id LIMIT 1 FOR UPDATE`,
-      [input.category, summaryKey, toolName ?? null],
-    )
-  ).rows[0];
-  if (existing) {
-    // Original context stays on the item; later occurrences retain their own evidence.
-    await database.query(
-      `UPDATE feedback_items SET occurrence_count=occurrence_count+1,
-         last_occurrence_at=now(), occurrences=occurrences || jsonb_build_array($3::jsonb || jsonb_build_object('createdAt',now()))
-       WHERE id=$1
-         AND NOT (reporter_identity_id=$2 AND created_at>now()-interval '1 hour')
-         AND NOT EXISTS (
-           SELECT 1 FROM jsonb_array_elements(occurrences) occurrence
-           WHERE occurrence->>'agentId'=$2
-             AND (occurrence->>'createdAt')::timestamptz>now()-interval '1 hour'
-         )`,
-      [
-        existing.id,
-        agentId,
-        JSON.stringify({
-          agentId,
-          roomId: command.room_id,
-          triggerMessageId: command.source_message_id,
-          requestId: command.turn_request_id,
-          messageIds: await evidenceMessageIds(
-            database,
-            command.room_id,
-            command.source_message_id,
-          ),
-          promptSectionIds,
-          summary,
-          detail: detail ?? null,
-          errorExcerpt: errorExcerpt ?? null,
-          helperVersion: versions.helperVersion,
-          harness: versions.harness,
-          harnessVersion: versions.harnessVersion,
-        }),
-      ],
-    );
-    return { itemId: existing.id, duplicate: true };
-  }
-  const today = (
-    await database.query<{ count: number }>(
-      `SELECT count(*)::int count FROM feedback_items
-       WHERE source_kind='agent' AND reporter_identity_id=$1
-         AND created_at>=date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`,
-      [agentId],
-    )
-  ).rows[0]!.count;
-  const overflow = today >= FEEDBACK_AGENT_DAILY_CAP;
-  // A reserved key (not producible by summary normalization) keeps overflow
-  // separate from ordinary duplicate matching, including across agents.
-  const overflowKey = overflow
-    ? `overflow:${agentId}:${(await database.query<{ utc_day: string }>(
-        "SELECT to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD') AS utc_day",
-      )).rows[0]!.utc_day}`
-    : undefined;
-  const owner = (
-    await database.query<{ owner_id: string }>(`SELECT owner_id FROM agents WHERE agent_id=$1`, [
-      agentId,
-    ])
-  ).rows[0]?.owner_id;
-  const id = overflowKey ? `fb_${overflowKey}` : feedbackItemId();
-  const stored = await database.query<{ occurrence_count: number }>(
-    `INSERT INTO feedback_items(
-       id,source_kind,reporter_identity_id,reporter_owner_id,workspace_id,room_id,
-       trigger_message_id,message_ids,request_id,category,summary,summary_key,detail,
-       tool_name,error_excerpt,prompt_section_ids,
-       helper_version,app_version,app_platform,harness,harness_version
-     ) VALUES($1,'agent',$2,$3,$4,$5,$6,$7::text[],$8,$9,$10,$11,$12,$13,$14,$15::text[],
-       $16,$17,$18,$19,$20)
-     ${overflow ? `ON CONFLICT(id) DO UPDATE SET
-       occurrence_count=feedback_items.occurrence_count+1, last_occurrence_at=now(),
-       summary=EXCLUDED.summary, detail=EXCLUDED.detail, category=EXCLUDED.category,
-       tool_name=EXCLUDED.tool_name, error_excerpt=EXCLUDED.error_excerpt,
-       workspace_id=EXCLUDED.workspace_id, room_id=EXCLUDED.room_id,
-       trigger_message_id=EXCLUDED.trigger_message_id, message_ids=EXCLUDED.message_ids,
-       request_id=EXCLUDED.request_id, prompt_section_ids=EXCLUDED.prompt_section_ids,
-       helper_version=EXCLUDED.helper_version, app_version=EXCLUDED.app_version,
-       app_platform=EXCLUDED.app_platform, harness=EXCLUDED.harness,
-       harness_version=EXCLUDED.harness_version,
-       status='new', issue_repository=NULL, issue_number=NULL, triage_reason=NULL,
-       triaged_at=NULL, resolved_notified_at=NULL` : ''}
-     RETURNING occurrence_count`,
-    [
-      id,
-      agentId,
-      owner ?? null,
-      await roomWorkspace(database, command.room_id),
-      command.room_id,
-      command.source_message_id,
-      await evidenceMessageIds(database, command.room_id, command.source_message_id),
-      command.turn_request_id,
-      input.category,
-      summary,
-      overflowKey ?? summaryKey,
-      detail ?? null,
-      toolName ?? null,
-      errorExcerpt ?? null,
-      promptSectionIds,
-      versions.helperVersion,
-      versions.appVersion,
-      versions.appPlatform,
-      versions.harness,
-      versions.harnessVersion,
-    ],
-  );
-  return { itemId: id, duplicate: stored.rows[0]!.occurrence_count > 1 };
+  return {itemId:stored.rows[0]!.id,duplicate:stored.rows[0]!.occurrence_count>1};
 }
 
 const TAG_SUMMARY = 'Reported with @system';

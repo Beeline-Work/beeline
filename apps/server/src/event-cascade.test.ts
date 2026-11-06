@@ -1,15 +1,6 @@
 import { setRoomEventSubscriptions } from './agent-subscriptions.js';
-/**
- * How far an event may travel, and how many turns it may pay for.
- *
- * The whole guard lives at write time in `systemLine`, so this file drives it
- * the way the server does: a root event with no cause, then lines that cite one.
- * The refusal must leave NOTHING behind — a guard that posts the line and then
- * complains is worse than no guard, because the receiving agent has already
- * been woken by the time the emitter reads the error.
- */
+/** Server-derived causal trace and source validation for committed events. */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { MAX_EVENT_DEPTH, MAX_TURNS_PER_ROOT } from '@beeline/api-contract/phone';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { EventCascadeRefusedError, systemLine } from './system-line.js';
 
@@ -78,7 +69,7 @@ describe('an event cascade', () => {
     });
   });
 
-  it('leaves a line with no kind out of every cascade, so nothing spends a budget on it', async () => {
+  it('leaves an unkinded line outside causal event traces', async () => {
     const note = await systemLine(database, {
       roomId: ROOM,
       subject: { kind: 'person', id: HUMAN, name: 'Ada' },
@@ -120,63 +111,27 @@ describe('an event cascade', () => {
     expect(await rowCount()).toBe(before);
   });
 
-  it('stops an A→B→A chain at the depth cap, with the reason the emitter reads', async () => {
-    let cause = (
-      await systemLine(database, {
-        roomId: ROOM,
-        subject: { kind: 'person', id: HUMAN, name: 'Ada' },
-        verb: 'joined',
-        kind: 'joined',
-        wakes: [AGENT_A],
-      })
-    ).id;
-    // A wakes B, B wakes A, A wakes B… each hop is one event citing the last.
-    for (let hop = 1; hop <= MAX_EVENT_DEPTH; hop += 1) {
-      const written = await emit(cause, [hop % 2 === 1 ? AGENT_B : AGENT_A]);
-      expect((await cascadeOf(written.id))?.event_depth).toBe(hop);
-      cause = written.id;
+  it('retains causal depth beyond the former depth cap',async()=>{
+    const root=await systemLine(database,{roomId:ROOM,subject:{kind:'person',id:HUMAN,name:'Ada'},
+      verb:'joined',kind:'joined',wakes:[AGENT_A]});
+    let cause=root.id;
+    for(let hop=1;hop<=8;hop++){
+      const written=await emit(cause,[hop%2?AGENT_B:AGENT_A]);
+      expect(await cascadeOf(written.id)).toEqual({event_cause_id:cause,event_root_cause_id:root.id,event_depth:hop});
+      cause=written.id;
     }
-    const before = await rowCount();
-    await expect(emit(cause, [AGENT_B])).rejects.toThrow(
-      new RegExp(
-        `would sit ${MAX_EVENT_DEPTH + 1} events deep and the limit is ${MAX_EVENT_DEPTH}`,
-      ),
-    );
-    expect(await rowCount()).toBe(before);
   });
 
-  it('refuses the emit that would push one root past its turn budget', async () => {
-    // A wide root: one event with three mentions per hop spends the budget
-    // before the depth cap can.
-    const root = await systemLine(database, {
-      roomId: ROOM,
-      subject: { kind: 'person', id: HUMAN, name: 'Ada' },
-      verb: 'joined',
-      kind: 'joined',
-      wakes: [AGENT_A, AGENT_B, HUMAN],
-    });
-    let cause = root.id;
-    for (let hop = 0; hop < 3; hop += 1) {
-      cause = (await emit(cause, [AGENT_A, AGENT_B, HUMAN])).id;
-    }
-    // 4 lines × 3 mentions = 12 turns woken, exactly the budget.
-    const spent = await database.query<{ woken: number }>(
-      `SELECT COALESCE(SUM(event_woken),0)::int woken
-       FROM messages WHERE event_root_cause_id=$1`,
-      [root.id],
-    );
-    expect(spent.rows[0]?.woken).toBe(MAX_TURNS_PER_ROOT);
-    const before = await rowCount();
-    await expect(emit(cause, [AGENT_A])).rejects.toThrow(
-      new RegExp(`already woken ${MAX_TURNS_PER_ROOT} turns`),
-    );
-    expect(await rowCount()).toBe(before);
+  it('keeps wide event chains without a shared turn budget',async()=>{
+    const root=await systemLine(database,{roomId:ROOM,subject:{kind:'person',id:HUMAN,name:'Ada'},
+      verb:'joined',kind:'joined',wakes:[AGENT_A,AGENT_B]});
+    let cause=root.id;
+    for(let hop=0;hop<8;hop++) cause=(await emit(cause,[AGENT_A,AGENT_B])).id;
+    expect((await cascadeOf(cause))?.event_depth).toBe(8);
+    expect((await cascadeOf(cause))?.event_root_cause_id).toBe(root.id);
   });
 
-  it('never refuses a server-authored root, however many agents subscribe to it', async () => {
-    // The join must survive: a greeting Room with more subscribers than the
-    // per-chain budget is a Room, not an attack, and losing the membership
-    // write to a guard meant for agents is the silent failure this forbids.
+  it('fans out server-authored roots to every current subscriber', async () => {
     for (const agent of [AGENT_A, AGENT_B])
       await setRoomEventSubscriptions(database, ROOM, agent, ['joined']);
     const join = await systemLine(database, {
@@ -195,7 +150,7 @@ describe('an event cascade', () => {
     expect(woke?.sort()).toEqual([AGENT_A, AGENT_B].sort());
   });
 
-  it('counts a subscriber fan-out toward the same budget its emits spend', async () => {
+  it('keeps subscriber wakes and emitted facts on one root without granting new authority', async () => {
     for (const agent of [AGENT_A, AGENT_B])
       await setRoomEventSubscriptions(database, ROOM, agent, ['joined']);
     const root = await systemLine(database, {
@@ -205,13 +160,11 @@ describe('an event cascade', () => {
       kind: 'joined',
     });
     const first = await emit(root.id, [AGENT_B]);
-    const spent = await database.query<{ woken: number }>(
-      `SELECT COALESCE(SUM(event_woken),0)::int woken
-       FROM messages WHERE event_root_cause_id=$1`,
-      [root.id],
-    );
-    // Two subscribers woken by the join, one agent woken by the emit.
-    expect(spent.rows[0]?.woken).toBe(3);
+    expect((await database.query('SELECT agent_id FROM agent_commands WHERE source_message_id=$1 ORDER BY agent_id',[root.id])).rows)
+      .toEqual([AGENT_A,AGENT_B].sort().map(agent_id=>({agent_id})));
+    // The emitted fact has no owned parent command, so its requested target
+    // acquires no execution authority from the causal metadata alone.
+    expect((await database.query('SELECT id FROM agent_commands WHERE source_message_id=$1',[first.id])).rows).toEqual([]);
     expect((await cascadeOf(first.id))?.event_root_cause_id).toBe(root.id);
   });
 });

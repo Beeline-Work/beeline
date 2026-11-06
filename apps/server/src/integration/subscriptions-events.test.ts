@@ -174,10 +174,9 @@ const fixture = monolithFixture();
       tagged_ids: string[];
       text: string;
       system_event: { verb: string; kind?: string };
-      event_woken: number | null;
       woke: string[];
     }>(
-      `SELECT ${taggedIdentityIdsSql('messages')} tagged_ids,text,system_event,event_woken,
+      `SELECT ${taggedIdentityIdsSql('messages')} tagged_ids,text,system_event,
               ARRAY(SELECT agent_id FROM agent_commands
                     WHERE source_message_id=messages.id ORDER BY agent_id) woke
        FROM messages
@@ -189,7 +188,6 @@ const fixture = monolithFixture();
         tagged_ids: [],
         text: '@greeted-newcomer joined · invited by @owner',
         system_event: expect.objectContaining({ kind: 'joined' }),
-        event_woken: 1,
         woke: [WELCOME_AGENT],
       }),
     ]);
@@ -258,10 +256,9 @@ const fixture = monolithFixture();
       tagged_ids: string[];
       text: string;
       system_event: { kind?: string };
-      event_woken: number | null;
       woke: string[];
     }>(
-      `SELECT ${taggedIdentityIdsSql('messages')} tagged_ids,text,system_event,event_woken,
+      `SELECT ${taggedIdentityIdsSql('messages')} tagged_ids,text,system_event,
               ARRAY(SELECT agent_id FROM agent_commands
                     WHERE source_message_id=messages.id ORDER BY agent_id) woke
        FROM messages WHERE room_id=$1 AND card_type='member-joined'`,
@@ -271,7 +268,6 @@ const fixture = monolithFixture();
       expect.objectContaining({
         tagged_ids: [],
         system_event: expect.objectContaining({ kind: 'joined' }),
-        event_woken: 1,
         woke: [WELCOME_AGENT],
       }),
     ]);
@@ -312,19 +308,17 @@ const fixture = monolithFixture();
       await (await fixture.operation('addRoomMember', { roomId: ROOM, memberId: newcomerId })).json(),
     ).toEqual({ joined: true });
     const joins = await fixture.database.query<{
-      event_woken: number | null;
       system_event: { kind?: string };
       woke: string[];
     }>(
       `SELECT ARRAY(SELECT agent_id FROM agent_commands
                     WHERE source_message_id=messages.id ORDER BY agent_id) woke,
-              event_woken,system_event
+              system_event
        FROM messages WHERE room_id=$1 AND author_id=$2 AND card_type='member-joined'`,
       [ROOM, newcomerId],
     );
     expect(joins.rows).toEqual([
       {
-        event_woken: 1,
         system_event: expect.objectContaining({ kind: 'joined' }),
         woke: [AGENT],
       },

@@ -1,3 +1,4 @@
+import { type PendingComposerAck } from '@/buzz/room-indicators';
 import { MonolithRequestTimeoutError } from '@/auth/monolith-session';
 import React, { useEffect, useLayoutEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { transcriptBylineOpeners } from '@/buzz/message-dates';
@@ -8,7 +9,8 @@ import { useAnimatedStyle } from 'react-native-reanimated';
 import { Modal } from '@/modal';
 import { type ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { cornerProposalDecision } from '@/buzz/corner-proposal';
-import { COMPOSER_ACK_BOUND_MS, STEER_RECEIVED_VISIBLE_MS, hasComposerAckReceipt, selectComposerAckPresentation, type ComposerAckPresentation } from '@/buzz/room-indicators';
+import { STEER_RECEIVED_VISIBLE_MS, hasComposerAckReceipt, selectComposerAckPresentation, type ComposerAckPresentation } from '@/buzz/room-indicators';
+import { useComposerAckExpiry } from '@/buzz/use-composer-ack-expiry';
 import { formatTerminalTurnOverlay, type TurnVerb } from '@/buzz/turn-clock';
 import { useScrollFollowOnLayoutChange } from '@/buzz/room-scroll-follow';
 import { composerBottomPadding } from '@/buzz/composer-keyboard';
@@ -18,9 +20,9 @@ import { sameMessageRefMap, sameRecordValueMap, sameStringSet, useStable } from 
 
 type Props = [
   visibleMessages: ChatDisplayMessage[],
-  pendingAck: { sentAt: number; requestId?: string; } | null,
+  pendingAck: PendingComposerAck | null,
   agentTurnMarkers: readonly import("@beeline/api-contract/phone").RoomViewAgentTurn[],
-  setPendingAck: React.Dispatch<React.SetStateAction<{ sentAt: number; requestId?: string; } | null>>,
+  setPendingAck: React.Dispatch<React.SetStateAction<PendingComposerAck | null>>,
   receivedSteer: { agentPubkey: string; turnRequestId: string; receivedAt: number; } | null,
   activeAgentTurn: import("@beeline/api-contract/phone").RoomViewAgentTurn,
   setReceivedSteer: React.Dispatch<React.SetStateAction<{ agentPubkey: string; turnRequestId: string; receivedAt: number; } | null>>,
@@ -114,24 +116,13 @@ export function useChatTurnPresentation([
   // old active-only check missed the case where WORKING had already become
   // COMPLETE before this screen observed it.
   useEffect(() => {
-    if (pendingAck && hasComposerAckReceipt(pendingAck.requestId, agentTurnMarkers)) {
+    if (pendingAck && !pendingAck.externalHandles?.length && hasComposerAckReceipt(pendingAck.requestId, agentTurnMarkers)) {
       setPendingAck(null);
     }
   }, [agentTurnMarkers, pendingAck]);
 
 
-  // A single deadline-scheduled timer (never a ticking interval — see the
-  // presence clock above) clears the purely local acknowledgement. If no
-  // receipt arrives, silence is not evidence that an agent is waiting; a
-  // later server-indexed WORKING receipt can independently light `thinking`.
-  useEffect(() => {
-    if (!pendingAck) return;
-    const deadline = pendingAck.sentAt + COMPOSER_ACK_BOUND_MS;
-    const delay = Math.max(1, deadline - Date.now() + 1);
-    const timer = setTimeout(() => setPendingAck(null), delay);
-    return () => clearTimeout(timer);
-  }, [pendingAck]);
-
+  useComposerAckExpiry(pendingAck, setPendingAck);
 
   // A committed steer is a brief confirmation, not a new lifecycle. It stays
   // on the exact running turn the server accepted it into and then clears.
@@ -185,7 +176,7 @@ export function useChatTurnPresentation([
           }
         : {}),
       ...(viewerPubkey ? { viewerPubkey } : {}),
-      ...(pendingAck ? { pendingAckSentAt: pendingAck.sentAt } : {}),
+      ...(pendingAck ? { pendingAckSentAt: pendingAck.sentAt, externalHandles: pendingAck.externalHandles } : {}),
       ...(receivedSteer ? { receivedSteer } : {}),
       now: pendingAck?.sentAt ?? Date.now(),
       conversationIdentities,

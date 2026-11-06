@@ -2,8 +2,7 @@
 # unified release dispatch; a merge to main never releases.
 name: Prebuild server image
 on:
-  push:
-    branches: [main]
+  workflow_dispatch: {}
 permissions:
   contents: read
   packages: read
@@ -26,7 +25,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Prebuild this exact main SHA without deploying
+      - name: Prebuild this exact checkout SHA without deploying
         env:
           SOURCE_SHA: ${{ github.sha }}
         run: bash scripts/server-release-image.sh prebuild "$SOURCE_SHA"

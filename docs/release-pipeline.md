@@ -1,7 +1,55 @@
 # Production release pipeline
 
 `Unified production release` is the only workflow that releases current
-`main` to `next`, or promotes its last successful `next` release to `latest`. It is manually dispatched; merges do not trigger a production release.
+`main` to `next`, or promotes its last successful `next` release to `latest`. It is manually dispatched; merging to main starts no workflow.
+
+## Release tests and PR selection
+
+A PR runs the tests selected for its affected modules and every correctness
+check formerly reserved for main. `TYPECHECK`, `SHARED PACKAGE TESTS` and the
+other existing check names stay unchanged. `SERVER COVERAGE MAP` now runs on
+PRs and checks the source-reader scan against the newest usable map. There
+are no push-to-main jobs, including server-image prebuilds or main-failure
+reporting. The prebuild workflow remains available by manual dispatch.
+
+Before any delivery leg, `release_checks` calls the reusable Checks workflow
+with `suite=all` and the immutable release SHA. Every checkout uses that SHA,
+including latest promotion at an older rc commit. No PR subset is applied:
+all eight server shards, all eight integration batches, the existing
+`identity-live.e2e.test.ts`, PostgreSQL seams and every other Checks suite run
+through their existing owners. No e2e suite or second invocation is added.
+Server wall-clock tests run in the shards on release and in the hosted replay
+job on PRs, so the replay job does not repeat them during release.
+
+`RELEASE TESTS` waits for the complete Checks verdict, merges the coverage
+records from those same server/corpus/PostgreSQL executions, runs `build-map`
+and `check-map`, and publishes `server-coverage-map` with the tested release
+commit and GitHub run ID. Every delivery leg requires this gate to succeed,
+including no-op attempts and optional device/store legs. A failed gate records
+`release-tests` as the release failure class and prevents release publication.
+Validation time is included in the existing release duration measurements;
+there is no new timer or elapsed-time gate.
+
+On failure, the gate prints failing test names and files from completed job
+logs, then lists commits since the previous release that touched files those
+tests executed or read according to the coverage records. These are likely
+culprits, not a causal verdict. Missing coverage, logs or a previous release
+SHA are called out; unmapped tests can only be attributed by their own file.
+There is no automatic bisect, retry or second test run.
+
+PRs read the newest usable release map, not the workflow dispatch head.
+They diff from its embedded commit, so intervening merges are included.
+Existing age/ancestry/distance limits still fall back to full suites when the
+map cannot safely describe the PR. The manual coverage-map recovery suite
+and existing nightly suites remain available; their schedules and policies
+are unchanged. This workflow change requires no required-check renames.
+
+Offline validation (no dispatch or delivery):
+
+```sh
+node --test --test-concurrency=1 scripts/ci-release-contract.test.mjs scripts/server-test-selection.test.mjs scripts/coverage-map-artifact.test.mjs scripts/release-test-report.test.mjs
+npm run lint:workflows
+```
 
 ## Next and latest
 
@@ -315,8 +363,8 @@ image recovery floor before enabling commands. The combined router draft is
 not a schema-only prerequisite release. See the [T7 release sequence and proof
 limits](../data/network-ops-fixes/t7-compatibility.md).
 
-`Prebuild server image` compiles and pushes a registry image for every merge
-to main. It changes no Machines and runs no migrations. The promotion records
+`Prebuild server image` is manual-only and compiles and pushes a registry
+image for its selected commit. It changes no Machines and runs no migrations. The promotion records
 the two current Machine image refs and asks the registry for that exact source
 SHA. It verifies the image's source label, pins its digest, adds only the release
 identity metadata, and pushes the release image. An unavailable prebuild falls

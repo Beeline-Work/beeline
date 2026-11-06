@@ -71,3 +71,13 @@ test('Xcode signs the Simulator executable and launch diagnostics precede provid
   assert.match(capture, /DiagnosticReports.*-newer/);
   assert.match(capture, /log show --last 5m/);
 });
+
+test('provider assertion rejects the recorded consent sheet and accepts provider addresses', async () => {
+  const { readFileSync } = await import('node:fs');
+  const flow = readFileSync(resolve('scripts/ios-signin/provider.yaml'), 'utf8');
+  const selector = [...flow.matchAll(/visible: '([^']+)'/g)].at(-1)[1];
+  const matchesProvider = new RegExp(selector);
+  assert.equal(matchesProvider.test('“Beeline” Wants to Use “server.usebeeline.app” to Sign in'), false);
+  assert.equal(matchesProvider.test('github.com'), true);
+  assert.equal(matchesProvider.test('accounts.google.com'), true);
+});

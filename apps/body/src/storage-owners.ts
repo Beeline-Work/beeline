@@ -158,7 +158,7 @@ export async function pruneEndedOwnerStorage(supervisorRoot: string, options: Wh
     }
     if (!hasMember) {
       const cache = resolve(workspaceAssetRoot(supervisorRoot, owner.workspaceId), '..');
-      removed.push(...(await reclaimWholeStorageObject(cache, true, { ...options, emulatorLeaseRoot: resolve(cache, 'shared-home/cache/android-leases') })).map(entry => entry.path));
+      removed.push(...(await reclaimWholeStorageObject(cache, true, options)).map(entry => entry.path));
       for (const checkout of await readStorageOwners(supervisorRoot)) {
         if (checkout.workspaceId === owner.workspaceId)
           removed.push(...await reclaimOwnedCheckout(supervisorRoot, checkout, options));
@@ -239,10 +239,9 @@ export async function reclaimArchivedMemberStorage(supervisorRoot: string, state
   }
   for (const agentId of await readdir(resolve(supervisorRoot, 'beeline/agents')).catch(() => [])) {
     if (!/^[a-f0-9]{64}$/.test(agentId)) continue;
-    const runtime = await readFile(resolve(runtimeDirectory(supervisorRoot, agentId), 'runtime.json'), 'utf8').then(text => JSON.parse(text) as AgentRuntimeRecord, () => undefined);
     const owners = await readStorageOwners(supervisorRoot);
     await reclaimHelperStorage({ runtimeDir: runtimeDirectory(supervisorRoot, agentId), readStates: async () => archived,
-      ...options, ...(runtime ? { emulatorLeaseRoot: resolve(workspaceAssetRoot(supervisorRoot, runtime.communityId), 'cache/android-leases') } : {}), relatedRoots: roomId => [resolve(supervisorRoot, 'beeline/corners', roomId),
+      ...options, relatedRoots: roomId => [resolve(supervisorRoot, 'beeline/corners', roomId),
         ...owners.filter(owner => owner.roomId === roomId).map(owner => resolve(supervisorRoot, 'beeline', owner.kind, owner.itemId))],
       withIdleRoom: (roomId, task) => AgentProcesses.withIdleHostRoom(roomId, task),
     });
@@ -285,7 +284,6 @@ export async function pruneStoppedAgentStorage(supervisorRoot: string, options: 
         if (!options.dryRun) { await markAgentStorageEnded(runtime); await pruneEndedOwnerStorage(supervisorRoot, options); }
       } else {
         await reclaimHelperStorage({ runtimeDir, readStates: async () => answer.storageRooms, ...options,
-          emulatorLeaseRoot: resolve(workspaceAssetRoot(supervisorRoot, runtime.communityId), 'cache/android-leases'),
           withIdleRoom: async (roomId, task) => AgentProcesses.hostStoragePaused ? (await task(), true) : AgentProcesses.withIdleHostRoom(roomId, task),
         });
       }

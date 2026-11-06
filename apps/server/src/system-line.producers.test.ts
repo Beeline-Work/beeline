@@ -392,7 +392,7 @@ describe('system-line producers', () => {
     }
   });
 
-  it('phrases model unavailability without ids, advice, or mentions', async () => {
+  it('shows one plain failure and ignores conflicting terminal replays', async () => {
     const database = await fixture();
     try {
       const requestId = 'f'.repeat(64);
@@ -436,19 +436,19 @@ describe('system-line producers', () => {
           },
           AGENT,
         ),
-      ).rejects.toThrow('authority rejected');
+      ).resolves.toBeDefined();
       const failed = await lines(database);
       expect(failed).toEqual([
         {
           author_id: AGENT,
-          text: "@bee could not answer · the selected model isn't available. Pick another in the agent's settings.",
+          text: "@bee could not finish this request · model selection unavailable",
           presentation: 'system',
           woke: [],
           card_type: 'turn-failed',
           system_event: {
             subject: { kind: 'agent', id: AGENT, name: '@bee' },
-            verb: 'could not answer',
-            consequence: "the selected model isn't available. Pick another in the agent's settings.",
+            verb: 'could not finish this request',
+            consequence: 'model selection unavailable',
           },
         },
       ]);

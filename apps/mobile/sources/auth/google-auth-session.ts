@@ -184,7 +184,7 @@ export async function runGoogleSignIn(input: {
         throw new OidcBindError('invalid_response', 'Invalid Google sign-in completion');
       await assertCurrent(nativeToken);
       return nativeToken;
-    } catch {
+    } catch (error) {
       await assertNativeCurrent();
       // A dropped response may follow a committed ticket. Recovery belongs to
       // this same native owner, including cancellation while it is waiting.
@@ -194,10 +194,8 @@ export async function runGoogleSignIn(input: {
         if (recovered) return recovered;
       }
       await cancelNative();
-      // Missing routes/configuration and every native failure retain browser
-      // sign-in, including test copies whose signing keys are unregistered.
-      await assertNativeCurrent();
-      await savePending(pending);
+      await clearPendingGoogleSignIn(input.state);
+      throw error;
     }
   }
   await assertCurrent();

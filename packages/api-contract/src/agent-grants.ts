@@ -542,6 +542,9 @@ export function interpreterScriptArgument(
   return undefined;
 }
 
+/** Existing Android emulator access on the host adb server requires human consent. */
+export const HOST_EMULATOR_TARGET = '127.0.0.1:5037';
+
 /** The mcp grant target that mounts Trusty Squire. */
 export const SQUIRE_MCP_TARGET = 'squire';
 

@@ -55,7 +55,6 @@ it('consumes the top safe area once and retains the mounted Room when the banner
     await act(async () => tree.update(<ConnectionStatus><Room /></ConnectionStatus>));
     expect(tree.root.findByProps({ testID: 'connection-status-disconnected' }).props.style[1].paddingTop).toBe(24);
     expect(tree.root.findByType('RoomHeader').props.insets).toMatchObject({ top: 0, bottom: 16 });
-    expect(tree.root.findByType(IndexRow).props.wrap).toBe(true);
     state.failed = false;
     await act(async () => tree.update(<ConnectionStatus><Room /></ConnectionStatus>));
     expect(tree.root.findByType('RoomHeader').props.insets.top).toBe(24);

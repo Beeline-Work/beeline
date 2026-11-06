@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { HOST_EMULATOR_TARGET } from '@beeline/api-contract/agent-grants';
+import { hostEmulatorSerials } from './machine-control.js';
 import { boundToolResult } from './tool-output-budget.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { resolveGrantCommand, isNativeGrantExecutable, resolveGrantScriptExecutable } from './grant-script.js';
@@ -42,7 +44,6 @@ import { fileURLToPath } from 'node:url';
 import {
   cornerTextRefusal,
   normalizeCornerText,
-  wakeBatchMinutes,
   ARTIFACT_MIME_BY_EXTENSION,
   ARTIFACT_MIME_TYPES,
   INSTITUTIONAL_SEARCH_QUERY_MAX_CHARACTERS,
@@ -614,15 +615,23 @@ function requiredEnv(name: string): string {
   return value;
 }
 
+const commandRequest = new AsyncLocalStorage<string | undefined>();
+
 async function activeCommandContext(): Promise<{
   roomId: string;
   requestId: string;
   generationId: string;
+  taskId?: string;
 }> {
-  const { promptSectionIds: _sections, commandReason: _reason, startedAt: _startedAt, ...value } = await readTurnContextFile();
-  if (!value.roomId || !value.requestId || !value.generationId)
-    throw new Error('no active server command');
-  return value as { roomId: string; requestId: string; generationId: string };
+  const value = await readTurnContextFile();
+  const requestId = commandRequest.getStore() ?? value.requestId;
+  const commands = value.commands as {requestId:string;commandReason:string;taskId:string}[] | undefined;
+  if (!value.roomId || !requestId || !value.generationId ||
+      (commands?.length && !commands.some(command => command.requestId === requestId)))
+    throw new Error('no active server command for requestId');
+  const taskId = commands?.find(command => command.requestId === requestId)?.taskId ?? value.taskId;
+  return {roomId:String(value.roomId),requestId:String(requestId),generationId:String(value.generationId),
+    ...(typeof taskId === 'string' ? {taskId} : {})};
 }
 
 async function readTurnContextFile(): Promise<Record<string, unknown>> {
@@ -1943,15 +1952,6 @@ export async function subscribeEvents(
   return describeSubscriptions(result, 'You now react to');
 }
 
-export async function setWakeDelivery(
-  args: JsonObject,
-  deps: AgentScheduleDeps = agentScheduleDepsFromEnv(),
-): Promise<string> {
-  wakeBatchMinutes(args.delivery);
-  const result = await deps.execute('setWakeDelivery', { roomId: deps.roomId, delivery: args.delivery });
-  return `Your whole wake inbox is ${String(result.delivery)}; human messages arrive immediately. Digests stay within each Room or corner.`;
-}
-
 export async function listEventSubscriptions(
   deps: AgentScheduleDeps = agentScheduleDepsFromEnv(),
 ): Promise<string> {
@@ -2058,6 +2058,8 @@ export interface AgentGrantDeps {
   scriptEnv?: NodeJS.ProcessEnv;
   /** Test seam for reading those bytes. */
   readScript?: (path: string) => Buffer;
+  /** Read-only probe of the already running host adb server. */
+  hostEmulators?: () => Promise<string[]>;
   /**
    * Where a command grant's named secrets resolve from, at ask time and for
    * `list_grants`. Defaults to the operator key store, secrets.json, then the
@@ -2194,6 +2196,29 @@ export async function requestGrant(
           'Have the operator initialize the named secret securely, or drop the --with suffix.',
       );
     }
+  }
+  if (kind === 'host' && target === HOST_EMULATOR_TARGET) {
+    const listed = await deps.execute('listAgentGrants', { roomId: deps.roomId });
+    const live = Array.isArray(listed.grants) ? listed.grants.map(asObject) : [];
+    const grant = live.find((entry) => entry.kind === kind && entry.target === target &&
+      (entry.status === 'approved' || entry.status === 'once'));
+    if (grant) {
+      let serials: string[];
+      try { serials = await (deps.hostEmulators ?? hostEmulatorSerials)(); }
+      catch { serials = []; }
+      if (!serials.length)
+        return 'Host emulator unavailable: no running host emulator is available; nothing was started. Do not use an emulator and say so in your reply.';
+      if (grant.status === 'once')
+        await deps.execute('consumeAgentGrant', { grantId: grant.grantId });
+      return `Host emulator allowed at ${target}: ${serials.map((serial) => `adb -H 127.0.0.1 -P 5037 -s ${serial}`).join('; ')}. Use this existing emulator only; the helper never starts or manages it.`;
+    }
+    const history = await deps.execute('listAgentGrantRequests', { roomId: deps.roomId });
+    const requests = Array.isArray(history.grants) ? history.grants.map(asObject) : [];
+    const previous = requests.find((entry) => !entry.agentId && entry.kind === kind && entry.target === target);
+    if (previous?.status === 'denied' || previous?.status === 'revoked')
+      return 'Host emulator permission refused: do not use an emulator and say so in your reply.';
+    if (previous?.status === 'pending')
+      return 'Host emulator permission pending: wait for the host to Allow, then call request_grant again for the existing emulator address; end your turn now without using an emulator.';
   }
   const result = await deps.execute('requestAgentGrant', {
     roomId: deps.roomId,
@@ -2926,16 +2951,24 @@ function validateToolInput(tool: ToolDefinition, args: JsonObject): void {
 
 // MCP requests may run concurrently. Register artifact work before the first
 // await so an immediately following report cannot overtake its upload/queue.
-let turnArtifacts: { key: string; uploads: { name: string; result: Promise<string> }[] } | undefined;
+let artifactGeneration: unknown;
+const turnArtifacts = new Map<string, { uploads: { name: string; result: Promise<string> }[] }>();
 
 export async function callAgentTool(name: string, args: JsonObject, toolCallId: string): Promise<string> {
+  const {requestId,...input}=args;
+  if(requestId!==undefined && (typeof requestId!=='string'||!requestId.length)) throw new Error('invalid claimed requestId');
+  return commandRequest.run(requestId as string|undefined,
+    () => callCommandTool(name, input, toolCallId));
+}
+async function callCommandTool(name: string, args: JsonObject, toolCallId: string): Promise<string> {
   if (name !== 'post_artifact' && name !== 'report' && name !== 'post') return executeAgentTool(name, args, toolCallId);
   const contextFile = process.env.BEELINE_TURN_CONTEXT_FILE;
   const context = contextFile ? JSON.parse(readFileSync(contextFile, 'utf8')) as Record<string, unknown> : {};
   const key = JSON.stringify([process.env.BEELINE_DAEMON_BASE_URL, process.env.BEELINE_DAEMON_ROOM_ID,
-    context.roomId, context.requestId, context.generationId]);
-  if (turnArtifacts?.key !== key) turnArtifacts = { key, uploads: [] };
-  const artifacts = turnArtifacts;
+    context.roomId, commandRequest.getStore() ?? context.requestId, context.generationId]);
+  if (artifactGeneration !== context.generationId) { turnArtifacts.clear(); artifactGeneration = context.generationId; }
+  const artifacts = turnArtifacts.get(key) ?? {uploads: []};
+  turnArtifacts.set(key, artifacts);
   if (name === 'post_artifact') {
     const upload = executeAgentTool(name, args, toolCallId);
     const artifactName = typeof args.title === 'string' && args.title.trim()
@@ -3534,13 +3567,14 @@ async function executeAgentOperation(
       return JSON.stringify(await daemonExecute('stopAgentTurn', { address: args.address as string, agent: args.agent as string | undefined }));
     case 'no_reply_needed': {
       await activeCommandContext();
-      const { commandReason } = await readTurnContextFile();
+      const context = await readTurnContextFile();
+      const selected = (context.commands as {requestId:string;commandReason:string}[] | undefined)?.find(command => command.requestId === commandRequest.getStore());
+      const commandReason = selected?.commandReason ?? context.commandReason;
       if (!args.messageId && !nonhumanSilentWake(commandReason)) throw new Error('no_reply_needed requires a nonhuman report, order, lifecycle, scheduler or system wake. Call post({text: <your reply>}), then end the turn.');
       await daemonExecute('markAgentTurnSilent', { ...(args.messageId ? { messageId: args.messageId } : {}) });
-      // The helper drains in-flight activity and drafts before its terminal receipt.
-      // Completing here revokes authority while those writes are still running.
+      // The server ends only this request. End the invocation after delivering
+      // its tool result; intake returns every unanswered request to pending.
       const path = requiredEnv('BEELINE_TURN_CONTEXT_FILE');
-      const context = await readTurnContextFile();
       writeFileSync(path, JSON.stringify({ ...context, terminalReason: 'no-reply' }), { mode: 0o600 });
       return JSON.stringify({ acknowledged: true });
     }

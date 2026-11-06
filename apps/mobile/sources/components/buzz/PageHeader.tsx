@@ -70,7 +70,7 @@ export function PageHeader({
       ) : null}
       <View style={styles.headerCopy}>
         {eyebrow ? (
-          <Text numberOfLines={1} style={styles.headerEyebrow}>
+          <Text style={styles.headerEyebrow}>
             {eyebrow}
           </Text>
         ) : null}

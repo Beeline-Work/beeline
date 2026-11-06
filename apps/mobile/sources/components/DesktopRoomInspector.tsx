@@ -1,3 +1,4 @@
+import { PageHeaderTitle } from '@/components/buzz/PageHeader';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
@@ -10,7 +11,7 @@ import { CloseButton } from '@/components/buzz/CloseGlyph';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import * as React from 'react';
 import { observeRoomResource, useObservedResource } from '@/buzz/use-observed-resource';
-import { FlatList, PanResponder, Platform, Pressable, Text, View } from 'react-native';
+import { FlatList, PanResponder, Platform, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { CornerListItem, RoomView, RoomViewMessage } from '@beeline/buzz-client';
 import { cornerTitle } from '@beeline/api-contract/phone';
@@ -357,7 +358,7 @@ function CornerCockpit({
     return () => clearInterval(timer);
   }, []);
   const turn = detail?.latestAgentTurns.find((candidate) =>
-    isAgentTurnActive(candidate, undefined, now),
+    isAgentTurnActive(candidate),
   );
   const ack = selectComposerAckPresentation({
     isCorner: true,
@@ -585,9 +586,9 @@ function CornerCockpit({
           />
         ) : null}
         <View style={styles.headerCopy}>
-          <Text numberOfLines={2} style={styles.headerTitle}>
+          <PageHeaderTitle style={styles.headerTitle}>
             {title}
-          </Text>
+          </PageHeaderTitle>
           <Text style={styles.headerMeta}>
             {summary
               ? `${stateLine(summary)} · @${summary.agent?.handle ?? summary.agent?.name ?? 'unassigned'} · ${age(summary)}`

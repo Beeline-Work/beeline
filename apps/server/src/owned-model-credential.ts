@@ -1,8 +1,9 @@
+import { OwnedModelRefusal, OwnedModelUnknownGeneration } from './owned-model-errors.js';
+import { refuseExpiredFreeAgentTurn } from './free-agent-turn-budget.js';
 import type { OwnedModelCredential } from '@beeline/api-contract/helper-model';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { CommandRefusalError } from './command-refusal.js';
 import type { SqlDatabase } from './database.js';
-import { commandOwnerLiveSql, registerOwnedEffectFence } from './turn-ownership.js';
+import { invocationCommandSql, registerOwnedEffectFence } from './turn-ownership.js';
 
 /** Release-installed additive primitive for the claim/router/provider adapters;
  * this module creates no transport or rollout switch. */
@@ -71,20 +72,6 @@ export type OwnedModelKeyring = Readonly<{
   /** Injected server key material only. Never an environment/file read here. */
   key(version: string): Uint8Array | undefined;
 }>;
-export class OwnedModelRefusal extends CommandRefusalError {
-  constructor() { super('Owned model authority is unavailable', 403); }
-}
-export const OWNED_MODEL_UNKNOWN_GENERATION_MESSAGE = 'Owned model outcome UNKNOWN blocks a new command generation';
-export class OwnedModelUnknownGeneration extends CommandRefusalError {
-  readonly state = 'unknown';
-  constructor() { super(OWNED_MODEL_UNKNOWN_GENERATION_MESSAGE, 409); }
-}
-/** Exact persisted floor refusal, including legacy SQL callers that do not
- * know the credential adapter. Never reinterpret another constraint failure. */
-export function isOwnedModelUnknownGenerationError(error: unknown): boolean {
-  return error instanceof OwnedModelUnknownGeneration || Boolean(error && typeof error === 'object' &&
-    (error as { code?: unknown }).code === '23514' && (error as { message?: unknown }).message === OWNED_MODEL_UNKNOWN_GENERATION_MESSAGE);
-}
 const scalar = (value: unknown, max = 256): value is string => typeof value === 'string' && value.length > 0 && value.length <= max;
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 function fixedEqual(a: Buffer, b: Buffer): boolean { return a.length === b.length && timingSafeEqual(a, b); }
@@ -128,7 +115,7 @@ const CURRENT = `SELECT command.agent_id,starter.owner_id,room.workspace_id,room
  LEFT JOIN owned_model_credentials issued ON issued.command_id=command.id AND issued.generation_id=command.generation_id
  JOIN agent_command_generation_owners immutable ON immutable.command_id=command.id AND immutable.generation_id=command.generation_id
    AND immutable.connection_id=command.turn_owner_connection_id AND immutable.connection_epoch=command.turn_owner_epoch
- WHERE command.id=$1 AND command.agent_id=$2 AND command.generation_id=$3 AND command.state='claimed' AND command.action IN ('input','resume')
+ WHERE command.id=$1 AND command.agent_id=$2 AND command.generation_id=$3 AND command.action IN ('input','resume')
    AND command.turn_owner_connection_id=COALESCE(connection.turn_connection_id,connection.connection_id) AND command.turn_owner_epoch=COALESCE(connection.turn_connection_epoch,connection.epoch)
    AND connection.released_at IS NULL AND starter.removed_at IS NULL AND starter.state='running'
    AND starter.model_token_hash IS NOT NULL AND command.claimed_at IS NOT NULL
@@ -137,7 +124,8 @@ const CURRENT = `SELECT command.agent_id,starter.owner_id,room.workspace_id,room
      AND workspace.identity_id=command.agent_id AND workspace.removed_at IS NULL)
    AND EXISTS(SELECT 1 FROM memberships member WHERE member.room_id=COALESCE(room.parent_id,room.id)
      AND member.identity_id=command.agent_id AND member.removed_at IS NULL)
-   AND ${commandOwnerLiveSql('command', 'clock_timestamp()')}`;
+   AND EXISTS(SELECT 1 FROM agent_commands invocation_command
+     WHERE ${invocationCommandSql('command','invocation_command')})`;
 
 export class OwnedModelCredentials {
   private readonly actors = new WeakMap<object, Actor>();
@@ -229,6 +217,17 @@ export class OwnedModelCredentials {
     return actor.binding;
   }
 
+  /** Serialize provider admission with results, Stop and invocation release.
+   * The original command remains the immutable credential/ledger anchor. */
+  async lockInvocation(database: SqlDatabase, actor: AuthenticatedOwnedModel): Promise<void> {
+    const owned=this.actor(actor);
+    await database.query(`SELECT id FROM agent_commands
+      WHERE room_id=$1 AND agent_id=$2 AND generation_id=$3
+        AND turn_owner_connection_id=$4 AND turn_owner_epoch=$5
+      ORDER BY created_at,id FOR SHARE NOWAIT`,
+      [owned.roomId,owned.agentId,owned.generationId,owned.connectionId,owned.connectionEpoch]);
+  }
+
   /** Read-only final predicate after the caller acquired its ordered locks.
    * Returns a conservative DB-clock lifetime for immediate synchronous entry. */
   async assertCurrent(database: SqlDatabase, actor: AuthenticatedOwnedModel): Promise<{ nowMs: number; untilMs: number }> {
@@ -243,6 +242,8 @@ export class OwnedModelCredentials {
         current.request_id !== value.requestId || current.connection_id !== value.connectionId || Number(current.connection_epoch) !== value.connectionEpoch ||
         current.instance_id !== value.instanceId || current.model !== value.model || current.agent_model !== value.agentModel ||
         current.model_token_hash !== value.modelTokenHash) throw new OwnedModelRefusal();
+    if (await refuseExpiredFreeAgentTurn(database,value.commandId,value.generationId,maxTurnMs))
+      throw new OwnedModelRefusal();
     const nowMs = Number(current.now_ms), untilMs = Math.min(value.expiresMs, Number(current.expires_ms), Number(current.lease_ms));
     if (!Number.isSafeInteger(nowMs) || !Number.isSafeInteger(untilMs) || untilMs <= nowMs) throw new OwnedModelRefusal();
     return { nowMs, untilMs };

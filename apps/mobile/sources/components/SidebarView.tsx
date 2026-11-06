@@ -4,7 +4,7 @@ import { useDesktopLayout } from '@/buzz/desktop-layout-state';
 import { TrayGlyph } from '@/components/buzz/TrayGlyph';
 import { Button } from '@/components/buzz/Button';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
-import { InlineRow } from '@/components/buzz/IndexRow';
+import { InlineRow, ContentTarget } from '@/components/buzz/IndexRow';
 import { removeRoomSearchDrafts } from '@/buzz/room-search-drafts';
 import { useNeedsYouCount } from '@/buzz/needs-you-store';
 import { invalidatesWorkspaceList } from '@/buzz/workspace-list-invalidation';
@@ -53,7 +53,6 @@ import { useGlobalSearchParams, usePathname, useRouter, type Href } from 'expo-r
 import * as React from 'react';
 import {
   Platform,
-  Pressable,
   ScrollView,
   Text,
   TextInput,
@@ -515,7 +514,7 @@ export const SidebarView = React.memo(function SidebarView() {
               {workspaces.map((workspace) => {
                 const selected = workspace.id === workspaceId;
                 return (
-                  <Pressable
+                  <ContentTarget
                     key={workspace.id}
                     accessibilityRole="button"
                     accessibilityState={{ selected }}
@@ -524,12 +523,11 @@ export const SidebarView = React.memo(function SidebarView() {
                     testID={`desktop-workspace-${workspace.id}`}
                   >
                     <Text
-                      numberOfLines={1}
                       style={[styles.workspaceText, selected && styles.workspaceTextSelected]}
                     >
                       {workspace.name}
                     </Text>
-                  </Pressable>
+                  </ContentTarget>
                 );
               })}
             </ScrollView>
@@ -643,7 +641,7 @@ export const SidebarView = React.memo(function SidebarView() {
               }}
             />
           </ScrollView>
-            <Pressable
+            <ContentTarget
               accessibilityLabel={
                 viewerIdentity?.name ? `${viewerIdentity.name} — Settings` : 'Settings'
               }
@@ -669,7 +667,6 @@ export const SidebarView = React.memo(function SidebarView() {
                     />
                     {viewerIdentity?.name ? (
                       <Text
-                        numberOfLines={1}
                         style={styles.settingsViewerName}
                         testID="profile-settings-name"
                       >
@@ -691,7 +688,7 @@ export const SidebarView = React.memo(function SidebarView() {
                   <Text style={styles.settingsText}>SETTINGS</Text>
                 </>
               )}
-            </Pressable>
+            </ContentTarget>
         </>
         {isDesktop && (
           <DesktopWorkspaceRail

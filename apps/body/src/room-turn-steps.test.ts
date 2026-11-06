@@ -34,13 +34,18 @@ describe('roomReplySteps', () => {
     expect(JSON.stringify(rows)).not.toContain('planted-secret');
   });
 
-  it.each(['.netrc', '_netrc'])('hides synthetic credential-file reads of %s before persistence', (filename) => {
-    const rows = roomReplySteps([{ kind: 'tool', call: {
-      title: 'read_file', rawInput: { path: `/synthetic/${filename}` },
-      content: 'machine example.invalid login synthetic password planted-netrc-password',
-    } }]);
-    expect(rows[0]!.output).toBe('Output hidden: contains a secret.');
-    expect(JSON.stringify(rows)).not.toContain('planted-netrc-password');
+  it.each(['.netrc', '_netrc', '.pgpass', '.git-credentials', '.npmrc', '.pypirc', '.docker/config.json', '.aws/credentials', '.env', '.envrc', '.env.local', 'id_rsa', 'id_ed25519', 'service.pem', 'service.key'])('hides synthetic credential-file reads of %s before persistence', (filename) => {
+    for (const call of [
+      { title: 'read_file', rawInput: { path: `/synthetic/${filename}` } },
+      ...['cat', 'head', 'tail', 'less'].map(command => ({ title: 'exec_command', rawInput: { cmd: `${command} /synthetic/${filename}` } })),
+    ]) {
+      const rows = roomReplySteps([{ kind: 'tool', call: {
+        ...call,
+        content: 'machine example.invalid login synthetic password planted-netrc-password',
+      } }]);
+      expect(rows[0]!.output).toBe('Output hidden: contains a secret.');
+      expect(JSON.stringify(rows)).not.toContain('planted-netrc-password');
+    }
   });
 
   it.each([
@@ -53,6 +58,12 @@ describe('roomReplySteps', () => {
     expect(JSON.stringify(rows)).not.toContain('planted-netrc-password');
     expect(rows[0]!.output).toContain('[REDACTED]');
     expect(rows[0]!.output).toContain('machine example.invalid');
+  });
+
+  it.each(['machine example.invalid login planted-netrc-login', 'machine example.invalid\nlogin\nplanted-netrc-login'])('redacts synthetic netrc logins before persistence: %s', (content) => {
+    const rows = roomReplySteps([{ kind: 'tool', call: { title: 'exec_command', content } }]);
+    expect(JSON.stringify(rows)).not.toContain('planted-netrc-login');
+    expect(rows[0]!.output).toContain('[REDACTED]');
   });
 
   it('keeps every note whole and in order between the tools', () => {

@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import { appErrorCopy } from './app-error-copy';
+import { PhoneSocketDisconnectedError } from '@/sync/transport/phone-socket-error';
 it('explains network, timeout and server failures without diagnostics', () => {
   for (const reason of [new TypeError('Network request failed'), new Error('Request timed out'), { status: 504, code: 'surface_request_timed_out', message: 'Room view request failed (504 surface_request_timed_out)' }]) expect(appErrorCopy(reason, 'Could not load rooms.')).toBe('Could not load rooms.');
 });
@@ -39,7 +40,8 @@ it('shows connection recovery after a live socket closes before its read answers
 it('leaves socket transport recovery to the global banner', () => {
   for (const name of ['PhoneSocketDisconnectedError', 'MonolithRequestTimeoutError'])
     expect(appErrorCopy(Object.assign(new Error('transport diagnostic'), { name, socketRequest: true }), 'Could not load rooms.')).toBe('');
-  expect(appErrorCopy({ status: 0, code: 'timeout', message: 'timed out' })).toBe('');
+  expect(appErrorCopy(new PhoneSocketDisconnectedError(), 'Could not load rooms.')).toBe('');
+  expect(appErrorCopy({ name: 'PhoneSocketDisconnectedError', message: 'transport diagnostic' })).toBe('transport diagnostic');
 });
 
 it('keeps HTTP-only upload timeouts as action errors without diagnosing connectivity', () => {

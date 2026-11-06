@@ -10,9 +10,6 @@ import {
 
 export type RoomAgentPresence = AgentPresence & { generationId?: string };
 
-/** A missing terminal receipt must never leave a dead daemon visibly working forever. */
-export const AGENT_TURN_FRESHNESS_MS = 90_000;
-
 /**
  * One tier answer for every surface. Thin over the canonical SDK door so all
  * consumers share the same invariants; kept here because mobile resolves the
@@ -66,42 +63,9 @@ export function nextAgentPresenceTransitionAt(
   return next;
 }
 
-export function nextAgentTurnExpiryAt(
-  turns: readonly RoomViewAgentTurn[],
-  now = Date.now(),
-): number | undefined {
-  let next: number | undefined;
-  for (const turn of turns) {
-    if (turn.status !== 'working') continue;
-    const deadline = turn.createdAt * 1_000 + AGENT_TURN_FRESHNESS_MS;
-    if (!Number.isFinite(deadline) || deadline <= now) continue;
-    next = next === undefined ? deadline : Math.min(next, deadline);
-  }
-  return next;
-}
-
-/** Dispatch receipts precede claim; claimed turns belong to the current daemon generation. */
-export function isAgentTurnActive(
-  turn: RoomViewAgentTurn,
-  presence: RoomAgentPresence | undefined,
-  now = Date.now(),
-  reconnectGraceUntil = 0,
-): boolean {
-  void reconnectGraceUntil;
-  if (turn.status !== 'working') return false;
-  const age = now - turn.createdAt * 1_000;
-  if (age < -AGENT_TURN_FRESHNESS_MS || age >= AGENT_TURN_FRESHNESS_MS) return false;
-
-  // Turn lifecycle and availability are independent relay streams. A signed
-  // working event is enough to render the Room progress row while the durable
-  // availability record is still loading.
-  // An explicit offline marker closes either kind of receipt. A dispatched
-  // pending receipt has no helper generation yet; only claimed receipts can
-  // be vetoed by a different current daemon generation.
-  if (presence?.status === 'offline') return false;
-  if (turn.generationId?.startsWith('pending:')) return true;
-  if (presence?.generationId) return turn.generationId === presence.generationId;
-  return true;
+/** Working/terminal state comes from committed server lifecycle projections. */
+export function isAgentTurnActive(turn: RoomViewAgentTurn): boolean {
+  return turn.status === 'working';
 }
 
 export function mergeAgentPresence(

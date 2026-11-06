@@ -128,7 +128,7 @@ it('lists every entry as one row in the shared grammar, each opening its own pag
     expect(row('scheduled-work-video').props.leading).toBeUndefined();
     expect(row('scheduled-work-daily').props.leading).toBeUndefined();
     expect(row('subscription-sub').props.leading).toBeUndefined();
-    expect(row('subscription-sub').props).toMatchObject({ title: 'Triage new issues', description: 'On new issue in owner/widgets', descriptionDetail: '@Hoots · this Room' });
+    expect(row('subscription-sub').props).toMatchObject({ title: 'Triage new issues.', description: 'On new issue in owner/widgets', descriptionDetail: '@Hoots · this Room' });
     act(() => row('scheduled-work-daily').props.onPress());
     act(() => row('scheduled-work-video').props.onPress());
     act(() => row('subscription-sub').props.onPress());

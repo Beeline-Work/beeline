@@ -3,8 +3,9 @@ import { migratedDatabase, type PgliteDatabase } from './test-support.js';
 import { claimAgentCommand, createAgentCommand } from './agent-command.js';
 import { clearConnectedAppPlaceholders } from './migrations/connected-app-turns.js';
 import { PhoneService } from './phone-service.js';
-import { DaemonService } from './daemon-service.js';
-import { RoomsMcpAgentTools } from './rooms-mcp-agent.js';
+import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';
+import { releaseAgentConnection } from './connection-presence.js';
+import { RoomsMcpAgentTools, pendingMcpWakes } from './rooms-mcp-agent.js';
 import { LiveHub } from './live.js';
 
 const H = 'a'.repeat(64), APP = 'b'.repeat(64), MACHINE = 'c'.repeat(64), SENDER = 'd'.repeat(64);
@@ -42,11 +43,13 @@ const report = (text: string, agentId = APP, authorId = SENDER, origin = C, id?:
 const working = async (agentId: string) => (await phone.readRoom(R, H))!.latestAgentTurns
   .filter(t => t.agentPubkey === agentId && t.status === 'working');
 
-it('R1: app dispatch is quiet, machine dispatch works, and a real MCP tool turn is visible', async () => {
+it('R1: dispatch waits for pickup, while claimed machine and MCP turns are visible', async () => {
   await report('needs-decision: approve the numbered list');
   const machine = await report('needs-decision: another decision', MACHINE);
   expect(await working(APP)).toEqual([]);
-  expect(await working(MACHINE)).toEqual([expect.objectContaining({ generationId: `pending:${machine!.id}` })]);
+  expect(await working(MACHINE)).toEqual([]);
+  await daemon.execute('claimAgentCommand',{roomId:R,commandId:machine!.id,generationId:'machine-picked-up'},MACHINE);
+  expect(await working(MACHINE)).toEqual([expect.objectContaining({generationId:'machine-picked-up'})]);
   let release!: () => void;
   let entered!: () => void;
   const started = new Promise<void>(resolve => { entered = resolve; });
@@ -97,7 +100,7 @@ it('R1: status, sender, origin and recipient distinguish new reports; claimed wo
     .toEqual([{ state: 'claimed', n: 1 }, { state: 'pending', n: 5 }]);
 });
 
-it('R1: release cleanup removes legacy app placeholders and preserves real and machine turns', async () => {
+it('R1: release cleanup preserves stored real and machine turns without inventing active claims', async () => {
   for (const [agent, request, generation] of [
     [APP, 'legacy', 'pending:legacy'], [APP, 'real', 'mcp:real'],
     [MACHINE, 'machine', 'pending:machine'],
@@ -107,15 +110,19 @@ it('R1: release cleanup removes legacy app placeholders and preserves real and m
   await clearConnectedAppPlaceholders(db);
   expect((await db.query(`SELECT generation_id FROM agent_turns ORDER BY generation_id`)).rows)
     .toEqual([{ generation_id: 'mcp:real' }, { generation_id: 'pending:machine' }]);
-  expect(await working(APP)).toEqual([expect.objectContaining({ generationId: 'mcp:real' })]);
-  expect(await working(MACHINE)).toEqual([expect.objectContaining({ generationId: 'pending:machine' })]);
+  expect(await working(APP)).toEqual([]);
+  expect(await working(MACHINE)).toEqual([]);
 });
 
-it('R1: expired claims can be superseded, while handled reports and machine queues retain their history', async () => {
+it('R1: only connection close releases a live report for supersession; handled reports and machine queues keep their history', async () => {
   const expired = await report('needs-decision: old context');
-  await db.transaction(tx => claimAgentCommand(tx, R, APP, expired!.id, 'mcp:expired'));
+  await daemon.execute('claimAgentCommand',{roomId:R,commandId:expired!.id,generationId:'owned-report'},APP);
   await db.query(`UPDATE agent_commands SET lease_expires_at=now()-interval '1 second' WHERE id=$1`, [expired!.id]);
-  const current = await report('needs-decision: new context');
+  await report('needs-decision: context while the first is claimed');
+  expect((await db.query('SELECT state FROM agent_commands WHERE id=$1',[expired!.id])).rows).toEqual([{state:'claimed'}]);
+  const source=(await db.query<{connection_id:string}>('SELECT connection_id FROM agent_connections WHERE agent_id=$1',[APP])).rows[0]!;
+  await releaseAgentConnection(db,new LiveHub(),APP,source.connection_id);
+  const current=await report('needs-decision: new context after connection close');
   expect((await db.query(`SELECT status FROM agent_turns WHERE request_id=$1`, [expired!.turn_request_id])).rows)
     .toEqual([{ status: 'cancelled' }]);
   await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1`, [current!.id]);
@@ -125,4 +132,12 @@ it('R1: expired claims can be superseded, while handled reports and machine queu
   await report('needs-decision: another machine update', MACHINE);
   expect((await db.query(`SELECT count(*)::int n FROM agent_commands WHERE agent_id=$1 AND state='pending'`, [MACHINE])).rows)
     .toEqual([{ n: 2 }]);
+});
+
+it('every independent pending wake is readable beyond the retired 30-command page',async()=>{
+  for(let index=0;index<36;index++)await report(`Update ${index}`,MACHINE);
+  const wakes=await pendingMcpWakes(db,MACHINE);
+  expect(wakes).toHaveLength(36);
+  expect(new Set(wakes.map(wake=>wake.id)).size).toBe(36);
+  for(const wake of wakes)expect(wake).not.toHaveProperty('deliveryVersion');
 });

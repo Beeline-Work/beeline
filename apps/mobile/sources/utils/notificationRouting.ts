@@ -129,11 +129,6 @@ export function getBuzzNotificationTargetFromData(data: unknown): BuzzNotificati
   };
 }
 
-/** Backward-compatible channel-only projection for older call sites and payloads. */
-function getBuzzChannelIdFromNotificationData(data: unknown): string | null {
-  return getBuzzNotificationTargetFromData(data)?.channelId ?? null;
-}
-
 /**
  * The one notification destination resolver. Workspace selection is committed
  * before navigation. Corners read server truth so an unavailable/finished
@@ -205,24 +200,6 @@ export async function resolveBuzzNotificationTarget(
   }
 }
 
-/**
- * Bring a notification's Room to the front without creating another copy.
- * The response id also invalidates the retained screen's transcript backfill.
- */
-function navigateToBuzzChannelFromNotification(
-  router: Pick<Router, 'navigate'>,
-  channelId: string,
-  notificationResponseId: string,
-): void {
-  router.navigate(
-    {
-      pathname: '/beeline/chat/[channelId]',
-      params: { channelId, notificationResponseId },
-    },
-    { dangerouslySingular: true },
-  );
-}
-
 /** One screen of the stack a notification opens, named as the app stack names it. */
 export type NotificationStackRoute = {
   name: 'beeline/channels' | 'beeline/corners/[roomId]' | 'beeline/chat/[channelId]';
@@ -286,18 +263,4 @@ export function navigateToBuzzTargetFromNotification(
   notificationResponseId: string,
 ): void {
   navigator.openStack(notificationStackRoutes(target, notificationResponseId));
-}
-
-/** Parse an Expo response and navigate to its exact Buzz source when supported. */
-function navigateToBuzzNotificationResponse(
-  navigator: NotificationNavigator,
-  response: unknown,
-): BuzzNotificationTarget | null {
-  const request = getObjectValue(getObjectValue(response, 'notification'), 'request');
-  const responseId = nonEmptyString(getObjectValue(request, 'identifier'));
-  const content = getObjectValue(request, 'content');
-  const target = getBuzzNotificationTargetFromData(getObjectValue(content, 'data'));
-  if (!responseId || !target) return null;
-  navigateToBuzzTargetFromNotification(navigator, target, responseId);
-  return target;
 }

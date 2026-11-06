@@ -208,7 +208,7 @@ it.each(['corner', 'parent Room'])('stops a corner → %s → corner order loop 
   expect(await orderWakes()).toEqual(before);
 });
 
-it.each(['done', 'blocked', 'failed', 'needs_decision'].flatMap(status => [false, true].flatMap(digest => [JELLYBEAN, OWNER, EARTH].map(commander => ({ status, digest, commander })))))('HANDBACK-ROUTE-1: implementer handback $status (digest=$digest, commander=$commander) reaches the right recipient', async ({ status, digest, commander }) => {
+it.each(['done', 'blocked', 'failed', 'needs_decision'].flatMap(status => [JELLYBEAN, OWNER, EARTH].map(commander => ({ status, commander }))))('HANDBACK-ROUTE-1: implementer handback $status (commander=$commander) reaches the right recipient', async ({ status, commander }) => {
   const incoming = await cornerTurn();
   // Baby reviews Candy's work; Jellybean remains the corner commander.
   await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [ROOM, BABY]);
@@ -229,15 +229,6 @@ it.each(['done', 'blocked', 'failed', 'needs_decision'].flatMap(status => [false
     address: incoming.roomId, text: 'FAIL: repair the missing proof' }, BABY);
   await db.query(`UPDATE agent_commands SET state='complete' WHERE id=$1`, [incoming.id]);
   const repair = (await daemon.execute('getAgentCommands', { roomId: incoming.roomId }, CANDY)).commands.find(c => c.reason === 'order' && c.source.authorId === BABY)!;
-  if (digest) {
-    const folded = await createAgentCommand(db, { id: randomBytes(32).toString('hex'), roomId: incoming.roomId, agentId: CANDY,
-      sourceMessageId: null, reason: 'order', parent: { ...review!, review_context: context },
-      privatePayload: { kind: 'order', authorId: BABY, fromRoomId: incoming.roomId, text: 'Additional review findings' } });
-    await db.query(`UPDATE agent_commands SET coalesced_context=$2 WHERE id=$1`,
-      [repair.id, JSON.stringify({ id: folded!.id })]);
-    await db.query(`UPDATE agent_commands SET state='cancelled',cancellation_reason='coalesced_into:'||$1
-      WHERE room_id=$2 AND reason='order' AND agent_id=$3 AND id<>$1 AND review_context->>'purpose'='repair'`, [repair.id, incoming.roomId, CANDY]);
-  }
   await daemon.execute('claimAgentCommand', { roomId: repair.roomId, commandId: repair.id, generationId: 'repair' }, CANDY);
   await daemon.execute('report', { roomId: repair.roomId, requestId: repair.turnRequestId, generationId: 'repair',
     status, text: `${status.replace('_', '-')}: repair result` }, CANDY);

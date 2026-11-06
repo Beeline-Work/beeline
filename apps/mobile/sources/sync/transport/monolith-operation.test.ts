@@ -1,3 +1,4 @@
+import { subscribePhoneLiveEvents } from './phone-live-events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PhoneSocketDisconnectedError, PhoneSocketError } from './phone-socket-error';
 const request = vi.hoisted(() => vi.fn());
@@ -57,4 +58,14 @@ describe('phone operations over the shared socket', () => {
     await expect(monolithPhoneOperation('redeemInvite', { token: 'invite' })).rejects.toThrow('invite not found');
     expect(request).toHaveBeenCalledOnce();
   });
+});
+
+it('keeps a committed command successful when an optional observer fails', async () => {
+  request.mockResolvedValueOnce({ messageId: 'm' });
+  const stop = subscribePhoneLiveEvents(() => { throw new Error('Optional observation failed'); });
+  try {
+    await expect(monolithPhoneOperation('sendRoomMessage', { roomId: 'r', messageId: 'm', text: 'Hello' }))
+      .resolves.toEqual({ messageId: 'm' });
+    expect(request).toHaveBeenCalledOnce();
+  } finally { stop(); }
 });

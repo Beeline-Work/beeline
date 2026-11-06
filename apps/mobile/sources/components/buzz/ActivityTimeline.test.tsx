@@ -166,15 +166,6 @@ describe('one-line tool ledger', () => {
     const text = renderedText(renderer);
     expect(text).toContain('ls -la node_modules/.bin');
     expect(text).not.toContain('terminalId');
-    // A narrow screen cuts where the data cap does: the middle.
-    expect(
-      renderer.root
-        .findByProps({ testID: 'tool-ledger-line-shell' })
-        .findAll(
-          (node: { type: unknown; props: { ellipsizeMode?: string } }) =>
-            node.type === 'Text' && node.props.ellipsizeMode === 'middle',
-        ),
-    ).toHaveLength(1);
     expect(
       renderer.root.findByProps({ testID: 'tool-ledger-line-shell' }).props.onPress,
     ).toBeTypeOf('function');
@@ -311,8 +302,6 @@ describe('grouping consecutive steps', () => {
       <ActivityTimeline active={false} items={[call('a'), call('b'), call('c'), call('d')]} />,
     );
     act(() => renderer.root.findByProps({ testID: 'tool-run-group-a' }).props.onPress());
-    expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(2);
-    act(() => renderer.root.findByProps({ testID: 'tool-run-more-a' }).props.onPress());
     expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(4);
     expect(
       renderer.root.findByProps({ testID: 'tool-run-group-a' }).props.accessibilityState,
@@ -369,7 +358,6 @@ describe('a reply’s steps line', () => {
   it('expands to every note in full, in order, between the tool lines', () => {
     const renderer = render(<TurnStepsLine items={STEPS} />);
     expandRun(renderer, 'n1');
-    act(() => renderer.root.findByProps({ testID: 'tool-run-more-n1' }).props.onPress());
     expect(hostNodes(renderer, /^tool-ledger-line-/).map((node: { props: { testID?: string } }) => node.props.testID)).toEqual([
       'tool-ledger-line-n1',
       'tool-ledger-line-t1',
@@ -715,8 +703,8 @@ describe('agent prose and drafts', () => {
     expect(bylineText).not.toContain('effort');
     expect(bylineText).toContain('14:02');
     const role = renderer.root.findByProps({ testID: 'chat-byline-role' });
-    expect(role.props.numberOfLines).toBe(1);
-    expect(role.props.ellipsizeMode).toBe('tail');
+    expect(role.props.numberOfLines).toBeUndefined();
+    expect(role.props.ellipsizeMode).toBeUndefined();
   });
 
   it('keeps a streaming author readable while its real font loads', () => {
@@ -794,7 +782,6 @@ describe('folded historical transcripts', () => {
     ).toBe('6 steps, expandable');
 
     expandRun(renderer, 'tool-1');
-    act(() => renderer.root.findByProps({ testID: 'tool-run-more-tool-1' }).props.onPress());
     expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(6);
     expect(
       renderer.root.findByProps({ testID: 'tool-ledger-line-tool-8' }).findByType('Pressable').props.onPress,

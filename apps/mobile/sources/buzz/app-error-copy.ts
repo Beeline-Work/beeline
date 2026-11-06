@@ -4,9 +4,7 @@ export function appErrorCopy(reason: unknown, fallback = 'Could not complete req
   const message = typeof reason === 'string' ? reason : typeof record?.message === 'string' ? record.message : '';
   const status = typeof record?.status === 'number' ? record.status : Number(message.match(/(?:\(|\bHTTP(?: status)?[ :]+)([45]\d{2})\b/)?.[1]);
   // Socket transport failures already have the one app-wide recovery banner.
-  if (record?.name === 'PhoneSocketDisconnectedError' ||
-      record?.name === 'MonolithRequestTimeoutError' && record?.socketRequest === true ||
-      record?.status === 0 && record?.code === 'timeout') return '';
+  if (record?.socketRequest === true) return '';
   const clientFailure = status >= 400 && status < 500;
   if (status >= 500 || (!clientFailure && /network (?:request failed|unavailable)|failed to fetch|networkerror|connection closed before|timed? ?out|timeout|load failed|did not answer|\boffline\b/i.test(message + ' ' + (record?.name ?? '')))) return fallback;
   if (!clientFailure && /^(?:Type|Reference|Syntax|Range|URI|Eval)Error$/.test(String(record?.name ?? ''))) return fallback;

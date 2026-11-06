@@ -1,5 +1,6 @@
+import { ContentTarget } from '@/components/buzz/IndexRow';
 import React, { useEffect, useRef } from 'react';
-import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import {
@@ -107,7 +108,7 @@ export function MentionSuggestionMenu({
               ? memberRosterModel({ kind: 'agent', model: participant.model })
               : undefined;
           return (
-            <TouchableOpacity
+            <ContentTarget
               accessibilityLabel={
                 participant.pubkey === SYSTEM_MENTION_PUBKEY
                   ? `${SYSTEM_MENTION_LABEL}, @${participant.handle}`
@@ -121,7 +122,7 @@ export function MentionSuggestionMenu({
               accessibilityState={checkedHandles ? { checked } : { selected }}
               key={participant.pubkey}
               onPress={() => onSelect(participant)}
-              style={[styles.mentionRow, selected && styles.mentionRowSelected]}
+              style={({ pressed }) => [styles.mentionRow, selected && styles.mentionRowSelected, pressed && { opacity: 0.2 }]}
               testID={`mention-suggestion-${participant.handle}`}
             >
               {reserved ? (
@@ -163,13 +164,13 @@ export function MentionSuggestionMenu({
                         ✓
                       </Text>
                     ) : model ? (
-                      <Text numberOfLines={1} style={styles.mentionModel}>
+                      <Text style={styles.mentionModel}>
                         {model}
                       </Text>
                     ) : null}
                   </View>
                   {subtitle !== undefined ? (
-                    <Text numberOfLines={1} style={styles.mentionHandle}>
+                    <Text style={styles.mentionHandle}>
                       {subtitle}
                     </Text>
                   ) : null}
@@ -177,12 +178,12 @@ export function MentionSuggestionMenu({
               ) : (
                 <>
                   <View style={styles.mentionIdentity}>
-                    <Text numberOfLines={1} style={styles.mentionName}>
+                    <Text style={styles.mentionName}>
                       {participant.pubkey === CHANNEL_MENTION_PUBKEY
                         ? 'Everyone in this Room'
                         : SYSTEM_MENTION_LABEL}
                     </Text>
-                    <Text numberOfLines={1} style={styles.mentionHandle}>
+                    <Text style={styles.mentionHandle}>
                       @{participant.handle}
                     </Text>
                   </View>
@@ -191,7 +192,7 @@ export function MentionSuggestionMenu({
                   </Text>
                 </>
               )}
-            </TouchableOpacity>
+            </ContentTarget>
           );
         })}
         {overflow > 0 && (
@@ -252,7 +253,7 @@ export function ChannelSuggestionMenu({
           const kind = suggestion.kind === 'room' ? 'ROOM' : 'CORNER';
           const subtitle = cornerRoom ? undefined : suggestion.subtitle;
           return (
-            <TouchableOpacity
+            <ContentTarget
               accessibilityLabel={[`#${suggestion.token}`, subtitle, suggestion.kind]
                 .filter(Boolean)
                 .join(', ')}
@@ -260,7 +261,7 @@ export function ChannelSuggestionMenu({
               accessibilityState={{ selected }}
               key={suggestion.id}
               onPress={() => onSelect(suggestion)}
-              style={[styles.mentionRow, selected && styles.mentionRowSelected]}
+              style={({ pressed }) => [styles.mentionRow, selected && styles.mentionRowSelected, pressed && { opacity: 0.2 }]}
               testID={`channel-suggestion-${suggestion.token}`}
             >
               <View style={styles.mentionChannelGlyph}>
@@ -271,17 +272,17 @@ export function ChannelSuggestionMenu({
                 )}
               </View>
               <View style={styles.mentionAgentIdentity}>
-                <Text numberOfLines={1} style={[styles.mentionName, styles.channelToken]}>
+                <Text style={[styles.mentionName, styles.channelToken]}>
                   #{suggestion.token}
                 </Text>
                 {subtitle ? (
-                  <Text numberOfLines={1} style={styles.mentionHandle}>
+                  <Text style={styles.mentionHandle}>
                     {subtitle}
                   </Text>
                 ) : null}
               </View>
               <Text style={styles.mentionKind}>{kind}</Text>
-            </TouchableOpacity>
+            </ContentTarget>
           );
         })}
         {overflow > 0 && (

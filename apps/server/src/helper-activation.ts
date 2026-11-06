@@ -15,7 +15,7 @@ function commandRevision(command:CommandRow):string{
   // digest carries no source text or grant material into persistent controls.
   return createHash('sha256').update(JSON.stringify([command.turn_request_id,command.action,command.reason,
     command.root_command_id,command.parent_command_id,command.root_source_message_id,command.source_message_id,
-    command.private_payload,command.review_context,command.wake_context,command.coalesced_context,command.coalesced_attachments,
+    command.private_payload,command.review_context,command.wake_context,
     command.turn_owner_connection_id,command.turn_owner_epoch])).digest('hex');
 }
 

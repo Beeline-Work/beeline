@@ -477,7 +477,7 @@ export async function systemLine(
           roomId: watch.watcher_room_id,
           agentId: watch.agent_id,
           sourceMessageId: id,
-          privatePayload: { text: `Watched corner ${watched?.name ?? input.subject.name} (${input.card?.cornerId ?? input.roomId}): ${input.kind === 'corner-opened' ? 'opened' : input.kind}${input.kind === 'merged' && watched?.merge_sha ? ` · merge commit ${watched?.merge_sha}` : ''}\n${text}`, authorId, fromRoomId: String(input.card?.cornerId ?? input.roomId), kind: 'lifecycle' },
+          privatePayload: { text: `Watched corner ${watched?.name ?? input.subject.name} (${input.card?.cornerId ?? input.roomId}): ${input.kind === 'corner-opened' ? 'opened' : input.kind}${input.kind === 'merged' && watched?.merge_sha ? ` · merge commit ${watched?.merge_sha}` : ''}\n${text}`, authorId: SYSTEM_IDENTITY_ID, fromRoomId: String(input.card?.cornerId ?? input.roomId), kind: 'lifecycle' },
           reason: 'watched_corner',
           parent: watch.incoming_command ?? undefined, retainDepth: true,
           action: 'input',
@@ -487,6 +487,7 @@ export async function systemLine(
         sourceMessageId: id,
         kind: input.kind,
         targets: wakes,
+        assignmentTargets: input.kind === 'workflow-handoff' ? input.wakes : undefined,
         requestId: input.requestId,
         causeId: input.causeId,
         commandId: input.commandId,
@@ -579,7 +580,7 @@ export async function wakeLateCornerWatcher(
       roomId: watcherRoomId,
       agentId,
       sourceMessageId: line.id,
-      privatePayload: { text: `Watched address ${cornerId}: merged`, authorId: agentId, fromRoomId: cornerId, kind: 'lifecycle' },
+      privatePayload: { text: `Watched address ${cornerId}: merged`, authorId: SYSTEM_IDENTITY_ID, fromRoomId: cornerId, kind: 'lifecycle' },
       reason: 'watched_corner',
       parent: incoming, retainDepth: true,
       action: 'input',
@@ -672,11 +673,10 @@ export async function backfillComputerObservations(database: SqlDatabase): Promi
     WHERE system_event->>'kind'='computer-session-activity'`);
   // Browser activity accepted by an older release must not start a turn.
   // Claimed turns and commands sourced from a person's message stay intact.
-  await database.query(`UPDATE agent_commands command SET state='cancelled',completed_at=now()
-    FROM messages source WHERE source.id=command.source_message_id
+  await database.query(`SELECT (terminal.ended).* FROM (SELECT beeline_end_agent_turn(command.id,command.generation_id,'cancelled',NULL,NULL) ended FROM agent_commands command ,messages source WHERE source.id=command.source_message_id
       AND command.state='pending'
       AND command.reason IN ('subscribed_event','computer_activity')
-      AND source.system_event->>'kind'='computer-session-activity'`);
+      AND source.system_event->>'kind'='computer-session-activity') terminal`);
 }
 
 /** A plain operator notice in the recipient's existing System thread. */

@@ -1,19 +1,5 @@
 import type { AgentActivityItem } from '@/sync/transport/rig-transport';
 
-export type ActivityTimelineEntry =
-  | {
-      kind: 'reasoning';
-      title: string;
-      detail: string;
-      count: number;
-    }
-  | {
-      kind: 'action';
-      title: string;
-      detail?: string;
-      count: number;
-    };
-
 /**
  * How a single tool call reaches the reader.
  *
@@ -111,14 +97,6 @@ function oneLine(value: string): string {
 function clamp(value: string, limit: number): string {
   if (value.length <= limit) return value;
   return `${value.slice(0, Math.max(0, limit - 1)).trimEnd()}…`;
-}
-
-function phaseTitle(text: string | undefined): string | undefined {
-  if (!text) return undefined;
-  const markdownBold = text.match(/^\s*\*\*([^*\n]+)\*\*/)?.[1];
-  const markdownHeading = text.match(/^\s*#{1,6}\s+([^\n]+)/)?.[1];
-  const candidate = oneLine(markdownBold ?? markdownHeading ?? '');
-  return candidate ? clamp(candidate.replace(/[.:]+$/, ''), MAX_ACTION_TITLE) : undefined;
 }
 
 function cleanTitle(value: string): string {
@@ -358,70 +336,6 @@ function actionTitle(item: AgentActivityItem): string | undefined {
   }
   if (normalized === 'output' || item.kind === 'output') return 'Agent update';
   return clamp(redactPaths(title || 'Completed an action'), MAX_ACTION_TITLE);
-}
-
-function appendDistinctDetail(
-  current: string | undefined,
-  next: string | undefined,
-): string | undefined {
-  if (!next) return current;
-  if (!current) return next;
-  if (current === next || current.endsWith(next)) return current;
-  return `${current}\n${next}`;
-}
-
-/**
- * Turns ACP telemetry into the deliberately sparse rows used by the corner UI.
- * Adjacent updates coalesce in place, so tool/reasoning order remains visible.
- * An identical action title recurring later in the same turn (e.g. the agent
- * re-reads the same file after an edit) folds into its first row instead of
- * printing a new one, so a long turn still reads like a summary, not a log.
- */
-function buildActivityTimeline(
-  items: readonly AgentActivityItem[],
-): ActivityTimelineEntry[] {
-  const entries: ActivityTimelineEntry[] = [];
-  const actionsByTitle = new Map<string, Extract<ActivityTimelineEntry, { kind: 'action' }>>();
-
-  for (const item of items) {
-    if (item.kind === 'thinking') {
-      const previous = entries.at(-1);
-      if (previous?.kind === 'reasoning') {
-        previous.count += 1;
-        previous.detail = appendDistinctDetail(previous.detail, item.text) ?? previous.detail;
-        previous.title = phaseTitle(item.text) ?? previous.title;
-      } else {
-        entries.push({
-          kind: 'reasoning',
-          title: phaseTitle(item.text) ?? 'reasoning',
-          detail: item.text ?? '',
-          count: 1,
-        });
-      }
-      continue;
-    }
-
-    const title = actionTitle(item);
-    if (!title) continue;
-    const isFileReview = /^Reviewed (?!the current changes)/.test(title);
-    const dedupeKey = isFileReview ? 'Reviewed' : title.toLowerCase();
-    const existing = actionsByTitle.get(dedupeKey);
-    if (existing) {
-      existing.count += 1;
-      if (isFileReview) existing.title = `Reviewed ${existing.count} files`;
-      continue;
-    }
-
-    const entry: Extract<ActivityTimelineEntry, { kind: 'action' }> = {
-      kind: 'action',
-      title,
-      count: 1,
-    };
-    entries.push(entry);
-    actionsByTitle.set(dedupeKey, entry);
-  }
-
-  return entries;
 }
 
 function mergeToolActivity(
@@ -740,25 +654,4 @@ export function buildTurnActivity(items: readonly AgentActivityItem[]): TurnActi
     ...(thoughtMs > 0 ? { thoughtMs } : {}),
     ...(plan ? { plan } : {}),
   };
-}
-
-/**
- * The corner's current plan, for the pinned checklist above the transcript.
- *
- * A plan update replaces the whole checklist, never patches it, so the latest
- * one across every message's activity — in chronological order — is simply
- * the most recent plan the agent has published. Takes duck-typed messages
- * (not `ChatDisplayMessage`) so this stays a pure function over activity data
- * with no dependency on the projection layer's message shape.
- */
-function latestCornerPlan(
-  messages: readonly { activity?: readonly AgentActivityItem[] }[],
-): AgentActivityItem['plan'] | undefined {
-  let plan: AgentActivityItem['plan'];
-  for (const message of messages) {
-    for (const item of message.activity ?? []) {
-      if (item.plan) plan = item.plan;
-    }
-  }
-  return plan;
 }

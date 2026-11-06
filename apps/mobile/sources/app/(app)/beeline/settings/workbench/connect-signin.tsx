@@ -73,10 +73,6 @@ function ConnectorSignInOverlay() {
   const [pageLoaded, setPageLoaded] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [fallback, setFallback] = useState(false);
-  // Quick-tunnel names can lag DNS: a load that fails at once usually works a
-  // few seconds later, so the page reloads itself before saying it failed.
-  const [autoReloads, setAutoReloads] = useState(0);
-  const [loadRound, setLoadRound] = useState(0);
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const desktopPageLayout = useDesktopPageLayout();
@@ -91,39 +87,16 @@ function ConnectorSignInOverlay() {
             : ({ pathname: '/beeline/settings/workbench', params: { workspaceId, viewerId } } as Href),
       ), [roomId, squire, viewerId, workspaceId],
   );
-  // The page has 15 seconds to load, reloads included, then says so in full.
-  useEffect(() => {
-    if (!signIn.url || pageLoaded || fallback || external) return;
-    const timer = setTimeout(() => setPageError(PAGE_LOAD_ERROR), PAGE_LOAD_TIMEOUT_MS);
-    return () => clearTimeout(timer);
-  }, [signIn.url, external, pageLoaded, fallback, loadRound]);
-  // A stalled helper completion also ends visibly after the browser loads.
-  useEffect(() => {
-    if (!signIn.url) return;
-    const timer = setTimeout(() => setPageError('Sign-in has not finished. Try again.'), 120_000);
-    return () => clearTimeout(timer);
-  }, [signIn.url, loadRound]);
   // Android reports a failed load as finished too; only a clean finish counts.
   const loadFailed = useRef(false);
-  const reloadTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => () => clearTimeout(reloadTimer.current), []);
   const pageFailed = useCallback(() => {
-    if (loadFailed.current) return;
-    // The finish event can arrive before the error that caused it.
     loadFailed.current = true;
     setPageLoaded(false);
-    if (autoReloads >= PAGE_AUTO_RELOADS) return;
-    reloadTimer.current = setTimeout(() => {
-      loadFailed.current = false;
-      setAutoReloads(value => value + 1); setAttempt(value => value + 1);
-    }, PAGE_RELOAD_DELAY_MS);
-  }, [autoReloads]);
+    setPageError(PAGE_LOAD_ERROR);
+  }, []);
   const retry = useCallback(async () => {
-    clearTimeout(reloadTimer.current);
     loadFailed.current = false;
     setFallback(false);
-    setAutoReloads(0);
-    setLoadRound(value => value + 1);
     setPageLoaded(false);
     setAttempt(value => value + 1);
     setPageError(null);
@@ -152,10 +125,6 @@ function ConnectorSignInOverlay() {
 
   const openBrowser = useCallback(async () => {
     if (!signIn.url) return;
-    // Every browser attempt owns a fresh completion deadline, including retries
-    // after the previous deadline has already fired.
-    clearTimeout(reloadTimer.current);
-    setLoadRound(value => value + 1);
     setPageError(null);
     setFallback(true);
     try {
@@ -230,9 +199,6 @@ function ConnectorSignInOverlay() {
 }
 
 /** A page that fails while its name is new reloads itself inside the 15 seconds. */
-const PAGE_AUTO_RELOADS = 2;
-const PAGE_RELOAD_DELAY_MS = 5_000;
-const PAGE_LOAD_TIMEOUT_MS = 15_000;
 const PAGE_LOAD_ERROR = 'The sign-in page did not load.';
 
 const styles = StyleSheet.create(theme => ({

@@ -183,8 +183,9 @@ describe('media id extraction', () => {
 });
 
 describe('CSP meta injection', () => {
-  it('declares the plan policy: no default source, inline styles, data images only', () => {
+  it('declares the plan policy: no default source, inline styles, data images and data fonts only', () => {
     expect(ARTIFACT_CSP).toContain("default-src 'none'");
+    expect(ARTIFACT_CSP).toMatch(/(^|; )font-src data:(;|$)/);
     expect(ARTIFACT_CSP).toContain("base-uri 'none'");
     expect(ARTIFACT_CSP).toContain("form-action 'none'");
     expect(ARTIFACT_CSP).toContain("frame-src 'none'");

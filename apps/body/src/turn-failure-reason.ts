@@ -2,8 +2,8 @@ import { ModelSelectionUnavailableError } from './model-config.js';
 import { classifyTurnSilence, type TurnReceiptReasonKind } from '@beeline/api-contract/daemon';
 
 /**
- * One distilled line for a failed turn receipt. The Room carries the classified
- * silence fact; the full error stays in the daemon log. Never a stack trace,
+ * One distilled line for a failed turn receipt. The Room carries a plain
+ * failure; the full error stays in the daemon log. Never a stack trace,
  * never a credential, at most 200 chars.
  */
 export const TURN_FAILURE_REASON_MAX = 200;
@@ -24,6 +24,10 @@ export function redactToolDetail(value: string): string {
     .replace(
       /\b(password|passwd)(\s+)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s]+)/gi,
       '$1$2[REDACTED]',
+    )
+    .replace(
+      /(\b(?:machine\s+\S+|default)\s+[\s\S]*?\blogin\s+)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+)/gi,
+      '$1[REDACTED]',
     )
     .replace(
       /\b(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*=(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+)/g,
@@ -82,14 +86,8 @@ export function distillTurnFailureReason(error: unknown): DistilledTurnFailureRe
     : clean.length > TURN_FAILURE_REASON_MAX
       ? `${clean.slice(0, TURN_FAILURE_REASON_MAX - 1)}…`
       : clean;
-  // A transient token-refresh race on the harness's own provider connection
-  // (claude-agent-acp mid-OAuth-refresh, say) can read identically to a
-  // genuinely expired/missing credential. Report other auth-shaped failures as
-  // an ordinary retryable hiccup here — the server's existing bounded hiccup
-  // budget (packages/api-contract/src/turn-silence.ts's escalateExhaustedHiccup)
-  // settles it into the standing not-signed-in verdict only once those
-  // retries are exhausted, so a genuinely signed-out helper is still named
-  // plainly, just after giving the race a chance to clear on its own.
+  // Keep the diagnostic wire classification; the server records the result
+  // without a retry budget or automatic escalation.
   const kind: TurnReceiptReasonKind =
     classified.kind === 'wrong-model'
       ? 'model-selection-unavailable'

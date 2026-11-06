@@ -7,7 +7,6 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AcpClient } from '../../body/src/acp.js';
-import { flushDueCommanderWakes } from './commander-wakes.js';
 import { assembleTurnPrompt, cornerReviewerInstruction } from '../../body/src/prompt-assembly.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { seedCornerOpening, PgliteDatabase, migratedDatabase, assignCornerWorker, insertCornerFacts } from './test-support.js';
@@ -17,7 +16,7 @@ import { announceAgentLifecycle } from './connection-presence.js';
 import { LiveHub } from './live.js';
 import { PushDeliveryLoop, MediaExpiryLoop } from './background.js';
 import { systemLine } from './system-line.js';
-import { createAgentCommand, noteBlockedCornerChecks, reconcileConfiguredCornerReviewers, REVIEWER_DISPATCH_REASONS, reviewerDispatchCarriesHead, routeSystemCommand } from './agent-command.js';
+import { createAgentCommand, reconcileConfiguredCornerReviewers, REVIEWER_DISPATCH_REASONS, reviewerDispatchCarriesHead, routeSystemCommand } from './agent-command.js';
 import { advanceCorner } from './corner-lifecycle.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
@@ -258,74 +257,6 @@ describe('corner message attribution', () => {
     await db.query('UPDATE agents SET owner_id=$2 WHERE agent_id=$1',[B,H]);
   });
 
-  it.each([
-    {reason:'ACP error -32000: Authentication required',free:false},
-    {reason:'ACP error -32602: Invalid params',reasonKind:'hiccup' as const,free:false},
-    {reason:'ACP error -32602: Invalid params',free:true},
-    {reason:'model selection unavailable',free:false},
-    {reason:'provider refused the selected configuration',reasonKind:'model-selection-unavailable' as const,free:false},
-    {reason:'ACP error -32000: Authentication required',free:true},
-  ])('WAKE-STORM: standing reviewer failure waits for recovery: $reason (free=$free)', async ({reason,reasonKind,free}) => {
-    if (free) await db.query(`INSERT INTO free_agents(agent_id,workspace_id,owner_id,sealed_keys) VALUES($1,$2,$3,'{}')`, [B,W,H]);
-    await db.query('UPDATE agents SET selected_model=NULL WHERE agent_id=$1', [B]);
-    await db.query('UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1', [R, B]);
-    if (reason.includes('-32602')) await db.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
-      VALUES($1,$2,'presence','presence','{"releaseVersion":"v0.1.113"}')`, [R,B]);
-    await greenHead(7, 'a'.repeat(40));
-    const [review] = await commands(B, C);
-    expect(review).toBeDefined();
-    await claim(review!);
-    await daemon.execute('postAgentTurnReceipt', { roomId: C, requestId: review!.turnRequestId,
-      generationId: 'g1', status: 'failed', reason, reasonKind }, B);
-    for (let cycle = 0; cycle < 5; cycle++) await reconcileConfiguredCornerReviewers(db, R);
-    expect(await commands(B, C)).toHaveLength(0);
-    const reports = (await commands(A, R)).filter(c => c.reason === 'report');
-    expect(reports).toHaveLength(1);
-    expect(reports[0]!.source.body).toContain(reason);
-    // A timer and a new PR head cannot repair credentials or a missing model.
-    await db.query(`UPDATE agent_turns SET created_at=now()-interval '1 day' WHERE agent_id=$1`, [B]);
-    await greenHead(8, 'b'.repeat(40));
-    await reconcileConfiguredCornerReviewers(db, R);
-    expect(await commands(B, C)).toHaveLength(0);
-    if (reason.includes('-32602')) {
-      await announceAgentLifecycle(db, new LiveHub(), R, B, { lifecycleId: 'reconnect', releaseVersion: 'v0.1.113' });
-      await announceAgentLifecycle(db, new LiveHub(), R, B, { lifecycleId: 'missing-version' });
-      await reconcileConfiguredCornerReviewers(db, R);
-      expect(await commands(B, C)).toHaveLength(0);
-    }
-    // A helper upgrade repairs an adapter rejection; model selection repairs
-    // the other standing provider conditions. A reconnect alone repairs neither.
-    if (reason.includes('-32602')) await announceAgentLifecycle(db, new LiveHub(), R, B,
-      { lifecycleId: 'upgraded-helper', releaseVersion: 'v0.1.114' });
-    else await db.query("UPDATE agents SET selected_model='working-model' WHERE agent_id=$1", [B]);
-    await reconcileConfiguredCornerReviewers(db, R);
-    expect(await commands(B, C)).toHaveLength(1);
-  });
-
-  // Reproduction ZC-1: GitHub reports no rollup for a PR with no checks, so no
-  // check webhook exists to create the configured reviewer's command.
-  it.each(['sign-in','successful-turn','legacy-configuration'])('WAKE-STORM: reviewer resumes after a concrete %s recovery', async recovery => {
-    await db.query('UPDATE agents SET selected_model=NULL WHERE agent_id=$1', [B]);
-    await db.query('UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1', [R,B]);
-    await greenHead(9,'c'.repeat(40));
-    const [review] = await commands(B,C);
-    await claim(review!);
-    await daemon.execute('postAgentTurnReceipt', {roomId:C,requestId:review!.turnRequestId,
-      generationId:'g1',status:'failed',reason:'Authentication required'}, B);
-    if (recovery === 'legacy-configuration') await db.query(`UPDATE agent_commands
-      SET review_context=review_context-'reviewerConfiguration' WHERE id=$1`, [review!.id]);
-    await reconcileConfiguredCornerReviewers(db,R);
-    expect(await commands(B,C)).toHaveLength(0);
-    if(recovery === 'sign-in') await db.query(`INSERT INTO messages(id,room_id,author_id,text,card_type,card)
-      VALUES($1,$2,$3,'Signed in','agent-sign-in',jsonb_build_object('agentId',$3::text,'attemptId',$1::text,'status','signed-in'))`,
-      ['recovery-'+review!.id,R,B]);
-    else if(recovery === 'successful-turn') await db.query(`INSERT INTO agent_turns(room_id,request_id,agent_id,status)
-      VALUES($1,$2,$3,'complete')`, [R,'recovery-'+review!.id,B]);
-    else await db.query("UPDATE agents SET selected_model='recovered-model' WHERE agent_id=$1", [B]);
-    await reconcileConfiguredCornerReviewers(db,R);
-    expect(await commands(B,C)).toHaveLength(1);
-  });
-
   it('wakes the configured reviewer for a zero-check PR, privately asks the implementer to report when no reviewer is configured', async () => {
     let headSha = '1'.repeat(40);
     const checkGate = vi.fn(async () => ({
@@ -475,13 +406,14 @@ describe('corner message attribution', () => {
     await result(review!, '@hoots FAIL: repair this head.');
     const [repair] = await commands(A, C);
     await claim(repair!);
-    // The push fact is committed before the handoff; ordinary replies use it
-    // without another provider read. Webhook refresh has separate coverage.
+    // The committed push is the new handoff target. The machine adapter keeps
+    // the ordinary reply's provider validation outside the command transaction.
     await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`, [C, '2'.repeat(40)]);
     const refreshed = vi.fn();
     Object.assign(daemon, { github: { refreshCornerReviewHead: refreshed } });
     await result(repair!, '@goosy The fix is pushed; please review.');
-    expect(refreshed).not.toHaveBeenCalled();
+    expect(refreshed).toHaveBeenCalledTimes(1);
+    expect(refreshed).toHaveBeenCalledWith(C);
     const next = (await commands(B, C)).find(c => c.reason === 'agent_tag');
     expect(next?.source.body).toContain(`Current handoff target: PR #83 at ${'2'.repeat(40)}`);
     const target = (await db.query<{ context: { headSha: string } }>('SELECT review_context context FROM agent_commands WHERE id=$1', [next!.id])).rows[0]?.context;
@@ -652,36 +584,6 @@ describe('corner message attribution', () => {
         'SELECT review_context context,state FROM agent_commands WHERE id=$1', [old!.id]);
       expect(rows.rows[0]?.state).toBe(state === 'pending' ? 'cancelled' : 'complete');
     });
-
-  it('Reproduction REVIEW-CYCLE-1: later background cycles repair a lost wake and hand back a finished review only once', async () => {
-    // Keep the database stand-in tied to the actual background-cycle wiring.
-    const index = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-    expect(index.includes('reconciledCornerReviewers')).toBe(false);
-    expect(index).toContain('registerBackgroundDeadlineFamilies(work,repairDeadlineFamilies(jobsDatabase,');
-    const family = repairDeadlineFamilies(db, {live:new LiveHub(),phone,
-      mediaExpiry:new MediaExpiryLoop(db),institutionalMemory:INSTITUTIONAL_MEMORY_ON,
-      voiceDeadlines:new BackgroundRecordDeadlines('voice-call-recovery',new BackgroundWork(),()=>{})})
-      .find(family=>family.name==='corner-reviewers');
-    expect(family).toBeDefined();
-    expect(family!.next).toBeUndefined(); // Committed input, never a recurring repair timer.
-    const cycle = () => family!.run();
-    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
-    await greenHead(61, '6'.repeat(40));
-    await cycle();
-    const [lost] = await commands(B, C);
-    await db.query('DELETE FROM agent_commands WHERE id=$1', [lost!.id]);
-    await cycle();
-    const [repaired] = await commands(B, C);
-    expect(repaired?.reason).toBe('corner_review_dispatch');
-    await claim(repaired!);
-    await result(repaired!, 'FAIL: the demonstration is missing.');
-    for (let i = 0; i < 4; i++) await cycle();
-    expect(await commands(B, C)).toHaveLength(0);
-    const reports = (await commands(A, R)).filter(c => c.reason === 'report' && c.source.body.includes('the reviewer completed its review'));
-    expect(reports).toHaveLength(0);
-    expect((await commands(A, C)).filter(c => c.reason === 'corner_review_needed')).toHaveLength(1);
-    console.info('Demonstrated REVIEW-CYCLE-1: later cycle restored review; findings handed back once without a commander report');
-  });
 
   it('Reproduction REVIEW-FAIL-HANDOFF-1: an explicit wait postpones handback without reporting a wake failure', async () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
@@ -875,10 +777,10 @@ describe('corner message attribution', () => {
     try {
       const assignment = async (revision: number, queue = true) => {
         await db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,content,spec,author_id,source_room_id)
-          VALUES($1,$2,'Brief',$3,$4,$5)`, [C, revision, `Brief at ${revision}`, A, R]);
+          VALUES($1,$2,'Brief',$3,$4,$5)`, [C, revision, `Brief at ${revision}`, H, R]);
         if (!queue) return;
         const line = await systemLine(db, { roomId: C,
-          subject: { kind: 'agent', id: A, name: 'Hoots' }, verb: 'revised the corner brief',
+          subject: { kind: 'person', id: H, name: 'Ada' }, verb: 'revised the corner brief',
           object: { text: `Revision ${revision}`, id: C } });
         await createAgentCommand(db, { roomId: C, agentId: A, sourceMessageId: line.id,
           reason: 'corner_brief_revision' });
@@ -890,7 +792,7 @@ describe('corner message attribution', () => {
       expect((await commands(A, C)).map(c => c.id)).toContain(old!.id);
       const human = await phone.execute('sendRoomMessage', { roomId: C, text: '@hoots keep this instruction' }, H);
       const line = await systemLine(db, { roomId: C,
-        subject: { kind: 'agent', id: A, name: 'Hoots' }, verb: 'revised the corner brief',
+        subject: { kind: 'person', id: H, name: 'Ada' }, verb: 'revised the corner brief',
         object: { text: 'Revision 2', id: C } });
       const replacement = await createAgentCommand(db, { roomId: C, agentId: A,
         sourceMessageId: line.id, reason: 'corner_brief_revision' });
@@ -921,10 +823,10 @@ describe('corner message attribution', () => {
     // its system line, and the corner_brief_revision assignment command.
     const assignment = async (revision: number) => {
       await db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,content,spec,author_id,source_room_id)
-        VALUES($1,$2,'Brief',$3,$4,$5)`, [C, revision, `Brief at ${revision}`, A, R]);
+        VALUES($1,$2,'Brief',$3,$4,$5)`, [C, revision, `Brief at ${revision}`, H, R]);
       const line = await systemLine(db, {
         roomId: C,
-        subject: { kind: 'agent', id: A, name: 'Hoots' },
+        subject: { kind: 'person', id: H, name: 'Ada' },
         verb: 'revised the corner brief',
         object: { text: `Revision ${revision}`, id: C },
       });
@@ -1128,57 +1030,6 @@ describe('corner message attribution', () => {
     ).toEqual([{ head_sha: '2'.repeat(40) }]);
   });
 
-  it('Reproduction R1: waits for new input after a completed fix with no push', async () => {
-    await db.query(
-      `INSERT INTO push_devices(token,identity_id,platform,environment)
-       VALUES('human-device-token-123456789012345678902',$1,'android','physical')`,
-      [H],
-    );
-    const send = vi.fn().mockResolvedValue(undefined);
-    const push = new PushDeliveryLoop(db, { send });
-    await push.runOnce();
-    const head = '7'.repeat(40);
-    await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
-      C,
-      JSON.stringify({
-        checks: 'failing',
-        lifecycle: 'in-review',
-        pr: {
-          number: 21,
-          title: 'Fix widget',
-          url: 'https://github.com/acme/repo/pull/21',
-          headSha: head,
-        },
-      }),
-    ]);
-    await systemLine(db, {
-      roomId: C,
-      authorId: A,
-      subject: { kind: 'github', name: 'GitHub' },
-      verb: 'found failing checks on',
-      kind: 'check-failed',
-      object: { text: 'Fix widget', url: 'https://github.com/acme/repo/pull/21', headSha: head },
-    });
-    const [fix] = (await commands(A, C)).filter((command) => command.reason === 'corner_check');
-    expect(fix).toBeDefined();
-    await claim(fix!);
-    // While the fix turn runs, nothing is blocked.
-    expect(await noteBlockedCornerChecks(db)).toBe(0);
-    await result(fix!, 'I could not fix the failing test.');
-    // The turn just ended; a pushed fix may still be on its way from GitHub.
-    expect(await noteBlockedCornerChecks(db)).toBe(0);
-    await db.query(
-      `UPDATE agent_commands SET completed_at=now()-interval '3 minutes' WHERE id=$1`,
-      [fix!.id],
-    );
-    expect(await noteBlockedCornerChecks(db)).toBe(0);
-    expect(await noteBlockedCornerChecks(db)).toBe(0);
-    expect((await commands(A, C)).filter(command => command.reason === 'corner_check')).toEqual([]);
-    await push.runOnce();
-    expect(send).not.toHaveBeenCalled();
-    await db.query(`DELETE FROM push_devices WHERE identity_id=$1`, [H]);
-  });
-
   it.each([false, true])('notifies an Attention requester about a non-repository deliverable only when tagged (tagged=%s)', async (tagged) => {
     await db.query(
       `UPDATE rooms SET repository_key=NULL,repository_resolution='none' WHERE id=$1`,
@@ -1224,34 +1075,6 @@ describe('corner message attribution', () => {
       );
       await db.query(`DELETE FROM push_devices WHERE identity_id=$1`, [H]);
     }
-  });
-
-  it('does not call a corner blocked once a new head replaces the failing one', async () => {
-    const head = '8'.repeat(40);
-    await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
-      C,
-      JSON.stringify({ checks: 'failing', pr: { number: 22, headSha: head } }),
-    ]);
-    await systemLine(db, {
-      roomId: C,
-      authorId: A,
-      subject: { kind: 'github', name: 'GitHub' },
-      verb: 'found failing checks on',
-      kind: 'check-failed',
-      object: { text: 'pull request #22', headSha: head },
-    });
-    const [fix] = (await commands(A, C)).filter((command) => command.reason === 'corner_check');
-    await claim(fix!);
-    await result(fix!, 'Pushed a fix.');
-    await db.query(
-      `UPDATE agent_commands SET completed_at=now()-interval '3 minutes' WHERE id=$1`,
-      [fix!.id],
-    );
-    await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
-      C,
-      JSON.stringify({ checks: 'pending', pr: { number: 22, headSha: '9'.repeat(40) } }),
-    ]);
-    expect(await noteBlockedCornerChecks(db)).toBe(0);
   });
 
   // Reproduction REVIEW-HANDBACK-NULL: a corner an agent opened off its own
@@ -1344,31 +1167,6 @@ describe('corner message attribution', () => {
     await greenHead(10,'4'.repeat(40));
     expect((await commands(B,C)).map(command => command.reason)).toEqual(['subscribed_event']);
     expect((await db.query('SELECT 1 FROM memberships WHERE room_id=$1',[C])).rowCount).toBe(0);
-  });
-
-  it.each(['order', 'subscribed_event'] as const)('Reproduction CAPACITY-COMMANDER-1: exhausted %s capacity retries deliver the failure to the corner commander', async reason => {
-    const opening = await createAgentCommand(db, {
-      roomId: C, agentId: B, sourceMessageId: null, reason: 'order',
-      privatePayload: { kind: 'order', text: 'Finish this work', authorId: A, fromRoomId: R },
-    });
-    if (reason !== 'order') await db.query("UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1", [opening!.id]);
-    const command = reason === 'order' ? opening : await createAgentCommand(db, {
-      roomId: C, agentId: B, sourceMessageId: null, reason, parent: opening!,
-    });
-    for (const attempt of [1, 2, 3]) {
-      await db.query('UPDATE agent_commands SET wake_after=NULL WHERE id=$1', [command!.id]);
-      const pending = (await commands(B, C)).find(item => item.id === command!.id)!;
-      await claim(pending, `capacity-${attempt}`);
-      const receipt = await daemon.execute('postAgentTurnReceipt', {
-        roomId: C, requestId: pending.turnRequestId, generationId: `capacity-${attempt}`, status: 'failed',
-        reason: 'The model is at capacity; overloaded_error', reasonKind: 'hiccup',
-      }, B);
-      expect(Boolean(receipt.hiccupRestart)).toBe(attempt < 3);
-      if (attempt < 3) expect(await commands(A, R)).toEqual([]);
-    }
-    const reports = (await db.query<{ text: string }>(
-      `SELECT private_payload->>'text' text FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND reason='report'`, [R,A])).rows;
-    expect(reports.some(report => report.text.startsWith('failed:') && report.text.includes('at capacity'))).toBe(true);
   });
 
   it.each(['FAIL: required evidence is missing.', 'blocked: waiting for required checks.'])(
@@ -1523,37 +1321,6 @@ describe('corner message attribution', () => {
 });
 
 describe('the corner implementer the workflow wakes follows a person hand-over', () => {
-  it('a blocked-checks line keys on the current implementer, not the opener', async () => {
-    const head = 'a'.repeat(40);
-    await assignCornerWorker(db, C, B);
-    await db.query(`UPDATE corner_github_cache SET lifecycle=$3::jsonb WHERE corner_id=$1 AND $2::text IS NOT NULL`, [
-      C,
-      B,
-      JSON.stringify({
-        checks: 'failing',
-        lifecycle: 'in-review',
-        pr: { number: 31, url: 'https://github.com/acme/repo/pull/31', headSha: head },
-        checksSummary: { updatedAt: Math.floor(Date.now() / 1000) - 3660, checks: [{ name: 'Server suite', status: 'pending' }] },
-      }),
-    ]);
-    const source = await systemLine(db, {
-      roomId: C,
-      authorId: A,
-      subject: { kind: 'github', name: 'GitHub' },
-      verb: 'found failing checks on',
-      object: { text: 'Fix widget', headSha: head },
-    });
-    await createAgentCommand(db, { roomId: C, agentId: B, sourceMessageId: source.id, reason: 'corner_check' });
-    // The opener still holds an unclaimed fix turn: reading the opener would
-    // stop the blocked line and hide the current implementer's ended turn.
-    await createAgentCommand(db, { roomId: C, agentId: A, sourceMessageId: source.id, reason: 'corner_check' });
-    await db.query(
-      `UPDATE agent_commands SET state='complete',completed_at=now()-interval '3 minutes'
-       WHERE room_id=$1 AND agent_id=$2`,
-      [C, B],
-    );
-    expect(await noteBlockedCornerChecks(db)).toBe(1);
-  });
 
   it('a zero-check PR is completed for the current implementer, not the opener', async () => {
     const checkGate = vi.fn(async () => ({
@@ -1622,25 +1389,17 @@ describe('the corner implementer the workflow wakes follows a person hand-over',
   });
 });
 
-it.each(['empty','status','failed'])('Reproduction REVIEW-LOOP: a %s review without a verdict retries the same head, then stops', async ending => {
-  await phone.execute('updateRoom', {roomId:R,reviewerAgentId:B}, H);
+it.each(['empty','status','failed'])('a %s review result never retries the same head',async ending=>{
+  await phone.execute('updateRoom',{roomId:R,reviewerAgentId:B},H);
   await greenHead(91,'d'.repeat(40));
-  for (let attempt=0;attempt<3;attempt++) {
-    const pending=await commands(B,C);
-    expect(pending).toHaveLength(1);
-    await claim(pending[0]!,`empty-${attempt}`);
-    if (ending==='status') await result(pending[0]!, 'Review ended without a verdict.', `empty-${attempt}`);
-    else if (ending==='failed') {
-      await db.query(`UPDATE agent_turns SET status='failed',failure_reason='GitHub rate limit' WHERE request_id=$1`,[pending[0]!.turnRequestId]);
-      await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1`,[pending[0]!.id]);
-    } else await daemon.execute('postAgentTurnReceipt',{roomId:C,requestId:pending[0]!.turnRequestId,
-      generationId:`empty-${attempt}`,status:'complete'},B);
-    await reconcileConfiguredCornerReviewers(db,R);
-  }
-  expect(await commands(B,C)).toHaveLength(0);
-  expect((await commands(A,C)).some(c=>c.source.body.includes('without a verdict'))).toBe(true);
-  for(let cycle=0;cycle<3;cycle++) await reconcileConfiguredCornerReviewers(db,R);
-  expect(await commands(B,C)).toHaveLength(0);
+  const [review]=await commands(B,C);await claim(review!);
+  if(ending==='status')await result(review!,'Review ended without a verdict.');
+  else await daemon.execute('postAgentTurnReceipt',{roomId:C,requestId:review!.turnRequestId,
+    generationId:'g1',status:ending==='failed'?'failed':'complete',...(ending==='failed'?{reason:'provider unavailable'}:{})},B);
+  for(let event=0;event<3;event++)await reconcileConfiguredCornerReviewers(db,R);
+  expect(await commands(B,C)).toEqual([]);
+  if(ending==='failed')expect((await commands(A,R)).filter(c=>c.reason==='report'&&c.source.body.includes('failed:'))).toHaveLength(1);
+  else expect((await commands(A,C)).some(c=>c.source.body.includes('without a verdict'))).toBe(true);
 });
 
 it('Reproduction REVIEW-LOOP: a current member tag reaches a reviewer after an empty completion', async () => {
@@ -1735,76 +1494,4 @@ it.each(['complete','failed'] as const)('Reproduction review-1: a delivered repa
   await db.query("UPDATE agent_commands SET state='complete',completed_at=now() WHERE room_id=$1 AND agent_id=$2",[C,A]);
   await reconcileConfiguredCornerReviewers(db,R);
   expect(await commands(B,C)).toEqual([]);
-});
-it('model-capacity-no-retry: ACP provider diagnostic reaches durable recovery and retains the original work', async () => {
-  const directory = await mkdtemp(join(tmpdir(),'beeline-capacity-'));
-  const script = join(directory,'provider.cjs');
-  // Codex reports this incident as final text with end_turn, not a failed RPC.
-  await writeFile(script, `
-const lines = require('node:readline').createInterface({input:process.stdin});
-let attempts=0;
-lines.on('line', line => {
-  const m=JSON.parse(line);
-  const send=result=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');
-  if(m.method==='initialize') send({protocolVersion:1});
-  else if(m.method==='session/new') send({sessionId:'capacity-session'});
-  else if(m.method==='session/prompt') {
-    attempts++;
-    const text=attempts===1?'Selected model is at capacity. Please try a different model.':'PASS: '+m.params.prompt[0].text;
-    process.stdout.write(JSON.stringify({jsonrpc:'2.0',method:'session/update',params:{sessionId:'capacity-session',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text}}}})+'\\n');
-    send({stopReason:'end_turn'});
-  }
-});
-`);
-  const adapter = new AcpClient({agentCommand:process.execPath,agentArgs:[script],agentLabel:'codex-acp',agentEnv:{},resourceScope:'none'});
-  try {
-    await phone.execute('updateRoom',{roomId:R,reviewerAgentId:B},H);
-    await greenHead(3095,'3b3560e14d96e58a52466785a01440846bd13394');
-    const [review] = await commands(B,C);
-    expect(review).toBeDefined();
-    await adapter.startProcess();
-    const {sessionId} = await adapter.sessionNew({cwd:directory});
-    for (const attempt of [1,2]) {
-      const generation = `adapter-${attempt}`;
-      await claim(review!,generation);
-      const output = await adapter.sessionPrompt(sessionId,review!.source.body);
-      expect(output.stopReason).toBe('end_turn');
-      await result(review!,output.agentText,generation);
-      const receipt = await daemon.execute('postAgentTurnReceipt',{roomId:C,requestId:review!.turnRequestId,
-        generationId:generation,status:'complete'},B);
-      const saved = (await db.query(`SELECT state,hiccup_attempts,wake_after FROM agent_commands WHERE id=$1`,[review!.id])).rows[0]!;
-      if(attempt===1) {
-        expect(output.agentText).toBe('Selected model is at capacity. Please try a different model.');
-        expect(receipt.hiccupRestart).toBe(true);
-        expect(saved).toMatchObject({state:'pending',hiccup_attempts:1});
-        expect(saved.wake_after).not.toBeNull();
-        // Advance the durable deadline; no sleep or alternate retry mechanism.
-        await db.query(`UPDATE agent_commands SET wake_after=now()-interval '1 second' WHERE id=$1`,[review!.id]);
-        await flushDueCommanderWakes(db);
-        const retried = (await commands(B,C)).find(c=>c.id===review!.id);
-        expect(retried).toMatchObject({turnRequestId:review!.turnRequestId,source:{body:review!.source.body}});
-      } else {
-        expect(output.agentText).toBe('PASS: '+review!.source.body);
-        expect(saved).toMatchObject({state:'complete',hiccup_attempts:1});
-      }
-    }
-  } finally { await adapter.stopProcess(); await rm(directory,{recursive:true,force:true}); }
-});
-
-it('Reproduction capacity-1: capacity returned as final text and a complete receipt retries the original review', async () => {
-  await phone.execute('updateRoom',{roomId:R,reviewerAgentId:B},H);
-  await greenHead(3095,'3b3560e14d96e58a52466785a01440846bd13394');
-  const [review]=await commands(B,C);
-  for(const attempt of [1,2,3]) {
-    await db.query('UPDATE agent_commands SET wake_after=NULL WHERE id=$1',[review!.id]);
-    await claim(review!,`cap-${attempt}`);
-    await result(review!,'Selected model is at capacity. Please try a different model.',`cap-${attempt}`);
-    const receipt=await daemon.execute('postAgentTurnReceipt',{roomId:C,requestId:review!.turnRequestId,generationId:`cap-${attempt}`,status:'complete'},B);
-    expect(Boolean(receipt.hiccupRestart)).toBe(attempt<3);
-    const saved=(await db.query('SELECT state,hiccup_attempts,wake_after FROM agent_commands WHERE id=$1',[review!.id])).rows[0]!;
-    expect((await db.query('SELECT status,failure_reason FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3',[C,review!.turnRequestId,B])).rows[0]).toMatchObject({status:'failed',failure_reason:'Selected model is at capacity. Please try a different model.'});
-    expect(saved.hiccup_attempts).toBe(attempt);
-    expect(saved.state).toBe(attempt<3?'pending':'complete');
-    if(attempt<3) expect(saved.wake_after).not.toBeNull();
-  }
 });

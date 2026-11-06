@@ -73,7 +73,7 @@ export function roomReplySteps(
     const operation = oneLine(step.call.kind ?? '') || 'tool';
     const title = oneLine(redactToolDetail(step.call.title ?? '')) || `${operation} tool`;
     const identity = `${step.call.name ?? ''} ${step.call.title ?? ''} ${JSON.stringify(step.call.rawInput ?? {})}`;
-    const secret = /fetch_credential|read_credential|raw_credential|(?:read|cat|head|tail)[\s\S]*?(?:[._]netrc\b|\.env\b|credentials|id_rsa|id_ed25519|private.?key)/i.test(identity);
+    const secret = /fetch_credential|read_credential|raw_credential|(?:read|cat|head|tail|less)[\s\S]*?(?:[._]netrc\b|\.pgpass\b|\.git-credentials\b|\.npmrc\b|\.pypirc\b|\.docker[\\/]+config\.json\b|\.aws[\\/]+credentials\b|\.env|credentials|id_rsa|id_ed25519|\.(?:pem|key)\b|private.?key)/i.test(identity);
     const raw = secret ? '' : redactToolDetail(toolCallText(step.call.content) || toolCallText(step.call.rawOutput));
     const bytes = Buffer.from(raw);
     const marker = '\n[cut off]';

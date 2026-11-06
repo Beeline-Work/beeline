@@ -32,6 +32,8 @@ it('R2 app startup flushes the persisted owner over the one phone operation path
   const identity = { publicKey: 'c'.repeat(64) };
   const owner = getMessageOutbox('https://server.example', identity);
   const room = createRoomOutbox('https://server.example', identity, 'room-a');
+  // The first covering Room read can commit before app delivery starts.
+  await expect(room.reconcile(new Set())).resolves.toBeUndefined();
   const e = { id: 'a'.repeat(64), pubkey: identity.publicKey, kind: 9, sig: '', created_at: 1, content: 'Start with the server PR', tags: [['h', 'room-a'], ['monolith-attachments', '[]'], ['monolith-mentions', '[]']] };
   await room.enqueue(e, { id: e.id, text: e.content, createdAt: 1, author: { pubkey: identity.publicKey, kind: 'human', name: 'Kai' }, presentation: 'message' });
   await startMessageOutbox(); await owner.connectionChanged(false);

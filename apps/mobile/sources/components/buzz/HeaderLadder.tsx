@@ -66,7 +66,7 @@ export function CornerHeaderAgentText({
   const waiting = (state ?? stateWord) === 'waiting';
   const label = waiting ? 'waiting' : stateWord;
   return (
-    <Text numberOfLines={1} style={[styles.metaCaps, style]}>
+    <Text style={[styles.metaCaps, style]}>
       {name.toUpperCase()}
       {label ? ' · ' : null}
       <Text accessibilityRole={waiting && onReasonPress ? 'link' : undefined}
@@ -80,15 +80,13 @@ export function CornerHeaderAgentText({
  *  token so the two headers can never drift apart again. */
 export function HeaderMetaCaps({
   children,
-  numberOfLines = 1,
   testID,
 }: {
   children: React.ReactNode;
-  numberOfLines?: number;
   testID?: string;
 }) {
   return (
-    <Text numberOfLines={numberOfLines} style={styles.metaCaps} testID={testID}>
+    <Text style={styles.metaCaps} testID={testID}>
       {children}
     </Text>
   );

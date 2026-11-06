@@ -48,6 +48,17 @@ m40_describe('durable member delivery ownership',()=>{
     await m40_acceptMemberDelivery(dir,joined.key,runner,{v:1,type:'checkpoint',cursor:{epoch,through:8},mentionCursor:'1'});
     m40_expect(m40_readState(dir).sessions[0]?.streamCursor).toEqual({epoch,through:8});
   });
+  m40_it('one command wakes the session once even if an old server changes its retry version',async()=>{
+    const dir=scratch();await m40_updateState(dir,state=>state.sessions.push({...joined,deliveredWakes:[]}));
+    const wake={id:'work',address:'room',reason:'system',text:'One request',createdAt:'2026-11-06T00:00:00Z'};
+    const frame=(version:number)=>({v:1,type:'delivery',deliveryId:`wake:work:${version}`,
+      mentions:[],wakes:[{...wake,deliveryVersion:version}],mentionCursor:'0'});
+    m40_expect(await m40_acceptMemberDelivery(dir,joined.key,runner,frame(0))).toBe(1);
+    m40_expect(await m40_acceptMemberDelivery(dir,joined.key,runner,frame(7))).toBe(0);
+    m40_expect(m40_readState(dir).sessions[0]?.deliveredWakes).toEqual(['work']);
+    m40_expect(m40_takeInbox(dir,joined.key)).toContain('One request');
+    m40_expect(m40_takeInbox(dir,joined.key)).toBe('');
+  });
   m40_it('keeps mention recovery at the last durable item and refuses backwards checkpoints',async()=>{
     const dir=scratch();await m40_updateState(dir,state=>state.sessions.push({...joined}));
     m40_expect(await m40_acceptMemberDelivery(dir,joined.key,runner,delivery())).toBe(1);

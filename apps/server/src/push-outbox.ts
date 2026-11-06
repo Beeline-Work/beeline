@@ -6,23 +6,12 @@ export const PUSH_OUTBOX_SCHEMA = `
 CREATE TABLE IF NOT EXISTS push_outbox (
   message_id text NOT NULL,
   device_token text NOT NULL REFERENCES push_devices(token) ON DELETE CASCADE,
-  not_before timestamptz NOT NULL DEFAULT now(),
   expires_at timestamptz NOT NULL,
   PRIMARY KEY(message_id,device_token)
 );
 CREATE INDEX IF NOT EXISTS push_outbox_device_idx ON push_outbox(device_token);
-CREATE INDEX IF NOT EXISTS push_outbox_due_idx ON push_outbox(not_before,message_id,device_token);
 CREATE INDEX IF NOT EXISTS push_outbox_expiry_idx ON push_outbox(expires_at);
--- Retirement evidence is separate from claims: editing a message may enqueue it again.
-CREATE TABLE IF NOT EXISTS push_outbox_retirements (
-  message_id text NOT NULL,
-  device_token text NOT NULL REFERENCES push_devices(token) ON DELETE CASCADE,
-  reason text NOT NULL,
-  retired_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY(message_id,device_token)
-);
-CREATE INDEX IF NOT EXISTS push_outbox_retirements_device_idx ON push_outbox_retirements(device_token);
-CREATE INDEX IF NOT EXISTS push_outbox_retirements_time_idx ON push_outbox_retirements(retired_at);
+DROP TABLE IF EXISTS push_outbox_retirements;
 CREATE TABLE IF NOT EXISTS push_message_context (
   message_id text PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -44,6 +33,8 @@ BEGIN
     OR m.card_type IN ('agent-yolo','grant-auto','turn-failed','workspace-member-joined','agent-command')
     OR (m.card_type='relay' AND m.card->>'direction'='up')
     OR NOT EXISTS (SELECT 1 FROM push_devices LIMIT 1) THEN RETURN; END IF;
+  -- The first real message owns the delivery boundary; no startup job is needed.
+  INSERT INTO push_delivery_floors(id) VALUES('message-delivery') ON CONFLICT(id) DO NOTHING;
   -- Serialize turn context with other committed writes in this Room.
   PERFORM pg_advisory_xact_lock(hashtextextended('push-context:' || m.room_id::text,0));
   -- These history reads happen once on the write path, never in the worker.
@@ -83,12 +74,7 @@ BEGIN
       -- Other kinds need direct attention under every possible push level.
       AND ((m.presentation='message' AND m.card_type IS NULL)
         OR ${pushDirectAttentionSql('collected_turn_ids')})
-    ON CONFLICT(message_id,device_token) DO UPDATE SET not_before=now()
-      -- Only wake preference-parked work; claims retain provider retry authority.
-      WHERE push_outbox.not_before=push_outbox.expires_at
-        AND NOT EXISTS (SELECT 1 FROM push_delivery_claims claim
-          WHERE claim.message_id=push_outbox.message_id
-            AND claim.device_token=push_outbox.device_token);
+    ON CONFLICT(message_id,device_token) DO NOTHING;
 END $$;
 CREATE OR REPLACE FUNCTION message_push_outbox_trigger() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -110,22 +96,14 @@ END $$;
 DROP TRIGGER IF EXISTS join_push_outbox ON workspace_join_notification_devices;
 CREATE TRIGGER join_push_outbox AFTER INSERT ON workspace_join_notification_devices
   FOR EACH ROW EXECUTE FUNCTION join_push_outbox_trigger();
--- Changing a deadline changes the durable queue deadline in the same transaction.
-CREATE OR REPLACE FUNCTION retry_push_outbox_trigger() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
-  IF NEW.status='retryable' THEN
-    UPDATE push_outbox SET not_before=NEW.next_retry_at
-      WHERE message_id=NEW.message_id AND device_token=NEW.device_token;
-  END IF;
-  RETURN NEW;
-END $$;
 DROP TRIGGER IF EXISTS retry_push_outbox ON push_delivery_claims;
-CREATE TRIGGER retry_push_outbox AFTER INSERT OR UPDATE OF next_retry_at ON push_delivery_claims
-  FOR EACH ROW EXECUTE FUNCTION retry_push_outbox_trigger();
+DROP FUNCTION IF EXISTS retry_push_outbox_trigger();
 CREATE OR REPLACE FUNCTION person_push_outbox_trigger() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-  UPDATE push_outbox queue SET not_before=now() FROM push_devices device
-    WHERE device.identity_id=NEW.id AND queue.device_token=device.token;
+  PERFORM enqueue_message_push(message) FROM push_message_context context
+    JOIN messages message ON message.id=context.message_id
+    JOIN room_access member ON member.room_id=context.room_id AND member.identity_id=NEW.id AND member.removed_at IS NULL
+    WHERE context.expires_at>now();
   RETURN NEW;
 END $$;
 DROP TRIGGER IF EXISTS person_push_outbox ON identities;
@@ -134,9 +112,9 @@ CREATE TRIGGER person_push_outbox AFTER UPDATE OF push_level ON identities
   EXECUTE FUNCTION person_push_outbox_trigger();
 CREATE OR REPLACE FUNCTION turn_push_outbox_trigger() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-  UPDATE push_outbox queue SET not_before=now() FROM push_message_context context
-    WHERE context.room_id=NEW.room_id AND context.author_id=NEW.agent_id
-      AND context.request_id=NEW.request_id AND queue.message_id=context.message_id;
+  PERFORM enqueue_message_push(message) FROM push_message_context context
+    JOIN messages message ON message.id=context.message_id
+    WHERE context.room_id=NEW.room_id AND context.author_id=NEW.agent_id AND context.request_id=NEW.request_id;
   RETURN NEW;
 END $$;
 DROP TRIGGER IF EXISTS turn_push_outbox ON agent_turns;

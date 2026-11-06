@@ -113,7 +113,7 @@ describe.skipIf(!url)('Group C P7/P9/P12 real PostgreSQL correlated completion',
       } };
       const second = new RouterCommandLedger(observed);
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
-      waiting = second.wait(key, args, 1_200_000, abort.signal);
+      waiting = second.wait(key, args, abort.signal);
       await initiallyRead.promise;
       await vi.advanceTimersByTimeAsync(600_000); expect(reads).toBe(1);
       for (const wrong of [{ ...key, principal: 'other' }, { ...key, operation: 'other' }, { ...key, commandId: 'other' }])

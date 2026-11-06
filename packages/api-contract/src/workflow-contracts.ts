@@ -28,8 +28,6 @@ export const WORKFLOW_CONTENTS_MAX_BYTES = 16_384;
 /** `agent_schedules` interval granularity is whole minutes; timeouts round up to it. */
 export const WORKFLOW_TIMEOUT_SECONDS_MIN = 60;
 export const WORKFLOW_TIMEOUT_SECONDS_MAX = 30 * 24 * 60 * 60;
-/** A saved workflow run started through `start_workflow` closes as failed after this long unless its contract sets `deadlineSeconds`. */
-export const WORKFLOW_DEFAULT_DEADLINE_SECONDS = 24 * 60 * 60;
 /**
  * The built-in outcome every handoff state accepts: the holder cannot do the
  * step, says why in `contents.reason`, and the step moves to the next eligible
@@ -241,10 +239,7 @@ export function validateSavedWorkflow(value: unknown): string | null {
       return `${at}: a saved workflow's ending must be done or failed`;
     if ('on' in state && Object.hasOwn(state.on, WORKFLOW_BLOCKED_OUTCOME))
       return `${at}: "${WORKFLOW_BLOCKED_OUTCOME}" is built in; name this outcome something else`;
-    if (state.kind === undefined && state.timeoutSeconds === undefined)
-      return `${at}: timeoutSeconds is required, with a "timeout" outcome in on`;
-    if (state.kind === 'gate' && (state.timeoutSeconds === undefined || state.default === undefined))
-      return `${at}: a gate needs timeoutSeconds and default`;
+
   }
   return null;
 }
@@ -358,8 +353,6 @@ function transitionError(state: Record<string, unknown>, at: string, states: obj
   if (!isServer && state.timeoutSeconds !== undefined && !timeoutInRange(state.timeoutSeconds))
     return `${at}: timeoutSeconds must be a whole number from ${WORKFLOW_TIMEOUT_SECONDS_MIN} to ${WORKFLOW_TIMEOUT_SECONDS_MAX}`;
   if (isGate) {
-    if ((state.timeoutSeconds === undefined) !== (state.default === undefined))
-      return `${at}: a gate declares timeoutSeconds and default together, or neither`;
     if (state.default !== undefined && (typeof state.default !== 'string' || !Object.hasOwn(on, state.default)))
       return `${at}: default ${JSON.stringify(state.default)} is not an outcome in on`;
   } else if (!isServer && state.timeoutSeconds !== undefined && !Object.hasOwn(on, 'timeout'))

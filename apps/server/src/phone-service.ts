@@ -1,6 +1,5 @@
 import { endAgentTurn } from './agent-turn-end.js';
 import { assetUrl, phoneIdentity as identity, type PhoneIdentityRow as IdentityRow } from './phone-identity.js';
-import { recordPersonInteraction } from './away-auto-pause.js';
 import { isSubscribableEventKind } from '@beeline/api-contract/phone';
 import { setRoomEventSubscriptions, unsubscribeRoomReviewer, subscribeRoomReviewer } from './agent-subscriptions.js';
 import { roomMessageTagsSql } from './room-router-read.js';
@@ -271,7 +270,6 @@ export function parseArchivedCornerCursor(
   );
   return parsed ? { micros: parsed[1]!, id: parsed[2]! } : undefined;
 }
-export const OPTIONAL_ENRICHMENT_DEADLINE_MS = 1_000;
 const ENRICHMENT_LOG_INTERVAL_MS = 60_000;
 function normalizeAgentName(value: string): string {
   const name = value.trim().replace(/\s+/g, ' ');
@@ -1011,18 +1009,8 @@ export class PhoneService {
 
   private async optionalEnrichment<T>(name: string, work: Promise<T>): Promise<T | undefined> {
 
-    let deadline: ReturnType<typeof setTimeout> | undefined;
     try {
-      return await Promise.race([
-        work,
-        new Promise<never>((_resolve, reject) => {
-          deadline = setTimeout(
-            () => reject(new Error(`optional ${name} enrichment timed out`)),
-            OPTIONAL_ENRICHMENT_DEADLINE_MS,
-          );
-          deadline.unref?.();
-        }),
-      ]);
+      return await work;
     } catch (error) {
       const now = Date.now();
       if (now - (this.lastEnrichmentLogAt.get(name) ?? 0) >= ENRICHMENT_LOG_INTERVAL_MS) {
@@ -1036,8 +1024,6 @@ export class PhoneService {
         );
       }
       return undefined;
-    } finally {
-      if (deadline) clearTimeout(deadline);
     }
   }
 
@@ -1055,7 +1041,6 @@ export class PhoneService {
     if (viewerId === REVIEW_IDENTITY_ID && REVIEW_LOCKED_OPERATIONS.has(operation)) throw new Error(REVIEW_IDENTITY_MESSAGE);
     if (operation === 'decideAgentGrant') {
       await this.decideAgentGrant(input as Input<'decideAgentGrant'>, viewerId, defer);
-      await recordPersonInteraction(this.database, viewerId);
     }
     else if (operation === 'decideWritePermission') await this.execute(operation, input as Input<'decideWritePermission'>, viewerId);
     else if (operation === 'skipChoice') await this.execute(operation, input as Input<'skipChoice'>, viewerId);
@@ -1078,7 +1063,7 @@ export class PhoneService {
       if(!(this.database as CommandScopedDatabase).active)throw new Error('Scheduled stop requires its durable command transaction');
       await authorize(this.database);
       await this.database.query(`DELETE FROM agent_schedules schedule USING rooms surface WHERE schedule.id=$1
-        AND surface.id=schedule.room_id AND(surface.id=$2 OR surface.parent_id=$2) AND schedule.workflow_run IS NULL`,[input.scheduleId,input.roomId]);
+        AND surface.id=schedule.room_id AND(surface.id=$2 OR surface.parent_id=$2)`,[input.scheduleId,input.roomId]);
       return;
     }
     const trigger=await this.database.transaction(async db=>{
@@ -4099,10 +4084,6 @@ export class PhoneService {
     deferPostCommitObservation = false,
   ): Promise<Output<Name>> {
     const result = await this.executeOperation(name, input, viewerId, sourceClient, familyId, deferPostCommitObservation);
-    if (['sendRoomMessage', 'sendRoomReply', 'reactToMessage', 'answerChoice', 'skipChoice',
-      'decideApprovalCard', 'decideWritePermission', 'decideAgentGrant', 'acceptConnectorOffer',
-      'actOnRepositoryCard', 'answerStarPrompt'].includes(name))
-      await recordPersonInteraction(this.database, viewerId);
     return result;
   }
 
@@ -4931,7 +4912,6 @@ export class PhoneService {
       [roomId, viewerId, messageIdValue],
     )).rows[0];
     if (!result?.eligible) throw new Error('message not found');
-    await recordPersonInteraction(this.database, viewerId);
     // The committed row's PostgreSQL notification reconciles every reader
     // device, including those on this server. Publishing here duplicates it.
   }
@@ -5081,10 +5061,7 @@ export class PhoneService {
          WHERE (EXCLUDED.message_created_at,EXCLUDED.message_id)>
            (room_read_marks.message_created_at,room_read_marks.message_id)
          RETURNING 1
-       ), pending_route AS (
-         INSERT INTO rooms_mcp_pending_routes(message_id,room_id,member_id)
-         SELECT id,room_id,$3 FROM inserted WHERE $7::jsonb IS NOT NULL
-         ON CONFLICT(message_id) DO NOTHING RETURNING 1
+
        )
        SELECT EXISTS(SELECT 1 FROM inserted) inserted,
          EXISTS(SELECT 1 FROM messages message
@@ -5140,7 +5117,7 @@ export class PhoneService {
        FROM agent_schedules schedule
        JOIN rooms surface ON surface.id=schedule.room_id
        WHERE (surface.id=$1 OR surface.parent_id=$1) AND surface.archived_at IS NULL
-         AND schedule.workflow_run IS NULL
+
        ORDER BY schedule.created_at,schedule.id`,
       [roomId],
     );
@@ -5191,7 +5168,7 @@ export class PhoneService {
     const deleted = await this.database.query(
       `DELETE FROM agent_schedules schedule USING rooms surface
        WHERE schedule.id=$1 AND surface.id=schedule.room_id
-         AND (surface.id=$2 OR surface.parent_id=$2) AND schedule.workflow_run IS NULL`,
+         AND (surface.id=$2 OR surface.parent_id=$2)`,
       [input.scheduleId, input.roomId],
     );
     if (!deleted.rowCount) throw new Error('schedule not found');
@@ -5243,10 +5220,7 @@ export class PhoneService {
        INSERT INTO messages(id,room_id,author_id,text,attachments,reply_to_message_id,root_message_id,source_client)
        VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8::jsonb) ON CONFLICT(id) DO NOTHING
        RETURNING id,room_id
-     ), pending_route AS (
-       INSERT INTO rooms_mcp_pending_routes(message_id,room_id,member_id)
-       SELECT id,room_id,$3 FROM inserted WHERE $8::jsonb IS NOT NULL
-       ON CONFLICT(message_id) DO NOTHING RETURNING 1
+
      ) SELECT id FROM inserted`,
       [...values, sourceClient ? JSON.stringify(sourceClient) : null],
     );
@@ -8609,14 +8583,8 @@ export class PhoneService {
     if (!this.composio) return [];
     return Promise.all(
       [...new Set(keys)].map(async (appKey) => {
-        let timeout: ReturnType<typeof setTimeout> | undefined;
         try {
-          const metadata = await Promise.race([
-            this.composio!.toolkit(appKey),
-            new Promise<undefined>((resolve) => {
-              timeout = setTimeout(() => resolve(undefined), 1500);
-            }),
-          ]);
+          const metadata = await this.composio!.toolkit(appKey);
           if (!metadata) return { appKey };
           return {
             appKey,
@@ -8626,8 +8594,6 @@ export class PhoneService {
           };
         } catch {
           return { appKey };
-        } finally {
-          clearTimeout(timeout);
         }
       }),
     );
@@ -9356,7 +9322,7 @@ export class PhoneService {
           [row.id, viewerId],
         )).rows[0];
         return current && (current.sign_in?.url || current.status === 'connected' || current.status === 'error') ? current : undefined;
-      }, 15_000, { principal: 'connector', operation: 'status', commandId: row.id });
+      }, { principal: 'connector', operation: 'status', commandId: row.id });
       if (ready?.status === 'error') throw new Error('The MCP connection could not start. Reconnect to retry.');
       return {
         appId: installed.id,

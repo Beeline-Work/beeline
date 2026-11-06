@@ -549,8 +549,7 @@ export class RoomsMcpOAuth {
             const row=await waitForCommittedChange(
               wake=>subscribeCommandCompletion({principal:'oauth',operation:'mcp-handoff',commandId:hash},wake),
               async()=>this.completionReady()?(await this.database.query<{code:string|null;error:string|null}>(
-                'SELECT code,error FROM rooms_mcp_handoffs WHERE state_hash=$1 AND expires_at>now()',[hash])).rows[0]:undefined,
-              Number(input.waitMs),controller.signal);
+                'SELECT code,error FROM rooms_mcp_handoffs WHERE state_hash=$1 AND expires_at>now()',[hash])).rows[0]:undefined,controller.signal);
             response.end(JSON.stringify(row?(row.code?{code:row.code}:{error:row.error??'access_denied'}):{error:'authorization_pending'}));return true;
           }catch{
             if(!controller.signal.aborted)response.end(JSON.stringify({error:'completion_unavailable'}));return true;

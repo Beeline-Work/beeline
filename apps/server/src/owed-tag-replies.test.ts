@@ -13,8 +13,8 @@ import { RoomsMcpOAuth, type McpPrincipal } from './rooms-mcp-oauth.js';
 import { recordMcpMention, recordMcpMemberWebhook, deliverMcpMemberWebhooks } from './rooms-mcp-members.js';
 import { routeHumanMessage } from './agent-command.js';
 import { owedMentions, clearOwedMention } from './owed-mentions.js';
-import { runMaintenance } from './background.js';
-import { maintenanceDeadlineFamilies, backgroundSourceFamilies } from './background-deadlines.js';
+
+
 import { MCP_STARTER_ROUTINE } from '@beeline/api-contract/phone';
 
 const owner = '1'.repeat(64), member = '2'.repeat(64), other = '3'.repeat(64), helper = '4'.repeat(64);
@@ -193,44 +193,39 @@ describe('owed Room tags', () => {
     expect((await db.query('SELECT id FROM messages WHERE author_id=$1 AND reply_to_message_id=$2', [helper, source])).rows).toEqual([{ id: first.id }]);
     expect((await owedMentions(db, helper)).some(m => m.messageId === source)).toBe(false);
   });
-  it('COMPLETED-TAG: maintenance never reopens a completed tag even when its reply leaves the mention owed', async () => {
-    await db.query("UPDATE agent_commands SET state='complete' WHERE agent_id=$1 AND state='pending'", [helper]);
-    const source = id();
-    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@helper u there?')`, [source, room, owner]);
-    await routeHumanMessage(db, source);
-    const command = (await daemon.execute('getAgentCommands', { roomId: room }, helper)).commands.find(c => c.sourceMessageId === source)!;
-    const authority = { roomId: room, requestId: command.turnRequestId, generationId: 'completed-tag' };
-    await daemon.execute('claimAgentCommand', { roomId: room, commandId: command.id, generationId: authority.generationId }, helper);
-    // A public answer without replyTo does not clear the private mention ledger.
-    await daemon.execute('postRoomMessage', { ...authority, text: 'Still here.' }, helper);
-    await daemon.execute('postAgentTurnReceipt', { ...authority, status: 'complete' }, helper);
-    expect((await owedMentions(db, helper)).some(m => m.messageId === source)).toBe(true);
-    const completed = (await db.query('SELECT * FROM agent_commands WHERE id=$1', [command.id])).rows[0]!;
-    expect(completed.state).toBe('complete');
-    const mention = (await db.query('SELECT seq,rewakes FROM rooms_mcp_mentions WHERE member_id=$1 AND message_id=$2', [helper, source])).rows;
-    const messages = (await db.query('SELECT id FROM messages ORDER BY id')).rows;
-    for (const minute of [5, 15, 45, 60]) {
-      await db.query("UPDATE rooms_mcp_mentions SET created_at=now()-$1*interval '1 minute' WHERE message_id=$2", [minute, source]);
-      // Exercise both the legacy maintenance entry and the live deadline composition.
-      await runMaintenance(db);
-      for (const family of maintenanceDeadlineFamilies(db)) await family.run();
-      expect((await db.query('SELECT * FROM agent_commands WHERE id=$1', [command.id])).rows).toEqual([completed]);
-      expect((await daemon.execute('getAgentCommands', { roomId: room }, helper)).commands.some(c => c.id === command.id)).toBe(false);
-      expect((await db.query('SELECT seq,rewakes FROM rooms_mcp_mentions WHERE member_id=$1 AND message_id=$2', [helper, source])).rows).toEqual(mention);
-      expect((await db.query('SELECT id FROM messages ORDER BY id')).rows).toEqual(messages);
-    }
-    expect(backgroundSourceFamilies()).not.toContain('owed-mentions');
-    expect(maintenanceDeadlineFamilies(db).map(family => family.name)).not.toContain('owed-mentions');
-    // A real new tag still admits exactly one new command.
-    const next = id();
-    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@helper another question')`, [next, room, owner]);
-    await routeHumanMessage(db, next);
-    expect((await daemon.execute('getAgentCommands', { roomId: room }, helper)).commands.map(c => c.sourceMessageId)).toEqual([next]);
-    await db.query("UPDATE agent_commands SET state='complete' WHERE source_message_id=$1", [next]);
+
+  it('a reply committed before delivery suppresses the queued tag wake', async () => {
+    const source = await tag(member, 'answer before webhook delivery');
+    await recordMcpMemberWebhook(db, member, 'https://example.com/wake', room, source, 'answer before webhook delivery');
+    await call('send_message', { room, text: 'already answered', replyTo: source });
+    const transport = vi.fn(async () => new Response(null, { status: 204 }));
+    await deliverMcpMemberWebhooks(db, transport);
+    expect(transport.mock.calls.some(([, input]) => JSON.parse(input.body).messageId === source)).toBe(false);
+    expect((await db.query(`SELECT outcome,reason FROM subscription_webhook_calls WHERE member_id=$1 AND wake_message_id=$2`, [member, source])).rows)
+      .toEqual([{ outcome: 'skipped', reason: 'already answered' }]);
   });
+
+  it('an answered tag stays settled across idle time and later event drains', async () => {
+    const source = await tag(member, 'one answered question');
+    const queued = await recordMcpMemberWebhook(db, member, 'https://example.com/wake', room, source, 'one answered question');
+    expect(queued).toBeDefined();
+    const transport = vi.fn(async () => new Response(null, { status: 204 }));
+    await deliverMcpMemberWebhooks(db, transport);
+    await call('send_message', { room, text: 'answered', replyTo: source });
+    const calls = transport.mock.calls.length;
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    try {
+      await vi.advanceTimersByTimeAsync(3 * 86400_000);
+      expect(vi.getTimerCount()).toBe(0);
+      await deliverMcpMemberWebhooks(db, transport);
+      expect(transport).toHaveBeenCalledTimes(calls);
+      expect((await owedMentions(db, member)).some(item => item.messageId === source)).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('COMPLETED-TAG: migration removes retired background source triggers on upgraded databases', async () => {
     await db.query(`CREATE TRIGGER beeline_background_source_999 AFTER INSERT OR UPDATE OR DELETE ON rooms_mcp_mentions
-      FOR EACH ROW EXECUTE FUNCTION beeline_background_source('owed-mentions','created_at,cleared_at,rewakes')`);
+      FOR EACH ROW EXECUTE FUNCTION beeline_background_source('owed-mentions','created_at,cleared_at')`);
     await db.query(BACKGROUND_DUE_SOURCE_SCHEMA);
     await db.query(BACKGROUND_DUE_SOURCE_SCHEMA);
     expect((await db.query(`SELECT 1 FROM pg_trigger WHERE tgname='beeline_background_source_999'`)).rowCount).toBe(0);

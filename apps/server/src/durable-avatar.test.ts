@@ -11,7 +11,7 @@ import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { createBeelineServer } from './server.js';
-import { MediaExpiryLoop } from './background.js';
+
 import { ObjectService } from './object-service.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
@@ -137,45 +137,6 @@ describe('durable workspace avatars through the installed phone contract', () =>
     expect(response.status).toBe(201);
     return (await response.json()).url as string;
   };
-
-  it('survives the actual 24h sweep and a fresh sign-in with no client cache', async () => {
-    const uploaded = await upload(await picture());
-    expect((await set(uploaded)).status).toBe(204);
-    const saved = await read();
-    expect(saved.avatar).toMatch(new RegExp(`^${origin}/v1/avatars/`));
-    const first = await phoneFetch(saved.avatar);
-    expect(first.status).toBe(200);
-    expect(first.headers.get('content-type')).toBe('image/webp');
-    const bytes = Buffer.from(await first.arrayBuffer());
-    expect(await sharp(bytes).metadata()).toMatchObject({ width: 256, height: 256 });
-
-    await database.query(`UPDATE objects SET expires_at=now()-interval '1 minute'`);
-    expect(
-      await new MediaExpiryLoop(database, 24, 0, {
-        storage: objectStorage.asStorage(),
-        service: objectService,
-      }).runOnce(),
-    ).toBe(1);
-    expect((await phoneFetch(uploaded)).status).toBe(410);
-    // Fresh session + fresh HTTP reads model the server boundary of reinstall.
-    // Nothing from AsyncStorage, an old image cache or the previous read is used.
-    const freshToken = (await auth.exchangeGitHubOidc('owner')).accessToken;
-    const fresh = await read(freshToken);
-    expect(fresh.avatar).toBe(saved.avatar);
-    const afterSweep = await phoneFetch(fresh.avatar, { cache: 'no-store' });
-    expect(afterSweep.status).toBe(200);
-    expect(Buffer.from(await afterSweep.arrayBuffer())).toEqual(bytes);
-    const list = await (
-      await phoneFetch(`${origin}/v1/phone/workspaces`, {
-        headers: { authorization: `Bearer ${freshToken}` },
-      })
-    ).json();
-    expect(list.workspaces.find((w: { id: string }) => w.id === WORKSPACE).avatar).toBe(
-      saved.avatar,
-    );
-    await migrate(database);
-    expect((await phoneFetch(saved.avatar)).status).toBe(200);
-  });
 
   it('replaces and removes the workspace-owned object without accumulating old images', async () => {
     expect((await set(await upload(await picture()))).status).toBe(204);

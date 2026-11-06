@@ -268,7 +268,7 @@ export class FreeAgentCallGate {
   constructor(readonly limit: number) {}
 
   /** Resolves with the slot's release, or undefined if the signal aborts or the deadline passes first. */
-  acquire(signal: AbortSignal): Promise<(() => void) | undefined> {
+  acquire(signal: AbortSignal, deadline = Infinity): Promise<(() => void) | undefined> {
     let released = false;
     const release = () => {
       if (released) return;
@@ -277,7 +277,7 @@ export class FreeAgentCallGate {
       if (next) next();
       else this.#running -= 1;
     };
-    if (signal.aborted) return Promise.resolve(undefined);
+    if (signal.aborted || Date.now() >= deadline) return Promise.resolve(undefined);
     if (this.#running < this.limit && !this.#waiting.length) {
       this.#running += 1;
       return Promise.resolve(release);
@@ -287,7 +287,11 @@ export class FreeAgentCallGate {
         signal.removeEventListener('abort', cancel);
         resolve(granted ? release : undefined);
       };
-      const grant = () => done(true);
+      const grant = () => {
+        const current = !signal.aborted && Date.now() < deadline;
+        done(current);
+        if (!current) release();
+      };
       const cancel = () => {
         const index = this.#waiting.indexOf(grant);
         if (index >= 0) this.#waiting.splice(index, 1);
@@ -519,7 +523,7 @@ async function handleOwnedFreeAgentModel(request: IncomingMessage, response: Ser
     catch { ownedOutcome(response, admitted.receipt); }
   };
   try {
-    release = await callGate(limits.maxConcurrentCalls).acquire(abort.signal);
+    release = await callGate(limits.maxConcurrentCalls).acquire(abort.signal, deadline);
     if (!release || abort.signal.aborted || Date.now() >= deadline) {
       await knownNonentry(abort.signal.aborted ? 'cancelled' : 'deadline');
       await refuseExpiredFreeAgentTurn(options.database,binding.commandId,binding.generationId,limits.maxTurnMs);
@@ -561,7 +565,11 @@ async function handleOwnedFreeAgentModel(request: IncomingMessage, response: Ser
     response.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') ?? 'application/json', 'cache-control': 'no-store' });
     try {
       for (;;) {
-        const next = await waitOwned(reader.read(), abort.signal); if (next.done) { complete = true; break; }
+        if (Date.now() >= deadline) { abort.abort(); throw new Error('Owned model authority expired'); }
+        const next = await waitOwned(reader.read(), abort.signal);
+        if (Date.now() >= deadline) { abort.abort(); throw new Error('Owned model authority expired'); }
+        await selected.credentials.assertCurrent(options.database, actor);
+        if (next.done) { complete = true; break; }
         const text = decoder.decode(next.value, { stream: true });
         if (stream) {
           usage.push(text);
@@ -672,11 +680,18 @@ async function executeFreeAgentModel(response: ServerResponse, body: Record<stri
   response.on('close', () => abort.abort());
   signal?.addEventListener('abort', () => abort.abort(), { once: true });
   if (signal?.aborted) abort.abort();
+  const turnDeadline = new Date(turn.started).getTime() + limits.maxTurnMs;
+  const requireLiveTurn = () => {
+    if (Date.now() >= turnDeadline) { abort.abort(); throw new Error('Model turn authority expired'); }
+  };
   // Queued calls keep their reservation, so they give up when the turn cap ends or the caller leaves.
   const forwardUpstream = async (): Promise<void> => {
     let upstream: Response;
     try {
+      requireLiveTurn();
       upstream = await requestModelUpstream(options, JSON.stringify(upstreamBody), abort.signal);
+      if (Date.now() >= turnDeadline) void upstream.body?.cancel().catch(() => {});
+      requireLiveTurn();
     } catch (error) {
       await settle(0, 0);
       if (!response.headersSent)
@@ -709,7 +724,9 @@ async function executeFreeAgentModel(response: ServerResponse, body: Record<stri
     let interrupted = false;
     try {
       for (;;) {
+        requireLiveTurn();
         const { done, value } = await reader.read();
+        requireLiveTurn();
         if (done) break;
         const text = decoder.decode(value, { stream: true });
         if (stream) usage.push(text);
@@ -719,6 +736,9 @@ async function executeFreeAgentModel(response: ServerResponse, body: Record<stri
     } catch {
       // Refund token reservations when an interrupted reply has no reported usage.
       interrupted = true;
+    } finally {
+      if (interrupted) void reader.cancel().catch(() => {});
+      reader.releaseLock();
     }
     let reported: Usage | undefined = usage.usage;
     if (!stream && upstream.ok) {
@@ -745,7 +765,7 @@ async function executeFreeAgentModel(response: ServerResponse, body: Record<stri
     );
     response.end();
   };
-  const release = await callGate(limits.maxConcurrentCalls).acquire(abort.signal);
+  const release = await callGate(limits.maxConcurrentCalls).acquire(abort.signal, turnDeadline);
   if (!release) {
     await settle(0, 0);
     if (!response.headersSent)

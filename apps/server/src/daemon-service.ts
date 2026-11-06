@@ -25,7 +25,6 @@ import { YouTubeUploadRefusal } from './composio-apps.js';
 import { missingReviewAttachments } from './review-evidence.js';
 import { consumeStarterVideoPost, restoreStarterVideoPost, postStarterVideoPreview } from './starter-onboarding.js';
 import type { StarterOnboardingService } from './starter-onboarding-run.js';
-import { checkinOutputAllowed } from './next-day-checkin.js';
 import { visibleMessageSql } from './read-cursor.js';
 import { readUsageRefreshOutcome, sanitizeTurnReplay } from '@beeline/api-contract/daemon';
 import { observeOnboardingMessage } from './signin-funnel.js';
@@ -4242,8 +4241,6 @@ export class DaemonService {
       }));
       steps = replySteps([...(input.steps ?? []), ...notes], notes.length);
     }
-    if (!await checkinOutputAllowed(this.database, input.roomId, agentId, input.requestId, input))
-      throw new ExpectedRefusalError('This one-time check-in is no longer due. Do not post another check-in message.');
     const mentionKey = await mentionReplyKey(this.database, agentId, input.roomId, input.replyToMessageId);
     const messageId = mentionKey ? mentionReplyId(mentionKey) : id();
     const parent = input.replyToMessageId
@@ -5603,7 +5600,7 @@ export class DaemonService {
            SELECT 1 FROM memberships self_membership
            WHERE self_membership.room_id=schedule.room_id
              AND self_membership.identity_id=$2 AND self_membership.removed_at IS NULL)))
-         AND schedule.workflow_run IS NULL
+
          AND (NOT $3::boolean OR schedule.agent_id=$2)
          AND (schedule.workflow_slug IS NOT NULL OR schedule.agent_id=$2 OR schedule.creator_id=schedule.agent_id)
        ORDER BY schedule.created_at,schedule.id`,
@@ -5668,7 +5665,7 @@ export class DaemonService {
            SELECT 1 FROM memberships self_membership
            WHERE self_membership.room_id=agent_schedules.room_id
              AND self_membership.identity_id=$3 AND self_membership.removed_at IS NULL)))
-         AND workflow_run IS NULL
+
          AND (agent_id=$3 OR creator_id=agent_id)
          AND (NOT $4::boolean OR agent_id=$3)`,
       [input.scheduleId, input.roomId, agentId, input.selfOnly === true],
@@ -5682,7 +5679,7 @@ export class DaemonService {
            SELECT 1 FROM memberships self_membership
            WHERE self_membership.room_id=agent_schedules.room_id
              AND self_membership.identity_id=$3 AND self_membership.removed_at IS NULL)))
-         AND workflow_run IS NULL
+
          AND (agent_id=$3 OR creator_id=agent_id)
          AND (NOT $4::boolean OR agent_id=$3)`,
       [input.scheduleId, input.roomId, agentId, input.selfOnly === true],
@@ -5731,7 +5728,7 @@ export class DaemonService {
              SELECT 1 FROM memberships self_membership
              WHERE self_membership.room_id=agent_schedules.room_id
                AND self_membership.identity_id=$3 AND self_membership.removed_at IS NULL)))
-           AND workflow_run IS NULL
+
            AND (NOT $4::boolean OR agent_id=$3)`,
         [input.scheduleId, input.roomId, agentId, input.selfOnly === true],
       )
@@ -5757,7 +5754,7 @@ export class DaemonService {
       `UPDATE agent_schedules SET message=COALESCE($3,message),
          cadence=COALESCE($4::jsonb,cadence),max_runs=COALESCE($5,max_runs),
          next_run_at=COALESCE($6,next_run_at),updated_at=now(),workflow_slug=$7,updated_by=$8,title=COALESCE($10,title)
-       WHERE id=$1 AND room_id=$2 AND creator_id=agent_id AND workflow_run IS NULL
+       WHERE id=$1 AND room_id=$2 AND creator_id=agent_id
          AND (NOT $9::boolean OR agent_id=$8)
        RETURNING next_run_at`,
       [
@@ -6915,18 +6912,12 @@ export class DaemonService {
       ...(domain ?? metadataDomain ? { domain: domain ?? metadataDomain } : {}),
     });
     if (!this.composio) return mark();
-    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
-      const metadata = await Promise.race([
-        this.composio.toolkit(composioToolkitForApp(appKey)),
-        new Promise<undefined>((resolve) => { timeout = setTimeout(() => resolve(undefined), 1500); }),
-      ]);
+      const metadata = await this.composio.toolkit(composioToolkitForApp(appKey));
       return mark(metadata?.logo,
         metadata?.appUrl ? registrableDomain(new URL(metadata.appUrl).hostname) : undefined);
     } catch {
       return mark();
-    } finally {
-      clearTimeout(timeout);
     }
   }
 
@@ -7325,7 +7316,7 @@ export class DaemonService {
           if (value.status === 'connected' || value.status === 'error' || signIn?.url)
             return { status: value.status, signIn };
           return undefined;
-        }, 85_000, kind === 'trusty-squire'
+        }, kind === 'trusty-squire'
           ? { principal: 'connector', operation: 'machine', commandId: `${context.owner.pubkey}:${context.machine.machineId}` }
           : { principal: 'connector', operation: 'status', commandId: connectorId });
         if (!status) return;
@@ -7389,7 +7380,7 @@ export class DaemonService {
           const row = (await database.query<{ status: string; sign_in: ConnectorStatus['signIn'] }>(
             'SELECT status,sign_in FROM workspace_connectors WHERE id=$1', [outcome.connectorId])).rows[0];
           return row && (row.status === 'connected' || row.status === 'error' || row.sign_in?.url) ? row : undefined;
-        }, 85_000, { principal: 'connector', operation: 'status', commandId: outcome.connectorId! });
+        }, { principal: 'connector', operation: 'status', commandId: outcome.connectorId! });
         if (!connector) return;
         if (connector.status === 'connected') { Object.assign(result, { status: 'ready', next: `${outcome.app} is ready.` }); return; }
         if (!connector.sign_in?.url) { Object.assign(result, { status: 'error', next: 'The Registry tool could not connect. Reconnect to retry.' }); return; }

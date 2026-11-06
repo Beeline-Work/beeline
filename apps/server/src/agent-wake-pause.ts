@@ -15,7 +15,7 @@ export async function setAgentWakePaused(db: SqlDatabase, agentId: string, input
        JOIN room_access member ON member.room_id=wake.room_id AND member.identity_id=$2 AND member.removed_at IS NULL
        JOIN rooms room ON room.id=wake.room_id AND room.archived_at IS NULL
        WHERE wake.id=$1 AND wake.agent_id=$2
-         ${input.scheduleId ? 'AND wake.workflow_run IS NULL' : ''} FOR UPDATE OF wake`,
+         FOR UPDATE OF wake`,
       [input.scheduleId ?? input.subscriptionId, agentId])).rows[0];
     if (!row) throw new Error('wake source not found');
     if (Boolean(row.paused_at) === input.paused) return;

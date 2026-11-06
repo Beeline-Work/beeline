@@ -61,19 +61,3 @@ it('R-SENTRY-CONNECT: reports failures after BEGIN immediately, even with a conn
   }));
   expect(captureServerError).toHaveBeenCalledOnce();
 });
-
-it('R-SENTRY-DEADLINE: identifies the transaction caller while destroying the expired connection', async () => {
-  const { client } = fixture();
-  const pool = { connect: async () => client, on: vi.fn(), end: vi.fn() } as unknown as Pool;
-  const database = new PostgresDatabase('', 1, { pool, transactionDeadlineMs: 10 });
-  async function overrunTransaction() {
-    return database.transaction(async () => new Promise(() => {}));
-  }
-  const error = await overrunTransaction().catch((cause: unknown) => cause) as Error;
-  expect(error.message).toBe('database transaction deadline exceeded');
-  expect(error.stack).toContain('overrunTransaction');
-  expect(error.stack).not.toContain('Timeout.');
-  expect(client.release).toHaveBeenCalledWith(error);
-  expect(database.transactionDeadlineCount()).toBe(1);
-  expect(database.oldestActiveTransactionAgeMs()).toBeNull();
-});

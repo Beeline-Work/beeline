@@ -8,7 +8,7 @@ interface MachineScope {
 }
 
 /**
- * Shared by wake suppression and the existing undelivered-command sweep.
+ * Current machine reachability for event-driven command admission.
  * A free starter agent's Machine is never offline in this sense: it sleeps,
  * and a pending wake starts it (`FreeAgentService.wake`).
  */

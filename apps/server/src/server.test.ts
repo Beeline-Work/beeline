@@ -264,14 +264,13 @@ describe('server readiness', () => {
     });
   });
 
-  it('reports an app transaction that is holding a connection and deadline count', async () => {
+  it('reports the age of an app transaction holding a connection', async () => {
     const response = await get('/health', {
       query: vi.fn().mockResolvedValue({ rows: [], rowCount: 0 }), transaction: vi.fn(),
       oldestActiveTransactionAgeMs: () => 42,
-      transactionDeadlineCount: () => 3,
     });
     expect((await response.json()).database).toMatchObject({
-      oldestActiveTransactionAgeMs: 42, transactionDeadlines: 3,
+      oldestActiveTransactionAgeMs: 42,
     });
   });
 
@@ -703,7 +702,7 @@ describe('daemon live command push', () => {
       auth: { authenticateDaemon: vi.fn().mockResolvedValue(agentId) } as unknown as TokenAuth,
       phone: { canReadRooms: canReadRoomsFrom(async () => true) } as unknown as PhoneService,
       daemon: { execute } as unknown as DaemonService,
-      connectionPresence: { announce } as never,
+      connectionPresence: { announce, renewLease: async () => {} } as never,
       live: new LiveHub(),
       mediaMaximumBytes: 1,
     });

@@ -400,6 +400,7 @@ export class DaemonAgentSession {
   }
 
   async #process(item: Record<string, unknown>): Promise<void> {
+    await this.deps.connectionPresence?.renewLease();
     if (!this.transport.admit(item)) return;
     if (item.type === 'turn-operation') {
       const operation = item.operation;
@@ -579,6 +580,7 @@ export class DaemonAgentSession {
       try {
         while (commandsRequested && active && transport.isOpen() && !this.#closed) {
           commandsRequested = false;
+          await this.deps.connectionPresence?.renewLease();
           const page = await daemon.execute('getAgentCommands', { roomId }, agentId,
             this.turnOwnershipV1 ? this.turnSource : undefined);
           if (!active || this.#closed || !transport.isOpen()) return;

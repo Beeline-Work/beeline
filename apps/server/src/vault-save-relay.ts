@@ -61,17 +61,13 @@ export class VaultSaveRelay {
     roomId: string,
     request: VaultSaveRequest,
     values: Record<string, string>,
-    timeoutMs = 65_000,
   ): Promise<VaultSaveAnswer> {
     const send = this.helpers.get(agentId);
     const attemptId = `${this.instanceId}:${randomUUID()}`;
-    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       if (!send || this.pending.size >= 128) return { status: 'retry' };
       return await new Promise<VaultSaveAnswer>((resolve) => {
         this.pending.set(attemptId, { agentId, resolve });
-        timer = setTimeout(() => resolve({ status: 'retry' }), timeoutMs);
-        timer.unref?.();
         try {
           if (!send({ type: 'vault-save', attemptId, cardId, roomId, request, values }))
             resolve({ status: 'retry' });
@@ -80,7 +76,6 @@ export class VaultSaveRelay {
         }
       });
     } finally {
-      if (timer) clearTimeout(timer);
       this.pending.delete(attemptId);
       for (const name of Object.keys(values)) delete values[name];
     }

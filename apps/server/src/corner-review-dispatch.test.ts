@@ -1,5 +1,4 @@
-import { repairDeadlineFamilies, BackgroundRecordDeadlines } from './background-deadlines.js';
-import { BackgroundWork } from './background-work.js';
+
 import { INSTITUTIONAL_MEMORY_ON } from './institutional-memory-shadow.js';
 import { readFileSync } from 'node:fs';
 import { cornerRunStateSql } from './corner-run.js';
@@ -14,7 +13,7 @@ import { PhoneService } from './phone-service.js';
 import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';
 import { announceAgentLifecycle } from './connection-presence.js';
 import { LiveHub } from './live.js';
-import { PushDeliveryLoop, MediaExpiryLoop } from './background.js';
+import { PushDeliveryLoop } from './background.js';
 import { systemLine } from './system-line.js';
 import { createAgentCommand, reconcileConfiguredCornerReviewers, REVIEWER_DISPATCH_REASONS, reviewerDispatchCarriesHead, routeSystemCommand } from './agent-command.js';
 import { advanceCorner } from './corner-lifecycle.js';
@@ -94,7 +93,6 @@ beforeEach(async () => {
   Object.assign(daemon, { github: { assertCornerReviewerNotAuthor: async () => {} } });
   await db.query('DELETE FROM free_agents WHERE agent_id=$1', [B]);
   // Each case starts a fresh failure episode despite reusing the same corner.
-  await db.query(`DELETE FROM agent_startup_backoff`);
   await db.query(`DELETE FROM agent_commands`);
   await db.query(`DELETE FROM corner_merge_approvals`);
   await db.query(`DELETE FROM agent_turns`);
@@ -326,7 +324,6 @@ describe('corner message attribution', () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: null }, H);
     await db.query('DELETE FROM free_agents WHERE agent_id=$1', [B]);
   // Each case starts a fresh failure episode despite reusing the same corner.
-  await db.query(`DELETE FROM agent_startup_backoff`);
   await db.query(`DELETE FROM agent_commands`);
     headSha = '2'.repeat(40);
     await db.query(

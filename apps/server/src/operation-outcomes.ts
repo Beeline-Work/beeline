@@ -1,7 +1,7 @@
 import type { BackgroundJobRunner } from './background.js';
+import { startBackgroundWork } from './background-work.js';
 import type { SqlDatabase } from './database.js';
 
-const FLUSH_DELAY_MS = 5 * 60_000;
 const MAX_KEYS = 2000;
 const BATCH_SIZE = 100;
 type Outcome = { hour: string; op: string; status: number; code: string; count: number };
@@ -84,67 +84,14 @@ export class OperationOutcomes {
         if (!current.count) this.counts.delete(row.key);
       }
     }
-    await database.query(`DELETE FROM operation_outcomes_hourly WHERE ctid IN (
-      SELECT ctid FROM operation_outcomes_hourly WHERE hour<now()-interval '14 days'
-      ORDER BY hour LIMIT 2000 FOR UPDATE SKIP LOCKED)`);
+
   }
 }
 
-/** Every instance owns its actual pending counts. A batch has one deadline;
- * retention has the oldest durable row's expiry. Empty time creates no work. */
+/** A recorded request flushes its counts; an idle process does no work. */
 export function startOperationOutcomeFlush(database: SqlDatabase, outcomes: OperationOutcomes,
-  runner: BackgroundJobRunner, subscribeRecovery?: (wake: () => void) => () => void): () => Promise<void> {
-  let stopped = false;
-  let flushAt: number | undefined;
-  let retentionAt: number | undefined;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let running: Promise<void> | undefined;
-  const nextRetention = async (): Promise<number | undefined> => {
-    const row = (await database.query<{ next_at: Date | string }>(
-      `SELECT hour + interval '14 days' + interval '1 millisecond' AS next_at
-       FROM operation_outcomes_hourly ORDER BY hour LIMIT 1`)).rows[0];
-    if (!row) return;
-    const at = new Date(row.next_at).getTime();
-    if (!Number.isFinite(at)) throw new Error('Invalid outcome retention deadline');
-    return at;
-  };
-  const arm = () => {
-    if (timer) clearTimeout(timer);
-    timer = undefined;
-    if (stopped || running) return;
-    const at = Math.min(flushAt ?? Infinity, retentionAt ?? Infinity);
-    if (!Number.isFinite(at)) return;
-    timer = setTimeout(() => { timer = undefined; run(true); }, Math.max(0, at - Date.now()));
-    timer.unref();
-  };
-  const run = (flush: boolean) => {
-    if (stopped || running) return;
-    if (flush) { flushAt = undefined; retentionAt = undefined; }
-    running = (async () => {
-      const result = await runner.run('operation-outcomes', async () => {
-        if (flush) await outcomes.flush(database);
-        return nextRetention();
-      });
-      // A failed attempt parks. Only a new outcome or real DB recovery can
-      // re-admit it; there is no recurring flush or failure backoff.
-      if (!stopped && result.ok) retentionAt = result.value;
-    })().finally(() => { running = undefined; arm(); });
-  };
-  const pending = () => {
-    if (stopped) return;
-    flushAt ??= Date.now() + FLUSH_DELAY_MS;
-    arm();
-  };
-  const stopPending = outcomes.subscribePending(pending);
-  const stopRecovery = subscribeRecovery?.(() => {
-    if (stopped) return;
-    flushAt = Date.now(); arm();
-  });
-  if (outcomes.hasPending()) pending();
-  run(false); // One startup read of durable expiry evidence, then park if empty.
-  return async () => {
-    stopped = true; stopPending(); stopRecovery?.();
-    if (timer) clearTimeout(timer);
-    await running;
-  };
+  runner: BackgroundJobRunner): () => Promise<void> {
+  const job = startBackgroundWork(() => runner.run('operation-outcomes', () => outcomes.flush(database)));
+  const release = outcomes.subscribePending(() => job.wake());
+  return async () => { release(); await job.stop(); };
 }

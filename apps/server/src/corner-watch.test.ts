@@ -157,7 +157,6 @@ it('lets a parent Room watch its child', async () => {
   );
   expect((await watch(['merged'], P)).snapshot.id).toBe(B);
   await emit();
-  await mature();
   expect((await readAgentCommands(db, P, W)).commands).toHaveLength(1);
 });
 

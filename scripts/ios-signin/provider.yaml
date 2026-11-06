@@ -1,0 +1,21 @@
+appId: app.usebeeline.mobile
+name: iOS provider start
+---
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: onboarding-${PROVIDER}-sign-in
+- takeScreenshot: 01-onboarding
+- tapOn:
+    id: onboarding-${PROVIDER}-sign-in
+- takeScreenshot: 02-after-provider-tap
+# Wait for the system action: a one-shot conditional can race the prompt.
+- extendedWaitUntil:
+    visible: Continue
+- takeScreenshot: 03-system-consent
+- tapOn: Continue
+- waitForAnimationToEnd
+- takeScreenshot: 04-after-consent
+# The auth browser is absent from Maestro's app hierarchy on this runtime.
+# Keep the provider screenshot as the visible capture result.
+- takeScreenshot: 05-provider-page

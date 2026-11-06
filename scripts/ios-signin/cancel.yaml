@@ -1,0 +1,18 @@
+appId: app.usebeeline.mobile
+name: iOS deliberate consent cancellation
+---
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: onboarding-${PROVIDER}-sign-in
+- takeScreenshot: 01-before-cancel
+- tapOn:
+    id: onboarding-${PROVIDER}-sign-in
+- extendedWaitUntil:
+    visible: Cancel
+- takeScreenshot: 02-system-consent
+- tapOn: Cancel
+- extendedWaitUntil:
+    visible:
+      id: onboarding-${PROVIDER}-sign-in
+- takeScreenshot: 03-returned-to-onboarding

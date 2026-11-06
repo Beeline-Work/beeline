@@ -27,7 +27,8 @@
       "does": "Read new feedback and rank it by problem.",
       "role": "triager",
       "requires": [
-        "problems"
+        "problems",
+        "dispositions"
       ],
       "on": {
         "ranked": "adapters",

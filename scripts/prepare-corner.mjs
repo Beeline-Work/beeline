@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Prepare only the dependency trees requested by the corner's work.
+// Install dependencies and compile shared workspace exports before corner work.
 import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -21,7 +21,7 @@ for (const flag of flags) {
   if (!allowed.has(flag)) throw new Error(`Unknown preparation option: ${flag}`);
 }
 if (flags.has('--help')) {
-  console.log('Usage: npm run corner:prepare -- [--mobile] [--build] | --extra <path>\nRoot dependencies are installed by default. Add --mobile for mobile work and --build when compiled workspace outputs are needed.');
+  console.log('Usage: npm run corner:prepare -- [--mobile] [--build] | --extra <path>\nRoot dependencies and shared exports are prepared by default. Add --mobile for mobile work and --build for the full application build.');
 } else {
   const run = (args) => {
     const result = spawnSync('npm', args, { stdio: 'inherit' });
@@ -35,5 +35,6 @@ if (flags.has('--help')) {
       console.log('Mobile dependencies requested. Beeline prepares and mounts them automatically at the next turn.');
     } else run(['run', 'mobile:install']);
   }
+  run(['exec', '--', 'turbo', 'run', 'build', '--filter=@beeline/body^...', '--filter=@beeline/server^...']);
   if (flags.has('--build')) run(['run', 'build']);
 }

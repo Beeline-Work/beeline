@@ -1,6 +1,7 @@
 import { claimRun } from './workflow-runs.js';
 import { SkillRevisionConflict } from './institutional-skills.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
+import { applyFeedbackDispositions } from './feedback-dispositions.js';
 import { completeServiceReview } from './service-review.js';
 import { CommandRefusalError, ExpectedRefusalError } from './command-refusal.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
@@ -151,6 +152,9 @@ export async function handoff(
       throw new ExpectedRefusalError(`${errors.join('; ')}; outcome must be one of: ${outcomes}${blocked}`);
     }
     if (!await claimRun(db, scope)) return alreadyAdvanced(await openRun(db, command.room_id, input.runId));
+    if (scope.contract.name === 'feedback-triage' && stateName === 'pull' && contentsState.requires.includes('dispositions') && ['ranked', 'nothing_new'].includes(input.outcome)) {
+      await applyFeedbackDispositions(db, command, (input.contents as Record<string, unknown>).dispositions);
+    }
     if (scope.contract.name === 'workspace-walk' && stateName === 'browse' && input.outcome === 'reviewed') {
       await completeServiceReview(db,command.agent_id,input.runId,(input.contents as Record<string, unknown>).receipts);
     }

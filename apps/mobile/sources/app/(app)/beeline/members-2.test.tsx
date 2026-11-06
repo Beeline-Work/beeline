@@ -1,4 +1,4 @@
-import { WORKSPACE, VIEWER, OWNER, AGENT, state, liveListeners, roomView, modal, navigation, client, phoneOperation, unistylesTheme, chevronDirections, baseWorkspace, baseAgent, create, render, press, openAgentProfile, openAgentManagement, fixtureScope1, fixtureScope2 } from './test-support-members.test-support';
+import { WORKSPACE, VIEWER, OWNER, AGENT, state, liveListeners, roomView, modal, navigation, client, phoneOperation, unistylesTheme, chevronDirections, baseWorkspace, baseAgent, create, render, press, openAgentProfile, openAgentManagement, fixtureScope1, fixtureScope2 } from "../../../test/fixtures/members.test-support";
 import * as React from 'react';
 import { StyleSheet } from 'react-native';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.

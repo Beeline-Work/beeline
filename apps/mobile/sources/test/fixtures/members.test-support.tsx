@@ -1,7 +1,7 @@
 
-import { HumanProfile } from './human-profile';
+import { HumanProfile } from "../../app/(app)/beeline/human-profile";
 
-import AgentProfileRoute from './agent-profile';
+import AgentProfileRoute from "../../app/(app)/beeline/agent-profile";
 
 import * as React from 'react';
 
@@ -13,7 +13,7 @@ import { act, create as createRenderer, type ReactTestRenderer } from 'react-tes
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 
-import MembersScreen from './members';
+import MembersScreen from "../../app/(app)/beeline/members";
 
 import { router } from 'expo-router';
 

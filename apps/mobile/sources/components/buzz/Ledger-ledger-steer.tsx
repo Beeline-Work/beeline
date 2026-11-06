@@ -6,7 +6,7 @@ import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { MonoMarkdown } from './MonoMarkdown';
 import type { SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
 import { LedgerBodyProps, ledgerEntryRhythm, Byline, SystemLineCutSearch, webFitsTwoLines, startCutSearch, closedCutLength } from './Ledger';
-import { styles } from './Ledger-styles';
+import { styles } from './Ledger';
 
 
 

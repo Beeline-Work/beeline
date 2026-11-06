@@ -1,4 +1,4 @@
-import { WORKSPACE, VIEWER, OWNER, MEMBER, AGENT, state, roomView, share, modal, platform, client, phoneOperation, safeArea, chevronDirections, baseWorkspace, baseAgent, create, render, press, agentChanged, openAgentProfile, openAgentManagement, sheet, fixtureScope1 } from './test-support-members.test-support';
+import { WORKSPACE, VIEWER, OWNER, MEMBER, AGENT, state, roomView, share, modal, platform, client, phoneOperation, safeArea, chevronDirections, baseWorkspace, baseAgent, create, render, press, agentChanged, openAgentProfile, openAgentManagement, sheet, fixtureScope1 } from "../../../test/fixtures/members.test-support";
 import { HumanProfile } from './human-profile';
 import AgentProfileRoute from './agent-profile';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.

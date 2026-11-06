@@ -1,4 +1,4 @@
-import { layout, appState, navigation, route, workspaceSet, phoneOperation, liveRegistrations, roomRead, prefetchRoom, theme, safeArea, applyNeedsYouLiveDelta, person, bookmark, need, serve, returnToForeground, textOf, mountedTrees, renderTray, fixtureScope1, fixtureScope7 } from './test-support-tray.test-support';
+import { layout, appState, navigation, route, workspaceSet, phoneOperation, liveRegistrations, roomRead, prefetchRoom, theme, safeArea, applyNeedsYouLiveDelta, person, bookmark, need, serve, returnToForeground, textOf, mountedTrees, renderTray, fixtureScope1, fixtureScope7 } from "../../../test/fixtures/tray.test-support";
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';

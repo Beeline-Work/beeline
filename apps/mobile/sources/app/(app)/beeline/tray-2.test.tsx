@@ -1,4 +1,4 @@
-import { layout, navigation, phoneOperation, liveRegistrations, auth, applyNeedsYouLiveDelta, bookmark, need, serve, textOf, renderTray, fixtureScope7, fixtureScope8, fixtureScope9 } from './test-support-tray.test-support';
+import { layout, navigation, phoneOperation, liveRegistrations, auth, applyNeedsYouLiveDelta, bookmark, need, serve, textOf, renderTray, fixtureScope7, fixtureScope8, fixtureScope9 } from "../../../test/fixtures/tray.test-support";
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';

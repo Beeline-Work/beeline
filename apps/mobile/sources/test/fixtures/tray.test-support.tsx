@@ -6,7 +6,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 
-import TrayScreen from './tray';
+import TrayScreen from "../../app/(app)/beeline/tray";
 
 import { ButtonRow } from '@/components/buzz/ButtonRow';
 

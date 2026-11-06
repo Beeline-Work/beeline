@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -13,6 +13,38 @@ test('a stuck capture flow ends so the next provider can run', () => {
   const next = spawnSync(process.execPath, [runner, '2000', process.execPath, '-e', 'console.log("next provider")'], { encoding: 'utf8', timeout: 5000 });
   assert.equal(next.status, 0, next.stderr);
   assert.match(next.stdout, /next provider/);
+});
+
+test('a stalled flow preserves the screen, recent log and hierarchy before killing Maestro', () => {
+  const root = mkdtempSync(join(tmpdir(), 'signin-stall-'));
+  try {
+    const pidFile = join(root, 'flow.pid');
+    const calls = join(root, 'calls.txt');
+    const fakeTool = `#!${process.execPath}
+const fs = require('node:fs');
+process.kill(Number(fs.readFileSync(${JSON.stringify(pidFile)}, 'utf8')), 0);
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(calls)}, args.join(' ') + '\\n');
+if (args.includes('screenshot')) fs.writeFileSync(args.at(-1), 'stall screen');
+console.log(args.includes('hierarchy') ? 'stall hierarchy' : 'recent device log');
+`;
+    for (const name of ['xcrun', 'maestro']) writeFileSync(join(root, name), fakeTool, { mode: 0o755 });
+    const stuck = spawnSync(process.execPath, [resolve('scripts/ios-signin/run-flow.mjs'), '300', process.execPath, '-e', `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000)`], {
+      encoding: 'utf8', timeout: 5000,
+      env: { ...process.env, PATH: `${root}:${process.env.PATH}`, CAPTURE_DEVICE: 'test-udid', CAPTURE_STALL_DIR: join(root, 'stall') },
+    });
+    assert.equal(stuck.status, 124, stuck.stderr);
+    assert.equal(readFileSync(join(root, 'stall/screen.png'), 'utf8'), 'stall screen');
+    assert.match(readFileSync(join(root, 'stall/device-last-60s.log'), 'utf8'), /recent device log/);
+    assert.match(readFileSync(join(root, 'stall/maestro-hierarchy.txt'), 'utf8'), /stall hierarchy/);
+    const commands = readFileSync(calls, 'utf8');
+    assert.match(commands, /simctl io test-udid screenshot/);
+    assert.match(commands, /log show --last 60s/);
+    assert.match(commands, /ASWebAuthenticationSession.*SafariViewService.*SpringBoard/);
+    assert.match(commands, /--device test-udid hierarchy/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 for (const missing of ['pod', 'codesign']) {

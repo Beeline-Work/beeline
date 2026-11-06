@@ -32,11 +32,7 @@ import { PhoneService } from './phone-service.js';
 
 import { readRoomView } from '@beeline/api-contract/phone';
 
-import { readFileSync } from 'node:fs';
-
-import { runInNewContext } from 'node:vm';
-
-import { transformSync } from 'esbuild';
+import { cornerStatusLine } from '../../mobile/sources/buzz/corner-status-line.js';
 
 import type { createServer } from 'node:http';
 
@@ -46,13 +42,7 @@ vi.mock('./sentry.js', () => ({ captureServerError: vi.fn() }));
 
 
 export function checkStatusLine(lifecycle: unknown): string | undefined {
-  const formatter = transformSync(readFileSync(new URL('../../mobile/sources/buzz/corner-status-line.ts', import.meta.url), 'utf8'), {
-    loader: 'ts', format: 'cjs', tsconfigRaw: {},
-  });
-  const module = { exports: {} };
-  runInNewContext(formatter.code, { module, exports: module.exports });
-  return (module.exports as typeof import('../../mobile/sources/buzz/corner-status-line.js'))
-    .cornerStatusLine(lifecycle as import('@beeline/api-contract/phone').CornerLifecycleView, false);
+  return cornerStatusLine(lifecycle as import('@beeline/api-contract/phone').CornerLifecycleView, false);
 }
 
 

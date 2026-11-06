@@ -1,3 +1,4 @@
+import { publishPhoneLiveEvent } from './phone-live-events';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import type { PhoneOperationMap } from '@beeline/api-contract/phone';
 import { MONOLITH_REQUEST_TIMEOUT_MS, MonolithRequestTimeoutError } from '@/auth/monolith-session';
@@ -120,8 +121,7 @@ export async function monolithPhoneOperation<Name extends keyof PhoneOperationMa
       // uncertainty until a separate explicit Join action checks the same token.
       throw new Error('Your join is not confirmed yet. Try Join again to check its result.');
     }
-    if (['createWorkspace', 'sendRoomMessage', 'sendRoomReply'].includes(name))
-      void import('@/auth/signin-funnel').then(module => module.funnelSuccessfulOperation(name)).catch(() => undefined);
+    publishPhoneLiveEvent({ type: 'operation-completed', operation: name });
     return result;
   } catch (error) {
     if (error instanceof PhoneSocketError)

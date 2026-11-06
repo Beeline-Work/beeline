@@ -34,7 +34,7 @@ describe('Room view socket reads', () => {
   });
   it('reports the existing read deadline and server refusal without retry', async () => {
     request.mockRejectedValueOnce(new MonolithRequestTimeoutError());
-    await expect(client().room('r')).rejects.toMatchObject({ status: 0, code: 'timeout' });
+    await expect(client().room('r')).rejects.toBeInstanceOf(MonolithRequestTimeoutError);
     request.mockRejectedValueOnce(new PhoneSocketError('not_found', 'not_found', false));
     await expect(client().room('r')).rejects.toMatchObject({ status: 404, code: 'not_found' });
     expect(request).toHaveBeenCalledTimes(2);

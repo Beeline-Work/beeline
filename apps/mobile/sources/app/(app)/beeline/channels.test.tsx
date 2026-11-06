@@ -727,7 +727,7 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
   });
   it('shows the shared Retry after a failed discovery and reads on Retry', async () => {
     deck.selectedWorkspace=null;deck.workspacesResponse={workspaces:[],viewer,truncated:false,watchFilters:[]};
-    deck.workspaceFailures=[new RoomViewHttpError(0,'timeout')];
+    deck.workspaceFailures=[Object.assign(new Error('Socket request failed'), { socketRequest: true })];
     let renderer!:ReactTestRenderer;
     await act(async()=>{renderer=create(React.createElement(BuzzChannels));});await quiet();
     expect(deck.workspaceReads).toBe(1);
@@ -784,7 +784,7 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
     } finally {if(renderer)await act(async()=>renderer.unmount());vi.useRealTimers();}
   });
   it('does not add a second recovery surface for a socket read timeout', async () => {
-    deck.selectedWorkspace=null;deck.workspaceFailures=[new RoomViewHttpError(0,'timeout')];
+    deck.selectedWorkspace=null;deck.workspaceFailures=[Object.assign(new Error('Socket request failed'), { socketRequest: true })];
     let renderer!:ReactTestRenderer;
     try {
       await act(async()=>{renderer=create(React.createElement(BuzzChannels));});await quiet();

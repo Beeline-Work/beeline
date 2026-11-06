@@ -1,6 +1,7 @@
+import type { PhoneOperationMap } from '@beeline/api-contract/phone';
 import type { LiveWireEvent } from './monolith-rig-transport';
 
-type PhoneLiveEvent = LiveWireEvent | { type: 'socket-dropped' } | { type: 'room-released'; roomId: string };
+type PhoneLiveEvent = LiveWireEvent | { type: 'operation-completed'; operation: keyof PhoneOperationMap } | { type: 'socket-dropped' } | { type: 'room-released'; roomId: string };
 const listeners = new Set<(event: PhoneLiveEvent) => void>();
 
 /** Domain owners observe committed frames and connection lifetime directly. */

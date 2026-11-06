@@ -13,6 +13,38 @@ export interface DistilledTurnFailureReason {
   readonly kind?: TurnReceiptReasonKind;
 }
 
+/** Keep wire-visible tool detail useful without ever carrying credentials. */
+export function redactToolDetail(value: string): string {
+  return value
+    .replace(/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z]+ )?PRIVATE KEY-----/g, '[REDACTED]')
+    .replace(
+      /\b(["']?)(api[_-]?key|token|secret|password|passwd|authorization|credential|cookie|private[_-]?key)\1\s*[:=]\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,}\]]+)/gi,
+      '"$2": "[REDACTED]"',
+    )
+    .replace(
+      /\b(password|passwd)(\s+)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s]+)/gi,
+      '$1$2[REDACTED]',
+    )
+    .replace(
+      /(\b(?:machine\s+\S+|default)\s+[\s\S]*?\blogin\s+)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+)/gi,
+      '$1[REDACTED]',
+    )
+    .replace(
+      /\b(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*=(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+)/g,
+      (assignment) => `${assignment.slice(0, assignment.indexOf('='))}=[REDACTED]`,
+    )
+    .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,})\b/gi, '[REDACTED]')
+    .replace(/\b(?:bat|brt|bdt|bde)_[A-Za-z0-9_-]{43}\b/g, '[REDACTED]')
+    .replace(/\bbfmc_v1\.[a-f0-9]{32}\.[a-f0-9]{64}\b/gi, '[REDACTED]')
+    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]')
+    .replace(/\b(Bearer\s+)[^\s,]+/gi, '$1[REDACTED]')
+    .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, '[REDACTED]')
+    .replace(
+      /(--?(?:api[_-]?key|token|secret|password|authorization|credential|cookie)\s+)(?:"[^"]*"|'[^']*'|\S+)/gi,
+      '$1[REDACTED]',
+    );
+}
+
 /** Preserve diagnostic stacks in the helper journal. */
 export function turnErrorDetail(error: unknown): string {
   return error instanceof Error ? error.stack || error.message : String(error);

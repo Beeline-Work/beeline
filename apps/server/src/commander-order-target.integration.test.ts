@@ -92,7 +92,7 @@ it('allows named corner peers and preserves agent DM orders', async () => {
   expect((await orderWakes()).filter(row => row.agent_id === BABY)).toEqual([{ agent_id: BABY, room_id: opened.cornerId }]);
 });
 
-it.each(['corner', 'parent Room'])('Reproduction corner-peer-orders: %s order reports to its sender', async target => {
+it.each(['corner', 'parent Room'])('Reproduction corner-peer-orders: %s order preserves the opening commander', async target => {
   const opened = await daemon.execute('createCorner', { ...authority(), targetRoomId: ROOM, name: 'peer-orders',
     objective: 'Prove peer orders', implementer: 'candy',
     brief: { spec: 'Prove peer orders', repositoryWork: false, approval: { sourceMessageId: order.sourceMessageId } } }, JELLYBEAN);
@@ -106,12 +106,15 @@ it.each(['corner', 'parent Room'])('Reproduction corner-peer-orders: %s order re
   await daemon.execute('claimAgentCommand', { roomId: address, commandId: assigned.id, generationId: 'reply' }, BABY);
   await daemon.execute('report', { roomId: address, requestId: assigned.turnRequestId, generationId: 'reply',
     status: 'done', text: 'done: replay passed' }, BABY);
-  const replies = (await daemon.execute('getAgentCommands', { roomId: opened.cornerId }, CANDY)).commands;
+  const recipient = target === 'corner' ? JELLYBEAN : CANDY;
+  const destination = target === 'corner' ? DM : opened.cornerId;
+  const replies = (await daemon.execute('getAgentCommands', { roomId: destination }, recipient)).commands;
   expect(replies.find(c => c.reason === 'report')).toMatchObject({ private: true,
     source: { authorId: BABY, body: 'done: replay passed' } });
-  expect((await db.query(`SELECT 1 FROM agent_commands WHERE reason='report' AND agent_id=$1`, [JELLYBEAN])).rowCount).toBe(0);
+  expect((await db.query(`SELECT agent_id,room_id FROM agent_commands WHERE reason='report'`)).rows)
+    .toEqual([{ agent_id: recipient, room_id: destination }]);
   expect((await db.query(`SELECT ${cornerImplementerSql('f', 'c')} worker_agent_id FROM corner_facts f JOIN rooms c ON c.id=f.corner_id WHERE f.corner_id=$1`, [opened.cornerId])).rows[0]?.worker_agent_id).not.toBe(BABY);
-  console.info(`Demonstrated corner-peer-orders: Candy → ${target} Baby → Candy privately; commander Jellybean received no report`);
+
 });
 
 async function cornerTurn() {
@@ -123,7 +126,7 @@ async function cornerTurn() {
   return command;
 }
 
-it.each(['done', 'blocked', 'failed', 'needs_decision'])('Reproduction report-commander-refused: repair %s reaches its ordering agent after a new head', async status => {
+it.each(['done', 'blocked', 'failed', 'needs_decision'])('Reproduction report-commander-refused: repair %s reaches its opening commander after a new head', async status => {
   const incoming = await cornerTurn();
   const context = { cornerId: incoming.roomId, headSha: 'old-head', pullRequest: 42, briefRevision: 1 };
   await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_build_object('pr',jsonb_build_object('number',42,'headSha','old-head')) WHERE corner_id=$1`, [incoming.roomId]);
@@ -136,20 +139,19 @@ it.each(['done', 'blocked', 'failed', 'needs_decision'])('Reproduction report-co
   const text = `${status.replace('_', '-')}: repair result`;
   await daemon.execute('report', { roomId: assigned.roomId, requestId: assigned.turnRequestId,
     generationId: 'repair', status, text }, BABY);
-  const replies = (await daemon.execute('getAgentCommands', { roomId: incoming.roomId }, CANDY)).commands;
-  const reply = replies.find(c => c.reason === 'report')!;
+  const reply = (await daemon.execute('getAgentCommands', { roomId: DM }, JELLYBEAN)).commands.find(c => c.reason === 'report')!;
   expect(reply).toMatchObject({ private: true, source: { authorId: BABY, body: text } });
-  await daemon.execute('claimAgentCommand', { roomId: reply.roomId, commandId: reply.id, generationId: 'received' }, CANDY);
+  await daemon.execute('claimAgentCommand', { roomId: reply.roomId, commandId: reply.id, generationId: 'received' }, JELLYBEAN);
   expect((await db.query(`SELECT state,parent_command_id,review_context FROM agent_commands WHERE id=$1`, [reply.id])).rows[0])
-    .toMatchObject({ state: 'claimed', parent_command_id: incoming.id, review_context: null });
-  expect((await db.query(`SELECT 1 FROM agent_commands WHERE reason='report' AND agent_id=$1`, [JELLYBEAN])).rowCount).toBe(0);
+    .toMatchObject({ state: 'claimed', parent_command_id: order.id, review_context: null });
+  expect((await db.query(`SELECT 1 FROM agent_commands WHERE reason='report' AND agent_id=$1`, [CANDY])).rowCount).toBe(0);
   expect((await db.query(`SELECT 1 FROM messages WHERE text=$1`, [text])).rowCount).toBe(0);
   // The old review itself still cannot publish a verdict on the replacement head.
   const stale = await daemon.execute('report', { roomId: incoming.roomId, requestId: incoming.turnRequestId,
     generationId: 'guard', status: 'done', text: 'done: stale review verdict' }, CANDY);
   expect(stale).toMatchObject({ skipped: true });
   expect((await db.query(`SELECT 1 FROM agent_commands WHERE private_payload->>'text'='done: stale review verdict'`)).rowCount).toBe(0);
-  console.info(`Demonstrated Reproduction report-commander-refused: ${status} after repair delivered privately and claimed by ordering agent`);
+  console.info(`Demonstrated Reproduction report-commander-refused: ${status} after repair delivered privately and claimed by opening commander`);
 });
 
 it('Reproduction report-commander-refused: a current reviewer report keeps its own head across an older repair parent', async () => {
@@ -166,11 +168,11 @@ it('Reproduction report-commander-refused: a current reviewer report keeps its o
   await daemon.execute('claimAgentCommand', { roomId: assigned.roomId, commandId: assigned.id, generationId: 'review' }, BABY);
   await daemon.execute('report', { roomId: assigned.roomId, requestId: assigned.turnRequestId,
     generationId: 'review', status: 'done', text: 'done: current review complete' }, BABY);
-  const reply = (await daemon.execute('getAgentCommands', { roomId: incoming.roomId }, CANDY)).commands.find(c => c.reason === 'report')!;
+  const reply = (await daemon.execute('getAgentCommands', { roomId: DM }, JELLYBEAN)).commands.find(c => c.reason === 'report')!;
   expect(reply).toMatchObject({ source: { authorId: BABY, body: expect.stringContaining('done: current review complete') } });
   expect((await db.query(`SELECT review_context FROM agent_commands WHERE id=$1`, [reply.id])).rows[0]?.review_context)
     .toMatchObject({ ...context, purpose: 'verdict' });
-  await daemon.execute('claimAgentCommand', { roomId: reply.roomId, commandId: reply.id, generationId: 'received' }, CANDY);
+  await daemon.execute('claimAgentCommand', { roomId: reply.roomId, commandId: reply.id, generationId: 'received' }, JELLYBEAN);
 });
 
 it('rejects corner self-orders, humans, outsiders and removed members without queueing', async () => {
@@ -230,10 +232,8 @@ it.each(['done', 'blocked', 'failed', 'needs_decision'].flatMap(status => [JELLY
   await daemon.execute('claimAgentCommand', { roomId: repair.roomId, commandId: repair.id, generationId: 'repair' }, CANDY);
   await daemon.execute('report', { roomId: repair.roomId, requestId: repair.turnRequestId, generationId: 'repair',
     status, text: `${status.replace('_', '-')}: repair result` }, CANDY);
-  const recipient = status === 'done' ? BABY : commander;
-  const destination = status === 'done' ? incoming.roomId : commander === EARTH ? ROOM : DM;
+  const recipient = JELLYBEAN;
+  const destination = DM;
   expect((await db.query(`SELECT agent_id,room_id FROM agent_commands WHERE reason='report'`)).rows)
-    .toEqual(recipient === OWNER ? [] : [{ agent_id: recipient, room_id: destination }]);
-  if (recipient === OWNER) expect((await db.query(`SELECT room_id FROM messages WHERE text=$1 AND presentation='message'`,
-    [`${status.replace('_', '-')}: repair result`])).rows).toEqual([{ room_id: DM }]);
+    .toEqual([{ agent_id: recipient, room_id: destination }]);
 });

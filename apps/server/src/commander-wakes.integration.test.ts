@@ -87,17 +87,22 @@ it.each([
   ['delivery', 'needs_decision'], ['cached claim', 'needs_decision'],
   ['delivery', 'done'],
 ] as const)('STALE-DELEGATE-REPORT: a new order answers a delegate %s / %s', async (path, status) => {
+  const peer = 'd'.repeat(64);
+  await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Delegate','delegate') ON CONFLICT DO NOTHING`, [peer]);
+  await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [peer,HUMAN]);
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+    VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`, [WS,peer,ROOM]);
   const opened = await open(false), turn = await worker(opened.cornerId);
-  await daemon.execute('order', { ...authority(turn), address: opened.cornerId, agent: 'ruby', text: 'Recover the input' }, WORKER);
-  const delegate = (await commands(opened.cornerId, RUBY))[0]!;
+  await daemon.execute('order', { ...authority(turn), address: opened.cornerId, agent: 'delegate', text: 'Recover the input' }, WORKER);
+  const delegate = (await commands(opened.cornerId, peer))[0]!;
   await claim(delegate);
-  await daemon.execute('report', { ...authority(delegate), status, text: `${status.replace('_', '-')}: input recovery result` }, RUBY);
-  const report = (await commands(opened.cornerId, WORKER)).find(command => command.reason === 'report')!;
+  await daemon.execute('report', { ...authority(delegate), status, text: `${status.replace('_', '-')}: input recovery result` }, peer);
+  const report = (await commands(DM, RUBY)).find(command => command.reason === 'report')!;
   expect(report).toBeDefined();
-  // A delegate is not the corner implementer, so its blocker has no attention-index row.
-  await daemon.execute('order', { ...authority(turn), address: opened.cornerId, agent: 'ruby', text: 'Use the recovered input' }, WORKER);
+  // A delegate reports to the opening commander, whose next order answers it.
+  await daemon.execute('order', { ...authority(order), address: opened.cornerId, agent: 'delegate', text: 'Use the recovered input' }, RUBY);
   if (path === 'cached claim') await expect(claim(report)).rejects.toThrow('command claim conflict');
-  expect((await commands(opened.cornerId, WORKER)).some(command => command.id === report.id)).toBe(status === 'done');
+  expect((await commands(DM, RUBY)).some(command => command.id === report.id)).toBe(status === 'done');
 });
 it.each(['delivery', 'cached claim'])('Reproduction STALE-ANSWERED-REPORT: drops an answered blocker at %s', async path => {
   const opened = await open(false), turn = await worker(opened.cornerId);

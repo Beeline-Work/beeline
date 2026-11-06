@@ -1915,7 +1915,7 @@ export const wireShapes: readonly WireShape[] = [
   shape({"kind":"object","properties":{"roomId":{"node":5,"optional":true},"name":{"node":5,"optional":true},"reviewer":{"node":5,"optional":true},"objective":{"node":5,"optional":true},"brief":{"node":1292,"optional":true}}}),
   shape({"kind":"object","properties":{"cornerId":{"node":1,"optional":false},"name":{"node":1,"optional":false}}}),
   shape({"kind":"intersection","choices":[1185,1198,1913]}),
-  shape({"kind":"object","properties":{"status":{"node":1914,"optional":false},"text":{"node":1,"optional":false},"ask":{"node":5,"optional":true},"to":{"node":5,"optional":true}}}),
+  shape({"kind":"object","properties":{"status":{"node":1914,"optional":false},"text":{"node":1,"optional":false},"ask":{"node":5,"optional":true}}}),
   shape({"kind":"union","choices":[312,449,450,1915]}),
   shape({"kind":"literal","value":"needs_decision"}),
   shape({"kind":"union","choices":[1917,1920,1922,1924,1927,1928]}),

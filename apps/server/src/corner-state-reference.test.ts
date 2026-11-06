@@ -29,7 +29,8 @@ it('CORNER-REFERENCE: exhausts independent activity, ending, CI and blocker fact
       },
       ...(blocked ? { blocker: { reason: 'question' as const, itemId: 'reference' } } : {}),
     };
-    const expected = archived || (!locked && ending !== 'none') ? 'archived'
+    const expected = archived || (!locked && ['done','abandoned','merged'].includes(ending)) ? 'archived'
+      : blocked ? 'waiting'
       : turnRunning ? 'working'
       : reviewerActive || ['pending', 'unreported', 'pending-job'].includes(ci) ? 'review'
       : blocked ? 'waiting' : 'idle';

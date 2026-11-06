@@ -57,6 +57,7 @@ import { VoiceService, voiceConfigFromEnv } from './voice-service.js';
 import { createWebPushSender } from './web-push.js';
 import type { MonolithAuthMount } from './monolith-auth.js';
 import { PostgresLiveListener } from './postgres-live.js';
+import { CornerMachineEvents } from './corner-attention.js';
 import { listenAfterBestEffortRecovery } from './startup.js';
 import { INSTITUTIONAL_MEMORY_ON } from './institutional-memory-shadow.js';
 import {
@@ -142,6 +143,7 @@ async function main() {
   // Listener expands one presence NOTIFY across memberships; writers must not
   // also run broadcastAgentPresence against the same LiveHub.
   live.useListenerPresenceFanout();
+  const cornerMachine = new CornerMachineEvents(jobsDatabase, live, captureServerError);
   void liveListener.run();
   const githubConfigured =
     process.env.GITHUB_CLIENT_ID &&
@@ -463,6 +465,7 @@ async function main() {
     mcpStop.abort();
     liveListener.setMcpWebhookWake(() => {});
     for (const stop of stops) stop();
+    await cornerMachine.stop();
     scheduleClock.stop();
     await Promise.all([pushJob.stop(), sentryJob.stop(), xJob.stop(), dmJob.stop(), schedulesJob.stop(), mcpJob.stop()]);
     scheduleClock.stop();

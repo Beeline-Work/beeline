@@ -53,7 +53,7 @@
       "strict": true,
       "ownerFunctions": {
         "apps/server/src/agent-command.ts": [
-          "createAgentCommand",
+          "insertAgentCommand",
           "createClaimedMcpAgentCommand"
         ]
       },
@@ -157,11 +157,11 @@
         "apps/server/src"
       ],
       "owners": [
-        "apps/server/src/corner-lifecycle.ts",
-        "apps/server/src/corner-close.ts"
+        "apps/server/src/corner-lifecycle.ts"
       ],
       "total": 0,
-      "fix": "Change corner state through the corner module: advanceCorner/lockCornerLifecycle in apps/server/src/corner-lifecycle.ts, or closeCornerState in apps/server/src/corner-close.ts. If the module lacks the write you need, add a named function there and call it."
+      "fix": "Emit an event through advanceCorner in apps/server/src/corner-lifecycle.ts.",
+      "strict": true
     },
     {
       "id": "corner.github-cache-writes",
@@ -221,13 +221,13 @@
         "apps/server/src"
       ],
       "owners": [
-        "apps/server/src/corner-close.ts"
+        "apps/server/src/corner-lifecycle.ts"
       ],
       "total": 0,
-      "fix": "Call archiveCornerState in corner-close.ts; retain outcome-specific lifecycle writes in the caller.",
+      "fix": "Emit closed or merged through advanceCorner in corner-lifecycle.ts; its archiveCorner effect owns command, workflow and hold cleanup.",
       "ownerFunctions": {
-        "apps/server/src/corner-close.ts": [
-          "archiveCornerState"
+        "apps/server/src/corner-lifecycle.ts": [
+          "archiveCorner"
         ]
       },
       "ownerSites": 1,
@@ -1091,7 +1091,8 @@
           "owner_agent_id": {
             "reason": "Compatibility for rollout-0707: preceding serving and rollback images read the retired owner column",
             "drop": "Remove only through a reviewed contract migration after serving and rollback images stop reading it."
-          }
+          },
+          "machine": "The single corner state and once-only transition effect receipts; the owner rebuilds it from committed facts on startup."
         }
       },
       "corner_github_cache": {
@@ -3246,7 +3247,8 @@
         "headSha": "existing before the registry; weekly audit reviews",
         "purpose": "existing before the registry; weekly audit reviews",
         "pullRequest": "existing before the registry; weekly audit reviews",
-        "cornerId": "existing before the registry; weekly audit reviews"
+        "cornerId": "existing before the registry; weekly audit reviews",
+        "briefRevision": "The brief revision captured at review dispatch; it must remain comparable with the current revision."
       },
       "wake_context": {},
       "coalesced_attachments": {},
@@ -3286,6 +3288,15 @@
       "non_goals": {},
       "brief_references": {},
       "approval_basis": {},
+      "machine": {
+        "state": "The single corner state rendered by server rows.",
+        "phase": "The checks or reviewer phase within Review.",
+        "reason": "Blocked, user action or question within Waiting.",
+        "headSha": "Head that scopes the transition effect receipts.",
+        "pullRequest": "PR target paired with that head.",
+        "effects": "Applied transition effect keys for replay deduplication.",
+        "outcome": "Confirmed landed or closed terminal outcome."
+      },
       "lifecycle": {
         "pr": "existing before the registry; weekly audit reviews",
         "checks": "existing before the registry; weekly audit reviews",
@@ -3400,7 +3411,8 @@
         "object": "existing before the registry; weekly audit reviews",
         "verb": "existing before the registry; weekly audit reviews",
         "kind": "existing before the registry; weekly audit reviews",
-        "subject": "existing before the registry; weekly audit reviews"
+        "subject": "existing before the registry; weekly audit reviews",
+        "payload": "Committed provider event evidence (failed jobs and bounded follow-up provenance), preserved for recovery without a provider re-read."
       },
       "source_client": {},
       "recipients": {},

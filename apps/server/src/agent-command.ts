@@ -10,8 +10,6 @@ import type { HelperTurnOwnershipSource } from '@beeline/api-contract/helper-tur
 import { cornerKindSql } from './corner-opening.js';
 import { cornerWaitingReportSql } from './corner-waiting-report.js';
 import { currentIdleReportSql } from './corner-idle.js';
-import { cornerOwnerSql } from './corner-worker.js';
-import { cornerRunStateSql } from './corner-run.js';
 import { cornerReviewerSql } from './corner-reviewer.js';
 import { voiceDateContext } from './voice-reply.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
@@ -39,7 +37,7 @@ import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-cont
 import { isResumeKind } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { isCornerReviewer } from './agent-health.js';
-import { advanceCorner, blockingReview, cornerMergeGate, lockCornerLifecycle } from './corner-lifecycle.js';
+import { advanceCorner, blockingReview } from './corner-lifecycle.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import {
   hasSystemReportMention,
@@ -49,7 +47,7 @@ import {
   isChannelMentionToken,
 } from './message-mentions.js';
 import { CORNER_LIFECYCLE_CARD_TYPE } from './room-choice.js';
-import { ensureSystemIdentity, GITHUB_SUBJECT, systemLine } from './system-line.js';
+import { systemLine } from './system-line.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
 function checkFailureLogBody(event: { kind?: string; payload?: unknown } | null): string {
@@ -332,14 +330,7 @@ function commandValidityCtes(roomSql: string, agentSql: string, claimSql = 'NULL
     SELECT command.id FROM command_scope command
     JOIN corner_facts fact ON fact.corner_id=COALESCE((command.review_context->>'cornerId')::uuid,command.room_id)
     LEFT JOIN messages source ON source.id=command.source_message_id
-    WHERE (command.review_context IS NOT NULL AND (
-        command.review_context->>'headSha' IS DISTINCT FROM ${cornerLifecycleSql('fact.corner_id')}->'pr'->>'headSha'
-        OR command.review_context->'pullRequest' IS DISTINCT FROM ${cornerLifecycleSql('fact.corner_id')}->'pr'->'number'
-        OR (command.review_context->>'briefRevision')::int IS DISTINCT FROM
-          COALESCE((SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=fact.corner_id),0)))
-      OR (command.reason IN ('corner_check','corner_merge_conflict','corner_review_dispatch','subscribed_event')
-        AND source.system_event->'object'->>'headSha' IS NOT NULL
-        AND source.system_event->'object'->>'headSha' IS DISTINCT FROM ${cornerLifecycleSql('fact.corner_id')}->'pr'->>'headSha')
+    WHERE NOT ${currentCornerCommandTargetSql('command')}
       OR (command.wake_context->>'briefRevision' IS NOT NULL
         AND (command.wake_context->>'briefRevision')::int <
           (SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=command.room_id)
@@ -543,7 +534,26 @@ export async function repairReviewerCornerMembership(
   return member.rowCount > 0;
 }
 
-/** Exact target comparison also applies to review reports routed to another place. */
+/** Exact-target eligibility shared by dispatch, the machine snapshot and delivery, including reports. */
+export function currentCornerCommandTargetSql(command: string): string {
+  const corner = `COALESCE((${command}.review_context->>'cornerId')::uuid,${command}.room_id)`;
+  const cache = cornerLifecycleSql(corner);
+  return `((${command}.review_context IS NULL OR (
+    ${command}.review_context->>'headSha' IS NOT DISTINCT FROM ${cache}->'pr'->>'headSha'
+    AND ${command}.review_context->'pullRequest' IS NOT DISTINCT FROM ${cache}->'pr'->'number'
+    AND (${command}.review_context->>'briefRevision')::int IS NOT DISTINCT FROM
+      COALESCE((SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=${corner}),0)))
+    AND NOT (${command}.state='pending' AND ${command}.review_context IS NOT NULL
+      AND ${command}.review_context->>'purpose' IS NULL
+      AND ${command}.reason IN ('corner_review_dispatch','subscribed_event') AND ${command}.agent_id IS DISTINCT FROM (
+        SELECT ${cornerReviewerSql('target', 'target_parent')} FROM rooms target
+        JOIN rooms target_parent ON target_parent.id=target.parent_id WHERE target.id=${corner}))
+    AND NOT EXISTS(SELECT 1 FROM messages target_source WHERE target_source.id=${command}.source_message_id
+      AND ${command}.reason IN ('corner_check','corner_merge_conflict','corner_review_dispatch','subscribed_event')
+      AND target_source.system_event->'object'->>'headSha' IS NOT NULL
+      AND target_source.system_event->'object'->>'headSha' IS DISTINCT FROM ${cache}->'pr'->>'headSha'))`;
+}
+
 export async function supersededReview(db: SqlDatabase, command: CommandRow): Promise<boolean> {
   if (!command.review_context) return false;
   return Boolean((await db.query(`SELECT 1 FROM corner_github_cache fact WHERE fact.corner_id=$1
@@ -577,9 +587,7 @@ export async function createClaimedMcpAgentCommand(db: SqlDatabase, input: {
   });
 }
 
-export async function createAgentCommand(
-  db: SqlDatabase,
-  input: {
+export type AgentCommandInput = {
     roomId: string;
     agentId: string;
     sourceMessageId: string | null;
@@ -602,8 +610,17 @@ export async function createAgentCommand(
     workflowAssignment?: boolean;
     /** A line appended to a lifecycle wake's text, fixed at dispatch. */
     wakeNote?: string;
-  },
-): Promise<CommandRow | undefined> {
+  };
+
+/** Every corner admission is an event; the generic queue still owns authority. */
+export async function createAgentCommand(db: SqlDatabase, input: AgentCommandInput): Promise<CommandRow | undefined> {
+  if ((await db.query('SELECT 1 FROM rooms WHERE id=$1 AND parent_id IS NOT NULL', [input.roomId])).rowCount)
+    return (await advanceCorner(db, input.roomId, { kind: 'command', command: input })).command;
+  return insertAgentCommand(db, input);
+}
+
+/** Queue primitive. Corner callers enter through advanceCorner, never here. */
+export async function insertAgentCommand(db: SqlDatabase, input: AgentCommandInput): Promise<CommandRow | undefined> {
     db = new CornerAccessDatabase(db);
   return db.transaction(async (db) => {
   await lockAgentCommandQueue(db, input.roomId, input.agentId);
@@ -1928,303 +1945,23 @@ export async function routeSystemCommand(
   }
 }
 
-/** A dirty current PR head is an actionable author turn, even with green CI. */
-export async function queueCornerMergeConflict(
-  db: SqlDatabase,
-  cornerId: string,
-  sourceMessageId: string,
-): Promise<boolean> {
-  const owner = (
-    await db.query<{ owner_agent_id: string }>(
-      `SELECT ${cornerImplementerSql('fact', 'corner')} owner_agent_id FROM corner_facts fact
-       JOIN rooms corner ON corner.id=fact.corner_id
-       WHERE fact.corner_id=$1 AND corner.archived_at IS NULL
-         AND ${cornerLifecycleSql('fact.corner_id')}->'pr'->>'mergeability'='dirty'`,
-      [cornerId],
-    )
-  ).rows[0]?.owner_agent_id;
-  if (!owner) return false;
-  const command = await createAgentCommand(db, {
-    roomId: cornerId,
-    agentId: owner,
-    sourceMessageId,
-    reason: 'corner_merge_conflict',
-  });
-  return Boolean(command);
+/** Compatibility adapters: all admissions belong to the corner machine. */
+export async function queueCornerMergeConflict(db: SqlDatabase, cornerId: string, sourceMessageId: string): Promise<boolean> {
+  return Boolean((await advanceCorner(db, cornerId, { kind: 'merge-conflict', sourceMessageId })).wake?.queued);
 }
-
-/** Recover blocker lifecycles whose note or command was lost before delivery. */
-export async function reconcileCornerMergeBlockers(
-  db: SqlDatabase,
-  cornerId?: string,
-): Promise<number> {
-  const stranded = await db.query<{
-    corner_id: string;
-    owner_agent_id: string;
-    checks: string;
-    mergeability: string;
-    head_sha: string;
-    number: number;
-    title: string;
-    url: string;
-  }>(
-    `SELECT fact.corner_id,${cornerImplementerSql('fact', 'corner')} owner_agent_id,
-            gh.lifecycle->>'checks' checks,
-            gh.lifecycle->'pr'->>'mergeability' mergeability,
-            gh.lifecycle->'pr'->>'headSha' head_sha,
-            (gh.lifecycle->'pr'->>'number')::integer number,
-            gh.lifecycle->'pr'->>'title' title,
-            gh.lifecycle->'pr'->>'url' url
-     FROM (corner_facts fact JOIN corner_github_cache gh ON gh.corner_id=fact.corner_id) JOIN rooms corner ON corner.id=fact.corner_id
-     WHERE corner.archived_at IS NULL AND ${cornerImplementerSql('fact', 'corner')} IS NOT NULL
-       AND ($1::uuid IS NULL OR fact.corner_id=$1)
-       AND gh.lifecycle->'pr'->>'headSha' IS NOT NULL
-       AND gh.lifecycle->'pr'->>'number' ~ '^[0-9]+$'
-       AND (gh.lifecycle->>'checks'='failing'
-            OR gh.lifecycle->'pr'->>'mergeability'='dirty'
-            OR (gh.lifecycle->'pr'->>'mergeability'='draft'
-              AND gh.lifecycle->'draftReadyFailure'->>'headSha'=gh.lifecycle->'pr'->>'headSha'))`,
-    [cornerId ?? null],
-  );
+export async function reconcileCornerMergeBlockers(db: SqlDatabase, cornerId?: string): Promise<number> {
+  const rows = (await db.query<{ id: string }>(`SELECT id FROM rooms WHERE parent_id IS NOT NULL AND archived_at IS NULL
+    AND ($1::uuid IS NULL OR id=$1)`, [cornerId ?? null])).rows;
   let commands = 0;
-  for (const row of stranded.rows) {
-    commands += await db.transaction(async (db) => {
-      await lockCornerLifecycle(db, row.corner_id);
-      let routedCommands = 0;
-      // A known-red head wakes the implementer even while other checks are
-      // still running. A wake already recorded for this head is left in place.
-      if (row.checks === 'failing') {
-        const existing = await db.query(
-          `SELECT 1 FROM agent_commands command
-           JOIN messages source ON source.id=command.source_message_id
-           WHERE command.room_id=$1 AND command.agent_id=$2
-             AND command.reason='corner_check'
-             AND source.system_event->'object'->>'headSha'=$3 LIMIT 1`,
-          [row.corner_id, row.owner_agent_id, row.head_sha],
-        );
-        if (!existing.rowCount) {
-          const source = await systemLine(db, {
-            id: createHash('sha256')
-              .update(`beeline:${row.corner_id}:github:checks-failed:${row.head_sha}`)
-              .digest('hex'),
-            roomId: row.corner_id,
-            authorId: row.owner_agent_id,
-            subject: GITHUB_SUBJECT,
-            verb: systemMessage("agent-command.found-failing-checks-on"),
-            kind: 'check-failed',
-            object: {
-              text: row.title ?? systemMessage("agent-command.pull-request", row.number),
-              url: row.url,
-              headSha: row.head_sha,
-            },
-          });
-          if (!source.inserted) {
-            await routeSystemCommand(db, {
-              roomId: row.corner_id,
-              sourceMessageId: source.id,
-              kind: 'check-failed',
-              targets: [],
-            });
-          }
-          const routed = await db.query(
-            `SELECT 1 FROM agent_commands WHERE room_id=$1 AND source_message_id=$2 AND agent_id=$3`,
-            [row.corner_id, source.id, row.owner_agent_id],
-          );
-          if (routed.rowCount) routedCommands += 1;
-        }
-      }
-      if (row.mergeability === 'draft' && row.checks === 'passing') {
-        const current = await db.query(`SELECT 1 FROM corner_github_cache fact JOIN rooms corner ON corner.id=fact.corner_id
-          WHERE fact.corner_id=$1 AND corner.archived_at IS NULL
-            AND fact.lifecycle->'pr'->>'headSha'=$2
-            AND fact.lifecycle->'draftReadyFailure'->>'headSha'=$2
-            AND fact.lifecycle->'pr'->>'mergeability'='draft' AND fact.lifecycle->>'checks'='passing'`,
-          [row.corner_id, row.head_sha]);
-        if (!current.rowCount) return routedCommands;
-        const gate = await cornerMergeGate(db, row.corner_id, { number: row.number, headSha: row.head_sha });
-        if (gate.open) await reportToCommander(db, row.corner_id, row.owner_agent_id,
-          systemMessage("agent-command.blocked-pr-is-a-draft-marking-it-ready-for-review-failed"), undefined,
-          createHash('sha256').update(`draft-blocked:${row.corner_id}:${row.head_sha}`).digest('hex'));
-      }
-      if (row.mergeability === 'dirty') {
-        // Keyed on the head only, matching mergeConflictKey: a moved base must
-        // not turn one stale 'dirty' verdict into a fresh wake.
-        const generation = `${row.number}:${row.head_sha}`;
-        const id = createHash('sha256')
-          .update(`beeline:${row.corner_id}:github:merge-conflict:${generation}`)
-          .digest('hex');
-        const exists = await db.query(
-          `SELECT 1 FROM agent_commands WHERE room_id=$1 AND source_message_id=$2 AND agent_id=$3`,
-          [row.corner_id, id, row.owner_agent_id],
-        );
-        if (exists.rowCount) return routedCommands;
-        const note = await systemLine(db, {
-          id,
-          roomId: row.corner_id,
-          authorId: row.owner_agent_id,
-          subject: GITHUB_SUBJECT,
-          verb: systemMessage("agent-command.found-merge-conflicts-in"),
-          object: {
-            text: row.title ?? systemMessage("agent-command.pull-request", row.number),
-            url: row.url,
-            headSha: row.head_sha,
-          },
-        });
-        if (await queueCornerMergeConflict(db, row.corner_id, note.id)) routedCommands += 1;
-      }
-      return routedCommands;
-    });
-  }
+  for (const row of rows) if ((await advanceCorner(db, row.id, { kind: 'reconcile' })).wake?.queued) commands++;
   return commands;
 }
 
-/**
- * Restore the two durable projections of a configured reviewer.
- *
- * Room configuration is the dispatch authority. The subscription remains a
- * visible description of what wakes the reviewer, but losing or overwriting
- * that projection must not lose a review. Existing green heads are dispatched
- * from their latest check fact when the lifecycle is ready and no review
- * command is pending or running on that head.
- */
-export async function reconcileConfiguredCornerReviewers(
-  db: SqlDatabase,
-  parentRoomId?: string,
-): Promise<{ subscriptions: number; commands: number }> {
-    db = new CornerAccessDatabase(db);
+export async function reconcileConfiguredCornerReviewers(db: SqlDatabase, parentRoomId?: string): Promise<{ subscriptions: number; commands: number }> {
   const subscriptions = await subscribeConfiguredReviewers(db, [parentRoomId ?? null]);
-  // Older webhook deliveries could persist a green lifecycle while their
-  // deduplicated GitHub note never created a check-passed fact. Give those
-  // heads a durable source for both review dispatch and reviewer handback.
-  const missingFacts = await db.query<{
-    corner_id: string;
-    author_id: string;
-    head_sha: string;
-  }>(
-    `SELECT corner.id corner_id,COALESCE(${cornerOwnerSql('corner.id')},corner.created_by) author_id,
-            gh.lifecycle->'pr'->>'headSha' head_sha
-     FROM rooms corner
-     JOIN rooms parent ON parent.id=corner.parent_id
-     JOIN (corner_facts fact JOIN corner_github_cache gh ON gh.corner_id=fact.corner_id) ON fact.corner_id=corner.id
-     JOIN memberships reviewer ON reviewer.room_id=parent.id
-       AND reviewer.identity_id=${cornerReviewerSql()} AND reviewer.removed_at IS NULL
-     WHERE corner.archived_at IS NULL AND gh.lifecycle->>'checks'='passing'
-       AND gh.lifecycle->'pr'->>'number' IS NOT NULL
-       AND gh.lifecycle->'pr'->>'headSha' IS NOT NULL
-       AND COALESCE(${cornerOwnerSql('corner.id')},corner.created_by) IS NOT NULL
-       AND ($1::uuid IS NULL OR parent.id=$1)
-       AND NOT EXISTS (
-         SELECT 1 FROM agent_commands worker
-         WHERE worker.room_id=corner.id
-           AND worker.agent_id=${cornerImplementerSql('fact', 'corner')}
-           AND worker.action='input' AND worker.state IN ('pending','claimed')
-       )
-       AND NOT EXISTS (
-         SELECT 1 FROM corner_merge_approvals approval
-         WHERE approval.corner_id=corner.id
-           AND approval.approved_by=${cornerReviewerSql()}
-           AND approval.pull_request_number=(gh.lifecycle->'pr'->>'number')::integer
-           AND approval.head_sha=gh.lifecycle->'pr'->>'headSha'
-       )
-       AND NOT EXISTS (
-         SELECT 1 FROM messages message WHERE message.room_id=corner.id
-           AND message.system_event->>'kind'='check-passed'
-           AND (message.system_event->'object'->>'headSha' IS NULL
-                OR message.system_event->'object'->>'headSha'=gh.lifecycle->'pr'->>'headSha')
-       )`,
-    [parentRoomId ?? null],
-  );
+  const corners = (await db.query<{ id: string }>(`SELECT id FROM rooms WHERE parent_id IS NOT NULL AND archived_at IS NULL
+    AND ($1::uuid IS NULL OR parent_id=$1)`, [parentRoomId ?? null])).rows;
   let commands = 0;
-  if (missingFacts.rows.length) {
-    for (const missing of missingFacts.rows) {
-      const source = await systemLine(db, {
-        id: createHash('sha256')
-          .update(`beeline:${missing.corner_id}:recovered-green:${missing.head_sha}`)
-          .digest('hex'),
-        roomId: missing.corner_id,
-        authorId: missing.author_id,
-        subject: { kind: 'github', name: systemMessage("agent-command.github") },
-        verb: systemMessage("agent-command.passed-checks"),
-        kind: 'check-passed',
-        object: { text: systemMessage("agent-command.aggregate-checks"), headSha: missing.head_sha },
-      });
-      const routed = await db.query(
-        `SELECT 1 FROM agent_commands WHERE room_id=$1 AND source_message_id=$2
-           AND agent_id=(SELECT ${cornerReviewerSql()} FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id WHERE corner.id=$1)`,
-        [missing.corner_id, source.id],
-      );
-      if (source.inserted && routed.rowCount) commands += 1;
-    }
-  }
-  const candidates = await db.query<{
-    corner_id: string;
-    reviewer_agent_id: string | null;
-    source_message_id: string;
-    head_sha: string | null;
-  }>(
-    `SELECT corner.id corner_id,${cornerReviewerSql()} reviewer_agent_id,source.id source_message_id,
-            gh.lifecycle->'pr'->>'headSha' head_sha
-     FROM rooms corner
-     JOIN rooms parent ON parent.id=corner.parent_id
-     JOIN (corner_facts fact JOIN corner_github_cache gh ON gh.corner_id=fact.corner_id) ON fact.corner_id=corner.id
-     JOIN LATERAL (
-       SELECT message.id
-       FROM messages message
-       WHERE message.room_id=corner.id
-         AND message.system_event->>'kind'='check-passed'
-         AND (message.system_event->'object'->>'headSha' IS NULL
-              OR message.system_event->'object'->>'headSha'=gh.lifecycle->'pr'->>'headSha')
-       ORDER BY message.created_at DESC,message.id DESC LIMIT 1
-     ) source ON true
-     WHERE corner.archived_at IS NULL
-       AND ${cornerRunStateSql('fact.corner_id')} IS DISTINCT FROM 'ask_human'
-       AND gh.lifecycle->>'checks'='passing'
-       AND gh.lifecycle->'pr'->>'number' IS NOT NULL
-       AND gh.lifecycle->'pr'->>'headSha' IS NOT NULL
-       AND ($1::uuid IS NULL OR parent.id=$1)
-       AND NOT EXISTS (
-         SELECT 1 FROM agent_commands worker
-         WHERE worker.room_id=corner.id
-           AND worker.agent_id=${cornerImplementerSql('fact', 'corner')}
-           AND worker.action='input' AND worker.state IN ('pending','claimed')
-       )
-       AND NOT EXISTS (
-         SELECT 1 FROM corner_merge_approvals approval
-         WHERE approval.corner_id=corner.id
-           AND approval.approved_by=${cornerReviewerSql()}
-           AND approval.pull_request_number=(gh.lifecycle->'pr'->>'number')::integer
-           AND approval.head_sha=gh.lifecycle->'pr'->>'headSha'
-       )
-       AND NOT EXISTS (
-         SELECT 1 FROM agent_commands command
-         JOIN messages dispatch ON dispatch.id=command.source_message_id
-         WHERE command.room_id=corner.id
-           AND command.agent_id=${cornerReviewerSql()}
-           AND command.state IN ('pending','claimed') AND command.action='input'
-           AND (command.reason='corner_review_dispatch'
-             OR (command.reason='subscribed_event' AND
-               (dispatch.system_event->>'kind'='check-passed'
-                 OR dispatch.author_id=${cornerImplementerSql('fact', 'corner')}))
-             OR (command.reason='agent_tag' AND dispatch.author_id=${cornerImplementerSql('fact', 'corner')}))
-           AND (dispatch.system_event->'object'->>'headSha' IS NULL
-                OR dispatch.system_event->'object'->>'headSha'=gh.lifecycle->'pr'->>'headSha')
-       )`,
-    [parentRoomId ?? null],
-  );
-  for (const candidate of candidates.rows) {
-    // Re-report the green head. A review state repairs a missing wake; an
-    // implement state waits for its current worker before taking rereview.
-    const outcome = await advanceCorner(db, candidate.corner_id, {
-      kind: 'checks',
-      result: 'passing',
-      sourceMessageId: candidate.source_message_id,
-    });
-    const routed = await db.query(
-      `SELECT 1 FROM agent_commands WHERE room_id=$1 AND source_message_id=$2 AND agent_id=$3
-         AND state IN ('pending','claimed')`,
-      [candidate.corner_id, candidate.source_message_id, candidate.reviewer_agent_id],
-    );
-    if (outcome.wake?.queued || routed.rowCount) commands += 1;
-  }
+  for (const corner of corners) if ((await advanceCorner(db, corner.id, { kind: 'reconcile' })).wake?.queued) commands++;
   return { subscriptions: subscriptions.rowCount, commands };
 }

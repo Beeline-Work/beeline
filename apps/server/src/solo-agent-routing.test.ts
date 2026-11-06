@@ -52,7 +52,8 @@ describe('solo-agent-untagged-silence', () => {
     phone = new PhoneService(measured(db), 'http://local.test');
     const commands = await send();
     // Each statement is another database round trip before the send receipt.
-    expect(statements).toHaveLength(9);
+    // The corner front door classifies the address with one indexed Room lookup.
+    expect(statements).toHaveLength(10);
     expect(commands).toHaveLength(1);
     expect(commands[0]).toMatchObject({ agent_id: AGENT, source_message_id: MESSAGE });
     await routeHumanMessage(db, MESSAGE);

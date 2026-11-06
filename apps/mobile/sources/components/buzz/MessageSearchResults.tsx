@@ -104,13 +104,13 @@ function MessageSearchRow({
       testID={`message-search-result-${result.messageId}`}
     >
       <View style={styles.meta}>
-        <Text numberOfLines={1} style={styles.room}>
+        <Text style={styles.room}>
           <Text style={styles.sigil}>{sigil}</Text>
           {room}
         </Text>
         <Text style={styles.time}>{compactRelativeTime(result.createdAt, now)}</Text>
       </View>
-      <Text numberOfLines={3} style={styles.snippet}>
+      <Text style={styles.snippet}>
         <Text style={styles.author}>{result.authorName}: </Text>
         {result.snippet.map((part, index) =>
           part.match ? (

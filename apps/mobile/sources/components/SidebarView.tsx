@@ -524,7 +524,6 @@ export const SidebarView = React.memo(function SidebarView() {
                     testID={`desktop-workspace-${workspace.id}`}
                   >
                     <Text
-                      numberOfLines={1}
                       style={[styles.workspaceText, selected && styles.workspaceTextSelected]}
                     >
                       {workspace.name}
@@ -669,7 +668,6 @@ export const SidebarView = React.memo(function SidebarView() {
                     />
                     {viewerIdentity?.name ? (
                       <Text
-                        numberOfLines={1}
                         style={styles.settingsViewerName}
                         testID="profile-settings-name"
                       >

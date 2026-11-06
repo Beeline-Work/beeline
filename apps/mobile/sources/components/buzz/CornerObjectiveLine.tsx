@@ -154,7 +154,7 @@ function WorkflowLine({
       testID={testID}
     >
       <WorkflowGlyph size={CORNER_META_SIZE} />
-      <Text numberOfLines={1} style={styles.workflowCopy} testID={`${testID}-copy`}>
+      <Text style={styles.workflowCopy} testID={`${testID}-copy`}>
         {label}
       </Text>
     </Pressable>

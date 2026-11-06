@@ -221,7 +221,6 @@ export default function WalletScreen() {
                 <View style={styles.addressCopy}>
                   <RoomListSectionHeader title="Address" inset="content" />
                   <Text
-                  numberOfLines={1}
                   selectable
                   style={styles.address}
                   testID="wallet-address-value"
@@ -361,7 +360,7 @@ export default function WalletScreen() {
                           ? `Sent by ${entry.agentName}`
                           : 'Sent'}
                     </Text>
-                    <Text numberOfLines={1} style={styles.activitySub}>
+                    <Text style={styles.activitySub}>
                       {entry.counterparty} · {entry.chain}
                     </Text>
                   </View>

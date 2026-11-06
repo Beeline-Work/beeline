@@ -1,7 +1,3 @@
-/** Preview length that fills one line on the narrowest shipped phone without
- * the trailing ellipsis landing mid-word on every row. */
-const PREVIEW_MAX_CHARS = 120;
-
 /**
  * Lines that are machine plumbing and must never reach a person-facing
  * preview. These mirror the shapes `summarizeGitFailure`
@@ -97,7 +93,7 @@ function flattenMarkdown(line: string): string {
  * message contains nothing a person would want to read, which the caller
  * treats as "not a preview" so the previous readable message keeps the row.
  */
-export function roomPreviewText(raw: string, limit = PREVIEW_MAX_CHARS): string {
+export function roomPreviewText(raw: string): string {
   const withoutCode = raw.replace(/```[\s\S]*?```/g, ' ').replace(/```[\s\S]*$/, ' ');
   const readable = withoutCode
     .split('\n')
@@ -109,7 +105,7 @@ export function roomPreviewText(raw: string, limit = PREVIEW_MAX_CHARS): string 
     .join(' ');
   const collapsed = shortenShas(readable).replace(/\s+/g, ' ').trim();
   if (!collapsed || isMachinePreview(collapsed)) return '';
-  return collapsed.length > limit ? `${collapsed.slice(0, limit - 1).trimEnd()}…` : collapsed;
+  return collapsed;
 }
 
 /**

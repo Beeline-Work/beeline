@@ -267,7 +267,7 @@ export function RoomCornersList({
           <Text style={styles.rowTitle} textBreakStrategy="simple">
             {label}
           </Text>
-          <Text numberOfLines={1} style={styles.agent}>
+          <Text style={styles.agent}>
             {line}
           </Text>
         </View>

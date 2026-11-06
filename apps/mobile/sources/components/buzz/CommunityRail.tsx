@@ -401,7 +401,6 @@ function CommunityHeaderIdentity({
         </View>
       )}
       <Text
-        numberOfLines={1}
         style={styles.drawerTriggerName}
         testID={
           pickerTitle

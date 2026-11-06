@@ -181,7 +181,7 @@ export const WritePermissionCard = React.memo(function WritePermissionCard({
         : [];
   return (
     <AgentApprovalCard
-      tier={pending ? 'ask' : 'record'} testID={`write-permission-${permission.status}`} wrapTitle
+      tier={pending ? 'ask' : 'record'} testID={`write-permission-${permission.status}`}
       askingAgent={{ pubkey: permission.agentPubkey, kind: 'agent', name: display.name }} agent={agent}
       title={<><TranscriptCardHandle>@{display.name.replace(/^@/, '')}</TranscriptCardHandle>{' '}{squireSpending ? 'wants to spend with Trusty Squire' : 'wants to open an edit corner'}</>}
       subline={`${squireSpending ? roomName ? `#${roomName}` : 'Room' : permission.repository ?? 'Repository'} · ${approvalAudience(permission.requester, viewerPubkey)}`}
@@ -229,7 +229,7 @@ export const SquireApprovalCard = React.memo(function SquireApprovalCard({
   });
   if (!settled) actions.push({ label: approval.linkKind === 'passkey' ? 'Use passkey' : approval.linkKind === 'vouch' ? 'Vouch' : 'Review',
     accessibilityRole: 'link', destination: 'external', onPress: () => void openExternalUrl(approval.approvalUrl), testID: 'squire-approval-open' });
-  return <AgentApprovalCard tier={settled ? 'record' : 'ask'} testID="squire-approval-card" wrapTitle
+  return <AgentApprovalCard tier={settled ? 'record' : 'ask'} testID="squire-approval-card"
     askingAgent={approval.agent} agent={agent}
     title={`@${name.replace(/^@/, '')} wants to ${approval.action ?? squireApprovalAction(approval.tool, approval.detail, approval.linkKind)}`}
     subline={`${approval.tool === 'Link' ? 'Link' : 'Trusty Squire'} · ${approvalAudience(approval.owner, viewerPubkey)}`}
@@ -385,7 +385,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
   return (
     <AgentApprovalCard
       tier={pending || connecting ? 'ask' : 'record'}
-      testID={`connector-offer-${pending ? 'pending' : connecting ? 'connecting' : 'settled'}`} wrapTitle
+      testID={`connector-offer-${pending ? 'pending' : connecting ? 'connecting' : 'settled'}`}
       askingAgent={offer.agent} agent={agent}
       title={`@${agentName.replace(/^@/, '')} wants to ${offer.intent === 'reconnect' ? 'reconnect' : offer.intent === 'switch' ? 'switch' : 'add'} ${offer.connectorName}`}
       subline={offer.addressee.pubkey === viewerPubkey ? undefined : approvalAudience(offer.addressee, viewerPubkey)}
@@ -529,7 +529,6 @@ export const ChoiceCard = React.memo(function ChoiceCard({
         />
       }
       title={card.prompt}
-      wrapTitle
       subline={subline}
       sublineTestID={`choice-${card.choiceId}-subline`}
       stamp={ledgerStamp(message.timestamp)}
@@ -697,7 +696,7 @@ export const TargetBranchProposalCard = React.memo(function TargetBranchProposal
     ? resolveAgentDisplayIdentity(proposal.agentPubkey, agent).name.replace(/^@/, '')
     : undefined;
   return (
-    <AgentApprovalCard tier={settled ? 'record' : 'ask'} testID="target-branch-proposal" wrapTitle
+    <AgentApprovalCard tier={settled ? 'record' : 'ask'} testID="target-branch-proposal"
       askingAgent={{ pubkey: proposal.agentPubkey ?? '', kind: 'agent', name: askingAgent ?? 'Agent' }} agent={agent}
       title={`@${askingAgent ?? 'Agent'} wants to change the target branch`}
       subline={`${roomName ? `#${roomName}` : proposal.repository ?? 'Room'} · for you`}
@@ -759,10 +758,10 @@ function AttachmentCard({
           <Text style={[styles.attachmentFileGlyphText, styles.attachmentExpired]}>▧</Text>
         </View>
         <View style={styles.attachmentCopy}>
-          <Text numberOfLines={1} style={[styles.attachmentName, styles.attachmentExpired]}>
+          <Text style={[styles.attachmentName, styles.attachmentExpired]}>
             {attachment.name}
           </Text>
-          <Text numberOfLines={1} style={styles.attachmentMeta}>
+          <Text style={styles.attachmentMeta}>
             EXPIRED · {metadata}
           </Text>
         </View>
@@ -808,10 +807,10 @@ function AttachmentCard({
         </View>
       )}
       <View style={styles.attachmentCopy}>
-        <Text numberOfLines={1} style={styles.attachmentName}>
+        <Text style={styles.attachmentName}>
           {attachment.name}
         </Text>
-        <Text numberOfLines={1} style={styles.attachmentMeta}>
+        <Text style={styles.attachmentMeta}>
           {metadata}
         </Text>
       </View>
@@ -1618,7 +1617,6 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
               />
             }
             title={`Proposed ${CORNER_LABEL}: ${cornerProposal.title}`}
-            wrapTitle
             subline={cornerProposal.objective}
             stamp={ledgerStamp(message.timestamp)}
             body={cornerProposal.warnings.length ? cornerProposal.warnings.join('\n') : undefined}
@@ -1652,7 +1650,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             footerNoteTestID={`corner-proposal-footer-${message.id}`}
           />
         ) : message.awayWarning ? (
-          <TranscriptCard tier="record" testID="away-warning-card" wrapTitle
+          <TranscriptCard tier="record" testID="away-warning-card"
             title="Schedules and subscriptions will pause in 1 day"
             body={message.text} stamp={ledgerStamp(message.timestamp)} />
         ) : (message.authorIdentity?.pubkey ?? message.pubkey) === SYSTEM_IDENTITY_PUBKEY ? (

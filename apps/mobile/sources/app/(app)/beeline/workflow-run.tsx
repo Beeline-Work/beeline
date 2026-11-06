@@ -197,11 +197,11 @@ function AlsoRunning({ roomId, current, now }: { roomId: string; current: Workfl
           testID={`workflow-run-also-running-${other.runId}`}
         >
           <View style={styles.alsoRunningCopy}>
-            <Text numberOfLines={1} style={styles.alsoRunningName}>
+            <Text style={styles.alsoRunningName}>
               {`${workflowDisplayName(other.workflowSlug)} · ${workflowStateLabel(other.state)}`}
             </Text>
             {other.holder ? (
-              <Text numberOfLines={1} style={styles.alsoRunningHolder}>{`@${identityHandle(other.holder)}`}</Text>
+              <Text style={styles.alsoRunningHolder}>{`@${identityHandle(other.holder)}`}</Text>
             ) : null}
           </View>
           <Text style={styles.statusMeta}>{formatRunDuration(now - other.startedAt)}</Text>

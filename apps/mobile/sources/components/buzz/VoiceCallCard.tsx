@@ -20,7 +20,7 @@ export function VoiceCallCard({ call, joined, onJoin, connecting = false, viewer
     <View style={styles.row} testID="voice-call-header">
     <View style={styles.pill}>
       <View style={styles.dot} />
-      <Text style={styles.title} numberOfLines={1}>Call · {voiceDuration(now - call.startedAt)} · {voiceCallHumanNames(call, viewer)}</Text>
+      <Text style={styles.title}>Call · {voiceDuration(now - call.startedAt)} · {voiceCallHumanNames(call, viewer)}</Text>
       {!joined && (
           <Button
             onPress={onJoin}

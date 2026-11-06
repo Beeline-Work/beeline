@@ -67,7 +67,5 @@ export function webhookCallerMessage(event: SystemEvent | undefined): string | u
   const words = typeof body === 'string' ? body
     : typeof fields?.message === 'string' ? fields.message
       : typeof fields?.text === 'string' ? fields.text : JSON.stringify(body);
-  if (!words) return undefined;
-  const characters = Array.from(words);
-  return characters.length > 280 ? `${characters.slice(0, 279).join('')}…` : words;
+  return words || undefined;
 }

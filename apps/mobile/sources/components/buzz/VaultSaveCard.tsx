@@ -110,7 +110,6 @@ export function VaultSaveCard({
       tier={canType ? 'ask' : 'record'}
       title={`${agentName} wants a ${card.service} ${card.authStrategy === 'username_password' ? 'login' : 'entry'}`}
       stamp={stamp}
-      wrapTitle
       decisionNote
       identity={<IdentityMark kind="agent" seed={card.agentId} size={26} name={agentName} />}
       subline={isOwner ? 'to your vault · for you' : `to @${card.ownerName}'s vault`}

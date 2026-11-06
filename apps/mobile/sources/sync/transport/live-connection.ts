@@ -182,11 +182,17 @@ export class LiveConnection {
       throw error;
     } finally {
       // The sole connection-banner trigger: an explicit socket request outcome.
-      if (failed !== undefined && identity === this.identity) setConnectionFailure(failed);
+      if (failed !== undefined && identity === this.identity) {
+        const recovered = connectionFailed && !failed;
+        setConnectionFailure(failed);
+        // A failed request can leave an open socket (for example a write
+        // deadline). Its next answer recovers failed media on that socket too.
+        if (recovered && isOpen(this.socket)) this.publishConnected();
+      }
     }
   }
 
-  // Existing update/artifact observers use this connection generation.
+  // Existing update/artifact observers use this confirmed availability generation.
   commandState(): { generation: number; ready: boolean } {
     const ready = isOpen(this.socket);
     return { generation: this.socketEpoch, ready };
@@ -198,6 +204,9 @@ export class LiveConnection {
     options: RequestOptions,
   ): Promise<unknown> {
     if (options.signal?.aborted) return Promise.reject(this.abortError());
+    // Native close callbacks can arrive late. Settle the old socket's requests
+    // before admitting a replacement, so their deadlines cannot undo recovery.
+    if (this.socket && this.socket.readyState > 1) this.dropConnection();
     const id = String(++this.requestId);
     const read = (PHONE_READ_OPERATIONS as readonly string[]).includes(operation);
     return new Promise((resolve, reject) => {
@@ -261,6 +270,8 @@ export class LiveConnection {
 
   private ensureSocket(): Promise<void> {
     if (isOpen(this.socket)) return Promise.resolve();
+    // A newly mounted screen can discover the same delayed native close.
+    if (this.socket && this.socket.readyState > 1) this.dropConnection();
     if (this.connecting) return this.connecting.promise;
     if (this.disposed) return Promise.reject(new PhoneSocketDisconnectedError());
     const identity = this.identity;
@@ -278,14 +289,13 @@ export class LiveConnection {
         if (this.connecting !== connection || identity !== this.identity) return;
         const socket = new WebSocket(this.deps.liveUrl(), [`bearer.${token}`]);
         this.socket = socket;
-        this.socketEpoch++;
         socket.onopen = () => {
           if (this.socket !== socket) return;
           this.connecting = undefined;
           this.sendSubscribe([...this.roomReferences.keys()]);
           for (const roomId of this.viewing.keys()) this.sendViewing(roomId, true);
           this.sendPending(socket);
-          for (const listener of this.connected) listener();
+          this.publishConnected();
           resolve();
         };
         socket.onmessage = (event) => {
@@ -386,6 +396,10 @@ export class LiveConnection {
           roomStateProjections: true,
         }),
       );
+  }
+  private publishConnected(): void {
+    this.socketEpoch++;
+    for (const listener of this.connected) listener();
   }
   subscribeConnected(listener: () => void): () => void {
     this.connected.add(listener);

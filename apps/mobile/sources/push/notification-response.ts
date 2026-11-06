@@ -156,7 +156,7 @@ export type NotificationResponseRouting = {
   defaultActionIdentifier: string;
   /** Route only after the root navigator has rendered; prefetch may run sooner. */
   waitForRootReady?: () => Promise<void>;
-  /** Resolves once the landing route has committed, or reports a timeout. */
+  /** Resolves once the landing route has committed. */
   waitForInitialLanding: () => Promise<InitialLandingResult>;
   /** Claims the destination for this push: the app root's pending landing replace must not run. */
   suppressPendingInitialLanding: () => void;
@@ -169,14 +169,6 @@ export type NotificationResponseRouting = {
   consumedResponses?: ConsumedNotificationResponseStore;
   log?: (message: string) => void;
 };
-
-async function waitForCommittedLanding(routing: NotificationResponseRouting, log: (message: string) => void): Promise<void> {
-  while ((await routing.waitForInitialLanding()) === 'timeout') {
-    // Keep the response pending while Home shows its retry surface. Suppressing
-    // Home here would strand a cold tap on the empty index route.
-    log('[PUSH ROUTING] Initial landing still pending; retaining pushed destination');
-  }
-}
 
 function stringifyNotificationPayload(value: unknown): string {
   try {
@@ -256,7 +248,7 @@ export async function routeBuzzNotificationResponse(
     // the landing route has committed. Root navigator readiness alone can
     // precede that first usable destination on a killed-app push.
     if (directRoom && buzzTarget) {
-      await waitForCommittedLanding(routing, log);
+      await routing.waitForInitialLanding();
       // This payload already has the exact top-level Room and Workspace. Its
       // route carries the Workspace id, and the Room's own read persists
       // server truth. A cold AsyncStorage selection write need not keep the
@@ -272,7 +264,7 @@ export async function routeBuzzNotificationResponse(
     }
 
     if (!directRoom) {
-      await waitForCommittedLanding(routing, log);
+      await routing.waitForInitialLanding();
     }
 
     if (buzzTarget) {

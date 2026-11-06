@@ -405,15 +405,11 @@ export class MonolithSession {
     init: RequestInit = {},
     options: {
       timeoutMs?: number;
-      idempotent?: boolean;
       fetchImpl?: typeof fetch;
     } = {},
   ): Promise<Response> {
     const sessionRevision = this.sessionRevision;
-    const dispatch = () =>
-      options.fetchImpl
-        ? this.perform(input, init, options.timeoutMs, options.fetchImpl)
-        : this.dispatch(input, init, options);
+    const dispatch = () => this.perform(input, init, options.timeoutMs, options.fetchImpl);
     let response = await dispatch();
     if (response.status !== 401) return response;
     if (sessionRevision !== this.sessionRevision) throw new MonolithSessionChangedError();
@@ -421,14 +417,6 @@ export class MonolithSession {
     this.accessRestoreAttempted = true;
     response = await dispatch();
     return response;
-  }
-
-  private async dispatch(
-    input: string,
-    init: RequestInit,
-    options: { timeoutMs?: number; idempotent?: boolean },
-  ): Promise<Response> {
-    return this.perform(input, init, options.timeoutMs);
   }
 
   private async perform(

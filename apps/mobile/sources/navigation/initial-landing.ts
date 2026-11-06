@@ -7,18 +7,11 @@ import { createContext } from 'react';
  * Resolution is once per process; later taps and Back do not wait again.
  */
 
-/**
- * Bound on the wait. The landing decision reads secure storage and, on a
- * monolith build, the session. Each wait reports a timeout; the push handler
- * retains the target while local account restoration finishes.
- */
-export const INITIAL_LANDING_TIMEOUT_MS = 8000;
-
 let resolved = false;
 let suppressed = false;
 let waiters: Array<(result: InitialLandingResult) => void> = [];
 
-export type InitialLandingResult = 'committed' | 'timeout';
+export type InitialLandingResult = 'committed';
 
 /** Called after Expo Router reports the landing destination as committed. */
 export function markInitialLandingResolved(): void {
@@ -35,7 +28,7 @@ export function isInitialLandingResolved(): boolean {
 
 /**
  * A tapped push with a routable destination has claimed the navigation —
- * including the timeout path, where the landing replace is still pending.
+ * while the landing replace is still pending.
  * The app root must then not run its landing replace at all: it would
  * overwrite the notification navigation (the push opens its Room and is
  * thrown straight back to the deck).
@@ -49,22 +42,10 @@ export function isInitialLandingNavigationSuppressed(): boolean {
   return suppressed;
 }
 
-/** Resolves once the landing route has committed, or on timeout. */
-export function whenInitialLandingResolved(
-  timeoutMs: number = INITIAL_LANDING_TIMEOUT_MS,
-): Promise<InitialLandingResult> {
+/** Resolves on the committed route event; no elapsed-time inference. */
+export function whenInitialLandingResolved(): Promise<InitialLandingResult> {
   if (resolved) return Promise.resolve('committed');
-  return new Promise<InitialLandingResult>((resolve) => {
-    let done = false;
-    const finish = (result: InitialLandingResult) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      resolve(result);
-    };
-    const timer = setTimeout(() => finish('timeout'), timeoutMs);
-    waiters.push(finish);
-  });
+  return new Promise(resolve => waiters.push(resolve));
 }
 
 /** Test-only reset. */

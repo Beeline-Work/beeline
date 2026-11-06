@@ -10,7 +10,6 @@ import { subscribeClientReset, clientResetGeneration } from '@/sync/client-reset
 
 let stop: (() => void) | undefined;
 let starting: Promise<void> | undefined;
-let active: ReturnType<typeof getMessageOutbox> | undefined;
 const rejection = (error: unknown) => error instanceof MonolithPhoneOperationError && error.status >= 400 && error.status < 500 && ![408, 429].includes(error.status)
   ? error.code : undefined;
 export function startMessageOutbox(): Promise<void> {
@@ -20,6 +19,7 @@ export function startMessageOutbox(): Promise<void> {
     if (!identity || generation !== clientResetGeneration()) { starting = undefined; return; }
     const transport = new MonolithRigTransport(identity);
     const connection = sharedLiveConnection();
+    const owner = getMessageOutbox(getBuzzRuntimeConfig().monolithUrl, identity);
     configureMessageOutboxDelivery({
       send: async (event, cause) => {
         const socketGeneration = connection.diagnostics().generation;
@@ -29,19 +29,18 @@ export function startMessageOutbox(): Promise<void> {
           return result;
         }
         catch (error) {
-          if (!rejection(error) && generation === clientResetGeneration() && socketGeneration === connection.diagnostics().generation) {
-            void active?.connectionChanged(false);
-            // The reconnect owns the replay. Its failure stays pending until
-            // another real trigger, rather than starting a recovery loop.
-            if (cause === 'send') connection.reconnectAfterFailedSend(socketGeneration);
+          if (!rejection(error) && generation === clientResetGeneration()) {
+            if (socketGeneration === connection.diagnostics().generation) void owner.connectionChanged(false);
+            // The reconnect owns one replay. A failed replacement becomes
+            // explicitly retryable rather than starting a recovery loop.
+            if (cause === 'send') void connection.reconnectAfterFailedSend(socketGeneration)
+              .catch(() => owner.fail(event.id));
           }
           throw error;
         }
       },
       rejection,
     });
-    const owner = getMessageOutbox(getBuzzRuntimeConfig().monolithUrl, identity);
-    active = owner;
     const unwatch = observeMessageOutbox(owner);
     // Named integration hook for the shared connection's connected state.
     const onOutboxConnected = () => { void owner.connectionChanged(true); };
@@ -58,7 +57,7 @@ export function startMessageOutbox(): Promise<void> {
 }
 
 subscribeClientReset(() => {
-  stop?.(); stop = undefined; starting = undefined; active = undefined;
+  stop?.(); stop = undefined; starting = undefined;
   resetMessageOutboxes(); observeMessageOutbox();
   void startMessageOutbox();
 });

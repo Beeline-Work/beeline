@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   archiveActionPresentation,
   liveCardPresentation,
+  messageFailureGroups,
   messageRosterPresentation,
   RoomMessageCell,
   type ArchiveActionInputs,
@@ -15,6 +16,7 @@ import {
   useRoomMessageRenderItem,
 } from './room-message-cell';
 import type { ChatDisplayMessage } from './room-view-presentation';
+import type { MessageSendState } from './message-outbox';
 import { useTranscriptCardMotion } from '@/components/buzz/transcript-card-motion-context';
 
 vi.mock('react-native', () => ({
@@ -28,6 +30,19 @@ vi.mock('@/components/buzz/Ledger', () => ({
       ? React.createElement('day-caption-wrap', { label }, node as React.ReactNode)
       : node,
 }));
+
+it('groups only consecutive own failures and puts one summary on each last row', () => {
+  const failed = { kind: 'offline' as const, text: 'Not sent' };
+  const states = new Map<string, MessageSendState>([
+    ['a', failed], ['b', failed], ['c', failed],
+    ['pending', { kind: 'sending' as const, text: 'Sending' }], ['d', failed], ['e', failed],
+  ]);
+  const rows = ['a', 'b', 'c', 'pending', 'd', 'accepted', 'e'].map(id => ({ id, isUser: true }));
+  expect([...messageFailureGroups(rows, states)]).toEqual([
+    ['c', ['a', 'b', 'c']], ['d', ['d']], ['e', ['e']],
+  ]);
+  expect([...messageFailureGroups([{ id: 'a', isUser: false }], states)]).toEqual([]);
+});
 
 describe('RoomMessageCell', () => {
   it('updates card arrival context without rerendering unchanged message bodies', () => {

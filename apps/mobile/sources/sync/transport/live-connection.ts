@@ -355,12 +355,15 @@ export class LiveConnection {
   }
 
   /** One failed explicit send may replace its socket, then refresh open screens. */
-  reconnectAfterFailedSend(generation: number): void {
+  reconnectAfterFailedSend(generation: number): Promise<void> {
     // Concurrent failures share recovery; an old outcome cannot drop a new socket.
-    if (this.disposed || this.connecting || generation !== this.socketGeneration) return;
+    if (this.disposed) return Promise.resolve();
+    if (this.connecting) return this.connecting.promise;
+    if (generation !== this.socketGeneration) return Promise.resolve();
     this.dropConnection();
-    void this.ensureSocket().catch(() => undefined);
+    const opening = this.ensureSocket();
     this.refreshRoom();
+    return opening;
   }
 
   view(roomId: string): () => void {

@@ -2,6 +2,7 @@ import { useRoomSurfaceSubscription } from './useRoomSurfaceSubscription';
 import type { MessageSendState } from '@/buzz/message-outbox';
 
 import { appErrorCopy } from '@/buzz/app-error-copy';
+import { Modal } from '@/modal';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -208,6 +209,7 @@ export interface RoomSurfaceOutboxHandle {
   current(): RoomOutbox | null;
   failedIds: ReadonlySet<string>;
   states: ReadonlyMap<string, MessageSendState>;
+  retry(eventIds: readonly string[]): Promise<void>;
   dismiss(eventId: string): void;
 }
 
@@ -550,6 +552,14 @@ export function useRoomSurfaceSession({
   );
 
   const readRoom = useCallback(() => { void readRoomRef.current?.(); }, []);
+  const retryOutbox = useCallback(async (eventIds: readonly string[]) => {
+    try {
+      const results = await outboxRef.current?.retry(eventIds);
+      if (results?.some(Boolean)) await readRoomRef.current?.();
+    } catch (error) {
+      Modal.alert('Could not retry message', appErrorCopy(error));
+    }
+  }, []);
 
   // Focus starts a session once. A covered native-stack route retains its
   // transcript and transport; focus alone never tears them down or rebuilds them.
@@ -571,9 +581,10 @@ export function useRoomSurfaceSession({
       current: () => outboxRef.current,
       failedIds,
       states: outboxStates,
-        dismiss: dismissOutbox,
+      retry: retryOutbox,
+      dismiss: dismissOutbox,
     }),
-    [dismissOutbox, failedIds, outboxStates],
+    [dismissOutbox, failedIds, outboxStates, retryOutbox],
   );
 
   const retryHydration = useCallback(() => {

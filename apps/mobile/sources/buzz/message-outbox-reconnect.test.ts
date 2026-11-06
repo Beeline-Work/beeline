@@ -97,7 +97,7 @@ it('SEND-RECONNECT reopens once and flushes a send that timed out while the app 
   expect(replacement.requests()).toHaveLength(2);
 });
 
-it('a failed reconnect send remains visibly pending without another reconnect or replay loop', async () => {
+it('a failed reconnect send becomes a failure without another reconnect or replay loop', async () => {
   const { room, first, connection, enqueue } = await setup();
   const event = await enqueue(); const sending = room.send(event.id); await tick();
   // A concurrent read must not suppress the send owner's recovery.
@@ -107,9 +107,9 @@ it('a failed reconnect send remains visibly pending without another reconnect or
   const replacement = Socket.instances[1]!; replacement.open(); await tick();
   for (const request of replacement.requests().filter(request => request.op === 'readRoom')) replacement.reply(request, {});
   await vi.advanceTimersByTimeAsync(15_000);
-  expect(room.get(event.id)).toBeDefined();
+  expect(room.state(event.id)?.text).toBe('Not sent');
   await vi.advanceTimersByTimeAsync(3 * 60 * 60 * 1000);
-  expect(room.state(event.id)?.text).toBe('Not sent yet');
+  expect(room.state(event.id)?.text).toBe('Not sent');
   expect(Socket.instances).toHaveLength(2);
   expect(replacement.requests().filter(request => request.op === 'sendRoomMessage')).toHaveLength(1);
 });
@@ -133,9 +133,10 @@ it('a failed replacement opening ends recovery after that one connection attempt
   await vi.advanceTimersByTimeAsync(15_000); await sending;
   expect(Socket.instances).toHaveLength(2);
   Socket.instances[1]!.drop(); await tick();
+  expect(room.state(event.id)?.text).toBe('Not sent');
   await vi.advanceTimersByTimeAsync(3 * 60 * 60 * 1000);
   expect(Socket.instances).toHaveLength(2);
-  expect(room.state(event.id)?.text).toBe('Not sent yet');
+  expect(room.state(event.id)?.text).toBe('Not sent');
 });
 
 it('a server refusal settles without replacing its answered socket', async () => {
@@ -144,7 +145,37 @@ it('a server refusal settles without replacing its answered socket', async () =>
   first.onmessage?.({ data: JSON.stringify({ t: 'res', id: first.requests()[0].id, ok: false,
     error: { code: 'access_denied', message: 'Room access denied', retryable: false } }) });
   await sending;
-  expect(room.state(event.id)).toEqual({ kind: 'refused', text: 'Not sent · Room access denied' });
+  expect(room.state(event.id)).toEqual({ kind: 'refused', text: 'Not sent: Room access denied', reason: 'Room access denied' });
   expect(Socket.instances).toHaveLength(1);
   expect(first.readyState).toBe(1);
+});
+
+it('an idle-screen replacement failure settles the send even when a read opened the replacement first', async () => {
+  const { room, first, enqueue } = await setup();
+  const event = await enqueue(); const sending = room.send(event.id); await tick();
+  first.drop(); await sending; await tick();
+  expect(Socket.instances).toHaveLength(2);
+  Socket.instances[1]!.drop(); await tick();
+  expect(room.state(event.id)?.text).toBe('Not sent');
+  expect(Socket.instances).toHaveLength(2);
+});
+
+it('an explicit Retry reconnects a failed offline message and preserves its id', async () => {
+  const { room, enqueue } = await setup();
+  const event = await enqueue(); const sending = room.send(event.id); await tick();
+  await vi.advanceTimersByTimeAsync(15_000); await sending;
+  Socket.instances[1]!.drop(); await tick();
+  expect(room.state(event.id)?.text).toBe('Not sent');
+  const retrying = room.retry([event.id]); await tick();
+  expect(room.state(event.id)?.kind).toBe('sending');
+  expect(Socket.instances).toHaveLength(3);
+  const retrySocket = Socket.instances[2]!; retrySocket.open(); await tick();
+  const sends = retrySocket.requests().filter(request => request.op === 'sendRoomMessage');
+  expect(sends).toHaveLength(1);
+  expect(sends[0].args.messageId).toBe(event.id);
+  for (const request of retrySocket.requests()) retrySocket.reply(request, { messageId: event.id });
+  await retrying; await tick();
+  expect(room.list()).toHaveLength(0);
+  await vi.advanceTimersByTimeAsync(3 * 60 * 60 * 1000);
+  expect(Socket.instances).toHaveLength(3);
 });

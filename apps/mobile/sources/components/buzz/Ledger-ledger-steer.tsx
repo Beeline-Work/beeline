@@ -4,6 +4,7 @@ import { webhookCallerMessage } from '@/buzz/system-lines';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { MonoMarkdown } from './MonoMarkdown';
+import { ContentTarget } from './IndexRow';
 import type { SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
 import { LedgerBodyProps, ledgerEntryRhythm, Byline, SystemLineCutSearch, webFitsTwoLines, startCutSearch, closedCutLength } from './Ledger';
 import { styles } from './Ledger';
@@ -22,6 +23,7 @@ import { styles } from './Ledger';
 export function LedgerSteer({
   itemId,
   bodyText,
+  pending = false,
   bodyTestID,
   byline,
   chronological = false,
@@ -35,7 +37,7 @@ export function LedgerSteer({
   onChannelReference,
   codeRoomId,
   onOpenCode,
-}: Omit<LedgerBodyProps, 'marginalia' | 'machineNoise' | 'typewriter' | 'settleFrom'>) {
+}: Omit<LedgerBodyProps, 'marginalia' | 'machineNoise' | 'typewriter' | 'settleFrom'> & { pending?: boolean }) {
   // Deliberately NO lead split here: a human message never takes the
   // emphasized lead treatment. Weight, size, and tone are exactly the agent
   // body's; ownership reads from the byline alone.
@@ -52,7 +54,7 @@ export function LedgerSteer({
       {replyReference}
       {bodyText ? (
         bodyAction ? (
-          <Pressable
+          <ContentTarget
             accessibilityLabel={bodyAction.accessibilityLabel}
             accessibilityRole="button"
             onPress={bodyAction.onPress}
@@ -66,10 +68,10 @@ export function LedgerSteer({
               onChannelReference={onChannelReference}
               codeSource={codeRoomId ? { roomId: codeRoomId, messageId: itemId } : undefined}
               onOpenCode={onOpenCode}
-              textStyle={styles.steerText}
+              textStyle={styles.steerText(pending)}
               testID={bodyTestID}
             />
-          </Pressable>
+          </ContentTarget>
         ) : (
           <MonoMarkdown
             markdown={bodyText}
@@ -79,7 +81,7 @@ export function LedgerSteer({
             onChannelReference={onChannelReference}
             codeSource={codeRoomId ? { roomId: codeRoomId, messageId: itemId } : undefined}
             onOpenCode={onOpenCode}
-            textStyle={styles.steerText}
+            textStyle={styles.steerText(pending)}
             testID={bodyTestID}
           />
         )

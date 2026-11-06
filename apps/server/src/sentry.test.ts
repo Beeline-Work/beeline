@@ -623,8 +623,8 @@ it('WORKFLOW-ROLE-REFUSAL / BEELINE-SENTRY-REFUSALS / APP-REFUSAL-5 / VIDEO-PREV
         await flushServerErrors();
         providerFault = 'unexpected';
         const unexpected = await call({...input,appId:'app:slack',tool:'SLACK_FETCH',arguments:{}},'executeAppTool');
-        assert.equal(unexpected.status,503);
-        assert.ok(unexpected.body.error.includes('Insufficient Permission'));
+        assert.deepEqual(unexpected,{status:200,body:{status:'executed',data:{successful:false,
+          error:'App tool execution failed: '+JSON.stringify({error:{code:500,message:'Insufficient Permission',status:'INTERNAL'}})}}});
         providerFault = 'http500';
         const outage = await call({...input,appId:'app:slack',tool:'SLACK_FETCH',arguments:{}},'executeAppTool');
         assert.equal(outage.status,503);
@@ -650,10 +650,9 @@ it('WORKFLOW-ROLE-REFUSAL / BEELINE-SENTRY-REFUSALS / APP-REFUSAL-5 / VIDEO-PREV
     expect(result, result.error).toMatchObject({ code: 0 });
     const events = envelopes.flatMap(envelope => envelope.split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line)))
       .filter(item => item.exception);
-    expect(events).toHaveLength(4);
+    expect(events).toHaveLength(3);
     expect(events.map(event => event.exception.values[0].value).sort()).toEqual([
       'App provider request failed (500): upstream broken',
-      'App tool execution failed: '+JSON.stringify({error:{code:500,message:'Insufficient Permission',status:'INTERNAL'}}),
       'queued attachments exceed the size cap',
       'Show the video preview with Post and Cancel, and wait for the person to tap Post before uploading.',
     ].sort());

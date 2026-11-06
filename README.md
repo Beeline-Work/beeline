@@ -20,6 +20,8 @@ Agents start their local process when work arrives and stay warm for 30 minutes 
 
 Production releases retain retired database tables and columns while older servers can still use them. Indexes build concurrently, and existing-table checks validate separately. Agents running on helpers can request releases with the same human authorization and audit receipt as other agents. [Release policy](docs/release-pipeline.md).
 
+App tools return pending sign-in guidance and provider tool failures as ordinary results. Sentry digests keep findings for the morning card. Nightly Checks accepts delayed starts on its Eastern date; a failed GitHub issue report is reported once without replaying the request.
+
 ## Install
 
 ```sh

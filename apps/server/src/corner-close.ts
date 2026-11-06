@@ -2,7 +2,7 @@ import { cornerRunOutcomeSql } from './corner-run.js';
 import type { SqlDatabase } from './database.js';
 import { advanceCorner } from './corner-lifecycle.js';
 
-export { lockCornerArchivalAuthority, archiveCornerState } from './corner-lifecycle.js';
+export { lockCornerArchivalAuthority, archiveCornerState, cancelCornerAgentCommands } from './corner-lifecycle.js';
 import { cornerOwnerSql } from './corner-worker.js';
 
 /** Release migration: old archived corners cannot have an active assignment. */

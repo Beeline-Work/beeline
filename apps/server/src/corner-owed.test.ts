@@ -467,11 +467,8 @@ describe('corner_owed', () => {
     // indexed call-site cards. These scans do not recover owed facts.
     const callsiteScans = messageScans.filter((scan) => scan.alias.startsWith('callsite'));
     expect(callsiteScans).toHaveLength(2);
-    // The run state is the newest handoff card (indexed by corner and seq),
-    // and a derived worker wait reads its report card by primary key and the
-    // worker's newest human report through separate origin, local-legacy and
-    // command-forwarded legacy indexes. None recovers owed facts.
-    expect(messageScans.filter((scan) => scan.alias.startsWith('run_card'))).toHaveLength(2);
+    // The machine state is indexed on corner_facts; no lifecycle cards are scanned.
+    expect(messageScans.filter((scan) => scan.alias.startsWith('run_card'))).toHaveLength(0);
     expect(messageScans.filter((scan) => scan.alias === 'visible')).toHaveLength(1);
     expect(messageScans.filter((scan) => scan.alias !== 'item' && scan.alias !== 'visible' &&
       !isDispatchSource(scan.alias) && !scan.alias.startsWith('callsite') &&

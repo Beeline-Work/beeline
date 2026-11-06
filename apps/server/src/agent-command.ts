@@ -544,7 +544,8 @@ export function currentCornerCommandTargetSql(command: string): string {
     AND (${command}.review_context->>'briefRevision')::int IS NOT DISTINCT FROM
       COALESCE((SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=${corner}),0)))
     AND NOT (${command}.state='pending' AND ${command}.review_context IS NOT NULL
-      AND ${command}.review_context->>'purpose' IS NULL AND ${command}.agent_id IS DISTINCT FROM (
+      AND ${command}.review_context->>'purpose' IS NULL
+      AND ${command}.reason IN ('corner_review_dispatch','subscribed_event') AND ${command}.agent_id IS DISTINCT FROM (
         SELECT ${cornerReviewerSql('target', 'target_parent')} FROM rooms target
         JOIN rooms target_parent ON target_parent.id=target.parent_id WHERE target.id=${corner}))
     AND NOT EXISTS(SELECT 1 FROM messages target_source WHERE target_source.id=${command}.source_message_id

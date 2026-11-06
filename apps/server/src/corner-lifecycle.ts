@@ -242,10 +242,11 @@ export type CornerMachineFacts = CornerStateFacts & {
   approved?: boolean;
   mergeHeld?: boolean;
   mergeConflictDelivered?: boolean;
+  checkDelivered?: boolean;
   draftReadyFailure?: boolean;
   waitReason?: 'blocked' | 'user_action' | 'question';
   reviewerConfigured?: boolean;
-  reviewEnded?: { id: string; findings?: string };
+  reviewEnded?: { id: string; findings?: string; reported?: boolean };
   idleSince?: string;
   idleEligible?: boolean;
   checkSourceId?: string;
@@ -332,9 +333,11 @@ export function transitionCorner(
       f.lifecycle?.checksSummary?.status === 'unknown' && f.lifecycle.checksSummary.fetchStartedAt === undefined
       ? current.headSha : undefined);
   const pullRequest = f.lifecycle?.pr?.number;
+  const redKey = `red:${headSha}:${f.checkAttempt ?? 0}:${f.checkFollowup || (event.kind === 'checks' && event.followup) ? f.checkSourceId : 'first'}`;
   const effects = (current.headSha === headSha && current.pullRequest === pullRequest
     ? [...(current.effects ?? [])] : [])
-    .filter(key => key !== `merge-conflict:${headSha ?? ''}` || f.mergeConflictDelivered !== false);
+    .filter(key => (key !== `merge-conflict:${headSha ?? ''}` || f.mergeConflictDelivered !== false) &&
+      (key !== redKey || f.checkDelivered !== false));
   const base = {
     ...(headSha ? { headSha } : {}),
     ...(pullRequest ? { pullRequest } : {}),
@@ -413,7 +416,7 @@ export function transitionCorner(
   if (checks === 'failing' && f.checkSourceId && (!f.turnRunning || event.kind === 'checks'))
     wake(
       'checks-failed',
-      `red:${headSha}:${f.checkAttempt ?? 0}:${f.checkFollowup || (event.kind === 'checks' && event.followup) ? f.checkSourceId : 'first'}`,
+      redKey,
     );
   if (f.lifecycle?.pr?.mergeability === 'dirty') wake('merge-conflict');
   if (
@@ -559,7 +562,7 @@ export async function lockCornerArchivalAuthority(database: SqlDatabase): Promis
  * Take command locks before the room's archival UPDATE/FOR UPDATE lock:
  * command output already holds its command when dispatch locks rooms FOR SHARE.
  */
-async function cancelCornerAgentCommands(database: SqlDatabase, cornerId: string): Promise<void> {
+export async function cancelCornerAgentCommands(database: SqlDatabase, cornerId: string): Promise<void> {
   await lockCornerArchivalAuthority(database);
   const active = await database.query<CommandRow>(
     `SELECT * FROM agent_commands
@@ -660,8 +663,8 @@ export async function advanceCorner(
     const ended = head ? await blockingReview(db, cornerId, head) : undefined;
     const completed = head
       ? (
-          await db.query<{ id: string; findings: string | null }>(
-            `SELECT command.id,result.text findings
+          await db.query<{ id: string; findings: string | null; reported: boolean }>(
+            `SELECT command.id,result.text findings,COALESCE(command.private_payload->>'reportedOutcome',command.report_outcome) IN ('failed','blocked') reported
       FROM agent_commands command LEFT JOIN messages result ON result.id=command.result_message_id
       WHERE command.room_id=$1 AND command.review_context->>'headSha'=$2
         AND command.review_context->'pullRequest'=$3::jsonb AND command.review_context->>'purpose' IS NULL
@@ -684,8 +687,10 @@ export async function advanceCorner(
           )
         ).rows[0]?.text
       : undefined;
+    const attempt = (corner.lifecycle.checksSummary as { attempt?: number } | undefined)?.attempt ?? 0;
+    const cachedCheckId = createHash('sha256').update(`cached-checks:${cornerId}:${corner.lifecycle.pr?.number}:${head}:${attempt}`).digest('hex');
     const active = (
-      await db.query<{ worker: boolean; reviewer: boolean; conflict: boolean }>(
+      await db.query<{ worker: boolean; reviewer: boolean; conflict: boolean; checks: boolean }>(
         `SELECT
       EXISTS(SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2
         AND state IN ('pending','claimed') AND action IN ('input','resume') AND reason<>'report' AND ${currentCornerCommandTargetSql('agent_commands')}) worker,
@@ -697,13 +702,17 @@ export async function advanceCorner(
         AND COALESCE((review_context->>'briefRevision')::int,0)=COALESCE((SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=$1),0)) reviewer,
       EXISTS(SELECT 1 FROM agent_commands delivered JOIN messages source ON source.id=delivered.source_message_id
         WHERE delivered.room_id=$1 AND delivered.reason='corner_merge_conflict'
-          AND source.system_event->'object'->>'headSha'=$4) conflict`,
+          AND source.system_event->'object'->>'headSha'=$4) conflict,
+      EXISTS(SELECT 1 FROM agent_commands delivered WHERE delivered.room_id=$1 AND delivered.reason='corner_check'
+        AND (delivered.source_message_id=$6 OR delivered.id=$7)) checks`,
         [
           cornerId,
           corner.worker_agent_id,
           corner.configured_reviewer_id,
           head ?? null,
           JSON.stringify(corner.lifecycle.pr?.number ?? null),
+          event.kind === 'checks' ? event.sourceMessageId : checkSource?.id ?? null,
+          cachedCheckId,
         ],
       )
     ).rows[0];
@@ -731,6 +740,7 @@ export async function advanceCorner(
       approved: gate?.approved,
       mergeHeld: gate?.held,
       mergeConflictDelivered: active?.conflict,
+      checkDelivered: active?.checks,
       draftReadyFailure: (corner.lifecycle as CornerLifecycleView & { draftReadyFailure?: { headSha?: string } }).draftReadyFailure?.headSha === head && Boolean(head),
       reviewerConfigured: independentReviewerConfigured(corner),
       ...(/^blocked:/.test(waitText ?? '') ? { waitReason: 'blocked' as const } : {}),
@@ -738,6 +748,7 @@ export async function advanceCorner(
         ? {
             reviewEnded: {
               id: ended ?? completed!.id,
+              reported: completed?.reported,
               ...(ended
                 ? { findings: evidence ?? 'The reviewer requested changes on this head.' }
                 : {}),
@@ -933,7 +944,7 @@ export async function advanceCorner(
           );
           break;
         case 'review-no-verdict':
-          result = await noteMissingReviewVerdict(db, cornerId, corner, head!);
+          result = await noteMissingReviewVerdict(db, cornerId, corner, head!, facts.reviewEnded?.reported);
           break;
         case 'land':
           if (corner.worker_agent_id) {
@@ -1155,10 +1166,11 @@ async function noteMissingReviewVerdict(
   cornerId: string,
   corner: CornerRow,
   headSha: string,
+  reported = false,
 ): Promise<Applied> {
   const text = `blocked: the reviewer ended without a verdict on head ${headSha}; arrange review or restore reviewer access`;
   const key = `${cornerId}:${corner.lifecycle.pr?.number}:${headSha}`;
-  await reportToCommander(
+  if (!reported) await reportToCommander(
     db,
     cornerId,
     SYSTEM_IDENTITY_ID,

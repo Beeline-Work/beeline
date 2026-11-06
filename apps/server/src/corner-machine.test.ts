@@ -28,72 +28,18 @@ const run = (f: CornerMachineFacts, event: CornerEvent = observe, current: Corne
 
 describe('corner transition table', () => {
   it.each([
-    [
-      'scratch open',
-      facts,
-      { kind: 'open' },
-      'idle',
-      undefined,
-    ],
+    ['scratch open', facts, { kind: 'open' }, 'idle', undefined],
     ['worker executing', { ...facts, turnRunning: true }, observe, 'working', undefined],
-    [
-      'worker ends without PR',
-      { ...facts, idleSince: '1', idleEligible: true },
-      observe,
-      'idle',
-      undefined,
-    ],
-    [
-      'push after handoff',
-      { ...green, lifecycle: { ...green.lifecycle!, checks: 'pending' } },
-      { kind: 'push', headSha: head, contents: {} },
-      'review',
-      undefined,
-    ],
-    [
-      'first failing job',
-      { ...green, lifecycle: { ...green.lifecycle!, checks: 'failing' }, checkSourceId: 'red' },
-      { kind: 'checks', result: 'failing', sourceMessageId: 'red' },
-      'working',
-      'checks-failed',
-    ],
+    ['worker ends without PR', { ...facts, idleSince: '1', idleEligible: true }, observe, 'idle', undefined],
+    ['push after handoff', { ...green, lifecycle: { ...green.lifecycle!, checks: 'pending' } }, { kind: 'push', headSha: head, contents: {} }, 'review', undefined],
+    ['first failing job', { ...green, lifecycle: { ...green.lifecycle!, checks: 'failing' }, checkSourceId: 'red' }, { kind: 'checks', result: 'failing', sourceMessageId: 'red' }, 'working', 'checks-failed'],
     ['all green', green, observe, 'review', 'review'],
-    [
-      'corner/Room reviewer already running',
-      { ...green, reviewerActive: true },
-      observe,
-      'review',
-      undefined,
-    ],
-    [
-      'review requests changes',
-      { ...green, reviewEnded: { id: 'review', findings: 'FAIL: missing test' } },
-      observe,
-      'working',
-      'review-findings',
-    ],
-    [
-      'review ends without verdict',
-      { ...green, reviewEnded: { id: 'review' } },
-      observe,
-      'working',
-      'review-no-verdict',
-    ],
+    ['corner/Room reviewer already running', { ...green, reviewerActive: true }, observe, 'review', undefined],
+    ['review requests changes', { ...green, reviewEnded: { id: 'review', findings: 'FAIL: missing test' } }, observe, 'working', 'review-findings'],
+    ['review ends without verdict', { ...green, reviewEnded: { id: 'review' } }, observe, 'working', 'review-no-verdict'],
     ['no reviewer', { ...green, reviewerConfigured: false }, observe, 'review', 'review-gap'],
-    [
-      'yes before green continues landing',
-      { ...green, approved: true },
-      observe,
-      'working',
-      'land',
-    ],
-    [
-      'landing refusal',
-      green,
-      { kind: 'merge-refused', headSha: head, reason: 'base moved' },
-      'working',
-      'merge-refused',
-    ],
+    ['yes before green continues landing', { ...green, approved: true }, observe, 'working', 'land'],
+    ['landing refusal', green, { kind: 'merge-refused', headSha: head, reason: 'base moved' }, 'working', 'merge-refused'],
     ['PR closes unmerged', facts, { kind: 'pull-request-closed', number: 7 }, 'idle', undefined],
     ['confirmed merge', green, { kind: 'merged', contents: {} }, 'archived', undefined],
     ['authorized close', facts, { kind: 'closed' }, 'archived', undefined],
@@ -163,6 +109,14 @@ describe('corner transition table', () => {
       expect(first.wakes).toHaveLength(1);
       expect(run(f, observe, { ...first.state, effects: [first.wakes[0]!.key] }).wakes).toEqual([]);
     }
+  });
+  it('repairs a lost failed-check wake without repeating a retained command', () => {
+    const red = { ...green, lifecycle: { ...green.lifecycle!, checks: 'failing' as const }, checkSourceId: 'red' };
+    const first = run(red);
+    const delivered = { ...first.state, effects: [first.wakes[0]!.key] };
+    expect(run({ ...red, checkDelivered: true }, observe, delivered).wakes).toEqual([]);
+    expect(run({ ...red, checkDelivered: false }, observe, delivered).wakes.map(wake => wake.kind))
+      .toEqual(['checks-failed']);
   });
   it('rejects old-head and duplicate check deliveries', () => {
     expect(

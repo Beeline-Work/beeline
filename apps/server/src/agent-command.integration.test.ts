@@ -510,9 +510,8 @@ beforeEach(async () => {
   );
   await db.query(`DELETE FROM live_outputs WHERE kind<>'presence'`);
   await db.query(`DELETE FROM agent_commands`);
-  // The corner's workflow run and its wakes commit together; resetting one
-  // resets the other.
-  await db.query(`DELETE FROM messages WHERE card_type='corner-workflow-handoff'`);
+  // Reopen this shared fixture with no effect receipts from the previous case.
+  await db.query(`UPDATE corner_facts SET machine=NULL`);
   await db.query(`DELETE FROM agent_turns`);
   await db.query(`DELETE FROM corner_merge_approvals`);
   await db.query(`DELETE FROM corner_brief_revisions`);
@@ -1012,12 +1011,8 @@ it('wakes the opener for failed checks even after a reviewer turn and retries a 
     expect.objectContaining({ reason: 'corner_check', sourceMessageId: note.id }),
   ]);
   expect((await readAgentCommands(db,C,A)).commands).toHaveLength(0);
-  // The wake and the workflow transition commit together, so a command can
-  // only be lost in a corner with no run record: one opened before the
-  // workflow run existed. Its run is rebuilt from the lifecycle and the
-  // missing wake re-sent.
+  // A deleted wake is recovered from the recorded checks despite its effect receipt.
   await db.query(`DELETE FROM agent_commands WHERE room_id=$1`, [C]);
-  await db.query(`DELETE FROM messages WHERE room_id=$1 AND card_type='corner-workflow-handoff'`, [C]);
   await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(1);
   expect(await commands(B, C)).toHaveLength(1);
   await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(0);
@@ -1179,7 +1174,7 @@ it('routes subscribed events, grants and changed corner checks through actions',
   expect(resume?.action).toBe('resume');
   expect(resume?.turnRequestId).toBe(c!.turnRequestId);
   await db.query(
-    `UPDATE corner_github_cache SET lifecycle='{"checks":"passing"}' WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle='{"checks":"passing","pr":{"number":1,"headSha":"action-head"}}' WHERE corner_id=$1`,
     [C],
   );
   await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
@@ -1198,7 +1193,7 @@ it('routes subscribed events, grants and changed corner checks through actions',
     });
   expect(await commands(B, C)).toHaveLength(0);
   expect(await commands(A, C)).toHaveLength(1);
-  expect((await commands(A, C))[0]?.reason).toBe('subscribed_event');
+  expect((await commands(A, C))[0]?.reason).toBe('corner_review_dispatch');
 
   await db.query(`DELETE FROM agent_commands`);
   await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [
@@ -1206,7 +1201,7 @@ it('routes subscribed events, grants and changed corner checks through actions',
     A,
   ]);
   await db.query(
-    `UPDATE corner_github_cache SET lifecycle='{"checks":"failing"}' WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle='{"checks":"failing","pr":{"number":1,"headSha":"action-head"}}' WHERE corner_id=$1`,
     [C],
   );
   await systemLine(db, {
@@ -1221,7 +1216,7 @@ it('routes subscribed events, grants and changed corner checks through actions',
   await db.query(`DELETE FROM agent_commands`);
   await phone.execute('updateRoom', { roomId: R, reviewerAgentId: null }, H);
   await db.query(
-    `UPDATE corner_github_cache SET lifecycle='{"checks":"passing"}' WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle='{"checks":"passing","pr":{"number":1,"headSha":"action-head"}}' WHERE corner_id=$1`,
     [C],
   );
   await systemLine(db, {
@@ -1251,7 +1246,7 @@ it('holds the green review wake while the corner worker still holds a live turn'
   await claim(workerCommand!, 'gw');
 
   await db.query(
-    `UPDATE corner_github_cache SET lifecycle='{"checks":"passing"}' WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle='{"checks":"passing","pr":{"number":1,"headSha":"action-head"}}' WHERE corner_id=$1`,
     [C],
   );
   await systemLine(db, {
@@ -1261,13 +1256,12 @@ it('holds the green review wake while the corner worker still holds a live turn'
     kind: 'check-passed',
   });
 
-  // The reviewer's command exists and is durable, but is not delivered while
-  // the worker's lease is live: two agents must not stream into one corner.
+  // The machine waits for the worker's terminal receipt before assigning review.
   await expect(
     db
       .query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2`, [C, A])
       .then((r) => r.rowCount),
-  ).resolves.toBe(1);
+  ).resolves.toBe(0);
   expect((await readAgentCommands(db,C,A)).commands).toHaveLength(0);
 
   // Only the worker result releases the review wake.
@@ -1277,7 +1271,7 @@ it('holds the green review wake while the corner worker still holds a live turn'
   // This suite shares one store, so leave none of the above behind.
   await db.query(`DELETE FROM agent_commands`);
   await db.query(
-    `UPDATE corner_github_cache SET lifecycle='{"checks":"passing"}' WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle='{"checks":"passing","pr":{"number":1,"headSha":"action-head"}}' WHERE corner_id=$1`,
     [C],
   );
   await phone.execute('updateRoom', { roomId: R, reviewerAgentId: null }, H);
@@ -1289,7 +1283,7 @@ it('wakes the implementer without consuming a green transition when the configur
     A,
   ]);
   await db.query(
-    `UPDATE corner_github_cache SET lifecycle='{"checks":"passing"}' WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle='{"checks":"passing","pr":{"number":1,"headSha":"action-head"}}' WHERE corner_id=$1`,
     [C],
   );
   await systemLine(db, {
@@ -1346,8 +1340,7 @@ it('keeps reviewer subscriptions mandatory and reconciles an unreviewed green he
   });
   expect(await commands(A, C)).toEqual([
     expect.objectContaining({
-      rootSourceMessageId: source.id,
-      reason: 'subscribed_event',
+      reason: 'corner_review_dispatch',
       private: true,
       source: expect.objectContaining({ body: expect.stringContaining('Current handoff target: PR #17') }),
     }),
@@ -1385,7 +1378,7 @@ it('recovers a green head whose earlier GitHub note never dispatched its reviewe
     subscriptions: 1,
     commands: 1,
   });
-  expect(await commands(A, C)).toEqual([expect.objectContaining({ reason: 'subscribed_event' })]);
+  expect(await commands(A, C)).toEqual([expect.objectContaining({ reason: 'corner_review_dispatch' })]);
   await expect(reconcileConfiguredCornerReviewers(db, R)).resolves.toEqual({
     subscriptions: 0,
     commands: 0,
@@ -2330,15 +2323,18 @@ it('superseded review output cancels its command and turn through the terminal o
   await claim(command!);
   await db.query(`UPDATE agent_commands SET review_context=$2::jsonb WHERE id=$1`,
     [command!.id, JSON.stringify({cornerId:corner,headSha:'obsolete',pullRequest:1})]);
-  const state = async () => (await phone.readCorners(R,H))!.corners.find(row => row.corner.id===corner)!.state;
-  expect(await state()).toBe('working');
+  const state = async () => {
+    await advanceCorner(db, corner, { kind: 'reconcile' });
+    return (await phone.readCorners(R,H))!.corners.find(row => row.corner.id===corner)!.state;
+  };
+  expect(await state()).toBe('review');
   await result(command!, '@hoots Review output for the old head');
   expect((await db.query(`SELECT state FROM agent_commands WHERE id=$1`, [command!.id])).rows)
     .toEqual([{state:'cancelled'}]);
   expect((await db.query(`SELECT status,failure_reason FROM agent_turns
     WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`, [corner,command!.turnRequestId,A])).rows)
     .toEqual([{status:'cancelled',failure_reason:'superseded_review'}]);
-  expect(await state()).not.toBe('working');
+  expect(await state()).toBe('idle');
   await expect(daemon.execute('postAgentTurnReceipt', {roomId:corner,requestId:command!.turnRequestId,
     generationId:'g1',status:'complete'}, A, await helperOwner(A))).rejects.toThrow();
   expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,

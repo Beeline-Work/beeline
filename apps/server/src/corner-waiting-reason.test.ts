@@ -85,7 +85,7 @@ it('R1: an agent-commander report retains selection when a human blocker is also
     waiting_item_id: only.item_id, waiting_reason: 'question' as const, waiting_kind: 'report' as const,
     lifecycle: { lifecycle: 'in-review', checks: 'pending' as const },
   };
-  expect(cornerRowState({ ...pending }).state).toBe('review');
+  expect(cornerRowState({ ...pending }).state).toBe('waiting');
   expect(cornerRowState({
     ...pending,
     lifecycle: { lifecycle: 'working', checks: 'unknown' },
@@ -159,19 +159,19 @@ it('Reproduction R1: a lone merge hold shows review while checks run and waits o
     itemId: createHash('sha256').update('corner-hold:hold').digest('hex'),
     blocker: { kind: 'merge-hold', personId: 'person', personName: 'Lunchbox' } });
 
-  // A later agent-commander report still defers to pending checks beside a hold.
+  // A genuine agent-commander blocker stays visible while checks run.
   await db.exec(`INSERT INTO agent_commands VALUES('report','44444444-4444-4444-8444-444444444444','agent','{"kind":"report","fromRoomId":"33333333-3333-4333-8333-333333333333","authorId":"worker","text":"blocked: choose"}','2026-01-02')`);
   await reportCard();
   const report = await query();
   expect(report).toMatchObject({ item_id: 'report' });
-  expect(project(report, pending).state).toBe('review');
+  expect(project(report, pending).state).toBe('waiting');
 
   // A later human question is not shadowed by the older hold.
   await db.exec(`DELETE FROM agent_commands; INSERT INTO messages(id,card_type) VALUES('ask','choice');
     INSERT INTO corner_owed VALUES('33333333-3333-4333-8333-333333333333','ask','person','2026-01-03',true,NULL);`);
   const question = await query();
   expect(question).toMatchObject({ item_id: 'ask', kind: 'message' });
-  expect(project(question, pending)).toEqual({ state: 'review' });
+  expect(project(question, pending)).toMatchObject({ state: 'waiting', reason: 'question', itemId: 'ask' });
 });
 
 

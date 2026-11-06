@@ -3,6 +3,7 @@ import { setRoomEventSubscriptions, migrateMembershipSubscriptions } from './age
 import { cornerObjectiveSql } from './corner-objective.js';
 import { cornerCommissionerSql, cornerKindSql, cornerRequestSql } from './corner-opening.js';
 import { cornerRunStateSql } from './corner-run.js';
+import { advanceCorner } from './corner-lifecycle.js';
 import * as approvalSources from './approval-card-source.js';
 import * as serverSentry from './sentry.js';
 import { createAgentCommand, claimAgentCommand } from './agent-command.js';
@@ -658,14 +659,9 @@ describe('monolith integration', () => {
   // These fixtures test projections and lifecycle behavior downstream of intake.
   // Supply an explicit command first. Routing/refusal tests call DaemonService
   // directly in agent-command.integration.test.ts and never use this helper.
-  const settleCornerWorkPastGap = async (cornerId: string) => {
+  const settleCornerWork = async (cornerId: string) => {
     await database.query(`UPDATE agent_commands SET state='complete' WHERE room_id=$1`, [cornerId]);
     await database.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1`, [cornerId]);
-    // These projection fixtures begin after the approved turn gap has elapsed.
-    await database.query(
-      `UPDATE agent_turns SET ended_at=now()-interval '40 seconds' WHERE room_id=$1 AND status<>'working'`,
-      [cornerId],
-    );
   };
   const daemonOperation = async (name: string, payload: unknown, token = daemonToken) => {
     const input = { ...(payload as Record<string, unknown>) };
@@ -9052,7 +9048,7 @@ describe('monolith integration', () => {
       objective: 'Pick a shape for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
-    await settleCornerWorkPastGap(cornerId);
+    await settleCornerWork(cornerId);
     // Someone else started it: the viewer neither commissioned nor follows it.
     await database.query(`UPDATE agent_commands SET root_source_message_id='agent-initiated' WHERE room_id=$1 AND reason='corner_objective'`, [
       cornerId,
@@ -9061,8 +9057,9 @@ describe('monolith integration', () => {
       cornerId,
       HUMAN,
     ]);
-    const listed = async () =>
-      (
+    const listed = async () => {
+      await advanceCorner(database, cornerId, { kind: 'reconcile' });
+      return (
         (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
           chats: Array<{
             room: { id: string };
@@ -9072,6 +9069,7 @@ describe('monolith integration', () => {
       ).chats
         .find((item) => item.room.id === ROOM)
         ?.openCorners.find((item) => item.id === cornerId);
+    };
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)
        VALUES('chat-mine-untagged',$1,$2,'Still thinking.',now()+interval '1 second')`,
@@ -9110,14 +9108,15 @@ describe('monolith integration', () => {
       objective: 'Pick a size for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
-    await settleCornerWorkPastGap(cornerId);
+    await settleCornerWork(cornerId);
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)
        VALUES('busy-chatter',$1,$2,'Chatter.',now()+interval '5 seconds')`,
       [busy, AGENT],
     );
-    const listed = async () =>
-      (
+    const listed = async () => {
+      await advanceCorner(database, cornerId, { kind: 'reconcile' });
+      return (
         (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
           chats: Array<{
             room: { id: string };
@@ -9125,6 +9124,7 @@ describe('monolith integration', () => {
           }>;
         }
       ).chats;
+    };
     const order = async () =>
       (await listed()).map((item) => item.room.id).filter((id) => id === ROOM || id === busy);
     expect(await order()).toEqual([busy, ROOM]);
@@ -9155,9 +9155,10 @@ describe('monolith integration', () => {
       objective: 'Pick a finish for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
-    await settleCornerWorkPastGap(cornerId);
-    const listed = async () =>
-      (
+    await settleCornerWork(cornerId);
+    const listed = async () => {
+      await advanceCorner(database, cornerId, { kind: 'reconcile' });
+      return (
         (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
           chats: Array<{
             room: { id: string };
@@ -9167,6 +9168,7 @@ describe('monolith integration', () => {
       ).chats
         .find((item) => item.room.id === ROOM)
         ?.openCorners?.find((item) => item.id === cornerId);
+    };
     const page = async () =>
       (await new PhoneService(database, origin).readCorners(ROOM, HUMAN))?.corners.find(
         (item) => item.corner.id === cornerId,
@@ -9216,11 +9218,13 @@ describe('monolith integration', () => {
       objective: 'Pick a box for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
-    await settleCornerWorkPastGap(cornerId);
-    const state = async () =>
-      (await new PhoneService(database, origin).readCorners(ROOM, HUMAN))?.corners.find(
+    await settleCornerWork(cornerId);
+    const state = async () => {
+      await advanceCorner(database, cornerId, { kind: 'reconcile' });
+      return (await new PhoneService(database, origin).readCorners(ROOM, HUMAN))?.corners.find(
         (item) => item.corner.id === cornerId,
       )?.state;
+    };
     const old = "now()-interval '25 hours'";
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)
@@ -9275,11 +9279,13 @@ describe('monolith integration', () => {
       objective: 'Pick a lid for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
-    await settleCornerWorkPastGap(cornerId);
-    const state = async () =>
-      (await new PhoneService(database, origin).readCorners(ROOM, HUMAN))?.corners.find(
+    await settleCornerWork(cornerId);
+    const state = async () => {
+      await advanceCorner(database, cornerId, { kind: 'reconcile' });
+      return (await new PhoneService(database, origin).readCorners(ROOM, HUMAN))?.corners.find(
         (item) => item.corner.id === cornerId,
       )?.state;
+    };
     let updates = 0;
     const crowd = async () => {
       for (let index = 0; index < 21; index += 1) {
@@ -9947,9 +9953,9 @@ describe('monolith integration', () => {
   });
 
   it.each([
-    ...['opened', 'implement', 'checks', 'review', 'ask_human', 'landed', 'closed']
+    ...['idle', 'working', 'review-checks', 'review-reviewer', 'waiting', 'landed', 'closed']
       .map(state => ({ state, health: 'healthy' })),
-    ...['implement', 'ask_human'].flatMap(state =>
+    ...['working', 'waiting'].flatMap(state =>
       ['offline', 'removed', 'recent-failure', 'out-of-credit'].map(health => ({ state, health }))),
   ])(
     'Reproduction BR-01: brief revision from $state with $health worker', async ({ state, health }) => {
@@ -9976,7 +9982,18 @@ describe('monolith integration', () => {
         createHash('sha256').update(`failure-${state}`).digest('hex'), ROOM, HUMAN,
         JSON.stringify({ requestId: 'opener-failed', agentId: AGENT, silenceKind: 'allowance-spent' }),
       ]);
-      await database.query(`UPDATE messages SET card=jsonb_set(card,'{toState}',to_jsonb($2::text)) WHERE id=(SELECT id FROM messages WHERE room_id=$1 AND card_type='corner-workflow-handoff' ORDER BY (card->>'seq')::int DESC LIMIT 1)`, [cornerId, state]);
+      if (state !== 'working') await settleCornerWork(cornerId);
+      if (state.startsWith('review-')) {
+        await database.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [ROOM, AGENT]);
+        await database.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [cornerId,
+          JSON.stringify({ checks: state === 'review-checks' ? 'pending' : 'passing', pr: { number: 42, headSha: 'brief-head' } })]);
+      }
+      if (state === 'waiting') await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+         VALUES('brief-question',$1,$2,'Choose a label','card','choice',$3::jsonb)`,
+        [cornerId, worker, JSON.stringify({ mode: 'question', status: 'open', requester: { pubkey: HUMAN } })]);
+      await advanceCorner(database, cornerId, state === 'landed' ? { kind: 'merged', contents: {} }
+        : state === 'closed' ? { kind: 'closed' } : { kind: 'reconcile' });
       if (health === 'offline')
         await database.query(`DELETE FROM live_outputs WHERE agent_id=$1`, [worker]);
       if (health === 'removed')
@@ -9994,14 +10011,21 @@ describe('monolith integration', () => {
         roomId: ROOM, cornerId, requestId: 'worker-brief-correction', expectedRevision: 1,
         brief: { content: 'Keep the corrected behavior.', change: 'Corrected behavior' },
       });
+      const terminal = state === 'landed' || state === 'closed';
+      if (terminal) {
+        expect(revised.status).toBe(403);
+        expect((await database.query(`SELECT revision FROM corner_brief_revisions WHERE corner_id=$1`, [cornerId])).rows)
+          .toEqual([{ revision: 1 }]);
+        expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason='corner_brief_revision'`, [cornerId])).rowCount).toBe(0);
+        return;
+      }
       expect(revised.status).toBe(200);
       const result = await revised.json();
       const wakes = (await database.query<{ agent_id: string }>(
         `SELECT command.agent_id FROM agent_commands command JOIN messages note ON note.id=command.source_message_id
          WHERE command.room_id=$1 AND note.text LIKE '%revised the corner brief%'`, [cornerId],
       )).rows.map(row => row.agent_id);
-      const terminal = state === 'landed' || state === 'closed';
-      const shouldWake = !terminal && !['offline','removed'].includes(health);
+      const shouldWake = !['offline','removed'].includes(health);
       console.info(`Reproduction BR-01: HTTP reviseCornerBrief from ${state}, worker ${health}; expected=${shouldWake ? 'current worker' : 'none'}; observed=${wakes.map(id => id === worker ? 'current worker' : 'opener').join(',') || 'none'}; revision=${result.revision}`);
       expect(result).toMatchObject({ revision: 2, wake: shouldWake ? { queued: true, agentId: worker } : { queued: false, reason: expect.any(String) } });
       expect(wakes).toEqual(shouldWake ? [worker] : []);
@@ -10009,7 +10033,7 @@ describe('monolith integration', () => {
       expect((await database.query<{ worker_agent_id: string; workflow_state: string }>(
         `SELECT ${cornerImplementerSql('fact', 'corner')} worker_agent_id,${cornerRunStateSql('fact.corner_id')} workflow_state FROM corner_facts fact
          JOIN rooms corner ON corner.id=fact.corner_id WHERE fact.corner_id=$1`, [cornerId],
-      )).rows[0]).toEqual({ worker_agent_id: worker, workflow_state: state === 'ask_human' && shouldWake ? 'implement' : state });
+      )).rows[0]).toEqual({ worker_agent_id: worker, workflow_state: state === 'waiting' ? 'waiting' : 'working' });
     },
   );
 
@@ -10063,14 +10087,13 @@ describe('monolith integration', () => {
       `SELECT agent_id,reason FROM agent_commands WHERE room_id=$1 AND reason IN ('corner_brief_revision','corner_check') ORDER BY agent_id`,
       [cornerId],
     );
-    // A brief edit never sends the corner back to review: the reviewer is not
-    // woken, and the run stays where it was.
+    // The implementer works on the revised brief before another review is admitted.
     expect(commands.rows.filter((row) => row.agent_id === reviewerId)).toEqual([]);
     expect(
       (await database.query<{ workflow_state: string }>(
         `SELECT ${cornerRunStateSql('$1::uuid')} workflow_state`, [cornerId],
       )).rows[0]?.workflow_state,
-    ).toBe('implement');
+    ).toBe('working');
     expect(
       await (await daemonOperation('getCornerRestoreState', { cornerId })).json(),
     ).toMatchObject({

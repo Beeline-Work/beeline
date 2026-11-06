@@ -441,7 +441,7 @@ it('routes zero-check completion through a durable lifecycle fact', async () => 
   expect(
     (
       await db.query(
-        `SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND reason='subscribed_event'`,
+        `SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND reason IN ('subscribed_event','corner_review_dispatch')`,
         [opened.cornerId, RUBY],
       )
     ).rowCount,
@@ -940,10 +940,12 @@ it('keeps the originating corner waiting for a decision returned to its parent R
     WORKER,
   );
   await daemon.execute('postAgentTurnReceipt', { ...authority(turn), agentId: WORKER, status: 'complete' }, WORKER);
-  const state = async () =>
-    (await phone.readCorners(ROOM, HUMAN))?.corners.find(
+  const state = async () => {
+    await advanceCorner(db, opened.cornerId, { kind: 'reconcile' });
+    return (await phone.readCorners(ROOM, HUMAN))?.corners.find(
       (item) => item.corner.id === opened.cornerId,
     )?.state;
+  };
   expect(await state()).toBe('waiting');
   await db.query('SELECT corner_owed_refresh($1,$2)', [opened.cornerId, HUMAN]);
   expect(await state()).toBe('waiting');

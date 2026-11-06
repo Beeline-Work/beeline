@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
-import { PgliteDatabase, migratedDatabase, recordCornerRun, insertCornerFacts } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, insertCornerFacts } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { GITHUB_SUBJECT, systemLine } from './system-line.js';
 import { readAgentCommands } from './agent-command.js';
+import { advanceCorner } from './corner-lifecycle.js';
 import { closeCornerState } from './corner-close.js';
 import type { CornerWatchKind } from '@beeline/api-contract/daemon';
 
@@ -50,7 +51,7 @@ beforeEach(async () => {
   await db.query(
     `UPDATE corner_github_cache SET lifecycle='{"lifecycle":"working","checks":"unknown"}'`,
   );
-  for (const corner of [A, B]) await recordCornerRun(db, corner, 'implement');
+  await db.query(`UPDATE corner_facts SET machine=NULL`);
 });
 const watch = (kinds: CornerWatchKind[] = ['merged'], roomId = A, cornerId = B, agentId = W) =>
   daemon.execute('watchCorner', { roomId, cornerId, kinds }, agentId);
@@ -65,11 +66,7 @@ const emit = (kind: CornerWatchKind = 'merged') =>
     object: { text: 'Ship widget', url: 'https://github.com/owner/widgets/pull/42' },
     durableFact: 'merge',
   });
-const mature = async () => {
-
-
-};
-const wakes = async () => { await mature(); return (await readAgentCommands(db, A, W)).commands; };
+const wakes = async () => (await readAgentCommands(db, A, W)).commands;
 
 it('Reproduction O-2: a watcher receives a named sibling merge in A', async () => {
 
@@ -122,6 +119,7 @@ it('returns all merged PR snapshot fields from corner facts', async () => {
       B,
       JSON.stringify({
         lifecycle: 'done',
+        outcome: 'landed',
         checks: 'passing',
         pr: {
           number: 42,
@@ -132,14 +130,15 @@ it('returns all merged PR snapshot fields from corner facts', async () => {
       }),
     ],
   );
-  await recordCornerRun(db, B, 'done');
+  await advanceCorner(db, B, { kind: 'merged', contents: {} });
   expect(await watch()).toEqual({
-    kinds: ['merged'],
-    state: 'active',
+    kinds: [],
+    state: 'merged',
+    woken: false,
     snapshot: {
       id: B,
       name: 'B',
-      workflowState: 'done',
+      workflowState: 'archived',
       pullRequestNumber: 42,
       pullRequestUrl: 'https://github.com/owner/widgets/pull/42',
       headSha: 'a'.repeat(40),

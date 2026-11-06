@@ -40,10 +40,11 @@ describe('storage registry', () => {
   });
 });
 
-it('removes an installed retired phone capture trigger during upgrade',async()=>{
+it('retains an installed retired phone capture trigger during release overlap',async()=>{
   await db.query(`CREATE OR REPLACE FUNCTION beeline_router_extra_capture() RETURNS trigger AS $$ BEGIN RETURN NEW; END $$ LANGUAGE plpgsql;
     CREATE TRIGGER retired_phone_read_capture AFTER INSERT ON rooms FOR EACH ROW EXECUTE FUNCTION beeline_router_extra_capture();`);
   await migrate(db);
-  expect((await db.query(`SELECT tgname FROM pg_trigger WHERE tgname='retired_phone_read_capture'`)).rows).toEqual([]);
+  expect((await db.query(`SELECT tgname FROM pg_trigger WHERE tgname='retired_phone_read_capture'`)).rows)
+    .toEqual([{ tgname: 'retired_phone_read_capture' }]);
   expect((await db.query(`SELECT tgname FROM pg_trigger WHERE tgname='beeline_router_authority' AND NOT tgisinternal`)).rows).toHaveLength(2);
 });

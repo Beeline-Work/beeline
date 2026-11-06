@@ -56,10 +56,6 @@ export function spinnerFrameIndexAt(elapsedMs: number): number {
   return step < count ? step : cycle - step;
 }
 
-function spinnerFrameAt(elapsedMs: number): string {
-  return SPINNER_FRAMES[spinnerFrameIndexAt(elapsedMs)]!;
-}
-
 /** Whole seconds elapsed since the receipt's server time, floored at zero. */
 export function elapsedSeconds(startedAtMs: number, nowMs: number): number {
   return Math.max(0, Math.floor((nowMs - startedAtMs) / 1_000));

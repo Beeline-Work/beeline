@@ -93,19 +93,6 @@ export function replaceActiveMention(
   };
 }
 
-/** Keep one Workspace roster, ordered as current Room members followed by addable members. */
-function sectionRoomRoster<T extends RoomRosterMember>(
-  roster: T[],
-  roomMemberPubkeys: ReadonlySet<string>,
-): { inRoom: T[]; addable: T[] } {
-  const inRoom: T[] = [];
-  const addable: T[] = [];
-  for (const member of roster) {
-    (roomMemberPubkeys.has(member.pubkey) ? inRoom : addable).push(member);
-  }
-  return { inRoom, addable };
-}
-
 /**
  * The authoritative Room roster as ONE list: people in membership order, agents
  * after. The sheet heads and counts that single list — the viewer among them,
@@ -143,12 +130,6 @@ export function roomRosterWindow<T>(
   return { visible, hidden, overflowLabel: hidden > 0 ? `${hidden} more` : null };
 }
 
-/** Slack-style participant copy: five names at most, with overflow folded into the fifth slot. */
-function formatRoomParticipantList(names: string[]): string {
-  if (names.length <= 5) return names.join(', ');
-  return `${names.slice(0, 4).join(', ')} and ${names.length - 4} others`;
-}
-
 /** Compact header member count; the unified roster sheet carries the actual names. */
 export function formatRoomParticipantTotal(total: number): string {
   return `${total} ${total === 1 ? 'member' : 'members'}`;
@@ -164,14 +145,6 @@ export function selectedMentionAgentPubkey(
   selections: ReadonlyMap<string, string>,
 ): string | undefined {
   return resolveComposerMentions(text, [], selections).pubkeys[0];
-}
-
-/** Resolve every picker-selected mention whose handle is still present in the sent text. */
-function selectedMentionPubkeys(
-  text: string,
-  selections: ReadonlyMap<string, string>,
-): string[] {
-  return resolveComposerMentions(text, [], selections).pubkeys;
 }
 
 const COMPOSER_MENTION_PATTERN = /@([\p{L}\p{M}\p{N}_]+(?:[.-][\p{L}\p{M}\p{N}_]+)*)/gu;

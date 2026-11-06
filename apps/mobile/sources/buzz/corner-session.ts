@@ -98,27 +98,3 @@ export function resolveCornerViewAgentPubkey(
     isRegisteredAgent,
   );
 }
-
-/** The edit session lifecycle is authoritative for the corner, never daemon presence. */
-function cornerSessionState(messages: readonly ChatDisplayMessage[]): CornerSessionState {
-  const latestTurn = [...messages]
-    .filter((message) => message.agentTurn)
-    .sort((left, right) => left.timestamp - right.timestamp || left.id.localeCompare(right.id))
-    .at(-1)?.agentTurn;
-  if (!latestTurn) return 'idle';
-  if (latestTurn.status === 'working') return 'working';
-  return latestTurn.status === 'complete' ? 'done' : 'idle';
-}
-function cornerProcessState(
-  messages: readonly ChatDisplayMessage[],
-): CornerProcessState | undefined {
-  return [...messages]
-    .filter((message) => message.cornerProcess)
-    .sort(
-      (a, b) =>
-        (a.cornerProcess?.sequence ?? 0) - (b.cornerProcess?.sequence ?? 0) ||
-        a.timestamp - b.timestamp ||
-        a.id.localeCompare(b.id),
-    )
-    .at(-1)?.cornerProcess?.state;
-}

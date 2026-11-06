@@ -62,9 +62,6 @@ import { takePrefetchedPushRoom } from '@/push/push-room-prefetch';
 
 /** A socket that never answers must not hold the open's one Room read. */
 const LIVE_CACHE_WRITE_DELAY_MS = 1_000;
-const EMPTY_ROUTER_OVERLAYS: readonly LiveOverlay[] = Object.freeze([]);
-const EMPTY_ROUTER_PRESENCES: Record<string, RoomAgentPresence> = Object.freeze({});
-const EMPTY_ROUTER_GRACE: Record<string, number> = Object.freeze({});
 /**
  * Invalidations that change nothing this Room read shows, so they read
  * nothing: a child corner's list status; a stored draft, thought or presence
@@ -174,10 +171,6 @@ function eventTag(event: { tags: string[][] }, name: string): string | undefined
 
 function eventMarkers(event: { tags: string[][] }): string[] {
   return event.tags.flatMap((tag) => (tag[0] === 't' && tag[1] ? [tag[1]] : []));
-}
-
-function messageTimeMs(message: RoomView['messages'][number]): number {
-  return message.createdAtMs ?? message.createdAt * 1_000;
 }
 
 /** A read carries a message newer than anything the painted Room held. */

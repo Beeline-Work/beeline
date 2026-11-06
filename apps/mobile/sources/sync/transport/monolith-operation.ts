@@ -101,7 +101,7 @@ export function phoneOperationFailureReason(error: unknown): string {
   return appErrorCopy(error);
 }
 
-async function executePhoneOperation<Name extends keyof PhoneOperationMap>(
+export async function monolithPhoneOperation<Name extends keyof PhoneOperationMap>(
   name: Name,
   input: PhoneOperationMap[Name]['input'],
   options?: { timeoutMs?: number },
@@ -128,10 +128,4 @@ async function executePhoneOperation<Name extends keyof PhoneOperationMap>(
       throw new MonolithPhoneOperationError(name, error.status, error.message);
     throw error;
   }
-}
-
-export function monolithPhoneOperation<Name extends keyof PhoneOperationMap>(
-  name: Name, input: PhoneOperationMap[Name]['input'], options?: { timeoutMs?: number },
-): Promise<PhoneOperationMap[Name]['output']> {
-  return executePhoneOperation(name, input, options);
 }

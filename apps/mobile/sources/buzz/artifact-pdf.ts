@@ -64,28 +64,6 @@ export interface PdfViewerDocumentOptions {
 }
 
 /**
- * Wraps the one-shot navigation guard so the render document's completion
- * navigation calls `onRendered` on its way to being refused. The signal is a
- * denied request, never a granted one: the wrapped guard still answers `false`
- * for it, and every other request goes to the guard underneath untouched — so
- * the initial load is still the only navigation that ever passes.
- */
-function pdfRenderedSignalGuard(
-  guard: { allow(requestUrl: string): boolean },
-  onRendered: () => void,
-): { allow(requestUrl: string): boolean } {
-  return {
-    allow(requestUrl: string): boolean {
-      if (requestUrl.startsWith(ARTIFACT_PDF_RENDERED_URL)) {
-        onRendered();
-        return false;
-      }
-      return guard.allow(requestUrl);
-    },
-  };
-}
-
-/**
  * Inline a JavaScript string into a `<script>` body. `JSON.stringify` covers
  * quoting; `</` has to be broken up separately because an HTML parser ends the
  * script element at `</script>` even inside a string literal.

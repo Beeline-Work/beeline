@@ -209,31 +209,3 @@ const PROOF_FRAMES: readonly ProofFrame[] = [
     still: true,
   },
 ];
-
-function glyphPaintProofFrames(): readonly ProofFrame[] {
-  return PROOF_FRAMES;
-}
-
-function buildGlyphPaintProofHtml(): string {
-  const cards = PROOF_FRAMES.map((frame) => {
-    const ground = glyphPaintGround(frame.dark);
-    const svg = glyphPaintCaptureSvg({ ...frame, ground: true });
-    return `<figure data-frame="${frame.id}" data-ground="${ground}" style="margin:0;padding:24px;background:${ground};color:${glyphPaintInk(frame.dark)}"><figcaption style="font:500 13px/18px 'IBM Plex Mono',ui-monospace,monospace;letter-spacing:0.4px;margin-bottom:16px">${frame.title}</figcaption>${svg}</figure>`;
-  }).join('');
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/>
-<title>Beeline glyph paint</title>
-<style>
-  html,body{margin:0;background:#14091A;color:#E5A645}
-  body{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1px;background:#291e33}
-  figure svg{display:block;margin:0 auto}
-</style>
-</head>
-<body>
-${cards}
-</body>
-</html>
-`;
-}

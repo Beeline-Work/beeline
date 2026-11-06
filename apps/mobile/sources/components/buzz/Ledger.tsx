@@ -354,47 +354,6 @@ function TypewriterMarkdown({
   );
 }
 
-/**
- * The ghosted margin: a fixed-width clock stamp, and (when a voice first
- * announces itself in a Room) an optional secondary detail under it.
- *
- * Hung in the right margin rather than set into the flow, so the centre stays a
- * clean column — editor line numbers, verse numbers. It is absolutely
- * positioned against the entry so it can never push the prose around, and it
- * takes the dimmest tier because none of it is information the reader is
- * looking for; it is information the reader occasionally checks.
- *
- * The Editorial direction folds the stamp into the byline for prose turns;
- * this gutter survives for the rows that keep the wider margin (the folded
- * tool run), where a stamp without a byline is still worth hanging.
- */
-function LedgerMarginalia({
-  stamp,
-  detail,
-  testID,
-}: {
-  stamp: string;
-  /** Optional secondary detail for surfaces that have one. */
-  detail?: string | null;
-  testID?: string;
-}) {
-  if (!stamp && !detail) return null;
-  return (
-    <View pointerEvents="none" style={styles.marginalia} testID={testID}>
-      {stamp ? (
-        <Text style={styles.marginaliaStamp}>
-          {stamp}
-        </Text>
-      ) : null}
-      {detail ? (
-        <Text style={styles.marginaliaDetail}>
-          {detail}
-        </Text>
-      ) : null}
-    </View>
-  );
-}
-
 /** The one byline view: identity tile (or viewer dot) + name, role tag, stamp.
  *  Exported so the live draft lane's byline (`ActivityTimeline`) is exactly
  *  the settled row's byline — the tile, the name and the stamp are byte-for-byte

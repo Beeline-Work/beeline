@@ -32,22 +32,6 @@ export interface ShortcutChord {
     shiftKey?: boolean;
 }
 
-const SESSION_ACTION_SHORTCUTS: Readonly<Record<SessionActionShortcutId, ShortcutChord>> = {
-    details: { key: 'o', code: 'KeyO', keyLabel: 'O', altKey: true },
-    resume: { key: 'r', code: 'KeyR', keyLabel: 'R', altKey: true },
-    fork: { key: 'f', code: 'KeyF', keyLabel: 'F', altKey: true },
-    duplicate: { key: 'd', code: 'KeyD', keyLabel: 'D', altKey: true, shiftKey: true },
-    'copy-metadata': { key: 'm', code: 'KeyM', keyLabel: 'M', altKey: true },
-    'copy-metadata-and-logs': { key: 'm', code: 'KeyM', keyLabel: 'M', altKey: true, shiftKey: true },
-    archive: { key: 'a', code: 'KeyA', keyLabel: 'A', shiftKey: true },
-};
-
-const SIDEBAR_PICKER_SHORTCUTS: Readonly<Record<SidebarPickerShortcutId, ShortcutChord>> = {
-    changes: { key: 'c', code: 'KeyC', keyLabel: 'C', altKey: true },
-    allFiles: { key: 'f', code: 'KeyF', keyLabel: 'F', altKey: true },
-    newSideChat: { key: 's', code: 'KeyS', keyLabel: 'S', altKey: true },
-};
-
 export const GLOBAL_SHORTCUTS: ReadonlyArray<{
     id: GlobalShortcutId;
     key: string;
@@ -126,36 +110,4 @@ export function formatShortcut(
         return `${browserSafe ? '⌥' : ''}${modifierLabel}${keyLabel}`;
     }
     return `${modifierLabel}${browserSafe ? '+Alt' : ''}+${keyLabel}`;
-}
-
-function formatShortcutChord(modifier: ShortcutModifier, chord: ShortcutChord): string {
-    if (modifier === 'meta') {
-        return `${chord.altKey ? '⌥' : ''}${chord.shiftKey ? '⇧' : ''}⌘${chord.keyLabel}`;
-    }
-
-    return [
-        'Ctrl',
-        chord.altKey ? 'Alt' : null,
-        chord.shiftKey ? 'Shift' : null,
-        chord.keyLabel,
-    ].filter(Boolean).join('+');
-}
-
-function matchesShortcutChord(
-    event: KeyboardShortcutEvent,
-    modifier: ShortcutModifier,
-    chord: ShortcutChord,
-): boolean {
-    if (event.isComposing || event.repeat || event.getModifierState?.('AltGraph')) {
-        return false;
-    }
-
-    const hasPrimaryModifier = modifier === 'meta'
-        ? event.metaKey && !event.ctrlKey
-        : event.ctrlKey && !event.metaKey;
-
-    return hasPrimaryModifier
-        && event.altKey === Boolean(chord.altKey)
-        && event.shiftKey === Boolean(chord.shiftKey)
-        && (event.code ? event.code === chord.code : event.key.toLowerCase() === chord.key);
 }

@@ -12,10 +12,6 @@ const WEB_ZOOM_CLASS = 'happy-app-zoomed';
 
 const clampZoom = (zoom: number) => Math.max(MIN_APP_ZOOM, Math.min(MAX_APP_ZOOM, zoom));
 
-function getBrowserAppZoomValue(): string {
-    return String(BROWSER_APP_ZOOM);
-}
-
 // Cmd/Ctrl+=, Cmd/Ctrl+-, Cmd/Ctrl+0 zoom shortcuts for the Tauri desktop app.
 // Uses Tauri's native webview.setZoom — unlike CSS `zoom`, this shrinks the
 // layout viewport so matchMedia / window.innerWidth change and responsive

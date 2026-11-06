@@ -6,31 +6,3 @@ export function normalizedRoomRole(member: ChannelMember | undefined): ChannelRo
   if (!member) return null;
   return member.role === 'owner' || member.role === 'admin' ? member.role : 'member';
 }
-
-function roomLifecycleAction(role: ChannelRole | null): RoomLifecycleAction {
-  if (role === 'owner') return 'delete';
-  return role === 'member' ? 'leave' : null;
-}
-
-function canRenameRoom(role: ChannelRole | null): boolean {
-  return role === 'owner' || role === 'admin';
-}
-
-/**
- * Client-side mirror of `setRoomRepository`'s own server-side authority check
- * (`packages/buzz-client/src/room-repository.ts`) — the write is rejected
- * either way, but the set/change UI must not even offer itself to a non-admin.
- */
-function canManageRoomRepository(role: ChannelRole | null): boolean {
-  return role === 'owner' || role === 'admin';
-}
-
-function canRemoveRoomParticipant(
-  viewerRole: ChannelRole | null,
-  targetRole: ChannelRole | null,
-  isSelf: boolean,
-): boolean {
-  if (isSelf || targetRole === 'owner') return false;
-  if (viewerRole === 'owner') return targetRole === 'admin' || targetRole === 'member';
-  return viewerRole === 'admin' && targetRole === 'member';
-}

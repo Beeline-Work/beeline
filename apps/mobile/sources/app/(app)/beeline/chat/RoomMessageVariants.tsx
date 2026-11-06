@@ -94,18 +94,6 @@ import { agentMessageJsonMarkdown } from '@/buzz/agent-message-json';
 
 type WriteDecision = 'allow' | 'deny';
 
-function cardMeta(text: string): React.ReactNode {
-  return text.split(/(@[a-z0-9_-]+)/gi).map((part, index) =>
-    part.startsWith('@') ? (
-      <TranscriptCardHandle key={`${part}-${index}`} meta>
-        {part}
-      </TranscriptCardHandle>
-    ) : (
-      part
-    ),
-  );
-}
-
 export interface WritePermissionCardProps {
   message: ChatDisplayMessage;
   agent?: AgentPresentation;

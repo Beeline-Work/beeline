@@ -107,19 +107,3 @@ export function roomPreviewText(raw: string): string {
   if (!collapsed || isMachinePreview(collapsed)) return '';
   return collapsed;
 }
-
-/**
- * Uppercase mono attribution for an index preview line — the same "who said
- * this" label the transcript rows carry, so a Room row and the Room it opens
- * read as one system.
- *
- * An author outside the current Workspace roster resolves to no name, and the
- * caller renders the preview unattributed: a shouty truncated npub is worse
- * than no label, and it is the one case where the index has nothing true to
- * say about who spoke.
- */
-function previewAuthorLabel(name: string | undefined, maxChars = 12): string {
-  const upper = name?.trim().toUpperCase();
-  if (!upper) return '';
-  return upper.length > maxChars ? `${upper.slice(0, maxChars - 1)}…` : upper;
-}

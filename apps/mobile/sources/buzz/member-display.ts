@@ -1,5 +1,5 @@
 import {
-  fallbackPersonName,
+  fallbackPersonName as fallbackMemberName,
   personHandle,
   type DirectMessage,
   type PersonProfile,
@@ -7,9 +7,7 @@ import {
 } from '@beeline/buzz-client';
 import type { ChatTitleIdentity } from '@beeline/api-contract/phone';
 
-export function fallbackMemberName(pubkey: string): string {
-  return fallbackPersonName(pubkey);
-}
+export { fallbackMemberName };
 
 export function fallbackMemberHandle(pubkey: string): string {
   return personHandle(fallbackMemberName(pubkey), pubkey);
@@ -38,10 +36,4 @@ export function directMessageHeaderIdentity(
       : profile;
   if (identity && named(identity)) return { ...identity, name: identity.name ?? '' };
   return { name: fallbackMemberName(pubkey) };
-}
-
-function directMessagePeer(dm: DirectMessage, viewerPubkey: string): string {
-  const peer = dm.participants.find((pubkey) => pubkey !== viewerPubkey);
-  if (!peer) throw new Error('viewer is not a participant in this direct message');
-  return peer;
 }

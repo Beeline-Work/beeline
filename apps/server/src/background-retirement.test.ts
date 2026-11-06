@@ -3,7 +3,7 @@ import { migrate } from './database.js';
 import { migratedDatabase } from './test-support.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 
-it('an upgrade deletes retired deadline state and keeps a real owner schedule', async () => {
+it('R-RELEASE-DDL: an upgrade preserves overlap storage and runs a real owner schedule', async () => {
   const db = await migratedDatabase();
   const human = 'a'.repeat(64), agent = 'b'.repeat(64);
   const workspace = '11111111-1111-4111-8111-111111111111', room = '22222222-2222-4222-8222-222222222222';
@@ -39,14 +39,21 @@ it('an upgrade deletes retired deadline state and keeps a real owner schedule', 
       CREATE OR REPLACE FUNCTION beeline_display_deadline_change() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END $$;
       CREATE TRIGGER beeline_display_deadline AFTER INSERT ON messages FOR EACH ROW EXECUTE FUNCTION beeline_display_deadline_change();`);
     await migrate(db);
-    expect((await db.query(`SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename IN
-      ('next_day_checkins','next_day_checkin_candidates','pending_mention_notices','push_read_clears','push_outbox_retirements','agent_startup_backoff')`)).rows).toEqual([]);
-    expect((await db.query(`SELECT 1 FROM pg_trigger WHERE tgname='beeline_display_deadline'`)).rows).toEqual([]);
+    // The old serving/rollback image still reads and writes these relations.
+    // Their removal belongs to a later contract release, not this upgrade.
+    const overlapTables = ['next_day_checkins', 'next_day_checkin_candidates', 'pending_mention_notices',
+      'push_read_clears', 'push_outbox_retirements', 'agent_startup_backoff'];
+    expect((await db.query<{ tablename: string }>(`SELECT tablename FROM pg_tables WHERE schemaname='public'
+      AND tablename=ANY($1::text[])`, [overlapTables])).rows.map(row => row.tablename).sort()).toEqual([...overlapTables].sort());
+    expect((await db.query(`SELECT 1 FROM pg_trigger WHERE tgname='beeline_display_deadline'`)).rows).toHaveLength(1);
+    await db.query(`INSERT INTO next_day_checkins(command_id) VALUES('old-server-command')`);
     expect((await db.query(`SELECT id FROM agent_schedules WHERE message='Internal workflow timer'`)).rows).toEqual([]);
     expect((await db.query(`SELECT message FROM agent_schedules WHERE id='33333333-3333-4333-8333-333333333333'`)).rows).toEqual([{ message: 'Run my schedule' }]);
     expect(await new AgentScheduleLoop(db).runOnce(new Date(Date.now() + 120_000))).toBe(1);
     expect((await db.query(`SELECT text FROM messages WHERE text='Run my schedule'`)).rows).toHaveLength(1);
     await migrate(db);
+    expect((await db.query(`SELECT command_id FROM next_day_checkins`)).rows).toEqual([{ command_id: 'old-server-command' }]);
+    expect((await db.query(`SELECT 1 FROM pg_trigger WHERE tgname='beeline_display_deadline'`)).rows).toHaveLength(1);
     expect(await new AgentScheduleLoop(db).runOnce(new Date(Date.now() + 240_000))).toBe(0);
   } finally { await db.close(); }
 });

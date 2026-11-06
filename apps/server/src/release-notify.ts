@@ -111,7 +111,8 @@ export class ReleaseNotifier {
   }
 
   private accept(release: HelperRelease): void {
-    if (`${release.version}:${release.sha}` === this.lastSeenRelease) return;
+    // A channel promotion can repoint latest at the already announced nightly
+    // build. Every committed notice invalidates manifests, even for that same identity.
     this.lastSeenRelease = `${release.version}:${release.sha}`;
     this.lastRelease = release;
     for (const listener of this.listeners) {

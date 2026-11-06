@@ -3900,19 +3900,19 @@ export function BuzzChatSurface({
       // Session cleanup may clear its ref while this send is still preparing.
       let activeOutbox = outbox.current();
       sendInFlightRef.current = true;
-      const phonePreview = Platform.OS !== 'web' && !desktopTranscript && activePendingAttachments.length === 0;
+      const listPreview = !desktopTranscript && activePendingAttachments.length === 0;
       const updateSendStatus = () => {
         setReceivedSteer(null);
         setPendingAck(addressesAgent ? { sentAt: Date.now() } : null);
         setSending(true);
         if (desktopExperience) setDesktopDeliveryState('sending');
       };
-      if (!phonePreview) updateSendStatus();
+      if (!listPreview) updateSendStatus();
       // Text feedback lands in the local overlay in this same turn. Signing,
       // transport startup and outbox persistence can all take longer than a
       // frame on a cold Android device.
-      // Web uses its prepared row directly; native keeps its provisional first frame.
-      const provisionalId = Platform.OS !== 'web' && activePendingAttachments.length === 0
+      // Each viewport paints its provisional row before preparation.
+      const provisionalId = activePendingAttachments.length === 0
         ? `pending:${Date.now()}:${Math.random()}`
         : null;
       if (provisionalId) {
@@ -3930,7 +3930,7 @@ export function BuzzChatSurface({
           ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
           ...(preparedReply?.reference ? { replyToId: preparedReply.reference.eventId } : {}),
         } satisfies ChatDisplayMessage;
-        if (phonePreview) {
+        if (listPreview) {
           // Only the list's new cell renders now. Window resets, status and
           // the Room-wide projections wait until native layout and a frame.
           const painted = sendPreview.show(provisional);
@@ -4030,7 +4030,7 @@ export function BuzzChatSurface({
           );
         }
         if (provisionalId) {
-          if (phonePreview) sendPreview.reconcile(provisionalId, preparedEvent.id);
+          if (listPreview) sendPreview.reconcile(provisionalId, preparedEvent.id);
           else reconcileOptimistic(provisionalId, preparedEvent.id);
         }
         const optimistic = {
@@ -4131,7 +4131,7 @@ export function BuzzChatSurface({
         return true;
       } catch (err) {
         console.warn('Send failed:', err);
-        if (phonePreview && provisionalId && (!preparedEvent || !activeOutbox?.get(preparedEvent.id))) {
+        if (listPreview && provisionalId && (!preparedEvent || !activeOutbox?.get(preparedEvent.id))) {
           sendPreview.remove(preparedEvent?.id ?? provisionalId);
         }
         if (provisionalId && !preparedEvent) {

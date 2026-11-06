@@ -2,6 +2,7 @@
 # Use a disposable simulator; never erase or shut down another job's device.
 set -euo pipefail
 : "${SOURCE_DIR:?}" "${HARNESS_DIR:?}" "${EVIDENCE:?}"
+derived_data="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/ios-signin-dd-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}"
 mkdir -p "$EVIDENCE"
 missing=0
 for tool in xcodebuild xcrun node npm npx pod java maestro; do
@@ -32,7 +33,7 @@ cleanup() {
     xcrun simctl delete "$device" || true
   fi
   # Only our DerivedData, never the release job's global Xcode cache.
-  rm -rf "$EVIDENCE/DerivedData"
+  rm -rf "$derived_data"
   exit "$status"
 }
 trap cleanup EXIT
@@ -72,9 +73,9 @@ expo_plist=$(find ios -name Expo.plist -print -quit)
 test -n "$expo_plist"
 /usr/libexec/PlistBuddy -c 'Set :EXUpdatesEnabled false' "$expo_plist"
 xcodebuild -workspace "$workspace" -scheme "$scheme" -configuration Release \
-  -sdk iphonesimulator -destination "id=$device" -derivedDataPath "$EVIDENCE/DerivedData" \
+  -sdk iphonesimulator -destination "id=$device" -derivedDataPath "$derived_data" \
   CODE_SIGNING_ALLOWED=NO -jobs 2 build > "$EVIDENCE/xcode-build.log" 2>&1
-app=$(find "$EVIDENCE/DerivedData/Build/Products/Release-iphonesimulator" -maxdepth 1 -name '*.app' -print -quit)
+app=$(find "$derived_data/Build/Products/Release-iphonesimulator" -maxdepth 1 -name '*.app' -print -quit)
 test -n "$app"
 cp "$app/Info.plist" "$EVIDENCE/app-info.plist"
 xcrun simctl install "$device" "$app"

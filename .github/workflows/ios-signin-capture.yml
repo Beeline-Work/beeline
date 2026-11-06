@@ -19,7 +19,7 @@ concurrency:
 jobs:
   capture:
     runs-on: [self-hosted, macOS, X64, ios-builder]
-    timeout-minutes: 30
+    timeout-minutes: 90
     env:
       CI: '1'
       LANG: en_US.UTF-8
@@ -116,4 +116,4 @@ jobs:
       - name: Remove only this run's build and tool output
         if: always()
         run: |
-          rm -rf "$RUNNER_TEMP/ios-signin-gems-${{ github.run_id }}" "$EVIDENCE/DerivedData" "$RUNNER_TEMP/maestro-signin" "$RUNNER_TEMP/maestro-signin.zip"
+          rm -rf "$RUNNER_TEMP/ios-signin-gems-${{ github.run_id }}" "$RUNNER_TEMP/ios-signin-dd-${{ github.run_id }}-${{ github.run_attempt }}" "$RUNNER_TEMP/maestro-signin" "$RUNNER_TEMP/maestro-signin.zip"

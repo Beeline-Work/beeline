@@ -759,50 +759,11 @@ import { resolve as m38_resolve } from 'node:path';
 
 import { expect as m38_expect, it as m38_it, vi as m38_vi } from 'vitest';
 
-import { RoomRuntimeCoordinator as m38_RoomRuntimeCoordinator, type CornerWorktree as m38_CornerWorktree } from "./room-runtime.js";
+import { RoomRuntimeCoordinator as m38_RoomRuntimeCoordinator } from "./room-runtime.js";
 
 import { identityFromKey as m38_identityFromKey, type AgentRuntimeRecord as m38_AgentRuntimeRecord } from "./runtime.js";
 import { describe as mergedDescribe38 } from 'vitest';
 mergedDescribe38("room-runtime.startup.test.ts", () => {
-
-
-m38_it('background reaping leases inactive corners and wakes a start deferred by that lease', async () => {
-  const root = await m38_mkdtemp(m38_resolve(m38_tmpdir(), 'beeline-reap-lease-'));
-  const identity = m38_identityFromKey('11'.repeat(32), 'Bee');
-  const execute = m38_vi.fn();
-  const coordinator = new m38_RoomRuntimeCoordinator({
-    agent: { publicKey: identity.publicKey, secretKeyHex: '11'.repeat(32), name: 'Bee' },
-    rooms: [], communityId: 'workspace', supervisorRoot: root,
-    transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'test' },
-  } as m38_AgentRuntimeRecord, m38_resolve(root, 'runtime.json'), { workspaceRoot: root } as never,
-  { daemonApi: { execute } as never });
-  const internal = coordinator as unknown as {
-    reapIdleCornerWorktree(worktree: m38_CornerWorktree, desired: ReadonlySet<string>): Promise<void>;
-    reapCornerWorktree(worktree: m38_CornerWorktree): Promise<void>;
-    startCorner(corner: { cornerId: string; parentRoomId: string }): Promise<void>;
-  };
-  const worktree = { cornerId: 'corner', parentRoomId: 'room', path: m38_resolve(root, 'corner'),
-    gitCommonDir: m38_resolve(root, 'repo.git'), branch: 'feature/corner', token: '' };
-  let release!: () => void;
-  const blocked = new Promise<void>(done => { release = done; });
-  const reap = m38_vi.spyOn(internal, 'reapCornerWorktree').mockReturnValue(blocked);
-  const wake = m38_vi.fn();
-  coordinator.setDiscoveryWakeListener(wake);
-  let maintenance: Promise<void> | undefined;
-  try {
-    await internal.reapIdleCornerWorktree(worktree, new Set(['corner']));
-    m38_expect(reap).not.toHaveBeenCalled();
-    maintenance = internal.reapIdleCornerWorktree(worktree, new Set());
-    await m38_vi.waitFor(() => m38_expect(reap).toHaveBeenCalledOnce());
-    await internal.startCorner({ cornerId: 'corner', parentRoomId: 'room' });
-    m38_expect(execute).not.toHaveBeenCalled();
-    release(); await maintenance;
-    m38_expect(wake).toHaveBeenCalledOnce();
-  } finally {
-    release(); await maintenance; reap.mockRestore();
-    await coordinator.shutdown(); await m38_rm(root, { recursive: true, force: true });
-  }
-});
 
 
 m38_it('establishes every corner subscription without waiting for pending legacy checkout migration', async () => {
@@ -865,12 +826,12 @@ m38_it('starts Room and corner intake before waiting for archived cleanup', asyn
   const internal = coordinator as unknown as {
     startRoom(id: string): Promise<void>;
     watchCorner(input: { cornerId: string }): Promise<void>;
-    retryPendingCornerReaps(desired: ReadonlySet<string>): Promise<void>;
+    sweepArchivedCornerWorktrees(archived: ReadonlyMap<string, unknown>, desired: ReadonlySet<string>): Promise<void>;
   };
   const start = m38_vi.spyOn(internal, 'startRoom').mockResolvedValue();
   const watch = m38_vi.spyOn(internal, 'watchCorner').mockResolvedValue();
   let release!: () => void;
-  const cleanup = m38_vi.spyOn(internal, 'retryPendingCornerReaps')
+  const cleanup = m38_vi.spyOn(internal, 'sweepArchivedCornerWorktrees')
     .mockImplementation(() => new Promise<void>(done => { release = done; }));
   const serving = m38_vi.fn();
   const reconciliation = coordinator.reconcile(serving);

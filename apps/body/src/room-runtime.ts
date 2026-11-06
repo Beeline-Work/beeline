@@ -29,7 +29,6 @@ import type { InterruptedTurn } from './force-update-journal.js';
 import { openRouterRoutingCacheDir } from './openrouter-routing.js';
 import { turnTraceDirectory } from './turn-trace.js';
 import { distillTurnFailureReason } from './turn-failure-reason.js';
-import { preserveUnpublishedCornerWorktree, queueCornerPreservation } from './corner-disk-recovery.js';
 import { writePrivateFileAtomically } from './atomic-private-file.js';
 import { agentGitIdentity } from './agent-git-identity.js';
 import { reclaimHelperStorage, removeStoragePath, storageTree, isSquirePath, ordinaryDirectory, type StorageRoomState } from './helper-storage.js';
@@ -260,11 +259,6 @@ export interface CornerWorktree {
   recovered?: true;
 }
 
-export interface DiscoveredCornerWorktree {
-  path: string;
-  gitCommonDir: string;
-}
-
 /** The local worktree root is small even when the server has years of archived corners. */
 export async function localCornerWorktreeIds(supervisorRoot: string): Promise<Set<string>> {
   const root = resolve(supervisorRoot, 'beeline', 'corners');
@@ -426,11 +420,6 @@ async function assertPublishedOnOrigin(
   if (!published) throw new Error(`corner ${cornerId} has unpushed commits`);
 }
 
-/** The exact, permanent faults cleanup throws for work nothing will ever push. */
-function hasUnpublishedWork(error: unknown): boolean {
-  return error instanceof Error && / has unpushed (?:commits|working-tree work)$/.test(error.message);
-}
-
 async function originContains(gitCommonDir: string, head: string): Promise<boolean> {
   const result = await execFileAsync('git', [
     `--git-dir=${gitCommonDir}`,
@@ -457,25 +446,13 @@ export class RoomRuntimeCoordinator {
   private readonly runtime: AgentRuntimeRecord;
   private readonly running = new Map<string, RunningRoom>();
   private readonly surfaceHealth = new SurfaceHealth();
-  /** Close/reconcile leftovers retried until local and remote refs are gone. */
-  private readonly pendingCornerReaps = new Map<string, CornerWorktree>();
   /** Idle corners listen for durable commands without obtaining a token or checkout. */
   private readonly idleCornerSubscriptions = new Map<string, () => void>();
   private readonly pendingCornerCommands = new Set<string>();
   /** Enumerated once; later materialization and removal keep it current. */
   private localWorktreeIds?: Promise<Set<string>>;
-  /** Event-driven cleanup retries stay scoped to the failed local corner. */
-  private readonly archiveCleanupFaults = new Map<string, { failures: number; retryAt: number }>();
   /** Permanent cleanup refusals survive core and helper restarts on disk. */
   private readonly archiveCleanupRefused = new Set<string>();
-  /**
-   * A corner whose branch cleanup found commits no origin ref contains. That
-   * is never transient - nothing pushes them later - so retrying it every
-   * reconciliation would only slow discovery down forever. Reported once,
-   * then left alone; the checkout and its commits are kept, never deleted.
-   */
-  private readonly archiveCleanupAbandoned = new Set<string>();
-  private preservationFlight?: Promise<void>;
   private maintenanceFlight?: Promise<void>;
   private maintenanceRequest?: {
     archived: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>;
@@ -924,10 +901,15 @@ export class RoomRuntimeCoordinator {
       while (!this.stopped && this.maintenanceRequest) {
         const request = this.maintenanceRequest;
         this.maintenanceRequest = undefined;
-        const attemptedReaps = new Set([...this.desiredChannels, ...this.pendingCornerReaps.keys()]);
-        await this.retryPendingCornerReaps(this.desiredChannels);
+        // Active membership is fresh authority to clear a prior refusal.
+        for (const cornerId of this.desiredChannels) {
+          await this.yieldReconciliation();
+          if (this.stopped) return;
+          this.archiveCleanupRefused.delete(cornerId);
+          await rm(this.archiveCleanupRefusalPath(cornerId), { force: true });
+        }
         if (this.stopped) return;
-        await this.sweepArchivedCornerWorktrees(request.archived, new Set([...attemptedReaps, ...this.desiredChannels]));
+        await this.sweepArchivedCornerWorktrees(request.archived, this.desiredChannels);
         if (this.stopped) return;
         if (this.stopped) return;
         await this.sweepRoomPrivateStorage(request.states);
@@ -1038,7 +1020,7 @@ export class RoomRuntimeCoordinator {
       if (running.worktree) await this.reapCornerWorktree(running.worktree);
       else if (running.scratch) await this.reapCornerScratch(running.scratch);
     } catch (error) {
-      console.error(`[thin-core] corner ${channelId} cleanup failed; will retry:`, error);
+      console.error(`[thin-core] corner ${channelId} cleanup failed:`, error);
     }
     if (running.worktree || running.scratch) await this.cleanupArchivedCornerLocalState(channelId);
   }
@@ -1676,96 +1658,11 @@ export class RoomRuntimeCoordinator {
   private async refuseArchiveCleanup(
     cornerId: string,
     error: DaemonApiError,
-    worktree?: DiscoveredCornerWorktree & { branch?: string },
   ): Promise<void> {
     this.archiveCleanupRefused.add(cornerId);
-    this.archiveCleanupFaults.delete(cornerId);
-    this.pendingCornerReaps.delete(cornerId);
     await writePrivateFileAtomically(this.archiveCleanupRefusalPath(cornerId),
       `${JSON.stringify({ cornerId, status: error.status, code: error.code })}\n`);
-    // Keeping the checkout untouched already preserves its code and refs.
-    // Pointer creation and ignored-output pruning are optional local recovery,
-    // serialized off the work loop, never part of acknowledging a refusal.
-    if (worktree) this.queueArchivePreservation(cornerId, worktree,
-      'server permanently refused archived cleanup');
     console.warn(`[thin-core] corner ${cornerId} cleanup refused; local work kept`);
-  }
-
-  private queueArchivePreservation(
-    cornerId: string,
-    worktree: DiscoveredCornerWorktree & { branch?: string },
-    reason: string,
-  ): void {
-    const eligible = () => !this.stopped &&
-      !this.running.has(cornerId) && !this.startingCorners.has(cornerId) &&
-      !this.idleCornerSubscriptions.has(cornerId) &&
-      (this.archiveCleanupRefused.has(cornerId) || this.archiveCleanupAbandoned.has(cornerId));
-    queueCornerPreservation(worktree.path, async () => {
-      if (!eligible() || !existsSync(worktree.path)) return;
-      const branch = worktree.branch ?? await execFileAsync('git',
-        ['-C', worktree.path, 'symbolic-ref', '--quiet', '--short', 'HEAD'])
-        .then(result => result.stdout.trim(), () => 'HEAD');
-      if (!eligible()) return;
-      const flight = preserveUnpublishedCornerWorktree({ ...worktree, cornerId, branch }, reason, eligible);
-      this.preservationFlight = flight.then(() => undefined);
-      try { await this.preservationFlight; }
-      finally { this.preservationFlight = undefined; }
-    });
-  }
-
-  private archiveCleanupDue(cornerId: string): boolean {
-    return (this.archiveCleanupFaults.get(cornerId)?.retryAt ?? 0) <= this.now();
-  }
-
-  private deferArchiveCleanup(cornerId: string): void {
-    const failures = Math.min((this.archiveCleanupFaults.get(cornerId)?.failures ?? 0) + 1, 9);
-    this.archiveCleanupFaults.set(cornerId, {
-      failures,
-      retryAt: this.now() + Math.min(1_000 * 2 ** failures, 5 * 60_000),
-    });
-  }
-
-  private async retryPendingCornerReaps(desired: ReadonlySet<string>): Promise<void> {
-    // A new active membership is fresh authority, rather than a cleanup retry.
-    for (const cornerId of desired) {
-      await this.yieldReconciliation();
-      if (this.stopped) return;
-      this.archiveCleanupRefused.delete(cornerId);
-      await rm(this.archiveCleanupRefusalPath(cornerId), { force: true });
-    }
-    for (const [cornerId, worktree] of [...this.pendingCornerReaps]) {
-      await this.yieldReconciliation();
-      if (this.stopped) return;
-      if (desired.has(cornerId)) {
-        this.pendingCornerReaps.delete(cornerId);
-        this.archiveCleanupAbandoned.delete(cornerId);
-        continue;
-      }
-      if (this.archiveCleanupAbandoned.has(cornerId) || await this.cleanupWasRefused(cornerId)) continue;
-      if (!this.archiveCleanupDue(cornerId)) continue;
-      try {
-        await this.reapIdleCornerWorktree(worktree, desired);
-      } catch (error) {
-        if (hasUnpublishedWork(error)) {
-          // Nothing will ever push this work for an abandoned corner, so
-          // retrying is pure waste. Keep the checkout and its commits or
-          // working-tree changes, report the fault once, and stop spending
-          // reconciliation time on it.
-          this.archiveCleanupAbandoned.add(cornerId);
-          this.queueArchivePreservation(cornerId, worktree, 'archived with unpublished local work');
-          console.error(`[thin-core] corner ${cornerId} branch cleanup abandoned; unpublished work kept:`, error);
-          continue;
-        }
-        if (error instanceof DaemonApiError && error.status >= 400 && error.status < 500 && !error.retryable)
-          await this.refuseArchiveCleanup(cornerId, error, worktree);
-        else {
-          this.deferArchiveCleanup(cornerId);
-          console.error(`[thin-core] corner ${cornerId} branch cleanup retry failed:`, error);
-        }
-        // Cleanup retries ride the next reconciliation. Waking discovery
-        // here would repeat every Room and archived-corner read.
-      }
-    }
   }
 
   /**
@@ -1788,7 +1685,7 @@ export class RoomRuntimeCoordinator {
       }
       await this.yieldReconciliation();
       if (this.stopped) return;
-      if (desired.has(cornerId) || this.running.has(cornerId) || this.pendingCornerReaps.has(cornerId)) continue;
+      if (desired.has(cornerId) || this.running.has(cornerId)) continue;
       if (await this.cleanupWasRefused(cornerId)) continue;
       try {
         const state = await this.options.daemonApi.execute('getCornerRestoreState', { cornerId });
@@ -1806,22 +1703,9 @@ export class RoomRuntimeCoordinator {
         if (error instanceof DaemonApiError && error.status >= 400 && error.status < 500 && !error.retryable)
           await this.refuseArchiveCleanup(cornerId, error);
         else
-          console.warn(`[body] corner ${cornerId} archive state or cleanup unavailable; retrying:`, error);
+          console.warn(`[body] corner ${cornerId} archive state or cleanup unavailable:`, error);
       }
     }
-  }
-
-  private async reapIdleCornerWorktree(worktree: CornerWorktree, desired: ReadonlySet<string>): Promise<void> {
-    const eligible = () => !this.stopped && !desired.has(worktree.cornerId) &&
-      !this.running.has(worktree.cornerId) && !this.startingCorners.has(worktree.cornerId) &&
-      !this.idleCornerSubscriptions.has(worktree.cornerId);
-    if (!eligible()) return;
-    await this.scheduler.withIdleStorage(worktree.cornerId, async () => {
-      if (!eligible()) return;
-      this.storageMaintenanceRooms.add(worktree.cornerId);
-      try { await this.reapCornerWorktree(worktree); }
-      finally { this.storageMaintenanceRooms.delete(worktree.cornerId); }
-    });
   }
 
   private async reapCornerWorktree(worktree: CornerWorktree): Promise<void> {
@@ -1839,8 +1723,6 @@ export class RoomRuntimeCoordinator {
       log: entry => console.log(`[body] archived corner ${entry.roomId} deleted ${entry.path}; freed ${entry.freedBytes} bytes`),
     });
     await this.collectDependencyStores();
-    this.pendingCornerReaps.delete(worktree.cornerId);
-    this.archiveCleanupFaults.delete(worktree.cornerId);
     (await this.getLocalWorktreeIds()).delete(worktree.cornerId);
   }
 
@@ -1967,7 +1849,6 @@ export class RoomRuntimeCoordinator {
     this.beginShutdown();
     if (this.membershipDrain) await this.membershipDrain;
     if (this.maintenanceFlight) await this.maintenanceFlight;
-    if (this.preservationFlight) await this.preservationFlight.catch(() => undefined);
     const rooms = [...this.running.values()];
     for (const room of rooms) room.controller.abort();
     const drained = Promise.all(rooms.map((room) => room.promise.catch(() => undefined)));

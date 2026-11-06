@@ -77,8 +77,11 @@ it('retains a cold iOS restart across navigation and consumes it once in the mat
   expect(await routing).toBe(true);
   expect(native.openURL).toHaveBeenCalledWith(url);
   const resume = vi.fn();
-  const stop = subscribeVoiceResume('room-a', resume);
-  await vi.waitFor(() => expect(resume).toHaveBeenCalledOnce());
+  let stop!: () => void;
+  await new Promise<void>(resolve => {
+    stop = subscribeVoiceResume('room-a', () => { resume(); resolve(); });
+  });
+  expect(resume).toHaveBeenCalledOnce();
   native.link!({ url });
   expect(resume).toHaveBeenCalledOnce();
   await routeVoiceResumeNotification(url);

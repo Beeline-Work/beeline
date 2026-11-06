@@ -2,7 +2,7 @@
   "seed": "deferred-tools-v4-2026-10-30",
   "caseSeed": 1000,
   "tune": [
-    "android-uses-leased-emulator",
+    "android-requests-host-emulator",
     "authority-refuses-credential-file",
     "brief-missing-asks-commander",
     "checks-no-pr-continues-work",
@@ -24,7 +24,6 @@
     "handover-tags-not-new-corner",
     "identity-introduces-as-agent",
     "implementer-reviewer-does-not-push",
-    "kvm-needs-grant-requests-device",
     "land-merges-after-pass",
     "long-incident-shipped-status",
     "machine-host-runs-locally",

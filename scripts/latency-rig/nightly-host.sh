@@ -8,7 +8,7 @@ LATENCY_RIG_STATE="$(cd "$1" && pwd -P)"
 chmod 700 "$LATENCY_RIG_STATE"
 state="$LATENCY_RIG_STATE"
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-head_sha="" error="" phase="lane check" owned_device="" emulator_pid="" nightly_pid=""
+head_sha="" error="" phase="lane check" nightly_pid=""
 host_locked=false
 
 # shellcheck disable=SC2317,SC2329 # Invoked indirectly by the EXIT trap.
@@ -22,13 +22,6 @@ cleanup() {
     sleep 1
     pkill -KILL -s "$nightly_pid" 2>/dev/null
     wait "$nightly_pid" 2>/dev/null
-  fi
-  if [[ -n "$owned_device" ]]; then timeout 15s adb -s "$owned_device" emu kill; fi
-  if [[ -n "$emulator_pid" ]]; then
-    kill -TERM -- "-$emulator_pid" 2>/dev/null
-    sleep 1
-    kill -KILL -- "-$emulator_pid" 2>/dev/null
-    wait "$emulator_pid" 2>/dev/null
   fi
   if [[ "$status" != 0 && -z "$error" ]]; then error="$phase failed (exit $status)"; fi
   node --input-type=module - "$state" "$started_at" "$head_sha" "$status" "$error" "$host_locked" <<'JS'
@@ -56,18 +49,10 @@ host_locked=true
 [[ ! -e "$state/nightly.lock" ]] || blocked 'verdict lane held (nightly.lock)'
 exec 9>"$state/capture.lock"
 flock -n 9 || blocked 'capture lane held (capture.lock)'
-device_list() { timeout 15s adb devices | awk 'NR > 1 && $1 ~ /^emulator-[0-9]+$/ {print $1}' | sort -u; }
-check_lane() {
-  local devices
-  devices="$(device_list)"
-  [[ -z "$devices" ]] || blocked 'emulator lane held'
-  ss -ltn >"$state/host-listeners.txt"
-  # Include emulators still booting, before adb has registered their transport.
-  if awk '{n=split($4,a,":"); p=a[n]; if (p >= 5554 && p <= 5584 && p % 2 == 0) found=1} END {exit !found}' "$state/host-listeners.txt"; then
-    blocked 'emulator console lane held'
-  fi
-}
-check_lane
+# The operator selects and authorizes an existing host emulator for this rig.
+: "${LATENCY_RIG_DEVICE:?Select an already running host emulator with LATENCY_RIG_DEVICE}"
+[[ "$LATENCY_RIG_DEVICE" =~ ^emulator-[0-9]+$ ]] || blocked 'select an existing host emulator serial'
+[[ "$(adb -s "$LATENCY_RIG_DEVICE" get-state)" == device ]] || blocked 'selected host emulator unavailable'
 
 phase="checkout preparation"
 checkout="$state/checkout"
@@ -87,32 +72,6 @@ if [[ "$lock_hashes" != "$previous_hashes" ]]; then
   (cd apps/mobile && npm ci)
   printf '%s\n' "$lock_hashes" >"$state/dependencies-head"
 fi
-
-phase="emulator lease"
-check_lane
-before="$(device_list)"
-# The parent reads this immediately; background redirection may not have run yet.
-: >"$state/host-emulator.log"
-setsid beeline emulator -avd se_api35 -no-window -gpu swiftshader_indirect \
-  -no-snapshot -memory 2560 -cores 4 >"$state/host-emulator.log" 2>&1 9>&- &
-emulator_pid=$!
-for _ in {1..180}; do
-  # Kept-corner CLI output is documented in requestKeptCornerEmulator. The
-  # host's one-shot launcher stays alive instead, so use the adb diff there.
-  if grep -q ' already running' "$state/host-emulator.log"; then blocked 'emulator launcher reused an existing lane'; fi
-  owned_device="$(sed -nE 's/^emulator (emulator-[0-9]+) started$/\1/p' "$state/host-emulator.log" | head -1)"
-  if [[ -z "$owned_device" ]]; then
-    after="$(device_list)"
-    added="$(comm -13 <(printf '%s\n' "$before" | sed '/^$/d') <(printf '%s\n' "$after" | sed '/^$/d'))"
-    if [[ -n "$added" && "$added" != *$'\n'* ]]; then owned_device="$added"; fi
-  fi
-  if [[ -n "$owned_device" ]]; then break; fi
-  kill -0 "$emulator_pid" 2>/dev/null || { error='Emulator launcher exited without a leased serial'; exit 1; }
-  sleep 1
-done
-[[ -n "$owned_device" ]] || { error='Timed out identifying the leased emulator'; exit 1; }
-export LATENCY_RIG_DEVICE="$owned_device"
-timeout 180s adb -s "$owned_device" wait-for-device
 
 phase="port selection"
 ss -ltn >"$state/host-listeners.txt"

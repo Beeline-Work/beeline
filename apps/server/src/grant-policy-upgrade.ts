@@ -1,6 +1,7 @@
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { createHash } from 'node:crypto';
 import {
+  HOST_EMULATOR_TARGET,
   commandRuleEscalations,
   parseCommandGrantTarget,
   type CommandGrantScript,
@@ -188,7 +189,7 @@ export async function upgradeGrantPolicy(database: SqlDatabase): Promise<void> {
  * Cancellation uses the existing revoked status and clears card actions. Nothing waits on these rows, yet their cards kept offering
  * No/Once/Always. Each is withdrawn by @system without waking the turn that
  * raised it, so an answer can no longer resume stale work. Asks the current
- * rule still raises — the wallet, a credential file, an unread script — stay.
+ * rule still raises — host emulator consent, the wallet, a credential file, an unread script — stay.
  */
 export async function withdrawSupersededGrantAsks(database: SqlDatabase): Promise<number> {
   return database.transaction(async (db) => {
@@ -206,6 +207,7 @@ export async function withdrawSupersededGrantAsks(database: SqlDatabase): Promis
       FOR UPDATE OF g`);
     const superseded = pending.rows
       .filter((grant) => {
+        if (grant.kind === 'host' && grant.target === HOST_EMULATOR_TARGET) return false;
         if (grant.kind !== 'command') return true;
         try {
           const rule = parseCommandGrantTarget(grant.target);

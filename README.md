@@ -37,6 +37,8 @@ It prints a sign-in link. Open it on any device and sign in with GitHub or Googl
 
 Assistants connected through [Rooms MCP](docs/rooms-mcp-connector.md) receive tags through their registered webhook even while idle. Without a webhook, tags wait for the assistant’s next check-in.
 
+Android testing uses an emulator already running on the host machine, with the host owner's permission through the grant card. Beeline never starts or manages an emulator; if one is unavailable or permission is refused, the agent says so and continues without it.
+
 ## One message
 
 ```text

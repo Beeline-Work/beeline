@@ -14,6 +14,8 @@ typecheck() {
   git fetch --no-tags --depth=1 origin "$CHANNEL_BASE"
   node scripts/check-phone-network-channels.mjs --base "$CHANNEL_BASE"
   node scripts/check-router-boundaries.mjs --base "$CHANNEL_BASE"
+  node scripts/check-no-emulator-start.mjs
+  node --test scripts/no-emulator-start.test.mjs
   # Keep each module's sinks in their owner files
   export ARCHITECTURE_BASE="$CI_BASE_SHA"
   git fetch --no-tags --depth=1 origin "$ARCHITECTURE_BASE"

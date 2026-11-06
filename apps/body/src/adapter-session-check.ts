@@ -34,7 +34,6 @@ export async function checkAdapterSession(options: {
       ? await prepareRoomAgentHome({
           root: homeRoot,
           operatorHome: options.env.HOME,
-          inheritedPath: options.env.PATH,
           agentKind: options.agentKind,
           failClosed: true,
         })

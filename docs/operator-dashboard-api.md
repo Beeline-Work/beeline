@@ -494,9 +494,7 @@ contact name/title, city/state, email and phone before it can be submitted. The
 existing discovery bearer is not an Ads API OAuth1 credential. No reporting
 credential was obtained and no live daily X reporting is claimed.
 
-Proof: `npm run prove:x-attribution` exercises the **built** loopback signup HTTP
-service and authenticated dashboard with isolated PGlite and X provider fixtures,
-writing `.scratch/x-ads/service-proof.json`. `x-ads.test.ts` covers signup retries,
+`x-ads.test.ts` covers signup retries,
 both providers, returning accounts and dashboard joins; the shared browser tests
 cover cross-origin cookie reuse and pixel deduplication. `npm run build:x-attribution`
 regenerates the committed landing script. Privacy changes retain the October 18

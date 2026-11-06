@@ -31,6 +31,8 @@ beforeAll(async () => {
   await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','System','system') ON CONFLICT DO NOTHING`, [SYSTEM_IDENTITY_ID]);
   await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Human','human'),($2,'agent','Ruby','ruby'),
     ($3,'agent','Sol','sol'),($4,'human','Second','second')`, [H, A, B, SECOND]);
+  await db.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login)
+    VALUES('github','voice-proof-owner',$1,'https://github.com','beeline','voice-proof-owner')`, [H]);
   await db.query(`INSERT INTO agents(agent_id,owner_id,soul) VALUES($1,$3,'{"instructions":"Warm."}'),($2,$3,'{"instructions":"Concise."}')`, [A, B, H]);
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Voice proof')`, [W]);
   await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [R, W]);
@@ -62,9 +64,7 @@ it('refuses the retired HTTP call join for Android and JSON bodies', async () =>
   for (const id of [H, A]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
     VALUES($1,$2,$3,'member')`, [W, roomId, id]);
   const auth = new TokenAuth(db, async token => ({ subject: token, login: token, name: token }));
-  await db.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login)
-    VALUES('github','android-join-proof',$1,'https://github.com','beeline','android-join-proof')`, [H]);
-  const { accessToken } = await auth.exchangeGitHubOidc('android-join-proof');
+  const { accessToken } = await auth.exchangeGitHubOidc('voice-proof-owner');
   const server = createBeelineServer({ database: db, auth, phone: new PhoneService(db, 'http://proof'),
     daemon: new DaemonService(db, live), live, voice: service, mediaMaximumBytes: 1024 });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -91,9 +91,7 @@ it('SOCKET-OPS-1: joins, reads, resumes and leaves a real voice session over the
   for (const id of [H, A]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
     VALUES($1,$2,$3,'member')`, [W, roomId, id]);
   const auth = new TokenAuth(db, async token => ({ subject: token, login: token, name: token }));
-  await db.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login)
-    VALUES('github','socket-voice-proof',$1,'https://github.com','beeline','socket-voice-proof')`, [H]);
-  const { accessToken } = await auth.exchangeGitHubOidc('socket-voice-proof');
+  const { accessToken } = await auth.exchangeGitHubOidc('voice-proof-owner');
   const server = createBeelineServer({ database: db, auth, phone: new PhoneService(db, 'http://proof'),
     daemon: new DaemonService(db, live), live, voice: service, mediaMaximumBytes: 1024 });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -248,9 +246,7 @@ it('ignores an old client provider field while keeping Aura and manager authoriz
 
 it('demonstrates authenticated Aura saves and WAV previews while ignoring old provider fields', async () => {
   const auth = new TokenAuth(db, async token => ({ subject: token, login: token, name: token }));
-  await db.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login)
-    VALUES('github','aura-proof-owner',$1,'https://github.com','beeline','aura-proof-owner')`, [H]);
-  const { accessToken } = await auth.exchangeGitHubOidc('aura-proof-owner');
+  const { accessToken } = await auth.exchangeGitHubOidc('voice-proof-owner');
   const aura = new VoiceService(db, live, { ...service.config, speech: {
     voices: ['luna', 'apollo'], async *synthesize() { yield new Uint8Array([1, 2, 3, 4]); },
   } });
@@ -490,9 +486,7 @@ it('demonstrates workspace exhaustion ending the whole call and refusing HTTP jo
     releaseClose?.(); await ending; deleteRoom.mockRestore();
   }
   const auth = new TokenAuth(db, async token => ({ subject: token, login: token, name: token }));
-  await db.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login)
-    VALUES('github','budget-proof-human',$1,'https://github.com','beeline','budget-proof-human')`, [H]);
-  const { accessToken } = await auth.exchangeGitHubOidc('budget-proof-human');
+  const { accessToken } = await auth.exchangeGitHubOidc('voice-proof-owner');
   const server = createBeelineServer({ database: db, auth, phone: new PhoneService(db, 'http://proof'),
     daemon: new DaemonService(db, live), live, voice: service, mediaMaximumBytes: 1024 });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));

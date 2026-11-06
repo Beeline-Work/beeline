@@ -18,14 +18,6 @@
       "phase": "M4"
     },
     {
-      "id": "apps/auth/src/store.ts::import:pg",
-      "file": "apps/auth/src/store.ts",
-      "kind": "import:pg",
-      "count": 1,
-      "compatibility": "legacy-only",
-      "phase": "M4"
-    },
-    {
       "id": "apps/body/src/agent-corner-checkout.ts::fetch",
       "file": "apps/body/src/agent-corner-checkout.ts",
       "kind": "fetch",

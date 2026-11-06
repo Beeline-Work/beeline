@@ -142,14 +142,17 @@ import { GitHubOperations, Input, hash, challenge, record, GitHubRecord, text, i
 
 
   export async function gitHubOperationsCompleteInstallation(ctx: GitHubOperations, state: string, installationId?: number, code?: string, callbackUri?: string) {
-    const flow=(await ctx.database.query<{identity_id:string;redirect_uri:string}>(
+    const flow=(await ctx.database.query<{identity_id:string;redirect_uri:string;github_subject:string|null}>(
       `UPDATE github_auth_flows SET consumed_at=now() WHERE state_hash=$1 AND purpose='installation'
-        AND consumed_at IS NULL AND expires_at>now() RETURNING identity_id,redirect_uri`,[hash(state)])).rows[0];
+        AND consumed_at IS NULL AND expires_at>now() RETURNING identity_id,redirect_uri,
+        (SELECT link.subject FROM identity_external_links link WHERE link.provider='github'
+          AND link.identity_id=github_auth_flows.identity_id) github_subject`,[hash(state)])).rows[0];
     if (!flow) throw new Error('GitHub installation flow not found or expired');
     try {
       const binding=state.startsWith('github_bind_');
       if (binding && (!code || !callbackUri)) throw new Error('github_connection_canceled');
       const identity=binding?await ctx.oauth.exchangeCode(code!,callbackUri!,state):undefined;
+      if (identity && flow.github_subject && flow.github_subject!==identity.subject) throw new Error('github_account_mismatch');
       const credential=identity?{subject:identity.subject,token:identity.accessToken,refreshToken:identity.refreshToken}
         :await ctx.userCredential(flow.identity_id,ctx.database);
       if (!credential?.token) throw new Error('GitHub installation access denied');

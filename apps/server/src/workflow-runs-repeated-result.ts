@@ -148,7 +148,7 @@ export async function handoff(
         ? ', or blocked with contents.reason' : '';
       throw new ExpectedRefusalError(`${errors.join('; ')}; outcome must be one of: ${outcomes}${blocked}`);
     }
-    if (scope.contract.name === 'feedback-triage' && stateName === 'pull' && ['ranked', 'nothing_new'].includes(input.outcome)) {
+    if (scope.contract.name === 'feedback-triage' && stateName === 'pull' && contentsState.requires.includes('dispositions') && ['ranked', 'nothing_new'].includes(input.outcome)) {
       await applyFeedbackDispositions(db, command, (input.contents as Record<string, unknown>).dispositions);
     }
     if (scope.contract.name === 'workspace-walk' && stateName === 'browse' && input.outcome === 'reviewed') {

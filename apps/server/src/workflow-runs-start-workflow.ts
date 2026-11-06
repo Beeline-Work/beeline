@@ -4,7 +4,7 @@ import { CommandRefusalError, ExpectedRefusalError } from './command-refusal.js'
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { humanRoomAdmin, WorkflowAuthorizationError } from './workflow-admin.js';
 import { createHash, randomBytes } from 'node:crypto';
-import { shortRunId, isAgentIdentityReference, WORKFLOW_DEFAULT_DEADLINE_SECONDS, WORKFLOW_ROLE_AGENTS_MAX, type WorkflowContract, type WorkflowReadContract, type WorkflowGateState, type WorkflowHandoffState, type WorkflowRoleBinding } from '@beeline/api-contract/daemon';
+import { shortRunId, isAgentIdentityReference, WORKFLOW_ROLE_AGENTS_MAX, type WorkflowContract, type WorkflowReadContract, type WorkflowGateState, type WorkflowHandoffState, type WorkflowRoleBinding } from '@beeline/api-contract/daemon';
 import { workflowRunStatus } from '@beeline/api-contract/phone';
 import { FEEDBACK_TRIAGE_CONTRACT, FEEDBACK_TRIAGE_SLUG } from './feedback-triage-workflow.js';
 import type { CommandRow } from './agent-command.js';
@@ -12,7 +12,7 @@ import type { SqlDatabase } from './database.js';
 import { closeRunChoices } from './room-choice.js';
 import { identitySubject, systemLine } from './system-line.js';
 import { workflowStartLockKey, liveWorkflowRun, scheduleTriggerPeriod, validateWorkflowBindings, roleAgentList } from './workflow-runs-repeated-result.js';
-import { loadIdentityRow, lockWorkflowRun, resolveRoleBinding, WORKFLOW_HANDOFF_CARD_TYPE, workflowRequester, resolveRunOwner, scheduleRunTimer, openRun, mentionsFor, workflowRunRequester, loadRun, loadPinnedContract } from './workflow-runs.js';
+import { loadIdentityRow, lockWorkflowRun, resolveRoleBinding, WORKFLOW_HANDOFF_CARD_TYPE, workflowRequester, resolveRunOwner, openRun, mentionsFor, workflowRunRequester, loadRun, loadPinnedContract } from './workflow-runs.js';
 import { dispatchState, authorizeRunControl, moveRole } from './workflow-runs-cancel-run-timers.js';
 
 
@@ -121,7 +121,6 @@ export async function startWorkflow(
       runId,
     });
     const exhausted = 'exhausted' in resolution;
-    const deadlineSeconds = contract.deadlineSeconds ?? WORKFLOW_DEFAULT_DEADLINE_SECONDS;
     await systemLine(db, {
       id: runId,
       roomId: command.room_id,
@@ -142,7 +141,6 @@ export async function startWorkflow(
         workflowVersion: skill.current_version,
         requesterId: await workflowRequester(db, command),
         ownerId: await resolveRunOwner(db, command),
-        deadlineSeconds,
         startKind:
           starter?.kind === 'human'
             ? 'human_admin'
@@ -162,14 +160,6 @@ export async function startWorkflow(
       ) UPDATE agent_subscriptions subscription SET fired_count=subscription.fired_count
         FROM linked WHERE subscription.id=linked.subscription_id`,
       [command.source_message_id, runId]);
-    await scheduleRunTimer(db, {
-      workspaceId: room.workspace_id,
-      roomId: command.room_id,
-      runId,
-      workflowSlug: contract.name,
-      timer: 'deadline',
-      seconds: deadlineSeconds,
-    });
     await dispatchState(db, {
       workspaceId: room.workspace_id,
       roomId: command.room_id,

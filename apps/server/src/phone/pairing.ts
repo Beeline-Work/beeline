@@ -15,7 +15,6 @@ import { hash, unix, normalizeAgentName, CONNECT_RENAME_WINDOW_MS } from './valu
 
 
 
-
   export async function phoneReadInvite(ctx: PhoneContext, rawToken: string, viewerId: string): Promise<InviteView | null> {
     if (!isCommunityInviteToken(rawToken)) return null;
     const result = await ctx.database.query<{

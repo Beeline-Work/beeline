@@ -1,5 +1,37 @@
-import { expect, it, vi, VoiceService, VoiceRoomRuntime, spokenReport, voiceInterrupt, RealVoiceService, migrate, PgliteDatabase, LiveHub, PhoneService, ConnectionPresence, state, roster, conversationService, phantomHarness, deferred, multiCall } from './voice-room-runtime.test-support.js';
+import { expect, it, vi, VoiceService, VoiceRoomRuntime, spokenReport, RealVoiceService, migrate, PgliteDatabase, LiveHub, PhoneService, ConnectionPresence, state, roster, conversationService, phantomHarness, deferred } from './test-support-voice-room-runtime.test-support.js';
 
+
+
+it('Reproduction phantom-1: never sends Hey or Yeah from a noisy turn during TTS; stop still interrupts', async () => {
+  const harness = phantomHarness();
+  const runtime = await VoiceRoomRuntime.connect(harness.service as unknown as VoiceService, 'call', 'room');
+  state.streams = [new ReadableStream()];
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(harness.service.config.stt).toHaveBeenCalledOnce());
+    harness.emit('EndOfTurn', 'Explain the answer', 0);
+    await vi.waitFor(() => expect(harness.speech.synthesize).toHaveBeenCalledOnce());
+    harness.emit('StartOfTurn', '', 1);
+    harness.emit('Update', 'Hey', 1);
+    harness.emit('EndOfTurn', 'Hey', 1);
+    harness.emit('StartOfTurn', '', 2);
+    harness.emit('Update', 'Yeah', 2);
+    harness.emit('EndOfTurn', 'Yeah', 2);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(harness.service.recordHuman.mock.calls.map(call => call[4])).toEqual(['Explain the answer']);
+    expect(harness.messages).toEqual(['@ronnie Explain the answer']);
+    expect(harness.timeline.filter(line => line.endsWith('barge-in cancel'))).toHaveLength(0);
+    harness.emit('StartOfTurn', '', 3);
+    harness.emit('EndOfTurn', 'stop', 3);
+    await vi.waitFor(() => expect(harness.speech.synthesize.mock.calls[0]?.[2]?.aborted).toBe(true));
+    expect(harness.service.leave).not.toHaveBeenCalled();
+    expect(harness.service.recordHuman).toHaveBeenCalledOnce();
+    expect(harness.speech.synthesize.mock.calls[0]?.[2]?.aborted).toBe(true);
+  } finally {
+    console.log('Reproduction phantom-1\n' + harness.timeline.join('\n'));
+    await runtime.close();
+  }
+});
 
 
 it.each(['stop', 'cancel', 'wait', 'no', 'Yeah', 'Please explain something else'])('preserves a real barge-in: %s', async text => {
@@ -704,7 +736,7 @@ it('Demonstration MULTI-1: two humans in one call both get the agent reply, with
     onText(text); return { text, order: false };
   });
   const voice = new RealVoiceService(db, live, { ...config, speech: { synthesize: async function* () { yield new Uint8Array([200, 1]); } } });
-  const presence = new ConnectionPresence(db, live, 500);
+  const presence = new ConnectionPresence(db, live);
   const words = (text: string) => text.split(' ').map((word, i) => ({ word, start: i * 0.2, end: (i + 1) * 0.2, confidence: 0.95 }));
   try {
     await migrate(db);
@@ -758,30 +790,3 @@ it('Demonstration MULTI-1: two humans in one call both get the agent reply, with
     await presence.stop(); await voice.close(); await db.close();
   }
 }, 30_000);
-
-
-it('uses two words or 400 ms of non-backchannel speech as the interrupt threshold', () => {
-  const event = (transcript: string, seconds = 0.2) => ({ event: 'Update' as const, transcript, turn_index: 0, sequence_id: 0,
-    words: transcript.split(' ').map((word, i, all) => ({ word, start: i * seconds / all.length, end: (i + 1) * seconds / all.length, confidence: 0.95 })) });
-  expect(voiceInterrupt(event('hold on'))).toBe(true);
-  expect(voiceInterrupt(event('stop', 0.45))).toBe(true);
-  expect(voiceInterrupt(event('stop', 0.25))).toBe(false);
-  for (const noise of ['uh', 'hmm', 'mm hmm', 'yeah okay', 'uh-huh', 'haha', 'oh wow', 'hmm', 'um', 'uh'])
-    expect(voiceInterrupt(event(noise, 1))).toBe(false);
-});
-
-
-it('1-human lock: the locked agent answers every unnamed turn until a spoken name or avatar tap switches it', async () => {
-  const call = multiCall(1);
-  const runtime = await VoiceRoomRuntime.connect(call.service as unknown as VoiceService, 'call', 'room');
-  try {
-    await runtime.utterance('human', 'What do you think?');
-    await runtime.utterance('human', 'Gussie, your turn');
-    await runtime.utterance('human', 'And then what?');
-    call.roomData('human', { type: 'target', agentId: 'ruby', tap: true });
-    await vi.waitFor(() => expect(call.service.access).toHaveBeenCalled());
-    for (const text of ['Keep going', 'More please', 'One more']) await runtime.utterance('human', text);
-    expect(call.answered()).toEqual(['ruby', 'goose', 'goose', 'ruby', 'ruby', 'ruby']);
-    expect(call.signals('human').filter(signal => signal.type === 'unaddressed')).toEqual([]);
-  } finally { await runtime.close(); }
-});

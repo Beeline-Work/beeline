@@ -1,8 +1,6 @@
 import { VOICE_SCHEMA } from './voice-schema.js';
 import { retireWorkspaceBansSql } from './membership-join.js';
 import { messageSearchDocumentSql } from './message-search-document-sql.js';
-
-
 export const DATABASE_SCHEMA_WORKFLOW_BACKFILLS = `
 CREATE TABLE IF NOT EXISTS workflow_backfills (
   name text PRIMARY KEY,
@@ -23,9 +21,7 @@ CREATE TABLE IF NOT EXISTS identities (
 );
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS hidden_from_roster boolean NOT NULL DEFAULT false;
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS face_id text NULL;
--- Start existing people's inactivity clock at rollout; account age is not app inactivity.
-ALTER TABLE identities ADD COLUMN IF NOT EXISTS last_app_active_at timestamptz DEFAULT now();
-ALTER TABLE identities ADD COLUMN IF NOT EXISTS away_warning_at timestamptz;
+DROP TRIGGER IF EXISTS beeline_agent_schedule_due ON identities;
 -- Null excludes every identity present at rollout. New humans inherit true;
 -- completion changes it to false and follows the account across devices.
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS welcome_cards_due boolean;
@@ -297,6 +293,7 @@ CREATE TABLE IF NOT EXISTS agents (
   yolo_set_at timestamptz,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS wake_batch_minutes integer NOT NULL DEFAULT 0 CHECK (wake_batch_minutes >= 0);
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS usage_snapshot jsonb;
 -- One plan reading per owner, provider and account, shared by every agent on
 -- it (agent-usage.ts). account_key is a hash; it never names the account.
@@ -318,7 +315,6 @@ ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_by text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_at timestamptz;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS model_unavailable text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS fast_mode boolean NOT NULL DEFAULT false;
-ALTER TABLE agents ADD COLUMN IF NOT EXISTS wake_batch_minutes integer NOT NULL DEFAULT 0 CHECK (wake_batch_minutes >= 0);
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS machine_id text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS machine_name text;
 -- Broker facts are machine reports, not connector lifecycle records.
@@ -439,27 +435,7 @@ CREATE TABLE IF NOT EXISTS needs_you_marks (
 -- cascade-delete.
 CREATE INDEX IF NOT EXISTS needs_you_marks_message_idx ON needs_you_marks(message_id);
 CREATE INDEX IF NOT EXISTS needs_you_marks_workspace_idx ON needs_you_marks(workspace_id);
--- Inert until the next release drains servers that still use this schema.
-CREATE TABLE IF NOT EXISTS pending_mention_notices (
-  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
-  agent_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
-  sender_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
-  source_message_id text NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-  reason text NOT NULL,
-  due_at timestamptz NOT NULL,
-  notice_id text,
-  notified_at timestamptz,
-  PRIMARY KEY(room_id, agent_id, source_message_id, reason)
-);
-CREATE INDEX IF NOT EXISTS pending_mention_notices_due_idx
-  ON pending_mention_notices(due_at) WHERE notified_at IS NULL;
-CREATE INDEX IF NOT EXISTS pending_mention_notices_notice_idx
-  ON pending_mention_notices(notice_id) WHERE notice_id IS NOT NULL;
--- source_message_id cascades from messages but is only the third column of
--- the primary key, so deleting a message made Postgres sequentially scan
--- this table to find rows to cascade-delete.
-CREATE INDEX IF NOT EXISTS pending_mention_notices_source_message_idx
-  ON pending_mention_notices(source_message_id);
+DROP TABLE IF EXISTS pending_mention_notices;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS agent_hop_count integer NOT NULL DEFAULT 0;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS system_event jsonb;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
@@ -635,4 +611,23 @@ CREATE TABLE IF NOT EXISTS institutional_memory_jobs (
   source_deleted_at timestamptz,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE institutional_memory_jobs ADD COLUMN IF NOT EXISTS source_deleted_at timestamptz;
+ALTER TABLE institutional_memory_jobs ADD COLUMN IF NOT EXISTS context jsonb;
+CREATE INDEX IF NOT EXISTS institutional_memory_jobs_claim_idx
+  ON institutional_memory_jobs(status,next_attempt_at,created_at,id)
+  WHERE status IN ('pending','retry','claimed');
+CREATE INDEX IF NOT EXISTS institutional_memory_jobs_workspace_created_idx
+  ON institutional_memory_jobs(workspace_id,created_at,id);
+-- source_message_id/source_room_id cascade from messages/rooms with no index,
+-- so deleting a room or workspace made Postgres sequentially scan this table
+-- to find rows to cascade-delete.
+CREATE INDEX IF NOT EXISTS institutional_memory_jobs_source_message_idx
+  ON institutional_memory_jobs(source_message_id);
+CREATE INDEX IF NOT EXISTS institutional_memory_jobs_source_room_idx
+  ON institutional_memory_jobs(source_room_id);
+
+-- Meaning-based recall (search_memory, the per-turn snapshot, workspace
+-- skills) needs pgvector; Neon supports the extension directly.
+CREATE EXTENSION IF NOT EXISTS vector;
+
 `;

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, generateKeyPair, exportPKCS8, GitHubAppClient, GitHubOAuthClient, seedCornerOpening, PgliteDatabase, insertCornerFacts, GitHubOperations, DaemonService, LiveHub, createServer, HUMAN, REVIEWER, fixtureScope1, type QueryResult, type QueryResultRow, type AddressInfo } from './github-operations.test-support.js';
+import { describe, expect, it, vi, generateKeyPair, exportPKCS8, GitHubAppClient, GitHubOAuthClient, seedCornerOpening, PgliteDatabase, insertCornerFacts, GitHubOperations, DaemonService, LiveHub, createServer, HUMAN, REVIEWER, fixtureScope1, type QueryResult, type QueryResultRow, type AddressInfo } from './test-support-github-operations.test-support.js';
 
 describe('GitHub phone operations', () => {
 const scope1 = fixtureScope1();

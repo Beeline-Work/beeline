@@ -5,9 +5,9 @@ import type { CornerLifecycleView } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { GITHUB_SUBJECT, systemLine, type SystemPhrase } from './system-line.js';
 import { archiveCornerState, lockCornerArchivalAuthority } from './corner-close.js';
-import { advanceCorner, lockCornerLifecycle } from './corner-lifecycle.js';
+import { advanceCorner, planCornerCheckObservation, checksSettled, checksRestarted, actionsJobId, lockCornerLifecycle } from './corner-lifecycle.js';
 import { reconcileCornerMergeBlockers, routeSystemCommand } from './agent-command.js';
-import { GitHubOperations, hash, text, CornerWebhookTarget, checkFact, checksRestarted, checksSettled, actionsJobId, jobErrorLines } from './github-operations.js';
+import { GitHubOperations, CornerWebhookTarget, checkFact, jobErrorLines, text, hash } from './github-operations.js';
 
 
 
@@ -156,44 +156,12 @@ import { GitHubOperations, hash, text, CornerWebhookTarget, checkFact, checksRes
             updatedAt: Math.floor(fetchStartedAt),
             fetchStartedAt,
           };
-          const priorReport = current.checksSummary as (typeof current.checksSummary & {
-            reportedHeadSha?: string; reportedFailing?: readonly string[]; failureFollowupSent?: boolean;
-            partialRepairSent?: boolean; attempt?: number;
-          }) | undefined;
-          const sameReportedHead = priorReport?.reportedHeadSha === checkHeadSha;
-          const newAttempt = sameReportedHead && checksRestarted(priorReport.checks, summary.checks);
-          const attempt = sameReportedHead ? (priorReport.attempt ?? 0) + (newAttempt ? 1 : 0) : 0;
-          const reported = sameReportedHead && !newAttempt ? priorReport.reportedFailing ?? [] : [];
-          const newFailures = summary.failing.filter(name => !reported.includes(name));
-          const workerBusy = (await database.query(
-            `SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason='corner_check'
-               AND state IN ('pending','claimed') LIMIT 1`,
-            [target.corner_id],
-          )).rowCount > 0;
-          const firstFailure = summary.status === 'failing' && newFailures.length > 0 && !reported.length;
-          const followup = summary.status === 'failing' && reported.length > 0 &&
-            checksSettled(summary.checks) && !checksSettled(priorReport?.checks ?? []) &&
-            !(sameReportedHead && !newAttempt && priorReport.failureFollowupSent);
-          // A later failed job, after the first repair turn has ended, wakes
-          // once without waiting for the checks that are still running.
-          const partialRepair = !followup && summary.status === 'failing' && !checksSettled(summary.checks) &&
-            reported.length > 0 && newFailures.length > 0 && !workerBusy &&
-            !(sameReportedHead && !newAttempt && priorReport.partialRepairSent);
-          const reportFailure = firstFailure || followup || partialRepair;
-          const storedSummary = {
-            ...summary,
-            // Repeated reads of an unchanged status do not start new idle work.
-            statusChangedAt: current.pr?.headSha === checkHeadSha && priorReport?.status === summary.status
-              && !newAttempt && JSON.stringify((priorReport.checks ?? []).map(check => [check.name,check.status]).sort()) ===
-                JSON.stringify(summary.checks.map(check => [check.name,check.status]).sort())
-              ? (priorReport as typeof priorReport & { statusChangedAt?: number })?.statusChangedAt ?? priorReport.fetchStartedAt ?? priorReport.updatedAt
-              : summary.fetchStartedAt,
-            attempt,
-            reportedHeadSha: checkHeadSha,
-            reportedFailing: reportFailure ? [...reported, ...newFailures] : reported,
-            failureFollowupSent: Boolean((sameReportedHead && !newAttempt && priorReport.failureFollowupSent) || followup),
-            partialRepairSent: Boolean((sameReportedHead && !newAttempt && priorReport.partialRepairSent) || partialRepair),
-          };
+          const priorReport = current.checksSummary;
+          const workerBusy = (await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason='corner_check'
+            AND state IN ('pending','claimed') LIMIT 1`, [target.corner_id])).rowCount > 0;
+          const { sameReportedHead, newAttempt, attempt, newFailures, followup, partialRepair, reportFailure, storedSummary } =
+            planCornerCheckObservation({ headSha: checkHeadSha, previousHeadSha: current.pr?.headSha,
+              prior: priorReport, next: summary, workerBusy });
           await ctx.updateLifecycle(
             target.corner_id,
             {

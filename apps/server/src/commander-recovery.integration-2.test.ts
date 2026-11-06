@@ -1,4 +1,4 @@
-import { createHash, randomUUID, randomBytes, expect, it, vi, MemoryObjectStorage, ObjectService, callAgentTool, postArtifact, createServer, spawn, createInterface, mkdtemp, readFile, writeFile, rm, tmpdir, join, CommandExecutionContext, runServerCommandIntake, HUMAN, RUBY, WORKER, WS, ROOM, DM, db, daemon, phone, order, claim, authority, commands, open, worker, rootFixture, type AgentCommand, type DaemonApiClient } from './commander-recovery.integration.test-support.js';
+import { advanceCorner, createHash, randomUUID, randomBytes, expect, it, vi, MemoryObjectStorage, ObjectService, callAgentTool, postArtifact, createServer, spawn, createInterface, mkdtemp, readFile, writeFile, rm, tmpdir, join, CommandExecutionContext, runServerCommandIntake, HUMAN, RUBY, WORKER, WS, ROOM, DM, db, daemon, phone, order, claim, authority, commands, open, worker, rootFixture, type AgentCommand, type DaemonApiClient } from './test-support-commander-recovery.integration.test-support.js';
 
 
 it('keeps the originating corner waiting for a decision returned to its parent Room', async () => {
@@ -47,10 +47,12 @@ it('keeps the originating corner waiting for a decision returned to its parent R
     WORKER,
   );
   await rootFixture.daemon.execute('postAgentTurnReceipt', { ...authority(turn), agentId: WORKER, status: 'complete' }, WORKER);
-  const state = async () =>
-    (await rootFixture.phone.readCorners(ROOM, HUMAN))?.corners.find(
+  const state = async () => {
+    await advanceCorner(rootFixture.db, opened.cornerId, { kind: 'reconcile' });
+    return (await rootFixture.phone.readCorners(ROOM, HUMAN))?.corners.find(
       (item) => item.corner.id === opened.cornerId,
     )?.state;
+  };
   expect(await state()).toBe('waiting');
   await rootFixture.db.query('SELECT corner_owed_refresh($1,$2)', [opened.cornerId, HUMAN]);
   expect(await state()).toBe('waiting');

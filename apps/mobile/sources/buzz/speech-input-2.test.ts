@@ -1,4 +1,4 @@
-import { upload, platformState, mockMod, fireEvent, renderHook, fixtureScope2 } from './speech-input.test-support.js';
+import { upload, platformState, mockMod, fireEvent, renderHook, fixtureScope2 } from './test-support-speech-input.test-support.js';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';

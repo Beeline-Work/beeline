@@ -1,20 +1,24 @@
-import { beelineManagedSkills, runningBeelineReleaseId } from './beeline-skill.js';
-import { nonhumanSilentWake } from './silent-wake.js';
-import { createHash, randomUUID } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { cornerTextRefusal, type CornerRestoreResult, type ConnectResult, type RoomConversationResult, type DaemonAttachment } from '@beeline/api-contract/daemon';
-import { normalizeAppContinuation } from '@beeline/api-contract/app-connections';
-import { squireSessionSignedIn } from './squire-sign-in.js';
-import { readAgentUsage, usageIsOld, usageSummary } from '@beeline/api-contract/daemon';
-import { allocatedDirectoryBytes, scratchBudgetMessage } from './scratch-lifecycle.js';
-import { attachmentId, deliverAttachments, withoutImageData } from './attachment-delivery.js';
-import { JsonObject, readTurnContextFile, daemonExecute, requiredEnv, memorySources, activeCommandContext, commandRequest, asObject, stringArg } from './read-only-mcp.js';
-
-import { downloadAttachment, agentScheduleRoomId, reactToMessage, postArtifact, bindBriefFiles, agentScheduleDepsFromEnv } from './read-only-mcp-download-attachment.js';
-import { reportFeedback, openCorner, reviseCornerBrief, readCornerBrief, closeCorner, prChecksStatus, approveMerge, targetCornerId, writeScratchFile, fetchImage } from './read-only-mcp-open-corner.js';
-import { shareBrowser, requestGrant, listGrants, workbenchStatus, connectorOfferDepsFromEnv } from './read-only-mcp-agent-grant-deps.js';
+import { type DaemonAttachment, readAgentUsage, usageSummary, usageIsOld, type RoomConversationResult, type CornerRestoreResult, cornerTextRefusal, type ConnectResult } from "@beeline/api-contract/daemon";
+import { withoutImageData, deliverAttachments, attachmentId } from "./attachment-delivery.js";
+import { join } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { beelineManagedSkills, runningBeelineReleaseId } from "./beeline-skill.js";
+import { nonhumanSilentWake } from "./silent-wake.js";
+import { writeFileSync } from "node:fs";
+import { scratchBudgetMessage, allocatedDirectoryBytes } from "./scratch-lifecycle.js";
+import { normalizeAppContinuation } from "@beeline/api-contract/app-connections";
+import { squireSessionSignedIn } from "./squire-sign-in.js";
+import { JsonObject, readTurnContextFile, daemonExecute, requiredEnv, downloadAttachment, memorySources, activeCommandContext, commandRequest, fetchImage, asObject, stringArg, connectorOfferDepsFromEnv } from './read-only-mcp.js';
+import { agentScheduleRoomId, reactToMessage, postArtifact, bindBriefFiles, agentScheduleDepsFromEnv } from './read-only-mcp-download-attachment.js';
+import { reportFeedback, openCorner, reviseCornerBrief, readCornerBrief, closeCorner, prChecksStatus, approveMerge, targetCornerId, writeScratchFile } from './read-only-mcp-open-corner.js';
+import { shareBrowser, requestGrant, listGrants, workbenchStatus } from './read-only-mcp-agent-grant-deps.js';
 import { runGrantedCommand } from './read-only-mcp-open-poll.js';
+
+
+
+
+
+
 
 
 

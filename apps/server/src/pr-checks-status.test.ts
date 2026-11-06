@@ -1,4 +1,4 @@
-import { cornerFeatureBranch, spawn, createServer, createInterface, fileURLToPath, describe, expect, it, vi, assignCornerWorker, recordCornerRun, seedCornerOpening, PhoneService, W, R, C, AUTHOR, H, A, REVIEWER, URL, SHA, db, operations, daemon, app, head, rollupState, rollupContexts, mergeableState, pullBaseSha, mainHead, workflowCount, actionsEnabled, registeredCount, onWorkflowRead, workflowStatus, suiteStatus, suiteRuns, associatedPulls, requiredContexts, protectionForbidden, requests, registrationForbidden, server, gate, graphqlRequests, ownPr, rootFixture, fixtureScope2, type DaemonOperationMap } from './pr-checks-status.test-support.js';
+import { readFileSync, runInNewContext, transformSync, cornerFeatureBranch, spawn, createServer, createInterface, fileURLToPath, describe, expect, it, vi, assignCornerWorker, recordCornerRun, seedCornerOpening, PhoneService, W, R, C, AUTHOR, H, A, REVIEWER, URL, SHA, db, operations, daemon, app, head, rollupState, rollupContexts, mergeableState, pullBaseSha, mainHead, workflowCount, actionsEnabled, workflowStatus, suiteStatus, suiteRuns, associatedPulls, requiredContexts, protectionForbidden, requests, registrationForbidden, server, gate, graphqlRequests, ownPr, rootFixture, fixtureScope2, type DaemonOperationMap } from './test-support-pr-checks-status.test-support.js';
 
 
 
@@ -191,12 +191,34 @@ describe('PR-scoped check gate', () => {
   });
 
 
-  it('Reproduction EMPTY-SUITE-1: a missing required check stays pending', async () => {
-    rootFixture.suiteStatus = 'queued';
-    rootFixture.suiteRuns = 0;
+  it.each([0, 25])('Reproduction R1: counts missing required checks after %i reported successes', async count => {
     rootFixture.associatedPulls = [{ state: 'open', base: { ref: 'main' } }];
-    rootFixture.requiredContexts = ['TYPECHECK'];
-    expect(await gate()).toMatchObject({ checks: 'pending', stage: 'checking', mergeAllowed: false });
+    rootFixture.requiredContexts = ['PRODUCTION-CORPUS REPLAY', 'FRAME-BUDGET', 'STATE-UPGRADE'];
+    rootFixture.rollupContexts = {
+      totalCount: count,
+      nodes: Array.from({ length: count }, (_, i) => ({
+        __typename: 'CheckRun', name: `check-${i}`, status: 'COMPLETED', conclusion: 'SUCCESS',
+      })),
+    };
+    const rollup = await rootFixture.app.readCommitCheckRollup('room-token', 'owner/widgets', SHA);
+    expect(rollup).toMatchObject({ state: 'pending', total: count + 3 });
+    expect(await gate()).toMatchObject({
+      checks: 'pending', checkCount: count + 3, mergeAllowed: false,
+      checkStates: { passed: count, pending: 3 },
+    });
+    const formatter = transformSync(readFileSync(new globalThis.URL('../../mobile/sources/buzz/corner-status-line.ts', import.meta.url), 'utf8'), {
+      loader: 'ts', format: 'cjs', tsconfigRaw: {},
+    });
+    const module = { exports: {} };
+    runInNewContext(formatter.code, { module, exports: module.exports });
+    const { cornerStatusLine } = module.exports as typeof import('../../mobile/sources/buzz/corner-status-line.js');
+    const line = cornerStatusLine({
+      checks: 'pending',
+      pr: { number: 3958, url: URL, headSha: SHA },
+      checksSummary: { status: 'pending', total: rollup.total, checks: rollup.checks, failing: [] },
+    } as import('@beeline/api-contract/phone').CornerLifecycleView, false);
+    console.info(`Reproduction R1: ${line}`);
+    expect(line).toBe(`PR #3958 · ${count}/${count + 3} tests passed · running`);
   });
 
 
@@ -774,28 +796,5 @@ const scope2 = fixtureScope2();
     )).rows[0]!.lifecycle;
     expect(lifecycle).toMatchObject({ checks: 'pending', checksSummary: { total: 1 } });
     expect(await gate()).toMatchObject({ checks: 'pending', mergeAllowed: false });
-  });
-
-
-  it('finishes a head with workflows but no registered suites or runs in one explicit confirmation', async () => {
-    rootFixture.rollupState = null;
-    rootFixture.workflowCount = 2;
-    rootFixture.registeredCount = 0;
-    rootFixture.mergeableState = 'clean';
-    rootFixture.pullBaseSha = rootFixture.mainHead;
-    const after = await scope2.finishPrTurn(rootFixture.mainHead);
-    expect(after.lifecycle).toMatchObject({ checks: 'passing', checksSummary: { total: 0 } });
-    expect(after.reviewer).toEqual(['subscribed_event']);
-  }, 20_000);
-
-
-  it('does not transfer absence evidence to a head pushed during confirmation', async () => {
-    rootFixture.rollupState = null;
-    rootFixture.mergeableState = 'clean';
-    rootFixture.pullBaseSha = rootFixture.mainHead;
-    rootFixture.onWorkflowRead = async () => { rootFixture.head = 'f'.repeat(40); };
-    const after = await scope2.finishPrTurn(rootFixture.mainHead);
-    expect(after.lifecycle.checks).not.toBe('passing');
-    expect(after.reviewer).toEqual([]);
   });
 });

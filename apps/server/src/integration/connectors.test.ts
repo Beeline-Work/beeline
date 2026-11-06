@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import type { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { PushDeliveryLoop } from '.././background.js';
 import { isRoomView, type RoomView } from '@beeline/api-contract/phone';

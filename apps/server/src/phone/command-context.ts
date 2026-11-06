@@ -1,4 +1,3 @@
-import { recordPersonInteraction } from '../away-auto-pause.js';
 import { CommandScopedDatabase } from '../command-scoped-database.js';
 import type { TrayDecisionOperation } from '../tray-decision-command.js';
 import { ROUTER_AUTHORITY_LOCK } from '../router-authority-lock.js';
@@ -44,7 +43,6 @@ import { phoneExecute } from './execute.js';
     if (viewerId === REVIEW_IDENTITY_ID && REVIEW_LOCKED_OPERATIONS.has(operation)) throw new Error(REVIEW_IDENTITY_MESSAGE);
     if (operation === 'decideAgentGrant') {
       await phoneDecideAgentGrant(ctx, input as Input<'decideAgentGrant'>, viewerId, defer);
-      await recordPersonInteraction(ctx.database, viewerId);
     }
     else if (operation === 'decideWritePermission') await phoneExecute(ctx, operation, input as Input<'decideWritePermission'>, viewerId);
     else if (operation === 'skipChoice') await phoneExecute(ctx, operation, input as Input<'skipChoice'>, viewerId);
@@ -68,7 +66,7 @@ import { phoneExecute } from './execute.js';
       if(!(ctx.database as CommandScopedDatabase).active)throw new Error('Scheduled stop requires its durable command transaction');
       await authorize(ctx.database);
       await ctx.database.query(`DELETE FROM agent_schedules schedule USING rooms surface WHERE schedule.id=$1
-        AND surface.id=schedule.room_id AND(surface.id=$2 OR surface.parent_id=$2) AND schedule.workflow_run IS NULL`,[input.scheduleId,input.roomId]);
+        AND surface.id=schedule.room_id AND(surface.id=$2 OR surface.parent_id=$2)`,[input.scheduleId,input.roomId]);
       return;
     }
     const trigger=await ctx.database.transaction(async db=>{

@@ -1,7 +1,6 @@
 import { phoneFetch } from '../../../../tests/helpers/phone-operation.js';
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { MediaExpiryLoop } from '.././background.js';
 import { isRoomView, isRoomViewMessage, ROOM_VIEW_MESSAGE_LIMIT, type RoomView } from '@beeline/api-contract/phone';
 import { monolithFixture, HUMAN, AGENT, ROOM } from '../test-fixtures/test-support-monolith.js';
 
@@ -270,102 +269,6 @@ const fixture = monolithFixture();
       ),
     ];
     expect(durableTexts).toEqual(['Inspecting']);
-  });
-
-
-  it('expires attachment bytes after the TTL and keeps the message that carried them', async () => {
-    const upload = await phoneFetch(`${fixture.origin}/v1/phone/media`, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${fixture.accessToken}`,
-        'content-type': 'text/plain',
-        'x-file-name': 'receipt.txt',
-      },
-      body: Buffer.from('receipt-bytes'),
-    });
-    expect(upload.status).toBe(201);
-    const attachment = (await upload.json()) as { url: string };
-    const sent = await fixture.request('/v1/phone/operations/sendRoomMessage', 'POST', {
-      roomId: ROOM,
-      text: 'the receipt',
-      attachments: [{ url: attachment.url, name: 'receipt.txt', mimeType: 'text/plain', size: 13 }],
-    });
-    expect(sent.status).toBe(200);
-
-    await fixture.database.query(`UPDATE objects SET expires_at=now()-interval '1 minute'`);
-    expect(
-      await new MediaExpiryLoop(fixture.database, 24, 0, {
-        storage: fixture.objectStorage.asStorage(),
-        service: fixture.objectService,
-      }).runOnce(),
-    ).toBeGreaterThan(0);
-
-    // The bytes are gone for good, and the endpoint says so in one status.
-    const gone = await phoneFetch(attachment.url, {
-      headers: { authorization: `Bearer ${fixture.accessToken}` },
-    });
-    expect(gone.status).toBe(410);
-    expect(await gone.json()).toMatchObject({ error: 'media_expired', ttlHours: 24 });
-    // An id that never existed is still absent, not expired.
-    expect(
-      (
-        await phoneFetch(`${fixture.origin}/v1/media/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`, {
-          headers: { authorization: `Bearer ${fixture.accessToken}` },
-        })
-      ).status,
-    ).toBe(404);
-
-    // The message survives with its metadata, and the projection states the loss.
-    const roomView = (await (await fixture.request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
-    expect(isRoomView(roomView)).toBe(true);
-    const carried = roomView.messages.find((message) => message.text === 'the receipt');
-    expect(carried?.attachments?.[0]).toMatchObject({
-      name: 'receipt.txt',
-      mimeType: 'text/plain',
-      size: 13,
-      expired: true,
-    });
-    const history = (await (await fixture.request(`/v1/phone/rooms/${ROOM}/history`)).json()) as {
-      messages: RoomView['messages'];
-    };
-    expect(
-      history.messages.find((message) => message.text === 'the receipt')?.attachments?.[0],
-    ).toMatchObject({ expired: true });
-
-    // And an agent is told the bytes expired rather than handed a dead URL.
-    const inbox = (await (
-      await fixture.daemonOperation('getRoomConversation', { roomId: ROOM })
-    ).json()) as { items: { body: string; attachments: { expired?: boolean }[] }[] };
-    expect(inbox.items.find((item) => item.body === 'the receipt')?.attachments[0]).toMatchObject({
-      expired: true,
-    });
-
-    // Posting a file again is an upload: identical bytes deduplicate, and the
-    // window restarts rather than the new message inheriting an old row's age.
-    const repost = async () =>
-      (await (
-        await phoneFetch(`${fixture.origin}/v1/phone/media`, {
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${fixture.accessToken}`,
-            'content-type': 'text/plain',
-            'x-file-name': 'receipt.txt',
-          },
-          body: Buffer.from('receipt-bytes'),
-        })
-      ).json()) as { url: string };
-    const reposted = await repost();
-    await fixture.database.query(`UPDATE objects SET expires_at=now()-interval '1 minute'`);
-    expect((await repost()).url).toBe(reposted.url);
-    expect(
-      await new MediaExpiryLoop(fixture.database, 24, 0, {
-        storage: fixture.objectStorage.asStorage(),
-        service: fixture.objectService,
-      }).runOnce(),
-    ).toBe(0);
-    expect(
-      (await phoneFetch(reposted.url, { headers: { authorization: `Bearer ${fixture.accessToken}` } })).status,
-    ).toBe(200);
   });
 
 

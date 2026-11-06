@@ -1,20 +1,18 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { lstat, mkdir, rm } from 'node:fs/promises';
+import { lstat, mkdir } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
 import { DaemonApiError } from './daemon-api-client.js';
 import { redactReplayError, type RoomGitHubTokenResult, type RoomRepositoryStateResult } from '@beeline/api-contract/daemon';
-import { reapKeptCornerEmulators, type CornerClosedDecision } from './corner-emulator.js';
 import { MonolithCornerTurnLoop } from './monolith-corner-turn.js';
 import { cornerHasRepositoryWork } from './prompt-assembly.js';
 import { distillTurnFailureReason } from './turn-failure-reason.js';
-import { preserveUnpublishedCornerWorktree, queueCornerPreservation } from './corner-disk-recovery.js';
 import { writePrivateFileAtomically } from './atomic-private-file.js';
 import { rememberStorageOwner, readStorageOwners } from './storage-owners.js';
 import { isStandingRuntimeFault } from './runtime-start-fault.js';
 import { agentCornerCheckoutPaths } from './agent-corner-checkout.js';
 import { AgentProcesses } from './agent-process.js';
-import { RoomRuntimeCoordinator, roomCheckoutRemote, execFileAsync, DesiredCorner, cornerStartConfigKey, materializeCornerWorktree, shouldPostInitialCornerWorkingState, CornerCredentialLookupError, isStandingCornerStartFault, localCornerWorktreeIds, DiscoveredCornerWorktree, hasUnpublishedWork } from './room-runtime.js';
+import { RoomRuntimeCoordinator, roomCheckoutRemote, execFileAsync, DesiredCorner, cornerStartConfigKey, materializeCornerWorktree, shouldPostInitialCornerWorkingState, CornerCredentialLookupError, isStandingCornerStartFault, localCornerWorktreeIds } from './room-runtime.js';
 
 
 
@@ -500,136 +498,9 @@ import { RoomRuntimeCoordinator, roomCheckoutRemote, execFileAsync, DesiredCorne
   export async function roomRuntimeCoordinatorRefuseArchiveCleanup(ctx: RoomRuntimeCoordinator, 
     cornerId: string,
     error: DaemonApiError,
-    worktree?: DiscoveredCornerWorktree & { branch?: string },
   ): Promise<void> {
     ctx.archiveCleanupRefused.add(cornerId);
-    ctx.archiveCleanupFaults.delete(cornerId);
-    ctx.pendingCornerReaps.delete(cornerId);
     await writePrivateFileAtomically(ctx.archiveCleanupRefusalPath(cornerId),
       `${JSON.stringify({ cornerId, status: error.status, code: error.code })}\n`);
-    // Keeping the checkout untouched already preserves its code and refs.
-    // Pointer creation and ignored-output pruning are optional local recovery,
-    // serialized off the work loop, never part of acknowledging a refusal.
-    if (worktree) ctx.queueArchivePreservation(cornerId, worktree,
-      'server permanently refused archived cleanup');
     console.warn(`[thin-core] corner ${cornerId} cleanup refused; local work kept`);
-  }
-
-
-  export function roomRuntimeCoordinatorQueueArchivePreservation(ctx: RoomRuntimeCoordinator, 
-    cornerId: string,
-    worktree: DiscoveredCornerWorktree & { branch?: string },
-    reason: string,
-  ): void {
-    const eligible = () => !ctx.stopped &&
-      !ctx.running.has(cornerId) && !ctx.startingCorners.has(cornerId) &&
-      !ctx.idleCornerSubscriptions.has(cornerId) &&
-      (ctx.archiveCleanupRefused.has(cornerId) || ctx.archiveCleanupAbandoned.has(cornerId));
-    queueCornerPreservation(worktree.path, async () => {
-      if (!eligible() || !existsSync(worktree.path)) return;
-      const branch = worktree.branch ?? await execFileAsync('git',
-        ['-C', worktree.path, 'symbolic-ref', '--quiet', '--short', 'HEAD'])
-        .then(result => result.stdout.trim(), () => 'HEAD');
-      if (!eligible()) return;
-      const flight = preserveUnpublishedCornerWorktree({ ...worktree, cornerId, branch }, reason, eligible);
-      ctx.preservationFlight = flight.then(() => undefined);
-      try { await ctx.preservationFlight; }
-      finally { ctx.preservationFlight = undefined; }
-    });
-  }
-
-
-  export function roomRuntimeCoordinatorArchiveCleanupDue(ctx: RoomRuntimeCoordinator, cornerId: string): boolean {
-    return (ctx.archiveCleanupFaults.get(cornerId)?.retryAt ?? 0) <= ctx.now();
-  }
-
-
-  export function roomRuntimeCoordinatorDeferArchiveCleanup(ctx: RoomRuntimeCoordinator, cornerId: string): void {
-    const failures = Math.min((ctx.archiveCleanupFaults.get(cornerId)?.failures ?? 0) + 1, 9);
-    ctx.archiveCleanupFaults.set(cornerId, {
-      failures,
-      retryAt: ctx.now() + Math.min(1_000 * 2 ** failures, 5 * 60_000),
-    });
-  }
-
-
-  export async function roomRuntimeCoordinatorRetryPendingCornerReaps(ctx: RoomRuntimeCoordinator, desired: ReadonlySet<string>): Promise<void> {
-    // A new active membership is fresh authority, rather than a cleanup retry.
-    for (const cornerId of desired) {
-      await ctx.yieldReconciliation();
-      if (ctx.stopped) return;
-      ctx.archiveCleanupRefused.delete(cornerId);
-      await rm(ctx.archiveCleanupRefusalPath(cornerId), { force: true });
-    }
-    for (const [cornerId, worktree] of [...ctx.pendingCornerReaps]) {
-      await ctx.yieldReconciliation();
-      if (ctx.stopped) return;
-      if (desired.has(cornerId)) {
-        ctx.pendingCornerReaps.delete(cornerId);
-        ctx.archiveCleanupAbandoned.delete(cornerId);
-        continue;
-      }
-      if (ctx.archiveCleanupAbandoned.has(cornerId) || await ctx.cleanupWasRefused(cornerId)) continue;
-      if (!ctx.archiveCleanupDue(cornerId)) continue;
-      try {
-        await ctx.reapIdleCornerWorktree(worktree, desired);
-      } catch (error) {
-        if (hasUnpublishedWork(error)) {
-          // Nothing will ever push this work for an abandoned corner, so
-          // retrying is pure waste. Keep the checkout and its commits or
-          // working-tree changes, report the fault once, and stop spending
-          // reconciliation time on it.
-          ctx.archiveCleanupAbandoned.add(cornerId);
-          ctx.queueArchivePreservation(cornerId, worktree, 'archived with unpublished local work');
-          console.error(`[thin-core] corner ${cornerId} branch cleanup abandoned; unpublished work kept:`, error);
-          continue;
-        }
-        if (error instanceof DaemonApiError && error.status >= 400 && error.status < 500 && !error.retryable)
-          await ctx.refuseArchiveCleanup(cornerId, error, worktree);
-        else {
-          ctx.deferArchiveCleanup(cornerId);
-          console.error(`[thin-core] corner ${cornerId} branch cleanup retry failed:`, error);
-        }
-        // Cleanup retries ride the next reconciliation. Waking discovery
-        // here would repeat every Room and archived-corner read.
-      }
-    }
-  }
-
-
-  /**
-   * Helper start and each reconcile: an emulator whose corner is not open
-   * here stays until the server says the corner is archived. Every runtime
-   * on the host scans the same records, so any refusal (403, 404, 410) or
-   * failed lookup keeps it: one agent's partial view cannot stop another
-   * agent's live corner. The server answers a corner the caller cannot
-   * reach with 403, never with a deletion signal.
-   */
-  export async function roomRuntimeCoordinatorReapClosedCornerEmulators(ctx: RoomRuntimeCoordinator, liveCornerIds: ReadonlySet<string>): Promise<void> {
-    const agentId = ctx.agent.publicKey;
-    await reapKeptCornerEmulators(ctx.runtime.supervisorRoot, liveCornerIds, async (cornerId) => {
-      let decision: CornerClosedDecision;
-      try {
-        const restore = await ctx.options.daemonApi.execute('getCornerRestoreState', { cornerId });
-        decision = restore.archived === true
-          ? { closed: true, reason: `corner archived; reaped by agent ${agentId}` }
-          : { closed: false, reason: restore.archived === false ? 'corner open' : 'archive state not reported' };
-      } catch (error) {
-        decision = {
-          closed: false,
-          reason: error instanceof DaemonApiError
-            ? `lookup refused (${error.status})`
-            : `lookup failed: ${error instanceof Error ? error.message : String(error)}`,
-        };
-      }
-      // Reconcile repeats every decision; log only when one changes.
-      if (ctx.emulatorReapDecisions.get(cornerId) !== decision.reason) {
-        ctx.emulatorReapDecisions.set(cornerId, decision.reason);
-        console.log(`[thin-core] corner emulator reaper: corner=${cornerId} agent=${agentId} ` +
-          `${decision.closed ? 'stop' : 'keep'}: ${decision.reason}`);
-      }
-      return decision;
-    }).catch((error) => {
-      console.error('[thin-core] corner emulator reap failed:', error);
-    });
   }

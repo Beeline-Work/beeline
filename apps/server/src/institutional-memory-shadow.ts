@@ -1,14 +1,13 @@
 import { resourceReadAuthority, resourceRequester } from './resource-requester.js';
 import { cornerCommissionerSql } from './corner-opening.js';
 import { randomUUID } from 'node:crypto';
-import { INSTITUTIONAL_CONTEXT_HARD_MAX_BYTES, INSTITUTIONAL_SKILL_INDEX_MAX_BYTES, WORKSPACE_CORE_SKILL_SLUG, institutionalMemoryRequestWords, INSTITUTIONAL_MEMORY_VECTOR_CANDIDATES_MAX, INSTITUTIONAL_MEMORY_VECTOR_MAX_DISTANCE, INSTITUTIONAL_CONTEXT_VECTOR_ITEMS_MAX, INSTITUTIONAL_CONTEXT_EMBEDDING_TIMEOUT_MS, parseInstitutionalMemoryProposal, type InstitutionalMemoryItem, type InstitutionalContextSnapshot, type InstitutionalMemoryProposal } from '@beeline/api-contract/daemon';
+import { INSTITUTIONAL_CONTEXT_HARD_MAX_BYTES, INSTITUTIONAL_SKILL_INDEX_MAX_BYTES, WORKSPACE_CORE_SKILL_SLUG, institutionalMemoryRequestWords, INSTITUTIONAL_MEMORY_VECTOR_CANDIDATES_MAX, INSTITUTIONAL_MEMORY_VECTOR_MAX_DISTANCE, INSTITUTIONAL_CONTEXT_VECTOR_ITEMS_MAX, parseInstitutionalMemoryProposal, type InstitutionalMemoryItem, type InstitutionalContextSnapshot, type InstitutionalMemoryProposal } from '@beeline/api-contract/daemon';
 import type { CommandRow } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
 import { authorizedWorkspaceSkillCandidates, vectorWorkspaceSkillCandidates, type WorkspaceSkillIndexCandidate, type WorkspaceSkillVectorCandidate } from './institutional-skills.js';
-import { createDefaultEmbedFn, pgvectorLiteral, memoryEnvLimit, precomputedEmbedFn, withDeadline, type EmbedFn } from './institutional-memory-embeddings.js';
+import { createDefaultEmbedFn, pgvectorLiteral, memoryEnvLimit, precomputedEmbedFn, type EmbedFn } from './institutional-memory-embeddings.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
-import { SEARCH_MEMORY_EMBEDDING_TIMEOUT_MS } from './institutional-memory-shadow-save-institutional-memory.js';
-export { saveInstitutionalMemory, updateInstitutionalMemory, deleteInstitutionalMemory, reportInstitutionalMemoryUsed, SEARCH_MEMORY_EMBEDDING_TIMEOUT_MS, searchInstitutionalMemory, getInstitutionalMemoryTurnStats, tombstoneInstitutionalMemoryForMessage } from './institutional-memory-shadow-save-institutional-memory.js';
+import { saveInstitutionalMemory, updateInstitutionalMemory, deleteInstitutionalMemory, reportInstitutionalMemoryUsed, searchInstitutionalMemory, getInstitutionalMemoryTurnStats, tombstoneInstitutionalMemoryForMessage } from './institutional-memory-shadow-save-institutional-memory.js';
 
 
 
@@ -154,9 +153,7 @@ export async function precomputeInstitutionalQueryEmbedding(
       [input.roomId, input.agentId, input.requestId],
     )).rows[0]?.text;
   if (!text) return precomputedEmbedFn('', { outcome: 'error', ms: 0 });
-  const result = await withDeadline(embed, input.kind === 'search'
-    ? SEARCH_MEMORY_EMBEDDING_TIMEOUT_MS
-    : INSTITUTIONAL_CONTEXT_EMBEDDING_TIMEOUT_MS)(text, 'query');
+  const result = await embed(text, 'query');
   return precomputedEmbedFn(text, result);
 }
 
@@ -169,7 +166,7 @@ export async function getInstitutionalContext(
   const read = await resourceReadAuthority(database, command);
   const requestText = read?.source.text;
   if (requestText === undefined) throw new Error('institutional memory requester authority is unavailable');
-  const queryEmbedding = await withDeadline(embed, INSTITUTIONAL_CONTEXT_EMBEDDING_TIMEOUT_MS)(
+  const queryEmbedding = await embed(
     requestText, 'query');
   return database.transaction(async (db) => {
     const readAuthority = await resourceReadAuthority(db, command);
@@ -665,3 +662,10 @@ export async function lockMemoryTarget(
   }
   return row;
 }
+export { saveInstitutionalMemory } from './institutional-memory-shadow-save-institutional-memory.js';
+export { updateInstitutionalMemory } from './institutional-memory-shadow-save-institutional-memory.js';
+export { deleteInstitutionalMemory } from './institutional-memory-shadow-save-institutional-memory.js';
+export { reportInstitutionalMemoryUsed } from './institutional-memory-shadow-save-institutional-memory.js';
+export { searchInstitutionalMemory } from './institutional-memory-shadow-save-institutional-memory.js';
+export { getInstitutionalMemoryTurnStats } from './institutional-memory-shadow-save-institutional-memory.js';
+export { tombstoneInstitutionalMemoryForMessage } from './institutional-memory-shadow-save-institutional-memory.js';

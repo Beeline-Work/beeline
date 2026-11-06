@@ -1,8 +1,8 @@
-import { type PhoneIdentityRow as IdentityRow, phoneIdentity as identity } from '../phone-identity.js';
+import { phoneIdentity as identity } from '../phone-identity.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { scheduleDisplayTitle } from '../schedule-title.js';
 import { modelChoiceLabel, readRepositoryOnboardingCard } from '@beeline/api-contract/phone';
-import type { AgentDetailView, MessageSearchSnippetPart, RoomScheduleView, RoomViewIdentity, RoomViewMember, RoomViewMessage } from '@beeline/api-contract/phone';
+import type { AgentDetailView, MessageSearchSnippetPart, RoomScheduleView, RoomViewMember, RoomViewMessage } from '@beeline/api-contract/phone';
 import { cornerDisplayName, formatSystemLine, MESSAGE_REACTION_EMOJIS, type ArtifactAttachment, type AgentSignInCardView } from '@beeline/api-contract/phone';
 import { isAgentReachable } from '@beeline/api-contract/agent-access';
 import { mediaIdFromUrl } from '../media-ttl.js';

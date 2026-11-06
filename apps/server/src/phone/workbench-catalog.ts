@@ -10,7 +10,6 @@ import { Input, Output } from './types.js';
 import { phoneReadWorkbench } from './workbench-reads.js';
 
 
-
   /**
    * An `@system` notification DM (Workspace lifecycle) is
    * read-only: only `@system` may post into a direct-message Room it is a
@@ -59,14 +58,8 @@ import { phoneReadWorkbench } from './workbench-reads.js';
     if (!ctx.composio) return [];
     return Promise.all(
       [...new Set(keys)].map(async (appKey) => {
-        let timeout: ReturnType<typeof setTimeout> | undefined;
         try {
-          const metadata = await Promise.race([
-            ctx.composio!.toolkit(appKey),
-            new Promise<undefined>((resolve) => {
-              timeout = setTimeout(() => resolve(undefined), 1500);
-            }),
-          ]);
+          const metadata = await ctx.composio!.toolkit(appKey);
           if (!metadata) return { appKey };
           return {
             appKey,
@@ -76,8 +69,6 @@ import { phoneReadWorkbench } from './workbench-reads.js';
           };
         } catch {
           return { appKey };
-        } finally {
-          clearTimeout(timeout);
         }
       }),
     );

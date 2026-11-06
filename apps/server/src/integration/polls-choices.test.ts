@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { PushDeliveryLoop } from '.././background.js';
 import { isRoomView, readRoomView, type RoomView } from '@beeline/api-contract/phone';
-import { closeExpiredChoices } from '.././room-choice.js';
 import { monolithFixture, wokenBy, AGENT, WORKSPACE, ROOM } from '../test-fixtures/test-support-monolith.js';
 
 describe('monolith integration: polls-choices', () => {
@@ -195,40 +194,5 @@ const fixture = monolithFixture();
     ).toEqual(
       expect.objectContaining({ mode: 'poll', status: 'closed', outcome: 'tie', votedCount: 2 }),
     );
-  });
-
-
-  it('expires an unanswered question as skipped and shows the skip as a line', async () => {
-    const posted = await fixture.daemonOperation('askRoomChoice', {
-      roomId: ROOM,
-      prompt: 'Which paper API?',
-      ttlSeconds: 300,
-      options: [
-        { label: 'Kraken paper', consequence: 'plugin auth' },
-        { label: 'Keep waiting', consequence: 'blocked' },
-      ],
-    });
-    expect(posted.status).toBe(200);
-    const body = (await posted.json()) as { choiceId: string };
-    await fixture.database.query(
-      `UPDATE room_choices SET closes_at=now() - interval '1 second' WHERE id=$1`,
-      [body.choiceId],
-    );
-    expect(await closeExpiredChoices(fixture.database)).toBe(1);
-    const room = (await (await fixture.request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
-    expect(isRoomView(room)).toBe(true);
-    expect(room.messages.find((message) => message.choice)?.choice).toEqual(
-      expect.objectContaining({ status: 'skipped', footer: 'expired · no answer' }),
-    );
-    const skippedLine = room.messages.find(
-      (message) => message.systemEvent?.kind === 'choice-skipped',
-    );
-    expect(skippedLine?.text).toBe('@bee asked · expired · no answer');
-    const skippedRow = await fixture.database.query<{ id: string }>(
-      `SELECT id FROM messages WHERE room_id=$1 AND card_type='choice-skipped'`,
-      [ROOM],
-    );
-    expect(skippedRow.rows).toHaveLength(1);
-    expect(await wokenBy(fixture.database, skippedRow.rows[0]!.id)).toEqual([AGENT]);
   });
 });

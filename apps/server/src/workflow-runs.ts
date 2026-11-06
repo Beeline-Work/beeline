@@ -2,7 +2,6 @@ import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { WELCOME_VIDEO_SLUG } from './welcome-video-workflow.js';
 import { CommandRefusalError, ExpectedRefusalError } from './command-refusal.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
-import { workflowTimerId } from './workflow-timer-id.js';
 import { createHash } from 'node:crypto';
 import { shortRunId, type WorkflowReadContract, type WorkflowReadState, type WorkflowRunReadResult, type WorkflowReceipt } from '@beeline/api-contract/daemon';
 import { workflowRunStatus } from '@beeline/api-contract/phone';
@@ -12,8 +11,8 @@ import type { SqlDatabase } from './database.js';
 import { firstHealthyAgent, roomAgentHealth, type AgentHealthReason } from './agent-health.js';
 import { ensureSystemDirectMessageRoom, ensureSystemIdentity, systemIdentityMention, systemLine } from './system-line.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
-import { welcomeVideoRoleHolders, workflowGatePrompt, backfillWorkflowRunTimers, cancelWorkflowRun } from './workflow-runs-cancel-run-timers.js';
-import { handoff, settleWorkflowGate, fireWorkflowTimer, abandonCornerWorkflowRuns, liveWorkflowRun, saveWorkflow, activeRunIdsForSchedule } from './workflow-runs-repeated-result.js';
+import { welcomeVideoRoleHolders, workflowGatePrompt, cancelWorkflowRun } from './workflow-runs-cancel-run-timers.js';
+import { handoff, settleWorkflowGate, abandonCornerWorkflowRuns, liveWorkflowRun, saveWorkflow, activeRunIdsForSchedule } from './workflow-runs-repeated-result.js';
 import { startWorkflow, assignWorkflowRole, archiveWorkflow, describedLegacyWorkflowContract, backfillWorkflowSkillDescriptions, closeStaleWorkflowGateChoices } from './workflow-runs-start-workflow.js';
 
 
@@ -34,10 +33,6 @@ import { startWorkflow, assignWorkflowRole, archiveWorkflow, describedLegacyWork
  * never move a later step.
  */
 export const WORKFLOW_HANDOFF_CARD_TYPE = 'workflow-handoff';
-
-
-/** Agent steps pinned before timeouts were required still get a bounded lease. */
-export const WORKFLOW_LEGACY_STEP_TIMEOUT_SECONDS = 3600;
 
 
 /** One agent tried during a state visit, and why it left the step. */
@@ -67,7 +62,6 @@ export type WorkflowRunCard = {
   requesterId?: string;
   /** Start card only: the person notices go to (see `resolveRunOwner`). */
   ownerId?: string | null;
-  deadlineSeconds?: number;
   cancellation?: { reason: string; actorId: string };
   /** An engine close that is not a person's cancellation, such as a passed deadline. */
   closure?: { reason: string };
@@ -635,82 +629,10 @@ export async function cancelRunWakes(db: SqlDatabase, roomId: string, runId: str
     [roomId, runId],
   );
 }
-
-
-export type WorkflowTimerKind = 'step' | 'deadline';
-
-/**
- * An engine timer is an `agent_schedules` row with `workflow_run` set, owned
- * by the system identity rather than any agent, so it fires whether or not
- * the step's agent is still in the Room and survives a restart.
- * `AgentScheduleLoop` hands due rows to `fireWorkflowTimer`, using the
- * timer kind and current attempt.
- */
-export type WorkflowTimer = { runId: string; workflowSlug: string; timer: WorkflowTimerKind; attempt?: number; retryRoleList?: boolean };
-
-
-export async function scheduleRunTimer(
-  db: SqlDatabase,
-  input: {
-    workspaceId: string;
-    roomId: string;
-    runId: string;
-    workflowSlug: string;
-    timer: WorkflowTimerKind;
-    seconds: number;
-    attempt?: number;
-    retryRoleList?: boolean;
-    fireAt?: Date;
-  },
-): Promise<void> {
-  await ensureSystemIdentity(db);
-  const fireAt = input.fireAt ?? new Date(Date.now() + input.seconds * 1_000);
-  const cadence = {
-    kind: 'interval' as const,
-    everyMinutes: Math.max(1, Math.ceil(input.seconds / 60)),
-    startsAt: Math.floor(fireAt.getTime() / 1_000),
-  };
-  const timer: WorkflowTimer = {
-    runId: input.runId,
-    workflowSlug: input.workflowSlug,
-    timer: input.timer,
-    ...(input.attempt !== undefined ? { attempt: input.attempt } : {}),
-    ...(input.retryRoleList ? { retryRoleList: true } : {}),
-  };
-  await db.query(
-    `INSERT INTO agent_schedules
-       (id,workspace_id,room_id,agent_id,creator_id,cadence,message,max_runs,next_run_at,workflow_run)
-     VALUES($1,$2,$3,$4,$4,$5::jsonb,$6,1,$7,$8::jsonb)
-     ON CONFLICT(id) DO UPDATE
-       SET cadence=EXCLUDED.cadence,message=EXCLUDED.message,next_run_at=EXCLUDED.next_run_at,
-           workflow_run=EXCLUDED.workflow_run,run_count=0,updated_at=now()`,
-    [
-      workflowTimerId(input.runId, input.timer),
-      input.workspaceId,
-      input.roomId,
-      SYSTEM_IDENTITY_ID,
-      JSON.stringify(cadence),
-      input.timer === 'deadline'
-        ? `workflow run ${input.runId} deadline`
-        : `workflow run ${input.runId} step timeout for attempt ${input.attempt}`,
-      fireAt,
-      JSON.stringify(timer),
-    ],
-  );
-}
-
-
-export async function cancelStepTimer(db: SqlDatabase, runId: string): Promise<void> {
-  await db.query(`DELETE FROM agent_schedules WHERE id=ANY($1::uuid[])`, [
-    [workflowTimerId(runId, 'step')],
-  ]);
-}
 export { workflowGatePrompt } from './workflow-runs-cancel-run-timers.js';
-export { backfillWorkflowRunTimers } from './workflow-runs-cancel-run-timers.js';
 export { cancelWorkflowRun } from './workflow-runs-cancel-run-timers.js';
 export { handoff } from './workflow-runs-repeated-result.js';
 export { settleWorkflowGate } from './workflow-runs-repeated-result.js';
-export { fireWorkflowTimer } from './workflow-runs-repeated-result.js';
 export { abandonCornerWorkflowRuns } from './workflow-runs-repeated-result.js';
 export { liveWorkflowRun } from './workflow-runs-repeated-result.js';
 export { saveWorkflow } from './workflow-runs-repeated-result.js';

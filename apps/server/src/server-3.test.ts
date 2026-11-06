@@ -1,100 +1,7 @@
-import { phoneFetch, AddressInfo, WebSocket, describe, expect, it, vi, LiveHub, createBeelineServer, maxLiveDbTasks, canReadRoomsFrom, nextSocketMessage, nextSocketMessages, expectNoSocketMessage, fixtureScope4, type TokenAuth, type PhoneService, type DaemonService } from './server.test-support.js';
+import { phoneFetch, AddressInfo, WebSocket, describe, expect, it, vi, LiveHub, createBeelineServer, maxLiveDbTasks, canReadRoomsFrom, nextSocketMessage, nextSocketMessages, expectNoSocketMessage, fixtureScope4, type SqlDatabase, type TokenAuth, type PhoneService, type DaemonService } from './test-support-server.test-support.js';
 
 describe('phone committed-row live delivery', () => {
 const scope4 = fixtureScope4();
-
-
-  it('sends a person change to who shares a scope, and the push level only to its owner', async () => {
-    const person = { pubkey: 'mate', kind: 'human' as const, name: 'Mate Renamed' };
-    const self = { pubkey: 'viewer', kind: 'human' as const, name: 'Viewer' };
-    const livePersonChange = vi.fn().mockImplementation(async (personId: string) =>
-      personId === 'mate' ? { person, pushLevel: 'full', viewers: new Set(['mate', 'viewer']) }
-        : personId === 'viewer' ? { person: self, pushLevel: 'off', viewers: new Set(['viewer']) }
-          : { person: { ...person, pubkey: 'stranger' }, pushLevel: 'attention',
-            viewers: new Set(['stranger']) });
-    const { live, socket } = await scope4.connect(
-      vi.fn() as PhoneService['readLiveDelta'], undefined, undefined, false,
-      undefined, undefined, undefined, undefined, undefined,
-      { livePersonChange } as Partial<PhoneService>);
-    const mate = nextSocketMessage(socket, 'person-changed');
-    live.publish({ type: 'invalidate', roomId: '', reason: 'postgres:identities', personId: 'mate' });
-    await expect(mate).resolves.toEqual({ type: 'person-changed', roomId: '', person });
-    const own = nextSocketMessage(socket, 'person-changed');
-    live.publish({ type: 'invalidate', roomId: '', reason: 'postgres:identities', personId: 'viewer' });
-    await expect(own).resolves.toEqual({ type: 'person-changed', roomId: '', person: self,
-      pushLevel: 'off' });
-    const noLeak = expectNoSocketMessage(socket, 100);
-    live.publish({ type: 'invalidate', roomId: '', reason: 'postgres:identities',
-      personId: 'stranger' });
-    await noLeak;
-  });
-
-
-  it('reads a bookmark once and sends the typed change to both devices', async () => {
-    const bookmark = { messageId: 'saved', workspaceId: 'workspace', roomId: 'room-live',
-      roomName: 'Room', roomKind: 'room' as const, messageCreatedAt: 1,
-      bookmarkedAt: 2, available: true };
-    const read = vi.fn().mockResolvedValue(bookmark);
-    const { live, socket, port } = await scope4.connect(
-      vi.fn() as PhoneService['readLiveDelta'], undefined, undefined, false,
-      undefined, undefined, undefined, read as PhoneService['readLiveBookmark']);
-    const second = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.phone']);
-    scope4.sockets.push(second);
-    await new Promise<void>((resolve, reject) => {
-      second.once('open', resolve);
-      second.once('error', reject);
-    });
-    const firstFrame = nextSocketMessage(socket, 'bookmark-delta');
-    const secondFrame = nextSocketMessage(second, 'bookmark-delta');
-    live.publish({ type: 'invalidate', roomId: '', reason: 'postgres:message_bookmarks',
-      readerId: 'viewer', workspaceId: 'workspace', messageId: 'saved' });
-    await expect(firstFrame).resolves.toMatchObject({ bookmark, messageId: 'saved' });
-    await expect(secondFrame).resolves.toMatchObject({ bookmark, messageId: 'saved' });
-    expect(read).toHaveBeenCalledTimes(1);
-    const removed = nextSocketMessage(socket, 'bookmark-delta');
-    live.publish({ type: 'invalidate', roomId: '', reason: 'postgres:message_bookmarks',
-      readerId: 'viewer', workspaceId: 'workspace', messageId: 'saved', operation: 'DELETE' });
-    await expect(removed).resolves.toMatchObject({ messageId: 'saved', bookmark: null });
-    expect(read).toHaveBeenCalledTimes(1);
-  });
-
-
-  it('sends one server-derived Needs-you room slice to each device', async () => {
-    const roomId = 'room-live';
-    const message = { id: 'ask', text: '@viewer please review', createdAt: 1,
-      author: { pubkey: 'agent', kind: 'agent' as const, name: 'Agent' },
-      presentation: 'message' as const, mentionPubkeys: ['viewer'] };
-    const batch = vi.fn().mockImplementation(async (_roomId, viewers: string[]) =>
-      new Map(viewers.map((viewer) => [viewer,
-        { type: 'message-delta', roomId, message }])));
-    const needs = { workspaceId: 'workspace', count: 1,
-      items: [{ messageId: 'ask', workspaceId: 'workspace', roomId,
-        roomName: 'Room', roomKind: 'room', text: 'please review', createdAt: 1 }] };
-    const readNeeds = vi.fn().mockResolvedValue(needs);
-    const { live, socket, port } = await scope4.connect(
-      vi.fn() as PhoneService['readLiveDelta'], undefined, undefined, false,
-      undefined, undefined, batch as PhoneService['readLiveDeltas'],
-      undefined, readNeeds as PhoneService['liveNeedsYou']);
-    const second = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.phone']);
-    scope4.sockets.push(second);
-    await new Promise<void>((resolve, reject) => {
-      second.once('open', resolve);
-      second.once('error', reject);
-    });
-    const subscribed = nextSocketMessage(second, 'subscribed');
-    second.send(JSON.stringify({ type: 'subscribe', roomId }));
-    await subscribed;
-    const first = nextSocketMessage(socket, 'needs-you-delta');
-    const next = nextSocketMessage(second, 'needs-you-delta');
-    live.publish({ type: 'invalidate', roomId, reason: 'postgres:messages',
-      operation: 'INSERT', messageId: 'ask', needsYouCandidate: true,
-      agentId: 'agent' });
-    await expect(first).resolves.toMatchObject({ type: 'needs-you-delta', count: 1,
-      sourceRoomId: roomId, items: needs.items });
-    await expect(next).resolves.toMatchObject({ type: 'needs-you-delta', count: 1 });
-    expect(batch).toHaveBeenCalledTimes(1);
-    expect(readNeeds).toHaveBeenCalledTimes(1);
-  });
 
 
   it('sends one fallback for a row that projects no delta', async () => {
@@ -778,6 +685,89 @@ describe('live reconnect admission', () => {
       current.ping('still-there');
       await expect(pong).resolves.toBe('still-there');
       for (const finish of stalledReads.splice(0)) finish();
+    } finally {
+      for (const socket of sockets) socket.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+
+  it('recovers 15 agents twice through a two-connection pool without waiters', async () => {
+    let inUse = 0;
+    let waiting = 0;
+    let peakInUse = 0;
+    let peakWaiting = 0;
+    const poolWaiters: Array<() => void> = [];
+    const query = vi.fn(async () => {
+      if (inUse >= 2) {
+        waiting++;
+        peakWaiting = Math.max(peakWaiting, waiting);
+        await new Promise<void>((resolve) => poolWaiters.push(resolve));
+        waiting--;
+      }
+      inUse++;
+      peakInUse = Math.max(peakInUse, inUse);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      inUse--;
+      poolWaiters.shift()?.();
+      return { rows: [], rowCount: 0 };
+    });
+    const database = {
+      query,
+      transaction: vi.fn(),
+      poolCounts: () => ({ total: 2, idle: 2 - inUse, waiting }),
+    } as unknown as SqlDatabase;
+    const server = createBeelineServer({
+      database,
+      auth: { authenticateDaemon: vi.fn(async (token: string) => token) } as unknown as TokenAuth,
+      phone: {
+        canReadRooms: vi.fn(async (roomIds: readonly string[]) => {
+          await database.query('SELECT 1');
+          return new Set(roomIds);
+        }),
+      } as unknown as PhoneService,
+      daemon: {
+        execute: vi.fn(async (name: string) => {
+          await database.query('SELECT 1');
+          return name === 'getAgentCommands'
+            ? { commandProtocol: 1, commands: [] }
+            : { items: [] };
+        }),
+      } as unknown as DaemonService,
+      live: new LiveHub(),
+      mediaMaximumBytes: 1,
+    });
+    const sockets: WebSocket[] = [];
+    try {
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const port = (server.address() as AddressInfo).port;
+      for (let wave = 0; wave < 2; wave++) {
+        const waveSockets = Array.from({ length: 15 }, (_, index) => {
+          const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, [
+            `bearer.bdt_agent_${index}`,
+          ]);
+          sockets.push(socket);
+          return socket;
+        });
+        await Promise.all(waveSockets.map(async (socket, index) => {
+          await new Promise<void>((resolve, reject) => {
+            socket.once('open', () => resolve());
+            socket.once('error', reject);
+          });
+          const commands = nextSocketMessage(socket, 'commands');
+          socket.send(JSON.stringify({ type: 'subscribe', roomId: `room-${index}` }));
+          await commands;
+        }));
+        await Promise.all(waveSockets.map((socket) => new Promise<void>((resolve) => {
+          socket.once('close', () => resolve());
+          socket.close();
+        })));
+      }
+      expect(peakInUse).toBeLessThanOrEqual(2);
+      expect(peakWaiting).toBe(0);
+      const health = await phoneFetch(`http://127.0.0.1:${port}/health`);
+      expect(health.status).toBe(200);
+      expect((await health.json()).database.pool.waiting).toBe(0);
     } finally {
       for (const socket of sockets) socket.terminate();
       await new Promise<void>((resolve) => server.close(() => resolve()));

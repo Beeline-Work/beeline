@@ -1,35 +1,37 @@
-let webhookWritesSincePrune = 0;
-import { routeAuthenticated } from './server-authenticated-routes.js';
-import { syncXAdReports } from './x-ad-reports.js';
-import { syncXSiteVisits } from './x-site-visits.js';
-import { dashboardFinances } from './operator-finances.js';
-import { serveEmailImage } from './email-images.js';
-import { parseMobileMinimum } from '@beeline/api-contract/mobile-minimum';
-import { readMobileMinimums, writeMobileMinimum } from './mobile-minimum.js';
-import { parseSiteDownloadTap, recordSiteDownloadTap } from './site-download-taps.js';
-import { ingestScreenReport, parseScreenReport } from './x-ad-screen.js';
-import { parseSigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
-import { recordSigninFunnelEvent } from './signin-funnel.js';
-import { readCompanyLogo } from './company-logos.js';
-import { receiveSentryWake } from './sentry-wake.js';
-import { authenticSentryAlert, sendSentryTelegram, sentryTelegramMessage } from './sentry-telegram.js';
-import { verifyNip98Header } from '@beeline/nostr';
-import { randomUUID } from 'node:crypto';
-import { type IncomingMessage, type ServerResponse } from 'node:http';
-import { serveComputerSession, serveComputerStatus } from './computer-session.js';
-import { handleFreeAgentModelRequest } from './free-agent-model-proxy.js';
-import { isAppSignInLink } from './composio-apps.js';
-import { ingestComposioDelivery } from './composio-delivery.js';
-import { ingestSubscriptionWebhook, WEBHOOK_BODY_LIMIT } from './subscription-webhooks.js';
-import { ingestProviderWebhook } from './provider-webhooks.js';
-import { ingestWalletWebhook } from './wallet-webhooks.js';
-import { GoogleSignInError } from './auth.js';
-import { connectorLogo } from './workbench.js';
-import { InvitePreviewAccess } from './invite-preview.js';
-import { parseDashboardPlatforms, readOperatorDashboard } from './operator-dashboard.js';
-import { HelperVersionGate } from './helper-version-gate.js';
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { InvitePreviewAccess } from "./invite-preview.js";
+import { HelperVersionGate } from "./helper-version-gate.js";
+import { receiveSentryWake } from "./sentry-wake.js";
+import { authenticSentryAlert, sentryTelegramMessage, sendSentryTelegram } from "./sentry-telegram.js";
+import { handleFreeAgentModelRequest } from "./free-agent-model-proxy.js";
+import { serveComputerSession, serveComputerStatus } from "./computer-session.js";
+import { isAppSignInLink } from "./composio-apps.js";
+import { randomUUID } from "node:crypto";
+import { parseSiteDownloadTap, recordSiteDownloadTap } from "./site-download-taps.js";
+import { dashboardFinances } from "./operator-finances.js";
+import { syncXAdReports } from "./x-ad-reports.js";
+import { syncXSiteVisits } from "./x-site-visits.js";
+import { parseScreenReport, ingestScreenReport } from "./x-ad-screen.js";
+import { parseDashboardPlatforms, readOperatorDashboard } from "./operator-dashboard.js";
+import { readMobileMinimums, writeMobileMinimum } from "./mobile-minimum.js";
+import { parseMobileMinimum } from "@beeline/api-contract/mobile-minimum";
+import { parseSigninFunnelEvent } from "@beeline/api-contract/signin-funnel";
+import { recordSigninFunnelEvent } from "./signin-funnel.js";
+import { GoogleSignInError } from "./auth.js";
+import { verifyNip98Header } from "@beeline/nostr";
+import { ingestWalletWebhook } from "./wallet-webhooks.js";
+import { WEBHOOK_BODY_LIMIT, ingestSubscriptionWebhook } from "./subscription-webhooks.js";
+import { ingestProviderWebhook } from "./provider-webhooks.js";
+import { ingestComposioDelivery } from "./composio-delivery.js";
+import { readCompanyLogo } from "./company-logos.js";
+import { connectorLogo } from "./workbench.js";
+import { serveEmailImage } from "./email-images.js";
 import { ServerOptions, exactPath, bytes, MAX_JSON_BYTES, json, body, appSignInWebOrigin, appSignInReturnCookie, bearerSecretMatches, clientKey, publicJson, funnelRateLimit, signatureMatches } from './server.js';
 import { PhoneHttpOperation, daemonIdentity, refuseDaemon, phoneIdentity } from './server-create-beeline-server.js';
+import { routeAuthenticated } from './server-authenticated-routes.js';
+
+let webhookWritesSincePrune = 0;
+
 
 
 
@@ -341,9 +343,6 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
             : {}),
         ...(options.database.oldestActiveTransactionAgeMs
           ? { oldestActiveTransactionAgeMs: options.database.oldestActiveTransactionAgeMs() }
-          : {}),
-        ...(options.database.transactionDeadlineCount
-          ? { transactionDeadlines: options.database.transactionDeadlineCount() }
           : {}),
       },
       live: liveHealth(),

@@ -25,18 +25,12 @@ import { id, Input, Output } from './values.js';
       ...(domain ?? metadataDomain ? { domain: domain ?? metadataDomain } : {}),
     });
     if (!ctx.composio) return mark();
-    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
-      const metadata = await Promise.race([
-        ctx.composio.toolkit(composioToolkitForApp(appKey)),
-        new Promise<undefined>((resolve) => { timeout = setTimeout(() => resolve(undefined), 1500); }),
-      ]);
+      const metadata = await ctx.composio.toolkit(composioToolkitForApp(appKey));
       return mark(metadata?.logo,
         metadata?.appUrl ? registrableDomain(new URL(metadata.appUrl).hostname) : undefined);
     } catch {
       return mark();
-    } finally {
-      clearTimeout(timeout);
     }
   }
 

@@ -1,4 +1,4 @@
-import { type ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { type TurnTokenFigure } from './harness-turn-tokens.js';
 import { toolCallEntries } from './acp.js';
 

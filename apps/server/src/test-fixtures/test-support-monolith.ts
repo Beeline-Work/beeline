@@ -1,9 +1,9 @@
 import { phoneFetch } from '../../../../tests/helpers/phone-operation.js';
 import { createAgentCommand, claimAgentCommand } from '.././agent-command.js';
 import { createHash, createHmac } from 'node:crypto';
-import { AddressInfo } from 'node:net';
+import type { AddressInfo } from 'node:net';
 import { afterEach, beforeAll, beforeEach, vi } from 'vitest';
-import WebSocket from 'ws';
+import type WebSocket from 'ws';
 import { migrate } from '.././database.js';
 import { MemoryObjectStorage, PgliteDatabase, migratedDatabase } from '.././test-support.js';
 import { ObjectService } from '.././object-service.js';
@@ -319,14 +319,9 @@ export function monolithFixture() {
   // These fixtures test projections and lifecycle behavior downstream of intake.
   // Supply an explicit command first. Routing/refusal tests call DaemonService
   // directly in agent-command.integration.test.ts and never use this helper.
-  const settleCornerWorkPastGap = async (cornerId: string) => {
+  const settleCornerWork = async (cornerId: string) => {
     await database.query(`UPDATE agent_commands SET state='complete' WHERE room_id=$1`, [cornerId]);
     await database.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1`, [cornerId]);
-    // These projection fixtures begin after the approved turn gap has elapsed.
-    await database.query(
-      `UPDATE agent_turns SET ended_at=now()-interval '40 seconds' WHERE room_id=$1 AND status<>'working'`,
-      [cornerId],
-    );
   };
 
   const daemonOperation = async (name: string, payload: unknown, token = daemonToken) => {
@@ -488,7 +483,7 @@ get databaseSnapshot(){ return databaseSnapshot; }, set databaseSnapshot(value: 
 request,
 phoneToken,
 operation,
-settleCornerWorkPastGap,
+settleCornerWork,
 daemonOperation,
 webhook,
 redeemReview,

@@ -1,8 +1,10 @@
-import { homedir } from 'node:os';
-import { squireReachCause } from './squire-status.js';
-import { squireBrokerSocketReady, squireHostPaths } from './squire-host.js';
-import type { ConnectionGrant, ConnectorSignIn, ConnectorStep, VaultConnectionMeta } from '@beeline/api-contract/daemon';
-import { InstallSquireOptions, InstallSquireResult, squireChromeProfileDir, defaultShellRunner, defaultStreamedRunner, step, prepareHostedSquire, releaseSquireConnectSession, SquireConnectResolution, resolveSquireConnectSpec, squireConnectProcessEnv, isOutstandingSignIn, connectBlockedLine, connectBrowserLocation, SquireMcpClient, isRecord } from './connector-squire.js';
+import type { ConnectorStep, ConnectorSignIn, VaultConnectionMeta, ConnectionGrant } from "@beeline/api-contract/daemon";
+import { squireHostPaths, squireBrokerSocketReady } from "./squire-host.js";
+import { homedir } from "node:os";
+import { squireReachCause } from "./squire-status.js";
+import { InstallSquireOptions, InstallSquireResult, squireChromeProfileDir, defaultShellRunner, defaultStreamedRunner, step, prepareHostedSquire, releaseSquireConnectSession, SquireConnectResolution, resolveSquireConnectSpec, squireConnectProcessEnv, isOutstandingSignIn, connectBlockedLine, connectBrowserLocation, awaitPublicPage, SquireMcpClient, isRecord } from './connector-squire.js';
+
+
 
 
 
@@ -200,19 +202,10 @@ export async function installSquireAttempt(
 }
 
 
+
 /** How long the helper waits for a fresh sign-in page to answer. */
 export const PAGE_READY_TIMEOUT_MS = 30_000;
 
-
-/** One admitted readiness observation. A pending tunnel never schedules another
- * GET; another explicit setup action or actual report can observe it anew. */
-export async function awaitPublicPage(url: string, _timeoutMs = PAGE_READY_TIMEOUT_MS): Promise<boolean> {
-  try {
-    const response = await fetch(url, { method: 'GET', redirect: 'manual', signal: undefined });
-    await response.body?.cancel().catch(() => undefined);
-    return response.status < 500;
-  } catch { return false; }
-}
 
 
 /** Probe the mounted Squire MCP to confirm the account is live on this helper. */
@@ -231,6 +224,7 @@ export async function pairSquire(
     return pairingFailure(error);
   }
 }
+
 
 
 /** Decode MCP error envelopes for recovery, and publish only a plain cause. */
@@ -257,9 +251,11 @@ export function pairingFailure(error: unknown): { ok: false; reason: string; rec
 }
 
 
+
 export function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
 }
+
 
 
 export function asArray(value: unknown): unknown[] {
@@ -267,14 +263,17 @@ export function asArray(value: unknown): unknown[] {
 }
 
 
+
 export function stringList(value: unknown): string[] {
   return asArray(value).filter((entry): entry is string => typeof entry === 'string');
 }
 
 
+
 export function numberOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
+
 
 
 /**
@@ -289,6 +288,7 @@ export function epochSeconds(value: unknown): number | null {
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? null : Math.floor(parsed / 1000);
 }
+
 
 
 /** Map one Squire vault entry to the contract metadata (never secret values). */
@@ -314,11 +314,13 @@ export function vaultConnectionMeta(raw: unknown): VaultConnectionMeta {
 }
 
 
+
 /** `list_credentials` through the Squire MCP, shaped to the contract. */
 export async function readVault(mcp: SquireMcpClient): Promise<VaultConnectionMeta[]> {
   const result = asRecord(await mcp.call('list_credentials'));
   return asArray(result.credentials ?? result.items ?? result).map(vaultConnectionMeta);
 }
+
 
 
 export function connectionGrant(raw: unknown): ConnectionGrant {
@@ -340,6 +342,7 @@ export function connectionGrant(raw: unknown): ConnectionGrant {
 }
 
 
+
 /** Every live grant on one connection, from `list_app_access`. */
 export async function readGrants(mcp: SquireMcpClient, ref: string): Promise<ConnectionGrant[]> {
   const result = asRecord(await mcp.call('list_app_access', {}));
@@ -347,6 +350,7 @@ export async function readGrants(mcp: SquireMcpClient, ref: string): Promise<Con
     .map(connectionGrant)
     .filter((grant) => grant.credentialRef === ref && grant.revokedAt === undefined);
 }
+
 
 
 /** Revoke every live grant on one connection; partial failures are counted. */

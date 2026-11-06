@@ -1,4 +1,4 @@
-import { type QueryResultRow } from 'pg';
+import type { QueryResultRow } from 'pg';
 import { AuthStore, GITHUB_REPO_EVENT_RETENTION_MS, ManagedIdentity, ManagedIdentityRow, SqlResult, managedIdentityFromRow } from './store.js';
 
 

@@ -1,4 +1,4 @@
-import { describe, expect, it, HUMAN, fixtureScope1, fixtureScope2 } from './github-operations.test-support.js';
+import { describe, expect, it, HUMAN, fixtureScope1, fixtureScope2 } from './test-support-github-operations.test-support.js';
 
 describe('GitHub phone operations', () => {
 const scope1 = fixtureScope1();

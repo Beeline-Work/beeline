@@ -1,13 +1,18 @@
-import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
-import { type DaemonAttachment } from '@beeline/api-contract/daemon';
-import { type CornerLifecycleView } from '@beeline/api-contract/phone';
-import { assertScratchWriteBudget } from './scratch-lifecycle.js';
-import { BoundedSizeError, FETCH_TIMEOUT_MS, MAX_ATTACHMENT_BYTES, attachmentId, fetchBoundedBytes, safeAttachmentNames } from './attachment-delivery.js';
+import { createHash } from "node:crypto";
+import type { CornerLifecycleView } from "@beeline/api-contract/phone";
+import { realpathSync, existsSync, lstatSync, mkdirSync, writeFileSync } from "node:fs";
+import { isAbsolute, resolve, dirname, basename } from "node:path";
+import { assertScratchWriteBudget } from "./scratch-lifecycle.js";
+import type { DaemonAttachment } from "@beeline/api-contract/daemon";
+import { attachmentId, safeAttachmentNames } from "./attachment-delivery.js";
 import { JsonObject, cornerCallText, requiredEnv, daemonExecute, activeCommandContext, asObject, turnPromptSectionIds, stringArg, MAX_ATTACH_BYTES } from './read-only-mcp.js';
-
 import { bindBriefFiles, withinRoot } from './read-only-mcp-download-attachment.js';
+
+
+
+
+
+
 
 
 
@@ -70,6 +75,8 @@ export async function openCorner(args: JsonObject, toolCallId: string): Promise<
 }
 
 
+
+
 export async function reviseCornerBrief(args: JsonObject): Promise<string> {
   const cornerId = typeof args.cornerId === 'string' ? args.cornerId : requiredEnv('BEELINE_DAEMON_CORNER_ID');
   const requestId = (await activeCommandContext()).requestId;
@@ -94,6 +101,8 @@ export async function reviseCornerBrief(args: JsonObject): Promise<string> {
 }
 
 
+
+
 export async function readCornerBrief(args: JsonObject): Promise<string> {
   const cornerId =
     typeof args.cornerId === 'string' ? args.cornerId : requiredEnv('BEELINE_DAEMON_CORNER_ID');
@@ -109,6 +118,8 @@ export async function readCornerBrief(args: JsonObject): Promise<string> {
 }
 
 
+
+
 /** The corner a tool acts on: the named `cornerId`, else the active corner. */
 export function targetCornerId(args: JsonObject): string {
   if (typeof args.cornerId === 'string' && args.cornerId) return args.cornerId;
@@ -116,6 +127,8 @@ export function targetCornerId(args: JsonObject): string {
   if (!active) throw new Error('cornerId is required outside a corner');
   return active;
 }
+
+
 
 
 /**
@@ -130,6 +143,8 @@ export async function closeCorner(args: JsonObject): Promise<string> {
   await daemonExecute('archiveCorner', { cornerId });
   return JSON.stringify({ cornerId, status: 'closed' });
 }
+
+
 
 
 /**
@@ -160,6 +175,8 @@ export async function reportFeedback(args: JsonObject = {}): Promise<string> {
     });
   }
 }
+
+
 
 
 export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
@@ -270,12 +287,16 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
 }
 
 
+
+
 export async function approveMerge(args: JsonObject = {}): Promise<string> {
   const cornerId = targetCornerId(args);
   const headSha = typeof args.headSha === 'string' ? args.headSha.toLowerCase() : '';
   if (!/^[0-9a-f]{40}$/.test(headSha)) throw new Error('headSha must be a full 40-character SHA');
   return JSON.stringify(await daemonExecute('approveCornerMerge', { cornerId, headSha }));
 }
+
+
 
 
 export interface WriteScratchFileDeps {
@@ -285,9 +306,13 @@ export interface WriteScratchFileDeps {
 }
 
 
+
+
 export function writeScratchFileDepsFromEnv(): WriteScratchFileDeps {
   return { root: requiredEnv('BEELINE_ATTACH_SCRATCH_ROOT') };
 }
+
+
 
 
 /** Resolve a write_scratch_file target strictly inside `root`: relative
@@ -323,6 +348,8 @@ export function resolveWriteScratchPath(root: string, input: string): string {
 }
 
 
+
+
 export async function writeScratchFile(
   args: JsonObject,
   deps: WriteScratchFileDeps = writeScratchFileDepsFromEnv(),
@@ -347,9 +374,15 @@ export async function writeScratchFile(
 }
 
 
+
+
 export const FETCH_IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const;
 
+
+
 export type FetchImageMime = (typeof FETCH_IMAGE_MIMES)[number];
+
+
 
 
 export interface FetchImageDeps {
@@ -359,9 +392,13 @@ export interface FetchImageDeps {
 }
 
 
+
+
 export function fetchImageDepsFromEnv(): FetchImageDeps {
   return { root: requiredEnv('BEELINE_ATTACH_SCRATCH_ROOT') };
 }
+
+
 
 
 export function parseImageUrl(input: string): URL {
@@ -376,6 +413,8 @@ export function parseImageUrl(input: string): URL {
   }
   return parsed;
 }
+
+
 
 
 export function sniffRasterImageMime(bytes: Buffer): FetchImageMime | undefined {
@@ -411,6 +450,8 @@ export function sniffRasterImageMime(bytes: Buffer): FetchImageMime | undefined 
 }
 
 
+
+
 export function resolveFetchedImageMime(contentType: string, bytes: Buffer): FetchImageMime {
   if (contentType === 'image/svg+xml' || contentType.startsWith('image/svg')) {
     throw new Error('fetch_image is for photographs, not SVG; embed a JPEG or PNG as a data: URL');
@@ -426,6 +467,8 @@ export function resolveFetchedImageMime(contentType: string, bytes: Buffer): Fet
     `response is not a photograph (${contentType || 'unknown type'}); fetch_image accepts JPEG, PNG, GIF, and WebP`,
   );
 }
+
+
 
 
 export function fetchedImageFileName(url: URL, mime: FetchImageMime): string {
@@ -446,45 +489,11 @@ export function fetchedImageFileName(url: URL, mime: FetchImageMime): string {
 }
 
 
-/** fetch_image: daemon-side photograph download into session scratch. */
-export async function fetchImage(
-  args: JsonObject,
-  deps: FetchImageDeps = fetchImageDepsFromEnv(),
-): Promise<string> {
-  const url = stringArg(args, 'url')?.trim();
-  if (!url) throw new Error('url must be a non-empty http(s) URL');
-  const parsed = parseImageUrl(url);
-  let fetched;
-  try {
-    fetched = await fetchBoundedBytes(parsed.href, deps.fetchImpl ?? fetch);
-  } catch (error) {
-    if (error instanceof BoundedSizeError) {
-      throw new Error(
-        `image exceeds the ${MAX_ATTACHMENT_BYTES}-byte limit (${error.bytes} bytes)`,
-      );
-    }
-    if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
-      throw new Error(`image fetch timed out after ${FETCH_TIMEOUT_MS / 1000} seconds`);
-    }
-    throw error instanceof Error ? error : new Error(String(error));
-  }
-  if (!fetched.ok) {
-    throw new Error(`image fetch failed: HTTP ${fetched.status}`);
-  }
-  if (fetched.bytes.length === 0) throw new Error('image fetch returned no bytes');
-  const mime = resolveFetchedImageMime(fetched.mimeType, fetched.bytes);
-  const resolved = resolveWriteScratchPath(
-    deps.root,
-    join('fetched-images', fetchedImageFileName(parsed, mime)),
-  );
-  if (process.env.BEELINE_CORNER_SCRATCH_ROOT)
-    await assertScratchWriteBudget(process.env.BEELINE_CORNER_SCRATCH_ROOT, fetched.bytes.length);
-  writeFileSync(resolved, fetched.bytes);
-  return JSON.stringify({ path: resolved, mime, size: fetched.bytes.length });
-}
 
 
 export type AttachmentDownloadFailure = 'not_found' | 'forbidden' | 'too_large' | 'download_failed';
+
+
 
 
 /** A refused download_attachment: the tool error text is `{"error":<reason>,"message":…}`. */
@@ -496,6 +505,8 @@ export class AttachmentDownloadError extends Error {
     this.reason = reason;
   }
 }
+
+
 
 
 export interface DownloadAttachmentDeps {
@@ -513,6 +524,8 @@ export interface DownloadAttachmentDeps {
   readBriefAttachment?: (objectId: string) => Promise<DaemonAttachment | null>;
   fetchImpl?: typeof fetch;
 }
+
+
 
 
 export function downloadAttachmentDepsFromEnv(): DownloadAttachmentDeps {
@@ -561,6 +574,8 @@ export function downloadAttachmentDepsFromEnv(): DownloadAttachmentDeps {
 }
 
 
+
+
 /** The status in a `daemon operation … failed (<status>: …)` error, mapped to a reason. */
 export function messageReadFailure(error: unknown): AttachmentDownloadError {
   const text = error instanceof Error ? error.message : String(error);
@@ -571,6 +586,8 @@ export function messageReadFailure(error: unknown): AttachmentDownloadError {
     return new AttachmentDownloadError('not_found', 'no such message');
   return new AttachmentDownloadError('download_failed', `could not read the message (${text})`);
 }
+
+
 
 
 /** One file to download: the media id its bytes live under, plus the metadata
@@ -587,6 +604,8 @@ export interface DownloadCandidate {
   readonly sha256?: string;
   readonly expired?: boolean;
 }
+
+
 
 
 /**
@@ -613,6 +632,8 @@ export function candidateFromMessage(
     ...(attachment.expired ? { expired: true } : {}),
   };
 }
+
+
 
 
 /**

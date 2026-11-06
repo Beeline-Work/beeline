@@ -1,4 +1,4 @@
-import { releaseAgentConnection, advanceCorner, randomUUID, randomBytes, expect, it, vi, MemoryObjectStorage, ObjectService, DaemonService, LiveHub, PushDeliveryLoop, createAgentCommand, GITHUB_SUBJECT, systemLine, HUMAN, RUBY, WORKER, WS, ROOM, DM, db, daemon, phone, order, claim, authority, commands, open, worker, rootFixture, type AgentCommand } from './commander-recovery.integration.test-support.js';
+import { releaseAgentConnection, advanceCorner, randomUUID, randomBytes, expect, it, vi, MemoryObjectStorage, ObjectService, DaemonService, LiveHub, PushDeliveryLoop, createAgentCommand, GITHUB_SUBJECT, systemLine, HUMAN, RUBY, WORKER, WS, ROOM, DM, db, daemon, phone, order, claim, authority, commands, open, worker, rootFixture, type AgentCommand } from './test-support-commander-recovery.integration.test-support.js';
 
 
 
@@ -319,6 +319,8 @@ it('routes zero-check completion through a durable lifecycle fact', async () => 
     WORKER,
   );
   await zero.execute('postAgentTurnReceipt', { ...authority(turn), agentId: WORKER, status: 'complete' }, WORKER);
+  expect((await rootFixture.db.query(`SELECT lifecycle->>'checks' checks FROM corner_github_cache WHERE corner_id=$1`, [opened.cornerId])).rows[0]?.checks).toBe('passing');
+  await advanceCorner(rootFixture.db, opened.cornerId, { kind: 'reconcile' });
   expect(
     (await commands(DM, RUBY)).some(
       (c) => c.reason === 'report' && c.source.body.includes('foreign key constraint'),
@@ -330,7 +332,7 @@ it('routes zero-check completion through a durable lifecycle fact', async () => 
   expect(
     (
       await rootFixture.db.query(
-        `SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND reason='subscribed_event'`,
+        `SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND reason IN ('subscribed_event','corner_review_dispatch')`,
         [opened.cornerId, RUBY],
       )
     ).rowCount,

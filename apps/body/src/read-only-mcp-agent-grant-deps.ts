@@ -1,18 +1,21 @@
-import { resolveGrantCommand, isNativeGrantExecutable, resolveGrantScriptExecutable } from './grant-script.js';
-import { squireReachCause } from './squire-status.js';
-import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-
-import { REQUESTABLE_AGENT_GRANT_KINDS, AGENT_GRANT_REASON_MAX_LENGTH, AGENT_GRANT_TARGET_MAX_LENGTH, AGENT_GRANT_VERBS, COMMAND_SECRET_NAME, GRANT_SCRIPT_MAX_BYTES, GRANT_SCRIPT_MAX_LINES, formatGrantEscalationReason, grantScriptTooLongMessage, interpreterScriptArgument, isRequestableAgentGrantKind, isSharedAssetCategory, SHARED_ASSET_CATEGORIES, parseCommandGrantTarget, type AgentGrantEscalation, type CommandGrantRule, type CommandGrantScript } from '@beeline/api-contract/agent-grants';
-import { operatorSecretResolver, storeOperatorSecret, type SecretResolver } from './grant-runner.js';
-import { CONNECTOR_OFFER_REASON_MAX_LENGTH, OFFERABLE_CONNECTOR_KINDS, isOfferableConnectorKind } from '@beeline/api-contract/connector-offers';
-import { findChromiumPage } from './browser-share.js';
-import { startHostedBrowserShare } from './browser-share-host.js';
-import { describeTailscaleReach } from './connector-tailscale.js';
-import { readVault } from './connector-squire.js';
-import { sandboxDevicePath } from './bwrap-sandbox.js';
-import { JsonObject, daemonExecute, stringArg, asObject, activeCommandContext, requiredEnv } from './read-only-mcp.js';
+import { type SecretResolver, operatorSecretResolver, storeOperatorSecret } from "./grant-runner.js";
+import { type CommandGrantRule, type CommandGrantScript, interpreterScriptArgument, GRANT_SCRIPT_MAX_BYTES, GRANT_SCRIPT_MAX_LINES, grantScriptTooLongMessage, isRequestableAgentGrantKind, REQUESTABLE_AGENT_GRANT_KINDS, AGENT_GRANT_TARGET_MAX_LENGTH, parseCommandGrantTarget, AGENT_GRANT_REASON_MAX_LENGTH, HOST_EMULATOR_TARGET, AGENT_GRANT_VERBS, type AgentGrantEscalation, formatGrantEscalationReason, isSharedAssetCategory, SHARED_ASSET_CATEGORIES, COMMAND_SECRET_NAME } from "@beeline/api-contract/agent-grants";
+import { resolveGrantCommand, resolveGrantScriptExecutable, isNativeGrantExecutable } from "./grant-script.js";
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { hostEmulatorSerials } from "./machine-control.js";
+import { sandboxDevicePath } from "./bwrap-sandbox.js";
+import { findChromiumPage } from "./browser-share.js";
+import { startHostedBrowserShare } from "./browser-share-host.js";
+import { isOfferableConnectorKind, OFFERABLE_CONNECTOR_KINDS, CONNECTOR_OFFER_REASON_MAX_LENGTH } from "@beeline/api-contract/connector-offers";
+import { JsonObject, daemonExecute, stringArg, asObject, activeCommandContext, squireShareEndpoint, requiredEnv, connectorOfferDepsFromEnv } from './read-only-mcp.js';
 import { agentScheduleRoomId, resolveAttachPath } from './read-only-mcp-download-attachment.js';
+
+
+
+
+
+
 
 
 
@@ -25,6 +28,8 @@ export interface AgentGrantDeps {
   scriptEnv?: NodeJS.ProcessEnv;
   /** Test seam for reading those bytes. */
   readScript?: (path: string) => Buffer;
+  /** Read-only probe of the already running host adb server. */
+  hostEmulators?: () => Promise<string[]>;
   /**
    * Where a command grant's named secrets resolve from, at ask time and for
    * `list_grants`. Defaults to the operator key store, secrets.json, then the
@@ -34,6 +39,8 @@ export interface AgentGrantDeps {
   /** Where `store_secret` writes; defaults to the daemon's secrets.json. */
   storeSecret?: (name: string, value: string) => Promise<void>;
 }
+
+
 
 
 export function agentGrantDepsFromEnv(): AgentGrantDeps {
@@ -47,6 +54,8 @@ export function agentGrantDepsFromEnv(): AgentGrantDeps {
     storeSecret: (name, value) => storeOperatorSecret(name, value, process.env),
   };
 }
+
+
 
 
 /**
@@ -120,6 +129,8 @@ export function readGrantScript(
 }
 
 
+
+
 /** request_grant: one ask, one kind, one target; the server decides yolo vs card. */
 export async function requestGrant(
   args: JsonObject,
@@ -164,6 +175,29 @@ export async function requestGrant(
           'Have the operator initialize the named secret securely, or drop the --with suffix.',
       );
     }
+  }
+  if (kind === 'host' && target === HOST_EMULATOR_TARGET) {
+    const listed = await deps.execute('listAgentGrants', { roomId: deps.roomId });
+    const live = Array.isArray(listed.grants) ? listed.grants.map(asObject) : [];
+    const grant = live.find((entry) => entry.kind === kind && entry.target === target &&
+      (entry.status === 'approved' || entry.status === 'once'));
+    if (grant) {
+      let serials: string[];
+      try { serials = await (deps.hostEmulators ?? hostEmulatorSerials)(); }
+      catch { serials = []; }
+      if (!serials.length)
+        return 'Host emulator unavailable: no running host emulator is available; nothing was started. Do not use an emulator and say so in your reply.';
+      if (grant.status === 'once')
+        await deps.execute('consumeAgentGrant', { grantId: grant.grantId });
+      return `Host emulator allowed at ${target}: ${serials.map((serial) => `adb -H 127.0.0.1 -P 5037 -s ${serial}`).join('; ')}. Use this existing emulator only; the helper never starts or manages it.`;
+    }
+    const history = await deps.execute('listAgentGrantRequests', { roomId: deps.roomId });
+    const requests = Array.isArray(history.grants) ? history.grants.map(asObject) : [];
+    const previous = requests.find((entry) => !entry.agentId && entry.kind === kind && entry.target === target);
+    if (previous?.status === 'denied' || previous?.status === 'revoked')
+      return 'Host emulator permission refused: do not use an emulator and say so in your reply.';
+    if (previous?.status === 'pending')
+      return 'Host emulator permission pending: wait for the host to Allow, then call request_grant again for the existing emulator address; end your turn now without using an emulator.';
   }
   const result = await deps.execute('requestAgentGrant', {
     roomId: deps.roomId,
@@ -228,6 +262,8 @@ export async function requestGrant(
 }
 
 
+
+
 export async function requestSharedAssetIsolation(
   args: JsonObject,
   deps: AgentGrantDeps = agentGrantDepsFromEnv(),
@@ -249,6 +285,8 @@ export async function requestSharedAssetIsolation(
     throw new Error('shared asset isolation did not open a human approval');
   return `pending, card posted: isolate ${category} [grant ${String(result.grantId)}]. A Workspace owner, admin, or this agent's owner must answer ALWAYS or NO on the card in this Room. Your turn is paused; end it now. If approved, the category becomes private from your next session.`;
 }
+
+
 
 
 /**
@@ -299,6 +337,8 @@ export async function listGrants(
 }
 
 
+
+
 /**
  * store_secret: write one operator secret by name so a command grant's
  * `--with NAME` resolves at run time. The value goes into the daemon's
@@ -325,6 +365,8 @@ export async function storeSecret(
 }
 
 
+
+
 export interface ConnectorOfferDeps {
   roomId: string;
   execute: (name: string, input: JsonObject) => Promise<JsonObject>;
@@ -336,51 +378,6 @@ export interface ConnectorOfferDeps {
 }
 
 
-export function connectorOfferDepsFromEnv(): ConnectorOfferDeps {
-  const relayUrl = process.env.BEELINE_SQUIRE_RELAY_URL;
-  const relayToken = process.env.BEELINE_SQUIRE_RELAY_TOKEN;
-  const squireCall = relayUrl && relayToken ? async (tool: string, args: Record<string, unknown> = {}) => {
-    const context = await activeCommandContext();
-    const response = await fetch(new URL('/mcp', relayUrl), {
-      method: 'POST',
-      headers: { authorization: `Bearer ${relayToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ ...context, method: 'tools/call',
-        params: { name: tool, arguments: args } }),
-      signal: undefined,
-    });
-    const body = await response.json().catch((error) => {
-      if (!response.ok) throw new Error(`Squire relay HTTP ${response.status}`);
-      throw error;
-    }) as { error?: string; result?: {
-      isError?: boolean; content?: Array<{ type: string; text?: string }>;
-    } };
-    if (!response.ok) throw new Error(body.error ?? `Squire relay HTTP ${response.status}`);
-    const result = body.result;
-    const text = result?.content?.find((entry) => entry.type === 'text')?.text;
-    if (result?.isError) throw new Error(text ?? 'Squire MCP tool error');
-    if (text) return JSON.parse(text);
-    throw new Error(`Squire MCP returned no result for ${tool}`);
-  } : undefined;
-  return {
-    squireCall,
-    roomId: agentScheduleRoomId(),
-    execute: daemonExecute,
-    tailscaleReach: (enabled) => describeTailscaleReach({ enabled, installIfMissing: enabled }),
-    // This task relay reaches only the broker on this agent's own machine.
-    squireReach: relayUrl && relayToken ? async () => {
-      try {
-        await readVault({ call: squireCall! });
-      } catch (error) {
-        // Task authorization and stale turns are not machine failures.
-        if (/not authorized|active task|active server command|Squire relay HTTP 403/i.test(
-          error instanceof Error ? error.message : ''))
-          return { reachable: false, cause: 'Squire status probe was not authorized' };
-        return { reachable: false, cause: squireReachCause(error) };
-      }
-      return { reachable: true };
-    } : undefined,
-  };
-}
 
 
 /**
@@ -397,6 +394,8 @@ export const SQUIRE_SHARE_CAUSES: Record<string, string> = {
 };
 
 
+
+
 /** Messages the Beeline task relay writes itself, so they hold no provider text. */
 export const SQUIRE_RELAY_REFUSALS = new Set([
   'Squire MCP connection died and its browser session is gone; call operate_start',
@@ -406,6 +405,8 @@ export const SQUIRE_RELAY_REFUSALS = new Set([
   'Squire requires the current active task',
   'Squire task ended while the call was running',
 ]);
+
+
 
 
 /** Only known causes reach the agent; provider payloads may hold secrets. */
@@ -426,48 +427,6 @@ export function squireShareFailure(status: number, body: unknown): Error {
 }
 
 
-export async function squireShareEndpoint(sessionId: string): Promise<{ url: string; expiresAt: number }> {
-  const relayUrl = requiredEnv('BEELINE_SQUIRE_RELAY_URL');
-  const relayToken = requiredEnv('BEELINE_SQUIRE_RELAY_TOKEN');
-  let response: Response;
-  let body: unknown;
-  try {
-    response = await fetch(new URL('/mcp', relayUrl), {
-      method: 'POST',
-      headers: { authorization: `Bearer ${relayToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ ...await activeCommandContext(), method: 'tools/call',
-        params: { name: 'operate_share', arguments: { session_id: sessionId } } }),
-      signal: undefined,
-    });
-    // Only an unparseable body is tolerated; a timeout while reading it is not.
-    body = await response.json().catch((error: unknown) => {
-      if (error instanceof SyntaxError) return undefined;
-      throw error;
-    });
-  } catch (error) {
-    if (error instanceof Error && error.name === 'TimeoutError')
-      throw new Error('Squire share timed out after 30 seconds');
-    throw error;
-  }
-  if (response.status === 403 && body === undefined)
-    throw new Error('Squire relay refused authorization (HTTP 403); this turn may have ended');
-  if (!response.ok) throw squireShareFailure(response.status, body);
-  const result = (body as { result?: { isError?: unknown; content?: unknown } } | undefined)?.result;
-  if (result?.isError) throw squireShareFailure(response.status, body);
-  const text = Array.isArray(result?.content)
-    ? (result.content as Array<{ type?: unknown; text?: unknown }>)
-      .find((entry) => entry?.type === 'text')?.text : undefined;
-  let shared: Record<string, unknown> | undefined;
-  try { shared = typeof text === 'string' ? JSON.parse(text) as Record<string, unknown> : undefined; } catch { /* Reported below. */ }
-  if (!shared || typeof shared !== 'object') throw new Error('Squire share returned a malformed response');
-  const endpoint = shared.url;
-  if (typeof endpoint !== 'string' || !/^https?:\/\/[^/]+\/s\/[A-Za-z0-9_-]{43}\/$/.test(endpoint))
-    throw new Error('Squire share returned no valid live page URL');
-  const expiresAt = typeof shared.expires_at === 'string' ? Date.parse(shared.expires_at) : NaN;
-  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now())
-    throw new Error('Squire share returned no valid expiry');
-  return { url: endpoint, expiresAt };
-}
 
 
 export async function shareBrowser(args: JsonObject): Promise<string> {
@@ -506,6 +465,8 @@ export async function shareBrowser(args: JsonObject): Promise<string> {
   }
   return JSON.stringify({ cardId: result.messageId, shareId: result.id, message: 'The live browser card is posted in this place. Ask the person to open the card.', sessionId: page.id, status: 'live' });
 }
+
+
 
 
 
@@ -617,6 +578,8 @@ export async function workbenchStatus(
 }
 
 
+
+
 /**
  * offer_connector: one card, one tool, the turn paused on it. The server
  * owns the card's consequence line; the agent supplies only its reason.
@@ -659,6 +622,8 @@ export async function offerConnector(
 }
 
 
+
+
 export function choiceOptionArgs(args: JsonObject): Array<{
   label: string;
   consequence: string;
@@ -681,6 +646,8 @@ export function choiceOptionArgs(args: JsonObject): Array<{
     };
   });
 }
+
+
 
 
 /** ask_choice: optional lettered question; the turn is not paused. */

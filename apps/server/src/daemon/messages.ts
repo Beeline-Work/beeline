@@ -1,11 +1,9 @@
 import { commandOwnerFenceCteSql, commandOwnerFenceMatchesSql, commandOwnerLiveSql } from '../turn-ownership.js';
 import { cornerRequestSql } from '../corner-opening.js';
 import { mentionReplyKey, mentionReplyId } from '../owed-mentions.js';
-import { checkinOutputAllowed } from '../next-day-checkin.js';
 import { visibleMessageSql } from '../read-cursor.js';
 import { sanitizeTurnReplay } from '@beeline/api-contract/daemon';
 import { observeOnboardingMessage } from '../signin-funnel.js';
-import { ExpectedRefusalError } from '../command-refusal.js';
 import { CornerAccessDatabase } from '../corner-access-database.js';
 import { refuseTagPastCommander, CommandRefusalError } from '../commander.js';
 import { authorizeCommandOutput, turnRootMessageSql } from '../agent-command.js';
@@ -65,8 +63,6 @@ import { daemonWriteResult } from './corner-messages.js';
       }));
       steps = replySteps([...(input.steps ?? []), ...notes], notes.length);
     }
-    if (!await checkinOutputAllowed(ctx.database, input.roomId, agentId, input.requestId, input))
-      throw new ExpectedRefusalError('This one-time check-in is no longer due. Do not post another check-in message.');
     const mentionKey = await mentionReplyKey(ctx.database, agentId, input.roomId, input.replyToMessageId);
     const messageId = mentionKey ? mentionReplyId(mentionKey) : id();
     const parent = input.replyToMessageId

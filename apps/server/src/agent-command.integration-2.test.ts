@@ -1,78 +1,5 @@
-import { expect, it, taggedIdentityIdsSql, createAgentCommand, nextAgentDepth, reconcileCornerMergeBlockers, reconcileConfiguredCornerReviewers, routeSystemCommand, readAgentCommands, systemLine, H, A, B, R, C, id, db, phone, daemon, commands, send, helperOwner, claim, result, landCorner, rootFixture } from './agent-command.integration.test-support.js';
+import { expect, it, createAgentCommand, nextAgentDepth, reconcileCornerMergeBlockers, reconcileConfiguredCornerReviewers, routeSystemCommand, readAgentCommands, systemLine, advanceCorner, H, A, B, R, C, id, db, phone, daemon, commands, send, helperOwner, claim, result, landCorner, rootFixture } from './test-support-agent-command.integration.test-support.js';
 
-
-it('rejects unknown, wrong agent, cross-Room, completed and cancelled turn output without side effects', async () => {
-  await send('@hoots');
-  const [c] = await commands();
-  await claim(c!);
-  const draft = {
-    roomId: R,
-    agentId: A,
-    turnId: c!.turnRequestId,
-    generationId: 'g1',
-    text: 'draft',
-  };
-  await expect(rootFixture.daemon.execute('postAgentDraft', { ...draft, turnId: id() }, A)).rejects.toThrow();
-  await expect(rootFixture.daemon.execute('postAgentDraft', { ...draft, roomId: C }, A)).rejects.toThrow();
-  await expect(rootFixture.daemon.execute('postAgentDraft', { ...draft, agentId: B }, B)).rejects.toThrow();
-  await rootFixture.daemon.execute('postAgentDraft', draft, A);
-  await rootFixture.phone.execute('cancelAgentTurn', { roomId: R, agentId: A, requestId: c!.turnRequestId }, H);
-  await expect(result(c!, 'Stopped')).rejects.toThrow();
-  await expect(rootFixture.daemon.execute('postAgentDraft', draft, A)).rejects.toThrow();
-  expect((await commands())[0]?.action).toBe('stop');
-  await send('@hoots next');
-  const [next] = (await commands()).filter((c) => c.action === 'input');
-  await claim(next!);
-  await result(next!, 'Done');
-  await expect(
-    rootFixture.daemon.execute('postAgentDraft', { ...draft, turnId: next!.turnRequestId }, A),
-  ).rejects.toThrow();
-});
-
-it('routes a validated agent tag when the final message is committed', async () => {
-  await send('@hoots');
-  const [c] = await commands();
-  await claim(c!);
-  expect(await commands(B)).toEqual([]);
-  await result(c!, '@goosy please help');
-  expect(await commands(B)).toHaveLength(1);
-});
-
-it('does not trust a caller-supplied agent id without an exact tag', async () => {
-  await send('@hoots');
-  const [c] = await commands();
-  await claim(c!);
-  const posted = await result(c!, '@GOOSY please help');
-  expect(await commands(B)).toEqual([]);
-  // `@GOOSY` is not how Goosy is spelled, so it names nobody — and there is no
-  // caller-supplied list that could disagree with the words.
-  expect(
-    (
-      await rootFixture.db.query<{ tagged_ids: string[] }>(
-        `SELECT ${taggedIdentityIdsSql('m')} tagged_ids FROM messages m WHERE m.id=$1`,
-        [posted.id],
-      )
-    ).rows[0]?.tagged_ids,
-  ).toEqual([]);
-});
-
-it('rolls final storage back if creating the next command fails', async () => {
-  await send('@hoots');
-  const [c] = await commands();
-  await claim(c!);
-  await rootFixture.db.query(`CREATE FUNCTION refuse_command() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected dispatch failure'; END $$;
- CREATE TRIGGER refuse_command BEFORE INSERT ON agent_commands FOR EACH ROW EXECUTE FUNCTION refuse_command();`);
-  try {
-    await expect(result(c!, '@goosy Atomic')).rejects.toThrow('injected');
-    expect((await rootFixture.db.query(`SELECT 1 FROM messages WHERE text='Atomic'`)).rowCount).toBe(0);
-  } finally {
-    await rootFixture.db.query(
-      `DROP TRIGGER refuse_command ON agent_commands; DROP FUNCTION refuse_command();`,
-    );
-  }
-  await result(c!, '@goosy Atomic');
-  expect(await commands(B)).toHaveLength(1);
-});
 
 it('gives old helpers only projected commands and refuses unsolicited old output', async () => {
   await send('@hoots');
@@ -136,12 +63,8 @@ it('wakes the opener for failed checks even after a reviewer turn and retries a 
     expect.objectContaining({ reason: 'corner_check', sourceMessageId: note.id }),
   ]);
   expect((await readAgentCommands(rootFixture.db,C,A)).commands).toHaveLength(0);
-  // The wake and the workflow transition commit together, so a command can
-  // only be lost in a corner with no run record: one opened before the
-  // workflow run existed. Its run is rebuilt from the lifecycle and the
-  // missing wake re-sent.
+  // A deleted wake is recovered from the recorded checks despite its effect receipt.
   await rootFixture.db.query(`DELETE FROM agent_commands WHERE room_id=$1`, [C]);
-  await rootFixture.db.query(`DELETE FROM messages WHERE room_id=$1 AND card_type='corner-workflow-handoff'`, [C]);
   await expect(reconcileCornerMergeBlockers(rootFixture.db)).resolves.toBe(1);
   expect(await commands(B, C)).toHaveLength(1);
   await expect(reconcileCornerMergeBlockers(rootFixture.db)).resolves.toBe(0);
@@ -308,7 +231,7 @@ it('routes subscribed events, grants and changed corner checks through actions',
   expect(resume?.action).toBe('resume');
   expect(resume?.turnRequestId).toBe(c!.turnRequestId);
   await rootFixture.db.query(
-    `UPDATE corner_github_cache SET lifecycle='{"checks":"passing"}' WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle='{"checks":"passing","pr":{"number":1,"headSha":"action-head"}}' WHERE corner_id=$1`,
     [C],
   );
   await rootFixture.phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
@@ -327,7 +250,7 @@ it('routes subscribed events, grants and changed corner checks through actions',
     });
   expect(await commands(B, C)).toHaveLength(0);
   expect(await commands(A, C)).toHaveLength(1);
-  expect((await commands(A, C))[0]?.reason).toBe('subscribed_event');
+  expect((await commands(A, C))[0]?.reason).toBe('corner_review_dispatch');
 
   await rootFixture.db.query(`DELETE FROM agent_commands`);
   await rootFixture.db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [
@@ -335,7 +258,7 @@ it('routes subscribed events, grants and changed corner checks through actions',
     A,
   ]);
   await rootFixture.db.query(
-    `UPDATE corner_github_cache SET lifecycle='{"checks":"failing"}' WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle='{"checks":"failing","pr":{"number":1,"headSha":"action-head"}}' WHERE corner_id=$1`,
     [C],
   );
   await systemLine(rootFixture.db, {
@@ -348,11 +271,11 @@ it('routes subscribed events, grants and changed corner checks through actions',
   expect(await commands(B, C)).toHaveLength(1);
 
   await rootFixture.db.query(`DELETE FROM agent_commands`);
-  await rootFixture.phone.execute('updateRoom', { roomId: R, reviewerAgentId: null }, H);
   await rootFixture.db.query(
-    `UPDATE corner_github_cache SET lifecycle='{"checks":"passing"}' WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle='{"checks":"passing","pr":{"number":1,"headSha":"action-head"}}' WHERE corner_id=$1`,
     [C],
   );
+  await rootFixture.phone.execute('updateRoom', { roomId: R, reviewerAgentId: null }, H);
   await systemLine(rootFixture.db, {
     roomId: C,
     subject: { kind: 'person', id: H, name: 'Human' },
@@ -381,7 +304,7 @@ it('holds the green review wake while the corner worker still holds a live turn'
   await claim(workerCommand!, 'gw');
 
   await rootFixture.db.query(
-    `UPDATE corner_github_cache SET lifecycle='{"checks":"passing"}' WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle='{"checks":"passing","pr":{"number":1,"headSha":"action-head"}}' WHERE corner_id=$1`,
     [C],
   );
   await systemLine(rootFixture.db, {
@@ -391,23 +314,23 @@ it('holds the green review wake while the corner worker still holds a live turn'
     kind: 'check-passed',
   });
 
-  // The reviewer's command exists and is durable, but is not delivered while
-  // the worker's lease is live: two agents must not stream into one corner.
+  // The machine waits for the worker's terminal receipt before assigning review.
   await expect(
     rootFixture.db
       .query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2`, [C, A])
       .then((r) => r.rowCount),
-  ).resolves.toBe(1);
+  ).resolves.toBe(0);
   expect((await readAgentCommands(rootFixture.db,C,A)).commands).toHaveLength(0);
 
   // Only the worker result releases the review wake.
   await rootFixture.daemon.execute('postAgentTurnReceipt',{roomId:C,requestId:workerCommand!.turnRequestId,generationId:'gw',status:'complete'},B,await helperOwner(B));
+  await advanceCorner(rootFixture.db, C, { kind: 'reconcile' });
   expect(await commands(A, C)).toHaveLength(1);
 
   // This suite shares one store, so leave none of the above behind.
   await rootFixture.db.query(`DELETE FROM agent_commands`);
   await rootFixture.db.query(
-    `UPDATE corner_github_cache SET lifecycle='{"checks":"passing"}' WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle='{"checks":"passing","pr":{"number":1,"headSha":"action-head"}}' WHERE corner_id=$1`,
     [C],
   );
   await rootFixture.phone.execute('updateRoom', { roomId: R, reviewerAgentId: null }, H);
@@ -420,7 +343,7 @@ it('wakes the implementer without consuming a green transition when the configur
     A,
   ]);
   await rootFixture.db.query(
-    `UPDATE corner_github_cache SET lifecycle='{"checks":"passing"}' WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle='{"checks":"passing","pr":{"number":1,"headSha":"action-head"}}' WHERE corner_id=$1`,
     [C],
   );
   await systemLine(rootFixture.db, {
@@ -478,8 +401,7 @@ it('keeps reviewer subscriptions mandatory and reconciles an unreviewed green he
   });
   expect(await commands(A, C)).toEqual([
     expect.objectContaining({
-      rootSourceMessageId: source.id,
-      reason: 'subscribed_event',
+      reason: 'corner_review_dispatch',
       private: true,
       source: expect.objectContaining({ body: expect.stringContaining('Current handoff target: PR #17') }),
     }),
@@ -518,7 +440,7 @@ it('recovers a green head whose earlier GitHub note never dispatched its reviewe
     subscriptions: 1,
     commands: 1,
   });
-  expect(await commands(A, C)).toEqual([expect.objectContaining({ reason: 'subscribed_event' })]);
+  expect(await commands(A, C)).toEqual([expect.objectContaining({ reason: 'corner_review_dispatch' })]);
   await expect(reconcileConfiguredCornerReviewers(rootFixture.db, R)).resolves.toEqual({
     subscriptions: 0,
     commands: 0,
@@ -682,11 +604,11 @@ it('records its own corner objective without a second wake or resetting the auth
     },
     A,
   );
-  expect(await commands(A, opened.cornerId)).toEqual([]);
+  expect((await commands(A, opened.cornerId)).map(c => c.reason)).toEqual(['corner_objective']);
   expect((await rootFixture.db.query(`SELECT reason,root_command_id,parent_command_id,agent_depth,state,
     private_payload->>'objective' objective FROM agent_commands WHERE room_id=$1 AND reason='corner_objective'`,
     [opened.cornerId])).rows).toEqual([{reason:'corner_objective',root_command_id:c!.id,
-      parent_command_id:c!.id,agent_depth:c!.agentDepth,state:'complete',objective:'Do this task'}]);
+      parent_command_id:c!.id,agent_depth:c!.agentDepth,state:'pending',objective:'Do this task'}]);
   // B is a member (it can read the corner and answer when tagged) but the
   // objective is not its work: no intake command.
   expect(await commands(B, opened.cornerId)).toEqual([]);
@@ -793,4 +715,85 @@ it('selects exactly one winner when two generations claim a pending command toge
   );
   expect(attempts.filter((a) => a.status === 'fulfilled')).toHaveLength(1);
   expect(attempts.filter((a) => a.status === 'rejected')).toHaveLength(1);
+});
+
+it('atomically establishes the working receipt when an input command is claimed', async () => {
+  await send('@hoots');
+  const [c] = await commands();
+  await rootFixture.daemon.execute(
+    'claimAgentCommand',
+    { roomId: R, commandId: c!.id, generationId: 'working-at-claim' },
+    A, await helperOwner(A),
+  );
+  expect(
+    (
+      await rootFixture.db.query(
+        `SELECT status,generation_id FROM agent_turns
+         WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+        [R, c!.turnRequestId, A],
+      )
+    ).rows,
+  ).toEqual([{ status: 'working', generation_id: 'working-at-claim' }]);
+  expect((await rootFixture.phone.readRoom(R, H))?.latestAgentTurns).toContainEqual(
+    expect.objectContaining({
+      requestId: c!.turnRequestId,
+      agentPubkey: A,
+      status: 'working',
+    }),
+  );
+});
+
+it('restarts the turn clock when a parked turn resumes after a long approval wait', async () => {
+  await send('@hoots');
+  const [c] = await commands();
+  await claim(c!, 'before-approval');
+  await result(c!, 'Waiting for your approval.', 'before-approval');
+  const turn = () =>
+    rootFixture.db
+      .query<{ status: string; age_hours: number }>(
+        `SELECT status,(extract(epoch FROM now()-started_at)/3600)::float8 age_hours FROM agent_turns
+         WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+        [R, c!.turnRequestId, A],
+      )
+      .then((r) => r.rows[0]!);
+  const parkFor57Hours = () =>
+    rootFixture.db.query(
+      `UPDATE agent_turns SET started_at=now()-interval '57 hours'
+       WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+      [R, c!.turnRequestId, A],
+    );
+  await parkFor57Hours();
+  expect((await turn()).status).not.toBe('working');
+
+  // The approval resumes the same turn: a resume command on its request id.
+  const decision = id();
+  await rootFixture.db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'approved')`, [
+    decision,
+    R,
+    H,
+  ]);
+  const resume = (await createAgentCommand(rootFixture.db, {
+    roomId: R,
+    agentId: A,
+    sourceMessageId: decision,
+    action: 'resume',
+    reason: 'resume',
+    turnRequestId: c!.turnRequestId,
+  }))!;
+  await rootFixture.daemon.execute(
+    'claimAgentCommand',
+    { roomId: R, commandId: resume.id, generationId: 'after-approval' },
+    A, await helperOwner(A),
+  );
+  expect(await turn()).toMatchObject({ status: 'working' });
+  expect((await turn()).age_hours).toBeLessThan(1);
+
+  // and a receipt on a turn that is still working keeps its start.
+  await parkFor57Hours();
+  await rootFixture.daemon.execute(
+    'postAgentTurnReceipt',
+    { roomId: R, agentId: A, requestId: c!.turnRequestId, generationId: 'after-approval', status: 'working' },
+    A, await helperOwner(A),
+  );
+  expect((await turn()).age_hours).toBeGreaterThan(56);
 });

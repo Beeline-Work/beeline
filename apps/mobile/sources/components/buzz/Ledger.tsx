@@ -13,17 +13,8 @@ import { IdentityMark } from './IdentityMark';
 import { InlineRow } from './IndexRow';
 import { MonoMarkdown } from './MonoMarkdown';
 import type { ChannelReferenceIndex, ChannelReferenceTarget } from '@/buzz/channel-reference';
-import { styles } from './Ledger-styles';
-
-
-
-
-
-
-
-
-export { LedgerSteer, LedgerRoomUpdate, LedgerHistoryLine, LedgerSystemLine, LedgerDayCaption, withLedgerDayCaption, LedgerGhostLine, LedgerUntaggedHint } from './Ledger-ledger-steer';
-export { provisionalProseStyle, settledAgentProseStyle } from './Ledger-styles';
+import { styles, provisionalProseStyle, settledAgentProseStyle } from './Ledger-styles';
+import { LedgerSteer, LedgerRoomUpdate, LedgerHistoryLine, LedgerSystemLine, LedgerDayCaption, withLedgerDayCaption, LedgerGhostLine, LedgerUntaggedHint } from './Ledger-ledger-steer';
 
 
 
@@ -359,6 +350,48 @@ function TypewriterMarkdown({
 }
 
 
+/**
+ * The ghosted margin: a fixed-width clock stamp, and (when a voice first
+ * announces itself in a Room) an optional secondary detail under it.
+ *
+ * Hung in the right margin rather than set into the flow, so the centre stays a
+ * clean column — editor line numbers, verse numbers. It is absolutely
+ * positioned against the entry so it can never push the prose around, and it
+ * takes the dimmest tier because none of it is information the reader is
+ * looking for; it is information the reader occasionally checks.
+ *
+ * The Editorial direction folds the stamp into the byline for prose turns;
+ * this gutter survives for the rows that keep the wider margin (the folded
+ * tool run), where a stamp without a byline is still worth hanging.
+ */
+function LedgerMarginalia({
+  stamp,
+  detail,
+  testID,
+}: {
+  stamp: string;
+  /** Optional secondary detail for surfaces that have one. */
+  detail?: string | null;
+  testID?: string;
+}) {
+  if (!stamp && !detail) return null;
+  return (
+    <View pointerEvents="none" style={styles.marginalia} testID={testID}>
+      {stamp ? (
+        <Text numberOfLines={1} style={styles.marginaliaStamp}>
+          {stamp}
+        </Text>
+      ) : null}
+      {detail ? (
+        <Text numberOfLines={1} style={styles.marginaliaDetail}>
+          {detail}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+
 /** The one byline view: identity tile (or viewer dot) + name, role tag, stamp.
  *  Exported so the live draft lane's byline (`ActivityTimeline`) is exactly
  *  the settled row's byline — the tile, the name and the stamp are byte-for-byte
@@ -372,6 +405,7 @@ const bylineFonts = {
   'SpaceGrotesk-Medium': spaceGroteskMedium,
   'IBMPlexMono-Regular': ibmPlexMonoRegular,
 };
+
 
 export function Byline({ byline }: { byline: LedgerByline }) {
   const [fontsReady] = useFonts(bylineFonts);
@@ -452,6 +486,7 @@ export function Byline({ byline }: { byline: LedgerByline }) {
       >
         {byline.name ? (
           <Text
+            numberOfLines={1}
             style={[
               styles.bylineName,
               { fontFamily: nameFont, maxWidth: nameLimit },
@@ -465,6 +500,8 @@ export function Byline({ byline }: { byline: LedgerByline }) {
         ) : null}
         {byline.role ? (
           <Text
+            ellipsizeMode="tail"
+            numberOfLines={1}
             style={[styles.bylineTag, { fontFamily: metadataFont }]}
             testID="chat-byline-role"
           >
@@ -475,6 +512,7 @@ export function Byline({ byline }: { byline: LedgerByline }) {
           {byline.feedbackReported ? (
             <Text
               accessibilityLabel="Reported to Beeline"
+              numberOfLines={1}
               style={[styles.bylineStamp, metadataFace]}
               testID="chat-reported-marker"
             >
@@ -490,7 +528,7 @@ export function Byline({ byline }: { byline: LedgerByline }) {
               testID="chat-bookmark-marker"
             />
           ) : null}
-          <Text style={[styles.bylineStamp, metadataFace]} testID="chat-byline-stamp">
+          <Text numberOfLines={1} style={[styles.bylineStamp, metadataFace]} testID="chat-byline-stamp">
             {byline.stamp}
           </Text>
         </InlineRow>
@@ -659,3 +697,49 @@ export function LedgerEntry({
     </View>
   );
 }
+
+
+export type SystemLineCutSearch = {
+  key: string;
+  mode: 'word' | 'char';
+  candidates: number[];
+  /** Highest candidate index known to fit, or -1. */
+  lo: number;
+  /** Lowest candidate index known not to fit. */
+  hi: number;
+};
+
+
+export function startCutSearch(key: string, fullText: string, mode: 'word' | 'char'): SystemLineCutSearch {
+  const candidates: number[] = [];
+  for (let at = 1; at < fullText.length; at += 1) {
+    if (mode === 'char' || (/\s/.test(fullText[at]!) && !/\s/.test(fullText[at - 1]!))) {
+      candidates.push(at);
+    }
+  }
+  if (!candidates.length && mode === 'word') return startCutSearch(key, fullText, 'char');
+  return { key, mode, candidates, lo: -1, hi: candidates.length };
+}
+
+
+/** Drops trailing spaces and a dangling "·" so the ellipsis follows a word. */
+export function closedCutLength(fullText: string, at: number): number {
+  return fullText.slice(0, at).replace(/[\s·]+$/u, '').length;
+}
+
+
+export function webFitsTwoLines(element: HTMLElement): boolean | null {
+  const lineHeight = parseFloat(getComputedStyle(element).lineHeight);
+  if (!Number.isFinite(lineHeight)) return null;
+  return element.getBoundingClientRect().height <= lineHeight * 2 + 1;
+}
+export { LedgerSteer } from './Ledger-ledger-steer';
+export { LedgerRoomUpdate } from './Ledger-ledger-steer';
+export { LedgerHistoryLine } from './Ledger-ledger-steer';
+export { LedgerSystemLine } from './Ledger-ledger-steer';
+export { LedgerDayCaption } from './Ledger-ledger-steer';
+export { withLedgerDayCaption } from './Ledger-ledger-steer';
+export { LedgerGhostLine } from './Ledger-ledger-steer';
+export { LedgerUntaggedHint } from './Ledger-ledger-steer';
+export { provisionalProseStyle } from './Ledger-styles';
+export { settledAgentProseStyle } from './Ledger-styles';

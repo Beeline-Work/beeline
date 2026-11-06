@@ -1,107 +1,7 @@
-import { describe, expect, it, vi, DeadlineExpiry, LiveHub, claimAgentConnection, notifyAgentConfigChange, notifyConnectorAssignment, POSTGRES_LIVE_CHANNEL, postgresLiveSchema, PostgresLiveListener, seedCornerOpening, assignCornerWorker, recordCornerRun, insertCornerFacts, createAgentCommand, AUTHOR, WORKSPACE, ROOM, PgliteListenClient, eventually, settle, SkewedClockDatabase, fixtureScope1, type LiveEvent } from './postgres-live.test-support.js';
+import { describe, expect, it, vi, LiveHub, announceAgentLifecycle, ConnectionPresence, notifyAgentConfigChange, notifyConnectorAssignment, POSTGRES_LIVE_CHANNEL, postgresLiveSchema, PostgresLiveListener, seedCornerOpening, assignCornerWorker, recordCornerRun, insertCornerFacts, createAgentCommand, AUTHOR, WORKSPACE, ROOM, PgliteListenClient, eventually, settle, fixtureScope1, type LiveEvent } from './test-support-postgres-live.test-support.js';
 
 describe('Postgres live fanout', () => {
 const scope1 = fixtureScope1();
-
-
-  it('publishes room-scoped message and turn notifications without a database lookup', async () => {
-    const live = new LiveHub();
-    const client = new PgliteListenClient(scope1.database);
-    const query = vi.fn(scope1.database.query.bind(scope1.database));
-    const listener = new PostgresLiveListener(
-      { query, transaction: scope1.database.transaction.bind(scope1.database) },
-      live,
-      () => client,
-    );
-    scope1.listeners.push(listener);
-    const received: LiveEvent[] = [];
-    live.subscribe(ROOM, (event) => received.push(event));
-    void listener.run();
-    await eventually(() => client.listenerCount('notification') === 1);
-    received.length = 0;
-    query.mockClear();
-
-    for (const table of ['messages', 'agent_turns']) {
-      client.emit('notification', {
-        channel: POSTGRES_LIVE_CHANNEL,
-        payload: JSON.stringify({
-          table,
-          operation: table === 'messages' ? 'INSERT' : 'UPDATE',
-          roomId: ROOM,
-          agentId: AUTHOR,
-          ...(table === 'messages' ? { messageId: 'message-id' } : { requestId: 'request-id' }),
-        }),
-      });
-    }
-
-    await eventually(() => received.length === 2);
-    expect(query).not.toHaveBeenCalled();
-    expect(received.map((event) => event.type === 'invalidate' && event.reason)).toEqual([
-      'postgres:messages',
-      'postgres:agent_turns',
-    ]);
-    expect(received).toEqual([
-      expect.objectContaining({ messageId: 'message-id' }),
-      expect.objectContaining({ requestId: 'request-id' }),
-    ]);
-  });
-
-
-  it('relays a newer helper connection epoch to every other server instance', async () => {
-    const agent = 'f'.repeat(64);
-    await scope1.database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [agent]);
-    const live = new LiveHub();
-    const client = new PgliteListenClient(scope1.database);
-    const listener = new PostgresLiveListener(scope1.database, live, () => client);
-    scope1.listeners.push(listener);
-    const received: LiveEvent[] = [];
-    live.subscribeAll((event) => received.push(event));
-    void listener.run();
-    await eventually(() => client.listenerCount('notification') === 1);
-    received.length = 0;
-
-    // Server A accepts the connection against its own hub; B learns through PostgreSQL.
-    const epoch = await claimAgentConnection(scope1.database, new LiveHub(), agent, { lifecycleId: 'life' }, {
-      connectionId: 'connection-a', instanceId: 'server-a',
-    });
-    await eventually(() => received.some((event) => event.type === 'agent-connection'));
-    expect(received.filter((event) => event.type === 'agent-connection')).toEqual([
-      { type: 'agent-connection', roomId: '', agentId: agent, epoch },
-    ]);
-  });
-
-
-  it('delivers a membership change as an agent-directed invalidation', async () => {
-    const live = new LiveHub();
-    const client = new PgliteListenClient(scope1.database);
-    const listener = new PostgresLiveListener(scope1.database, live, () => client);
-    scope1.listeners.push(listener);
-    const received: LiveEvent[] = [];
-    live.subscribeAll((event) => received.push(event));
-    void listener.run();
-    await eventually(() => client.listenerCount('notification') === 1);
-    received.length = 0;
-
-    const freshRoom = '99999999-9999-4999-8999-999999999999';
-    await scope1.database.query(
-      `INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'milo')`,
-      [freshRoom, WORKSPACE, AUTHOR],
-    );
-    await scope1.database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
-      [WORKSPACE, freshRoom, AUTHOR],
-    );
-
-    await eventually(() =>
-      received.some(
-        (event) =>
-          event.type === 'invalidate' &&
-          event.reason === 'postgres:memberships' &&
-          event.targetAgentId === AUTHOR &&
-          event.roomId === freshRoom,
-      ),
-    );
-  });
 
 
   it('carries exact Workspace and identity on committed membership insert, revoke and deletion', async () => {
@@ -111,7 +11,7 @@ const scope1 = fixtureScope1();
     const listener = new PostgresLiveListener(scope1.database, live, () => client);
     scope1.listeners.push(listener); const received: LiveEvent[] = [];
     live.subscribeAll(event => received.push(event)); void listener.run();
-    await eventually(() => client.listenerCount('notification') === 1);
+    await eventually(() => listener.projectionHealth().connected);
     const changes = () => received.filter(event => event.type === 'invalidate' && event.reason === 'postgres:memberships' &&
       event.roomId === '' && event.workspaceId === WORKSPACE && event.readerId === AUTHOR && event.targetAgentId === AUTHOR);
     await scope1.database.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner')`, [WORKSPACE, AUTHOR]);
@@ -148,7 +48,7 @@ const scope1 = fixtureScope1();
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
     void listener.run();
-    await eventually(() => client.listenerCount('notification') === 1);
+    await eventually(() => listener.projectionHealth().connected);
     await scope1.database.query(
       `INSERT INTO registry_mcp_oauth_attempts(state,connector_id,expires_at)
        VALUES('registry-expiry-test',$1,now()+interval '100 milliseconds')`,
@@ -167,7 +67,7 @@ const scope1 = fixtureScope1();
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
     void listener.run();
-    await eventually(() => client.listenerCount('notification') === 1);
+    await eventually(() => listener.projectionHealth().connected);
     received.length = 0;
 
     const corner = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -238,7 +138,7 @@ const scope1 = fixtureScope1();
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
     void listener.run();
-    await eventually(() => client.listenerCount('notification') === 1);
+    await eventually(() => listener.projectionHealth().connected);
 
     const corner = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
     const target = 'c'.repeat(64);
@@ -285,7 +185,7 @@ const scope1 = fixtureScope1();
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
     void listener.run();
-    await eventually(() => client.listenerCount('notification') === 1);
+    await eventually(() => listener.projectionHealth().connected);
 
     const worker = 'c'.repeat(64);
     await scope1.database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Cee')`, [
@@ -330,7 +230,7 @@ const scope1 = fixtureScope1();
     const parent: LiveEvent[] = [];
     live.subscribe(ROOM, (event) => parent.push(event));
     void listener.run();
-    await eventually(() => client.listenerCount('notification') === 1);
+    await eventually(() => listener.projectionHealth().connected);
 
     const corner = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
     const agent = 'e'.repeat(64);
@@ -447,7 +347,7 @@ const scope1 = fixtureScope1();
     const parent: LiveEvent[] = [];
     live.subscribe(ROOM, (event) => parent.push(event));
     void listener.run();
-    await eventually(() => client.listenerCount('notification') === 1);
+    await eventually(() => listener.projectionHealth().connected);
     const nudges = () =>
       parent.filter((event) => event.type === 'invalidate' && event.reason === 'corner-status');
 
@@ -484,7 +384,7 @@ const scope1 = fixtureScope1();
       VALUES($1,$2,'owner')`, [corner,reader]));
     await expectNudge(() => scope1.database.query(`UPDATE corner_merge_holds SET released_at=now(),released_by=$2
       WHERE corner_id=$1`, [corner,reader]));
-    // A review verdict or ask_human writes only a run card.
+    // Historical lifecycle cards still invalidate their visible Room transcript.
     await expectNudge(() => recordCornerRun(scope1.database, corner, 'review'));
     await expectNudge(() => recordCornerRun(scope1.database, corner, 'ask_human'));
     await expectNudge(() => scope1.database.query(
@@ -558,7 +458,7 @@ const scope1 = fixtureScope1();
       scope1.listeners.push(listener);
       live.subscribe(ROOM, (event) => parents[index]!.push(event));
       void listener.run();
-      await eventually(() => client.listenerCount('notification') === 1);
+      await eventually(() => listener.projectionHealth().connected);
     }
     const corner = 'cccccccc-cccc-4ccc-8ccc-cccccccccccf';
     await scope1.database.query(
@@ -581,7 +481,7 @@ const scope1 = fixtureScope1();
     const listener = new PostgresLiveListener(scope1.database, live, () => client);
     scope1.listeners.push(listener);
     void listener.run();
-    await eventually(() => client.listenerCount('notification') === 1);
+    await eventually(() => listener.projectionHealth().connected);
     const corner = 'cccccccc-cccc-4ccc-8ccc-cccccccccccd';
     const agent = 'e'.repeat(64);
     await scope1.database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [agent]);
@@ -608,84 +508,6 @@ const scope1 = fixtureScope1();
   });
 
 
-  it('nudges the parent Room on every machine when the leader sees an owed item expire', async () => {
-    const machines = [new LiveHub(), new LiveHub()];
-    const parents: LiveEvent[][] = [[], []];
-    const wakes = [0, 0];
-    for (const [index, live] of machines.entries()) {
-      const client = new PgliteListenClient(scope1.database);
-      const listener = new PostgresLiveListener(scope1.database, live, () => client);
-      listener.setOwedWake(() => { wakes[index]! += 1; });
-      scope1.listeners.push(listener);
-      live.subscribe(ROOM, (event) => parents[index]!.push(event));
-      void listener.run();
-      await eventually(() => client.listenerCount('notification') === 1);
-    }
-    const expiresAt = new Date(Date.now() + 60_000);
-    await scope1.insertExpiringOwed(expiresAt);
-    // A new owed row wakes the leader so it can re-arm for the new deadline.
-    await eventually(() => wakes.every((count) => count >= 1));
-    const clock = new SkewedClockDatabase(scope1.database);
-    const expiry = new DeadlineExpiry(clock);
-    expect(await expiry.runOnce(true)).toBeGreaterThan(50_000);
-    await settle(parents[0]!);
-    await settle(parents[1]!);
-
-    // No write happens at expiry: only the leader's job announces it.
-    clock.offsetMs = 60_000;
-    await expiry.runOnce();
-    for (const parent of parents)
-      await eventually(() => parent.some((event) =>
-        event.type === 'invalidate' && event.reason === 'corner-status'));
-    // The same expiry is announced once per leader.
-    clock.offsetMs = 61_000;
-    await settle(parents[0]!);
-    await expiry.runOnce();
-    expect(parents[0]).toEqual([]);
-  });
-
-
-  it('decides an owed expiry by the database clock when the app clock runs ahead', async () => {
-    const live = new LiveHub();
-    const client = new PgliteListenClient(scope1.database);
-    const listener = new PostgresLiveListener(scope1.database, live, () => client);
-    scope1.listeners.push(listener);
-    const parent: LiveEvent[] = [];
-    live.subscribe(ROOM, (event) => parent.push(event));
-    void listener.run();
-    await eventually(() => client.listenerCount('notification') === 1);
-    const expiresAt = new Date(Date.now() + 60_000);
-    await scope1.insertExpiringOwed(expiresAt);
-    // PGlite reads the JS clock, so the database is held back to stay put
-    // while the app clock jumps ten minutes past the expiry.
-    const skewMs = 10 * 60_000;
-    const clock = new SkewedClockDatabase(scope1.database);
-    clock.offsetMs = -skewMs;
-    vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true });
-    try {
-      vi.setSystemTime(Date.now() + skewMs);
-      expect(Date.now()).toBeGreaterThan(expiresAt.getTime());
-      const expiry = new DeadlineExpiry(clock);
-      expect(await expiry.runOnce(true)).toBeGreaterThan(50_000);
-      await settle(parent);
-      await expiry.runOnce();
-      expect(parent).toEqual([]);
-
-      // The database reaches the expiry: announced once, then never again.
-      clock.offsetMs = -skewMs + 60_000;
-      await expiry.runOnce();
-      await eventually(() => parent.some((event) =>
-        event.type === 'invalidate' && event.reason === 'corner-status'));
-      clock.offsetMs = -skewMs + 61_000;
-      await settle(parent);
-      await expiry.runOnce();
-      expect(parent).toEqual([]);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-
   it('leaves a top-level Room membership without a corner opener', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(scope1.database);
@@ -694,7 +516,7 @@ const scope1 = fixtureScope1();
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
     void listener.run();
-    await eventually(() => client.listenerCount('notification') === 1);
+    await eventually(() => listener.projectionHealth().connected);
     received.length = 0;
 
     await scope1.database.query(
@@ -721,7 +543,7 @@ const scope1 = fixtureScope1();
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
     void listener.run();
-    await eventually(() => client.listenerCount('notification') === 1);
+    await eventually(() => listener.projectionHealth().connected);
     received.length = 0;
 
     await notifyConnectorAssignment(scope1.database, AUTHOR);
@@ -753,7 +575,7 @@ const scope1 = fixtureScope1();
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
     void listener.run();
-    await eventually(() => client.listenerCount('notification') === 1);
+    await eventually(() => listener.projectionHealth().connected);
     received.length = 0;
 
     await notifyAgentConfigChange(scope1.database, agent, WORKSPACE);
@@ -768,5 +590,171 @@ const scope1 = fixtureScope1();
             event.roomId === ROOM,
         ),
     );
+  });
+
+
+  it('delivers a phone-side model/effort change as an agent-config invalidation', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(scope1.database);
+    const listener = new PostgresLiveListener(scope1.database, live, () => client);
+    scope1.listeners.push(listener);
+    const received: LiveEvent[] = [];
+    live.subscribeAll((event) => received.push(event));
+    void listener.run();
+    await eventually(() => listener.projectionHealth().connected);
+    received.length = 0;
+
+    // PhoneService.updateAgentModel writes this synthetic payload directly
+    // inside the selection transaction — the agents table has no Room for a
+    // row trigger, so the wake rides the same pg_notify channel.
+    await scope1.database.query(`SELECT pg_notify($1, $2)`, [
+      POSTGRES_LIVE_CHANNEL,
+      JSON.stringify({ table: 'agent_config', operation: 'UPDATE', roomId: ROOM, agentId: AUTHOR }),
+    ]);
+
+    await eventually(
+      () =>
+        received.some(
+          (event) =>
+            event.type === 'invalidate' &&
+            event.reason === 'agent-config' &&
+            event.targetAgentId === AUTHOR &&
+            event.roomId === ROOM,
+        ),
+    );
+  });
+
+
+  it('fans an agent presence fact to every joined Room on another server', async () => {
+    const otherRoom = '33333333-3333-4333-8333-333333333333';
+    const agent = 'b'.repeat(64);
+    await scope1.database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [agent]);
+    await scope1.database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Other')`, [
+      otherRoom,
+      WORKSPACE,
+    ]);
+    await scope1.database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,$2,$4,'member'),($1,$3,$4,'member')`,
+      [WORKSPACE, ROOM, otherRoom, agent],
+    );
+    const liveB = new LiveHub();
+    const client = new PgliteListenClient(scope1.database);
+    const listener = new PostgresLiveListener(scope1.database, liveB, () => client);
+    scope1.listeners.push(listener);
+    void listener.run();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await announceAgentLifecycle(scope1.database, new LiveHub(), ROOM, agent, { lifecycleId: 'boot' });
+    await eventually(() => liveB.latestAgentPresence(agent, ROOM)?.status === 'online');
+    expect(liveB.latestAgentPresence(agent, otherRoom)?.status).toBe('online');
+    await announceAgentLifecycle(scope1.database, new LiveHub(), otherRoom, agent, {
+      lifecycleId: 'boot',
+    });
+    await eventually(() => liveB.latestAgentPresence(agent, otherRoom)?.status === 'online');
+    const presenceRows = await scope1.database.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM live_outputs
+       WHERE agent_id=$1 AND kind='presence'`,
+      [agent],
+    );
+    expect(presenceRows.rows[0]?.count).toBe('1');
+    await scope1.database.query(
+      `UPDATE live_outputs SET body=body || jsonb_build_object(
+      'status','offline','observedAt',(body->>'observedAt')::bigint+1) WHERE agent_id=$1`,
+      [agent],
+    );
+    await eventually(() => liveB.latestAgentPresence(agent, otherRoom)?.status === 'offline');
+    expect(liveB.latestAgentPresence(agent, ROOM)?.status).toBe('offline');
+  });
+
+
+  it('fans one canonical presence notification across thirty Rooms on each listener', async () => {
+    const agent = 'b'.repeat(64);
+    const roomIds = Array.from(
+      { length: 30 },
+      (_, index) => `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+    );
+    await scope1.database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [agent]);
+    for (const roomId of roomIds) {
+      await scope1.database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Load')`, [
+        roomId,
+        WORKSPACE,
+      ]);
+      await scope1.database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         VALUES($1,$2,$3,'member')`,
+        [WORKSPACE, roomId, agent],
+      );
+    }
+    for (const roomId of roomIds)
+      await scope1.database.query(
+        `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
+         VALUES($1,$2,'presence','presence',$3::jsonb)`,
+        [
+          roomId,
+          agent,
+          JSON.stringify({
+            status: 'online',
+            observedAt: 1,
+            evidenceNonce: 'before',
+            lifecycleId: 'boot',
+          }),
+        ],
+      );
+    const queryA = vi.fn(scope1.database.query.bind(scope1.database));
+    const queryB = vi.fn(scope1.database.query.bind(scope1.database));
+    const liveA = new LiveHub();
+    const liveB = new LiveHub();
+    const clientA = new PgliteListenClient(scope1.database);
+    const clientB = new PgliteListenClient(scope1.database);
+    const listenerA = new PostgresLiveListener(
+      { query: queryA, transaction: scope1.database.transaction.bind(scope1.database) },
+      liveA,
+      () => clientA,
+    );
+    const listenerB = new PostgresLiveListener(
+      { query: queryB, transaction: scope1.database.transaction.bind(scope1.database) },
+      liveB,
+      () => clientB,
+    );
+    scope1.listeners.push(listenerA, listenerB);
+    void listenerA.run();
+    void listenerB.run();
+    await eventually(() => listenerA.projectionHealth().connected && listenerB.projectionHealth().connected);
+    queryA.mockClear();
+    queryB.mockClear();
+
+    const publishA = vi.spyOn(liveA, 'publish');
+    const publishB = vi.spyOn(liveB, 'publish');
+    const evidence = new ConnectionPresence(scope1.database, new LiveHub());
+    await evidence.evidence(roomIds[0], agent);
+
+    await eventually(
+      () =>
+        liveA.latestAgentPresence(agent, roomIds[0])?.status === 'online' &&
+        liveB.latestAgentPresence(agent, roomIds[0])?.status === 'online',
+    );
+    await evidence.stop();
+    const stored = await scope1.database.query<{ body: { evidenceNonce?: string } }>(
+      `SELECT body FROM live_outputs WHERE agent_id=$1 AND kind='presence'`,
+      [agent],
+    );
+    expect(stored.rows.filter((row) => row.body.evidenceNonce !== 'before')).toHaveLength(1);
+    expect(clientA.payloads).toHaveLength(1);
+    expect(clientB.payloads).toHaveLength(1);
+    expect(queryA).toHaveBeenCalledTimes(1);
+    expect(queryB).toHaveBeenCalledTimes(1);
+    for (const query of [queryA.mock.calls[0]?.[0], queryB.mock.calls[0]?.[0]]) {
+      expect(query).toContain('SELECT membership.room_id,presence.body');
+      expect(query?.match(/SELECT body FROM live_outputs/g)).toHaveLength(1);
+    }
+    expect(publishA).toHaveBeenCalledTimes(roomIds.length);
+    expect(publishB).toHaveBeenCalledTimes(roomIds.length);
+    expect([...queryA.mock.calls, ...queryB.mock.calls].map(([sql]) => sql)).toContainEqual(
+      expect.stringContaining('room_access'),
+    );
+    for (const roomId of roomIds) {
+      expect(liveA.latestAgentPresence(agent, roomId)?.status).toBe('online');
+      expect(liveB.latestAgentPresence(agent, roomId)?.status).toBe('online');
+    }
   });
 });

@@ -1,4 +1,4 @@
-import { m16_access, m16_mkdtemp, m16_tmpdir, m16_resolve, m16_describe, m16_expect, m16_it, m16_cornerBranchIsSafeToDelete, m16_materializeCornerWorktree, m16_removeCornerWorktreeAndBranches, mergedDescribe16, m35_access, m35_mkdir, m35_mkdtemp, m35_rm, m35_writeFile, m35_tmpdir, m35_resolve, m35_expect, m35_it, m35_vi, m35_RoomRuntimeCoordinator, m35_materializeCornerWorktree, m35_MonolithCornerTurnLoop, m35_agentCornerCheckoutPaths, m35_readStorageOwners, m35_rememberStorageOwner, m35_markAgentStorageEnded, m35_pruneEndedOwnerStorage, m35_identityFromKey, mergedDescribe35, m36_mkdtemp, m36_tmpdir, m36_join, m36_describe, m36_expect, m36_it, m36_vi, m36_identityFromKey, m36_RoomRuntimeCoordinator, mergedDescribe36, m37_mkdtemp, m37_tmpdir, m37_resolve, m37_describe, m37_expect, m37_it, m37_vi, m37_DaemonApiError, m37_RoomRuntimeCoordinator, m37_identityFromKey, mergedDescribe37, m38_mkdtemp, m38_rm, m38_tmpdir, m38_resolve, m38_expect, m38_it, m38_vi, m38_RoomRuntimeCoordinator, m38_identityFromKey, mergedDescribe38, move2_resolve, move2_describe, move2_expect, move2_it, movedDescribe2, fixtureScope1, fixtureScope4, fixtureScope5, fixtureScope7, fixtureScope10, type m35_DaemonApiClient, type m35_AgentRuntimeRecord, type m36_DaemonApiClient, type m36_AgentRuntimeRecord, type m37_DaemonApiClient, type m37_AgentRuntimeRecord, type m38_CornerWorktree, type m38_AgentRuntimeRecord } from './room-runtime.test-support.js';
+import { m16_access, m16_mkdtemp, m16_tmpdir, m16_resolve, m16_describe, m16_expect, m16_it, m16_cornerBranchIsSafeToDelete, m16_materializeCornerWorktree, m16_removeCornerWorktreeAndBranches, mergedDescribe16, m35_access, m35_mkdir, m35_mkdtemp, m35_rm, m35_writeFile, m35_tmpdir, m35_resolve, m35_expect, m35_it, m35_vi, m35_RoomRuntimeCoordinator, m35_materializeCornerWorktree, m35_MonolithCornerTurnLoop, m35_agentCornerCheckoutPaths, m35_readStorageOwners, m35_rememberStorageOwner, m35_markAgentStorageEnded, m35_pruneEndedOwnerStorage, m35_identityFromKey, mergedDescribe35, m36_mkdtemp, m36_tmpdir, m36_join, m36_describe, m36_expect, m36_it, m36_vi, m36_identityFromKey, m36_RoomRuntimeCoordinator, mergedDescribe36, m37_mkdtemp, m37_tmpdir, m37_resolve, m37_describe, m37_expect, m37_it, m37_vi, m37_DaemonApiError, m37_RoomRuntimeCoordinator, m37_identityFromKey, mergedDescribe37, m38_mkdtemp, m38_rm, m38_tmpdir, m38_resolve, m38_expect, m38_it, m38_vi, m38_RoomRuntimeCoordinator, m38_identityFromKey, mergedDescribe38, move2_resolve, move2_describe, move2_expect, move2_it, movedDescribe2, fixtureScope1, fixtureScope4, fixtureScope5, fixtureScope7, fixtureScope10, type m35_DaemonApiClient, type m35_AgentRuntimeRecord, type m36_DaemonApiClient, type m36_AgentRuntimeRecord, type m37_DaemonApiClient, type m37_AgentRuntimeRecord, type m38_AgentRuntimeRecord } from './test-support-room-runtime.test-support.js';
 
 mergedDescribe16("corner-pr-branch-preservation.test.ts", () => {
 const scope1 = fixtureScope1();
@@ -555,46 +555,6 @@ m37_describe('idle corner discovery', () => {
 mergedDescribe38("room-runtime.startup.test.ts", () => {
 
 
-m38_it('background reaping leases inactive corners and wakes a start deferred by that lease', async () => {
-  const root = await m38_mkdtemp(m38_resolve(m38_tmpdir(), 'beeline-reap-lease-'));
-  const identity = m38_identityFromKey('11'.repeat(32), 'Bee');
-  const execute = m38_vi.fn();
-  const coordinator = new m38_RoomRuntimeCoordinator({
-    agent: { publicKey: identity.publicKey, secretKeyHex: '11'.repeat(32), name: 'Bee' },
-    rooms: [], communityId: 'workspace', supervisorRoot: root,
-    transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'test' },
-  } as m38_AgentRuntimeRecord, m38_resolve(root, 'runtime.json'), { workspaceRoot: root } as never,
-  { daemonApi: { execute } as never });
-  const internal = coordinator as unknown as {
-    reapIdleCornerWorktree(worktree: m38_CornerWorktree, desired: ReadonlySet<string>): Promise<void>;
-    reapCornerWorktree(worktree: m38_CornerWorktree): Promise<void>;
-    startCorner(corner: { cornerId: string; parentRoomId: string }): Promise<void>;
-  };
-  const worktree = { cornerId: 'corner', parentRoomId: 'room', path: m38_resolve(root, 'corner'),
-    gitCommonDir: m38_resolve(root, 'repo.git'), branch: 'feature/corner', token: '' };
-  let release!: () => void;
-  const blocked = new Promise<void>(done => { release = done; });
-  const reap = m38_vi.spyOn(internal, 'reapCornerWorktree').mockReturnValue(blocked);
-  const wake = m38_vi.fn();
-  coordinator.setDiscoveryWakeListener(wake);
-  let maintenance: Promise<void> | undefined;
-  try {
-    await internal.reapIdleCornerWorktree(worktree, new Set(['corner']));
-    m38_expect(reap).not.toHaveBeenCalled();
-    maintenance = internal.reapIdleCornerWorktree(worktree, new Set());
-    await m38_vi.waitFor(() => m38_expect(reap).toHaveBeenCalledOnce());
-    await internal.startCorner({ cornerId: 'corner', parentRoomId: 'room' });
-    m38_expect(execute).not.toHaveBeenCalled();
-    release(); await maintenance;
-    m38_expect(wake).toHaveBeenCalledOnce();
-  } finally {
-    release(); await maintenance; reap.mockRestore();
-    await coordinator.shutdown(); await m38_rm(root, { recursive: true, force: true });
-  }
-});
-
-
-
 m38_it('establishes every corner subscription without waiting for pending legacy checkout migration', async () => {
   const root = await m38_mkdtemp(m38_resolve(m38_tmpdir(), 'beeline-migration-intake-'));
   const identity = m38_identityFromKey('11'.repeat(32), 'Bee');
@@ -656,12 +616,12 @@ m38_it('starts Room and corner intake before waiting for archived cleanup', asyn
   const internal = coordinator as unknown as {
     startRoom(id: string): Promise<void>;
     watchCorner(input: { cornerId: string }): Promise<void>;
-    retryPendingCornerReaps(desired: ReadonlySet<string>): Promise<void>;
+    sweepArchivedCornerWorktrees(archived: ReadonlyMap<string, unknown>, desired: ReadonlySet<string>): Promise<void>;
   };
   const start = m38_vi.spyOn(internal, 'startRoom').mockResolvedValue();
   const watch = m38_vi.spyOn(internal, 'watchCorner').mockResolvedValue();
   let release!: () => void;
-  const cleanup = m38_vi.spyOn(internal, 'retryPendingCornerReaps')
+  const cleanup = m38_vi.spyOn(internal, 'sweepArchivedCornerWorktrees')
     .mockImplementation(() => new Promise<void>(done => { release = done; }));
   const serving = m38_vi.fn();
   const reconciliation = coordinator.reconcile(serving);

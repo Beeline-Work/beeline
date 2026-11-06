@@ -1,13 +1,19 @@
 import { setRoomEventSubscriptions } from './agent-subscriptions.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { createCipheriv, createDecipheriv, createECDH, createHash, randomBytes } from 'node:crypto';
 import { assignSeededAgentIdentity, resolveFace, uniqueAgentHandle } from '@beeline/api-contract/phone';
+import { createAgentCommand } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
-import { freeAgentDailyTokenCapFromEnv, freeAgentFirstDayTokenCapFromEnv, freeAgentLimitsFromEnv, type FreeAgentLimits } from './free-agent-limits.js';
+import type { FreeAgentMachines } from './fly-machines.js';
+import { FlyApiError } from './fly-machines.js';
+import type { LiveHub } from './live.js';
+import { DEFAULT_FREE_AGENT_LIMITS, freeAgentDailyTokenCapFromEnv, freeAgentFirstDayTokenCapFromEnv, freeAgentBudgetReached, freeAgentLimitsFromEnv, type FreeAgentLimits } from './free-agent-limits.js';
 import { createInvitedWorkspaceMembership, joinRooms } from './membership-join.js';
+import { captureServerError } from './sentry.js';
+import { ensureSystemIdentity, systemLine } from './system-line.js';
 import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
-import { FreeAgentService } from './free-agents-free-agent-service.js';
-
-
+import { createStarterOnboardingRun } from './starter-onboarding-run.js';
 
 /**
  * Free starter agents: every new Workspace gets one agent, owned by its
@@ -30,7 +36,6 @@ CREATE TABLE IF NOT EXISTS free_agents (
   sealed_keys text NOT NULL,
   bootstrap_hash text,
   model_token_hash text,
-  last_activity_at timestamptz NOT NULL DEFAULT now(),
   wake_requested_at timestamptz,
   provision_started_at timestamptz,
   provision_attempts integer NOT NULL DEFAULT 0,
@@ -78,11 +83,7 @@ CREATE TABLE IF NOT EXISTS free_agent_events (
 CREATE INDEX IF NOT EXISTS free_agent_events_agent ON free_agent_events(agent_id, at);
 `;
 
-
-/** How often the background leader sweeps free agents at most. */
-
 export const FREE_AGENT_HARNESS = 'pi';
-
 
 export interface FreeAgentConfig {
   limits?: FreeAgentLimits;
@@ -113,7 +114,6 @@ export interface FreeAgentConfig {
   /** A Machine with no activity this long is deleted; a later wake recreates it. */
   deleteAfterMs: number;
 }
-
 
 export function freeAgentConfigFromEnv(
   env: NodeJS.ProcessEnv,
@@ -149,27 +149,22 @@ export function freeAgentConfigFromEnv(
   };
 }
 
-
 /** The model id the helper selects in OpenCode: its `beeline` provider is our proxy. */
 export function freeAgentHarnessModel(config: Pick<FreeAgentConfig, 'model'>): string {
   return `beeline/${config.model}`;
 }
 
-
 export function tokenHash(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
-
-export function opaque(prefix: string): string {
+function opaque(prefix: string): string {
   return `${prefix}_${randomBytes(32).toString('base64url')}`;
 }
 
-
-export function sealKey(secret: string): Buffer {
+function sealKey(secret: string): Buffer {
   return createHash('sha256').update(`beeline-free-agent:${secret}`).digest();
 }
-
 
 export function sealSecrets(secret: string, value: unknown): string {
   const iv = randomBytes(12);
@@ -177,7 +172,6 @@ export function sealSecrets(secret: string, value: unknown): string {
   const body = Buffer.concat([cipher.update(JSON.stringify(value)), cipher.final()]);
   return Buffer.concat([iv, cipher.getAuthTag(), body]).toString('base64');
 }
-
 
 export function openSecrets<T>(secret: string, sealed: string): T {
   const bytes = Buffer.from(sealed, 'base64');
@@ -187,7 +181,6 @@ export function openSecrets<T>(secret: string, sealed: string): T {
     Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString(),
   ) as T;
 }
-
 
 /**
  * A secp256k1 key pair in the helper's identity format: the 32-byte secret in
@@ -207,18 +200,14 @@ export function generateAgentKeypair(): { secretKey: string; publicKey: string }
   }
 }
 
-
 /** The owner's exact join greeting (message d97de435…), after the joiner's @handle. */
 export const FREE_AGENT_JOIN_GREETING =
   "what up boss? I'm a pro bono agent for beeline. I can help you set up this workspace, invite other humans and agents, or whatever else you might need";
 
-
 /** Owner-approved backfill greeting (approval relayed by Ruby, ae9a4279). */
 export const LUNA_BACKFILL_HELLO =
   "Hi {name}, I'm Luna. I just joined your team. Beebee and I run on different AI models, so we can check each other's work. What should we do first?";
-
 export const LUNA_BACKFILL_HELLO_APPROVED = true;
-
 
 export const FREE_AGENT_HELLO =
   `@<owner> Hi, I'm Beebee, your free agent. I run on my own small cloud computer, so I can research, write, draft, build things and run code for you.
@@ -230,7 +219,6 @@ Three things to know:
 
 What are you working on? Tell me, and I'll take the first step with you. If you'd rather not have me here, remove me from Members.`;
 
-
 /**
  * The exit note. Both claims hold: leaving or removal keeps the member's
  * messages, and a Workspace admin can add them back (`addRoomMember`,
@@ -239,30 +227,22 @@ What are you working on? Tell me, and I'll take the first step with you. If you'
 export const FREE_AGENT_EXIT_NOTE =
   '{name} left. Their messages stay here, and an admin can invite them back anytime.';
 
-
 /** Membership events every free agent hears in #general from creation. */
 export const FREE_AGENT_EVENT_SUBSCRIPTIONS = ['joined', 'left'] as const;
-
 
 export const FREE_AGENT_CONNECT_GUIDE = `Offer help bringing their own agent only on real triggers: someone requests their own files, apps, logins or local repository that you cannot access, a job longer than your turn limit, or the server's 80% allowance warning has fired. Explain the limitation and offer to guide them. At most one unsolicited nudge per UTC day; the 80% warning counts as that day's nudge. Check the conversation before nudging; if unsure whether you already nudged today, do not nudge. Normal conversation is not a trigger. When explicitly asked, help without this daily restriction.
 
 When they accept, guide them one step at a time, waiting for the result of each step. Help them choose their own computer or an always-on machine they control. Install Node.js and an agent CLI (Claude Code, Codex or OpenCode), and help them sign in to that CLI. Send them to Members -> Add agent in their Workspace to copy the command. The command format is npx usebeeline connect <code>; they must run the actual command copied from Add agent on their chosen machine. Never create, retrieve, request, repeat or post a pairing code in a Room. Troubleshoot using redacted errors, never secrets. Keep helping until Members shows their new agent online, then have them tag it with a small task. Do not claim it is online without confirmation.`;
 
-
 export const FREE_AGENT_APP_CONNECT_GUIDE = `For Grok/xAI, Muse/Meta AI, ChatGPT, Claude or Cursor, use connect for Beeline Rooms steps: in that assistant add https://join.usebeeline.app as a custom connector, sign in to Beeline, tap Allow, then Room Members > + to add the new member. No custom-connector option means it cannot connect yet; Muse's directory listing is pending. TikTok sign-in awaits TikTok's approval of Beeline; never claim it works or offer sign-in. For apps needing Trusty Squire, call connect to offer its card once; Squire runs on your hosted machine too: have them tap the card and finish sign-in on their phone. Do not require their own computer. Follow connect's next; never loop through Settings > Connectors.`;
-
 
 export const FREE_AGENT_REPOSITORY_GUIDE = `When the person picks "Something else", ask what job they want in their own words. Post the repository card only when the person asks for coding work on a codebase (writing, fixing or reviewing code in a repo), or asks to connect GitHub or a repository. For non-coding requests, never suggest linking a repository; do the requested research, writing, drafting or other work directly. For example, "help me write a cold email" needs no repository card; "fix the login bug in my app" needs the repository card if this Room has no repository. On those coding or connection requests, call app_tool(app:"beeline:onboarding", tool:"repository", args:{}). For other repository work, discover the repository and starters tools with app_tool(app:"beeline:onboarding"). If the card fails, explain the actual reason and the concrete next step to connect the repository. For coding work when a Room has no repository, post its repository card instead of sending anyone to Settings or a CLI. When a person wants to switch repositories, post the same card. After linking, offer the starters card, grounded in recent commits, CI and open issues. A tapped starter is an instruction to start that task now: open a repository corner with a complete brief using their selection as approval, do the work, and use the normal checks, independent review and merge path.`;
 
-
 export const FREE_AGENT_TURN_GUIDE = `Before long work, call read(facet:"usage") to check your remaining allowance. If the job will not fit, deliver a smaller useful version or explain the limit up front. End every turn with the deliverable or a clear status explaining what is finished, what stopped, and the next step. Never end on a promise of more work: once your turn ends, no work continues until another message wakes you.`;
 
+const FREE_AGENT_YOUTUBE_GUIDE = `When the person picks "Make a welcome video and post it to my YouTube", the server starts the welcome-video workflow. Read its pinned contract and continue that run; never start another. Make the personalized vertical 9:16 film yourself using free tiers, with Squire for signups. Never ask the person to supply the clip. Connect YouTube first if needed. Use outcome blocked promptly when Squire or another required capability is unavailable so the next agent can try. Stay inside your free-agent allowance. An independent agent checks the film before its preview. Before showing video_preview, discover the connected YouTube tools and call YOUTUBE_LIST_CHANNELS with mine:true. If there are zero channels, tell the person to create a YouTube channel at youtube.com and stop; after they create it, check again before showing a Post card. Check that the clip is square or vertical and within YouTube Shorts duration limits. Draft a title and description, ask Luna for one second opinion, and name Luna's concrete catch. Extract a frame from the clip and post it as an image artifact in this Room. Then call app_tool(app:"beeline:onboarding",tool:"video_preview",args:{videoObjectId,frameObjectId,title,description,visibility:"public"}) to show the frame with the exact metadata above Post/Cancel. Honor a person's explicit visibility choice; use unlisted for an unlisted test. Do not upload or schedule anything until the person taps Post on that preview. Discover the connected app's current tools. Upload with YOUTUBE_MULTIPART_UPLOAD_VIDEO, never YOUTUBE_UPLOAD_VIDEO. Use exactly videoFile: {beelineObjectId: "<videoObjectId from the preview>"}, with the approved title, description and privacyStatus; do not use name/mimetype/s3key or a local path. A clear YouTube refusal leaves the same Post tap valid: after the person fixes the cause, retry the exact approved upload without another preview or tap. If an upload times out or its outcome is uncertain, check YouTube for the video before retrying; never risk a duplicate upload. Confirm YouTube's fileDetails.fileSize matches the clip bytes and processingDetails.processingStatus is succeeded before calling it posted; an id alone is not success. Verify public visibility and share the Short URL. If processing is pending, report that state and the concrete next step. Never claim a video was posted when it was not.`;
 
-export const FREE_AGENT_YOUTUBE_GUIDE = `When the person picks "Make a welcome video and post it to my YouTube", the server starts the welcome-video workflow. Read its pinned contract and continue that run; never start another. Make the personalized vertical 9:16 film yourself using free tiers, with Squire for signups. Never ask the person to supply the clip. Connect YouTube first if needed. Use outcome blocked promptly when Squire or another required capability is unavailable so the next agent can try. Stay inside your free-agent allowance. An independent agent checks the film before its preview. Before showing video_preview, discover the connected YouTube tools and call YOUTUBE_LIST_CHANNELS with mine:true. If there are zero channels, tell the person to create a YouTube channel at youtube.com and stop; after they create it, check again before showing a Post card. Check that the clip is square or vertical and within YouTube Shorts duration limits. Draft a title and description, ask Luna for one second opinion, and name Luna's concrete catch. Extract a frame from the clip and post it as an image artifact in this Room. Then call app_tool(app:"beeline:onboarding",tool:"video_preview",args:{videoObjectId,frameObjectId,title,description,visibility:"public"}) to show the frame with the exact metadata above Post/Cancel. Honor a person's explicit visibility choice; use unlisted for an unlisted test. Do not upload or schedule anything until the person taps Post on that preview. Discover the connected app's current tools. Upload with YOUTUBE_MULTIPART_UPLOAD_VIDEO, never YOUTUBE_UPLOAD_VIDEO. Use exactly videoFile: {beelineObjectId: "<videoObjectId from the preview>"}, with the approved title, description and privacyStatus; do not use name/mimetype/s3key or a local path. A clear YouTube refusal leaves the same Post tap valid: after the person fixes the cause, retry the exact approved upload without another preview or tap. If an upload times out or its outcome is uncertain, check YouTube for the video before retrying; never risk a duplicate upload. Confirm YouTube's fileDetails.fileSize matches the clip bytes and processingDetails.processingStatus is succeeded before calling it posted; an id alone is not success. Verify public visibility and share the Short URL. If processing is pending, report that state and the concrete next step. Never claim a video was posted when it was not.`;
-
-
-export const FREE_AGENT_TEAM_GUIDE = `You are on a team with another free starter agent. If you are Beebee, for the person's first three substantive questions in this Room, ask another agent in the Room for one second opinion before your final answer, if another agent is present. After those first three questions, ask only when in doubt. Say in your final answer what changed and who caught it. Count substantive questions from the conversation, excluding greetings, game moves and onboarding choices. One review round per answer. If another agent asks you for a second opinion, reply once, tagging the requesting agent once to deliver your opinion, and never ask back or request another review. Use the other agent's exact current handle from the Room roster. Credit them by plain name in the final answer; do not tag them again. After the first helpful answer, offer to invite a friend. When the person wants an invite to their own Room, call app_tool(app:"beeline:onboarding",tool:"invite",args:{}); it prints the invite link in this chat. Never open a share sheet.`;
-
+const FREE_AGENT_TEAM_GUIDE = `You are on a team with another free starter agent. If you are Beebee, for the person's first three substantive questions in this Room, ask another agent in the Room for one second opinion before your final answer, if another agent is present. After those first three questions, ask only when in doubt. Say in your final answer what changed and who caught it. Count substantive questions from the conversation, excluding greetings, game moves and onboarding choices. One review round per answer. If another agent asks you for a second opinion, reply once, tagging the requesting agent once to deliver your opinion, and never ask back or request another review. Use the other agent's exact current handle from the Room roster. Credit them by plain name in the final answer; do not tag them again. After the first helpful answer, offer to invite a friend. When the person wants an invite to their own Room, call app_tool(app:"beeline:onboarding",tool:"invite",args:{}); it prints the invite link in this chat. Never open a share sheet.`;
 
 export function freeAgentInstructions(seededSoul: string, name: string, config: FreeAgentConfig): string {
   return `${seededSoul}
@@ -292,7 +272,6 @@ ${FREE_AGENT_CONNECT_GUIDE}
 
 ${FREE_AGENT_APP_CONNECT_GUIDE}`;
 }
-
 
 /**
  * Create the free agent for a new Workspace inside the creator's transaction:
@@ -406,7 +385,6 @@ export async function createFreeAgentInWorkspace(
   return agent.publicKey;
 }
 
-
 /**
  * Operator path for a Workspace created before free agents existed: give it
  * one, owned by its oldest owner, in its #general (or, without one, its
@@ -446,9 +424,6 @@ export async function addFreeAgentToWorkspace(
   return agentId;
 }
 
-
-
-
 export async function recordFreeAgentEvent(
   database: Pick<SqlDatabase, 'query'>,
   agentId: string,
@@ -461,13 +436,11 @@ export async function recordFreeAgentEvent(
   );
 }
 
-
 /** Whether this agent is a free agent the server may wake. */
 export function freeAgentReachableSql(agentIdSql: string): string {
   return `EXISTS (SELECT 1 FROM free_agents reachable_free_agent
     WHERE reachable_free_agent.agent_id=${agentIdSql} AND reachable_free_agent.state<>'failed' AND reachable_free_agent.removed_at IS NULL)`;
 }
-
 
 export interface FreeAgentBootstrapGrant {
   agentId: string;
@@ -489,18 +462,15 @@ export interface FreeAgentBootstrapGrant {
   idleSeconds: number;
 }
 
-
 /**
  * Starts without a connection that stop the restarts: a Machine that boots but
  * never connects would otherwise be started every 20 seconds forever.
  */
 export const FREE_AGENT_START_LIMIT = 5;
-
 export const FREE_AGENT_START_WINDOW_MINUTES = 10;
 
-
 /** Durable install/sign-in work ends on completion, failure, or disconnect. */
-export const connectorWorkSql = (agent: string): string => `(
+const connectorWorkSql = (agent: string): string => `(
   EXISTS (SELECT 1 FROM agents helper WHERE helper.agent_id=${agent}
     AND helper.squire_work->>'install'='true'
     AND COALESCE(helper.squire_work->>'errorMessage','')='')
@@ -508,12 +478,11 @@ export const connectorWorkSql = (agent: string): string => `(
     WHERE connector.helper_agent_id=${agent} AND connector.status='installing')
 )`;
 
-
 /**
  * Whether a wake is due for the row `f`: pending work, a Machine, and the
  * agent not serving. A waking or running agent waits 20 seconds between starts.
  */
-export const WAKE_DUE_SQL = `f.removed_at IS NULL AND f.fly_machine_id IS NOT NULL
+const WAKE_DUE_SQL = `f.removed_at IS NULL AND f.fly_machine_id IS NOT NULL
   AND (f.state IN ('sleeping','stopped')
     OR (f.state IN ('waking','running')
       AND (f.wake_requested_at IS NULL OR f.wake_requested_at<clock_timestamp()-interval '20 seconds')
@@ -524,14 +493,13 @@ export const WAKE_DUE_SQL = `f.removed_at IS NULL AND f.fly_machine_id IS NOT NU
   AND (${connectorWorkSql('f.agent_id')} OR EXISTS (SELECT 1 FROM agent_commands command
     WHERE command.agent_id=f.agent_id AND command.state='pending'))`;
 
-
 /**
  * The start limit for one agent. A `connected` event ends an episode. A
  * `start_limit_reached` event stops starts until a person sends a new message
  * that queues a command; that message opens a fresh episode. Join, leave and
  * other System lines carry a human author but never clear the stop.
  */
-export const START_LIMIT_SQL = `WITH last_connect AS (
+const START_LIMIT_SQL = `WITH last_connect AS (
     SELECT max(at) at FROM free_agent_events WHERE agent_id=$1 AND kind='connected'),
   last_stop AS (
     SELECT max(at) at FROM free_agent_events WHERE agent_id=$1 AND kind='start_limit_reached')
@@ -547,7 +515,434 @@ export const START_LIMIT_SQL = `WITH last_connect AS (
         AND started.at>GREATEST(clock_timestamp()-make_interval(mins => $2), last_connect.at, last_stop.at)) starts
   FROM last_connect, last_stop`;
 
-
 /** Wake reasons recorded for the latency measurement. */
-export type WakeCause = 'command' | 'connector' | 'sweep' | 'provisioned';
-export { FreeAgentService } from './free-agents-free-agent-service.js';
+type WakeCause = 'command' | 'connector' | 'provisioned';
+
+/**
+ * Runtime half of free agents: provisioning, waking, sleeping, bootstrap and
+ * the reaper. Every Fly call happens outside a database transaction; a
+ * conditional row update decides which server instance makes it.
+ */
+export class FreeAgentService {
+  readonly #inFlight = new Set<string>();
+
+  constructor(
+    private readonly database: SqlDatabase,
+    readonly config: FreeAgentConfig,
+    private readonly machines: FreeAgentMachines,
+    private readonly createDaemonExchange: (
+      agentId: string,
+      database: SqlDatabase,
+    ) => Promise<{ exchangeToken: string }>,
+    private readonly log: (line: string) => void = (line) => console.log(`[free-agents] ${line}`),
+  ) {}
+
+  async createInWorkspace(
+    database: SqlDatabase,
+    input: { workspaceId: string; creatorId: string; roomId: string; team?: boolean; timeZone?: string },
+  ): Promise<string | undefined> {
+    // Serialize owner creation so simultaneous Workspaces cannot exceed the cap.
+    await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`free-agent-create:${input.creatorId}`]);
+    if (!input.team) return createFreeAgentInWorkspace(database, this.config, input);
+    const owned = (await database.query<{ count: number }>(
+      `SELECT count(*)::int count FROM free_agents WHERE owner_id=$1`, [input.creatorId],
+    )).rows[0]?.count ?? 0;
+    if (owned + 2 > this.config.maxPerOwner) {
+      const existing = (await database.query<{ name: string; workspace_name: string }>(
+        `SELECT identity.name,workspace.name workspace_name FROM free_agents free
+         JOIN identities identity ON identity.id=free.agent_id
+         JOIN workspaces workspace ON workspace.id=free.workspace_id
+         WHERE free.owner_id=$1 AND free.removed_at IS NULL ORDER BY free.created_at,free.agent_id`,
+        [input.creatorId],
+      )).rows;
+      await ensureSystemIdentity(database);
+      await systemLine(database, { roomId: input.roomId, authorId: SYSTEM_IDENTITY_ID,
+        subject: { kind: 'system', name: systemMessage("free-agents.your-starter-agents") },
+        verb: existing.length ? systemMessage("free-agents.are-already-in") : systemMessage("free-agents.could-not-be-added"),
+        ...(existing.length ? { object: existing.map(agent => systemMessage("free-agents.starter-location", agent.name, agent.workspace_name)).join(systemMessage("free-agents.list-separator")) } : {}),
+        consequence: systemMessage("free-agents.your-account-has-reached-its-free-agent-limit") });
+      return undefined;
+    }
+    const beebee = await createFreeAgentInWorkspace(database, this.config, { ...input, silent: true, team: true });
+    const luna = await createFreeAgentInWorkspace(database, {
+      ...this.config, model: this.config.lunaModel ?? 'openai/gpt-6-luna',
+    }, { ...input, name: 'Luna', silent: true, team: true });
+    if (!beebee || !luna) throw new Error('starter team provisioning failed');
+    for (const agent of [beebee, luna]) await setRoomEventSubscriptions(database, input.roomId, agent, FREE_AGENT_EVENT_SUBSCRIPTIONS);
+    await createStarterOnboardingRun(database, { roomId: input.roomId, userId: input.creatorId, beebeeId: beebee, lunaId: luna, timeZone: input.timeZone });
+    return beebee;
+  }
+
+  /** Fire-and-forget entry for a committed create or a pending wake. */
+  kick(agentId: string, cause: WakeCause = 'command'): void {
+    if (this.#inFlight.has(agentId)) return;
+    this.#inFlight.add(agentId);
+    void this.#advance(agentId, cause)
+      .catch((error) =>
+        this.log(`agent ${agentId.slice(0, 12)} ${error instanceof Error ? error.message : String(error)}`),
+      )
+      .finally(() => this.#inFlight.delete(agentId));
+  }
+
+  /** Bring one agent toward serving: provision when it has no Machine, otherwise wake it. */
+  async #advance(agentId: string, cause: WakeCause): Promise<void> {
+    if (await this.cleanupRemoved(agentId)) return;
+    if (await this.provision(agentId)) return;
+    await this.wake(agentId, cause);
+  }
+
+  /**
+   * Create the Machine for an agent that has none. A provision is claimed for
+   * two minutes so concurrent instances never create two Machines; a crash
+   * mid-create is adopted by lookup on retry.
+   */
+  async provision(agentId: string): Promise<boolean> {
+    if (await this.#budgetPaused(agentId)) return false;
+    const claimed = (
+      await this.database.query<{ agent_id: string }>(
+        `UPDATE free_agents SET provision_started_at=clock_timestamp(),
+           provision_attempts=provision_attempts+1,updated_at=now(),
+           state=CASE WHEN state='destroyed' THEN 'provisioning' ELSE state END
+         WHERE agent_id=$1 AND removed_at IS NULL AND fly_machine_id IS NULL AND state IN ('provisioning','destroyed')
+           AND provision_attempts<5
+           AND (provision_started_at IS NULL OR provision_started_at<clock_timestamp()-interval '2 minutes')
+         RETURNING agent_id`,
+        [agentId],
+      )
+    ).rows[0];
+    if (!claimed) return false;
+    try {
+      const bootstrap = opaque('bfb');
+      const active = await this.database.query(
+        `UPDATE free_agents SET bootstrap_hash=$2,updated_at=now() WHERE agent_id=$1 AND removed_at IS NULL RETURNING agent_id`,
+        [agentId, tokenHash(bootstrap)],
+      );
+      if (!active.rowCount) return false;
+      const existing = await this.machines.find(agentId);
+      if (existing) await this.machines.destroy(existing.id);
+      const machine = await this.machines.create({
+        agentId,
+        image: this.config.image,
+        region: this.config.region,
+        cpus: this.config.cpus,
+        memoryMb: this.config.memoryMb,
+        env: {
+          BEELINE_FREE_AGENT_ID: agentId,
+          BEELINE_FREE_AGENT_MAX_TURN_SECONDS: String((this.config.limits ?? DEFAULT_FREE_AGENT_LIMITS).maxTurnMs / 1000),
+          BEELINE_FREE_AGENT_BOOTSTRAP: bootstrap,
+          BEELINE_SERVER_URL: this.config.publicOrigin,
+          ...(this.config.installBaseUrl
+            ? { BEELINE_INSTALL_BASE_URL: this.config.installBaseUrl }
+            : {}),
+        },
+      });
+      await this.database.query(
+        `UPDATE free_agents SET fly_machine_id=$2,
+           state=CASE WHEN removed_at IS NULL THEN 'waking' ELSE state END,
+           wake_requested_at=CASE WHEN removed_at IS NULL THEN clock_timestamp() ELSE NULL END,
+           provision_started_at=NULL,removal_cleaned_at=NULL,provision_error=NULL,updated_at=now()
+         WHERE agent_id=$1`,
+        [agentId, machine.id],
+      );
+      if (await this.cleanupRemoved(agentId)) return false;
+      await recordFreeAgentEvent(this.database, agentId, 'provisioned', { machineId: machine.id });
+      this.log(`agent ${agentId.slice(0, 12)} provisioned machine ${machine.id}`);
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.database.query(
+        `UPDATE free_agents SET provision_error=$2,provision_started_at=NULL,updated_at=now(),
+           state=CASE WHEN provision_attempts>=5 THEN 'failed' ELSE state END
+         WHERE agent_id=$1 AND removed_at IS NULL`,
+        [agentId, message.slice(0, 1000)],
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Start the agent's Machine when a wake is pending and the agent is not
+   * serving. The row update is the fence: one instance per 20 seconds.
+   */
+  async #budgetPaused(agentId: string): Promise<boolean> {
+    if (!await freeAgentBudgetReached(this.database, (this.config.limits ?? DEFAULT_FREE_AGENT_LIMITS).dailyBudgetUsd)) return false;
+    await recordFreeAgentEvent(this.database, agentId, 'budget_reached');
+    return true;
+  }
+
+  async wake(agentId: string, cause: WakeCause = 'command'): Promise<boolean> {
+    if (await this.#budgetPaused(agentId)) return false;
+    const decision = await this.database.transaction(async (db) => {
+      // The row lock is the fence: one instance decides each start or stop.
+      await db.query(`SELECT 1 FROM free_agents WHERE agent_id=$1 FOR UPDATE`, [agentId]);
+      const due = (
+        await db.query<{ fly_machine_id: string; previous: string }>(
+          `SELECT f.fly_machine_id,f.state previous FROM free_agents f WHERE f.agent_id=$1 AND ${WAKE_DUE_SQL}`,
+          [agentId],
+        )
+      ).rows[0];
+      if (!due) return undefined;
+      const limit = (
+        await db.query<{ stopped: boolean; starts: number }>(START_LIMIT_SQL, [
+          agentId,
+          FREE_AGENT_START_WINDOW_MINUTES,
+        ])
+      ).rows[0]!;
+      if (limit.stopped) return undefined;
+      if (limit.starts >= FREE_AGENT_START_LIMIT) {
+        await this.#stopStarts(db, agentId, due.fly_machine_id, limit.starts);
+        return { kind: 'stopped' as const, machineId: due.fly_machine_id, starts: limit.starts };
+      }
+      await db.query(
+        `UPDATE free_agents SET state='waking',wake_requested_at=clock_timestamp(),
+           updated_at=now() WHERE agent_id=$1`,
+        [agentId],
+      );
+      await recordFreeAgentEvent(db, agentId, 'wake_requested', { cause, previous: due.previous });
+      return { kind: 'claimed' as const, claimed: due };
+    });
+    if (!decision) return false;
+    if (decision.kind === 'stopped') {
+      this.log(`agent ${agentId.slice(0, 12)} never connected after ${decision.starts} starts; stopped starting`);
+      captureServerError(
+        new Error(`Free agent Machine never connected after ${decision.starts} starts in ${FREE_AGENT_START_WINDOW_MINUTES} minutes`),
+        { area: 'free-agent-start-limit', agentId, machineId: decision.machineId, starts: String(decision.starts) },
+      );
+      await this.machines.stop(decision.machineId).catch((error) =>
+        this.log(`stop ${agentId.slice(0, 12)}: ${String(error)}`),
+      );
+      return false;
+    }
+    const claimed = decision.claimed;
+    try {
+      await this.machines.start(claimed.fly_machine_id, this.config.image);
+      await recordFreeAgentEvent(this.database, agentId, 'machine_started', {
+        machineId: claimed.fly_machine_id,
+      });
+    } catch (error) {
+      const state = await this.machines.state(claimed.fly_machine_id).catch(() => 'unknown');
+      if (state === undefined) {
+        // The Machine is gone (deleted by hand or by Fly). Recreate it.
+        await this.database.query(
+          `UPDATE free_agents SET fly_machine_id=NULL,state='destroyed',provision_attempts=0,
+             provision_started_at=NULL,updated_at=now() WHERE agent_id=$1 AND removed_at IS NULL`,
+          [agentId],
+        );
+        return this.provision(agentId);
+      }
+      // `started` already, or mid-transition: the next lifecycle event can observe it.
+      if (state !== 'started' || (error instanceof FlyApiError && error.operation !== 'start')) throw error;
+    }
+    return true;
+  }
+
+  /**
+   * Record the stop and tell the person whose message is waiting, in the Room
+   * of the newest pending command. The notice id follows the stop event, so a
+   * retry writes nothing twice.
+   */
+  async #stopStarts(db: SqlDatabase, agentId: string, machineId: string, starts: number): Promise<void> {
+    await db.query(`UPDATE free_agents SET state='stopped',updated_at=now() WHERE agent_id=$1`, [agentId]);
+    const event = (
+      await db.query<{ id: string }>(
+        `INSERT INTO free_agent_events(agent_id,kind,detail) VALUES($1,'start_limit_reached',$2::jsonb) RETURNING id`,
+        [agentId, JSON.stringify({ machineId, starts })],
+      )
+    ).rows[0]!;
+    const target = (
+      await db.query<{ room_id: string; agent_name: string; person_id: string | null; person_handle: string | null }>(
+        `SELECT command.room_id,agent.name agent_name,person.id person_id,person.handle person_handle
+         FROM agent_commands command
+         JOIN identities agent ON agent.id=command.agent_id
+         JOIN free_agents f ON f.agent_id=command.agent_id
+         LEFT JOIN messages source ON source.id=command.source_message_id
+         LEFT JOIN identities author ON author.id=source.author_id AND author.kind='human'
+         LEFT JOIN identities person ON person.id=COALESCE(author.id,f.owner_id)
+         WHERE command.agent_id=$1 AND command.state='pending'
+         ORDER BY command.created_at DESC,command.id DESC LIMIT 1`,
+        [agentId],
+      )
+    ).rows[0];
+    if (!target) return;
+    await systemLine(db, {
+      roomId: target.room_id,
+      id: createHash('sha256').update(`free-agent-start-limit:${event.id}`).digest('hex'),
+      subject: { kind: 'agent', id: agentId, name: target.agent_name },
+      verb: systemMessage("free-agents.could-not-start"),
+      ...(target.person_id && target.person_handle
+        ? { object: { text: systemMessage("free-agents.for", target.person_handle), id: target.person_id } }
+        : {}),
+      consequence: systemMessage("free-agents.the-beeline-team-has-been-told-send-a-new-message-to-try-again"),
+    });
+  }
+
+  /**
+   * The helper reports a minute without work. Refuse while a wake is pending;
+   * otherwise refresh an outdated Machine or suspend its ready helper.
+   */
+  async requestSleep(agentId: string, options: { refresh?: boolean } = {}): Promise<{ sleep: boolean }> {
+    const slept = (
+      await this.database.query<{ fly_machine_id: string }>(
+        `UPDATE free_agents f SET state='sleeping',updated_at=now()
+         WHERE f.agent_id=$1 AND f.removed_at IS NULL AND f.fly_machine_id IS NOT NULL AND f.state IN ('running','waking')
+           AND NOT ${connectorWorkSql('f.agent_id')}
+           AND NOT EXISTS (SELECT 1 FROM agent_commands command
+             WHERE command.agent_id=f.agent_id AND command.state IN ('pending','claimed'))
+         RETURNING f.fly_machine_id`,
+        [agentId],
+      )
+    ).rows[0];
+    if (!slept) return { sleep: false };
+    const mode = options.refresh ? 'refresh' : 'suspend';
+    await recordFreeAgentEvent(this.database, agentId, 'sleep_requested', { mode });
+    void this.#sleepMachine(agentId, slept.fly_machine_id, mode);
+    return { sleep: true };
+  }
+
+  /** Image promotion warms existing sleepers without queuing an agent turn. */
+  async refreshSleepingMachines(): Promise<void> {
+    const sleepers = await this.database.query<{ agent_id: string; fly_machine_id: string }>(
+      `SELECT agent_id,fly_machine_id FROM free_agents
+       WHERE removed_at IS NULL AND fly_machine_id IS NOT NULL AND state='sleeping'`,
+    );
+    const results = await Promise.allSettled(sleepers.rows.map(async row => {
+      if (await this.machines.refresh(row.fly_machine_id, this.config.image)) {
+        await recordFreeAgentEvent(this.database, row.agent_id, 'refresh_started', {
+          machineId: row.fly_machine_id, image: this.config.image,
+        });
+      }
+    }));
+    const failures = results.filter(result => result.status === 'rejected');
+    if (failures.length) throw new AggregateError(failures.map(result => result.reason),
+      `Free-agent image refresh failed: ${failures.map(result => String(result.reason)).join('; ')}`);
+  }
+
+  async #sleepMachine(agentId: string, machineId: string, mode: 'suspend' | 'refresh'): Promise<void> {
+    // Let the helper's response leave the Machine before it freezes.
+    try {
+      if (await this.machines.refresh(machineId, this.config.image, mode === 'refresh')) {
+        // The new boot connects and uses this same idle-sleep path once the
+        // installer and helper are ready. Never snapshot a half-booted helper.
+        await recordFreeAgentEvent(this.database, agentId, 'refresh_started', { machineId, image: this.config.image });
+        return;
+      }
+      await this.machines.suspend(machineId);
+      // A suspend takes seconds to snapshot memory; `slept` marks the Machine
+      // actually asleep, not the request.
+      await this.machines.waitFor(machineId, 'suspended', 60);
+      await recordFreeAgentEvent(this.database, agentId, 'slept', { machineId, state: 'suspended' });
+    } catch (error) {
+      this.log(`agent ${agentId.slice(0, 12)} sleep failed: ${String(error)}`);
+    }
+    // A wake that arrived while Fly was suspending must be handled by this completion event.
+    this.kick(agentId, 'command');
+  }
+
+  /**
+   * First boot of a Machine: hand it everything it needs to stage its helper.
+   * Valid until the agent first connects; each call mints a fresh daemon
+   * exchange and model token, so a crashed first boot can simply retry.
+   */
+  async bootstrap(token: string): Promise<FreeAgentBootstrapGrant | undefined> {
+    return this.database.transaction(async (database) => {
+      const row = (
+        await database.query<{
+          agent_id: string;
+          owner_id: string;
+          workspace_id: string;
+          workspace_name: string;
+          sealed_keys: string;
+          name: string;
+          soul: { instructions?: string } | null;
+          model: string | null;
+        }>(
+          `SELECT f.agent_id,f.owner_id,f.workspace_id,w.name workspace_name,f.sealed_keys,
+                  i.name,a.soul,f.model
+           FROM free_agents f JOIN workspaces w ON w.id=f.workspace_id
+           JOIN identities i ON i.id=f.agent_id JOIN agents a ON a.agent_id=f.agent_id
+           WHERE f.bootstrap_hash=$1 AND f.removed_at IS NULL AND f.state NOT IN ('failed','destroyed')
+           FOR UPDATE OF f`,
+          [tokenHash(token)],
+        )
+      ).rows[0];
+      if (!row) return undefined;
+      const keys = openSecrets<{ agent: string; body: string }>(this.config.sealSecret, row.sealed_keys);
+      const modelToken = opaque('bfm');
+      await database.query(
+        `UPDATE free_agents SET model_token_hash=$2,updated_at=now() WHERE agent_id=$1`,
+        [row.agent_id, tokenHash(modelToken)],
+      );
+      const exchange = await this.createDaemonExchange(row.agent_id, database);
+      await recordFreeAgentEvent(database, row.agent_id, 'bootstrapped');
+      return {
+        agentId: row.agent_id,
+        agentSecretKey: keys.agent,
+        bodySecretKey: keys.body,
+        agentName: row.name,
+        harness: FREE_AGENT_HARNESS,
+        model: freeAgentHarnessModel({ model: row.model ?? this.config.model }),
+        soul: row.soul?.instructions ?? '',
+        workspaceId: row.workspace_id,
+        workspaceName: row.workspace_name,
+        pairedBy: row.owner_id,
+        monolithBaseUrl: new URL(this.config.publicOrigin).origin,
+        daemonExchangeToken: exchange.exchangeToken,
+        modelToken,
+        modelBaseUrl: `${new URL(this.config.publicOrigin).origin}/v1/free-agents/model`,
+        upstreamModel: row.model ?? this.config.model,
+        maxTurnSeconds: (this.config.limits ?? DEFAULT_FREE_AGENT_LIMITS).maxTurnMs / 1000,
+        idleSeconds: this.config.idleSeconds,
+      };
+    });
+  }
+
+  /** Called only after removal commits; Fly failure cannot fail the Members action. */
+  remove(agentId: string): void {
+    void this.cleanupRemoved(agentId).catch(error =>
+      this.log(`remove ${agentId.slice(0, 12)}: ${String(error)}`),
+    );
+  }
+
+  /** Delete a retired agent's Machine; a failed call leaves durable work for the leader. */
+  async cleanupRemoved(agentId: string): Promise<boolean> {
+    const row = (await this.database.query<{ fly_machine_id: string | null; removal_cleaned_at: Date | null }>(
+      `SELECT fly_machine_id,removal_cleaned_at FROM free_agents WHERE agent_id=$1 AND removed_at IS NOT NULL`,
+      [agentId],
+    )).rows[0];
+    if (!row) return false;
+    if (row.removal_cleaned_at) return true;
+    const machineId = row.fly_machine_id ?? (await this.machines.find(agentId))?.id;
+    if (machineId) await this.machines.destroy(machineId);
+    // A create already in flight can return after this delete. Keep cleanup pending
+    // through its provision lease; its completion stores the new id and retries cleanup.
+    await this.database.query(
+      `UPDATE free_agents SET fly_machine_id=NULL,removal_cleaned_at=CASE
+         WHEN provision_started_at IS NULL OR provision_started_at<clock_timestamp()-interval '2 minutes'
+         THEN clock_timestamp() ELSE NULL END,updated_at=now()
+       WHERE agent_id=$1 AND removed_at IS NOT NULL AND fly_machine_id IS NOT DISTINCT FROM $2`,
+      [agentId, row.fly_machine_id],
+    );
+    return true;
+  }
+
+  /** Committed work wakes the Machine; the source event is the only wake. */
+  subscribeToWakes(live: LiveHub): () => void {
+    return live.subscribeAll((event) => {
+      if (event.type !== 'invalidate' || !event.targetAgentId) return;
+      if (event.reason === 'connector-assignment') this.kickIfFree(event.targetAgentId, 'connector');
+      else if (event.reason === 'postgres:agent_commands' && event.operation === 'INSERT')
+        this.kickIfFree(event.targetAgentId);
+    });
+  }
+
+  /** Start the Machine if committed work targets a free agent. */
+  kickIfFree(agentId: string, cause: WakeCause = 'command'): void {
+    void this.database
+      .query(`SELECT 1 FROM free_agents f WHERE agent_id=$1 AND state<>'failed' AND removed_at IS NULL
+        ${cause === 'connector' ? `AND ${connectorWorkSql('f.agent_id')}` : ''}`, [agentId])
+      .then((found) => {
+        if (found.rowCount) this.kick(agentId, cause);
+      })
+      .catch((error) => this.log(`wake lookup ${agentId.slice(0, 12)}: ${String(error)}`));
+  }
+}

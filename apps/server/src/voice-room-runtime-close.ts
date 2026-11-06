@@ -1,5 +1,7 @@
-import { captureServerError } from './sentry.js';
+import { captureServerError } from "./sentry.js";
 import { VoiceRoomRuntime } from './voice-room-runtime.js';
+
+
 
 
 
@@ -11,10 +13,6 @@ import { VoiceRoomRuntime } from './voice-room-runtime.js';
     ctx.settleLeaseRecovery(false);
     for (const resolve of ctx.quietWaiters) resolve();
     ctx.quietWaiters.clear();
-    ctx.leaseRenewal?.();
-    clearTimeout(ctx.leaseExpiry);
-    clearTimeout(ctx.leaseRecoveryTimer);
-    clearTimeout(ctx.quietCheck);
     ctx.shutdown.abort();
     for (const human of ctx.eager.keys()) ctx.cancelEager(human);
     ctx.assembler.close();
@@ -27,13 +25,13 @@ import { VoiceRoomRuntime } from './voice-room-runtime.js';
     return ctx.closeWork;
   }
 
+
   export async function voiceRoomRuntimeFinishClose(ctx: VoiceRoomRuntime, meterClose: Promise<void>) {
     const cleanup = async (work: () => unknown) => {
       try { await work(); } catch (error) { captureServerError(error, { surface: 'voice-cleanup' }); }
     };
     await cleanup(() => { ctx.speaking?.abort(); ctx.clearAudioQueue(); });
     ctx.recoveryRelease?.();
-    for (const human of ctx.absent.keys()) ctx.cancelAbsent(human);
     ctx.participantSessions.clear();
     for (const human of ctx.inputs.keys()) await cleanup(() => ctx.stopInput(human));
     await meterClose;

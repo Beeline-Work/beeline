@@ -14,6 +14,8 @@ typecheck() {
   git fetch --no-tags --depth=1 origin "$CHANNEL_BASE"
   node scripts/check-phone-network-channels.mjs --base "$CHANNEL_BASE"
   node scripts/check-router-boundaries.mjs --base "$CHANNEL_BASE"
+  node scripts/check-no-emulator-start.mjs
+  node --test scripts/no-emulator-start.test.mjs
   # Keep each module's sinks in their owner files
   export ARCHITECTURE_BASE="$CI_BASE_SHA"
   git fetch --no-tags --depth=1 origin "$ARCHITECTURE_BASE"
@@ -28,10 +30,10 @@ typecheck() {
   fi
   npm run typecheck --prefix apps/mobile
   npx tsc -p tsconfig.scripts.json
-  # Check no workflow names a deleted test
-  npm run lint:workflow-paths
+  # Check no script, workflow, unit or skill names a deleted file
+  npm run lint:referenced-paths
   # Check CI routing, partitioning and build provenance
-  node --test --test-concurrency=1  scripts/run-workspace-tests.test.mjs scripts/report-main-checks.test.mjs scripts/architecture-invariants.test.mjs scripts/machine-connection-boundaries.test.mjs scripts/integration-shards.test.mjs scripts/mobile-ui-policy-moves.test.mjs
+  node --test --test-concurrency=1  scripts/run-workspace-tests.test.mjs scripts/report-main-checks.test.mjs scripts/architecture-invariants.test.mjs scripts/integration-shards.test.mjs scripts/mobile-ui-policy-moves.test.mjs scripts/server-timers.test.mjs scripts/machine-connection-boundaries.test.mjs scripts/corner-machine-boundary.test.mjs
   # Test nightly Checks orchestration
 }
 

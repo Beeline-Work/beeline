@@ -1,74 +1,7 @@
-import { phoneFetch, describe, expect, it, vi, ensureMcpMember, MCP_TAG_INSTRUCTION, randomBytes, createHash, tokenHash, BROWSER_REFUSALS, MCP_AGENT_TOOLS, claimAgentCommand, routeHumanMessage, deliverMcpMemberWebhooks, readFileSync, MCP_STARTER_ROUTINE, USER, AGENT, WORKSPACE, ROOM, PRIVATE, CORNER, PUBLIC_CORNER, opaque, fixtureScope1 } from './rooms-mcp.test-support.js';
+import { phoneFetch, describe, expect, it, vi, ensureMcpMember, MCP_TAG_INSTRUCTION, randomBytes, createHash, Client, StreamableHTTPClientTransport, tokenHash, BROWSER_REFUSALS, MCP_AGENT_TOOLS, claimAgentCommand, routeHumanMessage, deliverMcpMemberWebhooks, readFileSync, MCP_STARTER_ROUTINE, USER, AGENT, WORKSPACE, ROOM, PRIVATE, CORNER, PUBLIC_CORNER, opaque, fixtureScope1 } from './test-support-rooms-mcp.test-support.js';
 
 describe('Rooms connector HTTP OAuth and MCP', () => {
 const scope1 = fixtureScope1();
-
-  it('issues and requires a client secret for client_secret_post and client_secret_basic', async () => {
-    for (const method of ['client_secret_post', 'client_secret_basic']) {
-      const registered = await scope1.post('/mcp/oauth/register', { client_name: 'Hosted bot', redirect_uris: ['https://bot.example/oauth/cb'], token_endpoint_auth_method: method });
-      expect(registered.status).toBe(201);
-      const client = await registered.json() as { client_id: string; client_secret: string; token_endpoint_auth_method: string; client_secret_expires_at: number };
-      expect(client).toMatchObject({ token_endpoint_auth_method: method, client_secret_expires_at: 0 });
-      expect(client.client_secret).toMatch(/^[A-Za-z0-9_-]{43}$/);
-      const stored = (await scope1.db.query<{ secret_hash: string }>('SELECT secret_hash FROM rooms_mcp_clients WHERE id=$1', [client.client_id])).rows[0]!.secret_hash;
-      expect(stored).toBe(tokenHash(client.client_secret));
-      const basic = (id: string, secret: string) => ({ authorization: 'Basic ' + Buffer.from(`${encodeURIComponent(id)}:${encodeURIComponent(secret)}`).toString('base64') });
-      const auth = method === 'client_secret_post'
-        ? { body: { client_secret: client.client_secret }, headers: {} }
-        : { body: {}, headers: basic(client.client_id, client.client_secret) };
-      const grant = await scope1.authorize(undefined, 'allow', client.client_id, 'https://bot.example/oauth/cb');
-      const tokenBody = { grant_type: 'authorization_code', client_id: client.client_id, code: grant.code, code_verifier: grant.verifier, redirect_uri: 'https://bot.example/oauth/cb', resource: scope1.origin + '/mcp' };
-      for (const wrong of [{ body: {}, headers: {} }, { body: { client_secret: 'wrong' }, headers: {} }, { body: {}, headers: basic(client.client_id, 'wrong') }]) {
-        const refused = await scope1.post('/mcp/oauth/token', { ...tokenBody, ...wrong.body }, wrong.headers);
-        expect([refused.status, await refused.json()]).toEqual([401, { error: 'invalid_client' }]);
-      }
-      const otherMethod = method === 'client_secret_post' ? { body: {}, headers: basic(client.client_id, client.client_secret) } : { body: { client_secret: client.client_secret }, headers: {} };
-      expect((await scope1.post('/mcp/oauth/token', { ...tokenBody, ...otherMethod.body }, otherMethod.headers)).status).toBe(401);
-      expect((await scope1.post('/mcp/oauth/token', { ...tokenBody, client_secret: client.client_secret }, basic(client.client_id, client.client_secret))).status).toBe(401);
-      expect((await scope1.post('/mcp/oauth/token', tokenBody, { authorization: 'Basic ' + Buffer.from('%broken:secret').toString('base64') })).status).toBe(401);
-      for (const mismatch of [{ code_verifier: opaque() }, { resource: scope1.origin + '/other' }, { redirect_uri: 'https://evil.example/cb' }]) {
-        expect((await scope1.post('/mcp/oauth/token', { ...tokenBody, ...auth.body, ...mismatch }, auth.headers)).status).toBe(400);
-      }
-      const issued = await scope1.post('/mcp/oauth/token', { ...tokenBody, ...auth.body }, auth.headers);
-      expect(issued.status).toBe(200);
-      const tokens = await issued.json() as { access_token: string; refresh_token: string };
-      const refresh = { grant_type: 'refresh_token', refresh_token: tokens.refresh_token, client_id: client.client_id, resource: scope1.origin + '/mcp' };
-      expect((await scope1.post('/mcp/oauth/token', refresh)).status).toBe(401);
-      const refreshed = await scope1.post('/mcp/oauth/token', { ...refresh, ...auth.body }, auth.headers);
-      expect(refreshed.status).toBe(200);
-      const next = await refreshed.json() as typeof tokens;
-      expect((await scope1.post('/mcp/oauth/revoke', { token: next.access_token, client_id: client.client_id })).status).toBe(401);
-      expect((await scope1.post('/mcp/oauth/revoke', { token: next.access_token, client_id: client.client_id, ...auth.body }, auth.headers)).status).toBe(200);
-      expect((await phoneFetch(scope1.origin + '/mcp', { headers: { authorization: `Bearer ${next.access_token}` } })).status).toBe(401);
-    }
-    const publicGrant = await scope1.authorize();
-    const withSecret = await scope1.exchange(publicGrant, { client_secret: 'unexpected' });
-    expect(withSecret.status).toBe(401);
-    expect((await scope1.exchange(publicGrant)).status).toBe(200);
-  });
-
-  it('requires exact redirects, S256 and the intended resource, and refuses unsupported registration', async () => {
-    expect((await scope1.post('/mcp/oauth/register', { client_name: 'Bad', redirect_uris: ['javascript:alert(1)'] })).status).toBe(400);
-    const registered = await (await scope1.post('/mcp/oauth/register', { client_name: 'Test', redirect_uris: ['https://client.example/callback'] })).json() as { client_id: string };
-    const q = new URLSearchParams({ client_id: registered.client_id, redirect_uri: 'https://evil.example/callback', response_type: 'code', resource: scope1.origin + '/mcp', code_challenge_method: 'S256', code_challenge: opaque() });
-    expect((await phoneFetch(scope1.origin + '/mcp/oauth/authorize?' + q)).status).toBe(400);
-    q.set('redirect_uri', 'https://client.example/callback'); q.set('code_challenge_method', 'plain');
-    expect((await phoneFetch(scope1.origin + '/mcp/oauth/authorize?' + q)).status).toBe(400);
-    q.set('code_challenge_method', 'S256'); q.set('resource', 'https://other.example/mcp');
-    expect((await phoneFetch(scope1.origin + '/mcp/oauth/authorize?' + q)).status).toBe(400);
-  });
-
-  it('R1: starts sign-in when Cursor omits resource or sends the origin or a trailing slash, and refuses other hosts', async () => {
-    const registered = await (await scope1.post('/mcp/oauth/register', { client_name: 'Cursor', redirect_uris: ['cursor://anysphere.cursor-mcp/oauth/callback'], token_endpoint_auth_method: 'none' })).json() as { client_id: string };
-    const start = (resource?: string) => phoneFetch(scope1.origin + '/mcp/oauth/authorize?' + new URLSearchParams({ client_id: registered.client_id, redirect_uri: 'cursor://anysphere.cursor-mcp/oauth/callback',
-      response_type: 'code', code_challenge_method: 'S256', code_challenge: createHash('sha256').update(opaque()).digest('base64url'), state: 'r1-state', ...(resource === undefined ? {} : { resource }) }), { redirect: 'manual' });
-    for (const resource of [undefined, scope1.origin + '/mcp', scope1.origin + '/mcp/', scope1.origin, scope1.origin + '/']) {
-      const response = await start(resource);
-      expect([resource, response.status, response.headers.get('location')?.startsWith('/mcp/oauth/consent?flow=')]).toEqual([resource, 302, true]);
-    }
-    for (const resource of ['https://other.example/mcp', 'https://other.example', scope1.origin + '/other'])
-      expect([resource, (await start(resource)).status]).toEqual([resource, 400]);
-  });
 
   it('logs each refused browser sign-in step with its reason, never parameter values', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -625,7 +558,6 @@ const scope1 = fixtureScope1();
       await client.callTool({ name: 'set_webhook', arguments: { url } });
     if (callback === 'client')
       await scope1.db.query('UPDATE rooms_mcp_clients SET callback_url=$2 WHERE id=$1', [grant.clientId, url]);
-    await scope1.db.query("UPDATE rooms_mcp_members SET last_bridge_poll_at=now()-interval '1 hour' WHERE member_id=$1", [member]);
     expect((await scope1.db.query('SELECT 1 FROM rooms_mcp_event_subscriptions WHERE member_id=$1', [member])).rowCount).toBe(0);
     const handle = (await scope1.db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
     const source = await scope1.phone.execute('sendRoomMessage', { roomId: ROOM, text: '@demo-agent report back' }, USER);
@@ -760,13 +692,12 @@ const scope1 = fixtureScope1();
     }) as unknown as typeof fetch;
     const first = deliverMcpMemberWebhooks(scope1.db, transport);
     await firstStarted;
-    // The first drain is still sending its first row. Backdate every other
-    // queued claim to simulate a batch that has outlived the one-minute lease.
+    // An active delivery remains claimed even past its former lease window.
     const inFlightId = (await scope1.db.query<{ message_id: string }>(
       'SELECT message_id FROM rooms_mcp_webhook_outbox WHERE body=$1 AND delivered_at IS NULL', [inFlight])).rows[0]!.message_id;
     await scope1.db.query(
       `UPDATE rooms_mcp_webhook_outbox SET claimed_at=now()-interval '2 minutes'
-       WHERE delivered_at IS NULL AND message_id<>$1`, [inFlightId]);
+       WHERE delivered_at IS NULL AND message_id=$1`, [inFlightId]);
     const overlapping = await deliverMcpMemberWebhooks(scope1.db, transport);
     release();
     await first;
@@ -786,5 +717,83 @@ const scope1 = fixtureScope1();
       expect(JSON.stringify(result)).not.toContain('private nebula');
     }
     expect((await scope1.db.query("SELECT 1 FROM messages WHERE room_id=$1 AND text='forbidden'", [PRIVATE])).rowCount).toBe(0);
+  });
+
+  it('Reproduction R1: grants every tool after one Allow, with no scope or a read-only scope, and limits per token', async () => {
+    for (const scope of ['', 'rooms:read']) {
+      const { client } = await scope1.connected(scope);
+      const profile = await client.callTool({ name: 'set_profile', arguments: { name: `Grok ${scope || 'none'}` } });
+      expect(profile.isError).toBeFalsy();
+      const sent = await client.callTool({ name: 'send_message', arguments: { room: ROOM, text: `full rights ${scope || 'none'}` } });
+      expect(sent.isError).toBeFalsy();
+    }
+    expect((await scope1.db.query("SELECT 1 FROM messages WHERE text LIKE 'full rights %'")).rowCount).toBe(2);
+    const { token } = await scope1.connected('rooms:read');
+    await scope1.db.query('UPDATE rooms_mcp_tokens SET calls=60,window_at=now() WHERE hash=$1', [tokenHash(token)]);
+    expect((await phoneFetch(scope1.origin + '/mcp', { headers: { authorization: `Bearer ${token}` } })).status).toBe(429);
+  });
+
+  it('Reproduction R1: lets a stored read-only connection post and refresh without reconnecting', async () => {
+    const grant = await scope1.authorize();
+    const tokens = await (await scope1.exchange(grant)).json() as { access_token: string; refresh_token: string };
+    // Seed the pre-fix state: every stored row for this connection holds read only.
+    for (const table of ['rooms_mcp_tokens', 'rooms_mcp_families', 'rooms_mcp_connections']) {
+      await scope1.db.query(`UPDATE ${table} SET scope='rooms:read' WHERE client_id=$1`, [grant.clientId]);
+    }
+    const member = (await scope1.db.query<{ member_id: string }>('SELECT member_id FROM rooms_mcp_members WHERE client_id=$1', [grant.clientId])).rows[0]!.member_id;
+    await scope1.db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')
+      ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL DO NOTHING`, [WORKSPACE, ROOM, member]);
+    const call = async (token: string, name: string, args: Record<string, unknown>) => {
+      const client = new Client({ name: 'rooms-review-proof', version: '1.0.0' }); scope1.clients.push(client);
+      await client.connect(new StreamableHTTPClientTransport(new URL(scope1.origin + '/mcp'), { requestInit: { headers: { authorization: `Bearer ${token}` } } }));
+      return client.callTool({ name, arguments: args });
+    };
+    expect((await call(tokens.access_token, 'set_profile', { name: 'Grok Bot' })).isError).toBeFalsy();
+    const refreshed = await scope1.post('/mcp/oauth/token', { grant_type: 'refresh_token', refresh_token: tokens.refresh_token,
+      client_id: grant.clientId, resource: scope1.origin + '/mcp', scope: 'rooms:read rooms:write' });
+    expect(refreshed.status).toBe(200);
+    const next = await refreshed.json() as { access_token: string; refresh_token: string; scope: string };
+    expect(next.scope).toBe('rooms:read rooms:write');
+    expect((await call(next.access_token, 'send_message', { room: ROOM, text: 'posted after refresh' })).isError).toBeFalsy();
+    const narrowed = await scope1.post('/mcp/oauth/token', { grant_type: 'refresh_token', refresh_token: next.refresh_token,
+      client_id: grant.clientId, resource: scope1.origin + '/mcp', scope: 'rooms:read' });
+    expect(narrowed.status).toBe(200);
+    const last = await narrowed.json() as { access_token: string };
+    expect((await call(last.access_token, 'send_message', { room: ROOM, text: 'posted after narrow refresh' })).isError).toBeFalsy();
+    expect((await scope1.phone.readWorkbench({ workspaceId: WORKSPACE }, USER)).aiClients)
+      .toContainEqual(expect.objectContaining({ clientId: grant.clientId, scopes: ['rooms:read', 'rooms:write'] }));
+  });
+
+  it('rejects expired grants and never accepts an MCP grant as a phone session', async () => {
+    const { token } = await scope1.connected();
+    expect((await phoneFetch(scope1.origin + '/mcp', { headers: { authorization: `Bearer ${token}`, origin: 'https://unregistered.example' } })).status).toBe(403);
+    expect((await phoneFetch(scope1.origin + '/v1/phone/workspaces', { headers: { authorization: `Bearer ${token}` } })).status).toBe(401);
+    await scope1.db.query("UPDATE rooms_mcp_tokens SET expires_at=now()-interval '1 second' WHERE hash=$1", [tokenHash(token)]);
+    expect((await phoneFetch(scope1.origin + '/mcp', { headers: { authorization: `Bearer ${token}` } })).status).toBe(401);
+    const grant = await scope1.authorize();
+    await scope1.db.query("UPDATE rooms_mcp_codes SET expires_at=now()-interval '1 second' WHERE hash=$1", [tokenHash(grant.code!)]);
+    expect((await scope1.exchange(grant)).status).toBe(400);
+  });
+
+  it('pages messages without crossing Room cursors and rejects oversized input', async () => {
+    const { client } = await scope1.connected();
+    for (let i=0; i<3; i++) await scope1.phone.execute('sendRoomMessage', { roomId: ROOM, text: `page ${i}` }, USER);
+    const first = await client.callTool({ name: 'read_messages', arguments: { room: ROOM, limit: 1 } });
+    const data = JSON.parse((first.content as { text: string }[])[0]!.text).data;
+    expect(data.messages).toHaveLength(1); expect(data.nextCursor).toBeTruthy();
+    const next = await client.callTool({ name: 'read_messages', arguments: { room: ROOM, limit: 1, cursor: data.nextCursor } });
+    expect(JSON.parse((next.content as { text: string }[])[0]!.text).data.messages[0].id).not.toBe(data.messages[0].id);
+    const foreignCursor = await client.callTool({ name: 'read_messages', arguments: { room: ROOM, cursor: 'd'.repeat(64) } });
+    expect(JSON.parse((foreignCursor.content as { text: string }[])[0]!.text).data.messages).toEqual([]);
+    expect((await client.callTool({ name: 'send_message', arguments: { room: ROOM, text: 'x'.repeat(16001) } })).isError).toBe(true);
+  });
+
+  it('bounds messages and drops access immediately when membership ends', async () => {
+    const { client, member } = await scope1.connected();
+    expect((await client.callTool({ name: 'read_messages', arguments: { room: ROOM, limit: 1000 } })).isError).toBe(true);
+    // Removing the member from the Room revokes its next read and post at once.
+    await scope1.db.query('UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2', [ROOM, member]);
+    expect((await client.callTool({ name: 'read_messages', arguments: { room: ROOM } })).isError).toBe(true);
+    expect(JSON.stringify(await client.callTool({ name: 'list_rooms', arguments: {} }))).not.toContain(ROOM);
   });
 });

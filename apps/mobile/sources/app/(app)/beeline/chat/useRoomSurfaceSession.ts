@@ -15,11 +15,7 @@ import {
   type RoomView,
   type RoomViewMessage,
 } from '@beeline/buzz-client';
-import {
-  isRoomViewTimeoutError,
-  RoomViewClient,
-  RoomViewHttpError,
-} from '@/sync/transport/room-view-client';
+import { isRoomViewTimeoutError, RoomViewClient, RoomViewHttpError, } from '@/sync/transport/room-view-client';
 
 import {
   loadBuzzIdentity,

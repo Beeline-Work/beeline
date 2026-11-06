@@ -1,20 +1,22 @@
 export { messageSearchDocumentSql, MESSAGE_SEARCH_DOCUMENT_MAX_BYTES } from './message-search-document-sql.js';
+import { DATABASE_SCHEMA_WORKFLOW_BACKFILLS } from './database-schema-workflow-backfills.js';
+import { DATABASE_SCHEMA_INSTITUTIONAL_MEMORY_ITEMS } from './database-schema-institutional-memory-items.js';
+import { DATABASE_SCHEMA_CORNER_FACTS } from './database-schema-corner-facts.js';
+import { DATABASE_SCHEMA_AGENT_GRANTS } from './database-schema-agent-grants.js';
+import { DATABASE_SCHEMA_TABLES } from './database-schema-tables.js';
 import { Pool, type PoolClient, type PoolConfig, type QueryResultRow } from 'pg';
 import { createHash } from 'node:crypto';
 import { QueryProfiler } from './query-profile.js';
 import { DatabaseBackgroundWork } from './database-background-work.js';
-import { DATABASE_SCHEMA_WORKFLOW_BACKFILLS } from './database-schema-workflow-backfills.js';
-import { DATABASE_SCHEMA_INSTITUTIONAL_MEMORY_ITEMS } from './database-schema-institutional-memory-items.js';
-import { DATABASE_SCHEMA_AGENT_SCHEDULE_OCCURRENCES } from './database-schema-agent-schedule-occurrences.js';
-import { DATABASE_SCHEMA_DEVICE_UPDATE_RECEIPTS } from './database-schema-device-update-receipts.js';
-import { DATABASE_SCHEMA_TABLES } from './database-schema-tables.js';
 import { migrate, migrateData } from './database-migrate.js';
 import { backfillSquireApprovalExpiry, keywordsFromBody, retireStandingPreferences, MESSAGE_SEARCH_BACKFILL_BATCH, backfillMessageSearchDocuments, backfillConnectorMachineId, compactWebhookDeliveries, compactPushClaims, backfillAgentHandles, backfillInstitutionalMemoryRollout, backfillSystemEventKinds, backfillPerItemEventSubscriptions, backfillCornerOwed, measureDatabase, measureDatabaseBreakdown } from './database-backfill-squire-approval-expiry.js';
 
 
 
 
-export const SCHEMA = DATABASE_SCHEMA_WORKFLOW_BACKFILLS + DATABASE_SCHEMA_INSTITUTIONAL_MEMORY_ITEMS + DATABASE_SCHEMA_AGENT_SCHEDULE_OCCURRENCES + DATABASE_SCHEMA_DEVICE_UPDATE_RECEIPTS + DATABASE_SCHEMA_TABLES;
+
+
+export const SCHEMA = DATABASE_SCHEMA_WORKFLOW_BACKFILLS + DATABASE_SCHEMA_INSTITUTIONAL_MEMORY_ITEMS + DATABASE_SCHEMA_CORNER_FACTS + DATABASE_SCHEMA_AGENT_GRANTS + DATABASE_SCHEMA_TABLES;
 
 
 export const JOB_STATEMENT_TIMEOUT_MS = 2_000;
@@ -35,20 +37,7 @@ export const HEALTH_POOL_WAIT_TIMEOUT_MS = 1_000;
 
 export const MIGRATION_LOCK_TIMEOUT_MS = 1_000;
 
-/** Schema statements retry a busy table this many times (about 2 minutes). */
-export const MIGRATION_DDL_ATTEMPTS = 120;
-
 export const MIGRATION_STATEMENT_TIMEOUT_MS = 10 * 60_000;
-
-export const APP_TRANSACTION_DEADLINE_MS = 30_000;
-
-export const ENRICHMENT_TRANSACTION_DEADLINE_MS = 3_000;
-
-export const HEALTH_TRANSACTION_DEADLINE_MS = 5_000;
-
-export const JOB_TRANSACTION_DEADLINE_MS = 5 * 60_000;
-
-export const MIGRATION_TRANSACTION_DEADLINE_MS = 10 * 60_000;
 
 export const APP_DATABASE_NAME = 'beeline_app';
 
@@ -152,7 +141,6 @@ export class DatabaseTransactionStartError extends Error {
 export interface PostgresDatabaseOptions {
   pool?: Pool;
   /** Deterministic test override; production uses the pool class limit. */
-  transactionDeadlineMs?: number;
 }
 
 
@@ -182,7 +170,6 @@ export interface SqlDatabase {
   queryProfiles?(): ReturnType<QueryProfiler['snapshot']>;
   queryWindow?(): ReturnType<QueryProfiler['window']>;
   oldestActiveTransactionAgeMs?(): number | null;
-  transactionDeadlineCount?(): number;
   /** Fires once after an app-pool failure is followed by a successful read.
    * Live subscribers use it to retry discovery without closing their socket. */
   onRecovery?(listener: () => void): () => void;
@@ -273,9 +260,7 @@ export class PostgresDatabase implements ClosableDatabase {
   readonly #pool: Pool;
   #closePromise?: Promise<void>;
   readonly #profiler = new QueryProfiler();
-  readonly #transactionDeadlineMs: number;
   readonly #transactions = new Map<number, number>();
-  #transactionDeadlines = 0;
   /** Start time of every query this process currently has in flight, keyed by
    *  a monotonic ticket so identical concurrent statements cannot collide. */
   readonly #inFlight = new Map<number, number>();
@@ -365,14 +350,6 @@ export class PostgresDatabase implements ClosableDatabase {
     this.#pool =
       options.pool ??
       new Pool(postgresPoolConfig(connectionString, maximumConnections, options.mode));
-    this.#transactionDeadlineMs = options.transactionDeadlineMs ??
-      (options.mode === 'enrichment' ? ENRICHMENT_TRANSACTION_DEADLINE_MS
-        : options.mode === 'diagnostics' ? HEALTH_TRANSACTION_DEADLINE_MS
-        : options.mode === 'long-running' ? JOB_TRANSACTION_DEADLINE_MS
-        : options.mode === 'migration' ? MIGRATION_TRANSACTION_DEADLINE_MS
-        : APP_TRANSACTION_DEADLINE_MS);
-    if (!Number.isSafeInteger(this.#transactionDeadlineMs) || this.#transactionDeadlineMs < 1)
-      throw new Error('invalid transaction deadline');
     this.#pool.on('error', (error) => {
       console.error('postgres idle client error', error);
     });
@@ -398,10 +375,6 @@ export class PostgresDatabase implements ClosableDatabase {
     for (const startedAt of this.#transactions.values())
       if (oldest === undefined || startedAt < oldest) oldest = startedAt;
     return oldest === undefined ? null : Date.now() - oldest;
-  }
-
-  transactionDeadlineCount(): number {
-    return this.#transactionDeadlines;
   }
 
   async query<Row extends QueryResultRow = QueryResultRow>(
@@ -475,12 +448,6 @@ export class PostgresDatabase implements ClosableDatabase {
   }
 
   async transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {
-    // Capture the caller now. Creating this inside the timer loses the user/job
-    // path and leaves Sentry with only processTimers when the deadline fires.
-    const deadlineError = Object.assign(new Error('database transaction deadline exceeded'), {
-      code: '57014',
-    });
-    Error.captureStackTrace(deadlineError, this.transaction);
     const { client, release } = await this.#beginTransaction().catch((error: unknown) => {
       this.#noteFailure(error);
       if (isTransientDatabaseConnectionError(error)) throw new DatabaseTransactionStartError(error);
@@ -488,16 +455,6 @@ export class PostgresDatabase implements ClosableDatabase {
     });
     const ticket = this.#nextTicket++;
     this.#transactions.set(ticket, Date.now());
-    let expired = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const deadline = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => {
-        expired = true;
-        this.#transactionDeadlines++;
-        release(deadlineError);
-        reject(deadlineError);
-      }, this.#transactionDeadlineMs);
-    });
     let releaseError: Error | undefined;
     try {
       const database: SqlDatabase = {
@@ -506,12 +463,9 @@ export class PostgresDatabase implements ClosableDatabase {
           values: unknown[] = [],
           preparedName?: string,
         ) => {
-          if (expired) throw deadlineError;
-          const raw = await this.#timed(sql, () => Promise.race([
+          const raw = await this.#timed(sql, () =>
             preparedName ? client.query<Row>(preparedQuery(preparedName, sql, values))
-              : values.length ? client.query<Row>(sql, values) : client.query<Row>(sql),
-            deadline,
-          ]));
+              : values.length ? client.query<Row>(sql, values) : client.query<Row>(sql));
           const result = Array.isArray(raw) ? raw.at(-1) : raw;
           return {
             rows: result?.rows ?? [],
@@ -521,17 +475,16 @@ export class PostgresDatabase implements ClosableDatabase {
         transaction: async <Result>(nested: (database: SqlDatabase) => Promise<Result>) =>
           nested(database),
       };
-      const result = await Promise.race([work(database), deadline]);
-      await Promise.race([client.query('COMMIT'), deadline]);
+      const result = await work(database);
+      await client.query('COMMIT');
       this.#noteSuccess();
       return result;
     } catch (error) {
       this.#noteFailure(error);
-      if (expired) throw error;
       if (isTransientDatabaseConnectionError(error))
         releaseError = error instanceof Error ? error : new Error('transaction connection failed');
       try {
-        await Promise.race([client.query('ROLLBACK'), deadline]);
+        await client.query('ROLLBACK');
       } catch (rollbackError) {
         // The original error is more useful than a rollback failure on a dead connection.
         releaseError =
@@ -539,7 +492,6 @@ export class PostgresDatabase implements ClosableDatabase {
       }
       throw error;
     } finally {
-      if (timer) clearTimeout(timer);
       this.#transactions.delete(ticket);
       release(releaseError);
     }

@@ -1,19 +1,27 @@
-import { stdin, stdout } from 'node:process';
-import * as clack from '@clack/prompts';
-import { agentBehavior, AUTO_DETECT_AGENT_KINDS, detectInstalledAgentCommands, installLatestAgentAdapter, requireInstalledAgentProgram, installedAgentProgramEnvironment, resolveAgentCommand, type AgentCommand, type AgentKind, type DetectedAgentCommand } from './agent-command.js';
-import { clackPromptOutput, unwrapPrompt } from './clack-support.js';
-import { enumerateCursorModels } from './cursor-models.js';
-import { fetchAgentModelCatalog } from './model-catalog.js';
-import { verifyProviderKey, type ConnectKeyProvider } from './provider-key-check.js';
-import { maskProviderKey, PROVIDER_KEY_ENV_VARS, providerKeyFromEnvironment, readSavedProviderKey, saveProviderKey, type ProviderKeyProvider } from './provider-key-store.js';
-import { providerEnvironment } from './connect-command-parse-connect-subscriptions.js';
-export { parseConnectSubscriptions, readMachineId, requestConnectGrant, renameConnectedAgent, finishConnectedAgentPairing, seededIdentityLine, brassSpinner, runConnectCommand, confirmSeededName, connectPlainFailure, ConnectFailureError, runConnectFinishCommand } from './connect-command-parse-connect-subscriptions.js';
+import { defaultBeelineInstallLayout, hostPlatformKey } from "./self-update.js";
+import { resolve } from "node:path";
+import { resolveManifestUrl, parseUpdateManifest } from "./self-update-manifest.js";
+import { prepareMachineRelease, convergeMachine } from "./recovery.js";
+import type { AgentAccessPolicy } from "./access-policy.js";
+import { AUTO_DETECT_AGENT_KINDS, type AgentKind, type AgentCommand, installLatestAgentAdapter, requireInstalledAgentProgram, resolveAgentCommand, installedAgentProgramEnvironment, agentBehavior, type DetectedAgentCommand, detectInstalledAgentCommands } from "./agent-command.js";
+import { stdin, stdout } from "node:process";
+import { type ProviderKeyProvider, readSavedProviderKey, saveProviderKey, providerKeyFromEnvironment, maskProviderKey, PROVIDER_KEY_ENV_VARS } from "./provider-key-store.js";
+import { clackPromptOutput, unwrapPrompt } from "./clack-support.js";
+import * as clack from "@clack/prompts";
+import { fetchAgentModelCatalog } from "./model-catalog.js";
+import { enumerateCursorModels } from "./cursor-models.js";
+import { verifyProviderKey, type ConnectKeyProvider } from "./provider-key-check.js";
+import { runConnectWizard, providerEnvironment } from './connect-command-parse-connect-subscriptions.js';
+
+
 
 
 
 export const CONNECT_HARNESSES = AUTO_DETECT_AGENT_KINDS;
 
+
 export const AGENT_NAME_MAX_LENGTH = 32;
+
 
 
 /**
@@ -29,6 +37,7 @@ export function isInteractiveConnectTerminal(
 }
 
 
+
 export function isReasonableAgentName(value: string): boolean {
   const normalized = value.trim().replace(/\s+/g, ' ');
   return (
@@ -38,11 +47,15 @@ export function isReasonableAgentName(value: string): boolean {
   );
 }
 
+
 export const CONNECT_PROVIDER_HARNESSES = new Set<AgentKind>(['goose', 'pi']);
+
 
 export const CONNECT_PROVIDERS = ['openrouter', 'openai', 'anthropic', 'google', 'xai'] as const;
 
+
 export type ConnectProvider = (typeof CONNECT_PROVIDERS)[number];
+
 
 
 /** Saved-key access seam so tests can stub the on-disk store. */
@@ -52,10 +65,12 @@ export interface ConnectKeyStore {
 }
 
 
+
 export const fileConnectKeyStore: ConnectKeyStore = {
   read: (provider: ProviderKeyProvider) => readSavedProviderKey(provider),
   save: (provider: ProviderKeyProvider, key: string) => saveProviderKey(provider, key),
 };
+
 
 
 export const DEFAULT_MODELS: Record<
@@ -77,6 +92,7 @@ export const DEFAULT_MODELS: Record<
 };
 
 
+
 /**
  * What the wizard still asks for. Name and soul are NOT here: the server seeds
  * both from the animal it assigns the agent, so nobody types them.
@@ -89,6 +105,7 @@ export interface ConnectWizardResult {
   /** Only set when the harness advertises a reasoning-effort axis to choose from. */
   effort?: string;
 }
+
 
 
 export interface ConnectPrompts {
@@ -116,9 +133,11 @@ export interface ConnectPrompts {
 }
 
 
+
 export function connectHarnessNeedsProvider(harness: AgentKind): boolean {
   return CONNECT_PROVIDER_HARNESSES.has(harness);
 }
+
 
 
 export function defaultConnectModel(
@@ -129,6 +148,7 @@ export function defaultConnectModel(
     ? DEFAULT_MODELS[provider]
     : (DEFAULT_MODELS[harness as 'codex' | 'claude' | 'grok' | 'cursor' | 'opencode'] ?? 'default');
 }
+
 
 
 export function brassEnabled(
@@ -142,10 +162,13 @@ export function brassEnabled(
 }
 
 
+
 /** The one brand brass, #D7AF5F — the app's accent, and xterm 179 exactly. */
 export const BRASS_TRUECOLOR = '\u001b[38;2;215;175;95m';
 
+
 export const BRASS_256 = '\u001b[38;5;179m';
+
 
 
 export function brass(
@@ -158,6 +181,7 @@ export function brass(
   if (level === '256') return `${BRASS_256}${value}\u001b[39m`;
   return value;
 }
+
 
 
 /**
@@ -177,6 +201,7 @@ export function brassRails(
 }
 
 
+
 /** Hold the repaint for the life of the wizard; the return restores the stream. */
 export function paintWizardBrass(output: NodeJS.WriteStream = stdout): () => void {
   const original = output.write;
@@ -192,6 +217,7 @@ export function paintWizardBrass(output: NodeJS.WriteStream = stdout): () => voi
     output.write = original;
   };
 }
+
 
 
 export const clackPrompts: ConnectPrompts = {
@@ -242,10 +268,12 @@ export const clackPrompts: ConnectPrompts = {
 };
 
 
+
 export type ConnectAxisPicker = {
   currentValue?: string;
   options: Array<{ id: string; name?: string }>;
 };
+
 
 
 export type ConnectModelCatalog = ConnectAxisPicker & {
@@ -255,12 +283,14 @@ export type ConnectModelCatalog = ConnectAxisPicker & {
 };
 
 
+
 /**
  * The categories a harness spells its reasoning-effort axis with. Codex says
  * `effort`, Claude says `thought_level`, others say `reasoning_effort`; all
  * three are the same question to a person.
  */
 export const CONNECT_EFFORT_CATEGORIES = ['effort', 'reasoning_effort', 'thought_level'];
+
 
 
 /**
@@ -277,6 +307,7 @@ export function connectEffortPickerFromAxes(
   const axis = axes.find(isEffort) ?? rawAxes.find(isEffort);
   return axis ? { currentValue: axis.currentValue, options: axis.options } : undefined;
 }
+
 
 
 /**
@@ -310,6 +341,7 @@ export function connectModelPickerFromAxes(
 }
 
 
+
 export interface ConnectModelCatalogRequest {
   harness: ConnectWizardResult['harness'];
   provider?: ConnectProvider;
@@ -324,6 +356,7 @@ export interface ConnectModelCatalogRequest {
 }
 
 
+
 export interface ConnectModelCatalogDependencies {
   refreshAdapter?: (kind: AgentKind) => Promise<unknown>;
   resolveAgent?: (kind: AgentKind) => Pick<AgentCommand, 'kind' | 'command' | 'args'>;
@@ -331,7 +364,9 @@ export interface ConnectModelCatalogDependencies {
 }
 
 
+
 export const refreshedConnectAdapters = new Map<AgentKind, Promise<unknown>>();
+
 
 
 export function refreshConnectAdapter(kind: AgentKind): Promise<unknown> {
@@ -344,6 +379,7 @@ export function refreshConnectAdapter(kind: AgentKind): Promise<unknown> {
   refreshedConnectAdapters.set(kind, refresh);
   return refresh;
 }
+
 
 
 export async function loadConnectModelCatalog(
@@ -394,6 +430,7 @@ export async function loadConnectModelCatalog(
 }
 
 
+
 /**
  * How long the wizard waits for a harness to say what it can do before it
  * gives up and asks instead — the WHOLE read, handshake through live
@@ -423,6 +460,7 @@ export function connectProbeFoundModels(catalog: ConnectModelCatalog): boolean {
 }
 
 
+
 /**
  * The one harness worth auto-selecting: the only supported harness actually
  * installed on this machine. Anything else — none, or several — is a genuine
@@ -436,9 +474,11 @@ export function soleInstalledConnectHarness(
 }
 
 
+
 export function connectHarnessLabel(harness: (typeof CONNECT_HARNESSES)[number]): string {
   return agentBehavior(harness).label ?? harness[0]!.toUpperCase() + harness.slice(1);
 }
+
 
 
 /**
@@ -459,6 +499,7 @@ export function connectFoundLine(input: {
 }
 
 
+
 export interface ConnectWizardSeams {
   /** Supported harnesses installed on this machine; defaults to a real scan. */
   detect?: () => DetectedAgentCommand[];
@@ -466,6 +507,7 @@ export interface ConnectWizardSeams {
   /** Where the wizard says what it found instead of asking for it. */
   announce?: (line: string) => void;
 }
+
 
 
 /**
@@ -669,6 +711,7 @@ export async function collectConnectWizard(
 }
 
 
+
 export interface DeviceGrantResponse {
   agent_secret_key: string;
   agent_pubkey: string;
@@ -688,6 +731,7 @@ export interface DeviceGrantResponse {
 }
 
 
+
 export async function jsonRequest<T>(url: string, body: unknown, fetchImpl: typeof fetch): Promise<T> {
   const response = await fetchImpl(url, {
     method: 'POST',
@@ -704,3 +748,60 @@ export async function jsonRequest<T>(url: string, body: unknown, fetchImpl: type
   }
   return response.json() as Promise<T>;
 }
+
+
+
+export async function installCurrentRelease(
+  fetchImpl: typeof fetch,
+): Promise<{ binary: string; version: string }> {
+  const layout = defaultBeelineInstallLayout(process.env);
+  if (process.env.BEELINE_RECOVERY_SELECTED_RELEASE) return { binary: resolve(layout.binDir, 'beeline'), version: process.env.BEELINE_RECOVERY_SELECTED_RELEASE };
+  const manifestUrl = resolveManifestUrl(process.env);
+  const response = await fetchImpl(manifestUrl, { signal: undefined });
+  if (!response.ok)
+    throw new Error(`fetching the Beeline release manifest failed: HTTP ${response.status}`);
+  const published = parseUpdateManifest(await response.text(), hostPlatformKey()).bundle;
+  const { releaseId } = await prepareMachineRelease(layout, { manifest: { url: manifestUrl, bundle: published }, fetchImpl, logger: () => {} });
+  await convergeMachine({ layout, releaseId });
+  return {
+    binary: resolve(layout.binDir, 'beeline'),
+    version: published.version ?? releaseId,
+  };
+}
+
+
+
+export async function runConnectCommand(
+  code: string | undefined,
+  options: {
+    fetchImpl?: typeof fetch;
+    subscribe?: readonly string[];
+    accessPolicy?: AgentAccessPolicy;
+  } = {},
+): Promise<void> {
+  if (!isInteractiveConnectTerminal()) {
+    throw new Error('`usebeeline connect` needs an interactive terminal');
+  }
+  const restoreRails = paintWizardBrass();
+  try {
+    await runConnectWizard(
+      code,
+      options.fetchImpl ?? fetch,
+      options.subscribe ?? [],
+      options.accessPolicy,
+    );
+  } finally {
+    restoreRails();
+  }
+}
+export { parseConnectSubscriptions } from './connect-command-parse-connect-subscriptions.js';
+export { readMachineId } from './connect-command-parse-connect-subscriptions.js';
+export { requestConnectGrant } from './connect-command-parse-connect-subscriptions.js';
+export { renameConnectedAgent } from './connect-command-parse-connect-subscriptions.js';
+export { finishConnectedAgentPairing } from './connect-command-parse-connect-subscriptions.js';
+export { seededIdentityLine } from './connect-command-parse-connect-subscriptions.js';
+export { brassSpinner } from './connect-command-parse-connect-subscriptions.js';
+export { confirmSeededName } from './connect-command-parse-connect-subscriptions.js';
+export { connectPlainFailure } from './connect-command-parse-connect-subscriptions.js';
+export { ConnectFailureError } from './connect-command-parse-connect-subscriptions.js';
+export { runConnectFinishCommand } from './connect-command-parse-connect-subscriptions.js';

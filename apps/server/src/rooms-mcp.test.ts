@@ -1,4 +1,4 @@
-import { phoneFetch, BackgroundWork, describe, expect, it, vi, createServer, Webhook, MCP_ORDER_WAKE_HINT, MCP_REVIEW_WAKE_HINT, MCP_WAKE_HINT, backfillMcpMemberRoomsAndAvatars, ensureMcpMember, postMcpWebhook, randomBytes, createHash, randomUUID, Client, StreamableHTTPClientTransport, tokenHash, recordSigninAttempt, pendingMcpWakes, createAgentCommand, routeHumanMessage, openSecrets, deliverMcpMemberWebhooks, runMcpWebhookDelivery, USER, OTHER, AGENT, WORKSPACE, ROOM, opaque, fixtureScope1, type AddressInfo } from './rooms-mcp.test-support.js';
+import { phoneFetch, describe, expect, it, vi, createServer, Webhook, MCP_ORDER_WAKE_HINT, MCP_REVIEW_WAKE_HINT, MCP_WAKE_HINT, backfillMcpMemberRoomsAndAvatars, ensureMcpMember, postMcpWebhook, randomBytes, createHash, randomUUID, Client, StreamableHTTPClientTransport, tokenHash, recordSigninAttempt, pendingMcpWakes, createAgentCommand, routeHumanMessage, openSecrets, deliverMcpMemberWebhooks, runMcpWebhookDelivery, USER, OTHER, AGENT, WORKSPACE, ROOM, opaque, fixtureScope1, type AddressInfo } from './test-support-rooms-mcp.test-support.js';
 
 describe('Rooms connector HTTP OAuth and MCP', () => {
 const scope1 = fixtureScope1();
@@ -94,7 +94,7 @@ const scope1 = fixtureScope1();
     expect(JSON.stringify(await scope1.phone.readRoom(ROOM, USER))).toContain(text);
   }, 60_000);
 
-  it.each(['webhook', 'events', 'bridge', 'none', 'expired bridge', 'expired events'])(
+  it.each(['webhook', 'events', 'none', 'expired events'])(
     'R2: tag receipt accounts for connected member route %s', async route => {
       const fixture = await scope1.eventFixture();
       const { member, token, params, grant, client } = fixture;
@@ -104,15 +104,10 @@ const scope1 = fixtureScope1();
         expect((await scope1.eventCall(token, 'events/subscribe', params)).error).toBeUndefined();
         if (route === 'expired events') await scope1.db.query("UPDATE rooms_mcp_event_subscriptions SET expires_at=now()-interval '1 second' WHERE member_id=$1", [member]);
       }
-      if (route.includes('bridge')) {
-        const now = new Date().toISOString();
-        await client.callTool({ name: 'list_mentions', arguments: { waitSeconds: 1, wakesAfter: now } });
-        if (route === 'expired bridge') await scope1.db.query("UPDATE rooms_mcp_members SET last_bridge_poll_at=now()-interval '61 seconds' WHERE member_id=$1", [member]);
-      }
       const sender = await scope1.connected();
       const response = await sender.client.callTool({ name: 'send_message', arguments: { room: ROOM, text: `@${handle} check this tag` } }) as { content: { text: string }[] };
       const receipt = JSON.parse(response.content[0]!.text).data;
-      const live = ['webhook', 'events', 'bridge'].includes(route);
+      const live = ['webhook', 'events'].includes(route);
       expect(receipt.woken).toEqual(live ? [handle] : []);
       expect(receipt.notWoken).toEqual(live ? [] : [{ handle, reason: 'no live wake route; sees it on next list_mentions' }]);
       expect((await scope1.db.query('SELECT 1 FROM rooms_mcp_mentions WHERE member_id=$1 AND message_id=$2', [member, receipt.messageId])).rowCount).toBe(1);
@@ -149,40 +144,8 @@ const scope1 = fixtureScope1();
     expect((await scope1.db.query('SELECT id FROM rooms_mcp_event_subscriptions WHERE member_id=$1', [member])).rowCount).toBe(0);
   });
 
-  it('MCP-WEBHOOK-DEADLINE: an empty owner stays idle for a day, then a committed delivery wakes it once', async () => {
-    await scope1.db.query('DELETE FROM rooms_mcp_webhook_outbox');
-    const { token, params, member } = await scope1.eventFixture();
-    await scope1.eventCall(token, 'events/subscribe', params);
-    const transport = vi.fn(async () => new Response(null, { status: 204 }));
-    let now = 0;
-    const work = new BackgroundWork(() => now, () => {});
-    const drain = vi.fn(() => runMcpWebhookDelivery(scope1.db, transport));
-    work.addDeadline('mcp-webhooks', drain);
-    await work.run(true);
-    for (now = 60_000; now <= 24 * 60 * 60_000; now += 60_000) await work.run(false);
-    expect(drain).toHaveBeenCalledOnce(); expect(transport).not.toHaveBeenCalled();
-    const handle = (await scope1.db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
-    await scope1.phone.execute('sendRoomMessage', { roomId: ROOM, text: '@' + handle + ' committed delivery' }, USER);
-    work.wake('mcp-webhooks'); await work.run(false);
-    expect(transport).toHaveBeenCalledOnce(); expect(drain).toHaveBeenCalledTimes(2);
-    now += 24 * 60 * 60_000; await work.run(false);
-    expect(drain).toHaveBeenCalledTimes(2);
-  });
 
 
-  it('MCP-WEBHOOK-DEADLINE: a bounded legacy bearer batch continues only for remaining rows', async () => {
-    await scope1.db.query('DELETE FROM rooms_mcp_webhook_outbox');
-    const { client, member } = await scope1.eventFixture();
-    await client.callTool({ name: 'set_webhook', arguments: { url: 'https://hooks.example/bearer', secret: 'legacy-bearer' } });
-    const handle = (await scope1.db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
-    for (const text of ['first', 'second'])
-      await scope1.phone.execute('sendRoomMessage', { roomId: ROOM, text: '@' + handle + ' ' + text }, USER);
-    const transport = vi.fn(async () => new Response(null, { status: 204 }));
-    expect(await runMcpWebhookDelivery(scope1.db, transport, 1)).toBe(1);
-    expect(transport).toHaveBeenCalledOnce();
-    expect(await runMcpWebhookDelivery(scope1.db, transport, 1)).toBeUndefined();
-    expect(transport).toHaveBeenCalledTimes(2);
-  });
 
 
   it('MCP-WEBHOOK-DEADLINE: shutdown drains its active delivery and leaves the next row unclaimed', async () => {
@@ -197,52 +160,17 @@ const scope1 = fixtureScope1();
     const held = new Promise<void>(resolve => { release = resolve; });
     const transport = vi.fn(async () => { entered(); await held; return new Response(null, { status: 204 }); });
     const controller = new AbortController();
-    const flight = runMcpWebhookDelivery(scope1.db, transport, 50, controller.signal);
+    const flight = runMcpWebhookDelivery(scope1.db, transport, controller.signal);
     await ready; controller.abort(); release();
     expect(await flight).toBeUndefined(); expect(transport).toHaveBeenCalledOnce();
-    expect((await scope1.db.query('SELECT attempts,claimed_at FROM rooms_mcp_event_deliveries WHERE delivered_at IS NULL')).rows)
-      .toEqual([{ attempts: 0, claimed_at: null }]);
+    expect((await scope1.db.query('SELECT claimed_at FROM rooms_mcp_event_deliveries WHERE delivered_at IS NULL')).rows)
+      .toEqual([{ claimed_at: null }]);
     expect(await runMcpWebhookDelivery(scope1.db, transport)).toBeUndefined(); expect(transport).toHaveBeenCalledTimes(2);
   });
 
 
-  it('MCP-WEBHOOK-DEADLINE: persisted finite delivery attempts keep identity and terminate', async () => {
-    await scope1.db.query('DELETE FROM rooms_mcp_webhook_outbox');
-    const { token, params, member } = await scope1.eventFixture();
-    await scope1.eventCall(token, 'events/subscribe', params);
-    const handle = (await scope1.db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
-    await scope1.phone.execute('sendRoomMessage', { roomId: ROOM, text: '@' + handle + ' finite dispatch' }, USER);
-    const bodies: string[] = [], ids: string[] = [];
-    const transport: typeof postMcpWebhook = async (_url, init) => {
-      bodies.push(init.body); ids.push(init.headers['webhook-id']!);
-      return new Response(null, { status: 503 });
-    };
-    for (let attempt = 1; attempt <= 5; attempt++) {
-      await scope1.db.query("UPDATE rooms_mcp_event_deliveries SET next_attempt_at=now()-interval '1 second' WHERE delivered_at IS NULL");
-      const delay = await runMcpWebhookDelivery(scope1.db, transport);
-      expect(bodies).toHaveLength(attempt);
-      if (attempt < 5) { expect(delay).toBeGreaterThan(25_000); expect(delay).toBeLessThanOrEqual(240_000); }
-      else expect(delay).toBeUndefined();
-    }
-    expect(new Set(bodies).size).toBe(1); expect(new Set(ids).size).toBe(1);
-    expect(await runMcpWebhookDelivery(scope1.db, transport)).toBeUndefined(); expect(bodies).toHaveLength(5);
-  });
 
 
-  it('MCP-WEBHOOK-DEADLINE: an in-flight persisted claim supplies its actual expiry', async () => {
-    await scope1.db.query('DELETE FROM rooms_mcp_webhook_outbox');
-    const { token, params, member } = await scope1.eventFixture();
-    await scope1.eventCall(token, 'events/subscribe', params);
-    const handle = (await scope1.db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
-    await scope1.phone.execute('sendRoomMessage', { roomId: ROOM, text: '@' + handle + ' abandoned claim' }, USER);
-    await scope1.db.query('UPDATE rooms_mcp_event_deliveries SET claimed_at=now(),attempts=1 WHERE delivered_at IS NULL');
-    const transport = vi.fn(async () => new Response(null, { status: 204 }));
-    const delay = await runMcpWebhookDelivery(scope1.db, transport);
-    expect(delay).toBeGreaterThan(50_000); expect(delay).toBeLessThanOrEqual(60_000);
-    expect(transport).not.toHaveBeenCalled();
-    await scope1.db.query("UPDATE rooms_mcp_event_deliveries SET claimed_at=now()-interval '61 seconds' WHERE delivered_at IS NULL");
-    expect(await runMcpWebhookDelivery(scope1.db, transport)).toBeUndefined(); expect(transport).toHaveBeenCalledOnce();
-  });
 
 
   it('MCP-EVENTS-1: a human tag reaches a local receiver once, and the connected member replies under its own byline', async () => {
@@ -344,7 +272,6 @@ const scope1 = fixtureScope1();
     await scope1.phone.execute('sendRoomMessage', { roomId: ROOM, text: '@' + handle + ' terminal response' }, USER);
     const transport = vi.fn(async () => new Response(null, { status }));
     await deliverMcpMemberWebhooks(scope1.db, transport);
-    await scope1.db.query('UPDATE rooms_mcp_event_deliveries SET next_attempt_at=now()');
     await deliverMcpMemberWebhooks(scope1.db, transport);
     expect(transport).toHaveBeenCalledTimes(1);
   });
@@ -368,7 +295,7 @@ const scope1 = fixtureScope1();
     expect(transport).toHaveBeenCalledTimes(1);
   });
 
-  it('MCP-EVENTS-1: secret rotation keeps both signatures briefly; retries preserve event identity', async () => {
+  it('MCP-EVENTS-1: secret rotation keeps both signatures briefly and a failed event is not retried', async () => {
     const { token, params, member, secret } = await scope1.eventFixture();
     await scope1.eventCall(token, 'events/subscribe', params);
     const replacement = 'whsec_' + randomBytes(32).toString('base64');
@@ -388,10 +315,8 @@ const scope1 = fixtureScope1();
     };
     expect(await deliverMcpMemberWebhooks(scope1.db, transport)).toBe(0);
     expect(await deliverMcpMemberWebhooks(scope1.db, transport)).toBe(0);
-    await scope1.db.query('UPDATE rooms_mcp_event_deliveries SET next_attempt_at=now() WHERE delivered_at IS NULL');
-    expect(await deliverMcpMemberWebhooks(scope1.db, transport)).toBe(1);
-    expect(attempts).toHaveLength(2);
-    expect(attempts[1]).toBe(attempts[0]);
+    expect(attempts).toHaveLength(1);
+    expect((await scope1.db.query('SELECT 1 FROM rooms_mcp_event_deliveries WHERE delivered_at IS NULL')).rowCount).toBe(0);
   });
 
   it('MCP-WAKE-1: a subscribed member gets one signed wake for an order, a report, and a corner assignment', async () => {
@@ -782,5 +707,72 @@ const scope1 = fixtureScope1();
     const grant = await scope1.authorize(undefined, 'allow', client_id, redirect);
     expect((await scope1.exchange(grant, { redirect_uri: redirect })).status).toBe(200);
     }
+  });
+
+  it('issues and requires a client secret for client_secret_post and client_secret_basic', async () => {
+    for (const method of ['client_secret_post', 'client_secret_basic']) {
+      const registered = await scope1.post('/mcp/oauth/register', { client_name: 'Hosted bot', redirect_uris: ['https://bot.example/oauth/cb'], token_endpoint_auth_method: method });
+      expect(registered.status).toBe(201);
+      const client = await registered.json() as { client_id: string; client_secret: string; token_endpoint_auth_method: string; client_secret_expires_at: number };
+      expect(client).toMatchObject({ token_endpoint_auth_method: method, client_secret_expires_at: 0 });
+      expect(client.client_secret).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      const stored = (await scope1.db.query<{ secret_hash: string }>('SELECT secret_hash FROM rooms_mcp_clients WHERE id=$1', [client.client_id])).rows[0]!.secret_hash;
+      expect(stored).toBe(tokenHash(client.client_secret));
+      const basic = (id: string, secret: string) => ({ authorization: 'Basic ' + Buffer.from(`${encodeURIComponent(id)}:${encodeURIComponent(secret)}`).toString('base64') });
+      const auth = method === 'client_secret_post'
+        ? { body: { client_secret: client.client_secret }, headers: {} }
+        : { body: {}, headers: basic(client.client_id, client.client_secret) };
+      const grant = await scope1.authorize(undefined, 'allow', client.client_id, 'https://bot.example/oauth/cb');
+      const tokenBody = { grant_type: 'authorization_code', client_id: client.client_id, code: grant.code, code_verifier: grant.verifier, redirect_uri: 'https://bot.example/oauth/cb', resource: scope1.origin + '/mcp' };
+      for (const wrong of [{ body: {}, headers: {} }, { body: { client_secret: 'wrong' }, headers: {} }, { body: {}, headers: basic(client.client_id, 'wrong') }]) {
+        const refused = await scope1.post('/mcp/oauth/token', { ...tokenBody, ...wrong.body }, wrong.headers);
+        expect([refused.status, await refused.json()]).toEqual([401, { error: 'invalid_client' }]);
+      }
+      const otherMethod = method === 'client_secret_post' ? { body: {}, headers: basic(client.client_id, client.client_secret) } : { body: { client_secret: client.client_secret }, headers: {} };
+      expect((await scope1.post('/mcp/oauth/token', { ...tokenBody, ...otherMethod.body }, otherMethod.headers)).status).toBe(401);
+      expect((await scope1.post('/mcp/oauth/token', { ...tokenBody, client_secret: client.client_secret }, basic(client.client_id, client.client_secret))).status).toBe(401);
+      expect((await scope1.post('/mcp/oauth/token', tokenBody, { authorization: 'Basic ' + Buffer.from('%broken:secret').toString('base64') })).status).toBe(401);
+      for (const mismatch of [{ code_verifier: opaque() }, { resource: scope1.origin + '/other' }, { redirect_uri: 'https://evil.example/cb' }]) {
+        expect((await scope1.post('/mcp/oauth/token', { ...tokenBody, ...auth.body, ...mismatch }, auth.headers)).status).toBe(400);
+      }
+      const issued = await scope1.post('/mcp/oauth/token', { ...tokenBody, ...auth.body }, auth.headers);
+      expect(issued.status).toBe(200);
+      const tokens = await issued.json() as { access_token: string; refresh_token: string };
+      const refresh = { grant_type: 'refresh_token', refresh_token: tokens.refresh_token, client_id: client.client_id, resource: scope1.origin + '/mcp' };
+      expect((await scope1.post('/mcp/oauth/token', refresh)).status).toBe(401);
+      const refreshed = await scope1.post('/mcp/oauth/token', { ...refresh, ...auth.body }, auth.headers);
+      expect(refreshed.status).toBe(200);
+      const next = await refreshed.json() as typeof tokens;
+      expect((await scope1.post('/mcp/oauth/revoke', { token: next.access_token, client_id: client.client_id })).status).toBe(401);
+      expect((await scope1.post('/mcp/oauth/revoke', { token: next.access_token, client_id: client.client_id, ...auth.body }, auth.headers)).status).toBe(200);
+      expect((await phoneFetch(scope1.origin + '/mcp', { headers: { authorization: `Bearer ${next.access_token}` } })).status).toBe(401);
+    }
+    const publicGrant = await scope1.authorize();
+    const withSecret = await scope1.exchange(publicGrant, { client_secret: 'unexpected' });
+    expect(withSecret.status).toBe(401);
+    expect((await scope1.exchange(publicGrant)).status).toBe(200);
+  });
+
+  it('requires exact redirects, S256 and the intended resource, and refuses unsupported registration', async () => {
+    expect((await scope1.post('/mcp/oauth/register', { client_name: 'Bad', redirect_uris: ['javascript:alert(1)'] })).status).toBe(400);
+    const registered = await (await scope1.post('/mcp/oauth/register', { client_name: 'Test', redirect_uris: ['https://client.example/callback'] })).json() as { client_id: string };
+    const q = new URLSearchParams({ client_id: registered.client_id, redirect_uri: 'https://evil.example/callback', response_type: 'code', resource: scope1.origin + '/mcp', code_challenge_method: 'S256', code_challenge: opaque() });
+    expect((await phoneFetch(scope1.origin + '/mcp/oauth/authorize?' + q)).status).toBe(400);
+    q.set('redirect_uri', 'https://client.example/callback'); q.set('code_challenge_method', 'plain');
+    expect((await phoneFetch(scope1.origin + '/mcp/oauth/authorize?' + q)).status).toBe(400);
+    q.set('code_challenge_method', 'S256'); q.set('resource', 'https://other.example/mcp');
+    expect((await phoneFetch(scope1.origin + '/mcp/oauth/authorize?' + q)).status).toBe(400);
+  });
+
+  it('R1: starts sign-in when Cursor omits resource or sends the origin or a trailing slash, and refuses other hosts', async () => {
+    const registered = await (await scope1.post('/mcp/oauth/register', { client_name: 'Cursor', redirect_uris: ['cursor://anysphere.cursor-mcp/oauth/callback'], token_endpoint_auth_method: 'none' })).json() as { client_id: string };
+    const start = (resource?: string) => phoneFetch(scope1.origin + '/mcp/oauth/authorize?' + new URLSearchParams({ client_id: registered.client_id, redirect_uri: 'cursor://anysphere.cursor-mcp/oauth/callback',
+      response_type: 'code', code_challenge_method: 'S256', code_challenge: createHash('sha256').update(opaque()).digest('base64url'), state: 'r1-state', ...(resource === undefined ? {} : { resource }) }), { redirect: 'manual' });
+    for (const resource of [undefined, scope1.origin + '/mcp', scope1.origin + '/mcp/', scope1.origin, scope1.origin + '/']) {
+      const response = await start(resource);
+      expect([resource, response.status, response.headers.get('location')?.startsWith('/mcp/oauth/consent?flow=')]).toEqual([resource, 302, true]);
+    }
+    for (const resource of ['https://other.example/mcp', 'https://other.example', scope1.origin + '/other'])
+      expect([resource, (await start(resource)).status]).toEqual([resource, 400]);
   });
 });

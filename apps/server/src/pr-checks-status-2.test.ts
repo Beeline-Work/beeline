@@ -1,7 +1,30 @@
-import { cornerFeatureBranch, describe, expect, it, R, C, AUTHOR, REVIEWER, URL, SHA, db, operations, daemon, rollupState, mergeableState, pullBaseSha, mainHead, failMergeabilityRead, onWorkflowRead, gate, graphqlRequests, ownPr, rootFixture, fixtureScope2 } from './pr-checks-status.test-support.js';
+import { cornerFeatureBranch, describe, expect, it, R, C, AUTHOR, REVIEWER, URL, SHA, db, operations, daemon, head, rollupState, mergeableState, pullBaseSha, mainHead, failMergeabilityRead, workflowCount, registeredCount, onWorkflowRead, gate, graphqlRequests, ownPr, rootFixture, fixtureScope2 } from './test-support-pr-checks-status.test-support.js';
 
 describe('zero-check worker completion', () => {
 const scope2 = fixtureScope2();
+
+
+  it('finishes a head with workflows but no registered suites or runs in one explicit confirmation', async () => {
+    rootFixture.rollupState = null;
+    rootFixture.workflowCount = 2;
+    rootFixture.registeredCount = 0;
+    rootFixture.mergeableState = 'clean';
+    rootFixture.pullBaseSha = rootFixture.mainHead;
+    const after = await scope2.finishPrTurn(rootFixture.mainHead);
+    expect(after.lifecycle).toMatchObject({ checks: 'passing', checksSummary: { total: 0 } });
+    expect(after.reviewer).toEqual(['subscribed_event']);
+  }, 20_000);
+
+
+  it('does not transfer absence evidence to a head pushed during confirmation', async () => {
+    rootFixture.rollupState = null;
+    rootFixture.mergeableState = 'clean';
+    rootFixture.pullBaseSha = rootFixture.mainHead;
+    rootFixture.onWorkflowRead = async () => { rootFixture.head = 'f'.repeat(40); };
+    const after = await scope2.finishPrTurn(rootFixture.mainHead);
+    expect(after.lifecycle.checks).not.toBe('passing');
+    expect(after.reviewer).toEqual([]);
+  });
 
 
   it('does not overwrite a concurrent check webhook with an older empty read', async () => {

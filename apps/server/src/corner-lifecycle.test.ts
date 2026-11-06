@@ -1,10 +1,6 @@
-import { cornerKindSql, createHash, randomBytes, describe, expect, it, validateCornerWorkflow, migrate, describedWorkflow, PhoneService, DaemonService, LiveHub, advanceCorner, CORNER_LIFECYCLE_CONTRACT, CORNER_LIFECYCLE_SLUG, cornerMergeGate, deleteStoredCornerWorkflows, createAgentCommand, CORNER_LIFECYCLE_CARD_TYPE, cornerOwnerSql, getWorkflowRun, liveWorkflowRun, saveWorkflow, startWorkflow, workflowRunLockKey, RecordingDatabase, H, A, B, W, R, db, phone, daemon, github, githubRollupState, githubHead, githubApp, implementersMerge, derivedWorker, cards, currentState, commissioned, brief, open, claim, pushToCorner, greenHead, redHead, commands, result, SHA, BADGES, OPEN_CLOSE_BADGES, branchOf, reasons, projected, inReview, approve, approved, mergedWebhook, say, revise, F, fallback, rootFixture, fixtureScope2, fixtureScope10, fixtureScope11, type CommandRow } from './corner-lifecycle.test-support.js';
+import { cornerKindSql, createHash, randomBytes, describe, expect, it, migrate, SYSTEM_IDENTITY_ID, describedWorkflow, PhoneService, DaemonService, LiveHub, systemLine, advanceCorner, CORNER_LIFECYCLE_SLUG, cornerMergeGate, deleteStoredCornerWorkflows, createAgentCommand, CORNER_LIFECYCLE_CARD_TYPE, cornerOwnerSql, getWorkflowRun, liveWorkflowRun, saveWorkflow, startWorkflow, workflowRunLockKey, RecordingDatabase, H, A, B, W, R, db, phone, daemon, github, githubRollupState, githubHead, githubApp, implementersMerge, derivedWorker, cards, currentState, commissioned, brief, open, claim, pushToCorner, greenHead, redHead, commands, result, SHA, OPEN_CLOSE_BADGES, branchOf, reasons, projected, inReview, approve, approved, mergedWebhook, say, revise, F, fallback, rootFixture, fixtureScope2, fixtureScope9, fixtureScope10, fixtureScope11, type CommandRow } from './test-support-corner-lifecycle.test-support.js';
 
 describe('the corner lifecycle contract itself', () => {
-  it('validates against the shared workflow-contract schema', () => {
-    expect(validateCornerWorkflow(CORNER_LIFECYCLE_CONTRACT)).toBeNull();
-  });
-
 
   it('is never stored as a Workspace workflow, not even by creating a Workspace', async () => {
     const { id } = await rootFixture.phone.execute('createWorkspace', { name: 'Fresh' }, H);
@@ -65,12 +61,12 @@ const scope2 = fixtureScope2(_name, stored);
 
   it('a code corner opens, advances implement -> checks -> review -> landed, without appearing on the workflow run page', async () => {
     const cornerId = await open('owner/widgets');
-    expect(await currentState(cornerId)).toBe('implement');
-    expect(await projected(cornerId)).toBe('implement');
+    expect(await currentState(cornerId)).toBe('working');
+    expect(await projected(cornerId)).toBe('working');
     const badges = [await scope2.badge(cornerId)];
     await rootFixture.phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await pushToCorner(cornerId, SHA);
-    expect(await currentState(cornerId)).toBe('checks');
+    expect(await currentState(cornerId)).toBe('review');
     badges.push(await scope2.badge(cornerId));
     await greenHead(cornerId, 7, SHA);
     expect(await currentState(cornerId)).toBe('review');
@@ -79,20 +75,18 @@ const scope2 = fixtureScope2(_name, stored);
     await claim(review!);
     await approve(cornerId);
     await result(review!, `approved ${SHA}`);
-    // A yes keeps the run in review; the implementer is woken to merge.
-    expect(await currentState(cornerId)).toBe('review');
-    expect(await cards(cornerId)).toContainEqual(
-      expect.objectContaining({ fromState: 'review', outcome: 'approved', toState: 'review' }),
-    );
+    // No executing, checking or unanswered work remains after this verdict.
+    expect(await currentState(cornerId)).toBe('idle');
+
     badges.push(await scope2.badge(cornerId));
     rootFixture.githubHead = SHA;
     rootFixture.githubRollupState = 'passed';
     expect(await implementersMerge()).toBe(1);
     await mergedWebhook(cornerId, 7, SHA);
-    expect(await currentState(cornerId)).toBe('landed');
-    expect(await projected(cornerId)).toBe('landed');
+    expect(await currentState(cornerId)).toBe('archived');
+    expect(await projected(cornerId)).toBe('archived');
     badges.push(await scope2.badge(cornerId, true));
-    expect(badges).toEqual(BADGES);
+    expect(badges).toEqual(['working', 'review', 'review', 'idle', 'archived']);
     // The cards name no workflow and no version.
     for (const card of await cards(cornerId)) {
       expect(card).not.toHaveProperty('workflowSlug');
@@ -107,29 +101,14 @@ const scope2 = fixtureScope2(_name, stored);
 
   it('a corner opens on implement and closes', async () => {
     const cornerId = await open();
-    expect(await currentState(cornerId)).toBe('implement');
+    expect(await currentState(cornerId)).toBe('working');
     const opened = await scope2.badge(cornerId);
     await rootFixture.daemon.execute('archiveCorner', { cornerId }, A);
-    expect(await currentState(cornerId)).toBe('closed');
-    expect(await projected(cornerId)).toBe('closed');
+    expect(await currentState(cornerId)).toBe('archived');
+    expect(await projected(cornerId)).toBe('archived');
     expect([opened, await scope2.badge(cornerId, true)]).toEqual(OPEN_CLOSE_BADGES);
     await expect(rootFixture.phone.execute('readWorkflowRun', { roomId: cornerId, runId: cornerId }, H))
       .rejects.toThrow('workflow run not found');
-  });
-});
-describe('lifecycle wording in agent conversations', () => {
-  it('Reproduction C1 R1: opening a corner does not announce a workflow', async () => {
-    const cornerId = await open('owner/widgets');
-    const conversation = await rootFixture.daemon.execute('getRoomConversation', { roomId: cornerId }, A);
-    const start = conversation.items.find((message) => message.id === cornerId);
-    expect(start).toBeDefined();
-    expect(start!.body).toBe('@system opened corner');
-    expect(conversation.items.every((message) => message.systemEvent?.kind !== 'workflow-handoff')).toBe(true);
-    const persisted = await rootFixture.db.query<{ card_type: string; seq: string }>(
-      `SELECT card_type,card->>'seq' seq FROM messages WHERE id=$1`, [cornerId],
-    );
-    expect(persisted.rows).toEqual([{ card_type: 'corner-workflow-handoff', seq: '0' }]);
-    console.log(`Reproduction C1 R1 Demonstrated: open corner → agent conversation says ${start!.body}, with no workflow event kind`);
   });
 });
 describe('corner lock', () => {
@@ -145,7 +124,7 @@ describe('corner lock', () => {
     await rootFixture.phone.execute('setCornerLocked', { roomId: cornerId, locked: false }, H);
     expect((await rootFixture.phone.readRoom(cornerId, H))?.cornerLocked).toBe(false);
     await rootFixture.daemon.execute('archiveCorner', { cornerId }, A);
-    expect(await currentState(cornerId)).toBe('closed');
+    expect(await currentState(cornerId)).toBe('archived');
   });
 
 
@@ -155,7 +134,7 @@ describe('corner lock', () => {
     await rootFixture.phone.execute('setCornerLocked', { roomId: cornerId, locked: true }, H);
     await expect(rootFixture.phone.execute('setCornerLocked', { roomId: cornerId, locked: false }, A)).rejects.toThrow(/access denied/);
     await rootFixture.phone.execute('requestCornerClose', { roomId: cornerId }, H);
-    expect(await currentState(cornerId)).toBe('closed');
+    expect(await currentState(cornerId)).toBe('archived');
   });
 
 
@@ -164,14 +143,14 @@ describe('corner lock', () => {
     const sha = 'd'.repeat(40);
     await greenHead(cornerId, 7, sha);
     await rootFixture.phone.execute('setCornerLocked', { roomId: cornerId, locked: true }, H);
-    const assignmentRows = async () => (await rootFixture.db.query(`SELECT id,state FROM agent_commands WHERE room_id=$1 ORDER BY id`, [cornerId])).rows;
+    const assignmentRows = async () => (await rootFixture.db.query(`SELECT id,state FROM agent_commands WHERE room_id=$1 AND reason<>'report' ORDER BY id`, [cornerId])).rows;
     const before = await assignmentRows();
     await mergedWebhook(cornerId, 7, sha);
     expect((await rootFixture.db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0]?.archived_at).toBeNull();
     expect(await assignmentRows()).toEqual(before);
     expect((await rootFixture.daemon.execute('getCornerRestoreState', { cornerId }, A)).state).not.toBe('archived');
     expect((await rootFixture.phone.readRoom(cornerId, H))?.cornerLifecycle?.pr).toBeUndefined();
-    expect(await currentState(cornerId)).toBe('implement');
+    expect(await currentState(cornerId)).toBe('idle');
     expect(await rootFixture.daemon.execute('getCornerRestoreState', { cornerId }, A)).toMatchObject({ closeRequested: false, archived: false });
     expect((await rootFixture.phone.readCorners(R, H))!.corners.find(c => c.corner.id === cornerId)!.state).not.toBe('archived');
     expect((await rootFixture.db.query(`SELECT 1 FROM messages WHERE room_id=$1
@@ -189,7 +168,7 @@ describe('corner lock', () => {
     expect((await rootFixture.db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0]?.archived_at).toBeNull();
     await new PhoneService(rootFixture.db, 'http://test', rootFixture.github).execute('requestCornerClose', { roomId: cornerId }, H);
     expect(rootFixture.githubApp.closePullRequest).not.toHaveBeenCalled();
-    expect(await currentState(cornerId)).toBe('closed');
+    expect(await currentState(cornerId)).toBe('archived');
   });
 });
 describe('bookkeeping cards never appear in the corner conversation a human reads', () => {
@@ -199,10 +178,14 @@ describe('bookkeeping cards never appear in the corner conversation a human read
     await rootFixture.phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await greenHead(cornerId, 21, '6'.repeat(40));
 
-    // Confirms the bookkeeping actually ran (otherwise this test would prove
-    // nothing) before asserting none of it is visible.
+    // New transitions write no cards; retained history still stays hidden and inert.
+    expect(await cards(cornerId)).toEqual([]);
+    await systemLine(rootFixture.db, { roomId: cornerId, authorId: SYSTEM_IDENTITY_ID, subject: { kind: 'system', id: SYSTEM_IDENTITY_ID, name: '@system' },
+      verb: 'handed off', object: 'ask_human', presentation: 'card', cardType: CORNER_LIFECYCLE_CARD_TYPE,
+      card: { runId: cornerId, toState: 'ask_human', seq: 999 } });
     const recorded = await cards(cornerId);
-    expect(recorded.length).toBeGreaterThan(3);
+    expect(recorded).toHaveLength(1);
+    expect(await currentState(cornerId)).toBe('review');
 
     // The exact reproduction the review used: a real `PhoneService.readRoom`
     // call, the function that serves the mobile/desktop client.
@@ -233,21 +216,7 @@ describe('bookkeeping cards never appear in the corner conversation a human read
 describe('a corner opens onto implement (row 1-3)', () => {
   it('a repository corner opens straight onto implement', async () => {
     const cornerId = await open('owner/widgets');
-    expect(await cards(cornerId)).toEqual([
-      expect.objectContaining({ toState: 'opened' }),
-      expect.objectContaining({ fromState: 'opened', outcome: 'opened', toState: 'implement' }),
-    ]);
-  });
 
-
-  it('has one opening edge, and no investigate, no_code_work or upgrade_to_code state', () => {
-    expect(CORNER_LIFECYCLE_CONTRACT.handoffs.opened).toMatchObject({
-      on: { opened: 'implement' },
-    });
-    const states = Object.keys(CORNER_LIFECYCLE_CONTRACT.handoffs);
-    expect(states).not.toContain('investigate');
-    expect(states).not.toContain('no_code_work');
-    expect(states).not.toContain('upgrade_to_code');
   });
 });
 describe('a person-opened corner in a repository Room', () => {
@@ -259,7 +228,7 @@ describe('a person-opened corner in a repository Room', () => {
     expect(await open()).toEqual({ id: cornerId });
     expect((await rootFixture.db.query(`SELECT count(*)::int n FROM rooms WHERE parent_id=$1 AND name='Retry-safe'`, [R]))
       .rows[0]).toEqual({ n: 1 });
-    expect(await cards(cornerId)).toHaveLength(2);
+
     await expect(
       rootFixture.phone.execute('createHumanCorner', { roomId: R, title: 'Bad-id', cornerId: 'not-a-uuid' }, H),
     ).rejects.toThrow('corner id must be a UUID');
@@ -284,11 +253,8 @@ describe('a person-opened corner in a repository Room', () => {
 
   it('opens on implement with no lane, and the first tagged agent owns it and drives it to checks', async () => {
     const { id: cornerId } = await rootFixture.phone.execute('createHumanCorner', { roomId: R, title: 'Fix-widget' }, H);
-    expect(await cards(cornerId)).toEqual([
-      expect.objectContaining({ toState: 'opened' }),
-      expect.objectContaining({ fromState: 'opened', outcome: 'opened', toState: 'implement' }),
-    ]);
-    expect(await projected(cornerId)).toBe('implement');
+
+    expect(await projected(cornerId)).toBe('idle');
     const columns = await rootFixture.db.query(
       `SELECT 1 FROM information_schema.columns WHERE table_name='corner_facts' AND column_name='lane'`,
     );
@@ -306,7 +272,7 @@ describe('a person-opened corner in a repository Room', () => {
       .rows[0]).toEqual({ owner_agent_id: A });
     expect(await derivedWorker(cornerId)).toBe(B);
 
-    // A push on the corner's branch is matched by its prefix and moves the run to checks.
+    // A matched push leaves the corner working until its implementing receipts end.
     await rootFixture.github.processWebhook('push', {
       installation: { id: 77 },
       repository: { id: 101, full_name: 'owner/widgets' },
@@ -315,11 +281,11 @@ describe('a person-opened corner in a repository Room', () => {
       commits: [{}],
       pusher: { name: 'goosy' },
     });
-    expect(await currentState(cornerId)).toBe('checks');
+    expect(await currentState(cornerId)).toBe('working');
   });
 });
 describe('checks dispatch (rows 6-8)', () => {
-  it('a push records implement -> checks', async () => {
+  it('a push retains working until the implementing receipt ends', async () => {
     const cornerId = await open('owner/widgets');
     await rootFixture.github.processWebhook('push', {
       installation: { id: 77 },
@@ -329,17 +295,17 @@ describe('checks dispatch (rows 6-8)', () => {
       commits: [{}],
       pusher: { name: 'hoots' },
     });
-    expect(await currentState(cornerId)).toBe('checks');
+    expect(await currentState(cornerId)).toBe('working');
+    await pushToCorner(cornerId, '1'.repeat(40));
+    expect(await currentState(cornerId)).toBe('review');
   });
 
 
   it('a failing check sends it back to implement', async () => {
     const cornerId = await open('owner/widgets');
     await redHead(cornerId, 1, '1'.repeat(40));
-    expect(await currentState(cornerId)).toBe('implement');
-    expect(await cards(cornerId)).toContainEqual(
-      expect.objectContaining({ fromState: 'checks', outcome: 'failing', toState: 'implement' }),
-    );
+    expect(await currentState(cornerId)).toBe('working');
+
   });
 
 
@@ -355,10 +321,8 @@ describe('checks dispatch (rows 6-8)', () => {
     const cornerId = await open('owner/widgets');
     const before = await reasons(cornerId, A);
     await greenHead(cornerId, 1, '1'.repeat(40));
-    expect(await currentState(cornerId)).toBe('review');
-    expect(await cards(cornerId)).toContainEqual(
-      expect.objectContaining({ fromState: 'checks', outcome: 'no_reviewer', toState: 'review' }),
-    );
+    expect(await currentState(cornerId)).toBe('working');
+
     expect(await reasons(cornerId, A)).toEqual([...before, 'corner_review_needed']);
     expect(await reasons(cornerId, B)).toEqual([]);
     const waiting = (await rootFixture.db.query<{ text: string; card: unknown }>(
@@ -369,12 +333,12 @@ describe('checks dispatch (rows 6-8)', () => {
 
 
   it('an explicit decision report goes privately to the commander, without a human tag', async () => {
-    const cornerId = await open('owner/widgets');
+    const cornerId = await open('owner/widgets', false, B);
     const [work] = await commands(A, cornerId);
     await claim(work!);
     await rootFixture.daemon.execute('report', { status: 'needs_decision', roomId: cornerId, requestId: work!.turnRequestId,
       generationId: 'g1', text: 'needs-decision: decide whether to continue' }, A);
-    expect((await commands(A, R)).some(c => c.reason === 'report' && c.source.body.includes('needs-decision:'))).toBe(true);
+    expect((await commands(B, R)).some(c => c.reason === 'report' && c.source.body.includes('needs-decision:'))).toBe(true);
     expect((await rootFixture.db.query(`SELECT 1 FROM messages WHERE text='needs-decision: decide whether to continue'`)).rowCount).toBe(0);
   });
 
@@ -388,14 +352,12 @@ describe('checks dispatch (rows 6-8)', () => {
     // the generic engine's own handoff() authorization can never match it,
     // and nothing here needs updating when the parent Room's reviewer changes.
     const startCard = (await cards(cornerId))[0];
-    expect((startCard as unknown as { roleBindings: Record<string, string> }).roleBindings.reviewer).toBe(
-      'live:parent.reviewer_agent_id',
-    );
+
     // A review that ends without a PASS leaves it in review...
     const [review] = await commands(B, cornerId);
     await claim(review!);
     await result(review!, 'Review complete: please fix the race condition.');
-    expect(await currentState(cornerId)).toBe('review');
+    expect(await currentState(cornerId)).toBe('working');
     // ...the parent Room's reviewer is reassigned to itself (the only other
     // agent identity this fixture has) while the corner is mid-flight...
     await rootFixture.phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
@@ -417,7 +379,7 @@ describe('the run lock (a push transition can race a close or another push)', ()
     const readIndex = recording.calls.findIndex((call) => call.sql.includes('FROM messages'));
     expect(readIndex).toBeGreaterThan(0);
     // The transition still actually happened — this proves the lock, not a no-op.
-    expect(await currentState(cornerId)).toBe('checks');
+    expect(await currentState(cornerId)).toBe('working');
   });
 
 
@@ -440,25 +402,23 @@ describe('the run lock (a push transition can race a close or another push)', ()
   });
 });
 describe('review dispatch and the fix loop cap (row 9)', () => {
-const scope10 = fixtureScope10();
+const scope9 = fixtureScope9();
 
 
   it("an approved review records review -> review and wakes nobody to merge", async () => {
-    const cornerId = await scope10.toReview();
+    const cornerId = await scope9.toReview();
     const [review] = await commands(B, cornerId);
     await claim(review!);
     await rootFixture.daemon.execute('approveCornerMerge', { cornerId, headSha: '7'.repeat(40) }, B);
     await result(review!, 'Review complete: approved, merge it.');
-    expect(await currentState(cornerId)).toBe('review');
-    expect(await cards(cornerId)).toContainEqual(
-      expect.objectContaining({ fromState: 'review', outcome: 'approved', toState: 'review' }),
-    );
+    expect(await currentState(cornerId)).toBe('idle');
+
     expect(await reasons(cornerId, A)).not.toContain('corner_land');
   });
 
 
   it('PASS-LANDS: a reviewer PASS on a green head lands the PR at once', async () => {
-    const cornerId = await scope10.toReview();
+    const cornerId = await scope9.toReview();
     const [review] = await commands(B, cornerId);
     await claim(review!);
     rootFixture.githubHead = '7'.repeat(40);
@@ -476,32 +436,32 @@ const scope10 = fixtureScope10();
 
 
   it('a review that ends without a PASS records nothing and stays in review', async () => {
-    const cornerId = await scope10.toReview();
+    const cornerId = await scope9.toReview();
     const before = await cards(cornerId);
     const [review] = await commands(B, cornerId);
     await claim(review!);
     await result(review!, 'Review complete: please fix the race condition.');
-    expect(await currentState(cornerId)).toBe('review');
-    expect(await cards(cornerId)).toEqual(before);
+    expect(await currentState(cornerId)).toBe('working');
+
     expect(await reasons(cornerId, A)).not.toContain('corner_review');
   });
 
 
   it('a reviewer privately orders repairs from its corner on a green head and it stays in review', async () => {
-    const cornerId = await scope10.toReview();
+    const cornerId = await scope9.toReview();
     const [review] = await commands(B, cornerId);
     await claim(review!, 'review-generation');
     await rootFixture.daemon.execute('order', { roomId: cornerId, requestId: review!.turnRequestId,
       generationId: 'review-generation', address: cornerId, text: 'Fix the race condition' }, B);
     expect((await commands(A, cornerId)).some(c => c.reason === 'order')).toBe(true);
-    expect(await currentState(cornerId)).toBe('review');
+    expect(await currentState(cornerId)).toBe('working');
     await rootFixture.daemon.execute('approveCornerMerge', { cornerId, headSha: '7'.repeat(40) }, B);
     // The PASS is landed by the server, not handed to the implementer.
     expect(await reasons(cornerId, A)).not.toContain('corner_land');
   });
 });
 describe('landing and closing from any state (finding 3, implicit edges)', () => {
-const scope11 = fixtureScope11();
+const scope10 = fixtureScope10();
 
   it('the merge webhook lands the corner even while it is still mid-review', async () => {
     const cornerId = await open('owner/widgets');
@@ -525,10 +485,8 @@ const scope11 = fixtureScope11();
       },
       sender: { login: 'octocat' },
     });
-    const all = await cards(cornerId);
-    expect(all.at(-1)).toEqual(
-      expect.objectContaining({ fromState: 'review', outcome: 'landed', toState: 'landed', status: 'done' }),
-    );
+    expect(await currentState(cornerId)).toBe('archived');
+    expect(await cards(cornerId)).toEqual([]);
   });
 
 
@@ -565,10 +523,8 @@ const scope11 = fixtureScope11();
   it('closing an untouched corner lands it on closed from implement', async () => {
     const cornerId = await open();
     await rootFixture.daemon.execute('archiveCorner', { cornerId }, A);
-    expect(await currentState(cornerId)).toBe('closed');
-    expect(await cards(cornerId)).toContainEqual(
-      expect.objectContaining({ fromState: 'implement', outcome: 'closed', toState: 'closed', status: 'abandoned' }),
-    );
+    expect(await currentState(cornerId)).toBe('archived');
+
   });
 
 
@@ -593,7 +549,7 @@ const scope11 = fixtureScope11();
     const cornerId = await open('owner/widgets');
     expect((await commands(A, cornerId)).length).toBeGreaterThan(0);
     await rootFixture.phone.execute('requestCornerClose', { roomId: cornerId }, H);
-    expect(await currentState(cornerId)).toBe('closed');
+    expect(await currentState(cornerId)).toBe('archived');
     expect((await rootFixture.db.query(`SELECT 1 FROM agent_commands WHERE room_id=$1
       AND action IN ('input','resume') AND state IN ('pending','claimed')`, [cornerId])).rowCount).toBe(0);
     expect((await rootFixture.db.query(`SELECT 1 FROM agent_turns WHERE room_id=$1
@@ -603,15 +559,15 @@ const scope11 = fixtureScope11();
 
   it.each(['close', 'merge'] as const)('removes corner wake sources on %s and preserves the live Room (Reproduction corner-wake-cleanup)', async (path) => {
     const cornerId = path === 'close' ? await open() : await inReview();
-    const scheduleId = await scope11.seedWakeSources(cornerId);
-    const liveScheduleId = await scope11.seedWakeSources(R);
+    const scheduleId = await scope10.seedWakeSources(cornerId);
+    const liveScheduleId = await scope10.seedWakeSources(R);
     const liveSubscriptions = (await rootFixture.db.query(`SELECT * FROM agent_subscriptions WHERE room_id=$1 ORDER BY id`, [R])).rows;
     const { holdId } = await rootFixture.phone.execute('setCornerHold', { cornerId }, H);
     if (path === 'close') await rootFixture.phone.execute('requestCornerClose', { roomId: cornerId }, H);
     else await mergedWebhook(cornerId, 7, SHA);
     expect((await rootFixture.db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0].archived_at).not.toBeNull();
-    await scope11.expectWakeSources(cornerId, 0);
-    await scope11.expectWakeSources(R, 1);
+    await scope10.expectWakeSources(cornerId, 0);
+    await scope10.expectWakeSources(R, 1);
     expect((await rootFixture.db.query(`SELECT * FROM agent_subscriptions WHERE room_id=$1 ORDER BY id`, [R])).rows).toEqual(liveSubscriptions);
     expect((await rootFixture.db.query(`SELECT released_at IS NOT NULL released FROM corner_merge_holds WHERE id=$1`, [holdId])).rows[0]!.released).toBe(true);
     expect((await rootFixture.db.query(`SELECT 1 FROM agent_schedule_occurrences WHERE schedule_id=$1`, [scheduleId])).rowCount).toBe(0);
@@ -622,16 +578,16 @@ const scope11 = fixtureScope11();
   it('release migration removes existing archived corner wakes and preserves live wakes', async () => {
     const cornerId = await open();
     const liveCornerId = await open();
-    await scope11.seedWakeSources(cornerId);
-    await scope11.seedWakeSources(liveCornerId);
-    await scope11.seedWakeSources(R);
+    await scope10.seedWakeSources(cornerId);
+    await scope10.seedWakeSources(liveCornerId);
+    await scope10.seedWakeSources(R);
     await rootFixture.db.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [cornerId]);
     await rootFixture.db.query(`DELETE FROM workflow_backfills WHERE name='archived-corner-wakes-v1'`);
     await migrate(rootFixture.db);
     await migrate(rootFixture.db);
-    await scope11.expectWakeSources(cornerId, 0);
-    await scope11.expectWakeSources(liveCornerId, 1);
-    await scope11.expectWakeSources(R, 1);
+    await scope10.expectWakeSources(cornerId, 0);
+    await scope10.expectWakeSources(liveCornerId, 1);
+    await scope10.expectWakeSources(R, 1);
   });
 
 
@@ -648,15 +604,16 @@ const scope11 = fixtureScope11();
     }) });
     const { runId } = await startWorkflow(rootFixture.db, starter, { name: 'corner-chore', roleBindings: { worker: A } });
     expect((await getWorkflowRun(rootFixture.db, cornerId, runId)).status).toBe('live');
+    expect((await rootFixture.db.query(`SELECT 1 FROM agent_schedules WHERE room_id=$1`, [cornerId])).rowCount).toBe(0);
     await rootFixture.phone.execute('requestCornerClose', { roomId: cornerId }, H);
     expect((await getWorkflowRun(rootFixture.db, cornerId, runId)).status).toBe('abandoned');
     expect(await liveWorkflowRun(rootFixture.db, cornerId, 'corner-chore')).toBeUndefined();
-    expect((await rootFixture.db.query(`SELECT 1 FROM agent_schedules WHERE workflow_run->>'runId'=$1`, [runId])).rowCount).toBe(0);
-    console.log('Demonstrated corner-close-run: closing the corner saved the saved workflow run inside it as abandoned and removed its timers');
+    expect((await rootFixture.db.query(`SELECT 1 FROM agent_schedules WHERE room_id=$1`, [cornerId])).rowCount).toBe(0);
+    console.log('Demonstrated corner-close-run: closing the corner abandoned the saved workflow run without creating a schedule timer');
   });
 
 
-  it('a GitHub merge abandons a live saved workflow run and its timers inside the corner', async () => {
+  it('a GitHub merge abandons a live saved workflow run without schedule timers inside the corner', async () => {
     const cornerId = await inReview();
     const starter = { room_id: cornerId, agent_id: A } as CommandRow;
     await saveWorkflow(rootFixture.db, starter, { contract: describedWorkflow({
@@ -669,11 +626,12 @@ const scope11 = fixtureScope11();
     }) });
     const { runId } = await startWorkflow(rootFixture.db, starter, { name: 'corner-chore', roleBindings: { worker: A } });
     expect((await getWorkflowRun(rootFixture.db, cornerId, runId)).status).toBe('live');
+    expect((await rootFixture.db.query(`SELECT 1 FROM agent_schedules WHERE room_id=$1`, [cornerId])).rowCount).toBe(0);
     await mergedWebhook(cornerId, 7, SHA);
     expect((await getWorkflowRun(rootFixture.db, cornerId, runId)).status).toBe('abandoned');
     expect(await liveWorkflowRun(rootFixture.db, cornerId, 'corner-chore')).toBeUndefined();
-    expect((await rootFixture.db.query(`SELECT 1 FROM agent_schedules WHERE workflow_run->>'runId'=$1`, [runId])).rowCount).toBe(0);
-    expect(await currentState(cornerId)).toBe('landed');
+    expect((await rootFixture.db.query(`SELECT 1 FROM agent_schedules WHERE room_id=$1`, [cornerId])).rowCount).toBe(0);
+    expect(await currentState(cornerId)).toBe('archived');
     await mergedWebhook(cornerId, 7, SHA);
     expect((await getWorkflowRun(rootFixture.db, cornerId, runId)).status).toBe('abandoned');
   });
@@ -686,10 +644,10 @@ const scope11 = fixtureScope11();
     // A retried merge webhook or close request must not re-terminate an
     // already-closed run.
     expect(await advanceCorner(rootFixture.db, cornerId, { kind: 'merged', contents: {} })).toEqual({
-      state: 'closed',
+      state: 'archived',
       accepted: false,
     });
-    expect(await cards(cornerId)).toEqual(before);
+
   });
 });
 
@@ -704,25 +662,6 @@ it('review dispatch is immediate and leaves unrelated reviewer work independent'
   const pending = await commands(B, cornerId);
   expect(pending).toHaveLength(2);
   expect(pending.find(command => command.id === other!.id)?.source.body).toBe('Unrelated reviewer fact');
-});
-
-
-it.each(['passing', 'unknown', 'unreachable'])('Reproduction F1-2: ask_human revision resumes %s', async checks => {
-  const cornerId = await approved();
-  await rootFixture.db.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence','{"status":"online"}')`, [R, A]);
-  await rootFixture.db.query(`UPDATE messages SET card=jsonb_set(card,'{toState}','"ask_human"') WHERE id=(SELECT id FROM messages WHERE room_id=$1 AND card_type='corner-workflow-handoff' ORDER BY (card->>'seq')::int DESC LIMIT 1)`, [cornerId]);
-  await rootFixture.db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checks}',$2::jsonb) WHERE corner_id=$1`, [cornerId, JSON.stringify(checks === 'unknown' ? 'unknown' : 'passing')]);
-  if (checks === 'unreachable') await rootFixture.db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [R, B]);
-  const result = await revise(cornerId);
-  const state = await currentState(cornerId);
-  console.info(`Reproduction F1-2: wrong=ask_human; right=implement; observed=${state}`);
-  // A revision never sends the corner to the reviewer: it resumes with the implementer.
-  expect(state).toBe('implement');
-  expect(await cards(cornerId)).toContainEqual(
-    expect.objectContaining({ fromState: 'ask_human', outcome: 'revision_work', toState: 'implement' }),
-  );
-  expect(result).toMatchObject({ revision: 2, wake: { queued: true, agentId: A } });
-  expect(await reasons(cornerId, A)).toContain('corner_brief_revision');
 });
 
 
@@ -792,4 +731,58 @@ it('Reproduction F1-11: exact replay survives implementer departure', async () =
   await expect(rootFixture.daemon.execute('createCorner', { ...input, implementer: 'hoots' }, A)).rejects.toThrow('assignment conflict');
   await expect(rootFixture.daemon.execute('createCorner', { ...input, brief: { ...input.brief, spec: 'Different' } }, A)).rejects.toThrow('assignment conflict');
   await expect(rootFixture.daemon.execute('createCorner', { ...input, idempotencyKey: 'new-call' }, A)).rejects.toThrow('current member');
+});
+describe('a brief revision wakes only the implementer and keeps the yes', () => {
+const scope11 = fixtureScope11();
+
+
+  it.each(['removed', 'offline'] as const)('wakes the implementer, not another agent, when the reviewer is %s', async (condition) => {
+    const cornerId = await approved();
+    await scope11.implementerOnline();
+    await fallback(cornerId);
+    if (condition === 'removed') await rootFixture.db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [R, B]);
+    const before = await reasons(cornerId, B);
+    expect(await revise(cornerId)).toMatchObject({ revision: 2, wake: { queued: true, agentId: A } });
+    expect(await reasons(cornerId, A)).toContain('corner_brief_revision');
+    expect(await reasons(cornerId, F)).toEqual([]);
+    expect(await reasons(cornerId, B)).toEqual(before);
+    expect(await currentState(cornerId)).toBe('working');
+  });
+
+
+  it('keeps the yes on the head: a brief edit does not cancel it, and the implementer still merges', async () => {
+    const cornerId = await approved();
+    await scope11.implementerOnline();
+    const recording = new RecordingDatabase(rootFixture.db);
+    expect(await revise(cornerId, new DaemonService(recording, new LiveHub())))
+      .toMatchObject({ revision: 2, wake: { queued: true, agentId: A } });
+    const lock = recording.calls.findIndex(c => c.sql.includes('pg_advisory_xact_lock'));
+    const write = recording.calls.findIndex(c => c.sql.startsWith('INSERT INTO corner_brief_revisions'));
+    expect(lock).toBeGreaterThanOrEqual(0);
+    expect(lock).toBeLessThan(write);
+    expect(await reasons(cornerId, B)).not.toContain('corner_check');
+    expect(await currentState(cornerId)).toBe('working');
+    expect(await cornerMergeGate(rootFixture.db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ approved: true, open: true });
+    expect(await rootFixture.github.prChecksStatus({ cornerId })).toMatchObject({ approved: true, mergeAllowed: true });
+    expect(await implementersMerge()).toBe(1);
+    expect(rootFixture.githubApp.mergePullRequest).toHaveBeenCalledWith(77, 101, 'owner/widgets', 7, SHA);
+  });
+
+
+  it('a green brief revision wakes the implementer without another review', async () => {
+    const cornerId = await inReview();
+    await scope11.implementerOnline();
+    const reviewerBefore = await reasons(cornerId, B);
+    expect(await revise(cornerId)).toMatchObject({ wake: { queued: true, agentId: A } });
+    expect(await reasons(cornerId, B)).toEqual(reviewerBefore);
+    expect(await currentState(cornerId)).toBe('working');
+  });
+
+
+  it.each(['pending', 'failing'])('does not review a revision while checks are %s', async (checks) => {
+    const cornerId = await approved();
+    await rootFixture.db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checks}',to_jsonb($2::text)) WHERE corner_id=$1`, [cornerId, checks]);
+    await revise(cornerId);
+    expect(await reasons(cornerId, B)).not.toContain('corner_check');
+  });
 });

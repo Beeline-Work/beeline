@@ -1,13 +1,14 @@
-import { activateRelease, prepareLatestRelease, type SelfUpdateManagerOptions } from './self-update-activate-release.js';
-import { createHash } from 'node:crypto';
-import { constants as fsConstants } from 'node:fs';
-import { assertInstallTestIsolation } from './lifecycle-test-guard.js';
-import { access, chmod, lstat, mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { spawn } from 'node:child_process';
-import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
-import { type InstalledBundleIdentity, type PublishedBundle } from './self-update-manifest.js';
-export { activateRelease, normalizeLegacyBundleShape, repairInstallForwarders, type SelfUpdateManagerOptions, describeIdentity, prepareLatestRelease, pruneHelperReleases } from './self-update-activate-release.js';
+import { readFile, mkdir, open, rename, lstat, access, writeFile, rm, chmod } from "node:fs/promises";
+import { join, resolve, dirname } from "node:path";
+import { homedir } from "node:os";
+import { spawn } from "node:child_process";
+import { constants as fsConstants } from "node:fs";
+import { assertInstallTestIsolation } from "./lifecycle-test-guard.js";
+import { createHash } from "node:crypto";
+import { type PublishedBundle, type InstalledBundleIdentity, resolveManifestUrl, parseUpdateManifest } from './self-update-manifest.js';
+import { type SelfUpdateManagerOptions, activateRelease } from './self-update-activate-release.js';
+
+
 
 
 
@@ -25,6 +26,7 @@ export interface BeelineInstallLayout {
 }
 
 
+
 /**
  * Resolve the install layout from the environment. The bundled `bin/beeline`
  * wrapper exports BEELINE_LIB_DIR precisely so the CLI can find its own
@@ -33,6 +35,7 @@ export interface BeelineInstallLayout {
  * honestly instead of guessing.
  */
 export const RELEASES_SEGMENT = 'beeline-releases';
+
 
 
 /**
@@ -69,6 +72,7 @@ export function anchorLayout(rawLibDir: string): BeelineInstallLayout {
 }
 
 
+
 export function beelineInstallLayout(
   env: NodeJS.ProcessEnv = process.env,
 ): BeelineInstallLayout | undefined {
@@ -76,6 +80,7 @@ export function beelineInstallLayout(
   if (!raw) return undefined;
   return anchorLayout(raw);
 }
+
 
 
 /** Release id encoded in a `beeline-releases/<id>` path, if any. */
@@ -86,6 +91,7 @@ export function releaseIdFromPath(path: string | undefined): string | undefined 
   const id = idx >= 0 ? segments[idx + 1] : undefined;
   return id ? sanitizeReleaseId(id) : undefined;
 }
+
 
 
 /**
@@ -115,6 +121,7 @@ export function runningReleaseId(
 }
 
 
+
 /** Canonical first-install layout used by `npx usebeeline connect`. */
 export function defaultBeelineInstallLayout(
   env: NodeJS.ProcessEnv = process.env,
@@ -122,6 +129,7 @@ export function defaultBeelineInstallLayout(
   const home = env.HOME?.trim() || homedir();
   return anchorLayout(resolve(home, '.local', 'lib', 'beeline'));
 }
+
 
 
 /**
@@ -148,6 +156,7 @@ export function discoveredBeelineInstallLayout(
 }
 
 
+
 /** Platform key matching build-beeline-bundle.mjs's supported set. */
 export function hostPlatformKey(): string {
   const os = process.platform === 'linux' ? 'linux' : process.platform === 'darwin' ? 'darwin' : '';
@@ -156,6 +165,7 @@ export function hostPlatformKey(): string {
     throw new Error(`no Beeline bundle exists for ${process.platform}-${process.arch}`);
   return `${os}-${arch}`;
 }
+
 
 
 // ---------------------------------------------------------------------------
@@ -171,10 +181,12 @@ export interface BundleJson {
 }
 
 
+
 /** Where bundle.json lives: release-shaped bundles nest it, legacy-flat ones keep it at the root. */
 export function bundleJsonCandidates(bundleDir: string): string[] {
   return [join(bundleDir, 'lib', 'beeline', 'bundle.json'), join(bundleDir, 'bundle.json')];
 }
+
 
 
 export async function readBundleJson(bundleDir: string): Promise<InstalledBundleIdentity | undefined> {
@@ -200,8 +212,10 @@ export async function readBundleJson(bundleDir: string): Promise<InstalledBundle
 }
 
 
+
 /** The file name a staged/installed release's recorded-good Node path is kept under (bundle root). */
 export const STAGED_NODE_PATH_FILE = '.node-path';
+
 
 
 /** The `node` engine minimum a bundle declares in its own bundle.json, if any. */
@@ -221,6 +235,7 @@ export async function readBundleEngineMinimum(
 }
 
 
+
 export function nodeVersionAtLeast(
   version: string,
   minimum: readonly [number, number, number],
@@ -233,6 +248,7 @@ export function nodeVersionAtLeast(
   }
   return true;
 }
+
 
 
 export interface UpdateStateFile {
@@ -248,6 +264,7 @@ export interface UpdateStateFile {
 }
 
 
+
 /**
  * Install-scoped state lives beside the releases (one install may serve
  * several daemons; the identity of "what is installed" is shared).
@@ -257,6 +274,7 @@ export function updateStatePath(layout: BeelineInstallLayout): string {
 }
 
 
+
 export async function readUpdateState(layout: BeelineInstallLayout): Promise<UpdateStateFile> {
   try {
     return JSON.parse(await readFile(updateStatePath(layout), 'utf8')) as UpdateStateFile;
@@ -264,6 +282,7 @@ export async function readUpdateState(layout: BeelineInstallLayout): Promise<Upd
     return {};
   }
 }
+
 
 
 export async function writeUpdateState(
@@ -285,6 +304,7 @@ export async function writeUpdateState(
 }
 
 
+
 /**
  * What is this daemon running? Reads the installed bundle itself — never a
  * source checkout, which may not exist on the host. When the installed
@@ -301,6 +321,7 @@ export async function readInstalledBundleIdentity(
 }
 
 
+
 // ---------------------------------------------------------------------------
 // Release directories
 // ---------------------------------------------------------------------------
@@ -309,6 +330,7 @@ export function sanitizeReleaseId(id: string): string {
   const cleaned = id.replace(/[^0-9a-zA-Z._-]/g, '-').slice(0, 80);
   return cleaned || 'release';
 }
+
 
 
 export async function pathKind(path: string): Promise<'symlink' | 'directory' | 'missing'> {
@@ -322,6 +344,7 @@ export async function pathKind(path: string): Promise<'symlink' | 'directory' | 
     return 'missing';
   }
 }
+
 
 
 /** The release id the `lib/beeline` symlink currently names ('legacy' for a real dir). */
@@ -339,6 +362,7 @@ export async function activeReleaseId(layout: BeelineInstallLayout): Promise<str
 }
 
 
+
 export async function fsyncDir(path: string): Promise<void> {
   try {
     const handle = await open(path, 'r');
@@ -351,6 +375,7 @@ export async function fsyncDir(path: string): Promise<void> {
     // best effort — not every filesystem supports directory fsync
   }
 }
+
 
 
 // ---------------------------------------------------------------------------
@@ -366,11 +391,13 @@ export function archiveUrlFor(manifestUrl: string, file: string): string {
 }
 
 
+
 export async function fetchText(url: string, fetchImpl: typeof fetch): Promise<string> {
   const response = await fetchImpl(url, { signal: undefined });
   if (!response.ok) throw new Error(`fetching ${url} failed: HTTP ${response.status}`);
   return response.text();
 }
+
 
 
 export function run(
@@ -395,17 +422,22 @@ export function run(
 }
 
 
+
 export const BUNDLE_ENTRYPOINT = 'lib/beeline/beeline-cli.mjs';
+
 
 export const PI_MCP_ADAPTER_ENTRYPOINT = 'lib/beeline/pi-mcp-adapter.mjs';
 
+
 export const CODEGRAPH_ENTRYPOINT = 'lib/beeline/codegraph/bin/codegraph';
+
 
 
 /** Entrypoint candidates: release-shaped first, then the legacy-flat fallback. */
 export function entrypointCandidates(bundleDir: string): string[] {
   return [join(bundleDir, BUNDLE_ENTRYPOINT), join(bundleDir, 'beeline-cli.mjs')];
 }
+
 
 
 /**
@@ -427,10 +459,12 @@ export async function resolveBundleEntrypoint(bundleDir: string): Promise<string
 }
 
 
+
 /** Files whose presence makes an extracted bundle installable. */
 export function requiredBundlePaths(): string[] {
   return [BUNDLE_ENTRYPOINT, PI_MCP_ADAPTER_ENTRYPOINT, CODEGRAPH_ENTRYPOINT];
 }
+
 
 
 /**
@@ -618,6 +652,7 @@ export async function stageRelease(
 }
 
 
+
 // ---------------------------------------------------------------------------
 // Atomic activation
 // ---------------------------------------------------------------------------
@@ -629,6 +664,7 @@ export const FORWARDER_TOOLS = [
   'beeline-readonly-mcp',
   'codegraph',
 ] as const;
+
 
 
 /**
@@ -644,6 +680,7 @@ export const FORWARDER_TOOLS = [
 export const FORWARDER_ALIASES: Readonly<Record<string, (typeof FORWARDER_TOOLS)[number]>> = {
   usebeeline: 'beeline',
 };
+
 
 
 export function forwarderScript(tool: string): string {
@@ -676,12 +713,14 @@ export function forwarderScript(tool: string): string {
 }
 
 
+
 export async function replaceFile(path: string, contents: string, mode: number): Promise<void> {
   const temp = `${path}.new-${process.pid}`;
   await writeFile(temp, contents, { mode });
   await chmod(temp, mode);
   await rename(temp, path);
 }
+
 
 
 
@@ -696,3 +735,61 @@ export class SelfUpdateManager {
     if (!this.options.stageOnly) await activateRelease(this.options.layout, target.releaseId);
   }
 }
+
+
+
+export async function prepareLatestRelease(
+  layout: BeelineInstallLayout,
+  options: {
+    env?: NodeJS.ProcessEnv;
+    fetchImpl?: typeof fetch;
+    logger?: (line: string) => void;
+    force?: boolean;
+    deadlineAt?: number;
+    manifest?: { url: string; bundle: PublishedBundle };
+  } = {},
+): Promise<{ releaseId: string; identity: InstalledBundleIdentity }> {
+  try {
+    const manifestUrl = options.manifest?.url ?? resolveManifestUrl(options.env ?? process.env);
+    const bundle =
+      options.manifest?.bundle ??
+      parseUpdateManifest(
+        await fetchText(manifestUrl, options.fetchImpl ?? fetch),
+        hostPlatformKey(),
+      ).bundle;
+    const pending = (await readUpdateState(layout)).stagedReleaseId;
+    const pendingDigest = pending
+      ? await readFile(join(layout.releasesRoot, pending, '.stage-ok'), 'utf8').catch(() => '')
+      : '';
+    const releaseId =
+      !options.force && pending && pendingDigest.trim() === bundle.sha256
+        ? pending
+        : await stageRelease(layout, manifestUrl, bundle, {
+            fetchImpl: options.fetchImpl,
+            logger: options.logger,
+            force: options.force,
+            deadlineAt: options.deadlineAt,
+          });
+    await writeUpdateState(layout, {
+      ...(await readUpdateState(layout)),
+      lastCheckAt: Date.now(),
+      lastCheckResult: 'verified',
+      stagedReleaseId: releaseId,
+    });
+    return { releaseId, identity: { version: bundle.version, commit: bundle.commit } };
+  } catch (error) {
+    await writeUpdateState(layout, {
+      ...(await readUpdateState(layout)),
+      lastCheckAt: Date.now(),
+      lastCheckResult: 'unconfirmed',
+      lastCheckError: String(error),
+    }).catch(() => undefined);
+    throw error;
+  }
+}
+export { activateRelease } from './self-update-activate-release.js';
+export { normalizeLegacyBundleShape } from './self-update-activate-release.js';
+export { repairInstallForwarders } from './self-update-activate-release.js';
+export type { SelfUpdateManagerOptions } from './self-update-activate-release.js';
+export { describeIdentity } from './self-update-activate-release.js';
+export { pruneHelperReleases } from './self-update-activate-release.js';

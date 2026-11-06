@@ -2,7 +2,7 @@ import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { cornerObjectiveSql } from './corner-objective.js';
 import { commandOwnerLiveSql } from './turn-ownership.js';
 import { cornerOwnerSql } from './corner-worker.js';
-import { cornerRunOutcomeSql, cornerRunStateSql } from './corner-run.js';
+import { cornerRunOutcomeSql } from './corner-run.js';
 import { cornerReviewerSql } from './corner-reviewer.js';
 import { cornerFeatureBranchSql } from './corner-branch.js';
 import { GitHubAppClient, GitHubHttpError } from '@beeline/auth/github';
@@ -12,9 +12,9 @@ import type { SqlDatabase } from './database.js';
 import { GITHUB_SUBJECT, systemLine } from './system-line.js';
 import { recordPersonMergeYes, withdrawPullRequestMergeApprovals } from './corner-merge-approval.js';
 import { assertCornerBriefAllowsMerge } from './corner-brief.js';
-import { advanceCorner, blockingReview, confirmCornerMergeAuthority, lockCornerLifecycle, cornerMergeGate, cornerMergeability } from './corner-lifecycle.js';
+import { advanceCorner, cornerReviewWokenSql, blockingReview, confirmCornerMergeAuthority, lockCornerLifecycle, cornerMergeGate, cornerMergeability } from './corner-lifecycle.js';
 import { queueCornerMergeConflict, reconcileCornerMergeBlockers } from './agent-command.js';
-import { GitHubOperations, Input, hash, record, text, reviewerWakeFromFacts, LandCornerOutcome, CornerWebhookTarget, mergeConflictKey } from './github-operations.js';
+import { GitHubOperations, reviewerWakeFromFacts, Input, LandCornerOutcome, CornerWebhookTarget, record, mergeConflictKey, hash, text } from './github-operations.js';
 
 
 
@@ -37,7 +37,7 @@ import { GitHubOperations, Input, hash, record, text, reviewerWakeFromFacts, Lan
         `SELECT r.parent_id,parent.workspace_id,f.lifecycle,
                 COALESCE(${cornerOwnerSql('r.id')},r.created_by,parent.created_by) author_id,r.name corner_name,
                 r.archived_at IS NOT NULL archived,
-                (${cornerRunStateSql('r.id')}='review' AND ${cornerRunOutcomeSql('r.id')} IS DISTINCT FROM 'no_reviewer') review_woken,
+                ${cornerReviewWokenSql('r.id')} review_woken,
                 ${cornerReviewerSql('r')} configured_reviewer_id,
                 reviewer_identity.id reviewer_identity_id,
                 parent_member.identity_id parent_reviewer_id,
@@ -132,7 +132,7 @@ import { GitHubOperations, Input, hash, record, text, reviewerWakeFromFacts, Lan
       { name: 'Pull request checks', status: 'pending', headSha: pr.headSha }, ctx.database,
       { quiet: true, snapshot: { rollup, pr, fetchStartedAt, token: target.token } });
       corner.review_woken = (await ctx.database.query<{ review_woken: boolean }>(
-        `SELECT ${cornerRunStateSql('$1::uuid')}='review' AND ${cornerRunOutcomeSql('$1::uuid')} IS DISTINCT FROM 'no_reviewer' review_woken`,
+        `SELECT ${cornerReviewWokenSql('$1::uuid')} review_woken`,
         [input.cornerId],
       )).rows[0]?.review_woken ?? false;
     }
@@ -164,7 +164,7 @@ import { GitHubOperations, Input, hash, record, text, reviewerWakeFromFacts, Lan
            AND command.review_context->>'purpose' IS NULL`,
         [input.cornerId,pr.headSha,JSON.stringify(number)])).rows[0];
       if (delivery?.ended && !delivery.live && !await blockingReview(ctx.database,input.cornerId,pr.headSha))
-        reviewerWake = {status:'waiting',detail:'The reviewer ended without a verdict; bounded recovery retries this head or reports the review blocker.'};
+        reviewerWake = {status:'waiting',detail:'The reviewer ended without a verdict; ownership returns to the implementer or commander once.'};
     }
     const mergeDecision = cornerMergeability({
       checks,
@@ -454,7 +454,7 @@ import { GitHubOperations, Input, hash, record, text, reviewerWakeFromFacts, Lan
            AND repository.active AND lower(repository.full_name)=lower(regexp_replace(regexp_replace(
              COALESCE(parent.repository_remote,parent.repository_key,''),
              '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
-         WHERE corner.id=$1 AND ${cornerRunStateSql('corner.id')} IS DISTINCT FROM 'landed'`,
+         WHERE corner.id=$1 AND ${cornerRunOutcomeSql('corner.id')} IS DISTINCT FROM 'landed'`,
         [cornerId],
       )
     ).rows[0];
@@ -494,7 +494,7 @@ import { GitHubOperations, Input, hash, record, text, reviewerWakeFromFacts, Lan
              CASE WHEN corner.archived_at IS NULL THEN '{"lifecycle":"working","checks":"unknown"}'::jsonb
                ELSE '{}'::jsonb END
          FROM rooms corner WHERE fact.corner_id=$1 AND corner.id=fact.corner_id
-           AND ${cornerRunStateSql('fact.corner_id')} IS DISTINCT FROM 'landed'
+           AND ${cornerRunOutcomeSql('fact.corner_id')} IS DISTINCT FROM 'landed'
            AND (fact.lifecycle->'pr'->>'number')::int=$2
          RETURNING corner.archived_at IS NOT NULL archived`,
         [cornerId, number],

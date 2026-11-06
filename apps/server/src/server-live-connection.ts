@@ -1,18 +1,21 @@
-import { phoneLiveOutput } from './phone-live-output.js';
-import { HelperOverlayViewer, helperOverlayEnabled, fenceHelperOverlayEnqueue } from './helper-overlay.js';
-import { fenceCommandReceiptEnqueue } from './router-command-coverage.js';
-import { phoneSocketRequests } from './phone-socket.js';
-import { createHash, randomUUID } from 'node:crypto';
-import { type IncomingMessage } from 'node:http';
-import { type WebSocket } from 'ws';
-import { PhoneViewing } from './phone-viewing.js';
-import { projectSidebarPreview, offscreenMessageFits, readSidebarPreview, type MessageBookmarkView, type RoomLiveDelta } from '@beeline/api-contract/phone';
-import type { LiveEvent, LiveTrace } from './live.js';
-import { isNeedsYouAsk } from './needs-you.js';
-import { recordOperatorFunctionEvent } from './operator-dashboard.js';
-import { type DaemonLiveDependencies } from './daemon-live.js';
-import { serveAgentSocket, serveMachineSocket, machineConnectionOutput, enableMachineTcpKeepalive } from './machine-connection.js';
-import { MAX_LIVE_OUTBOUND_BUFFERED_BYTES, SENT_ROW_LIMIT, RowOrder, SentRow, rowOrderIsNotNewer, LIVE_PING_FRAME, LIVE_PONG_FRAME, ROOM_ID_PATTERN, ServerOptions, isRetryableLiveError, requestErrorStatus } from './server.js';
+import type { WebSocket } from "ws";
+import type { DaemonLiveDependencies } from "./daemon-live.js";
+import type { LiveEvent, LiveTrace } from "./live.js";
+import { type RoomLiveDelta, type MessageBookmarkView, offscreenMessageFits, projectSidebarPreview, readSidebarPreview } from "@beeline/api-contract/phone";
+import { PhoneViewing } from "./phone-viewing.js";
+import type { IncomingMessage } from "node:http";
+import { phoneLiveOutput } from "./phone-live-output.js";
+import { machineConnectionOutput, enableMachineTcpKeepalive, serveMachineSocket, serveAgentSocket } from "./machine-connection.js";
+import { randomUUID, createHash } from "node:crypto";
+import { isNeedsYouAsk } from "./needs-you.js";
+import { HelperOverlayViewer, fenceHelperOverlayEnqueue, helperOverlayEnabled } from "./helper-overlay.js";
+import { phoneSocketRequests } from "./phone-socket.js";
+import { fenceCommandReceiptEnqueue } from "./router-command-coverage.js";
+import { recordOperatorFunctionEvent } from "./operator-dashboard.js";
+import { ServerOptions, MAX_LIVE_OUTBOUND_BUFFERED_BYTES, SentRow, RowOrder, rowOrderIsNotNewer, SENT_ROW_LIMIT, LIVE_PING_FRAME, LIVE_PONG_FRAME, ROOM_ID_PATTERN, isRetryableLiveError } from './server.js';
+import { requestErrorStatus } from './server-request-error-status.js';
+
+
 
 type LiveConnectionContext = {
   liveErrors: { database: number; invalid: number; internal: number; overload: number; };
@@ -26,11 +29,12 @@ type LiveConnectionContext = {
   readPersonChange: (event: LiveEvent, id: string) => Promise<{ person: import("@beeline/api-contract/phone").RoomViewIdentity; pushLevel?: import("@beeline/api-contract/phone").PushLevel; viewers: ReadonlySet<string>; } | null>;
   bookmarkReads: WeakMap<LiveEvent, Promise<MessageBookmarkView | null>>;
   withLiveDbTask: <T>(work: () => Promise<T>) => Promise<T>;
-  dispatchPhoneOperation: (name: string, input: Record<string, unknown>, viewerId: string, signal?: AbortSignal | undefined, familyId?: string | undefined, command?: import("@beeline/api-contract/router-command").RouterCommandIdentity | undefined) => Promise<unknown>;
+  dispatchPhoneOperation: (name: string, input: Record<string, unknown>, viewerId: string, signal?: AbortSignal | undefined, familyId?: string | undefined, command?: import("@beeline/api-contract/phone").RouterCommandIdentity | undefined) => Promise<unknown>;
   readCornerStatusForViewer: (event: LiveEvent, roomId: string, viewerId: string) => Promise<{ cornerCount: number; waitingCornerCount: number; mineCornerCount: number; openCorners: import("@beeline/api-contract/phone").ChatListCorner[]; agentState: "needs-you" | "working" | null; attentionReason?: NonNullable<import("@beeline/api-contract/phone").ChatListItem["attentionReason"]>; corners: import("@beeline/api-contract/phone").CornerListView["corners"]; nextOpen?: string; } | null>;
   phoneViewing: PhoneViewing;
   acquireLiveDbTask: () => Promise<() => void>;
 };
+
 export function handleLiveConnection(ctx: LiveConnectionContext, client: WebSocket, _request: IncomingMessage, principal: {
         identityId: string;
         kind: 'phone' | 'daemon' | 'machine';
@@ -58,6 +62,7 @@ export function handleLiveConnection(ctx: LiveConnectionContext, client: WebSock
         return;
       }
       const releaseServerConnection = ctx.options.connectionPresence?.holdServerConnection();
+      client.on('message', () => { void ctx.options.connectionPresence?.renewLease(); });
       client.once('close', () => releaseServerConnection?.());
       client.once('error', () => releaseServerConnection?.());
       ctx.options.live.humanConnected(principal.identityId);

@@ -1,4 +1,4 @@
-import { phoneFetch, ensureSystemDirectMessageRoom, SYSTEM_IDENTITY_ID, createHash, randomUUID, describe, expect, it, migrate, companyPopularity, applyVaultList, HUMAN, RECIPIENT, HELPER, OTHER_HELPER, WORKSPACE, fixtureScope1 } from './workbench.integration.test-support.js';
+import { phoneFetch, ensureSystemDirectMessageRoom, SYSTEM_IDENTITY_ID, createHash, randomUUID, describe, expect, it, migrate, companyPopularity, applyVaultList, HUMAN, RECIPIENT, HELPER, OTHER_HELPER, WORKSPACE, fixtureScope1 } from './test-support-workbench.integration.test-support.js';
 
 describe('workbench connectors', () => {
 const scope1 = fixtureScope1();

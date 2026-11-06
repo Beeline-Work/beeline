@@ -1,4 +1,3 @@
-import { ConnectorOfferExpiryLoop } from '.././connector-offer-expiry.js';
 import { claimAgentCommand } from '.././agent-command.js';
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
@@ -194,7 +193,7 @@ const fixture = monolithFixture();
   });
 
 
-  it.each([['reported','trusty-squire'], ['timeout','trusty-squire'], ['reported','tailscale'], ['timeout','tailscale']] as const)('HOSTED-SQUIRE: %s %s install failure settles the phone card, resumes and retries', async (failure, connectorType) => {
+  it.each(['trusty-squire', 'tailscale'] as const)('HOSTED-SQUIRE: %s reported install failure settles the phone card and allows an explicit retry', async (connectorType) => {
     await fixture.database.query(`UPDATE agents SET machine_id='proof-machine' WHERE agent_id=$1`, [AGENT]);
     const asked = (await (await fixture.operation('sendRoomMessage', { roomId: ROOM, text: '@bee connect Trusty Squire', mentions: [AGENT] })).json()) as { messageId: string };
     const offered = await fixture.daemonOperation('offerConnector', { roomId: ROOM, requestId: asked.messageId,
@@ -206,22 +205,10 @@ const fixture = monolithFixture();
     const { connectorId } = await accepted.json() as { connectorId: string };
     const assignments = await (await fixture.daemonOperation('getConnectorAssignments', { agentId: AGENT })).json() as {
       assignments: Array<{ pairingGeneration: number }> };
-    if (failure === 'reported') {
       const report = await fixture.daemonOperation('postConnectorStatus', { connectorId,
         pairingGeneration: assignments.assignments[0]!.pairingGeneration, steps: [], errorMessage: 'Squire MCP connection closed' });
       expect(report.status).toBe(200);
-    } else {
-      const expiry = new ConnectorOfferExpiryLoop(fixture.database);
-      const delay = await expiry.runOnce();
-      expect(delay).toBeGreaterThan(14 * 60_000);
-      expect(delay).toBeLessThanOrEqual(15 * 60_000);
-      await fixture.database.query(`UPDATE connector_offers SET accepted_at=now()-interval '16 minutes' WHERE id=$1`, [offerId]);
-      await fixture.database.query(`UPDATE agents SET squire_work=jsonb_set(squire_work,'{reportedAt}',
-        to_jsonb(extract(epoch FROM now())-960)) WHERE agent_id=$1`, [AGENT]);
-      if (connectorType !== 'trusty-squire') await fixture.database.query(`UPDATE workspace_connectors SET updated_at=now()-interval '16 minutes' WHERE id=$1`, [connectorId]);
-      expect(await expiry.runOnce()).toBeUndefined();
-      expect(await expiry.runOnce()).toBeUndefined();
-    }
+
     const room = await fixture.phone.readRoom(ROOM, HUMAN);
     expect(isRoomView(room)).toBe(true);
     expect(room?.messages.find(message => message.id === messageId)?.connectorOffer?.status).toBe('failed');

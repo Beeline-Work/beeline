@@ -1,4 +1,4 @@
-import { controls, roomView, Harness, stubFrameScheduler, flushMicrotasks, flushEffects, fixtureScope1 } from './useRoomSurfaceSession.test-support.js';
+import { controls, roomView, Harness, stubFrameScheduler, flushMicrotasks, flushEffects, fixtureScope1 } from './test-support-useRoomSurfaceSession.test-support.js';
 import * as React from 'react';
 import { SurfaceRegistry } from '@/buzz/surface-registry';
 import { roomTransitionWork } from '@/buzz/room-transition-work';

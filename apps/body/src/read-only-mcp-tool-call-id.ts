@@ -1,6 +1,12 @@
-import { boundToolResult } from './tool-output-budget.js';
-import { JsonObject, JsonRpcRequest, asObject, toolOwedStorage, requiredEnv, agentSurface, TOOLS, readTurnContextFile, callTool } from './read-only-mcp.js';
+import { boundToolResult } from "./tool-output-budget.js";
+import { JsonObject, JsonRpcRequest, asObject, agentSurface, TOOLS, readTurnContextFile, callTool, withToolOwedContext } from './read-only-mcp.js';
 import { validateAdvertisedToolInput, callAgentTool } from './read-only-mcp-open-poll.js';
+
+
+
+
+
+
 
 
 
@@ -11,9 +17,13 @@ export function toolCallId(params: JsonObject, requestId: JsonRpcRequest['id']):
 }
 
 
+
+
 export function send(message: JsonObject): void {
   process.stdout.write(`${JSON.stringify(message)}\n`);
 }
+
+
 
 
 export function success(id: JsonRpcRequest['id'], result: unknown): void {
@@ -21,40 +31,13 @@ export function success(id: JsonRpcRequest['id'], result: unknown): void {
 }
 
 
+
+
 export function failure(id: JsonRpcRequest['id'], code: number, message: string): void {
   send({ jsonrpc: '2.0', id: id ?? null, error: { code, message } });
 }
 
 
-/** Keep concurrent calls isolated; footer metadata rides on their existing operation responses. */
-export async function withToolOwedContext(work: () => Promise<string>) {
-  return toolOwedStorage.run({}, async () => {
-    let output: string;
-    let isError = false;
-    try { output = await work(); }
-    catch (error) {
-      isError = true;
-      output = error instanceof Error ? error.message : String(error);
-      // Validation may refuse before dispatch. Read fresh authenticated context
-      // without adding an operation to the command/operation log.
-      if (!toolOwedStorage.getStore()?.owedMentions) {
-        try {
-          const response = await fetch(new URL('/v1/daemon/owed-mentions', requiredEnv('BEELINE_DAEMON_BASE_URL')), {
-            signal: undefined,
-            headers: { authorization: `Bearer ${requiredEnv('BEELINE_DAEMON_TOKEN')}` },
-          });
-          if (response.ok) {
-            const context = await response.json() as { owedMentions?: unknown[] };
-            if (Array.isArray(context.owedMentions)) toolOwedStorage.getStore()!.owedMentions = context.owedMentions;
-          }
-        } catch { /* Optional context must never mask the original refusal. */ }
-      }
-    }
-    const owedMentions = toolOwedStorage.getStore()?.owedMentions;
-    return { ...(isError ? { isError: true } : {}), content: [{ type: 'text' as const, text: output },
-      ...(owedMentions ? [{ type: 'text' as const, text: JSON.stringify({ owedMentions }) }] : [])] };
-  });
-}
 
 
 export async function handleLine(line: string): Promise<void> {

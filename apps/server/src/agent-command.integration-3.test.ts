@@ -1,86 +1,5 @@
-import { expect, it, insertCornerFacts, DaemonService, LiveHub, createAgentCommand, SYSTEM_IDENTITY_ID, ensureSystemIdentity, H, A, B, P, W, R, C, id, stopProofPostgresUrl, db, phone, daemon, live, commands, send, helperOwner, claim, result, rootFixture, type SqlDatabase } from './agent-command.integration.test-support.js';
+import { expect, it, insertCornerFacts, DaemonService, LiveHub, createAgentCommand, SYSTEM_IDENTITY_ID, ensureSystemIdentity, advanceCorner, H, A, B, P, W, R, C, id, stopProofPostgresUrl, db, phone, daemon, live, commands, send, helperOwner, claim, result, rootFixture, type SqlDatabase } from './test-support-agent-command.integration.test-support.js';
 
-
-it('atomically establishes the working receipt when an input command is claimed', async () => {
-  await send('@hoots');
-  const [c] = await commands();
-  await rootFixture.daemon.execute(
-    'claimAgentCommand',
-    { roomId: R, commandId: c!.id, generationId: 'working-at-claim' },
-    A, await helperOwner(A),
-  );
-  expect(
-    (
-      await rootFixture.db.query(
-        `SELECT status,generation_id FROM agent_turns
-         WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
-        [R, c!.turnRequestId, A],
-      )
-    ).rows,
-  ).toEqual([{ status: 'working', generation_id: 'working-at-claim' }]);
-  expect((await rootFixture.phone.readRoom(R, H))?.latestAgentTurns).toContainEqual(
-    expect.objectContaining({
-      requestId: c!.turnRequestId,
-      agentPubkey: A,
-      status: 'working',
-    }),
-  );
-});
-
-it('restarts the turn clock when a parked turn resumes after a long approval wait', async () => {
-  await send('@hoots');
-  const [c] = await commands();
-  await claim(c!, 'before-approval');
-  await result(c!, 'Waiting for your approval.', 'before-approval');
-  const turn = () =>
-    rootFixture.db
-      .query<{ status: string; age_hours: number }>(
-        `SELECT status,(extract(epoch FROM now()-started_at)/3600)::float8 age_hours FROM agent_turns
-         WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
-        [R, c!.turnRequestId, A],
-      )
-      .then((r) => r.rows[0]!);
-  const parkFor57Hours = () =>
-    rootFixture.db.query(
-      `UPDATE agent_turns SET started_at=now()-interval '57 hours'
-       WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
-      [R, c!.turnRequestId, A],
-    );
-  await parkFor57Hours();
-  expect((await turn()).status).not.toBe('working');
-
-  // The approval resumes the same turn: a resume command on its request id.
-  const decision = id();
-  await rootFixture.db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'approved')`, [
-    decision,
-    R,
-    H,
-  ]);
-  const resume = (await createAgentCommand(rootFixture.db, {
-    roomId: R,
-    agentId: A,
-    sourceMessageId: decision,
-    action: 'resume',
-    reason: 'resume',
-    turnRequestId: c!.turnRequestId,
-  }))!;
-  await rootFixture.daemon.execute(
-    'claimAgentCommand',
-    { roomId: R, commandId: resume.id, generationId: 'after-approval' },
-    A, await helperOwner(A),
-  );
-  expect(await turn()).toMatchObject({ status: 'working' });
-  expect((await turn()).age_hours).toBeLessThan(1);
-
-  // and a receipt on a turn that is still working keeps its start.
-  await parkFor57Hours();
-  await rootFixture.daemon.execute(
-    'postAgentTurnReceipt',
-    { roomId: R, agentId: A, requestId: c!.turnRequestId, generationId: 'after-approval', status: 'working' },
-    A, await helperOwner(A),
-  );
-  expect((await turn()).age_hours).toBeGreaterThan(56);
-});
 
 it('rolls the command claim back when a cancelled turn cannot become working', async () => {
   await send('@hoots');
@@ -664,15 +583,18 @@ it('superseded review output cancels its command and turn through the terminal o
   await claim(command!);
   await rootFixture.db.query(`UPDATE agent_commands SET review_context=$2::jsonb WHERE id=$1`,
     [command!.id, JSON.stringify({cornerId:corner,headSha:'obsolete',pullRequest:1})]);
-  const state = async () => (await rootFixture.phone.readCorners(R,H))!.corners.find(row => row.corner.id===corner)!.state;
-  expect(await state()).toBe('working');
+  const state = async () => {
+    await advanceCorner(rootFixture.db, corner, { kind: 'reconcile' });
+    return (await rootFixture.phone.readCorners(R,H))!.corners.find(row => row.corner.id===corner)!.state;
+  };
+  expect(await state()).toBe('review');
   await result(command!, '@hoots Review output for the old head');
   expect((await rootFixture.db.query(`SELECT state FROM agent_commands WHERE id=$1`, [command!.id])).rows)
     .toEqual([{state:'cancelled'}]);
   expect((await rootFixture.db.query(`SELECT status,failure_reason FROM agent_turns
     WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`, [corner,command!.turnRequestId,A])).rows)
     .toEqual([{status:'cancelled',failure_reason:'superseded_review'}]);
-  expect(await state()).not.toBe('working');
+  expect(await state()).toBe('idle');
   await expect(rootFixture.daemon.execute('postAgentTurnReceipt', {roomId:corner,requestId:command!.turnRequestId,
     generationId:'g1',status:'complete'}, A, await helperOwner(A))).rejects.toThrow();
   expect((await rootFixture.db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,

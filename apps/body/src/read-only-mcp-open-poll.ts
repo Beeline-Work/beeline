@@ -1,15 +1,19 @@
-import { builtinBeelineApp } from '@beeline/api-contract/workbench';
-import { Check, Errors } from 'typebox/value';
-import { CAPABILITY_ROUTES, SCRATCH_ROUTES, agentToolsFor, toolValidationSchema, placeBeelineApps, CAPABILITY_TOOLS } from './minimal-tool-surface.js';
-import { basename } from 'node:path';
-import { INSTITUTIONAL_SEARCH_QUERY_MAX_CHARACTERS, encodeArtifactTitleHeader } from '@beeline/api-contract/daemon';
-import { SUBSCRIBABLE_EVENT_KINDS } from '@beeline/api-contract/phone';
-import { REPOSITORY_SUBSCRIPTION_EVENTS } from '@beeline/api-contract/daemon';
-import { JsonObject, requiredEnv, ToolDefinition, asObject, commandRequest, callCommandTool, readTurnContextFile, daemonExecute } from './read-only-mcp.js';
+import { agentToolsFor, toolValidationSchema, CAPABILITY_ROUTES, CAPABILITY_TOOLS, SCRATCH_ROUTES, placeBeelineApps } from "./minimal-tool-surface.js";
+import { INSTITUTIONAL_SEARCH_QUERY_MAX_CHARACTERS, REPOSITORY_SUBSCRIPTION_EVENTS } from "@beeline/api-contract/daemon";
+import { Check, Errors } from "typebox/value";
+import { basename } from "node:path";
+import { builtinBeelineApp } from "@beeline/api-contract/workbench";
+import { SUBSCRIBABLE_EVENT_KINDS } from "@beeline/api-contract/phone";
+import { JsonObject, grantRunDepsFromEnv, ToolDefinition, asObject, commandRequest, callCommandTool, readTurnContextFile, daemonExecute, requiredEnv } from './read-only-mcp.js';
 import { AgentGrantDeps, agentGrantDepsFromEnv, choiceOptionArgs } from './read-only-mcp-agent-grant-deps.js';
-import { agentScheduleRoomId, DaemonArtifactUploadResult, namedPrivateFiles, attachRootsFromEnv, agentScheduleDepsFromEnv, subscribeEvents, createSchedule, updateSchedule, deleteSchedule } from './read-only-mcp-download-attachment.js';
-
+import { namedPrivateFiles, attachRootsFromEnv, agentScheduleRoomId, agentScheduleDepsFromEnv, subscribeEvents, createSchedule, updateSchedule, deleteSchedule } from './read-only-mcp-download-attachment.js';
 import { executeAgentOperation } from './read-only-mcp-execute-agent-operation.js';
+
+
+
+
+
+
 
 
 
@@ -40,35 +44,14 @@ export async function openPoll(
 }
 
 
+
+
 export interface GrantRunDeps {
   roomId: string;
   run: (input: { roomId: string; argv: string[] }) => Promise<JsonObject>;
 }
 
 
-export function grantRunDepsFromEnv(): GrantRunDeps {
-  return {
-    roomId: agentScheduleRoomId(),
-    run: async (input) => {
-      const baseUrl = requiredEnv('BEELINE_GRANT_RUNNER_URL');
-      const response = await fetch(new URL('/run', `${baseUrl}/`), {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${requiredEnv('BEELINE_GRANT_RUNNER_TOKEN')}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify(input),
-      });
-      const body = (await response.json().catch(() => ({}))) as JsonObject;
-      if (!response.ok) {
-        throw new Error(
-          typeof body.error === 'string' ? body.error : `grant runner failed (${response.status})`,
-        );
-      }
-      return body;
-    },
-  };
-}
 
 
 /** run_granted_command: the daemon checks the rule and runs outside the sandbox. */
@@ -106,42 +89,6 @@ export async function runGrantedCommand(
 }
 
 
-/** The small-object pass-through: the server validates and streams the
- *  bytes to storage in one step and answers with the stored artifact url. */
-export async function daemonUploadArtifact(
-  bytes: Buffer,
-  mime: string,
-  title: string,
-): Promise<DaemonArtifactUploadResult> {
-  const baseUrl = requiredEnv('BEELINE_DAEMON_BASE_URL');
-  const response = await fetch(new URL('/v1/daemon/artifacts', `${baseUrl}/`), {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${requiredEnv('BEELINE_DAEMON_TOKEN')}`,
-      'content-type': mime,
-      'x-artifact-title': encodeArtifactTitleHeader(title),
-      'x-beeline-helper-version': process.env.BEELINE_HELPER_VERSION || 'v0.0.0',
-    },
-    body: bytes,
-  });
-  if (!response.ok) {
-    let code = 'request_failed';
-    try {
-      const body = (await response.json()) as { error?: unknown };
-      if (typeof body.error === 'string') code = body.error;
-    } catch {
-      // Never reflect a server body into the model-facing tool error.
-    }
-    throw new Error(`artifact upload failed (${response.status}: ${code})`);
-  }
-  const body = (await response.json()) as JsonObject;
-  return {
-    url: typeof body.url === 'string' ? body.url : '',
-    mimeType: typeof body.mimeType === 'string' ? body.mimeType : mime,
-    size: typeof body.size === 'number' ? body.size : bytes.length,
-    title: typeof body.title === 'string' ? body.title : title,
-  };
-}
 
 
 export function advertisedAgentTool(name: string): ToolDefinition {
@@ -150,12 +97,16 @@ export function advertisedAgentTool(name: string): ToolDefinition {
   return tool;
 }
 
+
+
 export function validateAdvertisedToolInput(tool: ToolDefinition, args: JsonObject): void {
   // Restore root combinations while retaining surface-specific restrictions
   // such as scratch_io without quota. App operations have their own contracts
   // and may share a name (e.g. workflow read) with an ordinary tool.
   validateToolInput({ ...tool, inputSchema: { ...toolValidationSchema(tool.name), ...tool.inputSchema } }, args);
 }
+
+
 
 export function validateToolInput(tool: ToolDefinition, args: JsonObject): void {
   const requestedAction = args.action;
@@ -225,7 +176,11 @@ export function validateToolInput(tool: ToolDefinition, args: JsonObject): void 
   }
 }
 
+
+
 export const turnArtifacts = new Map<string, { uploads: { name: string; result: Promise<string> }[] }>();
+
+
 
 
 export async function callAgentTool(name: string, args: JsonObject, toolCallId: string): Promise<string> {
@@ -234,6 +189,8 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
   return commandRequest.run(requestId as string|undefined,
     () => callCommandTool(name, input, toolCallId));
 }
+
+
 
 
 /** Execute only the advertised vocabulary; internal operations retain server authority. */
@@ -436,6 +393,8 @@ export async function executeAgentTool(name: string, args: JsonObject, toolCallI
 }
 
 
+
+
 export async function availableCapabilities(checkOnboarding = true): Promise<string[]> {
   let onboarding = false;
   try {
@@ -447,6 +406,8 @@ export async function availableCapabilities(checkOnboarding = true): Promise<str
 
   return placeBeelineApps(Boolean(process.env.BEELINE_DAEMON_CORNER_ID), onboarding);
 }
+
+
 
 
 /** The refusal for a Beeline app that does not work here names the apps that do. */

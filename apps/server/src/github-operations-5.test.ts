@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, GitHubAppClient, GitHubOAuthClient, seedCornerOpening, insertCornerFacts, GitHubOperations, HUMAN, REVIEWER, fixtureScope1 } from './github-operations.test-support.js';
+import { describe, expect, it, vi, GitHubAppClient, GitHubOAuthClient, seedCornerOpening, insertCornerFacts, GitHubOperations, HUMAN, REVIEWER, fixtureScope1 } from './test-support-github-operations.test-support.js';
 
 describe('GitHub phone operations', () => {
 const scope1 = fixtureScope1();

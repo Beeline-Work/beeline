@@ -1,6 +1,5 @@
 import { OWNED_MODEL_CREDENTIAL_SCHEMA } from './owned-model-credential.js';
 import { OWNED_MODEL_ATTEMPT_SCHEMA } from './owned-model-attempt.js';
-import { DISPLAY_DEADLINE_SOURCE_SCHEMA } from './deadline-expiry-source.js';
 import { SENTRY_WAKE_SOURCE_SCHEMA } from './sentry-wake-source.js';
 import { CONNECTOR_OFFER_EXPIRY_SCHEMA } from './connector-offer-expiry.js';
 import { PENDING_ATTACHMENT_SOURCE_SCHEMA } from './pending-attachment-source.js';
@@ -48,7 +47,7 @@ import { GITHUB_STAR_PROMPT_SCHEMA } from './github-star-prompt.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { backfillCornerLifecycleRuns, deleteStoredCornerWorkflows } from './corner-lifecycle.js';
 import { backfillFeedbackTriageWorkflow, backfillFeedbackSignalWalk, backfillWorkspaceWalkHistory } from './feedback-triage-workflow.js';
-import { backfillWorkflowRunTimers, backfillWorkflowSkillDescriptions, closeStaleWorkflowGateChoices } from './workflow-runs.js';
+import { backfillWorkflowSkillDescriptions, closeStaleWorkflowGateChoices } from './workflow-runs.js';
 import { upgradeGrantPolicy, withdrawSupersededGrantAsks } from './grant-policy-upgrade.js';
 import { backfillRegistryApps } from './app-connections.js';
 import { syncTopLevelSharedRoomRoles } from './membership-join.js';
@@ -62,8 +61,8 @@ import { cornerOwedSchemaSql } from './corner-owed.js';
 import { cornerWaitingFunctionSql } from './corner-waiting-report.js';
 import { CORNER_ATTENTION_SCHEMA } from './corner-attention.js';
 import { backfillCornerFollows, cornerFollowsSchemaSql } from './corner-follow.js';
-import { alreadyNoOp, alreadySatisfied, logLockHolders, triggerAlreadyCurrent, runMigrationStep, splitMigrationStatements } from './migration-steps.js';
-import { SqlDatabase, MIGRATION_DDL_ATTEMPTS, SCHEMA, MESSAGE_CURSOR_MS_SQL } from './database.js';
+import { alreadyNoOp, alreadySatisfied, triggerAlreadyCurrent, runMigrationStep, splitMigrationStatements } from './migration-steps.js';
+import { SqlDatabase, SCHEMA, MESSAGE_CURSOR_MS_SQL } from './database.js';
 import { createIndexConcurrently, backfillMessageSearchDocuments, backfillSquireApprovalExpiry, compactWebhookDeliveries, compactPushClaims, backfillCornerOwed, backfillSystemEventKinds, backfillPerItemEventSubscriptions, backfillInstitutionalMemoryRollout, retireStandingPreferences, backfillAgentHandles, backfillConnectorMachineId } from './database-backfill-squire-approval-expiry.js';
 
 
@@ -72,22 +71,7 @@ export async function migrate(
   database: SqlDatabase,
   options: { deferData?: boolean } = {},
 ): Promise<void> {
-  // A schema change needs its table to itself for an instant. On a live app
-  // that table is rarely idle for the whole lock timeout, so wait in line and
-  // try again rather than failing the release on the first busy moment.
-  const ddl = async (name: string, sql: string) => {
-    for (let attempt = 1; ; attempt++) {
-      try {
-        return await runMigrationStep(name, async () => { await database.query(sql); }, {
-          onLockTimeout: attempt === 1 ? () => logLockHolders(database, name, sql) : undefined,
-        });
-      } catch (error) {
-        const code = (error as { code?: unknown } | null)?.code;
-        if ((code !== '55P03' && code !== '40P01') || attempt >= MIGRATION_DDL_ATTEMPTS) throw error;
-        await new Promise((resolve) => setTimeout(resolve, 250 + Math.floor(Math.random() * 1250)));
-      }
-    }
-  };
+  const ddl = async (name: string, sql: string) => runMigrationStep(name, async () => { await database.query(sql); });
   const ddlScript = async (name: string, sql: string) => {
     const statements = splitMigrationStatements(sql);
     for (let index = 0; index < statements.length; index++) {
@@ -161,13 +145,8 @@ export async function migrate(
   `);
   await ddlScript('router command identity', ROUTER_COMMAND_SCHEMA);
   await ddlScript('retired turn recovery schema', `
-    CREATE TABLE IF NOT EXISTS agent_startup_backoff (
-      agent_id text PRIMARY KEY REFERENCES agents(agent_id) ON DELETE CASCADE,
-      failures integer NOT NULL DEFAULT 0,
-      window_started_at timestamptz NOT NULL DEFAULT now(),
-      paused_until timestamptz
-    );
     ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS startup_outcome text;
+    DROP TABLE IF EXISTS agent_startup_backoff;
     DROP TRIGGER IF EXISTS defer_startup_wake ON agent_commands;
     DROP FUNCTION IF EXISTS defer_startup_wake();
   `);
@@ -181,11 +160,6 @@ export async function migrate(
      WHERE presentation='message' AND system_event IS NULL`,
   ));
   await ddlScript('next day checkin schema', NEXT_DAY_CHECKIN_SCHEMA);
-  await runMigrationStep('pending command re-nudge index', () => createIndexConcurrently(
-    database, 'agent_commands_pending_renudge',
-    `CREATE INDEX CONCURRENTLY agent_commands_pending_renudge ON agent_commands(created_at)
-     WHERE state='pending' AND action='input' AND renudged_at IS NULL`,
-  ));
   await runMigrationStep('room pending command index', () => createIndexConcurrently(
     database, 'agent_commands_room_pending_status',
     `CREATE INDEX CONCURRENTLY agent_commands_room_pending_status
@@ -524,7 +498,7 @@ export async function migrate(
   await ddlScript('corner follows schema', cornerFollowsSchemaSql());
   await ddlScript('live notification schema', (await postgresLiveSchema()));
   await ddlScript('sentry eligibility source', SENTRY_WAKE_SOURCE_SCHEMA);
-  await ddlScript('display deadline source', DISPLAY_DEADLINE_SOURCE_SCHEMA);
+  await ddlScript('Remove display deadline source', 'DROP FUNCTION IF EXISTS beeline_display_deadline_change() CASCADE;');
   await ddlScript('agent schedule due source', AGENT_SCHEDULE_SOURCE_SCHEMA);
   await ddlScript('pending attachment due source', PENDING_ATTACHMENT_SOURCE_SCHEMA);
   await ddlScript('computer expiry source', COMPUTER_EXPIRY_SCHEMA);
@@ -645,7 +619,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   await dataStep('feedback triage latest counts', () =>
     workflowBackfillOnce(database, 'feedback-triage-latest-count-v1', backfillFeedbackTriageWorkflow));
   await dataStep('welcome video workflow', () =>
-    workflowBackfillOnce(database, 'welcome-video-v1', backfillWelcomeVideoWorkflow));
+    workflowBackfillOnce(database, 'welcome-video-v2', backfillWelcomeVideoWorkflow));
   await dataStep('feedback signal walk', () =>
     workflowBackfillOnce(database, 'feedback-signal-walk-v1', backfillFeedbackSignalWalk));
   await dataStep('workspace walk history', () =>
@@ -662,7 +636,6 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   await dataStep('abandoned workflow endings', () =>
     workflowBackfillOnce(database, 'abandoned-workflow-endings-v1', reportAbandonedWorkflowEndings));
   // A timer lost after any release stalls its run; re-arm missing ones every boot.
-  await dataStep('workflow run timers', () => backfillWorkflowRunTimers(database));
   const syncedRoomRoles = await dataStep('top-level Room roles', () =>
     syncTopLevelSharedRoomRoles(database));
   console.log(`syncTopLevelSharedRoomRoles: updated ${syncedRoomRoles} stale Room role(s)`);

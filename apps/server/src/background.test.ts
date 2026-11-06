@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, BackgroundJobRunner, PUSH_DELIVERY_CONCURRENCY, PushDeliveryLoop, READ_CLEAR_INTERVAL_SECONDS, READ_CLEAR_MAX_CHANNELS, migratedDatabase, PhoneService, APNS_MAX_PAYLOAD_BYTES, apnsReadClearRequest } from './background.test-support.js';
+import { describe, expect, it, vi, BackgroundJobRunner, PushDeliveryLoop, migratedDatabase, PhoneService, APNS_MAX_PAYLOAD_BYTES, apnsReadClearRequest, type ReadClearCursor } from './test-support-background.test-support.js';
 
 describe('background advisory-lock ownership', () => {
   it('records a failed job and still runs the next independent job', async () => {
@@ -34,8 +34,6 @@ describe('background advisory-lock ownership', () => {
   });
 
 
-  // Actual lock transfer, failure recovery and initial-cycle admission are
-  // exercised in background-leader.test.ts and its real PostgreSQL proof.
   it('bounds push history before resolving tags and still delivers a fresh mention', async () => {
     const db = await migratedDatabase();
     try {
@@ -120,7 +118,7 @@ describe('background advisory-lock ownership', () => {
   });
 
 
-  it('sends claimed push candidates with bounded concurrency', async () => {
+  it('sends every claimed candidate from one event without a retry batch', async () => {
     const db = await migratedDatabase();
     try {
       const human = 'a'.repeat(64);
@@ -167,7 +165,7 @@ describe('background advisory-lock ownership', () => {
       expect(await new PushDeliveryLoop(db, { send }).runOnce()).toBe(12);
       expect(send).toHaveBeenCalledTimes(12);
       expect(peak).toBeGreaterThan(1);
-      expect(peak).toBeLessThanOrEqual(PUSH_DELIVERY_CONCURRENCY);
+      expect(peak).toBe(12);
     } finally {
       await db.close();
     }
@@ -470,14 +468,9 @@ describe('background advisory-lock ownership', () => {
         expect.objectContaining({ channelId: room }),
       ]);
 
-      // Reads inside the interval wait and then go out together, once.
+      // Committed reads clear immediately; no interval creates another send.
       await read('2'.repeat(64));
       await read('3'.repeat(64));
-      await loop.runOnce();
-      expect(clearRead).toHaveBeenCalledTimes(1);
-      await db.query(
-        `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
-      );
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(2);
       expect(clearRead.mock.calls[1]![0]).toBe(ios);
@@ -485,9 +478,6 @@ describe('background advisory-lock ownership', () => {
         [room, corner].sort(),
       );
 
-      await db.query(
-        `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
-      );
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(2);
       expect(firebaseSend).not.toHaveBeenCalled();
@@ -496,18 +486,18 @@ describe('background advisory-lock ownership', () => {
     }
   });
 
-  // G9-R1: a push names at most READ_CLEAR_MAX_CHANNELS Rooms. Overflow,
+  // G9-R1: a push names at most 50 Rooms. Overflow,
   // including marks tied on their message's created_at, must go out in later pushes.
   // G9-R5: each push must also fit APNs's 4,096-byte payload limit; 50 Rooms
   // with 64-character message ids made 6,103 bytes.
-  it('clears every read Room across throttled pushes that each fit the APNs limit', async () => {
+  it('clears every read Room from one event in payloads that fit APNs', async () => {
     const db = await migratedDatabase();
     try {
       const human = 'a'.repeat(64),
         agent = 'b'.repeat(64),
         workspace = '11111111-1111-4111-8111-111111111111',
         ios = 'c0ffee'.repeat(10) + 'abcd',
-        count = READ_CLEAR_MAX_CHANNELS + 1;
+        count = 50 + 1;
       await db.query(
         `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
         [human, agent],
@@ -546,23 +536,13 @@ describe('background advisory-lock ownership', () => {
         undefined,
         { send: vi.fn().mockResolvedValue(undefined), clearRead },
       );
-      const ageThrottle = () =>
-        db.query(
-          `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
-        );
-
-      // Push until the backlog is empty; the throttle holds each next batch.
-      for (let pass = 0; pass < count; pass += 1) {
-        const before = clearRead.mock.calls.length;
-        await loop.runOnce();
-        if (clearRead.mock.calls.length === before) break;
-        await loop.runOnce();
-        expect(clearRead).toHaveBeenCalledTimes(before + 1);
-        await ageThrottle();
-      }
+      await loop.runOnce();
+      const sends = clearRead.mock.calls.length;
+      await loop.runOnce();
+      expect(clearRead).toHaveBeenCalledTimes(sends);
       expect(clearRead.mock.calls.length).toBeGreaterThan(1);
       for (const [token, reads] of clearRead.mock.calls) {
-        expect(reads.length).toBeLessThanOrEqual(READ_CLEAR_MAX_CHANNELS);
+        expect(reads.length).toBeLessThanOrEqual(50);
         const { payload } = apnsReadClearRequest(token, reads, 'app.bundle', 'jwt');
         expect(Buffer.byteLength(JSON.stringify(payload))).toBeLessThanOrEqual(
           APNS_MAX_PAYLOAD_BYTES,
@@ -626,11 +606,6 @@ describe('background advisory-lock ownership', () => {
         undefined,
         { send: vi.fn().mockResolvedValue(undefined), clearRead },
       );
-      const ageThrottle = () =>
-        db.query(
-          `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
-        );
-
       await phone.markRead(room, first, human);
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(1);
@@ -641,13 +616,11 @@ describe('background advisory-lock ownership', () => {
       ]);
 
       // The mark moves back past every message; second stays in the shade.
-      await ageThrottle();
       await phone.markUnread(room, first, human);
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(1);
 
       // Reading it is a read, and clears it.
-      await ageThrottle();
       await phone.markRead(room, second, human);
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(2);
@@ -719,15 +692,79 @@ describe('background advisory-lock ownership', () => {
         expect.objectContaining({ channelId: room, messageId: first, readMessageIds: [zero] }),
       ]);
 
-      await db.query(
-        `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
-      );
       await read(second);
       await loop.runOnce();
       expect(clearRead).toHaveBeenLastCalledWith(ios, [
         // first and zero went in the first push, so neither is named again.
         expect.objectContaining({ channelId: room, messageId: second, readMessageIds: [] }),
       ]);
+    } finally {
+      await db.close();
+    }
+  });
+
+  // G9-R6: a Room with more read notifications than one push names must
+  // still clear them all. Ids left out by the per-Room cap or by the APNs
+  // size limit go in a later push; a newer unread notification stays.
+  it('clears every read notification from one event without a per-Room id cap', async () => {
+    const db = await migratedDatabase();
+    try {
+      const human = 'a'.repeat(64),
+        agent = 'b'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        room = '22222222-2222-4222-8222-222222222222',
+        ios = 'c0ffee'.repeat(10) + 'abcd';
+      const readIds = Array.from({ length: 20 + 2 }, (_, index) =>
+        index.toString(16).padStart(64, '0'),
+      );
+      const unread = 'f'.repeat(64);
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
+        [human, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
+        room,
+        workspace,
+      ]);
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at)
+         VALUES($1,$2,'ios','physical',now()-interval '2 hours')`,
+        [ios, human],
+      );
+      for (const [index, id] of [...readIds, unread].entries()) {
+        await db.query(
+          `INSERT INTO messages(id,room_id,author_id,text,created_at)
+           VALUES($1,$2,$3,'hi',now()-interval '1 hour'+$4*interval '1 second')`,
+          [id, room, agent, index],
+        );
+        await db.query(
+          `INSERT INTO push_delivery_claims(message_id,device_token,status) VALUES($1,$2,'delivered')`,
+          [id, ios],
+        );
+      }
+      await db.query(
+        `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
+         SELECT room_id,$2,created_at,id FROM messages WHERE id=$1`,
+        [readIds.at(-1), human],
+      );
+      const clearRead = vi.fn().mockResolvedValue(undefined);
+      const loop = new PushDeliveryLoop(
+        db,
+        undefined,
+        { send: vi.fn().mockResolvedValue(undefined), clearRead },
+      );
+      for (let pass = 0; pass < 5; pass += 1) {
+        await loop.runOnce();
+      }
+      const dismissed = new Set(
+        clearRead.mock.calls.flatMap(([, reads]: [string, ReadClearCursor[]]) =>
+          reads.flatMap((read) => [read.messageId, ...read.readMessageIds]),
+        ),
+      );
+      expect(clearRead).toHaveBeenCalledOnce();
+      expect([...dismissed].sort()).toEqual([...readIds].sort());
+      expect(dismissed.has(unread)).toBe(false);
     } finally {
       await db.close();
     }

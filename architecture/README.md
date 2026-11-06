@@ -13,45 +13,25 @@ its command/turn writes are forbidden, including terminal fallbacks. A failure
 names the rule, every site and the way to comply. Command creation, claim/lease
 assignment, legacy subscription reads and corner archival are strict, with zero
 external allowance. Their owner boundaries cannot be relaxed through a candidate
-rule edit. Owner paths and function names may follow a mechanical split only when
-every owned sink statement and its aggregate count match the base; changed SQL,
-arguments, duplicated sinks and empty new owners fail. Negative fixtures live in
-`scripts/architecture-invariants.test.mjs`.
+rule edit; negative fixtures live in `scripts/check-architecture.test.mjs`.
 
 The command-creation, live-notify, membership-write and server-interval rules
-have zero exceptions. Command creation lives in the `agent-command` modules declared by the rule, including
+have zero exceptions. Command creation lives in `agent-command.ts`, including
 explicit connected-app commands minted and claimed in one transaction. All helper
 and MCP acquisition uses `claimAgentCommand`; only its successful working-turn
 write can claim input/resume work. Lease progress uses a generation-fenced owner
-operation. `archiveCornerState` alone runs corner archival cleanup. Subscriptions
+operation. `corner-lifecycle.ts` alone decides and runs corner archival cleanup. Subscriptions
 live in `agent_subscriptions`; legacy JSON may be read only by named upgrade
 functions. `membership-join.ts` owns
 membership SQL and its conflict policies; callers pass their current transaction
-and retain access checks. The `postgres-live` modules own named notifiers and SQL
-expressions for atomic CTE/trigger notifications. `background-work.ts` drives
-instance-local jobs by their queue deadlines and owns cancellable timeout chains
-for live connections. Their close handlers cancel the chain.
+and retain access checks. `postgres-live.ts` owns named notifiers and SQL
+expressions for atomic CTE/trigger notifications. `background-work.ts` drains work authorized by committed events. The strict
+`timers.server-timeout` rule has zero exceptions outside the named
+`apps/server/src/owner-schedule-clock.ts` module, whose only job is firing
+owner-created schedules. There are no connection timer chains, retry clocks,
+retention sweeps or expiry wake loops. `scripts/server-timers.test.mjs` plants
+forbidden calls and verifies the real architecture check rejects them.
 
-## Code file size
-
-The `code.file-lines` rule in the same architecture check caps every tracked
-`.ts`, `.tsx`, `.js` and `.mjs` file under `apps/`, `packages/`, `scripts/` and
-`tools/` at 1,000 lines, including tests. Only the exact generated paths declared
-in the rule are exempt. New files must meet the cap when staged.
-
-There is no oversized-file allowlist. `--base` rejects relaxing the cap, its
-scope or the generated-file exclusions. Split by existing domain boundaries while
-preserving behavior; do not compress code to fit. The service domains live under
-`apps/server/src/phone/` and `daemon/`; their service classes retain constructors
-and delegation for existing callers. Room feature hooks and child views live
-beside `_chat-surface.tsx`; the monolith HTTP integration tests share
-`apps/server/src/test-fixtures/test-support-monolith.ts`. The existing eight
-integration batches balance these domain files, separately from ordinary server
-suites, so each selected integration file runs once.
-
-The UI component guard permits an existing legacy control to move only when its
-JSX, resolved styles and aggregate count match the trusted base. Its registry
-entries follow the moved controls; a copy or changed control still fails.
 
 ## Storage registry (bloat inside a module)
 
@@ -91,14 +71,15 @@ each app so a module cannot grow a second path for the same job.
 
 Non-strict invariant changes pass CI when the candidate satisfies its declared
 rules. Strict capability boundaries reject changes to their matching scope,
-owner functions, owned sink count or zero allowance. Verified moves of unchanged
-sink statements may update owner paths and function names; they cannot use the
-weekly warning path to introduce another sink. `--base` reports those changes for the weekly audit;
+owner functions, owned sink count or zero allowance; they cannot use the weekly
+warning path to reopen a second owner. A one-for-one relocation or rename is
+allowed only when the complete owning function bodies are unchanged against the
+base, with the same owned sink count and matching boundary. `--base` reports those changes for the weekly audit;
 it adds no approval or merge gate. CI executes the candidate guard. The owner
 reviews invariant and guard diffs weekly after merging.
 
-System message wording is not a rule here: it lives in the catalog exported by
-`packages/api-contract/src/system-message-catalog.ts` and never blocks a PR.
+System message wording is not a rule here: it lives in one catalog file and
+never blocks a PR.
 
 The [2026-11-02 harness/settings/path sweep](seam-sweep-b.md) records the
 remaining exceptions and why their callers still need them.
@@ -115,10 +96,10 @@ opens tightening PRs on its own and reports invariant, System catalog and corner
 The helper physical connection belongs to `apps/body/src/live-link.ts`; server
 machine output and login/version changes belong to `machine-connection.ts`.
 `machine-connection-sinks.json` pins owned sink counts and can only shrink.
-The server shutdown owner may follow its exact module split only when its sink
-call tokens and counts match the trusted base; changed calls and duplicates fail.
 A helper cannot acquire another reconnect/close/send path. Helper timers have
 zero inventory allowance, including generated child code and timer aliases.
 The sole exception is one stay-warm countdown in `AgentProcesses.workChanged`
 in `apps/body/src/agent-process.ts`. The mutation suite plants a second
 reconnect and timer and requires both to fail; TYPECHECK runs that suite.
+
+The `code.file-lines` rule caps every tracked `.ts`, `.tsx`, `.js` and `.mjs` file under `apps/`, `packages/`, `scripts/` and `tools/` at 1,000 lines, including tests. Only exact generated paths declared in the rule are exempt. New files must meet the cap when staged; there is no oversized-file allowlist. `--base` rejects relaxing the cap, its scope or its generated exclusions. Split by existing domain boundaries while preserving behavior.

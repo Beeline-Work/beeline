@@ -1,4 +1,4 @@
-import { describe, expect, it, migrateData, claimAgentCommand, createAgentCommand, WORKSPACE, ROOM, OTHER_ROOM, HUMAN, AGENT, OTHER_HUMAN, MESSAGE, database, liveDaemon, enrollLive, openTurn, closeTurn, rootFixture } from './institutional-memory-shadow.test-support.js';
+import { describe, expect, it, migrateData, claimAgentCommand, createAgentCommand, WORKSPACE, ROOM, OTHER_ROOM, HUMAN, AGENT, OTHER_AGENT, OTHER_HUMAN, MESSAGE, database, liveDaemon, enrollLive, openTurn, closeTurn, rootFixture } from './test-support-institutional-memory-shadow.test-support.js';
 
 describe('institutional memory phase-0 shadow capture', () => {
 
@@ -291,7 +291,7 @@ describe('institutional memory authority for agent-started turns', () => {
     const scheduleRoot = 'schedule-wake-root';
     await rootFixture.database.query(
       `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'daily triage sweep: check the release migration marker')`,
-      [scheduleRoot, ROOM, AGENT],
+      [scheduleRoot, ROOM, OTHER_AGENT],
     );
     const scheduleTurn = await openTurn('schedule-turn', scheduleRoot);
     const context = await liveDaemon().execute('getInstitutionalContext', scheduleTurn, AGENT);

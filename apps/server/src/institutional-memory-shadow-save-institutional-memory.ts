@@ -1,7 +1,7 @@
 import { INSTITUTIONAL_SEARCH_QUERY_MAX_CHARACTERS, institutionalMemoryRequestWords, INSTITUTIONAL_MEMORY_SEARCH_RESULT_MAX, INSTITUTIONAL_MEMORY_SEARCH_SCAN_MAX, INSTITUTIONAL_MEMORY_VECTOR_CANDIDATES_MAX, INSTITUTIONAL_MEMORY_VECTOR_MAX_DISTANCE, type DeleteInstitutionalMemoryInput, type InstitutionalMemoryWriteResult, type ReportInstitutionalMemoryUsedInput, type ReportInstitutionalMemoryUsedResult, type SaveInstitutionalMemoryInput, type SearchInstitutionalMemoryInput, type SearchInstitutionalMemoryResult, type UpdateInstitutionalMemoryInput } from '@beeline/api-contract/daemon';
 import type { CommandRow } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
-import { createDefaultEmbedFn, pgvectorLiteral, memoryEnvLimit, scheduleEmbedInstitutionalMemoryItem, runAfterCommit, withDeadline, type AfterCommit, type EmbedFn } from './institutional-memory-embeddings.js';
+import { createDefaultEmbedFn, pgvectorLiteral, memoryEnvLimit, scheduleEmbedInstitutionalMemoryItem, runAfterCommit, type AfterCommit, type EmbedFn } from './institutional-memory-embeddings.js';
 import { memoryWriteAuthority, memoryProposal, insertMemoryItem, lockMemoryTarget, memoryReadAuthority, searchRelevance } from './institutional-memory-shadow.js';
 
 
@@ -183,13 +183,6 @@ export async function reportInstitutionalMemoryUsed(
 }
 
 
-/** Search the full active item set; snapshot recency and byte limits do not apply. */
-/** search_memory's own embedding call gets a turn-friendly bound — a tool
- *  call, not the passive snapshot, so it can afford more than the snapshot's
- *  slice, but must still never hang the turn on a stalled network call. */
-export const SEARCH_MEMORY_EMBEDDING_TIMEOUT_MS = 3_000;
-
-
 export async function searchInstitutionalMemory(
   database: SqlDatabase,
   command: CommandRow,
@@ -209,7 +202,7 @@ export async function searchInstitutionalMemory(
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > INSTITUTIONAL_MEMORY_SEARCH_RESULT_MAX) {
     throw new Error('institutional memory limit must be an integer from 1 to 10');
   }
-  const queryEmbedding = await withDeadline(embed, SEARCH_MEMORY_EMBEDDING_TIMEOUT_MS)(
+  const queryEmbedding = await embed(
     query, 'query');
   return database.transaction(async (db) => {
     const authority = await memoryReadAuthority(db, command);

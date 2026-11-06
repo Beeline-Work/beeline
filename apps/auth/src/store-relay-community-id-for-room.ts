@@ -1,4 +1,4 @@
-import { type QueryResultRow } from 'pg';
+import type { QueryResultRow } from 'pg';
 import { AuthStore, MIGRATIONS, OidcFlow, SqlExecutor, FlowRow, flowFromRow, IdentityLink, asDate, AgentConnectDevice, AgentConnectDeviceRow, agentConnectDeviceFromRow, BindTicket, TicketRow, ticketFromRow, PhoneTicketExchangeResult, BindResult, RecoverBindResult } from './store.js';
 
 

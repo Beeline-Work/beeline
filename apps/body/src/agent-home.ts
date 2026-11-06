@@ -1,4 +1,53 @@
 import { waitForPathRemoval } from './filesystem-change.js';
+/**
+ * Per-room-instance harness state directories.
+ *
+ * Beeline isolates every Room and corner at its own layer — separate `Body`,
+ * durable inbox, relay socket, presence record, ACP session and worktree — but
+ * the ACP *child processes* all shared one `$HOME`, so an external harness
+ * (`claude`, `codex`, `pi`, …) that keeps per-project state under its own home
+ * directory could still remember another Room. That is below Beeline's
+ * per-channel isolation and is the one plausible mechanism for real cross-room
+ * context bleed.
+ *
+ * Room harnesses receive a Beeline-owned `$HOME` as well as their harness
+ * state roots. Known login files are linked into the harness-specific state
+ * directory, preserving one operator login without inheriting `$HOME/.agents`,
+ * plugins, configuration, or personal memory. Pi's credential-bearing custom
+ * provider catalog is copied as a private ordinary file into only its config
+ * directory and regenerated on activation; operator UI/default settings stay
+ * isolated.
+ *
+ * **Skills.** Every `<harness-home>/skills` is rebuilt on activation with the
+ * explicit default allowlist plus narrow names stored on this agent's runtime
+ * record. Shared skills are validated and copied as private ordinary
+ * files, preserving owner execution permission for launchers; ambient
+ * directories are never inherited. Ordinary operator MCP server
+ * declarations are COPIED into the harness home so every Room/corner session
+ * has the tools the host offers — without them a harness boots with a login but
+ * nothing to advertise over ACP. Codex-acp
+ * MERGES session MCP servers into `$CODEX_HOME/config.toml`, so a symlink
+ * there would let a session write into the operator's real config. Only MCP
+ * declarations pass through: model/sandbox/approval settings stay out because
+ * they fight the daemon's own agent-mode flags. Codex's native web search is
+ * enabled explicitly (`[features] standalone_web_search`); Claude Code gets a
+ * generated `settings.json` allowing its native `WebSearch` tool. Pi's
+ * harness MCP inventory is `$PI_CODING_AGENT_DIR/mcp.json` (operator
+ * `~/.pi/agent/mcp.json`); local servers are copied and granted host routes
+ * are rewritten there like Claude's `.claude.json`. The Pi installer chooses
+ * that native inventory only when the executable proves it can load it;
+ * otherwise `pi-mcp-bridge.ts` republishes the filtered stdio inventory.
+ * Isolated homes exclude operator `settings.json`; Pi receives generated
+ * stream-liveness settings. This does NOT touch the #376
+ * credential armor: masked stores (`~/.ssh`, `~/.netrc`, `~/.config/gh`,
+ * `~/.config/trusty-squire`, `~/.git-credentials`) are never linked. Imported
+ * MCP declarations are classified `local` (copied as-is) or `host` (rewritten
+ * into a route only after an owner grant; otherwise kept out). Squire is
+ * code-owned as host.
+ *
+ * Pi uses `PI_CODING_AGENT_DIR` and the isolated `$HOME`, preventing its
+ * otherwise-implicit reads from the operator's `~/.pi` and `~/.agents` trees.
+ */
 import { existsSync, watch, type FSWatcher } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { chmod, lstat, mkdir, readFile, readlink, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
@@ -6,18 +55,12 @@ import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { DRAW_AVATAR_SKILL_NAME } from './draw-avatar-skill.js';
 import { AGENT_BEHAVIORS, SHARED_CREDENTIALS, agentBehavior, type AgentKind } from './agent-command.js';
-import { androidAgentEnv } from './android-agent-env.js';
 import { BEELINE_REVIEW_SKILL_NAME, BEELINE_SPEC_SKILL_NAME, BEELINE_ONBOARDING_SKILL_NAME, BEELINE_TRIAGE_SKILL_NAME, runningBeelineReleaseId, SITUATIONAL_SKILL_NAMES } from './beeline-skill.js';
 import { type OpenRouterRoutingHomeInput } from './openrouter-routing.js';
 import { isMissingPathError, assertRealContainedDirectory, roomSessionTmpDir, roomAgentHomeEnv } from './agent-home-plan-managed-skills.js';
 import { provisionAgentSkillsAndMcp } from './agent-home-provision-agent-skills-and-mcp.js';
-export { mountedImportedMcpServerNames, hostImportedMcpDeclarations, hostImportedMcpServerNames, grantedSquireHostBindPaths, expectedMountedImportedMcpServerNames } from './agent-home-provision-agent-skills-and-mcp.js';
-export { writeIsolatedHarnessFile, roomSessionTmpDir, roomAgentHomeEnv, HARNESS_STATE_ENV_VARS, harnessStateDirsFromEnv } from './agent-home-plan-managed-skills.js';
 export { AGENT_PRIVATE_STATE_ENV } from './agent-private-state-env.js';
 
-
-
-export { SHARED_CREDENTIALS } from './agent-command.js';
 
 
 /**
@@ -250,8 +293,6 @@ export interface RoomAgentHomeInput {
   squireScope?: { readonly agentId: string; readonly roomId: string; readonly relay?: { readonly url: string; readonly token: string; readonly contextFile: string } };
   /** Operator's real home directory; defaults to the daemon's. */
   operatorHome?: string;
-  /** The agent's PATH before this overlay; the Android SDK tools are prepended. */
-  inheritedPath?: string;
   failClosed?: boolean;
   /**
    * Release id stamped into the managed Beeline skills. Defaults to
@@ -618,10 +659,16 @@ export async function prepareRoomAgentHome(
   return {
     ...env,
     ...(agentBehavior(input.agentKind).sharedLoginWriteBack === true ? sharedClaudeLoginEnv(operatorHome) : {}),
-    ...androidAgentEnv({
-      root,
-      operatorHome,
-      ...(input.inheritedPath ? { inheritedPath: input.inheritedPath } : {}),
-    }),
   };
 }
+export { SHARED_CREDENTIALS } from './agent-command.js';
+export { mountedImportedMcpServerNames } from './agent-home-provision-agent-skills-and-mcp.js';
+export { hostImportedMcpDeclarations } from './agent-home-provision-agent-skills-and-mcp.js';
+export { hostImportedMcpServerNames } from './agent-home-provision-agent-skills-and-mcp.js';
+export { grantedSquireHostBindPaths } from './agent-home-provision-agent-skills-and-mcp.js';
+export { expectedMountedImportedMcpServerNames } from './agent-home-provision-agent-skills-and-mcp.js';
+export { writeIsolatedHarnessFile } from './agent-home-plan-managed-skills.js';
+export { roomSessionTmpDir } from './agent-home-plan-managed-skills.js';
+export { roomAgentHomeEnv } from './agent-home-plan-managed-skills.js';
+export { HARNESS_STATE_ENV_VARS } from './agent-home-plan-managed-skills.js';
+export { harnessStateDirsFromEnv } from './agent-home-plan-managed-skills.js';

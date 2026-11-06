@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, assignCornerWorker, DaemonService, LiveHub, PushDeliveryLoop, systemLine, createAgentCommand, reconcileConfiguredCornerReviewers, REVIEWER_DISPATCH_REASONS, reviewerDispatchCarriesHead, routeSystemCommand, advanceCorner, H, A, B, R, C, db, phone, daemon, commands, claim, result, greenHead, rootFixture } from './corner-review-dispatch.test-support.js';
+import { describe, expect, it, vi, assignCornerWorker, DaemonService, LiveHub, PushDeliveryLoop, systemLine, createAgentCommand, reconcileConfiguredCornerReviewers, REVIEWER_DISPATCH_REASONS, reviewerDispatchCarriesHead, routeSystemCommand, advanceCorner, H, A, B, R, C, db, phone, daemon, commands, claim, result, greenHead, rootFixture } from './test-support-corner-review-dispatch.test-support.js';
 
 describe('corner message attribution', () => {
 
@@ -613,4 +613,78 @@ it.each(['complete','failed'] as const)('Reproduction review-1: a delivered repa
   await rootFixture.db.query("UPDATE agent_commands SET state='complete',completed_at=now() WHERE room_id=$1 AND agent_id=$2",[C,A]);
   await reconcileConfiguredCornerReviewers(rootFixture.db,R);
   expect(await commands(B,C)).toEqual([]);
+});
+
+
+it('committed-event recovery: startup green, lost command and reviewer completion share one timer-free runtime', async () => {
+  const { CornerMachineEvents } = await import('./corner-attention.js');
+  const { POSTGRES_LIVE_CHANNEL } = await import('./postgres-live.js');
+  await rootFixture.phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+  const headSha = '6'.repeat(40);
+  // Startup has no GitHub client and no repair interval.
+  await rootFixture.db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [C,
+    JSON.stringify({ lifecycle: 'in-review', checks: 'passing', pr: { number: 98, headSha, url: 'https://github.com/acme/repo/pull/98' } })]);
+  const live = new LiveHub();
+  const errors: unknown[] = [];
+  const machine = new CornerMachineEvents(rootFixture.db, live, error => errors.push(error));
+  const release = await rootFixture.db.client.listen(POSTGRES_LIVE_CHANNEL, payload => {
+    const event = JSON.parse(payload);
+    if (event.table === 'corner_state') live.publish({ type: 'invalidate', roomId: event.roomId, reason: 'postgres:corner_state' });
+  });
+  try {
+    live.resync();
+    await vi.waitFor(async () => expect(await commands(B, C)).toHaveLength(1));
+    const [lost] = await commands(B, C);
+    expect(lost).toBeDefined();
+    expect(await commands(B, R)).toEqual([]);
+    await rootFixture.db.query('DELETE FROM agent_commands WHERE id=$1', [lost!.id]);
+    await vi.waitFor(async () => expect(await commands(B, C)).toHaveLength(1));
+    const [review] = await commands(B, C);
+    await claim(review!);
+    await rootFixture.daemon.execute('postAgentTurnReceipt', { roomId: C, requestId: review!.turnRequestId,
+      generationId: 'g1', status: 'complete' }, B);
+    await vi.waitFor(async () => {
+      const handbacks = (await commands(A, C)).filter(command => command.reason === 'corner_review_needed');
+      expect(handbacks).toHaveLength(1);
+      expect(handbacks[0]?.source.body).toContain('without a verdict');
+      expect(handbacks[0]?.source.body).toContain(headSha);
+    });
+    for (let replay = 0; replay < 3; replay++) live.publish({ type: 'invalidate', roomId: C, reason: 'postgres:corner_state' });
+    await machine.refresh(C);
+    expect((await commands(A, C)).filter(command => command.reason === 'corner_review_needed')).toHaveLength(1);
+    expect(await commands(B, C)).toEqual([]);
+    expect(errors).toEqual([]);
+    await machine.stop();
+    // A preceding image closed the Room while this listener was down.
+    await rootFixture.db.query('UPDATE rooms SET archived_at=now() WHERE id=$1', [C]);
+    const recovery = new CornerMachineEvents(rootFixture.db, live, error => errors.push(error));
+    try {
+      await recovery.start();
+      expect((await rootFixture.db.query(`SELECT machine->>'state' state FROM corner_facts WHERE corner_id=$1`, [C])).rows).toEqual([{state:'archived'}]);
+    } finally { await recovery.stop(); }
+  } finally {
+    await machine.stop();
+    await release();
+  }
+});
+
+
+it('event recovery drains its startup scan before shutdown', async () => {
+  const { CornerMachineEvents } = await import('./corner-attention.js');
+  let release!: () => void, entered!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const scan = new Promise<void>(resolve => { entered = resolve; });
+  const query = rootFixture.db.query.bind(rootFixture.db), errors: unknown[] = [];
+  const runtime = new CornerMachineEvents({
+    query: async (sql, values) => {
+      if (sql.includes('LEFT JOIN corner_facts fact ON fact.corner_id=corner.id')) { entered(); await gate; }
+      return query(sql, values);
+    }, transaction: work => rootFixture.db.transaction(work),
+  }, new LiveHub(), error => errors.push(error));
+  const recovery = runtime.start(); await scan;
+  let stopped = false;
+  const stopping = runtime.stop().then(() => { stopped = true; });
+  await Promise.resolve(); expect(stopped).toBe(false);
+  release(); await Promise.all([recovery, stopping]);
+  expect(errors).toEqual([]);
 });

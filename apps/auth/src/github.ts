@@ -452,7 +452,9 @@ export interface GitHubInstallationAccount {
 }
 
 export class GitHubAppClient {
+
   readonly #config: Required<GitHubAppConfig>;
+
 
   constructor(config: GitHubAppConfig) {
     if (!/^\d+$/.test(config.appId) || !config.privateKey.trim() || !config.slug.trim()) {
@@ -461,23 +463,32 @@ export class GitHubAppClient {
     this.#config = { ...config, apiBaseUrl: config.apiBaseUrl ?? DEFAULT_API };
   }
 
+
   // Tokens from different repositories share one installation quota. Keep only
   // token digests in the scope map; mint caching preserves the exact grant.
   readonly #tokenScopes = new Map<string, { installationId: number; expiresAt: number }>();
+
   readonly #tokens = new Map<string, GitHubInstallationToken>();
+
   readonly #mints = new Map<string, Promise<GitHubInstallationToken>>();
+
   readonly #retryAt = new Map<string, number>();
+
   #activeRequests = 0;
+
   readonly #requestQueue: Array<() => void> = [];
+
   #rateLimitStore?: {
     get(installationId: number): Promise<number>;
     set(installationId: number, retryAt: number): Promise<void>;
   };
 
+
   /** Shared server storage makes an installation cooldown survive deploys and replicas. */
   setRateLimitStore(store: { get(installationId: number): Promise<number>; set(installationId: number, retryAt: number): Promise<void> }): void {
     this.#rateLimitStore = store;
   }
+
 
   async request(input: string | URL, init: RequestInit = {}): Promise<Response> {
     if (this.#activeRequests >= 4) await new Promise<void>(resolve => this.#requestQueue.push(resolve));
@@ -511,6 +522,7 @@ export class GitHubAppClient {
   }
   installationUrl(state: string, selectTarget = false): string { return gitHubAppClientInstallationUrl({ service: this, config: this.#config }, state, selectTarget); }
 
+
   /**
    * The STATE-LESS public install URL for this App — the shareable link handed
    * to a repository OWNER who does not use Beeline themselves. Unlike
@@ -523,6 +535,7 @@ export class GitHubAppClient {
   }
   /** * THIS App's own live configuration (GET /app, App-JWT authenticated): * the subscribed events and permission levels the drift check compares * against the required set. */ async fetchApp(): Promise<{ slug: string; events?: unknown; permissions?: unknown; }> { return gitHubAppClientFetchApp({ service: this, config: this.#config }); }
   async appJwt(): Promise<string> { return gitHubAppClientAppJwt({ service: this, config: this.#config }); }
+
 
   async installationToken(
     installationId: number,
@@ -580,6 +593,7 @@ export class GitHubAppClient {
   /** Close one PR without merging; its branch and commits stay on GitHub. */ async closePullRequest(installationId: number, repositoryId: number, fullName: string, pullRequestNumber: number): Promise<void> { return gitHubAppClientClosePullRequest({ service: this, config: this.#config }, installationId, repositoryId, fullName, pullRequestNumber); }
   /** * One Issues REST call on `fullName` (the feedback loop's filing path). * `path` is relative to the repository, e.g. `issues` or * `issues/comments/7`. A refusal carries GitHub's own `message` so the * caller can hand the reason back unchanged. */ async issuesRequest(accessToken: string, fullName: string, method: 'GET' | 'POST' | 'PATCH', path: string, body?: Record<string, unknown>): Promise<unknown> { return gitHubAppClientIssuesRequest({ service: this, config: this.#config }, accessToken, fullName, method, path, body); }
 
+
   #installationAccountFrom(body: Record<string, unknown>): GitHubInstallationAccount {
     const account = body.account;
     const accountRecord =
@@ -611,6 +625,7 @@ export class GitHubAppClient {
     };
   }
 
+
   async installationAccount(installationId: number): Promise<GitHubInstallationAccount> {
     const body = await jsonObject(
       await this.request(`${this.#config.apiBaseUrl}/app/installations/${installationId}`, {
@@ -620,6 +635,7 @@ export class GitHubAppClient {
     );
     return this.#installationAccountFrom(body);
   }
+
 
   /**
    * Every installation of THIS App, authenticated by the App JWT alone.

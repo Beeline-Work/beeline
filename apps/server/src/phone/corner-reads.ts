@@ -1,4 +1,4 @@
-import { type PhoneIdentityRow as IdentityRow, phoneIdentity as identity, assetUrl } from '../phone-identity.js';
+import { assetUrl, phoneIdentity as identity, type PhoneIdentityRow as IdentityRow } from '../phone-identity.js';
 import { roomMessageTagsSql } from '../room-router-read.js';
 import { workingTurnFreshSql } from '../turn-ownership.js';
 import { cornerLifecycleSql } from '../corner-github-cache.js';

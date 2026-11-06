@@ -37,6 +37,8 @@ import { forwardedMessageParts } from '@/buzz/message-forward';
 import { agentMessageJsonMarkdown } from '@/buzz/agent-message-json';
 import { OrdinaryLedgerMessageProps, agentBylineLabel, SwipeToReply, ConnectorReceiptCard, AttachmentCard, ViewerContextReference } from './RoomMessageVariants-attachment-card';
 
+
+
 export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   message,
   agent,
@@ -438,6 +440,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
               />
             }
             title={`Proposed ${CORNER_LABEL}: ${cornerProposal.title}`}
+            wrapTitle
             subline={cornerProposal.objective}
             stamp={ledgerStamp(message.timestamp)}
             body={cornerProposal.warnings.length ? cornerProposal.warnings.join('\n') : undefined}
@@ -471,7 +474,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             footerNoteTestID={`corner-proposal-footer-${message.id}`}
           />
         ) : message.awayWarning ? (
-          <TranscriptCard tier="record" testID="away-warning-card"
+          <TranscriptCard tier="record" testID="away-warning-card" wrapTitle
             title="Schedules and subscriptions will pause in 1 day"
             body={message.text} stamp={ledgerStamp(message.timestamp)} />
         ) : (message.authorIdentity?.pubkey ?? message.pubkey) === SYSTEM_IDENTITY_PUBKEY ? (

@@ -19,14 +19,9 @@ import { openExternalUrl } from '@/utils/open-external-url';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { Button } from '@/components/buzz/Button';
 import { TranscriptCard, TranscriptCardHandle, type TranscriptCardAction, type TranscriptCardChoice } from '@/components/buzz/TranscriptCard';
+import { OrdinaryLedgerMessageProps, agentBylineLabel, ConnectorReceiptCard } from './RoomMessageVariants-attachment-card';
+import { OrdinaryLedgerMessage } from './RoomMessageVariants-ordinary-ledger-message';
 
-export { type OrdinaryLedgerMessageProps, agentBylineLabel, ConnectorReceiptCard } from './RoomMessageVariants-attachment-card';
-export { OrdinaryLedgerMessage } from './RoomMessageVariants-ordinary-ledger-message';
-
-
-export { GitHubEventCard, DaemonFactCard } from '@/components/buzz/LifecycleCard';
-
-export { NotificationLifecycleCard };
 
 
 type WriteDecision = 'allow' | 'deny';
@@ -45,6 +40,7 @@ export interface WritePermissionCardProps {
   onDecision(message: ChatDisplayMessage, decision: WriteDecision): void;
   onOpenCorner(cornerId: string): void;
 }
+
 
 export const WritePermissionCard = React.memo(function WritePermissionCard({
   message,
@@ -105,7 +101,7 @@ export const WritePermissionCard = React.memo(function WritePermissionCard({
         : [];
   return (
     <AgentApprovalCard
-      tier={pending ? 'ask' : 'record'} testID={`write-permission-${permission.status}`}
+      tier={pending ? 'ask' : 'record'} testID={`write-permission-${permission.status}`} wrapTitle
       askingAgent={{ pubkey: permission.agentPubkey, kind: 'agent', name: display.name }} agent={agent}
       title={<><TranscriptCardHandle>@{display.name.replace(/^@/, '')}</TranscriptCardHandle>{' '}{squireSpending ? 'wants to spend with Trusty Squire' : 'wants to open an edit corner'}</>}
       subline={`${squireSpending ? roomName ? `#${roomName}` : 'Room' : permission.repository ?? 'Repository'} · ${approvalAudience(permission.requester, viewerPubkey)}`}
@@ -121,15 +117,13 @@ export const WritePermissionCard = React.memo(function WritePermissionCard({
 });
 
 
-export { GrantRequestCard, type GrantDecision, type GrantRequestCardProps } from '@/components/buzz/GrantRequestCard';
-
-
 export interface SquireApprovalCardProps {
   message: ChatDisplayMessage;
   agent?: AgentPresentation;
   viewerPubkey?: string;
   onOpenSource?(roomId: string, messageId: string): void;
 }
+
 
 /**
  * A notification, not an authority surface: the primary action opens the
@@ -155,7 +149,7 @@ export const SquireApprovalCard = React.memo(function SquireApprovalCard({
   });
   if (!settled) actions.push({ label: approval.linkKind === 'passkey' ? 'Use passkey' : approval.linkKind === 'vouch' ? 'Vouch' : 'Review',
     accessibilityRole: 'link', destination: 'external', onPress: () => void openExternalUrl(approval.approvalUrl), testID: 'squire-approval-open' });
-  return <AgentApprovalCard tier={settled ? 'record' : 'ask'} testID="squire-approval-card"
+  return <AgentApprovalCard tier={settled ? 'record' : 'ask'} testID="squire-approval-card" wrapTitle
     askingAgent={approval.agent} agent={agent}
     title={`@${name.replace(/^@/, '')} wants to ${approval.action ?? squireApprovalAction(approval.tool, approval.detail, approval.linkKind)}`}
     subline={`${approval.tool === 'Link' ? 'Link' : 'Trusty Squire'} · ${approvalAudience(approval.owner, viewerPubkey)}`}
@@ -255,6 +249,7 @@ const appSignInStyles = StyleSheet.create(theme => {
   };
 });
 
+
 export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
   message,
   agent,
@@ -314,7 +309,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
   return (
     <AgentApprovalCard
       tier={pending || connecting ? 'ask' : 'record'}
-      testID={`connector-offer-${pending ? 'pending' : connecting ? 'connecting' : 'settled'}`}
+      testID={`connector-offer-${pending ? 'pending' : connecting ? 'connecting' : 'settled'}`} wrapTitle
       askingAgent={offer.agent} agent={agent}
       title={`@${agentName.replace(/^@/, '')} wants to ${offer.intent === 'reconnect' ? 'reconnect' : offer.intent === 'switch' ? 'switch' : 'add'} ${offer.connectorName}`}
       subline={offer.addressee.pubkey === viewerPubkey ? undefined : approvalAudience(offer.addressee, viewerPubkey)}
@@ -365,6 +360,7 @@ function choiceHandle(identity?: { handle?: string; name: string; pubkey: string
   const handle = identity?.handle?.replace(/^@/, '');
   return handle || identity?.name?.replace(/^@/, '') || 'someone';
 }
+
 
 /**
  * One choice family: lettered plates for a question or a poll. Skip is a footer
@@ -460,6 +456,7 @@ export const ChoiceCard = React.memo(function ChoiceCard({
         />
       }
       title={card.prompt}
+      wrapTitle
       subline={subline}
       sublineTestID={`choice-${card.choiceId}-subline`}
       stamp={ledgerStamp(message.timestamp)}
@@ -611,6 +608,7 @@ export interface TargetBranchProposalCardProps {
   roomName?: string;
 }
 
+
 export const TargetBranchProposalCard = React.memo(function TargetBranchProposalCard({
   message,
   agent,
@@ -630,7 +628,7 @@ export const TargetBranchProposalCard = React.memo(function TargetBranchProposal
     ? resolveAgentDisplayIdentity(proposal.agentPubkey, agent).name.replace(/^@/, '')
     : undefined;
   return (
-    <AgentApprovalCard tier={settled ? 'record' : 'ask'} testID="target-branch-proposal"
+    <AgentApprovalCard tier={settled ? 'record' : 'ask'} testID="target-branch-proposal" wrapTitle
       askingAgent={{ pubkey: proposal.agentPubkey ?? '', kind: 'agent', name: askingAgent ?? 'Agent' }} agent={agent}
       title={`@${askingAgent ?? 'Agent'} wants to change the target branch`}
       subline={`${roomName ? `#${roomName}` : proposal.repository ?? 'Room'} · for you`}
@@ -644,3 +642,10 @@ export const TargetBranchProposalCard = React.memo(function TargetBranchProposal
       ] : []} />
   );
 });
+export { GitHubEventCard, DaemonFactCard } from '@/components/buzz/LifecycleCard';
+export { NotificationLifecycleCard };
+export { GrantRequestCard, type GrantDecision, type GrantRequestCardProps } from '@/components/buzz/GrantRequestCard';
+export type { OrdinaryLedgerMessageProps } from './RoomMessageVariants-attachment-card';
+export { agentBylineLabel } from './RoomMessageVariants-attachment-card';
+export { ConnectorReceiptCard } from './RoomMessageVariants-attachment-card';
+export { OrdinaryLedgerMessage } from './RoomMessageVariants-ordinary-ledger-message';

@@ -11,7 +11,9 @@ import type { SqlDatabase } from './database.js';
 import { resolveCurrentMemberMentions, typedMentionHandles, isChannelMentionToken } from './message-mentions.js';
 import { CORNER_LIFECYCLE_CARD_TYPE } from './room-choice.js';
 import { CommandRow, nextAgentDepth, commandValidityCtes, reviewerQuietSql, waitingReportSql, ordinaryWakeSql } from './agent-command.js';
-import { createAgentCommand } from './agent-command-create-agent-command.js';
+import { createAgentCommand } from './agent-command.js';
+
+
 
 export async function routeAgentResult(
   db: SqlDatabase,
@@ -53,8 +55,7 @@ export async function routeAgentResult(
         const live = (await db.query(`SELECT 1 FROM rooms_mcp_members member
           JOIN rooms_mcp_connections connection ON connection.client_id=member.client_id
             AND connection.identity_id=member.owner_id AND connection.revoked_at IS NULL
-          WHERE member.member_id=$1 AND (member.last_bridge_poll_at>now()-interval '60 seconds'
-            OR EXISTS(SELECT 1 FROM rooms_mcp_event_subscriptions subscription
+          WHERE member.member_id=$1 AND (EXISTS(SELECT 1 FROM rooms_mcp_event_subscriptions subscription
               JOIN rooms_mcp_event_deliveries delivery ON delivery.subscription_id=subscription.id AND delivery.message_id=$2
               WHERE subscription.member_id=member.member_id AND subscription.expires_at>now()))`,
         [mention.id, sourceId])).rowCount;
@@ -114,40 +115,6 @@ export const CORNER_AGENT_UNREACHABLE_CARD_TYPE = 'corner-agent-unreachable';
  * plain system line.
  */
 export const CORNER_MERGE_YES_CARD_TYPE = 'corner-merge-yes';
-
-
-/** Push one helper's eligible orders after an actual connection or pickup event.
- * Busy Rooms wait for the committed command release; other Rooms remain eligible.
- * Bootstrap also enumerates every pending Room, independently of this bounded hint.
- * There is no unscoped discovery or elapsed-time retry admission. */
-export async function renudgeStrandedPendingCommands(db: SqlDatabase, agentId: string): Promise<number> {
-  const result = await db.query<{ count: number }>(
-    `WITH due AS MATERIALIZED (
-       SELECT command.id
-       FROM agent_commands command
-       JOIN agent_connections connection ON connection.agent_id=command.agent_id
-         AND connection.released_at IS NULL
-       JOIN live_server_instances server ON server.instance_id=connection.instance_id
-         AND server.renewed_at>clock_timestamp()-interval '90 seconds'
-       WHERE command.state='pending' AND command.action='input'
-         AND command.reason IN ('human_tag','direct_message','order')
-         AND command.agent_id=$1
-         AND NOT EXISTS (
-           SELECT 1 FROM agent_commands busy
-           WHERE busy.agent_id=command.agent_id AND busy.room_id=command.room_id
-             AND busy.state='claimed' AND ${commandOwnerLiveSql('busy', 'clock_timestamp()')}
-         )
-       ORDER BY command.created_at,command.id LIMIT 100
-       FOR UPDATE OF command SKIP LOCKED
-     ), renudged AS (
-       UPDATE agent_commands command SET renudged_at=clock_timestamp()
-       FROM due WHERE command.id=due.id AND command.state='pending'
-       RETURNING command.id
-     ) SELECT count(*)::int count FROM renudged`,
-    [agentId],
-  );
-  return Number(result.rows[0]?.count ?? 0);
-}
 
 
 /** Claims and human Stops serialize before taking command or turn row locks. */

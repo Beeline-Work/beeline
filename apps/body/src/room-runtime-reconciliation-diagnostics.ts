@@ -1,12 +1,11 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import type { BodyConfig } from './config.js';
 import { type RoomMembershipChange } from './daemon-api-client.js';
 import { type RoomRepositoryStateResult } from '@beeline/api-contract/daemon';
 import { type GrantRunnerEndpoint } from './grant-runner.js';
-import { stopKeptCornerEmulator } from './corner-emulator.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
 import type { InterruptedTurn } from './force-update-journal.js';
 import { openRouterRoutingCacheDir } from './openrouter-routing.js';
@@ -357,12 +356,16 @@ import { RoomRuntimeCoordinator, WorkspaceMembershipStatus, REMOVAL_CONFIRMATION
       while (!ctx.stopped && ctx.maintenanceRequest) {
         const request = ctx.maintenanceRequest;
         ctx.maintenanceRequest = undefined;
-        const attemptedReaps = new Set([...ctx.desiredChannels, ...ctx.pendingCornerReaps.keys()]);
-        await ctx.retryPendingCornerReaps(ctx.desiredChannels);
+        // Active membership is fresh authority to clear a prior refusal.
+        for (const cornerId of ctx.desiredChannels) {
+          await ctx.yieldReconciliation();
+          if (ctx.stopped) return;
+          ctx.archiveCleanupRefused.delete(cornerId);
+          await rm(ctx.archiveCleanupRefusalPath(cornerId), { force: true });
+        }
         if (ctx.stopped) return;
-        await ctx.sweepArchivedCornerWorktrees(request.archived, new Set([...attemptedReaps, ...ctx.desiredChannels]));
+        await ctx.sweepArchivedCornerWorktrees(request.archived, ctx.desiredChannels);
         if (ctx.stopped) return;
-        await ctx.reapClosedCornerEmulators(ctx.desiredChannels);
         if (ctx.stopped) return;
         await ctx.sweepRoomPrivateStorage(request.states);
       }
@@ -436,11 +439,6 @@ import { RoomRuntimeCoordinator, WorkspaceMembershipStatus, REMOVAL_CONFIRMATION
       ctx.unwatchCorner(roomId);
       ctx.surfaceHealth.remove(roomId);
       if (!ctx.running.has(roomId)) ctx.monolithCornerParents.delete(roomId);
-      await stopKeptCornerEmulator(
-        ctx.runtime.supervisorRoot, roomId, `corner archived event; stopped by agent ${ctx.agent.publicKey}`,
-      ).catch((error) => {
-        console.error(`[thin-core] corner ${roomId} emulator stop failed:`, error);
-      });
       return;
     }
     ctx.roomRemovalConfirmations.delete(roomId);
@@ -482,7 +480,7 @@ import { RoomRuntimeCoordinator, WorkspaceMembershipStatus, REMOVAL_CONFIRMATION
       if (running.worktree) await ctx.reapCornerWorktree(running.worktree);
       else if (running.scratch) await ctx.reapCornerScratch(running.scratch);
     } catch (error) {
-      console.error(`[thin-core] corner ${channelId} cleanup failed; will retry:`, error);
+      console.error(`[thin-core] corner ${channelId} cleanup failed:`, error);
     }
     if (running.worktree || running.scratch) await ctx.cleanupArchivedCornerLocalState(channelId);
   }

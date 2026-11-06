@@ -1,9 +1,11 @@
-import type { IncomingMessage } from 'node:http';
-import type { Duplex } from 'node:stream';
-import { WebSocket, WebSocketServer } from 'ws';
-import type { SqlDatabase } from './database.js';
-import type { LiveHub } from './live.js';
-import { VIEWER_LAYOUT_SCRIPT, getComputerSession, mayViewComputer, noteComputerHandback, endComputerSession, handbackWaiters, ComputerActivityEvent, ComputerSessionRow, recordComputerActivity, isFrameMessage, MAX_VIEWER_BUFFERED_BYTES, authorizedViewer } from './computer-session.js';
+import type { WebSocket } from "ws";
+import type { SqlDatabase } from "./database.js";
+import type { LiveHub } from "./live.js";
+import type { Duplex } from "node:stream";
+import type { IncomingMessage } from "node:http";
+import { VIEWER_LAYOUT_SCRIPT, getComputerSession, mayViewComputer, endComputerSession, ComputerSessionRow, computerWebSockets, recordComputerActivity, noteComputerHandback } from './computer-session.js';
+
+
 
 
 
@@ -114,7 +116,7 @@ export function computerViewerHtml(id: string): string {
   // Copy the remote selection to this device. The clipboard write starts
   // inside the key press, which browsers require, and resolves on the answer.
   let copied;
-  function copySelection(){if(preview)return;takeover();const text=new Promise(resolve=>{copied=resolve;setTimeout(()=>resolve(''),3000);});
+  function copySelection(){if(preview)return;takeover();const text=new Promise(resolve=>{copied=resolve;});
     send({type:'copy'});
     if(window.ReactNativeWebView){text.then(value=>{if(value)window.ReactNativeWebView.postMessage(JSON.stringify({type:'computer-copy',id:'${id}',text:value}));});return;}
     try{navigator.clipboard.write([new ClipboardItem({'text/plain':text.then(value=>{if(!value)throw new Error('nothing selected');return new Blob([value],{type:'text/plain'});})})]).catch(()=>{});}
@@ -127,15 +129,17 @@ export function computerViewerHtml(id: string): string {
 }
 
 
-export const computerWebSockets = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
-
 export type BodyChannel = { source?: WebSocket; lastFrame?: { data: Buffer; binary: boolean }; viewers: Set<WebSocket>; interactiveViewers: Set<WebSocket>; pausedViewers: Set<WebSocket>; previewSentAt: Map<WebSocket, number>; controller?: WebSocket; ending?: boolean };
+
 
 export const bodyChannels = new Map<string, BodyChannel>();
 
+
 export type SquireChannel = { viewers: Set<WebSocket>; interactiveViewers: Set<WebSocket>; upstreams: Set<WebSocket>; humanControl: boolean; humanViewerId?: string; pendingHumanInput?: { viewerId: string; category: string }; html?: string; lastFrame?: { data: Buffer; binary: boolean }; previewSentAt: Map<WebSocket, number> };
 
+
 export const squireChannels = new Map<string, SquireChannel>();
+
 
 export function squireChannel(id: string): SquireChannel {
   let channel = squireChannels.get(id);
@@ -147,27 +151,6 @@ export function squireChannel(id: string): SquireChannel {
 }
 
 
-/** Only an authenticated person's explicit action completes a share. */
-export async function handBackComputerSession(database: SqlDatabase, id: string, viewerId: string): Promise<void> {
-  const row = await getComputerSession(database, id);
-  if (!row || row.status !== 'live' || !(await mayViewComputer(database, row, viewerId)))
-    throw new Error('computer session access denied');
-  const body = bodyChannels.get(id);
-  if (body) {
-    if (body.controller) {
-      body.source?.send(JSON.stringify({ type: 'release' }));
-      body.controller = undefined;
-    }
-  }
-  const squire = squireChannels.get(id);
-  if (squire) {
-    for (const upstream of squire.upstreams) {
-      if (upstream.readyState === WebSocket.OPEN) upstream.send(JSON.stringify({ type: 'release' }));
-    }
-  }
-  await noteComputerHandback(database, row);
-}
-
 
 export async function endComputerSessionByViewer(database: SqlDatabase, live: LiveHub | undefined, id: string, viewerId: string): Promise<void> {
   const row = await getComputerSession(database, id);
@@ -177,49 +160,13 @@ export async function endComputerSessionByViewer(database: SqlDatabase, live: Li
 }
 
 
+
 export function bodyChannel(id: string): BodyChannel {
   let channel = bodyChannels.get(id);
   if (!channel) { channel = { viewers: new Set(), interactiveViewers: new Set(), pausedViewers: new Set(), previewSentAt: new Map() }; bodyChannels.set(id, channel); }
   return channel;
 }
 
-
-/** The agent's pending tool call waits here; the database counter closes a reconnect race. */
-export async function upgradeComputerWaiter(
-  request: IncomingMessage, socket: Duplex, head: Buffer,
-  database: SqlDatabase, id: string, agentId: string, since: number,
-): Promise<void> {
-  const row = await getComputerSession(database, id);
-  if (!row || row.agent_id !== agentId) { socket.destroy(); return; }
-  if (replayToSourceMachine(socket, row)) return;
-  computerWebSockets.handleUpgrade(request, socket, head, (waiter) => {
-    let waiting = handbackWaiters.get(id);
-    if (!waiting) { waiting = new Set(); handbackWaiters.set(id, waiting); }
-    waiting.add(waiter);
-    waiter.once('close', () => {
-      waiting!.delete(waiter);
-      if (!waiting!.size) handbackWaiters.delete(id);
-    });
-    void Promise.all([
-      getComputerSession(database, id),
-      database.query<{ id: string; name: ComputerActivityEvent['name']; detail: string | null; created_at: Date }>(
-        `SELECT id,name,detail,created_at FROM computer_session_events
-         WHERE session_id=$1 AND id>$2 ORDER BY id ASC LIMIT 200`, [id, since],
-      ),
-    ]).then(([current, events]) => {
-      if (waiter.readyState !== WebSocket.OPEN) return;
-      for (const event of events.rows) {
-        waiter.send(JSON.stringify({ type: 'event', seq: Number(event.id), at: new Date(event.created_at).toISOString(),
-          name: event.name, ...(event.detail ? { detail: event.detail } : {}) } satisfies ComputerActivityEvent));
-      }
-      if (!current || current.status === 'ended') {
-        waiter.send(JSON.stringify({ type: 'ended' })); waiter.close();
-      } else if (current.handoff_count > 0) {
-        waiter.send(JSON.stringify({ type: 'handoff', note: 'Human handed the browser back' })); waiter.close();
-      }
-    }).catch(() => waiter.close());
-  });
-}
 
 
 export function replayToSourceMachine(socket: Duplex, row: ComputerSessionRow): boolean {
@@ -230,67 +177,6 @@ export function replayToSourceMachine(socket: Duplex, row: ComputerSessionRow): 
   return true;
 }
 
-
-/** The body connects outward to the server; its local CDP port is never public. */
-export async function upgradeBodyComputerSource(
-  request: IncomingMessage, socket: Duplex, head: Buffer,
-  database: SqlDatabase, live: LiveHub, id: string, agentId: string,
-): Promise<void> {
-  const row = await getComputerSession(database, id);
-  if (!row || row.status !== 'live' || row.agent_id !== agentId || row.upstream_url !== 'body:') {
-    socket.destroy(); return;
-  }
-  if (replayToSourceMachine(socket, row)) return;
-  computerWebSockets.handleUpgrade(request, socket, head, (source) => {
-    const channel = bodyChannel(id);
-    channel.source?.close();
-    channel.source = source;
-    channel.lastFrame = undefined;
-    source.on('message', (data, binary) => {
-      try {
-        const event = JSON.parse(data.toString()) as { type?: string; name?: string; detail?: string; text?: unknown };
-        if (event.type === 'share-event' && event.name === 'navigation') {
-          if (!channel.controller) return;
-          void recordComputerActivity(database, row, 'navigation', event.detail).catch(() => {});
-          return;
-        }
-        // Copied page text goes only to the person who asked for it.
-        if (event.type === 'clipboard') {
-          if (channel.controller?.readyState === WebSocket.OPEN && typeof event.text === 'string')
-            channel.controller.send(JSON.stringify({ type: 'clipboard', text: event.text }));
-          return;
-        }
-      } catch { /* An unrelated source frame is still forwarded below. */ }
-      const frame = isFrameMessage(data);
-      // A quiet Chromium tab may emit its only frame before anyone opens the card.
-      if (frame) channel.lastFrame = { data: Buffer.from(data.toString()), binary };
-      const now = Date.now();
-      for (const viewer of channel.viewers) {
-        if (frame && channel.pausedViewers.has(viewer)) continue;
-        if (frame && !channel.interactiveViewers.has(viewer)) {
-          const last = channel.previewSentAt.get(viewer) ?? 0;
-          if (now - last < 1_000) continue;
-          channel.previewSentAt.set(viewer, now);
-        }
-        if (viewer.readyState === WebSocket.OPEN && viewer.bufferedAmount < MAX_VIEWER_BUFFERED_BYTES)
-          viewer.send(data, { binary });
-      }
-    });
-    source.once('close', () => {
-      if (channel.source !== source) return;
-      channel.ending = true;
-      channel.source = undefined;
-      const closeViewers = () => {
-        for (const viewer of channel.viewers) {
-          if (viewer.readyState === WebSocket.OPEN) viewer.send(JSON.stringify({ type: 'ended' }));
-          viewer.close();
-        }
-        bodyChannels.delete(id);
-      };
-      void endComputerSession(database, live, row).then(closeViewers, closeViewers);
-    });
-  });
-}
 
 
 export function upgradeBodyViewer(request: IncomingMessage, socket: Duplex, head: Buffer, database: SqlDatabase, live: LiveHub, row: ComputerSessionRow): void {
@@ -377,188 +263,5 @@ export function upgradeBodyViewer(request: IncomingMessage, socket: Duplex, head
       }
       if (!preview) void recordComputerActivity(database, row, 'viewer-closed', undefined, viewerId).catch(() => {});
     });
-  });
-}
-
-
-export async function upgradeComputerSession(
-  request: IncomingMessage,
-  socket: Duplex,
-  head: Buffer,
-  database: SqlDatabase,
-  live: LiveHub,
-  id: string,
-): Promise<void> {
-  const row = await getComputerSession(database, id);
-  if (!row || row.status !== 'live') { socket.destroy(); return; }
-  if (!(await authorizedViewer(request, database, row))) { socket.destroy(); return; }
-  if (replayToSourceMachine(socket, row)) return;
-  const path = new URL(request.url ?? '/', 'http://beeline.local').pathname;
-  if (row.upstream_url === 'body:') {
-    if (!path.endsWith('/ws')) { socket.destroy(); return; }
-    upgradeBodyViewer(request, socket, head, database, live, row); return;
-  }
-  if (!path.endsWith('/stream')) { socket.destroy(); return; }
-  const target = new URL('stream', row.upstream_url);
-  if (target.protocol === 'https:') target.protocol = 'wss:';
-  if (target.protocol === 'http:') target.protocol = 'ws:';
-  if (!['ws:', 'wss:'].includes(target.protocol)) { socket.destroy(); return; }
-  const query = new URL(request.url ?? '/', 'http://beeline.local').searchParams;
-  const fixedPreview = query.has('preview');
-  const warm = query.has('warm');
-  let preview = fixedPreview || warm;
-  const viewerId = query.get('access')!.split('.')[0]!;
-  computerWebSockets.handleUpgrade(request, socket, head, (viewer) => {
-    const activity=()=>live?.publish({type:'invalidate',roomId:row.room_id,reason:'computer-viewer-activity',targetAgentId:row.agent_id,requestId:id});
-    activity();
-    const channel = squireChannel(id);
-    const startedAt = Date.now();
-    channel.viewers.add(viewer);
-    if (!preview) channel.interactiveViewers.add(viewer);
-    if (channel.lastFrame) {
-      viewer.send(channel.lastFrame.data, { binary: channel.lastFrame.binary });
-      console.info(`[computer-share] squire cached JPEG session=${id.slice(0, 8)} ms=${Date.now() - startedAt}`);
-    }
-    if (!preview) void recordComputerActivity(database, row, 'viewer-opened', undefined, viewerId).catch(() => {});
-    let upstream = [...channel.upstreams][0];
-    const newTunnel = !upstream;
-    if (!upstream) {
-      upstream = new WebSocket(target.toString(), { maxPayload: 2 * 1024 * 1024 });
-      channel.upstreams.add(upstream);
-    }
-    const source = upstream;
-    const pendingInput: Array<{ data: Buffer; binary: boolean }> = [];
-    const flushPending = () => {
-      for (const pending of pendingInput) source.send(pending.data, { binary: pending.binary });
-      pendingInput.length = 0;
-    };
-    if (source.readyState === WebSocket.CONNECTING) source.once('open', flushPending);
-    const lastInputAt = new Map<string, number>();
-    viewer.on('message', (data, binary) => {
-      if (Buffer.byteLength(data.toString()) > 4_096) return;
-      let message: { type?: string };
-      try { message = JSON.parse(data.toString()) as typeof message; } catch { return; }
-      activity();
-      if (warm && message.type === 'viewer-mode') {
-        preview = fixedPreview || !(message as { interactive?: boolean }).interactive;
-        if (preview) {
-          channel.interactiveViewers.delete(viewer);
-          if (!channel.interactiveViewers.size && channel.humanControl) {
-            channel.humanControl = false;
-            if (source.readyState === WebSocket.OPEN) source.send(JSON.stringify({ type: 'release' }));
-          }
-        } else {
-          channel.interactiveViewers.add(viewer);
-          if (channel.lastFrame) viewer.send(channel.lastFrame.data, { binary: channel.lastFrame.binary });
-        }
-        return;
-      }
-      if (preview) return;
-      if (message.type === 'handback') {
-        channel.humanControl = false;
-        pendingInput.length = 0;
-        if (source.readyState === WebSocket.OPEN) source.send(JSON.stringify({ type: 'release' }));
-        void noteComputerHandback(database, row);
-        return;
-      }
-      if (message.type === 'end-share') { void endComputerSession(database, live, row); return; }
-      if (message.type && ['touch', 'pointer', 'wheel', 'text', 'key', 'click'].includes(message.type)) {
-        const category = message.type === 'wheel' ? 'scroll'
-          : message.type === 'text' ? 'typing' : message.type === 'key' ? 'key' : 'pointer';
-        const now = Date.now();
-        if (now - (lastInputAt.get(category) ?? 0) >= 1_000) {
-          lastInputAt.set(category, now);
-          channel.humanViewerId = viewerId;
-          if (channel.humanControl) void recordComputerActivity(database, row, 'input', category, viewerId).catch(() => {});
-          else channel.pendingHumanInput = { viewerId, category };
-        }
-      }
-      if (source.readyState === WebSocket.OPEN) source.send(data, { binary });
-      else if (source.readyState === WebSocket.CONNECTING && pendingInput.length < 8)
-        pendingInput.push({ data: Buffer.from(data.toString()), binary });
-    });
-    viewer.once('close', () => {
-      source.off('open', flushPending);
-      pendingInput.length = 0;
-      channel.viewers.delete(viewer);
-      channel.interactiveViewers.delete(viewer);
-      channel.previewSentAt.delete(viewer);
-      if (!preview) void recordComputerActivity(database, row, 'viewer-closed', undefined, viewerId).catch(() => {});
-      if (!channel.interactiveViewers.size && channel.humanControl) {
-        channel.humanControl = false;
-        if (source.readyState === WebSocket.OPEN) source.send(JSON.stringify({ type: 'release' }));
-      }
-      if (!channel.viewers.size) {
-        if (squireChannels.get(id) === channel) squireChannels.delete(id);
-        source.close();
-      }
-    });
-    if (!newTunnel) return;
-    source.once('open', () => console.info(`[computer-share] squire tunnel open session=${id.slice(0, 8)} ms=${Date.now() - startedAt}`));
-    let firstJpegLogged = false;
-    source.on('message', (data, binary) => {
-      let message: { type?: string; state?: string; url?: string; origin?: string } | undefined;
-      try { message = JSON.parse(data.toString()) as typeof message; } catch { /* Forward unknown frames. */ }
-      if (message?.type === 'control') {
-        if (message.state === 'human' && !channel.humanControl) {
-          channel.humanControl = true;
-          void recordComputerActivity(database, row, 'takeover', undefined, channel.humanViewerId).catch(() => {});
-          const pending = channel.pendingHumanInput;
-          channel.pendingHumanInput = undefined;
-          if (pending) void recordComputerActivity(database, row, 'input', pending.category, pending.viewerId).catch(() => {});
-        }
-        if (message.state === 'agent') channel.humanControl = false;
-      }
-      if (message?.type === 'navigation' && channel.humanControl) {
-        let destination: string | undefined;
-        try {
-          const url = new URL(message.url ?? message.origin ?? '');
-          if (url.protocol === 'http:' || url.protocol === 'https:') {
-            url.username = ''; url.password = '';
-            destination = url.href;
-          }
-        } catch { /* Internal browser URLs are not shared. */ }
-        if (destination) void recordComputerActivity(database, row, 'navigation', destination, channel.humanViewerId).catch(() => {});
-      }
-      const frame = isFrameMessage(data);
-      if (message?.type === 'blank') channel.lastFrame = undefined;
-      if (frame) {
-        channel.lastFrame = { data: Buffer.from(data.toString()), binary };
-        if (!firstJpegLogged) {
-          firstJpegLogged = true;
-          console.info(`[computer-share] squire first JPEG session=${id.slice(0, 8)} ms=${Date.now() - startedAt}`);
-        }
-      }
-      for (const recipient of channel.viewers) {
-        if (frame && !channel.interactiveViewers.has(recipient)) {
-          const now = Date.now();
-          if (now - (channel.previewSentAt.get(recipient) ?? 0) < 1_000) continue;
-          channel.previewSentAt.set(recipient, now);
-        }
-        if (recipient.readyState !== WebSocket.OPEN) continue;
-        if (recipient.bufferedAmount < MAX_VIEWER_BUFFERED_BYTES) recipient.send(data, { binary });
-        else recipient.close(1013, 'screen backpressure');
-      }
-    });
-    const closeViewers = () => { for (const recipient of channel.viewers) recipient.close(); };
-    source.once('close', (code, reason) => {
-      channel.upstreams.delete(source);
-      if (squireChannels.get(id) === channel) squireChannels.delete(id);
-      if (!channel.viewers.size) return;
-      if (code === 1000 && reason.toString() === 'share ended') {
-        void endComputerSession(database, live, row).finally(closeViewers);
-        return;
-      }
-      // Tunnel loss is not share expiry. Reconcile the upstream status once.
-      void fetch(row.upstream_url, { redirect: 'error', signal: AbortSignal.timeout(5_000) })
-        .then(async (reply) => {
-          if (reply.status === 404 || reply.status === 410) {
-            for (const recipient of channel.viewers) if (recipient.readyState === WebSocket.OPEN)
-              recipient.send(JSON.stringify({ type: 'ended' }));
-            await endComputerSession(database, live, row);
-          }
-        }).finally(closeViewers).catch(() => {});
-    });
-    source.once('error', closeViewers);
   });
 }

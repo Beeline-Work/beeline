@@ -125,7 +125,7 @@ import { daemonRequestAgentGrant, daemonGrantRequester, daemonConsumeAgentGrant 
           if (value.status === 'connected' || value.status === 'error' || signIn?.url)
             return { status: value.status, signIn };
           return undefined;
-        }, 85_000, kind === 'trusty-squire'
+        }, kind === 'trusty-squire'
           ? { principal: 'connector', operation: 'machine', commandId: `${context.owner.pubkey}:${context.machine.machineId}` }
           : { principal: 'connector', operation: 'status', commandId: connectorId });
         if (!status) return;
@@ -189,7 +189,7 @@ import { daemonRequestAgentGrant, daemonGrantRequester, daemonConsumeAgentGrant 
           const row = (await database.query<{ status: string; sign_in: ConnectorStatus['signIn'] }>(
             'SELECT status,sign_in FROM workspace_connectors WHERE id=$1', [outcome.connectorId])).rows[0];
           return row && (row.status === 'connected' || row.status === 'error' || row.sign_in?.url) ? row : undefined;
-        }, 85_000, { principal: 'connector', operation: 'status', commandId: outcome.connectorId! });
+        }, { principal: 'connector', operation: 'status', commandId: outcome.connectorId! });
         if (!connector) return;
         if (connector.status === 'connected') { Object.assign(result, { status: 'ready', next: `${outcome.app} is ready.` }); return; }
         if (!connector.sign_in?.url) { Object.assign(result, { status: 'error', next: 'The Registry tool could not connect. Reconnect to retry.' }); return; }

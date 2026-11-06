@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, SYSTEM_IDENTITY_ID, SCHEDULE_SCHEDULER_ID, PhoneService, beginComposioAppSignIn, connectApp, readOwnerApps, ComposioApps, WORKSPACE, ROOM, OWNER, HELPER, COMMAND, turn, fakeRegistry, fixtureScope2 } from './app-connections.integration.test-support.js';
+import { describe, expect, it, vi, SYSTEM_IDENTITY_ID, SCHEDULE_SCHEDULER_ID, PhoneService, beginComposioAppSignIn, connectApp, readOwnerApps, ComposioApps, WORKSPACE, ROOM, OWNER, HELPER, COMMAND, turn, fakeRegistry, fixtureScope2 } from './test-support-app-connections.integration.test-support.js';
 
 describe('connect_app', () => {
 const scope2 = fixtureScope2();

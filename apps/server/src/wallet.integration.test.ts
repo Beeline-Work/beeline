@@ -1,4 +1,4 @@
-import { phoneFetch, generateKeyPairSync, CdpWalletClient, WalletTransactionPending, describe, expect, it, vi, walletSource, walletExplorerTxUrl, SYSTEM_IDENTITY_ID, PushDeliveryLoop, postWalletNotice, HUMAN, HELPER, ROOM, WALLET_REQUEST, WORKSPACE, BRIDGE2, fixtureScope1, type WalletNotice, type CdpWalletSourceLike } from './wallet.integration.test-support.js';
+import { phoneFetch, generateKeyPairSync, CdpWalletClient, WalletTransactionPending, describe, expect, it, vi, walletSource, walletExplorerTxUrl, SYSTEM_IDENTITY_ID, PushDeliveryLoop, postWalletNotice, HUMAN, HELPER, ROOM, WALLET_REQUEST, WORKSPACE, BRIDGE2, fixtureScope1, type WalletNotice, type CdpWalletSourceLike } from './test-support-wallet.integration.test-support.js';
 
 describe('wallet over the fake CDP seam', () => {
 const scope1 = fixtureScope1();

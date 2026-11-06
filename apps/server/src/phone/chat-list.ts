@@ -1,4 +1,4 @@
-import { type PhoneIdentityRow as IdentityRow, assetUrl, phoneIdentity as identity } from '../phone-identity.js';
+import { assetUrl, phoneIdentity as identity, type PhoneIdentityRow as IdentityRow } from '../phone-identity.js';
 import type { ChatListView, ChatListItem, RoomViewMessage } from '@beeline/api-contract/phone';
 import { chatActivityAt } from '@beeline/api-contract/phone';
 import { AGENT_REACHABLE_HORIZON_MS, isAgentReachable } from '@beeline/api-contract/agent-access';

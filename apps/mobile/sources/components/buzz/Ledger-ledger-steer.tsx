@@ -1,12 +1,14 @@
 import { ErrorBanner } from './ErrorBanner';
 import { LedgerDisclosure, LedgerLogGroup } from './LedgerDisclosure';
 import { webhookCallerMessage } from '@/buzz/system-lines';
-import React, { useState } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { MonoMarkdown } from './MonoMarkdown';
 import type { SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
-import { LedgerBodyProps, ledgerEntryRhythm, Byline } from './Ledger';
+import { LedgerBodyProps, ledgerEntryRhythm, Byline, SystemLineCutSearch, webFitsTwoLines, startCutSearch, closedCutLength } from './Ledger';
 import { styles } from './Ledger-styles';
+
+
 
 /**
  * You, steering.
@@ -87,6 +89,7 @@ export function LedgerSteer({
   );
 }
 
+
 /**
  * One derived Room-state notice. It is metadata, not a speaker turn: no
  * avatar, byline, rule, fill, or card. The optional landed-work digest is the
@@ -108,6 +111,7 @@ export function LedgerRoomUpdate({
   return (
     <View style={styles.roomUpdate} testID={`room-update-${id}`}>
       <Text
+        numberOfLines={1}
         style={
           tone === 'brass'
             ? [styles.roomUpdateLine, styles.roomUpdateLineBrass]
@@ -117,11 +121,11 @@ export function LedgerRoomUpdate({
       >
         {line}
       </Text>
-      <Text style={styles.roomUpdateStamp} testID={`room-update-stamp-${id}`}>
+      <Text numberOfLines={1} style={styles.roomUpdateStamp} testID={`room-update-stamp-${id}`}>
         {stamp}
       </Text>
       {digest ? (
-        <Text style={styles.roomUpdateDigest} testID={`room-update-digest-${id}`}>
+        <Text numberOfLines={2} style={styles.roomUpdateDigest} testID={`room-update-digest-${id}`}>
           {digest}
         </Text>
       ) : null}
@@ -144,6 +148,7 @@ export function LedgerHistoryLine({ text, onPress }: { text: string; onPress?: (
     </View>
   );
 }
+
 
 /**
  * The one renderer for a server-phrased system line (`buzz/system-lines.ts`):
@@ -171,6 +176,55 @@ export function LedgerSystemLine({
   onOpenBrief?: () => void;
 }) {
   const callerMessage = webhookCallerMessage(event);
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const [width, setWidth] = useState<number | null>(null);
+  const [search, setSearch] = useState<SystemLineCutSearch | null>(null);
+  const [cut, setCut] = useState<{ key: string; at: number } | null>(null);
+  const measurementRef = useRef<Text>(null);
+  const probeRef = useRef<Text>(null);
+  const fullText = event
+    ? `${event.subject.name} ${event.verb}${event.object?.text ? ` ${event.object.text}` : ''}${event.consequence ? ` · ${event.consequence}` : ''}`
+    : text;
+  const measureWebOverflow = () => {
+    const element = measurementRef.current as unknown as HTMLElement | null;
+    if (element) setOverflows(webFitsTwoLines(element) === false);
+  };
+  useEffect(() => {
+    setExpanded(false);
+    if (Platform.OS === 'web') measureWebOverflow();
+  }, [id, fullText]);
+  // The closed line ends in "… more" on its second line. Text clamping cannot
+  // append after its ellipsis, so a hidden probe finds the longest cut that
+  // still fits: word ends first, single characters for one unbroken word.
+  const cutKey = `${fullText}\n${width}`;
+  const cutAt = cut?.key === cutKey ? cut.at : null;
+  useEffect(() => {
+    if (!overflows || width === null || cutAt !== null || search?.key === cutKey) return;
+    const started = startCutSearch(cutKey, fullText, 'word');
+    if (started.candidates.length) setSearch(started);
+    else setCut({ key: cutKey, at: fullText.length });
+  }, [overflows, width, cutAt, search?.key, cutKey, fullText]);
+  const probing =
+    search?.key === cutKey && cutAt === null && search.hi - search.lo > 1 ? search : null;
+  const probeIndex = probing ? (probing.lo + probing.hi) >> 1 : null;
+  const probeCandidate =
+    probing && probeIndex !== null ? probing.candidates[probeIndex] : null;
+  const settleProbe = (fits: boolean) => {
+    if (!probing || probeIndex === null) return;
+    const lo = fits ? probeIndex : probing.lo;
+    const hi = fits ? probing.hi : probeIndex;
+    if (hi - lo > 1) setSearch({ ...probing, lo, hi });
+    else if (lo >= 0) setCut({ key: cutKey, at: probing.candidates[lo] });
+    else if (probing.mode === 'word') setSearch(startCutSearch(cutKey, fullText, 'char'));
+    else setCut({ key: cutKey, at: probing.candidates[0] ?? 1 });
+  };
+  useLayoutEffect(() => {
+    if (Platform.OS !== 'web' || probeCandidate === null) return;
+    const element = probeRef.current as unknown as HTMLElement | null;
+    const fits = element ? webFitsTwoLines(element) : null;
+    if (fits !== null) settleProbe(fits);
+  }, [probeCandidate, cutKey]);
   const name = (subject: SystemSubject, index: number) => (piece: string) => (
     <Text
       key={`${subject.id ?? subject.name}-${index}`}
@@ -188,6 +242,7 @@ export function LedgerSystemLine({
       {piece}
     </Text>
   );
+  // Each segment renders any prefix of its text, so the closed cut keeps names and links.
   const segments: { text: string; render?: (piece: string) => React.ReactNode }[] = [];
   if (event) {
     segments.push(
@@ -269,12 +324,108 @@ export function LedgerSystemLine({
   } else {
     segments.push({ text });
   }
+  const renderSegments = (length = fullText.length) => {
+    const nodes: React.ReactNode[] = [];
+    let left = length;
+    for (const segment of segments) {
+      if (left <= 0) break;
+      const piece = segment.text.slice(0, left);
+      left -= piece.length;
+      nodes.push(segment.render ? segment.render(piece) : piece);
+    }
+    return nodes;
+  };
+  // A non-breaking space binds the word to the text, so it never sits alone on a new line.
+  const toggleWord = (word: 'more' | 'less') => (
+    <Text key="toggle" style={styles.systemLineToggle} testID={`system-line-toggle-word-${id}`}>
+      {` ${word}`}
+    </Text>
+  );
+  const closedLength = cutAt === null ? null : closedCutLength(fullText, cutAt);
+  const body = (
+    <Text
+      style={styles.systemLineText}
+      numberOfLines={expanded ? undefined : 2}
+      ellipsizeMode="tail"
+      testID={`system-line-text-${id}`}
+    >
+      {overflows && expanded
+        ? [...renderSegments(fullText.trimEnd().length), toggleWord('less')]
+        : overflows && closedLength !== null
+          ? [...renderSegments(closedLength), '…', toggleWord('more')]
+          : event
+            ? renderSegments()
+            : text}
+    </Text>
+  );
+  const hiddenText = {
+    accessible: false,
+    accessibilityElementsHidden: true,
+    importantForAccessibility: 'no-hide-descendants',
+    'aria-hidden': true,
+  } as const;
   return (
     <View style={styles.systemLine} testID={`system-line-${id}`}>
       <View>
-        <Text style={styles.systemLineText} testID={`system-line-text-${id}`}>
-          {segments.map(segment => segment.render ? segment.render(segment.text) : segment.text)}
-        </Text>
+        {/* Measure unclamped copy: native reports lines, web reports its laid-out height.
+            Android ignores pointerEvents on Text, so the View keeps the copy from taking
+            taps where it overflows onto the row below. */}
+        <View
+          pointerEvents="none"
+          style={styles.systemLineMeasurement}
+          onLayout={({ nativeEvent }) => setWidth(nativeEvent.layout.width)}
+        >
+          <Text
+            ref={measurementRef}
+            testID={`system-line-measurement-${id}`}
+            style={styles.systemLineText}
+            {...hiddenText}
+            onTextLayout={
+              Platform.OS === 'web'
+                ? undefined
+                : ({ nativeEvent }) => {
+                    setOverflows(nativeEvent.lines.length > 2);
+                  }
+            }
+            onLayout={Platform.OS === 'web' ? measureWebOverflow : undefined}
+          >
+            {fullText}
+          </Text>
+        </View>
+        {probeCandidate !== null ? (
+          <View pointerEvents="none" style={styles.systemLineMeasurement}>
+            <Text
+              key={`${probing!.mode}-${probeCandidate}`}
+              ref={probeRef}
+              testID={`system-line-probe-${id}`}
+              style={styles.systemLineText}
+              {...hiddenText}
+              onTextLayout={
+                Platform.OS === 'web'
+                  ? undefined
+                  : ({ nativeEvent }) => settleProbe(nativeEvent.lines.length <= 2)
+              }
+            >
+              {fullText.slice(0, closedCutLength(fullText, probeCandidate))}…{toggleWord('more')}
+            </Text>
+          </View>
+        ) : null}
+        {overflows ? (
+          <LedgerDisclosure
+            textToggle
+            expanded={expanded}
+            accessibilityState={{ expanded }}
+            accessibilityLabel={
+              expanded ? 'Show less of system message' : 'Show full system message'
+            }
+            onPress={() => setExpanded((value) => !value)}
+            rowTestID={`system-line-toggle-${id}`}
+          >
+            {body}
+          </LedgerDisclosure>
+        ) : (
+          body
+        )}
         {callerMessage !== undefined ? (
           <>
             <Text style={styles.systemLineText} testID={`system-line-caller-label-${id}`}>
@@ -291,7 +442,7 @@ export function LedgerSystemLine({
           </>
         ) : null}
       </View>
-      <Text style={styles.roomUpdateStamp} testID={`system-line-stamp-${id}`}>
+      <Text numberOfLines={1} style={styles.roomUpdateStamp} testID={`system-line-stamp-${id}`}>
         {stamp}
       </Text>
     </View>

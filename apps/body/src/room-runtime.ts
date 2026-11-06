@@ -22,8 +22,8 @@ import { agentCornerCheckoutPaths, materializeAgentCornerCheckout } from './agen
 import { CRASH_SAFE_CLONE_ARGS, fetchRepositoryCache } from './repository-cache-repair.js';
 import { resolveSessionIdleMs, AgentProcesses, type AgentProcessSnapshot } from './agent-process.js';
 import { roomRuntimeCoordinatorReconciliationDiagnostics, roomRuntimeCoordinatorNoteReconciliationStage, roomRuntimeCoordinatorActiveRoomIds, roomRuntimeCoordinatorSetDiscoveryWakeListener, roomRuntimeCoordinatorSetReconciliationProgressListener, roomRuntimeCoordinatorYieldReconciliation, roomRuntimeCoordinatorSetInteractiveIdleListener, roomRuntimeCoordinatorWakeDiscovery, roomRuntimeCoordinatorActiveRoomCount, roomRuntimeCoordinatorSurfaceHealthSnapshot, roomRuntimeCoordinatorSurfaceHealthSummary, roomRuntimeCoordinatorHasDegradedSurfaces, roomRuntimeCoordinatorSchedulerSnapshot, roomRuntimeCoordinatorIsWorkspaceIdle, roomRuntimeCoordinatorActiveTurnCount, roomRuntimeCoordinatorStopAgentProcesses, roomRuntimeCoordinatorQuiesceForUpdateIfIdle, roomRuntimeCoordinatorQuiesceForUpdate, roomRuntimeCoordinatorResumeServing, roomRuntimeCoordinatorPrepareForForcedUpdateRestart, roomRuntimeCoordinatorInterruptedTurns, roomRuntimeCoordinatorInterruptForServerMinimum, roomRuntimeCoordinatorReconcile, roomRuntimeCoordinatorReconcileRooms, roomRuntimeCoordinatorScheduleStorageMaintenance, roomRuntimeCoordinatorQueueMembershipEvent, roomRuntimeCoordinatorDrainMembershipEvents, roomRuntimeCoordinatorApplyMembershipEvent, roomRuntimeCoordinatorApplyCornerComplete, roomRuntimeCoordinatorStopRunning, roomRuntimeCoordinatorRoomRecord, roomRuntimeCoordinatorRoomRoot, roomRuntimeCoordinatorRoomConfig, roomRuntimeCoordinatorGrantRunnerEndpoint, roomRuntimeCoordinatorStartRoom, roomRuntimeCoordinatorStartRoomOnce, roomRuntimeCoordinatorMaterializeRoomCheckout } from './room-runtime-reconciliation-diagnostics.js';
-import { roomRuntimeCoordinatorRefreshRoomCheckout, roomRuntimeCoordinatorStartCorner, roomRuntimeCoordinatorWatchCorner, roomRuntimeCoordinatorUnwatchCorner, roomRuntimeCoordinatorActivateWatchedCorner, roomRuntimeCoordinatorCornerRepositoryToken, roomRuntimeCoordinatorInvalidateParentRepository, roomRuntimeCoordinatorRefreshRoomCorners, roomRuntimeCoordinatorRestartRunningRoomForRepositoryChange, roomRuntimeCoordinatorParentRepositoryState, roomRuntimeCoordinatorParentRepositoryToken, roomRuntimeCoordinatorReportCornerStartFailure, roomRuntimeCoordinatorMaterializeCornerWorktree, roomRuntimeCoordinatorGetLocalWorktreeIds, roomRuntimeCoordinatorArchiveCleanupRefusalPath, roomRuntimeCoordinatorCleanupWasRefused, roomRuntimeCoordinatorRefuseArchiveCleanup, roomRuntimeCoordinatorQueueArchivePreservation, roomRuntimeCoordinatorArchiveCleanupDue, roomRuntimeCoordinatorDeferArchiveCleanup, roomRuntimeCoordinatorRetryPendingCornerReaps, roomRuntimeCoordinatorReapClosedCornerEmulators } from './room-runtime-refresh-room-checkout.js';
-import { roomRuntimeCoordinatorSweepArchivedCornerWorktrees, roomRuntimeCoordinatorReapIdleCornerWorktree, roomRuntimeCoordinatorReapCornerWorktree, roomRuntimeCoordinatorReapCornerScratch, roomRuntimeCoordinatorCleanupArchivedCornerLocalState, roomRuntimeCoordinatorReclaimPrivateStorage, roomRuntimeCoordinatorSweepRoomPrivateStorage, roomRuntimeCoordinatorCollectDependencyStores, roomRuntimeCoordinatorNotePoll, roomRuntimeCoordinatorBeginShutdown, roomRuntimeCoordinatorShutdown } from './room-runtime-sweep-archived-corner-worktrees.js';
+import { roomRuntimeCoordinatorRefreshRoomCheckout, roomRuntimeCoordinatorStartCorner, roomRuntimeCoordinatorWatchCorner, roomRuntimeCoordinatorUnwatchCorner, roomRuntimeCoordinatorActivateWatchedCorner, roomRuntimeCoordinatorCornerRepositoryToken, roomRuntimeCoordinatorInvalidateParentRepository, roomRuntimeCoordinatorRefreshRoomCorners, roomRuntimeCoordinatorRestartRunningRoomForRepositoryChange, roomRuntimeCoordinatorParentRepositoryState, roomRuntimeCoordinatorParentRepositoryToken, roomRuntimeCoordinatorReportCornerStartFailure, roomRuntimeCoordinatorMaterializeCornerWorktree, roomRuntimeCoordinatorGetLocalWorktreeIds, roomRuntimeCoordinatorArchiveCleanupRefusalPath, roomRuntimeCoordinatorCleanupWasRefused, roomRuntimeCoordinatorRefuseArchiveCleanup } from './room-runtime-refresh-room-checkout.js';
+import { roomRuntimeCoordinatorSweepArchivedCornerWorktrees, roomRuntimeCoordinatorReapCornerWorktree, roomRuntimeCoordinatorReapCornerScratch, roomRuntimeCoordinatorCleanupArchivedCornerLocalState, roomRuntimeCoordinatorReclaimPrivateStorage, roomRuntimeCoordinatorSweepRoomPrivateStorage, roomRuntimeCoordinatorCollectDependencyStores, roomRuntimeCoordinatorNotePoll, roomRuntimeCoordinatorBeginShutdown, roomRuntimeCoordinatorShutdown } from './room-runtime-sweep-archived-corner-worktrees.js';
 
 export class RoomRuntimeCoordinator {
 
@@ -33,12 +33,6 @@ export class RoomRuntimeCoordinator {
 
    readonly surfaceHealth = new SurfaceHealth();
 
-  /** Close/reconcile leftovers retried until local and remote refs are gone. */
-   readonly pendingCornerReaps = new Map<string, CornerWorktree>();
-
-  /** Last logged emulator reaper decision per corner, so reconcile does not repeat it. */
-   readonly emulatorReapDecisions = new Map<string, string>();
-
   /** Idle corners listen for durable commands without obtaining a token or checkout. */
    readonly idleCornerSubscriptions = new Map<string, () => void>();
 
@@ -47,21 +41,8 @@ export class RoomRuntimeCoordinator {
   /** Enumerated once; later materialization and removal keep it current. */
    localWorktreeIds?: Promise<Set<string>>;
 
-  /** Event-driven cleanup retries stay scoped to the failed local corner. */
-   readonly archiveCleanupFaults = new Map<string, { failures: number; retryAt: number }>();
-
   /** Permanent cleanup refusals survive core and helper restarts on disk. */
    readonly archiveCleanupRefused = new Set<string>();
-
-  /**
-   * A corner whose branch cleanup found commits no origin ref contains. That
-   * is never transient - nothing pushes them later - so retrying it every
-   * reconciliation would only slow discovery down forever. Reported once,
-   * then left alone; the checkout and its commits are kept, never deleted.
-   */
-   readonly archiveCleanupAbandoned = new Set<string>();
-
-   preservationFlight?: Promise<void>;
 
    maintenanceFlight?: Promise<void>;
 
@@ -359,24 +340,7 @@ async materializeCornerWorktree(input: {
 getLocalWorktreeIds(): Promise<Set<string>> { return roomRuntimeCoordinatorGetLocalWorktreeIds(this); }
 archiveCleanupRefusalPath(cornerId: string): string { return roomRuntimeCoordinatorArchiveCleanupRefusalPath(this, cornerId); }
 async cleanupWasRefused(cornerId: string): Promise<boolean> { return roomRuntimeCoordinatorCleanupWasRefused(this, cornerId); }
-async refuseArchiveCleanup(cornerId: string, error: DaemonApiError, worktree?: DiscoveredCornerWorktree & {
-    branch?: string;
-}): Promise<void> { return roomRuntimeCoordinatorRefuseArchiveCleanup(this, cornerId, error, worktree); }
-queueArchivePreservation(cornerId: string, worktree: DiscoveredCornerWorktree & {
-    branch?: string;
-}, reason: string): void { return roomRuntimeCoordinatorQueueArchivePreservation(this, cornerId, worktree, reason); }
-archiveCleanupDue(cornerId: string): boolean { return roomRuntimeCoordinatorArchiveCleanupDue(this, cornerId); }
-deferArchiveCleanup(cornerId: string): void { return roomRuntimeCoordinatorDeferArchiveCleanup(this, cornerId); }
-async retryPendingCornerReaps(desired: ReadonlySet<string>): Promise<void> { return roomRuntimeCoordinatorRetryPendingCornerReaps(this, desired); }
-/**
- * Helper start and each reconcile: an emulator whose corner is not open
- * here stays until the server says the corner is archived. Every runtime
- * on the host scans the same records, so any refusal (403, 404, 410) or
- * failed lookup keeps it: one agent's partial view cannot stop another
- * agent's live corner. The server answers a corner the caller cannot
- * reach with 403, never with a deletion signal.
- */
-async reapClosedCornerEmulators(liveCornerIds: ReadonlySet<string>): Promise<void> { return roomRuntimeCoordinatorReapClosedCornerEmulators(this, liveCornerIds); }
+async refuseArchiveCleanup(cornerId: string, error: DaemonApiError): Promise<void> { return roomRuntimeCoordinatorRefuseArchiveCleanup(this, cornerId, error); }
 /**
  * Startup/reconcile recovery for worktrees no current process remembers.
  * Archived server state names the exact corner; local discovery is limited
@@ -386,7 +350,6 @@ async sweepArchivedCornerWorktrees(_corners: ReadonlyMap<string, {
     cornerId: string;
     parentRoomId: string;
 }>, desired: ReadonlySet<string> = new Set()): Promise<void> { return roomRuntimeCoordinatorSweepArchivedCornerWorktrees(this, _corners, desired); }
-async reapIdleCornerWorktree(worktree: CornerWorktree, desired: ReadonlySet<string>): Promise<void> { return roomRuntimeCoordinatorReapIdleCornerWorktree(this, worktree, desired); }
 async reapCornerWorktree(worktree: CornerWorktree): Promise<void> { return roomRuntimeCoordinatorReapCornerWorktree(this, worktree); }
 async reapCornerScratch(scratch: CornerScratch): Promise<void> { return roomRuntimeCoordinatorReapCornerScratch(this, scratch); }
 /** A failed/missing restore read cannot authorize private reclamation. Shared
@@ -629,12 +592,6 @@ export interface CornerWorktree {
 }
 
 
-export interface DiscoveredCornerWorktree {
-  path: string;
-  gitCommonDir: string;
-}
-
-
 /** The local worktree root is small even when the server has years of archived corners. */
 export async function localCornerWorktreeIds(supervisorRoot: string): Promise<Set<string>> {
   const root = resolve(supervisorRoot, 'beeline', 'corners');
@@ -799,12 +756,6 @@ export async function assertPublishedOnOrigin(
     published = await originContains(gitCommonDir, head);
   }
   if (!published) throw new Error(`corner ${cornerId} has unpushed commits`);
-}
-
-
-/** The exact, permanent faults cleanup throws for work nothing will ever push. */
-export function hasUnpublishedWork(error: unknown): boolean {
-  return error instanceof Error && / has unpushed (?:commits|working-tree work)$/.test(error.message);
 }
 
 

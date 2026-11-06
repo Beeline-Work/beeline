@@ -1,26 +1,5 @@
 import { scheduleWorkflowSlugSql } from './workflow-admin.js';
-
-
-export const DATABASE_SCHEMA_INSTITUTIONAL_MEMORY_ITEMS = `ALTER TABLE institutional_memory_jobs ADD COLUMN IF NOT EXISTS source_deleted_at timestamptz;
-ALTER TABLE institutional_memory_jobs ADD COLUMN IF NOT EXISTS context jsonb;
-CREATE INDEX IF NOT EXISTS institutional_memory_jobs_claim_idx
-  ON institutional_memory_jobs(status,next_attempt_at,created_at,id)
-  WHERE status IN ('pending','retry','claimed');
-CREATE INDEX IF NOT EXISTS institutional_memory_jobs_workspace_created_idx
-  ON institutional_memory_jobs(workspace_id,created_at,id);
--- source_message_id/source_room_id cascade from messages/rooms with no index,
--- so deleting a room or workspace made Postgres sequentially scan this table
--- to find rows to cascade-delete.
-CREATE INDEX IF NOT EXISTS institutional_memory_jobs_source_message_idx
-  ON institutional_memory_jobs(source_message_id);
-CREATE INDEX IF NOT EXISTS institutional_memory_jobs_source_room_idx
-  ON institutional_memory_jobs(source_room_id);
-
--- Meaning-based recall (search_memory, the per-turn snapshot, workspace
--- skills) needs pgvector; Neon supports the extension directly.
-CREATE EXTENSION IF NOT EXISTS vector;
-
-CREATE TABLE IF NOT EXISTS institutional_memory_items (
+export const DATABASE_SCHEMA_INSTITUTIONAL_MEMORY_ITEMS = `CREATE TABLE IF NOT EXISTS institutional_memory_items (
   id uuid PRIMARY KEY,
   workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   kind text NOT NULL CHECK (kind IN ('workspace_fact','human_profile_fact')),
@@ -589,6 +568,7 @@ CREATE TABLE IF NOT EXISTS agent_schedules (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+DROP TRIGGER IF EXISTS beeline_agent_schedule_due ON agent_schedules;
 ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS creator_agent_id text REFERENCES identities(id);
 ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS owner_agent_id text REFERENCES identities(id);
 ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS ownership_initialized boolean NOT NULL DEFAULT false;
@@ -622,4 +602,30 @@ ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS failed_revision timestamptz
 CREATE INDEX IF NOT EXISTS agent_schedules_admitted_due_idx ON agent_schedules(next_run_at,id)
  WHERE failed_due_at IS DISTINCT FROM next_run_at OR failed_revision IS DISTINCT FROM updated_at;
 CREATE INDEX IF NOT EXISTS agent_schedules_due_idx ON agent_schedules(next_run_at, id);
+CREATE INDEX IF NOT EXISTS agent_schedules_room_idx ON agent_schedules(room_id, created_at, id);
+CREATE INDEX IF NOT EXISTS agent_schedules_workspace_idx ON agent_schedules(workspace_id);
+ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS max_runs integer;
+ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS run_count integer NOT NULL DEFAULT 0;
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema()
+    AND table_name='agent_schedules' AND column_name='workflow_run') THEN
+    DELETE FROM agent_schedules WHERE workflow_run IS NOT NULL;
+  END IF;
+END $$;
+ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS owner_id text REFERENCES identities(id);
+
+CREATE TABLE IF NOT EXISTS agent_schedule_occurrences (
+  schedule_id uuid NOT NULL REFERENCES agent_schedules(id) ON DELETE CASCADE,
+  scheduled_for timestamptz NOT NULL,
+  message_id text NOT NULL UNIQUE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (schedule_id, scheduled_for)
+);
+
+CREATE TABLE IF NOT EXISTS agent_mandates (
+  agent_id text NOT NULL REFERENCES identities(id),
+  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  generation bigint NOT NULL,
+  mandate jsonb NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now(),
 `;

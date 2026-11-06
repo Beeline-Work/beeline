@@ -1,42 +1,7 @@
-import { createServer, AddressInfo, spawn, existsSync, mkdtemp, readFile, rm, join, describe, expect, it, WebSocket, WebSocketServer, findChromiumPage, shareChromiumPage, waitForComputerHandback, computerViewToken, computerViewerHtml, createComputerSession, endComputerSession, getComputerSession, HUMAN, OTHER, AGENT, ROOM, testSquire, opened, next, nextType, until, fixtureScope1 } from './computer-session.test-support.js';
+import { createServer, AddressInfo, spawn, existsSync, mkdtemp, readFile, rm, join, describe, expect, it, WebSocket, WebSocketServer, findChromiumPage, shareChromiumPage, waitForComputerHandback, computerViewToken, computerViewerHtml, createComputerSession, endComputerSession, getComputerSession, HUMAN, OTHER, AGENT, ROOM, testSquire, opened, nextType, until, fixtureScope1 } from './test-support-computer-session.test-support.js';
 
 describe('computer session handoff', () => {
 const scope1 = fixtureScope1();
-
-
-  it('delivers a screenshot when Chromium accepts screencast but emits no frames', async () => {
-    const debuggerServer = createServer();
-    const debuggerSockets = new WebSocketServer({ noServer: true });
-    debuggerServer.on('upgrade', (request, socket, head) =>
-      debuggerSockets.handleUpgrade(request, socket, head, (client) => debuggerSockets.emit('connection', client, request)));
-    debuggerSockets.on('connection', (socket) => socket.on('message', (data) => {
-      const command = JSON.parse(data.toString()) as { id: number; method: string };
-      if (command.method === 'Page.captureScreenshot')
-        socket.send(JSON.stringify({ id: command.id, result: { data: Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64') } }));
-      else socket.send(JSON.stringify({ id: command.id, result: {} }));
-    }));
-    await new Promise<void>((resolve) => debuggerServer.listen(0, '127.0.0.1', resolve));
-    try {
-      const share = await createComputerSession(scope1.database, scope1.live, {
-        roomId: ROOM, agentId: AGENT, sessionId: 'silent-cdp', upstreamUrl: 'body:',
-      });
-      const port = (debuggerServer.address() as AddressInfo).port;
-      await shareChromiumPage({ page: { id: 'silent-cdp', type: 'page', webSocketDebuggerUrl: `ws://127.0.0.1:${port}/` },
-        serverBaseUrl: scope1.origin, shareId: share.id, daemonToken: 'test-token', onEnded: async () => {} });
-      const access = await computerViewToken(scope1.database, share.id, HUMAN);
-      const viewer = new WebSocket(`${scope1.origin.replace('http:', 'ws:')}/s/${share.id}/ws?access=${access}`);
-      const message = next(viewer);
-      await opened(viewer);
-      expect(JSON.parse(await message)).toMatchObject({ method: 'Page.screencastFrame', params: { data: '/9j/2Q==' } });
-      viewer.close();
-      for (const client of debuggerSockets.clients) client.close();
-      await until(async () => (await getComputerSession(scope1.database, share.id))?.status === 'ended' ? true : undefined);
-    } finally {
-      for (const client of debuggerSockets.clients) client.close();
-      await new Promise<void>((resolve) => debuggerSockets.close(() => resolve()));
-      await new Promise<void>((resolve) => debuggerServer.close(() => resolve()));
-    }
-  });
 
   it.skipIf(!existsSync(scope1.chromeBinary))('hands an actual agent-owned Chromium tab to a viewer and waits for handback', async () => {
     let profile = '';

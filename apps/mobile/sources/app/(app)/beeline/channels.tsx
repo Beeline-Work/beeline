@@ -16,9 +16,7 @@ import { RoomViewHttpError } from '@beeline/buzz-client';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import { useRoomSearch } from '@/buzz/use-room-search';
 import { useScopedCallbacks } from '@/buzz/use-stable';
-import {
-  useNeedsYouCount,
-} from '@/buzz/needs-you-store';
+import { useNeedsYouCount, } from '@/buzz/needs-you-store';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
 import { useGitHubInstallationSession } from '@/auth/github-installation-host';
@@ -31,12 +29,7 @@ import { agentPairingCommand } from '@/buzz/agent-pairing-command';
 import { loadPendingInvite } from '@/buzz/pending-invite';
 import { deckLanding } from '@/buzz/deck-landing';
 import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
-import {
-  filterConversations,
-  roomListCounts,
-  useRoomPins,
-  useRoomListFilter,
-} from '@/buzz/room-list-preferences';
+import { filterConversations, roomListCounts, useRoomPins, useRoomListFilter, } from '@/buzz/room-list-preferences';
 import { openRoomListCorner } from '@/buzz/room-list-new-corner';
 import { cornerOpenTappedAgain } from '@/buzz/corner-open-status';
 import type { CornerOpenAttempt } from '@/buzz/open-random-corner';
@@ -60,9 +53,7 @@ import { reconnectNow } from '@/sync/transport/live-connection';
 import { clientResetGeneration } from '@/sync/client-reset';
 import { InlineRow } from '@/components/buzz/IndexRow';
 import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
-import {
-  type RoomDeckComposeAction,
-} from '@/components/buzz/RoomDeckComposeMenu';
+import { type RoomDeckComposeAction, } from '@/components/buzz/RoomDeckComposeMenu';
 import { RoomDeckLoadingView } from '@/components/buzz/RoomDeckLoadingView';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { RoomListToolbar } from '@/components/buzz/RoomListToolbar';

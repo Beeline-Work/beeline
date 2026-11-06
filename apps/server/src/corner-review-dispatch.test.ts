@@ -1,4 +1,4 @@
-import { cornerRunStateSql, assembleTurnPrompt, cornerReviewerInstruction, describe, expect, it, vi, DaemonService, LiveHub, systemLine, createAgentCommand, reconcileConfiguredCornerReviewers, advanceCorner, H, A, B, W, R, C, db, phone, daemon, commands, claim, result, greenHead, rootFixture, type AgentCommand } from './corner-review-dispatch.test-support.js';
+import { cornerRunStateSql, assembleTurnPrompt, cornerReviewerInstruction, describe, expect, it, vi, DaemonService, LiveHub, systemLine, createAgentCommand, reconcileConfiguredCornerReviewers, advanceCorner, H, A, B, W, R, C, db, phone, daemon, commands, claim, result, greenHead, rootFixture, type AgentCommand } from './test-support-corner-review-dispatch.test-support.js';
 
 describe('corner message attribution', () => {
   it('REVIEW-SOURCE-1 reads only current brief citations during an assigned review', async () => {
@@ -195,7 +195,6 @@ describe('corner message attribution', () => {
     await rootFixture.phone.execute('updateRoom', { roomId: R, reviewerAgentId: null }, H);
     await rootFixture.db.query('DELETE FROM free_agents WHERE agent_id=$1', [B]);
   // Each case starts a fresh failure episode despite reusing the same corner.
-  await rootFixture.db.query(`DELETE FROM agent_startup_backoff`);
   await rootFixture.db.query(`DELETE FROM agent_commands`);
     headSha = '2'.repeat(40);
     await rootFixture.db.query(
@@ -210,6 +209,8 @@ describe('corner message attribution', () => {
     const noReviewerWorker = (await commands(A, C)).find(command => command.id === opening!.id);
     await claim(noReviewerWorker!, 'g2');
     await result(noReviewerWorker!, 'https://github.com/acme/repo/pull/7', 'g2');
+    await rootFixture.daemon.execute('postAgentTurnReceipt', { roomId: C, requestId: noReviewerWorker!.turnRequestId, generationId: 'g2', status: 'complete' }, A);
+    await advanceCorner(rootFixture.db, C, { kind: 'reconcile' });
     expect(checkGate).toHaveBeenCalledTimes(2);
     const notices = (await commands(A, C)).filter(command => command.reason === 'corner_review_needed');
     expect(notices).toHaveLength(1);
@@ -364,7 +365,7 @@ describe('corner message attribution', () => {
   });
 
 
-  it('hands nothing back when the reviewer ends a turn on a head that is not green', async () => {
+  it('hands a missing verdict back instead of repeating the same-head review after checks return', async () => {
     // A reviewer that ends its turn to WAIT for CI has not finished reviewing.
     // Pushing the worker here would send it at a pull request still mid-run.
     await rootFixture.phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
@@ -379,9 +380,10 @@ describe('corner message attribution', () => {
     await advanceCorner(rootFixture.db, C, { kind: 'checks-pending' });
     await result(review!, 'Checks are still running on this head; I will look when they land.');
     expect(await commands(A, C)).toEqual([]);
-    // The next green transition dispatches the reviewer again, unspent.
+    // Completion without a verdict returns ownership; it never retries that head.
     await greenHead(14, '1'.repeat(40));
-    expect((await commands(B, C)).map((command) => command.reason)).toEqual(['subscribed_event']);
+    expect(await commands(B, C)).toEqual([]);
+    expect((await commands(A, C)).some(command => command.source.body.includes('without a verdict'))).toBe(true);
   });
 
 
@@ -577,7 +579,7 @@ describe('corner message attribution', () => {
     expect(await commands(B, C)).toEqual([]);
     expect((await rootFixture.db.query<{ workflow_state: string }>(
       `SELECT ${cornerRunStateSql('corner_id')} workflow_state FROM corner_facts WHERE corner_id=$1`, [C],
-    )).rows[0]).toEqual({ workflow_state: 'review' });
+    )).rows[0]).toEqual({ workflow_state: 'working' });
   });
 
 

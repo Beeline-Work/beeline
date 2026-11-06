@@ -8,7 +8,7 @@ import { setCornerReviewer } from '../corner-reviewer.js';
 import { ExpectedRefusalError } from '../command-refusal.js';
 import { assertCornerCommandTarget, CommandRefusalError } from '../commander.js';
 import { setCornerHold } from '../corner-holds.js';
-import { authorizeCommandOutput, createAgentCommand } from '../agent-command.js';
+import { authorizeCommandOutput } from '../agent-command.js';
 import { randomUUID } from 'node:crypto';
 import { cornerImplementerSql } from '../corner-worker.js';
 import { cornerBriefRevisionHash, currentCornerBrief, resolveCornerBriefApproval, resolveCornerBriefAttachments, resolvePendingCornerBriefAttachments, validateCornerBrief } from '../corner-brief.js';
@@ -277,8 +277,9 @@ import { daemonReach, daemonWriteResult } from './corner-messages.js';
           ],
         );
       }
-      // Only the implementer gets the objective; other members work when tagged.
-      await createAgentCommand(db, {
+      await advanceCorner(db, cornerId, {
+        kind: 'open',
+        command: {
         roomId: cornerId,
         agentId: implementerAgentId,
         sourceMessageId: null,
@@ -287,6 +288,7 @@ import { daemonReach, daemonWriteResult } from './corner-messages.js';
         parent: parentCommand,
         retainDepth: true,
         turnRequestId: input.requestId,
+      },
       });
       // After the opening order: the reviewer must be independent of the agent it assigns.
       if (input.reviewer !== undefined) await setCornerReviewer(db, cornerId, input.reviewer, agentId,
@@ -323,11 +325,7 @@ import { daemonReach, daemonWriteResult } from './corner-messages.js';
           afterMessageId: destination.sourceMessageId,
         });
       }
-      await advanceCorner(db, cornerId, {
-        kind: 'open',
-        workspaceId: parent.workspace_id,
-        implementerAgentId,
-      });
+
 
     });
     const watch = (

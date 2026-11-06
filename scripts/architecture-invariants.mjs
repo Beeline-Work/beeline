@@ -296,6 +296,28 @@ function mechanicalOwnerMove(root, was, rule, ref) {
   return true;
 }
 
+/** A capability may move only with its complete, unchanged function bodies.
+ * Counts and every matching boundary remain frozen; there is no relocation list. */
+function unchangedOwners(root, before, after, readBase) {
+  if (!readBase || !Number.isInteger(before.ownerSites) || !before.ownerFunctions || !after.ownerFunctions ||
+      before.owners.length !== after.owners.length || before.ownerSites !== after.ownerSites) return false;
+  const bodies = (rule, read) => {
+    const result = [];
+    const printer = ts.createPrinter({ removeComments: true });
+    for (const [file, names] of Object.entries(rule.ownerFunctions)) {
+      const source = ts.createSourceFile(file, read(file), ts.ScriptTarget.Latest, true);
+      for (const name of names) {
+        const matches = source.statements.filter(node => ts.isFunctionDeclaration(node) && node.name?.text === name && node.body);
+        if (matches.length !== 1) throw new Error('owner is not one named function');
+        result.push(printer.printNode(ts.EmitHint.Unspecified, matches[0].body, source));
+      }
+    }
+    return result.sort();
+  };
+  try { return JSON.stringify(bodies(before, readBase)) === JSON.stringify(bodies(after, file => readFileSync(path.join(root, file), 'utf8'))); }
+  catch { return false; }
+}
+
 /** Strict capability owners cannot be weakened through a candidate-rule edit. */
 export function strictRelaxations(root, base, head, ref) {
   if (!base) return [];
@@ -305,7 +327,8 @@ export function strictRelaxations(root, base, head, ref) {
     const rule = current.get(was.id);
     if (!rule) { found.push(`rule ${was.id} removed`); continue; }
     if (rule.total > was.total) found.push(`rule ${was.id} allowance increased`);
-    const moved = mechanicalOwnerMove(root, was, rule, ref);
+    const readBase = typeof ref === 'function' ? ref : ref ? file => execFileSync('git', ['show', `${ref}:${file}`], { cwd: root, encoding: 'utf8', stdio: ['ignore','pipe','ignore'] }) : undefined;
+    const moved = unchangedOwners(root, was, rule, readBase) || (typeof ref === 'string' && mechanicalOwnerMove(root, was, rule, ref));
     for (const key of BOUNDARY_KEYS) {
       if (moved && ['owners', 'ownerFunctions'].includes(key)) continue;
       if (JSON.stringify(rule[key] ?? null) !== JSON.stringify(was[key] ?? null) && !tighterBoundary(key, was[key], rule[key]))

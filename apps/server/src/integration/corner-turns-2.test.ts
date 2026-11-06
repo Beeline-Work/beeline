@@ -1,5 +1,6 @@
 import { cornerObjectiveSql } from '.././corner-objective.js';
 import { cornerCommissionerSql } from '.././corner-opening.js';
+import { advanceCorner } from '.././corner-lifecycle.js';
 import { createAgentCommand } from '.././agent-command.js';
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
@@ -616,7 +617,7 @@ const fixture = monolithFixture();
       objective: 'Pick a shape for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
-    await fixture.settleCornerWorkPastGap(cornerId);
+    await fixture.settleCornerWork(cornerId);
     // Someone else started it: the viewer neither commissioned nor follows it.
     await fixture.database.query(`UPDATE agent_commands SET root_source_message_id='agent-initiated' WHERE room_id=$1 AND reason='corner_objective'`, [
       cornerId,
@@ -625,8 +626,9 @@ const fixture = monolithFixture();
       cornerId,
       HUMAN,
     ]);
-    const listed = async () =>
-      (
+    const listed = async () => {
+      await advanceCorner(fixture.database, cornerId, { kind: 'reconcile' });
+      return (
         (await (await fixture.request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
           chats: Array<{
             room: { id: string };
@@ -636,6 +638,7 @@ const fixture = monolithFixture();
       ).chats
         .find((item) => item.room.id === ROOM)
         ?.openCorners.find((item) => item.id === cornerId);
+    };
     await fixture.database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)
        VALUES('chat-mine-untagged',$1,$2,'Still thinking.',now()+interval '1 second')`,
@@ -675,14 +678,15 @@ const fixture = monolithFixture();
       objective: 'Pick a size for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
-    await fixture.settleCornerWorkPastGap(cornerId);
+    await fixture.settleCornerWork(cornerId);
     await fixture.database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)
        VALUES('busy-chatter',$1,$2,'Chatter.',now()+interval '5 seconds')`,
       [busy, AGENT],
     );
-    const listed = async () =>
-      (
+    const listed = async () => {
+      await advanceCorner(fixture.database, cornerId, { kind: 'reconcile' });
+      return (
         (await (await fixture.request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
           chats: Array<{
             room: { id: string };
@@ -690,6 +694,7 @@ const fixture = monolithFixture();
           }>;
         }
       ).chats;
+    };
     const order = async () =>
       (await listed()).map((item) => item.room.id).filter((id) => id === ROOM || id === busy);
     expect(await order()).toEqual([busy, ROOM]);
@@ -721,9 +726,10 @@ const fixture = monolithFixture();
       objective: 'Pick a finish for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
-    await fixture.settleCornerWorkPastGap(cornerId);
-    const listed = async () =>
-      (
+    await fixture.settleCornerWork(cornerId);
+    const listed = async () => {
+      await advanceCorner(fixture.database, cornerId, { kind: 'reconcile' });
+      return (
         (await (await fixture.request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
           chats: Array<{
             room: { id: string };
@@ -733,6 +739,7 @@ const fixture = monolithFixture();
       ).chats
         .find((item) => item.room.id === ROOM)
         ?.openCorners?.find((item) => item.id === cornerId);
+    };
     const page = async () =>
       (await new PhoneService(fixture.database, fixture.origin).readCorners(ROOM, HUMAN))?.corners.find(
         (item) => item.corner.id === cornerId,

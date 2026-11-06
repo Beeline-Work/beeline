@@ -27,7 +27,7 @@ import { acpClientPreparePromptDelivery, acpClientPromptDelivery, acpClientHandl
 import { acpClientSessionSteer, acpClientActiveRunId, acpClientSessionCancel, acpClientSetConfigOption, acpClientSetModel, acpClientOnData, acpClientHandleMessage, acpClientActiveRunIdFromUpdate, acpClientWaitForActiveRun, acpClientHandlePermission, acpClientRequest, acpClientNotify, acpClientWrite } from './acp-session-steer.js';
 import { CodexPromptDelivery } from './codex-prompt-delivery.js';
 import { readUsageWindow, type AgentUsage, type UsageWindow } from '@beeline/api-contract/daemon';
-import { type ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PiSessionInstructions } from './pi-session-instructions.js';
 import { McpLaunchFiles } from './mcp-launch-files.js';

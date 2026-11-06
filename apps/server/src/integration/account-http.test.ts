@@ -1,4 +1,5 @@
 import { phoneFetch } from '../../../../tests/helpers/phone-operation.js';
+import { advanceCorner } from '.././corner-lifecycle.js';
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { PhoneService } from '.././phone-service.js';
@@ -519,11 +520,13 @@ const fixture = monolithFixture();
       objective: 'Pick a lid for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
-    await fixture.settleCornerWorkPastGap(cornerId);
-    const state = async () =>
-      (await new PhoneService(fixture.database, fixture.origin).readCorners(ROOM, HUMAN))?.corners.find(
+    await fixture.settleCornerWork(cornerId);
+    const state = async () => {
+      await advanceCorner(fixture.database, cornerId, { kind: 'reconcile' });
+      return (await new PhoneService(fixture.database, fixture.origin).readCorners(ROOM, HUMAN))?.corners.find(
         (item) => item.corner.id === cornerId,
       )?.state;
+    };
     let updates = 0;
     const crowd = async () => {
       for (let index = 0; index < 21; index += 1) {

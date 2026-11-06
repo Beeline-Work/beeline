@@ -1,16 +1,17 @@
-import { systemMessage } from '@beeline/api-contract/system-message-catalog';
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { isIP } from 'node:net';
-import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
-import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
-import type { IncomingMessage, ServerResponse } from 'node:http';
-import { WebSocket } from 'ws';
-import type { SqlDatabase } from './database.js';
-import type { LiveHub } from './live.js';
-import { systemLine } from './system-line.js';
-import { subscribeCommandCompletion } from './command-completion.js';
-import { bodyChannels, squireChannels, squireChannel, computerViewerHtml } from './computer-session-computer-viewer-html.js';
-export { computerViewerHtml, handBackComputerSession, endComputerSessionByViewer, upgradeComputerWaiter, upgradeBodyComputerSource, upgradeComputerSession } from './computer-session-computer-viewer-html.js';
+import { WebSocketServer, WebSocket } from "ws";
+import type { SqlDatabase } from "./database.js";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import type { Duplex } from "node:stream";
+import type { LiveHub } from "./live.js";
+import { senderMayAddressAgent, parseAgentAccessPolicy } from "@beeline/api-contract/agent-access";
+import { createHmac, timingSafeEqual, randomBytes } from "node:crypto";
+import { systemLine } from "./system-line.js";
+import { SYSTEM_IDENTITY_ID } from "@beeline/api-contract/system-identity";
+import { isIP } from "node:net";
+import { systemMessage } from "@beeline/api-contract/system-message-catalog";
+import { bodyChannels, squireChannels, replayToSourceMachine, bodyChannel, upgradeBodyViewer, squireChannel, computerViewerHtml } from './computer-session-computer-viewer-html.js';
+
+
 
 
 
@@ -29,9 +30,12 @@ export type ComputerSessionRow = {
   expiry_version?:string|null;
 };
 
+
 export const handbackWaiters = new Map<string, Set<WebSocket>>();
 
+
 export const MAX_VIEWER_BUFFERED_BYTES = 4 * 1024 * 1024;
+
 
 
 export type ComputerActivityEvent = {
@@ -43,7 +47,9 @@ export type ComputerActivityEvent = {
 };
 
 
+
 export const VIEW_TOKEN_LIFETIME_MS = 60 * 60_000;
+
 
 
 export async function mayViewComputer(database: SqlDatabase, row: ComputerSessionRow, viewerId: string): Promise<boolean> {
@@ -67,6 +73,7 @@ export async function mayViewComputer(database: SqlDatabase, row: ComputerSessio
 }
 
 
+
 /** A Room reader obtains a short-lived, viewer-bound URL only through phone auth. */
 export async function computerViewToken(database: SqlDatabase, id: string, viewerId: string): Promise<string | null> {
   const row = await getComputerSession(database, id);
@@ -76,6 +83,7 @@ export async function computerViewToken(database: SqlDatabase, id: string, viewe
   const signature = createHmac('sha256', row.view_secret).update(body).digest('hex');
   return `${viewerId}.${expires}.${signature}`;
 }
+
 
 
 export async function authorizedViewer(request: IncomingMessage, database: SqlDatabase, row: ComputerSessionRow): Promise<boolean> {
@@ -90,6 +98,7 @@ export async function authorizedViewer(request: IncomingMessage, database: SqlDa
 }
 
 
+
 export function notifyWaiters(id: string, value: { type: 'handoff' | 'ended'; note?: string }): void {
   const waiting = handbackWaiters.get(id);
   handbackWaiters.delete(id);
@@ -98,6 +107,7 @@ export function notifyWaiters(id: string, value: { type: 'handoff' | 'ended'; no
     waiter.close();
   }
 }
+
 
 
 export async function recordComputerActivity(
@@ -150,6 +160,7 @@ export async function recordComputerActivity(
 }
 
 
+
 export async function noteComputerHandback(database: SqlDatabase, row: ComputerSessionRow): Promise<void> {
   const changed = await database.query(
     `UPDATE computer_sessions SET handoff_count=handoff_count+1
@@ -162,11 +173,13 @@ export async function noteComputerHandback(database: SqlDatabase, row: ComputerS
 }
 
 
+
 /** Browser-share viewers are served at server.usebeeline.app by default. */
 export function computerSessionUrl(id: string): string {
   const origin = process.env.BEELINE_COMPUTER_ORIGIN || 'https://server.usebeeline.app';
   return `${origin.replace(/\/$/, '')}/s/${id}/`;
 }
+
 
 
 /**
@@ -181,6 +194,7 @@ export function trustedComputerShareUpstream(upstream: URL): boolean {
     || ['.localhost', '.internal', '.local'].some((suffix) => host.endsWith(suffix))) return false;
   return host.endsWith('.trycloudflare.com') && host.length > '.trycloudflare.com'.length;
 }
+
 
 
 export async function createComputerSession(
@@ -229,6 +243,7 @@ export async function createComputerSession(
 }
 
 
+
 export async function getComputerSession(database: SqlDatabase, id: string): Promise<ComputerSessionRow | undefined> {
   if (!/^[A-Za-z0-9_-]{43}$/.test(id)) return undefined;
   return (await database.query<ComputerSessionRow>(
@@ -237,6 +252,7 @@ export async function getComputerSession(database: SqlDatabase, id: string): Pro
      FROM computer_sessions WHERE id=$1`, [id],
   )).rows[0];
 }
+
 
 
 /** A renewed upstream lease cannot resurrect an explicitly ended share. */
@@ -254,6 +270,7 @@ export async function refreshComputerSession(
   );
   return { live: Boolean(result.rowCount) };
 }
+
 
 
 export async function endComputerSession(
@@ -281,6 +298,7 @@ export async function endComputerSession(
 }
 
 
+
 export function closeComputerChannels(id: string): void {
   notifyWaiters(id, { type: 'ended' });
   const body = bodyChannels.get(id);
@@ -293,60 +311,6 @@ export function closeComputerChannels(id: string): void {
   squireChannels.delete(id);
 }
 
-
-/** The committed lease is the view's authority bound. Expiry is a terminal
- * transition, never permission to repeatedly probe an upstream status page. */
-export async function expireComputerSessions(database: SqlDatabase, live: LiveHub | undefined): Promise<number> {
-  const local = [...new Set([...bodyChannels.keys(), ...squireChannels.keys(), ...handbackWaiters.keys()])];
-  if(local.length){
-    const current=await database.query<{id:string;status:string}>('SELECT id,status FROM computer_sessions WHERE id=ANY($1::text[])',[local]);
-    const active=new Set(current.rows.filter(row=>row.status==='live').map(row=>row.id));
-    for(const id of local)if(!active.has(id))closeComputerChannels(id);
-  }
-  const rows = (await database.query<ComputerSessionRow>(
-    `SELECT id,room_id,message_id,agent_id,source_session_id,upstream_url,status,relay_instance_id,handoff_count,view_secret,expires_at,expires_at::text expiry_version
-     FROM computer_sessions WHERE expires_at<=now() AND status='live' ORDER BY expires_at,id LIMIT 100`,
-  )).rows;
-  for (const row of rows) {
-    // Both exact captured expiry and current due state are checked under the
-    // update lock. A newer successful renewal wins even after selection.
-    await endComputerSession(database, live, row, true);
-  }
-  return rows.length;
-}
-
-
-/** Existing startup adapter, now one actual deadline. The legacy interval
- * argument is accepted for source compatibility and never admits a scan. */
-export function startComputerExpirySweep(database: SqlDatabase, live: LiveHub, _legacyIntervalMs?:number,
-  timers: import('./background-work.js').WorkTimers = { setTimeout, clearTimeout }): () => void {
-  let closed=false,running=false,dirty=false,timer:ReturnType<typeof setTimeout>|undefined;
-  const arm=(due:number)=>{
-    if(closed)return;
-    timer=timers.setTimeout(()=>{
-      timer=undefined;if(Date.now()<due)arm(due);else void drain();
-    },Math.min(2_147_483_647,Math.max(0,due-Date.now())));timer.unref?.();
-  };
-  const drain=async()=>{
-    dirty=true;if(closed||running)return;running=true;
-    try{
-      do{
-        dirty=false;timers.clearTimeout(timer);timer=undefined;
-        await expireComputerSessions(database,live);if(closed)return;
-        const next=(await database.query<{delay_ms:number}>(`SELECT EXTRACT(epoch FROM (expires_at-clock_timestamp()))::double precision*1000 delay_ms FROM computer_sessions
-          WHERE status='live' AND expires_at IS NOT NULL ORDER BY expires_at LIMIT 1`)).rows[0]?.delay_ms;
-        if(next!==undefined&&!closed){
-          if(!Number.isFinite(Number(next)))throw new Error('Invalid computer expiry');
-          arm(Date.now()+Math.max(0,Math.ceil(Number(next))));
-        }
-      }while(dirty&&!closed);
-    }catch{console.warn('[computer-share] expiry unavailable; awaiting committed change or recovery');}
-    finally{running=false;if(dirty&&!closed)void drain();}
-  };
-  const stopSource=subscribeCommandCompletion({principal:'computer',operation:'expiry',commandId:'pending'},()=>{void drain();});
-  const stopRecovery=database.onRecovery?.(()=>{void drain();});void drain();
-  return()=>{closed=true;timers.clearTimeout(timer);stopSource();stopRecovery?.();};
-}
 
 
 /** One authoritative read when a live viewer's socket reconnects. */
@@ -362,6 +326,7 @@ export async function serveComputerStatus(request: IncomingMessage, response: Se
 }
 
 
+
 export function isFrameMessage(data: WebSocket.RawData): boolean {
   try {
     const message = JSON.parse(data.toString()) as { method?: string; params?: { data?: string }; type?: string; data?: string };
@@ -369,6 +334,7 @@ export function isFrameMessage(data: WebSocket.RawData): boolean {
     return typeof encoded === 'string';
   } catch { return false; }
 }
+
 
 
 /**
@@ -392,6 +358,7 @@ function viewerZoomAt(state,zoom,x,y){const next=Math.min(4,Math.max(state.minZo
   return {...state,zoom:next,left:x-(x-state.left)*ratio,top:y-(y-state.top)*ratio};}`;
 
 
+
 export function serveComputerRetry(_request: IncomingMessage, response: ServerResponse): void {
   response.writeHead(200, {
     'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store',
@@ -408,6 +375,7 @@ export function serveComputerRetry(_request: IncomingMessage, response: ServerRe
 }
 
 
+
 export function computerSharePage(response: ServerResponse, status: number, message: string, id: string): void {
   const path = `/beeline/browser-share?id=${encodeURIComponent(id)}`;
   response.writeHead(status, {
@@ -417,6 +385,7 @@ export function computerSharePage(response: ServerResponse, status: number, mess
   });
   response.end(`<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Shared browser · Beeline</title><h1>Shared browser</h1><p>${message}</p><p><a href="https://web.usebeeline.app${path}">Open in Beeline on the web</a></p><p><a href="beeline://${path.slice(1)}">Open in the Beeline app</a></p></html>`);
 }
+
 
 
 /** The public session path needs a viewer token and current Room/agent authority. */
@@ -462,7 +431,7 @@ export async function serveComputerSession(
     const fetchStartedAt = Date.now();
     const channel = squireChannel(id);
     const htmlWasCached = Boolean(channel.html);
-    const upstream = channel.html ? undefined : await fetch(row.upstream_url, { redirect: 'error', signal: AbortSignal.timeout(4_000) })
+    const upstream = channel.html ? undefined : await fetch(row.upstream_url, { redirect: 'error',  })
       .catch(() => undefined);
     if (!upstream && !channel.html) { console.warn(`[computer-share] Squire HTML unavailable session=${id.slice(0, 8)}`); serveComputerRetry(request, response); return; }
     if (upstream && !upstream.ok) {
@@ -610,3 +579,318 @@ export async function serveComputerSession(
   });
   response.end(computerViewerHtml(id));
 }
+
+
+
+export const computerWebSockets = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
+
+
+
+/** Only an authenticated person's explicit action completes a share. */
+export async function handBackComputerSession(database: SqlDatabase, id: string, viewerId: string): Promise<void> {
+  const row = await getComputerSession(database, id);
+  if (!row || row.status !== 'live' || !(await mayViewComputer(database, row, viewerId)))
+    throw new Error('computer session access denied');
+  const body = bodyChannels.get(id);
+  if (body) {
+    if (body.controller) {
+      body.source?.send(JSON.stringify({ type: 'release' }));
+      body.controller = undefined;
+    }
+  }
+  const squire = squireChannels.get(id);
+  if (squire) {
+    for (const upstream of squire.upstreams) {
+      if (upstream.readyState === WebSocket.OPEN) upstream.send(JSON.stringify({ type: 'release' }));
+    }
+  }
+  await noteComputerHandback(database, row);
+}
+
+
+
+/** The agent's pending tool call waits here; the database counter closes a reconnect race. */
+export async function upgradeComputerWaiter(
+  request: IncomingMessage, socket: Duplex, head: Buffer,
+  database: SqlDatabase, id: string, agentId: string, since: number,
+): Promise<void> {
+  const row = await getComputerSession(database, id);
+  if (!row || row.agent_id !== agentId) { socket.destroy(); return; }
+  if (replayToSourceMachine(socket, row)) return;
+  computerWebSockets.handleUpgrade(request, socket, head, (waiter) => {
+    let waiting = handbackWaiters.get(id);
+    if (!waiting) { waiting = new Set(); handbackWaiters.set(id, waiting); }
+    waiting.add(waiter);
+    waiter.once('close', () => {
+      waiting!.delete(waiter);
+      if (!waiting!.size) handbackWaiters.delete(id);
+    });
+    void Promise.all([
+      getComputerSession(database, id),
+      database.query<{ id: string; name: ComputerActivityEvent['name']; detail: string | null; created_at: Date }>(
+        `SELECT id,name,detail,created_at FROM computer_session_events
+         WHERE session_id=$1 AND id>$2 ORDER BY id ASC LIMIT 200`, [id, since],
+      ),
+    ]).then(([current, events]) => {
+      if (waiter.readyState !== WebSocket.OPEN) return;
+      for (const event of events.rows) {
+        waiter.send(JSON.stringify({ type: 'event', seq: Number(event.id), at: new Date(event.created_at).toISOString(),
+          name: event.name, ...(event.detail ? { detail: event.detail } : {}) } satisfies ComputerActivityEvent));
+      }
+      if (!current || current.status === 'ended') {
+        waiter.send(JSON.stringify({ type: 'ended' })); waiter.close();
+      } else if (current.handoff_count > 0) {
+        waiter.send(JSON.stringify({ type: 'handoff', note: 'Human handed the browser back' })); waiter.close();
+      }
+    }).catch(() => waiter.close());
+  });
+}
+
+
+
+/** The body connects outward to the server; its local CDP port is never public. */
+export async function upgradeBodyComputerSource(
+  request: IncomingMessage, socket: Duplex, head: Buffer,
+  database: SqlDatabase, live: LiveHub, id: string, agentId: string,
+): Promise<void> {
+  const row = await getComputerSession(database, id);
+  if (!row || row.status !== 'live' || row.agent_id !== agentId || row.upstream_url !== 'body:') {
+    socket.destroy(); return;
+  }
+  if (replayToSourceMachine(socket, row)) return;
+  computerWebSockets.handleUpgrade(request, socket, head, (source) => {
+    const channel = bodyChannel(id);
+    channel.source?.close();
+    channel.source = source;
+    channel.lastFrame = undefined;
+    source.on('message', (data, binary) => {
+      try {
+        const event = JSON.parse(data.toString()) as { type?: string; name?: string; detail?: string; text?: unknown };
+        if (event.type === 'share-event' && event.name === 'navigation') {
+          if (!channel.controller) return;
+          void recordComputerActivity(database, row, 'navigation', event.detail).catch(() => {});
+          return;
+        }
+        // Copied page text goes only to the person who asked for it.
+        if (event.type === 'clipboard') {
+          if (channel.controller?.readyState === WebSocket.OPEN && typeof event.text === 'string')
+            channel.controller.send(JSON.stringify({ type: 'clipboard', text: event.text }));
+          return;
+        }
+      } catch { /* An unrelated source frame is still forwarded below. */ }
+      const frame = isFrameMessage(data);
+      // A quiet Chromium tab may emit its only frame before anyone opens the card.
+      if (frame) channel.lastFrame = { data: Buffer.from(data.toString()), binary };
+      const now = Date.now();
+      for (const viewer of channel.viewers) {
+        if (frame && channel.pausedViewers.has(viewer)) continue;
+        if (frame && !channel.interactiveViewers.has(viewer)) {
+          const last = channel.previewSentAt.get(viewer) ?? 0;
+          if (now - last < 1_000) continue;
+          channel.previewSentAt.set(viewer, now);
+        }
+        if (viewer.readyState === WebSocket.OPEN && viewer.bufferedAmount < MAX_VIEWER_BUFFERED_BYTES)
+          viewer.send(data, { binary });
+      }
+    });
+    source.once('close', () => {
+      if (channel.source !== source) return;
+      channel.ending = true;
+      channel.source = undefined;
+      const closeViewers = () => {
+        for (const viewer of channel.viewers) {
+          if (viewer.readyState === WebSocket.OPEN) viewer.send(JSON.stringify({ type: 'ended' }));
+          viewer.close();
+        }
+        bodyChannels.delete(id);
+      };
+      void endComputerSession(database, live, row).then(closeViewers, closeViewers);
+    });
+  });
+}
+
+
+
+export async function upgradeComputerSession(
+  request: IncomingMessage,
+  socket: Duplex,
+  head: Buffer,
+  database: SqlDatabase,
+  live: LiveHub,
+  id: string,
+): Promise<void> {
+  const row = await getComputerSession(database, id);
+  if (!row || row.status !== 'live') { socket.destroy(); return; }
+  if (!(await authorizedViewer(request, database, row))) { socket.destroy(); return; }
+  if (replayToSourceMachine(socket, row)) return;
+  const path = new URL(request.url ?? '/', 'http://beeline.local').pathname;
+  if (row.upstream_url === 'body:') {
+    if (!path.endsWith('/ws')) { socket.destroy(); return; }
+    upgradeBodyViewer(request, socket, head, database, live, row); return;
+  }
+  if (!path.endsWith('/stream')) { socket.destroy(); return; }
+  const target = new URL('stream', row.upstream_url);
+  if (target.protocol === 'https:') target.protocol = 'wss:';
+  if (target.protocol === 'http:') target.protocol = 'ws:';
+  if (!['ws:', 'wss:'].includes(target.protocol)) { socket.destroy(); return; }
+  const query = new URL(request.url ?? '/', 'http://beeline.local').searchParams;
+  const fixedPreview = query.has('preview');
+  const warm = query.has('warm');
+  let preview = fixedPreview || warm;
+  const viewerId = query.get('access')!.split('.')[0]!;
+  computerWebSockets.handleUpgrade(request, socket, head, (viewer) => {
+    const activity=()=>live?.publish({type:'invalidate',roomId:row.room_id,reason:'computer-viewer-activity',targetAgentId:row.agent_id,requestId:id});
+    activity();
+    const channel = squireChannel(id);
+    const startedAt = Date.now();
+    channel.viewers.add(viewer);
+    if (!preview) channel.interactiveViewers.add(viewer);
+    if (channel.lastFrame) {
+      viewer.send(channel.lastFrame.data, { binary: channel.lastFrame.binary });
+      console.info(`[computer-share] squire cached JPEG session=${id.slice(0, 8)} ms=${Date.now() - startedAt}`);
+    }
+    if (!preview) void recordComputerActivity(database, row, 'viewer-opened', undefined, viewerId).catch(() => {});
+    let upstream = [...channel.upstreams][0];
+    const newTunnel = !upstream;
+    if (!upstream) {
+      upstream = new WebSocket(target.toString(), { maxPayload: 2 * 1024 * 1024 });
+      channel.upstreams.add(upstream);
+    }
+    const source = upstream;
+    const pendingInput: Array<{ data: Buffer; binary: boolean }> = [];
+    const flushPending = () => {
+      for (const pending of pendingInput) source.send(pending.data, { binary: pending.binary });
+      pendingInput.length = 0;
+    };
+    if (source.readyState === WebSocket.CONNECTING) source.once('open', flushPending);
+    const lastInputAt = new Map<string, number>();
+    viewer.on('message', (data, binary) => {
+      if (Buffer.byteLength(data.toString()) > 4_096) return;
+      let message: { type?: string };
+      try { message = JSON.parse(data.toString()) as typeof message; } catch { return; }
+      activity();
+      if (warm && message.type === 'viewer-mode') {
+        preview = fixedPreview || !(message as { interactive?: boolean }).interactive;
+        if (preview) {
+          channel.interactiveViewers.delete(viewer);
+          if (!channel.interactiveViewers.size && channel.humanControl) {
+            channel.humanControl = false;
+            if (source.readyState === WebSocket.OPEN) source.send(JSON.stringify({ type: 'release' }));
+          }
+        } else {
+          channel.interactiveViewers.add(viewer);
+          if (channel.lastFrame) viewer.send(channel.lastFrame.data, { binary: channel.lastFrame.binary });
+        }
+        return;
+      }
+      if (preview) return;
+      if (message.type === 'handback') {
+        channel.humanControl = false;
+        pendingInput.length = 0;
+        if (source.readyState === WebSocket.OPEN) source.send(JSON.stringify({ type: 'release' }));
+        void noteComputerHandback(database, row);
+        return;
+      }
+      if (message.type === 'end-share') { void endComputerSession(database, live, row); return; }
+      if (message.type && ['touch', 'pointer', 'wheel', 'text', 'key', 'click'].includes(message.type)) {
+        const category = message.type === 'wheel' ? 'scroll'
+          : message.type === 'text' ? 'typing' : message.type === 'key' ? 'key' : 'pointer';
+        const now = Date.now();
+        if (now - (lastInputAt.get(category) ?? 0) >= 1_000) {
+          lastInputAt.set(category, now);
+          channel.humanViewerId = viewerId;
+          if (channel.humanControl) void recordComputerActivity(database, row, 'input', category, viewerId).catch(() => {});
+          else channel.pendingHumanInput = { viewerId, category };
+        }
+      }
+      if (source.readyState === WebSocket.OPEN) source.send(data, { binary });
+      else if (source.readyState === WebSocket.CONNECTING && pendingInput.length < 8)
+        pendingInput.push({ data: Buffer.from(data.toString()), binary });
+    });
+    viewer.once('close', () => {
+      source.off('open', flushPending);
+      pendingInput.length = 0;
+      channel.viewers.delete(viewer);
+      channel.interactiveViewers.delete(viewer);
+      channel.previewSentAt.delete(viewer);
+      if (!preview) void recordComputerActivity(database, row, 'viewer-closed', undefined, viewerId).catch(() => {});
+      if (!channel.interactiveViewers.size && channel.humanControl) {
+        channel.humanControl = false;
+        if (source.readyState === WebSocket.OPEN) source.send(JSON.stringify({ type: 'release' }));
+      }
+      if (!channel.viewers.size) {
+        if (squireChannels.get(id) === channel) squireChannels.delete(id);
+        source.close();
+      }
+    });
+    if (!newTunnel) return;
+    source.once('open', () => console.info(`[computer-share] squire tunnel open session=${id.slice(0, 8)} ms=${Date.now() - startedAt}`));
+    let firstJpegLogged = false;
+    source.on('message', (data, binary) => {
+      let message: { type?: string; state?: string; url?: string; origin?: string } | undefined;
+      try { message = JSON.parse(data.toString()) as typeof message; } catch { /* Forward unknown frames. */ }
+      if (message?.type === 'control') {
+        if (message.state === 'human' && !channel.humanControl) {
+          channel.humanControl = true;
+          void recordComputerActivity(database, row, 'takeover', undefined, channel.humanViewerId).catch(() => {});
+          const pending = channel.pendingHumanInput;
+          channel.pendingHumanInput = undefined;
+          if (pending) void recordComputerActivity(database, row, 'input', pending.category, pending.viewerId).catch(() => {});
+        }
+        if (message.state === 'agent') channel.humanControl = false;
+      }
+      if (message?.type === 'navigation' && channel.humanControl) {
+        let destination: string | undefined;
+        try {
+          const url = new URL(message.url ?? message.origin ?? '');
+          if (url.protocol === 'http:' || url.protocol === 'https:') {
+            url.username = ''; url.password = '';
+            destination = url.href;
+          }
+        } catch { /* Internal browser URLs are not shared. */ }
+        if (destination) void recordComputerActivity(database, row, 'navigation', destination, channel.humanViewerId).catch(() => {});
+      }
+      const frame = isFrameMessage(data);
+      if (message?.type === 'blank') channel.lastFrame = undefined;
+      if (frame) {
+        channel.lastFrame = { data: Buffer.from(data.toString()), binary };
+        if (!firstJpegLogged) {
+          firstJpegLogged = true;
+          console.info(`[computer-share] squire first JPEG session=${id.slice(0, 8)} ms=${Date.now() - startedAt}`);
+        }
+      }
+      for (const recipient of channel.viewers) {
+        if (frame && !channel.interactiveViewers.has(recipient)) {
+          const now = Date.now();
+          if (now - (channel.previewSentAt.get(recipient) ?? 0) < 1_000) continue;
+          channel.previewSentAt.set(recipient, now);
+        }
+        if (recipient.readyState !== WebSocket.OPEN) continue;
+        if (recipient.bufferedAmount < MAX_VIEWER_BUFFERED_BYTES) recipient.send(data, { binary });
+        else recipient.close(1013, 'screen backpressure');
+      }
+    });
+    const closeViewers = () => { for (const recipient of channel.viewers) recipient.close(); };
+    source.once('close', (code, reason) => {
+      channel.upstreams.delete(source);
+      if (squireChannels.get(id) === channel) squireChannels.delete(id);
+      if (!channel.viewers.size) return;
+      if (code === 1000 && reason.toString() === 'share ended') {
+        void endComputerSession(database, live, row).finally(closeViewers);
+        return;
+      }
+      // Tunnel loss is not share expiry. Reconcile the upstream status once.
+      void fetch(row.upstream_url, { redirect: 'error',  })
+        .then(async (reply) => {
+          if (reply.status === 404 || reply.status === 410) {
+            for (const recipient of channel.viewers) if (recipient.readyState === WebSocket.OPEN)
+              recipient.send(JSON.stringify({ type: 'ended' }));
+            await endComputerSession(database, live, row);
+          }
+        }).finally(closeViewers).catch(() => {});
+    });
+    source.once('error', closeViewers);
+  });
+}
+export { computerViewerHtml } from './computer-session-computer-viewer-html.js';
+export { endComputerSessionByViewer } from './computer-session-computer-viewer-html.js';

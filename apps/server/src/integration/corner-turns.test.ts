@@ -155,7 +155,9 @@ const fixture = monolithFixture();
       }
     ).id;
     const unrelatedApproval = await turnIn(unrelated);
-    const agentApproval = await turnIn(corner, AGENT);
+    const agentApproval = { messageId: createHash('sha256').update('triage-agent-approval').digest('hex') };
+    await fixture.database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Agent approval')`,
+      [agentApproval.messageId, corner, AGENT]);
     const attachments = new Map<string, { objectId: string; purpose: string; required: boolean }>();
     for (const [index, sourceRoomId] of [ROOM, cornerId, corner, unrelated].entries()) {
       const objectId = `65432109-0000-4000-8000-00000000000${index}`;

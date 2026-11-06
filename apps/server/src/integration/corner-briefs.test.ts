@@ -1,6 +1,7 @@
 import { phoneFetch } from '../../../../tests/helpers/phone-operation.js';
 import { cornerRequestSql } from '.././corner-opening.js';
 import { cornerRunStateSql } from '.././corner-run.js';
+import { advanceCorner } from '.././corner-lifecycle.js';
 import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -9,7 +10,6 @@ import { describe, expect, it } from 'vitest';
 import { cornerImplementerSql } from '.././corner-worker.js';
 import { HelperDaemonService as DaemonService } from '.././test-fixtures/helper-daemon.js';
 import { LiveHub } from '.././live.js';
-import { MediaExpiryLoop } from '.././background.js';
 import { monolithFixture, HUMAN, AGENT, WORKSPACE, ROOM } from '../test-fixtures/test-support-monolith.js';
 
 describe('monolith integration: corner-briefs', () => {
@@ -303,12 +303,6 @@ const fixture = monolithFixture();
     await fixture.database.query(`UPDATE objects SET expires_at=now()-interval '1 minute' WHERE id=$1`, [
       mediaId,
     ]);
-    expect(
-      await new MediaExpiryLoop(fixture.database, 24, 0, {
-        storage: fixture.objectStorage.asStorage(),
-        service: fixture.objectService,
-      }).runOnce(),
-    ).toBe(0);
     expect((await phoneFetch(`${fixture.origin}/v1/media/${mediaId}`)).status).toBe(200);
     await fixture.database.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
       VALUES($1,$2,'presence','presence','{"status":"online"}')`, [ROOM, AGENT]);
@@ -605,9 +599,9 @@ const fixture = monolithFixture();
 
 
   it.each([
-    ...['opened', 'implement', 'checks', 'review', 'ask_human', 'landed', 'closed']
+    ...['idle', 'working', 'review-checks', 'review-reviewer', 'waiting', 'landed', 'closed']
       .map(state => ({ state, health: 'healthy' })),
-    ...['implement', 'ask_human'].flatMap(state =>
+    ...['working', 'waiting'].flatMap(state =>
       ['offline', 'removed', 'recent-failure', 'out-of-credit'].map(health => ({ state, health }))),
   ])(
     'Reproduction BR-01: brief revision from $state with $health worker', async ({ state, health }) => {
@@ -634,7 +628,19 @@ const fixture = monolithFixture();
         createHash('sha256').update(`failure-${state}`).digest('hex'), ROOM, HUMAN,
         JSON.stringify({ requestId: 'opener-failed', agentId: AGENT, silenceKind: 'allowance-spent' }),
       ]);
-      await fixture.database.query(`UPDATE messages SET card=jsonb_set(card,'{toState}',to_jsonb($2::text)) WHERE id=(SELECT id FROM messages WHERE room_id=$1 AND card_type='corner-workflow-handoff' ORDER BY (card->>'seq')::int DESC LIMIT 1)`, [cornerId, state]);
+      if (state !== 'working') await fixture.settleCornerWork(cornerId);
+      if (state.startsWith('review-')) {
+        await fixture.database.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [ROOM, AGENT]);
+        await fixture.database.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [cornerId,
+          JSON.stringify({ checks: state === 'review-checks' ? 'pending' : 'passing', pr: { number: 42, headSha: 'brief-head' } })]);
+      }
+      if (state === 'waiting') await fixture.database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+         VALUES('brief-question',$1,$2,'Choose a label','card','choice',$3::jsonb)`,
+        [cornerId, worker, JSON.stringify({ mode: 'question', status: 'open', requester: { pubkey: HUMAN } })]);
+      const seeded = await advanceCorner(fixture.database, cornerId, state === 'landed' ? { kind: 'merged', contents: {} }
+        : state === 'closed' ? { kind: 'closed' } : { kind: 'reconcile' });
+      expect(seeded.state).toBe(['landed', 'closed'].includes(state) ? 'archived' : state.startsWith('review-') ? 'review' : state);
       if (health === 'offline')
         await fixture.database.query(`DELETE FROM live_outputs WHERE agent_id=$1`, [worker]);
       if (health === 'removed')
@@ -652,14 +658,21 @@ const fixture = monolithFixture();
         roomId: ROOM, cornerId, requestId: 'worker-brief-correction', expectedRevision: 1,
         brief: { content: 'Keep the corrected behavior.', change: 'Corrected behavior' },
       });
+      const terminal = state === 'landed' || state === 'closed';
+      if (terminal) {
+        expect(revised.status).toBe(403);
+        expect((await fixture.database.query(`SELECT revision FROM corner_brief_revisions WHERE corner_id=$1`, [cornerId])).rows)
+          .toEqual([{ revision: 1 }]);
+        expect((await fixture.database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason='corner_brief_revision'`, [cornerId])).rowCount).toBe(0);
+        return;
+      }
       expect(revised.status).toBe(200);
       const result = await revised.json();
       const wakes = (await fixture.database.query<{ agent_id: string }>(
         `SELECT command.agent_id FROM agent_commands command JOIN messages note ON note.id=command.source_message_id
          WHERE command.room_id=$1 AND note.text LIKE '%revised the corner brief%'`, [cornerId],
       )).rows.map(row => row.agent_id);
-      const terminal = state === 'landed' || state === 'closed';
-      const shouldWake = !terminal && !['offline','removed'].includes(health);
+      const shouldWake = !['offline','removed'].includes(health);
       console.info(`Reproduction BR-01: HTTP reviseCornerBrief from ${state}, worker ${health}; expected=${shouldWake ? 'current worker' : 'none'}; observed=${wakes.map(id => id === worker ? 'current worker' : 'opener').join(',') || 'none'}; revision=${result.revision}`);
       expect(result).toMatchObject({ revision: 2, wake: shouldWake ? { queued: true, agentId: worker } : { queued: false, reason: expect.any(String) } });
       expect(wakes).toEqual(shouldWake ? [worker] : []);
@@ -667,7 +680,7 @@ const fixture = monolithFixture();
       expect((await fixture.database.query<{ worker_agent_id: string; workflow_state: string }>(
         `SELECT ${cornerImplementerSql('fact', 'corner')} worker_agent_id,${cornerRunStateSql('fact.corner_id')} workflow_state FROM corner_facts fact
          JOIN rooms corner ON corner.id=fact.corner_id WHERE fact.corner_id=$1`, [cornerId],
-      )).rows[0]).toEqual({ worker_agent_id: worker, workflow_state: state === 'ask_human' && shouldWake ? 'implement' : state });
+      )).rows[0]).toEqual({ worker_agent_id: worker, workflow_state: state === 'waiting' ? 'waiting' : 'working' });
     },
   );
 
@@ -722,14 +735,13 @@ const fixture = monolithFixture();
       `SELECT agent_id,reason FROM agent_commands WHERE room_id=$1 AND reason IN ('corner_brief_revision','corner_check') ORDER BY agent_id`,
       [cornerId],
     );
-    // A brief edit never sends the corner back to review: the reviewer is not
-    // woken, and the run stays where it was.
+    // The implementer works on the revised brief before another review is admitted.
     expect(commands.rows.filter((row) => row.agent_id === reviewerId)).toEqual([]);
     expect(
       (await fixture.database.query<{ workflow_state: string }>(
         `SELECT ${cornerRunStateSql('$1::uuid')} workflow_state`, [cornerId],
       )).rows[0]?.workflow_state,
-    ).toBe('implement');
+    ).toBe('working');
     expect(
       await (await fixture.daemonOperation('getCornerRestoreState', { cornerId })).json(),
     ).toMatchObject({

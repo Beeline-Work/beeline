@@ -279,7 +279,7 @@ import { daemonWriteResult } from './corner-messages.js';
            SELECT 1 FROM memberships self_membership
            WHERE self_membership.room_id=schedule.room_id
              AND self_membership.identity_id=$2 AND self_membership.removed_at IS NULL)))
-         AND schedule.workflow_run IS NULL
+
          AND (NOT $3::boolean OR schedule.agent_id=$2)
          AND (schedule.workflow_slug IS NOT NULL OR schedule.agent_id=$2 OR schedule.creator_id=schedule.agent_id)
        ORDER BY schedule.created_at,schedule.id`,
@@ -346,7 +346,7 @@ import { daemonWriteResult } from './corner-messages.js';
            SELECT 1 FROM memberships self_membership
            WHERE self_membership.room_id=agent_schedules.room_id
              AND self_membership.identity_id=$3 AND self_membership.removed_at IS NULL)))
-         AND workflow_run IS NULL
+
          AND (agent_id=$3 OR creator_id=agent_id)
          AND (NOT $4::boolean OR agent_id=$3)`,
       [input.scheduleId, input.roomId, agentId, input.selfOnly === true],
@@ -360,7 +360,7 @@ import { daemonWriteResult } from './corner-messages.js';
            SELECT 1 FROM memberships self_membership
            WHERE self_membership.room_id=agent_schedules.room_id
              AND self_membership.identity_id=$3 AND self_membership.removed_at IS NULL)))
-         AND workflow_run IS NULL
+
          AND (agent_id=$3 OR creator_id=agent_id)
          AND (NOT $4::boolean OR agent_id=$3)`,
       [input.scheduleId, input.roomId, agentId, input.selfOnly === true],
@@ -410,7 +410,7 @@ import { daemonWriteResult } from './corner-messages.js';
              SELECT 1 FROM memberships self_membership
              WHERE self_membership.room_id=agent_schedules.room_id
                AND self_membership.identity_id=$3 AND self_membership.removed_at IS NULL)))
-           AND workflow_run IS NULL
+
            AND (NOT $4::boolean OR agent_id=$3)`,
         [input.scheduleId, input.roomId, agentId, input.selfOnly === true],
       )
@@ -436,7 +436,7 @@ import { daemonWriteResult } from './corner-messages.js';
       `UPDATE agent_schedules SET message=COALESCE($3,message),
          cadence=COALESCE($4::jsonb,cadence),max_runs=COALESCE($5,max_runs),
          next_run_at=COALESCE($6,next_run_at),updated_at=now(),workflow_slug=$7,updated_by=$8,title=COALESCE($10,title)
-       WHERE id=$1 AND room_id=$2 AND creator_id=agent_id AND workflow_run IS NULL
+       WHERE id=$1 AND room_id=$2 AND creator_id=agent_id
          AND (NOT $9::boolean OR agent_id=$8)
        RETURNING next_run_at`,
       [

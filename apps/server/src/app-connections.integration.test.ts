@@ -1,4 +1,4 @@
-import { phoneFetch, describe, expect, it, vi, randomBytes, LinkAgentWallet, migrate, DaemonService, PhoneService, LiveHub, ConnectionPresence, applyVaultList, recordSquireSignIn, readOwnerApps, resolveAppRoute, createBeelineServer, captureServerError, WORKSPACE, ROOM, OWNER, HELPER, COMMAND, GENERATION, turn, linearServer, fakeRegistry, fixtureScope1, fixtureScope2, type AddressInfo, type TokenAuth } from './app-connections.integration.test-support.js';
+import { phoneFetch, describe, expect, it, vi, randomBytes, LinkAgentWallet, migrate, DaemonService, PhoneService, LiveHub, ConnectionPresence, applyVaultList, recordSquireSignIn, readOwnerApps, resolveAppRoute, createBeelineServer, captureServerError, WORKSPACE, ROOM, OWNER, HELPER, COMMAND, GENERATION, turn, linearServer, fakeRegistry, fixtureScope1, fixtureScope2, type AddressInfo, type TokenAuth } from './test-support-app-connections.integration.test-support.js';
 
 describe('the app route order', () => {
 const scope1 = fixtureScope1();

@@ -1,4 +1,4 @@
-import { WORKSPACE, VIEWER, OWNER, MEMBER, AGENT, state, liveListeners, roomView, phoneOperation, member, baseWorkspace, baseAgent, render, press, agentChanged, openAgentProfile, openAgentManagement, fixtureScope1 } from './members.test-support';
+import { WORKSPACE, VIEWER, OWNER, MEMBER, AGENT, state, liveListeners, roomView, phoneOperation, member, baseWorkspace, baseAgent, render, press, agentChanged, openAgentProfile, openAgentManagement, fixtureScope1 } from './test-support-members.test-support';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';

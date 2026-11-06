@@ -1,4 +1,4 @@
-import { phoneFetch, AddressInfo, WebSocket, describe, expect, it, vi, PostgresDatabase, LiveHub, createBeelineServer, databaseConnectionBudget, canReadRoomsFrom, nextSocketMessage, fixtureScope1, fixtureScope2, type Pool, type SqlDatabase, type TokenAuth, type PhoneService, type DaemonService } from './server.test-support.js';
+import { phoneFetch, AddressInfo, WebSocket, describe, expect, it, vi, PostgresDatabase, LiveHub, createBeelineServer, databaseConnectionBudget, canReadRoomsFrom, nextSocketMessage, fixtureScope1, fixtureScope2, type Pool, type SqlDatabase, type TokenAuth, type PhoneService, type DaemonService } from './test-support-server.test-support.js';
 
 describe('server readiness', () => {
 const scope1 = fixtureScope1();
@@ -229,14 +229,13 @@ const scope1 = fixtureScope1();
   });
 
 
-  it('reports an app transaction that is holding a connection and deadline count', async () => {
+  it('reports the age of an app transaction holding a connection', async () => {
     const response = await scope1.get('/health', {
       query: vi.fn().mockResolvedValue({ rows: [], rowCount: 0 }), transaction: vi.fn(),
       oldestActiveTransactionAgeMs: () => 42,
-      transactionDeadlineCount: () => 3,
     });
     expect((await response.json()).database).toMatchObject({
-      oldestActiveTransactionAgeMs: 42, transactionDeadlines: 3,
+      oldestActiveTransactionAgeMs: 42,
     });
   });
 
@@ -671,7 +670,7 @@ const scope2 = fixtureScope2();
       auth: { authenticateDaemon: vi.fn().mockResolvedValue(agentId) } as unknown as TokenAuth,
       phone: { canReadRooms: canReadRoomsFrom(async () => true) } as unknown as PhoneService,
       daemon: { execute } as unknown as DaemonService,
-      connectionPresence: { announce } as never,
+      connectionPresence: { announce, renewLease: async () => {} } as never,
       live: new LiveHub(),
       mediaMaximumBytes: 1,
     });
@@ -694,5 +693,109 @@ const scope2 = fixtureScope2();
     await expect(commands).resolves.toMatchObject({ roomId, commandProtocol: 1 });
     expect(socket.readyState).toBe(WebSocket.OPEN);
     expect(announce).toHaveBeenCalledOnce();
+  });
+
+
+  it('refreshes commands for a command addressed to this agent or one another agent released', async () => {
+    const roomId = 'room-live';
+    const agentId = 'agent-live';
+    const live = new LiveHub();
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getRoomInbox') return { items: [], cursor: undefined };
+      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
+      throw new Error(`unexpected operation ${name}`);
+    });
+    const server = createBeelineServer({
+      database: { query: vi.fn(), transaction: vi.fn() },
+      auth: {
+        authenticateDaemon: vi.fn().mockResolvedValue(agentId),
+      } as unknown as TokenAuth,
+      phone: { canReadRoom: vi.fn().mockResolvedValue(true), canReadRooms: canReadRoomsFrom(async () => true) } as unknown as PhoneService,
+      daemon: { execute } as unknown as DaemonService,
+      live,
+      mediaMaximumBytes: 1,
+    });
+    scope2.servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.bdt_test']);
+    scope2.sockets.push(socket);
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', resolve);
+      socket.once('error', reject);
+    });
+    const subscribed = nextSocketMessage(socket, 'subscribed');
+    const initialCommands = nextSocketMessage(socket, 'commands');
+    socket.send(JSON.stringify({ type: 'subscribe', roomId }));
+    await Promise.all([subscribed, initialCommands]);
+
+    const commandCalls = () =>
+      execute.mock.calls.filter(([name]) => name === 'getAgentCommands').length;
+    const inboxCalls = () => execute.mock.calls.filter(([name]) => name === 'getRoomInbox').length;
+    expect(commandCalls()).toBe(1);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(inboxCalls()).toBe(1);
+
+    live.publish({ type: 'presence', roomId, agentId, status: 'online', observedAt: 1 });
+    live.publish({ type: 'draft', roomId, agentId, turnId: 'turn', text: 'draft' });
+    live.publish({ type: 'thought', roomId, agentId, turnId: 'turn', text: 'thought' });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(inboxCalls()).toBe(1);
+    // A broad table hint carries no message-owned context and cannot admit a read.
+    live.publish({ type: 'invalidate', roomId, reason: 'postgres:messages' });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(inboxCalls()).toBe(1);
+    const messageTrace = { id: 'trace-message', databaseAt: 50, emittedAt: 75 };
+    const replayed = nextSocketMessage(socket, 'inbox');
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'postgres:messages',
+      messageId: 'actual-committed-message',
+      trace: messageTrace,
+    });
+    await expect(replayed).resolves.toEqual(
+      expect.objectContaining({
+        type: 'inbox',
+        trigger: { reason: 'postgres:messages', trace: messageTrace },
+      }),
+    );
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'postgres:agent_commands',
+      targetAgentId: 'another-agent',
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(commandCalls()).toBe(1);
+
+    // The worker's command ending releases a review wake held for this agent.
+    const released = nextSocketMessage(socket, 'commands');
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'postgres:agent_commands',
+      targetAgentId: 'another-agent',
+      commandReleased: true,
+    });
+    await expect(released).resolves.toMatchObject({ type: 'commands', roomId });
+    expect(commandCalls()).toBe(2);
+
+    const pushed = nextSocketMessage(socket, 'commands');
+    const trace = { id: 'trace-command', databaseAt: 100, emittedAt: 125 };
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'postgres:agent_commands',
+      targetAgentId: agentId,
+      trace,
+    });
+    await expect(pushed).resolves.toEqual(
+      expect.objectContaining({
+        type: 'commands',
+        trigger: { reason: 'postgres:agent_commands', trace },
+      }),
+    );
+    expect(commandCalls()).toBe(3);
   });
 });

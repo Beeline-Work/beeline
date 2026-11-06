@@ -14,7 +14,6 @@ import { WORKSPACE_ADMIN_AUTHORITY_MESSAGE, token, hash } from './values.js';
 import { phoneAvailableAgentHandle } from './pairing.js';
 
 
-
   export async function phoneAddWorkspaceMember(ctx: PhoneContext, input: Input<'addWorkspaceMember'>, viewerId: string) {
     await phoneRequireWorkspaceManager(ctx, input.workspaceId, viewerId);
     if (input.memberId === viewerId) throw new Error('workspace managers cannot change themselves');

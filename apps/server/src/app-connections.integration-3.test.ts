@@ -1,4 +1,4 @@
-import { phoneFetch, describe, expect, it, vi, PhoneService, LiveHub, CompanyMcpDiscovery, applyVaultList, readOwnerApps, cleanupUnfinishedAppSignIns, ComposioApps, createBeelineServer, captureServerError, WORKSPACE, ROOM, OWNER, HELPER, turn, fakeRegistry, fixtureScope2, fixtureScope3, type AddressInfo, type TokenAuth } from './app-connections.integration.test-support.js';
+import { phoneFetch, describe, expect, it, vi, PhoneService, LiveHub, CompanyMcpDiscovery, applyVaultList, readOwnerApps, cleanupUnfinishedAppSignIns, ComposioApps, createBeelineServer, captureServerError, WORKSPACE, ROOM, OWNER, HELPER, turn, fakeRegistry, fixtureScope2, fixtureScope3, type AddressInfo, type TokenAuth } from './test-support-app-connections.integration.test-support.js';
 
 describe('connect_app', () => {
 const scope2 = fixtureScope2();

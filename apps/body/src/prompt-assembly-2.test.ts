@@ -1,18 +1,7 @@
-import { ACP_SESSION_MEMORY_MAX_BYTES, describe, expect, it, PROMPT_SURFACES, assembleSessionPrompt, assembleTurnPrompt, renderAssignedCornerBrief, m23_describe, m23_expect, m23_it, m23_vi, m23_assembleTurnPrompt, m23_callTool, m23_callAgentTool, m23_withToolOwedContext, m23_renderMention, mergedDescribe23, SESSION_VARIANTS, TURN_VARIANTS, fixtureScope10, fixtureScope12, fixtureScope13, fixtureScope14, fixtureScope16, fixtureScope17, type CornerBrief } from './prompt-assembly.test-support.js';
+import { ACP_SESSION_MEMORY_MAX_BYTES, describe, expect, it, PROMPT_SURFACES, assembleSessionPrompt, assembleTurnPrompt, renderAssignedCornerBrief, m23_describe, m23_expect, m23_it, m23_vi, m23_assembleTurnPrompt, m23_callTool, m23_callAgentTool, m23_withToolOwedContext, m23_renderMention, mergedDescribe23, SESSION_VARIANTS, TURN_VARIANTS, fixtureScope10, fixtureScope12, fixtureScope13, fixtureScope14, fixtureScope16, fixtureScope17, type CornerBrief } from './test-support-prompt-assembly.test-support.js';
 
 describe('assigned corner brief', () => {
 const scope10 = fixtureScope10();
-
-
-  it.each(['code-corner', 'repo-less-corner'] as const)('keeps current brief authority on %s without demoting a new human direction', (surface) => {
-    const text = assembleTurnPrompt({ surface,
-      brief: { brief: scope10.brief, fileLines: [], missingRequiredFile: false },
-      task: { body: 'Change brief revision 2 again.', commandReason: 'human_tag' },
-    }).text;
-    expect(text).toContain('Read the current brief revision 3 before acting');
-    expect(text).toContain('Newest message:\nChange brief revision 2 again.');
-    expect(text).not.toContain('historical context only');
-  });
 
 
   it('renders the revision, the spec, then the approving message in the human words', () => {

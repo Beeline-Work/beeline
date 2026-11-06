@@ -1,4 +1,4 @@
-import { layout, navigation, openExternal, phoneOperation, bookmark, need, serve, textOf, renderTray, fixtureScope9, fixtureScope10 } from './tray.test-support';
+import { layout, navigation, openExternal, phoneOperation, bookmark, need, serve, textOf, renderTray, fixtureScope9, fixtureScope10 } from './test-support-tray.test-support';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';

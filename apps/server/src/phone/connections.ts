@@ -20,7 +20,6 @@ import { APP_INPUT_MAX_LENGTH, CONNECTOR_ADAPTER_DENIED, connectorAdapter, conne
 import type { PhoneContext } from './context.js';
 import { Input, Output } from './types.js';
 import { phoneViewerWorkbenchWorkspace, phoneAssertWorkbenchViewer } from './workbench-catalog.js';
-
 import { phoneResolveViewerHelper } from './workbench-reads.js';
 import { phoneResolveDirectMessage } from './members-invites.js';
 import { phoneSendMessage } from './messages.js';
@@ -121,7 +120,7 @@ import { phoneSendMessage } from './messages.js';
           [row.id, viewerId],
         )).rows[0];
         return current && (current.sign_in?.url || current.status === 'connected' || current.status === 'error') ? current : undefined;
-      }, 15_000, { principal: 'connector', operation: 'status', commandId: row.id });
+      }, { principal: 'connector', operation: 'status', commandId: row.id });
       if (ready?.status === 'error') throw new Error('The MCP connection could not start. Reconnect to retry.');
       return {
         appId: installed.id,

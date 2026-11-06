@@ -1,4 +1,4 @@
-import { describe, expect, it, seedCornerOpening, PhoneService, DaemonService, claimAgentConnection, createAgentCommand, renudgeStrandedPendingCommands, H, A, B, P, R, C, id, stopProofPostgresUrl, db, phone, daemon, live, commands, send, disconnectHelper, helperOwner, queuedHumanTags, queueStopOrders, claim, result, rootFixture, fixtureScope1, type SqlDatabase } from './agent-command.integration.test-support.js';
+import { describe, expect, it, taggedIdentityIdsSql, seedCornerOpening, PhoneService, DaemonService, createAgentCommand, H, A, B, P, R, C, id, stopProofPostgresUrl, db, phone, daemon, live, commands, send, disconnectHelper, helperOwner, queuedHumanTags, queueStopOrders, claim, result, rootFixture, fixtureScope1, type SqlDatabase } from './test-support-agent-command.integration.test-support.js';
 
 
 
@@ -316,78 +316,8 @@ it('bootstrap identifies only pending member surfaces, including the corner pare
 });
 
 
-it('shows an accepted tagged command until claim and permits only an explicit helper eligibility boundary', async () => {
-  const sent = await send('@hoots Please check this');
-  const [command] = await commands(A);
-  const waiting = { requestId: command!.turnRequestId, agentPubkey: A };
-  expect(sent.pendingAgentCommands).toEqual([expect.objectContaining(waiting)]);
-  expect((await rootFixture.phone.readRoom(R, H))?.pendingAgentCommands).toEqual([
-    expect.objectContaining(waiting),
-  ]);
-
-  await rootFixture.db.query(`UPDATE agent_commands SET created_at=now()-interval '31 seconds' WHERE id=$1`, [command!.id]);
-  expect(await renudgeStrandedPendingCommands(rootFixture.db, A)).toBe(0);
-  await rootFixture.db.query(`INSERT INTO live_server_instances(instance_id) VALUES('renudge-test') ON CONFLICT DO NOTHING`);
-  await rootFixture.db.query(`INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id)
-    VALUES($1,1,'renudge-test','renudge-test') ON CONFLICT(agent_id) DO UPDATE
-    SET instance_id=EXCLUDED.instance_id,released_at=NULL`, [A]);
-  const busySend = await send('@hoots An earlier task');
-  await rootFixture.db.query(`UPDATE agent_commands SET state='claimed',lease_expires_at=now()+interval '90 seconds'
-    WHERE source_message_id=$1`, [busySend.messageId]);
-  expect(await renudgeStrandedPendingCommands(rootFixture.db, A)).toBe(0);
-  await rootFixture.db.query(`UPDATE agent_commands SET state='complete' WHERE source_message_id=$1`, [busySend.messageId]);
-  expect(await renudgeStrandedPendingCommands(rootFixture.db, A)).toBe(1);
-  // A distinct reconnect boundary can notify immediately, without a 90-second retry clock.
-  expect(await renudgeStrandedPendingCommands(rootFixture.db, A)).toBe(1);
-  await claim(command!);
-  expect((await rootFixture.phone.readRoom(R, H))?.pendingAgentCommands).toEqual([]);
-});
-
-
-it('Reproduction R2: an order accepted while the helper is offline runs when it reconnects', async () => {
-  await rootFixture.db.query(`INSERT INTO live_server_instances(instance_id) VALUES('r2-offline') ON CONFLICT DO NOTHING`);
-  await rootFixture.db.query(`INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id,released_at)
-    VALUES($1,1,'r2-offline','r2-offline',now())`, [A]);
-  const command = await createAgentCommand(rootFixture.db, {
-    roomId: C, agentId: A, sourceMessageId: null, reason: 'order',
-    privatePayload: { kind: 'order', text: 'Do the work', authorId: B, fromRoomId: R },
-  });
-  const stored = (await rootFixture.db.query<{ state: string; created_offline: boolean; claimed_at: Date | null; renudged_at: Date | null }>(
-    `SELECT state,claimed_at,renudged_at FROM agent_commands WHERE id=$1`, [command!.id],
-  )).rows[0];
-  expect(stored).toMatchObject({ state: 'pending', claimed_at: null, renudged_at: null });
-  expect(await renudgeStrandedPendingCommands(rootFixture.db, A)).toBe(0);
-  await claimAgentConnection(rootFixture.db, rootFixture.live, A, { lifecycleId: 'back' }, { connectionId: 'r2-back', instanceId: 'r2-offline' });
-  expect((await rootFixture.db.query<{ renudged_at: Date | null }>(
-    `SELECT renudged_at FROM agent_commands WHERE id=$1`, [command!.id],
-  )).rows[0]?.renudged_at).toBeTruthy();
-  const delivered = await commands(A, C);
-  expect(delivered.map((item) => item.id)).toContain(command!.id);
-  await claim(delivered.find((item) => item.id === command!.id)!);
-  expect((await rootFixture.db.query<{ state: string }>(`SELECT state FROM agent_commands WHERE id=$1`, [command!.id])).rows[0]?.state)
-    .toBe('claimed');
-});
-
-
-it('re-nudges an order while the helper is claimed in a different room', async () => {
-  await rootFixture.db.query(`INSERT INTO live_server_instances(instance_id) VALUES('r2-busy') ON CONFLICT DO NOTHING`);
-  await rootFixture.db.query(`INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id)
-    VALUES($1,1,'r2-busy','r2-busy') ON CONFLICT(agent_id) DO UPDATE
-    SET instance_id=EXCLUDED.instance_id,released_at=NULL`, [A]);
-  const order = await createAgentCommand(rootFixture.db, {
-    roomId: C, agentId: A, sourceMessageId: null, reason: 'order',
-    privatePayload: { kind: 'order', text: 'Queued behind another corner', authorId: B, fromRoomId: R },
-  });
-  await rootFixture.db.query(`UPDATE agent_commands SET created_at=now()-interval '31 seconds' WHERE id=$1`, [order!.id]);
-  const busy = await send('@hoots busy elsewhere');
-  await rootFixture.db.query(`UPDATE agent_commands SET state='claimed',lease_expires_at=now()+interval '90 seconds'
-    WHERE source_message_id=$1`, [busy.messageId]);
-  expect(await renudgeStrandedPendingCommands(rootFixture.db, A)).toBe(1);
-  expect(await renudgeStrandedPendingCommands(rootFixture.db, A)).toBe(1);
-});
-
-
 it.each([R, C])('projects reply context outside the conversation window in %s', async (roomId) => {
+  await rootFixture.db.query(`UPDATE messages SET created_at=now()-interval '1 day' WHERE room_id=$1`, [roomId]);
   const parentId = id();
   const parentText = 'Five corners from the audit: '.repeat(30);
   await rootFixture.db.query('INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)',
@@ -787,5 +717,78 @@ it('deduplicates human writes, claims and final results', async () => {
   const one = await result(c!, '@goosy Done');
   const two = await result(c!, '@goosy Done');
   expect(two.id).toBe(one.id);
+  expect(await commands(B)).toHaveLength(1);
+});
+
+it('rejects unknown, wrong agent, cross-Room, completed and cancelled turn output without side effects', async () => {
+  await send('@hoots');
+  const [c] = await commands();
+  await claim(c!);
+  const draft = {
+    roomId: R,
+    agentId: A,
+    turnId: c!.turnRequestId,
+    generationId: 'g1',
+    text: 'draft',
+  };
+  await expect(rootFixture.daemon.execute('postAgentDraft', { ...draft, turnId: id() }, A)).rejects.toThrow();
+  await expect(rootFixture.daemon.execute('postAgentDraft', { ...draft, roomId: C }, A)).rejects.toThrow();
+  await expect(rootFixture.daemon.execute('postAgentDraft', { ...draft, agentId: B }, B)).rejects.toThrow();
+  await rootFixture.daemon.execute('postAgentDraft', draft, A);
+  await rootFixture.phone.execute('cancelAgentTurn', { roomId: R, agentId: A, requestId: c!.turnRequestId }, H);
+  await expect(result(c!, 'Stopped')).rejects.toThrow();
+  await expect(rootFixture.daemon.execute('postAgentDraft', draft, A)).rejects.toThrow();
+  expect((await commands())[0]?.action).toBe('stop');
+  await send('@hoots next');
+  const [next] = (await commands()).filter((c) => c.action === 'input');
+  await claim(next!);
+  await result(next!, 'Done');
+  await expect(
+    rootFixture.daemon.execute('postAgentDraft', { ...draft, turnId: next!.turnRequestId }, A),
+  ).rejects.toThrow();
+});
+
+it('routes a validated agent tag when the final message is committed', async () => {
+  await send('@hoots');
+  const [c] = await commands();
+  await claim(c!);
+  expect(await commands(B)).toEqual([]);
+  await result(c!, '@goosy please help');
+  expect(await commands(B)).toHaveLength(1);
+});
+
+it('does not trust a caller-supplied agent id without an exact tag', async () => {
+  await send('@hoots');
+  const [c] = await commands();
+  await claim(c!);
+  const posted = await result(c!, '@GOOSY please help');
+  expect(await commands(B)).toEqual([]);
+  // `@GOOSY` is not how Goosy is spelled, so it names nobody — and there is no
+  // caller-supplied list that could disagree with the words.
+  expect(
+    (
+      await rootFixture.db.query<{ tagged_ids: string[] }>(
+        `SELECT ${taggedIdentityIdsSql('m')} tagged_ids FROM messages m WHERE m.id=$1`,
+        [posted.id],
+      )
+    ).rows[0]?.tagged_ids,
+  ).toEqual([]);
+});
+
+it('rolls final storage back if creating the next command fails', async () => {
+  await send('@hoots');
+  const [c] = await commands();
+  await claim(c!);
+  await rootFixture.db.query(`CREATE FUNCTION refuse_command() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected dispatch failure'; END $$;
+ CREATE TRIGGER refuse_command BEFORE INSERT ON agent_commands FOR EACH ROW EXECUTE FUNCTION refuse_command();`);
+  try {
+    await expect(result(c!, '@goosy Atomic')).rejects.toThrow('injected');
+    expect((await rootFixture.db.query(`SELECT 1 FROM messages WHERE text='Atomic'`)).rowCount).toBe(0);
+  } finally {
+    await rootFixture.db.query(
+      `DROP TRIGGER refuse_command ON agent_commands; DROP FUNCTION refuse_command();`,
+    );
+  }
+  await result(c!, '@goosy Atomic');
   expect(await commands(B)).toHaveLength(1);
 });

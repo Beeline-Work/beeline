@@ -1,4 +1,4 @@
-import { readCornerObjective, activeCornerHolds, SYSTEM_IDENTITY_ID, cornerMergeGate, randomUUID, randomBytes, expect, it, DaemonService, LiveHub, createAgentCommand, systemLine, HUMAN, RUBY, WORKER, WS, ROOM, DM, db, daemon, phone, order, claim, authority, commands, open, worker, currentPlaceReminder, rootFixture, type CommandRow, type AgentCommand } from './commander.integration.test-support.js';
+import { readCornerObjective, activeCornerHolds, SYSTEM_IDENTITY_ID, cornerMergeGate, randomUUID, randomBytes, expect, it, DaemonService, LiveHub, createAgentCommand, systemLine, HUMAN, RUBY, WORKER, WS, ROOM, DM, db, daemon, phone, order, claim, authority, commands, open, worker, currentPlaceReminder, rootFixture, type CommandRow, type AgentCommand } from './test-support-commander.integration.test-support.js';
 
 
 
@@ -314,7 +314,7 @@ it('Reproduction SELF-1: self-orders in another Room and corner retain receipts 
     name: 'self-work', objective: 'Continue own work', implementer: 'ruby',
     brief: { spec: 'Continue own work', repositoryWork: false } }, RUBY);
   await rootFixture.daemon.execute('order', { ...authority(rootFixture.order), address: opened.cornerId, text: 'Resume own corner' }, RUBY);
-  expect(await commands(opened.cornerId, RUBY)).toEqual([]);
+  expect((await commands(opened.cornerId, RUBY)).map(c => c.reason)).toEqual(['corner_objective']);
   await expect(rootFixture.daemon.execute('order', { ...authority(rootFixture.order), address: DM, agent: 'ruby', text: 'Recurse' }, RUBY))
     .rejects.toThrow('current place');
 });

@@ -1,119 +1,26 @@
-/**
- * Deliberately narrow MCP server for repository and approved-skill inspection
- * in Room sessions.
- *
- * Security properties:
- *   - exposes no shell, generic process, or raw git-argument tool;
- *   - resolves every requested path through the configured repository root;
- *   - never follows a symlink outside that root and never exposes `.git`;
- *   - invokes only three fixed, local git read commands with optional locks,
- *     pagers, hooks, fsmonitor, external diff, and text conversion disabled.
- *
- * Repository writes remain the responsibility of buzz-dev-mcp in an isolated
- * edit-corner worktree after the signed human ALLOW flow.
- */
-import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
-import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { homedir } from 'node:os';
-import { fileURLToPath } from 'node:url';
-import { ARTIFACT_MIME_BY_EXTENSION, ARTIFACT_MIME_TYPES, type ArtifactMimeType } from '@beeline/api-contract/daemon';
-import { MAX_EVENT_CONSEQUENCE_LENGTH, AGENT_EVENT_SLUG_MAX_LENGTH, MAX_MENTIONS_PER_EVENT, SUBSCRIBABLE_EVENT_KINDS, perItemSubscriptionRefusal, isAgentKind, isPerItemEventKind, isServerEventKind, isSubscribableEventKind, MESSAGE_REACTION_EMOJIS, type MessageReactionEmoji } from '@beeline/api-contract/phone';
-import { validateArtifact } from './artifact-validation.js';
-import { BoundedSizeError, EXPIRED_REASON, MAX_ATTACHMENT_BYTES, fetchBoundedBytes } from './attachment-delivery.js';
-import { JsonObject, requiredEnv, daemonExecute, stringArg, MAX_ATTACH_BYTES, gitBinary, asObject } from './read-only-mcp.js';
-import { DownloadAttachmentDeps, downloadAttachmentDepsFromEnv, resolveDownloadAttachment, AttachmentDownloadError, resolveWriteScratchPath } from './read-only-mcp-open-corner.js';
-import { daemonUploadArtifact } from './read-only-mcp-open-poll.js';
+import { relative, sep, isAbsolute, join, resolve, basename } from "node:path";
+import { homedir } from "node:os";
+import { realpathSync, existsSync, statSync, readFileSync } from "node:fs";
+import { type ArtifactMimeType, ARTIFACT_MIME_TYPES, ARTIFACT_MIME_BY_EXTENSION } from "@beeline/api-contract/daemon";
+import { validateArtifact } from "./artifact-validation.js";
+import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
+import { MESSAGE_REACTION_EMOJIS, type MessageReactionEmoji, SUBSCRIBABLE_EVENT_KINDS, isPerItemEventKind, perItemSubscriptionRefusal, isSubscribableEventKind, isServerEventKind, isAgentKind, AGENT_EVENT_SLUG_MAX_LENGTH, MAX_EVENT_CONSEQUENCE_LENGTH, MAX_MENTIONS_PER_EVENT } from "@beeline/api-contract/phone";
+import { JsonObject, requiredEnv, daemonUploadArtifact, daemonExecute, stringArg, MAX_ATTACH_BYTES, gitBinary, asObject } from './read-only-mcp.js';
 
 
 
-/**
- * download_attachment: authorize through the same getRoomMessage read the
- * agent already has, or through a readable brief, then copy the bytes from the server into
- * `<scratch>/attachments/<key>/<safe-name>`. Nothing is downloaded while a
- * prompt is built; this is the only on-demand path for a transcript file.
- */
-export async function downloadAttachment(
-  args: JsonObject,
-  deps: DownloadAttachmentDeps = downloadAttachmentDepsFromEnv(),
-): Promise<string> {
-  const attachment = await resolveDownloadAttachment(args, deps);
-  const tooLarge = (bytes: number) =>
-    new AttachmentDownloadError(
-      'too_large',
-      `${bytes} bytes exceeds the ${MAX_ATTACHMENT_BYTES}-byte limit`,
-    );
-  if (attachment.expired) throw new AttachmentDownloadError('not_found', EXPIRED_REASON);
-  if (attachment.size && attachment.size > MAX_ATTACHMENT_BYTES) throw tooLarge(attachment.size);
-  if (!deps.root)
-    throw new AttachmentDownloadError(
-      'download_failed',
-      'this session has no writable scratch directory',
-    );
-  let path: string;
-  try {
-    path = resolveWriteScratchPath(
-      deps.root,
-      join(
-        'attachments',
-        attachment.key.replace(/[^\w-]/g, '_'),
-        attachment.safeName,
-      ),
-    );
-  } catch (error) {
-    throw new AttachmentDownloadError(
-      'download_failed',
-      error instanceof Error ? error.message : String(error),
-    );
-  }
-  const digest = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
-  if (attachment.sha256 && existsSync(path)) {
-    const held = readFileSync(path);
-    if (digest(held) === attachment.sha256) {
-      return JSON.stringify({
-        path,
-        mimeType: attachment.mimeType || 'application/octet-stream',
-        size: held.length,
-      });
-    }
-  }
-  let fetched;
-  try {
-    fetched = await fetchBoundedBytes(
-      new URL(`/v1/media/${attachment.mediaId}`, `${deps.serverBaseUrl}/`).toString(),
-      deps.fetchImpl ?? fetch,
-    );
-  } catch (error) {
-    if (error instanceof BoundedSizeError) throw tooLarge(error.bytes);
-    throw new AttachmentDownloadError(
-      'download_failed',
-      error instanceof Error ? error.message : String(error),
-    );
-  }
-  if (fetched.status === 410) throw new AttachmentDownloadError('not_found', EXPIRED_REASON);
-  if (fetched.status === 404)
-    throw new AttachmentDownloadError('not_found', 'the file is no longer stored');
-  if (!fetched.ok) throw new AttachmentDownloadError('download_failed', `HTTP ${fetched.status}`);
-  if (attachment.sha256 && digest(fetched.bytes) !== attachment.sha256) {
-    throw new AttachmentDownloadError(
-      'download_failed',
-      'downloaded bytes do not match the stored sha256',
-    );
-  }
-  writeFileSync(path, fetched.bytes);
-  return JSON.stringify({
-    path,
-    mimeType: attachment.mimeType || fetched.mimeType || 'application/octet-stream',
-    size: fetched.bytes.length,
-  });
-}
+
+
+
 
 
 export function withinRoot(root: string, resolved: string): boolean {
   const rel = relative(root, resolved);
   return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
+
+
 
 
 /** Resolve a post_artifact `path` inside the session checkout or anywhere in
@@ -150,10 +57,14 @@ export function resolveAttachPath(roots: string[], input: string): string {
 }
 
 
+
+
 export function finishResolvedAttachPath(resolved: string): string {
   if (!statSync(resolved).isFile()) throw new Error('path is not a regular file');
   return resolved;
 }
+
+
 
 
 /** The daemon-facing artifacts pass-through's response: `postArtifact` only
@@ -167,6 +78,8 @@ export interface DaemonArtifactUploadResult {
 }
 
 
+
+
 export interface PostArtifactDeps {
   roomId: string;
   /** Legal source roots for the `path` argument: the session checkout and
@@ -178,13 +91,19 @@ export interface PostArtifactDeps {
 }
 
 
+
+
 export const POSTED_MEDIA_ID =
   /\/v1\/media\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:$|[?#])/i;
+
+
 
 
 export function isArtifactMime(value: unknown): value is ArtifactMimeType {
   return typeof value === 'string' && (ARTIFACT_MIME_TYPES as readonly string[]).includes(value);
 }
+
+
 
 
 /** The viewer cannot open `application/octet-stream`, so content that falls
@@ -214,11 +133,15 @@ export function sniffArtifactMime(bytes: Buffer, fromHtml: boolean): ArtifactMim
 }
 
 
+
+
 /** The caller's checkout and writable home, where only it can open files. */
 export function attachRootsFromEnv(): string[] {
   return [process.env.BEELINE_ATTACH_ROOT?.trim(), process.env.BEELINE_ATTACH_SCRATCH_ROOT?.trim()]
     .filter((root): root is string => Boolean(root));
 }
+
+
 
 
 export function postArtifactDepsFromEnv(): PostArtifactDeps {
@@ -232,6 +155,8 @@ export function postArtifactDepsFromEnv(): PostArtifactDeps {
     },
   };
 }
+
+
 
 
 /** post_artifact: validate, upload through the artifacts pass-through, then
@@ -314,13 +239,19 @@ export async function postArtifact(
 }
 
 
+
+
 /** Rendered formats are validated as self-contained mocks; a working file
  *  such as a game template or a build page is source, so it travels inert. */
 export const BRIEF_FILE_INERT_MIMES = new Set(['text/html', 'image/svg+xml', 'application/vnd.beeline.game+html']);
 
 
+
+
 /** File citations, including Markdown links, file URLs and key=value text. */
 export const NAMED_PATH = /(?:^|[\s(<[=:])(?:"([^"\n]+)"|'([^'\n]+)'|`([^`\n]+)`|(file:\/\/[^\s`'"()<>\]]+|[^\s`'"()<>\]=:]+))/g;
+
+
 
 
 /** Recognize private paths even when missing or unreadable for delivery advice. */
@@ -366,6 +297,8 @@ export function namedPrivateFiles(roots: string[], text: string, includeRelative
   }
   return found;
 }
+
+
 
 
 /**
@@ -429,12 +362,18 @@ export async function bindBriefFiles(brief: JsonObject, given?: PostArtifactDeps
 }
 
 
+
+
 export function agentScheduleRoomId(): string {
   return process.env.BEELINE_DAEMON_CORNER_ID?.trim() || requiredEnv('BEELINE_DAEMON_ROOM_ID');
 }
 
 
+
+
 export const MIN_SCHEDULE_MINUTES = 1;
+
+
 
 
 export function parseScheduleCadence(args: JsonObject): {
@@ -472,6 +411,8 @@ export function parseScheduleCadence(args: JsonObject): {
 }
 
 
+
+
 export interface AgentScheduleDeps {
   roomId: string;
   selfOnly?: boolean;
@@ -479,9 +420,13 @@ export interface AgentScheduleDeps {
 }
 
 
+
+
 export function agentScheduleDepsFromEnv(): AgentScheduleDeps {
   return { roomId: agentScheduleRoomId(), execute: daemonExecute };
 }
+
+
 
 
 export async function reactToMessage(
@@ -501,6 +446,8 @@ export async function reactToMessage(
   });
   return `Reacted ${emoji} to message ${messageId}.`;
 }
+
+
 
 
 export async function createSchedule(
@@ -529,6 +476,8 @@ export async function createSchedule(
     ' Use wake(action:delete, scheduleId) to remove it.'
   );
 }
+
+
 
 
 export async function listSchedules(
@@ -567,6 +516,8 @@ export async function listSchedules(
 }
 
 
+
+
 /**
  * The agent's own event subscriptions, written by the agent.
  *
@@ -600,6 +551,8 @@ export async function subscribeEvents(
 }
 
 
+
+
 export async function listEventSubscriptions(
   deps: AgentScheduleDeps = agentScheduleDepsFromEnv(),
 ): Promise<string> {
@@ -608,12 +561,16 @@ export async function listEventSubscriptions(
 }
 
 
+
+
 export function describeSubscriptions(result: JsonObject, lead: string): string {
   const kinds = (Array.isArray(result.kinds) ? result.kinds : []).map(String);
   return kinds.length
     ? `${lead} ${kinds.join(', ')} in this Room; each one wakes you for a turn.`
     : 'You react to no events in this Room; only a message that mentions you wakes you.';
 }
+
+
 
 
 /**
@@ -662,6 +619,8 @@ export async function emitEvent(
 }
 
 
+
+
 export async function updateSchedule(
   args: JsonObject,
   deps: AgentScheduleDeps = agentScheduleDepsFromEnv(),
@@ -689,6 +648,8 @@ export async function updateSchedule(
       : '';
   return `Schedule ${scheduleId} updated.${nextRunAt}`;
 }
+
+
 
 
 export async function deleteSchedule(

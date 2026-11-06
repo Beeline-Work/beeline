@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { upgradeGrantPolicy } from '.././grant-policy-upgrade.js';
 import { type RoomHistoryView, type RoomView } from '@beeline/api-contract/phone';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
-import { monolithFixture, HUMAN, AGENT, WORKSPACE, ROOM } from '../test-fixtures/test-support-monolith.js';
+import { monolithFixture, HUMAN, AGENT, WORKSPACE, WELCOME_AGENT, ROOM } from '../test-fixtures/test-support-monolith.js';
 
 describe('monolith integration: grants-approvals', () => {
 const fixture = monolithFixture();
@@ -24,7 +24,7 @@ const fixture = monolithFixture();
     const { messageId: root } = await source.json() as { messageId: string };
     const requestId = createHash('sha256').update('grant-src-1-turn').digest('hex');
     await fixture.database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Agent request')`,
-      [requestId, ROOM, AGENT]);
+      [requestId, ROOM, SYSTEM_IDENTITY_ID]);
     const command = await createAgentCommand(fixture.database, {
       roomId: ROOM, agentId: AGENT, sourceMessageId: requestId,
       turnRequestId: requestId, reason: 'fixture',
@@ -484,9 +484,10 @@ const fixture = monolithFixture();
       )
     ).rows[0]!;
     const delegated = createHash('sha256').update('delegated-resource-task').digest('hex');
+    await fixture.database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Delegating agent')`, [WELCOME_AGENT]);
     await fixture.database.query(
       `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES($1,$2,$3,'delegated task','message')`,
-      [delegated, ROOM, AGENT],
+      [delegated, ROOM, WELCOME_AGENT],
     );
     await createAgentCommand(fixture.database, {
       roomId: ROOM,

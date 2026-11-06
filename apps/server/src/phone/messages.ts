@@ -1,4 +1,3 @@
-import { recordPersonInteraction } from '../away-auto-pause.js';
 import { CommandScopedDatabase } from '../command-scoped-database.js';
 import { isMentionReplyInput } from '../owed-mentions.js';
 import { observeOnboardingMessage } from '../signin-funnel.js';
@@ -47,7 +46,6 @@ import { phoneReadLiveDelta, phoneLiveStarPrompt } from './live-reads.js';
       [roomId, viewerId, messageIdValue],
     )).rows[0];
     if (!result?.eligible) throw new Error('message not found');
-    await recordPersonInteraction(ctx.database, viewerId);
     // The committed row's PostgreSQL notification reconciles every reader
     // device, including those on this server. Publishing here duplicates it.
   }
@@ -201,10 +199,7 @@ import { phoneReadLiveDelta, phoneLiveStarPrompt } from './live-reads.js';
          WHERE (EXCLUDED.message_created_at,EXCLUDED.message_id)>
            (room_read_marks.message_created_at,room_read_marks.message_id)
          RETURNING 1
-       ), pending_route AS (
-         INSERT INTO rooms_mcp_pending_routes(message_id,room_id,member_id)
-         SELECT id,room_id,$3 FROM inserted WHERE $7::jsonb IS NOT NULL
-         ON CONFLICT(message_id) DO NOTHING RETURNING 1
+
        )
        SELECT EXISTS(SELECT 1 FROM inserted) inserted,
          EXISTS(SELECT 1 FROM messages message
@@ -298,10 +293,7 @@ import { phoneReadLiveDelta, phoneLiveStarPrompt } from './live-reads.js';
        INSERT INTO messages(id,room_id,author_id,text,attachments,reply_to_message_id,root_message_id,source_client)
        VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8::jsonb) ON CONFLICT(id) DO NOTHING
        RETURNING id,room_id
-     ), pending_route AS (
-       INSERT INTO rooms_mcp_pending_routes(message_id,room_id,member_id)
-       SELECT id,room_id,$3 FROM inserted WHERE $8::jsonb IS NOT NULL
-       ON CONFLICT(message_id) DO NOTHING RETURNING 1
+
      ) SELECT id FROM inserted`,
       [...values, sourceClient ? JSON.stringify(sourceClient) : null],
     );

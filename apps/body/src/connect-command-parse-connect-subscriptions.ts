@@ -1,23 +1,22 @@
-import { convergeMachine, prepareMachineRelease } from './recovery.js';
-import { spawn } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
-import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
-import { homedir, hostname } from 'node:os';
-import { dirname, resolve } from 'node:path';
-import * as clack from '@clack/prompts';
-import { normalizeAgentPairingCode } from '@beeline/api-contract/phone';
-import { isAgentAccessPolicy, type AgentAccessPolicy } from './access-policy.js';
-import { agentBehavior } from './agent-command.js';
-import { clackPromptOutput } from './clack-support.js';
-import { verifyProviderKey } from './provider-key-check.js';
-import { completeDevicePairing, type DevicePairingGrant } from './device-pairing.js';
-import { openRouterModelId, openRouterRoutingCacheDir, resolveOpenRouterRouting } from './openrouter-routing.js';
-import { defaultBeelineInstallLayout, hostPlatformKey } from './self-update.js';
-import { isCanonicalInstalledLauncher } from './systemd.js';
-import { parseUpdateManifest, resolveManifestUrl } from './self-update-manifest.js';
-import { defaultSupervisorRoot, findAgentRuntimeConfigPaths } from './runtime.js';
-import { agentComputeWarning } from './agent-compute-warning.js';
-import { ConnectWizardResult, DeviceGrantResponse, jsonRequest, ConnectProvider, brass, isInteractiveConnectTerminal, paintWizardBrass, clackPrompts, collectConnectWizard, loadConnectModelCatalog, fileConnectKeyStore, ConnectPrompts, isReasonableAgentName, AGENT_NAME_MAX_LENGTH, CONNECT_HARNESSES } from './connect-command.js';
+import { resolve, dirname } from "node:path";
+import { homedir, hostname } from "node:os";
+import { readFile, mkdir, writeFile, chmod, unlink } from "node:fs/promises";
+import { randomUUID, createHash } from "node:crypto";
+import { normalizeAgentPairingCode } from "@beeline/api-contract/phone";
+import { agentBehavior } from "./agent-command.js";
+import { defaultSupervisorRoot, findAgentRuntimeConfigPaths } from "./runtime.js";
+import { spawn } from "node:child_process";
+import * as clack from "@clack/prompts";
+import { clackPromptOutput } from "./clack-support.js";
+import { type AgentAccessPolicy, isAgentAccessPolicy } from "./access-policy.js";
+import { verifyProviderKey } from "./provider-key-check.js";
+import { agentComputeWarning } from "./agent-compute-warning.js";
+import { type DevicePairingGrant, completeDevicePairing } from "./device-pairing.js";
+import { isCanonicalInstalledLauncher } from "./systemd.js";
+import { openRouterModelId, resolveOpenRouterRouting, openRouterRoutingCacheDir } from "./openrouter-routing.js";
+import { ConnectWizardResult, DeviceGrantResponse, jsonRequest, ConnectProvider, brass, clackPrompts, collectConnectWizard, loadConnectModelCatalog, fileConnectKeyStore, installCurrentRelease, ConnectPrompts, isReasonableAgentName, AGENT_NAME_MAX_LENGTH, CONNECT_HARNESSES } from './connect-command.js';
+
+
 
 
 
@@ -35,6 +34,7 @@ export function parseConnectSubscriptions(value: string | undefined): string[] {
     ),
   ];
 }
+
 
 
 /**
@@ -68,6 +68,7 @@ export async function readMachineId(
   }
   return { machineId, machineName };
 }
+
 
 
 export function requestConnectGrant(
@@ -108,6 +109,7 @@ export function requestConnectGrant(
 }
 
 
+
 /**
  * The one rename the terminal may make, right after the seeded identity is
  * printed. The pairing code is the authority and the server closes the window
@@ -128,6 +130,7 @@ export async function renameConnectedAgent(
   );
   return renamed.agent_name;
 }
+
 
 
 /**
@@ -157,29 +160,12 @@ export async function finishConnectedAgentPairing(
 }
 
 
+
 /** `Foxy the fox` — one line naming what to look for in the app. */
 export function seededIdentityLine(grant: { agent_name: string; agent_face?: string }): string {
   return grant.agent_face ? `${grant.agent_name} the ${grant.agent_face}` : grant.agent_name;
 }
 
-
-export async function installCurrentRelease(
-  fetchImpl: typeof fetch,
-): Promise<{ binary: string; version: string }> {
-  const layout = defaultBeelineInstallLayout(process.env);
-  if (process.env.BEELINE_RECOVERY_SELECTED_RELEASE) return { binary: resolve(layout.binDir, 'beeline'), version: process.env.BEELINE_RECOVERY_SELECTED_RELEASE };
-  const manifestUrl = resolveManifestUrl(process.env);
-  const response = await fetchImpl(manifestUrl, { signal: undefined });
-  if (!response.ok)
-    throw new Error(`fetching the Beeline release manifest failed: HTTP ${response.status}`);
-  const published = parseUpdateManifest(await response.text(), hostPlatformKey()).bundle;
-  const { releaseId } = await prepareMachineRelease(layout, { manifest: { url: manifestUrl, bundle: published }, fetchImpl, logger: () => {} });
-  await convergeMachine({ layout, releaseId });
-  return {
-    binary: resolve(layout.binDir, 'beeline'),
-    version: published.version ?? releaseId,
-  };
-}
 
 
 export function providerEnvironment(
@@ -205,11 +191,13 @@ export function providerEnvironment(
 }
 
 
+
 export async function writePrivateJson(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
   await chmod(path, 0o600);
 }
+
 
 
 export async function writeProviderEnv(
@@ -232,6 +220,7 @@ export async function writeProviderEnv(
   await chmod(path, 0o600);
   return path;
 }
+
 
 
 export async function runInstalledFinish(binary: string, grantPath: string): Promise<void> {
@@ -259,6 +248,7 @@ export async function runInstalledFinish(binary: string, grantPath: string): Pro
 }
 
 
+
 export async function brassSpinner<T>(
   message: string,
   action: () => Promise<T>,
@@ -276,30 +266,6 @@ export async function brassSpinner<T>(
   }
 }
 
-
-export async function runConnectCommand(
-  code: string | undefined,
-  options: {
-    fetchImpl?: typeof fetch;
-    subscribe?: readonly string[];
-    accessPolicy?: AgentAccessPolicy;
-  } = {},
-): Promise<void> {
-  if (!isInteractiveConnectTerminal()) {
-    throw new Error('`usebeeline connect` needs an interactive terminal');
-  }
-  const restoreRails = paintWizardBrass();
-  try {
-    await runConnectWizard(
-      code,
-      options.fetchImpl ?? fetch,
-      options.subscribe ?? [],
-      options.accessPolicy,
-    );
-  } finally {
-    restoreRails();
-  }
-}
 
 
 export async function runConnectWizard(
@@ -394,6 +360,7 @@ export async function runConnectWizard(
 }
 
 
+
 /**
  * Print the seeded identity, then two keys: keep it, or rename it here. The
  * rename lands before the helper is staged, so the runtime is written under
@@ -442,6 +409,7 @@ export async function confirmSeededName(
 }
 
 
+
 export function isDevicePairingGrant(value: unknown): value is DevicePairingGrant {
   if (!value || typeof value !== 'object') return false;
   const grant = value as Partial<DevicePairingGrant>;
@@ -475,6 +443,7 @@ export function isDevicePairingGrant(value: unknown): value is DevicePairingGran
 }
 
 
+
 /**
  * One plain sentence for a human at the end of a terminal — no stacks, no
  * multi-frame ACP dumps. Keeps the first line of the message and drops any
@@ -490,12 +459,14 @@ export function connectPlainFailure(error: unknown): string {
 }
 
 
+
 export class ConnectFailureError extends Error {
   constructor(sentence: string) {
     super(sentence);
     this.name = 'ConnectFailureError';
   }
 }
+
 
 
 export async function runConnectFinishCommand(path: string | undefined): Promise<void> {

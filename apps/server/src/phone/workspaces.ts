@@ -4,10 +4,10 @@ import type { WorkspaceListView, WorkspaceMemberListQuery, WorkspaceMemberListVi
 import { roomNeedsYouSql } from '../chat-corner-counts.js';
 import { unreadMessageSql } from '../read-cursor.js';
 import type { PhoneContext } from './context.js';
-import { reviveDates } from './read-projection.js';
 import { unix, MemberGrantRow, PROFILE_GRANT_LIMIT } from './values.js';
 import { phoneWorkspaceRoster, phoneProjectMembers, phoneProjectWorkspaceAgents } from './roster.js';
 import { MemberRow, RosterAgentRow, mcpClientIdentitySql } from './types.js';
+import { reviveDates } from './read-projection.js';
 import { phoneOptionalEnrichment } from './optional-enrichment.js';
 import { phoneProjectMemberGrantRows } from './agent-reads.js';
 

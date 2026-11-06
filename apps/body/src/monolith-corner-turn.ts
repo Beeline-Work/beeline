@@ -11,7 +11,6 @@ import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { androidLeaseShellBindings } from './corner-emulator.js';
 import { type DaemonAttachment, type DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { AcpClient, type PromptResult, type ToolCallEntry } from './acp.js';
 import { HarnessQuotaReader } from './harness-quota.js';
@@ -255,19 +254,12 @@ requestReconciliation(): void { return monolithCornerTurnLoopRequestReconciliati
       // branch and a pull request, and host work belongs here, next to the
       // transcript that explains it. A granted command runs unwrapped (C94).
       writePolicy: () => {
-        // A granted `beeline emulator` runs outside the sandbox. It still needs
-        // the same lease variables as the corner shell, or it exits before boot.
-        const toolEnv = Object.fromEntries(
-          androidLeaseShellBindings(this.agentEnv)
-            .map((entry) => [entry.name, entry.value]),
-        );
         return {
           surface: this.options.repository?.readOnly ? 'room' as const : 'corner' as const,
           ...(this.options.repository?.readOnly ? { bwrapPath: this.options.config.bwrapPath,
             harnessStateDirs: [this.options.config.agentHomeRoot, this.options.config.agentPrivateRoot].filter((path): path is string => Boolean(path)),
           } : {}),
           ...(this.sessionScratchDir ? { scratch: this.sessionScratchDir } : {}),
-          ...(Object.keys(toolEnv).length ? { toolEnv } : {}),
         };
       },
       turn: () =>

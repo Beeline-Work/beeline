@@ -13,8 +13,8 @@ import type { AfterCommit } from './institutional-memory-embeddings.js';
 import { answerRoomChoice, skipRoomChoice } from './room-choice.js';
 import { identitySubject, systemIdentityMention } from './system-line.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
-import { RunScope, openRun, loadIdentityRow, noticeRunOwner, WorkflowTimer, lockWorkflowRun, loadRunStart, loadRun, workflowRequester } from './workflow-runs.js';
-import { HandoffResult, provenanceAttempt, cardByCommand, alreadyAdvanced, isHandoffState, failOver, enterState, durationText, closeRun } from './workflow-runs-cancel-run-timers.js';
+import { RunScope, openRun, loadIdentityRow, noticeRunOwner, loadRun, workflowRequester } from './workflow-runs.js';
+import { HandoffResult, provenanceAttempt, cardByCommand, alreadyAdvanced, isHandoffState, failOver, enterState, closeRun } from './workflow-runs-cancel-run-timers.js';
 
 
 
@@ -291,95 +291,6 @@ export async function settleWorkflowGate(
     });
   }
   return { choiceId: settled.choiceId, status: input.skip ? 'skipped' : 'answered', roomId: settled.roomId };
-}
-
-
-/** A gate whose timeout passed takes its default as the system, and the run owner gets one notice. */
-export async function expireGate(db: SqlDatabase, scope: RunScope, state: WorkflowGateState): Promise<void> {
-  const label = state.default!;
-  const attempt = scope.run.seq;
-  const after = durationText(state.timeoutSeconds!);
-  await enterState(db, scope, {
-    outcome: label,
-    contents: { decision: label, defaultedBy: 'system' },
-    actorId: SYSTEM_IDENTITY_ID,
-    line: (toState) => ({
-      authorId: SYSTEM_IDENTITY_ID,
-      subject: { kind: 'system', name: systemMessage("workflow-runs.the-workflow") },
-      verb: systemMessage("workflow-runs.applied"),
-      object: label,
-      consequence: systemMessage("workflow-runs.at-and-went-to-because-nobody-answered-in-in-run-of", scope.stateName, toState, after, shortRunId(scope.runId), scope.run.workflowSlug),
-    }),
-  });
-  await noticeRunOwner(db, scope, `gate-default:${attempt}`, {
-    subject: { kind: 'system', name: systemMessage("workflow-runs.the-gate-of", scope.stateName, scope.run.workflowSlug) },
-    verb: systemMessage("workflow-runs.took-its-default"),
-    object: label,
-    consequence: systemMessage("workflow-runs.nobody-answered-in-in-run", after, shortRunId(scope.runId)),
-  });
-}
-
-
-/**
- * One due engine timer, under the run lock. A step timer for an older
- * attempt is stale and does nothing. A handoff step moves to its next
- * eligible agent (`lease expired`), and once the list is used up the engine
- * applies `timeout`; a gate applies its default; a deadline closes the run as
- * failed. Returns whether the run changed.
- */
-export async function fireWorkflowTimer(
-  database: SqlDatabase,
-  row: { id: string; room_id: string; workflow_run: WorkflowTimer; next_run_at: Date; due_revision: string; updated_at: string },
-): Promise<boolean> {
-  const timer = row.workflow_run;
-  const claim = (db: SqlDatabase) => db.query(`DELETE FROM agent_schedules schedule
-    WHERE schedule.id=$1 AND schedule.room_id=$2 AND schedule.next_run_at=$3
-      AND schedule.updated_at=$4::timestamptz AND schedule.workflow_run=$5::jsonb
-      AND (schedule.failed_due_at IS DISTINCT FROM schedule.next_run_at
-        OR schedule.failed_revision IS DISTINCT FROM schedule.updated_at)
-    RETURNING schedule.id`, [row.id,row.room_id,row.due_revision,row.updated_at,JSON.stringify(timer)]);
-  if (!timer?.runId) {
-    await claim(database);
-    return false;
-  }
-  return database.transaction(async (db) => {
-    await lockWorkflowRun(db, timer.runId);
-    const claimed = await claim(db);
-    if (!claimed.rowCount) return false;
-    const scope = await openRun(db, row.room_id, timer.runId).catch(() => undefined);
-    if (!scope || scope.ended || !scope.state) return false;
-    if (timer.timer === 'deadline') {
-      const seconds = (await loadRunStart(db, scope.roomId, scope.runId)).card.deadlineSeconds;
-      const after = seconds ? systemMessage("workflow-runs.of", durationText(seconds)) : '';
-      await closeRun(db, scope, {
-        status: 'failed',
-        outcome: 'deadline',
-        reason: 'deadline',
-        line: {
-          authorId: SYSTEM_IDENTITY_ID,
-          subject: { kind: 'system', name: systemMessage("workflow-runs.the-workflow") },
-          verb: systemMessage("workflow-runs.closed"),
-          object: systemMessage("workflow-runs.run-of", shortRunId(scope.runId), scope.run.workflowSlug),
-          consequence: systemMessage("workflow-runs.as-failed-at-because-it-passed-its-deadline", scope.stateName, after),
-        },
-      });
-      return true;
-    }
-    if (timer.attempt !== scope.run.seq) return false;
-    if (scope.state.kind === 'gate') {
-      if (!scope.state.default) return false;
-      await expireGate(db, scope, scope.state);
-      return true;
-    }
-    if (!isHandoffState(scope.state)) return false;
-    await failOver(db, scope, {
-      leaving: scope.run.roleBindings[scope.state.role],
-      why: 'its lease expired',
-      whenExhausted: 'timeout',
-      retryRoleList: timer.retryRoleList,
-    });
-    return true;
-  });
 }
 
 

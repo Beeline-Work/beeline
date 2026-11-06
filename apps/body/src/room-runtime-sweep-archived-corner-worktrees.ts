@@ -6,7 +6,6 @@ import { DaemonApiError } from './daemon-api-client.js';
 import { type CornerRestoreResult } from '@beeline/api-contract/daemon';
 import { reclaimHelperStorage, type StorageRoomState } from './helper-storage.js';
 import { pruneOpenCheckoutObjects, rememberStorageOwner, discoverLegacyStorageOwners, readStorageOwners, reclaimOwnedCheckout, type StorageOwner } from './storage-owners.js';
-import { workspaceAssetRoot } from './workspace-assets.js';
 import { RoomRuntimeCoordinator, localCornerWorktreeIds, CornerWorktree, CornerScratch } from './room-runtime.js';
 
 
@@ -31,7 +30,7 @@ import { RoomRuntimeCoordinator, localCornerWorktreeIds, CornerWorktree, CornerS
       }
       await ctx.yieldReconciliation();
       if (ctx.stopped) return;
-      if (desired.has(cornerId) || ctx.running.has(cornerId) || ctx.pendingCornerReaps.has(cornerId)) continue;
+      if (desired.has(cornerId) || ctx.running.has(cornerId)) continue;
       if (await ctx.cleanupWasRefused(cornerId)) continue;
       try {
         const state = await ctx.options.daemonApi.execute('getCornerRestoreState', { cornerId });
@@ -49,23 +48,9 @@ import { RoomRuntimeCoordinator, localCornerWorktreeIds, CornerWorktree, CornerS
         if (error instanceof DaemonApiError && error.status >= 400 && error.status < 500 && !error.retryable)
           await ctx.refuseArchiveCleanup(cornerId, error);
         else
-          console.warn(`[body] corner ${cornerId} archive state or cleanup unavailable; retrying:`, error);
+          console.warn(`[body] corner ${cornerId} archive state or cleanup unavailable:`, error);
       }
     }
-  }
-
-
-  export async function roomRuntimeCoordinatorReapIdleCornerWorktree(ctx: RoomRuntimeCoordinator, worktree: CornerWorktree, desired: ReadonlySet<string>): Promise<void> {
-    const eligible = () => !ctx.stopped && !desired.has(worktree.cornerId) &&
-      !ctx.running.has(worktree.cornerId) && !ctx.startingCorners.has(worktree.cornerId) &&
-      !ctx.idleCornerSubscriptions.has(worktree.cornerId);
-    if (!eligible()) return;
-    await ctx.scheduler.withIdleStorage(worktree.cornerId, async () => {
-      if (!eligible()) return;
-      ctx.storageMaintenanceRooms.add(worktree.cornerId);
-      try { await ctx.reapCornerWorktree(worktree); }
-      finally { ctx.storageMaintenanceRooms.delete(worktree.cornerId); }
-    });
   }
 
 
@@ -84,8 +69,6 @@ import { RoomRuntimeCoordinator, localCornerWorktreeIds, CornerWorktree, CornerS
       log: entry => console.log(`[body] archived corner ${entry.roomId} deleted ${entry.path}; freed ${entry.freedBytes} bytes`),
     });
     await ctx.collectDependencyStores();
-    ctx.pendingCornerReaps.delete(worktree.cornerId);
-    ctx.archiveCleanupFaults.delete(worktree.cornerId);
     (await ctx.getLocalWorktreeIds()).delete(worktree.cornerId);
   }
 
@@ -133,7 +116,6 @@ import { RoomRuntimeCoordinator, localCornerWorktreeIds, CornerWorktree, CornerS
       relatedRoots: roomId => [resolve(ctx.runtime.supervisorRoot, 'beeline/corners', roomId),
         ...owners.filter(owner => owner.roomId === roomId).map(owner => resolve(ctx.runtime.supervisorRoot, 'beeline', owner.kind, owner.itemId))],
       operatorHome: ctx.baseConfig.operatorHome,
-      emulatorLeaseRoot: resolve(workspaceAssetRoot(ctx.runtime.supervisorRoot, ctx.runtime.communityId), 'cache/android-leases'),
       withIdleRoom: async (roomId, task) => {
         if (ctx.stopped || ctx.startingRooms.has(roomId) || ctx.startingCorners.has(roomId) ||
             ctx.running.get(roomId)?.body.isBusy() ||
@@ -221,7 +203,6 @@ import { RoomRuntimeCoordinator, localCornerWorktreeIds, CornerWorktree, CornerS
     ctx.beginShutdown();
     if (ctx.membershipDrain) await ctx.membershipDrain;
     if (ctx.maintenanceFlight) await ctx.maintenanceFlight;
-    if (ctx.preservationFlight) await ctx.preservationFlight.catch(() => undefined);
     const rooms = [...ctx.running.values()];
     for (const room of rooms) room.controller.abort();
     const drained = Promise.all(rooms.map((room) => room.promise.catch(() => undefined)));

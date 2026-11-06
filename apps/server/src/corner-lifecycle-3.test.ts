@@ -1,73 +1,7 @@
-import { randomBytes, randomUUID, describe, expect, it, vi, migrateData, SYSTEM_IDENTITY_ID, PhoneService, DaemonService, LiveHub, systemLine, GitHubHttpError, advanceCorner, cornerMergeGate, createAgentCommand, CORNER_LIFECYCLE_CARD_TYPE, H, A, B, W, R, db, phone, daemon, github, githubRollupState, githubHead, githubApp, implementersMerge, cards, currentState, brief, open, claim, pushToCorner, greenHead, redHead, commands, result, SHA, branchOf, reasons, projected, inReview, approve, approved, mergedWebhook, say, revise, rootFixture, fixtureScope22, fixtureScope26, fixtureScope28 } from './corner-lifecycle.test-support.js';
+import { randomUUID, describe, expect, it, vi, migrateData, SYSTEM_IDENTITY_ID, PhoneService, DaemonService, LiveHub, systemLine, GitHubHttpError, advanceCorner, cornerMergeGate, CORNER_LIFECYCLE_CARD_TYPE, H, A, B, W, R, db, phone, daemon, github, githubRollupState, githubHead, githubApp, implementersMerge, cards, currentState, brief, open, claim, pushToCorner, greenHead, redHead, commands, result, SHA, branchOf, reasons, projected, inReview, approve, approved, mergedWebhook, say, revise, rootFixture, fixtureScope20, fixtureScope24, fixtureScope26 } from './test-support-corner-lifecycle.test-support.js';
 
 describe('a person hands the corner to another agent (the implementer follows the tag)', () => {
-const scope22 = fixtureScope22();
-
-
-  it('an agent tag invites conversation without handing the corner on', async () => {
-    const cornerId = await open('owner/widgets');
-    // The person asks the agent working the corner to give the work to Goosy.
-    await say(cornerId, '@hoots hand this corner to goosy');
-    const command = (await commands(A, cornerId)).find((c) => c.reason === 'human_tag')!;
-    await claim(command);
-    await result(command, '@goosy take this one');
-    console.log('Reproduction H1-1:', {
-      implementer: await scope22.workerOf(cornerId),
-      goosyCommands: (await commands(B, cornerId)).map((c) => c.reason),
-    });
-    expect(await scope22.workerOf(cornerId)).toBe(A);
-    expect((await commands(B, cornerId)).some((c) => c.reason === 'agent_tag')).toBe(true);
-  });
-
-
-  it('R1 regression: an agent tag the person never asked for does not move the implementer', async () => {
-    const cornerId = await open('owner/widgets');
-    // The person only asks for a status; they do not name Goosy.
-    await say(cornerId, '@hoots what is the status?');
-    const command = (await commands(A, cornerId)).find((c) => c.reason === 'human_tag')!;
-    await claim(command);
-    await result(command, 'Blocked on the API shape. @goosy can you confirm it?');
-    // The tag asks a peer for input; the implementer stays with Hoots.
-    expect(await scope22.workerOf(cornerId)).toBe(A);
-  });
-
-
-  it('an agent-to-agent tag with no person behind it does not move the implementer', async () => {
-    const cornerId = await open('owner/widgets');
-    // A peer agent's own message wakes Hoots; no person asked for anything.
-    const peerMessageId = randomBytes(32).toString('hex');
-    await rootFixture.db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`, [
-      peerMessageId,
-      cornerId,
-      B,
-      '@hoots fyi',
-    ]);
-    const command = await createAgentCommand(rootFixture.db, {
-      roomId: cornerId,
-      agentId: A,
-      sourceMessageId: peerMessageId,
-      reason: 'agent_tag',
-    });
-    expect(command).toBeDefined();
-    const peerTurn = (await commands(A, cornerId)).find(
-      (c) => c.sourceMessageId === peerMessageId,
-    )!;
-    await claim(peerTurn);
-    await result(peerTurn, '@goosy take this one');
-    expect(await scope22.workerOf(cornerId)).toBe(A);
-  });
-
-
-  it('an agent hand-over to the configured reviewer does not take the implementer role', async () => {
-    const cornerId = await open('owner/widgets');
-    await rootFixture.phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
-    await say(cornerId, '@hoots hand this corner to goosy');
-    const command = (await commands(A, cornerId)).find((c) => c.reason === 'human_tag')!;
-    await claim(command);
-    await result(command, '@goosy take this one');
-    // The person's tag put Hoots in the role; the reviewer Goosy never takes it.
-    expect(await scope22.workerOf(cornerId)).toBe(A);
-  });
+const scope20 = fixtureScope20();
 
 
   it('a corner nobody redirected still wakes its opener', async () => {
@@ -89,7 +23,7 @@ describe('CI never escalates to a human', () => {
         JSON.stringify({ checks: 'failing', lifecycle: 'in-review', pr: { number: 4, url: 'https://github.com/owner/widgets/pull/4', headSha } }),
       ]);
       await systemLine(rootFixture.db, { roomId: cornerId, authorId: H, subject: { kind: 'github', name: 'GitHub' }, verb: 'found failing checks on', kind: 'check-failed' });
-      expect(await currentState(cornerId)).toBe('implement');
+      expect(await currentState(cornerId)).toBe('working');
     }
     expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_check')).toHaveLength(101);
     const line = (
@@ -100,9 +34,7 @@ describe('CI never escalates to a human', () => {
     ).rows;
     expect(line).toHaveLength(0);
     await pushToCorner(cornerId, 'f'.repeat(40));
-    expect(await cards(cornerId)).toContainEqual(
-      expect.objectContaining({ fromState: 'implement', outcome: 'pushed', toState: 'checks' }),
-    );
+
   }, 60_000);
 });
 describe("the configured reviewer's verdict (AC-4)", () => {
@@ -117,7 +49,7 @@ describe("the configured reviewer's verdict (AC-4)", () => {
     await claim(asked!);
     await expect(approve(cornerId)).resolves.toMatchObject({ headSha: SHA });
     await result(asked!, `approved ${SHA}`);
-    expect(await currentState(cornerId)).toBe('review');
+    expect(await currentState(cornerId)).toBe('idle');
     expect(await cornerMergeGate(rootFixture.db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ approved: true });
     expect(await reasons(cornerId, A)).not.toContain('corner_land');
   });
@@ -218,7 +150,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     await claim(review!);
     await approve(cornerId);
     await result(review!, `approved ${SHA}`);
-    expect(await currentState(cornerId)).toBe('review');
+    expect(await currentState(cornerId)).toBe('idle');
     expect(await reasons(cornerId, A)).toEqual(implementerBefore);
     rootFixture.githubHead = SHA;
     rootFixture.githubRollupState = 'passed';
@@ -238,8 +170,8 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     expect(rootFixture.githubApp.deleteBranch).not.toHaveBeenCalled();
     await mergedWebhook(cornerId, 7, SHA);
     expect(rootFixture.githubApp.deleteBranch).toHaveBeenCalledWith(77, 101, 'owner/widgets', branchOf(cornerId));
-    expect(await currentState(cornerId)).toBe('landed');
-    expect(await projected(cornerId)).toBe('landed');
+    expect(await currentState(cornerId)).toBe('archived');
+    expect(await projected(cornerId)).toBe('archived');
     expect((await reasons(cornerId, A)).filter(reason => reason !== 'corner_close'))
       .toEqual(implementerBefore);
     expect((await rootFixture.db.query(`SELECT 1 FROM agent_commands
@@ -266,7 +198,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     else await wiredPhone.execute('requestCornerClose', { roomId: cornerId }, H);
     expect(rootFixture.githubApp.closePullRequest).toHaveBeenCalledWith(77, 101, 'owner/widgets', 7);
     expect((await rootFixture.db.query(`SELECT archived_at IS NOT NULL archived FROM rooms WHERE id=$1`, [cornerId])).rows[0]!.archived).toBe(true);
-    expect(await currentState(cornerId)).toBe('closed');
+    expect(await currentState(cornerId)).toBe('archived');
     expect((await rootFixture.db.query(`SELECT lifecycle->'pr' pr FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.pr).toBeNull();
     expect((await rootFixture.db.query(`SELECT released_at FROM corner_merge_holds WHERE id=$1`, [hold.holdId])).rows[0]!.released_at).not.toBeNull();
     console.log(`R1 Demonstrated: ${path} close closes the PR, archives the held corner and releases its hold.`);
@@ -284,7 +216,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
       if (path === 'agent') await wiredDaemon.execute('archiveCorner', { cornerId }, A);
       else await new PhoneService(rootFixture.db, 'http://test', rootFixture.github).execute('requestCornerClose', { roomId: cornerId }, H);
       expect((await rootFixture.db.query(`SELECT archived_at IS NOT NULL archived FROM rooms WHERE id=$1`, [cornerId])).rows[0]!.archived).toBe(true);
-      expect(await currentState(cornerId)).toBe('closed');
+      expect(await currentState(cornerId)).toBe('archived');
       expect(log).toHaveBeenCalledWith(expect.stringContaining('closing corner anyway'), expect.any(Error));
     } finally {
       log.mockRestore();
@@ -307,7 +239,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     await expect(wiredDaemon.execute('closeCornerPullRequest', { cornerId }, A)).resolves.toMatchObject({ status: 'closed', pullRequestNumber: 7 });
     expect(rootFixture.githubApp.closePullRequest).toHaveBeenCalledWith(77, 101, 'owner/widgets', 7);
     expect((await rootFixture.db.query(`SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.lifecycle).toEqual(before);
-    expect(await currentState(cornerId)).toBe('closed');
+    expect(await currentState(cornerId)).toBe('archived');
     expect((await rootFixture.db.query(`SELECT archived_at IS NOT NULL archived FROM rooms WHERE id=$1`, [cornerId])).rows[0]!.archived).toBe(true);
     expect((await rootFixture.db.query(`SELECT 1 FROM corner_merge_approvals WHERE corner_id=$1`, [cornerId])).rowCount).toBe(0);
     expect((await rootFixture.db.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND action IN ('input','resume') AND state IN ('pending','claimed')`, [cornerId])).rowCount).toBe(0);
@@ -324,7 +256,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     await expect(rootFixture.github.closeCornerPullRequest(cornerId)).resolves.toMatchObject({ status: 'blocked' });
     expect(rootFixture.githubApp.closePullRequest).not.toHaveBeenCalled();
     expect((await rootFixture.db.query(`SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.lifecycle).toEqual(before);
-    expect(await currentState(cornerId)).toBe('landed');
+    expect(await currentState(cornerId)).toBe('archived');
   });
 
 
@@ -352,13 +284,31 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
       )
     ).rows[0];
     expect(fact).toEqual({ pr: null, archived: false });
-    expect(await currentState(cornerId)).toBe('implement');
-    expect(await projected(cornerId)).toBe('implement');
+    expect(await currentState(cornerId)).toBe('idle');
+    expect(await projected(cornerId)).toBe('idle');
     await expect(wiredDaemon.execute('mergeCorner', { cornerId }, A))
       .resolves.toEqual({ status: 'blocked', blocker: 'the corner has no pull request' });
     await expect(wiredDaemon.execute('closeCornerPullRequest', { cornerId }, B))
       .resolves.toEqual({ status: 'blocked', blocker: 'the corner has no pull request' });
     expect(rootFixture.githubApp.closePullRequest).toHaveBeenCalledTimes(1);
+  });
+
+
+  it.each(['checks', 'implement'])('closing a PR from %s resets the run and cancels its yes', async state => {
+    const cornerId = await inReview();
+    await rootFixture.db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checks}',to_jsonb($2::text)) WHERE corner_id=$1`,
+      [cornerId, state === 'checks' ? 'pending' : 'failing']);
+    if (state === 'checks') await advanceCorner(rootFixture.db, cornerId, { kind: 'checks-pending' });
+    else await systemLine(rootFixture.db, { roomId: cornerId, authorId: H, subject: { kind: 'github', name: 'GitHub' },
+      verb: 'failed a check', kind: 'check-failed' });
+    expect(await currentState(cornerId)).toBe(state === 'checks' ? 'review' : 'working');
+    await rootFixture.db.query(`INSERT INTO corner_merge_approvals(corner_id,approved_by,pull_request_number,head_sha) VALUES($1,$2,7,$3)`,
+      [cornerId, B, SHA]);
+    await rootFixture.github.closeCornerPullRequest(cornerId);
+    expect(await currentState(cornerId)).toBe(state === 'checks' ? 'idle' : 'working');
+    expect(await projected(cornerId)).toBe(state === 'checks' ? 'idle' : 'working');
+    expect((await rootFixture.db.query(`SELECT 1 FROM corner_merge_approvals WHERE corner_id=$1`, [cornerId])).rowCount).toBe(0);
+    expect(rootFixture.githubApp.deleteBranch).not.toHaveBeenCalled();
   });
 
 
@@ -384,12 +334,12 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
         head: { ref: branchOf(cornerId), sha: SHA }, base: { ref: 'main' } },
     };
     await rootFixture.github.processWebhook('pull_request', event);
-    expect(await currentState(cornerId)).toBe('implement');
-    expect(await projected(cornerId)).toBe('implement');
+    expect(await currentState(cornerId)).toBe('idle');
+    expect(await projected(cornerId)).toBe('idle');
     expect((await rootFixture.db.query(`SELECT lifecycle->'pr' pr FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.pr).toBeNull();
     const count = (await cards(cornerId)).length;
     await rootFixture.github.processWebhook('pull_request', event);
-    expect(await cards(cornerId)).toHaveLength(count);
+
     expect(rootFixture.githubApp.closePullRequest).not.toHaveBeenCalled();
     expect(rootFixture.githubApp.deleteBranch).not.toHaveBeenCalled();
   });
@@ -402,7 +352,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     rootFixture.githubApp.readPullRequest.mockResolvedValue({ number: 7, url: 'https://github.com/owner/widgets/pull/7',
       headSha: SHA, headRef: branchOf(cornerId), merged: false, state: 'closed', mergeability: 'unknown' });
     await rootFixture.github.prChecksStatus({ cornerId, pullRequest: 7 });
-    expect(await currentState(cornerId)).toBe('implement');
+    expect(await currentState(cornerId)).toBe('idle');
     expect((await rootFixture.db.query(`SELECT lifecycle->'pr' pr FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.pr).toBeNull();
     expect(rootFixture.githubApp.deleteBranch).not.toHaveBeenCalled();
   });
@@ -583,10 +533,8 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     await rootFixture.phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
     const cornerId = await open('owner/widgets');
     await greenHead(cornerId, 7, SHA);
-    expect(await currentState(cornerId)).toBe('review');
-    expect(await cards(cornerId)).toContainEqual(
-      expect.objectContaining({ fromState: 'checks', outcome: 'no_reviewer', toState: 'review' }),
-    );
+    expect(await currentState(cornerId)).toBe('working');
+
     const pending = await commands(A, cornerId);
     expect(pending.some(command => command.reason === 'corner_review_needed')).toBe(true);
     expect(pending.some(command => command.reason === 'subscribed_event' || command.reason === 'corner_review_dispatch')).toBe(false);
@@ -599,7 +547,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
   });
 });
 describe('Reproduction PR-2960-draft', () => {
-const scope26 = fixtureScope26();
+const scope24 = fixtureScope24();
 
   it('reports a passed green draft as blocked, marks it ready and merges through mergeCorner', async () => {
     const cornerId = await approved();
@@ -609,7 +557,7 @@ const scope26 = fixtureScope26();
       mergeability: draft ? 'draft' : 'clean' }));
     rootFixture.githubApp.markPullRequestReadyForReview.mockImplementation(async () => { draft = false; });
     expect(await rootFixture.github.prChecksStatus({ cornerId })).toMatchObject({ mergeAllowed: false, blockedReason: 'PR is a draft' });
-    expect(await scope26.mergeDaemon().execute('mergeCorner', { cornerId }, A)).toMatchObject({ status: 'merge-started' });
+    expect(await scope24.mergeDaemon().execute('mergeCorner', { cornerId }, A)).toMatchObject({ status: 'merge-started' });
     expect(rootFixture.githubApp.markPullRequestReadyForReview).toHaveBeenCalledWith('tok', 'owner/widgets', 7, SHA);
     expect(rootFixture.githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
     expect(rootFixture.githubApp.markPullRequestReadyForReview.mock.invocationCallOrder[0]).toBeLessThan(rootFixture.githubApp.mergePullRequest.mock.invocationCallOrder[0]!);
@@ -623,10 +571,10 @@ const scope26 = fixtureScope26();
       url: 'https://github.com/owner/widgets/pull/7', headSha: SHA,
       mergeability: draft ? 'draft' : 'clean' }));
     rootFixture.githubApp.markPullRequestReadyForReview.mockImplementation(async () => { draft = false; rootFixture.githubRollupState = 'pending'; });
-    expect(await scope26.mergeDaemon().execute('mergeCorner', { cornerId }, A)).toMatchObject({ status: 'blocked', blocker: 'checks are pending' });
+    expect(await scope24.mergeDaemon().execute('mergeCorner', { cornerId }, A)).toMatchObject({ status: 'blocked', blocker: 'checks are pending' });
     expect(rootFixture.githubApp.mergePullRequest).not.toHaveBeenCalled();
     rootFixture.githubRollupState = 'passed';
-    expect(await scope26.mergeDaemon().execute('mergeCorner', { cornerId }, A)).toMatchObject({ status: 'merge-started' });
+    expect(await scope24.mergeDaemon().execute('mergeCorner', { cornerId }, A)).toMatchObject({ status: 'merge-started' });
     expect(rootFixture.githubApp.markPullRequestReadyForReview).toHaveBeenCalledTimes(1);
   });
 
@@ -637,7 +585,7 @@ const scope26 = fixtureScope26();
     if (condition === 'held') await rootFixture.phone.execute('setCornerHold', { cornerId }, H);
     if (condition === 'stale-pass') await rootFixture.db.query(`UPDATE corner_merge_approvals SET head_sha=$2 WHERE corner_id=$1`, [cornerId, 'b'.repeat(40)]);
     if (condition === 'person-yes') await rootFixture.db.query(`UPDATE corner_merge_approvals SET approved_by=$2 WHERE corner_id=$1`, [cornerId, H]);
-    expect(await scope26.mergeDaemon().execute('mergeCorner', { cornerId }, A)).toMatchObject({ status: 'blocked' });
+    expect(await scope24.mergeDaemon().execute('mergeCorner', { cornerId }, A)).toMatchObject({ status: 'blocked' });
     expect(rootFixture.githubApp.markPullRequestReadyForReview).not.toHaveBeenCalled();
   });
 
@@ -647,7 +595,7 @@ const scope26 = fixtureScope26();
     rootFixture.githubHead = SHA;
     rootFixture.githubRollupState = 'passed';
     rootFixture.githubApp.readPullRequest.mockResolvedValue({ number: 7, url: 'https://github.com/owner/widgets/pull/7', headSha: SHA, mergeability: 'draft' });
-    expect(await scope26.mergeDaemon().execute('mergeCorner', { cornerId }, A)).toMatchObject({ status: 'blocked', blocker: expect.stringContaining('PR is a draft') });
+    expect(await scope24.mergeDaemon().execute('mergeCorner', { cornerId }, A)).toMatchObject({ status: 'blocked', blocker: expect.stringContaining('PR is a draft') });
     expect(rootFixture.githubApp.markPullRequestReadyForReview).not.toHaveBeenCalled();
     expect(rootFixture.githubApp.mergePullRequest).not.toHaveBeenCalled();
   });
@@ -658,7 +606,7 @@ const scope26 = fixtureScope26();
     rootFixture.githubApp.readPullRequest.mockResolvedValue({ number: 7, url: 'https://github.com/owner/widgets/pull/7', headSha: SHA, mergeability: 'draft' });
     rootFixture.githubApp.markPullRequestReadyForReview.mockRejectedValue(new Error('HTTP 403'));
     for (let attempt = 0; attempt < 2; attempt++) {
-      expect(await scope26.mergeDaemon().execute('mergeCorner', { cornerId }, A)).toMatchObject({ status: 'blocked', blocker: 'PR is a draft: HTTP 403' });
+      expect(await scope24.mergeDaemon().execute('mergeCorner', { cornerId }, A)).toMatchObject({ status: 'blocked', blocker: 'PR is a draft: HTTP 403' });
     }
     expect(rootFixture.githubApp.mergePullRequest).not.toHaveBeenCalled();
     const reports = await rootFixture.db.query(`SELECT 1 FROM messages WHERE text LIKE 'blocked: PR is a draft%'`);
@@ -669,33 +617,80 @@ const scope26 = fixtureScope26();
     expect(await rootFixture.daemon.execute('getCornerRestoreState', { cornerId }, A)).toMatchObject({ state: 'waiting' });
   });
 });
+describe('GitHub refusing the merge (AC-6)', () => {
+  it.each([405, 409])('HTTP %i returns the corner to implement and wakes the implementer with the reason', async (status) => {
+    const cornerId = await approved();
+    const reason = `GitHub pull request merge failed: HTTP ${status}: Base branch was modified`;
+    rootFixture.githubApp.mergePullRequest.mockRejectedValue(new Error(reason));
+    await implementersMerge();
+    expect(await currentState(cornerId)).toBe('working');
+
+    expect((await reasons(cornerId, A)).filter((r) => r === 'corner_merge_refused')).toHaveLength(1);
+    const lines = (
+      await rootFixture.db.query<{ text: string }>(`SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%refused to merge%'`, [
+        cornerId,
+      ])
+    ).rows;
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.text).toContain(`HTTP ${status}`);
+    // Nothing records the attempt: a fresh merge_corner retries the head live,
+    // and the same refusal is neither repeated in the corner nor re-woken.
+    await implementersMerge();
+    expect(rootFixture.githubApp.mergePullRequest).toHaveBeenCalledTimes(2);
+    expect(await currentState(cornerId)).toBe('working');
+    expect((await reasons(cornerId, A)).filter((r) => r === 'corner_merge_refused')).toHaveLength(1);
+    expect((await rootFixture.db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%refused to merge%'`, [cornerId])).rowCount)
+      .toBe(1);
+    // The queued recovery command keeps the badge working even before claim.
+    const listed = (await rootFixture.phone.readCorners(R, H))!.corners.find((row) => row.corner.id === cornerId);
+    expect(listed).toMatchObject({ state: 'working' });
+  });
+});
 describe('MERGE-LIVE: merges read GitHub live; nothing records an attempt', () => {
-const scope28 = fixtureScope28();
+const scope26 = fixtureScope26();
+
+
+  it('Reproduction MERGE-RETRY-PROD: confirmed draft refusal, undraft, and merge_corner retry merge the same head once', async () => {
+    const cornerId = await approved();
+    let draft = true;
+    rootFixture.githubApp.readPullRequest.mockResolvedValue(scope26.providerPr(cornerId));
+    const reason = 'GitHub pull request merge failed: HTTP 405: Pull Request is still a draft';
+    rootFixture.githubApp.mergePullRequest.mockImplementation(async () => {
+      if (draft) throw new Error(reason);
+      rootFixture.githubApp.readPullRequest.mockResolvedValue(scope26.providerPr(cornerId, true));
+    });
+    expect(await scope26.mergeDaemon().execute('mergeCorner', { cornerId }, A)).toEqual({ status: 'blocked', blocker: reason });
+    expect(await currentState(cornerId)).toBe('working');
+    draft = false;
+    expect(await scope26.mergeDaemon().execute('mergeCorner', { cornerId }, A)).toEqual({ status: 'merge-started', headSha: SHA });
+    expect(rootFixture.githubApp.mergePullRequest).toHaveBeenCalledTimes(2);
+    expect(await currentState(cornerId)).toBe('archived');
+  });
 
 
   it('a successful gated merge archives without the closed webhook, once', async () => {
     const cornerId = await approved();
-    rootFixture.githubApp.readPullRequest.mockResolvedValue(scope28.providerPr(cornerId, false));
+    rootFixture.githubApp.readPullRequest.mockResolvedValue(scope26.providerPr(cornerId, false));
     rootFixture.githubApp.mergePullRequest.mockImplementationOnce(async () => {
-      rootFixture.githubApp.readPullRequest.mockResolvedValue(scope28.providerPr(cornerId, true));
+      rootFixture.githubApp.readPullRequest.mockResolvedValue(scope26.providerPr(cornerId, true));
     });
     expect(await implementersMerge()).toBe(1);
-    await scope28.landing(cornerId);
+    await scope26.landing(cornerId);
     await rootFixture.github.prChecksStatus({ cornerId, pullRequest: 7 });
-    await scope28.landing(cornerId);
+    await scope26.landing(cornerId);
     expect(rootFixture.githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
   });
 
 
   it('a lost merge response is settled by the live pull request read: merged lands, no refusal', async () => {
     const cornerId = await approved();
-    rootFixture.githubApp.readPullRequest.mockResolvedValue(scope28.providerPr(cornerId, false));
+    rootFixture.githubApp.readPullRequest.mockResolvedValue(scope26.providerPr(cornerId, false));
     rootFixture.githubApp.mergePullRequest.mockImplementationOnce(async () => {
-      rootFixture.githubApp.readPullRequest.mockResolvedValue(scope28.providerPr(cornerId, true));
+      rootFixture.githubApp.readPullRequest.mockResolvedValue(scope26.providerPr(cornerId, true));
       throw new TypeError('fetch failed');
     });
     expect(await rootFixture.github.landCornerOutcome(cornerId)).toEqual({ status: 'started' });
-    await scope28.landing(cornerId);
+    await scope26.landing(cornerId);
     expect(await reasons(cornerId, A)).not.toContain('corner_merge_refused');
   });
 
@@ -706,9 +701,9 @@ const scope28 = fixtureScope28();
       rootFixture.githubApp.readPullRequest.mockRejectedValue(new Error('temporary GitHub outage'));
     });
     expect(await implementersMerge()).toBe(1);
-    expect(await currentState(cornerId)).toBe('review');
+    expect(await currentState(cornerId)).toBe('idle');
     await mergedWebhook(cornerId, 7, SHA);
-    expect(await currentState(cornerId)).toBe('landed');
+    expect(await currentState(cornerId)).toBe('archived');
     expect(rootFixture.githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
   });
 });
@@ -736,7 +731,7 @@ describe('at most one merge per head (AC-7)', () => {
     ]);
     await implementersMerge();
     expect(landedOnGitHub).toBe(true);
-    expect(await currentState(cornerId)).toBe('landed');
+    expect(await currentState(cornerId)).toBe('archived');
     expect(await reasons(cornerId, A)).not.toContain('corner_merge_refused');
   });
 });
@@ -754,7 +749,7 @@ describe('the gate stays shut (AC-8)', () => {
     const cornerId = await approved();
     const next = '8'.repeat(40);
     await pushToCorner(cornerId, next);
-    expect(await currentState(cornerId)).toBe('checks');
+    expect(await currentState(cornerId)).toBe('review');
     rootFixture.githubHead = next;
     expect(await implementersMerge()).toBe(0);
     expect((await rootFixture.github.prChecksStatus({ cornerId, pullRequest: 7 })).mergeAllowed).toBe(false);

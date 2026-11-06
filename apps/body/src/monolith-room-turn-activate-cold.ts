@@ -21,7 +21,6 @@ import { codegraphFingerprintServers, codegraphIndexDirectory, codegraphMcpServe
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import { registryMcpHostBindPaths, registryMcpHostDeclarations } from './registry-mcp.js';
 import { credentialMaskPaths, harnessHomeStateDirs, siblingAgentMaskPaths, wrapAgentCommand } from './bwrap-sandbox.js';
-import { prepareKvmAccess } from './kvm-device-access.js';
 import { harnessIdentityLabel, sessionNewMcpServers } from './cursor-acp-bridge.js';
 import { bodyAgentCommand } from './config.js';
 import { explainEmptyAgentTurn, isSilentCompletion, nextPinnedProvider, type EmptyTurnExplanation } from './empty-turn.js';
@@ -95,9 +94,6 @@ import { MonolithRoomTurnLoop, execFileAsync, roomPermissionDecision, HumanMessa
           grantedHostRoutes: mountedHostRoutes,
           extraHostRoutes: registryHostDeclarations,
           resourceAuthFile,
-          ...(ctx.options.config.agentEnv.PATH
-            ? { inheritedPath: ctx.options.config.agentEnv.PATH }
-            : {}),
           ...(ctx.options.config.agentKind ? { agentKind: ctx.options.config.agentKind } : {}),
           ...(ctx.options.config.operatorHome
             ? { operatorHome: ctx.options.config.operatorHome }
@@ -228,8 +224,6 @@ import { MonolithRoomTurnLoop, execFileAsync, roomPermissionDecision, HumanMessa
         codegraphReady,
       ),
     });
-    const kvm = prepareKvmAccess(grantedDevices);
-    if ('advice' in kvm) console.error(`[body] ${kvm.advice}`);
     const spawnCommand = wrapAgentCommand({
       bwrapPath: ctx.options.config.bwrapPath,
       spec: {
@@ -411,7 +405,6 @@ import { MonolithRoomTurnLoop, execFileAsync, roomPermissionDecision, HumanMessa
       surface: directMessage ? 'dm' : 'room',
       agentName: self?.name ?? ctx.agent.name,
       machineHost: await machineHost(),
-      kvm,
       ...(persona?.instructions
         ? { soul: { name: persona.name, instructions: persona.instructions } }
         : {}),
@@ -610,5 +603,8 @@ import { MonolithRoomTurnLoop, execFileAsync, roomPermissionDecision, HumanMessa
     const active = ctx.activeTurn;
     if (!active || active.item.id !== requestId) return;
     active.cancelled = true;
-    if (ctx.client && ctx.sessionId) ctx.client.sessionCancel(ctx.sessionId);
+    // Cancellation ends the process tree, including MCP keepalives. A harness
+    // notification alone leaves tools running under the revoked generation.
+    void ctx.options.scheduler.stop(ctx.options.roomId, true).catch(error =>
+      console.error('[body] cancelled Room process cleanup failed:', error));
   }

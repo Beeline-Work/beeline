@@ -59,7 +59,6 @@ import { phoneAttachmentFacts, phoneEnrichHistoryRows, phoneEnrichMessageTags, p
 export { directMessageRoomId } from './system-line.js';
 export type { ArchivedCornerCursor } from './phone/values.js';
 export { parseArchivedCornerCursor } from './phone/values.js';
-export { OPTIONAL_ENRICHMENT_DEADLINE_MS } from './phone/values.js';
 export { MessageSearchTooBroadError } from './phone/read-projection.js';
 export { YOLO_AUTHORITY_MESSAGE } from './phone/values.js';
 export { CONNECTOR_OFFER_AUTHORITY_MESSAGE } from './phone/values.js';

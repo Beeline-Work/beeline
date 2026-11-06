@@ -1,57 +1,6 @@
-import { readFile, EventEmitter, describe, expect, it, vi, DEFAULT_WORKSPACE_ID, WELCOME_ROOM_ID, assertSchemaCurrent, DatabaseTransactionStartError, backfillAgentHandles, backfillInstitutionalMemoryRollout, backfillPerItemEventSubscriptions, MESSAGE_CURSOR_MS_SQL, migrate, APP_POOL_WAIT_TIMEOUT_MS, APP_STATEMENT_TIMEOUT_MS, ENRICHMENT_POOL_WAIT_TIMEOUT_MS, ENRICHMENT_STATEMENT_TIMEOUT_MS, postgresPoolConfig, REQUIRED_SCHEMA_VERSION, REQUIRED_ROUTER_SCHEMA_VERSION, markSchemaCurrent, migrateData, PostgresDatabase, isTransientDatabaseConnectionError, PgliteDatabase, migratedDatabase, result, poolWithQuery, fixtureScope10, fixtureScope11, fixtureScope12, fixtureScope13, fixtureScope14, fixtureScope15, fixtureScope16, fixtureScope18, fixtureScope19, fixtureScope20, type Pool, type SqlDatabase } from './database.test-support.js';
+import { readFile, EventEmitter, describe, expect, it, vi, DEFAULT_WORKSPACE_ID, WELCOME_ROOM_ID, assertSchemaCurrent, DatabaseTransactionStartError, backfillAgentHandles, backfillInstitutionalMemoryRollout, backfillPerItemEventSubscriptions, MESSAGE_CURSOR_MS_SQL, migrate, APP_POOL_WAIT_TIMEOUT_MS, APP_STATEMENT_TIMEOUT_MS, ENRICHMENT_POOL_WAIT_TIMEOUT_MS, ENRICHMENT_STATEMENT_TIMEOUT_MS, postgresPoolConfig, markSchemaCurrent, migrateData, PostgresDatabase, isTransientDatabaseConnectionError, PgliteDatabase, migratedDatabase, result, poolWithQuery, fixtureScope10, fixtureScope11, fixtureScope12, fixtureScope13, fixtureScope14, fixtureScope15, fixtureScope16, fixtureScope18, fixtureScope19, fixtureScope20, type Pool, type SqlDatabase } from './test-support-database.test-support.js';
 
-describe('cascade-path foreign keys stay indexed', () => {
-  it('never lets a FK into messages, rooms, or workspaces lack a supporting index', async () => {
-    const database = await migratedDatabase();
-    // A workspace delete cascades through rooms and messages; an FK column
-    // pointing at one of those three tables with no leading-column index
-    // forces Postgres to sequentially scan the whole child table for the FK
-    // check or cascade. That is exactly what stalled DELETE FROM workspaces
-    // past the app pool's statement_timeout for the Beeline Welcome
-    // Workspace (agent_commands.source_message_id/result_message_id and
-    // messages.reply_to_message_id, found by reproducing the incident).
-    const unindexed = await database.query<{ child_table: string; fk_columns: string[] }>(
-      `WITH fk AS (
-         SELECT con.conname, con.conrelid, con.confrelid::regclass::text AS parent, con.conkey
-         FROM pg_constraint con
-         WHERE con.contype = 'f'
-           AND con.confrelid::regclass::text IN ('messages', 'rooms', 'workspaces')
-       )
-       SELECT fk.conrelid::regclass::text AS child_table,
-              array_agg(att.attname ORDER BY k.ord) AS fk_columns
-       FROM fk
-       JOIN LATERAL unnest(fk.conkey) WITH ORDINALITY AS k(attnum, ord) ON true
-       JOIN pg_attribute att ON att.attrelid = fk.conrelid AND att.attnum = k.attnum
-       WHERE NOT EXISTS (
-         SELECT 1 FROM pg_index idx
-         WHERE idx.indrelid = fk.conrelid
-           AND (idx.indkey::smallint[])[0:array_length(fk.conkey,1)-1] = fk.conkey::smallint[]
-       )
-       GROUP BY fk.conrelid`,
-    );
-    expect(unindexed.rows).toEqual([]);
-    database.close();
-  });
-});
 describe('release-owned schema readiness', () => {
-  it('rejects the previous schema marker until the push outbox migration is released', async () => {
-    const query = vi.fn().mockResolvedValue(result([{ version: REQUIRED_SCHEMA_VERSION - 1 }]));
-    await expect(assertSchemaCurrent({ query, transaction: vi.fn() })).rejects.toThrow(
-      new RegExp(`expected schema version ${REQUIRED_SCHEMA_VERSION}, found ${REQUIRED_SCHEMA_VERSION - 1}`),
-    );
-  });
-
-
-  it('returns unavailable boot evidence once without treating it as a schema mismatch', async () => {
-    const failure = new Error('timeout exceeded when trying to connect');
-    const query = vi.fn().mockRejectedValueOnce(failure)
-      .mockResolvedValueOnce(result([{ version: REQUIRED_SCHEMA_VERSION, router_version: REQUIRED_ROUTER_SCHEMA_VERSION }]));
-    await expect(assertSchemaCurrent({ query, transaction: vi.fn() })).rejects.toBe(failure);
-    expect(query).toHaveBeenCalledOnce();
-    await expect(assertSchemaCurrent({ query, transaction: vi.fn() })).resolves.toBeUndefined();
-    expect(query).toHaveBeenCalledTimes(2);
-  });
-
 
   it('fails boot clearly until the release migration writes its final marker', async () => {
     const database = new PgliteDatabase();

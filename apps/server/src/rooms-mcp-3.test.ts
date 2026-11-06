@@ -1,85 +1,7 @@
-import { phoneFetch, describe, expect, it, vi, backfillMcpMemberRoomsAndAvatars, ensureMcpMember, randomBytes, createHash, randomUUID, Client, StreamableHTTPClientTransport, tokenHash, createAgentCommand, routeHumanMessage, routeAgentResult, openSecrets, deliverMcpMemberWebhooks, runMaintenance, PREREGISTERED_MCP_CLIENTS, readFileSync, sharp, FACE_SOULS, USER, AGENT, WORKSPACE, ROOM, PRIVATE, opaque, fixtureScope1, fixtureScope2, fixtureScope3 } from './rooms-mcp.test-support.js';
+import { phoneFetch, describe, expect, it, vi, MCP_ORDER_WAKE_HINT, MCP_REVIEW_WAKE_HINT, backfillMcpMemberRoomsAndAvatars, ensureMcpMember, randomBytes, createHash, randomUUID, Client, StreamableHTTPClientTransport, tokenHash, MCP_AGENT_EXCLUSIONS, MCP_APP_ROUTE_OPERATIONS, createAgentCommand, routeHumanMessage, routeAgentResult, openSecrets, deliverMcpMemberWebhooks, PREREGISTERED_MCP_CLIENTS, readFileSync, sharp, FACE_SOULS, USER, OTHER, AGENT, WORKSPACE, ROOM, PRIVATE, CORNER, opaque, fixtureScope1, fixtureScope2, fixtureScope3 } from './test-support-rooms-mcp.test-support.js';
 
 describe('Rooms connector HTTP OAuth and MCP', () => {
 const scope1 = fixtureScope1();
-
-  it('Reproduction R1: grants every tool after one Allow, with no scope or a read-only scope, and limits per token', async () => {
-    for (const scope of ['', 'rooms:read']) {
-      const { client } = await scope1.connected(scope);
-      const profile = await client.callTool({ name: 'set_profile', arguments: { name: `Grok ${scope || 'none'}` } });
-      expect(profile.isError).toBeFalsy();
-      const sent = await client.callTool({ name: 'send_message', arguments: { room: ROOM, text: `full rights ${scope || 'none'}` } });
-      expect(sent.isError).toBeFalsy();
-    }
-    expect((await scope1.db.query("SELECT 1 FROM messages WHERE text LIKE 'full rights %'")).rowCount).toBe(2);
-    const { token } = await scope1.connected('rooms:read');
-    await scope1.db.query('UPDATE rooms_mcp_tokens SET calls=60,window_at=now() WHERE hash=$1', [tokenHash(token)]);
-    expect((await phoneFetch(scope1.origin + '/mcp', { headers: { authorization: `Bearer ${token}` } })).status).toBe(429);
-  });
-
-  it('Reproduction R1: lets a stored read-only connection post and refresh without reconnecting', async () => {
-    const grant = await scope1.authorize();
-    const tokens = await (await scope1.exchange(grant)).json() as { access_token: string; refresh_token: string };
-    // Seed the pre-fix state: every stored row for this connection holds read only.
-    for (const table of ['rooms_mcp_tokens', 'rooms_mcp_families', 'rooms_mcp_connections']) {
-      await scope1.db.query(`UPDATE ${table} SET scope='rooms:read' WHERE client_id=$1`, [grant.clientId]);
-    }
-    const member = (await scope1.db.query<{ member_id: string }>('SELECT member_id FROM rooms_mcp_members WHERE client_id=$1', [grant.clientId])).rows[0]!.member_id;
-    await scope1.db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')
-      ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL DO NOTHING`, [WORKSPACE, ROOM, member]);
-    const call = async (token: string, name: string, args: Record<string, unknown>) => {
-      const client = new Client({ name: 'rooms-review-proof', version: '1.0.0' }); scope1.clients.push(client);
-      await client.connect(new StreamableHTTPClientTransport(new URL(scope1.origin + '/mcp'), { requestInit: { headers: { authorization: `Bearer ${token}` } } }));
-      return client.callTool({ name, arguments: args });
-    };
-    expect((await call(tokens.access_token, 'set_profile', { name: 'Grok Bot' })).isError).toBeFalsy();
-    const refreshed = await scope1.post('/mcp/oauth/token', { grant_type: 'refresh_token', refresh_token: tokens.refresh_token,
-      client_id: grant.clientId, resource: scope1.origin + '/mcp', scope: 'rooms:read rooms:write' });
-    expect(refreshed.status).toBe(200);
-    const next = await refreshed.json() as { access_token: string; refresh_token: string; scope: string };
-    expect(next.scope).toBe('rooms:read rooms:write');
-    expect((await call(next.access_token, 'send_message', { room: ROOM, text: 'posted after refresh' })).isError).toBeFalsy();
-    const narrowed = await scope1.post('/mcp/oauth/token', { grant_type: 'refresh_token', refresh_token: next.refresh_token,
-      client_id: grant.clientId, resource: scope1.origin + '/mcp', scope: 'rooms:read' });
-    expect(narrowed.status).toBe(200);
-    const last = await narrowed.json() as { access_token: string };
-    expect((await call(last.access_token, 'send_message', { room: ROOM, text: 'posted after narrow refresh' })).isError).toBeFalsy();
-    expect((await scope1.phone.readWorkbench({ workspaceId: WORKSPACE }, USER)).aiClients)
-      .toContainEqual(expect.objectContaining({ clientId: grant.clientId, scopes: ['rooms:read', 'rooms:write'] }));
-  });
-
-  it('rejects expired grants and never accepts an MCP grant as a phone session', async () => {
-    const { token } = await scope1.connected();
-    expect((await phoneFetch(scope1.origin + '/mcp', { headers: { authorization: `Bearer ${token}`, origin: 'https://unregistered.example' } })).status).toBe(403);
-    expect((await phoneFetch(scope1.origin + '/v1/phone/workspaces', { headers: { authorization: `Bearer ${token}` } })).status).toBe(401);
-    await scope1.db.query("UPDATE rooms_mcp_tokens SET expires_at=now()-interval '1 second' WHERE hash=$1", [tokenHash(token)]);
-    expect((await phoneFetch(scope1.origin + '/mcp', { headers: { authorization: `Bearer ${token}` } })).status).toBe(401);
-    const grant = await scope1.authorize();
-    await scope1.db.query("UPDATE rooms_mcp_codes SET expires_at=now()-interval '1 second' WHERE hash=$1", [tokenHash(grant.code!)]);
-    expect((await scope1.exchange(grant)).status).toBe(400);
-  });
-
-  it('pages messages without crossing Room cursors and rejects oversized input', async () => {
-    const { client } = await scope1.connected();
-    for (let i=0; i<3; i++) await scope1.phone.execute('sendRoomMessage', { roomId: ROOM, text: `page ${i}` }, USER);
-    const first = await client.callTool({ name: 'read_messages', arguments: { room: ROOM, limit: 1 } });
-    const data = JSON.parse((first.content as { text: string }[])[0]!.text).data;
-    expect(data.messages).toHaveLength(1); expect(data.nextCursor).toBeTruthy();
-    const next = await client.callTool({ name: 'read_messages', arguments: { room: ROOM, limit: 1, cursor: data.nextCursor } });
-    expect(JSON.parse((next.content as { text: string }[])[0]!.text).data.messages[0].id).not.toBe(data.messages[0].id);
-    const foreignCursor = await client.callTool({ name: 'read_messages', arguments: { room: ROOM, cursor: 'd'.repeat(64) } });
-    expect(JSON.parse((foreignCursor.content as { text: string }[])[0]!.text).data.messages).toEqual([]);
-    expect((await client.callTool({ name: 'send_message', arguments: { room: ROOM, text: 'x'.repeat(16001) } })).isError).toBe(true);
-  });
-
-  it('bounds messages and drops access immediately when membership ends', async () => {
-    const { client, member } = await scope1.connected();
-    expect((await client.callTool({ name: 'read_messages', arguments: { room: ROOM, limit: 1000 } })).isError).toBe(true);
-    // Removing the member from the Room revokes its next read and post at once.
-    await scope1.db.query('UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2', [ROOM, member]);
-    expect((await client.callTool({ name: 'read_messages', arguments: { room: ROOM } })).isError).toBe(true);
-    expect(JSON.stringify(await client.callTool({ name: 'list_rooms', arguments: {} }))).not.toContain(ROOM);
-  });
 
   it('MCP-WORKSPACE-1: legacy connections retain all-Workspace behavior until explicit re-consent', async () => {
     const grant = await scope1.authorize();
@@ -240,28 +162,6 @@ const scope1 = fixtureScope1();
     expect(await rooms()).not.toContain(later);
   });
 
-  it('signs Meta Muse in with its published client id, which maintenance never deletes', async () => {
-    const muse = PREREGISTERED_MCP_CLIENTS[0];
-    expect(muse.id).toBe('6Zxge0aVJeCxF8Jvshy-oYTjYPJmrFHdTnwVfvkaF0o');
-    const row = (await scope1.db.query<{ name: string; redirects: string[]; preregistered: boolean; auth_method: string; logo: string | null }>(
-      'SELECT name,redirects,preregistered,auth_method,logo FROM rooms_mcp_clients WHERE id=$1', [muse.id])).rows[0]!;
-    expect(row).toMatchObject({ name: 'Meta Muse', redirects: ['https://agent.meta.ai/api/hatch/oauth/callback'], preregistered: true, auth_method: 'none' });
-    expect(row.logo).toMatch(/^data:image\/png;base64,/);
-    // Nobody registers anything: the published id signs in at once.
-    const grant = await scope1.authorize('rooms:read rooms:write', 'allow', muse.id, muse.redirects[0]);
-    expect(grant.code).toBeTruthy();
-    expect((await scope1.exchange(grant, { redirect_uri: muse.redirects[0] })).status).toBe(200);
-    // Unused for 30 days: an ordinary registration expires, the published one stays.
-    const unused = await (await scope1.post('/mcp/oauth/register', { client_name: 'Unused', redirect_uris: ['https://example.com/cb'] })).json() as { client_id: string };
-    await scope1.db.query(`UPDATE rooms_mcp_connections SET revoked_at=now()-interval '40 days' WHERE client_id=$1`, [muse.id]);
-    await scope1.db.query(`DELETE FROM rooms_mcp_tokens WHERE client_id=$1`, [muse.id]);
-    await scope1.db.query(`UPDATE rooms_mcp_clients SET created_at=now()-interval '40 days' WHERE id=ANY($1)`, [[muse.id, unused.client_id]]);
-    await runMaintenance(scope1.db);
-    await scope1.db.query(`DELETE FROM rooms_mcp_connections WHERE client_id=$1`, [muse.id]);
-    await runMaintenance(scope1.db);
-    expect((await scope1.db.query('SELECT 1 FROM rooms_mcp_clients WHERE id=$1', [unused.client_id])).rowCount).toBe(0);
-    expect((await scope1.db.query('SELECT 1 FROM rooms_mcp_clients WHERE id=$1 AND preregistered', [muse.id])).rowCount).toBe(1);
-  });
 
   it.each([
     ['Cursor', ['https://www.cursor.com/agents/mcp/oauth/callback', 'http://localhost:8787/callback'], 'Grok Bot'],
@@ -472,27 +372,6 @@ const scope1 = fixtureScope1();
     expect(scope1.data(await client.callTool({ name: 'list_mentions', arguments: { cursor: page.nextCursor } })).mentions.map((m: { id: string }) => m.id)).toEqual([third.messageId]);
   });
 
-  it('SESSION-JOIN-1: a long poll returns at once when a tag arrives, and after its wait otherwise', async () => {
-    const { client, member } = await scope1.connected();
-    const handle = (await scope1.db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
-    // A client learns the name and handle its owner allowed.
-    expect(scope1.data(await client.callTool({ name: 'list_rooms', arguments: {} })).you).toEqual({ id: member, name: expect.any(String), handle });
-    const first = scope1.data(await client.callTool({ name: 'list_mentions', arguments: {} }));
-    const now = new Date().toISOString();
-    let started = Date.now();
-    const empty = scope1.data(await client.callTool({ name: 'list_mentions', arguments: { cursor: first.nextCursor, waitSeconds: 1, wakesAfter: now } }));
-    expect(empty.mentions).toEqual([]);
-    expect(Date.now() - started).toBeGreaterThanOrEqual(900);
-    started = Date.now();
-    const waiting = client.callTool({ name: 'list_mentions', arguments: { cursor: first.nextCursor, waitSeconds: 20, wakesAfter: now } });
-    await new Promise(resolve => setTimeout(resolve, 300));
-    const tag = await scope1.phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} are you there?` }, USER);
-    const page = scope1.data(await waiting);
-    expect(page.mentions.map((m: { id: string }) => m.id)).toEqual([tag.messageId]);
-    expect(Date.now() - started).toBeLessThan(5000);
-    const refused = await client.callTool({ name: 'list_mentions', arguments: { waitSeconds: 26 } });
-    expect(refused.isError).toBe(true);
-  });
 
   it.each([{ fallback: false, app: 'Claude Code' }, { fallback: true, app: 'Claude Code' }, { fallback: false, app: 'Codex' }])('SESSION-JOIN-1: a headless $app session signs in with fallback consent=$fallback and collects its code by state', async ({ fallback, app }) => {
     const label = app === 'Codex' ? 'codex' : fallback ? 'fallback' : 'api';
@@ -583,29 +462,6 @@ const scope1 = fixtureScope1();
     expect(Object.values(FACE_SOULS)).not.toContain(profile.seededSoul);
   });
 
-  it.each([false, true])('commits the post and routing record atomically (reply=%s)', async reply => {
-    const { client, member } = await scope1.connected();
-    const parent = reply ? await scope1.phone.execute('sendRoomMessage', { roomId: ROOM, text: 'atomic reply parent' }, USER) : undefined;
-    const args = { room: ROOM, text: '@demo-agent please handle this atomic post', idempotencyKey: `atomic-${reply}`,
-      ...(parent ? { replyTo: parent.messageId } : {}) };
-    const id = createHash('sha256').update(`rooms-mcp-message:${member}:${args.idempotencyKey}`).digest('hex');
-    await scope1.db.query(`CREATE FUNCTION reject_mcp_route_proof() RETURNS trigger LANGUAGE plpgsql AS $$
-      BEGIN RAISE EXCEPTION 'proof: pending route storage unavailable'; END $$;
-      CREATE TRIGGER reject_mcp_route_proof BEFORE INSERT ON rooms_mcp_pending_routes
-      FOR EACH ROW EXECUTE FUNCTION reject_mcp_route_proof()`);
-    try {
-      expect((await client.callTool({ name: 'send_message', arguments: args })).isError).toBe(true);
-      expect((await scope1.db.query('SELECT 1 FROM messages WHERE id=$1', [id])).rowCount).toBe(0);
-      expect((await scope1.db.query('SELECT 1 FROM rooms_mcp_pending_routes WHERE message_id=$1', [id])).rowCount).toBe(0);
-    } finally {
-      await scope1.db.query('DROP TRIGGER reject_mcp_route_proof ON rooms_mcp_pending_routes; DROP FUNCTION reject_mcp_route_proof()');
-    }
-    await scope1.db.query("UPDATE rooms_mcp_idempotency SET claimed_at=now()-interval '2 minutes' WHERE member_id=$1", [member]);
-    const retry = scope1.data(await client.callTool({ name: 'send_message', arguments: args }));
-    expect(retry.woken).toEqual(['demo-agent']);
-    expect((await scope1.db.query('SELECT 1 FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2', [id, AGENT])).rowCount).toBe(1);
-  });
-
   it('resumes a saved post after interruption before routing, without posting twice', async () => {
     const { client, member } = await scope1.connected();
     const args = { room: ROOM, text: '@demo-agent please resume this saved post', idempotencyKey: 'saved-post' };
@@ -618,7 +474,6 @@ const scope1 = fixtureScope1();
     try {
       expect((await client.callTool({ name: 'send_message', arguments: args })).isError).toBe(true);
     } finally { fault.mockRestore(); }
-    expect((await scope1.db.query('SELECT 1 FROM rooms_mcp_pending_routes WHERE message_id=$1', [id])).rowCount).toBe(1);
     await scope1.db.query("UPDATE rooms_mcp_idempotency SET claimed_at=now()-interval '2 minutes' WHERE member_id=$1", [member]);
     const retry = scope1.data(await client.callTool({ name: 'send_message', arguments: args }));
     expect(retry.woken).toEqual(['demo-agent']);
@@ -627,55 +482,24 @@ const scope1 = fixtureScope1();
     expect(scope1.data(await client.callTool({ name: 'send_message', arguments: args }))).toEqual(retry);
   });
 
-  it('retries a cached routing failure instead of returning it forever', async () => {
-    const { client } = await scope1.connected();
-    const args = { room: ROOM, text: '@demo-agent please retry this failed wake', idempotencyKey: 'cached-failed-wake' };
-    const query = scope1.db.query.bind(scope1.db);
-    let injected = false;
-    const fault = vi.spyOn(scope1.db, 'query').mockImplementation(async (sql, values) => {
-      if (!injected && sql.includes('SELECT text,room_id FROM messages')) {
-        injected = true;
-        throw new Error('proof: transient wake routing failure');
-      }
-      return query(sql, values);
-    });
-    let first: ReturnType<typeof scope1.data>;
-    try {
-      first = scope1.data(await client.callTool({ name: 'send_message', arguments: args }));
-      expect(first.routing).toBe('retrying');
-    } finally { fault.mockRestore(); }
-    expect(injected).toBe(true);
-    const retry = scope1.data(await client.callTool({ name: 'send_message', arguments: args }));
-    expect(retry.messageId).toBe(first!.messageId);
-    expect(retry.woken).toEqual(['demo-agent']);
-    expect(retry.routing).toBeUndefined();
-    expect((await scope1.db.query('SELECT 1 FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2', [retry.messageId, AGENT])).rowCount).toBe(1);
-  });
-
-  it('review proof: an interrupted routing record cannot lose a tagged wake on retry', async () => {
+  it('reports routing failure and routes again only on an explicit repeat request', async () => {
     const { client, member } = await scope1.connected();
-    const args = { room: ROOM, text: '@demo-agent please handle this interrupted post', idempotencyKey: 'interrupted-route' };
+    const args = { room: ROOM, text: '@demo-agent please retry this failed wake', idempotencyKey: 'cached-failed-wake' };
     const id = createHash('sha256').update(`rooms-mcp-message:${member}:${args.idempotencyKey}`).digest('hex');
-    const query = scope1.db.query.bind(scope1.db);
-    let injected = false;
-    const fault = vi.spyOn(scope1.db, 'query').mockImplementation(async (sql, values) => {
-      if (!injected && sql.includes('INSERT INTO rooms_mcp_pending_routes')) {
-        injected = true;
-        throw new Error('review proof: interrupted routing insert');
-      }
-      return query(sql, values);
-    });
+    await scope1.db.query(`CREATE FUNCTION reject_mcp_route() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'routing failed'; END $$;
+      CREATE TRIGGER reject_mcp_route BEFORE INSERT ON agent_commands
+      FOR EACH ROW EXECUTE FUNCTION reject_mcp_route()`);
     try {
       expect((await client.callTool({ name: 'send_message', arguments: args })).isError).toBe(true);
-    } finally { fault.mockRestore(); }
-    expect(injected).toBe(true);
-    await scope1.db.query("UPDATE rooms_mcp_idempotency SET claimed_at=now()-interval '2 minutes' WHERE member_id=$1", [member]);
-    const retry = scope1.data(await client.callTool({ name: 'send_message', arguments: args }));
-    expect(retry.messageId).toBe(id);
-    expect(retry.woken).toEqual(['demo-agent']);
+    } finally { await scope1.db.query('DROP TRIGGER reject_mcp_route ON agent_commands; DROP FUNCTION reject_mcp_route()'); }
     expect((await scope1.db.query('SELECT 1 FROM messages WHERE id=$1', [id])).rowCount).toBe(1);
+    expect((await scope1.db.query('SELECT 1 FROM agent_commands WHERE source_message_id=$1', [id])).rowCount).toBe(0);
+    const repeated = scope1.data(await client.callTool({ name: 'send_message', arguments: args }));
+    expect(repeated.messageId).toBe(id);
+    expect(repeated.woken).toEqual(['demo-agent']);
     expect((await scope1.db.query('SELECT 1 FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2', [id, AGENT])).rowCount).toBe(1);
-    expect((await scope1.db.query('SELECT 1 FROM rooms_mcp_pending_routes WHERE message_id=$1', [id])).rowCount).toBe(0);
+    expect(scope1.data(await client.callTool({ name: 'send_message', arguments: args }))).toEqual(repeated);
   });
 describe('in a Room of 20,000 messages', () => {
 const scope2 = fixtureScope2(scope1);
@@ -717,7 +541,6 @@ const scope2 = fixtureScope2(scope1);
         expect(await scope2.commands(sent.messageId)).toBe(1);
         const command = (await scope1.db.query<{ agent_depth: number }>('SELECT agent_depth FROM agent_commands WHERE source_message_id=$1', [sent.messageId])).rows[0]!;
         expect(command.agent_depth).toBe(1);
-        expect((await scope1.db.query('SELECT 1 FROM rooms_mcp_pending_routes WHERE message_id=$1', [sent.messageId])).rowCount).toBe(0);
       } finally {
         fault.mockRestore();
       }
@@ -772,6 +595,201 @@ const scope3 = fixtureScope3(scope1);
       const maximum = (search.inputSchema.properties as Record<string, { maximum?: number }>).limit!.maximum!;
       for (const scope of ['history', 'memory'])
         await scope3.ok(client, 'search', { address: ROOM, scope, query: 'release migration', limit: maximum });
+    });
+
+    it('R-MCP-PARITY: exposes every agent tool except the documented exclusions', async () => {
+      const surface = await import('../../body/src/minimal-tool-surface.js');
+      const agentTools = new Set([
+        ...surface.minimalTools(true), ...surface.minimalTools(false), surface.RUNNER_TOOL, surface.SILENT_TOOL,
+        ...surface.scratchTools(true), ...surface.repositoryTools(),
+      ].map(definition => definition.name));
+      for (const name of [...Object.values(surface.REPOSITORY_ROUTES), ...Object.values(surface.SCRATCH_ROUTES),
+        ...Object.values(surface.CAPABILITY_ROUTES).flatMap(routes => Object.values(routes))]) agentTools.add(name);
+      const { client } = await scope1.connected();
+      const exposed = new Set([...(await client.listTools()).tools.map(definition => definition.name), ...MCP_APP_ROUTE_OPERATIONS]);
+      const missing = [...agentTools].filter(name => !exposed.has(name) && !MCP_AGENT_EXCLUSIONS[name]);
+      expect(missing).toEqual([]);
+      expect(Object.keys(MCP_AGENT_EXCLUSIONS).filter(name => exposed.has(name))).toEqual([]);
+      // Every exclusion names a real agent tool, so the table cannot hide a typo.
+      expect(Object.keys(MCP_AGENT_EXCLUSIONS).filter(name => !agentTools.has(name))).toEqual([]);
+      // Reproduction (R-MCP-ROUTES): names alone hid that beeline:workflow had no describe action, which the
+      // helper's start description tells agents to call first. Every helper app action is listed or excluded.
+      for (const [app, routes] of Object.entries(surface.CAPABILITY_ROUTES)) {
+        const listed = await scope3.call(client, 'app_tool', { address: ROOM, app: `beeline:${app}` });
+        const actions = listed.error ? [] : (JSON.parse(listed.text).data.tools as { name: string }[]).map(entry => entry.name);
+        const missingActions = Object.entries(routes).filter(([action, op]) => !actions.includes(action) && !MCP_AGENT_EXCLUSIONS[op]);
+        expect(missingActions, app).toEqual([]);
+      }
+    });
+
+    it('R-MCP-EXCLUDED: refuses wallet spending and host grants with a plain reason', async () => {
+      const { client } = await scope1.connected();
+      for (const name of ['wallet_pay', 'wallet_swap', 'wallet_contract_call', 'wallet_sign_typed_data',
+        'create_link_spend_request', 'wait_link_spend_request', 'request_grant', 'run_granted_command']) {
+        const refused = await scope3.call(client, name, {});
+        expect(refused.error, name).toBe(true);
+        expect(refused.text).toMatch(name.includes('grant') ? /host grants are kept out of connected apps/ : /wallet spending is kept out of connected apps/);
+      }
+      for (const tool of ['pay', 'swap', 'contract_call', 'sign_typed_data', 'link_request', 'link_wait']) {
+        const refused = await scope3.call(client, 'app_tool', { address: ROOM, app: 'beeline:wallet', tool, args: { amount: '1', to: '0x0' } });
+        expect(refused.error, tool).toBe(true);
+        expect(refused.text).toContain('wallet spending is kept out of connected apps');
+      }
+      const listed = await scope3.ok(client, 'app_tool', { address: ROOM, app: 'beeline:wallet' });
+      expect(listed.tools.map((entry: { name: string }) => entry.name)).toEqual(['address', 'balance', 'chains', 'history', 'quote']);
+      expect((await scope1.db.query("SELECT 1 FROM agent_grants WHERE kind='mcp' AND target='wallet'")).rowCount).toBe(0);
+    });
+
+    it('R-MCP-ORDER: orders an agent and receives its report as a wake', async () => {
+      const { client, member } = await scope1.connected();
+      const ordered = await scope3.ok(client, 'order', { address: ROOM, agent: 'demo-agent', text: 'Check the nebula numbers.' });
+      expect(ordered.accepted).toBe(true);
+      const order = (await scope1.db.query<{ id: string; turn_request_id: string; private_payload: { authorId: string } }>(
+        `SELECT id,turn_request_id,private_payload FROM agent_commands WHERE id=$1`, [ordered.id])).rows[0]!;
+      expect(order.private_payload.authorId).toBe(member);
+      // The app's own call left no open turn behind.
+      expect((await scope1.db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1 AND state<>'complete'`, [member])).rowCount).toBe(0);
+      const generationId = 'gen-report';
+      await scope1.daemon.execute('claimAgentCommand', { roomId: ROOM, commandId: order.id, generationId } as never, AGENT);
+      await scope1.daemon.execute('report', { roomId: ROOM, requestId: order.turn_request_id, generationId, status: 'done', text: 'done: the numbers match' } as never, AGENT);
+      const wakes = (await scope3.ok(client, 'list_mentions', {})).wakes as { address: string; reason: string; text: string }[];
+      expect(wakes).toContainEqual(expect.objectContaining({ address: ROOM, reason: 'report', text: expect.stringContaining('the numbers match') }));
+      expect((await scope3.ok(client, 'no_reply_needed', { address: ROOM })).cleared).toBe(1);
+      expect((await scope3.ok(client, 'list_mentions', {})).wakes).toEqual([]);
+    });
+
+    it('R-MCP-REPORT: reports an order back to the agent that sent it', async () => {
+      const { client, member, grant } = await scope1.connected();
+      await scope1.db.query(`UPDATE rooms_mcp_clients SET callback_url='https://hooks.example/orders' WHERE id=$1`, [grant.clientId]);
+      const handle = (await scope1.db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+      expect((await scope3.call(client, 'report', { address: ROOM, status: 'done', text: 'done: nothing was ordered' })).text)
+        .toContain('no order is waiting for your report');
+      const turn = await scope3.agentTurn('@demo-agent hand the audit to the app');
+      const sent = await scope1.daemon.execute('order', { ...turn, address: ROOM, agent: handle, text: 'Audit the corner list.' } as never, AGENT) as { id: string };
+      // The order reaches the app's webhook at once; no helper claims it.
+      expect((await scope1.db.query<{ body: string }>('SELECT body FROM rooms_mcp_webhook_outbox WHERE member_id=$1 AND message_id=$2',
+        [member, sent.id])).rows[0]?.body).toContain('Order (order): Audit the corner list.');
+      // Reproduction: the delivered body once named the command id as a message to reply to, under tag instructions.
+      const delivered: Record<string, unknown>[] = [];
+      await deliverMcpMemberWebhooks(scope1.db, async (_url, init) => { delivered.push(JSON.parse(init.body)); return new Response(null, { status: 204 }); });
+      const orderBody = delivered.find(body => body.commandId === sent.id)!;
+      expect(orderBody).toMatchObject({ memberId: member, roomId: ROOM, address: ROOM, id: sent.id, kind: 'order', reason: 'order',
+        text: expect.stringContaining('Audit the corner list.'), next: MCP_ORDER_WAKE_HINT, cursor: null });
+      expect(orderBody).not.toHaveProperty('replyRule');
+      expect(orderBody).not.toHaveProperty('messageId');
+      expect(String(orderBody.instruction)).not.toMatch(/tagged you|replyTo [0-9a-f]{64}|send_message/);
+      expect(String(orderBody.instruction)).toContain('call report');
+      const wakes = (await scope3.ok(client, 'list_mentions', {})).wakes as { address: string; kind?: string; text?: string }[];
+      expect(wakes).toContainEqual(expect.objectContaining({ address: ROOM, kind: 'order', text: expect.stringContaining('Audit the corner list') }));
+      // Another call in that Room leaves the order waiting for its report.
+      await scope3.ok(client, 'read', { facet: 'members', address: ROOM });
+      await scope3.ok(client, 'post', { address: ROOM, text: 'Auditing now.' });
+      expect((await scope1.db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1 AND private_payload->>'kind'='order' AND state='pending'`, [member])).rowCount).toBe(1);
+      expect((await scope3.call(client, 'report', { address: ROOM, status: 'done', text: '' })).error).toBe(true);
+      await scope3.ok(client, 'report', { address: ROOM, status: 'done', text: 'three corners, all green' });
+      const back = (await scope1.db.query<{ private_payload: { kind: string; text: string } }>(
+        `SELECT private_payload FROM agent_commands WHERE agent_id=$1 AND reason='report' ORDER BY created_at DESC LIMIT 1`, [AGENT])).rows[0]!;
+      expect(back.private_payload).toMatchObject({ kind: 'report', text: 'done: three corners, all green' });
+      expect((await scope1.db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1 AND state<>'complete'`, [member])).rowCount).toBe(0);
+      // A reviewer dispatch by legacy webhook carries the same review hint as MCP Events and list_mentions.
+      const review = await createAgentCommand(scope1.db, {
+        roomId: ROOM, agentId: member, sourceMessageId: null, reason: 'corner_review_dispatch',
+        privatePayload: { text: `Current handoff target: PR #7 at ${'a'.repeat(40)}.`, authorId: AGENT, fromRoomId: ROOM, kind: 'lifecycle' },
+      });
+      delivered.length = 0;
+      await deliverMcpMemberWebhooks(scope1.db, async (_url, init) => { delivered.push(JSON.parse(init.body)); return new Response(null, { status: 204 }); });
+      expect(delivered.find(body => body.commandId === review!.id)).toMatchObject({ reason: 'corner_review_dispatch', next: MCP_REVIEW_WAKE_HINT });
+    });
+
+    it.each(['standalone', 'order'] as const)('R-MCP-ARTIFACT: a Room member posts files into its corner without a corner membership (%s)', async mode => {
+      const { client, member } = await scope1.connected();
+      const corner = await scope3.reportCorner(member);
+      const order = mode === 'order' ? await createAgentCommand(scope1.db, { roomId: corner, agentId: member,
+        sourceMessageId: null, reason: 'order', privatePayload: {
+          kind: 'order', authorId: AGENT, fromRoomId: ROOM, text: 'Post the corner mock.',
+        } }) : null;
+      const command = order ? { commandId: order.id } : {};
+      const noCornerMemberships = async () => expect((await scope1.db.query(
+        'SELECT 1 FROM memberships WHERE room_id=$1', [corner])).rowCount).toBe(0);
+      await noCornerMemberships();
+      const posted = await scope3.ok(client, 'post_artifact', { ...command, address: corner, title: 'mock.html',
+        html: '<!doctype html><title>Mock</title><p>Corner mock</p>', text: 'Here is the mock.' });
+      expect((await scope1.db.query('SELECT room_id,text,attachments FROM messages WHERE id=$1', [posted.id])).rows[0])
+        .toMatchObject({ room_id: corner, text: 'Here is the mock.', attachments: [
+          { name: 'mock.html', mimeType: 'text/html', url: expect.stringContaining('/media/') },
+        ] });
+      const second = await scope3.ok(client, 'post_artifact', { ...command, address: corner, title: 'mock.txt',
+        mime: 'text/plain', bytes: Buffer.from('Mock notes').toString('base64') });
+      expect((await scope1.db.query('SELECT room_id,attachments FROM messages WHERE id=$1', [second.id])).rows[0])
+        .toMatchObject({ room_id: corner, attachments: [{ name: 'mock.txt', mimeType: 'text/plain' }] });
+      expect((await scope1.db.query('SELECT 1 FROM messages WHERE room_id=$1 AND author_id=$2', [ROOM, member])).rowCount).toBe(0);
+      expect((await scope1.db.query('SELECT 1 FROM agent_pending_attachments WHERE agent_id=$1', [member])).rowCount).toBe(0);
+      await noCornerMemberships();
+    });
+
+    it('R-MCP-ARTIFACT: refuses inaccessible and archived corners before uploading', async () => {
+      const { client, member } = await scope1.connected();
+      const corner = await scope3.reportCorner(member);
+      const artifact = { title: 'private.html', html: '<p>Private mock</p>' };
+      expect((await scope3.call(client, 'post_artifact', { ...artifact, address: CORNER })).text).toContain('Access denied');
+      await scope1.db.query('UPDATE rooms SET archived_at=now() WHERE id=$1', [corner]);
+      expect((await scope3.call(client, 'post_artifact', { ...artifact, address: corner })).text).toContain('Access denied');
+      await scope1.db.query('UPDATE rooms SET archived_at=NULL WHERE id=$1', [corner]);
+      await scope1.db.query('UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2', [ROOM, member]);
+      expect((await scope3.call(client, 'post_artifact', { ...artifact, address: corner })).text).toContain('Access denied');
+      expect((await scope1.db.query('SELECT 1 FROM objects WHERE owner_id=$1', [member])).rowCount).toBe(0);
+      expect((await scope1.db.query('SELECT 1 FROM messages WHERE author_id=$1', [member])).rowCount).toBe(0);
+    });
+
+    // Reproduction (R-MCP-PROGRESS): an outside agent could only post whole messages, so a corner showed none of
+    // its work while it ran; created agents' narration lands as corner activity.
+    it('E1: explicit order preserves requester and generation through merge yes and report', async () => {
+      const { client, member } = await scope1.connected();
+      const corner = await scope3.reportCorner(member);
+      const source = 'e1'.repeat(32), unrelated = 'e2'.repeat(32);
+      await scope1.db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$3,$4,'Please finish this order'),($2,$3,$5,'Unrelated later tag')`,
+        [source, unrelated, ROOM, USER, OTHER]);
+      await scope1.db.query(`INSERT INTO rooms_mcp_mentions(member_id,room_id,message_id) VALUES($1,$2,$3)`, [member, corner, unrelated]);
+      const order = await createAgentCommand(scope1.db, { roomId: corner, agentId: member, sourceMessageId: source,
+        reason: 'order', privatePayload: { kind: 'order', authorId: AGENT, fromRoomId: ROOM, text: 'Finish this order' } });
+      const head = 'd'.repeat(40);
+      await scope1.db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [corner,
+        JSON.stringify({ lifecycle: 'in-review', checks: 'passing', pr: { number: 7, headSha: head } })]);
+      await scope3.ok(client, 'post', { address: corner, commandId: order!.id, progress: true, text: 'Checking the order.' });
+      const before = (await scope1.db.query<{ generation_id: string; root_source_message_id: string; state: string }>(
+        `SELECT generation_id,root_source_message_id,state FROM agent_commands WHERE id=$1`, [order!.id])).rows[0]!;
+      expect(before).toMatchObject({ state: 'claimed', root_source_message_id: source });
+      await scope3.ok(client, 'record_merge_yes', { address: corner, commandId: order!.id });
+      expect((await scope1.db.query(`SELECT approved_by,head_sha FROM corner_merge_approvals WHERE corner_id=$1`, [corner])).rows[0])
+        .toMatchObject({ approved_by: USER, head_sha: head });
+      expect((await scope1.db.query(`SELECT generation_id FROM agent_commands WHERE id=$1`, [order!.id])).rows[0])
+        .toEqual({ generation_id: before.generation_id });
+      await scope3.ok(client, 'report', { address: corner, commandId: order!.id, status: 'done', text: 'done: order complete' });
+      expect((await scope1.db.query(`SELECT state FROM agent_commands WHERE id=$1`, [order!.id])).rows[0]).toEqual({ state: 'complete' });
+      expect((await scope3.call(client, 'record_merge_yes', { address: corner, commandId: order!.id })).error).toBe(true);
+    });
+
+    it('E1: ambiguous fallback refuses; explicit order fences wrong member, address and generation', async () => {
+      const { client, member } = await scope1.connected();
+      const first = await scope3.reportCorner(member), second = await scope3.reportCorner(member);
+      const orders = [];
+      for (const corner of [first, second]) orders.push(await createAgentCommand(scope1.db, { roomId: corner, agentId: member, sourceMessageId: null,
+        reason: 'corner_objective', privatePayload: { kind: 'order', authorId: AGENT, fromRoomId: ROOM, text: 'Finish' } }));
+      expect((await scope3.call(client, 'report', { address: ROOM, status: 'done', text: 'done: ambiguous' })).text).toContain('ambiguous report');
+      expect((await scope3.call(client, 'post', { address: second, commandId: orders[0]!.id, text: 'wrong address' })).error).toBe(true);
+      expect((await scope3.call(client, 'post', { address: first, commandId: '0'.repeat(64), text: 'fabricated' })).error).toBe(true);
+      await scope1.db.query(`UPDATE agent_commands SET agent_id=$2 WHERE id=$1`, [orders[0]!.id, AGENT]);
+      expect((await scope3.call(client, 'post', { address: first, commandId: orders[0]!.id, text: 'wrong member' })).error).toBe(true);
+      await scope1.db.query(`UPDATE agent_commands SET agent_id=$2 WHERE id=$1`, [orders[0]!.id, member]);
+      await scope1.db.query(`UPDATE agent_commands SET state='claimed',generation_id='helper-generation',lease_expires_at=now()+interval '1 minute' WHERE id=$1`, [orders[0]!.id]);
+      expect((await scope3.call(client, 'post', { address: first, commandId: orders[0]!.id, text: 'another active lease' })).error).toBe(true);
+      await scope1.db.query(`UPDATE agent_commands SET lease_expires_at=now()-interval '1 second' WHERE id=$1`, [orders[0]!.id]);
+      expect((await scope3.call(client, 'post', { address: first, commandId: orders[0]!.id, progress: true, text: 'Expired clocks cannot steal work' })).error).toBe(true);
+      await scope1.db.query(`UPDATE agent_commands SET state='pending',generation_id=NULL,lease_expires_at=NULL WHERE id=$1`, [orders[0]!.id]);
+      await scope3.ok(client, 'post', { address: first, commandId: orders[0]!.id, progress: true, text: 'Explicitly returned work' });
+      expect((await scope1.db.query<{ generation_id: string }>(`SELECT generation_id FROM agent_commands WHERE id=$1`, [orders[0]!.id])).rows[0]!.generation_id).toMatch(/^mcp:/);
+      await scope3.ok(client, 'report', { address: first, commandId: orders[0]!.id, status: 'done', text: 'done: first' });
+      await scope3.ok(client, 'report', { address: second, commandId: orders[1]!.id, status: 'done', text: 'done: second' });
     });
 });
 });

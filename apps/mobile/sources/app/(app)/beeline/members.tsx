@@ -27,24 +27,10 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { router, useLocalSearchParams, useNavigation, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import {
-  AGENT_NAME_MAX_LENGTH,
-  isAgentDetailView,
-  isAllowedAgentModelConfigCategory,
-  isReasonableAgentName,
-  isWorkspaceView,
-  type AgentDetailView,
-  type AgentModelConfigInput,
-  type AgentModelConfigOption,
-  type Identity,
-  type WorkspaceView,
-} from '@beeline/buzz-client';
+import { AGENT_NAME_MAX_LENGTH, isAgentDetailView, isAllowedAgentModelConfigCategory, isReasonableAgentName, isWorkspaceView, type AgentDetailView, type AgentModelConfigInput, type AgentModelConfigOption, type Identity, type WorkspaceView, } from '@beeline/buzz-client';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import {
-  createCommunityInviteUrl,
-  resolveCommunityInvitePublicOrigin,
-} from '@/buzz/community-invite';
+import { createCommunityInviteUrl, resolveCommunityInvitePublicOrigin, } from '@/buzz/community-invite';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { agentPairingCommand } from '@/buzz/agent-pairing-command';
 import { defaultAgentPersona } from '@/buzz/agent-persona';

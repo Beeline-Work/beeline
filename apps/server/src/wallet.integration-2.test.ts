@@ -1,4 +1,4 @@
-import { phoneFetch, describe, expect, it, vi, walletSource, walletExplorerTxUrl, postWalletNotice, HUMAN, HELPER, WORKSPACE, BRIDGE2, fixtureScope1 } from './wallet.integration.test-support.js';
+import { phoneFetch, describe, expect, it, vi, walletSource, walletExplorerTxUrl, postWalletNotice, HUMAN, HELPER, WORKSPACE, BRIDGE2, fixtureScope1 } from './test-support-wallet.integration.test-support.js';
 
 describe('wallet over the fake CDP seam', () => {
 const scope1 = fixtureScope1();

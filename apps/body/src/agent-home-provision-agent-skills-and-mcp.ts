@@ -1,4 +1,53 @@
 import { piNoRetrySettings } from './pi-retry-settings.js';
+/**
+ * Per-room-instance harness state directories.
+ *
+ * Beeline isolates every Room and corner at its own layer — separate `Body`,
+ * durable inbox, relay socket, presence record, ACP session and worktree — but
+ * the ACP *child processes* all shared one `$HOME`, so an external harness
+ * (`claude`, `codex`, `pi`, …) that keeps per-project state under its own home
+ * directory could still remember another Room. That is below Beeline's
+ * per-channel isolation and is the one plausible mechanism for real cross-room
+ * context bleed.
+ *
+ * Room harnesses receive a Beeline-owned `$HOME` as well as their harness
+ * state roots. Known login files are linked into the harness-specific state
+ * directory, preserving one operator login without inheriting `$HOME/.agents`,
+ * plugins, configuration, or personal memory. Pi's credential-bearing custom
+ * provider catalog is copied as a private ordinary file into only its config
+ * directory and regenerated on activation; operator UI/default settings stay
+ * isolated.
+ *
+ * **Skills.** Every `<harness-home>/skills` is rebuilt on activation with the
+ * explicit default allowlist plus narrow names stored on this agent's runtime
+ * record. Shared skills are validated and copied as private ordinary
+ * files, preserving owner execution permission for launchers; ambient
+ * directories are never inherited. Ordinary operator MCP server
+ * declarations are COPIED into the harness home so every Room/corner session
+ * has the tools the host offers — without them a harness boots with a login but
+ * nothing to advertise over ACP. Codex-acp
+ * MERGES session MCP servers into `$CODEX_HOME/config.toml`, so a symlink
+ * there would let a session write into the operator's real config. Only MCP
+ * declarations pass through: model/sandbox/approval settings stay out because
+ * they fight the daemon's own agent-mode flags. Codex's native web search is
+ * enabled explicitly (`[features] standalone_web_search`); Claude Code gets a
+ * generated `settings.json` allowing its native `WebSearch` tool. Pi's
+ * harness MCP inventory is `$PI_CODING_AGENT_DIR/mcp.json` (operator
+ * `~/.pi/agent/mcp.json`); local servers are copied and granted host routes
+ * are rewritten there like Claude's `.claude.json`. The Pi installer chooses
+ * that native inventory only when the executable proves it can load it;
+ * otherwise `pi-mcp-bridge.ts` republishes the filtered stdio inventory.
+ * Isolated homes exclude operator `settings.json`; Pi receives generated
+ * stream-liveness settings. This does NOT touch the #376
+ * credential armor: masked stores (`~/.ssh`, `~/.netrc`, `~/.config/gh`,
+ * `~/.config/trusty-squire`, `~/.git-credentials`) are never linked. Imported
+ * MCP declarations are classified `local` (copied as-is) or `host` (rewritten
+ * into a route only after an owner grant; otherwise kept out). Squire is
+ * code-owned as host.
+ *
+ * Pi uses `PI_CODING_AGENT_DIR` and the isolated `$HOME`, preventing its
+ * otherwise-implicit reads from the operator's `~/.pi` and `~/.agents` trees.
+ */
 import { existsSync, readFileSync } from 'node:fs';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';

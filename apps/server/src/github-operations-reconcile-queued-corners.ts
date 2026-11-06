@@ -6,7 +6,7 @@ import { GitHubAppClient, githubMergeability } from '@beeline/auth/github';
 import type { CornerLifecycleView } from '@beeline/api-contract/phone';
 import { GITHUB_SUBJECT, systemLine } from './system-line.js';
 import { advanceCorner, lockCornerLifecycle, cornerMergeGate } from './corner-lifecycle.js';
-import { GitHubOperations, hash, record, GitHubRecord, text, integer, CornerWebhookTarget, repositoryName, branchForEvent, githubUrl, checkFact } from './github-operations.js';
+import { GitHubOperations, CornerWebhookTarget, GitHubRecord, repositoryName, branchForEvent, text, record, githubUrl, hash, integer, checkFact } from './github-operations.js';
 
 
 

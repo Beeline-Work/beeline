@@ -1,4 +1,4 @@
-import { createServer, createHmac, randomUUID, AddressInfo, mkdtemp, rm, join, describe, expect, it, WebSocket, WebSocketServer, waitForComputerHandback, SYSTEM_IDENTITY_ID, systemLine, createAgentCommand, claimAgentCommand, readAgentCommands, DaemonService, backfillComputerObservations, createBeelineServer, readRoomViewMessage, CommandExecutionContext, runServerCommandIntake, assembleTurnPrompt, computerViewToken, createComputerSession, endComputerSession, expireComputerSessions, getComputerSession, refreshComputerSession, startComputerExpirySweep, trustedComputerShareUpstream, HUMAN, OTHER, AGENT, WORKSPACE, ROOM, testSquire, opened, next, nextType, until, fixtureScope1, type TokenAuth, type DaemonApiClient } from './computer-session.test-support.js';
+import { createServer, createHmac, randomUUID, AddressInfo, mkdtemp, rm, join, describe, expect, it, WebSocket, WebSocketServer, shareChromiumPage, waitForComputerHandback, SYSTEM_IDENTITY_ID, systemLine, createAgentCommand, claimAgentCommand, readAgentCommands, DaemonService, backfillComputerObservations, createBeelineServer, readRoomViewMessage, CommandExecutionContext, runServerCommandIntake, assembleTurnPrompt, computerViewToken, createComputerSession, endComputerSession, getComputerSession, trustedComputerShareUpstream, HUMAN, OTHER, AGENT, WORKSPACE, ROOM, testSquire, opened, next, nextType, until, fixtureScope1, type TokenAuth, type DaemonApiClient } from './test-support-computer-session.test-support.js';
 
 describe('computer session handoff', () => {
 const scope1 = fixtureScope1();
@@ -497,120 +497,6 @@ const scope1 = fixtureScope1();
   });
 
 
-  it('keeps renewed leases live, binds renewal to owner/source, and never revives an ended card', async () => {
-    const upstreamUrl = `https://squire.test/s/${'r'.repeat(43)}/`;
-    const share = await createComputerSession(scope1.database, scope1.live, {
-      roomId: ROOM, agentId: AGENT, sessionId: 'rolling-share', upstreamUrl, expiresAt: Date.now() + 1_000,
-    }, testSquire);
-    const daemon = new DaemonService(scope1.database, scope1.live);
-    const renew = (expiresAt: number) => daemon.execute('refreshComputerSession', {
-      roomId: ROOM, sessionId: 'rolling-share', upstreamUrl, expiresAt,
-    }, AGENT);
-    for (let lifetime = 0; lifetime < 3; lifetime++) {
-      // Cross each prior upstream deadline; the persisted renewal wins the sweep.
-      await scope1.database.query(`UPDATE computer_sessions SET expires_at=now()-interval '1 second' WHERE id=$1`, [share.id]);
-      expect(await renew(Date.now() + 60_000)).toEqual({ live: true });
-      await expireComputerSessions(scope1.database, scope1.live);
-      expect((await getComputerSession(scope1.database, share.id))?.status).toBe('live');
-    }
-    const lease = { roomId: ROOM, agentId: AGENT, sessionId: 'rolling-share', upstreamUrl, expiresAt: Date.now() + 120_000 };
-    expect(await refreshComputerSession(scope1.database, { ...lease, agentId: OTHER })).toEqual({ live: false });
-    expect(await refreshComputerSession(scope1.database, { ...lease, upstreamUrl: 'https://another.test/' })).toEqual({ live: false });
-    await expect(renew(NaN)).rejects.toThrow('expiry is invalid');
-    await endComputerSession(scope1.database, scope1.live, (await getComputerSession(scope1.database, share.id))!);
-    expect(await renew(Date.now() + 120_000)).toEqual({ live: false });
-    expect((await getComputerSession(scope1.database, share.id))?.status).toBe('ended');
-  });
-
-
-  it('rechecks expiry when renewal races a sweep that already selected the old lease', async () => {
-    const gone = createServer((_request, response) => response.writeHead(410).end());
-    await new Promise<void>(resolve => gone.listen(0, '127.0.0.1', resolve));
-    const upstreamUrl = `http://127.0.0.1:${(gone.address() as AddressInfo).port}/s/${'r'.repeat(43)}/`;
-    const share = await createComputerSession(scope1.database, scope1.live, {
-      roomId: ROOM, agentId: AGENT, sessionId: 'renewal-race', upstreamUrl, expiresAt: Date.now() + 1_000,
-    }, testSquire);
-    await scope1.database.query(`UPDATE computer_sessions SET expires_at=now()-interval '1 second' WHERE id=$1`, [share.id]);
-    const racing = new Proxy(scope1.database, { get(target, property) {
-      if (property === 'query') return async (sql: string, values?: unknown[]) => {
-        const selected = await target.query(sql, values);
-        if (sql.includes('FROM computer_sessions WHERE expires_at<=now()'))
-          await refreshComputerSession(scope1.database, {
-            roomId: ROOM, agentId: AGENT, sessionId: 'renewal-race', upstreamUrl, expiresAt: Date.now() + 60_000,
-          });
-        return selected;
-      };
-      const value = Reflect.get(target, property);
-      return typeof value === 'function' ? value.bind(target) : value;
-    } });
-    await expireComputerSessions(racing, scope1.live);
-    expect((await getComputerSession(scope1.database, share.id))?.status).toBe('live');
-    expect((await scope1.database.query<{ status: string }>(`SELECT card->>'status' AS status FROM messages WHERE id=$1`,
-      [(await getComputerSession(scope1.database, share.id))!.message_id])).rows[0]?.status).toBe('live');
-    await endComputerSession(scope1.database, scope1.live, (await getComputerSession(scope1.database, share.id))!);
-    await new Promise<void>(resolve => gone.close(() => resolve()));
-  });
-
-
-  it('ends a view at its committed lease expiry without probing Squire and closes viewers', async () => {
-    const token = 'e'.repeat(43);
-    let upstreamReads=0;
-    const squire = createServer((_request, response) => {
-      upstreamReads++;response.writeHead(200).end('<!doctype html>');
-    });
-    const upstreamSockets = new WebSocketServer({ noServer: true });
-    squire.on('upgrade', (request, socket, head) =>
-      upstreamSockets.handleUpgrade(request, socket, head, (client) => upstreamSockets.emit('connection', client, request)));
-    await new Promise<void>((resolve) => squire.listen(0, '127.0.0.1', resolve));
-    const upstreamUrl = `http://127.0.0.1:${(squire.address() as AddressInfo).port}/s/${token}/`;
-    try {
-      const share = await createComputerSession(scope1.database, scope1.live, {
-        roomId: ROOM, agentId: AGENT, sessionId: 'squire-expires', upstreamUrl, expiresAt: Date.now() + 1_500,
-      }, testSquire);
-      const lasting = await createComputerSession(scope1.database, scope1.live, {
-        roomId: ROOM, agentId: AGENT, sessionId: 'squire-no-expiry', upstreamUrl,
-      }, testSquire);
-      const access = await computerViewToken(scope1.database, share.id, HUMAN);
-      const viewer = new WebSocket(`${scope1.origin.replace('http:', 'ws:')}/s/${share.id}/stream?access=${access}`);
-      await opened(viewer);
-      const viewerClosed = new Promise<void>((resolve) => viewer.once('close', () => resolve()));
-      await new Promise((resolve) => setTimeout(resolve, 1_600));
-
-      expect((await getComputerSession(scope1.database, share.id))?.status).toBe('live');
-      const readsBeforeExpiry=upstreamReads;
-      // Acquisition reconciles the stored due row even when its upstream URL
-      // would still return200. There is no status request to that provider.
-      const stop = startComputerExpirySweep(scope1.database, scope1.live, 60_000);
-      try {
-        await until(async () => (await scope1.database.query<{ status: string }>(
-          'SELECT status FROM computer_sessions WHERE id=$1', [share.id])).rows[0]?.status === 'ended' ? true : undefined);
-      } finally { stop(); }
-      expect(upstreamReads).toBe(readsBeforeExpiry);
-      expect((await fetch(`${scope1.origin}/s/${share.id}/?access=${access}`)).status).toBe(410);
-      await viewerClosed;
-      const refused = new WebSocket(`${scope1.origin.replace('http:', 'ws:')}/s/${share.id}/stream?access=${access}`);
-      await expect(opened(refused)).rejects.toThrow();
-      const card = (await scope1.database.query<{ card: { status: string } }>(
-        `SELECT m.card FROM messages m JOIN computer_sessions c ON c.message_id=m.id WHERE c.id=$1`, [share.id])).rows[0];
-      expect(card?.card.status).toBe('ended');
-      const endedAt = (await scope1.database.query<{ ended_at: Date }>(
-        'SELECT ended_at FROM computer_sessions WHERE id=$1', [share.id])).rows[0]?.ended_at;
-
-      // Repeated processing changes nothing.
-      expect(await expireComputerSessions(scope1.database, scope1.live)).toBe(0);
-      await endComputerSession(scope1.database, scope1.live, { ...(await getComputerSession(scope1.database, share.id))!, status: 'live' });
-      expect((await scope1.database.query<{ ended_at: Date }>(
-        'SELECT ended_at FROM computer_sessions WHERE id=$1', [share.id])).rows[0]?.ended_at).toEqual(endedAt);
-      expect((await getComputerSession(scope1.database, lasting.id))?.status).toBe('live');
-      await endComputerSession(scope1.database, scope1.live, (await getComputerSession(scope1.database, lasting.id))!);
-    } finally {
-      for (const client of upstreamSockets.clients) client.close();
-      await new Promise<void>((resolve) => upstreamSockets.close(() => resolve()));
-      await new Promise<void>((resolve) => squire.close(() => resolve()));
-    }
-  }, 60_000);
-
-
   it('coalesces each share into one latest observation, behind human requests, with silent completion', async () => {
     const share = await createComputerSession(scope1.database, scope1.live, {
       roomId: ROOM, agentId: AGENT, sessionId: 'activity-burst', upstreamUrl: 'body:',
@@ -788,5 +674,40 @@ const scope1 = fixtureScope1();
     const pending=waitForComputerHandback({serverBaseUrl:scope1.origin,shareId:share.id,daemonToken:'test-token',expiresAt:Date.now()+100});
     await endComputerSession(scope1.database,scope1.live,(await getComputerSession(scope1.database,share.id))!);
     expect(await pending).toEqual({type:'ended',events:[]});
+  });
+
+
+  it('delivers a screenshot when Chromium accepts screencast but emits no frames', async () => {
+    const debuggerServer = createServer();
+    const debuggerSockets = new WebSocketServer({ noServer: true });
+    debuggerServer.on('upgrade', (request, socket, head) =>
+      debuggerSockets.handleUpgrade(request, socket, head, (client) => debuggerSockets.emit('connection', client, request)));
+    debuggerSockets.on('connection', (socket) => socket.on('message', (data) => {
+      const command = JSON.parse(data.toString()) as { id: number; method: string };
+      if (command.method === 'Page.captureScreenshot')
+        socket.send(JSON.stringify({ id: command.id, result: { data: Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64') } }));
+      else socket.send(JSON.stringify({ id: command.id, result: {} }));
+    }));
+    await new Promise<void>((resolve) => debuggerServer.listen(0, '127.0.0.1', resolve));
+    try {
+      const share = await createComputerSession(scope1.database, scope1.live, {
+        roomId: ROOM, agentId: AGENT, sessionId: 'silent-cdp', upstreamUrl: 'body:',
+      });
+      const port = (debuggerServer.address() as AddressInfo).port;
+      await shareChromiumPage({ page: { id: 'silent-cdp', type: 'page', webSocketDebuggerUrl: `ws://127.0.0.1:${port}/` },
+        serverBaseUrl: scope1.origin, shareId: share.id, daemonToken: 'test-token', onEnded: async () => {} });
+      const access = await computerViewToken(scope1.database, share.id, HUMAN);
+      const viewer = new WebSocket(`${scope1.origin.replace('http:', 'ws:')}/s/${share.id}/ws?access=${access}`);
+      const message = next(viewer);
+      await opened(viewer);
+      expect(JSON.parse(await message)).toMatchObject({ method: 'Page.screencastFrame', params: { data: '/9j/2Q==' } });
+      viewer.close();
+      for (const client of debuggerSockets.clients) client.close();
+      await until(async () => (await getComputerSession(scope1.database, share.id))?.status === 'ended' ? true : undefined);
+    } finally {
+      for (const client of debuggerSockets.clients) client.close();
+      await new Promise<void>((resolve) => debuggerSockets.close(() => resolve()));
+      await new Promise<void>((resolve) => debuggerServer.close(() => resolve()));
+    }
   });
 });

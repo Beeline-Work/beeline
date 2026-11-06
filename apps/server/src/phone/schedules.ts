@@ -16,7 +16,7 @@ import { roomSchedule } from './read-projection.js';
        FROM agent_schedules schedule
        JOIN rooms surface ON surface.id=schedule.room_id
        WHERE (surface.id=$1 OR surface.parent_id=$1) AND surface.archived_at IS NULL
-         AND schedule.workflow_run IS NULL
+
        ORDER BY schedule.created_at,schedule.id`,
       [roomId],
     );
@@ -66,7 +66,7 @@ import { roomSchedule } from './read-projection.js';
     const deleted = await ctx.database.query(
       `DELETE FROM agent_schedules schedule USING rooms surface
        WHERE schedule.id=$1 AND surface.id=schedule.room_id
-         AND (surface.id=$2 OR surface.parent_id=$2) AND schedule.workflow_run IS NULL`,
+         AND (surface.id=$2 OR surface.parent_id=$2)`,
       [input.scheduleId, input.roomId],
     );
     if (!deleted.rowCount) throw new Error('schedule not found');

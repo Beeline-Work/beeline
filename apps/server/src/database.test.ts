@@ -1,4 +1,4 @@
-import { CornerAccessDatabase, CommandScopedDatabase, describe, expect, it, vi, INSTITUTIONAL_HISTORY_MAX_AGE_DAYS, backfillMessageSearchDocuments, MESSAGE_SEARCH_DOCUMENT_MAX_BYTES, migrate, APP_POOL_WAIT_TIMEOUT_MS, postgresPoolConfig, migrateData, PostgresDatabase, HEALTH_POOL_WAIT_TIMEOUT_MS, MIGRATION_LOCK_TIMEOUT_MS, MIGRATION_STATEMENT_TIMEOUT_MS, isTransientDatabaseConnectionError, PgliteDatabase, migratedDatabase, requireRoomSlug, reserveRoomName, result, TERMINATED, stubClient, poolHandingOut, poolWithQuery, type Pool, type SqlDatabase } from './database.test-support.js';
+import { CornerAccessDatabase, CommandScopedDatabase, describe, expect, it, vi, INSTITUTIONAL_HISTORY_MAX_AGE_DAYS, assertSchemaCurrent, backfillMessageSearchDocuments, MESSAGE_SEARCH_DOCUMENT_MAX_BYTES, migrate, APP_POOL_WAIT_TIMEOUT_MS, postgresPoolConfig, REQUIRED_SCHEMA_VERSION, REQUIRED_ROUTER_SCHEMA_VERSION, migrateData, PostgresDatabase, HEALTH_POOL_WAIT_TIMEOUT_MS, MIGRATION_LOCK_TIMEOUT_MS, MIGRATION_STATEMENT_TIMEOUT_MS, isTransientDatabaseConnectionError, PgliteDatabase, migratedDatabase, requireRoomSlug, reserveRoomName, result, TERMINATED, stubClient, poolHandingOut, poolWithQuery, type Pool, type SqlDatabase } from './test-support-database.test-support.js';
 
 
 
@@ -290,47 +290,7 @@ describe('pool checkout telemetry', () => {
   });
 });
 describe('a terminated checked-out connection never wedges the pool', () => {
-  it('destroys a transaction connection after its total deadline and refuses late queries', async () => {
-    const client = stubClient();
-    const database = new PostgresDatabase('', 1, {
-      pool: poolHandingOut([client]), transactionDeadlineMs: 50,
-    });
-    let releaseWork: (() => void) | undefined;
-    const work = new Promise<void>((resolve) => { releaseWork = resolve; });
-    let markStarted: (() => void) | undefined;
-    const started = new Promise<void>((resolve) => { markStarted = resolve; });
-    const stalled = database.transaction(async (transaction) => {
-      markStarted!();
-      await work;
-      await transaction.query('SELECT should_not_run');
-    });
-    const rejection = expect(stalled).rejects.toThrow(/transaction deadline exceeded/);
-    await started;
-    expect(database.oldestActiveTransactionAgeMs()).not.toBe(null);
-    await rejection;
-    expect(client.release).toHaveBeenCalledWith(expect.objectContaining({ code: '57014' }));
-    expect(database.transactionDeadlineCount()).toBe(1);
-    expect(database.oldestActiveTransactionAgeMs()).toBe(null);
-    releaseWork!();
-    await Promise.resolve();
-    expect(client.query).not.toHaveBeenCalledWith('SELECT should_not_run');
-  });
 
-
-  it('clears a stalled query age when a transaction deadline destroys its client', async () => {
-    const client = stubClient();
-    client.query.mockImplementation((sql: string) =>
-      sql === 'SELECT hanging' ? new Promise(() => {}) : Promise.resolve(result([])),
-    );
-    const database = new PostgresDatabase('', 1, {
-      pool: poolHandingOut([client]), transactionDeadlineMs: 20,
-    });
-    await expect(database.transaction((transaction) => transaction.query('SELECT hanging')))
-      .rejects.toThrow(/transaction deadline exceeded/);
-    expect(await database.oldestActiveQueryAgeMs()).toBe(null);
-    expect(database.oldestActiveTransactionAgeMs()).toBe(null);
-    expect(client.release).toHaveBeenCalledOnce();
-  });
 
   it('frees a checked-out transaction client that errors while no query is pending, and the pool recovers', async () => {
     const dying = stubClient();
@@ -779,5 +739,57 @@ describe('institutional cascades', () => {
     expect((await database.query(`SELECT 1 FROM institutional_memory_items`)).rowCount).toBe(0);
     expect((await database.query(`SELECT 1 FROM institutional_memory_jobs`)).rowCount).toBe(0);
     database.close();
+  });
+});
+describe('cascade-path foreign keys stay indexed', () => {
+  it('never lets a FK into messages, rooms, or workspaces lack a supporting index', async () => {
+    const database = await migratedDatabase();
+    // A workspace delete cascades through rooms and messages; an FK column
+    // pointing at one of those three tables with no leading-column index
+    // forces Postgres to sequentially scan the whole child table for the FK
+    // check or cascade. That is exactly what stalled DELETE FROM workspaces
+    // past the app pool's statement_timeout for the Beeline Welcome
+    // Workspace (agent_commands.source_message_id/result_message_id and
+    // messages.reply_to_message_id, found by reproducing the incident).
+    const unindexed = await database.query<{ child_table: string; fk_columns: string[] }>(
+      `WITH fk AS (
+         SELECT con.conname, con.conrelid, con.confrelid::regclass::text AS parent, con.conkey
+         FROM pg_constraint con
+         WHERE con.contype = 'f'
+           AND con.confrelid::regclass::text IN ('messages', 'rooms', 'workspaces')
+       )
+       SELECT fk.conrelid::regclass::text AS child_table,
+              array_agg(att.attname ORDER BY k.ord) AS fk_columns
+       FROM fk
+       JOIN LATERAL unnest(fk.conkey) WITH ORDINALITY AS k(attnum, ord) ON true
+       JOIN pg_attribute att ON att.attrelid = fk.conrelid AND att.attnum = k.attnum
+       WHERE NOT EXISTS (
+         SELECT 1 FROM pg_index idx
+         WHERE idx.indrelid = fk.conrelid
+           AND (idx.indkey::smallint[])[0:array_length(fk.conkey,1)-1] = fk.conkey::smallint[]
+       )
+       GROUP BY fk.conrelid`,
+    );
+    expect(unindexed.rows).toEqual([]);
+    database.close();
+  });
+});
+describe('release-owned schema readiness', () => {
+  it('rejects the previous schema marker until the push outbox migration is released', async () => {
+    const query = vi.fn().mockResolvedValue(result([{ version: REQUIRED_SCHEMA_VERSION - 1 }]));
+    await expect(assertSchemaCurrent({ query, transaction: vi.fn() })).rejects.toThrow(
+      new RegExp(`expected schema version ${REQUIRED_SCHEMA_VERSION}, found ${REQUIRED_SCHEMA_VERSION - 1}`),
+    );
+  });
+
+
+  it('returns unavailable boot evidence once without treating it as a schema mismatch', async () => {
+    const failure = new Error('timeout exceeded when trying to connect');
+    const query = vi.fn().mockRejectedValueOnce(failure)
+      .mockResolvedValueOnce(result([{ version: REQUIRED_SCHEMA_VERSION, router_version: REQUIRED_ROUTER_SCHEMA_VERSION }]));
+    await expect(assertSchemaCurrent({ query, transaction: vi.fn() })).rejects.toBe(failure);
+    expect(query).toHaveBeenCalledOnce();
+    await expect(assertSchemaCurrent({ query, transaction: vi.fn() })).resolves.toBeUndefined();
+    expect(query).toHaveBeenCalledTimes(2);
   });
 });

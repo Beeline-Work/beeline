@@ -136,7 +136,8 @@ import { MonolithCornerTurnLoop, WorkspaceRoster } from './monolith-corner-turn.
       ctx.stoppedTurns.delete(ctx.stoppedTurns.values().next().value!);
     if (ctx.currentTurn?.requestId !== requestId) return;
     ctx.branchSyncController?.abort();
-    if (ctx.client && ctx.sessionId) ctx.client.sessionCancel(ctx.sessionId);
+    void ctx.options.scheduler.stop(ctx.options.cornerId, true).catch(error =>
+      console.error('[body] cancelled corner process cleanup failed:', error));
   }
 
 

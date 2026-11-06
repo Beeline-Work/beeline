@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import type { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { PushDeliveryLoop } from '.././background.js';
 import { isAgentDetailView, isRoomView, type RoomView } from '@beeline/api-contract/phone';
@@ -356,6 +356,37 @@ const fixture = monolithFixture();
       ).toEqual([]);
     },
   );
+
+
+  it('host emulator refusal stays visible to the agent without granting access', async () => {
+    const ask = (await (await fixture.daemonOperation('requestAgentGrant', {
+      roomId: ROOM, kind: 'host', target: '127.0.0.1:5037',
+      reason: 'Test the Android app', purpose: 'Use an existing host emulator',
+    })).json()) as { grantId: string };
+    expect((await fixture.operation('decideAgentGrant', { grantId: ask.grantId, decision: 'deny' })).status).toBe(200);
+    const live = await (await fixture.daemonOperation('listAgentGrants', { roomId: ROOM })).json();
+    expect(live).toEqual({ grants: [] });
+    const history = await (await fixture.daemonOperation('listAgentGrantRequests', { roomId: ROOM })).json() as { grants: Array<{ grantId: string; status: string }> };
+    expect(history.grants).toEqual([expect.objectContaining({ grantId: ask.grantId, status: 'denied' })]);
+  });
+
+
+  it.each([false, true])('host emulator requires the owner human Allow even with yolo=%s', async yolo => {
+    await fixture.database.query(`UPDATE agents SET yolo_mode=$2 WHERE agent_id=$1`, [AGENT, yolo]);
+    const ask = (await (await fixture.daemonOperation('requestAgentGrant', {
+      roomId: ROOM, kind: 'host', target: '127.0.0.1:5037',
+      reason: 'Test the Android app', purpose: 'Use an existing host emulator',
+    })).json()) as { grantId: string; status: string; auto: boolean; messageId: string };
+    expect(ask).toMatchObject({ status: 'pending', auto: false });
+    expect(ask.messageId).toEqual(expect.any(String));
+    const read = async () => (await (await fixture.daemonOperation('listAgentGrants', { roomId: ROOM })).json()) as { grants: Array<{ grantId: string }> };
+    expect((await read()).grants).toEqual([]);
+    expect((await fixture.operation('decideAgentGrant', { grantId: ask.grantId, decision: 'always' })).status).toBe(200);
+    expect((await read()).grants).toEqual([expect.objectContaining({ grantId: ask.grantId })]);
+    // Automatic owner-machine host grants cannot supply emulator consent.
+    await fixture.database.query(`UPDATE agent_grants SET auto=true WHERE id=$1`, [ask.grantId]);
+    expect((await read()).grants).toEqual([]);
+  });
 
 
   it('approves grants on the spot under yolo with auto=true and no card, for the owner; rejects retired budget prompts', async () => {

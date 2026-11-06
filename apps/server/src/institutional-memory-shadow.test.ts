@@ -1,4 +1,4 @@
-import { describe, expect, it, INSTITUTIONAL_CONTEXT_HEADER, tombstoneInstitutionalMemoryForMessage, claimAgentCommand, createAgentCommand, WORKSPACE, OTHER_WORKSPACE, ROOM, DM, OTHER_ROOM, HUMAN, AGENT, OTHER_AGENT, OTHER_HUMAN, MESSAGE, DM_MESSAGE, database, liveDaemon, enrollLive, openTurn, closeTurn, rootFixture } from './institutional-memory-shadow.test-support.js';
+import { describe, expect, it, INSTITUTIONAL_CONTEXT_HEADER, tombstoneInstitutionalMemoryForMessage, claimAgentCommand, createAgentCommand, WORKSPACE, OTHER_WORKSPACE, ROOM, DM, OTHER_ROOM, HUMAN, AGENT, OTHER_AGENT, OTHER_HUMAN, MESSAGE, DM_MESSAGE, database, liveDaemon, enrollLive, openTurn, closeTurn, rootFixture } from './test-support-institutional-memory-shadow.test-support.js';
 
 describe('institutional memory phase-0 shadow capture', () => {
   it('keeps DM facts out of shared memory but accepts the requester profile exception', async () => {

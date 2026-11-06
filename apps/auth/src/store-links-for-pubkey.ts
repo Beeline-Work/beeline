@@ -1,4 +1,4 @@
-import { type QueryResultRow } from 'pg';
+import type { QueryResultRow } from 'pg';
 import { AuthStore, SqlExecutor, IdentityLink, asDate, GitHubInstallFlow, GITHUB_INSTALL_FLOW_RETENTION_MS, GitHubInstallFlowLookup, GitHubInstallation, StoredGitHubRepository, GitHubRepositoryAccessRow, GitHubRepositoryAccess, GitHubRoomLinkRequest } from './store.js';
 
 

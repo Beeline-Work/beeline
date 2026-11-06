@@ -1,3 +1,4 @@
+import { advanceCorner } from '.././corner-lifecycle.js';
 import { createAgentCommand } from '.././agent-command.js';
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
@@ -230,11 +231,13 @@ const fixture = monolithFixture();
       objective: 'Pick a box for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
-    await fixture.settleCornerWorkPastGap(cornerId);
-    const state = async () =>
-      (await new PhoneService(fixture.database, fixture.origin).readCorners(ROOM, HUMAN))?.corners.find(
+    await fixture.settleCornerWork(cornerId);
+    const state = async () => {
+      await advanceCorner(fixture.database, cornerId, { kind: 'reconcile' });
+      return (await new PhoneService(fixture.database, fixture.origin).readCorners(ROOM, HUMAN))?.corners.find(
         (item) => item.corner.id === cornerId,
       )?.state;
+    };
     const old = "now()-interval '25 hours'";
     await fixture.database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)

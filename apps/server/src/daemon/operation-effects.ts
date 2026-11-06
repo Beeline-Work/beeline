@@ -11,12 +11,12 @@ import { CommandRefusalError } from '../commander.js';
 import { vaultSaveRequest, type VaultSaveCard } from '@beeline/api-contract/daemon';
 import { FIRST_PARTY_INTEGRATIONS } from '../first-party-integrations.js';
 import { setCornerHold } from '../corner-holds.js';
-import { authorizeCommandOutput, claimAgentCommand, lockAgentCommandQueue, StaleWakeClaimRefused, createAgentCommand, readAgentCommands, type CommandRow } from '../agent-command.js';
+import { authorizeCommandOutput, claimAgentCommand, lockAgentCommandQueue, StaleWakeClaimRefused, readAgentCommands, type CommandRow } from '../agent-command.js';
 import { createHash } from 'node:crypto';
 import { endComputerSession, getComputerSession } from '../computer-session.js';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { recordPersonMergeYes } from '../corner-merge-approval.js';
-import { lockCornerLifecycle } from '../corner-lifecycle.js';
+import { advanceCorner, lockCornerLifecycle } from '../corner-lifecycle.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { ensureSystemIdentity, systemLine } from '../system-line.js';
 import { appIdentity } from '@beeline/api-contract/workbench';
@@ -344,7 +344,7 @@ export async function postBackgroundToolCompletionOperation<Name extends keyof D
           const commandId = createHash('sha256').update(JSON.stringify([
             'background-tool', origin.id, completion.generationId, completion.toolCallId,
           ])).digest('hex');
-          await createAgentCommand(db, {
+          await advanceCorner(db, completion.roomId, { kind: 'command', command: {
             id: commandId, roomId: completion.roomId, agentId: authenticatedAgentId,
             sourceMessageId: null, parent: origin, retainDepth: true,
             reason: 'corner_background_tool',
@@ -352,7 +352,7 @@ export async function postBackgroundToolCompletionOperation<Name extends keyof D
               kind: 'lifecycle', authorId: SYSTEM_IDENTITY_ID, fromRoomId: completion.roomId,
               text: `Your background tool ${completion.title.slice(0, 500)} (${completion.toolCallId}) ${completion.status}. Continue the work from its result.`,
             },
-          });
+          } });
           return daemonWriteResult(ctx);
         }) as Output<Name>;
       

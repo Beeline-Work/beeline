@@ -1,4 +1,4 @@
-import { createHash, describe, expect, it, vi, cornerRunStateSql, generateKeyPair, exportPKCS8, GitHubAppClient, GitHubHttpError, GitHubOAuthClient, seedCornerOpening, setCornerOwner, GitHubOperations, readAgentCommands, DaemonService, LiveHub, PhoneService, readRoomView, checkStatusLine, HUMAN, REVIEWER, fixtureScope1, type SqlDatabase } from './github-operations.test-support.js';
+import { createHash, describe, expect, it, vi, cornerRunStateSql, generateKeyPair, exportPKCS8, GitHubAppClient, GitHubHttpError, GitHubOAuthClient, seedCornerOpening, setCornerOwner, GitHubOperations, readAgentCommands, DaemonService, LiveHub, PhoneService, readRoomView, checkStatusLine, HUMAN, REVIEWER, fixtureScope1, type SqlDatabase } from './test-support-github-operations.test-support.js';
 
 describe('GitHub phone operations', () => {
 const scope1 = fixtureScope1();
@@ -88,12 +88,12 @@ const scope1 = fixtureScope1();
       WHERE fact.corner_id=$1`, [corner])).rows[0]!;
     expect(state.lifecycle).toMatchObject({ outcome: 'landed',
       pr: { mergeCommitSha: 'f'.repeat(40) } });
-    expect(state.workflow_state).toBe('landed');
+    expect(state.workflow_state).toBe('archived');
     expect(state.archived_at).not.toBeNull();
     const terminalCards = () => scope1.database.query(`SELECT id,card FROM messages WHERE room_id=$1
       AND card_type='corner-workflow-handoff' AND card->>'toState'='landed' ORDER BY id`, [corner]);
     const committedCards = (await terminalCards()).rows;
-    expect(committedCards).toHaveLength(1);
+    expect(committedCards).toHaveLength(0);
     await operations.processWebhook('check_run', payload);
     expect((await terminalCards()).rows).toEqual(committedCards);
     expect((await scope1.database.query(`SELECT fact.lifecycle, ${cornerRunStateSql('fact.corner_id')} workflow_state,

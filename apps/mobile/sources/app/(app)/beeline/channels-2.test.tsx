@@ -1,4 +1,4 @@
-import { deck, hotSurfaces, viewer, agent, chatList, room, listOf, paintedRows, roomWatch, quiet, mountDeck, fixtureScope7 } from './channels.test-support';
+import { deck, hotSurfaces, viewer, agent, chatList, room, listOf, paintedRows, roomWatch, quiet, mountDeck, fixtureScope7 } from './test-support-channels.test-support';
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';

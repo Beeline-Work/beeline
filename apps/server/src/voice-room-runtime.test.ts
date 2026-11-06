@@ -1,4 +1,4 @@
-import { expect, it, vi, VoiceService, VoiceRoomRuntime, spokenReport, confirmedVoiceSpeech, voicePlaybackEcho, OpenRouterVoiceBrain, VoiceQuotaError, RealVoiceService, migrate, PgliteDatabase, LiveHub, claimAgentCommand, DaemonService, PhoneService, state, roster, conversationService, phantomHarness, deferred } from './voice-room-runtime.test-support.js';
+import { VOICE_DATA_TOPIC, expect, it, vi, VoiceService, VoiceRoomRuntime, spokenReport, confirmedVoiceSpeech, voicePlaybackEcho, OpenRouterVoiceBrain, VoiceQuotaError, RealVoiceService, migrate, PgliteDatabase, LiveHub, claimAgentCommand, DaemonService, PhoneService, state, roster, conversationService, phantomHarness, deferred } from './test-support-voice-room-runtime.test-support.js';
 
 
 
@@ -36,24 +36,6 @@ it('multi-human-silence-1: resume without a report acknowledges idle playback to
     expect(options.destination_identities).toEqual(['human']);
     expect(service.recordAnswer).not.toHaveBeenCalled();
   } finally { await runtime.close(); }
-});
-
-
-it('uses one versioned absence deadline and cancels it when RTC returns before another departure', async () => {
-  vi.useFakeTimers({toFake:['setTimeout','clearTimeout','setInterval','clearInterval','Date','performance']}); const {service}=conversationService(1);const leave=vi.fn(async()=>{});
-  service.db.query.mockImplementation(async(sql:string)=>({rowCount:1,rows:sql.includes('SELECT identity_id,session_id')
-    ?[{identity_id:'human',session_id:'first'}]:[] as any}));
-  const runtime=await VoiceRoomRuntime.connect({...service,leave} as unknown as VoiceService,'call','room');
-  try {
-    const human={identity:'human'};state.room.remoteParticipants.delete('human');state.room.emit('left',human);
-    await vi.advanceTimersByTimeAsync(60_000);expect(leave).not.toHaveBeenCalled();
-    state.room.remoteParticipants.set('human',human);state.room.emit('joined',human);
-    await vi.advanceTimersByTimeAsync(60_000);expect(leave).not.toHaveBeenCalled();
-    state.room.remoteParticipants.delete('human');state.room.emit('left',human);
-    await vi.advanceTimersByTimeAsync(119_999);expect(leave).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(1);expect(leave).toHaveBeenCalledTimes(1);expect(leave).toHaveBeenCalledWith('call','human',true,'first',undefined,'owner');
-    await vi.advanceTimersByTimeAsync(300_000);expect(leave).toHaveBeenCalledOnce();
-  }finally{await runtime.close();vi.useRealTimers();}
 });
 
 
@@ -124,6 +106,7 @@ it('buffers first microphone frames during authorization and ignores stale STT f
   try {
     const human = { identity: 'human' };
     state.room.emit('track', { kind: 1 }, {}, human);
+    await vi.waitFor(() => expect(authorize).toBeTypeOf('function'));
     first.enqueue({ data: new Int16Array([123, 456]) });
     expect(inputs).toHaveLength(0);
     authorize();
@@ -135,6 +118,28 @@ it('buffers first microphone frames during authorization and ignores stale STT f
     await vi.waitFor(() => expect(inputs[1]?.send).toHaveBeenCalledWith(new Int16Array([789])));
     expect(inputs[1]?.close).not.toHaveBeenCalled();
   } finally { await runtime.close(); }
+});
+
+
+it('checks expired voice authority on the next control event and does nothing while idle', async () => {
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+  let now = 1000;
+  const monotonic = vi.spyOn(performance, 'now').mockImplementation(() => now);
+  const { service } = conversationService(1);
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    service.db.query.mockClear();
+    now += 16000;
+    expect(runtime.isClosed).toBe(false);
+    expect(service.db.query).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+    state.room.emit('data', new TextEncoder().encode(JSON.stringify({ type: 'unpin' })),
+      { identity: 'human' }, 0, VOICE_DATA_TOPIC);
+    expect(runtime.isClosed).toBe(true);
+    await runtime.close();
+    expect(service.access).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { monotonic.mockRestore(); await runtime.close(); }
 });
 
 
@@ -764,36 +769,4 @@ it('dispatches a low-confidence final without interrupting playback when voiceIn
     expect(signal.aborted).toBe(false);
     expect(harness.timeline.filter(line => line.endsWith('barge-in cancel'))).toHaveLength(0);
   } finally { await runtime.close(); }
-});
-
-
-it('Reproduction phantom-1: never sends Hey or Yeah from a noisy turn during TTS; stop still interrupts', async () => {
-  const harness = phantomHarness();
-  const runtime = await VoiceRoomRuntime.connect(harness.service as unknown as VoiceService, 'call', 'room');
-  state.streams = [new ReadableStream()];
-  try {
-    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
-    await vi.waitFor(() => expect(harness.service.config.stt).toHaveBeenCalledOnce());
-    harness.emit('EndOfTurn', 'Explain the answer', 0);
-    await vi.waitFor(() => expect(harness.speech.synthesize).toHaveBeenCalledOnce());
-    harness.emit('StartOfTurn', '', 1);
-    harness.emit('Update', 'Hey', 1);
-    harness.emit('EndOfTurn', 'Hey', 1);
-    harness.emit('StartOfTurn', '', 2);
-    harness.emit('Update', 'Yeah', 2);
-    harness.emit('EndOfTurn', 'Yeah', 2);
-    await new Promise<void>(resolve => setImmediate(resolve));
-    expect(harness.service.recordHuman.mock.calls.map(call => call[4])).toEqual(['Explain the answer']);
-    expect(harness.messages).toEqual(['@ronnie Explain the answer']);
-    expect(harness.timeline.filter(line => line.endsWith('barge-in cancel'))).toHaveLength(0);
-    harness.emit('StartOfTurn', '', 3);
-    harness.emit('EndOfTurn', 'stop', 3);
-    await vi.waitFor(() => expect(harness.speech.synthesize.mock.calls[0]?.[2]?.aborted).toBe(true));
-    expect(harness.service.leave).not.toHaveBeenCalled();
-    expect(harness.service.recordHuman).toHaveBeenCalledOnce();
-    expect(harness.speech.synthesize.mock.calls[0]?.[2]?.aborted).toBe(true);
-  } finally {
-    console.log('Reproduction phantom-1\n' + harness.timeline.join('\n'));
-    await runtime.close();
-  }
 });

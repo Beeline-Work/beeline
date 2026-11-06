@@ -11,7 +11,7 @@ const ROOTS = ['apps/server/src', 'apps/body/src', 'apps/api/src', 'apps/auth/sr
 const PUBLIC_ENTRIES = ['packages/net/src/index.ts', 'packages/net/src/helper-codecs.ts', 'packages/net/src/helper-activation-codecs.ts', 'packages/net/src/helper-turn-codecs.ts'];
 const SKIP = new Set(['node_modules', 'dist', 'build', '.git', 'target', 'Pods', '__tests__', 'fixtures']);
 const SOURCE = /\.(?:[cm]?[jt]sx?|swift|kt|java|m|mm|rs)$/;
-const TEST = /\.(?:test|spec|test-support|typecheck)\.[^.]+$|\.d\.ts$|\/test-support[^/]*\.[^.]+$/;
+const TEST = /\.(?:test|spec|typecheck)\.[^.]+$|\.d\.ts$|\/test-support[^/]*\.[^.]+$/;
 const LIBRARIES = [...NETWORK_LIBRARIES, 'node:http', 'node:https', 'node:http2', 'node:net',
   'node:tls', 'node:dgram', 'http', 'https', 'http2', 'net', 'tls', 'dgram', 'ws', 'pg',
   'undici', 'openai', '@anthropic-ai/sdk', '@google/genai', '@modelcontextprotocol/sdk',

@@ -1,4 +1,4 @@
-import { controls, roomView, Harness, flushEffects, fixtureScope3 } from './useRoomSurfaceSession.test-support.js';
+import { controls, roomView, Harness, flushEffects, fixtureScope3 } from './test-support-useRoomSurfaceSession.test-support.js';
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';

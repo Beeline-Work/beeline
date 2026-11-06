@@ -1,4 +1,4 @@
-import { type PhoneIdentityRow as IdentityRow, phoneIdentity as identity } from '../phone-identity.js';
+import { phoneIdentity as identity, type PhoneIdentityRow as IdentityRow } from '../phone-identity.js';
 import { mcpClientName } from '../rooms-mcp-logos.js';
 import { agentUsageColumns, projectAgentUsage } from '../agent-usage.js';
 import { ROOM_VIEW_CHAT_LIMIT, WORKSPACE_MEMBER_PAGE_SIZE } from '@beeline/api-contract/phone';

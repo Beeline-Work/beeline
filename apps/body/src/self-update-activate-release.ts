@@ -1,10 +1,12 @@
-import { constants as fsConstants } from 'node:fs';
-import { ordinaryDirectory, removeStoragePath } from './storage-filesystem.js';
-import { assertInstallTestIsolation } from './lifecycle-test-guard.js';
-import { access, copyFile, lstat, mkdir, readFile, readdir, rename, rm, symlink } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
-import { parseUpdateManifest, resolveManifestUrl, type InstalledBundleIdentity, type PublishedBundle } from './self-update-manifest.js';
-import { BeelineInstallLayout, activeReleaseId, BUNDLE_ENTRYPOINT, pathKind, readBundleJson, sanitizeReleaseId, fsyncDir, readUpdateState, writeUpdateState, replaceFile, FORWARDER_TOOLS, FORWARDER_ALIASES, forwarderScript, fetchText, hostPlatformKey, stageRelease } from './self-update.js';
+import { assertInstallTestIsolation } from "./lifecycle-test-guard.js";
+import { join, dirname, resolve } from "node:path";
+import { access, mkdir, rename, rm, symlink, copyFile, readFile, readdir, lstat } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { ordinaryDirectory, removeStoragePath } from "./storage-filesystem.js";
+import { BeelineInstallLayout, activeReleaseId, BUNDLE_ENTRYPOINT, pathKind, readBundleJson, sanitizeReleaseId, fsyncDir, readUpdateState, writeUpdateState, replaceFile, FORWARDER_TOOLS, FORWARDER_ALIASES, forwarderScript } from './self-update.js';
+import { type InstalledBundleIdentity } from './self-update-manifest.js';
+
+
 
 
 
@@ -75,6 +77,7 @@ export async function activateRelease(
 }
 
 
+
 export async function installRecoveryLauncher(
   layout: BeelineInstallLayout,
   releaseDir: string,
@@ -99,6 +102,7 @@ export async function installRecoveryLauncher(
 }
 
 
+
 /** Files a legacy-flat bundle keeps at its root; migration moves them into lib/beeline/. */
 export const LEGACY_FLAT_BUNDLE_FILES = [
   'beeline-cli.mjs',
@@ -106,6 +110,7 @@ export const LEGACY_FLAT_BUNDLE_FILES = [
   'pi-mcp-adapter.mjs',
   'bundle.json',
 ];
+
 
 
 /**
@@ -144,6 +149,7 @@ export async function normalizeLegacyBundleShape(bundleDir: string): Promise<voi
 }
 
 
+
 /**
  * Rewrite `<prefix>/bin/*` as stable forwarders into the ACTIVE bundle root
  * (`<prefix>/lib/beeline/bin/<tool>` — through the anchor, never a resolved
@@ -177,6 +183,7 @@ export async function writeBinForwarders(
     );
   }
 }
+
 
 
 /**
@@ -232,6 +239,7 @@ export async function repairInstallForwarders(
 }
 
 
+
 // ---------------------------------------------------------------------------
 // Compatibility entry for one explicit preparation
 // ---------------------------------------------------------------------------
@@ -247,6 +255,7 @@ export interface SelfUpdateManagerOptions {
 }
 
 
+
 export function describeIdentity(identity: InstalledBundleIdentity | undefined): string {
   if (!identity) return 'unknown';
   const parts: string[] = [];
@@ -255,56 +264,6 @@ export function describeIdentity(identity: InstalledBundleIdentity | undefined):
   return parts.join(' ') || 'unknown';
 }
 
-
-export async function prepareLatestRelease(
-  layout: BeelineInstallLayout,
-  options: {
-    env?: NodeJS.ProcessEnv;
-    fetchImpl?: typeof fetch;
-    logger?: (line: string) => void;
-    force?: boolean;
-    deadlineAt?: number;
-    manifest?: { url: string; bundle: PublishedBundle };
-  } = {},
-): Promise<{ releaseId: string; identity: InstalledBundleIdentity }> {
-  try {
-    const manifestUrl = options.manifest?.url ?? resolveManifestUrl(options.env ?? process.env);
-    const bundle =
-      options.manifest?.bundle ??
-      parseUpdateManifest(
-        await fetchText(manifestUrl, options.fetchImpl ?? fetch),
-        hostPlatformKey(),
-      ).bundle;
-    const pending = (await readUpdateState(layout)).stagedReleaseId;
-    const pendingDigest = pending
-      ? await readFile(join(layout.releasesRoot, pending, '.stage-ok'), 'utf8').catch(() => '')
-      : '';
-    const releaseId =
-      !options.force && pending && pendingDigest.trim() === bundle.sha256
-        ? pending
-        : await stageRelease(layout, manifestUrl, bundle, {
-            fetchImpl: options.fetchImpl,
-            logger: options.logger,
-            force: options.force,
-            deadlineAt: options.deadlineAt,
-          });
-    await writeUpdateState(layout, {
-      ...(await readUpdateState(layout)),
-      lastCheckAt: Date.now(),
-      lastCheckResult: 'verified',
-      stagedReleaseId: releaseId,
-    });
-    return { releaseId, identity: { version: bundle.version, commit: bundle.commit } };
-  } catch (error) {
-    await writeUpdateState(layout, {
-      ...(await readUpdateState(layout)),
-      lastCheckAt: Date.now(),
-      lastCheckResult: 'unconfirmed',
-      lastCheckError: String(error),
-    }).catch(() => undefined);
-    throw error;
-  }
-}
 
 
 /** Caller holds the install lock. Startup also repairs installations predating

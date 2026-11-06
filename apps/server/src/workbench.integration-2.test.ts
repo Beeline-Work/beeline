@@ -1,4 +1,4 @@
-import { SYSTEM_IDENTITY_ID, createHash, randomUUID, describe, expect, it, HUMAN, HELPER, OTHER_HELPER, WORKSPACE, fixtureScope1 } from './workbench.integration.test-support.js';
+import { SYSTEM_IDENTITY_ID, createHash, randomUUID, describe, expect, it, HUMAN, HELPER, OTHER_HELPER, WORKSPACE, fixtureScope1 } from './test-support-workbench.integration.test-support.js';
 
 describe('workbench connectors', () => {
 const scope1 = fixtureScope1();

@@ -1,4 +1,4 @@
-import { describe, expect, it, TRIAGE, ROOM, TRIAGE_CORNER, database, daemon, triageTurn, rootFixture } from './feedback.test-support.js';
+import { describe, expect, it, TRIAGE, ROOM, TRIAGE_CORNER, database, daemon, triageTurn, rootFixture } from './test-support-feedback.test-support.js';
 
 describe('triage corner: sibling fix corners and its daily schedule, with no setting', () => {
   it('opens a fix corner from the triage corner as a sibling in the parent Room', async () => {

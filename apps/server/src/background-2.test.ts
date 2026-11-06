@@ -1,76 +1,6 @@
-import { describe, expect, it, vi, createPushTestSender, PushDeliveryLoop, READ_CLEAR_INTERVAL_SECONDS, READ_CLEAR_MAX_MESSAGE_IDS, migratedDatabase, PhoneService, ApnsPushError, cornerTitle, type ReadClearCursor } from './background.test-support.js';
+import { describe, expect, it, vi, createPushTestSender, PushDeliveryLoop, migratedDatabase, PhoneService, ApnsPushError, ensureSystemDirectMessageRoom, SYSTEM_IDENTITY_ID, cornerTitle, type ReadClearCursor } from './test-support-background.test-support.js';
 
 describe('background advisory-lock ownership', () => {
-  // G9-R6: a Room with more read notifications than one push names must
-  // still clear them all. Ids left out by the per-Room cap or by the APNs
-  // size limit go in a later push; a newer unread notification stays.
-  it('clears every read notification past the per-Room id cap in later pushes', async () => {
-    const db = await migratedDatabase();
-    try {
-      const human = 'a'.repeat(64),
-        agent = 'b'.repeat(64),
-        workspace = '11111111-1111-4111-8111-111111111111',
-        room = '22222222-2222-4222-8222-222222222222',
-        ios = 'c0ffee'.repeat(10) + 'abcd';
-      const readIds = Array.from({ length: READ_CLEAR_MAX_MESSAGE_IDS + 2 }, (_, index) =>
-        index.toString(16).padStart(64, '0'),
-      );
-      const unread = 'f'.repeat(64);
-      await db.query(
-        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
-        [human, agent],
-      );
-      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
-      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
-        room,
-        workspace,
-      ]);
-      await db.query(
-        `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at)
-         VALUES($1,$2,'ios','physical',now()-interval '2 hours')`,
-        [ios, human],
-      );
-      for (const [index, id] of [...readIds, unread].entries()) {
-        await db.query(
-          `INSERT INTO messages(id,room_id,author_id,text,created_at)
-           VALUES($1,$2,$3,'hi',now()-interval '1 hour'+$4*interval '1 second')`,
-          [id, room, agent, index],
-        );
-        await db.query(
-          `INSERT INTO push_delivery_claims(message_id,device_token,status) VALUES($1,$2,'delivered')`,
-          [id, ios],
-        );
-      }
-      await db.query(
-        `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
-         SELECT room_id,$2,created_at,id FROM messages WHERE id=$1`,
-        [readIds.at(-1), human],
-      );
-      const clearRead = vi.fn().mockResolvedValue(undefined);
-      const loop = new PushDeliveryLoop(
-        db,
-        undefined,
-        { send: vi.fn().mockResolvedValue(undefined), clearRead },
-      );
-      for (let pass = 0; pass < 5; pass += 1) {
-        await loop.runOnce();
-        await db.query(
-          `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
-        );
-      }
-      const dismissed = new Set(
-        clearRead.mock.calls.flatMap(([, reads]: [string, ReadClearCursor[]]) =>
-          reads.flatMap((read) => [read.messageId, ...read.readMessageIds]),
-        ),
-      );
-      expect(clearRead.mock.calls.length).toBeGreaterThan(1);
-      expect([...dismissed].sort()).toEqual([...readIds].sort());
-      expect(dismissed.has(unread)).toBe(false);
-    } finally {
-      await db.close();
-    }
-  });
-
   // G9-R7: read notifications delivered hours before the read must still
   // clear. The one-hour claim cleanup keeps an iOS or Android device's
   // delivered claims until a read-clear push names them.
@@ -83,7 +13,7 @@ describe('background advisory-lock ownership', () => {
         room = '22222222-2222-4222-8222-222222222222',
         ios = 'c0ffee'.repeat(10) + 'abcd',
         android = 'android-token';
-      const readIds = Array.from({ length: READ_CLEAR_MAX_MESSAGE_IDS + 2 }, (_, index) =>
+      const readIds = Array.from({ length: 20 + 2 }, (_, index) =>
         index.toString(16).padStart(64, '0'),
       );
       const unread = 'f'.repeat(64);
@@ -128,9 +58,6 @@ describe('background advisory-lock ownership', () => {
       );
       for (let pass = 0; pass < 5; pass += 1) {
         await loop.runOnce();
-        await db.query(
-          `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
-        );
       }
       const dismissed = new Set(
         clearRead.mock.calls.flatMap(([, reads]: [string, ReadClearCursor[]]) =>
@@ -203,9 +130,6 @@ describe('background advisory-lock ownership', () => {
       );
       for (let pass = 0; pass < 3; pass += 1) {
         await loop.runOnce();
-        await db.query(
-          `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
-        );
       }
       const dismissed = clearRead.mock.calls.flatMap(([, reads]: [string, ReadClearCursor[]]) =>
         reads.flatMap((read) => [read.messageId, ...read.readMessageIds]),
@@ -405,7 +329,7 @@ describe('background advisory-lock ownership', () => {
     }
   });
 
-  it('retries an APNs timeout durably and records acceptance on the same message claim', async () => {
+  it('records an APNs failure once and never retries it after time or another event', async () => {
     const db = await migratedDatabase();
     try {
       const human = 'a'.repeat(64),
@@ -442,76 +366,13 @@ describe('background advisory-lock ownership', () => {
         [message, room, agent],
       );
       expect(await loop.runOnce()).toBe(0);
-      expect(
-        (
-          await db.query<{ status: string; attempts: number }>(
-            `SELECT status,attempts FROM push_delivery_claims WHERE message_id=$1`,
-            [message],
-          )
-        ).rows[0],
-      ).toEqual({ status: 'retryable', attempts: 1 });
+      expect((await db.query(`SELECT status,attempts FROM push_delivery_claims WHERE message_id=$1`, [message])).rows)
+        .toEqual([{ status: 'failed', attempts: 1 }]);
       expect(await loop.runOnce()).toBe(0);
-      expect(send).toHaveBeenCalledTimes(1);
-      await db.query(
-        `UPDATE push_delivery_claims SET next_retry_at=now()-interval '1 second' WHERE message_id=$1`,
-        [message],
-      );
-      expect(await loop.runOnce()).toBe(1);
-      expect(send).toHaveBeenCalledTimes(2);
-      expect(
-        (
-          await db.query<{ status: string; attempts: number }>(
-            `SELECT status,attempts FROM push_delivery_claims WHERE message_id=$1`,
-            [message],
-          )
-        ).rows[0],
-      ).toEqual({ status: 'delivered', attempts: 2 });
-
-      const connectionMessage = '3'.repeat(64);
-      send.mockRejectedValueOnce(
-        Object.assign(new Error('connection reset'), { code: 'ECONNRESET' }),
-      );
-      await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@owner again')`,
-        [connectionMessage, room, agent],
-      );
+      await db.query(`UPDATE messages SET text=text||' edited' WHERE id=$1`, [message]);
       expect(await loop.runOnce()).toBe(0);
-      expect(
-        (
-          await db.query<{ status: string }>(
-            `SELECT status FROM push_delivery_claims WHERE message_id=$1`,
-            [connectionMessage],
-          )
-        ).rows[0]?.status,
-      ).toBe('retryable');
-
-      // A persistent outage has a bounded retry budget and cannot spin forever.
-      const exhaustedMessage = '2'.repeat(64);
-      send.mockRejectedValue(new Error('APNs request timed out'));
-      await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@owner still here')`,
-        [exhaustedMessage, room, agent],
-      );
-      for (let attempt = 1; attempt <= 3; attempt += 1) {
-        expect(await loop.runOnce()).toBe(0);
-        const claim = (
-          await db.query<{ status: string; attempts: number }>(
-            `SELECT status,attempts FROM push_delivery_claims WHERE message_id=$1`,
-            [exhaustedMessage],
-          )
-        ).rows[0];
-        expect(claim).toEqual({ status: attempt < 3 ? 'retryable' : 'failed', attempts: attempt });
-        if (attempt < 3)
-          await db.query(
-            `UPDATE push_delivery_claims SET next_retry_at=now()-interval '1 second' WHERE message_id=$1`,
-            [exhaustedMessage],
-          );
-      }
-      expect(await loop.runOnce()).toBe(0);
-      expect(send).toHaveBeenCalledTimes(6);
-    } finally {
-      await db.close();
-    }
+      expect(send).toHaveBeenCalledOnce();
+    } finally { await db.close(); }
   });
 
   it('routes test pushes by device platform and excludes iOS without APNs configuration', async () => {
@@ -761,6 +622,165 @@ describe('background advisory-lock ownership', () => {
         }),
       );
       expect(cornerTitle('Direct', 'fix-auth', dmCorner)).toBe('#Direct/fix-auth');
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('names the inline action a notification can answer, and only that one', async () => {
+    const db = await migratedDatabase();
+    try {
+      const human = 'a'.repeat(64),
+        agent = 'c'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        agentDm = '33333333-3333-4333-8333-333333333333';
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle,push_level)
+         VALUES($1,'human','Owner','owner','attention'),($2,'agent','Wren','wren','off')`,
+        [human, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(
+        `INSERT INTO rooms(id,workspace_id,name,direct_participants) VALUES($1,$2,'Direct',$3::jsonb)`,
+        [agentDm, workspace, JSON.stringify([human, agent].sort())],
+      );
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         VALUES($1,NULL,$2,'owner'),($1,$3,$2,'member'),($1,$3,$4,'member')`,
+        [workspace, human, agentDm, agent],
+      );
+      const systemDm = await ensureSystemDirectMessageRoom(db, workspace, human);
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment)
+         VALUES('owner-device-token-12345678901234567890',$1,'android','physical')`,
+        [human],
+      );
+      const send = vi.fn().mockResolvedValue(undefined);
+      const loop = new PushDeliveryLoop(db, { send });
+      expect(await loop.runOnce()).toBe(0);
+      const grant = (id: string, status: string) =>
+        db.query(
+          `INSERT INTO agent_grants(id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status)
+           VALUES($1,$2,$3,'host','api.stripe.com','checking the webhook',$4,$5,$6)`,
+          [id, agent, workspace, human, agentDm, status],
+        );
+      const pending = '55555555-5555-4555-8555-555555555555',
+        second = '66666666-6666-4666-8666-666666666666',
+        settled = '77777777-7777-4777-8777-777777777777';
+      await grant(pending, 'pending');
+      await grant(second, 'pending');
+      await grant(settled, 'once');
+      const card = (grants: string[]) =>
+        JSON.stringify({
+          agent: { pubkey: agent, name: 'wren' },
+          grants: grants.map((grantId) => ({ grantId, kind: 'host', target: 'api.stripe.com' })),
+        });
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card) VALUES
+         ($1,$2,$3,'@wren asked @owner for host api.stripe.com','card','grant-request',$4::jsonb),
+         ($5,$2,$3,'@wren asked @owner for host api.stripe.com and host b','card','grant-request',$6::jsonb),
+         ($7,$2,$3,'@wren asked @owner for host api.stripe.com','card','grant-request',$8::jsonb),
+         ($9,$2,$3,'Beeline 1.2 is out','system',NULL,NULL),
+         ($10,$11,$12,'are you there?','message',NULL,NULL)`,
+        [
+          '1'.repeat(64),
+          systemDm,
+          SYSTEM_IDENTITY_ID,
+          card([pending]),
+          '2'.repeat(64),
+          card([pending, second]),
+          '3'.repeat(64),
+          card([settled]),
+          '4'.repeat(64),
+          '5'.repeat(64),
+          agentDm,
+          agent,
+        ],
+      );
+      expect(await loop.runOnce()).toBe(5);
+      const sent = new Map(
+        send.mock.calls.map(([, message]) => [message.messageId as string, message.action]),
+      );
+      expect(sent.get('1'.repeat(64))).toEqual({
+        kind: 'grant',
+        grantId: pending,
+        grantKind: 'host',
+        grantTarget: 'api.stripe.com',
+        agentName: 'wren',
+      });
+      // Three buttons cannot answer two asks, and a settled ask needs none.
+      expect(sent.get('2'.repeat(64))).toBeUndefined();
+      expect(sent.get('3'.repeat(64))).toBeUndefined();
+      // The @system DM is read-only: no Reply on its lines.
+      expect(sent.get('4'.repeat(64))).toBeUndefined();
+      expect(sent.get('5'.repeat(64))).toEqual({ kind: 'reply', authorName: 'Wren' });
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('sends a permission ask whole and stays quiet for an automatic access receipt', async () => {
+    const db = await migratedDatabase();
+    try {
+      const human = 'a'.repeat(64),
+        agent = 'c'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        room = '33333333-3333-4333-8333-333333333333';
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle,push_level)
+         VALUES($1,'human','Owner','owner','attention'),($2,'agent','Wren','wren','off')`,
+        [human, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'General')`, [
+        room,
+        workspace,
+      ]);
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`,
+        [workspace, human],
+      );
+      const systemDm = await ensureSystemDirectMessageRoom(db, workspace, human);
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment)
+         VALUES('owner-device-token-12345678901234567890',$1,'android','physical')`,
+        [human],
+      );
+      const send = vi.fn().mockResolvedValue(undefined);
+      const loop = new PushDeliveryLoop(db, { send });
+      expect(await loop.runOnce()).toBe(0);
+      const pending = '55555555-5555-4555-8555-555555555555',
+        auto = '66666666-6666-4666-8666-666666666666';
+      const target = `node scripts/check.mjs ${'--workspace apps/server '.repeat(8).trim()}`;
+      await db.query(
+        `INSERT INTO agent_grants(id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status,auto)
+         VALUES($1,$3,$4,'command',$6,'check',$5,$7,'pending',false),
+               ($2,$3,$4,'mcp','openaiDeveloperDocs','read docs',$5,$7,'approved',true)`,
+        [pending, auto, agent, workspace, human, target, room],
+      );
+      const ask = `Owner wants wren to use ${target}`;
+      expect(ask.length).toBeGreaterThan(200);
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card) VALUES
+         ($1,$2,$3,$4,'card','grant-request',$5::jsonb),
+         ($6,$2,$3,'@wren was granted mcp openaiDeveloperDocs · auto-approved','system','grant-auto',$7::jsonb)`,
+        [
+          '1'.repeat(64),
+          systemDm,
+          agent,
+          ask,
+          JSON.stringify({
+            agent: { pubkey: agent, name: 'wren' },
+            grants: [{ grantId: pending, kind: 'command', target }],
+          }),
+          '2'.repeat(64),
+          JSON.stringify({ grantId: auto }),
+        ],
+      );
+      expect(await loop.runOnce()).toBe(1);
+      expect(send.mock.calls.map(([, message]) => message)).toEqual([
+        expect.objectContaining({ messageId: '1'.repeat(64), text: ask, permission: true }),
+      ]);
     } finally {
       await db.close();
     }

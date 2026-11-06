@@ -42,13 +42,15 @@ it('rejects extra connection surfaces, mounts and triggers, including inside own
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-it('rejects a planted phone write backdoor, including inside the HTTP server owner file', () => {
+it('rejects a planted phone write backdoor, including inside an HTTP write owner file', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'phone-write-door-'));
   const rule = readInvariants(process.cwd()).rules.find(rule => rule.id === 'phone.write-door');
   const sources = {
     'apps/mobile/sources/sync/transport/live-connection.ts': "class LiveConnection { sendRequest() { return {t:'req'}; } }",
     'apps/server/src/phone-operations.ts': 'const execute = () => { phone.execute(); phone.markRead(); phone.markUnread(); options.voice.join(); options.voice.leave(); options.voice.idle(); options.voice.resume(); options.voice.profiles.save(); options.voice.profiles.preview(); }; const effect = () => phone.stopScheduledWorkCommand();',
-    'apps/server/src/server.ts': 'const httpPhoneOperation = () => dispatchPhoneOperation(); async function route() { phone.uploadMedia(); return options.voice.nativeStop(); }',
+    'apps/server/src/server.ts': 'const httpPhoneOperation = () => dispatchPhoneOperation();',
+    'apps/server/src/server-authenticated-routes.ts': 'async function routeAuthenticated() { phone.uploadMedia(); }',
+    'apps/server/src/server-route.ts': 'async function route() { return options.voice.nativeStop(); }',
     'apps/server/src/rooms-mcp.ts': 'class RoomsMcp { call() { this.phone.execute(); this.phone.execute(); } }',
   };
   try {
@@ -58,11 +60,11 @@ it('rejects a planted phone write backdoor, including inside the HTTP server own
     }
     assert.deepEqual(judgeTree(root, { rules: [rule] }), []);
     for (const backdoor of ['options.phone.execute(name,input,viewer)', 'dispatchPhoneOperation(name,input,viewer)', 'options.phone.markUnread(room,viewer)', 'options.voice.join(room,viewer)']) {
-      writeFileSync(path.join(root, 'apps/server/src/server.ts'),
-        sources['apps/server/src/server.ts'] + `\nasync function route() { return ${backdoor}; }`);
+      writeFileSync(path.join(root, 'apps/server/src/server-route.ts'),
+        sources['apps/server/src/server-route.ts'] + `\nasync function route() { return ${backdoor}; }`);
       assert.match(judgeTree(root, { rules: [rule] }).join('\n'), /phone\.write-door/);
     }
-    writeFileSync(path.join(root, 'apps/server/src/server.ts'), sources['apps/server/src/server.ts']);
+    writeFileSync(path.join(root, 'apps/server/src/server-route.ts'), sources['apps/server/src/server-route.ts']);
     writeFileSync(path.join(root, 'apps/mobile/sources/feature.ts'), "socket.send(JSON.stringify({t:'req',op:'sendFromWallet',args:{}}))");
     assert.match(judgeTree(root, { rules: [rule] }).join('\n'), /phone\.write-door/);
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -212,4 +214,21 @@ it('permits identical sink moves while rejecting changed statements and empty ne
     assert.match(check({ ...next, owners: [newFile, empty] }).join('\n'), /owners changed/);
     assert.match(check({ ...next, pattern: 'query' }).join('\n'), /pattern changed/);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+it('permits relocating unchanged strict functions, never altered bodies or a second owner', async () => {
+  const { strictRelaxations } = await import('./architecture-invariants.mjs');
+  const root = mkdtempSync(path.join(process.cwd(), '.beeline-proof', 'owner-relocation-'));
+  const source = 'export async function original(db) { await db.query(`UPDATE rooms SET archived_at=now()`); }';
+  const before = { id:'archive',strict:true,total:0,owners:['old.ts'],ownerFunctions:{'old.ts':['original']},ownerSites:1 };
+  const after = {...before,owners:['new.ts'],ownerFunctions:{'new.ts':['moved']}};
+  const check = rule => strictRelaxations(root,{rules:[before]},{rules:[rule]},() => source);
+  try {
+    writeFileSync(path.join(root,'new.ts'), source.replace('original','moved'));
+    assert.deepEqual(check(after),[]);
+    assert.notDeepEqual(check({...after,owners:['old.ts','new.ts']}),[]);
+    assert.notDeepEqual(check({...after,ownerSites:2}),[]);
+    writeFileSync(path.join(root,'new.ts'), source.replace('original','moved').replace('now()','NULL'));
+    assert.notDeepEqual(check(after),[]);
+  } finally { rmSync(root,{recursive:true,force:true}); }
 });

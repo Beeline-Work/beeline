@@ -2,7 +2,6 @@ import { tryWithKernelLock } from './kernel-lock.js';
 import { runServerCommandIntake } from './server-command-intake.js';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { stopKeptCornerEmulator } from './corner-emulator.js';
 import { redactTurnError } from './turn-failure-reason.js';
 import { syncCornerBranch } from './corner-branch-sync.js';
 import { harvestWarmNodeModules, mobileNodeModulesStoreDir, warmNodeModulesStoreDir } from './warm-node-modules.js';
@@ -160,12 +159,8 @@ import { MonolithCornerTurnLoop, execFileAsync } from './monolith-corner-turn.js
         restart: () => ctx.options.onRestartRequested?.(),
         canStartTurn: ctx.options.canStartTurn,
         closed: async () => {
-          const stopEmulator = () => stopKeptCornerEmulator(
-            ctx.options.runtime.supervisorRoot, cornerId, `corner close requested; stopped by agent ${ctx.agent.publicKey}`)
-            .catch((error) => console.error(`[body] corner ${cornerId} emulator stop failed:`, error));
           if (ctx.closePushed) {
             ctx.closePushed = false;
-            await stopEmulator();
             await ctx.harvest;
             await ctx.options.onCloseRequested();
             return true;
@@ -177,7 +172,6 @@ import { MonolithCornerTurnLoop, execFileAsync } from './monolith-corner-turn.js
           const state = await api.execute('getCornerRestoreState', { cornerId });
           if (!state.closeRequested) return false;
           // The reap deletes the worktree a harvest is still reading.
-          await stopEmulator();
           await ctx.harvest;
           await ctx.options.onCloseRequested();
           return true;

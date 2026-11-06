@@ -1,3 +1,4 @@
+import { maskCredentialResult } from './mask-credential-result.js';
 import { CommandActivationContext } from './helper-activation-context.js';
 import { FreeAgentContinuation } from './free-agent-continuation.js';
 import { type TurnTokenFigure } from './harness-turn-tokens.js';
@@ -15,7 +16,7 @@ import { type DaemonAttachment, type DaemonOperationMap } from '@beeline/api-con
 import { AcpClient, type PromptResult, type ToolCallEntry } from './acp.js';
 import { HarnessQuotaReader } from './harness-quota.js';
 import { ConnectorUsageRecorder } from './connector-runner.js';
-import { redactToolDetail, redactTurnError } from './turn-failure-reason.js';
+import { turnErrorDetail } from './turn-failure-reason.js';
 import { type BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import { type EmptyTurnExplanation } from './empty-turn.js';
@@ -223,7 +224,7 @@ requestReconciliation(): void { return monolithCornerTurnLoopRequestReconciliati
         options.api
           .execute('postSquireApprovalDecision', { roomId: options.cornerId, ...decision })
           .catch((error: unknown) =>
-            console.error('[thin-core] Squire approval decision publication failed:', redactTurnError(error)));
+            console.error('[thin-core] Squire approval decision publication failed:', turnErrorDetail(error)));
       },
       (sessionId) => {
         options.api.execute('endComputerSession', { roomId: options.cornerId, sessionId }).catch(() => {});
@@ -553,12 +554,9 @@ export function outputText(value: unknown): string {
 
 
 export function outputExcerpt(value: unknown): string | undefined {
-  const redacted = redactToolDetail(outputText(value));
-  if (!redacted.trim()) return undefined;
-  if (/\b(?:git[- ]credential|credential[- ]helper)\b/i.test(redacted)) {
-    return 'Credential-helper output omitted.';
-  }
-  const lines = redacted.split(/\r?\n/).map((line) => line.trimEnd());
+  const text = outputText(value);
+  if (!text.trim()) return undefined;
+  const lines = text.split(/\r?\n/).map((line) => line.trimEnd());
   if (lines.length <= 8) return clampBytes(lines.join('\n'), TOOL_OUTPUT_MAX_BYTES, true);
   return clampBytes(
     [...lines.slice(0, 4), '…[output omitted]…', ...lines.slice(-4)].join('\n'),
@@ -577,7 +575,7 @@ export function filePaths(value: unknown, worktreePath: string): string[] {
         const path = candidate.startsWith(`${worktreePath}/`)
           ? candidate.slice(worktreePath.length + 1)
           : candidate;
-        if (path && path.length <= 512) paths.add(redactToolDetail(path));
+        if (path && path.length <= 512) paths.add(path);
       }
       return;
     }
@@ -623,9 +621,9 @@ export function toolArguments(call: ToolCallEntry): { command?: string; input?: 
         : typeof raw?.cmd === 'string'
           ? raw.cmd
           : undefined;
-  if (command) return { command: clampBytes(redactToolDetail(command), TOOL_ARGUMENT_MAX_BYTES) };
+  if (command) return { command: clampBytes(command, TOOL_ARGUMENT_MAX_BYTES) };
   const input = serialized(call.rawInput);
-  return input ? { input: clampBytes(redactToolDetail(input), TOOL_ARGUMENT_MAX_BYTES) } : {};
+  return input ? { input: clampBytes(input, TOOL_ARGUMENT_MAX_BYTES) } : {};
 }
 
 
@@ -650,14 +648,15 @@ export function isSuccessfulCommit(call: ToolCallEntry): boolean {
 }
 
 
-/** Turn one physical ACP tool call into a bounded, redacted indexed ledger row. */
+/** Turn one physical ACP tool call into a bounded indexed ledger row. */
 export async function cornerToolActivity(
   call: ToolCallEntry,
   worktreePath: string,
   requestedBy?: { pubkey: string; name?: string },
 ): Promise<DaemonActivity> {
+  call = maskCredentialResult(call);
   const operation = oneLine(call.kind ?? '') || 'tool';
-  let title = oneLine(redactToolDetail(call.title ?? '')) || `${operation} tool`;
+  let title = oneLine(call.title ?? '') || `${operation} tool`;
   if (isSuccessfulCommit(call)) {
     try {
       const shown = await execFileAsync(

@@ -62,6 +62,7 @@ import {
   installWebPushForegroundResponder,
 } from '@/push/web-push-registration';
 import { subscribeClientReset } from '@/sync/client-reset';
+import { subscribePushTokenChanges } from '@/push/push-token-events';
 import { startPushRegistrationLifecycle } from '@/push/push-registration-lifecycle';
 import { reportRunningUpdateReceipt } from '@/push/update-receipt';
 import { getOpenBuzzChannelId } from '@/buzz/open-room-tracker';
@@ -516,6 +517,8 @@ function BackgroundEffects() {
       stop = startPushRegistrationLifecycle({
         loadIdentity: loadBuzzIdentity,
         subscribeIdentityChange: subscribeClientReset,
+        subscribeTokenChange: subscribePushTokenChanges,
+        subscribeRecovery: listener => sharedLiveConnection().subscribeConnected(listener),
         subscribeForeground: (listener) => {
           const subscription = AppState.addEventListener('change', (state) => {
             if (state === 'active') listener();

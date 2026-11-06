@@ -4,7 +4,8 @@ import { ScrollView, Text, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
 import { typeRoles } from '@/buzz/groknight';
-import { HULL_SHEET_INSET, HullActionSheetModal, HullActionSheetRow } from './HullActionSheet';
+import { HULL_SHEET_INSET, HullActionSheetModal } from './HullActionSheet';
+import { Button } from './Button';
 import { CodeHighlighter } from './CodeHighlighter';
 
 /** The source line every machine body is written to. */
@@ -71,6 +72,7 @@ export function ToolOutputSheet({
     if (copyTimer.current) clearTimeout(copyTimer.current);
     copyTimer.current = setTimeout(() => setCopied(false), 2000);
   }, [detail]);
+  const canCopy = Boolean(detail && detail !== 'Output hidden: contains a secret.' && detail !== 'Loading…' && !error);
   const highlight = language !== undefined;
   return (
     <HullActionSheetModal
@@ -94,18 +96,18 @@ export function ToolOutputSheet({
           <CodeHighlighter code={detail ?? ''} language={language} />
         ) : (
           <Text selectable style={styles.sheetOutput} testID="tool-output-text">
-            {detail}
+            {detail || 'No output saved'}
           </Text>
         )}
       </ScrollView>
-      {/* The subtitle carries any context; the row reports only whether the
-          press landed. */}
-      <HullActionSheetRow
-        label="Copy output"
-        metadata={copied ? 'Copied' : undefined}
+      {canCopy ? <Button
+        size="inline"
+        label={copied ? 'Copied' : 'Copy output'}
+        appearance={{ label: styles.copyLabel }}
+        style={styles.copyRow}
         onPress={copy}
         testID="tool-output-copy"
-      />
+      /> : null}
     </HullActionSheetModal>
   );
 }
@@ -113,6 +115,8 @@ export function ToolOutputSheet({
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
   return {
+    copyLabel: { ...groknight.type.machine, color: groknight.accent },
+    copyRow: { alignSelf: 'flex-start', marginHorizontal: HULL_SHEET_INSET },
     sheetModal: { maxWidth: TOOL_OUTPUT_SHEET_MAX_WIDTH },
     sheetScroll: { flexGrow: 0, flexShrink: 1 },
     sheetContent: { paddingHorizontal: HULL_SHEET_INSET },

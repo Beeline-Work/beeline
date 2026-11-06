@@ -136,8 +136,7 @@ function useToolOutput() {
     void request.then(page => {
       if (generation !== current.current) return;
       const full = toolPageLines(page).find(item => item.id === next.id);
-      setLine({ ...next, detail: full?.detail ?? 'Output unavailable.' });
-      if (full?.detail == null) setError('Output unavailable.');
+      setLine({ ...next, detail: full?.detail, requester: full?.requester });
     }).catch(() => {
       if (generation !== current.current) return;
       const message = 'Output unavailable. Open again to retry.';
@@ -197,7 +196,7 @@ function ToolRunGroupRow({
               key={line.id}
               line={line}
               divider={index > 0}
-              onPress={line.detail||line.toolOutput ? () => onPressLine?.(line) : undefined}
+              onPress={line.kind === 'tool' || line.detail||line.toolOutput ? () => onPressLine?.(line) : undefined}
               testID={`tool-ledger-line-${line.id}`}
             />
           ))
@@ -239,9 +238,9 @@ export const TurnStepsLine = React.memo(function TurnStepsLine({
         detail={sheetLine?.detail}
         error={sheetError}
         onClose={closeLine}
-        subtitle={sheetLine?.outcome === 'failure' ? sheetLine?.reason : undefined}
+        subtitle={sheetLine?.requester ?? (sheetLine?.outcome === 'failure' ? sheetLine?.reason : undefined)}
         title={sheetLine?.label ?? 'Output'}
-        visible={Boolean(sheetLine?.detail)}
+        visible={Boolean(sheetLine)}
       />
     </View>
   );
@@ -311,9 +310,9 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
         detail={sheetLine?.detail}
         error={sheetError}
         onClose={closeLine}
-        subtitle={sheetLine?.outcome === 'failure' ? sheetLine?.reason : undefined}
+        subtitle={sheetLine?.requester ?? (sheetLine?.outcome === 'failure' ? sheetLine?.reason : undefined)}
         title={sheetLine?.label ?? 'Output'}
-        visible={Boolean(sheetLine?.detail)}
+        visible={Boolean(sheetLine)}
       />
     </View>
   );

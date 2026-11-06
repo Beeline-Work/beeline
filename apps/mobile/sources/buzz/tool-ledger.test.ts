@@ -69,7 +69,7 @@ describe('toolLedgerLines', () => {
     expect(shown!.durationMs).toBe(2100);
   });
 
-  it('composes the sheet detail from reason, files, and the envelope-stripped output', () => {
+  it('keeps copyable output separate from the reason and file metadata', () => {
     const [line] = toolLedgerLines([
       step({
         id: 'd',
@@ -81,7 +81,7 @@ describe('toolLedgerLines', () => {
       }),
     ]);
     expect(line!.detail).toBe(
-      ['permission denied', 'M sources/Ledger.tsx', 'first', 'second'].join('\n'),
+      ['first', 'second'].join('\n'),
     );
   });
 
@@ -122,7 +122,8 @@ describe('toolLedgerLines', () => {
         requestedBy: { pubkey: 'abc123', name: 'lunchbox' },
       }),
     ]);
-    expect(line!.detail).toBe("at lunchbox's request");
+    expect(line!.requester).toBe("at lunchbox's request");
+    expect(line!.detail).toBeUndefined();
   });
 
   it('the live turn’s last step reads as running; everything else settles', () => {

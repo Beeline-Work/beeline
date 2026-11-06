@@ -39,6 +39,7 @@ vi.mock('./IdentityMark', () => ({
 vi.mock('./BeelineMarkSpinner', () => ({
   BeelineMarkSpinner: (props: any) => React.createElement('BeelineMarkSpinner', props),
 }));
+vi.mock('./Button', () => ({ Button: (props: any) => React.createElement('Button', props, props.label) }));
 vi.mock('./HullActionSheet', () => ({
   HULL_SHEET_INSET: 22,
   HullActionSheetModal: (props: any) =>
@@ -416,6 +417,20 @@ describe('a reply’s steps line', () => {
 });
 
 describe('the output sheet', () => {
+  it.each([undefined, 'Output hidden: contains a secret.'])(
+    'shows an empty or hidden output without a copy control (%s)', (output) => {
+      const renderer = render(<TurnStepsLine items={[{
+        kind: 'tool', id: 'empty', title: 'Read', toolKind: 'read', status: 'completed', output,
+        requestedBy: { pubkey: 'owner', name: 'lunchbox' },
+      }]} />);
+      expandRun(renderer, 'empty');
+      act(() => renderer.root.findByProps({ testID: 'tool-ledger-line-empty' }).props.onPress());
+      expect(renderer.root.findByProps({ testID: 'tool-output-sheet' }).props.subtitle).toBe("at lunchbox's request");
+      expect(renderer.root.findByProps({ testID: 'tool-output-text' }).props.children).toBe(output ?? 'No output saved');
+      expect(renderer.root.findAllByProps({ testID: 'tool-output-copy' })).toHaveLength(0);
+    },
+  );
+
   it('a tap opens the full raw output — flat, mono, no inline expansion in the transcript', () => {
     const renderer = render(
       <ActivityTimeline
@@ -468,13 +483,15 @@ describe('the output sheet', () => {
     act(() => renderer.root.findByProps({ testID: 'tool-ledger-line-out' }).props.onPress());
     const body = renderer.root.findByProps({ testID: 'tool-output-text' });
     expect(body.props.selectable).toBe(true);
+    expect(renderer.root.findByProps({ testID: 'tool-output-copy' }).props.appearance.label.fontSize)
+      .toBe(body.props.style.fontSize);
     expect(body.props.children).toContain('tests passed');
     expect(Clipboard.setStringAsync).not.toHaveBeenCalled();
     await act(async () => {
       await renderer.root.findByProps({ testID: 'tool-output-copy' }).props.onPress();
     });
     expect(Clipboard.setStringAsync).toHaveBeenCalledWith(expect.stringContaining('tests passed'));
-    expect(renderer.root.findByProps({ testID: 'tool-output-copy' }).props.metadata).toBe('Copied');
+    expect(renderer.root.findByProps({ testID: 'tool-output-copy' }).props.label).toBe('Copied');
   });
 
   it('a failed call’s sheet leads with the distilled reason as the subtitle', () => {

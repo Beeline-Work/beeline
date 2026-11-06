@@ -11,6 +11,29 @@ const noteText = (rows: ReturnType<typeof roomReplySteps>) =>
   rows.filter((row) => row.kind === 'note').map((row) => row.text).join('');
 
 describe('roomReplySteps', () => {
+  it('saves redacted output within a UTF-8 byte cap with a cut-off marker', () => {
+    const step: AgentTurnStep = { kind: 'tool', call: {
+      title: 'exec_command', content: [{ type: 'text', text: 'token=planted-secret\n-----BEGIN PRIVATE KEY-----\nplanted-pem\n-----END PRIVATE KEY-----\n' + '😀'.repeat(2000) }],
+    } };
+    const output = roomReplySteps([step])[0]!.output!;
+    expect(output).not.toContain('planted-secret');
+    expect(output).not.toContain('planted-pem');
+    expect(output).toContain('[REDACTED]');
+    expect(Buffer.byteLength(output)).toBeLessThanOrEqual(4096);
+    expect(output).toMatch(/\[cut off\]$/);
+  });
+
+  it.each([
+    { title: 'squire__fetch_credential' },
+    { title: 'read_credential' },
+    { title: 'read_file', rawInput: { path: '/tmp/.env' } },
+    { title: 'exec_command', rawInput: { cmd: 'cat /tmp/credentials.json' } },
+  ])('never saves secret-returning call contents: %j', (call) => {
+    const rows = roomReplySteps([{ kind: 'tool', call: { ...call, content: 'planted-secret' } }]);
+    expect(rows[0]!.output).toBe('Output hidden: contains a secret.');
+    expect(JSON.stringify(rows)).not.toContain('planted-secret');
+  });
+
   it('keeps every note whole and in order between the tools', () => {
     expect(roomReplySteps([note('First.'), tool('a'), note('Second.'), tool('b')])).toEqual([
       { kind: 'note', title: 'Note', text: 'First.' },

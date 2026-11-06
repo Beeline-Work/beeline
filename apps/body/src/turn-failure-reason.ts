@@ -16,6 +16,7 @@ export interface DistilledTurnFailureReason {
 /** Keep wire-visible tool detail useful without ever carrying credentials. */
 export function redactToolDetail(value: string): string {
   return value
+    .replace(/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z]+ )?PRIVATE KEY-----/g, '[REDACTED]')
     .replace(
       /\b(["']?)(api[_-]?key|token|secret|password|passwd|authorization|credential|cookie|private[_-]?key)\1\s*[:=]\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,}\]]+)/gi,
       '"$2": "[REDACTED]"',

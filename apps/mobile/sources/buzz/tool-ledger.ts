@@ -83,6 +83,7 @@ export type ToolLedgerLine = {
   durationMs?: number;
   /** The sheet body: full raw output, files, reason. Undefined = not pressable. */
   detail?: string;
+  requester?: string;
   files?: readonly { path: string; status?: string }[];
 };
 
@@ -124,20 +125,19 @@ export function toolLedgerLines(
   });
 }
 
-function detailOf(step: TurnActivityAction): Pick<ToolLedgerLine, 'detail'> | {} {
+function detailOf(step: TurnActivityAction): Pick<ToolLedgerLine, 'detail' | 'requester'> | {} {
   const parts: string[] = [];
-  if (step.reason) parts.push(step.reason);
-  for (const file of step.files ?? []) {
+  if (step.kind !== 'tool' && step.reason) parts.push(step.reason);
+  for (const file of step.kind === 'tool' ? [] : step.files ?? []) {
     parts.push(file.status ? `${file.status} ${file.path}` : file.path);
   }
   const output = toolCallOutput(step.output).join('\n');
   if (output) parts.push(output);
-  if (step.requestedBy) {
-    parts.push(
-      step.requestedBy.name ? `at ${step.requestedBy.name}'s request` : "at a grant's request",
-    );
-  }
-  return parts.length ? { detail: parts.join('\n') } : {};
+  return {
+    ...(parts.length ? { detail: parts.join('\n') } : {}),
+    ...(step.requestedBy ? { requester: step.requestedBy.name
+      ? `at ${step.requestedBy.name}'s request` : "at a grant's request" } : {}),
+  };
 }
 
 export type ToolLedgerRun = {

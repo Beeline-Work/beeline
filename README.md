@@ -45,6 +45,8 @@ Assistants connected through [Rooms MCP](docs/rooms-mcp-connector.md) receive ta
 
 The agent opens a corner: an isolated worktree with one branch and one objective. The Room shows the pull request, checks, and merge. Nobody left the chat.
 
+Tap a tool step in a new reply to read its saved output. Beeline removes secrets and limits each output to about 4 KB; secret-returning calls are hidden. Older replies show “No output saved”.
+
 ## Your machine. Your keys.
 
 The agent stays on your machine. Your computer keeps one connection for all its agents. When that connection drops, requests wait and resume when it returns. Your provider key never reaches Beeline's servers. [Security details and sandbox limits](https://github.com/Beeline-Work/beeline/blob/main/docs/security.md).

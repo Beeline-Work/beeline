@@ -1,4 +1,5 @@
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
+import { toolCallText } from './tool-call-failure.js';
 import type { AgentTurnStep } from './acp.js';
 import { redactToolDetail } from './turn-failure-reason.js';
 
@@ -71,11 +72,20 @@ export function roomReplySteps(
     }
     const operation = oneLine(step.call.kind ?? '') || 'tool';
     const title = oneLine(redactToolDetail(step.call.title ?? '')) || `${operation} tool`;
+    const identity = `${step.call.name ?? ''} ${step.call.title ?? ''} ${JSON.stringify(step.call.rawInput ?? {})}`;
+    const secret = /fetch_credential|read_credential|raw_credential|(?:read|cat|head|tail)[\s\S]*?(?:\.env\b|credentials|id_rsa|id_ed25519|private.?key)/i.test(identity);
+    const raw = secret ? '' : redactToolDetail(toolCallText(step.call.content) || toolCallText(step.call.rawOutput));
+    const bytes = Buffer.from(raw);
+    const marker = '\n[cut off]';
+    const output = secret ? 'Output hidden: contains a secret.' : bytes.length > 4096
+      ? bytes.subarray(0, 4096 - Buffer.byteLength(marker)).toString('utf8').replace(/\ufffd$/, '') + marker
+      : raw;
     rows.push({
       kind: 'tool',
       title: title.slice(0, 240),
       operation: operation.slice(0, 80),
       status: step.call.status ?? 'completed',
+      ...(output ? { output } : {}),
       ...(requestedBy ? { requestedBy } : {}),
     });
   });

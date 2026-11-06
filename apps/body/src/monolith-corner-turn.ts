@@ -751,7 +751,8 @@ export class MonolithCornerTurnLoop {
       this.stoppedTurns.delete(this.stoppedTurns.values().next().value!);
     if (this.currentTurn?.requestId !== requestId) return;
     this.branchSyncController?.abort();
-    if (this.client && this.sessionId) this.client.sessionCancel(this.sessionId);
+    void this.options.scheduler.stop(this.options.cornerId, true).catch(error =>
+      console.error('[body] cancelled corner process cleanup failed:', error));
   }
 
   private commandActivation(){

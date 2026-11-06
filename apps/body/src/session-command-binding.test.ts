@@ -6,11 +6,54 @@ import { MonolithCornerTurnLoop } from './monolith-corner-turn.js';
 import { CommandExecutionContext } from './server-command-intake.js';
 import { identityFromKey } from './runtime.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
+import { AgentProcesses } from './agent-process.js';
 
 const roots: string[] = [];
 afterEach(async () => {
   vi.restoreAllMocks();
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
+});
+
+it.each(['room', 'corner'] as const)('%s cancellation tears down the harness and its MCP tools even if session/cancel is ignored', async kind => {
+  const root = await mkdtemp(join(process.cwd(), '.command-binding-'));
+  roots.push(root);
+  const identity = identityFromKey('11'.repeat(32), 'Bee');
+  const scheduler = new AgentProcesses();
+  const options = {
+    runtime: { agent: { ...identity, secretKeyHex: '11'.repeat(32) }, supervisorRoot: root },
+    config: { workspaceRoot: root, agentHomeRoot: root }, scheduler,
+    api: { execute: vi.fn() }, cwd: root, roomId: 'room', cornerId: 'room',
+  };
+  const loop = (kind === 'room' ? new MonolithRoomTurnLoop(options as never)
+    : new MonolithCornerTurnLoop(options as never)) as any;
+  let finish!: () => void;
+  const work = new Promise<void>(resolve => { finish = resolve; });
+  let started!: () => void;
+  const ready = new Promise<void>(resolve => { started = resolve; });
+  const stopped = vi.fn(async () => { finish(); });
+  loop.client = { isAlive: true, hasBackgroundTools: true, stopProcess: stopped, sessionCancel: vi.fn() };
+  loop.sessionId = 'stale-session';
+  loop.activeTurn = { item: { id: 'cancelled-command' } };
+  loop.currentTurn = { requestId: 'cancelled-command' };
+  const running = scheduler.run('room', {
+    start: async () => 'stale-session',
+    stop: (force) => loop.discardSession(true, force),
+  }, async () => { started(); await work; });
+  try {
+    await ready;
+    loop.stopTurn('unrelated-command');
+    expect(stopped).not.toHaveBeenCalled();
+    loop.stopTurn('cancelled-command');
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(stopped).toHaveBeenCalledOnce();
+    expect(loop.client).toBeUndefined();
+    await running;
+  } finally {
+    finish();
+    await running;
+    await scheduler.dispose();
+    loop.squireRelay.close();
+  }
 });
 
 it.each(['room', 'corner'] as const)('%s sessions replace the MCP context captured for the previous order', async kind => {

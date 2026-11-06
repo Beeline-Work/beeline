@@ -5,6 +5,58 @@ import type { CornerLifecycleView, CornerStateFacts, DerivedCornerState } from '
 import type { SqlDatabase } from './database.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import { CornerEvent } from './corner-lifecycle.js';
+import { commanderChainSql } from './commander.js';
+import { cornerWaitingReportSql } from './corner-waiting-report.js';
+
+/** Read the question boundary and the newest accepted input, without changing cards.
+ * Message probes use the Room/author index once per current chain member.
+ * Reports retain their original boundary even if a legacy push marked them answered.
+ */
+export async function loadCornerQuestion(db: SqlDatabase, cornerId: string, itemId?: string | null) {
+  return (await db.query<{
+    id: string; asked_at: Date; answered_at: Date | null; text: string; kind: 'message' | 'report';
+  }>(`WITH question AS MATERIALIZED (
+    SELECT item.id,item.author_id,item.created_at asked_at,item.text,'message'::text kind
+      FROM messages item WHERE item.id=$2 AND item.text ~ '^(needs-decision|blocked):'
+        AND item.card_type IS NULL AND item.deleted_at IS NULL
+    UNION ALL
+    SELECT command.id,command.private_payload->>'authorId',visible.created_at,
+      command.private_payload->>'text','report' FROM agent_commands command
+      JOIN messages visible ON visible.id=encode(sha256(convert_to('agent-command-card:'||command.id,'UTF8')),'hex')
+      WHERE command.id=$2 AND command.private_payload->>'kind'='report'
+    UNION ALL
+    SELECT COALESCE(report.report_id,report.message_id),${cornerImplementerSql('question_fact', 'question_corner')},
+      COALESCE(visible.created_at,report.created_at),COALESCE(command.private_payload->>'text',message.text),
+      CASE WHEN report.report_id IS NULL THEN 'message' ELSE 'report' END
+      FROM rooms question_corner JOIN corner_facts question_fact ON question_fact.corner_id=question_corner.id
+      CROSS JOIN LATERAL (${cornerWaitingReportSql('question_corner', true)}) report
+      LEFT JOIN agent_commands command ON command.id=report.report_id
+      LEFT JOIN messages message ON message.id=report.message_id
+      LEFT JOIN messages visible ON visible.id=report.card_id
+      WHERE question_corner.id=$1 AND $2::text IS NULL
+  ) SELECT question.id,question.asked_at,question.text,question.kind,max(answer.at) answered_at
+    FROM question JOIN rooms question_corner ON question_corner.id=$1
+    LEFT JOIN LATERAL (
+      SELECT max(input.at) at FROM (${commanderChainSql('question_corner', 'question.author_id', 'question.asked_at')}) commander
+      CROSS JOIN LATERAL (
+        (SELECT message.created_at at FROM messages message
+          WHERE message.room_id=question_corner.id AND message.author_id=commander.id
+            AND message.presentation='message' AND message.system_event IS NULL AND message.deleted_at IS NULL
+            AND message.created_at>question.asked_at ORDER BY message.created_at DESC LIMIT 1)
+        UNION ALL
+        (SELECT ordered.created_at FROM agent_commands ordered
+          LEFT JOIN messages source ON source.id=ordered.source_message_id
+          WHERE ordered.room_id=question_corner.id AND ordered.agent_id=(
+            SELECT ${cornerImplementerSql('order_fact', 'question_corner')}
+            FROM corner_facts order_fact WHERE order_fact.corner_id=question_corner.id)
+            AND ordered.created_at>question.asked_at
+            AND (ordered.private_payload->>'kind'='order' OR ordered.reason='corner_brief_revision')
+            AND COALESCE(ordered.private_payload->>'authorId',source.author_id)=commander.id
+          ORDER BY ordered.created_at DESC LIMIT 1)
+      ) input
+    ) answer ON true GROUP BY question.id,question.asked_at,question.text,question.kind
+    ORDER BY question.asked_at DESC LIMIT 1`, [cornerId,itemId ?? null])).rows[0];
+}
 
 
 
@@ -114,6 +166,7 @@ export type MachineWake = {
 export type MachineNotification = { kind: 'idle' | 'waiting' | 'draft'; key: string };
 
 export type CornerMachineFacts = CornerStateFacts & {
+  question?: { postedAt: Date; answeredAt: Date | null };
   headSha?: string;
   approved?: boolean;
   mergeHeld?: boolean;
@@ -134,7 +187,7 @@ export type CornerMachineEvent = { facts: CornerMachineFacts; event: CornerEvent
 
 export function transitionCorner(
   current: CornerMachine,
-  { facts: f, event }: CornerMachineEvent,
+  { facts, event }: CornerMachineEvent,
 ): {
   state: CornerMachine;
   wakes: MachineWake[];
@@ -142,6 +195,9 @@ export function transitionCorner(
   suppression?: string;
   checksPlan?: CornerChecksPlan;
 } {
+  const f = facts.blocker?.reason === 'question' && facts.question?.answeredAt
+    ? { ...facts, blocker: undefined, waitReason: undefined }
+    : facts;
   if (event.kind === 'check-observation') {
     const { headSha, previousHeadSha, prior, next, workerBusy } = event.observation;
     const sameReportedHead = prior?.reportedHeadSha === headSha;

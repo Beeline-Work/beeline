@@ -3,6 +3,7 @@ import React from 'react';
 import { act, create } from 'react-test-renderer';
 import { expect, it, vi } from 'vitest';
 import { RoomEvent } from 'livekit-client';
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const fixture = vi.hoisted(() => ({
   listeners: new Map<string, (...args: any[]) => void>(),
   request: vi.fn(), closeAudio: vi.fn(async () => {}), disconnect: vi.fn(async () => {}),

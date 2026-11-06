@@ -219,7 +219,7 @@ export function startDictationUpload(lexicon: readonly string[], locale: string,
       try {
         const done = await Promise.race([queue.then(() => true as const), late]);
         if (!done) console.warn('[dictation] server transcription missed the stop deadline');
-        else if (failed) console.warn('[dictation] a recording could not be read');
+        else if (failed) console.warn('[dictation] a recording or upload failed');
         if (!done || failed) return null;
         return joinSpeechPieces(texts(), lexicon, locale) || null;
       } finally {

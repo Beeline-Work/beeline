@@ -636,14 +636,14 @@ describe('daemon live command push', () => {
       socket.once('open', resolve);
       socket.once('error', reject);
     });
-    const closed = new Promise<number>((resolve) => socket.once('close', resolve));
     socket.send(JSON.stringify({ type: 'subscribe', roomId: 'room-live' }));
-
-    await expect(closed).resolves.toBe(1013);
+    await vi.waitFor(async () => {
+      const health = await phoneFetch(`http://127.0.0.1:${port}/health`);
+      expect((await health.json()).live.errors.database).toBe(1);
+    });
+    expect(socket.readyState).toBe(WebSocket.OPEN);
     const response = await phoneFetch(`http://127.0.0.1:${port}/healthz`);
     expect(response.status).toBe(200);
-    const health = await phoneFetch(`http://127.0.0.1:${port}/health`);
-    expect((await health.json()).live.errors.database).toBe(1);
   });
 
   it('advertises discovery wake and pushes listener and app-pool recovery', async () => {

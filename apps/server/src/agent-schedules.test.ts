@@ -10,7 +10,7 @@ import {
   nextScheduleOccurrence,
   validateScheduleCadence,
 } from './agent-schedules.js';
-import { DaemonService } from './daemon-service.js';
+import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import { SCHEDULE_RAN_VERB, SCHEDULE_SCHEDULER_ID } from '@beeline/api-contract/scheduled-prompts';

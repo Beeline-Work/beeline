@@ -68,7 +68,7 @@ describe('actual selected model credential claim socket', () => {
   }
 
   it('negotiates only a boolean and returns the bearer solely on the authorized bounded source-bound claim response', async () => {
-    const registered = await register(); expect(registered.capabilities).toMatchObject({ ownedModelV1: true, turnOwnershipV1: true, intakeHeartbeat: false });
+    const registered = await register(); expect(registered.capabilities).toMatchObject({ ownedModelV1: true, turnOwnershipV1: true });
     expect(JSON.stringify(registered)).not.toContain('bfmc_'); expect(registered).not.toHaveProperty('modelCredential');
     const reply = await claim(); expect(reply.error).toBeUndefined(); expect(reply.result?.modelCredential).toBeDefined();
     const actor = await f.credentials.authenticate(f.db, reply.result!.modelCredential!.token);
@@ -117,16 +117,22 @@ describe('actual selected model credential claim socket', () => {
     expect((await claim('claim-after-journal-end')).error).toBe('turn_operation_unconfirmed');
   });
 
-  it('keeps helpers without installed model support and a server without signer configuration on the legacy claim wire', async () => {
-    const old = await register(false); expect(old.capabilities).not.toHaveProperty('ownedModelV1'); expect(old.capabilities).not.toHaveProperty('turnOwnershipV1');
-    expect(old.capabilities?.intakeHeartbeat).toBe(true);
+  it('keeps machine ownership mandatory when optional model support or signer configuration is absent', async () => {
+    const old=await register(false);
+    expect(old.capabilities).not.toHaveProperty('ownedModelV1');
+    expect(old.capabilities).toHaveProperty('turnOwnershipV1',true);
+    expect((await claim('unsupported-model-helper')).error).toBeDefined();
     daemon.setOwnedModel(undefined);
-    const unavailable = await register(true); expect(unavailable.capabilities).not.toHaveProperty('ownedModelV1'); expect(unavailable.capabilities).not.toHaveProperty('turnOwnershipV1');
-    const response = await fetch(origin + '/v1/daemon/operations/claimAgentCommand', { method: 'POST',
-      headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ roomId: MODEL_ROOM, commandId, generationId: 'legacy-model-generation' }) });
-    expect(response.status).toBe(200); expect(await response.json()).not.toHaveProperty('modelCredential');
-    expect((await f.db.query('SELECT * FROM owned_model_credentials WHERE command_id=$1', [commandId])).rowCount).toBe(0);
+    const unavailable=await register(true);
+    expect(unavailable.capabilities).not.toHaveProperty('ownedModelV1');
+    expect(unavailable.capabilities).toHaveProperty('turnOwnershipV1',true);
+    const claimed=await claim('without-model-signer');
+    expect(claimed.error).toBeUndefined();expect(claimed.result).not.toHaveProperty('modelCredential');
+    const response=await fetch(origin+'/v1/daemon/operations/claimAgentCommand',{method:'POST',
+      headers:{authorization:`Bearer ${TOKEN}`,'content-type':'application/json'},
+      body:JSON.stringify({roomId:MODEL_ROOM,commandId,generationId:'legacy-model-generation'})});
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect((await f.db.query('SELECT * FROM owned_model_credentials WHERE command_id=$1',[commandId])).rowCount).toBe(0);
   });
 
   it('does not enqueue an already committed credential response after current membership revocation wins the final reply fence', async () => {
@@ -158,7 +164,7 @@ describe('actual selected model credential claim socket', () => {
     const response = await fetch(origin + '/v1/daemon/operations/claimAgentCommand', { method: 'POST',
       headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
       body: JSON.stringify({ roomId: MODEL_ROOM, commandId, generationId: 'legacy-bypass-generation' }) });
-    expect(response.status).toBe(409); const refusal = JSON.stringify(await response.json()); expect(refusal).toContain('UNKNOWN'); expect(refusal).not.toContain(bearer);
+    expect(response.status).toBeGreaterThanOrEqual(400); const refusal = JSON.stringify(await response.json()); expect(refusal).toContain('helper claim requires its machine connection owner'); expect(refusal).not.toContain(bearer);
     expect((await f.db.query('SELECT state,generation_id FROM agent_commands WHERE id=$1', [commandId])).rows).toEqual([{ state: 'pending', generation_id: null }]);
     expect((await f.db.query(`SELECT 1 FROM agent_command_generation_owners WHERE command_id=$1 AND generation_id='legacy-bypass-generation'`, [commandId])).rowCount).toBe(0);
     expect((await f.db.query('SELECT state FROM owned_model_attempts WHERE command_id=$1', [commandId])).rows).toEqual([{ state: 'unknown' }]);

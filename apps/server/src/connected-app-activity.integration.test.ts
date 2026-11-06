@@ -3,7 +3,7 @@ import { migratedDatabase, type PgliteDatabase } from './test-support.js';
 import { createAgentCommand } from './agent-command.js';
 import { clearConnectedAppPlaceholders } from './migrations/connected-app-turns.js';
 import { PhoneService } from './phone-service.js';
-import { DaemonService } from './daemon-service.js';
+import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';
 import { RoomsMcpAgentTools } from './rooms-mcp-agent.js';
 import { LiveHub } from './live.js';
 

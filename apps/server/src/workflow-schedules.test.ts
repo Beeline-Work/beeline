@@ -7,7 +7,7 @@ import { createBeelineServer } from './server.js';
 import { migrate } from './database.js';
 import { describedWorkflow, PgliteDatabase, migratedDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
-import { DaemonService } from './daemon-service.js';
+import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';
 import { LiveHub } from './live.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { saveWorkflow, startWorkflow, cancelWorkflowRun, getWorkflowRun } from './workflow-runs.js';

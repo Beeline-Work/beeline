@@ -30,7 +30,7 @@ it.each(['room', 'corner'] as const)('%s sessions replace the MCP context captur
       sessionContextPath?: string;
       sessionCwd?: string;
       sessionFingerprint?: string;
-      client?: { isAlive: boolean; stop: () => Promise<void> };
+      client?: { isAlive: boolean; stopProcess: () => void };
       refreshTurnCheckout: () => Promise<void>;
       currentSessionFingerprint: () => Promise<string>;
       sessionIsCurrent: () => Promise<boolean>;
@@ -45,7 +45,7 @@ it.each(['room', 'corner'] as const)('%s sessions replace the MCP context captur
   await context.enter(command('first'));
   const captured = context.path;
   const stopped = vi.fn(async () => undefined);
-  loop.client = { isAlive: true, stop: stopped };
+  loop.client = { isAlive: true, stopProcess: stopped };
   loop.sessionId = 'first-session';
   loop.sessionContextPath = captured;
   loop.sessionCwd = root;

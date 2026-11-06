@@ -1,10 +1,11 @@
 import { flushDueCommanderWakes } from './commander-wakes.js';
+import { releaseAgentConnection } from './connection-presence.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { advanceCorner } from './corner-lifecycle.js';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { beforeAll, beforeEach, afterAll, afterEach, expect, it, vi } from 'vitest';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
-import { DaemonService } from './daemon-service.js';
+import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';
 import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
 import { captureServerError } from './sentry.js';
@@ -130,6 +131,10 @@ it('STALE-ANSWERED-REPORT: preserves a report already being handled', async () =
   expect((await db.query('SELECT state FROM agent_commands WHERE id=$1', [report.id])).rows)
     .toEqual([{ state: 'claimed' }]);
   await db.query(`UPDATE agent_commands SET lease_expires_at=now()-interval '1 second' WHERE id=$1`, [report.id]);
+  await claim(report); // Only a closed connection releases the live machine's work.
+  const connection = (await db.query<{ connection_id: string }>(
+    'SELECT connection_id FROM agent_connections WHERE agent_id=$1', [RUBY])).rows[0]!;
+  await releaseAgentConnection(db, new LiveHub(), RUBY, connection.connection_id);
   await expect(claim(report)).rejects.toThrow('command claim conflict');
 });
 it.each([

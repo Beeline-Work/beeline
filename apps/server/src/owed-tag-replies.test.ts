@@ -5,7 +5,7 @@ import { ROOMS_MCP_SCHEMA } from './rooms-mcp-schema.js';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
-import { DaemonService } from './daemon-service.js';
+import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';
 import { LiveHub } from './live.js';
 import { TokenAuth } from './auth.js';
 import { RoomsMcp } from './rooms-mcp.js';

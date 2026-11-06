@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createAgentCommand } from './agent-command.js';
 import { TokenAuth } from './auth.js';
-import { DaemonService } from './daemon-service.js';
+import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import { createBeelineServer } from './server.js';
@@ -31,6 +31,8 @@ beforeAll(async () => {
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Permissions proof')`, [WORKSPACE]);
   await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$3,'Team'),($2,$3,'Other team')`, [ROOM, OTHER_ROOM, WORKSPACE]);
   for (const who of [REQUESTER, ROLE_OWNER, ROOM_ADMIN, WORKSPACE_ADMIN, OUTSIDER, SAVER, WORKER, DELEGATE]) {
+    if (who !== WORKSPACE_ADMIN) await db.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')`, [WORKSPACE, who]);
     for (const room of [ROOM, OTHER_ROOM]) await db.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,$4)`,
       [WORKSPACE, room, who, who === ROOM_ADMIN ? 'admin' : 'member']);

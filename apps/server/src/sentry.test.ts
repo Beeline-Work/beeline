@@ -196,7 +196,7 @@ it('SENTRY-7807034373: schedule HTTP refusals stay visible without Sentry events
       import assert from 'node:assert/strict';
       import { PgliteDatabase } from './src/test-support.ts';
       import { migrate } from './src/database.ts';
-      import { DaemonService } from './src/daemon-service.ts';
+      import { HelperDaemonService as DaemonService } from './src/test-fixtures/helper-daemon.ts';
       import { LiveHub } from './src/live.ts';
       import { createBeelineServer } from './src/server.ts';
       import { flushServerErrors } from './src/sentry.ts';
@@ -274,7 +274,7 @@ it('R-CHECKIN-ACTIVITY: invalid final output is actionable while unexpected data
       import assert from 'node:assert/strict';
       import { PgliteDatabase } from './src/test-support.ts';
       import { migrate } from './src/database.ts';
-      import { DaemonService } from './src/daemon-service.ts';
+      import { HelperDaemonService as DaemonService } from './src/test-fixtures/helper-daemon.ts';
       import { LiveHub } from './src/live.ts';
       import { createAgentCommand, claimAgentCommand } from './src/agent-command.ts';
       import { createBeelineServer } from './src/server.ts';
@@ -382,7 +382,7 @@ it('ATTACH-CAP-1: attachment cap is a client error and unexpected failures still
       import assert from 'node:assert/strict';
       import { PgliteDatabase } from './src/test-support.ts';
       import { migrate } from './src/database.ts';
-      import { DaemonService } from './src/daemon-service.ts';
+      import { HelperDaemonService as DaemonService } from './src/test-fixtures/helper-daemon.ts';
       import { LiveHub } from './src/live.ts';
       import { createAgentCommand } from './src/agent-command.ts';
       import { createBeelineServer } from './src/server.ts';
@@ -482,7 +482,7 @@ it('WORKFLOW-ROLE-REFUSAL / BEELINE-SENTRY-REFUSALS / APP-REFUSAL-5 / VIDEO-PREV
       import { describedWorkflow } from './src/test-support.ts';
       import { PgliteDatabase } from './src/test-support.ts';
       import { migrate } from './dist/database.js';
-      import { DaemonService } from './dist/daemon-service.js';
+      import { HelperDaemonService as DaemonService } from './dist/test-fixtures/helper-daemon.js';
       import { LiveHub } from './dist/live.js';
       import { createAgentCommand } from './dist/agent-command.js';
       import { createBeelineServer } from './dist/server.js';

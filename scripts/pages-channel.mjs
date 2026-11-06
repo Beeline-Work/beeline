@@ -7,8 +7,8 @@ import { validateBundleDirectory } from './pages-site.mjs';
 
 export const CHANNEL_TAG = 'helper-update-channel';
 export function pagesChannelTag(channel = 'latest') {
-  if (!['latest', 'nightly'].includes(channel)) throw new Error(`invalid helper channel: ${channel}`);
-  return channel === 'latest' ? CHANNEL_TAG : `${CHANNEL_TAG}-nightly`;
+  if (!['latest', 'next'].includes(channel)) throw new Error(`invalid helper channel: ${channel}`);
+  return channel === 'latest' ? CHANNEL_TAG : `${CHANNEL_TAG}-next`;
 }
 // The Mac input hashes beside the published bundles let the next release
 // carry an unchanged Mac bundle forward instead of rebuilding it.

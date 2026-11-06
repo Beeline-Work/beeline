@@ -26,9 +26,9 @@ const delivered = (version = 'v0.1.1', sourceSha = previousSha) => {
   record.components.server.imageRef = 'registry.fly.io/beeline-server:previous';
   return record;
 };
-const nightlyRecord = () => {
+const nextRecord = () => {
   const record = delivered('v0.1.2', sha);
-  record.channel = 'nightly';
+  record.channel = 'next';
   record.components.desktop = delivered().components.desktop;
   record.components.website = delivered().components.website;
   record.components['mobile-ota'].otaBranch = 'release-v0.1.2';
@@ -40,8 +40,8 @@ const fixture = (fn) => {
 };
 const workflow = parse(readFileSync('.github/workflows/unified-release.yml', 'utf8'));
 
-test('channel defaults to nightly; native consent and latest selection stay separate', () => {
-  assert.equal(releaseChannel(), 'nightly');
+test('channel defaults to next; native consent and latest selection stay separate', () => {
+  assert.equal(releaseChannel(), 'next');
   assert.throws(() => releaseChannel('beta'), /invalid release channel/);
   assert.deepEqual(channelComponents(['helper', 'mobile-ota', 'desktop', 'website']), ['server', 'helper', 'mobile-ota']);
   assert.deepEqual(channelComponents(['mobile-native'], { storeTrack: 'beta' }), ['server', 'mobile-native']);
@@ -51,69 +51,78 @@ test('channel defaults to nightly; native consent and latest selection stay sepa
   assert.throws(() => channelComponents([], { channel: 'latest', storeTrack: 'beta' }), /cannot publish/);
 });
 
-test('promotion pins a successful nightly and refuses a different source or incomplete evidence', () => {
-  const nightly = nightlyRecord();
-  assert.equal(promotionSource(nightly).sourceSha, sha);
-  assert.throws(() => promotionSource(nightly, previousSha), /current nightly source SHA/);
-  assert.throws(() => promotionSource(delivered()), /successfully published nightly/);
-  nightly.components['mobile-ota'].otaTargets = [];
-  assert.throws(() => promotionSource(nightly), /immutable OTA branch and targets/);
+test('retired nightly channel is rejected without aliases', () => {
+  assert.throws(() => releaseChannel('nightly'), /invalid release channel/);
+  assert.throws(() => channelComponents([], { channel: 'nightly' }), /invalid release channel/);
+  assert.throws(() => pagesChannelTag('nightly'), /invalid helper channel/);
+  assert.equal(pagesChannelTag('next'), 'helper-update-channel-next');
+  assert.throws(() => androidReleaseProfile({}, 'nightly'), /invalid Android release channel/);
+  assert.throws(() => promotionSource({ ...nextRecord(), channel: 'nightly' }), /successfully published next/);
 });
 
-test('nightly release records cannot become GitHub latest; identities include reserved nightlies', () => {
+test('promotion pins a successful next and refuses a different source or incomplete evidence', () => {
+  const next = nextRecord();
+  assert.equal(promotionSource(next).sourceSha, sha);
+  assert.throws(() => promotionSource(next, previousSha), /current next source SHA/);
+  assert.throws(() => promotionSource(delivered()), /successfully published next/);
+  next.components['mobile-ota'].otaTargets = [];
+  assert.throws(() => promotionSource(next), /immutable OTA branch and targets/);
+});
+
+test('next release records cannot become GitHub latest; identities include reserved next releases', () => {
   const stable = { tag_name: 'v0.1.1', target_commitish: previousSha, published_at: '2026-01-01', draft: false, prerelease: false };
-  const nightly = { tag_name: 'v0.1.2', target_commitish: sha, published_at: '2026-01-02', draft: false, prerelease: true };
-  const rolling = { tag_name: pagesChannelTag('nightly'), published_at: '2026-01-03', prerelease: true };
-  assert.equal(latestPublished([stable, nightly, rolling]).tag_name, stable.tag_name);
-  assert.equal(latestPublished([stable, nightly, rolling], 'nightly').tag_name, nightly.tag_name);
-  assert.equal(assignReleaseVersion({ releases: [stable, nightly], previous: delivered(), sha: 'c'.repeat(40) }).version, 'v0.1.3');
+  const next = { tag_name: 'v0.1.2', target_commitish: sha, published_at: '2026-01-02', draft: false, prerelease: true };
+  const rolling = { tag_name: pagesChannelTag('next'), published_at: '2026-01-03', prerelease: true };
+  assert.equal(latestPublished([stable, next, rolling]).tag_name, stable.tag_name);
+  assert.equal(latestPublished([stable, next, rolling], 'next').tag_name, next.tag_name);
+  assert.equal(assignReleaseVersion({ releases: [stable, next], previous: delivered(), sha: 'c'.repeat(40) }).version, 'v0.1.3');
 });
 
-for (const channel of ['nightly', 'latest']) test(`offline workflow plan: ${channel}`, () => fixture(directory => {
+for (const channel of ['next', 'latest']) test(`offline workflow plan: ${channel}`, () => fixture(directory => {
   const previous = delivered();
   // The CLI reads native pins with git show. Both fixture releases use the
   // current pins, so HEAD supplies that input without requiring its parent.
   previous.sourceSha = sha;
-  const nightly = nightlyRecord();
+  const next = nextRecord();
   writeFileSync(join(directory, 'previous.json'), JSON.stringify(previous));
-  writeFileSync(join(directory, 'nightly.json'), JSON.stringify(nightly));
+  writeFileSync(join(directory, 'next.json'), JSON.stringify(next));
   writeFileSync(join(directory, 'paths.txt'), 'apps/body/src/self-update-manifest.ts\napps/mobile/sources/app/index.tsx\n');
   const args = ['scripts/unified-release.mjs', 'plan', '--version', 'v0.1.2', '--sha', sha,
     '--paths', join(directory, 'paths.txt'), '--previous', join(directory, 'previous.json'),
     '--channel', channel, '--state', join(directory, 'state.json'), '--outputs', join(directory, 'outputs.txt')];
-  if (channel === 'latest') args.push('--nightly', join(directory, 'nightly.json'));
+  if (channel === 'latest') args.push('--next', join(directory, 'next.json'));
   const output = execFileSync(process.execPath, args, { encoding: 'utf8' });
   const plan = JSON.parse(output.trim().split('\n').at(-1));
   console.log(`${channel} component plan: ${JSON.stringify(plan)}`);
-  assert.deepEqual(plan.selected, channel === 'nightly' ? ['server', 'helper', 'mobile-ota'] : ['helper', 'mobile-ota', 'desktop', 'website']);
+  assert.deepEqual(plan.selected, channel === 'next' ? ['server', 'helper', 'mobile-ota'] : ['helper', 'mobile-ota', 'desktop', 'website']);
   const state = JSON.parse(readFileSync(join(directory, 'state.json')));
-  assert.deepEqual(state.plan.nativePlatforms, channel === 'nightly' ? ['android'] : ['android', 'ios']);
+  assert.deepEqual(state.plan.nativePlatforms, channel === 'next' ? ['android'] : ['android', 'ios']);
   const outputs = Object.fromEntries(readFileSync(join(directory, 'outputs.txt'), 'utf8').trim().split('\n').map(line => {
     const i = line.indexOf('='); return [line.slice(0, i), line.slice(i + 1)];
   }));
-  const restored = restoreReleasePlan({ version: state.version, sourceSha: sha, plan: outputs, previous, nightly: channel === 'latest' ? nightly : undefined });
+  const restored = restoreReleasePlan({ version: state.version, sourceSha: sha, plan: outputs, previous, next: channel === 'latest' ? next : undefined });
   assert.equal(restored.channel, channel);
   assert.deepEqual(restored.plan.selected, state.plan.selected);
   if (channel === 'latest') {
-    assert.equal(outputs.ota_branch, nightly.components['mobile-ota'].otaBranch);
-    assert.equal(restored.components.server.imageRef, nightly.components.server.imageRef);
+    assert.equal(outputs.ota_branch, next.components['mobile-ota'].otaBranch);
+    assert.equal(restored.components.server.imageRef, next.components.server.imageRef);
   }
 }));
 
 test('promotion carries older helper and OTA identities without assigning them this release SHA', () => {
   const previous = delivered();
-  const nightly = nightlyRecord();
-  nightly.components.helper = previous.components.helper;
-  nightly.components['mobile-ota'] = previous.components['mobile-ota'];
-  const state = initializeRelease({ version: nightly.version, sourceSha: sha, previous, nightly,
+  const next = nextRecord();
+  next.components.helper = previous.components.helper;
+  next.components['mobile-ota'] = previous.components['mobile-ota'];
+  const state = initializeRelease({ version: next.version, sourceSha: sha, previous, next,
     channel: 'latest', selectedComponents: channelComponents([], { channel: 'latest' }) });
-  const outputs = Object.fromEntries(planOutputs(state, previous, nightly).trim().split('\n').map(line => {
+  const outputs = Object.fromEntries(planOutputs(state, previous, next).trim().split('\n').map(line => {
     const i = line.indexOf('='); return [line.slice(0, i), line.slice(i + 1)];
   }));
   const needs = { initialize: { outputs }, helper: { result: 'success' }, mobile_ota: { result: 'success', outputs: {
     ota_branch: outputs.ota_branch, ota_targets: outputs.ota_targets,
   } } };
-  applyComponentCheckpoints(state, checkpointsFromJobs(needs, { version: nightly.version, sourceSha: sha, releaseId: 'fixture' }));
+  applyComponentCheckpoints(state, checkpointsFromJobs(needs, { version: next.version, sourceSha: sha, releaseId: 'fixture' }));
   applyJobFacts(state, needs, { previous });
   assert.equal(state.components.helper.sourceSha, previousSha);
   assert.equal(state.components.helper.version, previous.version);
@@ -121,24 +130,24 @@ test('promotion carries older helper and OTA identities without assigning them t
 });
 
 test('workflow reuses native beta and OTA legs, skipping helper compilation during promotion', () => {
-  assert.deepEqual(workflow.on.workflow_dispatch.inputs.channel.options, ['nightly', 'latest']);
-  assert.equal(workflow.on.workflow_dispatch.inputs.channel.default, 'nightly');
-  for (const name of ['helper_linux', 'helper_macos']) assert.match(workflow.jobs[name].if, /channel == 'nightly'/);
+  assert.deepEqual(workflow.on.workflow_dispatch.inputs.channel.options, ['next', 'latest']);
+  assert.equal(workflow.on.workflow_dispatch.inputs.channel.default, 'next');
+  for (const name of ['helper_linux', 'helper_macos']) assert.match(workflow.jobs[name].if, /channel == 'next'/);
   for (const name of ['mobile_ota', 'mobile_ota_after_proof']) {
     const action = workflow.jobs[name].steps.find(s => s.uses === './.github/actions/mobile-ota-leg');
-    assert.equal(action.with.beta_channel, 'nightly');
+    assert.equal(action.with.beta_channel, 'next');
     assert.equal(action.with.promote, 'false');
     assert.match(action.with.mode, /latest.*promote/);
   }
   const config = JSON.parse(readFileSync('apps/mobile/eas.json'));
-  assert.equal(config.build['nightly-ci'], undefined);
-  const profile = androidReleaseProfile(config, 'nightly').config.build['nightly-ci'];
+  assert.equal(config.build['next-ci'], undefined);
+  const profile = androidReleaseProfile(config, 'next').config.build['next-ci'];
   assert.equal(profile.extends, 'production-ci');
-  assert.equal(profile.channel, 'nightly');
+  assert.equal(profile.channel, 'next');
   assert.equal(profile.env, undefined);
   const ota = parse(readFileSync('.github/actions/mobile-ota-leg/action.yml', 'utf8'));
   assert.equal(ota.runs.steps.find(s => s.id === 'publish').if, "inputs.mode == 'publish'");
-  assert.match(workflow.jobs.release_result.steps.find(s => s.name?.startsWith('Publish the nightly record')).run, /--prerelease --latest=false/);
+  assert.match(workflow.jobs.release_result.steps.find(s => s.name?.startsWith('Publish the next record')).run, /--prerelease --latest=false/);
   assert.match(readFileSync('scripts/gh-release-retry.sh', 'utf8'), /--prerelease=false --latest/);
 });
 
@@ -156,15 +165,15 @@ function bundle(directory, version, sourceCommit) {
   return manifest;
 }
 
-test('Pages preserves stable website and latest bytes while serving nightly beside them', () => fixture(async directory => {
-  const latestDir = join(directory, 'latest'), nightlyDir = join(directory, 'nightly');
-  const latest = bundle(latestDir, 'v0.1.1', previousSha), nightly = bundle(nightlyDir, 'v0.1.2', sha);
+test('Pages preserves stable website and latest bytes while serving next beside them', () => fixture(async directory => {
+  const latestDir = join(directory, 'latest'), nextDir = join(directory, 'next');
+  const latest = bundle(latestDir, 'v0.1.1', previousSha), next = bundle(nextDir, 'v0.1.2', sha);
   const outputRoot = join(directory, 'site');
-  await buildPagesSite({ sourceRoot: 'web', bundleRoot: latestDir, nightlyBundleRoot: nightlyDir, outputRoot });
+  await buildPagesSite({ sourceRoot: 'web', bundleRoot: latestDir, nextBundleRoot: nextDir, outputRoot });
   assert.deepEqual(JSON.parse(readFileSync(join(outputRoot, 'dl/manifest.json'))), latest);
-  assert.deepEqual(JSON.parse(readFileSync(join(outputRoot, 'dl/nightly/manifest.json'))), nightly);
+  assert.deepEqual(JSON.parse(readFileSync(join(outputRoot, 'dl/next/manifest.json'))), next);
   assert.deepEqual(readFileSync(join(outputRoot, 'index.html')), readFileSync('web/index.html'));
-  assert.deepEqual(readFileSync(join(outputRoot, 'dl/nightly/beeline-linux-x64.tar.gz')), readFileSync(join(nightlyDir, 'beeline-linux-x64.tar.gz')));
+  assert.deepEqual(readFileSync(join(outputRoot, 'dl/next/beeline-linux-x64.tar.gz')), readFileSync(join(nextDir, 'beeline-linux-x64.tar.gz')));
 }));
 
 test('durable helper channels round-trip and promote the exact validated bytes', () => fixture(async directory => {
@@ -176,11 +185,11 @@ test('durable helper channels round-trip and promote the exact validated bytes',
     async getReleaseAsset({ asset_id }) { if (!payloads.has(asset_id)) throw Object.assign(new Error('missing asset'), { status: 404 }); return { data: payloads.get(asset_id) }; },
     async deleteReleaseAsset({ asset_id }) { for (const r of releases.values()) r.assets = r.assets.filter(a => a.id !== asset_id); },
   } } };
-  assert.equal(await downloadPagesChannel({ github, repo: {}, channel: 'nightly', allowMissing: true, directory: join(directory, 'absent') }), null);
+  assert.equal(await downloadPagesChannel({ github, repo: {}, channel: 'next', allowMissing: true, directory: join(directory, 'absent') }), null);
   const candidate = join(directory, 'candidate'); const expected = bundle(candidate, 'v0.1.2', sha);
-  await publishPagesChannel({ github, repo: {}, channel: 'nightly', directory: candidate });
+  await publishPagesChannel({ github, repo: {}, channel: 'next', directory: candidate });
   const downloaded = join(directory, 'downloaded');
-  assert.deepEqual(await downloadPagesChannel({ github, repo: {}, channel: 'nightly', directory: downloaded }), expected);
+  assert.deepEqual(await downloadPagesChannel({ github, repo: {}, channel: 'next', directory: downloaded }), expected);
   await publishPagesChannel({ github, repo: {}, directory: downloaded });
   assert.equal(releases.get(pagesChannelTag()).prerelease, true);
   assert.equal(releases.get(pagesChannelTag()).make_latest, 'false');
@@ -189,31 +198,31 @@ test('durable helper channels round-trip and promote the exact validated bytes',
   for (const name of ['manifest.json', 'beeline-linux-x64.tar.gz', 'beeline-linux-x64.tar.gz.sha256'])
     assert.deepEqual(readFileSync(join(promoted, name)), readFileSync(join(candidate, name)));
   assert.throws(() => pagesChannelTag('../escape'), /invalid helper channel/);
-  payloads.delete(releases.get(pagesChannelTag('nightly')).assets.find(a => a.name === 'manifest.json').id);
-  await assert.rejects(downloadPagesChannel({ github, repo: {}, channel: 'nightly', allowMissing: true, directory: downloaded }), /missing asset/);
+  payloads.delete(releases.get(pagesChannelTag('next')).assets.find(a => a.name === 'manifest.json').id);
+  await assert.rejects(downloadPagesChannel({ github, repo: {}, channel: 'next', allowMissing: true, directory: downloaded }), /missing asset/);
 }));
 
-test('a nightly at the promoted SHA gets a fresh prerelease identity and cannot demote latest', () => {
+test('a next at the promoted SHA gets a fresh prerelease identity and cannot demote latest', () => {
   const previous = delivered('v0.1.2', sha);
   previous.channel = 'latest'; previous.promotedFrom = previous.version;
   const releases = [{ tag_name: previous.version, target_commitish: sha, draft: false, prerelease: false }];
   const { version } = assignReleaseVersion({ releases, previous, sha, reusePublished: false });
   assert.equal(version, 'v0.1.3');
-  const nightly = initializeRelease({ version, sourceSha: sha, previous, channel: 'nightly', selectedComponents: ['server'] });
-  assert.equal(nightly.state, 'planned');
-  assert.equal(nightly.version, version);
-  nightly.state = 'delivered';
-  const promoted = initializeRelease({ version, sourceSha: sha, previous, nightly, channel: 'latest',
+  const next = initializeRelease({ version, sourceSha: sha, previous, channel: 'next', selectedComponents: ['server'] });
+  assert.equal(next.state, 'planned');
+  assert.equal(next.version, version);
+  next.state = 'delivered';
+  const promoted = initializeRelease({ version, sourceSha: sha, previous, next, channel: 'latest',
     selectedComponents: channelComponents([], { channel: 'latest' }) });
   assert.equal(promoted.state, 'planned');
   assert.equal(promoted.channel, 'latest');
 });
 
 
-test('nightly reads Play beta and production; latest reads production alone', async () => {
+test('next reads Play beta and production; latest reads production alone', async () => {
   const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const key = JSON.stringify({ type: 'service_account', client_email: 'fixture@example.test', private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }) });
-  for (const channel of ['nightly', 'latest']) {
+  for (const channel of ['next', 'latest']) {
     const requests = [];
     const stores = await readStores({
       env: { GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: key, BEELINE_RELEASE_CHANNEL: channel },
@@ -228,12 +237,12 @@ test('nightly reads Play beta and production; latest reads production alone', as
       },
     });
     assert.equal(stores.android.status, 'readable');
-    assert.equal(requests.length, channel === 'nightly' ? 2 : 1);
-    assert.deepEqual(stores.android.live.map(t => t.runtimeVersion), channel === 'nightly' ? ['1', '4'] : ['1']);
+    assert.equal(requests.length, channel === 'next' ? 2 : 1);
+    assert.deepEqual(stores.android.live.map(t => t.runtimeVersion), channel === 'next' ? ['1', '4'] : ['1']);
   }
 });
 
-test('nightly OTA retains production and beta live runtimes even across a larger runtime gap', () => {
+test('next OTA retains production and beta live runtimes even across a larger runtime gap', () => {
   const live = [1, 2, 3, 4].map(n => ({ platform: 'android', runtimeVersion: String(n) }));
   const { targets } = computeTargets({ pins: { android: '4', ios: '1' }, includeAllAndroidLive: true,
     stores: { android: { status: 'readable', live, latestRuntimeVersion: '4' },
@@ -242,13 +251,13 @@ test('nightly OTA retains production and beta live runtimes even across a larger
 });
 
 
-test('OTA promotion points production at the exact nightly groups without exporting or uploading', () => fixture(directory => {
+test('OTA promotion points production at the exact next groups without exporting or uploading', () => fixture(directory => {
   const eas = join(directory, 'eas-stub.mjs');
   const calls = join(directory, 'calls.jsonl');
   const pointer = join(directory, 'pointer.txt');
   const branch = 'release-v0.1.2';
   const updates = ['android', 'ios'].map((platform, i) => ({ platform, runtimeVersion: String(i + 1),
-    group: `immutable-nightly-group-${platform}`, message: `release ${sha.slice(0, 12)} ${platform}@${i + 1}` }));
+    group: `immutable-next-group-${platform}`, message: `release ${sha.slice(0, 12)} ${platform}@${i + 1}` }));
   writeFileSync(eas, String.raw`#!/usr/bin/env node
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 const args = process.argv.slice(2);
@@ -266,21 +275,21 @@ else { console.error('unexpected command: ' + args[0]); process.exit(1); }
     '--channel', 'production', '--targets', join(directory, 'targets.json'), '--output', join(directory, 'facts.json')],
   { cwd: 'apps/mobile', env: { ...process.env, EAS_CLI_PATH: eas }, encoding: 'utf8' });
   const facts = JSON.parse(readFileSync(join(directory, 'facts.json')));
-  assert.deepEqual(facts.groups, { 'android@1': 'immutable-nightly-group-android', 'ios@2': 'immutable-nightly-group-ios' });
+  assert.deepEqual(facts.groups, { 'android@1': 'immutable-next-group-android', 'ios@2': 'immutable-next-group-ios' });
   assert.equal(readFileSync(pointer, 'utf8'), branch);
   const commands = readFileSync(calls, 'utf8').trim().split('\n').map(line => JSON.parse(line)[0]);
   assert.deepEqual(commands, ['update:list', 'channel:view', 'channel:edit', 'channel:view']);
 }));
 
 test('an explicit store build cannot reuse a binary subscribed to the other OTA channel', () => {
-  const nightly = nightlyRecord();
-  nightly.components['mobile-native'].storeTrack = 'beta';
-  const latest = initializeRelease({ version: nightly.version, sourceSha: sha, previous: delivered(), nightly,
+  const next = nextRecord();
+  next.components['mobile-native'].storeTrack = 'beta';
+  const latest = initializeRelease({ version: next.version, sourceSha: sha, previous: delivered(), next,
     channel: 'latest', selectedComponents: channelComponents([], { channel: 'latest' }) });
   latest.state = 'delivered';
   for (const entry of Object.values(latest.components)) if (entry.selected) entry.state = 'checked';
   latest.components['mobile-native'].storeTrack = 'beta';
-  const native = initializeRelease({ version: latest.version, sourceSha: sha, previous: latest, nightly,
+  const native = initializeRelease({ version: latest.version, sourceSha: sha, previous: latest, next,
     channel: 'latest', selectedComponents: channelComponents([], { channel: 'latest', storeTrack: 'production' }) });
   assert.equal(native.state, 'planned');
   assert.equal(native.components['mobile-native'].state, 'pending');
@@ -293,19 +302,19 @@ test('an explicit store build cannot reuse a binary subscribed to the other OTA 
   applyJobFacts(native, needs, { previous: latest, runtimePins: { android: '1', ios: '2' } });
   assert.equal(native.components['mobile-native'].storeTrack, 'production');
   assert.equal(native.components.server.selected, false);
-  const beta = initializeRelease({ version: nightly.version, sourceSha: sha, previous: nightly,
-    channel: 'nightly', selectedComponents: channelComponents(['mobile-native'], { storeTrack: 'beta' }) });
+  const beta = initializeRelease({ version: next.version, sourceSha: sha, previous: next,
+    channel: 'next', selectedComponents: channelComponents(['mobile-native'], { storeTrack: 'beta' }) });
   assert.equal(beta.state, 'delivered'); // This beta identity already shipped.
   beta.components['mobile-native'].storeTrack = 'production';
-  const missingBeta = initializeRelease({ version: nightly.version, sourceSha: sha, previous: beta,
-    channel: 'nightly', selectedComponents: channelComponents(['mobile-native'], { storeTrack: 'beta' }) });
+  const missingBeta = initializeRelease({ version: next.version, sourceSha: sha, previous: beta,
+    channel: 'next', selectedComponents: channelComponents(['mobile-native'], { storeTrack: 'beta' }) });
   assert.equal(missingBeta.components['mobile-native'].state, 'pending');
   assert.deepEqual(missingBeta.plan.nativePlatforms, ['android']);
 });
 
 test('a delivered no-op needs no outputs from skipped jobs', () => {
-  const previous = nightlyRecord();
-  const state = initializeRelease({ version: previous.version, sourceSha: sha, previous, channel: 'nightly', selectedComponents: ['server'] });
+  const previous = nextRecord();
+  const state = initializeRelease({ version: previous.version, sourceSha: sha, previous, channel: 'next', selectedComponents: ['server'] });
   assert.equal(state.state, 'delivered');
   assert.equal(applyJobFacts(state, {}, { previous }), state);
 });
@@ -320,11 +329,11 @@ test('Android channel injection is temporary and leaves production config bytes 
   const selected = execFileSync(process.execPath, ['scripts/android-release-channel.mjs', file, 'latest'], { encoding: 'utf8' }).trim();
   assert.equal(selected, 'production-ci');
   assert.deepEqual(readFileSync(file), productionBytes);
-  const nightly = execFileSync(process.execPath, ['scripts/android-release-channel.mjs', file, 'nightly'], { encoding: 'utf8' }).trim();
-  assert.equal(nightly, 'nightly-ci');
+  const next = execFileSync(process.execPath, ['scripts/android-release-channel.mjs', file, 'next'], { encoding: 'utf8' }).trim();
+  assert.equal(next, 'next-ci');
   const temporary = JSON.parse(readFileSync(file));
-  assert.deepEqual(temporary.build['nightly-ci'], { extends: 'production-ci', channel: 'nightly' });
-  delete temporary.build['nightly-ci'];
+  assert.deepEqual(temporary.build['next-ci'], { extends: 'production-ci', channel: 'next' });
+  delete temporary.build['next-ci'];
   assert.deepEqual(temporary, JSON.parse(productionBytes));
-  assert.equal(JSON.parse(productionBytes).build['nightly-ci'], undefined);
+  assert.equal(JSON.parse(productionBytes).build['next-ci'], undefined);
 }));

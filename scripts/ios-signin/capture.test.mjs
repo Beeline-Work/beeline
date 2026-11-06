@@ -51,3 +51,19 @@ test('Simulator selection uses runtime compatibility rather than the final legac
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('Xcode signs the Simulator executable and launch diagnostics precede provider taps', async () => {
+  const { readFileSync } = await import('node:fs');
+  const capture = readFileSync(resolve('scripts/ios-signin/capture.sh'), 'utf8');
+  assert.match(capture, /CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO DEVELOPMENT_TEAM=/);
+  assert.match(capture, /CODE_SIGN_ENTITLEMENTS="\$EVIDENCE\/simulator-entitlements.plist"/);
+  assert.doesNotMatch(capture, /codesign --force/);
+  const entitlements = capture.match(/<<'PLIST'\n([\s\S]*?)\nPLIST/)[1];
+  assert.match(entitlements, /keychain-access-groups/);
+  assert.doesNotMatch(entitlements, /application-identifier/);
+  assert.match(capture, /Print :keychain-access-groups:0/);
+  assert.ok(capture.indexOf('simctl launch --console-pty') < capture.indexOf('for provider in'));
+  assert.match(capture, /launch-stderr.log/);
+  assert.match(capture, /DiagnosticReports.*-newer/);
+  assert.match(capture, /log show --last 5m/);
+});

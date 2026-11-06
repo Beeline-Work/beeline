@@ -3419,6 +3419,7 @@
         "confirmed": "existing before the registry; weekly audit reviews"
       },
       "card": {
+        "runStatus": "Workflow run start cards persist the committed live or terminal status so assignment admission cannot wake a finished run.",
         "roleClasses": "existing before the registry; weekly audit reviews",
         "roleBindings": "existing before the registry; weekly audit reviews",
         "runId": "existing before the registry; weekly audit reviews",

@@ -343,7 +343,9 @@ describe('one tap from a Connectors row', () => {
     const renderer = await render();
     const chatgpt = row(renderer, 'rooms:chatgpt');
     expect(chatgpt.props.leading.props.mark).toEqual({ kind: 'image', uri: 'data:image/png;base64,AA==', plate: 'light' });
-    expect(renderer.root.findAll((node: any) => node.props?.children === 'Pidoong').length).toBeGreaterThan(0);
+    let subtitle!: ReactTestRenderer;
+    await act(async () => { subtitle = create(chatgpt.props.descriptionContent); });
+    expect(subtitle.root.findAll((node: any) => node.props?.children === 'Pidoong').length).toBeGreaterThan(0);
     await act(async () => chatgpt.props.onPress());
     expect(navigation.push.mock.calls).toEqual([[{ pathname: '/beeline/settings/workbench/service', params: { ...scope, service: 'rooms:chatgpt' } }]]);
     expect(renderer.root.findAllByType('HullActionSheetModal').every((sheet: any) => !sheet.props.visible)).toBe(true);

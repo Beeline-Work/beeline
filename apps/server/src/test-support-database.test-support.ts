@@ -16,7 +16,7 @@ import { INSTITUTIONAL_HISTORY_MAX_AGE_DAYS } from '@beeline/api-contract/daemon
 
 import { DEFAULT_WORKSPACE_ID, WELCOME_ROOM_ID } from '@beeline/api-contract/phone';
 
-import { assertSchemaCurrent, DatabaseTransactionStartError, backfillAgentHandles, backfillMessageSearchDocuments, MESSAGE_SEARCH_DOCUMENT_MAX_BYTES, backfillInstitutionalMemoryRollout, backfillPerItemEventSubscriptions, MESSAGE_CURSOR_MS_SQL, migrate, APP_POOL_WAIT_TIMEOUT_MS, APP_STATEMENT_TIMEOUT_MS, ENRICHMENT_POOL_WAIT_TIMEOUT_MS, ENRICHMENT_STATEMENT_TIMEOUT_MS, postgresPoolConfig, REQUIRED_SCHEMA_VERSION, REQUIRED_ROUTER_SCHEMA_VERSION, markSchemaCurrent, migrateData, PostgresDatabase, HEALTH_POOL_WAIT_TIMEOUT_MS, MIGRATION_LOCK_TIMEOUT_MS, MIGRATION_STATEMENT_TIMEOUT_MS, isTransientDatabaseConnectionError, type SqlDatabase, } from './database.js';
+import { assertSchemaCurrent, DatabaseTransactionStartError, backfillMessageSearchDocuments, MESSAGE_SEARCH_DOCUMENT_MAX_BYTES, backfillInstitutionalMemoryRollout, backfillPerItemEventSubscriptions, MESSAGE_CURSOR_MS_SQL, migrate, APP_POOL_WAIT_TIMEOUT_MS, APP_STATEMENT_TIMEOUT_MS, ENRICHMENT_POOL_WAIT_TIMEOUT_MS, ENRICHMENT_STATEMENT_TIMEOUT_MS, postgresPoolConfig, REQUIRED_SCHEMA_VERSION, REQUIRED_ROUTER_SCHEMA_VERSION, markSchemaCurrent, migrateData, PostgresDatabase, HEALTH_POOL_WAIT_TIMEOUT_MS, MIGRATION_LOCK_TIMEOUT_MS, MIGRATION_STATEMENT_TIMEOUT_MS, isTransientDatabaseConnectionError, type SqlDatabase } from './database.js';
 
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
@@ -291,7 +291,7 @@ export { EventEmitter } from 'node:events';
 export { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 export { INSTITUTIONAL_HISTORY_MAX_AGE_DAYS } from '@beeline/api-contract/daemon';
 export { DEFAULT_WORKSPACE_ID, WELCOME_ROOM_ID } from '@beeline/api-contract/phone';
-export { assertSchemaCurrent, DatabaseTransactionStartError, backfillAgentHandles, backfillMessageSearchDocuments, MESSAGE_SEARCH_DOCUMENT_MAX_BYTES, backfillInstitutionalMemoryRollout, backfillPerItemEventSubscriptions, MESSAGE_CURSOR_MS_SQL, migrate, APP_POOL_WAIT_TIMEOUT_MS, APP_STATEMENT_TIMEOUT_MS, ENRICHMENT_POOL_WAIT_TIMEOUT_MS, ENRICHMENT_STATEMENT_TIMEOUT_MS, postgresPoolConfig, REQUIRED_SCHEMA_VERSION, REQUIRED_ROUTER_SCHEMA_VERSION, markSchemaCurrent, migrateData, PostgresDatabase, HEALTH_POOL_WAIT_TIMEOUT_MS, MIGRATION_LOCK_TIMEOUT_MS, MIGRATION_STATEMENT_TIMEOUT_MS, isTransientDatabaseConnectionError } from './database.js';
+export { assertSchemaCurrent, DatabaseTransactionStartError, backfillMessageSearchDocuments, MESSAGE_SEARCH_DOCUMENT_MAX_BYTES, backfillInstitutionalMemoryRollout, backfillPerItemEventSubscriptions, MESSAGE_CURSOR_MS_SQL, migrate, APP_POOL_WAIT_TIMEOUT_MS, APP_STATEMENT_TIMEOUT_MS, ENRICHMENT_POOL_WAIT_TIMEOUT_MS, ENRICHMENT_STATEMENT_TIMEOUT_MS, postgresPoolConfig, REQUIRED_SCHEMA_VERSION, REQUIRED_ROUTER_SCHEMA_VERSION, markSchemaCurrent, migrateData, PostgresDatabase, HEALTH_POOL_WAIT_TIMEOUT_MS, MIGRATION_LOCK_TIMEOUT_MS, MIGRATION_STATEMENT_TIMEOUT_MS, isTransientDatabaseConnectionError } from './database.js';
 export { PgliteDatabase, migratedDatabase } from './test-support.js';
 export { requireRoomSlug, reserveRoomName } from './room-names.js';
 export type { Pool } from 'pg';

@@ -384,14 +384,6 @@ export interface WorkspaceSkillCodeAnchor {
   readonly path?: string;
 }
 
-export interface WorkspaceSkillProposal {
-  readonly slug: string;
-  readonly description: string;
-  readonly markdown: string;
-  readonly baseVersion: number | null;
-  readonly anchor: WorkspaceSkillCodeAnchor;
-}
-
 export interface InstitutionalCuratorAction {
   readonly action: 'retain' | 'stale' | 'archive' | 'consolidate';
   readonly targetType: 'memory_item' | 'workspace_skill';

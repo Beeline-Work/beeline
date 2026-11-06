@@ -99,37 +99,23 @@ export const WELCOME_VIDEO_SLUG = 'welcome-video';
 /** Caller owns the transaction. Append revisions so running workflows keep their pinned contract. */
 export async function seedWelcomeVideoWorkflow(db: SqlDatabase, workspaceId: string, roomId: string): Promise<void> {
   const markdown = JSON.stringify(contract);
-  const contentHash = createHash('sha256').update(markdown).digest('hex');
-  // Retain the old seed lock during rolling upgrades, and share the ordinary save/archive lock.
-  await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`welcome-video:${workspaceId}`]);
-  await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`workspace-skill:${workspaceId}:${WELCOME_VIDEO_SLUG}`]);
-  const versionRow = async (skillId: string, version: number) => db.query(`INSERT INTO workspace_skill_versions
-    (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,repository,target_commit,path,extractor_version,model)
-    VALUES($1,$2,$3,$4,NULL,$5,'','',NULL,'welcome-video-v2','n/a')`,
-  [skillId, version, markdown, contentHash, ['system:welcome-video-seed']]);
-  const inserted = await db.query<{ id: string }>(
-    `INSERT INTO workspace_skills
+  await db.query(`WITH saved AS (
+    INSERT INTO workspace_skills
       (id,workspace_id,slug,description,state,current_version,revision,source_room_id,repository,target_commit,path,kind)
-     SELECT $1,$2,$3,$4,'active',1,1,$5,'','',NULL,'workflow'
-     WHERE NOT EXISTS (SELECT 1 FROM workspace_skills WHERE workspace_id=$2 AND slug=$3) RETURNING id`,
-    [randomUUID(), workspaceId, WELCOME_VIDEO_SLUG, contract.description, roomId]);
-  if (inserted.rows[0]) {
-    await versionRow(inserted.rows[0].id, 1);
-    return;
-  }
-  // Refresh only the server's seed; preserve team-authored and archived workflows.
-  const stale = (await db.query<{ id: string }>(
-    `SELECT skill.id FROM workspace_skills skill
-     JOIN workspace_skill_versions version ON version.skill_id=skill.id AND version.version=skill.current_version
-     WHERE skill.workspace_id=$1 AND skill.slug=$2 AND skill.kind='workflow' AND skill.state='active'
-       AND version.extractor_version IN ('welcome-video-v1','welcome-video-v2') AND version.content_hash<>$3
-     FOR UPDATE OF skill`, [workspaceId, WELCOME_VIDEO_SLUG, contentHash])).rows[0];
-  if (!stale) return;
-  const next = (await db.query<{ version: number }>(
-    `UPDATE workspace_skills SET current_version=current_version+1,revision=revision+1,
-       description=$2,updated_at=now(),embedding=NULL,embedding_version=NULL
-     WHERE id=$1 RETURNING current_version version`, [stale.id, contract.description])).rows[0]!.version;
-  await versionRow(stale.id, next);
+    VALUES($1,$2,$3,$4,'active',1,1,$5,'','',NULL,'workflow')
+    ON CONFLICT(workspace_id,slug) DO UPDATE SET
+      current_version=workspace_skills.current_version+1,revision=workspace_skills.revision+1,
+      description=EXCLUDED.description,updated_at=now(),embedding=NULL,embedding_version=NULL
+    WHERE workspace_skills.kind='workflow' AND workspace_skills.state='active'
+      AND EXISTS(SELECT 1 FROM workspace_skill_versions version
+        WHERE version.skill_id=workspace_skills.id AND version.version=workspace_skills.current_version
+          AND version.extractor_version IN ('welcome-video-v1','welcome-video-v2') AND version.content_hash<>$7)
+    RETURNING id,current_version
+  ) INSERT INTO workspace_skill_versions
+    (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,repository,target_commit,path,extractor_version,model)
+    SELECT id,current_version,$6,$7,NULL,ARRAY['system:welcome-video-seed'],'','',NULL,'welcome-video-v2','n/a' FROM saved`,
+    [randomUUID(),workspaceId,WELCOME_VIDEO_SLUG,contract.description,roomId,markdown,
+      createHash('sha256').update(markdown).digest('hex')]);
 }
 
 export async function backfillWelcomeVideoWorkflow(db: SqlDatabase): Promise<void> {

@@ -1,15 +1,11 @@
+import { restoreRoomMemberships, restoreRoomMembershipsSql } from './membership-join.js';
 import { roomEventSubscriptions } from './agent-subscriptions.js';
-import { restoreRoomMembership } from './membership-join.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { approvalAsk } from './tray-approval-ask.js';
 import { createAgentCommand, type CommandRow, routeSystemCommand } from './agent-command.js';
 import { createHash, randomBytes } from 'node:crypto';
 import {
-  MAX_EVENT_DEPTH,
-  MAX_TURNS_PER_ROOT,
-  eventBudgetRefusal,
-  eventDepthRefusal,
   formatSystemLine,
   isSubscribableEventKind,
   type SystemEvent,
@@ -170,15 +166,13 @@ export async function ensureSystemDirectMessageRoomResult(
   if (!inserted.rowCount) {
     await database.query(`UPDATE rooms SET visibility='invite-only' WHERE id=$1`, [roomId]);
   }
-  for (const memberId of participants)
-    await restoreRoomMembership(database, [workspaceId, roomId, memberId]);
+  await restoreRoomMemberships(database,workspaceId,roomId,participants);
   return { id: roomId, created: Boolean(inserted.rowCount) };
 }
 
 /**
- * The cascade bounds, refused at write time. Carries the sentence an agent
- * reads: `postRoomEvent` lets it out of the operation so the emitting tool
- * shows it verbatim, and nothing is written.
+ * An emitted event must cite an available cause. The emitting tool surfaces
+ * this refusal without posting a fact that cannot be traced.
  */
 export class EventCascadeRefusedError extends Error {
   override readonly name = 'EventCascadeRefusedError';
@@ -279,6 +273,10 @@ async function canonicalPhrase(
       )
     : { rows: [] };
   const identities = new Map(rows.rows.map((row) => [row.id, row]));
+  return labeledPhrase(phrase, identities, plainSubjectId);
+}
+
+function labeledPhrase(phrase: SystemPhrase, identities: ReadonlyMap<string, IdentityLabelRow>, plainSubjectId?: string): SystemPhrase {
   const subjectRow = phrase.subject.id ? identities.get(phrase.subject.id) : undefined;
   const object = typeof phrase.object === 'string' ? undefined : phrase.object;
   const objectRow = object?.id ? identities.get(object.id) : undefined;
@@ -356,22 +354,10 @@ async function orderingFloor(
   }
 }
 
-/**
- * Where this line sits in its cascade, and whether the cascade may grow.
- *
- * The depth and the root are DERIVED from the cause row the server reads here;
- * neither is ever accepted from a caller, because the party a guard binds must
- * not be the party that sets it. The count is serialised per root with
- * `pg_advisory_xact_lock(hashtext(root))`: counting and then inserting races,
- * and two emitters that each see eleven would otherwise both write the twelfth.
- * The lock is per root, so unrelated Rooms never wait on each other, and it is
- * released by the transaction that took it.
- */
+/** Derive causal trace metadata from the committed cause, never caller-supplied bounds. */
 async function resolveCascade(
   database: SqlDatabase,
   causeId: string,
-  wakeCount: number,
-  excludeMessageId?: string,
 ): Promise<Cascade> {
   const cause = await database.query<{
     event_root_cause_id: string | null;
@@ -385,17 +371,6 @@ async function resolveCascade(
   }
   const rootCauseId = row.event_root_cause_id ?? causeId;
   const depth = (row.event_depth ?? 0) + 1;
-  await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [rootCauseId]);
-  if (depth > MAX_EVENT_DEPTH) throw new EventCascadeRefusedError(eventDepthRefusal(depth));
-  // What this cascade has already spent, in turns woken.
-  const spent = await database.query<{ woken: number }>(
-    `SELECT COALESCE(SUM(event_woken),0)::int woken
-     FROM messages WHERE event_root_cause_id=$1 ${excludeMessageId ? 'AND id<>$2' : ''}`,
-    excludeMessageId ? [rootCauseId, excludeMessageId] : [rootCauseId],
-  );
-  const woken = spent.rows[0]?.woken ?? 0;
-  if (woken + wakeCount > MAX_TURNS_PER_ROOT)
-    throw new EventCascadeRefusedError(eventBudgetRefusal(woken));
   return { causeId, rootCauseId, depth };
 }
 
@@ -419,7 +394,7 @@ export async function systemLine(
   let subscriptions: Awaited<ReturnType<typeof roomEventSubscriptions>> = [];
   let wakes = [...new Set(input.wakes ?? [])].filter(agentId => input.kind !== 'corner-opened' || agentId !== input.subject.id);
   // Only an event carries a cascade. A line with no kind is one nothing reacts
-  // to, so it has no root to belong to and no budget to spend.
+  // to, so it has no causal trace.
   const write = async (
     db: SqlDatabase,
     cascade: Cascade | undefined,
@@ -429,13 +404,12 @@ export async function systemLine(
     const result = await db.query(
       `INSERT INTO messages(
          id,room_id,author_id,text,presentation,request_id,durable_fact,
-         card_type,card,system_event,event_cause_id,event_root_cause_id,event_depth,
-         event_woken,created_at
+         card_type,card,system_event,event_cause_id,event_root_cause_id,event_depth,created_at
        ) VALUES(
-         $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11,$12,$13,$14,
-         GREATEST(now(), COALESCE($15::timestamptz, now()))
+         $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11,$12,$13,
+         GREATEST(now(), COALESCE($14::timestamptz, now()))
        )
-       ON CONFLICT(id) DO NOTHING`,
+       ON CONFLICT DO NOTHING`,
       [
         id,
         input.roomId,
@@ -450,7 +424,6 @@ export async function systemLine(
         cascade?.causeId ?? null,
         cascade?.rootCauseId ?? null,
         cascade?.depth ?? null,
-        cascade ? wakes.length + watches.length : null,
         notBefore,
       ],
     );
@@ -467,15 +440,8 @@ export async function systemLine(
           console.error('[system-line] subscriber lookup failed', input.roomId, input.kind, error);
         }
         await db.query('RELEASE SAVEPOINT room_event_recipients');
-        const explicitCount = wakes.length;
         wakes = [...new Set([...wakes, ...subscriptions
           .filter(row => row.prompt === null && input.kind !== 'corner-opened').map(row => row.agent_id)])];
-        if (wakes.length !== explicitCount) {
-          // The provisional fact is private to this transaction. Judge its full
-          // wake count against the existing cascade, excluding that provisional row.
-          if (cascade?.causeId) await resolveCascade(db, cascade.causeId, wakes.length + watches.length, id);
-          await db.query('UPDATE messages SET event_woken=$2 WHERE id=$1', [id, wakes.length + watches.length]);
-        }
       }
 
       const watched = watches.length ? (await db.query<{ name: string; merge_sha: string | null }>(`SELECT room.name,fact.lifecycle->'pr'->>'mergeCommitSha' merge_sha FROM rooms room LEFT JOIN corner_github_cache fact ON fact.corner_id=room.id WHERE room.id=$1`, [input.card?.cornerId ?? input.roomId])).rows[0] : undefined;
@@ -545,7 +511,7 @@ export async function systemLine(
       ? undefined
       : input.causeId === undefined
         ? { causeId: null, rootCauseId: id, depth: 0 }
-        : await resolveCascade(tx, input.causeId, wakes.length + watches.length);
+        : await resolveCascade(tx, input.causeId);
     const notBefore = await orderingFloor(
       tx,
       input.roomId,
@@ -553,6 +519,41 @@ export async function systemLine(
     );
     return write(tx, cascade, notBefore, watches);
   });
+}
+
+/** One committed batch of per-offer answers, with the same grammar and resume
+ * owner as individual system lines. Per-item decisions have no subscribers. */
+export async function connectorOfferDecisionLines(database: SqlDatabase,
+  inputs: readonly (SystemLineInput & { kind: 'connector-offer-decided' })[]): Promise<void> {
+  if (!inputs.length) return;
+  const ids = [...new Set(inputs.flatMap(input => [input.subject.id,
+    typeof input.object === 'string' ? undefined : input.object?.id, input.attribution?.actor.id])
+    .filter((id): id is string => Boolean(id)))];
+  const labels = (await database.query<IdentityLabelRow>(
+    'SELECT id,kind,name,handle FROM identities WHERE id=ANY($1::text[])', [ids])).rows;
+  const identities = new Map(labels.map(row => [row.id,row]));
+  const lines = inputs.map(input => {
+    const id = input.id ?? randomBytes(32).toString('hex');
+    const composed = composeSystemLine(labeledPhrase(input,identities));
+    return { id,roomId:input.roomId,authorId:input.authorId ?? input.subject.id,
+      text:composed.text,event:composed.event,card:input.card
+        ? {...input.card,ask:approvalAsk(input.cardType,input.card)} : null,cardType:input.cardType ?? null,
+      wakes:[...new Set(input.wakes ?? [])],commandId:input.commandId ?? null,requestId:input.requestId ?? null };
+  });
+  const inserted = (await database.query<{id:string}>(`INSERT INTO messages(id,room_id,author_id,text,presentation,
+    request_id,card_type,card,system_event,event_root_cause_id,event_depth)
+    SELECT id,"roomId","authorId",text,'system',"requestId","cardType",card,event,id,0
+    FROM jsonb_to_recordset($1::jsonb) AS line(id text,"roomId" uuid,"authorId" text,text text,
+      "requestId" text,"cardType" text,card jsonb,event jsonb,wakes jsonb)
+    ON CONFLICT DO NOTHING RETURNING id`,[JSON.stringify(lines)])).rows;
+  const winners = new Set(inserted.map(row => row.id));
+  for (const line of lines) {
+    if (!winners.has(line.id) || !line.wakes.length) continue;
+    await routeSystemCommand(database,{
+      roomId:line.roomId,sourceMessageId:line.id,kind:line.event.kind,targets:line.wakes,
+      ...(line.commandId ? {commandId:line.commandId} : {}),...(line.requestId ? {requestId:line.requestId} : {}),
+    });
+  }
 }
 
 /**
@@ -612,6 +613,26 @@ export async function restateSystemLine(
     [messageId, text, JSON.stringify(event), card ? JSON.stringify(card) : null],
   );
   return { text, event, updated: Boolean(result.rowCount) };
+}
+
+/** Restate committed facts as one batch, without query loops under their rows. */
+export async function restateSystemLines(database: SqlDatabase, lines: readonly {
+  id: string; phrase: SystemPhrase; card?: Record<string, unknown>;
+  presentation?: 'system' | 'card' | 'activity'; createdAt?: Date;
+}[]): Promise<void> {
+  if (!lines.length) return;
+  const ids = [...new Set(lines.flatMap(({phrase}) => [phrase.subject.id,
+    typeof phrase.object === 'string' ? undefined : phrase.object?.id, phrase.attribution?.actor.id]
+    .filter((id): id is string => Boolean(id))))];
+  const identities = new Map((ids.length ? (await database.query<IdentityLabelRow>(
+    'SELECT id,kind,name,handle FROM identities WHERE id=ANY($1::text[])', [ids])).rows : []).map(row => [row.id,row]));
+  const rows = lines.map(line => ({id:line.id,...composeSystemLine(labeledPhrase(line.phrase,identities)),
+    card:line.card,presentation:line.presentation,created_at:line.createdAt}));
+  await database.query(`UPDATE messages message SET text=line.text,system_event=line.event,
+    card=COALESCE(line.card,message.card),presentation=COALESCE(line.presentation,message.presentation),
+    created_at=COALESCE(line.created_at,message.created_at)
+    FROM jsonb_to_recordset($1::jsonb) line(id text,text text,event jsonb,card jsonb,presentation text,created_at timestamptz)
+    WHERE message.id=line.id`, [JSON.stringify(rows)]);
 }
 
 /** Replace an actionable card with its one catalog completion line, retaining its id. */
@@ -696,4 +717,35 @@ export async function sendSystemDirectMessage(database: SqlDatabase, workspaceId
   const inserted = await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)
     ON CONFLICT(id) DO NOTHING`, [id, roomId, SYSTEM_IDENTITY_ID, text]);
   return Boolean(inserted.rowCount);
+}
+
+/** Deliver the same plain system phrase to a recipient set in one statement.
+ * Room creation, membership restoration and idempotent notice inserts share
+ * one transaction; the statement creates no events or command dispatches. */
+export async function sendSystemNotices(database: SqlDatabase, workspaceId: string,
+  recipients: readonly { identityId: string; messageId: string }[],
+  phrase: Pick<SystemPhrase,'subject'|'verb'|'object'|'consequence'|'attribution'>): Promise<void> {
+  if (!recipients.length) return;
+  await ensureSystemIdentity(database);
+  const { text, event } = composeSystemLine(await canonicalPhrase(database,phrase));
+  const notices = recipients.map(recipient=>{
+    const participants=[SYSTEM_IDENTITY_ID,recipient.identityId].sort() as [string,string];
+    return {id:recipient.messageId,room:directMessageRoomId(workspaceId,participants),participants};
+  });
+  await database.query(`WITH notices AS MATERIALIZED (
+    SELECT notice.* FROM jsonb_to_recordset($1::jsonb) AS notice(id text,room uuid,participants jsonb)
+  ), threads AS (
+    INSERT INTO rooms(id,workspace_id,created_by,name,visibility,direct_participants)
+    SELECT room,$2,$3,'Direct message','invite-only',participants FROM notices
+    ON CONFLICT(id) DO UPDATE SET visibility='invite-only' RETURNING id
+  ), members AS (
+    SELECT $2::uuid workspace_id,thread.id room_id,participant identity_id
+    FROM notices notice JOIN threads thread ON thread.id=notice.room
+      CROSS JOIN LATERAL jsonb_array_elements_text(notice.participants) participant
+  ), restored AS (
+    ${restoreRoomMembershipsSql('members')}
+  ) INSERT INTO messages(id,room_id,author_id,text,presentation,system_event)
+    SELECT notice.id,thread.id,$3,$4,'system',$5::jsonb FROM notices notice JOIN threads thread ON thread.id=notice.room
+    WHERE EXISTS(SELECT 1 FROM restored WHERE room_id=thread.id) ON CONFLICT(id) DO NOTHING`,
+  [JSON.stringify(notices),workspaceId,SYSTEM_IDENTITY_ID,text,JSON.stringify(event)]);
 }

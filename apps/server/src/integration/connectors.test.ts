@@ -294,10 +294,10 @@ const fixture = monolithFixture();
         status: string;
         connector_type: string;
       }>(
-        `SELECT owner_id owner_identity_id,agent_id helper_agent_id,machine_id,
+        `SELECT owner_id owner_identity_id,helper_agent_id,machine_id,
            CASE WHEN (squire_work->>'install')::boolean THEN 'installing'
              ELSE squire_report->>'status' END status,'trusty-squire' connector_type
-         FROM agents WHERE 'squire:' || COALESCE(machine_id,agent_id)=$1`,
+         FROM squire_machines WHERE 'squire:' || machine_id=$1`,
         [acceptance.connectorId],
       )
     ).rows[0];
@@ -317,12 +317,18 @@ const fixture = monolithFixture();
     ]);
     // The same actor can retry the ceremony after an install failure without
     // minting a second connector row or prematurely resuming the turn.
+    const acceptedAt = (await fixture.database.query<{accepted_at:Date}>(
+      'SELECT accepted_at FROM connector_offers WHERE id=$1', [offer.offerId])).rows[0]!.accepted_at;
     const retry = await fixture.operation('acceptConnectorOffer', { offerId: offer.offerId });
     expect(retry.status).toBe(200);
     expect(await retry.json()).toEqual({
       ...acceptance,
       status: 'connecting',
     });
+    expect((await fixture.database.query(`SELECT generation FROM squire_machines WHERE helper_agent_id=$1`, [AGENT])).rows)
+      .toEqual([{generation:2}]);
+    expect((await fixture.database.query('SELECT accepted_at FROM connector_offers WHERE id=$1', [offer.offerId])).rows)
+      .toEqual([{accepted_at:acceptedAt}]);
     // A second tap is a conflict, not a second pairing.
     expect(
       (await fixture.operation('acceptConnectorOffer', { offerId: offer.offerId }, mara.token)).status,
@@ -506,7 +512,7 @@ const fixture = monolithFixture();
     expect(
       (
         await fixture.database.query<{ status: string; force_relogin_provider: string | null }>(
-          `SELECT CASE WHEN (squire_work->>'install')::boolean THEN 'installing' ELSE squire_report->>'status' END status,squire_work->>'forceReloginProvider' force_relogin_provider FROM agents WHERE 'squire:' || COALESCE(machine_id,agent_id)=$1`,
+          `SELECT CASE WHEN (squire_work->>'install')::boolean THEN 'installing' ELSE squire_report->>'status' END status,squire_work->>'forceReloginProvider' force_relogin_provider FROM squire_machines WHERE 'squire:' || machine_id=$1`,
           [connector.id],
         )
       ).rows[0],
@@ -539,7 +545,7 @@ const fixture = monolithFixture();
     expect(
       (
         await fixture.database.query<{ status: string; force_relogin_provider: string | null }>(
-          `SELECT CASE WHEN (squire_work->>'install')::boolean THEN 'installing' ELSE squire_report->>'status' END status,squire_work->>'forceReloginProvider' force_relogin_provider FROM agents WHERE 'squire:' || COALESCE(machine_id,agent_id)=$1`,
+          `SELECT CASE WHEN (squire_work->>'install')::boolean THEN 'installing' ELSE squire_report->>'status' END status,squire_work->>'forceReloginProvider' force_relogin_provider FROM squire_machines WHERE 'squire:' || machine_id=$1`,
           [connector.id],
         )
       ).rows[0],
@@ -558,7 +564,7 @@ const fixture = monolithFixture();
     ]);
 
     // The helper's connected report settles the card and clears the flag.
-    expect((await fixture.daemonOperation('installConnector', { connectorId: connector.id, pairingGeneration: Number((await fixture.database.query<{ generation: string }>(`SELECT squire_work->>'generation' generation FROM agents WHERE agent_id=$1`, [AGENT])).rows[0]!.generation) })).status).toBe(
+    expect((await fixture.daemonOperation('installConnector', { connectorId: connector.id, pairingGeneration: Number((await fixture.database.query<{ generation: string }>(`SELECT generation::text generation FROM squire_machines WHERE (owner_id,machine_id)=(SELECT owner_id,COALESCE(machine_id,agent_id) FROM agents WHERE agent_id=$1)`, [AGENT])).rows[0]!.generation) })).status).toBe(
       200,
     );
     await fixture.daemonOperation('postConnectorVault', { connections: [] });
@@ -571,7 +577,7 @@ const fixture = monolithFixture();
     expect(
       (
         await fixture.database.query<{ force_relogin_provider: string | null }>(
-          `SELECT squire_work->>'forceReloginProvider' force_relogin_provider FROM agents WHERE 'squire:' || COALESCE(machine_id,agent_id)=$1`,
+          `SELECT squire_work->>'forceReloginProvider' force_relogin_provider FROM squire_machines WHERE 'squire:' || machine_id=$1`,
           [connector.id],
         )
       ).rows[0]!.force_relogin_provider,
@@ -658,7 +664,7 @@ const fixture = monolithFixture();
     // session through Squire's own connect ceremony — never the ordinary
     // "add a connector" pairing, which must never pass --force-relogin.
     const armed = await fixture.database.query<{ status: string; force_relogin_provider: string | null }>(
-      `SELECT CASE WHEN (squire_work->>'install')::boolean THEN 'installing' ELSE squire_report->>'status' END status,squire_work->>'forceReloginProvider' force_relogin_provider FROM agents WHERE 'squire:' || COALESCE(machine_id,agent_id)=$1`,
+      `SELECT CASE WHEN (squire_work->>'install')::boolean THEN 'installing' ELSE squire_report->>'status' END status,squire_work->>'forceReloginProvider' force_relogin_provider FROM squire_machines WHERE 'squire:' || machine_id=$1`,
       [connector.id],
     );
     expect(armed.rows[0]).toEqual({ status: 'installing', force_relogin_provider: 'google' });
@@ -685,7 +691,7 @@ const fixture = monolithFixture();
     // The helper's connected report settles the card, clears the force-relogin
     // flag, and resumes the SAME paused agent turn — the existing
     // connector-offer settle-in-place and hidden resume path, unchanged.
-    expect((await fixture.daemonOperation('installConnector', { connectorId: connector.id, pairingGeneration: Number((await fixture.database.query<{ generation: string }>(`SELECT squire_work->>'generation' generation FROM agents WHERE agent_id=$1`, [AGENT])).rows[0]!.generation) })).status).toBe(
+    expect((await fixture.daemonOperation('installConnector', { connectorId: connector.id, pairingGeneration: Number((await fixture.database.query<{ generation: string }>(`SELECT generation::text generation FROM squire_machines WHERE (owner_id,machine_id)=(SELECT owner_id,COALESCE(machine_id,agent_id) FROM agents WHERE agent_id=$1)`, [AGENT])).rows[0]!.generation) })).status).toBe(
       200,
     );
     await fixture.daemonOperation('postConnectorVault', { connections: [] });
@@ -696,7 +702,7 @@ const fixture = monolithFixture();
       expect.objectContaining({ status: 'accepted', connectorId: connector.id }),
     );
     const clearedFlag = await fixture.database.query<{ force_relogin_provider: string | null }>(
-      `SELECT squire_work->>'forceReloginProvider' force_relogin_provider FROM agents WHERE 'squire:' || COALESCE(machine_id,agent_id)=$1`,
+      `SELECT squire_work->>'forceReloginProvider' force_relogin_provider FROM squire_machines WHERE 'squire:' || machine_id=$1`,
       [connector.id],
     );
     expect(clearedFlag.rows[0]!.force_relogin_provider).toBeNull();
@@ -742,7 +748,7 @@ const fixture = monolithFixture();
       expect.objectContaining({ status: 'connecting', intent: 'reconnect', provider: 'google' }),
     );
     const armed = await fixture.database.query<{ force_relogin_provider: string | null }>(
-      `SELECT squire_work->>'forceReloginProvider' force_relogin_provider FROM agents WHERE 'squire:' || COALESCE(machine_id,agent_id)=$1`,
+      `SELECT squire_work->>'forceReloginProvider' force_relogin_provider FROM squire_machines WHERE 'squire:' || machine_id=$1`,
       [connector.id],
     );
     expect(armed.rows[0]).toEqual({ force_relogin_provider: 'google' });
@@ -753,7 +759,7 @@ const fixture = monolithFixture();
     await fixture.daemonOperation('postAgentMachineReport', { machineId: 'auto-machine', machineName: 'squire' });
     await fixture.daemonOperation('postConnectorVault', { connections: [] });
     await fixture.daemonOperation('postSquireLoginWall', { roomId: ROOM, wall: 'google_session', message: 'Run raw tool instructions' });
-    const work = (await fixture.database.query<{ generation: string }>(`SELECT squire_work->>'generation' generation FROM agents WHERE agent_id=$1`, [AGENT])).rows[0]!;
+    const work = (await fixture.database.query<{ generation: string }>(`SELECT generation::text generation FROM squire_machines WHERE (owner_id,machine_id)=(SELECT owner_id,COALESCE(machine_id,agent_id) FROM agents WHERE agent_id=$1)`, [AGENT])).rows[0]!;
     await fixture.daemonOperation('installConnector', { connectorId: 'squire:auto-machine', pairingGeneration: Number(work.generation) });
     await fixture.daemonOperation('postConnectorVault', { connections: [] });
     const card = (await fixture.database.query<{ card: Record<string, any> }>(`SELECT card FROM messages WHERE card_type='connector-offer'`)).rows[0]!.card;
@@ -772,7 +778,7 @@ const fixture = monolithFixture();
     expect(posted.status).toBe(200);
     expect(await posted.json()).toMatchObject({ cardPosted: false });
     expect((await fixture.database.query(`SELECT 1 FROM messages WHERE card_type='connector-offer'`)).rows).toHaveLength(0);
-    expect((await fixture.database.query(`SELECT 1 FROM agents WHERE squire_work->>'install'='true'`)).rows).toHaveLength(0);
+    expect((await fixture.database.query(`SELECT 1 FROM squire_machines WHERE squire_work->>'install'='true'`)).rows).toHaveLength(0);
   });
 
 

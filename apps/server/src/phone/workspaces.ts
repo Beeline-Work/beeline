@@ -126,13 +126,9 @@ import { phoneProjectMemberGrantRows } from './agent-reads.js';
   }
 
 
-  export async function phoneReadWorkspaceMembers(ctx: PhoneContext,
-    workspaceId: string,
-    viewerId: string,
-    query: WorkspaceMemberListQuery = {},
-  ): Promise<WorkspaceMemberListView | null> {
+  export async function phoneReadWorkspaceMembers(ctx: PhoneContext, workspaceId: string, viewerId: string, query: WorkspaceMemberListQuery = {}): Promise<WorkspaceMemberListView | null> {
     if (!query.memberId) {
-      const roster = await phoneWorkspaceRoster(ctx, workspaceId, viewerId, query);
+      const roster = await ctx.workspaceRoster(workspaceId, viewerId, query);
       if (!roster) return null;
       return {
         members: roster.members,agents: roster.agents,
@@ -172,7 +168,7 @@ import { phoneProjectMemberGrantRows } from './agent-reads.js';
       SELECT authorized.role,to_jsonb(viewer) viewer_row,
         (SELECT to_jsonb(member_row) FROM member_row) member_row,
         COALESCE((SELECT jsonb_agg(to_jsonb(page)) FROM (
-          SELECT * FROM owned ORDER BY lower(name),id LIMIT $5
+          SELECT owned.* FROM owned ORDER BY lower(name),id LIMIT $5
         ) page),'[]'::jsonb) owned_rows,
         (SELECT count(*)::text FROM owned) owned_total,
         COALESCE((SELECT jsonb_agg(to_jsonb(grant_row) ORDER BY created_at DESC,id) FROM (
@@ -202,7 +198,7 @@ import { phoneProjectMemberGrantRows } from './agent-reads.js';
     const ownedRows = row.owned_rows.slice(0, WORKSPACE_MEMBER_PAGE_SIZE);
     const presenceRows: MemberRow[] = [...(member ? [member] : []), ...ownedRows];
     if (presenceRows.length) {
-      const presence = await phoneOptionalEnrichment(ctx, 'member-presence',
+      const presence = await ctx.optionalEnrichment('member-presence',
         ctx.enrichmentDatabase.query<{ id: string; presence_body: MemberRow['presence_body'];
           presence_updated_at: Date }>(`SELECT DISTINCT ON (agent_id) agent_id id,body presence_body,
             updated_at presence_updated_at
@@ -218,9 +214,9 @@ import { phoneProjectMemberGrantRows } from './agent-reads.js';
     return {
       viewer: { identity: identity(row.viewer_row, ctx.publicOrigin), role,
         permissions: { send: role !== 'spectator', manage: role === 'owner' || role === 'admin' } },
-      members: member ? phoneProjectMembers(ctx, [member], null) : [],
-      agents: phoneProjectWorkspaceAgents(ctx, ownedRows, ownedRows),
-      grants: phoneProjectMemberGrantRows(ctx, row.grant_rows.map((grant) =>
+      members: member ? ctx.projectMembers([member], null) : [],
+      agents: ctx.projectWorkspaceAgents(ownedRows, ownedRows),
+      grants: ctx.projectMemberGrantRows(row.grant_rows.map((grant) =>
         reviveDates(grant, ['created_at', 'decided_at', 'expires_at']))),
       agentTotal: Number(row.owned_total),
       membersTruncated: false,agentsTruncated: row.owned_rows.length > WORKSPACE_MEMBER_PAGE_SIZE,

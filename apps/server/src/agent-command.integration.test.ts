@@ -227,14 +227,14 @@ it('tagged human Stop also drains orders and reports their count once', async ()
 
 it.runIf(Boolean(stopProofPostgresUrl))('Stop holds the claim fence through the drain and preserves an order arriving during Stop', async () => {
   const { queued, root } = await queueStopOrders();
-  let reached!: () => void, release!: () => void, claimStarted!: () => void;
+  let reached!: () => void, release!: () => void, claimStarted!: () => void, orderStarted!: () => void;
   const stopped = new Promise<void>(resolve => { reached = resolve; });
   const resume = new Promise<void>(resolve => { release = resolve; });
-  const started = new Promise<void>(resolve => { claimStarted = resolve; });
+  const started = new Promise<void>(resolve => { claimStarted = resolve; }), queuedOrder = new Promise<void>(resolve => { orderStarted = resolve; });
   const wrapStop = (database: SqlDatabase): SqlDatabase => ({
     query: async (sql, values) => {
       const result = await database.query(sql, values);
-      if (sql.includes("UPDATE agent_turns SET status='cancelled',created_at=now()")) {
+      if (sql.startsWith('SELECT * FROM beeline_end_agent_turn(') && values?.[2] === 'cancelled' && values?.[3] === 'stop') {
         reached();
         await resume;
       }
@@ -242,31 +242,31 @@ it.runIf(Boolean(stopProofPostgresUrl))('Stop holds the claim fence through the 
     },
     transaction: work => database.transaction(transaction => work(wrapStop(transaction))),
   });
-  const wrapClaim = (database: SqlDatabase): SqlDatabase => ({
+  const wrapClaim = (database: SqlDatabase, onQueue = claimStarted): SqlDatabase => ({
     query: (sql, values) => {
-      if (sql.includes('pg_advisory_xact_lock')) claimStarted();
+      if (sql.includes('FOR UPDATE OF member')) onQueue();
       return database.query(sql, values);
     },
-    transaction: work => database.transaction(transaction => work(wrapClaim(transaction))),
+    transaction: work => database.transaction(transaction => work(wrapClaim(transaction,onQueue))),
   });
-  const stop = new PhoneService(wrapStop(rootFixture.db), 'http://test').execute('cancelAgentTurn',
+  const stop = new PhoneService(wrapStop(db), 'http://test').execute('cancelAgentTurn',
     { roomId: R, agentId: A, requestId: queued[0]!.turnRequestId }, H);
-  let claimAttempt: Promise<unknown> | undefined;
+  let claimAttempt: Promise<unknown> | undefined, arriving: Promise<unknown> | undefined;
   try {
     await stopped;
-    claimAttempt = new DaemonService(wrapClaim(rootFixture.db), rootFixture.live).execute('claimAgentCommand',
+    claimAttempt = new DaemonService(wrapClaim(db), live).execute('claimAgentCommand',
       { roomId: R, commandId: queued[1]!.id, generationId: 'racing-helper' }, A, await helperOwner(A));
     // Attach the rejection handler before releasing Stop.
     const rejected = expect(claimAttempt).rejects.toThrow('command claim conflict');
     await started;
-    const fence = await rootFixture.db.transaction(transaction => transaction.query<{ available: boolean }>(
-      `SELECT pg_try_advisory_xact_lock(hashtext($1)) available`, [`agent-command-queue:${R}:${A}`]));
-    expect(fence.rows[0]!.available).toBe(false);
-    await rootFixture.daemon.execute('order', { roomId: R, address: R, agent: 'hoots', text: 'arrived during Stop',
+    await expect(db.transaction(transaction => transaction.query(
+      'SELECT identity_id FROM memberships WHERE room_id=$1 AND identity_id=$2 FOR UPDATE NOWAIT',[R,A])))
+      .rejects.toMatchObject({code:'55P03'});
+    arriving = new DaemonService(wrapClaim(db,orderStarted),live).execute('order', { roomId: R, address: R, agent: 'hoots', text: 'arrived during Stop',
       requestId: root.turnRequestId, generationId: 'g1' }, B);
-    release();
+    await Promise.race([queuedOrder,arriving.then(()=>{throw new Error('Order did not reach the recipient fence');})]); release();
     await stop;
-    await rejected;
+    await rejected; await arriving;
     const surviving = (await commands()).filter(command => command.action === 'input');
     expect(surviving).toHaveLength(1);
     expect(surviving[0]!.source.body).toContain('arrived during Stop');
@@ -274,7 +274,7 @@ it.runIf(Boolean(stopProofPostgresUrl))('Stop holds the claim fence through the 
     console.log('Demonstrated Reproduction stop-queued-orders on PostgreSQL: claim fence held after turn cancellation and before drain; racing cached claim refused after commit; order accepted during Stop survived and claimed');
   } finally {
     release();
-    await Promise.allSettled([stop, ...(claimAttempt ? [claimAttempt] : [])]);
+    await Promise.allSettled([stop, ...(claimAttempt ? [claimAttempt] : []), ...(arriving ? [arriving] : [])]);
   }
 });
 

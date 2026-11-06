@@ -108,8 +108,8 @@ describe('background advisory-lock ownership', () => {
       expect(candidateQueries).toHaveLength(1);
       const sql = candidateQueries[0]!;
       query.mockRestore();
-      expect(sql).toContain('SELECT * FROM messages WHERE id=queued.message_id OFFSET 0');
-      expect(sql).toContain('unnest(context.turn_ids) final_ids(id)');
+      expect(sql).toMatch(/JOIN LATERAL \(SELECT [^)]* FROM messages stored WHERE id=queued\.message_id OFFSET 0\)/);
+      expect(sql).toContain('unnest(COALESCE(turn.turn_ids,context.turn_ids)) final_ids(id)');
       expect(sql).not.toContain('FROM messages interruption');
       expect(await loop.runOnce()).toBe(0);
     } finally {

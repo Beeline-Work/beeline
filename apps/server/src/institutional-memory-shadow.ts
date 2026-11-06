@@ -559,61 +559,43 @@ export async function insertMemoryItem(
   proposal: InstitutionalMemoryProposal,
   options: { version: number; explicitSave: boolean; predecessorId?: string },
 ): Promise<string> {
-  const source = (
-    await db.query<{ repository: string | null; source_corner_id: string | null }>(
-      `SELECT COALESCE(room.repository_key,parent.repository_key) repository,
-              CASE WHEN room.parent_id IS NULL THEN NULL ELSE room.id END source_corner_id
-       FROM rooms room LEFT JOIN rooms parent ON parent.id=room.parent_id
-       WHERE room.id=$1`,
-      [proposal.source.roomId],
-    )
-  ).rows[0];
-  if (!source) throw new Error('institutional memory source room is unavailable');
   const itemId = randomUUID();
-  await db.query(
-    `INSERT INTO institutional_memory_items
-       (id,workspace_id,kind,subject_identity_id,canonical_key,body,state,source_room_id,
-        source_message_id,source_corner_id,audience_kind,confidence,version,supersedes_id,
-        created_by_command_id,repository,keywords,explicit_save)
-     VALUES($1,$2,$3,$4,$5,$6,'active',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::text[],$17)`,
-    [
-      itemId,
-      workspaceId,
-      proposal.memoryKind,
-      proposal.subjectIdentityId ?? null,
-      proposal.canonicalKey,
-      proposal.body,
-      proposal.source.roomId,
-      proposal.source.messageIds[0],
-      source.source_corner_id,
-      proposal.audience,
-      proposal.confidence,
-      options.version,
-      options.predecessorId ?? null,
-      command.id,
-      source.repository,
-      [...proposal.keywords],
-      options.explicitSave,
-    ],
-  );
-  // Root provenance is server-owned and does not consume the caller's source limit.
-  // Cross-Room event roots stay outside this Room's source partition.
-  await db.query(
-    `INSERT INTO institutional_memory_item_sources(item_id,message_id)
-     SELECT $1::uuid,source_id FROM unnest($2::text[]) source_id
-     UNION
-     SELECT $1::uuid,id FROM messages WHERE id=$3 AND room_id=$4 AND deleted_at IS NULL`,
-    [itemId, proposal.source.messageIds, command.root_source_message_id, command.room_id],
-  );
-  if (options.predecessorId) {
-    await db.query(
-      `INSERT INTO institutional_memory_item_sources(item_id,message_id)
-       SELECT $1,message_id FROM institutional_memory_item_sources WHERE item_id=$2
-       ON CONFLICT DO NOTHING`,
-      [itemId, options.predecessorId],
-    );
+  const result = (await db.query<{item_id:string|null;source_available:boolean}>(`WITH source AS (
+    SELECT COALESCE(room.repository_key,parent.repository_key) repository,
+      CASE WHEN room.parent_id IS NULL THEN NULL ELSE room.id END source_corner_id
+    FROM rooms room LEFT JOIN rooms parent ON parent.id=room.parent_id WHERE room.id=$7
+  ), inserted AS (
+    INSERT INTO institutional_memory_items
+      (id,workspace_id,kind,subject_identity_id,canonical_key,body,state,source_room_id,
+       source_message_id,source_corner_id,audience_kind,confidence,version,supersedes_id,
+       created_by_command_id,repository,keywords,explicit_save)
+    SELECT $1,$2,$3,$4,$5,$6,'active',$7,$8,source.source_corner_id,$9,$10,$11,$12,$13,
+      source.repository,$14::text[],$15 FROM source
+    ON CONFLICT (workspace_id,kind,(COALESCE(subject_identity_id,'')),canonical_key,audience_kind)
+      WHERE state='active' DO NOTHING RETURNING id
+  ), provenance AS (
+    INSERT INTO institutional_memory_item_sources(item_id,message_id)
+    SELECT inserted.id,evidence.message_id FROM inserted CROSS JOIN LATERAL (
+      SELECT unnest($16::text[]) message_id
+      UNION SELECT id FROM messages WHERE id=$17 AND room_id=$18 AND deleted_at IS NULL
+      UNION SELECT message_id FROM institutional_memory_item_sources WHERE item_id=$12::uuid
+    ) evidence
+  ) SELECT (SELECT id FROM inserted) item_id,EXISTS(SELECT 1 FROM source) source_available`,[
+    itemId,workspaceId,proposal.memoryKind,proposal.subjectIdentityId??null,proposal.canonicalKey,proposal.body,
+    proposal.source.roomId,proposal.source.messageIds[0],proposal.audience,proposal.confidence,options.version,
+    options.predecessorId??null,command.id,[...proposal.keywords],options.explicitSave,
+    proposal.source.messageIds,command.root_source_message_id,command.room_id,
+  ])).rows[0]!;
+  if (!result.source_available) throw new Error('institutional memory source room is unavailable');
+  if (!result.item_id) {
+    const current=(await db.query<{id:string;version:number}>(`SELECT id,version FROM institutional_memory_items
+      WHERE workspace_id=$1 AND kind=$2 AND subject_identity_id IS NOT DISTINCT FROM $3
+        AND canonical_key=$4 AND audience_kind=$5 AND state='active'`,
+      [workspaceId,proposal.memoryKind,proposal.subjectIdentityId??null,proposal.canonicalKey,proposal.audience])).rows[0];
+    if (!current) throw new Error('institutional memory key changed; search memory before saving');
+    throw new Error(`institutional memory already has item ${current.id} (version ${current.version}) under this key; skip this save if it says the same, or update_memory that item`);
   }
-  return itemId;
+  return result.item_id;
 }
 
 

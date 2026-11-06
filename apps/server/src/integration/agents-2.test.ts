@@ -68,7 +68,7 @@ const fixture = monolithFixture();
   });
 
 
-  it('keeps a renamed agent handle unique in every Workspace it belongs to', async () => {
+  it('keeps an agent handle unchanged when its display name changes', async () => {
     const secondWorkspace = '66666666-6666-4666-8666-666666666666';
     const goosy = 'f'.repeat(64);
     await fixture.database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Second')`, [secondWorkspace]);
@@ -96,7 +96,7 @@ const fixture = monolithFixture();
     }));
     expect(
       (await fixture.database.query(`SELECT handle FROM identities WHERE id=$1`, [AGENT])).rows,
-    ).toEqual([{ handle: 'goosy_2' }]);
+    ).toEqual([{ handle: 'bee' }]);
   });
 
 

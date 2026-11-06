@@ -1,3 +1,4 @@
+import { lockAgentCommandQueue } from '../agent-command-queue.js';
 import { OwnedModelUnknownGeneration, isOwnedModelUnknownGenerationError } from '../owned-model-errors.js';
 import { endAgentTurn } from '../agent-turn-end.js';
 import { assertCurrentTurnOwner, commandOwnerLiveSql, registerOwnedEffectFence } from '../turn-ownership.js';
@@ -11,7 +12,7 @@ import { CommandRefusalError } from '../commander.js';
 import { vaultSaveRequest, type VaultSaveCard } from '@beeline/api-contract/daemon';
 import { FIRST_PARTY_INTEGRATIONS } from '../first-party-integrations.js';
 import { setCornerHold } from '../corner-holds.js';
-import { authorizeCommandOutput, claimAgentCommand, lockAgentCommandQueue, StaleWakeClaimRefused, readAgentCommands, type CommandRow } from '../agent-command.js';
+import { authorizeCommandOutput, claimAgentCommand, StaleWakeClaimRefused, readAgentCommands, type CommandRow } from '../agent-command.js';
 import { createHash } from 'node:crypto';
 import { endComputerSession, getComputerSession } from '../computer-session.js';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';

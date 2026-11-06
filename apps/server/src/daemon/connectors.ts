@@ -462,10 +462,7 @@ import { Output, id, Input, registrySubject } from './values.js';
    * A failed probe preserves cached keys; successful metadata stays scoped
    * to the machine owner. Squire has no persisted connector row.
    */
-  export async function daemonConnectorVaultReport(ctx: DaemonContext,
-    input: Input<'postConnectorVault'>,
-    agentId: string,
-  ): Promise<Output<'postConnectorVault'>> {
+  export async function daemonConnectorVaultReport(ctx: DaemonContext, input: Input<'postConnectorVault'>, agentId: string): Promise<Output<'postConnectorVault'>> {
     const completed = await ctx.database.transaction(async (db) => {
       const machine = (await db.query<{ owner_id: string; machine_id: string; workspace_id: string }>(
         `SELECT a.owner_id,COALESCE(a.machine_id,a.agent_id) machine_id,m.workspace_id
@@ -474,22 +471,11 @@ import { Output, id, Input, registrySubject } from './values.js';
          WHERE a.agent_id=$1 ORDER BY m.joined_at LIMIT 1`, [agentId],
       )).rows[0];
       if (!machine) throw new Error('machine helper not found');
-      await db.query('SELECT pg_advisory_xact_lock(hashtext($1))',
-        [`squire-vault:${machine.owner_id}:${machine.machine_id}`]);
-      // An owner unpair survives startup/reconnect broker reports. Explicit pairing
-      // clears this machine decision; the local Squire account stays in its vault.
-      const disconnected = await db.query(`SELECT 1 FROM agents WHERE owner_id=$1
-        AND COALESCE(machine_id,agent_id)=$2 AND squire_work->>'disconnected'='true'`,
-        [machine.owner_id, machine.machine_id]);
-      if (disconnected.rowCount) return [];
-      const report = { status: input.notAdded ? 'not-added' : input.errorMessage ? 'error' : 'connected',
-        ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}),
-        reportedAt: Date.now() / 1000 };
-      await db.query('UPDATE agents SET squire_report=$2::jsonb WHERE agent_id=$1',
-        [agentId, JSON.stringify(report)]);
-      if (input.errorMessage || input.notAdded) return [];
-      await applyVaultList(db, { owner_identity_id: machine.owner_id,
-        machine_id: machine.machine_id, workspace_id: machine.workspace_id }, input.connections);
+      const report = { status: input.notAdded ? 'not-added' as const : input.errorMessage ? 'error' as const : 'connected' as const,
+        ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}),reportedAt:Date.now()/1000 };
+      const applied=await applyVaultList(db,{owner_identity_id:machine.owner_id,machine_id:machine.machine_id,
+        workspace_id:machine.workspace_id},input.connections,report);
+      if(!applied || report.status!=='connected') return [];
       return completeSquireMachineOffers(db, machine.owner_id, machine.machine_id);
     });
     for (const offer of completed) ctx.live.publish({ type: 'invalidate', roomId: offer.roomId,

@@ -21,7 +21,7 @@ export type CornerIdleRow = CornerStateRow & {
  */
 export function cornerIdleSql(cornerId: string, includeCommander = false): string {
   return `WITH live_corner AS MATERIALIZED (
-    SELECT * FROM rooms WHERE id=${cornerId} AND parent_id IS NOT NULL AND archived_at IS NULL
+    SELECT rooms.* FROM rooms WHERE id=${cornerId} AND parent_id IS NOT NULL AND archived_at IS NULL
   ) SELECT snapshot.*,
     (machine->>'state'='idle' AND archived_at IS NULL
       AND NOT (worker_active OR reviewer_active OR blocking OR suppressed)) idle_eligible

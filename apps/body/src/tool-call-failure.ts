@@ -1,3 +1,4 @@
+import { maskCredentialResult } from './mask-credential-result.js';
 /**
  * One journal line for a tool call the harness reports as failed.
  *
@@ -9,7 +10,6 @@
  * the helper reads whichever one carries it and says it out loud.
  */
 import type { ToolCallEntry } from './acp.js';
-import { redactToolDetail } from './turn-failure-reason.js';
 
 const MAX_DETAIL = 300;
 
@@ -100,13 +100,13 @@ export function isPrivateWorkToolCall(call: ToolCallEntry): boolean {
 
 /**
  * The line to log for a failed tool call, or `undefined` when the call did
- * not fail. Secrets are scrubbed with the same redactor the failed-turn
- * receipt uses, and the detail is capped — this is a log line, not a dump.
+ * not fail. Credential-fetch results are masked and the detail is capped.
  */
 export function toolCallFailureLine(call: ToolCallEntry): string | undefined {
+  call = maskCredentialResult(call);
   if (!isFailedToolCall(call)) return undefined;
-  const title = redactToolDetail(call.title?.trim() || call.id || 'tool');
-  const detail = redactToolDetail(toolCallText(call.content) || toolCallText(call.rawOutput))
+  const title = call.title?.trim() || call.id || 'tool';
+  const detail = (toolCallText(call.content) || toolCallText(call.rawOutput))
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, MAX_DETAIL);

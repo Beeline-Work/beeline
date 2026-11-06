@@ -1,3 +1,4 @@
+import { maskCredentialResult } from './mask-credential-result.js';
 import { STDERR_TAIL_MAX_CHARS, flattenHarnessCause, AcpRuntimeExitedError, isPiAcpHarness, killChildProcessGroup } from './acp-stderr-tail-max-chars.js';
 
 
@@ -61,7 +62,7 @@ export function toolCallEntries(updates: readonly SessionUpdate[]): ToolCallEntr
     }
     const key = id ?? activeAnonymous!;
     const previous = calls.get(key);
-    calls.set(key, {
+    calls.set(key, maskCredentialResult({
       ...previous,
       id: key,
       ...(typeof update.name === 'string' ? { name: update.name } : {}),
@@ -73,7 +74,7 @@ export function toolCallEntries(updates: readonly SessionUpdate[]): ToolCallEntr
       ...('content' in update ? { content: update.content } : {}),
       ...('rawOutput' in update ? { rawOutput: update.rawOutput } : {}),
       ...('locations' in update ? { locations: update.locations } : {}),
-    });
+    }));
     if (!id && sessionUpdate === 'tool_result') activeAnonymous = undefined;
   }
   return [...calls.values()];

@@ -8,12 +8,9 @@ export interface ModelUnavailableState {
   recovery: string;
 }
 
-const SECRET_VALUE = /(?:token|key|secret|password)=?[^\s,;]*/gi;
-
 function safeGuidance(value: string): string {
   return value
     .replace(/[\r\n\t]+/g, ' ')
-    .replace(SECRET_VALUE, 'credential=[redacted]')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 280);

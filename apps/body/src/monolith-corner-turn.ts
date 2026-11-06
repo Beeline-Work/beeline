@@ -1,601 +1,177 @@
 import { CommandActivationContext } from './helper-activation-context.js';
-import { OwnedModelOutcomeUnknown, ownedModelPrompt, ownedModelEndReceipt } from './owned-model-turn.js';
-import { helperUsageBinding, postChangedAgentUsage } from './helper-usage-binding.js';
-import { agentBehavior } from './agent-command.js';
-import type { SandboxSessionSpec } from './bwrap-sandbox.js';
-import { tryWithKernelLock } from './kernel-lock.js';
-import { extraDependencyRoots, dependencyFingerprint, prepareDependencyGeneration, installDependencyNpmGuard, dependencyRequest } from './dependency-generation.js';
-import { CODE_OWNED_HOST_MCP_NAMES } from './mcp-route-class.js';
-import { roomPermissionDecision } from './monolith-room-turn.js';
 import { FreeAgentContinuation } from './free-agent-continuation.js';
-import { modelContextWindowTokens } from './model-context-window.js';
-import { addTurnTokenFigure, mergeHarnessTurnMetrics, type TurnTokenFigure } from './harness-turn-tokens.js';
+import { type TurnTokenFigure } from './harness-turn-tokens.js';
 import { TurnUsageAccumulator } from './turn-usage.js';
-import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
+import { CommandExecutionContext } from './server-command-intake.js';
 import type { InterruptedTurn } from './force-update-journal.js';
 import { SquireTaskRelay } from './squire-task-relay.js';
 import { resourceCallFacts } from './resource-mcp-facade.js';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { mkdir, readFile } from 'node:fs/promises';
-import { homedir, hostname } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { machineHost } from './machine-host.js';
-import {
-  prepareCodexCacheTargets,
-  preparePackageCacheTargets,
-  preparePrivateAssets,
-  markWorkspaceLayoutLive,
-  prepareWorkspaceAssets,
-  workspaceAssetPaths,
-  workspaceCacheEnv,
-} from './workspace-assets.js';
-import { admitSharedAssets } from './shared-asset-capacity.js';
 import { type DaemonAttachment, type DaemonOperationMap } from '@beeline/api-contract/daemon';
-import {
-  AcpClient,
-  openAcpConversation,
-  isPureRetryNarration,
-  type McpServerWire,
-  type PromptResult,
-  type ToolCallEntry,
-} from './acp.js';
-import {
-  AGENT_SKILL_DIRS,
-  expectedMountedImportedMcpServerNames,
-  freshHarnessLoginLine,
-  grantedSquireHostBindPaths,
-  harnessStateDirsFromEnv,
-  hostImportedMcpDeclarations,
-  hostImportedMcpServerNames,
-  isExpiredHarnessLoginError,
-  prepareRoomAgentHome,
-  repairRoomAgentCredentialLinks,
-  watchRoomClaudeLogin,
-  writeBackRoomClaudeLogin,
-} from './agent-home.js';
-import {
-  grantedHostRouteWires,
-  grantedSquireHostRoute,
-  ungatedHostServers,
-} from './host-mcp-route.js';
-import { openRouterRoutingInput } from './openrouter-routing.js';
-import { agentOpenRouterKey, readOpenRouterKeyUsage } from './openrouter-key-usage.js';
-import { HarnessQuotaReader, quotaAxiProvider } from './harness-quota.js';
-import { agentCommandCatalogPublisher } from './agent-command-catalog.js';
-import {
-  attachmentImageBlocks,
-  attachmentMarkerLines,
-  attachmentPromptLines,
-  deliverAttachments,
-  promptWithImages,
-  type DeliveredAttachment,
-} from './attachment-delivery.js';
-import { isCornerStatusRestatement } from './reply-sanitizer.js';
-import { TurnStoppedError } from './turn-stop.js';
-import { AgentTurnStream, durableReplyText } from './turn-stream.js';
-import { isCompletedToolCall, isPrChecksRead, toolCallFailureLine } from './tool-call-failure.js';
-import { captureConnectionUsage, ConnectorUsageRecorder } from './connector-runner.js';
-import { distillTurnFailureReason, redactToolDetail, redactTurnError } from './turn-failure-reason.js';
-import { sessionConfigFingerprint } from './session-config-fingerprint.js';
-import { hasCornerPrepareScript } from './corner-prepare-script.js';
-import { registryMcpHostBindPaths, registryMcpHostDeclarations } from './registry-mcp.js';
-import { installPiMcpBridge } from './pi-mcp-bridge.js';
-import { installPiTurnBudget } from './pi-turn-budget.js';
-import { syncCornerBranch } from './corner-branch-sync.js';
-import { beelineAgentMcpServer, readOnlyMcpServer, sessionGrantedResources, writeSessionResourceAuth, recordSessionModelFallback, tracedAgentProcessLifecycle } from './room-session.js';
-import { allocatedDirectoryBytes, scratchBudgetMessage, scratchGrowthExceedsBudget } from './scratch-lifecycle.js';
-import { awaitInstitutionalContext, startInstitutionalContextFetch } from './institutional-context.js';
-import {
-  codegraphFingerprintServers,
-  codegraphMcpServer,
-  prepareCodegraphIndex,
-} from './codegraph.js';
-import {
-  credentialMaskPaths,
-  harnessHomeStateDirs,
-  siblingAgentMaskPaths,
-  wrapAgentCommand,
-} from './bwrap-sandbox.js';
-import { harnessIdentityLabel, sessionNewMcpServers } from './cursor-acp-bridge.js';
-import {
-  approvedDeviceGrant,
-  deviceGrantResumePrompt,
-} from './monolith-room-turn.js';
-import { bodyAgentCommand, type BodyConfig } from './config.js';
+import { AcpClient, type PromptResult, type ToolCallEntry } from './acp.js';
+import { HarnessQuotaReader } from './harness-quota.js';
+import { ConnectorUsageRecorder } from './connector-runner.js';
+import { redactToolDetail, redactTurnError } from './turn-failure-reason.js';
+import { type BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
-import {
-  explainEmptyAgentTurn,
-  isSilentCompletion,
-  isAccountOrProviderRefusal,
-  isContextOverflowTurn,
-  nextPinnedProvider,
-  shouldFailOverProviderError,
-  shouldRetryEmptyTurn,
-  turnFailureReasonWithProvider,
-  type EmptyTurnExplanation,
-} from './empty-turn.js';
+import { type EmptyTurnExplanation } from './empty-turn.js';
 import type { GrantCommandRunner, GrantRunnerEndpoint } from './grant-runner.js';
-import {
-  agentArgsWithModelSelection,
-  applyAgentModelSelection,
-  filterAllowedModelConfigOptions,
-  parseAdvertisedConfigOptions,
-} from './model-config.js';
 import type { AgentRuntimeRecord } from './runtime.js';
-import { runtimeDirectory, runtimeIdentity } from './runtime.js';
-import {
-  assembleSessionPrompt,
-  assembleTurnPrompt,
-  CORNER_DELIVERY_NUDGE,
-  cornerHasRepositoryWork,
-  CORNER_REVIEWER_SESSION_INSTRUCTION,
-  CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION,
-  CORNER_CHECKS_NUDGE,
-  cornerReviewerInstruction,
-  roomMentionDirectory,
-  renderReplyContext,
-  type PromptSurface,
-  type SessionPromptContext,
-} from './prompt-assembly.js';
-import { AgentProcesses, startAgentProcess, stopAgentProcess, isAgentProcessExit, type AgentProcessLifecycle } from './agent-process.js';
+import { runtimeIdentity } from './runtime.js';
+import { cornerReviewerInstruction, type PromptSurface, type SessionPromptContext } from './prompt-assembly.js';
+import { AgentProcesses, type AgentProcessLifecycle } from './agent-process.js';
 import { WarmTranscript } from './warm-transcript.js';
-import { harnessSupportsNativeSessionResume, harnessEnforcement } from './harness-capabilities.js';
+import { harnessSupportsNativeSessionResume } from './harness-capabilities.js';
 import { PromptSectionBaseline } from './prompt-section-baseline.js';
 import type { RoomSupervisor } from './room-supervisor.js';
-import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
-import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
-import { installCornerGitHubWrappers, type CornerGitHubCli } from './corner-github-auth.js';
-import { agentGitIdentityEnv } from './agent-git-identity.js';
-import {
-  harvestWarmNodeModules,
-  mobileNodeModulesStoreDir,
-  sharedNpmCacheDir,
-  sharedPnpmStoreDir,
-  sharedTurboCacheDir,
-  warmNodeModulesStoreDir,
-} from './warm-node-modules.js';
+import { TurnTrace, type TurnTraceSink } from './turn-trace.js';
+import { type CornerGitHubCli } from './corner-github-auth.js';
 
-type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
-type DaemonActivity = DaemonOperationMap['postAgentActivity']['input']['activity'][number];
-type ReviewerInstructionInput = Parameters<typeof cornerReviewerInstruction>[0];
+import { monolithCornerTurnLoopRetainBackgroundClient, monolithCornerTurnLoopConfigurationChanged, monolithCornerTurnLoopRequestReconciliation, monolithCornerTurnLoopIsBusy, monolithCornerTurnLoopRequestClose, monolithCornerTurnLoopRefreshPersonaForSoulUpdate, monolithCornerTurnLoopPrepareForForcedUpdateRestart, monolithCornerTurnLoopInterruptedTurn, monolithCornerTurnLoopInterruptForServerMinimum, monolithCornerTurnLoopForceRecoverRoom, monolithCornerTurnLoopStopTurn, monolithCornerTurnLoopCommandActivation, monolithCornerTurnLoopConfiguration, monolithCornerTurnLoopRestoredState, monolithCornerTurnLoopRepositoryState, monolithCornerTurnLoopRoster, monolithCornerTurnLoopWriteBackClaudeLogin, monolithCornerTurnLoopPublishOpenRouterSpend, monolithCornerTurnLoopPublishHarnessQuota, monolithCornerTurnLoopCaptureTurnMetrics, monolithCornerTurnLoopWatchClaudeLogin, monolithCornerTurnLoopStopClaudeLoginWatch, monolithCornerTurnLoopDiscardSession, monolithCornerTurnLoopSessionIsCurrent, monolithCornerTurnLoopCurrentSessionFingerprint, monolithCornerTurnLoopGrantedResources, monolithCornerTurnLoopActivate } from './monolith-corner-turn-retain-background-client.js';
+import { monolithCornerTurnLoopActivateCold, monolithCornerTurnLoopActiveReviewerInstruction, monolithCornerTurnLoopLifecycle } from './monolith-corner-turn-activate-cold.js';
+import { monolithCornerTurnLoopAcceptsImages, monolithCornerTurnLoopServingProviders, monolithCornerTurnLoopExplainEmpty, monolithCornerTurnLoopRepinNextProvider, monolithCornerTurnLoopBeginTurnTrace, monolithCornerTurnLoopWithCheckout } from './monolith-corner-turn-accepts-images.js';
+import { monolithCornerTurnLoopPrompt } from './monolith-corner-turn-prompt.js';
+import { monolithCornerTurnLoopHarvestWarmNodeModules, monolithCornerTurnLoopSyncBranch, monolithCornerTurnLoopRun } from './monolith-corner-turn-harvest-warm-node-modules.js';
 
-const execFileAsync = promisify(execFile);
-const TOOL_ARGUMENT_MAX_BYTES = 1_200;
-const TOOL_OUTPUT_MAX_BYTES = 3_200;
-const TOOL_PATH_LIMIT = 12;
-/** How long a turn start waits out a GitHub outage before it fails. */
-
-function isCornerChecksTurn(trigger: string, restates?: readonly string[]): boolean {
-  return Boolean(restates) || /\b(?:passed|failed) a check\b/i.test(trigger);
-}
-
-/**
- * A green-checks wake of the Room's reviewer: the server wakes only the
- * reviewer on a green head (`corner-lifecycle.ts` `checksReported`). A
- * failing-checks wake goes to the agent that writes the code, so a reviewer
- * that writes code still gets its fix-and-push turn.
- */
-function isCornerReviewTurn(reviewer: boolean, trigger: string): boolean {
-  return reviewer && /\bpassed a check\b/i.test(trigger);
-}
-
-async function cornerUndeliveredRepositoryState(
-  worktreePath: string,
-  featureBranch?: string,
-  targetBranch?: string,
-): Promise<string | undefined> {
-  try {
-    const [{ stdout: status }, ahead] = await Promise.all([
-      execFileAsync('git', ['-C', worktreePath, 'status', '--porcelain=v1']),
-      featureBranch
-        ? firstResolvedRemoteRef(worktreePath, [featureBranch, targetBranch])
-            .then((remoteRef) =>
-              remoteRef
-                ? execFileAsync('git', [
-                    '-C',
-                    worktreePath,
-                    'rev-list',
-                    '--count',
-                    `${remoteRef}..HEAD`,
-                  ]).then(({ stdout }) => Number.parseInt(stdout.trim(), 10) || 0)
-                : 0,
-            )
-            .catch(() => 0)
-        : Promise.resolve(0),
-    ]);
-    const dirty = status.trimEnd();
-    return dirty || ahead > 0 ? `${dirty}\nahead:${ahead}` : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-async function firstResolvedRemoteRef(
-  worktreePath: string,
-  branches: readonly (string | undefined)[],
-): Promise<string | undefined> {
-  for (const branch of branches) {
-    if (!branch) continue;
-    const ref = `refs/remotes/origin/${branch}`;
-    const resolved = await execFileAsync('git', ['-C', worktreePath, 'rev-parse', '--verify', ref])
-      .then(() => true)
-      .catch(() => false);
-    if (resolved) return ref;
-  }
-  return undefined;
-}
-
-function oneLine(value: string): string {
-  return value.replace(/\s+/g, ' ').trim();
-}
-
-function serialized(value: unknown): string {
-  if (typeof value === 'string') return value;
-  try {
-    return JSON.stringify(value) ?? '';
-  } catch {
-    return '';
-  }
-}
-
-function record(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function clampBytes(value: string, maxBytes: number, preserveWhitespace = false): string {
-  const clean = preserveWhitespace ? value : value.trim();
-  if (Buffer.byteLength(clean) <= maxBytes) return clean;
-  const suffix = '\n…[truncated]';
-  const allowed = maxBytes - Buffer.byteLength(suffix);
-  let end = Math.max(0, allowed);
-  const bytes = Buffer.from(clean);
-  // Do not persist a replacement glyph produced by cutting a UTF-8 sequence.
-  while (end > 0 && ((bytes[end] ?? 0) & 0xc0) === 0x80) end--;
-  return `${bytes.subarray(0, end).toString('utf8')}${suffix}`;
-}
-
-function outputText(value: unknown): string {
-  if (typeof value === 'string') {
-    if (!/^[\s]*[\[{\"]/.test(value)) return value;
-    try {
-      const parsed = JSON.parse(value) as unknown;
-      if (typeof parsed === 'string') return parsed;
-      return outputText(parsed);
-    } catch {
-      // The harness can also send ordinary, unencoded text.
-    }
-    return value;
-  }
-  if (Array.isArray(value)) return value.map(outputText).filter(Boolean).join('\n');
-  const object = record(value);
-  if (!object) return '';
-  const entries = Object.entries(object);
-  for (const key of [
-    'formatted_output',
-    'stdout',
-    'stderr',
-    'output',
-    'text',
-    'content',
-    'message',
-    'result',
-    'error',
-  ]) {
-    for (const [entryKey, entryValue] of entries) {
-      if (entryKey.toLowerCase() !== key) continue;
-      const text = outputText(entryValue);
-      if (text) return text;
-    }
-  }
-  return serialized(value);
-}
-
-function outputExcerpt(value: unknown): string | undefined {
-  const redacted = redactToolDetail(outputText(value));
-  if (!redacted.trim()) return undefined;
-  if (/\b(?:git[- ]credential|credential[- ]helper)\b/i.test(redacted)) {
-    return 'Credential-helper output omitted.';
-  }
-  const lines = redacted.split(/\r?\n/).map((line) => line.trimEnd());
-  if (lines.length <= 8) return clampBytes(lines.join('\n'), TOOL_OUTPUT_MAX_BYTES, true);
-  return clampBytes(
-    [...lines.slice(0, 4), '…[output omitted]…', ...lines.slice(-4)].join('\n'),
-    TOOL_OUTPUT_MAX_BYTES,
-    true,
-  );
-}
-
-function filePaths(value: unknown, worktreePath: string): string[] {
-  const paths = new Set<string>();
-  const visit = (candidate: unknown, key?: string) => {
-    if (paths.size >= TOOL_PATH_LIMIT || candidate === null || candidate === undefined) return;
-    if (typeof candidate === 'string') {
-      if (key && /(?:^|_)(?:path|file|filename|target)$/i.test(key)) {
-        const path = candidate.startsWith(`${worktreePath}/`)
-          ? candidate.slice(worktreePath.length + 1)
-          : candidate;
-        if (path && path.length <= 512) paths.add(redactToolDetail(path));
-      }
-      return;
-    }
-    if (Array.isArray(candidate)) {
-      candidate.forEach((entry) => visit(entry));
-      return;
-    }
-    const object = record(candidate);
-    if (object) Object.entries(object).forEach(([entryKey, entry]) => visit(entry, entryKey));
-  };
-  visit(value);
-  return [...paths];
-}
-
-function resultStatus(call: ToolCallEntry): string {
-  const content =
-    record(call.content) ??
-    (typeof call.content === 'string'
-      ? (() => {
-          try {
-            return record(JSON.parse(call.content));
-          } catch {
-            return undefined;
-          }
-        })()
-      : undefined);
-  const exitCode = content?.exitCode ?? content?.exit_code ?? content?.code;
-  if (typeof exitCode === 'number' && Number.isFinite(exitCode)) return `exit ${exitCode}`;
-  if (content?.ok === true || content?.success === true) return 'ok';
-  if (content?.ok === false || content?.success === false) return 'error';
-  return /(?:failed|error|denied)/i.test(call.status ?? '') ? 'error' : 'ok';
-}
-
-function toolArguments(call: ToolCallEntry): { command?: string; input?: string } {
-  const raw = record(call.rawInput);
-  const command =
-    typeof call.rawInput === 'string'
-      ? call.rawInput
-      : typeof raw?.command === 'string'
-        ? raw.command
-        : typeof raw?.cmd === 'string'
-          ? raw.cmd
-          : undefined;
-  if (command) return { command: clampBytes(redactToolDetail(command), TOOL_ARGUMENT_MAX_BYTES) };
-  const input = serialized(call.rawInput);
-  return input ? { input: clampBytes(redactToolDetail(input), TOOL_ARGUMENT_MAX_BYTES) } : {};
-}
-
-function toolCallKey(call: ToolCallEntry, index: number): string {
-  return call.id ? `id-${createHash('sha256').update(call.id).digest('hex')}` : `tool-${index}`;
-}
-
-function toolCallSettled(call: ToolCallEntry): boolean {
-  if (call.resultReceived) return true;
-  return /^(?:completed|complete|failed|error|succeeded|success|passed|done)$/i.test(
-    call.status ?? '',
-  );
-}
-
-function isSuccessfulCommit(call: ToolCallEntry): boolean {
-  if (/failed|error|denied/i.test(call.status ?? '')) return false;
-  return /\bgit\s+commit\b|\bcommit(?:ted)?\s+(?:changes|files?)\b/i.test(
-    `${call.title ?? ''} ${serialized(call.rawInput)}`,
-  );
-}
-
-/** Turn one physical ACP tool call into a bounded, redacted indexed ledger row. */
-export async function cornerToolActivity(
-  call: ToolCallEntry,
-  worktreePath: string,
-  requestedBy?: { pubkey: string; name?: string },
-): Promise<DaemonActivity> {
-  const operation = oneLine(call.kind ?? '') || 'tool';
-  let title = oneLine(redactToolDetail(call.title ?? '')) || `${operation} tool`;
-  if (isSuccessfulCommit(call)) {
-    try {
-      const shown = await execFileAsync(
-        'git',
-        ['-C', worktreePath, 'show', '--format=%s', '--name-only', '--no-renames', 'HEAD'],
-        { maxBuffer: 1024 * 1024 },
-      );
-      const lines = shown.stdout.split(/\r?\n/);
-      const subject = oneLine(lines.shift() ?? 'commit');
-      const files = new Set(lines.map(oneLine).filter(Boolean));
-      title = `committed ${files.size} files: ${subject}`;
-    } catch {
-      // The harness title remains a useful summary if the commit disappeared
-      // between the ACP update and this read.
-    }
-  }
-  const paths = filePaths([call.rawInput, call.content, call.locations], worktreePath);
-  const argumentsSummary = toolArguments(call);
-  const output = outputExcerpt(call.content ?? call.rawOutput);
-  return {
-    kind: 'tool',
-    title: title.slice(0, 240),
-    operation: operation.slice(0, 80),
-    status: resultStatus(call),
-    ...argumentsSummary,
-    ...(output ? { output } : {}),
-    ...(requestedBy ? { requestedBy } : {}),
-    ...(paths.length ? { files: paths.map((path) => ({ path })) } : {}),
-  };
-}
-
-export interface MonolithCornerTurnOptions {
-  cornerId: string;
-  parentRoomId: string;
-  workspaceId: string;
-  /**
-   * The agent that opened the corner. History and the initial lifecycle
-   * carrier only; command dispatch is selected by the server.
-   */
-  openedBy?: string;
-  objective: string;
-  worktreePath: string;
-  /** Present exactly when the parent Room is bound to a repository: this is then a code corner. */
-  repository?: {
-    featureBranch: string;
-    targetBranch: string;
-    gitCommonDir: string;
-    githubToken: string;
-    readOnly?: boolean;
-  };
-  /** Gives a writer its private copy; every other turn gets the Room's read-only checkout. */
-  prepareCheckout?: (repositoryWork: boolean, implementerAgentId?: string, assigned?: boolean) =>
-    Promise<{ path: string; gitCommonDir: string; writable: boolean }>;
-  runtime: AgentRuntimeRecord;
-  config: BodyConfig;
-  api: DaemonApiClient;
-  scheduler: AgentProcesses;
-  signal?: AbortSignal;
-  /** Close-request recovery interval (test seam); defaults to the jittered 10 min. */
-  closePollMs?: number;
-  onPoll(): void;
-  onSubscriptionState?: (connected: boolean) => void;
-  onIntakeError?: (error: unknown) => void;
-  onCloseRequested(): Promise<void>;
-  onRestartRequested?: () => Promise<void>;
-  canStartTurn?: () => boolean;
-  /** Keeps this corner's intake alive across failed reads. */
-  supervisor?: RoomSupervisor;
-  createAcpClient?: (options: ConstructorParameters<typeof AcpClient>[0]) => AcpClient;
-  /** Attachment downloads (test seam). */
-  fetchImpl?: typeof fetch;
-  /** The daemon's command-grant runner; this corner registers its worktree and current turn. */
-  grantRunner?: GrantCommandRunner;
-  grantRunnerEndpoint?: GrantRunnerEndpoint;
-  /** Connection usage capture: batched per turn into one postConnectionUsage. */
-  connectorUsage?: ConnectorUsageRecorder;
-}
-
-/** One write-enabled corner session, driven only by monolith transcript facts. */
 export class MonolithCornerTurnLoop {
-  private readonly commandContext: CommandExecutionContext;
-  private readonly activationContext: CommandActivationContext;
-  private readonly squireRelay: SquireTaskRelay;
-  private readonly agent: ReturnType<typeof runtimeIdentity>;
-  private wakeIntake?: () => void;
-  private reviewerCheckout = false;
-  private branchSyncNotice?: string;
-  private readonly retiredClients = new Map<AcpClient, { done: Promise<void>; check: () => void; stop: () => void }>();
 
-  /** Retire the conversation immediately, but keep its existing tools and wake callbacks alive. */
-  private retainBackgroundClient(client: AcpClient): Promise<void> {
-    const existing = this.retiredClients.get(client);
-    if (existing) return existing.done;
-    let resolveDone!: () => void;
-    const done = new Promise<void>(resolve => { resolveDone = resolve; });
-    let stopping = false;
-    const finish = async () => {
-      if (stopping) return;
-      stopping = true;
-      client.off('session/update', check);
-      client.off('exit', exited);
-      this.options.signal?.removeEventListener('abort', exited);
-      try { await stopAgentProcess(client); }
-      finally { this.retiredClients.delete(client); this.options.scheduler.workChanged(this.options.cornerId); resolveDone(); }
-    };
-    const check = () => { if (!client.hasBackgroundTools) void finish().catch(console.error); };
-    const exited = () => { void finish().catch(console.error); };
-    this.retiredClients.set(client, { done, check, stop: exited });
-    client.on('session/update', check);
-    client.once('exit', exited);
-    this.options.signal?.addEventListener('abort', exited, { once: true });
-    if (this.options.signal?.aborted) exited();
-    check();
-    return done;
-  }
-  private recoverIntake?: () => void;
+   readonly commandContext: CommandExecutionContext;
 
-  configurationChanged(): void {
-    this.recoverIntake?.();
-  }
+   readonly activationContext: CommandActivationContext;
 
+   readonly squireRelay: SquireTaskRelay;
 
-  /**
-   * Called on socket resubscription. A `corner-complete` published while that
-   * socket was down is recovered by a single durable read.
-   *
-   * The wake is the intake loop's own stable notify and is handed back exactly
-   * once, so it is kept: clearing it here left `requestClose` waking nothing
-   * after the first reconciliation. Intake clears it itself when it exits.
-   */
-  requestReconciliation(): void {
-    this.reconcileCloseRequested = true;
-    this.wakeIntake?.();
-  }
-  private client?: AcpClient;
-  private claudeLoginWatch?: { close(): void };
-  private sessionId?: string;
+   readonly agent: ReturnType<typeof runtimeIdentity>;
+
+   wakeIntake?: () => void;
+
+   reviewerCheckout = false;
+
+   branchSyncNotice?: string;
+
+   readonly retiredClients = new Map<AcpClient, { done: Promise<void>; check: () => void; stop: () => void }>();
+/** Retire the conversation immediately, but keep its existing tools and wake callbacks alive. */
+retainBackgroundClient(client: AcpClient): Promise<void> { return monolithCornerTurnLoopRetainBackgroundClient(this, client); }
+
+   recoverIntake?: () => void;
+configurationChanged(): void { return monolithCornerTurnLoopConfigurationChanged(this); }
+/**
+ * Called on socket resubscription. A `corner-complete` published while that
+ * socket was down is recovered by a single durable read.
+ *
+ * The wake is the intake loop's own stable notify and is handed back exactly
+ * once, so it is kept: clearing it here left `requestClose` waking nothing
+ * after the first reconciliation. Intake clears it itself when it exits.
+ */
+requestReconciliation(): void { return monolithCornerTurnLoopRequestReconciliation(this); }
+
+   client?: AcpClient;
+
+   claudeLoginWatch?: { close(): void };
+
+   sessionId?: string;
+
   /** MCP subprocesses capture this generation-specific path at launch. */
-  private sessionContextPath?: string;
+   sessionContextPath?: string;
+
   /** The configuration the live session baked in; a change invalidates it. */
-  private sessionFingerprint?: string;
+   sessionFingerprint?: string;
+
   /** Whether CodeGraph preparation succeeded for the live session. */
-  private sessionCodegraphReady = false;
+   sessionCodegraphReady = false;
+
   /** What this exact ACP session has already been prompted with (`warm-transcript.ts`). */
-  private readonly warmTranscript: WarmTranscript;
-  private readonly freeContinuation: FreeAgentContinuation;
+   readonly warmTranscript: WarmTranscript;
+
+   readonly freeContinuation: FreeAgentContinuation;
+
   /** What each turn section last sent to this exact ACP session hashed to (`prompt-section-baseline.ts`). */
-  private readonly sectionBaseline = new PromptSectionBaseline();
+   readonly sectionBaseline = new PromptSectionBaseline();
+
   /** The live session's environment, read back for pi's own turn record. */
-  private agentEnv: Record<string, string> = {};
+   agentEnv: Record<string, string> = {};
+
   /**
    * The real size of the last settled prompt, captured while the session that
    * sent it is still alive — `discardSession` clears both the client and the id,
    * and the terminal receipt is posted on a path that may run after it.
    */
-  private turnMetrics: {
+   turnMetrics: {
     inputTokens?: number;
     promptBytes?: number;
     totalInputTokens?: number;
     modelCalls?: number;
     modelCallsWithoutUsage?: number;
   } = {};
-  private turnUsage = new TurnUsageAccumulator();
-  private harnessTokens: TurnTokenFigure | undefined;
-  private modelContextTokens?: number;
+
+   turnUsage = new TurnUsageAccumulator();
+
+   harnessTokens: TurnTokenFigure | undefined;
+
+   modelContextTokens?: number;
+
   /** OpenRouter providers this activation pinned, in order (C92). */
-  private pinnedProviders: string[] = [];
+   pinnedProviders: string[] = [];
+
   /** Whether the pinned model takes images; `undefined` when the pin did not say. */
-  private modelTakesImages?: boolean;
+   modelTakesImages?: boolean;
+
   /** The one provider re-pinned after an empty completion, until the session ends. */
-  private pinnedProviderOverride?: string;
+   pinnedProviderOverride?: string;
+
   /**
    * Identity-only reviewer context, set when this agent holds the Room's
    * reviewer post; the exact PR head is refreshed inside each review turn.
    */
-  private reviewerInstructionInput?: ReviewerInstructionInput;
+   reviewerInstructionInput?: ReviewerInstructionInput;
+
   /** The role-specific second-chance instruction for this session. */
   /** Repository state already given a delivery reminder, until that state changes. */
-  private lastDeliveryNudgeState?: string;
-  private turnSessionPrefix = '';
+   lastDeliveryNudgeState?: string;
+
+   turnSessionPrefix = '';
+
   /** The session prompt's section ids, for `report_feedback` (with each turn's). */
-  private sessionPromptSectionIds: readonly string[] = [];
-  private sessionSurface: PromptSurface = 'code-corner';
-  private sessionPromptContext?: SessionPromptContext;
-  private repositoryWork = true;
+   sessionPromptSectionIds: readonly string[] = [];
+
+   sessionSurface: PromptSurface = 'code-corner';
+
+   sessionPromptContext?: SessionPromptContext;
+
+   repositoryWork = true;
+
   /** Whether this corner's gh launcher uses a host binary or the REST fallback. */
-  private cornerGitHubCli: CornerGitHubCli = 'host';
-  private busy = false;
-  private forcedStop = false;
-  private branchSyncController?:AbortController;
-  private activityTail = Promise.resolve();
+   cornerGitHubCli: CornerGitHubCli = 'host';
+
+   busy = false;
+
+   forcedStop = false;
+
+   branchSyncController?:AbortController;
+
+   activityTail = Promise.resolve();
+
   /** The model selected for the live ACP session, independent of later settings edits. */
-  private sessionModel: string | null = null;
+   sessionModel: string | null = null;
+
   /** Session scratch directory attachments are downloaded into (`TMPDIR/beeline-attachments`). */
-  private attachmentDir?: string;
+   attachmentDir?: string;
+
   /** The session's TMPDIR, where a granted command's script argument may also live. */
-  private sessionScratchDir?: string;
+   sessionScratchDir?: string;
+
   /** The turn in flight and who asked for it, for ledger rows and the grant runner. */
-  private currentTurn?: { requestId: string; requester?: { pubkey: string; name?: string } };
+   currentTurn?: { requestId: string; requester?: { pubkey: string; name?: string } };
+
   /** Operator-local turn traces; built once when the daemon configured a directory. */
-  private turnTraceSink?: TurnTraceSink;
-  private memberNames = new Map<string, string>();
+   turnTraceSink?: TurnTraceSink;
+
+   memberNames = new Map<string, string>();
+
   /** Agent identities in this Workspace, so a mention can be told from a human's. */
   /** Per-sender continuity, shared in shape with top-level Room intake. */
   /** The member agent that owns corner-wide lifecycle facts such as checks. */
@@ -606,16 +182,20 @@ export class MonolithCornerTurnLoop {
    * back here; ids that never matched a running turn are harmless and bounded
    * by the same replay window the inbox already de-duplicates over.
    */
-  private readonly stoppedTurns = new Set<string>();
+   readonly stoppedTurns = new Set<string>();
+
   /** Live corner-complete: close now, do not wait for the recovery GET. */
-  private closePushed = false;
+   closePushed = false;
+
   /** One durable state read after a socket reconnect/discovery pass. */
-  private reconcileCloseRequested = false;
+   reconcileCloseRequested = false;
+
 
   /** In-flight warm-store harvest, awaited at shutdown and never by a turn. */
-  private harvest: Promise<void> | undefined;
+   harvest: Promise<void> | undefined;
 
-  constructor(private readonly options: MonolithCornerTurnOptions) {
+
+  constructor( readonly options: MonolithCornerTurnOptions) {
     this.agent = runtimeIdentity(options.runtime.agent);
     const nativeResume = harnessSupportsNativeSessionResume(options.config.agentCommand ?? options.config.agentBinary);
     this.freeContinuation = new FreeAgentContinuation(options.config.agentHomeRoot
@@ -688,127 +268,39 @@ export class MonolithCornerTurnLoop {
           : undefined,
     });
   }
+isBusy(): boolean { return monolithCornerTurnLoopIsBusy(this); }
+/** corner-complete on the wire: wake intake so `closed()` reaps now. */
+requestClose(): void { return monolithCornerTurnLoopRequestClose(this); }
+refreshPersonaForSoulUpdate(): Promise<void> { return monolithCornerTurnLoopRefreshPersonaForSoulUpdate(this); }
+async prepareForForcedUpdateRestart(): Promise<void> { return monolithCornerTurnLoopPrepareForForcedUpdateRestart(this); }
+interruptedTurn(): InterruptedTurn | undefined { return monolithCornerTurnLoopInterruptedTurn(this); }
+interruptForServerMinimum(): InterruptedTurn | undefined { return monolithCornerTurnLoopInterruptForServerMinimum(this); }
+async forceRecoverRoom(): Promise<void> { return monolithCornerTurnLoopForceRecoverRoom(this); }
+/**
+ * Obey a stop the requester already made a fact.
+ *
+ * The id is remembered whether or not it names the turn in flight: a stop for
+ * work not yet started must still keep that work from starting, and one for a
+ * turn that has already ended is simply never read again. Only the session
+ * actually running the stopped turn is cancelled.
+ */
+stopTurn(requestId: string): void { return monolithCornerTurnLoopStopTurn(this, requestId); }
+commandActivation() { return monolithCornerTurnLoopCommandActivation(this); }
+async configuration() { return monolithCornerTurnLoopConfiguration(this); }
+async restoredState() { return monolithCornerTurnLoopRestoredState(this); }
+async repositoryState() { return monolithCornerTurnLoopRepositoryState(this); }
+async roster(): Promise<WorkspaceRoster> { return monolithCornerTurnLoopRoster(this); }
+/**
+ * Drop this corner's live harness process. The next activation starts cold.
+ * A rotation is a fact about one live session, so the pin goes with it.
+ */
+/**
+ * Claude Code may have refreshed its login during the prompt, detaching
+ * this Room's credential link. Share the rotated login now so other Rooms
+ * do not spend the old refresh token before this Room's next activation.
+ */
+async writeBackClaudeLogin(): Promise<void> { return monolithCornerTurnLoopWriteBackClaudeLogin(this); }
 
-  isBusy(): boolean {
-    return this.busy;
-  }
-
-  /** corner-complete on the wire: wake intake so `closed()` reaps now. */
-  requestClose(): void {
-    this.closePushed = true;
-    for (const retired of this.retiredClients.values()) retired.stop();
-    this.wakeIntake?.();
-  }
-
-  refreshPersonaForSoulUpdate(): Promise<void> {
-    return this.options.scheduler.stop(this.options.cornerId);
-  }
-
-  async prepareForForcedUpdateRestart(): Promise<void> {
-    this.forcedStop = true;
-    this.branchSyncController?.abort();
-  }
-
-  interruptedTurn(): InterruptedTurn | undefined {
-    const current = this.currentTurn;
-    if (!current || this.stoppedTurns.has(current.requestId)) return undefined;
-    return { roomId: this.options.cornerId, requestId: current.requestId, generationId: this.commandContext.generationId };
-  }
-
-  interruptForServerMinimum(): InterruptedTurn | undefined {
-    this.forcedStop = true;
-    this.branchSyncController?.abort();
-    const current = this.currentTurn;
-    if (!current) return undefined;
-    // The idle lease starts after active work, including a handover interruption.
-    this.warmTranscript.complete(this.sessionId, []);
-    this.stoppedTurns.add(current.requestId);
-    if (this.client && this.sessionId) this.client.sessionCancel(this.sessionId);
-    return {
-      roomId: this.options.cornerId,
-      requestId: current.requestId,
-      generationId: this.commandContext.generationId,
-    };
-  }
-
-  async forceRecoverRoom(): Promise<void> {
-    if (this.client && this.sessionId) this.client.sessionCancel(this.sessionId);
-    await this.options.scheduler.stop(this.options.cornerId, true);
-  }
-
-  /**
-   * Obey a stop the requester already made a fact.
-   *
-   * The id is remembered whether or not it names the turn in flight: a stop for
-   * work not yet started must still keep that work from starting, and one for a
-   * turn that has already ended is simply never read again. Only the session
-   * actually running the stopped turn is cancelled.
-   */
-  private stopTurn(requestId: string): void {
-    this.squireRelay.cancel(requestId);
-    this.stoppedTurns.add(requestId);
-    while (this.stoppedTurns.size > 500)
-      this.stoppedTurns.delete(this.stoppedTurns.values().next().value!);
-    if (this.currentTurn?.requestId !== requestId) return;
-    this.branchSyncController?.abort();
-    void this.options.scheduler.stop(this.options.cornerId, true).catch(error =>
-      console.error('[body] cancelled corner process cleanup failed:', error));
-  }
-
-  private commandActivation(){
-    if(!this.options.api.channel?.isOpen)return Promise.resolve(undefined);
-    const command=this.commandContext?.current;
-    if(!command){
-      return Promise.reject(new Error('Activation requires a claimed command'));
-    }
-    return this.activationContext.read({agentId:this.agent.publicKey,workspaceId:this.options.workspaceId,
-      roomId:this.options.cornerId,commandId:command.id,generationId:this.commandContext.generationId});
-  }
-
-  private async configuration(){
-    const activation=await this.commandActivation();
-    return activation?activation.configuration:this.options.api.execute('getAgentConfiguration',{agentId:this.agent.publicKey,roomId:this.options.cornerId});
-  }
-
-  private async restoredState(){
-    const activation=await this.commandActivation();
-    if(activation){if(!activation.corner)throw new Error('Activation corner context absent');return activation.corner;}
-    return this.options.api.execute('getCornerRestoreState',{cornerId:this.options.cornerId});
-  }
-
-  private async repositoryState(){
-    const activation=await this.commandActivation();
-    return activation?activation.repository:this.options.api.execute('getRoomRepositoryState',{roomId:this.options.cornerId});
-  }
-
-  private async roster(): Promise<WorkspaceRoster> {
-    const activation=await this.commandActivation();
-    const roster = activation?activation.roster:await this.options.api.execute('getWorkspaceRoster', {
-      agentId: this.agent.publicKey,
-      workspaceId: this.options.workspaceId,
-    });
-    this.memberNames = new Map(roster.members.map((member) => [member.identityId, member.name]));
-    return roster;
-  }
-
-  /**
-   * Drop this corner's live harness process. The next activation starts cold.
-   * A rotation is a fact about one live session, so the pin goes with it.
-   */
-  /**
-   * Claude Code may have refreshed its login during the prompt, detaching
-   * this Room's credential link. Share the rotated login now so other Rooms
-   * do not spend the old refresh token before this Room's next activation.
-   */
-  private async writeBackClaudeLogin(): Promise<void> {
-    if (!agentBehavior(this.options.config.agentKind).sharedLoginWriteBack || !this.options.config.agentHomeRoot) return;
-    await writeBackRoomClaudeLogin({
-      root: this.options.config.agentHomeRoot,
-      operatorHome: this.options.config.operatorHome,
-    }).catch((error: unknown) => {
-      console.error(`[thin-core] corner ${this.options.cornerId} could not write back a refreshed Claude login:`, error);
-    });
-  }
 
   /**
    * What this turn really cost and did, read at the moment its prompt settled.
@@ -820,1940 +312,427 @@ export class MonolithCornerTurnLoop {
    * Missing numbers are omitted rather than zeroed.
    */
   /** This agent's own OpenRouter key when its model routes there. */
-  private openRouterKey?: string;
-  private openRouterSpendPublish: Promise<unknown> = Promise.resolve();
+   openRouterKey?: string;
+
+   openRouterSpendPublish: Promise<unknown> = Promise.resolve();
+
   /** Plan quota read through quota-axi, throttled per agent across loops. */
-  private harnessQuota?: HarnessQuotaReader;
+   harnessQuota?: HarnessQuotaReader;
+/**
+ * After a turn, refresh the owner's view of this agent's OpenRouter key
+ * spend. `refused` marks a turn OpenRouter refused with 402.
+ */
+publishOpenRouterSpend(refused = false): void { return monolithCornerTurnLoopPublishOpenRouterSpend(this, refused); }
+/** After a turn, refresh the owner's view of this agent's plan quota. */
+publishHarnessQuota(): void { return monolithCornerTurnLoopPublishHarnessQuota(this); }
+async captureTurnMetrics() { return monolithCornerTurnLoopCaptureTurnMetrics(this); }
+/**
+ * Watch this client's Claude login so a refresh made while the
+ * corner is idle reaches other Rooms at once (see `watchRoomClaudeLogin`).
+ */
+watchClaudeLogin(): void { return monolithCornerTurnLoopWatchClaudeLogin(this); }
+stopClaudeLoginWatch(): void { return monolithCornerTurnLoopStopClaudeLoginWatch(this); }
+async discardSession(preserveConversation = false, stopBackground = false): Promise<void> { return monolithCornerTurnLoopDiscardSession(this, preserveConversation, stopBackground); }
+/** See `MonolithRoomTurnLoop.sessionIsCurrent`: retention never keeps a
+ *  session whose persona, model pin, or mounted MCP set the operator has
+ *  since changed, or whose harness process has exited. */
+async sessionIsCurrent(): Promise<boolean> { return monolithCornerTurnLoopSessionIsCurrent(this); }
+async currentSessionFingerprint(): Promise<string> { return monolithCornerTurnLoopCurrentSessionFingerprint(this); }
+async grantedResources() { return monolithCornerTurnLoopGrantedResources(this); }
+async activate(trace?: TurnTrace): Promise<string> { return monolithCornerTurnLoopActivate(this, trace); }
+async activateCold(trace?: TurnTrace): Promise<string> { return monolithCornerTurnLoopActivateCold(this, trace); }
+/**
+ * Resolve the review target at prompt time, not session activation time.
+ *
+ * A push can land after a reviewer session starts but before its first
+ * prompt, or while that prompt is running. The active prompt and its bounded
+ * second pass therefore each read the current green lifecycle head. The
+ * server still compares approve_merge's SHA with the current head, so a push
+ * after this read fails closed too.
+ */
+async activeReviewerInstruction(refreshChecks = true): Promise<string | undefined> { return monolithCornerTurnLoopActiveReviewerInstruction(this, refreshChecks); }
+/** Queue timing ends when this conversation starts or reuses its process. */
+lifecycle(trace?: TurnTrace): AgentProcessLifecycle { return monolithCornerTurnLoopLifecycle(this, trace); }
+/** A picture reaches the model only if the harness AND the model take one (C87). */
+acceptsImages(): boolean { return monolithCornerTurnLoopAcceptsImages(this); }
+/** The pinned providers a failure reason should name for this session. */
+servingProviders(): string[] { return monolithCornerTurnLoopServingProviders(this); }
+/** Why a turn carried no answer text, or undefined when it did. */
+async explainEmpty(result: PromptResult): Promise<EmptyTurnExplanation | undefined> { return monolithCornerTurnLoopExplainEmpty(this, result); }
+/**
+ * Re-pin the session to the next provider in the OpenRouter order and open a
+ * fresh session on it, so the retry of an empty completion or a failing
+ * provider is served — and named — by exactly one provider (C92).
+ */
+async repinNextProvider(trace?: TurnTrace, reason?: string): Promise<string | undefined> { return monolithCornerTurnLoopRepinNextProvider(this, trace, reason); }
+/** One turn's stopwatch; writes only when the daemon configured a trace directory. */
+beginTurnTrace(requestId: string): TurnTrace { return monolithCornerTurnLoopBeginTurnTrace(this, requestId); }
+async withCheckout<T>(work: () => Promise<T>): Promise<T> { return monolithCornerTurnLoopWithCheckout(this, work); }
+async prompt(requestId: string, trigger: string, attachments: readonly DaemonAttachment[] = [], requestedById?: string,
+/** Server system lines this turn answers; a reply that only restates them is dropped. */
+restates?: readonly string[], sourceMessageId?: string): Promise<void> { return monolithCornerTurnLoopPrompt(this, requestId, trigger, attachments, requestedById, restates, sourceMessageId); }
+/**
+ * Offer this worktree's `node_modules` to the host-wide warm store.
+ *
+ * A turn's end is the moment the tree is most likely to be a finished
+ * install, and the store keeps only the first complete tree per lockfile —
+ * so after the first corner on a lockfile this is one `stat` that answers
+ * `already-warm`. The copy that the first one does is deliberately NOT
+ * awaited by the turn: nobody in the Room is waiting on a cache, and the
+ * only thing that waits is shutdown, so a half-copied tree is never left
+ * where a later corner could read it as complete.
+ */
+harvestWarmNodeModules(): void { return monolithCornerTurnLoopHarvestWarmNodeModules(this); }
+/**
+ * Bring this worktree onto the corner's branch as GitHub currently has it,
+ * before any work is done on top of it.
+ *
+ * The branch is the shared artifact: another member agent may have pushed to
+ * it since this helper last looked, and a first touch of a corner this
+ * helper did not open starts from whatever `room-runtime.ts` restored. A
+ * conflicting local commits are realigned to that remote branch so the
+ * fixed objective can be attempted again without clobbering a sibling push.
+ */
+async syncBranch(): Promise<void> { return monolithCornerTurnLoopSyncBranch(this); }
+async run(): Promise<void> { return monolithCornerTurnLoopRun(this); }
+}
 
-  /**
-   * After a turn, refresh the owner's view of this agent's OpenRouter key
-   * spend. `refused` marks a turn OpenRouter refused with 402.
-   */
-  private publishOpenRouterSpend(refused = false): void {
-    const key = this.openRouterKey;
-    if (!key) return;
-    // One read at a time, so a later normal read cannot land over a 402 stop.
-    this.openRouterSpendPublish = this.openRouterSpendPublish
-      .then(() => readOpenRouterKeyUsage(key, {
-        ...(this.options.fetchImpl ? { fetchImpl: this.options.fetchImpl } : {}),
-        ...(refused ? { refused } : {}),
-      }))
-      .then((usage) => usage
-        ? postChangedAgentUsage(this.options.api,this.agent.publicKey,usage)
-        : undefined)
-      .catch((error) => console.error('[agent-usage] OpenRouter key read failed', error));
-  }
 
-  /** After a turn, refresh the owner's view of this agent's plan quota. */
-  private publishHarnessQuota(): void {
-    this.harnessQuota ??= new HarnessQuotaReader({
-      accountPublisher:helperUsageBinding(this.options.api),
-      agentId: this.agent.publicKey,
-      post: (usage) =>
-        postChangedAgentUsage(this.options.api,this.agent.publicKey,usage),
-    });
-    void this.harnessQuota.publish(
-      quotaAxiProvider(this.options.config.agentKind, Boolean(this.openRouterKey)),
-      this.agentEnv,
-    );
-  }
 
-  private async captureTurnMetrics() {
-    this.publishOpenRouterSpend();
-    this.publishHarnessQuota();
-    return mergeHarnessTurnMetrics(this.turnUsage.usage, this.harnessTokens, this.client?.lastPromptBytes);
-  }
+export type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
 
-  /**
-   * Watch this client's Claude login so a refresh made while the
-   * corner is idle reaches other Rooms at once (see `watchRoomClaudeLogin`).
-   */
-  private watchClaudeLogin(): void {
-    this.stopClaudeLoginWatch();
-    if (!agentBehavior(this.options.config.agentKind).sharedLoginWriteBack || !this.options.config.agentHomeRoot) return;
-    this.claudeLoginWatch = watchRoomClaudeLogin({
-      root: this.options.config.agentHomeRoot,
-      operatorHome: this.options.config.operatorHome,
-    });
-  }
+export type DaemonActivity = DaemonOperationMap['postAgentActivity']['input']['activity'][number];
 
-  private stopClaudeLoginWatch(): void {
-    this.claudeLoginWatch?.close();
-    this.claudeLoginWatch = undefined;
-  }
+export type ReviewerInstructionInput = Parameters<typeof cornerReviewerInstruction>[0];
 
-  private async discardSession(preserveConversation = false, stopBackground = false): Promise<void> {
-    if (!preserveConversation) this.warmTranscript.forgetSession();
-    const client = this.client;
-    this.stopClaudeLoginWatch();
-    this.client = undefined;
-    this.sessionId = undefined;
-    this.sessionContextPath = undefined;
-    this.sessionFingerprint = undefined;
-    this.sessionCodegraphReady = false;
-    this.pinnedProviderOverride = undefined;
-    this.sessionModel = null;
-    const cancelled = this.closePushed || this.forcedStop || this.options.signal?.aborted ||
-      (this.currentTurn && this.stoppedTurns.has(this.currentTurn.requestId));
-    if (client?.hasBackgroundTools && !cancelled && !stopBackground) void this.retainBackgroundClient(client);
-    else if (client) await stopAgentProcess(client);
-  }
 
-  /** See `MonolithRoomTurnLoop.sessionIsCurrent`: retention never keeps a
-   *  session whose persona, model pin, or mounted MCP set the operator has
-   *  since changed, or whose harness process has exited. */
-  private async sessionIsCurrent(): Promise<boolean> {
-    if (!this.client?.isAlive || this.sessionContextPath !== this.commandContext.path) return false;
-    return (await this.currentSessionFingerprint()) === this.sessionFingerprint;
-  }
+export const execFileAsync = promisify(execFile);
 
-  private async currentSessionFingerprint(): Promise<string> {
-    const [configuration, roster, grants, restored, cornerPrepareScript] = await Promise.all([
-      this.configuration(),
-      this.roster(),
-      this.grantedResources(),
-      this.restoredState(),
-      hasCornerPrepareScript(this.options.worktreePath),
+export const TOOL_ARGUMENT_MAX_BYTES = 1_200;
+
+export const TOOL_OUTPUT_MAX_BYTES = 3_200;
+
+export const TOOL_PATH_LIMIT = 12;
+
+/** How long a turn start waits out a GitHub outage before it fails. */
+
+export function isCornerChecksTurn(trigger: string, restates?: readonly string[]): boolean {
+  return Boolean(restates) || /\b(?:passed|failed) a check\b/i.test(trigger);
+}
+
+
+/**
+ * A green-checks wake of the Room's reviewer: the server wakes only the
+ * reviewer on a green head (`corner-lifecycle.ts` `checksReported`). A
+ * failing-checks wake goes to the agent that writes the code, so a reviewer
+ * that writes code still gets its fix-and-push turn.
+ */
+export function isCornerReviewTurn(reviewer: boolean, trigger: string): boolean {
+  return reviewer && /\bpassed a check\b/i.test(trigger);
+}
+
+
+export async function cornerUndeliveredRepositoryState(
+  worktreePath: string,
+  featureBranch?: string,
+  targetBranch?: string,
+): Promise<string | undefined> {
+  try {
+    const [{ stdout: status }, ahead] = await Promise.all([
+      execFileAsync('git', ['-C', worktreePath, 'status', '--porcelain=v1']),
+      featureBranch
+        ? firstResolvedRemoteRef(worktreePath, [featureBranch, targetBranch])
+            .then((remoteRef) =>
+              remoteRef
+                ? execFileAsync('git', [
+                    '-C',
+                    worktreePath,
+                    'rev-list',
+                    '--count',
+                    `${remoteRef}..HEAD`,
+                  ]).then(({ stdout }) => Number.parseInt(stdout.trim(), 10) || 0)
+                : 0,
+            )
+            .catch(() => 0)
+        : Promise.resolve(0),
     ]);
-    const { hostRoutes: grantedHostRoutes, devices: grantedDevices, isolatedCategories } = grants;
-    const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
-    const registryRoutes = configuration.registryMcpRoutes ?? [];
-    return sessionConfigFingerprint({
-      dependencyGeneration: await dependencyFingerprint(this.options.worktreePath, this.options.config.agentHomeRoot),
-      devices: grantedDevices,
-      isolatedCategories,
-      model: configuration.model ?? this.options.config.modelSelection?.model,
-      effort: configuration.effort ?? this.options.config.modelSelection?.effort,
-      fastMode: configuration.fastMode,
-      soul: configuration.soul ?? self?.soul,
-      agentName: self?.name ?? this.agent.name,
-      yoloMode: configuration.yoloMode,
-      repositoryWork: cornerHasRepositoryWork(restored.brief),
-      cornerPrepareScript,
-      mcpServers: codegraphFingerprintServers(
-        this.options.config,
-        [
-          ...expectedMountedImportedMcpServerNames({
-            operatorHome: this.options.config.operatorHome,
-            agentKind: this.options.config.agentKind,
-            grantedHostRoutes: [
-              ...grantedHostRoutes,
-              ...registryRoutes.map((route) => route.routeName),
-            ],
-          }),
-          ...registryRoutes.map((route) => route.routeName),
-        ],
-        this.sessionCodegraphReady,
-      ),
-      reviewerHandle: configuration.reviewerHandle,
-    });
+    const dirty = status.trimEnd();
+    return dirty || ahead > 0 ? `${dirty}\nahead:${ahead}` : undefined;
+  } catch {
+    return undefined;
   }
+}
 
-  private async grantedResources() {
-    return sessionGrantedResources(this.options.config, async () => {
-      const activation = await this.commandActivation();
-      return activation ? activation.grants : this.options.api.execute('listAgentGrants', {
-        agentId: this.agent.publicKey,
-        roomId: this.options.cornerId,
-      });
-    });
+
+export async function firstResolvedRemoteRef(
+  worktreePath: string,
+  branches: readonly (string | undefined)[],
+): Promise<string | undefined> {
+  for (const branch of branches) {
+    if (!branch) continue;
+    const ref = `refs/remotes/origin/${branch}`;
+    const resolved = await execFileAsync('git', ['-C', worktreePath, 'rev-parse', '--verify', ref])
+      .then(() => true)
+      .catch(() => false);
+    if (resolved) return ref;
   }
+  return undefined;
+}
 
-  private async activate(trace?: TurnTrace): Promise<string> {
-    if (this.options.config.agentProgramError) throw new Error(this.options.config.agentProgramError);
-    if (this.client?.isAlive && this.sessionId && this.sessionContextPath === this.commandContext.path) {
-      if (this.options.config.agentHomeRoot) {
-        await repairRoomAgentCredentialLinks({
-          root: this.options.config.agentHomeRoot,
-          operatorHome: this.options.config.operatorHome,
-          writeBackNewerClaudeLogin: agentBehavior(this.options.config.agentKind).sharedLoginWriteBack === true,
-        });
-      }
-      return this.sessionId;
-    }
-    // A client without a usable session still owns a harness process.
-    if (this.client) await this.discardSession(true);
+
+export function oneLine(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+
+export function serialized(value: unknown): string {
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+
+export function record(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+
+export function clampBytes(value: string, maxBytes: number, preserveWhitespace = false): string {
+  const clean = preserveWhitespace ? value : value.trim();
+  if (Buffer.byteLength(clean) <= maxBytes) return clean;
+  const suffix = '\n…[truncated]';
+  const allowed = maxBytes - Buffer.byteLength(suffix);
+  let end = Math.max(0, allowed);
+  const bytes = Buffer.from(clean);
+  // Do not persist a replacement glyph produced by cutting a UTF-8 sequence.
+  while (end > 0 && ((bytes[end] ?? 0) & 0xc0) === 0x80) end--;
+  return `${bytes.subarray(0, end).toString('utf8')}${suffix}`;
+}
+
+
+export function outputText(value: unknown): string {
+  if (typeof value === 'string') {
+    if (!/^[\s]*[\[{\"]/.test(value)) return value;
     try {
-      return await this.activateCold(trace);
-    } catch (error) {
-      // Cleanup must not hide the activation failure that owns the receipt.
-      await this.discardSession(true).catch(cleanupError =>
-        console.error('[body] failed to stop harness after activation failure:', cleanupError),
-      );
-      throw error;
-    }
-  }
-
-  private async activateCold(trace?: TurnTrace): Promise<string> {
-    trace?.noteActivation('cold');
-    this.sectionBaseline.reset();
-    const [configuration, roster, grants, restored] = await Promise.all([
-      this.configuration(),
-      this.roster(),
-      this.grantedResources(),
-      this.restoredState(),
-    ]);
-    const { hostRoutes: grantedHostRoutes, devices: grantedDevices, isolatedCategories } = grants;
-    const privateAssetRoot = resolve(runtimeDirectory(this.options.runtime.supervisorRoot,
-      this.options.runtime.agent.publicKey), 'private-assets');
-    const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
-    const opener = this.options.openedBy
-      ? roster.members.find((member) => member.identityId === this.options.openedBy)
-      : undefined;
-    // The reviewer post is the one fixed role. Who opened the corner, and who
-    // writes its code, never pick the prompt: the implementer rules are
-    // conditional and the agent decides whether it was told to write code.
-    const reviewer = Boolean(this.options.repository) && configuration.isReviewer === true;
-    this.reviewerInstructionInput = reviewer
-      ? {
-          isReviewer: true,
-          ...(opener?.handle && opener.identityId !== this.agent.publicKey
-            ? { authorHandle: opener.handle }
-            : {}),
-        }
-      : undefined;
-    this.sessionSurface = this.options.repository ? 'code-corner' : 'repo-less-corner';
-    this.repositoryWork = cornerHasRepositoryWork(restored.brief);
-    const cornerPrepareScript = await hasCornerPrepareScript(this.options.worktreePath);
-    this.sessionPromptContext = {
-      brief: restored.brief,
-      surface: this.sessionSurface,
-      agentName: self?.name ?? this.agent.name,
-      ...(configuration.reviewerHandle ? { reviewerHandle: configuration.reviewerHandle } : {}),
-      reviewer,
-      cornerPrepareScript,
-    };
-    await mkdir(this.options.worktreePath, { recursive: true });
-    const selection = {
-      model: configuration.model ?? this.options.config.modelSelection?.model,
-      effort: configuration.effort ?? this.options.config.modelSelection?.effort,
-      fastMode: configuration.fastMode,
-    };
-    this.openRouterKey = agentOpenRouterKey(
-      this.options.config.agentKind, selection.model, this.options.config.agentEnv,
-    );
-    const operatorHome = this.options.config.operatorHome ?? homedir();
-    const registryHostDeclarations = registryMcpHostDeclarations(
-      configuration.registryMcpRoutes,
-      this.commandContext.path,
-      this.options.config.registryMcpBrokerSocket,
-    );
-    const mountedHostRoutes = [...grantedHostRoutes, ...Object.keys(registryHostDeclarations)];
-    const squireScope = {
-      agentId: this.agent.publicKey,
-      roomId: this.options.cornerId,
-      ...(grantedSquireHostRoute(mountedHostRoutes, {
-        ...hostImportedMcpDeclarations({ operatorHome, agentKind: this.options.config.agentKind }),
-        ...registryHostDeclarations,
-      })
-        ? { relay: await this.squireRelay.listen(this.commandContext.path) }
-        : {}),
-    };
-    const resourceAuthFile = await writeSessionResourceAuth(this.options.api, this.commandContext.path);
-    const homeOverlay = this.options.config.agentHomeRoot
-      ? await prepareRoomAgentHome({
-          root: this.options.config.agentHomeRoot,
-          squireScope,
-          sharedSkills: this.options.config.sharedSkills ?? [],
-          isReviewer: reviewer,
-          grantedHostRoutes: mountedHostRoutes,
-          extraHostRoutes: registryHostDeclarations,
-          resourceAuthFile,
-          ...(this.options.config.agentKind ? { agentKind: this.options.config.agentKind } : {}),
-          ...(this.options.config.operatorHome
-            ? { operatorHome: this.options.config.operatorHome }
-            : {}),
-          ...openRouterRoutingInput(this.options.config, selection, this.options.fetchImpl, {
-            ...(this.pinnedProviderOverride
-              ? { providerOverride: this.pinnedProviderOverride }
-              : {}),
-            onDecision: (routing) => {
-              if (!this.pinnedProviderOverride) this.pinnedProviders = [...routing.providers];
-              // See `MonolithRoomTurnLoop.acceptsImages` (C87).
-              this.modelTakesImages = routing.input ? routing.input.includes('image') : undefined;
-            },
-          }),
-        })
-      : {};
-    const command = bodyAgentCommand(this.options.config);
-    const harnessLabel = harnessIdentityLabel({
-      kind: this.options.config.agentKind,
-      command,
-    });
-    const repository = this.options.repository;
-    let githubEnv: Record<string, string> = repository
-      ? { GH_TOKEN: repository.githubToken, GITHUB_TOKEN: repository.githubToken }
-      : {};
-    if (repository && this.options.config.runtimeConfigPath && this.options.config.agentHomeRoot) {
-      const gitBinary = (await execFileAsync('which', ['git'])).stdout.trim();
-      const ghBinary = await execFileAsync('which', ['gh'])
-        .then((result) => result.stdout.trim())
-        .catch(() => undefined);
-      // The push guard is scoped to the worktree's OWN `origin`; this is the
-      // URL the corner actually pushes to, not a re-derivation of the server
-      // fact (which would miss a `git://` remote mapped to GitHub HTTPS).
-      const originUrl = await execFileAsync(gitBinary, [
-        '-C',
-        this.options.worktreePath,
-        'remote',
-        'get-url',
-        'origin',
-      ])
-        .then((result) => result.stdout.trim() || undefined)
-        .catch(() => undefined);
-      const launchers = await installCornerGitHubWrappers({
-        root: this.options.config.agentHomeRoot,
-        runtimeConfigPath: this.options.config.runtimeConfigPath,
-        roomId: this.options.parentRoomId,
-        cliEntrypoint: process.argv[1]!,
-        gitBinary,
-        featureBranch: repository.featureBranch,
-        targetBranch: repository.targetBranch,
-        ...(originUrl ? { originUrl } : {}),
-        ...(ghBinary ? { ghBinary } : {}),
-        inheritedPath: homeOverlay.PATH ?? this.options.config.agentEnv.PATH ?? process.env.PATH,
-      });
-      githubEnv = launchers.env;
-      this.cornerGitHubCli = launchers.githubCli;
-    }
-    const assets = this.options.config.agentSharedAssetRoot && this.options.config.bwrapPath && homeOverlay.HOME &&
-      await admitSharedAssets(this.options.runtime.supervisorRoot, 1024 ** 3)
-      ? await prepareWorkspaceAssets(this.options.config.agentSharedAssetRoot)
-      : undefined;
-    if (isolatedCategories.length)
-      await preparePrivateAssets(privateAssetRoot, isolatedCategories);
-
-    const cacheEnv = assets
-      ? workspaceCacheEnv(assets, this.options.worktreePath,
-          isolatedCategories.includes('package-cache') ? privateAssetRoot : undefined)
-      : isolatedCategories.includes('package-cache')
-        ? workspaceCacheEnv(workspaceAssetPaths(privateAssetRoot), this.options.worktreePath, privateAssetRoot)
-        : {};
-    if (assets && agentBehavior(this.options.config.agentKind).codexCacheBindings && homeOverlay.CODEX_HOME)
-      await prepareCodexCacheTargets(homeOverlay.CODEX_HOME);
-    if (assets && homeOverlay.HOME) await preparePackageCacheTargets(homeOverlay.HOME);
-    // A build output belongs to this corner, even when its package downloads
-    // come from the Workspace cache.
-    const cargoTargetDir = resolve(this.options.repository?.readOnly ? this.options.config.agentHomeRoot ?? operatorHome : this.options.worktreePath, '.beeline-cargo-target');
-    const npmCacheDir = cacheEnv.npm_config_cache ?? sharedNpmCacheDir(this.options.runtime.supervisorRoot);
-    const pnpmStoreDir = cacheEnv.PNPM_CONFIG_STORE_DIR ?? sharedPnpmStoreDir(this.options.runtime.supervisorRoot);
-    // Turbo derives its cache directory from the repository's GIT COMMON
-    // directory; in a linked corner worktree that is the read-only
-    // `repositories/.turbo/cache`, so every `turbo run` fails before it starts.
-    const turboCacheDir = cacheEnv.TURBO_CACHE_DIR ?? sharedTurboCacheDir(this.options.runtime.supervisorRoot);
-    const modelCacheDir = cacheEnv.HF_HUB_CACHE ?? resolve(this.options.runtime.supervisorRoot, 'beeline', 'model-cache');
-    const hfHomeDir = assets && this.options.config.agentHomeRoot
-      ? resolve(this.options.config.agentHomeRoot, 'cache/huggingface-private')
-      : modelCacheDir;
-    await Promise.all(
-      [npmCacheDir, pnpmStoreDir, cargoTargetDir, turboCacheDir, modelCacheDir].map((path) =>
-        mkdir(path, { recursive: true, mode: 0o700 }),
-      ),
-    );
-    const agentEnv: Record<string, string> = {
-      ...this.options.config.agentEnv,
-      ...homeOverlay,
-      ...githubEnv,
-      // Git reads these before any config, so this session commits as itself
-      // no matter which session last prepared the shared corner worktree.
-      ...agentGitIdentityEnv(this.agent),
-      ...cacheEnv,
-      BEELINE_TURN_CONTEXT_FILE: this.commandContext.path,
-      npm_config_cache: npmCacheDir,
-      // pnpm reads its settings from PNPM_CONFIG_* environment variables and
-      // hardlinks packages out of this content-addressable store.
-      PNPM_CONFIG_STORE_DIR: pnpmStoreDir,
-      CARGO_TARGET_DIR: cargoTargetDir,
-      TURBO_CACHE_DIR: turboCacheDir,
-      HF_HOME: hfHomeDir,
-      HUGGINGFACE_HUB_CACHE: assets || isolatedCategories.includes('package-cache')
-        ? modelCacheDir : join(modelCacheDir, 'hub'),
-    };
-
-    await mkdir(hfHomeDir, { recursive: true, mode: 0o700 });
-    this.agentEnv = agentEnv;
-    const selectedCommand = command;
-    if (assets && this.options.config.agentPrivateRoot)
-      await mkdir(this.options.config.agentPrivateRoot, { recursive: true, mode: 0o700 });
-    this.modelContextTokens = await modelContextWindowTokens(
-      selection.model, agentEnv.PI_CODING_AGENT_DIR,
-    );
-    const agentArgs = agentArgsWithModelSelection(
-      {
-        kind: this.options.config.agentKind,
-        command,
-        args: this.options.config.agentArgs ?? [],
-      },
-      selection,
-    );
-    const { stateDirs, tmpDir } = harnessStateDirsFromEnv(agentEnv);
-    this.attachmentDir = tmpDir ? join(tmpDir, 'beeline-attachments') : undefined;
-    this.sessionScratchDir = tmpDir;
-    const homeStateDirs = harnessHomeStateDirs(harnessLabel, agentEnv.HOME ?? operatorHome);
-    await Promise.all(homeStateDirs.map((dir) => mkdir(dir, { recursive: true })));
-    // The same path handed to the MCP server as BEELINE_ATTACH_SCRATCH_ROOT
-    // (below): post_artifact can only post what write_scratch_file could write,
-    // so the sandbox must leave this writable too. It sits under the
-    // protected supervisorRoot above, so it needs its own re-bind.
-    const attachScratchRoot = this.options.config.agentHomeRoot ?? tmpDir;
-    if (attachScratchRoot) await mkdir(attachScratchRoot, { recursive: true });
-    const dependencyPaths: string[] = [];
-    const sandboxSpec: SandboxSessionSpec = {
-        mode: this.options.repository?.readOnly ? 'readonly' : 'edit',
-        cwd: this.options.worktreePath,
-        worktreePath: this.options.worktreePath,
-        ...(repository ? { gitCommonDir: repository.gitCommonDir } : {}),
-        protectedPaths: [this.options.runtime.supervisorRoot],
-        dependencyPaths,
-        harnessStateDirs: stateDirs,
-        harnessHomeStateDirs: homeStateDirs,
-        ...(tmpDir ? { tmpDir } : {}),
-        additionalWritablePaths: [
-          ...(this.options.config.browserShareHostSocket ? [dirname(this.options.config.browserShareHostSocket)] : []),
-          ...(attachScratchRoot ? [attachScratchRoot] : []),
-          ...(assets ? [] : [npmCacheDir, pnpmStoreDir, turboCacheDir, modelCacheDir]),
-          cargoTargetDir,
-          ...registryMcpHostBindPaths(
-            configuration.registryMcpRoutes,
-            this.options.config.registryMcpBrokerSocket,
-          ),
-          ...grantedSquireHostBindPaths({
-            operatorHome,
-            agentKind: this.options.config.agentKind,
-            grantedHostRoutes: mountedHostRoutes,
-          }),
-        ],
-        devices: grantedDevices,
-        maskPaths: [
-          ...credentialMaskPaths(this.options.config.sandboxMaskPaths, operatorHome),
-          ...(assets ? [] : siblingAgentMaskPaths(
-            runtimeDirectory(this.options.runtime.supervisorRoot, this.options.runtime.agent.publicKey),
-          )),
-        ],
-        ...(assets && this.options.config.agentHomeRoot
-          ? { sharedLayout: {
-              assetRoot: assets.root,
-              agentRuntimeDir: runtimeDirectory(this.options.runtime.supervisorRoot, this.options.runtime.agent.publicKey),
-              privateHomeRoot: this.options.config.agentHomeRoot,
-              ...(this.options.config.agentPrivateRoot ? { privateRoot: this.options.config.agentPrivateRoot } : {}),
-              ...(agentBehavior(this.options.config.agentKind).codexCacheBindings && agentEnv.CODEX_HOME ? { codexHome: agentEnv.CODEX_HOME } : {}),
-              ...(agentEnv.HOME ? { packageHome: agentEnv.HOME } : {}),
-              privateAssetRoot,
-              isolatedCategories,
-            } }
-          : {}),
-      };
-    if (!this.options.config.bwrapPath && ['', 'apps/mobile'].some(part =>
-      existsSync(resolve(this.options.worktreePath, part, 'node_modules/.beeline-generation')))) {
-      throw new Error('Beeline shared dependencies require a working bubblewrap sandbox. Restore sandbox support before resuming this checkout.');
-    }
-    if (repository && !repository.readOnly && this.options.config.bwrapPath && (this.repositoryWork || existsSync(resolve(this.options.worktreePath, 'node_modules')))) {
-      const npm = (await execFileAsync('which', ['npm'])).stdout.trim();
-      const install = (cwd: string) => async () => {
-        const command = wrapAgentCommand({ bwrapPath: this.options.config.bwrapPath,
-          spec: { ...sandboxSpec, cwd }, command: npm, args: ['ci', '--no-audit', '--no-fund'] });
-        await execFileAsync(command.command, command.args, {
-          cwd, env: { ...process.env, ...agentEnv }, maxBuffer: 16 * 1024 * 1024,
-        });
-      };
-      dependencyPaths.push(...await prepareDependencyGeneration({
-        root: this.options.worktreePath, store: warmNodeModulesStoreDir(this.options.runtime.supervisorRoot), npm, cache: npmCacheDir, install: install(this.options.worktreePath),
-      }));
-      const mobile = resolve(this.options.worktreePath, 'apps/mobile');
-      if (existsSync(resolve(mobile, 'node_modules')) || existsSync(resolve(this.options.worktreePath, dependencyRequest))) dependencyPaths.push(...await prepareDependencyGeneration({
-        root: mobile, store: mobileNodeModulesStoreDir(this.options.runtime.supervisorRoot), npm, cache: npmCacheDir, install: install(mobile),
-      }));
-      for (const extra of await extraDependencyRoots(this.options.worktreePath, this.options.config.agentHomeRoot)) {
-        dependencyPaths.push(...await prepareDependencyGeneration({
-          root: extra, store: warmNodeModulesStoreDir(this.options.runtime.supervisorRoot),
-          npm, cache: npmCacheDir, install: install(extra),
-        }));
-      }
-      if (dependencyPaths.length && this.options.config.agentHomeRoot) {
-        agentEnv.PATH = await installDependencyNpmGuard(this.options.config.agentHomeRoot, npm, agentEnv.PATH ?? process.env.PATH ?? '', dependencyPaths);
-        agentEnv.BEELINE_READONLY_DEPENDENCIES = '1';
-      }
-    }
-
-    const spawnCommand = wrapAgentCommand({
-      bwrapPath: this.options.config.bwrapPath,
-      spec: sandboxSpec,
-      command: selectedCommand,
-      args: agentArgs,
-    });
-    const hostDeclarations = hostImportedMcpDeclarations({
-      operatorHome,
-      agentKind: this.options.config.agentKind,
-    });
-    let mountedServers: string[] = [];
-    const hostServers = ungatedHostServers(
-      [...CODE_OWNED_HOST_MCP_NAMES, ...hostImportedMcpServerNames({ operatorHome, agentKind: this.options.config.agentKind })],
-      mountedHostRoutes,
-    );
-    const clientOptions: ConstructorParameters<typeof AcpClient>[0] = {
-      agentCommand: spawnCommand.command,
-      harnessCommand: selectedCommand,
-      agentArgs: spawnCommand.args,
-      agentEnv,
-      agentCwd: this.options.worktreePath,
-      agentLabel: harnessLabel,
-      backgroundTasks: true,
-      autoApprovePermissions: !repository?.readOnly,
-      ...(repository?.readOnly ? { osSandbox: Boolean(this.options.config.bwrapPath) } : {}),
-      permissionHandler: async request => repository?.readOnly
-        ? roomPermissionDecision(request, { mountedServers, hostServers, shellSandboxed: Boolean(this.options.config.bwrapPath), sandboxHome: homeOverlay.HOME })
-        : 'allow',
-      onUsage: (usage) => {
-        void postChangedAgentUsage(this.options.api,this.agent.publicKey,usage)
-          .catch(error => console.error('[agent-usage] publish failed', error));
-      },
-      onCommands: agentCommandCatalogPublisher({
-        api: this.options.api,
-        agentId: this.agent.publicKey,
-        workspaceId: this.options.workspaceId,
-      }),
-    };
-    this.client = (this.options.createAcpClient ?? ((value) => new AcpClient(value)))(
-      clientOptions,
-    );
-    await startAgentProcess(this.client);
-    if (assets) await markWorkspaceLayoutLive(assets);
-    this.watchClaudeLogin();
-    const codegraphReady = await prepareCodegraphIndex(
-      this.options.config,
-      this.options.worktreePath,
-    );
-    const fingerprint = sessionConfigFingerprint({
-      dependencyGeneration: await dependencyFingerprint(this.options.worktreePath, this.options.config.agentHomeRoot),
-      devices: grantedDevices,
-      isolatedCategories,
-      model: configuration.model ?? this.options.config.modelSelection?.model,
-      effort: configuration.effort ?? this.options.config.modelSelection?.effort,
-      fastMode: configuration.fastMode,
-      soul: configuration.soul ?? self?.soul,
-      agentName: self?.name ?? this.agent.name,
-      yoloMode: configuration.yoloMode,
-      repositoryWork: cornerHasRepositoryWork(restored.brief),
-      cornerPrepareScript,
-      mcpServers: codegraphFingerprintServers(
-        this.options.config,
-        [
-          ...expectedMountedImportedMcpServerNames({
-            operatorHome: this.options.config.operatorHome,
-            agentKind: this.options.config.agentKind,
-            grantedHostRoutes: mountedHostRoutes,
-          }),
-          ...Object.keys(registryHostDeclarations),
-        ],
-        codegraphReady,
-      ),
-      reviewerHandle: configuration.reviewerHandle,
-    });
-    const nativeIoProven = harnessEnforcement(harnessLabel).enforcement !== 'unknown';
-    const servers: McpServerWire[] = [
-      ...(nativeIoProven ? [] : [readOnlyMcpServer(this.options.config, this.options.worktreePath)]),
-      ...(repository
-        ? [
-            {
-              name: 'buzz-dev-mcp',
-              command: this.options.config.mcpBinary,
-              args: [],
-              // ACP hosts launch stdio MCP servers with an explicit, sanitized env.
-              // This token is minted for this exact corner and is also the credential
-              // helper's password source, so its shell commands need the same scope as
-              // the corner harness without inheriting any host credentials.
-              env: [
-                { name: 'GH_TOKEN', value: repository.githubToken },
-                { name: 'GITHUB_TOKEN', value: repository.githubToken },
-                // Its shell tool runs the same installs the harness does, and
-                // a sanitized env would otherwise send them to npm's default
-                // per-corner cache.
-                { name: 'npm_config_cache', value: npmCacheDir },
-                { name: 'PNPM_CONFIG_STORE_DIR', value: pnpmStoreDir },
-                { name: 'CARGO_TARGET_DIR', value: cargoTargetDir },
-                { name: 'HF_HOME', value: hfHomeDir },
-                { name: 'HUGGINGFACE_HUB_CACHE', value: assets || isolatedCategories.includes('package-cache')
-                  ? modelCacheDir : join(modelCacheDir, 'hub') },
-              ],
-            },
-          ]
-        : []),
-      beelineAgentMcpServer(this.options.config, this.options.api, {
-        roomId: this.options.parentRoomId,
-        workspaceId: this.options.workspaceId,
-        cornerId: this.options.cornerId,
-        reviewer,
-        nativeIoProven,
-        agentCommand: harnessLabel,
-        repositoryBacked: Boolean(repository),
-        attachRoot: this.options.worktreePath,
-        // The whole per-session overlay, not an enumerated subset: see
-        // `monolith-room-turn.ts`'s matching comment.
-        attachScratchRoot,
-        ...(!repository ? { cornerScratchRoot: this.options.worktreePath } : {}),
-        turnContextPath: this.commandContext.path,
-        squireRelay: squireScope.relay,
-        ...(this.options.grantRunnerEndpoint
-          ? { grantRunner: this.options.grantRunnerEndpoint }
-          : {}),
-      }),
-    ];
-    if (codegraphReady) {
-      const codegraph = codegraphMcpServer(this.options.config, this.options.worktreePath, {
-        readonly: Boolean(repository?.readOnly),
-      });
-      if (codegraph) servers.push(codegraph);
-    }
-    const grantedRouteServers = grantedHostRouteWires(
-      mountedHostRoutes,
-      operatorHome,
-      { ...hostDeclarations, ...registryHostDeclarations },
-      resourceAuthFile,
-      squireScope,
-    );
-    const sessionServers = sessionNewMcpServers<McpServerWire>(harnessLabel, servers, grantedRouteServers);
-    mountedServers = [...servers, ...grantedRouteServers].map(server => server.name);
-    // Pi ACP ignores session/new MCP servers. The installer selects native
-    // mcp.json or the generated bridge for this executable and isolated home.
-    await installPiTurnBudget(agentEnv.PI_CODING_AGENT_DIR);
-    await installPiMcpBridge({
-      agentCommand: harnessLabel,
-      piHome: agentEnv.PI_CODING_AGENT_DIR,
-      piCommand: agentEnv.PI_ACP_PI_COMMAND ?? process.env.PI_ACP_PI_COMMAND,
-      agentEnv,
-      servers: [...servers, ...grantedRouteServers],
-    });
-    const persona = configuration.soul ?? self?.soul;
-    const session = assembleSessionPrompt({
-      squireAvailable: Boolean(squireScope.relay),
-      ...this.sessionPromptContext!,
-      machineHost: await machineHost(),
-      githubCli: this.cornerGitHubCli,
-      ...(persona?.instructions
-        ? { soul: { name: persona.name, instructions: persona.instructions } }
-        : {}),
-      agentCommand: command,
-      ...(repository
-        ? {
-            worktree: {
-              featureBranch: repository.featureBranch,
-              targetBranch: repository.targetBranch,
-            },
-          }
-        : {}),
-    });
-    this.turnSessionPrefix = session.turnPrefix;
-    this.sessionPromptSectionIds = session.report.map((section) => section.id);
-    const conversationFingerprint = JSON.stringify([fingerprint, command,
-      this.options.config.agentArgs, this.options.worktreePath]);
-    const opened = await openAcpConversation({
-      client: this.client,
-      agentCommand: harnessLabel,
-      resumeSessionId: this.warmTranscript.resumeSessionId(conversationFingerprint),
-      cwd: this.options.worktreePath,
-      mcpServers: sessionServers,
-      mode: repository?.readOnly ? 'readonly' : 'edit',
-      create: () => this.client!.sessionNew({
-        cwd: this.options.worktreePath, mcpServers: sessionServers, mode: repository?.readOnly ? 'readonly' : 'edit', systemPrompt: session.systemPrompt,
-      }),
-      onResumeFailure: error => console.warn('[body] native conversation unavailable; starting cold:', error),
-    });
-    if (opened.kind === 'created') this.warmTranscript.forgetSession();
-    this.warmTranscript.rememberSession(opened.sessionId, conversationFingerprint);
-    this.sessionId = opened.sessionId;
-    this.sessionContextPath = this.commandContext.path;
-    this.sessionFingerprint = fingerprint;
-    this.sessionCodegraphReady = codegraphReady;
-    let appliedModel: string | undefined;
-    if (selection) {
-      const options = filterAllowedModelConfigOptions(
-        parseAdvertisedConfigOptions(opened.raw, selection.model),
-      );
-      const applied = await applyAgentModelSelection(this.client, opened.sessionId, options, selection);
-      appliedModel = applied.appliedSelection.model;
-      if (selection.model && appliedModel && appliedModel !== selection.model) {
-        recordSessionModelFallback(this.options.api, this.agent.publicKey, this.options.workspaceId,
-          applied.appliedSelection, applied.options, `corner ${this.options.cornerId}`);
-      }
-    }
-    this.sessionModel = appliedModel ?? selection?.model ?? null;
-    return opened.sessionId;
-  }
-
-  /**
-   * Resolve the review target at prompt time, not session activation time.
-   *
-   * A push can land after a reviewer session starts but before its first
-   * prompt, or while that prompt is running. The active prompt and its bounded
-   * second pass therefore each read the current green lifecycle head. The
-   * server still compares approve_merge's SHA with the current head, so a push
-   * after this read fails closed too.
-   */
-  private async activeReviewerInstruction(refreshChecks = true): Promise<string | undefined> {
-    const input = this.reviewerInstructionInput;
-    if (!input) return undefined;
-    try {
-      const [restore, localHead] = await Promise.all([
-        this.options.api.execute('getCornerRestoreState', {
-          cornerId: this.options.cornerId,
-        }),
-        execFileAsync('git', ['-C', this.options.worktreePath, 'rev-parse', 'HEAD']).then(
-          ({ stdout }) => stdout.trim(),
-        ),
-      ]);
-      const pr = restore.lifecycle?.pr;
-      if (!pr?.number) return CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION;
-      // One provider refresh per wake. The bounded second pass reads the
-      // committed lifecycle, including any head/check changes since that read.
-      const liveChecks = refreshChecks
-        ? await this.options.api.execute('getPrChecksStatus', {
-            cornerId: this.options.cornerId, pullRequest: pr.number,
-          })
-        : { checks: restore.lifecycle?.checks === 'passing' ? 'passed' : 'pending',
-            headSha: pr.headSha, stage: restore.lifecycle?.lifecycle === 'done' ? 'merged' : 'checking' };
-      if (
-        liveChecks.checks !== 'passed' ||
-        liveChecks.stage === 'merged' || liveChecks.stage === 'closed' ||
-        !pr.headSha || liveChecks.headSha !== pr.headSha ||
-        pr.headSha !== localHead
-      )
-        return CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION;
-      return [
-        'Current stable reviewer target for this active turn; it supersedes any older head in the trigger or transcript:',
-        cornerReviewerInstruction({
-          ...input,
-          pullRequestNumber: pr.number,
-          headSha: pr.headSha,
-          briefRevision: restore.brief?.revision,
-        }),
-        ...(this.options.config.agentHomeRoot &&
-        this.options.config.agentKind &&
-        !(AGENT_SKILL_DIRS as readonly string[]).includes(this.options.config.agentKind)
-          ? [
-              `This harness has no verified native skill discovery. Read the release-managed review procedure at ${resolve(this.options.config.agentHomeRoot, 'codex', 'skills', 'beeline-review', 'SKILL.md')} before the verdict.`,
-            ]
-          : []),
-      ].join('\n');
+      const parsed = JSON.parse(value) as unknown;
+      if (typeof parsed === 'string') return parsed;
+      return outputText(parsed);
     } catch {
-      return CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION;
+      // The harness can also send ordinary, unencoded text.
+    }
+    return value;
+  }
+  if (Array.isArray(value)) return value.map(outputText).filter(Boolean).join('\n');
+  const object = record(value);
+  if (!object) return '';
+  const entries = Object.entries(object);
+  for (const key of [
+    'formatted_output',
+    'stdout',
+    'stderr',
+    'output',
+    'text',
+    'content',
+    'message',
+    'result',
+    'error',
+  ]) {
+    for (const [entryKey, entryValue] of entries) {
+      if (entryKey.toLowerCase() !== key) continue;
+      const text = outputText(entryValue);
+      if (text) return text;
     }
   }
+  return serialized(value);
+}
 
-  /** Queue timing ends when this conversation starts or reuses its process. */
-  private lifecycle(trace?: TurnTrace): AgentProcessLifecycle {
-    return {
-      ...tracedAgentProcessLifecycle(() => this.activate(trace), () => this.sessionIsCurrent(), trace),
-      hasBackgroundWork: () => Boolean(this.client?.hasBackgroundTools || this.retiredClients.size),
-      stop: async (force = false) => {
-        if (force) await Promise.all([...this.retiredClients.values()].map(retired => {
-          retired.stop();
-          return retired.done;
-        }));
-        await this.discardSession(true, force);
-      },
-      isRunning: () => Boolean(this.client?.isAlive || this.retiredClients.size),
-      onWorkChanged: listener => {
-        const client = this.client;
-        client?.on('session/update', listener);
-        client?.on('exit', listener);
-        return () => { client?.off('session/update', listener); client?.off('exit', listener); };
-      },
-    };
+
+export function outputExcerpt(value: unknown): string | undefined {
+  const redacted = redactToolDetail(outputText(value));
+  if (!redacted.trim()) return undefined;
+  if (/\b(?:git[- ]credential|credential[- ]helper)\b/i.test(redacted)) {
+    return 'Credential-helper output omitted.';
   }
+  const lines = redacted.split(/\r?\n/).map((line) => line.trimEnd());
+  if (lines.length <= 8) return clampBytes(lines.join('\n'), TOOL_OUTPUT_MAX_BYTES, true);
+  return clampBytes(
+    [...lines.slice(0, 4), '…[output omitted]…', ...lines.slice(-4)].join('\n'),
+    TOOL_OUTPUT_MAX_BYTES,
+    true,
+  );
+}
 
-  /** A picture reaches the model only if the harness AND the model take one (C87). */
-  private acceptsImages(): boolean {
-    if (!(this.client?.canPromptWithImages() ?? false)) return false;
-    return this.modelTakesImages ?? true;
-  }
 
-  /** The pinned providers a failure reason should name for this session. */
-  private servingProviders(): string[] {
-    return this.pinnedProviderOverride ? [this.pinnedProviderOverride] : this.pinnedProviders;
-  }
-
-  /** Why a turn carried no answer text, or undefined when it did. */
-  private async explainEmpty(result: PromptResult): Promise<EmptyTurnExplanation | undefined> {
-    if (['no-reply', 'repeated-tool-call'].includes(result.stopReason)) return undefined;
-    if (durableReplyText(result.agentText)) return undefined;
-    // Passive browser updates owe no answer and must not start provider
-    // retries. Their receipt acknowledges delivery, even for a textless turn.
-    if (this.commandContext.current?.source.systemEvent?.kind === 'computer-session-activity') return undefined;
-    const explanation = await explainEmptyAgentTurn({
-      agentLabel: harnessIdentityLabel({
-        kind: this.options.config.agentKind,
-        command: this.options.config.agentCommand ?? this.options.config.agentBinary,
-      }),
-      agentEnv: this.agentEnv,
-      sessionId: this.sessionId!,
-      result,
-    });
-    // OpenRouter refuses a key past its limit with 402; show the stop now.
-    if (explanation.record?.kind === 'error' && explanation.record.status === 402)
-      this.publishOpenRouterSpend(true);
-    if (isSilentCompletion(result, explanation)) return undefined;
-    return explanation;
-  }
-
-  /**
-   * Re-pin the session to the next provider in the OpenRouter order and open a
-   * fresh session on it, so the retry of an empty completion or a failing
-   * provider is served — and named — by exactly one provider (C92).
-   */
-  private async repinNextProvider(trace?: TurnTrace, reason?: string): Promise<string | undefined> {
-    const next = nextPinnedProvider(this.pinnedProviders, this.pinnedProviderOverride);
-    if (!next) return undefined;
-    // The retry is its own timeline, fresh ACP handshake included.
-    trace?.retry({ provider: next, ...(reason ? { reason } : {}) });
-    const client = this.client;
-    this.stopClaudeLoginWatch();
-    this.client = undefined;
-    this.sessionId = undefined;
-    this.sessionContextPath = undefined;
-    this.sessionFingerprint = undefined;
-    this.sessionCodegraphReady = false;
-    if (client?.hasBackgroundTools) void this.retainBackgroundClient(client);
-    else if (client) await stopAgentProcess(client);
-    this.pinnedProviderOverride = next;
-    await (trace ? trace.measure('activation', () => this.activate(trace)) : this.activate());
-    return next;
-  }
-
-  /** One turn's stopwatch; writes only when the daemon configured a trace directory. */
-  private beginTurnTrace(requestId: string): TurnTrace {
-    const directory = this.options.config.turnTraceDir;
-    if (directory) this.turnTraceSink ??= new TurnTraceFile(directory);
-    return new TurnTrace({
-      surface: 'corner',
-      agentId: this.agent.publicKey,
-      roomId: this.options.cornerId,
-      requestId,
-      ...(this.turnTraceSink ? { sink: this.turnTraceSink } : {}),
-    });
-  }
-
-  private async withCheckout<T>(work: () => Promise<T>): Promise<T> {
-    // Each writer owns its refs and files. Detached tools retain their harness,
-    // never a checkout lock or another agent's turn.
-    const configuration = this.options.repository ? await this.configuration() : undefined;
-    this.reviewerCheckout = configuration?.isReviewer === true;
-    if (this.options.prepareCheckout && this.options.repository) {
-      const restored = await this.restoredState();
-      // An unbriefed human corner still bootstraps on its feature branch;
-      // repository publication remains gated by its first assigned brief.
-      const repositoryWork = !restored.brief || cornerHasRepositoryWork(restored.brief);
-      // An order gives work; a reviewer keeps its own detached copy (#3176).
-      const assigned = this.commandContext.current?.reason === 'order' || this.reviewerCheckout;
-      const checkout = await this.options.prepareCheckout(repositoryWork, restored.implementerAgentId, assigned);
-      if (checkout.path !== this.options.worktreePath) await this.discardSession(true);
-      this.options.worktreePath = checkout.path;
-      this.options.repository.gitCommonDir = checkout.gitCommonDir;
-      this.options.repository.readOnly = !checkout.writable;
+export function filePaths(value: unknown, worktreePath: string): string[] {
+  const paths = new Set<string>();
+  const visit = (candidate: unknown, key?: string) => {
+    if (paths.size >= TOOL_PATH_LIMIT || candidate === null || candidate === undefined) return;
+    if (typeof candidate === 'string') {
+      if (key && /(?:^|_)(?:path|file|filename|target)$/i.test(key)) {
+        const path = candidate.startsWith(`${worktreePath}/`)
+          ? candidate.slice(worktreePath.length + 1)
+          : candidate;
+        if (path && path.length <= 512) paths.add(redactToolDetail(path));
+      }
+      return;
     }
-    try { return await work(); }
-    catch (error) {
-      await this.discardSession(true);
-      throw error;
+    if (Array.isArray(candidate)) {
+      candidate.forEach((entry) => visit(entry));
+      return;
     }
-  }
+    const object = record(candidate);
+    if (object) Object.entries(object).forEach(([entryKey, entry]) => visit(entry, entryKey));
+  };
+  visit(value);
+  return [...paths];
+}
 
-  private async prompt(
-    requestId: string,
-    trigger: string,
-    attachments: readonly DaemonAttachment[] = [],
-    requestedById?: string,
-    /** Server system lines this turn answers; a reply that only restates them is dropped. */
-    restates?: readonly string[],
-    sourceMessageId?: string,
-  ): Promise<void> {
-    const { api, cornerId } = this.options;
-    const activityTurn = this.commandContext.current?.source.systemEvent?.kind === 'computer-session-activity';
-    // Work the requester has already withdrawn is never started. A stop can
-    // land between the message being read and the session becoming free.
-    if (this.stoppedTurns.has(requestId)) return;
-    const spoken = (text: string): string =>
-      restates && isCornerStatusRestatement(text, restates) ? '' : text;
-    const requester = requestedById
-      ? {
-          pubkey: requestedById,
-          ...(this.memberNames.get(requestedById)
-            ? { name: this.memberNames.get(requestedById)! }
-            : {}),
-        }
-      : undefined;
-    this.currentTurn = { requestId, ...(requester ? { requester } : {}) };
-    const trace = this.beginTurnTrace(requestId);
-    let timeLimited = false;
-    const freeAgent = Boolean(this.options.config.agentEnv?.BEELINE_FREE_AGENT_ID ||
-      this.options.config.agentEnv?.BEELINE_FREE_AGENT_MODEL_TOKEN);
-    const traceGenerationId = this.commandContext.generationId;
-    // Kicked off now, alongside activation rather than after it, so its own
-    // network round trip has somewhere to hide (see institutional-context.ts).
-    const institutionalContextFetch = startInstitutionalContextFetch(api, cornerId);
-    // Best-effort read of this turn's search_memory call/miss counters before
-    // the trace writes — bounded so a slow or unreachable server never delays
-    // the turn's own completion over a diagnostic.
-    let statsPromise: Promise<{ searchCalls: number; searchMisses: number } | undefined> | undefined;
-    const startTraceStats = (): void => {
-      if (statsPromise) return;
-      statsPromise = api.execute('getInstitutionalMemoryTurnStats', {
-        roomId: cornerId,
-        agentId: this.agent.publicKey,
-        requestId,
-      }).catch(() => undefined);
-    };
-    const finishTrace = async (
-      outcome: 'complete' | 'failed' | 'cancelled',
-      reason?: string,
-    ): Promise<void> => {
-      try {
-        const stats=await statsPromise;
-        if (stats) trace.noteSearchMemoryStats(stats.searchCalls, stats.searchMisses);
-      } catch {
-        // Losing this measurement must never affect the turn.
-      }
-      if (outcome === 'cancelled') {
-        await api.execute('postAgentTurnReceipt', {
-          agentId: this.agent.publicKey, roomId: cornerId, requestId,
-          generationId: traceGenerationId, status: 'cancelled', trace: trace.replay(),
-        }).catch(() => console.warn('[turn-trace] trace dropped'));
-      }
-      await trace.finish(outcome, reason);
-    };
-    try {
-      if (freeAgent) await this.freeContinuation.begin(this.commandContext.current?.source.body ?? trigger);
-      await withTurnReceiptHeartbeat(
-        api,
-        {
-          agentId: this.agent.publicKey,
-          roomId: cornerId,
-          requestId,
-          generationId: this.commandContext.generationId,
-        },
-        async () => {
-          trace.noteScheduler('queue', this.options.scheduler.snapshot());
-          trace.start('queue-wait');
-          return this.withCheckout(() => this.options.scheduler.run(
-            cornerId,
-            this.lifecycle(trace),
-            async () => {
-              // Belt and braces: `activate`/`isCurrent` already closed the
-              // queue wait, and `end` on a closed phase is a no-op.
-              trace.end('queue-wait');
-              trace.noteScheduler('admission', this.options.scheduler.snapshot());
-              if (this.forcedStop) throw new Error('corner turn stopped for daemon handoff');
-              this.busy = true;
-              // A turn starts with no measured cost. Without this reset a turn
-              // that throws before its own prompt settles — the context fetch,
-              // `buildPrompt`, a rejected delivery — would report the PREVIOUS
-              // turn's token count and prompt size on its failure receipt, and
-              // the budget gate would read somebody else's prompt.
-              this.turnMetrics = {};
-              this.turnUsage = new TurnUsageAccumulator();
-              this.harnessTokens = undefined;
-              await this.syncBranch();
-              const reviewTurn = !activityTurn && isCornerReviewTurn(Boolean(this.reviewerInstructionInput), trigger);
-              const [
-                conversation,
-                roster,
-                restored,
-                activeReviewerInstruction,
-                institutionalContext,
-                memberCorners,
-                onboarding,
-              ] = await trace.measure('context-fetch', () =>
-                Promise.all([
-                  api.execute('getRoomConversation', {
-                    roomId: cornerId,
-                    limit: 200,
-                    narrationRequestId: requestId,
-                  }),
-                  this.roster(),
-                  this.restoredState(),
-                  this.activeReviewerInstruction(),
-                  awaitInstitutionalContext(institutionalContextFetch, (message) =>
-                    console.warn(`[thin-core] corner ${cornerId}: ${message}`),
-                  ),
-                  api.execute('listRoomCorners', { roomId: this.options.parentRoomId }),
-                  this.repositoryState()
-                    .then(state => state.repositoryOnboarding === true, () => false),
-                ]),
-              );
-              trace.noteInstitutionalMemory(institutionalContext.outcome);
-              if (institutionalContext.embeddingOutcome !== undefined) {
-                trace.noteInstitutionalMemoryEmbedding(
-                  institutionalContext.embeddingOutcome,
-                  institutionalContext.embeddingMs ?? 0,
-                );
-              }
-              let repositoryWork = cornerHasRepositoryWork(restored.brief);
-              let repositoryHeld = restored.held === true;
-              let assignedBrief = restored.brief;
-              const taskDelivered: DeliveredAttachment[] =
-                this.attachmentDir && attachments.length
-                  ? await deliverAttachments(
-                      attachments,
-                      join(this.attachmentDir, requestId.replace(/[^\w-]/g, '_')),
-                      this.options.fetchImpl,
-                    )
-                  : [];
-              let delivered = taskDelivered;
-              let briefFileLines: string[] = [];
-              let missingRequiredBriefFile = false;
-              const deliverBrief = async (): Promise<void> => {
-                const briefAttachments: DaemonAttachment[] = (assignedBrief?.attachments ?? []).map(
-                  (file) => ({
-                    url: new URL(`/v1/media/${file.objectId}`, api.baseUrl).toString(),
-                    name: file.title,
-                    mimeType: file.mime,
-                    size: file.size,
-                  }),
-                );
-                const briefDelivered: DeliveredAttachment[] =
-                  this.attachmentDir && briefAttachments.length
-                    ? await deliverAttachments(
-                        briefAttachments,
-                        join(
-                          this.attachmentDir,
-                          requestId.replace(/[^\w-]/g, '_'),
-                          'brief',
-                          String(assignedBrief!.revision),
-                        ),
-                        this.options.fetchImpl,
-                      )
-                    : [];
-                briefFileLines = await Promise.all(
-                  (assignedBrief?.attachments ?? []).map(async (file, index) => {
-                    const entry = briefDelivered.find(
-                      (item) => item.attachment === briefAttachments[index],
-                    );
-                    const verified =
-                      entry?.path &&
-                      createHash('sha256')
-                        .update(await readFile(entry.path))
-                        .digest('hex') === file.sha256;
-                    return `- ${file.title} (${file.purpose}; ${file.required ? 'required' : 'optional'}; sha256 ${file.sha256}): ${verified ? entry.path : 'UNAVAILABLE OR CONTENT MISMATCH'}`;
-                  }),
-                );
-                missingRequiredBriefFile = (assignedBrief?.attachments ?? []).some(
-                  (file, index) =>
-                    file.required &&
-                    briefFileLines[index]?.includes('UNAVAILABLE OR CONTENT MISMATCH'),
-                );
-                delivered = [...taskDelivered, ...briefDelivered];
-              };
-              await deliverBrief();
-              const names = new Map(
-                roster.members.map((member) => [member.identityId, member.name]),
-              );
-              const requestedBy =
-                requester && !requester.name && names.get(requester.pubkey)
-                  ? { ...requester, name: names.get(requester.pubkey)! }
-                  : requester;
-              if (requestedBy) this.currentTurn = { requestId, requester: requestedBy };
-              // The newest message renders once, as the task; activity rows with
-              // no text carry nothing a model can read.
-              const transcriptRows = conversation.items
-                .filter(
-                  (message) =>
-                    message.id !== requestId &&
-                    message.id !== sourceMessageId &&
-                    (message.body.trim() || message.attachments?.length),
-                )
-                .slice(-120)
-                .map((message) => ({
-                  id: message.id,
-                  authorId: message.authorId,
-                  line: [
-                    ...(message.type === 'message' ? [`[message id: ${message.id}]`] : []),
-                    `${names.get(message.authorId) ?? 'Beeline'} [${message.type}]: ${message.body.trim() ? message.body : '(shared attachments)'}`,
-                    ...(message.replyToMessageId ? [renderReplyContext(message)] : []),
-                    ...attachmentMarkerLines(message.attachments ?? []),
-                  ].join('\n'),
-                }));
-              // Built per ATTEMPT, never once per turn: a C92 re-pin runs the
-              // same turn against a NEW session id that holds none of this
-              // transcript. The objective is outside the window and always
-              // renders, warm session or not.
-              const buildPrompt = async (followup?: string): Promise<string> => {
-                await this.client?.preparePromptDelivery(this.sessionId);
-                // Context reads and file delivery can outlive a brief revision.
-                // Check at assembly time; unchanged revisions return no spec or files.
-                for (;;) {
-                  const { revisions } = await api.execute('listCornerBriefRevisions', {
-                    cornerId,
-                    afterRevision: assignedBrief?.revision ?? 0,
-                    limit: 1,
-                  });
-                  const latestBrief = revisions[0];
-                  if (!latestBrief || latestBrief.revision <= (assignedBrief?.revision ?? 0)) break;
-                  assignedBrief = latestBrief;
-                  await deliverBrief();
-                }
-                repositoryWork = cornerHasRepositoryWork(assignedBrief);
-                if (this.repositoryWork !== repositoryWork) {
-                  await this.discardSession();
-                  await trace.measure('activation', () => this.activate(trace));
-                }
-                if (followup === CORNER_DELIVERY_NUDGE && !(repositoryWork && !repositoryHeld))
-                  followup = 'Deliver files with post_artifact; answer plain chat questions directly.';
-                if (followup && !assignedBrief) return followup;
-                const briefContext = {
-                  ...(assignedBrief
-                    ? {
-                        brief: {
-                          brief: assignedBrief,
-                          fileLines: briefFileLines,
-                          missingRequiredFile: missingRequiredBriefFile,
-                        },
-                      }
-                    : {}),
-                };
-                const transcript = this.warmTranscript.select(
-                  this.sessionId,
-                  transcriptRows,
-                  this.agent.publicKey,
-                );
-                const assembled = assembleTurnPrompt(followup ? {
-                  surface: this.sessionSurface,
-                  onboarding,
-                  modelContextTokens: this.modelContextTokens,
-                  ...(freeAgent ? { timeLimitCheckpoint: this.freeContinuation.context } : {}),
-                  ...briefContext,
-                  task: { body: followup },
-                } : {
-                  delivery: this.client?.promptDelivery(this.sessionId),
-                  surface: this.sessionSurface,
-                  modelContextTokens: this.modelContextTokens,
-                  ...(freeAgent ? { timeLimitCheckpoint: this.freeContinuation.context } : {}),
-                  onboarding,
-                  sessionPrefix: this.turnSessionPrefix,
-                  objective: restored.objective ?? this.options.objective,
-                  ...(restored.titleGenerated && restored.title
-                    ? { generatedTitle: restored.title }
-                    : {}),
-                  ...briefContext,
-                  transcript: {
-                    lines: transcript.rows.map((row) => row.line),
-                    sinceLastTurn: transcript.warm,
-                  },
-                  members: roomMentionDirectory(roster, this.agent.publicKey),
-                  memory: institutionalContext.text,
-                  corners: memberCorners.corners?.filter(
-                    (corner) => corner.cornerId !== cornerId && !corner.archived,
-                  ),
-                  ...(activeReviewerInstruction
-                    ? { reviewerTarget: activeReviewerInstruction }
-                    : {}),
-                  task: {
-                    ...(sourceMessageId && conversation.items.some(
-                      (message) => message.id === sourceMessageId && message.type === 'message',
-                    ) ? { reactionTargetId: sourceMessageId } : {}),
-                    body: trigger,
-                    reply: this.commandContext.current?.source,
-                    commandReason: this.commandContext.current?.reason,
-                    outsideEvent: this.commandContext.current?.source.systemEvent,
-                    attachmentLines: attachmentPromptLines(
-                      attachments,
-                      delivered,
-                      this.acceptsImages(),
-                    ),
-                  },
-                });
-                trace.notePromptSections(
-                  assembled.report,
-                  this.sectionBaseline.observe(this.sessionId, assembled.report),
-                );
-                this.commandContext.notePromptSections([
-                  ...this.sessionPromptSectionIds,
-                  ...assembled.report.map((section) => section.id),
-                ]);
-                const promptText = this.branchSyncNotice ? `${assembled.text}\n\nRepository state: ${this.branchSyncNotice}` : assembled.text;
-                if (!repositoryWork) {
-                  const scratch = this.options.worktreePath;
-                  const usage = scratch ? await allocatedDirectoryBytes(scratch) : 0;
-                  const text = `${promptText}\n\n${scratchBudgetMessage(usage)}`;
-                  trace.notePromptWindow(text, this.modelContextTokens);
-                  return text;
-                }
-                trace.notePromptWindow(promptText, this.modelContextTokens);
-                return promptText;
-              };
-              // Rooms and corners share the provisional draft lane, request-id
-              // handoff, and single durable final reply in `turn-stream.ts`.
-              // The corner-only work ledger below is independent of that lane.
-              const stream = new AgentTurnStream({
-                api,
-                commandId:this.commandContext.current?.id,
-                turnGeneration:this.commandContext.generationId,
-                agentId: this.agent.publicKey,
-                roomId: cornerId,
-                requestId,
-                label: `corner ${cornerId}`,
-              });
-              let currentNarrationRun = '';
-              let completedNarrationRuns: string[] = [];
-              let narrationRunBoundary = 0;
-              const takeInterimNarration = (): string => {
-                const narration = spoken(
-                  [...completedNarrationRuns, currentNarrationRun]
-                    .map((run) => spoken(durableReplyText(run)))
-                    .filter((run) => run && !isPureRetryNarration(run))
-                    .join('\n\n'),
-                );
-                narrationRunBoundary += completedNarrationRuns.length;
-                completedNarrationRuns = [];
-                currentNarrationRun = '';
-                return narration;
-              };
-              const publishedToolCalls = new Set<string>();
-              const observedToolCalls = new Set<string>();
-              const pendingToolNarrations = new Map<string, string>();
-              /**
-               * The stream snapshot each pending narration was taken at. It
-               * becomes this turn's persisted offset only once that narration
-               * reaches the ledger, so a tool call that never settles — or a
-               * narration the final-reply dedupe drops — never moves it and
-               * the text stays in the draft and the reply.
-               */
-              const pendingToolOffsets = new Map<string, string>();
-              const pendingToolActivities = new Map<string, DaemonActivity[]>();
-              let lastNarratedToolCall: string | undefined;
-              let activityAttempt = 0;
-              const publishToolCalls = (
-                calls: readonly ToolCallEntry[],
-                settledOnly: boolean,
-                /**
-                 * A live (mid-turn) publish must never finalize the ONE row
-                 * `flushToolCalls` may still rewrite: the most recently
-                 * narrated call's row is skipped here whenever it could still
-                 * turn out to hold the same text as the turn's eventual
-                 * durable reply (see the dedupe at the top of `flushToolCalls`).
-                 * Every earlier, already-superseded call streams immediately.
-                 */
-                exceptKey?: string,
-              ) => {
-                calls.forEach((call, index) => {
-                  const key = `${activityAttempt}:${toolCallKey(call, index)}`;
-                  if (settledOnly && !observedToolCalls.has(key)) {
-                    observedToolCalls.add(key);
-                    // The ledger consumes the stream up to its current end, so
-                    // the snapshot the offset would move to is simply what the
-                    // lane has seen at the moment of the take.
-                    const at = stream.streamedText;
-                    const narration = takeInterimNarration();
-                    pendingToolNarrations.set(key, narration);
-                    pendingToolOffsets.set(key, at);
-                    if (narration) lastNarratedToolCall = key;
-                  }
-                  if (
-                    settledOnly ||
-                    publishedToolCalls.has(key) ||
-                    !toolCallSettled(call) ||
-                    key === exceptKey
-                  )
-                    return;
-                  publishedToolCalls.add(key);
-                  const producingModel = this.sessionModel;
-                  const narration = pendingToolNarrations.get(key) ?? '';
-                  this.activityTail = this.activityTail
-                    .catch(() => undefined)
-                    .then(async () => {
-                      let activity = pendingToolActivities.get(key);
-                      if (!activity) {
-                        const toolActivity = await cornerToolActivity(
-                          call,
-                          this.options.worktreePath,
-                          requestedBy,
-                        );
-                        activity = [
-                          ...(narration
-                            ? [
-                                {
-                                  kind: 'output' as const,
-                                  title: 'Update',
-                                  text: narration,
-                                  ...(requestedBy ? { requestedBy } : {}),
-                                },
-                              ]
-                            : []),
-                          toolActivity,
-                        ];
-                        pendingToolActivities.set(key, activity);
-                      }
-                      await api.execute('postAgentActivity', {
-                        agentId: this.agent.publicKey,
-                        roomId: cornerId,
-                        requestId,
-                        cornerActivityKey: key,
-                        agentModel: producingModel,
-                        activity,
-                      });
-                      // Only now is that prose somewhere a reader can scroll
-                      // to, so only now does the draft stop showing it and the
-                      // reply stop carrying it.
-                      const at = pendingToolOffsets.get(key);
-                      if (narration && at !== undefined) stream.markPersisted(at);
-                      pendingToolNarrations.delete(key);
-                      pendingToolOffsets.delete(key);
-                      pendingToolActivities.delete(key);
-                    })
-                    .then(() => undefined)
-                    .catch((error) => {
-                      publishedToolCalls.delete(key);
-                      console.error(`[thin-core] corner ${cornerId} tool activity failed:`, error);
-                    });
-                });
-              };
-              const flushToolCalls = async (
-                calls: readonly ToolCallEntry[],
-                finalReply: string,
-                final = false,
-              ): Promise<void> => {
-                await this.activityTail;
-                if (
-                  lastNarratedToolCall &&
-                  pendingToolNarrations.get(lastNarratedToolCall) === finalReply
-                )
-                  pendingToolNarrations.delete(lastNarratedToolCall);
-                publishToolCalls(calls, false);
-                await this.activityTail;
-                if (this.options.connectorUsage) {
-                  captureConnectionUsage(
-                    this.options.connectorUsage,
-                    { requestId, agentId: this.agent.publicKey, cornerId },
-                    calls,
-                  );
-                  if (final) await this.options.connectorUsage.flush(api, requestId);
-                }
-                await this.activityTail;
-                publishToolCalls(calls, false);
-                await this.activityTail;
-              };
-              // One prompt run. It is a closure because an empty completion
-              // re-pins the session to another provider and runs it again
-              // (C92) — against the NEW client and session id.
-              const runPromptAttempt = async (prompt: string): Promise<PromptResult> => {
-                const backgroundGeneration = this.commandContext.generationId;
-                activityAttempt += 1;
-                publishedToolCalls.clear();
-                observedToolCalls.clear();
-                pendingToolNarrations.clear();
-                pendingToolOffsets.clear();
-                pendingToolActivities.clear();
-                lastNarratedToolCall = undefined;
-                stream.beginRun();
-                completedNarrationRuns = [];
-                narrationRunBoundary = 0;
-                currentNarrationRun = '';
-                trace.promptSent();
-                const scratchRoot = this.repositoryWork ? undefined : this.options.worktreePath;
-                const scratchAtStart = scratchRoot ? await allocatedDirectoryBytes(scratchRoot) : 0;
-                const promptClient = this.client!;
-                try {
-                  const result = await this.turnUsage.measure(
-                  { agentEnv: this.agentEnv, sessionId: this.sessionId! },
-                  () => ownedModelPrompt(this.commandContext, () =>
-                    promptClient.sessionPrompt(
-                      this.sessionId!,
-                      promptWithImages(prompt, attachmentImageBlocks(delivered, this.acceptsImages())),
-                      (delta, full, currentRun, runs) => {
-                        trace.firstModelOutput();
-                        if (runs) {
-                          completedNarrationRuns = runs.slice(narrationRunBoundary);
-                          currentNarrationRun = '';
-                        } else if (currentRun === undefined) currentNarrationRun += delta;
-                        else {
-                          if (
-                            currentNarrationRun &&
-                            currentNarrationRun !== currentRun &&
-                            !currentRun.startsWith(currentNarrationRun)
-                          )
-                            completedNarrationRuns.push(currentNarrationRun);
-                          currentNarrationRun = currentRun;
-                        }
-                        stream.onChunk(delta, full, currentRun);
-                      },
-                      undefined,
-                      (calls) => {
-                        trace.toolCalls(calls);
-                        // Observe (snapshot the narration that preceded each newly
-                        // seen call) THEN publish: a human watching a corner sees a
-                        // tool's row the moment it settles, not batched at the
-                        // turn's end behind a still-running sibling call. The
-                        // current tail (`lastNarratedToolCall`) is held back:
-                        // `flushToolCalls` may still need to drop its narration if
-                        // it turns out to duplicate the turn's final reply.
-                        publishToolCalls(calls, true);
-                        publishToolCalls(calls, false, lastNarratedToolCall);
-                      },
-                      (call) => {
-                        this.retiredClients.get(promptClient)?.check();
-                        if (!requestId || !backgroundGeneration || !call.id) return;
-                        void api.execute('postBackgroundToolCompletion', {
-                          roomId: this.options.cornerId, requestId,
-                          generationId: backgroundGeneration,
-                          toolCallId: call.id, title: call.title ?? call.id,
-                          status: call.status === 'failed' ? 'failed' : 'completed',
-                        }).catch((error) => console.error('[corner] background tool wake failed', redactTurnError(error)));
-                      },
-                    )),
-                  );
-                  this.harnessTokens = addTurnTokenFigure(this.harnessTokens, result.tokenUsage);
-                  return result;
-                } finally {
-                  if (scratchRoot) {
-                    const usage = await allocatedDirectoryBytes(scratchRoot);
-                    if (scratchGrowthExceedsBudget(usage, scratchAtStart))
-                      throw new Error(`Scratch budget exceeded. ${scratchBudgetMessage(usage)}`);
-                  }
-                }
-              };
-              let loginRetryUsed = false;
-              const runPrompt = async (prompt?: string, continuation?: string): Promise<PromptResult> => {
-                const activePrompt = async (): Promise<string> => {
-                  const assembled = await buildPrompt(prompt);
-                  return continuation ? `${assembled}\n\n${continuation}` : assembled;
-                };
-                try {
-                  return await runPromptAttempt(await activePrompt());
-                } catch (error) {
-                  if (isAgentProcessExit(error) || !isExpiredHarnessLoginError(error)) throw error;
-                  if (loginRetryUsed) {
-                    return {
-                      stopReason: 'login-required',
-                      updates: [],
-                      agentText: freshHarnessLoginLine(this.options.config.agentKind, hostname()),
-                      toolCalls: [],
-                    };
-                  }
-                  loginRetryUsed = true;
-                  console.warn(
-                    `[thin-core] corner ${cornerId} turn ${requestId}: ` +
-                      'harness login expired; repairing the shared credential and retrying once',
-                  );
-                  trace.retry({ reason: 'expired harness login' });
-                  if (this.options.config.agentHomeRoot) {
-                    await repairRoomAgentCredentialLinks({
-                      root: this.options.config.agentHomeRoot,
-                      operatorHome: this.options.config.operatorHome,
-                    });
-                  }
-                  await this.discardSession();
-                  await trace.measure('activation', () => this.activate(trace));
-                  try {
-                    return await runPromptAttempt(await activePrompt());
-                  } catch (retryError) {
-                    if (isAgentProcessExit(retryError) || !isExpiredHarnessLoginError(retryError)) throw retryError;
-                    return {
-                      stopReason: 'login-required',
-                      updates: [],
-                      agentText: freshHarnessLoginLine(this.options.config.agentKind, hostname()),
-                      toolCalls: [],
-                    };
-                  }
-                } finally {
-                  // Captured while the session is still alive: `discardSession`
-                  // clears both the client and the id, and the terminal receipt
-                  // that reports these facts may be posted after it.
-                  this.turnMetrics = await this.captureTurnMetrics();
-                  await this.writeBackClaudeLogin();
-                }
-              };
-              const completeTerminal = async (result: PromptResult): Promise<boolean> => {
-                if (result.stopReason === 'free-agent-time-limit') {
-                  stream.close();
-                  timeLimited = true;
-                  let reply: string;
-                  try { reply = await this.freeContinuation.stopped(result); }
-                  finally { await this.discardSession(); }
-                  await stream.settle(reply, requestedById ? { triggerMessageId: requestId } : {});
-                  return true;
-                }
-                if (!['no-reply', 'repeated-tool-call'].includes(result.stopReason)) return false;
-                stream.close();
-                await flushToolCalls(result.toolCalls, '', true);
-                await stream.retract();
-                await this.discardSession();
-                return true;
-              };
-              let result = await runPrompt();
-              trace.promptSettled();
-              if (await completeTerminal(result)) return;
-              // An instantly approved device grant cannot reach the running
-              // sandbox: replace the session and continue this same turn there.
-              const grantedDevice = approvedDeviceGrant(result.toolCalls);
-              if (grantedDevice) {
-                await flushToolCalls(result.toolCalls, '');
-                trace.retry({ reason: 'device grant' });
-                if (!(await this.sessionIsCurrent())) {
-                  await this.discardSession();
-                  await trace.measure('activation', () => this.activate(trace));
-                }
-                result = await runPrompt(
-                  undefined,
-                  deviceGrantResumePrompt(grantedDevice, result.agentText),
-                );
-                trace.promptSettled();
-                if (await completeTerminal(result)) return;
-              }
-              let explained = await this.explainEmpty(result);
-              // A checks turn is told to say nothing when nothing changed; its
-              // silence is not a routing failure and must not buy a retry. A
-              // stopped turn's `aborted` silence is not one either. A
-              // provider's 429/5xx moves the pin onward.
-              if (
-                explained &&
-                !this.stoppedTurns.has(requestId) &&
-                ((!restates && shouldRetryEmptyTurn(explained)) ||
-                  shouldFailOverProviderError(explained))
-              ) {
-                await flushToolCalls(result.toolCalls, '');
-                const silent = this.servingProviders();
-                const next = await this.repinNextProvider(trace, explained.reason);
-                if (next) {
-                  console.warn(
-                    `[thin-core] corner ${cornerId} turn ${requestId}: ` +
-                      `${turnFailureReasonWithProvider(explained.reason, silent)}; retrying on ${next}`,
-                  );
-                  result = await runPrompt();
-                  trace.promptSettled();
-                  if (await completeTerminal(result)) return;
-                  explained = await this.explainEmpty(result);
-                }
-              }
-              // A session whose history outgrew the model's window refuses
-              // every retry inside it. One retry in a fresh session; a second
-              // overflow fails the turn as `context-overflow`, never a hiccup.
-              if (explained && isContextOverflowTurn(explained)) {
-                await flushToolCalls(result.toolCalls, '');
-                console.warn(
-                  `[thin-core] corner ${cornerId} turn ${requestId}: ` +
-                    `${explained.reason}; retrying once in a fresh session`,
-                );
-                trace.retry({ reason: 'context overflow' });
-                await this.discardSession();
-                await trace.measure('activation', () => this.activate(trace));
-                result = await runPrompt();
-                trace.promptSettled();
-                if (await completeTerminal(result)) return;
-                explained = await this.explainEmpty(result);
-              }
-              // One bounded second chance to deliver repository work. Check
-              // turns get the narrower checks reminder instead: repeating the
-              // broad delivery instruction there could invite unrelated branch
-              // cleanup. The model remains the authority over whether dirty
-              // work belongs to the objective and whether to retain or dispose
-              // of it; the daemon never rewrites the worktree after a turn.
-              const checksTurn = isCornerChecksTurn(trigger, restates);
-              const mayPublish = repositoryWork && !repositoryHeld;
-              const deliveryState =
-                !activityTurn && !checksTurn && mayPublish && this.options.repository
-                  ? await cornerUndeliveredRepositoryState(
-                      this.options.worktreePath,
-                      this.options.repository.featureBranch,
-                      this.options.repository.targetBranch,
-                    )
-                  : undefined;
-              // A reviewer session never gets the dirty-work delivery nudge,
-              // even when it also wrote the code: its main prompt already
-              // carries the delivery rules.
-              const needsDeliveryNudge =
-                !this.reviewerInstructionInput &&
-                deliveryState !== undefined &&
-                deliveryState !== this.lastDeliveryNudgeState;
-              let refreshedReviewerInstruction: string | undefined;
-              let reviewerSecondPass = false;
-              let reviewerTargetChanged = false;
-              if (!explained && reviewTurn) {
-                await this.syncBranch();
-                refreshedReviewerInstruction = await this.activeReviewerInstruction(false);
-                reviewerTargetChanged = refreshedReviewerInstruction !== activeReviewerInstruction;
-                reviewerSecondPass =
-                  reviewerTargetChanged ||
-                  !result.toolCalls.some(
-                    (call) =>
-                      /(?:^|[._:/-])approve_merge$/i.test(call.title ?? '') &&
-                      isCompletedToolCall(call),
-                  );
-              }
-              let replyBeforeNudge = '';
-              if (
-                !explained &&
-                (needsDeliveryNudge ||
-                  (checksTurn &&
-                    (reviewTurn
-                      ? reviewerSecondPass
-                      : repositoryWork && !repositoryHeld &&
-                        !result.toolCalls.some(
-                          (call) =>
-                            isPrChecksRead(call) &&
-                            isCompletedToolCall(call),
-                        ))))
-              ) {
-                if (needsDeliveryNudge) this.lastDeliveryNudgeState = deliveryState;
-                // The flush comes first: it is what puts this run's narration
-                // in the ledger, so the offset it leaves behind is the one
-                // this half of the reply has to be measured against. The next
-                // prompt's `beginRun` then clears it for a fresh stream.
-                await flushToolCalls(result.toolCalls, '');
-                replyBeforeNudge = durableReplyText(stream.remainderOf(result.agentText));
-                // Even a focused follow-up needs the current assignment;
-                // runPrompt refreshes it before adding this instruction.
-                result = await runPrompt(
-                  reviewTurn
-                    ? (refreshedReviewerInstruction ?? CORNER_REVIEWER_SESSION_INSTRUCTION)
-                    : checksTurn
-                      ? CORNER_CHECKS_NUDGE
-                      : CORNER_DELIVERY_NUDGE,
-                );
-                trace.promptSettled();
-                if (await completeTerminal(result)) return;
-                explained = await this.explainEmpty(result);
-              }
-              // The requester stopped this turn while it ran. What the model
-              // had already written STAYS, as in a Room (`monolith-room-turn`
-              // says why), and the tool narration settles with it — the work
-              // reached the branch and the ledger must not lie about it. The
-              // partial reply carries no mentions.
-              if (this.stoppedTurns.has(requestId)) {
-                stream.close();
-                throw new TurnStoppedError('turn stopped by the requester');
-              }
-              let answer = durableReplyText(result.agentText);
-              // Recovered text comes from the harness's own session record,
-              // not from this stream, so no offset measured here describes it.
-              let fromStream = Boolean(answer);
-              if (!answer && explained?.recoveredText) {
-                answer = durableReplyText(explained.recoveredText);
-                fromStream = false;
-              }
-              const withNudgeReply = (text: string): string => {
-                if (reviewerSecondPass)
-                  return text || (reviewerTargetChanged ? '' : replyBeforeNudge);
-                return [replyBeforeNudge, text].filter(Boolean).join('\n\n');
-              };
-              // The dedupe inside the flush compares a pending narration with
-              // the answer as it stands BEFORE any cut: that comparison is how
-              // a narration duplicating the whole answer gets dropped instead
-              // of saved, which is also what keeps the offset off it.
-              await flushToolCalls(result.toolCalls, withNudgeReply(answer), true);
-              // Past the flush the persisted offset is final for this turn, so
-              // the answer can give up whatever head the ledger now carries.
-              if (fromStream) answer = durableReplyText(stream.remainderOf(result.agentText));
-              const reply = withNudgeReply(answer);
-              // A refusal the operator cannot read is a refusal that happens twice.
-              for (const call of result.toolCalls) {
-                const failure = toolCallFailureLine(call);
-                if (failure) console.warn(`[thin-core] corner ${cornerId} ${failure}`);
-              }
-              // Close the draft lane before the answer is published: the finished
-              // reply must never queue behind a draft nobody will read.
-              stream.close();
-              if (!reply && explained) {
-                // A checks turn is told to say nothing when nothing changed; only a
-                // provider refusal makes that silence a failure.
-                if (!reply && !(restates && !isAccountOrProviderRefusal(explained.record))) {
-                  throw new Error(
-                    turnFailureReasonWithProvider(explained.reason, this.servingProviders()),
-                  );
-                }
-                console.warn(
-                  `[thin-core] corner ${cornerId} turn ${requestId}: ${explained.reason}`,
-                );
-              }
-              // The reply is the remainder past this turn's persisted offset:
-              // everything the ledger did not already save, cut only where the
-              // saved snapshot provably reaches into the closing run, so a
-              // corner that narrated before a tool call still lands that
-              // closing message entire. A reply that only restates the
-              // server's own check notes says nothing new, and that turn
-              // settles through its receipt instead.
-              const durableReply = spoken(reply);
-              // A timed-out attempt can have saved its narration before the
-              // command is retried under the same request id. Its fresh stream
-              // has no offset for that earlier ledger row.
-              const repeatedNarration = Boolean(
-                durableReply &&
-                conversation.savedNarration?.some(
-                  (saved) => spoken(durableReplyText(saved)) === durableReply,
-                ),
-              );
-              await trace.measure('publish', () =>
-                stream.settle(
-                  repeatedNarration ? '' : durableReply,
-                  durableReply && !repeatedNarration
-                    ? {
-                        ...(requestedById ? { triggerMessageId: requestId } : {}),
-                      }
-                    : {},
-                ),
-              );
-            },
-          ));
-        },
-        (error) => console.error(`[thin-core] corner ${cornerId} receipt heartbeat failed:`, error),
-        () => {
-          console.warn(
-            `[thin-core] corner ${cornerId} turn ${requestId} dropped: ` +
-              'the server revoked its output authority',
-          );
-          this.stopTurn(requestId);
-        },
-      );
-      startTraceStats();
-      await api.execute('postAgentTurnReceipt', {
-        agentId: this.agent.publicKey,
-        roomId: cornerId,
-        requestId,
-        status: timeLimited ? 'failed' : 'complete',
-        ...(!timeLimited ? {diagnosticsOnly:true} : {}),
-        ...(timeLimited ? { reason: 'free-agent-time-limit' } : {}),
-        generationId: this.commandContext.generationId,
-        toolCalls: trace.toolCallsTotal,
-        trace: trace.replay(),
-        ...this.turnMetrics,
-      });
-      if (freeAgent && !timeLimited) await this.freeContinuation.clear();
-      this.warmTranscript.complete(this.sessionId, [requestId]);
-      // After the receipt: an operator artifact never delays the answer, and
-      // never becomes one — the trace has no way to post a Room row.
-      void finishTrace(timeLimited ? 'failed' : 'complete', timeLimited ? 'free-agent-time-limit' : undefined).catch(() => undefined);
-    } catch (error) {
-      // A stopped turn already has its ending: the server wrote `cancelled` and
-      // named who stopped it when it accepted the request. Nothing to post, and
-      // nothing the helper is to blame for.
-      if (error instanceof TurnStoppedError || this.stoppedTurns.has(requestId)) {
-        console.log(`[thin-core] corner ${cornerId} turn ${requestId} stopped by the requester`);
-        void finishTrace('cancelled').catch(() => undefined);
-        return;
-      }
-      if (isAgentProcessExit(error)) {
-        await this.discardSession(true);
-        await api.execute('postAgentTurnReceipt', {
-          agentId: this.agent.publicKey, roomId: cornerId, requestId,
-          status: 'failed', generationId: this.commandContext.generationId,
-          reason: 'agent process exited', reasonKind: 'process-exited',
-          trace: trace.replay(),
-        }).catch(receiptError => console.error('[body] process interruption receipt failed:', receiptError));
-        void finishTrace('failed', 'agent process exited').catch(() => undefined);
-        throw error;
-      }
-      if (error instanceof OwnedModelOutcomeUnknown) {
-        await this.discardSession(false, true);
-        await api.execute('postAgentTurnReceipt', ownedModelEndReceipt(error, { agentId: this.agent.publicKey,
-          roomId: cornerId, requestId, generationId: this.commandContext.generationId }));
-        throw error;
-      }
-      const reason = distillTurnFailureReason(error);
-      startTraceStats();
-      await api.execute('postAgentTurnReceipt', {
-        agentId: this.agent.publicKey,
-        roomId: cornerId,
-        requestId,
-        status: 'failed',
-        generationId: this.commandContext.generationId,
-        reason: reason.text,
-        ...(reason.kind ? { reasonKind: reason.kind } : {}),
-        toolCalls: trace.toolCallsTotal,
-        trace: trace.replay(),
-        ...this.turnMetrics,
-      });
-      void finishTrace('failed', reason.text).catch(() => undefined);
-      throw error;
-    } finally {
-      this.busy = false;
-      this.currentTurn = undefined;
-      this.harvestWarmNodeModules();
-    }
-  }
 
-  /**
-   * Offer this worktree's `node_modules` to the host-wide warm store.
-   *
-   * A turn's end is the moment the tree is most likely to be a finished
-   * install, and the store keeps only the first complete tree per lockfile —
-   * so after the first corner on a lockfile this is one `stat` that answers
-   * `already-warm`. The copy that the first one does is deliberately NOT
-   * awaited by the turn: nobody in the Room is waiting on a cache, and the
-   * only thing that waits is shutdown, so a half-copied tree is never left
-   * where a later corner could read it as complete.
-   */
-  private harvestWarmNodeModules(): void {
-    if (this.harvest || !this.options.repository || this.options.repository.readOnly) return;
-    const { cornerId, worktreePath, runtime } = this.options;
-    // `apps/mobile` has its own lockfile and store; harvesting it is what lets
-    // the next fresh corner skip the whole mobile install.
-    const mobilePath = resolve(worktreePath, 'apps/mobile');
-    const harvest = (input: { worktreePath: string; storeRoot: string }) => tryWithKernelLock(`dependency-store:${resolve(input.storeRoot)}`, () => harvestWarmNodeModules(input));
-    const jobs = [
-      harvest({
-        worktreePath,
-        storeRoot: warmNodeModulesStoreDir(runtime.supervisorRoot),
-      }),
-      ...(existsSync(resolve(mobilePath, 'package-lock.json'))
-        ? [
-            harvest({
-              worktreePath: mobilePath,
-              storeRoot: mobileNodeModulesStoreDir(runtime.supervisorRoot),
-            }),
-          ]
-        : []),
-    ];
-    const run = Promise.all(jobs)
-      .then((outcomes) => {
-        for (const outcome of outcomes) {
-          if (!outcome) continue; // Busy store: cache reuse never queues a turn or shutdown.
-          if (outcome.reason === 'already-warm' || outcome.reason === 'no-lockfile') continue;
-          console.log(
-            `[thin-core] corner ${cornerId} warm node_modules harvest: ${outcome.reason}${
-              outcome.detail ? ` (${outcome.detail})` : ''
-            }`,
-          );
-        }
-      })
-      .catch((error) => {
-        console.error(`[thin-core] corner ${cornerId} warm node_modules harvest failed:`, error);
-      })
-      .finally(() => {
-        if (this.harvest === run) this.harvest = undefined;
-      });
-    this.harvest = run;
-  }
-
-  /**
-   * Bring this worktree onto the corner's branch as GitHub currently has it,
-   * before any work is done on top of it.
-   *
-   * The branch is the shared artifact: another member agent may have pushed to
-   * it since this helper last looked, and a first touch of a corner this
-   * helper did not open starts from whatever `room-runtime.ts` restored. A
-   * conflicting local commits are realigned to that remote branch so the
-   * fixed objective can be attempted again without clobbering a sibling push.
-   */
-  private async syncBranch(): Promise<void> {
-    const repository = this.options.repository;
-    this.branchSyncNotice = undefined;
-    if (!repository || repository.readOnly) return;
-    // One command-authorized credential lookup. A failed provider observation
-    // parks through intake until configuration/link/provider recovery.
-    const token=(await this.options.api.execute('getRoomGitHubToken',{roomId:this.options.parentRoomId})).token;
-    if (!token) throw new Error('corner repository credential lookup returned no token');
-    const stop = new AbortController();
-    this.branchSyncController=stop;
-    if(this.forcedStop||(this.currentTurn&&this.stoppedTurns.has(this.currentTurn.requestId)))stop.abort();
-    try {
-      if (this.reviewerCheckout) {
-        if ((await execFileAsync('git', ['-C', this.options.worktreePath, 'status', '--porcelain'])).stdout.trim())
-          throw new Error('review checkout has uncommitted work; preserve it before syncing');
-        const env = { ...process.env, GH_TOKEN: token, GITHUB_TOKEN: token, GIT_TERMINAL_PROMPT: '0' };
-        const ref = `refs/remotes/origin/${repository.featureBranch}`;
-        await execFileAsync('git', ['-C', this.options.worktreePath, 'fetch', 'origin',
-          `+refs/heads/${repository.featureBranch}:${ref}`], { env });
-        await execFileAsync('git', ['-C', this.options.worktreePath, 'checkout', '--detach', ref], { env });
-        return;
-      }
-      await syncCornerBranch({
-        worktreePath: this.options.worktreePath,
-        featureBranch: repository.featureBranch,
-        env: { ...process.env, GH_TOKEN: token, GITHUB_TOKEN: token, GIT_TERMINAL_PROMPT: '0' },
-        signal: this.options.signal ? AbortSignal.any([this.options.signal, stop.signal]) : stop.signal,
-      }).catch(error => {
-        if (!(error instanceof Error) || !/^corner branch sync (refused: preserve uncommitted work|conflict: local commits preserved)/.test(error.message)) throw error;
-        // Preserve the work and let its owning agent resolve it in this turn.
-        this.branchSyncNotice = `${error.message}. Resolve this private checkout's local work against origin/${repository.featureBranch} before publishing.`;
-      });
-    } finally {
-      if(this.branchSyncController===stop)this.branchSyncController=undefined;
-    }
-  }
-
-  async run(): Promise<void> {
-    const { api, cornerId, signal, supervisor } = this.options;
-    const intake = (progress: () => void) =>
-      runServerCommandIntake({
-        api,
-        roomId: cornerId,
-        agentId: this.agent.publicKey,
-        context: this.commandContext,
-        signal,
-        presence: {
-          ...(this.options.config.daemonReleaseVersion
-            ? { releaseVersion: this.options.config.daemonReleaseVersion }
-            : {}),
-          ...(this.options.config.daemonSourceSha
-            ? { sourceSha: this.options.config.daemonSourceSha }
-            : {}),
-          available: !this.options.config.modelUnavailable,
-        },
-        onWake: (wake) => {
-          this.wakeIntake = wake;
-        },
-        onRecovery: (recover) => { this.recoverIntake = recover; },
-        onPoll: () => {
-          progress();
-          this.options.onPoll();
-        },
-        onSubscriptionState: this.options.onSubscriptionState,
-        onError: (error) => {
-          this.options.onIntakeError?.(error);
-          console.error('[thin-core] corner command failed', redactTurnError(error));
-        },
-        // See monolith-room-turn.ts (C112): mark busy the instant a claim
-        // attempt starts, before its own network round trip and before
-        // context.enter()'s own file I/O, so a reconcile busy-check landing
-        // anywhere in that window can never see this corner as idle when a
-        // turn was already claimed (or about to be).
-        onClaiming: () => {
-          this.busy = true;
-        },
-        onClaimFailed: () => {
-          this.busy = false;
-        },
-        onEnter: (command) => this.squireRelay.activate(command, this.commandContext.generationId),
-        onLeave: (command) => this.squireRelay.deactivate(command.turnRequestId),
-        stop: (requestId) => this.stopTurn(requestId),
-        restart: () => this.options.onRestartRequested?.(),
-        canStartTurn: this.options.canStartTurn,
-        closed: async () => {
-          if (this.closePushed) {
-            this.closePushed = false;
-            await this.harvest;
-            await this.options.onCloseRequested();
-            return true;
+export function resultStatus(call: ToolCallEntry): string {
+  const content =
+    record(call.content) ??
+    (typeof call.content === 'string'
+      ? (() => {
+          try {
+            return record(JSON.parse(call.content));
+          } catch {
+            return undefined;
           }
-          if (!this.reconcileCloseRequested) return false;
-          this.reconcileCloseRequested = false;
-          // A close control owns a current authority read, independently of a
-          // command's held setup value.
-          const state = await api.execute('getCornerRestoreState', { cornerId });
-          if (!state.closeRequested) return false;
-          // The reap deletes the worktree a harvest is still reading.
-          await this.harvest;
-          await this.options.onCloseRequested();
-          return true;
-        },
-        run: (command) => this.prompt(
-          command.turnRequestId,
-          command.source.body,
-          command.source.attachments,
-          command.source.authorId,
-          command.reason === 'corner_check' ? [command.source.body] : undefined,
-          ['message', 'private'].includes(command.source.type) ? command.sourceMessageId : undefined,
-        ),
-      });
+        })()
+      : undefined);
+  const exitCode = content?.exitCode ?? content?.exit_code ?? content?.code;
+  if (typeof exitCode === 'number' && Number.isFinite(exitCode)) return `exit ${exitCode}`;
+  if (content?.ok === true || content?.success === true) return 'ok';
+  if (content?.ok === false || content?.success === false) return 'error';
+  return /(?:failed|error|denied)/i.test(call.status ?? '') ? 'error' : 'ok';
+}
+
+
+export function toolArguments(call: ToolCallEntry): { command?: string; input?: string } {
+  const raw = record(call.rawInput);
+  const command =
+    typeof call.rawInput === 'string'
+      ? call.rawInput
+      : typeof raw?.command === 'string'
+        ? raw.command
+        : typeof raw?.cmd === 'string'
+          ? raw.cmd
+          : undefined;
+  if (command) return { command: clampBytes(redactToolDetail(command), TOOL_ARGUMENT_MAX_BYTES) };
+  const input = serialized(call.rawInput);
+  return input ? { input: clampBytes(redactToolDetail(input), TOOL_ARGUMENT_MAX_BYTES) } : {};
+}
+
+
+export function toolCallKey(call: ToolCallEntry, index: number): string {
+  return call.id ? `id-${createHash('sha256').update(call.id).digest('hex')}` : `tool-${index}`;
+}
+
+
+export function toolCallSettled(call: ToolCallEntry): boolean {
+  if (call.resultReceived) return true;
+  return /^(?:completed|complete|failed|error|succeeded|success|passed|done)$/i.test(
+    call.status ?? '',
+  );
+}
+
+
+export function isSuccessfulCommit(call: ToolCallEntry): boolean {
+  if (/failed|error|denied/i.test(call.status ?? '')) return false;
+  return /\bgit\s+commit\b|\bcommit(?:ted)?\s+(?:changes|files?)\b/i.test(
+    `${call.title ?? ''} ${serialized(call.rawInput)}`,
+  );
+}
+
+
+/** Turn one physical ACP tool call into a bounded, redacted indexed ledger row. */
+export async function cornerToolActivity(
+  call: ToolCallEntry,
+  worktreePath: string,
+  requestedBy?: { pubkey: string; name?: string },
+): Promise<DaemonActivity> {
+  const operation = oneLine(call.kind ?? '') || 'tool';
+  let title = oneLine(redactToolDetail(call.title ?? '')) || `${operation} tool`;
+  if (isSuccessfulCommit(call)) {
     try {
-      await (supervisor
-        ? supervisor.supervise(`corner ${cornerId}`, signal, intake)
-        : intake(() => undefined));
-    } finally {
-      this.squireRelay.close();
-      this.options.grantRunner?.unregister(cornerId);
-      await this.options.scheduler.stop(cornerId);
-      this.options.scheduler.forget(cornerId);
-      // A harvest writes into host-wide state, so it finishes or is discarded
-      // with this corner — never left running against a reaped worktree.
-      await this.harvest;
+      const shown = await execFileAsync(
+        'git',
+        ['-C', worktreePath, 'show', '--format=%s', '--name-only', '--no-renames', 'HEAD'],
+        { maxBuffer: 1024 * 1024 },
+      );
+      const lines = shown.stdout.split(/\r?\n/);
+      const subject = oneLine(lines.shift() ?? 'commit');
+      const files = new Set(lines.map(oneLine).filter(Boolean));
+      title = `committed ${files.size} files: ${subject}`;
+    } catch {
+      // The harness title remains a useful summary if the commit disappeared
+      // between the ACP update and this read.
     }
   }
+  const paths = filePaths([call.rawInput, call.content, call.locations], worktreePath);
+  const argumentsSummary = toolArguments(call);
+  const output = outputExcerpt(call.content ?? call.rawOutput);
+  return {
+    kind: 'tool',
+    title: title.slice(0, 240),
+    operation: operation.slice(0, 80),
+    status: resultStatus(call),
+    ...argumentsSummary,
+    ...(output ? { output } : {}),
+    ...(requestedBy ? { requestedBy } : {}),
+    ...(paths.length ? { files: paths.map((path) => ({ path })) } : {}),
+  };
+}
+
+
+export interface MonolithCornerTurnOptions {
+  cornerId: string;
+  parentRoomId: string;
+  workspaceId: string;
+  /**
+   * The agent that opened the corner. History and the initial lifecycle
+   * carrier only; command dispatch is selected by the server.
+   */
+  openedBy?: string;
+  objective: string;
+  worktreePath: string;
+  /** Present exactly when the parent Room is bound to a repository: this is then a code corner. */
+  repository?: {
+    featureBranch: string;
+    targetBranch: string;
+    gitCommonDir: string;
+    githubToken: string;
+    readOnly?: boolean;
+  };
+  /** Gives a writer its private copy; every other turn gets the Room's read-only checkout. */
+  prepareCheckout?: (repositoryWork: boolean, implementerAgentId?: string, assigned?: boolean) =>
+    Promise<{ path: string; gitCommonDir: string; writable: boolean }>;
+  runtime: AgentRuntimeRecord;
+  config: BodyConfig;
+  api: DaemonApiClient;
+  scheduler: AgentProcesses;
+  signal?: AbortSignal;
+  /** Close-request recovery interval (test seam); defaults to the jittered 10 min. */
+  closePollMs?: number;
+  onPoll(): void;
+  onSubscriptionState?: (connected: boolean) => void;
+  onIntakeError?: (error: unknown) => void;
+  onCloseRequested(): Promise<void>;
+  onRestartRequested?: () => Promise<void>;
+  canStartTurn?: () => boolean;
+  /** Keeps this corner's intake alive across failed reads. */
+  supervisor?: RoomSupervisor;
+  createAcpClient?: (options: ConstructorParameters<typeof AcpClient>[0]) => AcpClient;
+  /** Attachment downloads (test seam). */
+  fetchImpl?: typeof fetch;
+  /** The daemon's command-grant runner; this corner registers its worktree and current turn. */
+  grantRunner?: GrantCommandRunner;
+  grantRunnerEndpoint?: GrantRunnerEndpoint;
+  /** Connection usage capture: batched per turn into one postConnectionUsage. */
+  connectorUsage?: ConnectorUsageRecorder;
 }

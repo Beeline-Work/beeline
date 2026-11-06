@@ -37,13 +37,19 @@ config.resolver.assetExts.push('wasm');
 config.resolver.blockList = [
   /[/\\]src-tauri[/\\]target[/\\].*/,
   // Tests are Node/Vitest-only source and must never be considered by an OTA bundle.
-  // Cover both colocated test/spec files and conventional __tests__ directories.
-  /(?:^|[/\\])(?:__tests__[/\\].*|[^/\\]+\.(?:test|spec)\.[cm]?[jt]sx?)$/,
+  // Cover both colocated test/spec/support files and conventional __tests__ directories.
+  /(?:^|[/\\])(?:__tests__[/\\].*|[^/\\]+\.(?:test|spec|test-support)\.[cm]?[jt]sx?)$/,
 ];
 
 // preact ESM/CJS dedup
 const preactCjsPath = require.resolve('preact');
 const preactHooksCjsPath = require.resolve('preact/hooks');
+const rootHashesPath = path.join(rootNodeModules, '@noble/hashes');
+const mobileHashesPath = path.join(__dirname, 'node_modules/@noble/hashes');
+const sameHashesVersion = fs.existsSync(path.join(rootHashesPath, 'package.json')) &&
+  fs.existsSync(path.join(mobileHashesPath, 'package.json')) &&
+  require(path.join(rootHashesPath, 'package.json')).version ===
+    require(path.join(mobileHashesPath, 'package.json')).version;
 const baseResolveRequest = config.resolver.resolveRequest;
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   if (moduleName === 'preact') {
@@ -52,10 +58,29 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   if (moduleName === 'preact/hooks') {
     return { filePath: preactHooksCjsPath, type: 'sourceFile' };
   }
-  if (baseResolveRequest) {
-    return baseResolveRequest(context, moduleName, platform);
+  const resolved = baseResolveRequest
+    ? baseResolveRequest(context, moduleName, platform)
+    : context.resolveRequest(context, moduleName, platform);
+  // Keep identical workspace/mobile hash copies in one module graph. Nested
+  // dependencies with another version retain their original resolution.
+  if (sameHashesVersion && resolved.type === 'sourceFile' &&
+      resolved.filePath.startsWith(rootHashesPath + path.sep)) {
+    return { ...resolved, filePath: path.join(mobileHashesPath, path.relative(rootHashesPath, resolved.filePath)) };
   }
-  return context.resolveRequest(context, moduleName, platform);
+  return resolved;
+};
+
+// Fold bindings introduced by module extraction using the existing minifier.
+config.transformer.minifierConfig = {
+  ...config.transformer.minifierConfig,
+  output: {
+    ...config.transformer.minifierConfig.output,
+    ascii_only: false,
+  },
+  compress: {
+    ...config.transformer.minifierConfig.compress,
+    passes: 2,
+  },
 };
 
 config.transformer.getTransformOptions = async () => ({

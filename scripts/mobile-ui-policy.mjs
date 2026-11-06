@@ -57,7 +57,7 @@ export function uiSourceFiles(root) {
         if (!['test', 'node_modules'].includes(entry.name)) walk(file);
       } else if (
         /\.[cm]?[jt]sx?$/.test(entry.name) &&
-        !/\.(test|spec)\.[cm]?[jt]sx?$|\.d\.[cm]?ts$/.test(entry.name)
+        !/\.(test|spec|test-support)\.[cm]?[jt]sx?$|\.d\.[cm]?ts$/.test(entry.name)
       ) {
         files.push({
           file: path
@@ -439,6 +439,7 @@ export function scanUiSource(source, file, rules = UI_CONTROL_RULES) {
               line,
               fingerprint,
               legacyFingerprint,
+              moveFingerprint: hash(`${rule.id}\n${normalize(shellOnly ? shell : control.body, context.sourceFile)}\n${control.style.replace(/\s+/g, ' ').trim()}`),
               message,
               ...(rule.strict ? { strict: true } : {}),
             });
@@ -451,8 +452,27 @@ export function scanUiSource(source, file, rules = UI_CONTROL_RULES) {
   return { file, components: [...components].sort(), offences };
 }
 
+/** Imported styles retain their original fingerprints when JSX moves to a child. */
+function scanSources(sources) {
+  const byFile = new Map(sources.map(item => [item.file, item.source]));
+  return sources.map(({file, source}) => {
+    const imports = [...source.matchAll(/import\s*\{\s*styles\s*\}\s*from\s*['"](\.[^'"]+)['"]/g)];
+    for (const [, relative] of imports) {
+      const stem = path.posix.normalize(path.posix.join(path.posix.dirname(file), relative)).replace(/\.[cm]?[jt]sx?$/, '');
+      const styleSource = byFile.get(stem + '.ts') ?? byFile.get(stem + '.tsx');
+      if (styleSource) {
+        const parsed = ts.createSourceFile(stem + '.ts', styleSource, ts.ScriptTarget.Latest, true);
+        const declaration = parsed.statements.find(node => ts.isVariableStatement(node) &&
+          node.declarationList.declarations.some(item => ts.isIdentifier(item.name) && item.name.text === 'styles'));
+        if (declaration) source += '\n' + declaration.getText(parsed);
+      }
+    }
+    return scanUiSource(source, file);
+  });
+}
+
 export function scanUiTree(root) {
-  return uiSourceFiles(root).map(({ file, source }) => scanUiSource(source, file));
+  return scanSources(uiSourceFiles(root));
 }
 
 export function grandfatherRegistry(scans) {
@@ -488,13 +508,22 @@ export function judgeUiRegistry(scans, registry, baseRegistry) {
       'Invalid UI component registry (expected version 1, components and legacyControls).',
     );
   const errors = [];
+  // Only exact controls authorized at the base can move. Owner/file names may
+  // change; their JSX, resolved styles and aggregate count cannot.
+  const moveBudget = baseRegistry?.sourceControls && new Map();
+  for (const control of baseRegistry?.sourceControls ?? [])
+    moveBudget.set(control.moveFingerprint, (moveBudget.get(control.moveFingerprint) ?? 0) + 1);
+  const actual = new Map(scans.flatMap(scan => scan.offences.map(offence =>
+    [scan.file + ':' + offence.fingerprint, offence])));
   if (baseRegistry)
     for (const [file, entries] of Object.entries(registry.legacyControls)) {
       for (const [fingerprint, count] of Object.entries(entries)) {
+        const control = actual.get(file + ':' + fingerprint);
+        const movedCeiling = moveBudget?.get(control?.moveFingerprint) ?? 0;
         if (
           !Number.isSafeInteger(count) ||
           count < 1 ||
-          count > (baseRegistry.legacyControls[file]?.[fingerprint] ?? 0)
+          count > Math.max(baseRegistry.legacyControls[file]?.[fingerprint] ?? 0, movedCeiling)
         )
           errors.push({
             file,
@@ -526,7 +555,18 @@ export function judgeUiRegistry(scans, registry, baseRegistry) {
     }
     const remaining = { ...(registry.legacyControls[scan.file] ?? {}) };
     for (const offence of scan.offences.filter((offence) => !offence.strict)) {
-      if ((remaining[offence.fingerprint] ?? 0) > 0) remaining[offence.fingerprint]--;
+      if ((remaining[offence.fingerprint] ?? 0) > 0) {
+        remaining[offence.fingerprint]--;
+        if (moveBudget) {
+          const left = moveBudget.get(offence.moveFingerprint) ?? 0;
+          if (left < 1) errors.push({
+            ...offence,
+            rule: 'grandfather-growth',
+            message: 'A moved legacy control changed or grew beyond its base count.',
+          });
+          else moveBudget.set(offence.moveFingerprint, left - 1);
+        }
+      }
       else errors.push(offence);
     }
   }
@@ -543,17 +583,27 @@ export function registryAtRef(root, ref) {
   // A base without the registry bootstraps only controls already committed there.
   const registryFiles = git(['ls-tree', '--name-only', ref, '--', REGISTRY_PATH]);
   const stored = registryFiles.trim() ? JSON.parse(git(['show', `${ref}:${REGISTRY_PATH}`])) : null;
-  if (stored?.fingerprintMode === FINGERPRINT_MODE) return stored;
-  const scans = files
+
+  const sources = files
     .filter(
       (file) =>
         /\.[cm]?[jt]sx?$/.test(file) &&
-        !/\.(test|spec)\.[cm]?[jt]sx?$|\.d\.[cm]?ts$/.test(file) &&
+        !/\.(test|spec|test-support)\.[cm]?[jt]sx?$|\.d\.[cm]?ts$/.test(file) &&
         !/\/test\//.test(file),
     )
-    .map((file) =>
-      scanUiSource(git(['show', `${ref}:${file}`]), file.replace('apps/mobile/sources/', '')),
-    );
+    .map((file) => ({ source: git(['show', `${ref}:${file}`]), file: file.replace('apps/mobile/sources/', '') }));
+  const scans = scanSources(sources);
+  if (stored?.fingerprintMode === FINGERPRINT_MODE) {
+    const sourceControls = [];
+    for (const scan of scans) {
+      const remaining = {...stored.legacyControls[scan.file]};
+      for (const offence of scan.offences) if (!offence.strict && remaining[offence.fingerprint] > 0) {
+        remaining[offence.fingerprint]--;
+        sourceControls.push(offence);
+      }
+    }
+    return {...stored, sourceControls};
+  }
   if (!stored) return grandfatherRegistry(scans);
   // A base from before shared components were checked holds every control its
   // own committed components already had, and nothing the branch adds.

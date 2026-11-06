@@ -1,139 +1,121 @@
-import { PHONE_READ_OPERATIONS } from '@beeline/api-contract/phone';
-import { phoneLiveOutput } from './phone-live-output.js';
-import { HelperOverlayViewer, helperOverlayEnabled, fenceHelperOverlayEnqueue } from './helper-overlay.js';
-import { syncXAdReports } from './x-ad-reports.js';
-import { syncXSiteVisits } from './x-site-visits.js';
-import { dashboardFinances } from './operator-finances.js';
-import { fenceCommandReceiptEnqueue } from './router-command-coverage.js';
-import { owedMentions } from './owed-mentions.js';
-import { serveEmailImage } from './email-images.js';
-import { createPhoneOperationDispatcher, PhoneOperationError } from './phone-operations.js';
-import { phoneSocketRequests } from './phone-socket.js';
-import { parseMobileMinimum } from '@beeline/api-contract/mobile-minimum';
-import { readMobileMinimums, writeMobileMinimum } from './mobile-minimum.js';
-import { parseSiteDownloadTap, recordSiteDownloadTap } from './site-download-taps.js';
-import { VaultSaveRelay } from './vault-save-relay.js';
-import { vaultSaveHttp } from './vault-save-http.js';
-import type { RoomsMcp } from './rooms-mcp.js';
-import { ingestScreenReport, parseScreenReport } from './x-ad-screen.js';
-import { parseSigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
-import { FunnelRateLimit, recordSigninFunnelEvent } from './signin-funnel.js';
-import { runnableOrigin, serveRunnableArtifact } from './runnable-artifact.js';
-import { readCompanyLogo } from './company-logos.js';
-import { captureServerError } from './sentry.js';
-import { receiveSentryWake } from './sentry-wake.js';
-import { authenticSentryAlert, sendSentryTelegram, sentryTelegramMessage, type SentryTelegramConfig } from './sentry-telegram.js';
-import { verifyNip98Header } from '@beeline/nostr';
-import { WorkflowAuthorizationError } from './workflow-admin.js';
-import { WorkspaceSkillNotFoundError } from './institutional-skills.js';
-import { GitHubHttpError } from '@beeline/auth/github';
-import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { WebSocketServer, type WebSocket } from 'ws';
-import { serveComputerSession, serveComputerStatus, upgradeBodyComputerSource, upgradeComputerSession, upgradeComputerWaiter } from './computer-session.js';
-import type { Duplex } from 'node:stream';
-import { isTransientDatabaseConnectionError, type SqlDatabase } from './database.js';
-import type { FreeAgentService } from './free-agents.js';
-import { handleFreeAgentModelRequest, type FreeAgentModelProxyOptions } from './free-agent-model-proxy.js';
-import { isAppSignInLink } from './composio-apps.js';
-import type { ComposioApps } from './composio-apps.js';
-import { ingestComposioDelivery } from './composio-delivery.js';
-import { ingestSubscriptionWebhook, WEBHOOK_BODY_LIMIT } from './subscription-webhooks.js';
-import { ingestProviderWebhook } from './provider-webhooks.js';
-import { ingestWalletWebhook } from './wallet-webhooks.js';
-import { acceptedJsonEncoding, encodeJsonBody, type JsonEncoding } from './json-response.js';
-import { PhoneViewing } from './phone-viewing.js';
-import {
-  COMPACT_VIEW_HEADER,
-  compactRoomHistoryView,
-  compactRoomView,
-  wantsCompactView,
-} from './compact-room-view.js';
-import { bearer, GoogleSignInError, type TokenAuth } from './auth.js';
-import {
-  AGENT_OWNER_AUTHORITY_MESSAGE,
-  WORKSPACE_ADMIN_AUTHORITY_MESSAGE,
-  SPENDING_OWNER_AUTHORITY_MESSAGE,
-  CONNECTOR_OFFER_AUTHORITY_MESSAGE,
-  CONNECTOR_OFFER_WALLET_AUTHORITY_MESSAGE,
-  YOLO_AUTHORITY_MESSAGE,
-  type PhoneService,
-} from './phone-service.js';
-import { DAEMON_OPERATION_NAMES, type DaemonService } from './daemon-service.js';
-import { CommandRefusalError } from './commander.js';
-import { institutionalMemoryErrorStatus } from './institutional-memory-shadow.js';
-import { ARTIFACT_MAXIMUM_BYTES, decodeArtifactTitleHeader } from '@beeline/api-contract/daemon';
-import {
-  projectSidebarPreview,
-  offscreenMessageFits,
-  readSidebarPreview,
-  type MessageBookmarkView,
-  type RoomHistoryView,
-  type RoomLiveDelta,
-} from '@beeline/api-contract/phone';
-import type { LiveEvent, LiveHub, LiveTrace } from './live.js';
-import { isNeedsYouAsk } from './needs-you.js';
-import type { ReviewAccess } from './review-access.js';
-import type { ReleaseNotifier } from './release-notify.js';
-import { TRANSCRIPTION_MAXIMUM_BYTES, type SpeechTranscriber } from './speech-transcription.js';
-import type { VoiceService } from './voice-service.js';
-import { isMediaId } from './media-ttl.js';
-import type { ObjectService } from './object-service.js';
-import { connectorLogo } from './workbench.js';
-import type { LinkAgentWallet } from './link-agent-wallet.js';
-import type { RegistryMcpOAuth } from './registry-mcp-oauth.js';
-import { InvitePreviewAccess } from './invite-preview.js';
-import type { ConnectionPresence } from './connection-presence.js';
-import {
-  parseDashboardPlatforms,
-  readOperatorDashboard,
-  recordOperatorFunctionEvent,
-} from './operator-dashboard.js';
-import { HelperVersionGate, helperVersionBelowMinimum } from './helper-version-gate.js';
-import {
-  DaemonConnectionRegistry,
-  type DaemonLiveDependencies,
-} from './daemon-live.js';
-import { MACHINE_SOCKET_PROTOCOL, serveAgentSocket, serveMachineSocket, machineConnectionOutput, enableMachineTcpKeepalive } from './machine-connection.js';
+import { type Server, createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { runnableOrigin, serveRunnableArtifact } from "./runnable-artifact.js";
+import type { LiveEvent, LiveHub } from "./live.js";
+import { type RoomLiveDelta, type MessageBookmarkView, PHONE_READ_OPERATIONS } from "@beeline/api-contract/phone";
+import type { PhoneService } from "./phone-service.js";
+import { HelperVersionGate, helperVersionBelowMinimum } from "./helper-version-gate.js";
+import { WebSocketServer, type WebSocket } from "ws";
+import type { Duplex } from "node:stream";
+import { DaemonConnectionRegistry, type DaemonLiveDependencies } from "./daemon-live.js";
+import { VaultSaveRelay } from "./vault-save-relay.js";
+import { InvitePreviewAccess } from "./invite-preview.js";
+import { PhoneViewing } from "./phone-viewing.js";
+import { randomUUID, createHmac, timingSafeEqual, createHash } from "node:crypto";
+import { createPhoneOperationDispatcher, PhoneOperationError } from "./phone-operations.js";
+import { acceptedJsonEncoding, type JsonEncoding, encodeJsonBody } from "./json-response.js";
+import { recordOperatorFunctionEvent } from "./operator-dashboard.js";
+import { vaultSaveHttp } from "./vault-save-http.js";
+import { GitHubHttpError } from "@beeline/auth/github";
+import { captureServerError } from "./sentry.js";
+import { upgradeComputerSession, upgradeBodyComputerSource, upgradeComputerWaiter } from "./computer-session.js";
+import { bearer, type TokenAuth } from "./auth.js";
+import type { RoomsMcp } from "./rooms-mcp.js";
+import type { SentryTelegramConfig } from "./sentry-telegram.js";
+import { type SqlDatabase, isTransientDatabaseConnectionError } from "./database.js";
+import type { DaemonService } from "./daemon-service.js";
+import type { ConnectionPresence } from "./connection-presence.js";
+import type { FreeAgentService } from "./free-agents.js";
+import type { FreeAgentModelProxyOptions } from "./free-agent-model-proxy.js";
+import type { ObjectService } from "./object-service.js";
+import type { ComposioApps } from "./composio-apps.js";
+import type { LinkAgentWallet } from "./link-agent-wallet.js";
+import type { RegistryMcpOAuth } from "./registry-mcp-oauth.js";
+import type { ReviewAccess } from "./review-access.js";
+import type { ReleaseNotifier } from "./release-notify.js";
+import type { SpeechTranscriber } from "./speech-transcription.js";
+import type { VoiceService } from "./voice-service.js";
+import { FunnelRateLimit } from "./signin-funnel.js";
+import { MACHINE_SOCKET_PROTOCOL } from "./machine-connection.js";
+import { requestErrorStatus } from './server-request-error-status.js';
+import { PhoneHttpOperation, NON_PHONE_HTTP_WRITES, readPhoneSession } from './server-create-beeline-server.js';
+import { route } from './server-route.js';
+import { handleLiveConnection } from './server-live-connection.js';
+
+
+
+
 
 export const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
 
-const MAX_JSON_BYTES = 1024 * 1024;
-let webhookWritesSincePrune = 0;
+
+
+export const MAX_JSON_BYTES = 1024 * 1024;
+
+
+
+
 // A reconnecting helper may send all of its Room subscriptions at once. Keep
 // those reads outside pg-pool's queue, where they would otherwise time out and
 // amplify the reconnect. Older helpers need no new protocol to use this gate.
 // The gate scales with the machine's app pool and leaves four of its
 // connections to ordinary requests, so live work never takes all of them.
-const MIN_LIVE_DB_TASKS = 2;
-const LIVE_DB_RESERVED_APP_CONNECTIONS = 4;
+export const MIN_LIVE_DB_TASKS = 2;
+
+
+export const LIVE_DB_RESERVED_APP_CONNECTIONS = 4;
+
+
 export function maxLiveDbTasks(appConnections: number | undefined): number {
   return Math.max(MIN_LIVE_DB_TASKS, (appConnections ?? 0) - LIVE_DB_RESERVED_APP_CONNECTIONS);
 }
-const MAX_LIVE_WAITING_TASKS = 512;
-const MAX_LIVE_OUTBOUND_BUFFERED_BYTES = 16 * 1024 * 1024;
+
+
+export const MAX_LIVE_WAITING_TASKS = 512;
+
+
+export const MAX_LIVE_OUTBOUND_BUFFERED_BYTES = 16 * 1024 * 1024;
+
+
 /** Rows one socket remembers for `admitRow`; rows with a read in flight stay. */
-const SENT_ROW_LIMIT = 256;
+export const SENT_ROW_LIMIT = 256;
+
+
 /** A message's version, or the live epoch and sequence a corner status was read for. */
-type RowOrder = { version: number };
-type SentRow = { order?: RowOrder; fingerprint?: string; reads: number };
+export type RowOrder = { version: number };
+
+
+export type SentRow = { order?: RowOrder; fingerprint?: string; reads: number };
+
+
 
 /** Whether `next` is not newer than the frame already sent; unordered frames always are newer. */
-function rowOrderIsNotNewer(next: RowOrder | undefined, sent: RowOrder | undefined): boolean {
+export function rowOrderIsNotNewer(next: RowOrder | undefined, sent: RowOrder | undefined): boolean {
   if (!next || !sent) return false;
   return next.version <= sent.version;
 }
-const LIVE_PING_FRAME = JSON.stringify({ type: 'ping' });
-const LIVE_PONG_FRAME = JSON.stringify({ type: 'pong' });
-const ROOM_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+
+export const LIVE_PING_FRAME = JSON.stringify({ type: 'ping' });
+
+
+export const LIVE_PONG_FRAME = JSON.stringify({ type: 'pong' });
+
+
+export const ROOM_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+
 /** Machine sockets authenticate per agent after upgrade; cap them per client address. */
-const MAX_MACHINE_SOCKETS_PER_CLIENT = 8;
+export const MAX_MACHINE_SOCKETS_PER_CLIENT = 8;
+
+
 export interface GitHubServerHooks {
   webhookSecret?: string;
   roomToken?: (identityId: string, roomId: string) => Promise<{ token: string; expiresAt: number }>;
   onWebhook?: (eventType: string, payload: unknown, deliveryId?: string) => Promise<void>;
   completeInstallation?: (state: string, installationId: number) => Promise<string>;
 }
+
+
 
 export interface ServerOptions {
   /** Production enables this with the router; object storage and authority remain required. */
@@ -198,10 +180,14 @@ export interface ServerOptions {
   webAppOrigins?: readonly string[];
 }
 
-const appSignInReturnCookie = 'beeline_app_sign_in_return';
+
+
+export const appSignInReturnCookie = 'beeline_app_sign_in_return';
+
+
 
 /** The configured web origin this browser started app sign-in from, if any. */
-function appSignInWebOrigin(request: IncomingMessage, options: ServerOptions): string | undefined {
+export function appSignInWebOrigin(request: IncomingMessage, options: ServerOptions): string | undefined {
   for (const part of (request.headers.cookie ?? '').split(';')) {
     const [name, ...value] = part.trim().split('=');
     if (name !== appSignInReturnCookie) continue;
@@ -212,7 +198,9 @@ function appSignInWebOrigin(request: IncomingMessage, options: ServerOptions): s
   return undefined;
 }
 
-function applyWebAppCors(
+
+
+export function applyWebAppCors(
   request: IncomingMessage,
   response: ServerResponse,
   options: ServerOptions,
@@ -234,7 +222,9 @@ function applyWebAppCors(
   return true;
 }
 
-function isWebAppCorsPath(pathname: string): boolean {
+
+
+export function isWebAppCorsPath(pathname: string): boolean {
   if (pathname === '/v1/admin/dashboard') return false;
   return (
     pathname === '/healthz' ||
@@ -247,11 +237,17 @@ function isWebAppCorsPath(pathname: string): boolean {
   );
 }
 
-/** What each request accepts for a JSON answer, read once where it arrives. */
-const jsonEncodings = new WeakMap<ServerResponse, JsonEncoding>();
-const roomRequestStartedAt = new WeakMap<ServerResponse, number>();
 
-function json(response: ServerResponse, status: number, body: unknown): void {
+
+/** What each request accepts for a JSON answer, read once where it arrives. */
+export const jsonEncodings = new WeakMap<ServerResponse, JsonEncoding>();
+
+
+export const roomRequestStartedAt = new WeakMap<ServerResponse, number>();
+
+
+
+export function json(response: ServerResponse, status: number, body: unknown): void {
   const { bytes, encoding } = encodeJsonBody(body, jsonEncodings.get(response));
   // writeHead replaces a header set earlier, and CORS already set `vary: Origin`.
   const vary = response.getHeader('vary');
@@ -271,7 +267,9 @@ function json(response: ServerResponse, status: number, body: unknown): void {
   response.end(bytes);
 }
 
-function publicJson(response: ServerResponse, status: number, body: unknown): void {
+
+
+export function publicJson(response: ServerResponse, status: number, body: unknown): void {
   response.writeHead(status, {
     'content-type': 'application/json',
     'cache-control': 'no-store',
@@ -281,7 +279,9 @@ function publicJson(response: ServerResponse, status: number, body: unknown): vo
   response.end(`${JSON.stringify(body)}\n`);
 }
 
-async function bytes(request: IncomingMessage, maximum: number): Promise<Buffer> {
+
+
+export async function bytes(request: IncomingMessage, maximum: number): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
@@ -292,8 +292,12 @@ async function bytes(request: IncomingMessage, maximum: number): Promise<Buffer>
   }
   return Buffer.concat(chunks);
 }
-const funnelRateLimit = new FunnelRateLimit();
-async function body(request: IncomingMessage, allowEmptyVoiceBody = false): Promise<Record<string, unknown>> {
+
+
+export const funnelRateLimit = new FunnelRateLimit();
+
+
+export async function body(request: IncomingMessage, allowEmptyVoiceBody = false): Promise<Record<string, unknown>> {
   const raw = await bytes(request, MAX_JSON_BYTES);
   if (!raw.length) return {};
   const text = raw.toString('utf8');
@@ -304,10 +308,14 @@ async function body(request: IncomingMessage, allowEmptyVoiceBody = false): Prom
     throw new Error('JSON object required');
   return parsed as Record<string, unknown>;
 }
-function exactPath(urlValue: string | undefined): URL {
+
+
+export function exactPath(urlValue: string | undefined): URL {
   return new URL(urlValue ?? '/', 'http://server.invalid');
 }
-function tokenFromProtocol(request: IncomingMessage): string | null {
+
+
+export function tokenFromProtocol(request: IncomingMessage): string | null {
   const protocol = request.headers['sec-websocket-protocol'];
   if (typeof protocol !== 'string') return null;
   const value = protocol
@@ -316,38 +324,51 @@ function tokenFromProtocol(request: IncomingMessage): string | null {
     .find((item) => item.startsWith('bearer.'));
   return value ? value.slice('bearer.'.length) : null;
 }
-function isMachineSocket(request: IncomingMessage): boolean {
+
+
+export function isMachineSocket(request: IncomingMessage): boolean {
   const protocol = request.headers['sec-websocket-protocol'];
   return (
     typeof protocol === 'string' &&
     protocol.split(',').some((item) => item.trim() === MACHINE_SOCKET_PROTOCOL)
   );
 }
-function isRetryableLiveError(error: unknown): boolean {
+
+
+export function isRetryableLiveError(error: unknown): boolean {
   const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
   return isTransientDatabaseConnectionError(error) || code === '57014' || code === '53300';
 }
+
+
 /** Who a rate limit counts against: the edge's client address, else the socket peer. */
-function clientKey(request: IncomingMessage): string {
+export function clientKey(request: IncomingMessage): string {
   const forwarded = request.headers['fly-client-ip'] ?? request.headers['x-forwarded-for'];
   const value = Array.isArray(forwarded) ? forwarded[0] : forwarded;
   const first = value?.split(',')[0]?.trim();
   return first || request.socket.remoteAddress || 'unknown';
 }
-function signatureMatches(secret: string, payload: Buffer, header: string | undefined) {
+
+
+export function signatureMatches(secret: string, payload: Buffer, header: string | undefined) {
   if (!header?.startsWith('sha256=')) return false;
   const expected = `sha256=${createHmac('sha256', secret).update(payload).digest('hex')}`;
   const a = Buffer.from(expected);
   const b = Buffer.from(header);
   return a.length === b.length && timingSafeEqual(a, b);
 }
+
+
 /** Constant time over fixed-width digests, so neither the secret nor its length leaks. */
-function bearerSecretMatches(secret: string, request: IncomingMessage): boolean {
+export function bearerSecretMatches(secret: string, request: IncomingMessage): boolean {
   const header = request.headers.authorization;
   if (!header?.startsWith('Bearer ')) return false;
   const digest = (value: string) => createHash('sha256').update(value, 'utf8').digest();
   return timingSafeEqual(digest(header.slice('Bearer '.length)), digest(secret));
 }
+
+
+
 
 export function createBeelineServer(options: ServerOptions): Server {
   const gameOrigin = runnableOrigin();
@@ -791,1965 +812,9 @@ export function createBeelineServer(options: ServerOptions): Server {
         familyId?: string;
       },
     ) => {
-      const sendLive = principal.kind === 'phone'
-        ? phoneLiveOutput(client, MAX_LIVE_OUTBOUND_BUFFERED_BYTES, () => { liveErrors.overload++; })
-        : machineConnectionOutput(client, MAX_LIVE_OUTBOUND_BUFFERED_BYTES, () => { liveErrors.overload++; });
-      if (principal.kind !== 'phone') {
-        enableMachineTcpKeepalive(_request.socket);
-        watchConnectionEpochs();
-        const trackSubscriptions = (count: () => number) => socketSubscriptions.set(client, count);
-        client.on('close', () => socketSubscriptions.delete(client));
-        if (principal.kind === 'machine')
-          serveMachineSocket(
-            daemonLive,
-            client,
-            principal,
-            sendLive,
-            trackSubscriptions,
-          );
-        else serveAgentSocket(daemonLive, client, principal, sendLive, trackSubscriptions);
-        return;
-      }
-      const releaseServerConnection = options.connectionPresence?.holdServerConnection();
-      client.on('message', () => { void options.connectionPresence?.renewLease(); });
-      client.once('close', () => releaseServerConnection?.());
-      client.once('error', () => releaseServerConnection?.());
-      options.live.humanConnected(principal.identityId);
-      // Rooms this socket views hold pushes until it says otherwise or closes.
-      const viewingSession = randomUUID();
-      const viewedRooms = new Set<string>();
-      const previewRooms = new Set<string>();
-      const releases = new Map<string, () => void>();
-      let phoneViewClosed = false;
-      // Workspace membership notifications survive the deletion cascade and
-      // reach the affected identity without requiring a readable Room.
-      let needsYouDelivery = Promise.resolve();
-      // Workspace and identity changes keep their commit order on this socket.
-      let identityDelivery = Promise.resolve();
-      const sendNeedsYouDelta = (event: LiveEvent, roomId: string) => {
-        if (!options.phone.liveNeedsYou) return;
-        // A later projection must not overtake an earlier one and then be
-        // overwritten by its stale count or slice on the same socket.
-        needsYouDelivery = needsYouDelivery.then(() =>
-          readNeedsYouForViewer(event, roomId, principal.identityId).then((value) => {
-            if (!value) return;
-            sendLive(JSON.stringify({ type: 'needs-you-delta', roomId: '',
-              sourceRoomId: roomId, ...value }));
-          })).catch(() => {sendLive(JSON.stringify({ type: 'invalidate', roomId: '',
-          reason: 'needs-you-gap' }));});
-      };
-      const releaseWorkspaces = options.live.subscribeAll((event) => {
-        if (event.type === 'resource-change') {
-          if (event.ownerId === principal.identityId)
-            sendLive(JSON.stringify({ type: 'resource-change', roomId: '',
-              resource: event.resource, ...(event.resourceId ? { resourceId: event.resourceId } : {}),
-              ...(event.version ? { version: event.version } : {}), ...(event.usageOnly ? { usageOnly: true } : {}) }));
-          return;
-        }
-        if (event.type !== 'invalidate') return;
-        if (event.roomId !== '') {
-          if (releases.has(event.roomId)) return;
-          if (!event.messageId || !options.phone.liveNeedsYou) return;
-          const local = event.committedRow?.type === 'message' ? event.committedRow.row : null;
-          const candidate = event.needsYouCandidate || event.reason === 'phone-write' ||
-            event.agentId === principal.identityId ||
-            (local && (local.presentation === 'card' || local.presentation === 'system' ||
-              isNeedsYouAsk(local.text)));
-          if (!candidate) return;
-          void readLiveRowForViewer(event, event.roomId, principal.identityId,
-            { type: 'message', messageId: event.messageId }).then((delta) => {
-            if (delta?.type !== 'message-delta') return;
-            const message = delta.message;
-            if (message.author.pubkey === principal.identityId ||
-                message.presentation === 'card' || message.presentation === 'system' ||
-                (message.mentionPubkeys?.includes(principal.identityId) &&
-                  isNeedsYouAsk(message.text))) sendNeedsYouDelta(event, event.roomId);
-          }).catch(() => undefined);
-          return;
-        }
-        if (event.reason === 'postgres:workspaces' && event.workspaceId) {
-          const read = readWorkspaceChange(event, event.workspaceId);
-          identityDelivery = identityDelivery.then(() => read.then((change) => {
-            if (!change?.viewers.has(principal.identityId)) return;
-            sendLive(JSON.stringify({ type: 'workspace-changed', roomId: '',
-              workspace: change.workspace }));
-          })).catch(() => undefined);
-          return;
-        }
-        if (event.reason === 'postgres:identities' && event.personId) {
-          // A push level change alone carries its owner as the only reader.
-          if (event.readerId && event.readerId !== principal.identityId) return;
-          const read = readPersonChange(event, event.personId);
-          identityDelivery = identityDelivery.then(() => read.then((change) => {
-            if (!change?.viewers.has(principal.identityId)) return;
-            // The push level is the owner's own setting; no other viewer hears it.
-            sendLive(JSON.stringify({ type: 'person-changed', roomId: '', person: change.person,
-              ...(change.person.pubkey === principal.identityId && change.pushLevel
-                ? { pushLevel: change.pushLevel } : {}) }));
-          })).catch(() => undefined);
-          return;
-        }
-        if (event.readerId !== principal.identityId) return;
-        if (event.reason === 'postgres:memberships') {
-          sendLive(JSON.stringify({ type: 'invalidate', roomId: '', reason: event.reason }));
-          return;
-        }
-        if (event.reason === 'postgres:needs_you_marks' && event.sourceRoomId) {
-          sendNeedsYouDelta(event, event.sourceRoomId);
-          return;
-        }
-        if (event.reason !== 'postgres:message_bookmarks' || !event.messageId ||
-            !event.workspaceId || !options.phone.readLiveBookmark) return;
-        let read = bookmarkReads.get(event);
-        if (!read) {
-          read = (event.operation === 'DELETE'
-            ? Promise.resolve(null)
-            : withLiveDbTask(() => options.phone.readLiveBookmark(
-              event.messageId!, principal.identityId)))
-            .finally(() => bookmarkReads.delete(event));
-          bookmarkReads.set(event, read);
-        }
-        void read.then((bookmark) => {
-          sendLive(JSON.stringify({ type: 'bookmark-delta', roomId: '',
-            workspaceId: event.workspaceId, messageId: event.messageId, bookmark }));
-        }).catch(() => sendLive(JSON.stringify({ type: 'invalidate', roomId: '',
-          reason: 'bookmark-gap' })));
-      });
-      const releasePersonalResync = options.live.subscribeResync(() => {
-        if (client.readyState === client.OPEN)
-          sendLive(JSON.stringify({ type: 'invalidate', roomId: '', reason: 'reconnect' }));
-      });
-      // Keep in-flight rows while ordering and deduplicating delivered projections.
-      const sentRows = new Map<string, SentRow>();
-      const beginRowRead = (key: string) => {
-        const row = sentRows.get(key) ?? { reads: 0 };
-        row.reads += 1;
-        sentRows.set(key, row);
-      };
-      const endRowRead = (key: string) => {
-        const row = sentRows.get(key);
-        if (!row) return;
-        row.reads -= 1;
-        if (!row.reads && row.fingerprint === undefined) sentRows.delete(key);
-      };
-      const admitRow = (key: string, order: RowOrder | undefined, fingerprint: string) => {
-        const sent = sentRows.get(key) ?? { reads: 0 };
-        if (rowOrderIsNotNewer(order, sent.order)) return false;
-        // An unchanged projection is not sent, but its order still advances,
-        // so an older frame with other content cannot follow it.
-        sentRows.delete(key);
-        sentRows.set(key, { order: order ?? sent.order, fingerprint, reads: sent.reads });
-        for (const [candidate, row] of sentRows) {
-          if (sentRows.size <= SENT_ROW_LIMIT) break;
-          if (!row.reads) sentRows.delete(candidate);
-        }
-        return sent.fingerprint !== fingerprint;
-      };
-      const sendDraft = (event: Extract<LiveEvent, { type: 'draft' | 'thought' }>): boolean =>
-        sendLive(JSON.stringify(event));
-      const enqueueHelperOverlay=(raw:LiveEvent):boolean=>{
-        if(client.readyState!==client.OPEN||!overlayViewer.canDeliver(raw))return false;
-        const event=overlayViewer.normalize(raw);
-        let sent=false;
-        if(event.type==='draft'||event.type==='thought')sent=sendDraft(event);
-        else if(event.type==='retract'){
-          sent=sendLive(JSON.stringify(event));
-        }
-        if(sent)overlayViewer.delivered(event);
-        return sent;
-      };
-      const overlayViewer=new HelperOverlayViewer(event=>{
-        void fenceHelperOverlayEnqueue(options.database,event,()=>enqueueHelperOverlay(event),principal.identityId);
-      });
-      socketSubscriptions.set(client, () => releases.size);
-      let socketTaskTail = Promise.resolve();
-      const pendingPaintTraces = new Map<
-        string,
-        {
-          readonly startedAt?: number;
-          readonly databaseAt: number;
-          readonly databaseClock: boolean;
-          readonly kind: 'message' | 'turn';
-        }
-      >();
-      const rememberPaintTrace = (trace: LiveTrace | undefined, kind: 'message' | 'turn') => {
-        if (!trace || (typeof trace.startedAt !== 'number' && trace.paintAck !== 'database-clock'))
-          return;
-        pendingPaintTraces.set(trace.id, {
-          startedAt: trace.startedAt,
-          databaseAt: trace.databaseAt,
-          databaseClock: trace.paintAck === 'database-clock',
-          kind,
-        });
-        if (pendingPaintTraces.size > 64) {
-          const oldest = pendingPaintTraces.keys().next().value;
-          if (oldest) pendingPaintTraces.delete(oldest);
-        }
-      };
-      const handlePhoneRequest = phoneSocketRequests(client, principal.identityId,
-        dispatchPhoneOperation, sendLive, requestErrorStatus, principal.familyId,
-        (_name, _args, result, enqueue) => fenceCommandReceiptEnqueue(options.database, principal.identityId, result, enqueue));
-      client.on('message', (raw) => {
-        const frameBytes = Array.isArray(raw)
-          ? raw.reduce((total, part) => total + part.length, 0)
-          : raw.byteLength;
-        // The phone's liveness ping needs no database work, so it never
-        // waits behind the admission queue.
-        if (frameBytes <= 32 && raw.toString() === LIVE_PING_FRAME) {
-          sendLive(LIVE_PONG_FRAME);
-          return;
-        }
-        if (frameBytes <= 32 && raw.toString() === '{"type":"sync"}') {
-          sendLive('{"type":"sync-ok"}');
-          return;
-        }
-        try {
-          const parsed = JSON.parse(raw.toString());
-          if (handlePhoneRequest(parsed)) return;
-        } catch {
-          liveErrors.invalid++;
-          return;
-        }
-        const processMessage = async () => {
-          if (client.readyState !== client.OPEN) return;
-          let message: unknown;
-          try {
-            message = JSON.parse(raw.toString());
-          } catch {
-            liveErrors.invalid++;
-            return;
-          }
-          if (!message || typeof message !== 'object') return;
-          const item = message as Record<string, unknown>;
-          // Installed phones still send sync before selecting ordinary reads.
-          if (item.type === 'sync') { sendLive('{"type":"sync-ok"}'); return; }
-          if (item.type === 'trace-paint' && typeof item.id === 'string') {
-            const trace = pendingPaintTraces.get(item.id);
-            if (!trace || client.readyState !== client.OPEN) return;
-            pendingPaintTraces.delete(item.id);
-            if (trace.databaseClock) {
-              const clock = (
-                await options.database.query<{ clock_at: Date }>(
-                  `SELECT clock_timestamp() clock_at`,
-                )
-              ).rows[0]?.clock_at;
-              if (!clock || client.readyState !== client.OPEN) return;
-              const databaseClockAt = clock.getTime();
-              sendLive(
-                JSON.stringify({
-                  type: 'trace-painted',
-                  id: item.id,
-                  databaseAt: trace.databaseAt,
-                  databaseClockAt,
-                  upperBoundMs: databaseClockAt - trace.databaseAt,
-                }),
-              );
-              return;
-            }
-            if (typeof trace.startedAt !== 'number') return;
-            const serverReceivedAt = Date.now();
-            if (
-              trace.kind === 'message' &&
-              serverReceivedAt >= trace.startedAt &&
-              serverReceivedAt - trace.startedAt <= 600_000
-            ) {
-              void recordOperatorFunctionEvent(
-                options.database,
-                'message_delivery',
-                serverReceivedAt - trace.startedAt,
-                false,
-              ).catch(() => undefined);
-            }
-            sendLive(
-              JSON.stringify({
-                type: 'trace-painted',
-                id: item.id,
-                startedAt: trace.startedAt,
-                databaseAt: trace.databaseAt,
-                serverReceivedAt,
-                upperBoundMs: serverReceivedAt - trace.startedAt,
-              }),
-            );
-            return;
-          }
-          if (item.type === 'subscribe') {
-            const requestedRoomIds = Array.isArray(item.roomIds)
-              ? [
-                  ...new Set(
-                    (item.roomIds as unknown[]).filter(
-                      (id): id is string => typeof id === 'string' && id.length > 0,
-                    ),
-                  ),
-                ]
-              : typeof item.roomId === 'string'
-                ? [item.roomId]
-                : [];
-            if (requestedRoomIds.length === 0) return;
-            const readableRooms = await options.phone.canReadRooms(
-              requestedRoomIds,
-              principal.identityId,
-            );
-            for (const roomId of requestedRoomIds) {
-              if (!readableRooms.has(roomId)) continue;
-              releases.get(roomId)?.();
-              if (item.sidebarPreviews === true) previewRooms.add(roomId);
-              // Agents whose draft this socket has already been handed live.
-              // The snapshot below is read asynchronously, so a delta can land
-              // first; replacing it with the older row would show the reader the
-              // answer going backwards.
-              const streamed = new Set<string>();
-              const forwardEvent = (event: LiveEvent) => {
-                  const sendFrame = (payload: Record<string, unknown>) => sendLive(JSON.stringify(payload));
-                  if (
-                    event.type === 'invalidate' &&
-                    event.readerId &&
-                    event.readerId !== principal.identityId
-                  )
-                    return;
-                  if (event.type === 'draft') streamed.add(event.agentId);
-                  if (event.type !== 'invalidate') {
-                    if (client.readyState !== client.OPEN) return;
-                    if(helperOverlayEnabled() && 'overlayV1' in event && event.overlayV1){
-                      if(!viewedRooms.has(roomId)||!overlayViewer.accept(event))return;
-                      return fenceHelperOverlayEnqueue(options.database,event,()=>enqueueHelperOverlay(event),principal.identityId);
-                    }
-                    if (event.type === 'draft' || event.type === 'thought') sendDraft(event);
-                    else {
-                      sendFrame(event);
-                    }
-                    return;
-                  }
-                  // committedRow is process-local authority input. Strip it
-                  // before every wire branch, including malformed/no-target
-                  // invalidations, so only a projected public delta can leave.
-                  const { committedRow, trace: eventTrace } = event;
-                  // Phone readers react to the reason and Room; the remaining
-                  // LiveEvent fields route helper work or identify a row that
-                  // will instead be sent as a projected delta below.
-                  const wireEvent = { type: 'invalidate', roomId, reason: event.reason };
-                  const target = event.messageId
-                    ? ({ type: 'message' as const, messageId: event.messageId } as const)
-                    : event.agentId && event.requestId
-                      ? ({
-                          type: 'turn' as const,
-                          agentId: event.agentId,
-                          requestId: event.requestId,
-                        } as const)
-                      : undefined;
-                  if (!target) {
-                    if (item.roomStateProjections === true && ((event.reason === 'postgres:room_read_marks' && event.readerId === principal.identityId &&
-                          typeof options.phone.liveReadState === 'function') ||
-                        (event.reason === 'postgres:agent_commands' && typeof options.phone.liveRoomCommands === 'function'))) {
-                      const readMark = event.reason === 'postgres:room_read_marks';
-                      const stateKey = `${roomId}:${readMark ? 'read-state' : 'room-commands'}`;
-                      beginRowRead(stateKey);
-                      return withLiveDbTask(async () => readMark
-                        ? options.phone.liveReadState(roomId, principal.identityId)
-                        : options.phone.liveRoomCommands(roomId, principal.identityId))
-                        .then((state) => {
-                          if (client.readyState !== client.OPEN) return;
-                          if (state === null) { sendFrame(wireEvent); return; }
-                          if (!admitRow(stateKey, undefined,
-                            JSON.stringify(state))) return;
-                          sendFrame(readMark ? { type: 'read-state', roomId, readCursor: state }
-                            : { type: 'room-commands', roomId, commands: state });
-                        }).catch(() => { if (client.readyState === client.OPEN) sendFrame(wireEvent); })
-                        .finally(() => endRowRead(stateKey));
-                    }
-                    if (event.reason === 'corner-status' &&
-                        typeof options.phone.liveChatCornerStatus === 'function') {
-                      const statusKey = `${roomId}:corner-status`;
-                      beginRowRead(statusKey);
-                      return readCornerStatusForViewer(event, roomId, principal.identityId)
-                        .then((status) => {
-                          if (client.readyState !== client.OPEN) return;
-                          if (!status) { sendFrame(wireEvent); return; }
-                          if (!admitRow(statusKey,
-                            undefined,
-                            JSON.stringify(status))) return;
-                          sendFrame({ type: 'corner-status', roomId, ...status });
-                        })
-                        .catch(() => {
-                          if (client.readyState === client.OPEN) sendFrame(wireEvent);
-                        })
-                        .finally(() => endRowRead(statusKey));
-                    }
-                    if (client.readyState === client.OPEN)
-                      sendFrame({ ...wireEvent,
-                        ...(options.livePaintDiagnostics && eventTrace ? { trace: eventTrace } : {}) });
-                    return;
-                  }
-                  const trace = options.livePaintDiagnostics ? eventTrace : undefined;
-                  const wireTrace =
-                    trace && options.livePaintDiagnostics && typeof trace.startedAt !== 'number'
-                      ? ({ ...trace, paintAck: 'database-clock' as const } satisfies LiveTrace)
-                      : trace;
-                  const fallback = {
-                    ...wireEvent,
-                    ...(wireTrace ? { trace: wireTrace } : {}),
-                    reason: `delta-fallback:${event.reason}`,
-                  };
-                  // Cross-process notifications carry only the committed row
-                  // identity. Resolve every row independently: the result stays
-                  // on the direct socket-delta path even when the app pool takes
-                  // longer than an arbitrary UI deadline, and one slow/bad read
-                  // cannot hold later committed messages behind it. The client
-                  // reconciler restores causal order from createdAt/id.
-                  // An internal row must agree with the Room-scoped bus key. A
-                  // mismatch is neither serialized nor retried against attacker-
-                  // controlled ids; the canonical PostgreSQL hint remains the
-                  // independent recovery path for the real Room.
-                  if (committedRow?.type === 'message' && committedRow.row.room_id !== roomId) return;
-                  const rowKey = target.type === 'message'
-                    ? `${roomId}:message:${target.messageId}`
-                    : `${roomId}:turn:${target.agentId}:${target.requestId}`;
-                  beginRowRead(rowKey);
-                  const pendingDelta = (async () => committedRow?.type === 'message'
-                    ? options.phone.projectCommittedLiveDelta(
-                      roomId, committedRow, principal.identityId)
-                    : readLiveRowForViewer(event, roomId, principal.identityId, target))().then(
-                    (delta) => ({ delta }) as const,
-                    (error: unknown) => ({ error }) as const,
-                  );
-                  return pendingDelta
-                    .then(async (result) => {
-                      if (client.readyState !== client.OPEN) return;
-                      if ('error' in result) throw result.error;
-                      if (!result.delta) {
-                        sendFrame(fallback);
-                        return;
-                      }
-                      let workflowRuns;
-                      if (result.delta.type === 'message-delta' &&
-                          result.delta.message.systemEvent?.kind === 'workflow-handoff' &&
-                          typeof options.phone.liveWorkflowRuns === 'function') {
-                        try {
-                          workflowRuns = (await options.phone.liveWorkflowRuns(
-                            roomId, principal.identityId)).workflows;
-                        } catch {
-                          // A workflow read failure leaves the ordinary HTTP
-                          // resource path as the covering read.
-                        }
-                      }
-                      let starPrompt;
-                      if (result.delta.type === 'message-delta' &&
-                          typeof options.phone.liveStarPrompt === 'function') {
-                        const message = result.delta.message;
-                        if (message.author.kind === 'agent' && message.presentation === 'message') {
-                          try { starPrompt = await options.phone.liveStarPrompt(principal.identityId); }
-                          catch { /* Keep the committed message available when optional eligibility fails. */ }
-                        }
-                      }
-                      const publicDelta = { ...result.delta,
-                        ...(workflowRuns ? { workflowRuns } : {}),
-                        ...(starPrompt ? { starPrompt: starPrompt.prompt } : {}) };
-                      // Never roll a row back after a newer projection.
-                      if (!admitRow(rowKey,
-                        publicDelta.type === 'message-delta' && publicDelta.version !== undefined
-                          ? { version: publicDelta.version } : undefined,
-                        createHash('sha256').update(JSON.stringify(publicDelta)).digest('hex')))
-                        return;
-                      rememberPaintTrace(wireTrace, target.type);
-                      const sidebarOnly = previewRooms.has(roomId) && !viewedRooms.has(roomId);
-                      // Voice cards change a separate list mark; retain its covering read.
-                      let wireDelta: object = publicDelta;
-                      if (sidebarOnly && publicDelta.type === 'message-delta' &&
-                          !offscreenMessageFits(publicDelta)) {
-                        const preview = publicDelta.message.voiceCall ? null
-                          : projectSidebarPreview(publicDelta, principal.identityId);
-                        wireDelta = preview && readSidebarPreview(preview) ? preview : wireEvent;
-                      }
-                      sendFrame({ ...wireDelta,
-                        ...(wireTrace ? { trace: wireTrace } : {}) });
-                      if (result.delta.type === 'message-delta') {
-                        const message = result.delta.message;
-                        if (message.author.pubkey === principal.identityId ||
-                            message.presentation === 'card' || message.presentation === 'system' ||
-                            (message.mentionPubkeys?.includes(principal.identityId) &&
-                              isNeedsYouAsk(message.text))) sendNeedsYouDelta(event, roomId);
-                      }
-                    })
-                    .catch((error) => {
-                      console.error(
-                        '[live] committed row delivery failed',
-                        error instanceof Error ? error.message : String(error),
-                      );
-                      if (client.readyState === client.OPEN) {
-                        rememberPaintTrace(wireTrace, target.type);
-                        sendFrame(fallback);
-                      }
-                    })
-                    .finally(() => endRowRead(rowKey));
-              };
-              releases.set(roomId, options.live.subscribe(roomId, forwardEvent));
-              sendLive(JSON.stringify({ type: 'subscribed', roomId }));
-              // A live lane carries only what is written after this point, so a
-              // reader who joins a turn already in progress has missed the draft
-              // it is writing. Hand over the running one now; every later delta
-              // arrives through the subscription above and replaces it. A read
-              // that fails leaves the lane exactly as it was before.
-              const snapshot = await options.phone
-                .liveDraftSnapshot(roomId)
-                .catch(() => [] as LiveEvent[]);
-              for (const event of snapshot) {
-                if (event.type === 'draft' && streamed.has(event.agentId)) continue;
-                if (client.readyState === client.OPEN &&
-                    (event.type === 'draft' || event.type === 'thought')) {
-                  if(helperOverlayEnabled() && event.overlayV1)continue;
-                  sendDraft(event);
-                }
-              }
-              for (const event of options.live.presenceSnapshot(roomId)) {
-                if (client.readyState === client.OPEN) sendLive(JSON.stringify(event));
-              }
-            }
-          }
-          if (
-            item.type === 'viewing' &&
-            typeof item.roomId === 'string' &&
-            ROOM_ID_PATTERN.test(item.roomId) &&
-            typeof item.viewing === 'boolean'
-          ) {
-            if(helperOverlayEnabled()){
-              if(item.viewing && !viewedRooms.has(item.roomId))overlayViewer.enter(item.roomId);
-              else if(!item.viewing)overlayViewer.leave(item.roomId);
-            }
-            if (item.viewing) viewedRooms.add(item.roomId);
-            else viewedRooms.delete(item.roomId);
-            if (!phoneViewClosed){
-              try {
-                const revision=await phoneViewing.view(viewingSession, principal.identityId, item.roomId, item.viewing);
-                if(helperOverlayEnabled() && item.viewing) {
-                  if(revision!==undefined)overlayViewer.commit(item.roomId,revision);
-                  else { overlayViewer.leave(item.roomId); viewedRooms.delete(item.roomId); }
-                }
-              } catch(error) {
-                if(helperOverlayEnabled() && item.viewing) { overlayViewer.leave(item.roomId); viewedRooms.delete(item.roomId); }
-                throw error;
-              }
-            }
-            return;
-          }
-          if (item.type === 'unsubscribe' && typeof item.roomId === 'string') {
-            if(helperOverlayEnabled()){
-              overlayViewer.leave(item.roomId);
-              if(viewedRooms.delete(item.roomId) && !phoneViewClosed)await phoneViewing.view(viewingSession,principal.identityId,item.roomId,false);
-            }
-            releases.get(item.roomId)?.();
-            releases.delete(item.roomId);
-            previewRooms.delete(item.roomId);
-            sentRows.delete(`${item.roomId}:corner-status`);
-          }
-        };
-        socketTaskTail = socketTaskTail
-          .then(async () => {
-            if (client.readyState !== client.OPEN) return;
-            const releaseDbTask = await acquireLiveDbTask();
-            try {
-              if (client.readyState === client.OPEN) await processMessage();
-            } finally {
-              releaseDbTask();
-            }
-          })
-          .catch((error) => {
-            const retryable = isRetryableLiveError(error);
-            const code =
-              error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
-            const kind = retryable ? 'database' : code === '22P02' ? 'invalid' : 'internal';
-            liveErrors[kind]++;
-            console.error('[live] message failed', { kind, error });
-            if (client.readyState === client.OPEN) {
-              const failed = JSON.parse(raw.toString()) as { id?: string; roomId?: string; roomIds?: string[] };
-              const roomIds = failed.roomIds ?? (failed.roomId ? [failed.roomId] : []);
-              for (const roomId of roomIds) sendLive(JSON.stringify({ type: 'reload', roomId }));
-              if (!roomIds.length) sendLive(JSON.stringify(failed.id
-                ? { t: 'res', id: failed.id, ok: false, error: { code: 'unavailable', message: 'This request failed', retryable } }
-                : { type: 'invalidate', roomId: '', reason: 'reconnect' }));
-            }
-          });
-      });
-      const releasePhoneView = () => {
-        if (phoneViewClosed) return;
-        phoneViewClosed = true;
-        overlayViewer.clear();
-        void phoneViewing.end(viewingSession).catch((error) =>
-          console.error('[live] viewing release failed', error),
-        );
-      };
-      client.on('error', releasePhoneView);
-      client.on('close', () => {
-        socketSubscriptions.delete(client);
-        options.live.humanDisconnected(principal.identityId);
-        releasePhoneView();
-        releaseWorkspaces();
-        releasePersonalResync();
-        pendingPaintTraces.clear();
-        for (const release of releases.values()) release();
-        releases.clear();
-        sentRows.clear();
-      });
-    },
+return handleLiveConnection({ liveErrors, watchConnectionEpochs, socketSubscriptions, daemonLive, options, readNeedsYouForViewer, readLiveRowForViewer, readWorkspaceChange, readPersonChange, bookmarkReads, withLiveDbTask, dispatchPhoneOperation, readCornerStatusForViewer, phoneViewing, acquireLiveDbTask }, client, _request, principal);
+},
   );
   server.once('listening', () => { void options.daemon.warmConnectorIndex?.(); });
   return server;
-}
-
-const phoneFamilies = new WeakMap<IncomingMessage, string>();
-
-/** Identity plus the sign-in family, when this auth implementation can name one. */
-async function readPhoneSession(
-  auth: {
-    authenticatePhone(token: string): Promise<string | null>;
-    authenticatePhoneSession?(token: string): Promise<{ identityId: string; familyId: string } | null>;
-  },
-  token: string,
-): Promise<{ identityId: string; familyId: string | null } | null> {
-  if (typeof auth.authenticatePhoneSession === 'function') {
-    const session = await auth.authenticatePhoneSession(token);
-    return session ? { identityId: session.identityId, familyId: session.familyId } : null;
-  }
-  const identityId = await auth.authenticatePhone(token);
-  return identityId ? { identityId, familyId: null } : null;
-}
-
-async function phoneIdentity(
-  request: IncomingMessage,
-  options: ServerOptions,
-): Promise<string | null> {
-  const value = bearer(request.headers.authorization);
-  // Family is recorded beside the identity lookup. The identity return stays the
-  // access-token query System messages already follow.
-  if (value) await rememberPhoneFamily(request, options.auth, value);
-  return value ? options.auth.authenticatePhone(value) : null;
-}
-
-async function rememberPhoneFamily(
-  request: IncomingMessage,
-  auth: TokenAuth,
-  token: string,
-): Promise<void> {
-  if (typeof auth.authenticatePhoneSession !== 'function') return;
-  const session = await auth.authenticatePhoneSession(token);
-  if (session?.familyId) phoneFamilies.set(request, session.familyId);
-}
-
-async function daemonIdentity(
-  request: IncomingMessage,
-  options: ServerOptions,
-): Promise<string | null> {
-  const value = bearer(request.headers.authorization);
-  return value ? options.auth.authenticateDaemon(value) : null;
-}
-/**
- * Why a daemon request was refused, in the only two shapes a helper may act
- * on. `agent_removed` is a settled fact — the token is revoked and its agent
- * holds no membership anywhere — and is what lets the helper stop itself.
- * Everything else stays the ordinary 401 it retries against.
- */
-async function refuseDaemon(
-  request: IncomingMessage,
-  response: ServerResponse,
-  options: ServerOptions,
-): Promise<void> {
-  const value = bearer(request.headers.authorization);
-  const retired = value ? await options.auth.retiredDaemonAgent(value) : null;
-  if (retired) json(response, 403, { error: 'agent_removed' });
-  else json(response, 401, { error: 'daemon_token_required' });
-}
-
-// Non-phone consumers: apps/server/scripts/verify-fly-cutover.mjs, infra/free-agent/*.mjs,
-// and apps/mobile/evidence/corner-list-live/proof-kit/control.mts. Keep this closed list.
-const NON_PHONE_HTTP_WRITES = ['createWorkspace', 'deleteWorkspace', 'sendRoomMessage', 'requestCornerClose'] as const;
-type PhoneHttpOperation = (name: (typeof PHONE_READ_OPERATIONS)[number] | (typeof NON_PHONE_HTTP_WRITES)[number], input: Record<string, unknown>,
-  viewerId: string, familyId?: string) => Promise<unknown>;
-
-async function route(
-  request: IncomingMessage,
-  response: ServerResponse,
-  options: ServerOptions,
-  invitePreview: InvitePreviewAccess,
-  liveHealth: () => object,
-  helperVersionGate: HelperVersionGate,
-  httpPhoneOperation: PhoneHttpOperation,
-): Promise<void> {
-  const url = exactPath(request.url);
-  const method = request.method ?? 'GET';
-  if (await options.roomsMcp?.handle(request, response)) return;
-  if (method === 'POST' && url.pathname === '/v1/sentry/webhook') {
-    let raw: Buffer;
-    try { raw = await bytes(request, MAX_JSON_BYTES); }
-    catch { json(response, 413, { error: 'sentry_payload_too_large' }); return; }
-    const status = await receiveSentryWake(options.database, raw, request.headers, options.sentryWakeSecret, options.sentryWakeAgentId);
-    json(response, status, status < 300 ? { accepted: true } : { error: 'invalid_sentry_webhook' });
-    return;
-  }
-  if (method === 'POST' && url.pathname === '/api/webhooks/sentry') {
-    if (!authenticSentryAlert(options.sentryTelegram, url.searchParams.get('token'))) {
-      json(response, 401, { error: 'invalid_sentry_webhook' }); return;
-    }
-    let payload: Record<string, unknown>;
-    try { payload = await body(request); }
-    catch { json(response, 400, { error: 'invalid_sentry_alert' }); return; }
-    const message = sentryTelegramMessage(payload);
-    if (!message) { json(response, 400, { error: 'invalid_sentry_alert' }); return; }
-    await sendSentryTelegram(options.sentryTelegram!, message);
-    json(response, 200, { ok: true }); return;
-  }
-  if (url.pathname.startsWith('/v1/free-agents/model/')) {
-    if (!options.freeAgentModel) json(response, 503, { error: { message: 'free agent model unavailable' } });
-    else await handleFreeAgentModelRequest(request, response, url.pathname, options.freeAgentModel);
-    return;
-  }
-  if (method === 'POST' && url.pathname === '/v1/free-agents/bootstrap') {
-    const input = await body(request);
-    const grant =
-      options.freeAgents && typeof input.token === 'string' && input.token.startsWith('bfb_')
-        ? await options.freeAgents.bootstrap(input.token)
-        : undefined;
-    if (!grant) json(response, 401, { error: 'invalid_free_agent_bootstrap' });
-    else {
-      response.setHeader('cache-control', 'no-store');
-      json(response, 200, grant);
-    }
-    return;
-  }
-  if (method === 'POST' && url.pathname === '/v1/free-agents/sleep') {
-    const agentId = await daemonIdentity(request, options);
-    if (!agentId) {
-      await refuseDaemon(request, response, options);
-      return;
-    }
-    const input = await body(request);
-    json(response, 200, options.freeAgents
-      ? await options.freeAgents.requestSleep(agentId, { refresh: input.refresh === true })
-      : { sleep: false });
-    return;
-  }
-  const computer = /^\/s\/([A-Za-z0-9_-]{43})\/?$/.exec(url.pathname);
-  if (method === 'GET' && computer) {
-    await serveComputerSession(request, response, options.database, options.live, computer[1]!);
-    return;
-  }
-  const computerStatus = /^\/s\/([A-Za-z0-9_-]{43})\/status$/.exec(url.pathname);
-  if (method === 'GET' && computerStatus) {
-    await serveComputerStatus(request, response, options.database, computerStatus[1]!);
-    return;
-  }
-  if (method === 'GET' && url.pathname === '/v1/link/oauth/callback') {
-    if (!options.linkWallet) {
-      json(response, 503, { error: 'Link is unavailable' });
-      return;
-    }
-    const state = url.searchParams.get('state');
-    if (!state) {
-      json(response, 400, { error: 'Link authorization was not completed' });
-      return;
-    }
-    const result = await options.linkWallet.complete(
-      state,
-      url.searchParams.get('code') ?? undefined,
-      url.searchParams.get('error') ?? undefined,
-      url.searchParams.get('error_description') ?? undefined,
-    );
-    const webOrigin = appSignInWebOrigin(request, options);
-    if (webOrigin) {
-      const destination = new URL('/beeline/settings/workbench', webOrigin);
-      response.writeHead(302, { location: destination.toString(),
-        'set-cookie': `${appSignInReturnCookie}=; Path=/v1; Max-Age=0; HttpOnly; Secure; SameSite=Lax`,
-        'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
-      response.end();
-      return;
-    }
-    if (/\b(?:Android|iPhone|iPad|iPod)\b/i.test(request.headers['user-agent'] ?? '')) {
-      const appReturn = new URL('beeline://beeline/settings/workbench');
-      if (result.ownerId) appReturn.searchParams.set('viewerId', result.ownerId);
-      response.writeHead(302, {
-        location: appReturn.toString(),
-        'cache-control': 'no-store',
-        'x-content-type-options': 'nosniff',
-      });
-      response.end();
-    } else {
-      response.writeHead(result.completed ? 200 : 400, {
-        'content-type': 'text/html; charset=utf-8',
-        'cache-control': 'no-store',
-        'x-content-type-options': 'nosniff',
-      });
-      response.end(
-        result.completed
-          ? '<p>Link connected. Return to Beeline.</p>'
-          : '<p>Link sign-in did not complete. Return to Beeline and retry.</p>',
-      );
-    }
-    return;
-  }
-  if (method === 'GET' && url.pathname === '/v1/apps/oauth/start') {
-    // Beeline web opens the provider through here so the verifier below can
-    // send this browser back to the web app instead of the native app scheme.
-    const authorization = url.searchParams.get('authorization') ?? '';
-    const webOrigin = url.searchParams.get('return') ?? '';
-    let isLinkSignIn = false;
-    let safeAuthorization = false;
-    try {
-      const provider = new URL(authorization);
-      safeAuthorization = provider.protocol === 'https:' && !provider.username && !provider.password
-        && authorization.length <= 4096;
-      isLinkSignIn = provider.origin === 'https://login.link.com' && provider.pathname === '/auth'
-        && !provider.username && !provider.password;
-    } catch { /* Invalid URLs are refused below. */ }
-    if (!safeAuthorization || !options.webAppOrigins?.includes(webOrigin)) {
-      json(response, 400, { error: 'Invalid app sign-in start' });
-      return;
-    }
-    const storedSignIn = !isAppSignInLink(authorization) && !isLinkSignIn
-      ? (await options.database.query(`SELECT 1 FROM workspace_connectors
-          WHERE status='installing' AND sign_in->>'url'=$1
-          UNION ALL SELECT 1 FROM agents WHERE squire_work->>'install'='true'
-            AND squire_work->'signIn'->>'url'=$1 LIMIT 1`, [authorization])).rowCount > 0 : false;
-    if (!(isAppSignInLink(authorization) || isLinkSignIn || storedSignIn) || !options.webAppOrigins?.includes(webOrigin)) {
-      json(response, 400, { error: 'Invalid app sign-in start' });
-      return;
-    }
-    response.writeHead(302, {
-      location: authorization,
-      'set-cookie': `${appSignInReturnCookie}=${encodeURIComponent(webOrigin)}; Path=/v1; Max-Age=900; HttpOnly; Secure; SameSite=Lax`,
-      'cache-control': 'no-store',
-      'referrer-policy': 'no-referrer',
-      'x-content-type-options': 'nosniff',
-    });
-    response.end();
-    return;
-  }
-  if (method === 'GET' && url.pathname === '/v1/apps/oauth/verify') {
-    const sessionUri = url.searchParams.get('session_uri');
-    if (!sessionUri || sessionUri.length > 4096) {
-      json(response, 400, { error: 'Invalid app sign-in session' });
-      return;
-    }
-    const webOrigin = appSignInWebOrigin(request, options);
-    if (webOrigin) {
-      const webReturn = new URL('/beeline/settings/workbench/connect-signin', webOrigin);
-      webReturn.searchParams.set('appSignInSession', sessionUri);
-      response.writeHead(302, {
-        location: webReturn.toString(),
-        'set-cookie': `${appSignInReturnCookie}=; Path=/v1; Max-Age=0; HttpOnly; Secure; SameSite=Lax`,
-        'cache-control': 'no-store',
-        'referrer-policy': 'no-referrer',
-        'x-content-type-options': 'nosniff',
-      });
-      response.end();
-      return;
-    }
-    const destination = new URL('beeline://beeline/settings/workbench/connect-signin');
-    destination.searchParams.set('appSignInSession', sessionUri);
-    const href = destination.toString().replaceAll('&', '&amp;').replaceAll('"', '&quot;');
-    const nonce = randomUUID();
-    // Browsers can block an automatic app handoff. Keep the same session in a
-    // visible link so a deliberate tap can finish without starting sign-in again.
-    response.writeHead(200, {
-      'content-type': 'text/html; charset=utf-8',
-      'cache-control': 'no-store',
-      'referrer-policy': 'no-referrer',
-      'x-content-type-options': 'nosniff',
-      'content-security-policy': `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
-    });
-    response.end(`<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Return to Beeline</title><style nonce="${nonce}">
-body { margin: 0; padding: 32px 24px; font: 18px/1.5 system-ui, sans-serif; background: #14091a; color: #f7f3f8; }
-main { max-width: 420px; margin: 12vh auto; } h1 { font-size: 28px; line-height: 1.2; }
-p { color: #d3c8d7; } a { display: inline-block; padding: 14px 24px; border-radius: 10px; background: #f7f3f8; color: #14091a; font-weight: 600; text-decoration: none; }
-a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
-</style></head><body><main><h1>Return to Beeline</h1>
-<p>Return to Beeline to finish connecting your app. If it doesn't open automatically, tap below.</p>
-<a id="open-beeline" href="${href}">Open Beeline</a>
-</main><script nonce="${nonce}">window.location.href = document.getElementById('open-beeline').href;</script></body></html>`);
-    return;
-  }
-  if (method === 'GET' && url.pathname === '/v1/registry-mcp/oauth/callback') {
-    if (!options.registryMcpOAuth) {
-      json(response, 503, { error: 'Registry MCP OAuth is unavailable' });
-      return;
-    }
-    const state = url.searchParams.get('state');
-    const code = url.searchParams.get('code');
-    if (!state) {
-      json(response, 400, { error: 'Provider authorization was not completed' });
-      return;
-    }
-    const completed = code
-      ? await options.registryMcpOAuth.complete(state, code)
-      : (await options.registryMcpOAuth.cancel(state), false);
-    const webOrigin = appSignInWebOrigin(request, options);
-    if (webOrigin) {
-      response.writeHead(302, { location: new URL('/beeline/settings/workbench', webOrigin).toString(),
-        'set-cookie': `${appSignInReturnCookie}=; Path=/v1; Max-Age=0; HttpOnly; Secure; SameSite=Lax`,
-        'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
-      response.end();
-      return;
-    }
-    response.writeHead(completed ? 200 : 400, {
-      'content-type': 'text/html; charset=utf-8',
-      'cache-control': 'no-store',
-      'x-content-type-options': 'nosniff',
-    });
-    response.end(
-      completed
-        ? '<p>Provider sign-in completed. Return to Beeline while the helper connects the tool.</p>'
-        : '<p>Provider sign-in did not complete. Return to Beeline and retry.</p>',
-    );
-    return;
-  }
-  if (options.authHandler && url.pathname.startsWith('/auth/')) {
-    options.authHandler(request, response);
-    return;
-  }
-  if (method === 'GET' && url.pathname === '/health') {
-    const diagnostics = options.healthDatabase ?? options.database;
-    await diagnostics.query('SELECT 1');
-    const pool = options.database.poolCounts?.() ?? { total: 0, idle: 0, waiting: 0 };
-    // Read the age from the APP database, the same object the pool counts come
-    // from. The diagnostics handle has its own pool and its own in-flight set,
-    // so asking it would report the health check's own query rather than the
-    // work that can actually be stuck.
-    const oldestActiveQueryAgeMs = await options.database.oldestActiveQueryAgeMs?.();
-    const pools =
-      options.databasePools &&
-      Object.fromEntries(
-        Object.entries(options.databasePools).map(([name, database]) => {
-          const counts = database.poolCounts?.() ?? { total: 0, idle: 0, waiting: 0 };
-          return [
-            name,
-            {
-              size: counts.total,
-              inUse: counts.total - counts.idle,
-              waiting: counts.waiting,
-              telemetry: database.poolTelemetry?.() ?? null,
-            },
-          ];
-        }),
-      );
-    json(response, 200, {
-      ok: true,
-      database: {
-        pool: {
-          size: pool.total,
-          inUse: pool.total - pool.idle,
-          waiting: pool.waiting,
-        },
-        oldestActiveQueryAgeMs: oldestActiveQueryAgeMs ?? null,
-        ...(options.database.queryProfiles
-          ? { queryProfiles: options.database.queryProfiles() }
-          : {}),
-        ...(options.databaseBudget ? { budget: options.databaseBudget } : {}),
-        ...(pools
-          ? { pools }
-          : options.enrichmentDatabase || options.jobsDatabase || options.healthDatabase
-            ? {
-                pools: Object.fromEntries(
-                  (
-                    [
-                      ['enrichment', options.enrichmentDatabase],
-                      ['diagnostics', options.healthDatabase],
-                      ['jobs', options.jobsDatabase],
-                    ] as const
-                  )
-                    .filter(([, db]) => !!db)
-                    .map(([name, db]) => {
-                      const counts = db?.poolCounts?.() ?? { total: 0, idle: 0, waiting: 0 };
-                      return [
-                        name,
-                        {
-                          size: counts.total,
-                          inUse: counts.total - counts.idle,
-                          waiting: counts.waiting,
-                        },
-                      ];
-                    }),
-                ),
-              }
-            : {}),
-        ...(options.database.oldestActiveTransactionAgeMs
-          ? { oldestActiveTransactionAgeMs: options.database.oldestActiveTransactionAgeMs() }
-          : {}),
-      },
-      live: liveHealth(),
-      ...(options.backgroundHealth ? { background: options.backgroundHealth() } : {}),
-      ...(options.liveBridgeHealth ? { liveBridge: options.liveBridgeHealth() } : {}),
-    });
-    return;
-  }
-  if (method === 'GET' && url.pathname === '/healthz') {
-    json(response, 200, { ok: true });
-    return;
-  }
-  if (method === 'GET' && url.pathname === '/readyz') {
-    const ready = options.readiness?.() ?? true;
-    json(response, ready ? 200 : 503, { ok: ready });
-    return;
-  }
-  if (method === 'GET' && url.pathname === '/version') {
-    json(response, 200, {
-      version: process.env.BEELINE_RELEASE_VERSION ?? 'development',
-      sourceSha: process.env.BEELINE_RELEASE_SHA ?? 'unknown',
-      ...(helperVersionGate.minimum ? { minimumHelperVersion: helperVersionGate.minimum } : {}),
-    });
-    return;
-  }
-  if (url.pathname === '/v1/site/download-tap') {
-    response.setHeader('vary', 'Origin');
-    response.setHeader('cache-control', 'no-store');
-    if (request.headers.origin !== 'https://usebeeline.app') {
-      json(response, 403, { error: 'origin_denied' }); return;
-    }
-    response.setHeader('access-control-allow-origin', 'https://usebeeline.app');
-    if (method === 'OPTIONS') {
-      response.writeHead(204, { 'access-control-allow-methods': 'POST, OPTIONS',
-        'access-control-allow-headers': 'content-type', 'access-control-max-age': '600' });
-      response.end(); return;
-    }
-    if (method !== 'POST') { json(response, 405, { error: 'method_not_allowed' }); return; }
-    let input: unknown;
-    try { input = JSON.parse((await bytes(request, 256)).toString('utf8')); }
-    catch { json(response, 400, { error: 'invalid_download_tap' }); return; }
-    const tap = parseSiteDownloadTap(input);
-    if (!tap) { json(response, 400, { error: 'invalid_download_tap' }); return; }
-    if (!await recordSiteDownloadTap(options.database, tap)) {
-      json(response, 429, { error: 'daily_cap_reached' }); return;
-    }
-    response.writeHead(204); response.end(); return;
-  }
-  if (method === 'POST' && url.pathname === '/v1/admin/dashboard/refresh') {
-    if (!options.dashboardSecret || !bearerSecretMatches(options.dashboardSecret, request)) {
-      json(response,403,{error:'access_denied'});return;
-    }
-    const input=await body(request);
-    if(Object.keys(input).some(key=>key!=='scope') || !['finances','x-reports','x-site-visits'].includes(String(input.scope))){
-      json(response,400,{error:'invalid_refresh_scope'});return;
-    }
-    if(input.scope==='finances')json(response,200,await dashboardFinances(options.database));
-    else{
-      if(input.scope==='x-reports')await syncXAdReports(options.database);
-      else await syncXSiteVisits(options.database);
-      json(response,200,{ok:true});
-    }
-    return;
-  }
-  if (method === 'POST' && url.pathname === '/v1/admin/dashboard/x-ads/screen') {
-    if (!options.dashboardSecret || !bearerSecretMatches(options.dashboardSecret, request)) {
-      json(response, 403, { error: 'access_denied' });
-      return;
-    }
-    let input: unknown;
-    try { input = await body(request); }
-    catch { json(response, 400, { error: 'invalid_screen_report' }); return; }
-    const report = parseScreenReport(input);
-    if (!report) { json(response, 400, { error: 'invalid_screen_report' }); return; }
-    json(response, 200, await ingestScreenReport(options.database, report));
-    return;
-  }
-  if (method === 'GET' && url.pathname === '/v1/admin/dashboard') {
-    // Authentication happens before parsing the filter or reading any ledger.
-    // The browser never receives this key; the same-origin edge proxy supplies it.
-    if (!options.dashboardSecret || !bearerSecretMatches(options.dashboardSecret, request)) {
-      json(response, 403, { error: 'access_denied' });
-      return;
-    }
-    const platforms = parseDashboardPlatforms(url.searchParams.get('platforms'));
-    if (
-      !platforms ||
-      [...url.searchParams.keys()].some((key) => key !== 'platforms') ||
-      url.searchParams.getAll('platforms').length > 1
-    ) {
-      json(response, 400, { error: 'invalid_platforms' });
-      return;
-    }
-    json(
-      response,
-      200,
-      await readOperatorDashboard(
-        options.database,
-        platforms,
-        process.env.BEELINE_DASHBOARD_LATEST_MOBILE_RELEASE ?? 'development',
-        {
-          ...(process.env.BEELINE_DASHBOARD_MIN_RUNTIME_IOS &&
-          /^\d+$/.test(process.env.BEELINE_DASHBOARD_MIN_RUNTIME_IOS)
-            ? { ios: Number(process.env.BEELINE_DASHBOARD_MIN_RUNTIME_IOS) }
-            : {}),
-          ...(process.env.BEELINE_DASHBOARD_MIN_RUNTIME_ANDROID &&
-          /^\d+$/.test(process.env.BEELINE_DASHBOARD_MIN_RUNTIME_ANDROID)
-            ? { android: Number(process.env.BEELINE_DASHBOARD_MIN_RUNTIME_ANDROID) }
-            : {}),
-        },
-      ),
-    );
-    return;
-  }
-  if (method === 'GET' && url.pathname === '/v1/public/invite-preview') {
-    // The bearer invite stays in the query string because request logging records
-    // only the pathname; do not put it in a path segment that becomes log data.
-    const result = await invitePreview.resolve(
-      url.searchParams.get('token') ?? '',
-      clientKey(request),
-    );
-    if (result.status === 'found') publicJson(response, 200, result.preview);
-    else if (result.status === 'rate_limited')
-      publicJson(response, 429, { error: 'too_many_requests' });
-    else publicJson(response, 404, { valid: false });
-    return;
-  }
-  if (method === 'POST' && url.pathname === '/v1/auth/daemon/rollback') {
-    const input = await body(request);
-    if (typeof input.exchangeToken !== 'string') throw new Error('exchangeToken is required');
-    const agentId = await options.auth.consumeDaemonExchangeAgent(input.exchangeToken);
-    if (!agentId) throw new Error('pairing not found');
-    await options.phone.rollbackUnrealizedAgent(agentId);
-    json(response, 204, {});
-    return;
-  }
-  if (method === 'GET' && url.pathname === '/v1/releases/daemon-readiness') {
-    json(response, 200, await options.daemon.releaseReadiness());
-    return;
-  }
-  if (method === 'GET' && url.pathname === '/v1/public/mobile-minimum') {
-    try {
-      publicJson(response, 200, await readMobileMinimums(options.database));
-    } catch {
-      publicJson(response, 503, {});
-    }
-    return;
-  }
-  if (method === 'POST' && url.pathname === '/v1/releases/mobile-minimum') {
-    if (!options.releaseNotify?.secret || !bearerSecretMatches(options.releaseNotify.secret, request)) {
-      json(response, 403, { error: 'release_notify_access_denied' });
-      return;
-    }
-    const input = await body(request);
-    const minimum = parseMobileMinimum(input);
-    if (!minimum || (input.platform !== 'android' && input.platform !== 'ios')) {
-      json(response, 400, { error: 'platform, valid minVersion and reason required' });
-      return;
-    }
-    await writeMobileMinimum(options.database, input.platform, minimum);
-    json(response, 200, { platform: input.platform, ...minimum });
-    return;
-  }
-  if (method === 'POST' && url.pathname === '/v1/releases/helper-minimum') {
-    if (
-      !options.releaseNotify?.secret ||
-      !bearerSecretMatches(options.releaseNotify.secret, request)
-    ) {
-      json(response, 403, { error: 'release_notify_access_denied' });
-      return;
-    }
-    const input = await body(request);
-    if (typeof input.minVersion !== 'string') {
-      json(response, 400, { error: 'minVersion_required' });
-      return;
-    }
-    try {
-      helperVersionGate.raise(input.minVersion);
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : 'invalid minimum helper version';
-      json(response, reason.includes('cannot decrease') ? 409 : 400, { error: reason });
-      return;
-    }
-    json(response, 200, { minVersion: helperVersionGate.minimum });
-    return;
-  }
-  if (method === 'POST' && url.pathname === '/v1/releases/notify') {
-    if (
-      !options.releaseNotify?.secret ||
-      !bearerSecretMatches(options.releaseNotify.secret, request)
-    )
-      throw new Error('release notify access denied');
-    const input = await body(request);
-    if (
-      typeof input.version !== 'string' ||
-      typeof input.sha !== 'string' ||
-      typeof input.changelogUrl !== 'string'
-    ) {
-      throw new Error('version, sha and changelogUrl are required');
-    }
-    json(
-      response,
-      200,
-      await options.releaseNotify.notifyReleaseDelivered({
-        version: input.version,
-        sha: input.sha,
-        changelogUrl: input.changelogUrl,
-      }),
-    );
-    return;
-  }
-  if (method === 'POST' && url.pathname === '/v1/funnel/events') {
-    if (!funnelRateLimit.allow(clientKey(request))) { json(response,429,{error:'too_many_requests'}); return; }
-    let input: unknown;
-    try { input = JSON.parse((await bytes(request, 1024)).toString('utf8')); }
-    catch { json(response,400,{error:'invalid_funnel_event'}); return; }
-    const event = parseSigninFunnelEvent(input);
-    if (!event) { json(response,400,{error:'invalid_funnel_event'}); return; }
-    const requiresIdentity = ['signed_in', 'workspace_created', 'first_message_sent', 'screen_shown'].includes(event.event);
-    const viewerId = requiresIdentity || request.headers.authorization ? await phoneIdentity(request,options) : undefined;
-    if (requiresIdentity && !viewerId) { json(response,401,{error:'unauthorized'}); return; }
-    await recordSigninFunnelEvent(options.database,event,'client',viewerId ?? undefined);
-    response.writeHead(204); response.end(); return;
-  }
-  if (method === 'POST' && url.pathname === '/v1/auth/github/reconnect') {
-    const viewerId = await phoneIdentity(request, options);
-    if (!viewerId) {
-      json(response, 401, { error: 'unauthorized' });
-      return;
-    }
-    const input = await body(request);
-    if (typeof input.oidcToken !== 'string') throw new Error('oidcToken is required');
-    const matched = await options.auth.reconnectGitHub(viewerId, input.oidcToken);
-    if (!matched) json(response, 409, { error: 'github_account_mismatch' });
-    else {
-      response.writeHead(204);
-      response.end();
-    }
-    return;
-  }
-  if (method === 'POST' && url.pathname === '/v1/auth/google/link') {
-    const viewerId = await phoneIdentity(request, options);
-    if (!viewerId) { json(response, 401, { error: 'unauthorized' }); return; }
-    const input = await body(request);
-    if (typeof input.oidcToken !== 'string') throw new Error('oidcToken is required');
-    await options.auth.linkGoogleOidc(viewerId, input.oidcToken);
-    response.writeHead(204);
-    response.end();
-    return;
-  }
-  if (method === 'POST' && url.pathname === '/v1/auth/google/exchange') {
-    const input = await body(request);
-    if (typeof input.oidcToken !== 'string') throw new Error('oidcToken is required');
-    try {
-      const tokens = await options.auth.exchangeGoogleOidc(input.oidcToken, input.xAttribution);
-      const funnel = parseSigninFunnelEvent(input.funnel);
-      if (funnel && funnel.event === 'provider_tapped' && funnel.provider === 'google') {
-        await recordSigninFunnelEvent(options.database, {...funnel, event: 'signed_in'}, 'server', tokens.identityId).catch(() => undefined);
-      }
-      json(response, 200, tokens);
-    } catch (error) {
-      if (!(error instanceof GoogleSignInError)) throw error;
-      json(response, 401, { error: 'google_sign_in_failed' });
-    }
-    return;
-  }
-  if (method === 'POST' && url.pathname === '/v1/auth/github/exchange') {
-    const input = await body(request);
-    if (typeof input.oidcToken !== 'string') throw new Error('oidcToken is required');
-    const tokens=await options.auth.exchangeGitHubOidc(input.oidcToken, input.xAttribution);
-    const funnel=parseSigninFunnelEvent(input.funnel);
-    if(funnel && funnel.event==='provider_tapped' && funnel.provider==='github') {
-      await recordSigninFunnelEvent(options.database,{...funnel,event:'signed_in'},'server',tokens.identityId).catch(()=>undefined);
-    }
-    json(response,200,tokens);
-    return;
-  }
-  if (method === 'POST' && url.pathname === '/v1/auth/review/exchange') {
-    const input = await body(request);
-    const redemption = await (options.review?.redeem(input.secret, clientKey(request)) ??
-      Promise.resolve({ status: 'refused' as const }));
-    if (redemption.status === 'redeemed') json(response, 200, redemption.tokens);
-    // A rate limit is the only thing a client is told; an unknown secret and an
-    // unconfigured server are the same ordinary 404, so neither is a hint.
-    else if (redemption.status === 'rate_limited')
-      json(response, 429, { error: 'too_many_requests' });
-    else json(response, 404, { error: 'not_found' });
-    return;
-  }
-  if (method === 'POST' && url.pathname === '/v1/auth/logout') {
-    const input = await body(request);
-    if (typeof input.refreshToken !== 'string') throw new Error('refreshToken is required');
-    await options.auth.revokePhoneSession(input.refreshToken);
-    json(response, 200, { signedOut: true });
-    return;
-  }
-  if (method === 'POST' && url.pathname === '/v1/auth/refresh') {
-    const input = await body(request);
-    if (typeof input.refreshToken !== 'string') throw new Error('refreshToken is required');
-    const result = await options.auth.refresh(input.refreshToken);
-    json(response, result ? 200 : 401, result ?? { error: 'stale_refresh_token' });
-    return;
-  }
-  if (method === 'POST' && url.pathname === '/v1/auth/daemon/migrate-legacy') {
-    const origin = options.legacyMigrationOrigin ?? process.env.BEELINE_MONOLITH_BASE_URL ?? 'https://server.usebeeline.app';
-    const proof = verifyNip98Header(request.headers.authorization, `${origin.replace(/\/$/, '')}/v1/auth/daemon/migrate-legacy`, 'POST');
-    if (!proof.ok) { json(response, 401, { error: 'legacy_identity_proof_required' }); return; }
-    const input = await body(request);
-    if (typeof input.workspaceId !== 'string' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(input.workspaceId) || typeof input.pairedBy !== 'string') {
-      json(response, 400, { error: 'legacy_pairing_required' }); return;
-    }
-    const result = await options.auth.migrateLegacyDaemon({ agentId: proof.pubkey, proofId: proof.eventId, workspaceId: input.workspaceId, pairedBy: input.pairedBy });
-    json(response, result ? 200 : 403, result ?? { error: 'legacy_reconnect_required' });
-    return;
-  }
-  if (method === 'POST' && url.pathname === '/v1/auth/daemon/exchange') {
-    const input = await body(request);
-    if (typeof input.exchangeToken !== 'string') throw new Error('exchangeToken is required');
-    const result = await options.auth.exchangeDaemonToken(input.exchangeToken);
-    json(response, result ? 200 : 401, result ?? { error: 'stale_daemon_exchange' });
-    return;
-  }
-  if (method === 'GET' && url.pathname === '/v1/github/install/callback') {
-    const state = url.searchParams.get('state');
-    const installationId = Number(url.searchParams.get('installation_id'));
-    if (
-      !state ||
-      !Number.isSafeInteger(installationId) ||
-      installationId <= 0 ||
-      !options.github?.completeInstallation
-    )
-      throw new Error('GitHub installation callback is invalid');
-    const location = await options.github.completeInstallation(state, installationId);
-    response.writeHead(302, { location, 'cache-control': 'no-store' });
-    response.end();
-    return;
-  }
-
-  const walletWebhookPath = /^\/v1\/wallet\/events\/cdp\/([a-zA-Z0-9_-]{1,100})$/.exec(url.pathname);
-  if (method === 'POST' && walletWebhookPath) {
-    const secret = options.cdpWebhookSecrets?.[walletWebhookPath[1]!];
-    if (typeof secret !== 'string' || !secret) {
-      json(response, 404, { error: 'not_found' });
-      return;
-    }
-    const raw = await bytes(request, MAX_JSON_BYTES);
-    const accepted = await ingestWalletWebhook(options.database, raw, request.headers, secret);
-    json(response, accepted ? 200 : 401,
-      accepted ? { accepted: true } : { error: 'invalid_wallet_webhook' });
-    return;
-  }
-
-  const subscriptionHook = /^\/hooks\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.exec(url.pathname);
-  if (method === 'POST' && subscriptionHook) {
-    const chunks: Buffer[] = [];
-    let size = 0;
-    let retained = 0;
-    for await (const chunk of request) {
-      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      size += buffer.length;
-      const keep = buffer.subarray(0, Math.max(0, WEBHOOK_BODY_LIMIT + 1 - retained));
-      if (keep.length) { chunks.push(keep); retained += keep.length; }
-    }
-    const result = await ingestSubscriptionWebhook(options.database, subscriptionHook[1]!,
-      Buffer.concat(chunks), { ...request.headers,
-        'x-beeline-signature': request.headers['x-beeline-signature'] ?? url.searchParams.get('signature') ?? undefined,
-        'x-beeline-delivery': request.headers['x-beeline-delivery'] ?? url.searchParams.get('delivery') ?? undefined,
-      }, size);
-    json(response, result.status, { outcome: result.outcome });
-    return;
-  }
-
-  const providerWebhookPath = /^\/v1\/connectors\/events\/(linear|stripe)\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.exec(url.pathname);
-  if (method === 'POST' && providerWebhookPath) {
-    const raw = await bytes(request, MAX_JSON_BYTES);
-    const accepted = await ingestProviderWebhook(options.database,
-      providerWebhookPath[1] as 'linear' | 'stripe', providerWebhookPath[2]!, raw, request.headers);
-    if (!accepted) {
-      json(response, 401, { error: 'invalid_webhook_signature' });
-      return;
-    }
-    json(response, 200, { accepted: true });
-    return;
-  }
-
-  if (method === 'POST' && url.pathname === '/v1/connectors/events/composio') {
-    if (!options.composio || !options.composioReceiverUrl) {
-      json(response, 404, { error: 'not_found' });
-      return;
-    }
-    const raw = await bytes(request, MAX_JSON_BYTES);
-    const secret = await options.composio.triggerReceiverSecret(options.composioReceiverUrl);
-    const accepted = await ingestComposioDelivery(options.database, raw, request.headers, secret);
-    if (!accepted) {
-      json(response, 401, { error: 'invalid_webhook_signature' });
-      return;
-    }
-    json(response, 200, { accepted: true });
-    return;
-  }
-
-  if (method === 'POST' && url.pathname === '/v1/github/webhook') {
-    const payload = await bytes(request, MAX_JSON_BYTES);
-    if (
-      !options.github?.webhookSecret ||
-      !signatureMatches(
-        options.github.webhookSecret,
-        payload,
-        request.headers['x-hub-signature-256'] as string | undefined,
-      )
-    ) {
-      json(response, 401, { error: 'invalid_webhook_signature' });
-      return;
-    }
-    const delivery = request.headers['x-github-delivery'];
-    const event = request.headers['x-github-event'];
-    if (typeof delivery !== 'string' || typeof event !== 'string')
-      throw new Error('GitHub delivery headers are required');
-    const parsed = JSON.parse(payload.toString('utf8')) as unknown;
-    const completed = await options.database.query(
-      `SELECT 1 FROM github_webhook_deliveries WHERE delivery_id=$1`,
-      [delivery],
-    );
-    if (completed.rowCount) {
-      json(response, 200, { accepted: false, duplicate: true });
-      return;
-    }
-    if (options.github?.onWebhook) await options.github.onWebhook(event, parsed, delivery);
-    const inserted = await options.database.query(
-      `INSERT INTO github_webhook_deliveries(delivery_id) VALUES($1) ON CONFLICT DO NOTHING`,
-      [delivery],
-    );
-    const accepted = Boolean(inserted.rowCount);
-    if (accepted && ++webhookWritesSincePrune % 64 === 1) {
-      try {
-        await options.database.query(
-          `DELETE FROM github_webhook_deliveries delivery
-           WHERE delivery.delivery_id IN (
-             SELECT delivery_id FROM github_webhook_deliveries
-             WHERE received_at<now()-interval '30 days'
-             ORDER BY received_at,delivery_id LIMIT 1024 FOR UPDATE SKIP LOCKED)`,
-        );
-      } catch (error) {
-        console.warn('[github-webhook] retention prune failed', error);
-      }
-    }
-    json(response, accepted ? 202 : 200, {
-      accepted,
-      duplicate: !accepted,
-    });
-    return;
-  }
-
-  if (method === 'GET' && url.pathname.startsWith('/v1/company-logos/')) {
-    let id: string;
-    try { id = decodeURIComponent(url.pathname.slice('/v1/company-logos/'.length)); }
-    catch { json(response, 400, { error: 'invalid_company' }); return; }
-    const image = await readCompanyLogo(id);
-    if (!image) { json(response, 404, { error: 'company_icon_unavailable' }); return; }
-    response.writeHead(200, { 'content-type': image.mime, 'content-length': String(image.bytes.length),
-      'cache-control': 'public, max-age=86400', 'x-content-type-options': 'nosniff',
-      'content-security-policy': "default-src 'none'; sandbox" });
-    response.end(image.bytes); return;
-  }
-  if (method === 'GET' && url.pathname.startsWith('/v1/connectors/logo/')) {
-    const type = url.pathname.slice('/v1/connectors/logo/'.length).replace(/\.svg$/, '');
-    const logo = connectorLogo(type);
-    if (!logo) {
-      json(response, 404, { error: 'connector_not_found' });
-      return;
-    }
-    response.writeHead(200, {
-      'content-type': 'image/svg+xml',
-      'content-length': String(Buffer.byteLength(logo)),
-      'cache-control': 'public, max-age=86400',
-      'x-content-type-options': 'nosniff',
-    });
-    response.end(logo);
-    return;
-  }
-  // OS Stop runs while JavaScript/the phone socket is suspended; its scoped stop token is a separate boundary.
-  const nativeVoiceStop = url.pathname.match(/^\/v1\/phone\/voice\/([0-9a-f-]{36})\/native-stop$/);
-  if (nativeVoiceStop && method === 'POST') {
-    if (!options.voice) { json(response, 503, { error: 'Voice mode is unavailable' }); return; }
-    const accepted = await options.voice.nativeStop(nativeVoiceStop[1]!, (await body(request)).token);
-    json(response, accepted ? 200 : 403, accepted ? { left: true } : { error: 'invalid_voice_stop' });
-    return;
-  }
-  if (method === 'GET' && await serveEmailImage(options.database, url, response)) return;
-  const identityId = await phoneIdentity(request, options);
-  if (
-    method === 'GET' &&
-    (url.pathname.startsWith('/v1/avatars/') || url.pathname.startsWith('/v1/agent-avatars/'))
-  ) {
-    const agentAvatar = url.pathname.startsWith('/v1/agent-avatars/');
-    const id = url.pathname.slice(
-      agentAvatar ? '/v1/agent-avatars/'.length : '/v1/avatars/'.length,
-    );
-    const avatar = isMediaId(id)
-      ? (
-          await options.database.query<{ bytes: Uint8Array }>(
-            agentAvatar
-              ? 'SELECT bytes FROM agent_avatars WHERE id=$1'
-              : 'SELECT bytes FROM avatars WHERE id=$1',
-            [id],
-          )
-        ).rows[0]
-      : undefined;
-    if (!avatar) {
-      json(response, 404, { error: 'avatar_not_found' });
-      return;
-    }
-    response.writeHead(200, {
-      'content-type': 'image/webp',
-      'content-length': String(avatar.bytes.length),
-      'cache-control': 'public, max-age=31536000, immutable',
-      'x-content-type-options': 'nosniff',
-    });
-    response.end(Buffer.from(avatar.bytes));
-    return;
-  }
-  if (method === 'GET' && url.pathname.startsWith('/v1/media/')) {
-    const last = url.pathname.slice('/v1/media/'.length);
-    const playMatch = last.match(/^([0-9a-f-]{36})\/play$/);
-    if (playMatch) {
-      if (!identityId) { json(response, 401, { error: 'identity_required' }); return; }
-      const origin = runnableOrigin();
-      if (!origin || !options.objectService) { json(response, 503, { error: 'game_host_unavailable' }); return; }
-      const link = await options.objectService.runnableLink(playMatch[1]!, origin);
-      json(response, link ? 200 : 404, link ?? { error: 'game_not_found' });
-      return;
-    }
-    // `open in browser`: redeem the capability token minted by `/link` (a
-    // browser has no bearer token for the canonical media route) into a
-    // ten-minute signed storage GET. The token — an HMAC over the object id
-    // and expiry — keeps the raw storage hosts out of every shareable link.
-    const openMatch = last.match(/^([0-9a-f-]+)\/open$/);
-    if (method === 'GET' && openMatch && isMediaId(openMatch[1]!)) {
-      if (!options.objectService) {
-        json(response, 503, { error: 'object_storage_unavailable' });
-        return;
-      }
-      const expires = Number(new URL(request.url ?? '', 'http://x').searchParams.get('expires'));
-      const token = new URL(request.url ?? '', 'http://x').searchParams.get('token') ?? '';
-      const result = await options.objectService.openMediaLink(openMatch[1]!, expires, token);
-      if (result.kind === 'redirect') {
-        response.writeHead(302, { location: result.location });
-        response.end();
-        return;
-      }
-      if (result.kind === 'expired') {
-        json(response, 410, { error: 'media_expired' });
-        return;
-      }
-      if (result.kind === 'missing' || result.kind === 'pending') {
-        json(response, 404, { error: 'media_not_found' });
-        return;
-      }
-      json(response, 403, { error: 'link_invalid_or_expired' });
-      return;
-    }
-    // `open in browser` minting: hand out the capability URL at tap time.
-    const linkMatch = last.match(/^([0-9a-f-]+)\/link$/);
-    if (method === 'GET' && linkMatch && isMediaId(linkMatch[1]!)) {
-      if (!identityId) {
-        json(response, 401, { error: 'identity_required' });
-        return;
-      }
-      if (!options.objectService) {
-        json(response, 503, { error: 'object_storage_unavailable' });
-        return;
-      }
-      const link = await options.objectService.mediaLink(linkMatch[1]!);
-      if (!link) {
-        json(response, 404, { error: 'media_not_found' });
-        return;
-      }
-      json(response, 200, link);
-      return;
-    }
-    const mediaId = last;
-    // An id that is not a UUID never named a row, and must not reach the uuid
-    // cast below, where Postgres would answer a client typo with a 500.
-    if (!isMediaId(mediaId)) {
-      json(response, 404, { error: 'media_not_found' });
-      return;
-    }
-    // Object-storage branch: a ready object redirects to a fresh signed GET;
-    // the redirect itself is never cached, so every read mints its own link.
-    if (options.objectService) {
-      const object = await options.objectService.readMediaObject(mediaId);
-      if (object?.kind === 'redirect') {
-        response.writeHead(302, {
-          location: object.location!,
-          'cache-control': 'private, no-store',
-        });
-        response.end();
-        return;
-      }
-      if (object?.kind === 'expired') {
-        json(response, 410, { error: 'media_expired', ttlHours: object.ttlHours });
-        return;
-      }
-      if (object?.kind === 'pending') {
-        json(response, 404, { error: 'media_not_found' });
-        return;
-      }
-    }
-    // No bytea fallback: every file lives in `objects`. A tombstone is
-    // expired; anything else never existed for readers.
-    const expired = (
-      await options.database.query<{ retention_hours: number }>(
-        `SELECT retention_hours FROM object_expirations WHERE id=$1`,
-        [mediaId],
-      )
-    ).rows[0];
-    json(response, expired ? 410 : 404, {
-      error: expired ? 'media_expired' : 'media_not_found',
-      ...(expired ? { ttlHours: Number(expired.retention_hours) } : {}),
-    });
-    return;
-  }
-  if (url.pathname.startsWith('/v1/phone/') && !identityId) {
-    json(response, 401, { error: 'phone_token_required' });
-    return;
-  }
-
-  const operation = async (name: Parameters<PhoneHttpOperation>[0], input: Record<string, unknown>, project?: (result: unknown) => unknown) => {
-    if (['readRoomTools','readMediaMetadata','readMediaLink','readMediaPlayback'].includes(name))
-      throw new PhoneOperationError(409, { error: 'phone_socket_required' });
-    const result = await httpPhoneOperation(name, input, identityId!, phoneFamilies.get(request));
-    if (result === undefined) { response.writeHead(204); response.end(); }
-    else json(response, 200, project ? project(result) : result);
-  };
-
-  const profileVoiceMatch = url.pathname.match(
-    /^\/v1\/phone\/workspaces\/([0-9a-f-]{36})\/agents\/([a-f0-9]{64})\/(voices)$/,
-  );
-  if (profileVoiceMatch) {
-    const [, workspaceId, agentId] = profileVoiceMatch;
-    if (method === 'GET')
-      await operation('readAgentVoices', { workspaceId, agentId, ...(url.searchParams.has('roomId') ? { roomId: url.searchParams.get('roomId') } : {}) });
-    else json(response, 405, { error: 'method_not_allowed' });
-    return;
-  }
-  const voiceMatch = url.pathname.match(/^\/v1\/phone\/voice\/([0-9a-f-]{36})\/(current|state)$/);
-  if (method === 'GET' && voiceMatch) {
-    const [, id, action] = voiceMatch;
-    await operation(action === 'current' ? 'voiceCurrent' : 'voiceState', {
-      ...Object.fromEntries(url.searchParams), ...(action === 'current' ? { roomId: id } : { callId: id }),
-    });
-    return;
-  }
-  if (method === 'GET' && url.pathname === '/v1/phone/workspaces') {
-    await operation('readWorkspaces', {}); return;
-  }
-  let match = url.pathname.match(/^\/v1\/phone\/workspaces\/([0-9a-f-]+)(?:\/(members|chats|search))?$/);
-  if (method === 'GET' && match) {
-    const [, workspaceId, action] = match;
-    const query = Object.fromEntries(url.searchParams);
-    if (action === 'members')
-      await operation('readWorkspaceMembers', { ...query, workspaceId, offset: query.offset ? Number(query.offset) : undefined });
-    else if (action === 'chats') await operation('readChats', { workspaceId });
-    else if (action === 'search') await operation('searchMessages', { workspaceId, query: query.q ?? '', ...(query.before !== undefined ? { before: query.before } : {}) });
-    else await operation('readWorkspace', { workspaceId });
-    return;
-  }
-  match = url.pathname.match(/^\/v1\/phone\/workspaces\/([0-9a-f-]+)\/agents\/([0-9a-f]{64})$/);
-  if (method === 'GET' && match) {
-    await operation('readAgent', { workspaceId: match[1], agentId: match[2], ...(url.searchParams.has('workCursor') ? { workCursor: url.searchParams.get('workCursor') } : {}) }); return;
-  }
-  match = url.pathname.match(/^\/v1\/phone\/message-links\/([0-9a-f]{64})$/);
-  if (method === 'GET' && match) {
-    await operation('resolveMessageLink', { messageId: match[1] }); return;
-  }
-  const compact = wantsCompactView(request.headers[COMPACT_VIEW_HEADER]);
-  match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)(?:\/(history|outline|corners))?$/);
-  if (match) {
-    const [, roomId, action] = match;
-    if (method === 'GET' && !action) {
-      await operation('readRoom', { roomId }, result => compact ? compactRoomView(result as import('@beeline/api-contract/phone').RoomView) : result); return;
-    }
-    if (method === 'GET' && action === 'history') {
-      const query = Object.fromEntries(url.searchParams);
-      const parsed = query.before?.match(/^(\d+),([0-9a-f]{64})$/);
-      const name = query.after !== undefined ? 'readHistoryAfter' : query.around !== undefined ? 'readHistoryAround' : 'readHistory';
-      await operation(name, { roomId,
-        ...(name !== 'readHistory' ? { messageId: query.after ?? query.around } :
-          parsed ? { before: { createdAt: Number(parsed[1]), id: parsed[2] } } : {}),
-      }, result => compact ? compactRoomHistoryView(result as RoomHistoryView) : result); return;
-    }
-    if (method === 'GET' && action === 'outline') {
-      await operation('readHistoryOutline', { roomId, timeZone: url.searchParams.get('tz') ?? '' }); return;
-    }
-    if (method === 'GET' && action === 'corners') {
-      await operation('readCorners', { ...Object.fromEntries(url.searchParams), roomId, archived: url.searchParams.get('archived') === '1' }); return;
-    }
-  }
-  // Binary media uploads do not fit the socket's JSON operation envelope.
-  if (method === 'POST' && url.pathname === '/v1/phone/media') {
-    if (!options.objectService) {
-      json(response, 503, { error: 'object_storage_unavailable' });
-      return;
-    }
-    const raw = await bytes(request, options.mediaMaximumBytes + 1);
-    const mime =
-      typeof request.headers['content-type'] === 'string'
-        ? request.headers['content-type']
-        : 'application/octet-stream';
-    const name =
-      typeof request.headers['x-file-name'] === 'string'
-        ? request.headers['x-file-name']
-        : 'upload';
-    try {
-      json(
-        response,
-        201,
-        await options.phone.uploadMedia(identityId!, raw, mime, name, options.mediaMaximumBytes),
-      );
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : 'invalid upload';
-      if (reason.includes('object storage is not configured')) {
-        json(response, 503, { error: 'object_storage_unavailable' });
-        return;
-      }
-      json(response, 400, { error: 'upload_rejected', reason });
-    }
-    return;
-  }
-  // Dictation streams audio bytes to the transcriber; control operations use the socket.
-  if (method === 'POST' && url.pathname === '/v1/phone/transcriptions') {
-    if (!options.speechTranscriber) {
-      json(response, 503, { error: 'transcription_unavailable' });
-      return;
-    }
-    let audio: Buffer;
-    try {
-      audio = await bytes(request, TRANSCRIPTION_MAXIMUM_BYTES);
-    } catch {
-      console.warn('[transcription] audio over the upload limit; Groq not called');
-      json(response, 413, { error: 'audio_too_large' });
-      return;
-    }
-    if (!audio.length) {
-      json(response, 400, { error: 'audio_required' });
-      return;
-    }
-    const header = (name: string) =>
-      typeof request.headers[name] === 'string' ? (request.headers[name] as string) : undefined;
-    let prompt: string | undefined;
-    try {
-      prompt = header('x-speech-prompt') && decodeURIComponent(header('x-speech-prompt')!);
-    } catch {
-      prompt = undefined;
-    }
-    try {
-      const text = await options.speechTranscriber.transcribe({
-        audio,
-        mimeType: header('content-type') ?? 'audio/wav',
-        ...(prompt ? { prompt } : {}),
-        ...(header('x-speech-language') ? { language: header('x-speech-language')! } : {}),
-      });
-      json(response, 200, { text });
-    } catch (error) {
-      // The reason names only the provider status; audio and text are never logged.
-      console.warn('[transcription]', error instanceof Error ? error.message : 'failed');
-      json(response, 502, { error: 'transcription_failed' });
-    }
-    return;
-  }
-  match = url.pathname.match(/^\/v1\/phone\/github\/room-token\/([0-9a-f-]+)$/);
-  if (method === 'GET' && match) {
-    if (!options.github?.roomToken) throw new Error('GitHub room token service unavailable');
-    if (!(await options.phone.canReadRoom(match[1]!, identityId!))) {
-      json(response, 403, { error: 'room_access_denied' });
-      return;
-    }
-    json(response, 200, await options.github.roomToken(identityId!, match[1]!));
-    return;
-  }
-  match = url.pathname.match(/^\/v1\/phone\/operations\/([A-Za-z][A-Za-z0-9]+)$/);
-  if (method === 'POST' && match) {
-    await operation(match[1]! as Parameters<PhoneHttpOperation>[0], await body(request));
-    return;
-  }
-
-  if (method === 'POST' && url.pathname === '/v1/daemon/artifacts') {
-    const agentId = await daemonIdentity(request, options);
-    if (!agentId) {
-      await refuseDaemon(request, response, options);
-      return;
-    }
-    void options.connectionPresence?.evidence(undefined, agentId);
-    if (!options.objectService) {
-      json(response, 503, { error: 'object_storage_unavailable' });
-      return;
-    }
-    const raw = await bytes(request, ARTIFACT_MAXIMUM_BYTES + 1);
-    if (raw.length > ARTIFACT_MAXIMUM_BYTES) {
-      json(response, 413, { error: 'artifact_too_large', maximumBytes: ARTIFACT_MAXIMUM_BYTES });
-      return;
-    }
-    const mime =
-      typeof request.headers['content-type'] === 'string'
-        ? request.headers['content-type'].split(';')[0]!.trim()
-        : 'application/octet-stream';
-    const title =
-      typeof request.headers['x-artifact-title'] === 'string'
-        ? decodeArtifactTitleHeader(request.headers['x-artifact-title'])
-        : '';
-    try {
-      json(response, 201, await options.objectService.uploadArtifact(agentId, raw, mime, title));
-    } catch (error) {
-      json(response, 422, {
-        error: 'artifact_rejected',
-        reason: error instanceof Error ? error.message : 'invalid artifact',
-      });
-    }
-    return;
-  }
-  if (method === 'POST' && url.pathname === '/v1/daemon/uploads') {
-    const agentId = await daemonIdentity(request, options);
-    if (!agentId) {
-      await refuseDaemon(request, response, options);
-      return;
-    }
-    void options.connectionPresence?.evidence(undefined, agentId);
-    if (!options.objectService) {
-      json(response, 503, { error: 'object_storage_unavailable' });
-      return;
-    }
-    const input = await body(request);
-    try {
-      json(response, 201, await options.objectService.createUpload(agentId, input as never));
-    } catch (error) {
-      json(response, 422, {
-        error: 'upload_rejected',
-        reason: error instanceof Error ? error.message : 'invalid upload',
-      });
-    }
-    return;
-  }
-  match = url.pathname.match(/^\/v1\/daemon\/uploads\/([0-9a-f-]+)\/finalize$/);
-  if (method === 'POST' && match) {
-    const agentId = await daemonIdentity(request, options);
-    if (!agentId) {
-      await refuseDaemon(request, response, options);
-      return;
-    }
-    if (!options.objectService) {
-      json(response, 503, { error: 'object_storage_unavailable' });
-      return;
-    }
-    if (!isMediaId(match[1]!)) {
-      json(response, 404, { error: 'object_not_found' });
-      return;
-    }
-    try {
-      json(
-        response,
-        200,
-        await options.objectService.finalizeUpload(agentId, { objectId: match[1]! }),
-      );
-    } catch {
-      json(response, 404, { error: 'object_not_found' });
-    }
-    return;
-  }
-  if (method === 'POST' && url.pathname === '/v1/daemon/media') {
-    // Retired: the agent file-sharing path is `post_artifact` (object storage,
-    // an `objects` row, a card). The bytea `media` store takes no NEW agent
-    // writes; a 410 tells an un-upgraded daemon why instead of a bare 404.
-    const agentId = await daemonIdentity(request, options);
-    if (!agentId) {
-      await refuseDaemon(request, response, options);
-      return;
-    }
-    void options.connectionPresence?.evidence(undefined, agentId);
-    json(response, 410, {
-      error: 'media_store_retired',
-      detail:
-        'agents share files with post_artifact; the bytea media store no longer accepts agent uploads',
-    });
-    return;
-  }
-  // Error footers need fresh private context even when schema validation never
-  // dispatched an operation. This authenticated read adds no operation log entry.
-  if (method === 'GET' && url.pathname === '/v1/daemon/owed-mentions') {
-    const agentId = await daemonIdentity(request, options);
-    if (!agentId) { await refuseDaemon(request, response, options); return; }
-    json(response, 200, { owedMentions: await owedMentions(options.database, agentId) });
-    return;
-  }
-  // Supported installed helpers still use this ingress: HelperVersionGate has
-  // no mandatory minimum. Keep wire translation here, sharing DaemonService.
-  match = url.pathname.match(/^\/v1\/daemon\/operations\/([A-Za-z][A-Za-z0-9]+)$/);
-  if (method === 'POST' && match) {
-    const agentId = await daemonIdentity(request, options);
-    if (!agentId) {
-      await refuseDaemon(request, response, options);
-      return;
-    }
-    const name = match[1]!;
-    if (name === 'readCommandActivation') {
-      json(response, 409, { error: 'activation_context_socket_required' });
-      return;
-    }
-    if (name === 'getCornerAsk') {
-      json(response, 410, { error: 'getCornerAsk is retired; use order and report' });
-      return;
-    }
-    if (!DAEMON_OPERATION_NAMES.has(name as never)) {
-      json(response, 404, { error: 'unknown_daemon_operation' });
-      return;
-    }
-    const input = await body(request);
-    const evidenceRoom =
-      typeof input.roomId === 'string'
-        ? input.roomId
-        : typeof input.cornerId === 'string'
-          ? input.cornerId
-          : undefined;
-    void options.connectionPresence?.evidence(evidenceRoom, agentId);
-    const result = await options.daemon.execute(name as never, input as never, agentId);
-    let context: { _beelineOwedMentions?: Awaited<ReturnType<typeof owedMentions>> } = {};
-    // Only model tool responses need this private context. It must never turn a
-    // committed operation into a failure, and never adds a daemon operation.
-    if (request.headers['x-beeline-tool-result'] === '1') {
-      try { context = { _beelineOwedMentions: await owedMentions(options.database, agentId) }; }
-      catch { /* Keep the original tool result when its optional context is unavailable. */ }
-    }
-    json(response, 200, context._beelineOwedMentions ? { _beelineToolResult: result, ...context } : result);
-    return;
-  }
-  json(response, 404, { error: 'not_found' });
-}
-
-function requestErrorStatus(error: unknown): number {
-  if (error instanceof PhoneOperationError) return error.status;
-  const message = error instanceof Error ? error.message : 'request failed';
-  let status =
-    error instanceof WorkflowAuthorizationError ||
-    error instanceof CommandRefusalError ||
-    error instanceof WorkspaceSkillNotFoundError
-      ? error.status
-      : institutionalMemoryErrorStatus(message) ??
-        ((message.startsWith('corner brief attachment ') &&
-            message.endsWith('is missing or unavailable in this Room')) ||
-          message.includes('required') ||
-          message.includes('invalid') ||
-          message.includes('too large') ||
-          message.includes('size is outside')
-        ? 400
-        : message === 'github_account_mismatch' ||
-            message.includes('already linked') ||
-            message.includes('already claimed') ||
-            message.includes('conflict') ||
-            message.includes('checks are failing')
-          ? 409
-          : message.includes('access denied') ||
-              message.includes('command output authority rejected') ||
-              message.includes('command turn cancelled') ||
-              message.includes('command already completed') ||
-              message.includes('manager') ||
-              message.includes(AGENT_OWNER_AUTHORITY_MESSAGE) ||
-              message.includes(WORKSPACE_ADMIN_AUTHORITY_MESSAGE) ||
-              message.includes(SPENDING_OWNER_AUTHORITY_MESSAGE) ||
-              message.includes('yolo cannot be enabled in a public workspace') ||
-              message.includes(YOLO_AUTHORITY_MESSAGE) ||
-              message.includes(CONNECTOR_OFFER_AUTHORITY_MESSAGE) ||
-              message.includes(CONNECTOR_OFFER_WALLET_AUTHORITY_MESSAGE)
-            ? 403
-            : message.includes('not found')
-              ? 404
-              : 503);
-  // GitHub's own outage or rate limit is a bad gateway, not this server
-  // being unavailable; the message already names GitHub's status.
-  if (error instanceof GitHubHttpError && (error.status >= 500 || error.status === 429 || error.rateLimited)) {
-    status = 502;
-  }
-  return status;
 }

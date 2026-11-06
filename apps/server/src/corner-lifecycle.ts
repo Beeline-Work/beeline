@@ -1,40 +1,22 @@
-import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
 import { deleteCornerWakeSources } from './corner-wake-cleanup.js';
 import { releaseArchivedCornerHolds } from './corner-holds.js';
 import { workingTurnFreshSql } from './turn-ownership.js';
-import { cornerLifecycleSql } from './corner-github-cache.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
-import { REVIEW_VERDICT_SQL, missingReviewAttachments } from './review-evidence.js';
-import { cornerReviewerSql } from './corner-reviewer.js';
-import { cornerReportWaiting } from './corner-state.js';
-import { CornerAccessDatabase } from './corner-access-database.js';
-import { isZeroCheckCommander } from './corner-merge-approval.js';
 import { reportToCommander } from './commander.js';
-import type { activeCornerHolds } from './corner-holds.js';
 import { createHash } from 'node:crypto';
-import type {
-  CornerLifecycleView,
-  CornerStateFacts,
-  DerivedCornerState,
-} from '@beeline/api-contract/phone';
+import { CornerLifecycleView } from '@beeline/api-contract/phone';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
-import {
-  insertAgentCommand as createAgentCommand,
-  refuseVerdictedReviewerWake,
-  currentCornerCommandTargetSql,
-  repairReviewerCornerMembership,
-  type CommandRow,
-} from './agent-command.js';
-import { assertCornerBriefAllowsMerge } from './corner-brief.js';
-import { cornerImplementerSql } from './corner-worker.js';
+import { insertAgentCommand as createAgentCommand, refuseVerdictedReviewerWake, currentCornerCommandTargetSql, type CommandRow } from './agent-command.js';
 import { firstHealthyAgent } from './agent-health.js';
 import { ensureSystemIdentity, GITHUB_SUBJECT, systemLine } from './system-line.js';
-import { abandonCornerWorkflowRuns, workflowRunLockKey } from './workflow-runs.js';
-
+import { abandonCornerWorkflowRuns } from './workflow-runs.js';
 import { cornerIdleSql, type CornerIdleRow } from './corner-idle.js';
+import { CornerCheckObservation, CornerMachine, transitionCorner, loadCorner, CornerMachineFacts, CornerRow, CornerMachineEvent, deriveCornerState, planCornerCheckObservation, checksSettled, checksRestarted, actionsJobId } from './corner-lifecycle-read-state.js';
+import { lockCornerArchivalAuthority, lockCornerLifecycle, CornerAdvance, blockingReview, cornerMergeGate, independentReviewerConfigured, RevisionWake, Applied, noteReviewDispatchFailure, reachableReviewer, backfillCornerLifecycleRuns, archiveCornerState, cornerReviewWokenSql, CornerMergeGate, CornerMergeabilityInput, cornerMergeability, confirmCornerMergeAuthority, deleteStoredCornerWorkflows } from './corner-lifecycle-review-state.js';
+import { OK, reviewChecksSql, CORNER_LIFECYCLE_SLUG, CORNER_MACHINE_SCHEMA } from './corner-lifecycle-values.js';
 
-export const CORNER_LIFECYCLE_SLUG = 'corner';
+
 
 export type CornerEvent =
   | {
@@ -62,22 +44,6 @@ export type CornerEvent =
   | { kind: 'reconcile' }
   | { kind: 'command'; command: Parameters<typeof createAgentCommand>[1] };
 
-type CornerRow = {
-  machine: CornerMachine | null;
-  parent_id: string;
-  worker_agent_id: string | null;
-  lifecycle: CornerLifecycleView;
-  archived: boolean;
-  locked: boolean;
-  configured_reviewer_id: string | null;
-  configured_reviewer_kind: string | null;
-  configured_reviewer_name: string | null;
-  reviewer_parent_member: boolean;
-};
-
-export async function lockCornerLifecycle(db: SqlDatabase, cornerId: string): Promise<void> {
-  await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [workflowRunLockKey(cornerId)]);
-}
 
 export const CORNER_GITHUB_CACHE_MIRROR_SQL = `
 INSERT INTO corner_github_cache(corner_id,lifecycle)
@@ -103,6 +69,7 @@ CREATE TRIGGER corner_github_cache_mirror AFTER INSERT OR UPDATE OF lifecycle ON
   FOR EACH ROW EXECUTE FUNCTION corner_github_cache_mirror();
 `;
 
+
 /**
  * The corner's own row: created once with the corner, then changed only by
  * this module (its lock and its reviewer). Its GitHub display cache row starts
@@ -120,6 +87,7 @@ export async function createCornerFacts(db: SqlDatabase, cornerId: string): Prom
   );
 }
 
+
 /** A person's lock: merges then keep the corner open (`corner lock`). */
 export async function setCornerLockedFact(
   db: SqlDatabase,
@@ -129,12 +97,14 @@ export async function setCornerLockedFact(
   await db.query(`UPDATE corner_facts SET locked=$2 WHERE corner_id=$1`, [cornerId, locked]);
 }
 
+
 /** Account deletion: corners whose own reviewer was a deleted agent fall back to their Room's. */
 export async function clearCornerReviewers(db: SqlDatabase, agentIds: string[]): Promise<void> {
   await db.query(`UPDATE corner_facts SET reviewer_agent_id=NULL WHERE reviewer_agent_id=ANY($1)`, [
     agentIds,
   ]);
 }
+
 
 /** The corner's own reviewer; returns whether it changed. Callers check authority first. */
 export async function setCornerReviewerFact(
@@ -153,407 +123,6 @@ export async function setCornerReviewerFact(
   );
 }
 
-async function loadCorner(db: SqlDatabase, cornerId: string): Promise<CornerRow | undefined> {
-  db = new CornerAccessDatabase(db);
-  return (
-    await db.query<CornerRow>(
-      `SELECT fact.machine,corner.parent_id,
-              ${cornerImplementerSql('fact', 'corner')} worker_agent_id,
-              ${cornerLifecycleSql('fact.corner_id')},fact.locked,
-              corner.archived_at IS NOT NULL archived,
-              ${cornerReviewerSql()} configured_reviewer_id,
-              configured.kind configured_reviewer_kind,
-              configured.name configured_reviewer_name,
-              EXISTS (
-                SELECT 1 FROM memberships reviewer_membership
-                JOIN identities reviewer ON reviewer.id=reviewer_membership.identity_id
-                  AND reviewer.kind='agent'
-                WHERE reviewer_membership.room_id=parent.id
-                  AND reviewer_membership.identity_id=${cornerReviewerSql()}
-                  AND reviewer_membership.removed_at IS NULL
-              ) reviewer_parent_member
-       FROM corner_facts fact
-       JOIN rooms corner ON corner.id=fact.corner_id
-       JOIN rooms parent ON parent.id=corner.parent_id
-       LEFT JOIN identities configured ON configured.id=${cornerReviewerSql()}
-       WHERE fact.corner_id=$1
-       FOR UPDATE OF fact`,
-      [cornerId],
-    )
-  ).rows[0];
-}
-
-type CornerCheckSummary = NonNullable<CornerLifecycleView['checksSummary']> & {
-  reportedHeadSha?: string;
-  reportedFailing?: readonly string[];
-  failureFollowupSent?: boolean;
-  partialRepairSent?: boolean;
-  attempt?: number;
-  statusChangedAt?: number;
-};
-type CornerCheckObservation = {
-  headSha: string;
-  previousHeadSha?: string;
-  prior?: CornerCheckSummary;
-  next: CornerCheckSummary;
-  workerBusy: boolean;
-};
-type CornerChecksPlan = {
-  sameReportedHead: boolean;
-  newAttempt: boolean;
-  attempt: number;
-  newFailures: string[];
-  followup: boolean;
-  partialRepair: boolean;
-  reportFailure: boolean;
-  storedSummary: CornerCheckSummary;
-};
-
-/** The only corner state machine. Provider facts and execution receipts are inputs;
- * every transition, wake and notification is decided here, including recovery. */
-export type CornerMachine = {
-  headSha?: string;
-  pullRequest?: number;
-  effects?: string[];
-  outcome?: 'landed' | 'closed';
-} & (
-  | { state: 'working' | 'idle' | 'archived' }
-  | { state: 'review'; phase: 'checks' | 'reviewer' }
-  | { state: 'waiting'; reason: 'blocked' | 'user_action' | 'question' }
-);
-type MachineWake = {
-  kind:
-    | 'open'
-    | 'revision'
-    | 'checks-failed'
-    | 'review'
-    | 'review-findings'
-    | 'review-no-verdict'
-    | 'review-gap'
-    | 'land'
-    | 'merge-refused'
-    | 'merge-conflict'
-    | 'command';
-  key: string;
-};
-type MachineNotification = { kind: 'idle' | 'waiting' | 'draft'; key: string };
-export type CornerMachineFacts = CornerStateFacts & {
-  headSha?: string;
-  approved?: boolean;
-  mergeHeld?: boolean;
-  mergeConflictDelivered?: boolean;
-  lostEffects?: string[];
-  draftReadyFailure?: boolean;
-  waitReason?: 'blocked' | 'user_action' | 'question';
-  reviewerConfigured?: boolean;
-  reviewEnded?: { id: string; findings?: string; reported?: boolean };
-  idleSince?: string;
-  idleEligible?: boolean;
-  checkSourceId?: string;
-  checkFollowup?: boolean;
-  checkAttempt?: number;
-};
-export type CornerMachineEvent = { facts: CornerMachineFacts; event: CornerEvent };
-export function transitionCorner(
-  current: CornerMachine,
-  { facts: f, event }: CornerMachineEvent,
-): {
-  state: CornerMachine;
-  wakes: MachineWake[];
-  notifications: MachineNotification[];
-  suppression?: string;
-  checksPlan?: CornerChecksPlan;
-} {
-  if (event.kind === 'check-observation') {
-    const { headSha, previousHeadSha, prior, next, workerBusy } = event.observation;
-    const sameReportedHead = prior?.reportedHeadSha === headSha;
-    const newAttempt = sameReportedHead && checksRestarted(prior.checks, next.checks);
-    const attempt = sameReportedHead ? (prior.attempt ?? 0) + (newAttempt ? 1 : 0) : 0;
-    const reported = sameReportedHead && !newAttempt ? (prior.reportedFailing ?? []) : [];
-    const newFailures = next.failing.filter((name) => !reported.includes(name));
-    const firstFailure = next.status === 'failing' && newFailures.length > 0 && !reported.length;
-    const followup =
-      next.status === 'failing' &&
-      reported.length > 0 &&
-      checksSettled(next.checks) &&
-      !checksSettled(prior?.checks ?? []) &&
-      !(sameReportedHead && !newAttempt && prior.failureFollowupSent);
-    // A later failed job, after the first repair turn has ended, wakes
-    // once without waiting for the checks that are still running.
-    const partialRepair =
-      !followup &&
-      next.status === 'failing' &&
-      !checksSettled(next.checks) &&
-      reported.length > 0 &&
-      newFailures.length > 0 &&
-      !workerBusy &&
-      !(sameReportedHead && !newAttempt && prior.partialRepairSent);
-    const reportFailure = firstFailure || followup || partialRepair;
-    const storedSummary = {
-      ...next,
-      // Repeated reads of an unchanged status do not start new idle work.
-      statusChangedAt:
-        previousHeadSha === headSha &&
-        prior?.status === next.status &&
-        !newAttempt &&
-        JSON.stringify((prior.checks ?? []).map((check) => [check.name, check.status]).sort()) ===
-          JSON.stringify(next.checks.map((check) => [check.name, check.status]).sort())
-          ? ((prior as typeof prior & { statusChangedAt?: number })?.statusChangedAt ??
-            prior.fetchStartedAt ??
-            prior.updatedAt)
-          : next.fetchStartedAt,
-      attempt,
-      reportedHeadSha: headSha,
-      reportedFailing: reportFailure ? [...reported, ...newFailures] : reported,
-      failureFollowupSent: Boolean(
-        (sameReportedHead && !newAttempt && prior.failureFollowupSent) || followup,
-      ),
-      partialRepairSent: Boolean(
-        (sameReportedHead && !newAttempt && prior.partialRepairSent) || partialRepair,
-      ),
-    };
-    return {
-      state: current,
-      wakes: [],
-      notifications: [],
-      checksPlan: {
-        sameReportedHead,
-        newAttempt,
-        attempt,
-        newFailures,
-        followup,
-        partialRepair,
-        reportFailure,
-        storedSummary,
-      },
-    };
-  }
-  const headSha = f.headSha ?? f.lifecycle?.pr?.headSha ??
-    (event.kind === 'push' ? event.headSha : event.kind !== 'pull-request-closed' &&
-      f.lifecycle?.checksSummary?.status === 'unknown' && f.lifecycle.checksSummary.fetchStartedAt === undefined
-      ? current.headSha : undefined);
-  const pullRequest = f.lifecycle?.pr?.number;
-  const redKey = `red:${headSha}:${f.checkAttempt ?? 0}:${f.checkFollowup || (event.kind === 'checks' && event.followup) ? f.checkSourceId : 'first'}`;
-  // A receipt cannot suppress a wake whose durable command was lost.
-  const effects = (current.headSha === headSha && current.pullRequest === pullRequest
-    ? [...(current.effects ?? [])] : [])
-    .filter(key => (key !== `merge-conflict:${headSha ?? ''}` || f.mergeConflictDelivered !== false) &&
-      !(f.lostEffects ?? []).includes(key));
-  const base = {
-    ...(headSha ? { headSha } : {}),
-    ...(pullRequest ? { pullRequest } : {}),
-    effects,
-  };
-  const wakes: MachineWake[] = [];
-  const notifications: MachineNotification[] = [];
-  const wake = (kind: MachineWake['kind'], key = `${kind}:${headSha ?? ''}`) => {
-    if (!effects.includes(key)) wakes.push({ kind, key });
-  };
-  const notify = (kind: MachineNotification['kind'], key: string) => {
-    if (!effects.includes(key)) notifications.push({ kind, key });
-  };
-  const checks = f.lifecycle?.checks ?? f.lifecycle?.checksSummary?.status;
-  const checksUnderway =
-    checks === 'pending' ||
-    f.lifecycle?.checksSummary?.checks.some((check) => check.status === 'pending') ||
-    (Boolean(f.lifecycle?.pr || headSha) &&
-      f.lifecycle?.checksSummary?.status === 'unknown' &&
-      f.lifecycle.checksSummary.total === 0 &&
-      f.lifecycle.checksSummary.fetchStartedAt === undefined);
-  const providerEnded = f.lifecycle?.outcome === 'abandoned' || f.lifecycle?.lifecycle === 'done';
-  const merged = f.lifecycle?.outcome === 'landed' || Boolean(f.lifecycle?.pr?.mergedAt);
-  if (
-    event.kind === 'command' &&
-    (current.state === 'archived' || f.archived) &&
-    !['stop', 'restart'].includes(event.command.action ?? 'input')
-  )
-    return { state: current, wakes, notifications, suppression: 'archived' };
-  if (event.kind === 'command') return { state: current, wakes: [{ kind: 'command', key: '' }], notifications };
-  if (current.state === 'archived')
-    return !f.archived && (event.kind === 'closed' || event.kind === 'merged')
-      ? { state: event.kind === 'merged' ? { ...current, outcome: 'landed' } : current, wakes, notifications }
-      : { state: current, wakes, notifications, suppression: 'archived' };
-  if (
-    f.archived ||
-    event.kind === 'closed' ||
-    (!f.locked && (providerEnded || merged || event.kind === 'merged'))
-  )
-    return {
-      state: {
-        ...base,
-        state: 'archived',
-        outcome:
-          event.kind === 'merged' || merged || current.outcome === 'landed' ? 'landed' : 'closed',
-      },
-      wakes,
-      notifications,
-    };
-  if (event.kind === 'checks-pending' && !checksUnderway) return { state: current, wakes, notifications, suppression: 'checks are not pending' };
-  if (event.kind === 'checks' && (checks !== event.result || f.checkSourceId === 'stale'))
-    return { state: current, wakes, notifications, suppression: 'stale check event' };
-  if (
-    (event.kind === 'approval' && event.headSha !== headSha) ||
-    (event.kind === 'push' && event.headSha !== headSha) ||
-    (event.kind === 'merge-refused' && event.headSha !== headSha)
-  )
-    return { state: current, wakes, notifications, suppression: 'stale head' };
-  if (event.kind === 'approval' && checks === 'passing' && !effects.includes('approved-on-green')) effects.push('approved-on-green');
-  if (f.approved && f.draftReadyFailure && checks === 'passing') notify('draft', `draft:${headSha}`);
-  if (event.kind === 'open' && event.command)
-    wake('open', `open:${event.command.privatePayload?.openKey ?? ''}`);
-  if (event.kind === 'brief-revised') wake('revision', `revision:${event.revision}`);
-  if (event.kind === 'merge-refused')
-    wake(
-      'merge-refused',
-      `refused:${event.headSha}:${event.reason}:${event.confirmedUnmerged ? f.checkSourceId : ''}`,
-    );
-  // Explicit waits remain visible even while CI or a receipt is running. Red
-  // and green facts still retain their existing admission through that wait.
-  if (f.reviewEnded && headSha && !f.approved && !f.turnRunning && !f.blocker)
-    wake(
-      f.reviewEnded.findings ? 'review-findings' : 'review-no-verdict',
-      `handback:${headSha}:${f.reviewEnded.id}`,
-    );
-  if (checks === 'failing' && f.checkSourceId && (!f.turnRunning || event.kind === 'checks'))
-    wake(
-      'checks-failed',
-      redKey,
-    );
-  if (f.lifecycle?.pr?.mergeability === 'dirty') wake('merge-conflict');
-  if (
-    checks === 'passing' &&
-    headSha &&
-    f.lifecycle?.pr?.mergeability !== 'dirty'
-  ) {
-    if (f.approved) {
-      if (!f.mergeHeld && !f.reviewerActive && event.kind !== 'approval' && !effects.includes('approved-on-green')) wake('land');
-    } else if (!f.turnRunning && !f.reviewEnded && !f.reviewerActive) {
-      if (f.reviewerConfigured) wake('review');
-      else if (!f.blocker) wake('review-gap');
-    }
-  }
-  let state: CornerMachine;
-  if (
-    f.blocker &&
-    (f.blocker.blocker?.kind !== 'merge-hold' ||
-      (!f.turnRunning &&
-        !f.reviewerActive &&
-        !checksUnderway &&
-        !wakes.some((w) => w.kind === 'review')))
-  ) {
-    const reason =
-      f.waitReason ??
-      (f.blocker.reason === 'question'
-        ? 'question'
-        : f.blocker.reason === 'approve' || f.blocker.reason === 'connect'
-          ? 'user_action'
-          : 'blocked');
-    state = { ...base, state: 'waiting', reason };
-    notify('waiting', `waiting:${f.blocker.itemId ?? reason}`);
-  } else if (f.turnRunning || wakes.some((w) => !['review', 'review-gap'].includes(w.kind)))
-    state = { ...base, state: 'working' };
-  else if (
-    f.reviewerActive ||
-    wakes.some((w) => w.kind === 'review') ||
-    (checks === 'passing' &&
-      Boolean(headSha) &&
-      f.reviewerConfigured !== undefined &&
-      !f.reviewEnded &&
-      !f.approved)
-  )
-    state = { ...base, state: 'review', phase: 'reviewer' };
-  else if (checksUnderway) state = { ...base, state: 'review', phase: 'checks' };
-  else {
-    state = { ...base, state: 'idle' };
-    if (f.idleEligible && f.idleSince) notify('idle', `idle:${f.idleSince}`);
-  }
-  return { state, wakes, notifications };
-}
-
-/** Compatibility input adapter. All badge decisions use the machine above. */
-export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
-  const { state } = transitionCorner({ state: 'idle' }, { facts, event: { kind: 'reconcile' } });
-  return {
-    state: state.state,
-    ...(state.state === 'waiting' && facts.blocker ? facts.blocker : {}),
-  };
-}
-
-/** Emit a provider observation into the same transition table before writing its fact. */
-export function planCornerCheckObservation(observation: CornerCheckObservation): CornerChecksPlan {
-  return transitionCorner(
-    { state: 'idle' },
-    {
-      facts: { archived: false, turnRunning: false },
-      event: { kind: 'check-observation', observation },
-    },
-  ).checksPlan!;
-}
-
-/** No check on the head is still running. */
-export function checksSettled(checks: readonly { status: string }[] | undefined): boolean {
-  return !checks?.some((check) => check.status === 'pending');
-}
-
-/** A new Actions job also identifies a rerun whose start webhook was missed. */
-export function checksRestarted(
-  previous: readonly { name: string; status: string; url?: string }[] | undefined,
-  current: readonly { name: string; status: string; url?: string }[],
-): boolean {
-  if (!previous?.length || !checksSettled(previous)) return false;
-  return (
-    !checksSettled(current) ||
-    current.some((check) => {
-      const before = previous.find((item) => item.name === check.name);
-      return Boolean(
-        before?.url &&
-        check.url &&
-        actionsJobId(before.url) &&
-        actionsJobId(check.url) &&
-        actionsJobId(before.url) !== actionsJobId(check.url),
-      );
-    })
-  );
-}
-
-export function actionsJobId(url: string | undefined): number | undefined {
-  const match = url?.match(/^https:\/\/github\.com\/[^/]+\/[^/]+\/actions\/runs\/\d+\/job\/(\d+)(?:[/?#]|$)/);
-  const id = match ? Number(match[1]) : undefined;
-  return id && Number.isSafeInteger(id) ? id : undefined;
-}
-
-type RevisionWake = { queued: boolean; agentId?: string; reason?: string };
-export type CornerAdvance = {
-  archived?: boolean;
-  state: string | undefined;
-  accepted: boolean;
-  wake?: RevisionWake;
-  command?: CommandRow;
-};
-type Applied = { ok: true; wake?: RevisionWake };
-const OK: Applied = { ok: true };
-
-/** Expand only: old lifecycle cards remain inert for the previous image. */
-export const CORNER_MACHINE_SCHEMA = `
-ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS machine jsonb;
-`;
-
-/** Startup/data migration admission uses committed facts only, never GitHub. */
-export async function backfillCornerLifecycleRuns(db: SqlDatabase): Promise<number> {
-  const rows = (
-    await db.query<{ corner_id: string }>(
-      'SELECT corner_id FROM corner_facts WHERE machine IS NULL',
-    )
-  ).rows;
-  for (const row of rows) await advanceCorner(db, row.corner_id, { kind: 'reconcile' });
-  return rows.length;
-}
-
-/** Archival writers take lifecycle first, then authority before command or
- * Room/member locks. Acquiring only at the archival trigger is too late. */
-export async function lockCornerArchivalAuthority(database: SqlDatabase): Promise<void> {
-  await database.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [ROUTER_AUTHORITY_LOCK]);
-}
 
 /**
  * Cancels every pending or claimed input/resume/restart command for a corner, and any
@@ -598,7 +167,8 @@ export async function cancelCornerAgentCommands(database: SqlDatabase, cornerId:
 }
 
 
-async function archiveCorner(database: SqlDatabase, cornerId: string): Promise<boolean> {
+
+export async function archiveCorner(database: SqlDatabase, cornerId: string): Promise<boolean> {
   return database.transaction(async database => {
     await lockCornerLifecycle(database, cornerId);
     await lockCornerArchivalAuthority(database);
@@ -615,10 +185,6 @@ async function archiveCorner(database: SqlDatabase, cornerId: string): Promise<b
   });
 }
 
-/** A confirmed merge is an event; callers never write archive state themselves. */
-export async function archiveCornerState(database: SqlDatabase, cornerId: string): Promise<boolean> {
-  return (await advanceCorner(database, cornerId, { kind: 'merged', contents: {} })).archived === true;
-}
 
 export async function advanceCorner(
   database: SqlDatabase,
@@ -1041,18 +607,9 @@ export async function advanceCorner(
   });
 }
 
-/** Delivery diagnostic reads exact-target command evidence, never the broad Review badge. */
-export function cornerReviewWokenSql(cornerId: string): string {
-  return `EXISTS(SELECT 1 FROM agent_commands review JOIN rooms corner ON corner.id=review.room_id
-    JOIN rooms parent ON parent.id=corner.parent_id JOIN corner_github_cache cache ON cache.corner_id=corner.id WHERE corner.id=${cornerId}
-      AND review.agent_id=${cornerReviewerSql()} AND review.action='input'
-      AND review.state IN ('pending','claimed','complete') AND review.review_context->>'purpose' IS NULL
-      AND review.review_context->>'headSha'=cache.lifecycle->'pr'->>'headSha'
-      AND review.review_context->'pullRequest'=cache.lifecycle->'pr'->'number')`;
-}
 
 /** Zero checks need the commander's yes; other review gaps retain their handback. */
-async function noteMissingReviewer(
+export async function noteMissingReviewer(
   db: SqlDatabase,
   cornerId: string,
   corner: CornerRow,
@@ -1093,12 +650,13 @@ async function noteMissingReviewer(
   );
 }
 
+
 /**
  * One handback for every review gap. The implementer owns arranging another
  * review or reporting the blocker up the chain; a passive transcript note
  * alone cannot make that happen. A stable episode key dedupes fact replays.
  */
-async function noteReviewBlocked(
+export async function noteReviewBlocked(
   db: SqlDatabase,
   cornerId: string,
   corner: CornerRow,
@@ -1141,29 +699,9 @@ async function noteReviewBlocked(
   return { ok: true, wake: wakeResult };
 }
 
-async function noteReviewDispatchFailure(
-  db: SqlDatabase,
-  cornerId: string,
-  headSha: string,
-  reason: string,
-): Promise<void> {
-  await reportToCommander(
-    db,
-    cornerId,
-    SYSTEM_IDENTITY_ID,
-    systemMessage('corner-lifecycle.blocked', reason),
-    undefined,
-    createHash('sha256').update(`review-dispatch:${cornerId}:${headSha}:${reason}`).digest('hex'),
-  );
-}
-
-// Compare check results, not refresh timestamps, attempts or run URLs.
-const reviewChecksSql = `jsonb_build_object('status',lifecycle->>'checks','checks',
-  (SELECT jsonb_agg(jsonb_build_object('name',item->>'name','status',item->>'status') ORDER BY item->>'name')
-   FROM jsonb_array_elements(COALESCE(lifecycle->'checksSummary'->'checks','[]'::jsonb)) item))`;
 
 /** Exhausted empty reviews are a private missing-verdict handback, never a completed review. */
-async function noteMissingReviewVerdict(
+export async function noteMissingReviewVerdict(
   db: SqlDatabase,
   cornerId: string,
   corner: CornerRow,
@@ -1204,66 +742,8 @@ async function noteMissingReviewVerdict(
   };
 }
 
-/**
- * The reviewer's finished review of this head (callers have already checked
- * for an approval on the head), while the corner was still in review. Another
- * review wake for the same head would only repeat that verdict. A later brief
- * revision does not reopen it: the code is unchanged. A new head does.
- * Delivered failed/blocked reports retain their head even if checks changed
- * during the turn; a failed execution without a delivered decision does not.
- */
-export async function blockingReview(
-  db: SqlDatabase,
-  cornerId: string,
-  headSha: string | null,
-): Promise<string | undefined> {
-  if (!headSha) return undefined;
-  return (
-    await db.query<{ id: string }>(
-      `SELECT command.id FROM agent_commands command
-       JOIN rooms corner ON corner.id=command.room_id
-       JOIN rooms parent ON parent.id=corner.parent_id
-       LEFT JOIN messages source ON source.id=command.source_message_id
-       JOIN agent_turns turn ON turn.room_id=command.room_id
-         AND turn.agent_id=command.agent_id AND turn.request_id=command.turn_request_id
-       LEFT JOIN LATERAL (SELECT true delivered FROM agent_commands repair
-         WHERE repair.room_id=command.room_id AND repair.parent_command_id=command.id AND repair.reason='order'
-           AND repair.private_payload->>'authorId'=command.agent_id
-           AND repair.review_context->>'purpose'='repair'
-           AND repair.review_context->>'headSha'=$2
-           AND repair.review_context->'pullRequest'=command.review_context->'pullRequest'
-           AND repair.private_payload->>'text' ~* $3 LIMIT 1) repair_verdict ON true
-       WHERE command.room_id=$1 AND command.action='input'
-         AND (command.state='complete' AND turn.status='complete'
-           OR COALESCE(command.private_payload->>'reportedOutcome',command.report_outcome) IN ('failed','blocked') OR repair_verdict.delivered)
-         AND (EXISTS (SELECT 1 FROM messages verdict
-           WHERE verdict.room_id=command.room_id AND verdict.author_id=command.agent_id
-             AND (verdict.id=command.result_message_id OR verdict.request_id=command.turn_request_id
-               OR verdict.id IN (SELECT jsonb_array_elements_text(COALESCE(command.review_context->'reportIds','[]'::jsonb))))
-             AND verdict.deleted_at IS NULL AND verdict.text ~* $3)
-           OR EXISTS (SELECT 1 FROM agent_commands report
-             WHERE report.id IN (SELECT jsonb_array_elements_text(COALESCE(command.review_context->'reportIds','[]'::jsonb)))
-               AND report.private_payload->>'authorId'=command.agent_id AND report.private_payload->>'text' ~* $3)
-           OR repair_verdict.delivered)
-         AND command.agent_id=${cornerReviewerSql()}
-         AND (command.reason='corner_review_dispatch'
-           OR (command.reason IN ('agent_tag','order') AND command.review_context IS NOT NULL
-             AND command.review_context->>'purpose' IS DISTINCT FROM 'repair')
-           OR (command.reason='subscribed_event' AND source.system_event->>'kind'='check-passed'))
-         AND command.review_context->>'headSha'=$2
-         AND command.review_context->'pullRequest'=(
-           SELECT lifecycle->'pr'->'number' FROM corner_github_cache WHERE corner_id=$1)
-       ORDER BY command.created_at DESC,command.id DESC LIMIT 1`,
-      [
-        cornerId,
-        headSha,
-        `${REVIEW_VERDICT_SQL}|(^|\\n)[[:space:]]*blocked:[[:space:]]*[^[:space:]]`,
-      ],
-    )
-  ).rows[0]?.id;
-}
 
-async function queueReviewerCommand(
+export async function queueReviewerCommand(
   db: SqlDatabase,
   input: Parameters<typeof createAgentCommand>[1],
 ): Promise<{ command?: CommandRow; error?: string; blocked?: boolean }> {
@@ -1344,310 +824,50 @@ async function queueReviewerCommand(
     };
   }
 }
+export { CORNER_LIFECYCLE_SLUG } from './corner-lifecycle-values.js';
 
-/** A reviewer is configured and is not the implementer it would review. */
-function independentReviewerConfigured(corner: CornerRow): boolean {
-  return (
-    Boolean(corner.configured_reviewer_id) &&
-    corner.configured_reviewer_id !== corner.worker_agent_id
-  );
-}
+export { lockCornerLifecycle } from './corner-lifecycle-review-state.js';
 
-/**
- * Which reviewer a green head wakes, or undefined (after naming the gap in the
- * corner) when the configured reviewer cannot be reached. A configured
- * reviewer who is not a current member is never "no reviewer": it does not
- * fall through to the no-reviewer path.
- */
-async function reachableReviewer(
-  db: SqlDatabase,
-  cornerId: string,
-  corner: CornerRow,
-  sourceMessageId: string,
-): Promise<string | undefined> {
-  const reviewerId = corner.configured_reviewer_id;
-  if (!reviewerId || reviewerId === corner.worker_agent_id) return undefined;
-  if (!corner.reviewer_parent_member) {
-    await noteUnreachableReviewer(db, {
-      cornerId,
-      sourceMessageId,
-      reviewerId,
-      reviewerKind: corner.configured_reviewer_kind,
-      reviewerName: corner.configured_reviewer_name,
-      reason: REVIEWER_NOT_PARENT_MEMBER,
-    });
-    return undefined;
-  }
-  return (await readableByReviewer(db, cornerId, reviewerId, sourceMessageId))
-    ? reviewerId
-    : undefined;
-}
+export type { CornerMachine } from './corner-lifecycle-read-state.js';
 
-/**
- * Dispatch only when the reviewer can read the corner; a missing projection
- * is repaired, an unreachable reviewer is named instead of rerouting the
- * review to the owner (whose daemon would post it under the owner's name).
- */
-async function readableByReviewer(
-  db: SqlDatabase,
-  cornerId: string,
-  reviewerAgentId: string,
-  sourceMessageId: string,
-): Promise<boolean> {
-  if (await repairReviewerCornerMembership(db, cornerId, reviewerAgentId)) return true;
-  const reviewer = (
-    await db.query<{ kind: string; name: string }>(`SELECT kind,name FROM identities WHERE id=$1`, [
-      reviewerAgentId,
-    ])
-  ).rows[0];
-  await noteUnreachableReviewer(db, {
-    cornerId,
-    sourceMessageId,
-    reviewerId: reviewerAgentId,
-    reviewerKind: reviewer?.kind ?? null,
-    reviewerName: reviewer?.name ?? null,
-    reason: REVIEWER_NOT_CORNER_MEMBER,
-  });
-  return false;
-}
+export type { CornerMachineFacts } from './corner-lifecycle-read-state.js';
 
-const REVIEWER_NOT_PARENT_MEMBER = 'not a current member of the parent Room';
-const REVIEWER_NOT_CORNER_MEMBER = 'not a current member of this corner';
+export type { CornerMachineEvent } from './corner-lifecycle-read-state.js';
 
-/**
- * A configured reviewer that cannot be dispatched is named in the corner, not
- * collapsed into the no-reviewer path. Deterministic id so a later retry of
- * the same gap does not spam.
- */
-async function noteUnreachableReviewer(
-  db: SqlDatabase,
-  input: {
-    cornerId: string;
-    sourceMessageId: string;
-    reviewerId: string;
-    reviewerKind: string | null;
-    reviewerName: string | null;
-    reason: string;
-  },
-): Promise<void> {
-  console.error(
-    `[corner-lifecycle] ${input.cornerId}: reviewer ${input.reviewerId} ${input.reason}; reporting to the commander`,
-  );
-  const id = createHash('sha256')
-    .update(`beeline:${input.cornerId}:reviewer-unreachable:${input.reviewerId}:${input.reason}`)
-    .digest('hex');
-  await reportToCommander(
-    db,
-    input.cornerId,
-    input.reviewerId,
-    systemMessage(
-      'corner-lifecycle.blocked-configured-reviewer-could-not-be-reached',
-      input.reviewerName ?? input.reviewerId,
-      input.reason,
-    ),
-    undefined,
-    id,
-  );
-}
+export { transitionCorner } from './corner-lifecycle-read-state.js';
 
-export type CornerMergeGate = {
-  /** A reviewer is configured. */
-  reviewerExists: boolean;
-  /**
-   * A yes said on this exact head: a configured reviewer agent's PASS, or a
-   * current Workspace owner or admin's order, or the zero-check commander's yes.
-   */
-  approved: boolean;
-  evidenceMissing?: boolean;
-  held: boolean;
-  holds: Awaited<ReturnType<typeof activeCornerHolds>>;
-  /** Everything but checks: a yes on this head and no hold. */
-  open: boolean;
-};
+export { deriveCornerState } from './corner-lifecycle-read-state.js';
 
-export type CornerMergeabilityInput = {
-  checks: string;
-  evidenceMissing?: boolean;
-  approved: boolean;
-  held: boolean;
-  holds: readonly { id: string; holderId?: string; holderName?: string | null }[];
-  archived: boolean;
-  merged?: boolean;
-  expectedHeadSha?: string | null;
-  currentHeadSha: string;
-  mergeability?: string;
-};
+export { planCornerCheckObservation } from './corner-lifecycle-read-state.js';
 
-/** One verdict and refusal reason for both the checks read and merge command. */
-export function cornerMergeability(input: CornerMergeabilityInput) {
-  const reasons = [
-    input.merged ? 'the pull request is already merged' : '',
-    input.archived ? 'the corner is closed' : '',
-    input.expectedHeadSha && input.expectedHeadSha !== input.currentHeadSha
-      ? 'PR head changed; checks and approval must match the corner head'
-      : '',
-    input.mergeability === 'draft' ? 'PR is a draft' : '',
-    input.checks !== 'passed' ? `checks are ${input.checks}` : '',
-    input.evidenceMissing
-      ? 'missing review attachments: attach the screenshots or files claimed by the verdict'
-      : input.approved
-        ? ''
-        : 'no yes on this head',
-    input.held
-      ? `a hold stands${input.holds.length ? `: ${input.holds.map((hold) => `${hold.id}${hold.holderName ? ` (${hold.holderName}, ${hold.holderId ?? ''})` : ''}`).join('; ')}` : ''}`
-      : '',
-  ].filter(Boolean);
-  return {
-    mergeAllowed: reasons.length === 0,
-    ...(reasons.length ? { blockedReason: reasons.join('; ') } : {}),
-  };
-}
+export { checksSettled } from './corner-lifecycle-read-state.js';
 
-/**
- * The merge gate for one exact PR head, minus the checks verdict (the caller
- * supplies that live from GitHub). Shared by `pr_checks_status` and the server
- * merge, so the gate an agent reads is the gate `landCorner` merges on.
- */
-export async function cornerMergeGate(
-  db: SqlDatabase,
-  cornerId: string,
-  head: { number: number; headSha: string },
-): Promise<CornerMergeGate> {
-  db = new CornerAccessDatabase(db);
-  const rows = await db.query<{
-    configured_reviewer_id: string | null;
-    approved: boolean;
-    holds: CornerMergeGate['holds'];
-  }>(
-    `SELECT ${cornerReviewerSql()} configured_reviewer_id,
-              EXISTS (
-                SELECT 1 FROM corner_merge_approvals approval
-                WHERE approval.corner_id=fact.corner_id AND approval.pull_request_number=$2
-                  AND approval.head_sha=$3
-                  AND (
-                    -- A configured reviewer agent, still a parent member.
-                    EXISTS (
-                      SELECT 1 FROM memberships member
-                      JOIN identities reviewer ON reviewer.id=member.identity_id AND reviewer.kind='agent'
-                      WHERE member.room_id=parent.id AND member.identity_id=approval.approved_by
-                        AND approval.approved_by IS DISTINCT FROM ${cornerImplementerSql('fact', 'corner')}
-                        AND member.removed_at IS NULL
-                        AND approval.approved_by=${cornerReviewerSql()}
-                    )
-                    -- Or a current Workspace owner or admin.
-                    OR EXISTS (
-                      SELECT 1 FROM memberships workspace_member
-                      JOIN identities person ON person.id=workspace_member.identity_id AND person.kind='human'
-                      WHERE workspace_member.workspace_id=corner.workspace_id
-                        AND workspace_member.room_id IS NULL
-                        AND workspace_member.identity_id=approval.approved_by
-                        AND workspace_member.removed_at IS NULL
-                        AND workspace_member.role IN ('owner','admin')
-                    )
-                  )
-              ) approved,
-              COALESCE((SELECT jsonb_agg(jsonb_build_object('id',hold.id::text,'actorId',hold.actor_id,
-                'holderId',COALESCE(hold.set_by_agent_id,hold.actor_id),'holderName',(SELECT name FROM identities WHERE id=COALESCE(hold.set_by_agent_id,hold.actor_id)),
-                'sourceMessageId',hold.source_message_id,'sourceAuthorId',hold.source_author_id,
-                'sourceAuthorName',(SELECT name FROM identities WHERE id=hold.source_author_id),'sourceText',hold.source_text,
-                'standing',hold.standing,'setAt',hold.set_at::text) ORDER BY hold.set_at,hold.id)
-                FROM corner_merge_holds hold WHERE hold.corner_id=fact.corner_id AND hold.released_at IS NULL),
-                '[]'::jsonb) holds
-       FROM corner_facts fact
-       JOIN rooms corner ON corner.id=fact.corner_id
-       JOIN rooms parent ON parent.id=corner.parent_id
-       WHERE fact.corner_id=$1`,
-    [cornerId, head.number, head.headSha],
-  );
-  const corner = rows.rows[0];
-  if (!corner) throw new Error('corner not found');
-  if (!corner.approved && !corner.configured_reviewer_id) {
-    const approval = (
-      await db.query<{ approved_by: string }>(
-        `SELECT approved_by FROM corner_merge_approvals
-       WHERE corner_id=$1 AND pull_request_number=$2 AND head_sha=$3`,
-        [cornerId, head.number, head.headSha],
-      )
-    ).rows[0];
-    if (approval) corner.approved = await isZeroCheckCommander(db, cornerId, approval.approved_by);
-  }
-  const approval = (
-    await db.query<{ approved_by: string }>(
-      `SELECT approval.approved_by FROM corner_merge_approvals approval JOIN identities reviewer
-       ON reviewer.id=approval.approved_by AND reviewer.kind='agent'
-     WHERE corner_id=$1 AND pull_request_number=$2 AND head_sha=$3`,
-      [cornerId, head.number, head.headSha],
-    )
-  ).rows[0];
-  const evidenceMissing = Boolean(
-    approval && (await missingReviewAttachments(db, cornerId, head, approval.approved_by)),
-  );
-  if (evidenceMissing) corner.approved = false;
-  const held = corner.holds.length > 0;
-  return {
-    ...(evidenceMissing ? { evidenceMissing: true } : {}),
-    reviewerExists: Boolean(corner.configured_reviewer_id),
-    approved: corner.approved,
-    held,
-    holds: corner.holds,
-    open: corner.approved && !held,
-  };
-}
+export { checksRestarted } from './corner-lifecycle-read-state.js';
 
-/**
- * Rechecks local merge authority under the run lock after the live gate read,
- * immediately before GitHub is asked to merge: the corner is open, the head
- * is unchanged, the brief still assigns repository work, a yes stands on this
- * head and no hold stands. Nothing is stored. GitHub's expected-head merge
- * merges a pull request at most once; a concurrent second attempt reads the
- * live pull request and confirms the merge instead of reporting a refusal.
- */
-export async function confirmCornerMergeAuthority(
-  database: SqlDatabase,
-  cornerId: string,
-  headSha: string,
-  onBlocked?: (reason: string) => void,
-): Promise<boolean> {
-  const blocked = (reason: string) => {
-    onBlocked?.(reason);
-    return false;
-  };
-  return database.transaction(async (db) => {
-    await lockCornerLifecycle(db, cornerId);
-    const corner = await loadCorner(db, cornerId);
-    const pr = corner?.lifecycle.pr;
-    if (!corner) return blocked('the corner no longer exists');
-    if (corner.archived) return blocked('the corner is archived');
-    if (!pr?.number) return blocked('the corner has no pull request');
-    if (pr.headSha !== headSha) return blocked('the pull request head changed before the merge');
-    // A brief revised during the GitHub read is seen here: revisions take this lock.
-    await assertCornerBriefAllowsMerge(db, cornerId);
-    const gate = await cornerMergeGate(db, cornerId, { number: pr.number, headSha });
-    if (!gate.open)
-      return blocked(
-        gate.evidenceMissing
-          ? 'missing review attachments: attach the screenshots or files claimed by the verdict'
-          : gate.held
-            ? 'a hold stands'
-            : 'no yes on this head',
-      );
-    return true;
-  });
-}
+export { actionsJobId } from './corner-lifecycle-read-state.js';
 
-export async function deleteStoredCornerWorkflows(database: SqlDatabase): Promise<number> {
-  const deleted = await database.query(
-    `DELETE FROM workspace_skills skill
-     WHERE skill.slug=$1 AND skill.kind='workflow'
-       AND EXISTS (
-         SELECT 1 FROM workspace_skill_versions version
-         WHERE version.skill_id=skill.id AND version.extractor_version='corner-workflow-v1'
-       )`,
-    [CORNER_LIFECYCLE_SLUG],
-  );
-  if (deleted.rowCount)
-    console.log(
-      `deleteStoredCornerWorkflows: deleted ${deleted.rowCount} stored corner workflow(s)`,
-    );
-  return deleted.rowCount;
-}
+export type { CornerAdvance } from './corner-lifecycle-review-state.js';
+
+export { CORNER_MACHINE_SCHEMA } from './corner-lifecycle-values.js';
+
+export { backfillCornerLifecycleRuns } from './corner-lifecycle-review-state.js';
+
+export { lockCornerArchivalAuthority } from './corner-lifecycle-review-state.js';
+
+export { archiveCornerState } from './corner-lifecycle-review-state.js';
+
+export { cornerReviewWokenSql } from './corner-lifecycle-review-state.js';
+
+export { blockingReview } from './corner-lifecycle-review-state.js';
+
+export type { CornerMergeGate } from './corner-lifecycle-review-state.js';
+
+export type { CornerMergeabilityInput } from './corner-lifecycle-review-state.js';
+
+export { cornerMergeability } from './corner-lifecycle-review-state.js';
+
+export { cornerMergeGate } from './corner-lifecycle-review-state.js';
+
+export { confirmCornerMergeAuthority } from './corner-lifecycle-review-state.js';
+
+export { deleteStoredCornerWorkflows } from './corner-lifecycle-review-state.js';

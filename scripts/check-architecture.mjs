@@ -9,11 +9,12 @@ import path from 'node:path';
 import {
   INVARIANTS_PATH, invariantsAtRef, judgeTree, readInvariants, relaxations, strictRelaxations, validateRules,
 } from './architecture-invariants.mjs';
+import { fileLineRelaxations } from './architecture-file-lines.mjs';
 import { judgeStorage, storageRelaxations } from './architecture-storage.mjs';
 import { checkMachineConnections } from './machine-connection-boundaries.mjs';
 
 /** CI executes the candidate guard; changes remain visible in the weekly review. */
-const RUNNER_FILES = ['scripts/check-architecture.mjs', 'scripts/corner-machine-boundary.mjs', 'scripts/architecture-invariants.mjs', 'scripts/architecture-storage.mjs', 'scripts/machine-connection-boundaries.mjs', 'architecture/machine-connection-sinks.json'];
+const RUNNER_FILES = ['scripts/check-architecture.mjs', 'scripts/corner-machine-boundary.mjs', 'scripts/architecture-invariants.mjs', 'scripts/architecture-storage.mjs', 'scripts/architecture-file-lines.mjs', 'scripts/machine-connection-boundaries.mjs', 'architecture/machine-connection-sinks.json'];
 
 function changedRunnerFiles(root, base) {
   return RUNNER_FILES.filter((file) => {
@@ -40,7 +41,8 @@ async function main() {
   const root = rootFlag === -1 ? path.resolve(fileURLToPath(new URL('..', import.meta.url))) : path.resolve(args[rootFlag + 1]);
   const head = readInvariants(root);
   const errors = validateRules(head);
-  if (base) errors.push(...strictRelaxations(root, invariantsAtRef(root, base), head, file => execFileSync('git', ['show', `${base}:${file}`], { cwd: root, encoding: 'utf8', stdio: ['ignore','pipe','ignore'] })).map(item => `Strict architecture boundary: ${item}`));
+  if (base) errors.push(...strictRelaxations(root, invariantsAtRef(root, base), head, base).map(item => `Strict architecture boundary: ${item}`));
+  if (base) errors.push(...fileLineRelaxations(root, invariantsAtRef(root, base), head, base));
   if (!errors.length) errors.push(...judgeTree(root, head), ...judgeStorage(root, head.storage), ...checkMachineConnections(root,base), ...checkCornerMachine(root));
   const relaxed = base ? [
     ...relaxations(root, invariantsAtRef(root, base), head),

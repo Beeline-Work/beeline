@@ -11,6 +11,42 @@ The recovery bootstrap migrates old installations forward to one native supervis
 Cloudflare remains the public TLS endpoint; GitHub Pages becomes the origin
 for the entire website, including `/dl` and `.well-known`.
 
+## Following nightly
+
+User helpers follow latest at `/dl/manifest.json`. Set
+`BEELINE_RELEASE_CHANNEL=nightly` in the native helper service environment to
+follow `/dl/nightly/manifest.json`. `BEELINE_UPDATE_MANIFEST_URL` remains the
+highest-priority override. For the squire host's first transition, firstmate
+should set **both**:
+
+```ini
+BEELINE_RELEASE_CHANNEL=nightly
+BEELINE_UPDATE_MANIFEST_URL=https://usebeeline.app/dl/nightly/manifest.json
+```
+
+The URL override also works in the currently installed older helper, before
+it has the channel selector. Apply those variables to the squire's existing
+native service configuration and its recovery/update shell; changing a shell
+alone does not change an already running service. Firstmate applies this host
+configuration after merge; this PR does not touch the host. Removing both
+settings returns to latest on the next ordinary update reconciliation.
+
+The rolling prereleases `helper-update-channel` (latest) and
+`helper-update-channel-nightly` retain independently validated helper bytes.
+Every Pages deployment includes both directories. A nightly helper deployment
+uses the last latest website component's source commit for the static website;
+it cannot publish website changes from nightly. Latest promotion validates
+and copies the current nightly bytes, preserving their original helper version
+and SHA even when a nightly carried an older helper forward. Ordinary helper
+notices merely trigger a manifest check; each helper resolves its own channel.
+The new helper rechecks even when latest promotes a build already announced
+for nightly. Helpers predating this change can suppress that second notice:
+reconnect or run `npx usebeeline@latest update` once after the first latest
+promotion if necessary.
+The CLI's nightly npm tag is separate from these authoritative bundle channels;
+`npx usebeeline@latest update` continues to recover using the configured bundle
+manifest, without waiting for an npm tag promotion.
+
 ## Release authority and durable storage
 
 When helper code or a shared helper contract is selected,

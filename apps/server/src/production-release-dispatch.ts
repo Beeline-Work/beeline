@@ -12,7 +12,7 @@ type ReleaseDispatchInput = {
 };
 
 const RECOVERY_INPUTS = new Set([
-  'release_sha', 'release_version', 'selection', 'store_track', 'run_release_proof', 'allow_pin_restore', 'publish_listing', 'mobile_store_minimum',
+  'channel', 'release_sha', 'release_version', 'selection', 'store_track', 'run_release_proof', 'allow_pin_restore', 'publish_listing', 'mobile_store_minimum',
 ]);
 
 /** Commit provenance before sending the request; never persist provider credentials. */
@@ -27,6 +27,8 @@ export async function productionReleaseDispatch(
     throw new Error('Invalid production release inputs');
   if (inputs.publish_listing !== undefined && !['true', 'false'].includes(inputs.publish_listing))
     throw new ExpectedRefusalError('publish_listing must be true or false');
+  if (inputs.channel !== undefined && !['nightly', 'latest'].includes(inputs.channel))
+    throw new ExpectedRefusalError('channel must be nightly or latest');
   const auditMessageId = randomUUID();
   const dispatchedBy = await database.transaction(async db => {
     const agent = (await db.query<{ id: string; handle: string }>(
@@ -45,6 +47,8 @@ export async function productionReleaseDispatch(
        WHERE m.id=$1 AND m.deleted_at IS NULL`, [command.root_source_message_id, input.roomId],
     )).rows[0];
     if (!human) throw new ExpectedRefusalError('Production release requires a cited human command message from a workspace owner or admin');
+    if (inputs.channel === 'latest' && human.role !== 'owner')
+      throw new ExpectedRefusalError('Latest promotion requires a workspace owner command');
     if (inputs.publish_listing === 'true') {
       // A dedicated imperative line makes listing consent unambiguous. Routine
       // release commands, questions, quoted text and negated requests do not count.
@@ -54,7 +58,7 @@ export async function productionReleaseDispatch(
     }
     const provenance = JSON.stringify({
       agentId: agent.id, handle: agent.handle, place: input.roomId,
-      humanCommandMessageId: human.id, auditMessageId,
+      humanCommandMessageId: human.id, auditMessageId, channel: inputs.channel ?? 'nightly',
     });
     await db.query(
       `INSERT INTO messages(id,room_id,author_id,text,durable_fact)

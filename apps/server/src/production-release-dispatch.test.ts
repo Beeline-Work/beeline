@@ -348,3 +348,24 @@ it.each(['legacy', 'helper'])('R-RELEASE-CARD: built %s MCP tool dispatches thro
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
 });
+
+it('release channels: preserves explicit latest only for owners and defaults ordinary releases to nightly', async () => {
+  const dispatch = vi.fn(async (_inputs: Record<string, string>) => {});
+  await productionReleaseDispatch(db, agent, { ...input, inputs: {} }, dispatch);
+  expect(JSON.parse(dispatch.mock.calls[0]![0].dispatched_by!)).toMatchObject({ channel: 'nightly' });
+  await productionReleaseDispatch(db, agent, { ...input, inputs: { channel: 'latest' } }, dispatch);
+  expect(dispatch.mock.calls[1]![0].channel).toBe('latest');
+  expect(JSON.parse(dispatch.mock.calls[1]![0].dispatched_by!)).toMatchObject({ channel: 'latest' });
+  await expect(productionReleaseDispatch(db, agent, { ...input, inputs: { channel: 'typo' } }, dispatch))
+    .rejects.toThrow('channel must be nightly or latest');
+  await db.query(`UPDATE memberships SET role='admin' WHERE identity_id=$1`, [human]);
+  try {
+    await expect(productionReleaseDispatch(db, agent, { ...input, inputs: { channel: 'latest' } }, dispatch))
+      .rejects.toThrow('Latest promotion requires a workspace owner command');
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    await productionReleaseDispatch(db, agent, { ...input, inputs: { channel: 'nightly' } }, dispatch);
+    expect(dispatch.mock.calls[2]![0].channel).toBe('nightly');
+  } finally {
+    await db.query(`UPDATE memberships SET role='owner' WHERE identity_id=$1`, [human]);
+  }
+});

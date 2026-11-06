@@ -1,4 +1,5 @@
-import { expect, it, vi, voiceTempo, markdownToSpeech, VoiceService, telemetry, VoiceRoomRuntime, spokenReport, voiceInterrupt, AuraSpeech, OpenRouterVoiceBrain, state, roster, conversationService, deferred, multiCall } from './test-support-voice-room-runtime.test-support.js';
+import { expect, it, vi, voiceTempo, markdownToSpeech, VoiceService, VoiceRoomRuntime, spokenReport, voiceInterrupt, AuraSpeech, OpenRouterVoiceBrain, state, roster, conversationService, deferred, multiCall } from './test-support-voice-room-runtime.test-support.js';
+import * as telemetry from "./sentry.js";
 
 
 

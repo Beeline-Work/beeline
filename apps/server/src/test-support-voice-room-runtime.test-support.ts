@@ -176,7 +176,7 @@ export function multiCall(humans = 2) {
 
 export const inputOwnerPostgresUrl = process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
 
-export { backgroundWork, telemetry };
+
 export { VOICE_DATA_TOPIC } from '@beeline/api-contract/phone';
 export { EventEmitter } from 'node:events';
 export { afterEach, expect, it, vi } from 'vitest';

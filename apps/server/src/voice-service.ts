@@ -1,3 +1,4 @@
+import { phoneIdentity as identity, type PhoneIdentityRow as IdentityRow } from './phone-identity.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import type { ObjectService } from './object-service.js';
 import { mediaIdFromUrl } from './media-ttl.js';
@@ -7,7 +8,7 @@ import { VoiceBudgetStore } from './voice-budget.js';
 import { AgentVoiceService } from './agent-voice.js';
 import { createHash, createHmac, timingSafeEqual, randomBytes, randomUUID } from 'node:crypto';
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
-import { type VoiceIdleState, type VoiceCall, type VoiceJoin, type RoomViewIdentity, voiceDuration } from '@beeline/api-contract/phone';
+import { type VoiceIdleState, type VoiceCall, type VoiceJoin, voiceDuration } from '@beeline/api-contract/phone';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
 import type { SqlDatabase } from './database.js';
@@ -21,11 +22,8 @@ import { VoiceRoomRuntime } from './voice-room-runtime.js';
 import type { SpeechMember } from './markdown-to-speech.js';
 
 export type VoiceConfig = { url: string; apiKey: string; apiSecret: string; brain: VoiceBrain;
-  speech: VoiceSpeech; stt: VoiceSttFactory; searchWeb?: (query: string, signal: AbortSignal, currentTime?: number) => Promise<string>; budgetLimitMs?: number; objects?: ObjectService };
+  speech: VoiceSpeech; stt: VoiceSttFactory; searchWeb?: (query: string, signal: AbortSignal, currentTime?: number) => Promise<string>; budgetLimitMs?: number; objects?: ObjectService; publicOrigin?: string };
 type CallRow = { id: string; room_id: string; message_id: string; started_at: Date; ended_at: Date | null; end_reason?: string | null };
-type IdentityRow = { id: string; kind: 'human' | 'agent'; name: string; handle: string | null; face_id: string | null };
-const identity = (row: IdentityRow): RoomViewIdentity => ({ pubkey: row.id, kind: row.kind,
-  name: row.name, ...(row.handle ? { handle: row.handle } : {}), ...(row.face_id ? { face: row.face_id } : {}) });
 
 /** The DB owns membership/session facts. LiveKit transports audio, never authority. */
 export class VoiceService {
@@ -122,7 +120,7 @@ export class VoiceService {
         chosen_voices: Record<string, string>;
       }
     >(
-      `SELECT i.id,i.kind,i.name,i.handle,i.face_id,a.soul,a.owner_id,a.access_policy,a.chosen_voices FROM memberships m
+      `SELECT i.id,i.kind,i.name,i.handle,i.avatar,i.face_id,a.soul,a.owner_id,a.access_policy,a.chosen_voices FROM memberships m
        JOIN identities i ON i.id=m.identity_id AND i.kind='agent' JOIN agents a ON a.agent_id=i.id
        JOIN rooms r ON r.id=m.room_id JOIN workspaces w ON w.id=r.workspace_id
        WHERE m.room_id=$1 AND m.removed_at IS NULL ORDER BY i.id`,
@@ -145,6 +143,7 @@ export class VoiceService {
         soul: a.soul?.instructions ?? '',
         chosenVoice: savedAuraVoice(a.chosen_voices),
         ...(a.face_id ? { face: a.face_id } : {}),
+        ...(a.avatar ? { avatar: a.avatar } : {}),
       })),
       speech.voices,
     ).filter((a) => allowed.has(a.id));
@@ -153,7 +152,7 @@ export class VoiceService {
   /** Handle-to-display-name pairs for every current Room member, for spoken names. */
   async memberNames(roomId: string): Promise<SpeechMember[]> {
     const rows = await this.db.query<IdentityRow>(
-      `SELECT i.id,i.kind,i.name,i.handle,i.face_id FROM memberships m
+      `SELECT i.id,i.kind,i.name,i.handle,i.avatar,i.face_id FROM memberships m
        JOIN identities i ON i.id=m.identity_id WHERE m.room_id=$1 AND m.removed_at IS NULL`,
       [roomId],
     );
@@ -190,7 +189,7 @@ export class VoiceService {
     return { id: row.id, roomId: row.room_id, startedAt: Math.floor(row.started_at.getTime() / 1000),
       startedAtMs: row.started_at.getTime(),
       ...(row.ended_at ? { endedAt: Math.floor(row.ended_at.getTime() / 1000) } : {}),
-      participants: members.rows.map(identity) };
+      participants: members.rows.map(row => identity(row, this.config.publicOrigin ?? '')) };
   }
 
   async current(roomId: string, humanId: string): Promise<VoiceCall | null> {
@@ -237,8 +236,8 @@ export class VoiceService {
     token.addGrant({ roomJoin: true, room: `beeline-voice-${row.id}`, canPublish: true,
       canSubscribe: true, canPublishData: true, canUpdateOwnMetadata: false });
     return { sessionId, stopToken: this.stopToken(row.id, humanId, sessionId), call: await this.view(row), url: this.config.url, token: await token.toJwt(),
-      agents: agents.map(a => ({ pubkey: a.id, kind: 'agent', name: a.name, handle: a.handle,
-        ...(a.face ? { face: a.face } : {}) })) };
+      agents: agents.map(a => identity({ id: a.id, kind: 'agent', name: a.name, handle: a.handle,
+        face_id: a.face ?? null, avatar: a.avatar ?? null }, this.config.publicOrigin ?? '')) };
   }
 
   /** Compatibility for older phones: idle never parks or removes a human. */

@@ -1,4 +1,5 @@
 import { endAgentTurn } from './agent-turn-end.js';
+import { assetUrl, phoneIdentity as identity, type PhoneIdentityRow as IdentityRow } from './phone-identity.js';
 import { recordPersonInteraction } from './away-auto-pause.js';
 import { isSubscribableEventKind } from '@beeline/api-contract/phone';
 import { setRoomEventSubscriptions, unsubscribeRoomReviewer, subscribeRoomReviewer } from './agent-subscriptions.js';
@@ -315,14 +316,6 @@ function roomFilters(
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
 type Output<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['output'];
 
-interface IdentityRow {
-  id: string;
-  kind: 'human' | 'agent';
-  name: string;
-  handle: string | null;
-  avatar: string | null;
-  face_id: string | null;
-}
 interface RoomRow {
   id: string;
   workspace_id: string;
@@ -595,19 +588,6 @@ function reviveDates<Row extends object>(row: Row, fields: readonly string[]): R
     if (typeof value === 'string') mutable[field] = new Date(value);
   }
   return row;
-}
-function assetUrl(value: string, publicOrigin: string) {
-  return value.startsWith('/') ? `${publicOrigin}${value}` : value;
-}
-function identity(row: IdentityRow, publicOrigin: string): RoomViewIdentity {
-  return {
-    pubkey: row.id,
-    kind: row.kind,
-    name: row.name,
-    ...(row.handle ? { handle: row.handle } : {}),
-    ...(row.avatar ? { avatar: assetUrl(row.avatar, publicOrigin) } : {}),
-    ...(row.face_id ? { face: row.face_id } : {}),
-  };
 }
 
 function selectedModelLabel(

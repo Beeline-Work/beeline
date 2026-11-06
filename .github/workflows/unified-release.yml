@@ -21,7 +21,7 @@ on:
         default: auto
         required: true
       store_track:
-        description: Android binaries default to production; routine releases keep none for OTA; beta requires an explicit owner choice
+        description: Recovery override; none lets the workflow choose no-op, production stores or OTA from released native inputs
         type: choice
         default: none
         options:
@@ -96,6 +96,8 @@ jobs:
       previous_runtime_ios: ${{ steps.plan.outputs.previous_runtime_ios }}
       next_runtime_android: ${{ steps.plan.outputs.next_runtime_android }}
       next_runtime_ios: ${{ steps.plan.outputs.next_runtime_ios }}
+      store_track: ${{ steps.plan.outputs.store_track }}
+      release_kind: ${{ steps.plan.outputs.release_kind }}
       plan_selection: ${{ steps.plan.outputs.plan_selection }}
       desktop_version: ${{ steps.plan.outputs.desktop_version }}
     steps:
@@ -136,7 +138,7 @@ jobs:
         run: |
           set -euo pipefail
           . scripts/gh-release-retry.sh
-          release_sha=$(git rev-parse --verify "${REQUESTED_SHA:-$GITHUB_SHA}^{commit}")
+          release_sha=$(git rev-parse --verify "${REQUESTED_SHA:-origin/main}^{commit}")
           git merge-base --is-ancestor "$release_sha" origin/main || {
             echo "release SHA is not a commit on main: $release_sha" >&2; exit 1;
           }
@@ -197,8 +199,8 @@ jobs:
         id: store_shipped
         if: steps.plan.outputs.run_mobile_native == 'true'
         env:
-          STORE_TRACK: ${{ inputs.store_track }}
-          PLAY_TRACK: ${{ inputs.store_track == 'beta' && 'beta' || 'production' }}
+          STORE_TRACK: ${{ steps.plan.outputs.store_track }}
+          PLAY_TRACK: ${{ steps.plan.outputs.store_track == 'beta' && 'beta' || 'production' }}
           RELEASE_VERSION: ${{ steps.identity.outputs.version }}
           RELEASE_SHA: ${{ steps.identity.outputs.release_sha }}
           NATIVE_ANDROID: ${{ steps.plan.outputs.native_android }}
@@ -219,7 +221,7 @@ jobs:
         id: native_version
         if: steps.plan.outputs.run_mobile_native == 'true'
         env:
-          STORE_TRACK: ${{ inputs.store_track }}
+          STORE_TRACK: ${{ steps.plan.outputs.store_track }}
           RELEASE_SHA: ${{ steps.identity.outputs.release_sha }}
           SHIPPED_VERSION: ${{ steps.store_shipped.outputs.shipped_version }}
           EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
@@ -766,7 +768,7 @@ jobs:
       - initialize
       - delivery_result
     if: |-
-      !cancelled() && needs.initialize.result == 'success' && needs.initialize.outputs.run_mobile_native == 'true' && ((inputs.store_track != '' && inputs.store_track != 'none') ||
+      !cancelled() && needs.initialize.result == 'success' && needs.initialize.outputs.run_mobile_native == 'true' && ((needs.initialize.outputs.store_track != '' && needs.initialize.outputs.store_track != 'none') ||
        (inputs.selection != '' && inputs.selection != 'auto')) &&
       needs.initialize.outputs.native_android == 'true'
     runs-on:
@@ -870,7 +872,7 @@ jobs:
           PUBLISH_LISTING: ${{ inputs.publish_listing && 'true' || 'false' }}
           PLAY_DEFER_COMMIT: "1"
           PLAY_LISTING_BASELINE: ${{ runner.temp }}/play-listing-before-build.json
-          TRACK: ${{ inputs.store_track == 'beta' && 'beta' || 'production' }}
+          TRACK: ${{ needs.initialize.outputs.store_track == 'beta' && 'beta' || 'production' }}
           PACKAGE_NAME: app.usebeeline
         run: |
           set -euo pipefail
@@ -923,7 +925,7 @@ jobs:
   mobile_native_ios:
     needs: initialize
     if: |-
-      needs.initialize.outputs.run_mobile_native == 'true' && ((inputs.store_track != '' && inputs.store_track != 'none') ||
+      needs.initialize.outputs.run_mobile_native == 'true' && ((needs.initialize.outputs.store_track != '' && needs.initialize.outputs.store_track != 'none') ||
        (inputs.selection != '' && inputs.selection != 'auto')) &&
       needs.initialize.outputs.native_ios == 'true'
     runs-on:
@@ -1014,7 +1016,7 @@ jobs:
           node -e 'const fs=require("node:fs");const p=process.argv[1];fs.writeFileSync(p,JSON.stringify({...JSON.parse(fs.readFileSync(p,"utf8")),releaseMarker:process.argv[2]})+"\n")' \
             "$RUNNER_TEMP/ios-build.json" "${{ needs.initialize.outputs.release_marker }}"
       - name: Submit iOS build to TestFlight for a selected store track
-        if: inputs.store_track != 'none' && needs.initialize.outputs.ios_shipped != 'true'
+        if: needs.initialize.outputs.store_track != 'none' && needs.initialize.outputs.ios_shipped != 'true'
         working-directory: apps/mobile
         run: |
           set -euo pipefail
@@ -1038,7 +1040,7 @@ jobs:
           # exact delivery to finish and a new VALID build in our App Store app.
           node ../../scripts/ios-store-build.mjs verify "$RUNNER_TEMP/ios-build.json" "$RUNNER_TEMP/ios-upload.json"
       - name: Send production iOS version to App Review
-        if: inputs.store_track == 'production'
+        if: needs.initialize.outputs.store_track == 'production'
         run: |
           set -euo pipefail
           PATH="$(dirname "$(command -v node)"):/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"
@@ -1046,7 +1048,7 @@ jobs:
           node scripts/ios-store-build.mjs submit "$RUNNER_TEMP/ios-build.json"
       - name: Report the uploaded iOS build number to the release record
         id: ios_identity
-        if: inputs.store_track != 'none'
+        if: needs.initialize.outputs.store_track != 'none'
         run: |
           PATH="$(dirname "$(command -v node)"):/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"
           export PATH
@@ -1361,6 +1363,7 @@ jobs:
         env:
           OUTCOME: ${{ steps.result.outputs.outcome }}
           NO_OP: ${{ steps.result.outputs.no_op }}
+          RELEASE_KIND: ${{ needs.initialize.outputs.release_kind }}
           FAILURE_CLASS: ${{ steps.result.outputs.failure_class }}
           SLOW: ${{ steps.result.outputs.slow }}
           OTA_ELAPSED_SECONDS: ${{ steps.result.outputs.ota_elapsed_seconds }}
@@ -1379,6 +1382,7 @@ jobs:
           node - "$RUNNER_TEMP/release/release.json" >> "$GITHUB_STEP_SUMMARY" <<'NODE'
           const fs = require('node:fs');
           const release = JSON.parse(fs.readFileSync(process.argv[2]));
+          console.log(`Release: ${process.env.NO_OP === 'true' ? 'no-op' : process.env.RELEASE_KIND} · ${release.delivery.state} · ${release.sourceSha} · ${release.version}`);
           console.log(`## Release ${release.delivery.state}: ${release.version}`);
           if (release.delivery.durationSeconds !== undefined) console.log(`- Duration: ${release.delivery.durationSeconds}s`);
           if (release.delivery.live) console.log(`- Dispatch to live (server, OTA, website): ${release.delivery.live.elapsedSeconds}s; target <${release.delivery.live.targetSeconds}s`);

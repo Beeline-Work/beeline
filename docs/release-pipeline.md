@@ -5,20 +5,18 @@
 
 ## Release policy (consent gates)
 
-- **OTA is the default delivery.** A routine release promotes mobile OTA
-  updates only. It never publishes to the App Store or Play Store and never
-  requires the emulator device proof.
-- **Store publishing is explicit and consent-gated.** `store_track` stays
-  `none` unless the project owner explicitly dispatches with a track
-  (`production`, or `beta` only by the owner's explicit choice). Every release
-  that builds a new Android binary publishes it
-  to Play production as `completed` and sends the build for review automatically,
-  including explicit native recovery selection with `store_track=none`; an
-  explicit `store_track=beta` sends that release to Play beta instead. A
-  runtime-pin change does not change
-  this: the release still finishes, the OTA goes to every runtime live in the
-  stores today, and the new runtime waits for a store release the owner
-  chooses. Planning prints a notice; it never fails and never adds a store leg.
+- **Routine delivery is deterministic.** The human-authorized 02:00 ET schedule
+  calls `dispatch_release` with no inputs. The workflow pins current main and
+  compares it with the newest published release SHA. An unchanged SHA is a no-op.
+  A changed committed Expo native fingerprint or per-platform runtime version
+  selects **both Android and iOS production store paths**. Otherwise it delivers
+  OTA plus server, helper and web, without store submission. The existing native
+  fingerprint CI gate verifies the committed fingerprint against the source tree.
+- **Recovery inputs remain explicit.** `store_track=none` is the no-input policy
+  selector, not a request to suppress required native releases. An explicit
+  selection or store track retains the recovery path; `beta` still needs the
+  owner's explicit choice. The standing nightly order replaces the Oct 29
+  one-night full-store override; no agent prose chooses the nightly branch.
 - **iOS production includes App Review.** After Apple confirms the exact uploaded
   build is VALID, `store_track=production` attaches it to the matching App Store
   version, sets release notes from the committed store metadata, and submits it
@@ -110,14 +108,12 @@ resumes that draft's version, so every leg sees what the attempt already
 shipped; a dispatch of another commit skips the draft's version and is never
 blocked by it. A successful release deletes the drafts below its version.
 
-The workflow pins current `main`, includes every merge at that
-HEAD, keeps automatic component selection, uses the established `store_track=none`
-policy, promotes the OTA without a device proof (recorded UNPROVEN unless
-`run_release_proof=true`), publishes one release record, runs component checks,
-and reports the result in the workflow summary. The operator-selected workflow inputs are
-recovery- and consent-only (the server supplies attribution): operators use them to continue an existing identity,
-explicitly request the device proof, or make a deliberate store submission -
-never for a routine release.
+The workflow pins current `main`, includes every merge at that HEAD, and uses
+`productionReleaseDecision` in `scripts/unified-release.mjs` for the no-op/store/OTA
+policy above. It promotes OTA without a device proof (UNPROVEN unless
+`run_release_proof=true`), checks every selected component, and publishes one
+release record. The final summary starts with a one-line release outcome for the
+morning card. Recovery inputs remain available; the server supplies attribution.
 
 The helper leg smoke-tests the exact local npm tarball before publishing it.
 A successful `npm publish`, or an already existing version, completes that leg
@@ -143,8 +139,8 @@ memory* below) and writes `release-plan.json`. Its explicit path map is
 `server`, `helper`, `mobile-ota`, `mobile-native`, `desktop`, and `website`
 independently. `selection=all` is a recovery-only, deliberate full-release
 override. A
-non-`none` store track always selects `mobile-native`. Automatic selection with
-`store_track=none` never builds native binaries, even when native inputs changed.
+non-`none` store track always selects `mobile-native`. Routine planning resolves the effective store track before component jobs run;
+changed native fingerprints or runtime versions select both production platforms.
 Explicit recovery selection (`all` or `mobile-native`) also publishes every new
 Android binary to Play production by default; only explicit `store_track=beta`
 chooses Play beta. iOS store uploads require an explicit store track and only
@@ -158,12 +154,15 @@ warning annotation and a Store build required job summary naming the affected
 platforms. This notice is informational and does not block merge; it brings
 the store-track decision into PR review before release planning.
 
-The per-platform native runtime pins no longer gate an OTA release. When
-`apps/mobile/native-fingerprint.json` changes a runtime pin and `store_track`
-is `none`, the plan ships the OTA to the runtimes live in the stores and prints
-a notice; the new runtime gets OTAs once a store release puts it live. With an
-explicit store track, native builds run only for the platforms whose pins
-changed. The `allow_pin_restore` input is accepted and ignored.
+A routine runtime-pin or native-fingerprint change selects both native platforms,
+while OTA still targets the runtimes already live in stores. A new binary does
+not become an OTA target until store publication is verified. Explicit recovery
+tracks retain per-platform pin selection. `allow_pin_restore` remains ignored.
+
+The three policy branches and effective store job gates are covered by
+`node --test scripts/nightly-release.test.mjs`. Cadence and saved-procedure sources:
+[daily loops](loops/README.md). Store approvals/publication can finish after the
+release workflow's successful submission; the outcome line must not call that live.
 
 iOS store binaries build locally on the self-hosted `macbook-pro-7` Mac runner
 and are submitted to TestFlight from its generated IPA. The iOS leg inspects the

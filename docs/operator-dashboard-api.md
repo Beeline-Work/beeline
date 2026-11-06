@@ -647,3 +647,34 @@ leave observations unavailable. No failure schedules another observation.
 Committed X signup conversions remain delivery obligations with the same
 provider deduplication ID. A committed row or its stored next-attempt timestamp
 wakes only that delivery lane; no pending row means no observation timer.
+
+## Bounded insight loss read
+
+`GET /v1/admin/insights/loss?since=<ISO deployment time>&sourceSha=<40-char SHA>`
+uses the existing private `BEELINE_DASHBOARD_SECRET` bearer boundary. Phone tokens
+and cross-origin browser access do not authorize it. Responses are private,
+no-store. Invalid boundaries return 400; a SHA different from the serving
+`BEELINE_RELEASE_SHA` returns 409 so the operator must refresh its baseline.
+
+Unlike the aggregate dashboard, this explicitly authorized insight read returns
+bounded private thread context. SQL/heuristics rank at most ten threads from
+`max(since, now-24h)` to now: same-person/same-agent restatements within 15 minutes
+(character-trigram Jaccard ≥0.7, weight 3), frustration markers (2), silence over
+90 seconds followed by a nudge (3), system failure followed by a person (3), human
+Stops (4), stopped commands (2), and human feedback reports from either intake
+path (4). Scores rank suspects; they do not diagnose causes or measure retention.
+
+Only production cohorts in workspaces allowing `allow_fix_sweep` participate.
+Each thread returns score/count, workspace/Room ids, window bounds, up to twenty
+signal references and twelve context messages truncated to 500 characters.
+Zero results is `threads:[]`. The scan uses the enrichment database's read-only
+transaction with a five-second statement timeout, makes no provider/embedding
+calls and stores no text copies. A timeout fails the request, never becomes an
+empty result. The trusted operator supplies a verified deployment time and must
+also check affected app/helper versions; the server SHA alone cannot prove those.
+
+Implementation: `apps/server/src/insight-loss.ts`; SQL/access/sample proofs:
+`insight-loss.test.ts`. Only this shortlist goes to the model under
+[the insight skill](loops/insight-loss.md); no all-log LLM sweep. The random
+workspace walk is a separate read-only SQL sample defined in
+[workspace-sample.sql](loops/workspace-sample.sql), with the same opt-out rule.

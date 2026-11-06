@@ -311,6 +311,42 @@ export function runtimePinChangeFromPublishedInputs(previous, releaseSha, {
   return { changed: changedPlatforms.length > 0, changedPlatforms, previous: previousPin, next: nextPin };
 }
 
+/** Routine policy lives here, so a scheduled agent never chooses the release kind. */
+export function productionReleaseDecision({ previous, sourceSha, runtimePin, fingerprintsChanged = false,
+  selection = 'auto', storeTrack = 'none', paths = [], componentPaths }) {
+  const routine = (!selection || selection === 'auto') && storeTrack === 'none';
+  if (routine && previous?.sourceSha === sourceSha)
+    return { kind: 'no-op', storeTrack: 'none', selectedComponents: [], nativePlatforms: [] };
+  const nativeChanged = !previous || runtimePin?.changed || fingerprintsChanged;
+  const effectiveTrack = routine && nativeChanged ? 'production' : storeTrack;
+  const options = { selection, storeTrack: effectiveTrack };
+  const selected = new Set(componentPaths
+    ? selectReleaseComponentsFromPublishedInputs(componentPaths, options)
+    : selectReleaseComponents(paths, options));
+  if (routine) for (const component of (!previous ? RELEASE_COMPONENTS : ['server', 'helper', 'mobile-ota', 'website'])) selected.add(component);
+  return {
+    kind: routine ? (selected.has('mobile-native') ? 'store' : 'ota') : 'recovery',
+    storeTrack: effectiveTrack,
+    selectedComponents: RELEASE_COMPONENTS.filter(component => selected.has(component)),
+    // The standing native release order covers BOTH production stores.
+    nativePlatforms: routine && nativeChanged ? ['android', 'ios']
+      : runtimePin?.changed ? runtimePin.changedPlatforms : ['android', 'ios'],
+  };
+}
+
+export function nativeFingerprintsChanged(previous, sourceSha, {
+  gitShow = sha => execFileSync('git', ['show', `${sha}:${RUNTIME_PIN_PATH}`], { encoding: 'utf8', timeout: 30_000 }),
+} = {}) {
+  const read = sha => {
+    const pins = JSON.parse(gitShow(sha));
+    for (const platform of ['android', 'ios'])
+      if (!/^[a-f0-9]{40,64}$/.test(pins.fingerprints?.[platform] ?? '')) fail(`missing native fingerprint: ${platform}`);
+    return pins.fingerprints;
+  };
+  const before = read(previous.sourceSha), after = read(sourceSha);
+  return ['android', 'ios'].some(platform => before[platform] !== after[platform]);
+}
+
 export function changedPathsFromPublishedInputs(previous, releaseSha, {
   gitDiff = (publishedSha, targetSha) => execFileSync(
     'git', ['diff', '--name-only', publishedSha, targetSha],
@@ -455,7 +491,7 @@ export function pendingComponents(state) {
   currentRelease(state);
   return Object.fromEntries(RELEASE_COMPONENTS.map((component) => {
     const entry = componentEntry(state, component);
-    return [component, entry.selected && entry.state !== 'checked'];
+    return [component, state.state !== 'delivered' && entry.selected && entry.state !== 'checked'];
   }));
 }
 
@@ -506,6 +542,8 @@ export function releasePlanSummary(state) {
   currentRelease(state);
   return {
     identity: `${state.version}@${state.sourceSha}`,
+    releaseKind: state.plan.releaseKind,
+    storeTrack: state.plan.storeTrack,
     selected: state.plan.selected,
     carried: Object.fromEntries(state.plan.carried.map((component) => {
       const entry = componentEntry(state, component);
@@ -639,6 +677,8 @@ export function planOutputs(state, previous) {
       `next_runtime_${platform}=${plan.nextRuntimeVersion?.[platform] ?? ''}`,
     ]),
     `plan_selection=${plan.selection ?? 'auto'}`,
+    `store_track=${plan.storeTrack ?? 'none'}`,
+    `release_kind=${plan.releaseKind ?? 'recovery'}`,
     `desktop_version=${state.components.desktop.desktopVersion}`,
     ...['android', 'ios'].map((platform) => `native_${platform}=${(plan.nativePlatforms ?? ['android', 'ios']).includes(platform)}`),
     ...Object.entries(pendingComponents(state)).map(([component, run]) => `run_${component.replace('-', '_')}=${run}`),
@@ -688,6 +728,14 @@ export function restoreReleasePlan({ version, sourceSha, plan, previous, started
     state.plan.nativePlatforms = nativePlatforms;
     state.plan.runtimePinChanged = runtimePinChanged;
     state.plan.selection = plan.plan_selection;
+    if (plan.store_track !== undefined) {
+      if (!['none', 'production', 'beta'].includes(plan.store_track)) fail('invalid planned store track');
+      state.plan.storeTrack = plan.store_track;
+    }
+    if (plan.release_kind !== undefined) {
+      if (!['no-op', 'ota', 'store', 'recovery'].includes(plan.release_kind)) fail('invalid planned release kind');
+      state.plan.releaseKind = plan.release_kind;
+    }
     if (runtimePin) {
       state.plan.previousRuntimeVersion = runtimePin.previous;
       state.plan.nextRuntimeVersion = runtimePin.next;
@@ -782,11 +830,14 @@ async function main(argv) {
     const componentPaths = args['component-paths'] ? readJson(args['component-paths']) : undefined;
     const selection = args.selection ?? 'auto';
     const runtimePin = previous ? runtimePinChangeFromPublishedInputs(previous, args.sha) : undefined;
-    const selectOptions = { selection, storeTrack: args['store-track'] ?? 'none' };
-    const selectedComponents = componentPaths
-      ? selectReleaseComponentsFromPublishedInputs(componentPaths, selectOptions)
-      : selectReleaseComponents(paths, selectOptions);
+    const decision = productionReleaseDecision({ previous, sourceSha: args.sha, runtimePin,
+      fingerprintsChanged: previous ? nativeFingerprintsChanged(previous, args.sha) : false,
+      selection, storeTrack: args['store-track'] ?? 'none', paths, componentPaths });
+    const selectedComponents = decision.selectedComponents;
     const state = initializeRelease({ ...identityFromOptions(args), previous, selectedComponents, runtimePin });
+    state.plan.nativePlatforms = decision.nativePlatforms;
+    state.plan.storeTrack = decision.storeTrack;
+    state.plan.releaseKind = decision.kind;
     state.plan.paths = paths;
     if (componentPaths) state.plan.componentPaths = componentPaths;
     state.plan.selection = selection;

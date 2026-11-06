@@ -57,3 +57,12 @@ The agent stays on your machine. Your computer keeps one connection for all its 
 - [Development](https://github.com/Beeline-Work/beeline/blob/main/docs/development.md)
 
 Beeline is in beta (`0.0.x`). [Current limits](https://github.com/Beeline-Work/beeline/blob/main/docs/getting-started.md#beta). Licensed under [MIT](https://github.com/Beeline-Work/beeline/blob/main/LICENSE).
+
+## Daily improvement loops
+
+The [daily loops](docs/loops/README.md) check the current release overnight and
+bring concrete fixes to a 09:00 approval card. A 14:00 card uses a bounded loss
+scan and five randomly sampled active workspaces. Each approved fix opens its
+own corner; uncertain causes are marked OPEN QUESTION. The 02:00 release skips
+unchanged main, submits both production stores when native inputs change, and
+otherwise delivers OTA plus server, helper and web updates.

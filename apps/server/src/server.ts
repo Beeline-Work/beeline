@@ -1,3 +1,4 @@
+import { readInsightLoss } from './insight-loss.js';
 import { PHONE_READ_OPERATIONS } from '@beeline/api-contract/phone';
 import { phoneLiveOutput } from './phone-live-output.js';
 import { HelperOverlayViewer, helperOverlayEnabled, fenceHelperOverlayEnqueue } from './helper-overlay.js';
@@ -235,7 +236,7 @@ function applyWebAppCors(
 }
 
 function isWebAppCorsPath(pathname: string): boolean {
-  if (pathname === '/v1/admin/dashboard') return false;
+  if (pathname === '/v1/admin/dashboard' || pathname === '/v1/admin/insights/loss') return false;
   return (
     pathname === '/healthz' ||
     pathname.startsWith('/v1/') ||
@@ -1820,6 +1821,24 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
       json(response, 429, { error: 'daily_cap_reached' }); return;
     }
     response.writeHead(204); response.end(); return;
+  }
+  if (method === 'GET' && url.pathname === '/v1/admin/insights/loss') {
+    response.setHeader('cache-control', 'private, no-store');
+    if (!options.dashboardSecret || !bearerSecretMatches(options.dashboardSecret, request)) {
+      json(response, 403, { error: 'access_denied' }); return;
+    }
+    const since = url.searchParams.get('since'), sourceSha = url.searchParams.get('sourceSha');
+    if (!since || !Number.isFinite(Date.parse(since)) || Date.parse(since) > Date.now() ||
+        !sourceSha || !/^[a-f0-9]{40}$/.test(sourceSha) ||
+        [...url.searchParams.keys()].some(key => !['since', 'sourceSha'].includes(key)) ||
+        url.searchParams.getAll('since').length !== 1 || url.searchParams.getAll('sourceSha').length !== 1) {
+      json(response, 400, { error: 'invalid_release_boundary' }); return;
+    }
+    if (sourceSha !== process.env.BEELINE_RELEASE_SHA) {
+      json(response, 409, { error: 'release_changed' }); return;
+    }
+    json(response, 200, await readInsightLoss(options.enrichmentDatabase ?? options.database, since, sourceSha));
+    return;
   }
   if (method === 'POST' && url.pathname === '/v1/admin/dashboard/refresh') {
     if (!options.dashboardSecret || !bearerSecretMatches(options.dashboardSecret, request)) {

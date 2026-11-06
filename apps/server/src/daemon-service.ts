@@ -1,6 +1,7 @@
 import { OwnedModelRefusal, OwnedModelUnknownGeneration, isOwnedModelUnknownGenerationError } from './owned-model-errors.js';
 import { endAgentTurn } from './agent-turn-end.js';
 import { recordAgentTurnFailure } from './agent-turn-failure.js';
+import { HOST_EMULATOR_TARGET } from '@beeline/api-contract/agent-grants';
 import { resourceRequester } from './resource-requester.js';
 import { setAgentWakePaused } from './agent-wake-pause.js';
 import { roomEventSubscriptions } from './agent-subscriptions.js';
@@ -6413,6 +6414,7 @@ export class DaemonService {
     const auto =
       !requireOwnerApproval &&
       kind !== 'shared_asset' &&
+      !(kind === 'host' && target === HOST_EMULATOR_TARGET) &&
       escalations.length === 0 &&
       (kind === 'mcp' && (target.startsWith('app:') || connectionInstall)
         ? context.owner_id === resourceOwnerId
@@ -6672,9 +6674,10 @@ export class DaemonService {
            SELECT 1 FROM workspace_apps app WHERE app.id=g.app_id
              AND app.state='active' AND g.decided_by=app.owner_identity_id
          )))
+         AND NOT (g.kind='host' AND g.target=$3 AND (g.auto OR g.decided_by IS NULL))
          AND ($2::uuid IS NULL OR g.workspace_id=(SELECT workspace_id FROM rooms WHERE id=$2))
        ORDER BY g.created_at DESC,g.id`,
-      [agentId, roomId ?? null],
+      [agentId, roomId ?? null, HOST_EMULATOR_TARGET],
     );
     return {
       grants: rows.rows.map((row) => ({
@@ -6719,7 +6722,7 @@ export class DaemonService {
       kind: AgentGrantKind;
       target: string;
       reason: string;
-      status: 'pending' | 'approved' | 'once';
+      status: 'pending' | 'approved' | 'once' | 'denied' | 'revoked';
       auto: boolean;
       requested_by: string;
       requester_name: string | null;
@@ -6735,11 +6738,12 @@ export class DaemonService {
          WHERE corner.id=$2 AND g.room_id=corner.id
            AND g.agent_id=${cornerImplementerSql('fact', 'corner')}
            AND ${cornerReviewerSql()}=$1
-       )) AND g.status IN ('pending','approved','once') AND g.superseded_at IS NULL
-         AND (g.expires_at IS NULL OR g.expires_at>now())
+       )) AND g.superseded_at IS NULL
+         AND ((g.status IN ('pending','approved','once') AND (g.expires_at IS NULL OR g.expires_at>now()))
+           OR (g.kind='host' AND g.target=$3 AND g.status IN ('denied','revoked')))
          AND ($2::uuid IS NULL OR g.workspace_id=(SELECT workspace_id FROM rooms WHERE id=$2))
        ORDER BY g.created_at DESC,g.id`,
-      [agentId, roomId ?? null],
+      [agentId, roomId ?? null, HOST_EMULATOR_TARGET],
     );
     return {
       grants: rows.rows.map((row) => ({

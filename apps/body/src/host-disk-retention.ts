@@ -68,18 +68,15 @@ export async function pruneMachineStorage(supervisorRoot: string, options: Whole
   for (const workspace of await readdir(resolve(root, 'workspaces')).catch(() => [])) {
     if (!/^[a-f0-9]{24}$/.test(workspace)) continue;
     const home = resolve(root, 'workspaces', workspace, 'shared-home');
-    for (const category of ['cache', 'tools', 'avd-base', 'staging']) {
+    for (const category of ['cache', 'tools']) {
       for (const entry of await readdir(resolve(home, category)).catch(() => [])) {
-        if (category === 'cache' && entry === 'android-leases') continue;
         objects.push(resolve(home, category, entry));
       }
     }
   }
   const removed: string[] = [];
   for (const path of objects) {
-    const workspace = /^(.+\/workspaces\/[a-f0-9]{24}\/shared-home)\//.exec(path)?.[1];
     removed.push(...(await reclaimWholeStorageObject(path, false, { ...options, expireFiles: /(?:^|\/)npm(?:-cache)?$/.test(path) || path.endsWith('/turbo-cache'),
-      ...(workspace ? { emulatorLeaseRoot: resolve(workspace, 'cache/android-leases') } : {}),
     })).map(item => item.path));
   }
   return removed;

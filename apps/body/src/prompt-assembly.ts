@@ -9,7 +9,7 @@ import { ACP_SESSION_MEMORY_MAX_BYTES } from './acp-resource-scope.js';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 import { boundRoomTaskBody, budgetTranscript } from './transcript-budget.js';
 import type { MachineHost } from './machine-host.js';
-import type { KvmAccess } from './kvm-device-access.js';
+import { HOST_EMULATOR_RULE } from './host-emulator.js';
 import { SITUATIONAL_SKILL_NAMES } from './beeline-skill.js';
 import { agentToolsFor, placeBeelineApps } from './minimal-tool-surface.js';
 
@@ -71,11 +71,10 @@ const EVERYWHERE: readonly PromptSurface[] = PROMPT_SURFACES;
 /**
  * Ceiling for one surface's whole session prompt, soul text excluded. It is
  * the sum of the two ceilings it replaced: 2,420 bytes for the rules every
- * agent gets and 4,970 for one surface's own rules. A code corner on an
- * Android host with the no-host-gh pull-request path is the largest prompt. A
+ * agent gets and 4,970 for one surface's own rules. A code corner with
+ * the no-host-gh pull-request path is the largest prompt. A
  * capability-route rule adds only the 301 bytes beyond the former ceiling
- * required by the largest variant. A denied /dev/kvm adds its one advice
- * line, at most the 320-byte `kvm` section budget.
+ * required by the largest variant.
  */
 // The canonical tool inventory adds at most 600 bytes.
 export const SESSION_BUDGET_BYTES = 8_611;
@@ -111,10 +110,6 @@ export interface SessionPromptContext {
   readonly worktree?: { readonly featureBranch: string; readonly targetBranch: string };
   /** Whether this corner's gh launcher uses a host binary or the REST fallback. */
   readonly githubCli?: CornerGitHubCli;
-  /** This agent's emulator console port, when the host has an Android SDK (`android-agent-env.ts`). */
-  readonly android?: { readonly emulatorPort: string; readonly leased?: boolean };
-  /** This session's `/dev/kvm` probe (`kvm-device-access.ts`). Unprobed never claims it works. */
-  readonly kvm?: KvmAccess;
   readonly reviewerHandle?: string;
   /**
    * This agent holds the parent Room's reviewer post
@@ -321,13 +316,13 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
       'room.place': 'A repo-less Room agent implied a checkout existed and sent the person elsewhere instead of showing Link or Create.',
       'dm.place': 'A DM is a driving surface for work across every Room the agent belongs to.',
       'corner.worktree': 'Every agent in a code corner must know its branch and target, whether or not it writes code.',
-      'corner.android': 'An agent under its isolated $HOME concluded the host had no emulator, and agents on the shared adb server drove each other\'s emulators.',
+      'core.android': 'Host emulator use requires permission; the helper never owns an emulator.',
       'corner.repo-less': 'A repo-less corner has no repository; the agent delivers files, not commits.',
     },
     budgetBytes: 1_360,
     layer: 'session',
     surfaces: EVERYWHERE,
-    render: ({ surface, machineHost, memoryMaxBytes, repository, shell, writableHome, worktree, android, kvm }) =>
+    render: ({ surface, machineHost, memoryMaxBytes, repository, shell, writableHome, worktree }) =>
       paragraphs(
         machineHost &&
           `Already running on machine ${JSON.stringify(machineHost.hostname)}${machineHost.tailscaleName ? ` (MagicDNS: ${JSON.stringify(machineHost.tailscaleName)})` : ''}. Run commands locally; do not SSH to this machine.`,
@@ -357,25 +352,10 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
             .join(' '),
         surface === 'code-corner' &&
           `You are in an isolated git worktree on ${worktree?.featureBranch ?? 'the feature branch'}, targeting ${worktree?.targetBranch ?? 'the target branch'}.`,
-        surface === 'code-corner' &&
-          android &&
-          (android.leased
-            ? 'Android: the SDK is $ANDROID_HOME and AVDs are in $ANDROID_AVD_HOME. Boot with `beeline emulator -avd <name> -no-window -gpu swiftshader_indirect`. This corner keeps its emulator and app until the corner closes. Use `adb devices` and `adb -s emulator-<port>` to select one. The guest reaches host services at 10.0.2.2.'
-            : `Android: adb and emulator are on PATH; the SDK is $ANDROID_HOME${kvm?.status === 'works' ? ',' : ' and'} AVDs are in $ANDROID_AVD_HOME${kvm?.status === 'works' ? ', and /dev/kvm works' : ''}. Your adb server sees only your own emulator. Boot it with \`emulator -avd <name> -port ${android.emulatorPort} -read-only -no-window -no-snapshot -gpu swiftshader_indirect\`; it reaches host services at 10.0.2.2.`),
+        HOST_EMULATOR_RULE,
         surface === 'repo-less-corner' &&
           "This is a repo-less corner with no repository checkout and no GitHub workflow. Work in this corner's writable workspace: create files with your native tools (or use scratch_io when mounted), then send them with post_artifact.\nDo not initialize a repository, create a branch, commit, push, open a pull request, or wait for GitHub checks.",
       ),
-  },
-  {
-    id: 'kvm',
-    topic: 'why /dev/kvm is denied',
-    why: {
-      'core.kvm': 'An agent denied /dev/kvm never learned whether to request a device grant or ask the host admin, and a prompt still said /dev/kvm works.',
-    },
-    budgetBytes: 320,
-    layer: 'session',
-    surfaces: EVERYWHERE,
-    render: ({ kvm }) => (kvm && 'advice' in kvm ? kvm.advice : ''),
   },
   {
     id: 'talking',

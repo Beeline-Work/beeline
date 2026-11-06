@@ -35,9 +35,10 @@ The rolling prereleases `helper-update-channel` (latest) and
 `helper-update-channel-next` retain independently validated helper bytes.
 Every Pages deployment includes both directories. A `next` helper deployment
 uses the last latest website component's source commit for the static website;
-it cannot publish website changes from `next`. Latest promotion validates
-and copies the current `next` bytes, preserving their original helper version
-and SHA even when a `next` release carried an older helper forward. Ordinary helper
+it cannot publish website changes from `next`. Next bundles carry an rc version,
+for example `v0.1.184-rc.3`. Latest promotion
+rebuilds/stamps bundles from that rc commit with `v0.1.184` and publishes them
+to `/dl/manifest.json`; the next manifest keeps serving the rc. Ordinary helper
 notices merely trigger a manifest check; each helper resolves its own channel.
 The new helper rechecks even when latest promotes a build already announced
 for `next`. Helpers predating this change can suppress that second notice:
@@ -45,11 +46,13 @@ reconnect or run `npx usebeeline@latest update` once after the first latest
 promotion if necessary.
 The CLI's `next` npm tag is separate from these authoritative bundle channels;
 `npx usebeeline@latest update` continues to recover using the configured bundle
-manifest, without waiting for an npm tag promotion.
+manifest, independently of npm processing. The rc npm package publishes with `--tag next`;
+the rebuilt final package uses npm's default latest tag through OIDC, without
+an npm token or a dist-tag operation.
 
 ## Release authority and durable storage
 
-When helper code or a shared helper contract is selected,
+For every new next rc and latest promotion,
 `.github/actions/daemon-leg/action.yml` combines install-verified native
 `linux-x64`, `darwin-arm64`, and `darwin-x64` bundles under the release's exact
 version and source SHA. Linux builds on the standard hosted `ubuntu-22.04` runner, alongside native
@@ -61,8 +64,8 @@ skips bundle rebuilding and promotion (see [the release pipeline](./release-pipe
 Input-keyed native binaries may be restored from Actions cache; a miss builds
 them from the pinned upstream. Full-bundle install proof still runs. Native
 cache entries are never published on the public Releases page.
-Other selective releases carry the last successful helper version, SHA, and
-artifact reference.
+Channel policy selects helper rebuilding even when helper source inputs are
+unchanged, so every new identity gets its own version stamp.
 Its promote phase passes `daemon-artifact-<version>-<sha>` to
 `.github/actions/pages-leg/action.yml`. The Pages leg:
 
@@ -99,7 +102,7 @@ The manifest uses schemaVersion 1, with `sourceCommit`, `version`, and
 `bundles["darwin-x64"]` entries containing `file`, `sha256`, `bytes`, `node`,
 `commit`, `version`, and `verified: true`. Every bundle and the top-level identity
 must match the unified release identity. Source commit is the helper's primary
-comparison; the unified release's `vX.Y.Z` is the version fallback.
+comparison; the unified release's `vX.Y.Z-rc.N` or final `vX.Y.Z` is the version fallback.
 
 The verifier requires the exact expected manifest, checks every SHA sidecar,
 and executes the production `SelfUpdateManager` in a disposable prefix seeded

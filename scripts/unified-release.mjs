@@ -91,7 +91,7 @@ export const COMPONENT_PATH_RULES = [
   { exact: 'scripts/release-record.mjs', components: ['server', 'mobile-ota', 'website'] },
 ];
 
-const VERSION = /^v(\d+)\.(\d+)\.(\d+)$/;
+const VERSION = /^v(\d+)\.(\d+)\.(\d+)(?:-rc\.[1-9]\d*)?$/;
 const SHA = /^[0-9a-f]{7,64}$/;
 const FINAL_STATES = new Set(['checked', 'carried']);
 const RUNTIME_PIN_PATH = 'apps/mobile/native-fingerprint.json';
@@ -378,7 +378,8 @@ function desktopVersionForRelease(previous) {
 export function initializeRelease({ version, sourceSha, previous, selectedComponents = RELEASE_COMPONENTS, runtimePin, startedAt = now(), channel, next, freshIdentity = false }) {
   if (channel) {
     releaseChannel(channel);
-    if (channel === 'latest') promotionSource(next, sourceSha);
+    if (channel === 'latest' && promotionSource(next, sourceSha).version !== version) fail('latest must use the final version of the current next rc');
+    if (channel === 'next' && !/-rc\.[1-9]\d*$/.test(version)) fail('next requires an rc release version');
     const baseline = channelBaseline(previous, next);
     const state = initializeRelease({ version, sourceSha, previous: baseline, selectedComponents, runtimePin, startedAt, freshIdentity: previous?.version !== version });
     if (baseline?.storeRuntime) state.storeRuntime = structuredClone(baseline.storeRuntime);
@@ -535,7 +536,7 @@ export function releasePlanSummary(state) {
   currentRelease(state);
   return {
     identity: `${state.version}@${state.sourceSha}`,
-    ...(state.channel ? { channel: state.channel, helper: state.channel === 'latest' ? 'promote next bytes' : 'build when changed' } : {}),
+    ...(state.channel ? { channel: state.channel, helper: 'build and stamp release version' } : {}),
     selected: state.plan.selected,
     carried: Object.fromEntries(state.plan.carried.map((component) => {
       const entry = componentEntry(state, component);
@@ -618,22 +619,11 @@ export function applyJobFacts(state, needs, { previous, runtimePins = {} } = {})
     const outputs = needs[job].outputs ?? {};
     if (!OTA_BRANCH.test(outputs.ota_branch ?? '')) fail('the mobile OTA job reported no branch');
     ota.otaBranch = outputs.ota_branch;
-    if (state.channel === 'latest') {
-      validateReleaseIdentity(needs.initialize.outputs.ota_version, needs.initialize.outputs.ota_sha);
-      ota.sourceSha = needs.initialize.outputs.ota_sha;
-      ota.version = needs.initialize.outputs.ota_version;
-    }
     ota.previousOtaBranch = previous?.components?.['mobile-ota']?.otaBranch ?? 'production';
     if (ota.previousOtaBranch === ota.otaBranch) ota.previousOtaBranch = previous?.components?.['mobile-ota']?.previousOtaBranch;
     ota.otaTargets = (outputs.ota_targets ?? '').split(',').filter(Boolean);
     const storeRuntime = parseJsonOutput(outputs.store_runtime, 'store_runtime');
     if (storeRuntime) state.storeRuntime = { ...state.storeRuntime, previouslyLive: storeRuntime.previouslyLive ?? [] };
-  }
-  if (state.channel === 'latest' && state.components.helper.state === 'checked') {
-    const outputs = needs.initialize.outputs;
-    validateReleaseIdentity(outputs.helper_version, outputs.helper_sha);
-    Object.assign(state.components.helper, { version: outputs.helper_version, sourceSha: outputs.helper_sha,
-      artifactRef: `daemon-artifact-${outputs.helper_version}-${outputs.helper_sha}` });
   }
   if (state.channel && state.components['mobile-native'].selected && state.components['mobile-native'].state === 'checked')
     state.components['mobile-native'].storeTrack = state.channel === 'next' ? 'beta' : 'production';
@@ -665,12 +655,10 @@ export function compactState(state) {
 }
 
 /** One line per output; public JSON uses punctuation-safe transport. */
-export function planOutputs(state, previous, next) {
+export function planOutputs(state, previous) {
   const plan = state.plan;
   const lines = [
     ...(state.channel ? [`channel=${state.channel}`] : []),
-    ...(next ? Object.entries(promotionSource(next, state.sourceSha)).filter(([key]) => key !== 'sourceSha' && key !== 'version').map(([key, value]) =>
-      `${({ otaBranch: 'ota_branch', otaSha: 'ota_sha', otaVersion: 'ota_version', otaTargets: 'ota_targets', helperSha: 'helper_sha', helperVersion: 'helper_version' })[key]}=${Array.isArray(value) ? value.join(',') : value}`) : []),
     `has_previous=${Boolean(previous)}`,
     `previous_version=${previous?.version ?? ''}`,
     `previous_sha=${previous?.sourceSha ?? ''}`,
@@ -848,7 +836,7 @@ async function main(argv) {
     writeJson(args.state, state);
     if (args.summary) writeJson(args.summary, releasePlanSummary(state));
     else console.log(JSON.stringify(releasePlanSummary(state)));
-    if (args.outputs) appendFileSync(args.outputs, planOutputs(state, previous, next));
+    if (args.outputs) appendFileSync(args.outputs, planOutputs(state, previous));
     return;
   }
   if (command === 'restore-job-state') {

@@ -8,7 +8,8 @@ describe('F26 committed completion capture', () => {
   beforeEach(async () => {
     db = new PgliteDatabase();
     await db.query(`CREATE TABLE workspace_connectors(id text PRIMARY KEY,status text,sign_in jsonb,status_error text);
-      CREATE TABLE agents(agent_id text PRIMARY KEY,owner_id text,machine_id text,squire_work jsonb,squire_report jsonb);
+      CREATE TABLE agents(agent_id text PRIMARY KEY,owner_id text,machine_id text,squire_work jsonb);
+      CREATE TABLE squire_machines(owner_id text,machine_id text,squire_work jsonb,squire_report jsonb);
       CREATE TABLE rooms_mcp_idempotency(member_id text,idempotency_key text,message_id text,result jsonb);`);
     await db.query(commandCompletionSchema());
     release = await db.client.listen(COMMAND_COMPLETION_CHANNEL, payload => notifyCommandCompletion(payload));

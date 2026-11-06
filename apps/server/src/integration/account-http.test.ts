@@ -373,9 +373,9 @@ const fixture = monolithFixture();
     });
 
     const colliding = await operation('updatePersonProfile', { handle: 'bee' });
-    expect(colliding.status).toBe(200);
+    expect(colliding.status).toBe(409);
     await expect((await operation('getManagedIdentity')).json()).resolves.toMatchObject({
-      handle: 'bee',
+      handle: 'owner',
     });
     expect(
       (
@@ -383,7 +383,7 @@ const fixture = monolithFixture();
           AGENT,
         ])
       ).rows[0]?.handle,
-    ).toBe('bee_2');
+    ).toBe('bee');
 
     const claimed = await operation('claimManagedHandle', { handle: 'captain.owner' });
     expect(claimed.status).toBe(200);
@@ -636,7 +636,7 @@ const fixture = monolithFixture();
     await fixture.daemonOperation('postConnectorVault', { connections: [] });
     const posted = await fixture.daemonOperation('postSquireLoginWall', { roomId: ROOM, wall: 'google_session', message: 'expired' });
     const { offerId } = await posted.json() as { offerId: string };
-    const readWork = async () => (await fixture.database.query<{ work: Record<string, unknown> }>(`SELECT squire_work work FROM agents WHERE agent_id=$1`, [AGENT])).rows[0]!.work;
+    const readWork = async () => (await fixture.database.query<{ work: Record<string, unknown> }>(`SELECT squire_work || jsonb_build_object('generation',generation) work FROM squire_machines WHERE (owner_id,machine_id)=(SELECT owner_id,COALESCE(machine_id,agent_id) FROM agents WHERE agent_id=$1)`, [AGENT])).rows[0]!.work;
     const before = await readWork();
     const accepted = await fixture.operation('acceptConnectorOffer', { offerId });
     expect(accepted.status).toBe(200);

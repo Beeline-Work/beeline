@@ -176,7 +176,7 @@ export async function route(
     const storedSignIn = !isAppSignInLink(authorization) && !isLinkSignIn
       ? (await options.database.query(`SELECT 1 FROM workspace_connectors
           WHERE status='installing' AND sign_in->>'url'=$1
-          UNION ALL SELECT 1 FROM agents WHERE squire_work->>'install'='true'
+          UNION ALL SELECT 1 FROM squire_machines WHERE squire_work->>'install'='true'
             AND squire_work->'signIn'->>'url'=$1 LIMIT 1`, [authorization])).rowCount > 0 : false;
     if (!(isAppSignInLink(authorization) || isLinkSignIn || storedSignIn) || !options.webAppOrigins?.includes(webOrigin)) {
       json(response, 400, { error: 'Invalid app sign-in start' });

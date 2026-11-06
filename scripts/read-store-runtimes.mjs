@@ -61,9 +61,9 @@ export async function readStores({ builds, env = process.env, fetchImpl = fetch,
     try {
       if (platform === 'android') {
         const token = await mintAccessToken(env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON, { fetchImpl });
-        // Nightly's Play beta binary can have a runtime not yet in production.
+        // Next's Play beta binary can have a runtime not yet in production.
         // Include both tracks so every installed dogfood phone receives OTA.
-        const tracks = env.BEELINE_RELEASE_CHANNEL === 'nightly' ? ['production', 'beta'] : ['production'];
+        const tracks = env.BEELINE_RELEASE_CHANNEL === 'next' ? ['production', 'beta'] : ['production'];
         for (const track of tracks) {
           const response = await fetchImpl(`https://androidpublisher.googleapis.com/androidpublisher/v3/applications/app.usebeeline/tracks/${track}/releases`, {
             headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(30_000),

@@ -1,3 +1,4 @@
+import { seedSquireMachine } from './test-fixtures/squire-machines.js';
 import { phoneFetch } from '../../../tests/helpers/phone-operation.js';
 
 import { COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion } from './command-completion.js';
@@ -6,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type randomBytes, randomUUID } from 'node:crypto';
 
-import { Pool } from 'pg';
+import { Client, Pool } from 'pg';
 
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
@@ -206,7 +207,14 @@ export function fixtureScope2() {
         await admin.end();
       };
       await migrate(database);
-      releaseCompletions = async () => {};
+      const connection = new Client({ connectionString: isolatedUrl.toString() });
+      await connection.connect();
+      connection.on('notification', message => {
+        if (message.channel === COMMAND_COMPLETION_CHANNEL && message.payload)
+          notifyCommandCompletion(message.payload);
+      });
+      await connection.query(`LISTEN ${COMMAND_COMPLETION_CHANNEL}`);
+      releaseCompletions = () => connection.end();
     } else {
       database = await migratedDatabase();
       releaseCompletions = await database.client.listen(COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion);
@@ -256,8 +264,7 @@ export function fixtureScope2() {
 
 
   async function connectSquire(): Promise<string> {
-    await database.query(`UPDATE agents SET squire_report=$2::jsonb WHERE agent_id=$1`,
-      [HELPER, JSON.stringify({ status: 'connected', reportedAt: Date.now() / 1000 })]);
+    await seedSquireMachine(database, HELPER, { squire_report: { status: 'connected', reportedAt: Date.now() / 1000 } });
     return 'squire:machine-one';
   }
 

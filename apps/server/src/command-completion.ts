@@ -80,10 +80,12 @@ BEGIN
        IS NOT DISTINCT FROM (previous->'status',previous->'sign_in',previous->'status_error') THEN RETURN NULL; END IF;
    command_key := jsonb_build_object('principal','connector','operation','status','commandId',item->>'id');
  ELSIF TG_TABLE_NAME='agents' THEN
-   IF TG_OP='UPDATE' AND (item->'squire_work',item->'squire_report')
-       IS NOT DISTINCT FROM (previous->'squire_work',previous->'squire_report') THEN RETURN NULL; END IF;
+   IF TG_OP='UPDATE' AND item->'squire_work' IS NOT DISTINCT FROM previous->'squire_work' THEN RETURN NULL; END IF;
    command_key := jsonb_build_object('principal','connector','operation','machine',
      'commandId',(item->>'owner_id') || ':' || COALESCE(item->>'machine_id',item->>'agent_id'));
+ ELSIF TG_TABLE_NAME='squire_machines' THEN
+   command_key := jsonb_build_object('principal','connector','operation','machine',
+     'commandId',(item->>'owner_id') || ':' || (item->>'machine_id'));
  ELSIF TG_TABLE_NAME='rooms_mcp_idempotency' THEN
    IF TG_OP='UPDATE' AND (item->'message_id',item->'result')
        IS NOT DISTINCT FROM (previous->'message_id',previous->'result') THEN RETURN NULL; END IF;
@@ -98,6 +100,9 @@ CREATE TRIGGER beeline_connector_completion AFTER INSERT OR UPDATE OR DELETE ON 
  FOR EACH ROW EXECUTE FUNCTION beeline_completion_changed();
 DROP TRIGGER IF EXISTS beeline_squire_completion ON agents;
 CREATE TRIGGER beeline_squire_completion AFTER INSERT OR UPDATE OR DELETE ON agents
+ FOR EACH ROW EXECUTE FUNCTION beeline_completion_changed();
+DROP TRIGGER IF EXISTS beeline_machine_squire_completion ON squire_machines;
+CREATE TRIGGER beeline_machine_squire_completion AFTER INSERT OR UPDATE OR DELETE ON squire_machines
  FOR EACH ROW EXECUTE FUNCTION beeline_completion_changed();
 DROP TRIGGER IF EXISTS beeline_mcp_send_completion ON rooms_mcp_idempotency;
 CREATE TRIGGER beeline_mcp_send_completion AFTER INSERT OR UPDATE OR DELETE ON rooms_mcp_idempotency

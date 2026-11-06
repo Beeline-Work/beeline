@@ -1,3 +1,4 @@
+import { requireScheduledStopManager } from '../subscription-webhooks.js';
 import { CommandScopedDatabase } from '../command-scoped-database.js';
 import type { TrayDecisionOperation } from '../tray-decision-command.js';
 import { ROUTER_AUTHORITY_LOCK } from '../router-authority-lock.js';
@@ -53,15 +54,8 @@ import { phoneExecute } from './execute.js';
   /** New durable stop intents are idempotent desired state. Legacy operations
    * keep their exact not-found response. Provider cleanup never holds the DB
    * connection or authority fence and cannot be automatically replayed. */
-  export async function phoneStopScheduledWorkCommand(ctx: PhoneContext, operation:'deleteRoomSchedule'|'deleteRoomSubscription',
-    input:{roomId:string;scheduleId?:string;subscriptionId?:string},viewer:string):Promise<void>{
-    const authorize=async(db:SqlDatabase)=>{
-      await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))',[ROUTER_AUTHORITY_LOCK]);
-      await requireScheduledWorkManager(db,input.roomId,viewer);
-      if((await db.query(`SELECT 1 FROM memberships member WHERE member.identity_id=$1 AND member.room_id IS NULL
-        AND member.removed_at IS NULL AND member.role='spectator' AND member.workspace_id=(SELECT workspace_id FROM rooms WHERE id=$2)`,[viewer,input.roomId])).rowCount)
-        throw new Error('spectator access is read-only (access denied)');
-    };
+  export async function phoneStopScheduledWorkCommand(ctx: PhoneContext, operation:'deleteRoomSchedule'|'deleteRoomSubscription', input:{roomId:string;scheduleId?:string;subscriptionId?:string}, viewer:string): Promise<void> {
+    const authorize=(db:SqlDatabase)=>requireScheduledStopManager(db,input.roomId,viewer);
     if(operation==='deleteRoomSchedule'){
       if(!(ctx.database as CommandScopedDatabase).active)throw new Error('Scheduled stop requires its durable command transaction');
       await authorize(ctx.database);

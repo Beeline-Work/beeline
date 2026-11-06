@@ -288,9 +288,6 @@ import { daemonExecuteOperation } from './operations.js';
         if (name === 'postAgentTurnReceipt' && candidate.modelOwnerEnd !== undefined &&
             (candidate.status !== 'failed' || candidate.heartbeat !== undefined)) throw new OwnedModelOwnerEndRefusal();
         if (name === 'postAgentTurnReceipt' && !candidate.diagnosticsOnly && ['failed', 'complete'].includes(String(candidate.status))) {
-          await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-            `turn:${scopedRoom}:${String(requestId)}:${authenticatedAgentId}`,
-          ]);
           // Preserve causal provider evidence before the single terminal write.
           if (await parkOwnedModelTerminal(db, input as Input<'postAgentTurnReceipt'>, authenticatedAgentId, turnOwner)) {
             const ended = (await db.query<CommandRow>(`SELECT * FROM agent_commands
@@ -319,7 +316,6 @@ import { daemonExecuteOperation } from './operations.js';
           (name === 'postAgentTurnReceipt' && ['complete','failed'].includes(String(candidate.status)));
         const command = await authorizeCommandOutput(
           db, scopedRoom, authenticatedAgentId, requestId, candidate.generationId, allowCompleted,
-          !['getRoomConversation', 'getRoomMessage', 'getRoomAuthority'].includes(name),
         );
         if (name === 'postAgentTurnReceipt' && command.turn_owner_connection_id) {
           if (!turnOwner || turnOwner.connectionId !== command.turn_owner_connection_id ||

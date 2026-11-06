@@ -117,7 +117,7 @@ export function useChatRoomPresentation([
 
   const voice = useVoiceCall(decodedId, Boolean(roomSurface?.viewer.permissions.send && !viewerIsAgent && !isArchived && !isCorner), roomVoiceAgents);
 
-  useEffect(() => { if (voice.error && !voice.quotaExhausted && !voice.error.startsWith('Calls resume at ')) showVoiceJoinError(voice.error); }, [voice.error, voice.quotaExhausted]);
+  useEffect(() => { if (voice.error && !voice.quotaExhausted && !voice.error.startsWith('Calls resume at ')) showVoiceJoinError(voice.error, () => { void voice.join(); }); }, [voice.error, voice.quotaExhausted, voice.join]);
 
   // The SERVER's statement of who is reading, so the phone's requester test and
   // the server's own are the same comparison over the same namespace.

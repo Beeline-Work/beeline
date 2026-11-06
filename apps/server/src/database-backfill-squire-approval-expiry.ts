@@ -1,7 +1,6 @@
 import { INSTITUTIONAL_HISTORY_MAX_AGE_DAYS, INSTITUTIONAL_MEMORY_KEYWORD_PATTERN, INSTITUTIONAL_MEMORY_KEYWORDS_MAX, INSTITUTIONAL_MEMORY_STOPWORDS, INSTITUTIONAL_RETIRED_STANDING_KEY } from '@beeline/api-contract/daemon';
 import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import { PER_ITEM_EVENT_KINDS, uniqueAgentHandle } from '@beeline/api-contract/phone';
-import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
 import { perItemMembershipSubscriptionCleanupSql } from './membership-join.js';
 import { TERMINAL_PUSH_CLAIMS_SQL } from './push-claim-cleanup.js';
 import { cornerOwedBackfillSql } from './corner-owed.js';
@@ -174,17 +173,10 @@ export async function createIndexConcurrently(
   );
   const state = existing.rows[0];
   if (state?.valid) return;
-  // A concurrent build waits for every older transaction, and a standby
-  // background leader waits on its advisory lock indefinitely. The index only
-  // speeds reads, so a release skips it instead of stalling; the next release
-  // (or an operator) builds it.
-  try {
-    if (state) await database.query(`DROP INDEX CONCURRENTLY IF EXISTS ${name}`);
-    await database.query(create);
-  } catch (error) {
-    if ((error as { code?: string }).code !== '55P03') throw error;
-    console.warn(`[migration] ${name} skipped: an older transaction is still open`);
-  }
+  // These indexes also enforce write admission. A failed build must fail
+  // the migration before its schema-ready marker can advance.
+  if (state) await database.query(`DROP INDEX CONCURRENTLY IF EXISTS ${name}`);
+  await database.query(create);
 }
 
 
@@ -251,59 +243,7 @@ export async function compactPushClaims(database: SqlDatabase): Promise<void> {
  * to, so two unrelated Workspaces may use the same address while duplicates
  * inside either roster receive deterministic numeric suffixes.
  */
-export async function backfillAgentHandles(database: SqlDatabase): Promise<number> {
-  let agents!: QueryResult<{ id: string; created_at: Date }>;
-  await runMigrationStep('agent handle candidates', async () => {
-    agents = await database.query(
-      `SELECT id,created_at FROM identities WHERE kind='agent' ORDER BY created_at,id`,
-    );
-  });
-  let changed = 0;
-  for (const agent of agents.rows) {
-    let updated = 0;
-    await runMigrationStep(`agent handle ${agent.id}`, async () => {
-      updated = await database.transaction(async (transaction) => {
-        await transaction.query(`SET LOCAL statement_timeout='10000ms'`);
-        await transaction.query(`SET LOCAL lock_timeout='500ms'`);
-        // Use the same allocation lock as live pairing/renaming, and lock only
-        // this identity's Workspaces. A legacy global FOR UPDATE held every
-        // Workspace row until the entire population had been rewritten.
-        const workspaceIds = await lockIdentityHandleWorkspaces(transaction, agent.id);
-        const current = (await transaction.query<{ name: string; handle: string | null }>(
-          `SELECT name,handle FROM identities WHERE id=$1 FOR UPDATE`, [agent.id],
-        )).rows[0];
-        if (!current) return 0;
-        const taken = workspaceIds.length
-          ? await transaction.query<{ handle: string }>(
-              `SELECT DISTINCT identity.handle FROM memberships member
-               JOIN identities identity ON identity.id=member.identity_id
-               WHERE member.workspace_id=ANY($1::uuid[]) AND member.room_id IS NULL
-                 AND member.removed_at IS NULL AND identity.id<>$2 AND identity.handle IS NOT NULL
-                 AND (identity.kind='human' OR (identity.kind='agent' AND
-                   (identity.created_at,identity.id)<($3::timestamptz,$2)))`,
-              [workspaceIds, agent.id, agent.created_at],
-            )
-          : await transaction.query<{ handle: string }>(
-              `SELECT identity.handle FROM identities identity WHERE identity.kind='agent'
-                 AND identity.handle IS NOT NULL AND (identity.created_at,identity.id)<($2::timestamptz,$1)
-                 AND NOT EXISTS (SELECT 1 FROM memberships member WHERE member.identity_id=identity.id
-                   AND member.room_id IS NULL AND member.removed_at IS NULL)`,
-              [agent.id, agent.created_at],
-            );
-        const handle = uniqueAgentHandle(current.name, taken.rows.map((row) => row.handle));
-        if (current.handle === handle) return 0;
-        const updated = await transaction.query(
-          `UPDATE identities SET handle=$2,updated_at=now() WHERE id=$1 AND handle IS DISTINCT FROM $2`,
-          [agent.id, handle],
-        );
-        return updated.rowCount;
-      });
-    });
-    changed += updated;
-  }
-  console.log(`backfillAgentHandles: assigned ${changed} name-derived agent handle(s)`);
-  return changed;
-}
+
 
 
 /**
@@ -429,7 +369,7 @@ export async function measureDatabaseBreakdown(database: SqlDatabase): Promise<{
       SELECT 'receipts' type,pg_column_size(t)::bigint bytes FROM agent_turns t
       UNION ALL SELECT 'presence-adjacent',pg_column_size(l)::bigint FROM live_outputs l
     )
-    SELECT type,count(*)::text rows,sum(bytes)::text logical_bytes FROM (SELECT * FROM message_types UNION ALL SELECT * FROM operational) typed GROUP BY type ORDER BY sum(bytes) DESC,type`);
+    SELECT type,count(*)::text rows,sum(bytes)::text logical_bytes FROM (SELECT message_types.* FROM message_types UNION ALL SELECT operational.* FROM operational) typed GROUP BY type ORDER BY sum(bytes) DESC,type`);
   const media = await database.query<{ type: string; objects: string; bytes: string }>(`
     WITH refs AS (
       SELECT DISTINCT (regexp_match(candidate.url,'/v1/media/([0-9a-f-]+)$'))[1] id

@@ -1,3 +1,4 @@
+import { seedSquireMachine } from './test-fixtures/squire-machines.js';
 import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -210,7 +211,7 @@ describe('PhoneService agent connect pairing claim', () => {
     ).toBeNull();
   });
 
-  it('keeps an active agent handle unique when it pairs into another Workspace', async () => {
+  it('keeps an existing agent handle unchanged when it pairs into another Workspace', async () => {
     await insertCode(new Date(Date.now() + 60_000));
     const first = await phone.claimAgentConnectPairing({
       code: CODE,
@@ -257,7 +258,7 @@ describe('PhoneService agent connect pairing claim', () => {
     expect(second).toMatchObject({ status: 'claimed', agentName: first.agentName });
     expect(
       (await database.query(`SELECT handle FROM identities WHERE id=$1`, [AGENT])).rows,
-    ).toEqual([{ handle: `${handle}_2` }]);
+    ).toEqual([{ handle }]);
   });
 
   it.each([
@@ -415,7 +416,7 @@ describe('PhoneService agent connect pairing claim', () => {
       });
       expect(
         (await database.query(`SELECT handle FROM identities WHERE id=$1`, [AGENT])).rows,
-      ).toEqual([{ handle: 'greeter' }]);
+      ).toEqual([{ handle: agentHandleFromName(claimed.agentName) }]);
 
       await phone.finishAgentConnectPairing({ code: CODE, workspaceJoined: true });
 
@@ -423,7 +424,7 @@ describe('PhoneService agent connect pairing claim', () => {
       expect(joinLine).toBeUndefined();
       expect(
         (await database.query('SELECT handle FROM identities WHERE id=$1', [AGENT])).rows,
-      ).toEqual([{ handle: 'greeter' }]);
+      ).toEqual([{ handle: agentHandleFromName(claimed.agentName) }]);
     });
 
     it('rejects an unknown or already-expired pairing code', async () => {
@@ -512,7 +513,7 @@ describe('PhoneService agent connect pairing claim', () => {
       expect(joinLine).toBeUndefined();
       expect(
         (await database.query('SELECT handle FROM identities WHERE id=$1', [AGENT])).rows,
-      ).toEqual([{ handle: 'greeter' }]);
+      ).toEqual([{ handle: agentHandleFromName(claimed.agentName) }]);
     });
   });
 });
@@ -668,10 +669,7 @@ describe('PhoneService machine grouping in readWorkbench', () => {
     ]);
 
     if (state === 'connected') {
-      await database.query(
-        `UPDATE agents SET squire_work='{}'::jsonb,squire_report=$2::jsonb WHERE agent_id=$1`,
-        [AGENT_A, JSON.stringify({ status: 'connected', reportedAt: Date.now() })],
-      );
+      await seedSquireMachine(database, AGENT_A, { squire_work: {}, squire_report: { status: 'connected', reportedAt: Date.now() } });
     }
 
     const code = 'ABCD1234-EF567890';
@@ -724,7 +722,7 @@ describe('PhoneService machine grouping in readWorkbench', () => {
 
     expect(paired.connectorId).toBe(`squire:${MACHINE_X}`);
     const work = await database.query<{ agent_id: string }>(
-      `SELECT agent_id FROM agents WHERE machine_id=$1 AND squire_work->>'install'='true'`,
+      `SELECT helper_agent_id agent_id FROM squire_machines WHERE machine_id=$1 AND squire_work->>'install'='true'`,
       [MACHINE_X],
     );
     expect(work.rows).toHaveLength(1);
@@ -761,7 +759,7 @@ describe('PhoneService machine grouping in readWorkbench', () => {
     );
     expect(paired.connectorId).toBe(`squire:${MACHINE_X}`);
     const work = await database.query<{ agent_id: string }>(
-      `SELECT agent_id FROM agents WHERE machine_id=$1 AND squire_work->>'install'='true'`,
+      `SELECT helper_agent_id agent_id FROM squire_machines WHERE machine_id=$1 AND squire_work->>'install'='true'`,
       [MACHINE_X],
     );
     expect(work.rows).toEqual([{ agent_id: AGENT_B }]);

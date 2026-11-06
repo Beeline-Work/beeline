@@ -544,15 +544,17 @@ const scope2 = fixtureScope2();
   });
 
 
-  it('returns an empty tool list over the daemon API when a query matches nothing', async () => {
+  it.each([true, false])('R-NOISE-9: HTTP tool discovery returns guidance, pending sign-in: %s', async pending => {
     const provider = scope2.fakeComposio();
     const daemon = scope2.daemonWith(fakeRegistry([]).client, provider);
     const started = await daemon.execute('connectApp',
       { ...turn, app: 'Slack', reason: 'find a tool' }, HELPER);
     const phone = new PhoneService(scope2.database, 'http://placeholder', undefined, undefined,
       undefined, false, scope2.database, undefined, undefined, fakeRegistry([]).client, provider);
-    await phone.execute('beginAppSignIn', { appId: started.appId! }, OWNER);
-    await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: started.appId! }, OWNER);
+    if (!pending) {
+      await phone.execute('beginAppSignIn', { appId: started.appId! }, OWNER);
+      await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: started.appId! }, OWNER);
+    }
     provider.listTools.mockResolvedValueOnce({ tools: [] });
     const server = createBeelineServer({ database: scope2.database, phone, daemon, live: new LiveHub(),
       mediaMaximumBytes: 1,
@@ -560,18 +562,41 @@ const scope2 = fixtureScope2();
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     try {
+      vi.mocked(captureServerError).mockClear();
       const response = await phoneFetch(`${origin}/v1/daemon/operations/listAppTools`, {
         method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer bdt_fixture-token-0001' },
         body: JSON.stringify({ ...turn, appId: started.appId!, query: 'nonexistent-tool' }),
       });
       const result = await response.json();
-      console.log(`Reproduction tool-input-limits: no-match query → HTTP ${response.status} ${JSON.stringify(result)}`);
+      console.log(`Reproduction R-NOISE-9: tool discovery, pending=${pending} → HTTP ${response.status} ${JSON.stringify(result)}`);
       expect(response.status).toBe(200);
       expect(result).toEqual({
         tools: [],
-        next: expect.stringContaining('query set to a tool slug or search phrase for matching input schemas'),
+        next: pending ? 'App sign-in is pending. Complete sign-in in Beeline.'
+          : expect.stringContaining('query set to a tool slug or search phrase for matching input schemas'),
       });
-      expect(provider.listTools).toHaveBeenCalledWith('slack', 'nonexistent-tool');
+      if (pending) expect(provider.listTools).not.toHaveBeenCalled();
+      else {
+        expect(provider.listTools).toHaveBeenCalledWith('slack', 'nonexistent-tool');
+        const detail = JSON.stringify({ detail: '`Filter ID` must be a valid UUID hex (32-36 characters long, containing only digits, dashes, or a-f characters)' });
+        const appProvider = new ComposioApps('fixture-only', vi.fn(async (url: URL | string) => {
+          const path = new URL(String(url)).pathname;
+          if (path.includes('/connected_accounts/')) return Response.json({
+            id: 'ca_fixture', user_id: OWNER, status: 'ACTIVE', toolkit: { slug: 'slack' },
+          });
+          if (path.includes('/tools/execute/')) return Response.json({ successful: false, error: detail });
+          return Response.json({ version: 'fixture', toolkit: { slug: 'slack' } });
+        }) as typeof fetch);
+        Object.assign(provider, { execute: appProvider.execute.bind(appProvider) });
+        const executed = await phoneFetch(`${origin}/v1/daemon/operations/executeAppTool`, {
+          method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer bdt_fixture-token-0001' },
+          body: JSON.stringify({ ...turn, appId: started.appId!, tool: 'SLACK_POST_MESSAGE', arguments: { filter_id: 'invalid' } }),
+        });
+        expect(executed.status).toBe(200);
+        expect(await executed.json()).toEqual({ status: 'executed',
+          data: { successful: false, error: 'App tool execution failed: ' + detail } });
+      }
+      expect(captureServerError).not.toHaveBeenCalled();
     } finally {
       await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     }

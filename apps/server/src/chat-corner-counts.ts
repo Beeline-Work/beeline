@@ -124,7 +124,7 @@ export function cornerFactsSql(viewerExpr: string): {
     LEFT JOIN corner_github_cache gh ON gh.corner_id=c.id
     ${cornerWorkSql()}
     ${cornerBlockerSql()}
-    LEFT JOIN LATERAL (SELECT * FROM messages message WHERE message.room_id=c.id
+    LEFT JOIN LATERAL (SELECT message.id,message.text,message.author_id,message.created_at,message.presentation FROM messages message WHERE message.room_id=c.id
       AND message.presentation IN ('message','system') AND ${visibleChatMessageSql('message')}
       ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
     LEFT JOIN LATERAL (SELECT status,created_at FROM agent_turns WHERE room_id=c.id

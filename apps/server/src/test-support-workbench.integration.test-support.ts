@@ -193,22 +193,18 @@ export function fixtureScope1() {
     await daemonOperation('installConnector', { connectorId: paired.connectorId });
     const machine = (await database.query<{ machine_id: string }>(
       'SELECT COALESCE(machine_id,agent_id) machine_id FROM agents WHERE agent_id=$1', [HELPER])).rows[0]!;
-    const vaultTarget = connectorType === 'trusty-squire'
-      ? { machine_id: machine.machine_id, workspace_id: WORKSPACE, owner_identity_id: HUMAN }
-      : { id: paired.connectorId, owner_identity_id: HUMAN };
-    if (connectorType === 'trusty-squire') await daemonOperation('postConnectorVault', { connections: [] });
-    await applyVaultList(database, vaultTarget, [
-      {
-        reference: 'github.com/acme/tooling',
-        service: 'github',
-        label: 'Acme tooling',
-        fieldNames: ['token'],
-        allowedHosts: ['github.com'],
-        createdAt: Math.floor(Date.now() / 1000),
-        stale: false,
-        state: 'active',
-      },
-    ]);
+    if (connectorType === 'trusty-squire') {
+      await daemonOperation('postConnectorVault', { connections: [] });
+      await applyVaultList(database, {machine_id:machine.machine_id,workspace_id:WORKSPACE,owner_identity_id:HUMAN}, [{
+        reference:'github.com/acme/tooling',service:'github',label:'Acme tooling',fieldNames:['token'],
+        allowedHosts:['github.com'],createdAt:Math.floor(Date.now()/1000),stale:false,state:'active',
+      }]);
+    } else {
+      await database.query(`INSERT INTO workspace_connections(id,connector_id,owner_identity_id,reference,service,
+        label,hosts,state,connection_metadata,last_synced_at)
+        VALUES(gen_random_uuid(),$1,$2,'github.com/acme/tooling','github','Acme tooling','["github.com"]','active',$3::jsonb,now())`,
+        [paired.connectorId,HUMAN,JSON.stringify({fieldNames:['token'],createdAt:Math.floor(Date.now()/1000)})]);
+    }
     await database.query(
       `UPDATE workspace_connections SET grants=$2::jsonb WHERE COALESCE(connector_id::text,'squire:' || machine_id)=$1`,
       [

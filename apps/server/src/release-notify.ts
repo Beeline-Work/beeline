@@ -111,7 +111,7 @@ export class ReleaseNotifier {
   }
 
   private accept(release: HelperRelease): void {
-    // A channel promotion can repoint latest at the already announced nightly
+    // A channel promotion can repoint latest at the already announced next
     // build. Every committed notice invalidates manifests, even for that same identity.
     this.lastSeenRelease = `${release.version}:${release.sha}`;
     this.lastRelease = release;

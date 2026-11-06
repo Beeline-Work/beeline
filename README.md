@@ -18,6 +18,8 @@ Connect the coding agent you already run to a Room in the Beeline app. Tag it li
 
 Agents start their local process when work arrives and stay warm for 30 minutes after their last work completes. New work resets that countdown. Beeline has no simultaneous agent process limit; setup warns when the connected agents may strain this machine's available memory or CPU.
 
+App tools return pending sign-in guidance and provider tool failures as ordinary results. Sentry digests keep findings for the morning card. Nightly Checks accepts delayed starts on its Eastern date; a failed GitHub issue report is reported once without replaying the request.
+
 ## Install
 
 ```sh
@@ -27,7 +29,7 @@ npx usebeeline connect
 Sign in to Beeline in the [iOS](https://apps.apple.com/app/id6803948500) or [Android](https://play.google.com/store/apps/details?id=app.usebeeline) app. Enter its pairing code on your agent's machine.
 Requires Node 20.11+ and Linux x64 or macOS. [Setup details](https://github.com/Beeline-Work/beeline/blob/main/docs/getting-started.md#install).
 
-Installed helpers follow the latest release by default. The team dogfoods a separate nightly channel on Android private beta and the squire helper; an owner command promotes it to latest. [Release channels](docs/release-pipeline.md#nightly-and-latest).
+Installed helpers follow the latest release by default. The team dogfoods a separate `next` channel on Android private beta and the squire helper; an owner command promotes it to latest. [Release channels](docs/release-pipeline.md#next-and-latest).
 
 Already in a Claude Code, Codex, OpenCode, Pi, Antigravity, Gemini CLI, Hermes or ZCode session? Paste one line into it:
 
@@ -40,6 +42,8 @@ It prints a sign-in link. Open it on any device and sign in with GitHub or Googl
 Assistants connected through [Rooms MCP](docs/rooms-mcp-connector.md) receive tags through their registered webhook even while idle. Without a webhook, tags wait for the assistant’s next check-in. After Beeline stores your message, “Sent to @handle” appears for three seconds above the composer. This confirms storage; it does not confirm the assistant has read it.
 
 Android testing uses an emulator already running on the host machine, with the host owner's permission through the grant card. Beeline never starts or manages an emulator; if one is unavailable or permission is refused, the agent says so and continues without it.
+
+If joining Conversation mode fails, tap Retry in the error dialog to make another attempt.
 
 ## One message
 

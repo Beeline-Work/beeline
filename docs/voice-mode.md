@@ -78,7 +78,7 @@ selection. Agent Profile presents Soul, Model / difficulty, then Voice.
 The owner can preview an Aura library voice and Save it; other members can
 read the current voice. Previews stop after eight seconds, navigation or Cancel.
 
-Saved Aura choices live in `agents.chosen_voices`. Migration removes other
+Saved Aura choices live in `agents.chosen_voices`. People may save the same preference for several agents; `assignVoiceAgents` resolves collisions into distinct voices when a Room speaks. Migration removes other
 entries and the Workspace provider column. Old apps may still send a provider
 field; the server ignores it. Room assignment reserves saved voices and resolves
 collisions deterministically. The profile opened from a Room shows its effective

@@ -1,3 +1,4 @@
+import { messageColumns } from '../message-columns.js';
 import { assetUrl, phoneIdentity as identity, type PhoneIdentityRow as IdentityRow } from '../phone-identity.js';
 import { workingTurnFreshSql } from '../turn-ownership.js';
 import { readHelperOverlayFrame } from '@beeline/api-contract/helper-overlay';
@@ -73,13 +74,8 @@ import { phoneListRoomWorkflowRuns } from './schedules.js';
   /** Resolve one committed row for every viewer listening on this process.
    * The authorized set and the base row come from one statement, so adding
    * sockets does not multiply row reads or trust a stale subscribe grant. */
-  export async function phoneReadLiveDeltas(ctx: PhoneContext,
-    roomId: string,
-    viewerIds: readonly string[],
-    target:
-      { type: 'message'; messageId: string } | { type: 'turn'; agentId: string; requestId: string },
-    database: SqlDatabase = ctx.database,
-  ): Promise<ReadonlyMap<string, RoomLiveDelta>> {
+  export async function phoneReadLiveDeltas(ctx: PhoneContext, roomId: string, viewerIds: readonly string[], target:
+      { type: 'message'; messageId: string } | { type: 'turn'; agentId: string; requestId: string }, database: SqlDatabase = ctx.database): Promise<ReadonlyMap<string, RoomLiveDelta>> {
     database = new CornerAccessDatabase(database);
     const viewers = [...new Set(viewerIds)];
     const deltas = new Map<string, RoomLiveDelta>();
@@ -121,7 +117,7 @@ import { phoneListRoomWorkflowRuns } from './schedules.js';
       ).rows[0];
       if (!row || row.request_id !== target.requestId) return deltas;
       const delta: RoomLiveDelta = {
-        type: 'turn-delta', roomId, turn: phoneProjectAgentTurns(ctx, [row])[0]!,
+        type: 'turn-delta', roomId, turn: ctx.projectAgentTurns([row])[0]!,
         agentState: row.deck_needs_you ? 'needs-you' : row.deck_working ? 'working' : null,
         ...(row.deck_needs_you ? { attentionReason: { kind: 'approval' as const,
           ...(row.deck_attention_actor ? { actor: row.deck_attention_actor } : {}) } } : {}),
@@ -154,7 +150,7 @@ import { phoneListRoomWorkflowRuns } from './schedules.js';
              AND workspace_member.removed_at IS NULL
            WHERE room.id=$1
          )
-         SELECT message.*,author.kind author_kind,author.name author_name,
+         SELECT ${messageColumns('message')},author.kind author_kind,author.name author_name,
            author.handle author_handle,author.avatar author_avatar,author.face_id author_face,
            ${reactionIdentitiesSql('message')} reaction_identities,
            ${taggedIdentityIdsSql('message')} tagged_ids,
@@ -175,7 +171,7 @@ import { phoneListRoomWorkflowRuns } from './schedules.js';
          JOIN messages message ON message.room_id=room.id AND message.id=$2
          JOIN identities author ON author.id=message.author_id
          LEFT JOIN LATERAL (
-           SELECT candidate.* FROM messages candidate
+           SELECT ${messageColumns('candidate')} FROM messages candidate
            WHERE message.deleted_at IS NOT NULL AND candidate.room_id=room.id
              AND ${visibleChatMessageSql('candidate')}
            ORDER BY candidate.created_at DESC,candidate.id DESC LIMIT 1
@@ -200,10 +196,10 @@ import { phoneListRoomWorkflowRuns } from './schedules.js';
       )
     ).rows[0];
     if (!row) return deltas;
-    const base = (await phoneDecorateCornerOpenCards(ctx, roomId, [
+    const base = (await ctx.decorateCornerOpenCards(roomId, [
       projectedMessage(row, ctx.publicOrigin),
     ]))[0]!;
-    const facts = await phoneAttachmentFacts(ctx, [base]);
+    const facts = await ctx.attachmentFacts([base]);
     const preview: ChatListItem['latestMessage'] | null =
       row.deck_latest_id && row.deck_latest_created_at && row.deck_latest_author_id &&
       row.deck_latest_author_kind && row.deck_latest_author_name

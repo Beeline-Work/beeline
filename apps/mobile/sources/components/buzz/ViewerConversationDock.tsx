@@ -92,7 +92,7 @@ export function ViewerConversationDock({
       id: message.id,
       speaker: message.author.handle ?? message.author.name,
       text: message.text,
-    }))]);
+    }))].slice(-8));
   }, [conversation?.messages, currentAgent]);
 
   React.useEffect(() => {
@@ -130,7 +130,7 @@ export function ViewerConversationDock({
       if (!succeeded) { sentToAgent.current = previouslySent; return false; }
       setEntries((current) => [...current, {
         id: `local:${Date.now()}`, speaker: 'You', text, context,
-      }]);
+      }].slice(-8));
       setDraft('');
       draftRef.current = '';
       setHeight(COMPOSER_SINGLE_LINE_INPUT_HEIGHT);
@@ -146,7 +146,7 @@ export function ViewerConversationDock({
   };
   const agentReplies = entries.filter((entry) => entry.speaker !== 'You');
   const showTranscript = Boolean(error || (open && entries.length) || (tickerVisible && agentReplies.length));
-  const latestReply = agentReplies.at(-1);
+  const recent = open ? entries.slice(-3) : agentReplies.slice(-2);
   return (
     <View pointerEvents="box-none" style={styles.overlay} testID="viewer-conversation-dock"
     onLayout={(event) => setAvailableWidth(event.nativeEvent.layout.width - 24)}>
@@ -158,7 +158,7 @@ export function ViewerConversationDock({
           <Text style={styles.transcriptHeading}>Recent conversation · {currentAgent ?? 'agent'}</Text>
           {open ? (
             <FlatList ref={transcriptScroll} style={styles.transcriptScroll}
-              data={entries} keyExtractor={entry => entry.id}
+              data={recent} keyExtractor={entry => entry.id}
               testID="viewer-conversation-scroll" keyboardShouldPersistTaps="handled"
               onLayout={scrollToNewest} onContentSizeChange={scrollToNewest}
               renderItem={({ item: entry }) => (
@@ -174,15 +174,15 @@ export function ViewerConversationDock({
             />
           ) : (
             <>
-              {latestReply ? (
-                <View style={styles.transcriptEntry}>
-                  <Text style={styles.transcriptSpeaker}>{latestReply.speaker}</Text>
-                  <Text style={styles.transcriptText}>{latestReply.text}</Text>
-                  {latestReply.context ? (
-                    <TranscriptReference viewer>{viewerContextLabel(latestReply.context)}</TranscriptReference>
+              {recent.map((entry) => (
+                <View key={entry.id} style={styles.transcriptEntry}>
+                  <Text style={styles.transcriptSpeaker}>{entry.speaker}</Text>
+                  <Text numberOfLines={2} style={styles.transcriptText}>{entry.text}</Text>
+                  {entry.context ? (
+                    <TranscriptReference viewer>{viewerContextLabel(entry.context)}</TranscriptReference>
                   ) : null}
                 </View>
-              ) : null}
+              ))}
               {error ? <Text style={styles.error}>{error}</Text> : null}
             </>
           )}

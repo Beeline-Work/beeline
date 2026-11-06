@@ -233,8 +233,8 @@ export function AgentUsageSection({ usage, harness, onRefresh }: {
                     }
                   : { accessible: true, accessibilityLabel: `${c.label}: ${c.value}` })}
               >
-                <Text style={styles.label}>{c.label}</Text>
-                <Text style={[styles.value, muted && styles.mutedValue, c.tone && styles[c.tone]]}>
+                <Text numberOfLines={1} style={styles.label}>{c.label}</Text>
+                <Text numberOfLines={1} style={[styles.value, muted && styles.mutedValue, c.tone && styles[c.tone]]}>
                   {c.value}
                 </Text>
                 {c.fill !== undefined ? (
@@ -251,7 +251,7 @@ export function AgentUsageSection({ usage, harness, onRefresh }: {
                   </View>
                 ) : null}
                 {c.foot ? (
-                  <Text style={[styles.label, c.tone === 'danger' && styles.danger]}>
+                  <Text numberOfLines={1} style={[styles.label, c.tone === 'danger' && styles.danger]}>
                     {c.foot}
                   </Text>
                 ) : null}

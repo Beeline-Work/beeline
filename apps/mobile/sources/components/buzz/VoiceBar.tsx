@@ -25,7 +25,7 @@ export function VoiceAgentStrip({ voice }: { voice: VoiceCallState }) {
         <IdentityMark kind="agent" seed={agent.pubkey} face={agent.face} avatarUrl={agent.avatar} name={agent.name} size={32} />
         {voice.target === agent.pubkey && <View style={styles.pinBadge} testID={`voice-pin-${agent.pubkey}`}><PinGlyph size={12} color={theme.buzz.bgBase} /></View>}
       </View>} />
-      <Text style={[styles.name, voice.target === agent.pubkey && styles.pinnedName]}>{agent.name}</Text>
+      <Text numberOfLines={1} style={[styles.name, voice.target === agent.pubkey && styles.pinnedName]}>{agent.name}</Text>
     </View>)}
   </ScrollView>;
 }
@@ -38,14 +38,14 @@ export function VoiceBar({ voice, testIDPrefix = 'chat' }: {
   const pinned = voice.agents.find(agent => agent.pubkey === voice.target);
   return <>
     {pinned && <InlineRow style={styles.pinLine} testID="voice-pin-line">
-      <Text style={styles.pinLabel}>Pinned to <Text style={styles.pinnedName}>{pinned.name}</Text></Text>
+      <Text numberOfLines={1} ellipsizeMode="tail" style={styles.pinLabel}>Pinned to <Text style={styles.pinnedName}>{pinned.name}</Text></Text>
       <Button label="" variant="quiet" iconOnly accessibilityLabel="Unpin agent" onPress={() => voice.aim(pinned.pubkey)}
-        hitSlop={theme.buzz.space.sm} style={styles.unpinTarget} icon={<Text style={styles.unpin}>Unpin</Text>} />
+        hitSlop={theme.buzz.space.sm} style={styles.unpinTarget} icon={<Text numberOfLines={1} style={styles.unpin}>Unpin</Text>} />
     </InlineRow>}
     <View style={styles.controls} testID="voice-bar">
       <View style={styles.waveform} accessibilityLabel={voice.speaker
         ? `${voice.agents.find(a => a.pubkey === voice.speaker)?.name ?? 'Agent'} speaking` : voice.muted ? 'Microphone muted' : 'Listening'} testID="voice-waveform">
-        {voice.connecting ? <SurfaceGlyphLoader compact testID="voice-startup-loader" /> : warning ? <Text accessibilityLiveRegion="polite"
+        {voice.connecting ? <SurfaceGlyphLoader compact testID="voice-startup-loader" /> : warning ? <Text accessibilityLiveRegion="polite" numberOfLines={1}
           style={styles.warning} testID="conversation-tip">{warning}</Text>
           : voice.error ? <ErrorBanner inline title={voice.error} titleTestID={voice.quotaExhausted ? 'voice-quota-error' : 'voice-connection-error'} />
           : <DictationWaveform level={voice.level} live={!voice.connecting} flat={voice.muted && voice.level === 0} />}

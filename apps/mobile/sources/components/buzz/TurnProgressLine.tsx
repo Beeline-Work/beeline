@@ -126,7 +126,7 @@ const TurnProgressLineBody = React.memo(function TurnProgressLineBody({
         >
           <BeelineMarkSpinner live />
         </View>
-        <Text style={styles.label}>
+        <Text numberOfLines={1} style={styles.label}>
           {label}
         </Text>
         {counter != null && (
@@ -177,7 +177,7 @@ export function TurnSettledLine({ line, testID }: { line: string; testID?: strin
         <View style={styles.glyphCell} testID={testID ? `${testID}-glyph` : undefined}>
           <BeelineMarkSpinner />
         </View>
-        <Text style={styles.label}>
+        <Text numberOfLines={1} style={styles.label}>
           {line}
         </Text>
       </View>

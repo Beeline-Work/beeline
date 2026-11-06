@@ -23,7 +23,7 @@ export const CornerStatusLine = React.memo(function CornerStatusLine({
       <TranscriptNavigationRow testID="corner-status-line" singleDestination divider={false}
         trailing={{ accessibilityLabel: `${line}. Opens the pull request on GitHub`,
           onPress: () => onOpenPullRequest(url), testID: 'corner-status-affordance' }}>
-        <Text style={styles.copy} testID="corner-status-copy">{line}</Text>
+        <Text numberOfLines={1} style={styles.copy} testID="corner-status-copy">{line}</Text>
       </TranscriptNavigationRow>
     </View>
   );

@@ -148,7 +148,7 @@ export default function ConnectionDetailScreen() {
             />
             <View style={styles.identityCopy}>
               {label ? (
-                <Text style={styles.identityLabel} testID="connection-key-label">
+                <Text numberOfLines={1} style={styles.identityLabel} testID="connection-key-label">
                   {label}
                 </Text>
               ) : null}
@@ -238,13 +238,13 @@ export default function ConnectionDetailScreen() {
                   testID={`connection-ledger-${index}`}
                 >
                   <View style={styles.ledgerCopy}>
-                    <Text style={styles.ledgerText}>
+                    <Text style={styles.ledgerText} numberOfLines={1}>
                       {[row.actor, row.action].filter(Boolean).join(' ') || 'Key used'}
                     </Text>
                     {[row.grant ? `grant ${row.grant}` : undefined, row.status, row.bytes].filter(
                       Boolean,
                     ).length ? (
-                      <Text style={styles.ledgerMeta}>
+                      <Text style={styles.ledgerMeta} numberOfLines={1}>
                         {[row.grant ? `grant ${row.grant}` : undefined, row.status, row.bytes]
                           .filter(Boolean)
                           .join(' · ')}

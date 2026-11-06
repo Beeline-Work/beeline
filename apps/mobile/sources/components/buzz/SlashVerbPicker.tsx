@@ -37,7 +37,7 @@ export function SlashVerbPicker({
   return (
     <View accessibilityLabel="Available commands" style={styles.root} testID="slash-verb-picker">
       <View style={styles.heading}>
-        <Text style={styles.headingText}>
+        <Text numberOfLines={1} style={styles.headingText}>
           {heading}
         </Text>
         <CloseButton
@@ -55,7 +55,7 @@ export function SlashVerbPicker({
         >
           {agentLacksCommands && commandCount === 0 ? (
             <View style={styles.quietWrap} testID="slash-agent-no-commands">
-              <Text style={styles.empty}>
+              <Text style={styles.empty} numberOfLines={2}>
                 {agentName
                   ? `${agentName.toUpperCase()} DOES NOT ADVERTISE COMMANDS`
                   : 'THIS AGENT DOES NOT ADVERTISE COMMANDS'}
@@ -78,17 +78,17 @@ export function SlashVerbPicker({
                 style={[styles.row, styles.commandRow, selected && styles.rowSelected]}
                 testID={`slash-agent-command-${command.name}`}
               >
-                <Text style={[styles.command, styles.agentCommand]}>
+                <Text numberOfLines={1} style={[styles.command, styles.agentCommand]}>
                   /{command.name}
                 </Text>
                 <View style={styles.copy}>
                   {command.description ? (
-                    <Text style={styles.description}>
+                    <Text numberOfLines={2} style={styles.description}>
                       {command.description}
                     </Text>
                   ) : null}
                   {command.inputHint ? (
-                    <Text style={styles.label}>
+                    <Text numberOfLines={1} style={styles.label}>
                       {command.inputHint}
                     </Text>
                   ) : null}
@@ -119,14 +119,14 @@ export function SlashVerbPicker({
                 style={[styles.row, selected && styles.rowSelected]}
                 testID={`slash-verb-${verb.id}`}
               >
-                <Text style={styles.command}>
+                <Text numberOfLines={1} style={styles.command}>
                   /{verb.command}
                 </Text>
                 <View style={styles.copy}>
-                  <Text style={styles.label}>
+                  <Text numberOfLines={1} style={styles.label}>
                     {verb.label}
                   </Text>
-                  <Text style={styles.description}>
+                  <Text numberOfLines={2} style={styles.description}>
                     {verb.description}
                   </Text>
                 </View>

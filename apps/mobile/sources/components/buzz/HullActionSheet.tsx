@@ -145,15 +145,15 @@ export function HullActionSheet({
           onPress={onTitlePress}
           testID={titleTestID}
         >
-          <Text style={styles.title}>{title}</Text>
+          <Text numberOfLines={1} style={styles.title}>{title}</Text>
         </Pressable>
       ) : title ? (
-        <Text accessibilityRole="header" style={styles.title} testID={titleTestID}>
+        <Text accessibilityRole="header" numberOfLines={1} style={styles.title} testID={titleTestID}>
           {title}
         </Text>
       ) : null}
       {subtitle ? (
-        <Text style={styles.subtitle}>
+        <Text numberOfLines={2} style={styles.subtitle}>
           {subtitle}
         </Text>
       ) : null}

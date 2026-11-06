@@ -212,11 +212,11 @@ export function ComputerSessionCard({ session, messageId, roomId, isDesktop, age
       {session.status === 'live' && access ? (
         <ContentTarget onPress={() => void open()} accessibilityRole="button" accessibilityLabel={`Open ${session.title} browser`}>
       <View style={styles.preview} pointerEvents="none">{visible && !fullViewer ? <ComputerStream session={{ ...session, access }} preview captureRef={captureRef} /> : null}</View>
-      <View style={styles.caption}><Text style={styles.title}>{session.title}</Text>
+      <View style={styles.caption}><Text numberOfLines={1} style={styles.title}>{session.title}</Text>
         <Text style={styles.kind}>Live browser</Text></View>
     </ContentTarget>
       ) : (
-        <View style={styles.caption}><Text style={styles.title}>{session.title}</Text>
+        <View style={styles.caption}><Text numberOfLines={1} style={styles.title}>{session.title}</Text>
       <Text style={styles.kind}>{session.status === 'ended' ? 'Session ended' : 'Live browser'}</Text></View>
       )}
       {session.status === 'live' && access ? (

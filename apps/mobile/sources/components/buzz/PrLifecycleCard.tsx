@@ -108,7 +108,7 @@ export function RepositoryLifecycleRow({
         }
       >
         <InlineRow style={styles.cornerCopy}>
-          <Text style={[styles.repositoryTitle, styles.cornerName]}>
+          <Text style={[styles.repositoryTitle, styles.cornerName]} numberOfLines={1} ellipsizeMode="tail">
             <Text style={[styles.verb, /fail/i.test(state) && styles.failed]}>{verb} </Text>
             {item.title}
             {state === 'Merged' && number && item.url ? ' ' : null}
@@ -116,6 +116,7 @@ export function RepositoryLifecycleRow({
           {state === 'Merged' && number && item.url ? (
             <Text
               style={[styles.number, styles.cornerNumber]}
+              numberOfLines={1}
               accessibilityRole="link"
               accessibilityLabel={`Open PR ${number}`}
               testID={`notification-run-cell-url-${item.id}`}
@@ -130,7 +131,7 @@ export function RepositoryLifecycleRow({
     );
   }
   const copy = (
-    <Text style={[styles.rowTitle, isRepositoryLifecycleItem(item) && styles.repositoryTitle]}>
+    <Text style={[styles.rowTitle, isRepositoryLifecycleItem(item) && styles.repositoryTitle]} numberOfLines={2} ellipsizeMode="tail">
       <Text style={[styles.verb, !isRepositoryLifecycleItem(item) && styles.nonRepositoryVerb, /fail/i.test(state) && styles.failed]}>{verb} </Text>
       {number && item.url ? <><Text style={styles.number}>#{number}</Text>{' '}</> : null}
       {item.title}

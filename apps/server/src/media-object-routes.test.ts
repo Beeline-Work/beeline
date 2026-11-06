@@ -95,6 +95,7 @@ describe('media object routes', () => {
     const game = await gameRequest(`/play/${UUID}?expires=123&token=opaque`);
     expect(game.status).toBe(200);
     expect(game.policy).toContain('sandbox allow-scripts');
+    expect(game.policy).toMatch(/(^|; )font-src data:(;|$)/);
     expect(game.body).toContain('<canvas>');
     expect(openRunnableArtifact).toHaveBeenCalledWith(UUID,123,'opaque');
     expect((await gameRequest('/v1/phone/identity')).status).toBe(404);

@@ -14,7 +14,7 @@ import type { PhoneService } from './phone-service.js';
 import { createBeelineServer } from './server.js';
 import { MODEL_AGENT, MODEL_CLAIM, MODEL_OWNER, MODEL_ROOM, MODEL_WORKSPACE, ownedModelFixture } from './test-fixtures/owned-model.js';
 
-type Frame = Record<string, unknown> & { capabilities?: Record<string, unknown>; result?: DaemonOperationMap['claimAgentCommand']['output'] };
+type Frame = Record<string, unknown> & { capabilities?: Record<string, unknown>; result?: DaemonOperationMap['claimAgentCommand']['output'] & { commands?: readonly import('@beeline/api-contract/daemon').AgentCommand[] } };
 const TOKEN = 'bdt_' + 's'.repeat(43);
 describe('actual selected model credential claim socket', () => {
   let f: Awaited<ReturnType<typeof ownedModelFixture>>, daemon: DaemonService, server: ReturnType<typeof createBeelineServer>;
@@ -58,7 +58,7 @@ describe('actual selected model credential claim socket', () => {
   };
   async function register(installed = true) {
     const from = frames.length;
-    send({ type: 'register', token: TOKEN, turnOwnershipV1: true, ownedModelV1: installed, intakeHeartbeat: true });
+    send({ type: 'register', token: TOKEN, turnOwnershipV1: true, ownedModelV1: installed, daemonOperationsV1:true });
     return next(frame => frame.type === 'registered' && frames.indexOf(frame) >= from);
   }
   async function claim(requestId = 'model-claim') {
@@ -76,6 +76,30 @@ describe('actual selected model credential claim socket', () => {
       connectionEpoch: registered.capabilities?.turnConnectionEpoch });
     const replay = await claim('same-claim-recovery'); expect(replay.result?.modelCredential).toEqual(reply.result!.modelCredential);
     expect(frames.filter(frame => frame.type !== 'turn-result').some(frame => JSON.stringify(frame).includes('bfmc_'))).toBe(false);
+  });
+
+  it('claims waiting requests together on the machine operation door and releases only unanswered work', async () => {
+    const registered = await register();
+    await f.db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('model-socket-next',$1,$2,'Another request')`, [MODEL_ROOM, MODEL_OWNER]);
+    const another = (await createAgentCommand(f.db, {roomId:MODEL_ROOM,agentId:MODEL_AGENT,sourceMessageId:'model-socket-next',reason:'human_mention'}))!;
+    const operation = async (name:string,requestId:string,input:Record<string,unknown>) => {
+      send({type:'daemon-operation',operation:name,requestId,input});
+      const reply=await next(frame=>frame.type==='daemon-operation-result'&&frame.requestId===requestId);
+      expect(reply.error).toBeUndefined();return reply.result!;
+    };
+    const claimed=await operation('claimAgentTurn','batch-claim',{roomId:MODEL_ROOM,commandId,generationId:'socket-batch'});
+    expect(claimed.commands?.map(command=>command.id)).toEqual([commandId,another.id]);
+    const actor=await f.credentials.authenticate(f.db,claimed.modelCredential!.token);
+    expect(actor.binding).toMatchObject({commandId,generationId:'socket-batch',
+      connectionId:registered.capabilities?.turnConnectionId,connectionEpoch:registered.capabilities?.turnConnectionEpoch});
+    await operation('postRoomMessage','batch-answer',{roomId:MODEL_ROOM,requestId:'model-socket-request',generationId:'socket-batch',text:'Here is the answer.'});
+    await expect(f.credentials.assertCurrent(f.db,actor)).resolves.toHaveProperty('untilMs');
+    const released=await operation('releaseAgentTurn','batch-release',{roomId:MODEL_ROOM,generationId:'socket-batch'});
+    expect(released.commands?.map(command=>command.id)).toEqual([another.id]);
+    await expect(f.credentials.authenticate(f.db,claimed.modelCredential!.token)).rejects.toThrow('authority');
+    expect((await f.db.query('SELECT state FROM agent_commands WHERE id=$1',[commandId])).rows).toEqual([{state:'complete'}]);
+    expect((await f.db.query('SELECT state,turn_owner_connection_id FROM agent_commands WHERE id=$1',[another.id])).rows)
+      .toEqual([{state:'pending',turn_owner_connection_id:null}]);
   });
 
   it.each(['unknown','succeeded'] as const)('acknowledges exact owner end over the socket without changing the %s provider outcome', async outcome => {
@@ -98,7 +122,7 @@ describe('actual selected model credential claim socket', () => {
       .toEqual([{model_request_id:modelRequestId}]);
     expect((await f.db.query('SELECT state FROM owned_model_attempts WHERE command_id=$1',[commandId])).rows).toEqual([{state:outcome}]);
     expect((await f.db.query('SELECT state,generation_id FROM agent_commands WHERE id=$1',[commandId])).rows)
-      .toEqual([{state:'claimed',generation_id:'model-socket-generation'}]);
+      .toEqual([{state:'complete',generation_id:'model-socket-generation'}]);
     expect((await f.db.query("SELECT 1 FROM agent_turns WHERE room_id=$1 AND agent_id=$2 AND status='working'",[MODEL_ROOM,MODEL_AGENT])).rowCount).toBe(0);
     const replay=await claim('claim-after-owner-end');expect(replay.error).toBe('turn_operation_unconfirmed');
   });
@@ -150,7 +174,7 @@ describe('actual selected model credential claim socket', () => {
     expect((await f.db.query('SELECT state FROM agent_commands WHERE id=$1', [commandId])).rows).toEqual([{ state: 'claimed' }]);
   });
 
-  it('keeps legacy HTTP and admission-off from reclaiming the same command across a durable model UNKNOWN', async () => {
+  it('refuses an unowned HTTP claim of returned work and preserves its UNKNOWN provider outcome', async () => {
     await register(); const first = await claim(), bearer = first.result!.modelCredential!.token;
     const actor = await f.credentials.authenticate(f.db, bearer);
     await new OwnedModelAttempts(f.db, f.credentials).reserve(actor, '11111111-1111-4111-8111-111111111111', { step: 'synthetic uncertain model request' }, async () => ({

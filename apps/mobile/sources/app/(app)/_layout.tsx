@@ -34,7 +34,7 @@ export default function RootLayout() {
         backgroundColor: isDesktop ? theme.colors.surface : theme.colors.groupped.background,
       }}
     >
-      <ConnectionStatus />
+      <ConnectionStatus>
       <Stack
         initialRouteName="index"
         screenOptions={{
@@ -212,6 +212,7 @@ export default function RootLayout() {
         <Stack.Screen name="artifact-viewer" options={{ headerShown: false }} />
         <Stack.Screen name="text-selection" options={{ headerShown: false }} />
       </Stack>
+      </ConnectionStatus>
       {/* One corner-open notice over every screen: pending, or a failed action with Retry. */}
       <CornerOpenToast />
     </View>

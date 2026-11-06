@@ -1,7 +1,8 @@
+import { OWNED_MODEL_UNKNOWN_GENERATION_MESSAGE } from './owned-model-errors.js';
 import { createHash, createHmac } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { SqlDatabase } from './database.js';
-import { OwnedModelCredentials, OWNED_MODEL_UNKNOWN_GENERATION_MESSAGE } from './owned-model-credential.js';
+import { OwnedModelCredentials } from './owned-model-credential.js';
 import { OwnedModelAttempts } from './owned-model-attempt.js';
 import { MODEL_AGENT, MODEL_CLAIM, MODEL_KEY, MODEL_ROOM, MODEL_SOURCE, ownedModelFixture } from './test-fixtures/owned-model.js';
 

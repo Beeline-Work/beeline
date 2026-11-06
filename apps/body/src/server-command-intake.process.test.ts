@@ -7,6 +7,7 @@ import type { DaemonApiClient } from './daemon-api-client.js';
 import { AcpRuntimeExitedError } from './acp.js';
 import { AgentProcesses } from './agent-process.js';
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
+import { DaemonApiError } from './daemon-api-client.js';
 
 function command(id: string, body = id, action: AgentCommand['action'] = 'input'): AgentCommand {
   return {
@@ -25,7 +26,7 @@ function command(id: string, body = id, action: AgentCommand['action'] = 'input'
 }
 
 it.each([false, true])(
-  're-reads a crashed turn from the server only when new work arrives (arrival during exit: %s)',
+  'starts a new source after a terminal process failure without rereading or reviving the old source (arrival during exit: %s)',
   async (arrivesDuringExit) => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-process-intake-'));
     const controller = new AbortController();
@@ -50,9 +51,11 @@ it.each([false, true])(
     };
     const execute = vi.fn(async (name: string, input: { commandId?: string }) => {
       if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [...serverQueue] };
-      if (name === 'claimAgentCommand') {
+      if (name === 'claimAgentTurn') {
+        if (!serverQueue.some(item => item.id === input.commandId)) throw new DaemonApiError('command claim conflict',409,false);
+        const commands=serverQueue.filter(item=>item.id===input.commandId);
         serverQueue = serverQueue.filter((item) => item.id !== input.commandId);
-        return {};
+        return {commands};
       }
       return {};
     });
@@ -79,8 +82,8 @@ it.each([false, true])(
           if (crash) {
             crash = false;
             alive = false;
-            // The receipt requeues the durable command and pushes its snapshot.
-            serverQueue = [command('original', 'fresh server body')];
+            // The real receipt ends this command. A stale push cannot revive it.
+            serverQueue = [];
             notify([command('original', 'stale pushed body')]);
             if (arrivesDuringExit) {
               serverQueue.push(command('new-work'));
@@ -106,12 +109,12 @@ it.each([false, true])(
         notify([command('new-work')]);
       }
       await vi.waitFor(() =>
-        expect(bodies).toEqual(['old local body', 'fresh server body', 'new-work']),
+        expect(bodies).toEqual(['old local body', 'new-work']),
       );
       expect(lifecycle.start).toHaveBeenCalledTimes(2);
       expect(
         execute.mock.calls.filter(([name]) => name === 'getAgentCommands').length,
-      ).toBeGreaterThan(1);
+      ).toBe(1);
     } finally {
       controller.abort();
       await running;
@@ -158,83 +161,12 @@ it('acknowledges explicit restart after processes stop without restarting the ho
   }
 });
 
-it('does not reuse an already queued sibling to restart a repeatedly dying process', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'beeline-no-process-retry-'));
-  const controller = new AbortController();
-  const processes = new AgentProcesses();
-  let notify!: (commands?: readonly AgentCommand[]) => void;
-  let serverQueue = [command('original')];
-  let failures = 0;
-  let alive = false;
-  const completed: string[] = [];
-  const lifecycle = {
-    start: vi.fn(async () => {
-      alive = true;
-      return 'physical';
-    }),
-    stop: async () => {
-      alive = false;
-    },
-    isCurrent: async () => alive,
-    isRunning: () => alive,
-  };
-  const execute = vi.fn(async (name: string, input: { commandId?: string }) => {
-    if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [...serverQueue] };
-    if (name === 'claimAgentCommand')
-      serverQueue = serverQueue.filter((item) => item.id !== input.commandId);
-    return {};
-  });
-  const running = runServerCommandIntake({
-    api: { execute } as unknown as DaemonApiClient,
-    roomId: 'room',
-    agentId: 'agent',
-    context: new CommandExecutionContext(root),
-    signal: controller.signal,
-    onWake: (wake) => {
-      if (wake) notify = wake;
-    },
-    stop: () => undefined,
-    onError: () => undefined,
-    run: (item) =>
-      processes.run('agent', lifecycle, async () => {
-        if (item.id === 'original' && failures < 2) {
-          failures++;
-          alive = false;
-          serverQueue.unshift(command('original'));
-          notify([command('original')]);
-          throw new AcpRuntimeExitedError('died again');
-        }
-        completed.push(item.id);
-      }),
-  });
-  try {
-    await vi.waitFor(() => expect(failures).toBe(1));
-    serverQueue.push(command('second'));
-    notify([command('second')]);
-    await vi.waitFor(() => expect(failures).toBe(2));
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    notify([...serverQueue]);
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(lifecycle.start).toHaveBeenCalledTimes(2);
-    expect(completed).toEqual([]);
-    serverQueue.push(command('third'));
-    notify([command('third')]);
-    await vi.waitFor(() => expect(completed).toEqual(['original', 'second', 'third']));
-    expect(lifecycle.start).toHaveBeenCalledTimes(3);
-  } finally {
-    controller.abort();
-    await running;
-    await processes.dispose();
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
 it('uses the pushed reconnect snapshot without asking for commands again',async()=>{
   const root=await mkdtemp(join(tmpdir(),'beeline-pushed-reconnect-'));
   const controller=new AbortController();
   let state!:(connected:boolean,capabilities:Record<string,unknown>)=>void;
   let pushed!:(commands:readonly AgentCommand[])=>void;
-  const execute=vi.fn(async(name:string)=>name==='getAgentCommands'?{commandProtocol:1,commands:[]}:{});
+  const execute=vi.fn(async(name:string)=>name==='getAgentCommands'?{commandProtocol:1,commands:[]}:name==='claimAgentTurn'?{commands:[command('after-drop')]}:{commands:[]});
   const completed:string[]=[];
   const running=runServerCommandIntake({
     api:{execute,liveSubscribe:(...args:unknown[])=>{state=args[3] as typeof state;pushed=args[5] as typeof pushed;return()=>{};}} as unknown as DaemonApiClient,
@@ -249,4 +181,33 @@ it('uses the pushed reconnect snapshot without asking for commands again',async(
     expect(completed).toEqual(['after-drop']);
     expect(execute.mock.calls.filter(([name])=>name==='getAgentCommands')).toHaveLength(1);
   }finally{controller.abort();await running;await rm(root,{recursive:true,force:true});}
+});
+
+it('never falls back to a partial claim when grouped claims are unsupported',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'beeline-group-protocol-'));
+  const abort=new AbortController(),context=new CommandExecutionContext(root);
+  const waiting=[command('first'),command('second')];
+  let supported=false, notify:((commands?:readonly AgentCommand[])=>void)|undefined;
+  const errors:unknown[]=[];
+  const execute=vi.fn(async(name:string)=>{
+    if(name==='getAgentCommands')return {commandProtocol:1,commands:waiting};
+    if(name==='claimAgentTurn'){
+      if(!supported)throw new DaemonApiError('grouped claims unavailable',404,false);
+      return {commands:waiting};
+    }
+    if(name==='releaseAgentTurn')return {commands:[]};
+    throw new Error(`Unexpected operation ${name}`);
+  });
+  const observed:AgentCommand[][]=[];
+  const running=runServerCommandIntake({api:{execute} as unknown as DaemonApiClient,roomId:'room',agentId:'agent',context,signal:abort.signal,
+    onWake:wake=>{notify=wake;},onError:error=>errors.push(error),stop:()=>{},
+    run:async()=>{observed.push([...context.commands]);abort.abort();}});
+  try{
+    await vi.waitFor(()=>expect(errors.length).toBeGreaterThan(0));
+    expect(observed).toEqual([]);
+    expect(execute.mock.calls.some(([name])=>name==='claimAgentCommand')).toBe(false);
+    supported=true;notify?.(waiting);
+    await running;
+    expect(observed.map(group=>group.map(item=>item.id))).toEqual([['first','second']]);
+  }finally{abort.abort();await running;await rm(root,{recursive:true,force:true});}
 });

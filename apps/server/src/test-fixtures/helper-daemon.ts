@@ -55,7 +55,7 @@ export class HelperDaemonService extends DaemonService {
     name: Name, input: DaemonOperationMap[Name]['input'], agentId: string,
     owner?: Parameters<DaemonService['execute']>[3], model?: Parameters<DaemonService['execute']>[4],
   ): Promise<DaemonOperationMap[Name]['output']> {
-    if (!owner && name === 'claimAgentCommand') {
+    if (!owner && (name === 'claimAgentCommand' || name === 'claimAgentTurn' || name === 'releaseAgentTurn')) {
       owner = await register(this.fixtureDatabase, this.fixtureLive, agentId);
     } else if (!owner && (name === 'postAgentTurnReceipt' || name === 'acknowledgeAgentCommand')) {
       await renewLease(this.fixtureDatabase);

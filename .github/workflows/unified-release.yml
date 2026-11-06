@@ -243,7 +243,7 @@ jobs:
     runs-on:
       - self-hosted
       - beeline-prod-host
-    timeout-minutes: 15
+    timeout-minutes: 35
     concurrency:
       group: deploy-beeline-server
       cancel-in-progress: false
@@ -278,6 +278,7 @@ jobs:
         with:
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
+          free_agent_image_token: ${{ secrets.FLY_FREE_AGENT_IMAGE_TOKEN }}
           previous_server_image_ref: ${{ needs.initialize.outputs.previous_server_image_ref }}
           rollback_server_image_ref: ${{ needs.initialize.outputs.rollback_server_image_ref }}
       - name: Record live server completion after both Machines passed

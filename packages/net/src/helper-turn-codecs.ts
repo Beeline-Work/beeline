@@ -25,10 +25,11 @@ const claimResult: typeof claim.result = Object.freeze({ parse(value: unknown) {
 } });
 const receipt = helperRouteCodecs('daemon.postAgentTurnReceipt');
 const acknowledge = helperRouteCodecs('daemon.acknowledgeAgentCommand');
-const claimFields = { roomId: true, commandId: true, generationId: true } as const satisfies Record<keyof DaemonOperationMap['claimAgentCommand']['input'], true>;
+const commandFields = { roomId: true, commandId: true, generationId: true } as const;
+const claimFields = commandFields satisfies Record<keyof DaemonOperationMap['claimAgentCommand']['input'], true>;
 const receiptFields = {
   agentId: true, roomId: true, requestId: true, generationId: true, status: true,
-  trace: true, completionKind: true, heartbeat: true, reason: true,
+  trace: true, completionKind: true, heartbeat: true, reason: true, diagnosticsOnly: true,
   inputTokens: true, promptBytes: true, totalInputTokens: true, outputTokens: true,
   modelCalls: true, modelCallsWithoutUsage: true, toolCalls: true, reasonKind: true,
   modelOwnerEnd: true,
@@ -44,7 +45,7 @@ const receiptParams: typeof receipt.params = Object.freeze({ parse(value: unknow
 } });
 const codecs = Object.freeze({
   claimAgentCommand: Object.freeze({ ...claim, result: claimResult, params: closed(claim.params, claimFields) }),
-  acknowledgeAgentCommand: Object.freeze({ ...acknowledge, params: closed(acknowledge.params, claimFields) }),
+  acknowledgeAgentCommand: Object.freeze({ ...acknowledge, params: closed(acknowledge.params, commandFields) }),
   postAgentTurnReceipt: Object.freeze({ ...receipt, params: receiptParams }),
 });
 /** Only these existing turn controls, at the two owned machine adapters. */

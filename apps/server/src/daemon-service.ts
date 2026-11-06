@@ -1,11 +1,13 @@
+import { OwnedModelRefusal, OwnedModelUnknownGeneration, isOwnedModelUnknownGenerationError } from './owned-model-errors.js';
+import { endAgentTurn } from './agent-turn-end.js';
+import { recordAgentTurnFailure } from './agent-turn-failure.js';
 import { resourceRequester } from './resource-requester.js';
 import { setAgentWakePaused } from './agent-wake-pause.js';
 import { roomEventSubscriptions } from './agent-subscriptions.js';
-import { settleAgentCommand, renewAgentCommandLease } from './agent-command.js';
 import {parkOwnedModelTerminal,OwnedModelOwnerEndRefusal} from './owned-model-parking.js';
-import { assertCurrentTurnOwner, commandOwnerExpiredSql, commandOwnerFenceCteSql, commandOwnerFenceMatchesSql, commandOwnerLiveSql, usesOwnedTurnAdapter, registerOwnedEffectFence, lockOwnedTurnRoomAccess } from './turn-ownership.js';
+import { assertCurrentTurnOwner, commandOwnerFenceCteSql, commandOwnerFenceMatchesSql, commandOwnerLiveSql, registerOwnedEffectFence, lockOwnedTurnRoomAccess } from './turn-ownership.js';
 import type { HelperTurnOwnershipSource } from '@beeline/api-contract/helper-turn-ownership';
-import { OwnedModelCredentials, OwnedModelRefusal, OwnedModelUnknownGeneration, isOwnedModelUnknownGenerationError } from './owned-model-credential.js';
+import { OwnedModelCredentials } from './owned-model-credential.js';
 import { attachUsageAccount, helperUsageEnabled, publishUsageAccount } from './helper-usage.js';
 import type { CommandActivationInput } from '@beeline/api-contract/helper-activation';
 import { captureCommandActivation, helperActivationEnabled } from './helper-activation.js';
@@ -23,8 +25,6 @@ import { missingReviewAttachments } from './review-evidence.js';
 import { consumeStarterVideoPost, restoreStarterVideoPost, postStarterVideoPreview } from './starter-onboarding.js';
 import type { StarterOnboardingService } from './starter-onboarding-run.js';
 import { checkinOutputAllowed } from './next-day-checkin.js';
-import { recordStartupWakeOutcome } from './startup-wake-backoff.js';
-import { isSilentRetry, stopSilentWakes } from './silent-wake-limit.js';
 import { visibleMessageSql } from './read-cursor.js';
 import { readUsageRefreshOutcome, sanitizeTurnReplay } from '@beeline/api-contract/daemon';
 import { observeOnboardingMessage } from './signin-funnel.js';
@@ -35,7 +35,6 @@ import { cleanVoiceReply } from './voice-reply.js';
 import { agentPostText } from './agent-post-text.js';
 import { sendOperatorSystemDm, readOperatorSystemDm } from './operator-system-dm.js';
 import { approvalCardSource } from './approval-card-source.js';
-import { closeFreeAgentTurn } from './free-agent-turn-close.js';
 import { ExpectedRefusalError } from './command-refusal.js';
 import { productionReleaseDispatch } from './production-release-dispatch.js';
 import { scheduleDisplayTitle, validateScheduleTitle } from './schedule-title.js';
@@ -64,8 +63,8 @@ import { cornerFactsSql, cornerRowState, type CornerStateRow } from './chat-corn
 import { renderAgentAvatar } from './agent-avatar.js';
 import {
   authorizeCommandOutput,
-  authorizeFailedTurnOutput,
   claimAgentCommand,
+  lockAgentCommandQueue,
   StaleWakeClaimRefused,
   supersededReview,
   commandInbox,
@@ -105,13 +104,10 @@ import {
 } from './corner-brief.js';
 import {
   AGENT_TO_AGENT_HOP_CAP,
-  wakeBatchMinutes,
   boundReplyExcerpt,
   REPLY_EXCERPT_MAX_LENGTH,
-  classifyTurnSilence,
   cornerTextRefusal,
   normalizeCornerText,
-  shouldCompletePendingFailedCommand,
   type CornerWatchKind,
 } from '@beeline/api-contract/daemon';
 import {
@@ -224,12 +220,7 @@ import {
 } from '@beeline/api-contract/agent-access';
 import { taggedIdentityIdsSql, typedMentionHandles } from './message-mentions.js';
 import { agentWalletTool, agentSignTypedData, agentContractCall, delegationView } from './wallet.js';
-import {
-  noteFirstSilence,
-  recoverModelCapacityCompletion,
-  TURN_FAILURE_REASON_MAX,
-  turnSilenceLockKey,
-} from './turn-silence-notice.js';
+
 import { completeConnectorOffersForConnector } from './connector-offer-completion.js';
 import {
   notifyAgentConfigChange,
@@ -264,7 +255,6 @@ import {
   getWorkflowRun,
   cancelWorkflowRun,
   saveWorkflow,
-  failOverUnansweredTurn,
   startWorkflow,
   workflowRunRequester,
 } from './workflow-runs.js';
@@ -299,48 +289,6 @@ function registryMcpRouteName(serverName: string, connectorId: string): string {
   return `registry-${slug || 'mcp'}-${connectorId.slice(0, 8)}`;
 }
 
-/**
- * A durable silence line stays in the transcript; a later answer does not
- * rewrite it. The one line that DOES yield is the deferred mention notice: it
- * says a mention could not be read, so when the helper finally answers that
- * exact mention the line is withdrawn rather than left to contradict the reply.
- * Only a notice this turn's own source message produced is touched.
- */
-async function settleTurnFailureLine(
-  database: SqlDatabase,
-  live: LiveHub,
-  roomId: string,
-  requestId: string,
-  agentId: string,
-): Promise<void> {
-  const withdrawn = await database.query<{ notice_id: string | null }>(
-    `DELETE FROM pending_mention_notices
-     WHERE room_id=$1 AND agent_id=$2 AND source_message_id=$3
-     RETURNING notice_id`,
-    [roomId, agentId, requestId],
-  );
-  const noticeIds = [
-    ...new Set(
-      withdrawn.rows.map((row) => row.notice_id).filter((id): id is string => Boolean(id)),
-    ),
-  ];
-  for (const noticeId of noticeIds) {
-    // Another unanswered mention in the same window shares this one line; it
-    // stays until the last of them is answered.
-    const shared = await database.query(
-      `SELECT 1 FROM pending_mention_notices WHERE notice_id=$1 LIMIT 1`,
-      [noticeId],
-    );
-    if (shared.rowCount) continue;
-    const removed = await database.query(
-      `DELETE FROM messages
-       WHERE id=$1 AND room_id=$2 AND presentation='system' AND author_id=$3`,
-      [noticeId, roomId, agentId],
-    );
-    if (removed.rowCount)
-      live.publish({ type: 'invalidate', roomId, reason: 'postgres:messages' });
-  }
-}
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
 
 const MAX_REPLY_STEPS = 2_000;
@@ -389,7 +337,9 @@ const CORNER_CLEANUP_OPERATIONS = new Set<string>([
   'closeCornerPullRequest',
   'getAgentCommands',
   'claimAgentCommand',
+  'claimAgentTurn',
   'acknowledgeAgentCommand',
+  'releaseAgentTurn',
   'getCornerCloseRequests',
   'getRoomInbox',
 ]);
@@ -482,17 +432,8 @@ export class DaemonService {
       const command = await db.query(`SELECT command.id FROM agent_commands command
         WHERE command.room_id=$1 AND command.agent_id=$2
           AND (($6::text IS NOT NULL AND command.id=$6) OR ($7::text IS NOT NULL AND command.turn_request_id=$7))
-          AND ((command.generation_id=$3 AND command.turn_owner_connection_id=$4 AND command.turn_owner_epoch=$5
-            AND command.state IN ('claimed','complete','cancelled') AND (NOT $8::boolean OR command.state='claimed'))
-          OR (NOT $8::boolean AND $7::text IS NOT NULL AND command.action IN ('input','resume')
-            AND command.state='pending' AND command.generation_id IS NULL AND command.lease_expires_at IS NULL
-            AND command.turn_owner_connection_id IS NULL AND command.turn_owner_epoch IS NULL
-            AND EXISTS(SELECT 1 FROM agent_command_generation_owners binding
-              WHERE binding.command_id=command.id AND binding.generation_id=$3
-                AND binding.connection_id=$4 AND binding.connection_epoch=$5)
-            AND EXISTS(SELECT 1 FROM agent_turns terminal WHERE terminal.room_id=command.room_id
-              AND terminal.agent_id=command.agent_id AND terminal.request_id=command.turn_request_id
-              AND terminal.generation_id=$3 AND terminal.status='failed'))) FOR SHARE OF command`,
+          AND command.generation_id=$3 AND command.turn_owner_connection_id=$4 AND command.turn_owner_epoch=$5
+          AND command.state IN ('claimed','complete','cancelled') AND (NOT $8::boolean OR command.state='claimed') FOR SHARE OF command`,
         [input.roomId, agentId, input.generationId ?? null, source.connectionId, source.epoch,
           input.commandId ?? null, input.requestId ?? null, requireClaimed]);
       if (!command.rowCount) throw new Error('Turn ownership changed before enqueue');
@@ -572,98 +513,9 @@ export class DaemonService {
     turnOwner?: HelperTurnOwnershipSource,
     modelClaim?: OwnedModelClaimCapability,
   ): Promise<Output<Name>> {
-    if (turnOwner && name !== 'claimAgentCommand' && name !== 'postAgentTurnReceipt' && name !== 'acknowledgeAgentCommand' && name !== 'getAgentCommands')
+    if (turnOwner && name !== 'claimAgentCommand' && name !== 'claimAgentTurn' && name !== 'postAgentTurnReceipt' && name !== 'acknowledgeAgentCommand' && name !== 'releaseAgentTurn' && name !== 'getAgentCommands')
       throw new Error('Turn ownership operation unavailable');
     if(name==='readCommandActivation')throw new Error('Activation context requires the negotiated machine socket');
-    input = { ...input };
-    const candidate = input as Record<string, unknown>;
-    if (typeof candidate.agentId === 'string' && candidate.agentId !== authenticatedAgentId)
-      throw new Error('daemon token does not own requested agent');
-    // A corner operation is authorized on that corner, never on a roomId the
-    // caller also sends; otherwise any Room the caller belongs to would open it.
-    const scopedRoom =
-      CORNER_REACH_OPERATIONS.has(name) && typeof candidate.cornerId === 'string'
-        ? candidate.cornerId
-        : typeof candidate.roomId === 'string'
-          ? candidate.roomId
-          : typeof candidate.cornerId === 'string'
-            ? candidate.cornerId
-            : undefined;
-    const walletCall = [
-      'getWalletToolState',
-      'getWalletToolBalance',
-      'getWalletToolChains',
-      'getWalletToolHistory',
-      'getWalletToolQuote',
-      'walletPay',
-      'walletSwap',
-      'walletContractCall',
-      'walletSignTypedData',
-    ].includes(name);
-    if (walletCall && !scopedRoom) throw new Error('wallet access requires an active Room command');
-    let cornerReviewer = false;
-    let isCorner = false;
-    let privateCommand = false;
-    let voiceAgentName: string | null | undefined;
-    if (scopedRoom && name !== 'ensureAgentMembership' && !this.commandTransaction)
-      ({ cornerReviewer, isCorner, privateCommand, voiceAgentName } = await this.access(scopedRoom, authenticatedAgentId, candidate.requestId ?? candidate.turnId).catch(
-        (error: unknown) => {
-          if (error instanceof AccessDeniedError &&
-              (name === 'getRoomConversation' || name === 'getRoomMessage'))
-            return this.reviewSourceAccess(scopedRoom, authenticatedAgentId).then(() => ({
-              cornerReviewer: false, isCorner: false, privateCommand: false, voiceAgentName: null,
-            })).catch((sourceError: unknown) => {
-              if (sourceError instanceof AccessDeniedError)
-                return this.reach(scopedRoom, authenticatedAgentId).then(() => ({
-                  cornerReviewer: false, isCorner: true, privateCommand: false, voiceAgentName: null,
-                }));
-              throw sourceError;
-            });
-          // Reachable corner operations also admit a parent Room member.
-          if (error instanceof AccessDeniedError &&
-              (CORNER_REACH_OPERATIONS.has(name) || CORNER_CLEANUP_OPERATIONS.has(name)))
-            return this.reach(scopedRoom, authenticatedAgentId).then(() => ({
-              cornerReviewer: false,
-              isCorner: true,
-              privateCommand: false,
-              voiceAgentName: null,
-            }));
-          throw error;
-        },
-      ));
-    let ownedIntent = Boolean(turnOwner || this.authorizedCommand?.turn_owner_connection_id);
-    if (!this.commandTransaction && scopedRoom && typeof candidate.generationId === 'string' &&
-        typeof (candidate.requestId ?? candidate.turnId) === 'string') {
-      ownedIntent ||= Boolean((await this.database.query(`SELECT 1 FROM agent_commands command
-        JOIN agent_command_generation_owners binding ON binding.command_id=command.id
-          AND binding.generation_id=$4 AND binding.connection_id IS NOT NULL
-        WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3 LIMIT 1`,
-        [scopedRoom, authenticatedAgentId, candidate.requestId ?? candidate.turnId, candidate.generationId])).rowCount);
-    }
-    // An owned claim must not remove existing tools. Operations without a
-    // dedicated adapter keep their established provider/permission path while
-    // retaining the command's generation and final commit fences below.
-    // Provider reads happen before the command transaction. Reports may be
-    // delivered in the commander's Room, so refresh their origin corners too.
-    if (!(ownedIntent && usesOwnedTurnAdapter(String(name))) && !this.commandTransaction && scopedRoom && this.github) {
-      if (['getAgentCommands', 'claimAgentCommand'].includes(name)) {
-        const origins = await this.database.query<{ corner_id: string }>(
-          `SELECT DISTINCT COALESCE(review_context->>'cornerId',room_id::text) corner_id
-           FROM agent_commands WHERE room_id=$1 AND agent_id=$2
-             AND review_context IS NOT NULL AND state IN ('pending','claimed')`,
-          [scopedRoom, authenticatedAgentId]);
-        for (const origin of origins.rows) await this.github.refreshCornerReviewHead?.(origin.corner_id);
-      } else if (isCorner && !cornerReviewer && name === 'report' && candidate.status === 'done') {
-        await this.github.resolveUnregisteredCornerPullRequest(scopedRoom, authenticatedAgentId);
-      } else if (isCorner && (['order', 'report', 'postCornerMessage'].includes(name) ||
-        name === 'postRoomMessage' && candidate.relay === undefined)) {
-        await this.github.refreshCornerReviewHead?.(scopedRoom);
-      }
-    }
-    if (voiceAgentName && typeof candidate.text === 'string')
-      candidate.text = cleanVoiceReply(candidate.text, voiceAgentName);
-    if (name === 'postRoomMessage' && candidate.relay !== undefined)
-      throw new CommandRefusalError('relay cards are retired; use order and report', 410);
     const turnWrites = new Set([
       'postVaultSaveCard',
       'postAgentAvatar',
@@ -741,6 +593,99 @@ export class DaemonService {
       'sendOperatorSystemDm',
       'readOperatorSystemDm',
     ]);
+    input = { ...input };
+    const candidate = input as Record<string, unknown>;
+    if (typeof candidate.agentId === 'string' && candidate.agentId !== authenticatedAgentId)
+      throw new Error('daemon token does not own requested agent');
+    // Command writes authorize their source before the operation checks its
+    // target. Lifecycle and read operations authorize the addressed corner,
+    // independently of any source context the helper also supplies.
+    const scopedRoom =
+      CORNER_REACH_OPERATIONS.has(name) && typeof candidate.cornerId === 'string'
+        ? candidate.cornerId
+        : typeof candidate.roomId === 'string'
+          ? candidate.roomId
+          : typeof candidate.cornerId === 'string'
+            ? candidate.cornerId
+            : undefined;
+    const addressedRoom = !turnWrites.has(name) && typeof candidate.cornerId === 'string'
+      ? candidate.cornerId : scopedRoom;
+    const walletCall = [
+      'getWalletToolState',
+      'getWalletToolBalance',
+      'getWalletToolChains',
+      'getWalletToolHistory',
+      'getWalletToolQuote',
+      'walletPay',
+      'walletSwap',
+      'walletContractCall',
+      'walletSignTypedData',
+    ].includes(name);
+    if (walletCall && !scopedRoom) throw new Error('wallet access requires an active Room command');
+    let cornerReviewer = false;
+    let isCorner = false;
+    let privateCommand = false;
+    let voiceAgentName: string | null | undefined;
+    if (addressedRoom && name !== 'ensureAgentMembership' && !this.commandTransaction)
+      ({ cornerReviewer, isCorner, privateCommand, voiceAgentName } = await this.access(addressedRoom, authenticatedAgentId, candidate.requestId ?? candidate.turnId).catch(
+        (error: unknown) => {
+          if (error instanceof AccessDeniedError &&
+              (name === 'getRoomConversation' || name === 'getRoomMessage'))
+            return this.reviewSourceAccess(addressedRoom, authenticatedAgentId).then(() => ({
+              cornerReviewer: false, isCorner: false, privateCommand: false, voiceAgentName: null,
+            })).catch((sourceError: unknown) => {
+              if (sourceError instanceof AccessDeniedError)
+                return this.reach(addressedRoom, authenticatedAgentId).then(() => ({
+                  cornerReviewer: false, isCorner: true, privateCommand: false, voiceAgentName: null,
+                }));
+              throw sourceError;
+            });
+          // Reachable corner operations also admit a parent Room member.
+          if (error instanceof AccessDeniedError &&
+              (CORNER_REACH_OPERATIONS.has(name) || CORNER_CLEANUP_OPERATIONS.has(name)))
+            return this.reach(addressedRoom, authenticatedAgentId).then(() => ({
+              cornerReviewer: false,
+              isCorner: true,
+              privateCommand: false,
+              voiceAgentName: null,
+            }));
+          throw error;
+        },
+      ));
+    let ownedIntent = Boolean(turnOwner || this.authorizedCommand?.turn_owner_connection_id);
+    if (!this.commandTransaction && scopedRoom && typeof candidate.generationId === 'string' &&
+        typeof (candidate.requestId ?? candidate.turnId) === 'string') {
+      ownedIntent ||= Boolean((await this.database.query(`SELECT 1 FROM agent_commands command
+        JOIN agent_command_generation_owners binding ON binding.command_id=command.id
+          AND binding.generation_id=$4 AND binding.connection_id IS NOT NULL
+        WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3 LIMIT 1`,
+        [scopedRoom, authenticatedAgentId, candidate.requestId ?? candidate.turnId, candidate.generationId])).rowCount);
+    }
+    // An owned claim must not remove existing tools. Operations without a
+    // dedicated adapter keep their established provider/permission path while
+    // retaining the command's generation and final commit fences below.
+    // Provider reads happen before the command transaction. Reports may be
+    // delivered in the commander's Room, so refresh their origin corners too.
+    if (!this.commandTransaction && scopedRoom && this.github) {
+      if (!ownedIntent && ['getAgentCommands', 'claimAgentCommand'].includes(name)) {
+        const origins = await this.database.query<{ corner_id: string }>(
+          `SELECT DISTINCT COALESCE(review_context->>'cornerId',room_id::text) corner_id
+           FROM agent_commands WHERE room_id=$1 AND agent_id=$2
+             AND review_context IS NOT NULL AND state IN ('pending','claimed')`,
+          [scopedRoom, authenticatedAgentId]);
+        for (const origin of origins.rows) await this.github.refreshCornerReviewHead?.(origin.corner_id);
+      } else if (isCorner && !cornerReviewer && name === 'report' && candidate.status === 'done') {
+        await this.github.resolveUnregisteredCornerPullRequest(scopedRoom, authenticatedAgentId);
+      } else if (isCorner && (['order', 'report', 'postCornerMessage'].includes(name) ||
+        name === 'postRoomMessage' && candidate.relay === undefined)) {
+        await this.github.refreshCornerReviewHead?.(scopedRoom);
+      }
+    }
+    if (voiceAgentName && typeof candidate.text === 'string')
+      candidate.text = cleanVoiceReply(candidate.text, voiceAgentName);
+    if (name === 'postRoomMessage' && candidate.relay !== undefined)
+      throw new CommandRefusalError('relay cards are retired; use order and report', 410);
+
     if (
       !this.commandTransaction &&
       !ownedIntent &&
@@ -814,40 +759,26 @@ export class DaemonService {
         if (ownedIntent && needsLifecycle) await lockCornerLifecycle(db, scopedRoom);
         if (ownedIntent) await this.lockOwnedTurnAccess(db, scopedRoom, authenticatedAgentId);
         if (turnOwner) await assertCurrentTurnOwner(db, authenticatedAgentId, turnOwner);
-        // Failed receipts may reassign the reviewer. Take the lifecycle lock
-        // before the silence lock and turn writes, matching lifecycle dispatch.
+        // Result publication keeps lifecycle and command locks in the same order as cancellation.
         if (!ownedIntent && needsLifecycle)
           await lockCornerLifecycle(db, scopedRoom);
         const requestId = candidate.requestId ?? candidate.turnId;
         if (name === 'postAgentTurnReceipt' && candidate.modelOwnerEnd !== undefined &&
             (candidate.status !== 'failed' || candidate.heartbeat !== undefined)) throw new OwnedModelOwnerEndRefusal();
-        if (name === 'postAgentTurnReceipt' && ['failed', 'complete'].includes(String(candidate.status))) {
+        if (name === 'postAgentTurnReceipt' && !candidate.diagnosticsOnly && ['failed', 'complete'].includes(String(candidate.status))) {
           await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-            turnSilenceLockKey(scopedRoom, String(requestId), authenticatedAgentId),
+            `turn:${scopedRoom}:${String(requestId)}:${authenticatedAgentId}`,
           ]);
-          // A causal model-owner end retains its durable uncertain command.
-          // Commit this transaction before any generic failed/requeue effects.
-          if (await parkOwnedModelTerminal(db, input as Input<'postAgentTurnReceipt'>, authenticatedAgentId, turnOwner))
+          // Preserve causal provider evidence before the single terminal write.
+          if (await parkOwnedModelTerminal(db, input as Input<'postAgentTurnReceipt'>, authenticatedAgentId, turnOwner)) {
+            const ended = (await db.query<CommandRow>(`SELECT * FROM agent_commands
+              WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 AND generation_id=$4 FOR UPDATE`,
+              [scopedRoom,authenticatedAgentId,requestId,candidate.generationId])).rows[0];
+            if (ended && await endAgentTurn(db,ended,'failed','The model result could not be confirmed.'))
+              await recordAgentTurnFailure(db,ended,'The model result could not be confirmed.');
             return this.writeResult() as Output<Name>;
-          if (['update-interrupted', 'process-exited'].includes(String(candidate.reasonKind))) {
-            // The helper keeps this receipt durably until it hears 200. If the
-            // first 200 was lost, accept its replay after the command was
-            // requeued without writing another Room line or touching the new
-            // generation's claim.
-            const alreadyRequeued = await db.query(
-              `SELECT 1 FROM agent_commands command
-               JOIN agent_turns turn ON turn.room_id=command.room_id
-                 AND turn.agent_id=command.agent_id AND turn.request_id=command.turn_request_id
-               WHERE command.room_id=$1 AND command.agent_id=$2
-                 AND command.turn_request_id=$3 AND command.action IN ('input','resume')
-                 AND command.state='pending' AND turn.status='failed'
-                 AND turn.generation_id IS NOT DISTINCT FROM $4
-               LIMIT 1`,
-              [scopedRoom, authenticatedAgentId, requestId, candidate.generationId ?? null],
-            );
-            if (alreadyRequeued.rowCount)
-              return this.writeResult({ updateRequeued: true }) as Output<Name>;
           }
+
         }
         // A stopped generation may upload diagnostics only. It cannot publish,
         // renew its lease, or change the requester's terminal cancellation.
@@ -863,34 +794,11 @@ export class DaemonService {
         const allowCompleted =
           (name === 'postRoomMessage' && candidate.relay === undefined) ||
           name === 'retractAgentLiveOutput' ||
-          (name === 'postAgentTurnReceipt' && candidate.status === 'complete');
-        const freeTimeoutReceipt = name === 'postAgentTurnReceipt' && candidate.status === 'failed' &&
-          candidate.reason === 'free-agent-time-limit' && Boolean((await db.query(
-            'SELECT 1 FROM free_agents WHERE agent_id=$1 AND removed_at IS NULL',
-            [authenticatedAgentId],
-          )).rowCount);
-        const command =
-          name === 'postAgentTurnReceipt' && candidate.status === 'failed'
-            ? await authorizeFailedTurnOutput(
-                db,
-                scopedRoom,
-                authenticatedAgentId,
-                requestId,
-                candidate.generationId,
-                // Publishing the retained partial reply completes its command.
-                // Only the matching free-agent timeout receipt may correct that
-                // success; generation and cancellation fences still apply.
-                freeTimeoutReceipt,
-              )
-            : await authorizeCommandOutput(
-                db,
-                scopedRoom,
-                authenticatedAgentId,
-                requestId,
-                candidate.generationId,
-                allowCompleted,
-                !['getRoomConversation', 'getRoomMessage', 'getRoomAuthority'].includes(name),
-              );
+          (name === 'postAgentTurnReceipt' && ['complete','failed'].includes(String(candidate.status)));
+        const command = await authorizeCommandOutput(
+          db, scopedRoom, authenticatedAgentId, requestId, candidate.generationId, allowCompleted,
+          !['getRoomConversation', 'getRoomMessage', 'getRoomAuthority'].includes(name),
+        );
         if (name === 'postAgentTurnReceipt' && command.turn_owner_connection_id) {
           if (!turnOwner || turnOwner.connectionId !== command.turn_owner_connection_id ||
               turnOwner.epoch !== Number(command.turn_owner_epoch))
@@ -898,12 +806,7 @@ export class DaemonService {
           if (candidate.heartbeat) throw new Error('Owned turns do not accept freshness receipts');
         }
         if (['postRoomMessage', 'postCornerMessage', 'order', 'report'].includes(name) && command.review_context?.purpose !== 'repair' && await supersededReview(db, command)) {
-          await db.query("UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1", [command.id]);
-          await db.query(`UPDATE agent_turns SET status='failed',
-            failure_reason='the review command was superseded',created_at=now()
-            WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working'
-              AND generation_id IS NOT DISTINCT FROM $4`,
-            [scopedRoom, authenticatedAgentId, requestId, command.generation_id]);
+          await endAgentTurn(db, command, 'cancelled', 'superseded_review');
           return { ...this.writeResult(), id: command.id, skipped: true } as Output<Name>;
         }
         // Helpers cannot impose an order outcome on an informational wake.
@@ -916,41 +819,6 @@ export class DaemonService {
           candidate.status = 'complete';
           delete candidate.reason;
           delete candidate.reasonKind;
-        }
-        if (name === 'postAgentTurnReceipt' && candidate.status === 'complete' && command.state === 'complete') {
-          const capacity = await recoverModelCapacityCompletion(db, this.live, command);
-          if (capacity) {
-            await this.persistTurnTrace(db, input as Input<'postAgentTurnReceipt'>, authenticatedAgentId);
-            return this.writeResult({
-              ...(capacity.hiccupRestart ? {hiccupRestart:true,hiccupAttempt:capacity.attempt} : {}),
-              ...(capacity.reportDelivered !== undefined ? {failureReportDelivered:capacity.reportDelivered} : {}),
-            }) as Output<Name>;
-          }
-        }
-        // Queue the existing workflow completion hook for both a fresh receipt
-        // and a receipt whose published reply already completed the command.
-        // A replay must preserve any stored failed outcome.
-        if (name === 'postAgentTurnReceipt' && candidate.status === 'complete' && command.source_message_id &&
-          (command.state !== 'complete' || (await db.query(
-            `SELECT 1 FROM agent_turns WHERE room_id=$1 AND agent_id=$2 AND request_id=$3
-               AND status='complete'`,
-            [scopedRoom, authenticatedAgentId, requestId],
-          )).rowCount))
-          committedTasks.push((database) => database.transaction((db) =>
-            failOverUnansweredTurn(db, {
-              roomId: scopedRoom!,
-              agentId: authenticatedAgentId,
-              sourceMessageId: command.source_message_id!,
-            }),
-          ));
-        // A lost receipt response may be replayed after the fallback consumed
-        // this generation. Never replace its stored failed outcome with success.
-        if (name === 'postAgentTurnReceipt' && candidate.status === 'complete' && command.state === 'complete' &&
-          !(await db.query(`SELECT 1 FROM agent_turns WHERE room_id=$1 AND agent_id=$2 AND request_id=$3
-            AND status='working' AND generation_id IS NOT DISTINCT FROM $4`,
-            [scopedRoom, authenticatedAgentId, requestId, command.generation_id])).rowCount) {
-          await this.persistTurnTrace(db, input as Input<'postAgentTurnReceipt'>, authenticatedAgentId);
-          return this.writeResult() as Output<Name>;
         }
         // Silence is a server-owned terminal outcome, including private return
         // routes. Older helpers may still submit final text after the tool.
@@ -969,25 +837,16 @@ export class DaemonService {
         ].includes(name) && !(await db.query(
           `SELECT 1 FROM corner_facts WHERE corner_id=$1`, [scopedRoom])).rowCount))) {
           // Final prose keeps the private return route without inventing a status.
-          let publishSkippedReport = false;
           if (name === 'postRoomMessage') {
             const text = String(candidate.text ?? '').trim();
             if (text) {
               const report = await this.report(text, authenticatedAgentId, command, db, true);
               if ('delivered' in report && report.delivered === false)
                 throw new CommandRefusalError('Report was not delivered; restore commander membership at the recorded return address, then report again.', 409);
-              // A report wake may inherit an already answered order. Skipping
-              // another private report must not discard its public reply/files.
-              publishSkippedReport = command.private_payload.kind === 'report' && 'skipped' in report && report.skipped === true;
             } else throw new CommandRefusalError('An assignment outcome requires nonempty report text.', 400);
-            if (!publishSkippedReport) {
-              await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1`, [command.id]);
-              await db.query(`UPDATE agent_turns SET status='complete',created_at=now()
-              WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status<>'cancelled'`,
-              [scopedRoom, authenticatedAgentId, requestId]);
-            }
+            await endAgentTurn(db, command, 'complete');
           }
-          if (!publishSkippedReport) return this.writeResult() as Output<Name>;
+          return this.writeResult() as Output<Name>;
         }
         if (command.state === 'complete') {
           if (name === 'postRoomMessage' && command.result_message_id) {
@@ -1003,11 +862,13 @@ export class DaemonService {
               createdAt: seconds(saved.created_at),
             } as Output<Name>;
           }
+          if (name==='postRoomMessage' && command.private_payload?.reportedGenerationId===command.generation_id)
+            return {...this.writeResult(),id:command.id} as Output<Name>;
           if (name !== 'retractAgentLiveOutput' && name !== 'postAgentTurnReceipt')
             throw new Error('command already completed');
           // A durable reply completes the command before its terminal receipt.
           // That receipt still owns usage and the institutional review enqueue.
-          if (name !== 'postAgentTurnReceipt' || (candidate.status !== 'complete' && !freeTimeoutReceipt))
+          if (name !== 'postAgentTurnReceipt')
             return this.writeResult() as Output<Name>;
         }
         const scoped = new DaemonService(
@@ -1087,32 +948,6 @@ export class DaemonService {
           // work to, so there is nothing to pre-check here.
           const message = result as unknown as { id: string };
           await routeAgentResult(db, command, message.id);
-        } else if (name === 'postAgentTurnReceipt') {
-          if (candidate.status === 'working') {
-            if (!command.turn_owner_connection_id) await renewAgentCommandLease(db, command);
-          } else if (
-            candidate.status === 'failed' &&
-            ((result as { hiccupRestart?: boolean; updateRequeued?: boolean }).hiccupRestart ||
-              (result as { updateRequeued?: boolean }).updateRequeued)
-          ) {
-            // noteFirstSilence already reopened this exact command for re-delivery.
-          } else if (
-            candidate.status === 'failed' &&
-            command.state === 'pending' &&
-            !shouldCompletePendingFailedCommand(
-              classifyTurnSilence(
-                typeof candidate.reason === 'string' ? candidate.reason : undefined,
-                typeof candidate.reasonKind === 'string' ? candidate.reasonKind : undefined,
-              ).kind,
-              typeof candidate.reason === 'string' ? candidate.reason : '',
-            )
-          ) {
-            // Transient corner-start clone/network: the helper retries startCorner.
-            // Leave the original pending command for that attempt; do not ask
-            // systemd to restart, and do not consume the request.
-          } else {
-            await settleAgentCommand(db, command, candidate.status === 'cancelled' ? 'cancelled' : 'complete');
-          }
         }
         return result;
       }));
@@ -1345,12 +1180,13 @@ export class DaemonService {
           scopedRoom!,
           authenticatedAgentId,
         ))) as Output<Name>;
-      case 'claimAgentCommand': {
+      case 'claimAgentCommand':
+      case 'claimAgentTurn': {
         if(!turnOwner)throw new Error('helper claim requires its machine connection owner');
         const claimed = await queueDatabaseWork(this.database, `turn:${scopedRoom}:${authenticatedAgentId}`, () => this.database.transaction(async (db) => {
           if (ownedIntent) await this.lockOwnedTurnAccess(db, scopedRoom!, authenticatedAgentId, String(candidate.commandId));
           const row = await claimAgentCommand(db, scopedRoom!, authenticatedAgentId,
-            String(candidate.commandId), typeof candidate.generationId === 'string' ? candidate.generationId : '', turnOwner)
+            String(candidate.commandId), typeof candidate.generationId === 'string' ? candidate.generationId : '', turnOwner, name === 'claimAgentTurn')
             .catch((error: unknown) => {
               if (isOwnedModelUnknownGenerationError(error)) throw new OwnedModelUnknownGeneration();
               // Commit stale cancellations before refusing a cached helper claim.
@@ -1368,10 +1204,10 @@ export class DaemonService {
           const activity = row.reason === 'computer_activity' ? (await db.query<{
             text: string; system_event: NonNullable<import('@beeline/api-contract/daemon').AgentCommand['source']['systemEvent']>;
           }>(`SELECT text,system_event FROM messages WHERE id=$1`, [row.source_message_id])).rows[0] : undefined;
-          const source = row.coalesced_context !== null && row.coalesced_context !== undefined
-            ? (await readAgentCommands(db, scopedRoom!, authenticatedAgentId, [row.id])).commands[0]?.source
+          const commands = name === 'claimAgentTurn'
+            ? (await readAgentCommands(db, scopedRoom!, authenticatedAgentId, row.generation_id!)).commands
             : undefined;
-          return { row, activity, source, modelCredential };
+          return { row, activity, modelCredential, commands };
         }));
         if (claimed instanceof StaleWakeClaimRefused) {
           claimed.log();
@@ -1379,13 +1215,26 @@ export class DaemonService {
         }
         this.live.publish({ type: 'invalidate', roomId: scopedRoom!, reason: 'turn', agentId: authenticatedAgentId });
         return { ...this.writeResult(),
+          ...(claimed.commands ? { commands: claimed.commands } : {}),
           ...(claimed.modelCredential ? { modelCredential: claimed.modelCredential } : {}),
           ...(claimed.row.recovery_context ? { recoveryContext: claimed.row.recovery_context } : {}),
-          ...(claimed.row.coalesced_context !== null && claimed.row.coalesced_context !== undefined
-            ? { coalescedContext: claimed.row.coalesced_context } : {}),
-          ...(claimed.source ? { source: claimed.source } : {}),
           ...(claimed.activity ? { activitySource: { body: claimed.activity.text, systemEvent: claimed.activity.system_event } } : {}),
         } as Output<Name>;
+      }
+      case 'releaseAgentTurn': {
+        if (!turnOwner) throw new Error('turn release requires its machine connection owner');
+        const released = await this.database.transaction(async db => {
+          await assertCurrentTurnOwner(db, authenticatedAgentId, turnOwner);
+          await lockAgentCommandQueue(db, scopedRoom!, authenticatedAgentId);
+          await db.query(`UPDATE agent_commands SET state='pending',generation_id=NULL,
+            lease_expires_at=NULL,claimed_at=NULL,turn_owner_connection_id=NULL,turn_owner_epoch=NULL
+            WHERE room_id=$1 AND agent_id=$2 AND state='claimed' AND generation_id=$3
+              AND action IN ('input','resume') AND turn_owner_connection_id=$4 AND turn_owner_epoch=$5`,
+            [scopedRoom,authenticatedAgentId,candidate.generationId,turnOwner.connectionId,turnOwner.epoch]);
+          return readAgentCommands(db, scopedRoom!, authenticatedAgentId);
+        });
+        this.live.publish({type:'invalidate',roomId:scopedRoom!,reason:'turn',agentId:authenticatedAgentId});
+        return {...this.writeResult(), commands: released.commands} as Output<Name>;
       }
       case 'acknowledgeAgentCommand': {
         const acknowledged = await this.database.transaction(async db => {
@@ -1399,13 +1248,13 @@ export class DaemonService {
             if (previous.rowCount) return previous;
           }
           const written = await db.query<CommandRow>(
-          `UPDATE agent_commands SET state='complete',completed_at=now(),
-            restart_confirmed_at=CASE WHEN action='restart' THEN COALESCE(restart_confirmed_at,now()) ELSE restart_confirmed_at END
-          WHERE id=$1 AND room_id=$2 AND agent_id=$3 AND generation_id=$4 AND (state='complete' OR (state='claimed' AND ${commandOwnerLiveSql(undefined)}))
+          `SELECT (ended).* FROM (SELECT beeline_end_agent_turn(id,generation_id,'complete') ended FROM agent_commands WHERE id=$1 AND room_id=$2 AND agent_id=$3 AND generation_id=$4 AND (state='complete' OR (state='claimed' AND ${commandOwnerLiveSql(undefined)}))
           AND action IN ('stop','restart') AND ((turn_owner_connection_id IS NULL AND $5::text IS NULL) OR
-            (turn_owner_connection_id=$5::text AND turn_owner_epoch=$6::bigint)) RETURNING *`,
+            (turn_owner_connection_id=$5::text AND turn_owner_epoch=$6::bigint))) ended_commands`,
           [candidate.commandId, scopedRoom, authenticatedAgentId, candidate.generationId,
             turnOwner?.connectionId ?? null, turnOwner?.epoch ?? null]);
+          if (written.rows[0]?.action==='restart') await db.query(`UPDATE agent_commands
+            SET restart_confirmed_at=COALESCE(restart_confirmed_at,clock_timestamp()) WHERE id=$1`,[written.rows[0].id]);
           if (written.rows[0]) await registerOwnedEffectFence(db, written.rows[0]);
           return written;
         });
@@ -1501,18 +1350,6 @@ export class DaemonService {
           input as Input<'setEventSubscriptions'>,
           authenticatedAgentId,
         )) as Output<Name>;
-      case 'setWakeDelivery': {
-        const minutes = wakeBatchMinutes((input as Input<'setWakeDelivery'>).delivery);
-        await this.database.query('UPDATE agents SET wake_batch_minutes=$2,updated_at=now() WHERE agent_id=$1',
-          [authenticatedAgentId, minutes]);
-        return { delivery: minutes ? `batch:${minutes}` : 'immediate' } as Output<Name>;
-      }
-      case 'getWakeDelivery': {
-        const result = await this.database.query<{ wake_batch_minutes: number }>(
-          'SELECT wake_batch_minutes FROM agents WHERE agent_id=$1', [authenticatedAgentId]);
-        const minutes = result.rows[0]!.wake_batch_minutes;
-        return { delivery: minutes ? `batch:${minutes}` : 'immediate' } as Output<Name>;
-      }
       case 'watchCorner':
         return (await this.watchCorner(
           input as Input<'watchCorner'>,
@@ -1728,6 +1565,7 @@ export class DaemonService {
             await this.database.query(`UPDATE agent_turns SET completion_kind='no-reply'
               WHERE room_id=$1 AND agent_id=$2 AND request_id=$3`,
               [command.room_id, authenticatedAgentId, command.turn_request_id]);
+            await endAgentTurn(this.database, command, 'complete');
             if (declinedMessage) await clearOwedMention(this.database, authenticatedAgentId, command.room_id, declinedMessage);
             return this.writeResult() as Output<Name>;
           }
@@ -3263,8 +3101,7 @@ export class DaemonService {
        JOIN rooms r ON r.id=command.room_id AND r.archived_at IS NULL
        JOIN memberships m ON m.room_id=r.id AND m.identity_id=command.agent_id AND m.removed_at IS NULL
        LEFT JOIN corner_facts f ON f.corner_id=r.id
-       WHERE command.agent_id=$1 AND (command.state='pending'
-         OR (command.state='claimed' AND ${commandOwnerExpiredSql('command')}))`,
+       WHERE command.agent_id=$1 AND command.state='pending'`,
       [agentId],
     );
     return {
@@ -4468,32 +4305,6 @@ export class DaemonService {
           `DELETE FROM agent_pending_attachments WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND generation_id=$4`,
           [input.roomId, agentId, input.requestId, input.generationId],
         );
-      // A durable final Room reply is also the turn's terminal proof. This
-      // makes the Room view settle even if the daemon is interrupted before
-      // its redundant explicit complete receipt reaches the server.
-      //
-      // Command authorization has already rejected cancelled output. Keep the
-      // receipt guard as a second terminal-state invariant inside this upsert.
-      // Public corner prose records conversation; only the private report or
-      // a recorded continuation can settle an assigned order.
-      if (input.requestId && command?.private_payload?.kind !== 'order') {
-        const settled = await database.query(
-          `INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
-           VALUES($1,$2,$3,'complete',$4)
-           ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET
-             status='complete',created_at=now()
-           WHERE agent_turns.status<>'cancelled'`,
-          [input.roomId, input.requestId, agentId, input.generationId],
-        );
-        if (settled.rowCount)
-          await settleTurnFailureLine(
-            database,
-            this.live,
-            input.roomId,
-            input.requestId,
-            agentId,
-          );
-      }
       const values = [
         messageId,
         input.roomId,
@@ -4533,18 +4344,18 @@ export class DaemonService {
                SELECT stored.* FROM messages stored WHERE stored.id=$1 AND stored.room_id=$2 AND stored.author_id=$3
                  AND NOT EXISTS(SELECT 1 FROM new_messages)
              ), completed AS (
-               UPDATE agent_commands SET state='complete',completed_at=now(),result_message_id=inserted.id
-               FROM inserted WHERE agent_commands.id=$13
-                 AND agent_commands.private_payload->>'kind' IS DISTINCT FROM 'order'
+               SELECT beeline_end_agent_turn($13,$14,'complete',NULL,inserted.id) ended
+               FROM inserted WHERE $15::boolean
              ), cleared AS (
                DELETE FROM live_outputs
-               WHERE room_id=$2 AND agent_id=$3 AND turn_id=$6 AND kind IN ('draft','thought')
+               WHERE room_id=$2 AND agent_id=$3 AND turn_id=$6 AND kind IN ('draft','thought') AND NOT $15::boolean
              )
              SELECT inserted.*,author.kind author_kind,author.name author_name,
                author.handle author_handle,author.avatar author_avatar,author.face_id author_face,
                ${taggedIdentityIdsSql('inserted')} tagged_ids
-             FROM inserted JOIN identities author ON author.id=inserted.author_id`,
-            [...values, command!.id],
+             FROM inserted JOIN identities author ON author.id=inserted.author_id
+             CROSS JOIN (SELECT count(*) FROM completed) completion`,
+            [...values, command!.id, command!.generation_id, command!.private_payload?.kind !== 'order'],
           )
         ).rows[0]!;
       }
@@ -4620,12 +4431,7 @@ export class DaemonService {
                'url',url,'name',name,'mimeType',mime_type,'size',size::integer
              ) ORDER BY created_at,id),'[]'::jsonb) attachments FROM pending
            ), settled AS (
-             INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
-             SELECT room_id,turn_request_id,agent_id,'complete',$10 FROM writable
-             ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET
-               status='complete',created_at=now()
-             WHERE agent_turns.status<>'cancelled'
-             RETURNING 1
+             SELECT 1 FROM writable
            ), new_messages AS (
              INSERT INTO messages(
                id,room_id,author_id,text,presentation,request_id,legacy_event,
@@ -4641,30 +4447,11 @@ export class DaemonService {
              SELECT stored.* FROM messages stored WHERE stored.id=$1 AND stored.room_id=$2 AND stored.author_id=$3
                AND NOT EXISTS(SELECT 1 FROM new_messages)
            ), completed AS (
-             UPDATE agent_commands command SET
-               state='complete',completed_at=now(),result_message_id=inserted.id
-             FROM inserted WHERE command.id=(SELECT id FROM writable)
-             RETURNING command.id
+             SELECT (ended).* FROM (SELECT beeline_end_agent_turn(writable.id,writable.generation_id,'complete',NULL,inserted.id) ended FROM writable,inserted) ended_commands
            ), star_count AS (
              ${starPromptReplySql(
                `(SELECT writable.root_source_message_id FROM writable,completed WHERE $5='message')`,
              )}
-           ), cleared AS (
-             DELETE FROM live_outputs output USING completed
-             WHERE output.room_id=$2 AND output.agent_id=$3 AND output.turn_id=$6
-               AND output.kind IN ('draft','thought')
-           ), notice_rows AS (
-             DELETE FROM pending_mention_notices notice USING writable
-             WHERE notice.room_id=$2 AND notice.agent_id=$3 AND notice.source_message_id=$6
-             RETURNING notice.notice_id
-           ), withdrawn_notice AS (
-             DELETE FROM messages message USING notice_rows
-             WHERE message.id=notice_rows.notice_id AND message.room_id=$2
-               AND message.author_id=$3
-               AND NOT EXISTS(SELECT 1 FROM pending_mention_notices other
-                 WHERE other.notice_id=notice_rows.notice_id
-                   AND other.source_message_id<>$6)
-             RETURNING message.id
            ), inserted_public AS (
              SELECT inserted.*,author.kind author_kind,author.name author_name,
                author.handle author_handle,author.avatar author_avatar,author.face_id author_face,
@@ -4945,6 +4732,8 @@ export class DaemonService {
 
   private async turnReceipt(input: Input<'postAgentTurnReceipt'>, agentId: string) {
     await this.access(input.roomId, agentId);
+    if (input.diagnosticsOnly && (input.status !== 'complete' || input.completionKind))
+      throw new Error('invocation diagnostics cannot declare a command result');
     if (input.heartbeat && input.status !== 'working') {
       throw new Error('turn receipt heartbeat must be working');
     }
@@ -4953,7 +4742,7 @@ export class DaemonService {
     }
     const reason =
       input.status === 'failed' && typeof input.reason === 'string'
-        ? input.reason.replace(/\s+/g, ' ').trim().slice(0, TURN_FAILURE_REASON_MAX) || null
+        ? input.reason.replace(/\s+/g, ' ').trim().slice(0, 200) || null
         : null;
     // Wire-supplied counts are only ever stored when they are what they claim:
     // a negative, fractional, or absurd value is dropped, never clamped into a
@@ -4971,152 +4760,35 @@ export class DaemonService {
     const inputTokens = recordedTokens(input.totalInputTokens ?? input.inputTokens);
     const outputTokens = recordedTokens(input.outputTokens);
     let committedTurn: CommittedTurnLiveRow | undefined;
-    let silence: { hiccupRestart: boolean; updateRequeued: boolean; attempt: number; reportDelivered?: boolean } | undefined;
-    await this.database.transaction(async (database) => {
-      if (input.heartbeat) {
-        committedTurn = (
-          await database.query<CommittedTurnLiveRow>(
-            `WITH written AS (
-               UPDATE agent_turns SET created_at=now()
-               WHERE room_id=$1 AND request_id=$2 AND agent_id=$3 AND status='working'
-                 AND generation_id IS NOT DISTINCT FROM $4
-               RETURNING room_id,request_id,agent_id,status,started_at,created_at,generation_id
-             )
-             SELECT written.*,requester.id requested_by FROM written
-             LEFT JOIN messages trigger ON trigger.id=${turnRootMessageSql('written')}
-             LEFT JOIN identities requester ON requester.id=trigger.author_id
-               AND requester.kind='human'`,
-            [input.roomId, input.requestId, agentId, input.generationId ?? null],
-          )
-        ).rows[0];
-      } else {
-        // `cancelled` is terminal and wins. The requester withdrew the question,
-        // so the answer that arrives a moment later is an answer to nothing: a
-        // helper that finishes its run mid-stop must not overwrite the stop with
-        // `complete`, nor turn the cancelled turn into a failure it never was.
-        // A refused write leaves `rowCount` at zero, which is also what keeps
-        // the consequences below — the failure line, the settle — from running
-        // over a turn the requester already stopped.
-        const written = await database.query<CommittedTurnLiveRow>(
-          `WITH written AS (
-             INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id,failure_reason,
-                                     tool_calls,completion_kind,input_tokens,output_tokens)
-             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-             ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET
-               status=EXCLUDED.status,generation_id=EXCLUDED.generation_id,
-               failure_reason=EXCLUDED.failure_reason,created_at=now(),
-               started_at=CASE WHEN EXCLUDED.status='working' AND agent_turns.status<>'working'
-                 THEN now() ELSE agent_turns.started_at END,
-               tool_calls=COALESCE(EXCLUDED.tool_calls,agent_turns.tool_calls),
-               completion_kind=COALESCE(agent_turns.completion_kind,EXCLUDED.completion_kind),
-               input_tokens=COALESCE(EXCLUDED.input_tokens,agent_turns.input_tokens),
-               output_tokens=COALESCE(EXCLUDED.output_tokens,agent_turns.output_tokens)
-             WHERE agent_turns.status<>'cancelled'
-             RETURNING room_id,request_id,agent_id,status,started_at,created_at,generation_id
-           )
-           SELECT written.*,requester.id requested_by FROM written
-           LEFT JOIN messages trigger ON trigger.id=${turnRootMessageSql('written')}
-           LEFT JOIN identities requester ON requester.id=trigger.author_id
-             AND requester.kind='human'`,
-          [
-            input.roomId,
-            input.requestId,
-            agentId,
-            input.status,
-            input.generationId ?? null,
-            reason,
-            toolCalls,
-            input.completionKind ?? null,
-            inputTokens,
-            outputTokens,
-          ],
-        );
-        if (!written.rowCount) return;
-        committedTurn = written.rows[0];
+    let failureReportDelivered: boolean | undefined;
+    await this.database.transaction(async db => {
+      const command = this.authorizedCommand ?? (await db.query<CommandRow>(
+        `SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3
+          AND generation_id IS NOT DISTINCT FROM $4 FOR UPDATE`,
+        [input.roomId, agentId, input.requestId, input.generationId ?? null])).rows[0];
+      if (!command) throw new Error('command output authority rejected');
+      if (!input.diagnosticsOnly && input.status !== 'working' && await endAgentTurn(db, command, input.status, reason)) {
+        if (input.status === 'failed') failureReportDelivered = await recordAgentTurnFailure(db, command, reason);
       }
-      await this.persistTurnTrace(database, input, agentId);
-      if (!input.heartbeat) await recordStartupWakeOutcome(database, input, agentId);
-      let silentWakeStopped = false;
-      if (['complete','failed'].includes(input.status) && !input.heartbeat) {
-        const command = (await database.query<CommandRow>(`SELECT * FROM agent_commands
-          WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 AND generation_id=$4`,
-        [input.roomId,agentId,input.requestId,input.generationId ?? null])).rows[0];
-        if (command && isSilentRetry(command.reason, command.private_payload))
-          silentWakeStopped = await stopSilentWakes(database,input.roomId,agentId,command.root_source_message_id);
-        if (silentWakeStopped) await database.query(`UPDATE agent_commands SET state='complete',completed_at=now()
-          WHERE id=$1 AND state='claimed' AND generation_id=$2`, [command!.id,input.generationId]);
-      }
-      if (input.status === 'failed' && !silentWakeStopped) {
-        silence = await this.inscribeTurnFailure(
-          database,
-          input.roomId,
-          input.requestId,
-          agentId,
-          input.generationId,
-          reason,
-          input.reasonKind,
-        );
-      } else if (input.status === 'complete') {
-        await closeFreeAgentTurn(database, { roomId: input.roomId, requestId: input.requestId,
-          agentId, generationId: input.generationId, normal: true });
-        // A successful turn does not always post a durable message. A textless
-        // Room turn that opened a corner settles through the server's corner
-        // card alone, so the terminal receipt must own the same durable
-        // live-lane cleanup as postRoomMessage. The daemon's earlier retract
-        // is only a best-effort presentation signal and may never reach the
-        // server.
-        await database.query(
-          `DELETE FROM live_outputs
-           WHERE room_id=$1 AND agent_id=$2 AND turn_id=$3 AND kind IN ('draft','thought')`,
-          [input.roomId, agentId, input.requestId],
-        );
-        await settleTurnFailureLine(
-          database,
-          this.live,
-          input.roomId,
-          input.requestId,
-          agentId,
-        );
-      }
+      // Usage and diagnostics may arrive after the reply already ended the turn.
+      // They never reopen it or replace its recorded terminal result.
+      await db.query(`UPDATE agent_turns SET tool_calls=COALESCE($5,tool_calls),
+        completion_kind=COALESCE(completion_kind,$6),input_tokens=COALESCE($7,input_tokens),
+        output_tokens=COALESCE($8,output_tokens)
+        WHERE room_id=$1 AND request_id=$2 AND agent_id=$3 AND generation_id IS NOT DISTINCT FROM $4`,
+        [input.roomId,input.requestId,agentId,input.generationId ?? null,toolCalls,
+          input.completionKind ?? null,inputTokens,outputTokens]);
+      committedTurn = (await db.query<CommittedTurnLiveRow>(
+        `SELECT room_id,request_id,agent_id,status,started_at,created_at,generation_id,NULL::text requested_by
+         FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+        [input.roomId,input.requestId,agentId])).rows[0];
+      await this.persistTurnTrace(db, input, agentId);
     });
-    this.live.publish({
-      type: 'invalidate',
-      roomId: input.roomId,
-      reason: 'turn',
-      agentId,
-      requestId: input.requestId,
-      ...(committedTurn ? { committedRow: { type: 'turn' as const, row: committedTurn } } : {}),
-    });
-    return this.writeResult({
-      ...(silence?.hiccupRestart ? { hiccupRestart: true, hiccupAttempt: silence.attempt }
-        : silence?.updateRequeued ? { updateRequeued: true } : {}),
-      ...(silence?.reportDelivered !== undefined ? { failureReportDelivered: silence.reportDelivered } : {}),
-    });
+    this.live.publish({type:'invalidate',roomId:input.roomId,reason:'turn',agentId,requestId:input.requestId,
+      ...(committedTurn ? {committedRow:{type:'turn' as const,row:committedTurn}} : {})});
+    return this.writeResult(failureReportDelivered === undefined ? {} : {failureReportDelivered});
   }
-  /**
-   * A failed turn is a fact the Room must carry. The approved first-silence
-   * line is inscribed here; a hiccup reopens the original command so the
-   * recovered helper answers without another human request. The line carries
-   * NO mention — `background.ts` also excludes `turn-failed` rows outright.
-   */
-  private async inscribeTurnFailure(
-    database: SqlDatabase,
-    roomId: string,
-    requestId: string,
-    agentId: string,
-    generationId: string | undefined,
-    reason: string | null,
-    reasonKind?: string,
-  ) {
-    return noteFirstSilence(database, this.live, {
-      roomId,
-      requestId,
-      agentId,
-      generationId,
-      reason,
-      reasonKind,
-    });
-  }
+
   private async activity(input: Input<'postAgentActivity'>, agentId: string) {
     await this.access(input.roomId, agentId);
     const key = input.cornerActivityKey;
@@ -6317,20 +5989,9 @@ export class DaemonService {
              AND source.system_event IS NULL AND source.presentation='message'))
          ORDER BY directed.created_at DESC,directed.id DESC LIMIT 1`, [command.room_id, agentId, recipient.id],
       )).rows[0];
-      // An explicit recipient answers only this order, even if it led a digest.
-      if (selected) reportCommand = { ...selected, coalesced_context: null };
+      // The named recipient selects its latest recorded return route.
+      if (selected) reportCommand = selected;
       else directRecipient = recipient.id;
-    }
-    // An informational continuation has no automatic return obligation. An
-    // actual incoming assignment may receive its first result here;
-    // reportToCommander fences that obligation across all later continuations.
-    if (automatic && command.private_payload?.kind !== 'order') {
-      const incoming = await commandOrder(database, command);
-      const ownOrder = incoming.agent_id === agentId && (incoming.private_payload?.kind === 'order' ||
-        (!incoming.private_payload && incoming.source_message_id && (await database.query(
-          `SELECT 1 FROM messages source JOIN identities author ON author.id=source.author_id
-           WHERE source.id=$1 AND author.kind='human' AND source.presentation='message' AND source.system_event IS NULL`, [incoming.source_message_id])).rowCount));
-      if (!ownOrder) return { ...this.writeResult(), delivered: true, skipped: true };
     }
     if (!automatic) {
       text = text.replace(/^(?:done|blocked|failed|needs[-_]decision):\s*/, '');
@@ -6370,7 +6031,7 @@ export class DaemonService {
     // unless tools queued more files after that report.
     if (automatic && command.private_payload?.reportedGenerationId === command.generation_id && !pending.length)
       return this.writeResult();
-    const attachments = [...(command.coalesced_attachments ?? command.private_payload?.attachments ?? []),
+    const attachments = [...(command.private_payload?.attachments ?? []),
       ...pending.map(row => ({ url: row.url, name: row.name, mimeType: row.mime_type, size: row.size }))]
       .filter((row, index, all) => all.findIndex(other => other.url === row.url) === index);
     // Collapse alternate URLs for the same object; content deduplication waits
@@ -6393,6 +6054,8 @@ export class DaemonService {
       `UPDATE agent_commands SET private_payload=private_payload ||
         jsonb_build_object('reportedGenerationId',$2::text,'reportedOutcome',$3::text) WHERE id=$1`,
       [command.id, command.generation_id, prefix ?? null]);
+    if (prefix && ['done','failed','blocked','needs-decision'].includes(prefix))
+      await endAgentTurn(database,command,prefix==='failed'?'failed':'complete');
     return result;
   }
   private async watchCorner(
@@ -8830,18 +8493,12 @@ export class DaemonService {
   }
   private async archiveCorner(input: Input<'archiveCorner'>, agentId: string) {
     const { cornerId } = input;
-    // The generic gate checks the turn's roomId; the target corner needs its own check.
-    await this.reach(cornerId, agentId);
     const authorize = async (database: SqlDatabase) => {
       await lockCornerLifecycle(database, cornerId);
       await lockCornerArchivalAuthority(database);
-      if (input.requestId) {
-        const command = await authorizeCommandOutput(database, input.roomId ?? cornerId,
-          agentId, input.requestId, input.generationId);
-        await assertCornerCommandTarget(database, command.room_id, cornerId);
-      } else if (input.roomId) {
-        await assertCornerCommandTarget(database, input.roomId, cornerId);
-      }
+      // Closing is lifecycle cleanup, not command output. A completed turn or
+      // an unrelated source place cannot revoke current parent Room access.
+      await this.reach(cornerId, agentId, database);
       if ((await database.query(
         `SELECT 1 FROM corner_facts WHERE corner_id=$1 AND locked`, [cornerId],
       )).rowCount) {
@@ -8944,7 +8601,8 @@ export class DaemonService {
          JOIN identities identity ON identity.id=command.agent_id
          WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3
          ORDER BY command.created_at DESC,command.id DESC LIMIT 1) voice_agent_name
-       FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
+       FROM memberships WHERE room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=$1)
+         AND identity_id=$2 AND removed_at IS NULL`,
       [roomId, agentId, typeof requestId === 'string' ? requestId : null],
     );
     if (!result.rowCount) throw new AccessDeniedError();
@@ -9108,9 +8766,6 @@ export class DaemonService {
     return this.writeResult();
   }
   private writeResult(extra?: {
-    hiccupRestart?: boolean;
-    hiccupAttempt?: number;
-    updateRequeued?: boolean;
     failureReportDelivered?: boolean;
   }) {
     return { id: id(), createdAt: Math.floor(Date.now() / 1000), ...extra };
@@ -9254,8 +8909,6 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getWorkScheduleAuthority: true,
   createAgentSchedule: true,
   setEventSubscriptions: true,
-  setWakeDelivery: true,
-  getWakeDelivery: true,
   createAgentSubscription: true,
   listServiceSubscriptionEvents: true,
   listAgentSubscriptions: true,
@@ -9296,7 +8949,9 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getRequestCompletion: true,
   getAgentCommands: true,
   claimAgentCommand: true,
+  claimAgentTurn: true,
   acknowledgeAgentCommand: true,
+  releaseAgentTurn: true,
   postRoomMessage: true,
   reactToRoomMessage: true,
   postAgentAttachment: true,

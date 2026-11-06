@@ -333,7 +333,7 @@ jobs:
       - name: Ask Pages whether this helper already shipped
         id: shipped
         env:
-          MANIFEST_URL: ${{ needs.initialize.outputs.channel == 'next' && 'https://beeline-work.github.io/beeline/dl/next/manifest.json' || vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
+          MANIFEST_URL: ${{ needs.initialize.outputs.channel == 'next' && 'https://usebeeline.app/dl/next/manifest.json' || vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
           RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
           RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
         run: |
@@ -422,7 +422,7 @@ jobs:
       - name: Ask Pages whether this helper already shipped
         id: shipped
         env:
-          MANIFEST_URL: ${{ needs.initialize.outputs.channel == 'next' && 'https://beeline-work.github.io/beeline/dl/next/manifest.json' || vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
+          MANIFEST_URL: ${{ needs.initialize.outputs.channel == 'next' && 'https://usebeeline.app/dl/next/manifest.json' || vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
           RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
           RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
         run: |
@@ -575,7 +575,7 @@ jobs:
           channel: ${{ needs.initialize.outputs.channel }}
           release_sha: ${{ needs.initialize.outputs.helper_sha || needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.helper_version || needs.initialize.outputs.release_version }}
-          pages_manifest_url: ${{ needs.initialize.outputs.channel == 'next' && 'https://beeline-work.github.io/beeline/dl/next/manifest.json' || vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
+          pages_manifest_url: ${{ needs.initialize.outputs.channel == 'next' && 'https://usebeeline.app/dl/next/manifest.json' || vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
       - name: Pack and smoke the exact helper CLI package
         id: helper_package
         if: needs.initialize.outputs.channel == 'next'
@@ -810,7 +810,7 @@ jobs:
       - uses: ./.github/actions/pages-leg
         if: needs.initialize.outputs.run_helper != 'true'
         with:
-          manifest_url: ${{ needs.initialize.outputs.channel == 'next' && 'https://beeline-work.github.io/beeline/dl/next/manifest.json' || vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
+          manifest_url: ${{ needs.initialize.outputs.channel == 'next' && 'https://usebeeline.app/dl/next/manifest.json' || vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
       - uses: ./.github/actions/web-app-leg
         with:
           sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
@@ -1430,7 +1430,7 @@ jobs:
         if: "!cancelled() && needs.initialize.outputs.no_op != 'true'"
         continue-on-error: true
         env:
-          MANIFEST_URL: ${{ needs.initialize.outputs.channel == 'next' && 'https://beeline-work.github.io/beeline/dl/next/manifest.json' || vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
+          MANIFEST_URL: ${{ needs.initialize.outputs.channel == 'next' && 'https://usebeeline.app/dl/next/manifest.json' || vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
           RELEASE_VERSION: ${{ needs.initialize.outputs.helper_version || needs.initialize.outputs.release_version }}
           RELEASE_SHA: ${{ needs.initialize.outputs.helper_sha || needs.initialize.outputs.release_sha }}
           BEELINE_RELEASE_NOTIFY_SECRET: ${{ secrets.BEELINE_RELEASE_NOTIFY_SECRET }}

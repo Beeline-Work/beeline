@@ -151,6 +151,17 @@ test('workflow reuses native beta and OTA legs, skipping helper compilation duri
   assert.match(readFileSync('scripts/gh-release-retry.sh', 'utf8'), /--prerelease=false --latest/);
 });
 
+test('next helper checks and publication verify the public manifest without a Pages redirect', () => {
+  const manifests = Object.values(workflow.jobs).flatMap(job => job.steps ?? [])
+    .map(step => step.env?.MANIFEST_URL ?? step.with?.pages_manifest_url ?? step.with?.manifest_url)
+    .filter(value => value?.includes("channel == 'next'"));
+  assert.equal(manifests.length, 5); // Linux/Mac reuse, helper/website publication, release notification.
+  for (const manifest of manifests) {
+    assert.match(manifest, /channel == 'next' && 'https:\/\/usebeeline\.app\/dl\/next\/manifest\.json'/);
+    assert.doesNotMatch(manifest, /github\.io\/beeline\/dl\/next/);
+  }
+});
+
 function bundle(directory, version, sourceCommit) {
   mkdirSync(directory, { recursive: true });
   const bytes = Buffer.from(`exact archive ${version}`);

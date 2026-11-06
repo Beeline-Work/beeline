@@ -1,3 +1,5 @@
+import { listenForPostgresCompletions } from './test-fixtures/postgres-completions.js';
+import { seedSquireMachine } from './test-fixtures/squire-machines.js';
 import { phoneFetch } from '../../../tests/helpers/phone-operation.js';
 
 import { COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion } from './command-completion.js';
@@ -206,7 +208,7 @@ export function fixtureScope2() {
         await admin.end();
       };
       await migrate(database);
-      releaseCompletions = async () => {};
+      releaseCompletions = await listenForPostgresCompletions(isolatedUrl.toString());
     } else {
       database = await migratedDatabase();
       releaseCompletions = await database.client.listen(COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion);
@@ -256,8 +258,7 @@ export function fixtureScope2() {
 
 
   async function connectSquire(): Promise<string> {
-    await database.query(`UPDATE agents SET squire_report=$2::jsonb WHERE agent_id=$1`,
-      [HELPER, JSON.stringify({ status: 'connected', reportedAt: Date.now() / 1000 })]);
+    await seedSquireMachine(database, HELPER, { squire_report: { status: 'connected', reportedAt: Date.now() / 1000 } });
     return 'squire:machine-one';
   }
 

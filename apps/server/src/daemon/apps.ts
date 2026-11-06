@@ -36,11 +36,11 @@ import { daemonRequestAgentGrant, daemonGrantRequester, daemonConsumeAgentGrant 
       throw new Error('service and reason are required');
     const builtin = builtinBeelineApp(service, `${reason} ${input.continuation ?? ''}`);
     if (builtin) {
-      await daemonAccess(ctx, input.roomId, agentId);
+      await ctx.access(input.roomId, agentId);
       return { status: 'ready', app: builtin, next: `Use app_tool(app:${builtin}) to discover its tools. Existing tool permissions still apply.` };
     }
     const continuation = normalizeAppContinuation(input.continuation);
-    const context = await daemonOfferContext(ctx, input.roomId, agentId);
+    const context = await ctx.offerContext(input.roomId, agentId);
     const commandId = ctx.authorizedCommand?.id;
     const assistant = service.toLowerCase().replace(/[-_\s]+/g, ' ');
     if (['grok', 'xai', 'x ai', 'grok bot', 'muse', 'meta muse', 'meta ai',
@@ -57,12 +57,6 @@ import { daemonRequestAgentGrant, daemonGrantRequester, daemonConsumeAgentGrant 
       connectKind?: string; resumeOnConnect?: boolean;
     }) => {
       await database.transaction(async database => {
-        await database.query('SELECT pg_advisory_xact_lock(hashtext($1))',
-          [`app-sign-in:${input.roomId}:${card.appId}:${context.owner.pubkey}`]);
-        const existing = await database.query(`SELECT 1 FROM messages WHERE room_id=$1
-          AND card_type='app-sign-in' AND card->>'appId'=$2 AND card->>'ownerId'=$3
-          AND card->>'status'='pending'`, [input.roomId, card.appId, context.owner.pubkey]);
-        if (existing.rowCount) return;
         await systemLine(database, { roomId: input.roomId,
           subject: { kind: 'agent', id: agentId, name: context.agent.name },
           verb: systemMessage("daemon-service.needs-a-connection-to"), object: card.name, consequence: systemMessage("daemon-service.sign-in-to-continue-the-request"),
@@ -87,7 +81,7 @@ import { daemonRequestAgentGrant, daemonGrantRequester, daemonConsumeAgentGrant 
         if (status.status === 'connected' && !input.reconnect && !input.switchGoogleAccount)
           return { status: 'ready', app: name, connectorId, next: `${name} is ready.` };
         if (status.status !== 'connected') {
-          const offer = await daemonOfferConnector(ctx, { roomId: input.roomId,
+          const offer = await ctx.offerConnector({ roomId: input.roomId,
             connectorType: 'trusty-squire', reason }, agentId, true);
           if (commandId && !offer.joined) await ctx.database.query(
             'UPDATE connector_offers SET command_id=$2 WHERE id=$1', [offer.offerId, commandId]);
@@ -144,7 +138,7 @@ import { daemonRequestAgentGrant, daemonGrantRequester, daemonConsumeAgentGrant 
     if (normalized === 'wallet') {
       if ((await delegationView(ctx.database, context.owner.pubkey)).active)
         return { status: 'ready', app: 'Wallet', next: 'Wallet is ready.' };
-      const offer = await daemonOfferConnector(ctx, { roomId: input.roomId, connectorType: 'wallet', reason }, agentId, true);
+      const offer = await ctx.offerConnector({ roomId: input.roomId, connectorType: 'wallet', reason }, agentId, true);
       if (commandId) await ctx.database.query('UPDATE connector_offers SET command_id=$2 WHERE id=$1', [offer.offerId, commandId]);
       return { status: 'needs_approval', app: 'Wallet', next: 'Wait for the owner to approve connecting their wallet.' };
     }
@@ -165,7 +159,7 @@ import { daemonRequestAgentGrant, daemonGrantRequester, daemonConsumeAgentGrant 
           || entry.title?.toLowerCase() === normalized || entry.websiteUrl && appIdentity(entry.websiteUrl)?.key === key);
         // Relevance is not authority: a candidate must also have the app's official publisher.
         if (match && isAppRegistryPublisher(match.name, service)) {
-          const installed = await daemonConnectMcpServer(ctx, { ...input, serverName: match.name,
+          const installed = await ctx.connectMcpServer({ ...input, serverName: match.name,
             version: match.version, reason }, agentId);
           if (installed.status === 'unsupported') return { status: 'unavailable', app: service, next: installed.reason };
           const app = (await ctx.database.query<{ id: string; app_key: string }>(
@@ -173,9 +167,9 @@ import { daemonRequestAgentGrant, daemonGrantRequester, daemonConsumeAgentGrant 
             [installed.connectorId, context.owner.pubkey])).rows[0];
           outcome = { status: installed.status, app: service, transport: 'registry-mcp',
             connectorId: installed.connectorId, appId: app?.id, appKey: app?.app_key, next: 'The server is connecting the Registry tool.' };
-        } else outcome = await daemonConnectAppFrontDoor(ctx, { ...input, app: service }, agentId);
-      } else outcome = await daemonConnectAppFrontDoor(ctx, { ...input, app: service }, agentId);
-    } else outcome = await daemonConnectAppFrontDoor(ctx, { ...input, app: service }, agentId);
+        } else outcome = await ctx.connectAppFrontDoor({ ...input, app: service }, agentId);
+      } else outcome = await ctx.connectAppFrontDoor({ ...input, app: service }, agentId);
+    } else outcome = await ctx.connectAppFrontDoor({ ...input, app: service }, agentId);
     const result: Output<'connect'> = { ...outcome, status: outcome.status === 'connected' ? 'ready'
       : outcome.status === 'needs_sign_in' ? 'needs_sign_in' : outcome.status === 'unavailable' ? 'unavailable' : 'error',
       next: outcome.status === 'connected' ? outcome.next
@@ -200,7 +194,7 @@ import { daemonRequestAgentGrant, daemonGrantRequester, daemonConsumeAgentGrant 
     }
     if (outcome.transport !== 'squire-api' && outcome.transport !== 'squire-browser') return result;
     if ((await machineSquireReport(ctx.database, context.owner.pubkey, context.machine.machineId))?.status !== 'connected') {
-      const offer = await daemonOfferConnector(ctx, { roomId: input.roomId,
+      const offer = await ctx.offerConnector({ roomId: input.roomId,
         connectorType: 'trusty-squire', reason }, agentId, true);
       if (commandId && !offer.joined) await ctx.database.query('UPDATE connector_offers SET command_id=$2 WHERE id=$1', [offer.offerId, commandId]);
       return { ...result, status: 'needs_approval',
@@ -235,14 +229,14 @@ import { daemonRequestAgentGrant, daemonGrantRequester, daemonConsumeAgentGrant 
         ORDER BY grant_row.created_at DESC LIMIT 1`,
       [context.owner.pubkey, target, ownAccount, appOwner?.owner_identity_id ?? context.owner.pubkey])).rows[0];
     if (ownAccount && consent?.status !== 'approved') {
-      const approved = await daemonRequestAgentGrant(ctx, { ...input, kind: 'mcp', target, appId: outcome.appId,
+      const approved = await ctx.requestAgentGrant({ ...input, kind: 'mcp', target, appId: outcome.appId,
         purpose: `Connect ${outcome.app} through Trusty Squire for this request`,
         reason: `Connect ${outcome.app} through Trusty Squire for this request` }, agentId);
       await ctx.database.query('UPDATE agent_grants SET command_id=$2 WHERE id=$1', [approved.grantId, commandId]);
       consent = { id: approved.grantId, status: approved.status };
     }
     if (!consent || consent.status === 'revoked') {
-      const asked = await daemonRequestAgentGrant(ctx, { ...input, kind: 'mcp', target, appId: outcome.appId,
+      const asked = await ctx.requestAgentGrant({ ...input, kind: 'mcp', target, appId: outcome.appId,
         purpose: `Connect ${outcome.app} through Trusty Squire for this request`,
         reason: `Connect ${outcome.app} through Trusty Squire for this request` }, agentId, true);
       await ctx.database.query('UPDATE agent_grants SET command_id=$2 WHERE id=$1', [asked.grantId, commandId]);
@@ -273,16 +267,13 @@ import { daemonRequestAgentGrant, daemonGrantRequester, daemonConsumeAgentGrant 
 
 
   /** Shared app routing for connect and its hidden one-release alias. */
-  export async function daemonConnectAppFrontDoor(ctx: DaemonContext,
-    input: Input<'connectApp'>,
-    agentId: string,
-  ): Promise<Output<'connectApp'>> {
+  export async function daemonConnectAppFrontDoor(ctx: DaemonContext, input: Input<'connectApp'>, agentId: string): Promise<Output<'connectApp'>> {
     const app = typeof input.app === 'string' ? input.app.trim() : '';
     const reason = typeof input.reason === 'string' ? input.reason.trim().replace(/\s+/g, ' ') : '';
     if (!app || app.length > APP_INPUT_MAX_LENGTH || !reason || reason.length > 500)
       throw new Error('app and reason are required');
     const continuation = normalizeAppContinuation(input.continuation);
-    const context = await daemonOfferContext(ctx, input.roomId, agentId);
+    const context = await ctx.offerContext(input.roomId, agentId);
     const firstParty = firstPartyIntegration(app);
     if (firstParty) {
       const provider = firstParty.provider({ linkWallet: ctx.linkWallet });
@@ -292,19 +283,14 @@ import { daemonRequestAgentGrant, daemonGrantRequester, daemonConsumeAgentGrant 
       if (account.connected && !input.reconnect) return { status: 'connected', app: firstParty.name,
         appKey: firstParty.key, next: `${firstParty.name} is ready.` };
       await ctx.database.transaction(async database => {
-        await database.query('SELECT pg_advisory_xact_lock(hashtext($1))',
-          [`app-sign-in:${input.roomId}:${firstParty.appId}:${context.owner.pubkey}`]);
-        const exists = await database.query(`SELECT 1 FROM messages WHERE room_id=$1
-          AND card_type='app-sign-in' AND card->>'appKey'=$2 AND card->>'ownerId'=$3
-          AND card->>'status'='pending' LIMIT 1`, [input.roomId, firstParty.key, context.owner.pubkey]);
-        if (exists.rowCount) return;
-        await systemLine(database, { roomId: input.roomId,
+        const line = await systemLine(database, { roomId: input.roomId,
           subject: { kind: 'agent', id: agentId, name: context.agent.name },
           verb: systemMessage("daemon-service.needs-a-connection-to"), object: firstParty.name,
           consequence: systemMessage("daemon-service.sign-in-to-continue-the-request"), presentation: 'card', cardType: 'app-sign-in',
           card: { appId: firstParty.appId, appKey: firstParty.key, name: firstParty.name,
             ownerId: context.owner.pubkey, agentId, status: 'pending',
             commandId: ctx.authorizedCommand?.id ?? null, ...(continuation ? { continuation } : {}) } });
+        if (!line.inserted) return;
         await database.query(`UPDATE workspace_apps SET state='disconnected',updated_at=now()
           WHERE owner_identity_id=$1 AND app_key='stripelinklinkcom'
           AND transport='squire-api' AND state='active'
@@ -331,16 +317,8 @@ import { daemonRequestAgentGrant, daemonGrantRequester, daemonConsumeAgentGrant 
     });
     if (outcome.transport === 'composio' && outcome.status === 'needs_sign_in' &&
       outcome.appId && outcome.appKey) {
-      const mark = await daemonAppCardMark(ctx, outcome.appKey, outcome.domain);
+      const mark = await ctx.appCardMark(outcome.appKey, outcome.domain);
       await ctx.database.transaction(async (database) => {
-        await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`,
-          [`app-sign-in:${input.roomId}:${outcome.appId}`]);
-        const exists = await database.query(
-          `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='app-sign-in'
-           AND card->>'appId'=$2 AND card->>'status'='pending' LIMIT 1`,
-          [input.roomId, outcome.appId],
-        );
-        if (exists.rowCount) return;
         await systemLine(database, {
           roomId: input.roomId,
           subject: { kind: 'agent', id: agentId, name: context.agent.name },

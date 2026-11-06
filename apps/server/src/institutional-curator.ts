@@ -174,9 +174,6 @@ export async function runInstitutionalCuratorCycle(
       }
       await recordWorkspaceHostAvailability(database, rollout.workspace_id, now);
       await database.transaction(async (db) => {
-        await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-          `institutional-memory:${rollout.workspace_id}`,
-        ]);
         const cycleKey = `weekly:${utcWeekKey(now)}`;
         const inserted = await db.query(
           `INSERT INTO institutional_curator_cycles(id,workspace_id,cycle_key)

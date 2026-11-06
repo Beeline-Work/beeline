@@ -1,3 +1,4 @@
+import { lockAgentCommandQueue } from './agent-command-queue.js';
 import { endAgentTurn } from './agent-turn-end.js';
 import { ExpectedRefusalError } from './command-refusal.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
@@ -118,31 +119,11 @@ export const CORNER_MERGE_YES_CARD_TYPE = 'corner-merge-yes';
 
 
 /** Claims and human Stops serialize before taking command or turn row locks. */
-export async function lockAgentCommandQueue(db: SqlDatabase, roomId: string, agentId: string): Promise<void> {
-  await db.query("SELECT pg_advisory_xact_lock(hashtext('agent-command-queue:' || ($1::uuid)::text || ':' || $2::text))", [roomId, agentId]);
-}
+
 
 
 /** The Stop transaction's timestamp fences orders accepted after the Stop. */
-export async function dropQueuedOrdersForStop(db: SqlDatabase, stopped: CommandRow): Promise<number> {
-  const order = await commandOrder(db, stopped);
-  if (order.private_payload?.kind !== 'order' || order.agent_id !== stopped.agent_id) return 0;
-  const dropped = await db.query<CommandRow>(
-    `SELECT (terminal.ended).* FROM (SELECT beeline_end_agent_turn(agent_commands.id,agent_commands.generation_id,'cancelled','stop',NULL) ended FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND action='input'
-       AND state='pending'
-       AND private_payload->>'kind'='order'
-       AND private_payload->>'authorId'=$3 AND private_payload->>'fromRoomId'=$4
-       AND created_at<=now() AND turn_request_id<>$5) terminal`,
-    [stopped.room_id, stopped.agent_id, order.private_payload.authorId,
-      order.private_payload.fromRoomId, stopped.turn_request_id],
-  );
-  if (dropped.rowCount) {
-    await reportToCommander(db, stopped.room_id, stopped.agent_id,
-      systemMessage("agent-command.failed-queued-dropped-by-a-stop-the-running-turn-was-cancelled", dropped.rowCount, dropped.rowCount === 1 ? systemMessage("agent-command.order-was") : systemMessage("agent-command.orders-were")),
-      dropped.rows[0], createHash('sha256').update(`stop-orders:${stopped.id}`).digest('hex'), { automatic: true });
-  }
-  return dropped.rowCount;
-}
+
 
 
 export type WakeDropLog = { drops: Record<string, unknown>[] };
@@ -169,6 +150,7 @@ export async function claimAgentCommand(
   allPending = false,
 ): Promise<CommandRow> {
   if (!generation || generation.length > 200) throw new Error('command generation is required');
+  const result=await db.transaction(async db=>{
   if (owner) {
     await assertCurrentTurnOwner(db, agentId, owner);
     const existing = (await db.query<CommandRow & { turn_cancelled: boolean }>(
@@ -187,14 +169,17 @@ export async function claimAgentCommand(
       return existing; // A resolved replay is a read, never a fake working/progress write.
     }
   }
+  await lockAgentCommandQueue(db,roomId,agentId);
     const row = (
       await db.query<CommandRow & WakeDropLog & { turn_claimed: boolean }>(
-        `WITH claim_fence AS MATERIALIZED (
-             SELECT pg_advisory_xact_lock(hashtext('agent-command-queue:' || ($2::uuid)::text || ':' || $3::text))
-           ), ${commandValidityCtes('$2', '$3', '$1', true, false)}, eligible AS MATERIALIZED (
-             SELECT agent_commands.* FROM agent_commands CROSS JOIN claim_fence
+        `WITH ${commandValidityCtes('$2', '$3', '$1', false)}, eligible AS MATERIALIZED (
+             SELECT agent_commands.* FROM agent_commands
              WHERE (id=$1 OR ($7::boolean AND state='pending' AND action IN ('input','resume')))
                AND room_id=$2 AND agent_id=$3 AND
+               EXISTS(SELECT 1 FROM rooms surface JOIN memberships current_member
+                 ON current_member.room_id=COALESCE(surface.parent_id,surface.id)
+                   AND current_member.identity_id=$3 AND current_member.removed_at IS NULL
+                 WHERE surface.id=$2) AND
                beeline_command_claim_open(id) AND
                (state='pending' OR (state='claimed' AND generation_id=$4)
                 )
@@ -251,13 +236,17 @@ export async function claimAgentCommand(
       )
     ).rows[0];
     if (!row?.id) {
-      if (row?.drops.length) throw new StaleWakeClaimRefused(row.drops);
-      throw new Error('command claim conflict');
+      if (row?.drops.length) return new StaleWakeClaimRefused(row.drops);
+      return new Error('command claim conflict');
     }
     logStaleWakeDrops(row.drops);
-    if (!row.turn_claimed) throw new Error('command turn cancelled');
+    if (!row.turn_claimed) return new Error('command turn cancelled');
     if (owner) await registerOwnedEffectFence(db, row);
     return row;
+  });
+  // Standalone calls retain the fence through the claim and commit stale cleanup.
+  if(result instanceof Error)throw result;
+  return result;
 }
 
 
@@ -304,7 +293,9 @@ export async function dismissAgentCommandWakes(db: SqlDatabase, roomId: string, 
       ORDER BY command.created_at,command.id FOR UPDATE OF command`, [roomId,agentId,commandId ?? null])).rows;
     if (waiting.some(command => command.private_payload?.kind === 'order'))
       throw new ExpectedRefusalError('that wake is an order; answer it with report');
-    for (const command of waiting) await endAgentTurn(db, command, 'complete');
+    await db.query(`SELECT ended.id FROM agent_commands command CROSS JOIN LATERAL
+      beeline_end_agent_turn(command.id,command.generation_id,'complete',NULL,NULL) ended
+      WHERE command.id=ANY($1::text[])`,[waiting.map(command=>command.id)]);
     return waiting.length;
   });
 }

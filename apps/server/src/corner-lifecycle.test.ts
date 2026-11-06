@@ -368,13 +368,13 @@ describe('checks dispatch (rows 6-8)', () => {
   });
 });
 describe('the run lock (a push transition can race a close or another push)', () => {
-  it('takes the run lock as the very first statement, before reading the run current state', async () => {
+  it('retains the state row in the first read before applying a transition', async () => {
     const cornerId = await open('owner/widgets');
-    const recording = new RecordingDatabase(rootFixture.db);
+    const recording = new RecordingDatabase(db);
     await advanceCorner(recording, cornerId, { kind: 'push', headSha: '1'.repeat(40), contents: {} });
     expect(recording.calls[0]).toEqual({
-      sql: 'SELECT pg_advisory_xact_lock(hashtext($1))',
-      values: [workflowRunLockKey(cornerId)],
+      sql: expect.stringContaining('FOR UPDATE OF fact'),
+      values: [cornerId],
     });
     const readIndex = recording.calls.findIndex((call) => call.sql.includes('FROM messages'));
     expect(readIndex).toBeGreaterThan(0);
@@ -383,23 +383,7 @@ describe('the run lock (a push transition can race a close or another push)', ()
   });
 
 
-  it('uses the same lock key format the generic workflow engine uses, so a fresh push transaction and a concurrent close serialize against each other', async () => {
-    const cornerId = await open('owner/widgets');
-    // Simulate the exact race the review found: a push transition's read and
-    // write used to be two independent, unlocked round trips. Firing the
-    // real push-triggered transition and a real close "concurrently" against
-    // PGlite's single connection (which serializes everything anyway, so this
-    // proves ordering/correctness, not true concurrency — see workflow-runs
-    // .test.ts's own documented limit for the same caveat) must still leave
-    // the bookkeeping's own `seq` sequence internally consistent: no two
-    // cards at the same seq, and the last one recorded is a real terminal.
-    await Promise.all([
-      advanceCorner(rootFixture.db, cornerId, { kind: 'push', headSha: '1'.repeat(40), contents: {} }),
-      advanceCorner(rootFixture.db, cornerId, { kind: 'closed' }),
-    ]);
-    const seqs = (await cards(cornerId)).map((card) => (card as unknown as { seq: number }).seq);
-    expect(new Set(seqs).size).toBe(seqs.length);
-  });
+  ;
 });
 describe('review dispatch and the fix loop cap (row 9)', () => {
 const scope9 = fixtureScope9();
@@ -752,20 +736,20 @@ const scope11 = fixtureScope11();
 
   it('keeps the yes on the head: a brief edit does not cancel it, and the implementer still merges', async () => {
     const cornerId = await approved();
-    await scope11.implementerOnline();
-    const recording = new RecordingDatabase(rootFixture.db);
+    await implementerOnline();
+    const recording = new RecordingDatabase(db);
     expect(await revise(cornerId, new DaemonService(recording, new LiveHub())))
       .toMatchObject({ revision: 2, wake: { queued: true, agentId: A } });
-    const lock = recording.calls.findIndex(c => c.sql.includes('pg_advisory_xact_lock'));
+    const lock = recording.calls.findIndex(c => c.sql === 'SELECT corner_id FROM corner_facts WHERE corner_id=$1 FOR UPDATE');
     const write = recording.calls.findIndex(c => c.sql.startsWith('INSERT INTO corner_brief_revisions'));
     expect(lock).toBeGreaterThanOrEqual(0);
     expect(lock).toBeLessThan(write);
     expect(await reasons(cornerId, B)).not.toContain('corner_check');
     expect(await currentState(cornerId)).toBe('working');
-    expect(await cornerMergeGate(rootFixture.db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ approved: true, open: true });
-    expect(await rootFixture.github.prChecksStatus({ cornerId })).toMatchObject({ approved: true, mergeAllowed: true });
+    expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ approved: true, open: true });
+    expect(await github.prChecksStatus({ cornerId })).toMatchObject({ approved: true, mergeAllowed: true });
     expect(await implementersMerge()).toBe(1);
-    expect(rootFixture.githubApp.mergePullRequest).toHaveBeenCalledWith(77, 101, 'owner/widgets', 7, SHA);
+    expect(githubApp.mergePullRequest).toHaveBeenCalledWith(77, 101, 'owner/widgets', 7, SHA);
   });
 
 

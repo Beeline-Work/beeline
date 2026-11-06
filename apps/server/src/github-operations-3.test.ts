@@ -739,7 +739,7 @@ const scope1 = fixtureScope1();
     expect(attempts).toBe(1);
     await operations.processWebhook('installation', { action: 'created', installation: { id: 77 } });
     expect(attempts).toBe(2);
-    expect(app.listRepositories).toHaveBeenCalledTimes(boundary === 'installation' ? 1 : 2);
+    expect(app.listRepositories).toHaveBeenCalledTimes(2);
     expect((await query(`SELECT repository_id,active FROM github_repositories ORDER BY repository_id`)).rows)
       .toEqual([{ repository_id: 101, active: true }, { repository_id: 102, active: false }]);
   });
@@ -748,7 +748,7 @@ const scope1 = fixtureScope1();
   it.each([['40P01', 1], ['23505', 1]] as const)('INSTALL-SYNC-1: surfaces %s after one attempt', async (code, expected) => {
     await scope1.database.query(`INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
       VALUES(77,$1,'42','owner','User','selected','active')`, [HUMAN]);
-    const app = { installationAccount: async () => ({ id: '42', login: 'owner', type: 'User', repositorySelection: 'selected' }), listRepositories: vi.fn() };
+    const app = { installationAccount: async () => ({ id: '42', login: 'owner', type: 'User', repositorySelection: 'selected' }), listRepositories: vi.fn(async () => []) };
     const operations = new GitHubOperations(scope1.database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
     const query = scope1.database.query.bind(scope1.database);
     const failure = Object.assign(new Error('database failure'), { code });
@@ -759,12 +759,12 @@ const scope1 = fixtureScope1();
     });
     await expect(operations.processWebhook('installation', { action: 'created', installation: { id: 77 } })).rejects.toBe(failure);
     expect(attempts).toBe(expected);
-    expect(app.listRepositories).not.toHaveBeenCalled();
+    expect(app.listRepositories).toHaveBeenCalledTimes(1);
   });
 
 
-  it.each(['installation', 'repository', 'removal'])('INSTALL-SYNC-1: propagates %s deadlock out of the installation callback transaction', async boundary => {
-    const { operations, installState } = await scope1.boundInstallationOperations(scope1.orgInstallationApp('allow'));
+  it.each(['installation', 'repository', 'removal'])('INSTALL-SYNC-1: consumes a failed %s callback and refuses replay', async boundary => {
+    const { operations, installState } = await boundInstallationOperations(orgInstallationApp('allow'));
     const transaction = scope1.database.transaction.bind(scope1.database);
     const failure = Object.assign(new Error('deadlock detected'), { code: '40P01' });
     let attempts = 0;
@@ -780,10 +780,10 @@ const scope1 = fixtureScope1();
       return work(tx);
     }));
     await expect(operations.completeInstallation(installState, 78)).rejects.toBe(failure);
-    expect(attempts).toBe(1);
     expect((await scope1.database.query(`SELECT * FROM github_installations`)).rows).toEqual([]);
     expect((await scope1.database.query(`SELECT * FROM github_repositories`)).rows).toEqual([]);
-    expect((await scope1.database.query(`SELECT consumed_at FROM github_auth_flows WHERE purpose='installation'`)).rows)
-      .toEqual([{ consumed_at: null }]);
+    expect((await scope1.database.query(`SELECT consumed_at FROM github_auth_flows WHERE purpose='installation'`)).rows[0]!.consumed_at).not.toBeNull();
+    await expect(operations.completeInstallation(installState, 78)).rejects.toThrow('flow not found or expired');
+    expect(attempts).toBe(1);
   });
 });

@@ -9,12 +9,8 @@ import {
 } from 'node:crypto';
 import { GITHUB_IDENTITY_AUDIENCE } from '@beeline/auth/github';
 import type { SqlDatabase } from './database.js';
-import { lockDaemonCredentialLifetime } from './daemon-credential-lifetime.js';
 import { ensureReviewWorkspace } from './review-proof-fixture.js';
-import {
-  lockIdentityHandleWorkspaces,
-  reassignCollidingAgentHandles,
-} from './workspace-handles.js';
+
 import {
   REVIEW_IDENTITY_HANDLE,
   REVIEW_IDENTITY_ID,
@@ -122,32 +118,27 @@ export class TokenAuth {
       throw new Error('invalid Google identity');
     let xSignup: PhoneTokens['xSignup'];
     const id = await this.database.transaction(async (database) => {
-      await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-        'workspace-handle-allocation',
-      ]);
       const linked = await database.query<{ identity_id: string }>(
         `SELECT identity_id FROM identity_external_links WHERE provider='google' AND subject=$1`,
         [google.subject],
       );
       const identity = linked.rows[0]?.identity_id ?? tokenHash(`google:${google.subject}`);
-      const handle = await this.allocateHandle(
-        database,
-        identity,
-        google.email?.split('@')[0] || 'person',
-      );
+      const stem=this.handleStem(google.email?.split('@')[0] || 'person');
       const created = await database.query(
         `INSERT INTO identities(id,kind,name,handle,avatar,updated_at)
-         VALUES($1,'human',$2,$3,$4,$5) ON CONFLICT(id) DO NOTHING RETURNING id`,
-        [identity, google.name, handle, google.avatar ?? null, this.now()],
+         VALUES($1,'human',$2,beeline_identity_handle($1,$3),$4,$5) ON CONFLICT(id) DO NOTHING RETURNING id`,
+        [identity, google.name, stem, google.avatar ?? null, this.now()],
       );
-      if (created.rowCount) xSignup = await recordXSignup(database, identity, xAttribution, this.now());
-      await database.query(
+      const actual=(await database.query<{identity_id:string}>(
         `INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login)
          VALUES('google',$1,$2,'https://accounts.google.com',$3,$4)
-         ON CONFLICT(provider,subject) DO NOTHING`,
-        [google.subject, identity, google.audience, google.email ?? null],
-      );
-      return identity;
+         ON CONFLICT(provider,subject) DO UPDATE SET subject=excluded.subject RETURNING identity_id`,
+        [google.subject,identity,google.audience,google.email??null])).rows[0]!.identity_id;
+      if(created.rowCount){
+        if(actual===identity) xSignup=await recordXSignup(database,identity,xAttribution,this.now());
+        else await database.query('DELETE FROM identities WHERE id=$1',[identity]);
+      }
+      return actual;
     });
     const tokens = await this.issuePhoneTokens(id, randomUUID());
     await recordSigninAttempt(this.database, { stage: 'ticket_exchanged', ticketHash: tokenHash(ticket), at: this.now() });
@@ -159,17 +150,17 @@ export class TokenAuth {
     if (!this.verifyGoogleOidc) throw new GoogleSignInError('Google sign-in is unavailable');
     const google = await this.verifyGoogleOidc(ticket);
     if (!google.subject || !google.audience) throw new GoogleSignInError('Invalid Google identity');
-    await this.database.transaction(async database => {
-      await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, ['workspace-handle-allocation']);
-      const links = (await database.query<{ subject: string; identity_id: string }>(
-        `SELECT subject,identity_id FROM identity_external_links WHERE provider='google' AND (identity_id=$1 OR subject=$2)`,
-        [viewerId, google.subject])).rows;
-      if (links.some(link => link.identity_id !== viewerId || link.subject !== google.subject))
-        throw new Error('Google account already linked to another Beeline account');
-      await database.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login)
-        VALUES('google',$1,$2,'https://accounts.google.com',$3,$4) ON CONFLICT(provider,subject) DO NOTHING`,
-        [google.subject, viewerId, google.audience, google.email ?? null]);
-    });
+    try {
+      const linked=await this.database.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login)
+        VALUES('google',$1,$2,'https://accounts.google.com',$3,$4)
+        ON CONFLICT(provider,subject) DO UPDATE SET subject=excluded.subject
+        WHERE identity_external_links.identity_id=excluded.identity_id RETURNING identity_id`,
+        [google.subject,viewerId,google.audience,google.email??null]);
+      if(!linked.rowCount) throw new Error('Google account already linked to another Beeline account');
+    } catch(error){
+      if((error as {code?:string}).code==='23505') throw new Error('Google account already linked to another Beeline account');
+      throw error;
+    }
   }
 
   async exchangeGitHubOidc(oidcToken: string, xAttribution?: unknown): Promise<PhoneTokens> {
@@ -178,68 +169,41 @@ export class TokenAuth {
       throw new Error('invalid GitHub identity');
     let xSignup: PhoneTokens['xSignup'];
     const id = await this.database.transaction(async (database) => {
-      await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-        'workspace-handle-allocation',
-      ]);
       const linked = await database.query<{ identity_id: string }>(
         `SELECT identity_id FROM identity_external_links WHERE provider='github' AND subject=$1`,
       [github.subject],
     );
     const id = linked.rows[0]?.identity_id ?? identityId(github.subject);
-      const handle = await this.allocateHandle(database, id, github.login);
+      const stem=this.handleStem(github.login);
       const created = await database.query(
         `INSERT INTO identities(id,kind,name,handle,avatar,github_subject,updated_at)
-         VALUES($1,'human',$2,$3,$4,$5,$6) ON CONFLICT(id) DO NOTHING RETURNING id`,
-        [id, github.name, handle, github.avatar ?? null, github.subject, this.now()],
+         VALUES($1,'human',$2,beeline_identity_handle($1,$3),$4,NULL,$5) ON CONFLICT(id) DO NOTHING RETURNING id`,
+        [id, github.name, stem, github.avatar ?? null, this.now()],
       );
-      if (created.rowCount) xSignup = await recordXSignup(database, id, xAttribution, this.now());
-      await database.query(`UPDATE identities SET github_subject=$2 WHERE id=$1`,
-        [id, github.subject,
-      ]);
-      await database.query(
+      const actual=(await database.query<{identity_id:string}>(
         `INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login)
          VALUES('github',$1,$2,'https://github.com',$3,$4)
          ON CONFLICT(provider,subject) DO UPDATE SET
-           identity_id=EXCLUDED.identity_id,
            issuer=EXCLUDED.issuer,
            audience=EXCLUDED.audience,
-           provider_login=EXCLUDED.provider_login`,
+           provider_login=EXCLUDED.provider_login RETURNING identity_id`,
         [github.subject, id, GITHUB_IDENTITY_AUDIENCE, github.login],
-      );
+      )).rows[0]!.identity_id;
+      if(created.rowCount){
+        if(actual===id) xSignup=await recordXSignup(database,id,xAttribution,this.now());
+        else await database.query('DELETE FROM identities WHERE id=$1',[id]);
+      }
+      await database.query('UPDATE identities SET github_subject=$2 WHERE id=$1',[actual,github.subject]);
       await this.persistGitHubCredential(database, github);
-      return id;
+      return actual;
     });
     const tokens = await this.issuePhoneTokens(id, randomUUID());
     await recordSigninAttempt(this.database, { stage: 'ticket_exchanged', ticketHash: tokenHash(oidcToken), at: this.now() });
     return { ...tokens, ...(xSignup ? { xSignup } : {}) };
   }
 
-  private async allocateHandle(database: SqlDatabase, id: string, input: string): Promise<string> {
-    const existing = await database.query<{ handle: string | null }>(
-      `SELECT handle FROM identities WHERE id=$1`,
-      [id],
-    );
-    if (existing.rows[0]?.handle) return existing.rows[0].handle;
-    const stem =
-      input
-        .toLowerCase()
-        .replace(/[^a-z0-9._-]/g, '')
-        .slice(0, 30)
-        .replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, '') || 'person';
-    for (let suffix = 1; ; suffix++) {
-      const number = suffix === 1 ? '' : String(suffix);
-      const handle = `${stem.slice(0, 30 - number.length).replace(/[^a-z0-9]+$/g, '')}${number}`;
-      if (['channel', 'system', 'play-review', 'review', 'scheduler'].includes(handle)) continue;
-      const taken = await database.query(
-        `SELECT 1 FROM identities WHERE kind='human' AND lower(handle)=lower($1) AND id<>$2`,
-        [handle, id],
-      );
-      if (!taken.rowCount) {
-        const workspaces = await lockIdentityHandleWorkspaces(database, id);
-        await reassignCollidingAgentHandles(database, id, handle, workspaces);
-        return handle;
-      }
-    }
+  private handleStem(input:string):string {
+    return input.toLowerCase().replace(/[^a-z0-9._-]/g,'').replace(/^[^a-z0-9]+|[^a-z0-9]+$/g,'')||'person';
   }
 
   async reconnectGitHub(viewerId: string, ticket: string): Promise<boolean> {
@@ -432,16 +396,17 @@ export class TokenAuth {
   ): Promise<{ daemonToken: string; agentId: string } | null> {
     const hash = tokenHash(exchangeToken);
     return this.database.transaction(async (database) => {
-      // Find the lock key without holding the exchange row: retirement takes
-      // the lifetime lock before deleting unused exchanges or memberships.
-      const candidate = (
-        await database.query<{ agent_id: string }>(
-          `SELECT agent_id FROM daemon_token_exchanges WHERE exchange_hash=$1`,
-          [hash],
-        )
-      ).rows[0];
-      if (!candidate) return null;
-      await lockDaemonCredentialLifetime(database, candidate.agent_id);
+      const bearer=opaque('bdt');
+      const claimed=await database.query<{agent_id:string}>(`WITH consumed AS (
+        UPDATE daemon_token_exchanges exchange SET consumed_at=$2
+        WHERE exchange_hash=$1 AND consumed_at IS NULL AND expires_at>$2
+          AND NOT EXISTS(SELECT 1 FROM legacy_daemon_migrations legacy WHERE legacy.exchange_hash=exchange.exchange_hash)
+        RETURNING agent_id
+      ) INSERT INTO daemon_tokens(token_hash,agent_id) SELECT $3,agent_id FROM consumed RETURNING agent_id`,
+        [hash,this.now(),tokenHash(bearer)]);
+      if (claimed.rows[0]) return {daemonToken:bearer,agentId:claimed.rows[0].agent_id};
+      // Legacy redelivery retains its deterministic credential and current
+      // membership checks; normal exchanges have already made their one claim.
       const found = await database.query<{
         agent_id: string;
         expires_at: Date;
@@ -455,42 +420,36 @@ export class TokenAuth {
       const legacy = (await database.query<{ workspace_id: string; owner_id: string }>(
         `SELECT workspace_id,owner_id FROM legacy_daemon_migrations WHERE exchange_hash=$1 AND agent_id=$2`, [hash, exchange.agent_id],
       )).rows[0];
+      if (!legacy) return null;
       // A consumed legacy exchange only redelivers its already-issued, still
       // authorized credential. A long interruption cannot turn a lost local
       // write into a reconnect requirement; unused exchanges still expire.
-      if (exchange.expires_at.getTime() <= this.now().getTime() && !(legacy && exchange.consumed_at)) return null;
-      if (legacy) {
-        // Lock the current membership before minting. Removal takes this row first,
-        // so it either wins here or revokes the newly minted token afterward.
-        const authorized = await database.query(
-          `SELECT member.id FROM memberships member JOIN memberships owner
-             ON owner.workspace_id=member.workspace_id AND owner.identity_id=$3 AND owner.room_id IS NULL AND owner.removed_at IS NULL
-           JOIN identities i ON i.id=member.identity_id JOIN agents a ON a.agent_id=i.id
-           WHERE member.workspace_id=$1 AND member.identity_id=$2 AND member.room_id IS NULL
-             AND member.removed_at IS NULL AND NOT i.hidden_from_roster AND a.owner_id=$3
-           FOR UPDATE OF member,owner`, [legacy.workspace_id, exchange.agent_id, legacy.owner_id],
-        );
-        if (!authorized.rowCount) return null;
-      }
+      if (exchange.expires_at.getTime() <= this.now().getTime() && !exchange.consumed_at) return null;
+      // Lock the current membership before minting. Removal takes this row first,
+      // so it either wins here or revokes the newly minted token afterward.
+      const authorized = await database.query(
+        `SELECT member.id FROM memberships member JOIN memberships owner
+           ON owner.workspace_id=member.workspace_id AND owner.identity_id=$3 AND owner.room_id IS NULL AND owner.removed_at IS NULL
+         JOIN identities i ON i.id=member.identity_id JOIN agents a ON a.agent_id=i.id
+         WHERE member.workspace_id=$1 AND member.identity_id=$2 AND member.room_id IS NULL
+           AND member.removed_at IS NULL AND NOT i.hidden_from_roster AND a.owner_id=$3
+         FOR UPDATE OF member,owner`, [legacy.workspace_id, exchange.agent_id, legacy.owner_id],
+      );
+      if (!authorized.rowCount) return null;
       // Delivering a legacy credential is idempotent across a lost HTTP reply
       // or process death after minting. Derive its high-entropy bearer from the
       // exchange secret so the database still stores hashes only. Ordinary
       // exchanges retain their one-use contract; revoked tokens never revive.
-      const daemonToken = legacy ? `bdt_${createHash('sha256').update('beeline legacy daemon exchange\0').update(exchangeToken).digest('base64url')}` : opaque('bdt');
+      const daemonToken = `bdt_${createHash('sha256').update('beeline legacy daemon exchange\0').update(exchangeToken).digest('base64url')}`;
       if (exchange.consumed_at) {
-        if (!legacy) return null;
         const existing = await database.query(`SELECT 1 FROM daemon_tokens WHERE token_hash=$1 AND agent_id=$2 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>$3)`, [tokenHash(daemonToken), exchange.agent_id, this.now()],
         );
         return existing.rowCount ? { daemonToken, agentId: exchange.agent_id } : null;
       }
-      await database.query(
-        `UPDATE daemon_token_exchanges SET consumed_at = $2 WHERE exchange_hash = $1`,
-        [hash, this.now()],
-      );
-      await database.query(`INSERT INTO daemon_tokens(token_hash, agent_id) VALUES ($1, $2)`, [
-        tokenHash(daemonToken),
-        exchange.agent_id,
-      ]);
+      await database.query(`WITH consumed AS (
+        UPDATE daemon_token_exchanges SET consumed_at=$2 WHERE exchange_hash=$1 RETURNING agent_id
+      ) INSERT INTO daemon_tokens(token_hash,agent_id) SELECT $3,agent_id FROM consumed`,
+        [hash,this.now(),tokenHash(daemonToken)]);
       return { daemonToken, agentId: exchange.agent_id };
     });
   }
@@ -498,16 +457,9 @@ export class TokenAuth {
   /** Resolve a daemon exchange token to its agent, consuming it in the same transaction. */
   async consumeDaemonExchangeAgent(exchangeToken: string): Promise<string | null> {
     const hash = tokenHash(exchangeToken);
-    return this.database.transaction(async (database) => {
-      const found = await database.query<{ agent_id: string; expires_at: Date }>(
-        `SELECT agent_id,expires_at FROM daemon_token_exchanges WHERE exchange_hash = $1 FOR UPDATE`,
-        [hash],
-      );
-      const exchange = found.rows[0];
-      if (!exchange || exchange.expires_at.getTime() <= this.now().getTime()) return null;
-      await database.query(`DELETE FROM daemon_token_exchanges WHERE exchange_hash = $1`, [hash]);
-      return exchange.agent_id;
-    });
+    const consumed=await this.database.query<{agent_id:string}>(
+      `DELETE FROM daemon_token_exchanges WHERE exchange_hash=$1 AND expires_at>$2 RETURNING agent_id`,[hash,this.now()]);
+    return consumed.rows[0]?.agent_id??null;
   }
 
   /** Resolve a daemon exchange token to its agent even after it was consumed. */

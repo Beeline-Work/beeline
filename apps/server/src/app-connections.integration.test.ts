@@ -1,3 +1,4 @@
+import { seedSquireMachine } from './test-fixtures/squire-machines.js';
 import { phoneFetch, describe, expect, it, vi, randomBytes, LinkAgentWallet, migrate, DaemonService, PhoneService, LiveHub, ConnectionPresence, applyVaultList, recordSquireSignIn, readOwnerApps, resolveAppRoute, createBeelineServer, captureServerError, WORKSPACE, ROOM, OWNER, HELPER, COMMAND, GENERATION, turn, linearServer, fakeRegistry, fixtureScope1, fixtureScope2, type AddressInfo, type TokenAuth } from './test-support-app-connections.integration.test-support.js';
 
 describe('the app route order', () => {
@@ -209,19 +210,18 @@ const scope2 = fixtureScope2();
 
 
   it('Reproduction onboarding-connect-1: direct Squire requests offer one card before install, including retry', async () => {
-    const daemon = scope2.daemonWith(fakeRegistry([]).client);
-    await scope2.database.query(`UPDATE agents SET squire_report=$2::jsonb WHERE agent_id=$1`,
-      [HELPER, JSON.stringify({ status: 'not-added', reportedAt: Date.now() / 1000 })]);
+    const daemon = daemonWith(fakeRegistry([]).client);
+    await seedSquireMachine(database, HELPER, { squire_report: { status: 'not-added', reportedAt: Date.now() / 1000 } });
     for (const input of [{ service: 'trusty-squire' }, { service: 'squire', reconnect: true },
       { service: 'Trusty Squire' }]) {
       expect(await daemon.execute('connect', { ...turn, ...input, reason: 'Use the hosted browser' }, HELPER))
         .toMatchObject({ status: 'needs_approval', app: 'Trusty Squire' });
     }
-    expect((await scope2.database.query("SELECT id FROM messages WHERE card_type='connector-offer'")).rowCount).toBe(1);
-    expect((await scope2.database.query('SELECT id FROM workspace_apps')).rowCount).toBe(0);
-    expect((await scope2.database.query('SELECT squire_work FROM agents WHERE agent_id=$1', [HELPER]))
+    expect((await database.query("SELECT id FROM messages WHERE card_type='connector-offer'")).rowCount).toBe(1);
+    expect((await database.query('SELECT id FROM workspace_apps')).rowCount).toBe(0);
+    expect((await database.query('SELECT squire_work FROM squire_machines WHERE (owner_id,machine_id)=(SELECT owner_id,COALESCE(machine_id,agent_id) FROM agents WHERE agent_id=$1)', [HELPER]))
       .rows[0]!.squire_work.install).not.toBe(true);
-    await scope2.connectSquire();
+    await connectSquire();
     expect(await daemon.execute('connect', { ...turn, service: 'trusty-squire', reason: 'Use the browser' }, HELPER))
       .toMatchObject({ status: 'ready', app: 'Trusty Squire' });
   });
@@ -461,14 +461,14 @@ const scope2 = fixtureScope2();
 
 
   it.each([true, false])('Reproduction R1 / squire-connect-1: connect hands Squire setup to the agent (browser=%s)', async noApi => {
-    await scope2.connectSquire();
-    const daemon = scope2.daemonWith(fakeRegistry([]).client);
+    await connectSquire();
+    const daemon = daemonWith(fakeRegistry([]).client);
     const input = { ...turn, service: 'resend.com', reason: 'Send email', noApi, squireAvailable: true };
     const ask = await daemon.execute('connect', input, HELPER);
     expect(ask.status).toBe('needs_squire');
-    expect((await scope2.database.query(`SELECT status,auto FROM agent_grants WHERE target='connection-install:resend'`)).rows)
+    expect((await database.query(`SELECT status,auto FROM agent_grants WHERE target='connection-install:resend'`)).rows)
       .toEqual([{ status: 'approved', auto: true }]);
-    expect((await scope2.database.query(`SELECT id FROM messages WHERE card_type='grant-request'`)).rows).toHaveLength(0);
+    expect((await database.query(`SELECT id FROM messages WHERE card_type='grant-request'`)).rows).toHaveLength(0);
     const result = await daemon.execute('connect', input, HELPER);
     expect(result).toMatchObject({ status: 'needs_squire',
       transport: noApi ? 'squire-browser' : 'squire-api', squire: { url: 'https://resend.com' } });
@@ -477,18 +477,17 @@ const scope2 = fixtureScope2();
     expect(result.next).toContain('low_confidence');
     const assigned = await daemon.execute('getConnectorAssignments', { agentId: HELPER }, HELPER);
     expect(assigned.assignments).not.toContainEqual(expect.objectContaining({ kind: 'connect-app' }));
-    const work = (await scope2.database.query<{ squire_work: Record<string, unknown> }>(
-      'SELECT squire_work FROM agents WHERE agent_id=$1', [HELPER])).rows[0]!.squire_work;
+    const work = (await database.query<{ squire_work: Record<string, unknown> }>(
+      'SELECT squire_work FROM squire_machines WHERE (owner_id,machine_id)=(SELECT owner_id,COALESCE(machine_id,agent_id) FROM agents WHERE agent_id=$1)', [HELPER])).rows[0]!.squire_work;
     expect(work.appConnections).toBeUndefined();
-    await applyVaultList(scope2.database,
+    await applyVaultList(database,
       { machine_id: 'machine-one', workspace_id: WORKSPACE, owner_identity_id: OWNER }, [{
         reference: 'vault:resend', service: 'resend', label: 'Resend',
         fieldNames: noApi ? ['login', 'password'] : ['api_key'],
         allowedHosts: ['resend.com'], createdAt: 1, stale: false, state: 'active' }]);
     expect(await daemon.execute('connect', input, HELPER)).toMatchObject({ status: 'ready' });
     // Readiness is the vault credential, even when no Squire tools are mounted.
-    await scope2.database.query(`UPDATE agents SET squire_report=$2::jsonb WHERE agent_id=$1`,
-      [HELPER, JSON.stringify({ status: 'error', reportedAt: Date.now() / 1000 })]);
+    await seedSquireMachine(database, HELPER, { squire_report: { status: 'error', reportedAt: Date.now() / 1000 } });
     expect(await daemon.execute('connect', { ...input, squireAvailable: false }, HELPER))
       .toMatchObject({ status: 'ready' });
     console.info(`Reproduction squire-connect-1: connect -> quiet approved consent -> agent URL/goal (${noApi ? 'browser' : 'API'}) -> no helper job -> vault credential -> ready`);

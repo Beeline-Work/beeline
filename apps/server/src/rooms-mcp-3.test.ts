@@ -1,3 +1,4 @@
+import { migrate } from './database.js';
 import { phoneFetch, describe, expect, it, vi, MCP_ORDER_WAKE_HINT, MCP_REVIEW_WAKE_HINT, backfillMcpMemberRoomsAndAvatars, ensureMcpMember, randomBytes, createHash, randomUUID, Client, StreamableHTTPClientTransport, tokenHash, MCP_AGENT_EXCLUSIONS, MCP_APP_ROUTE_OPERATIONS, createAgentCommand, routeHumanMessage, routeAgentResult, openSecrets, deliverMcpMemberWebhooks, PREREGISTERED_MCP_CLIENTS, readFileSync, sharp, FACE_SOULS, USER, OTHER, AGENT, WORKSPACE, ROOM, PRIVATE, CORNER, opaque, fixtureScope1, fixtureScope2, fixtureScope3 } from './test-support-rooms-mcp.test-support.js';
 import { bundledMcpLogo } from './rooms-mcp-logos.js';
 
@@ -415,7 +416,7 @@ const scope1 = fixtureScope1();
     const label = app === 'Codex' ? 'codex' : fallback ? 'fallback' : 'api';
     const memberName = `payments ${label}`, memberHandle = `payments_${label}`;
     const handoff = scope1.origin + '/mcp/oauth/handoff';
-    const registered = await scope1.post('/mcp/oauth/register', { client_name: app, redirect_uris: [handoff] });
+    const registered = await post('/mcp/oauth/register', { client_name: app, redirect_uris: [handoff] });
     expect(registered.status).toBe(201);
     const client = await registered.json() as { client_id: string };
     const verifier = opaque(), state = opaque();
@@ -423,13 +424,13 @@ const scope1 = fixtureScope1();
       code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', scope: 'rooms:read rooms:write', state,
       member_name: `payments  ${label}\u0007` });
     if (fallback) query.set('claude_inbound_fallback', '1');
-    expect(await (await scope1.post('/mcp/oauth/handoff', { state })).json()).toEqual({ error: 'authorization_pending' });
+    expect(await (await post('/mcp/oauth/handoff', { state })).json()).toEqual({ error: 'authorization_pending' });
     const start = await phoneFetch(scope1.origin + '/mcp/oauth/authorize?' + query, { redirect: 'manual' });
     const cookie = start.headers.get('set-cookie')!.split(';')[0]!;
     const flow = new URL(start.headers.get('location')!, scope1.origin).searchParams.get('flow')!;
     await phoneFetch(`${scope1.origin}/mcp/oauth/login?flow=${flow}&provider=google`, { headers: { cookie }, redirect: 'manual' });
     await phoneFetch(`${scope1.origin}/mcp/oauth/callback/google?state=${flow}&ticket=local-demo-ticket`, { headers: { cookie }, redirect: 'manual' });
-    await scope1.db.query(`UPDATE identities SET handle=$2 WHERE id=$1`, [AGENT, memberHandle]);
+    await db.query(`UPDATE identities SET handle=$2 WHERE id=$1`, [AGENT, memberHandle]); await migrate(db);
     const page = await (await phoneFetch(`${scope1.origin}/mcp/oauth/consent?flow=${flow}`, { headers: { cookie } })).text();
     expect(page).toContain(`Add ${app} to your team`);
     expect(page.includes('Would you like to run the following command?')).toBe(app === 'Codex');
@@ -439,24 +440,24 @@ const scope1 = fixtureScope1();
     expect(page.includes('user-level "crossSessionInbound": "accept" setting')).toBe(fallback);
     // Another member in the Workspace holds the plain handle already.
     expect(page).toContain(`@${memberHandle}_2`);
-    await scope1.db.query(`UPDATE identities SET handle='demo-agent' WHERE id=$1`, [AGENT]);
-    const allowed = await scope1.post('/mcp/oauth/consent', { flow, decision: 'allow', trust_app: '1', workspace_selection: '1', workspace_ids: [WORKSPACE] }, { cookie, origin: scope1.origin });
+    await db.query(`UPDATE identities SET handle='demo-agent' WHERE id=$1`, [AGENT]);
+    const allowed = await post('/mcp/oauth/consent', { flow, decision: 'allow', trust_app: '1', workspace_selection: '1', workspace_ids: [WORKSPACE] }, { cookie, origin:scope1.origin });
     const target = new URL(allowed.headers.get('location')!);
     expect(target.origin + target.pathname).toBe(handoff);
     // The person's browser lands on Beeline's own page, which keeps the code for the session.
     const landed = await phoneFetch(target);
     expect(landed.status).toBe(200);
     expect(await landed.text()).toContain('Go back to your session');
-    expect((await scope1.post('/mcp/oauth/handoff', { state: opaque() })).status).toBe(400);
-    const collected = await (await scope1.post('/mcp/oauth/handoff', { state })).json() as { code: string };
+    expect((await post('/mcp/oauth/handoff', { state: opaque() })).status).toBe(400);
+    const collected = await (await post('/mcp/oauth/handoff', { state })).json() as { code: string };
     expect(collected.code).toBe(target.searchParams.get('code'));
-    expect(await (await scope1.post('/mcp/oauth/handoff', { state })).json()).toEqual({ error: 'authorization_pending' });
+    expect(await (await post('/mcp/oauth/handoff', { state })).json()).toEqual({ error: 'authorization_pending' });
     // The code alone is not enough: the verifier stays with the session.
-    expect((await scope1.post('/mcp/oauth/token', { grant_type: 'authorization_code', client_id: client.client_id, code: collected.code, code_verifier: opaque() })).status).toBe(400);
-    const tokens = await scope1.post('/mcp/oauth/token', { grant_type: 'authorization_code', client_id: client.client_id, code: collected.code, code_verifier: verifier });
+    expect((await post('/mcp/oauth/token', { grant_type: 'authorization_code', client_id: client.client_id, code: collected.code, code_verifier: opaque() })).status).toBe(400);
+    const tokens = await post('/mcp/oauth/token', { grant_type: 'authorization_code', client_id: client.client_id, code: collected.code, code_verifier: verifier });
     expect(tokens.status).toBe(200);
-    const member = (await scope1.db.query<{ member_id: string }>('SELECT member_id FROM rooms_mcp_members WHERE owner_id=$1 AND client_id=$2', [USER, client.client_id])).rows[0]!.member_id;
-    expect((await scope1.db.query('SELECT name,handle FROM identities WHERE id=$1', [member])).rows[0]).toEqual({ name: memberName, handle: `${memberHandle}_2` });
+    const member = (await db.query<{ member_id: string }>('SELECT member_id FROM rooms_mcp_members WHERE owner_id=$1 AND client_id=$2', [USER, client.client_id])).rows[0]!.member_id;
+    expect((await db.query('SELECT name,handle FROM identities WHERE id=$1', [member])).rows[0]).toEqual({ name: memberName, handle: `${memberHandle}_2` });
     expect((await phoneFetch(`${scope1.origin}/mcp/oauth/handoff?state=short&code=x`)).status).toBe(400);
   });
 

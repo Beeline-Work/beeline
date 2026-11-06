@@ -58,15 +58,14 @@ export async function connectApp(
       }));
       if (!armed.versionConflict) {
         await backfillRegistryApps(database, armed.id);
-        if (armed.created) await notifyConnectorHelper(database, armed.id);
+        if (armed.status==='installing') await notifyConnectorHelper(database, armed.id);
       }
     }
   }
-  const lockKey = `app:${params.ownerId}:${key}`;
   const readExisting = async (db: SqlDatabase) =>
     (
-      await db.query<AppRow>(
-        `SELECT ${APP_COLUMNS} FROM workspace_apps a
+      await db.query<AppRow & {change_id:string}>(
+        `SELECT ${APP_COLUMNS},a.xmin::text change_id FROM workspace_apps a
          WHERE a.owner_identity_id=$1 AND a.app_key=$2`,
         [params.ownerId, key],
       )
@@ -128,9 +127,8 @@ export async function connectApp(
       { workbench: workbenchProbe(db), composio: composioProbe },
     );
 
-  // The provider support result is memoized across the preview and locked
-  // decision so a transient outage cannot change routes mid-request.
-  const preview = await resolveWith(database, await readExisting(database));
+  const existing = await readExisting(database);
+  const preview = await resolveWith(database, existing);
   if (preview.kind === 'unavailable')
     return {
       status: 'unavailable',
@@ -141,10 +139,7 @@ export async function connectApp(
     };
 
   const applied = await database.transaction(async (db) => {
-    await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [lockKey]);
-    const existing = await readExisting(db);
-    const decision = await resolveWith(db, existing);
-    if (decision.kind === 'unavailable') return { decision, row: existing };
+    let decision = preview;
     let row = existing;
     if (decision.kind === 'route') {
       let connectorId: string | null = null;
@@ -152,8 +147,8 @@ export async function connectApp(
       const name = displayNameFor(params.app, key);
       const domain = identity.domain ?? null;
       const id = existing?.id ?? randomUUID();
-      await db.query(
-        `INSERT INTO workspace_apps(
+      const changed=await db.query(
+        `WITH changed AS (INSERT INTO workspace_apps(
            id,workspace_id,owner_identity_id,app_key,display_name,domain,transport,route,
            connector_id,machine_id,state
          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'active')
@@ -167,7 +162,12 @@ export async function connectApp(
              composio_link_expires_at=CASE WHEN EXCLUDED.transport='composio' AND workspace_apps.transport='composio'
                THEN workspace_apps.composio_link_expires_at ELSE NULL END,
              sign_in_error=NULL,
-             state='active',updated_at=now()`,
+             state='active',updated_at=now()
+         WHERE workspace_apps.xmin::text=$11
+           OR (workspace_apps.transport='squire-api' AND excluded.transport='composio' AND workspace_apps.state='active')
+         RETURNING id,route,transport
+       ) INSERT INTO workspace_app_routes(id,app_id,route,transport,reason,requested_by)
+         SELECT $12::uuid,id,route,transport,$13,$14 FROM changed RETURNING app_id`,
         [
           id,
           params.workspaceId,
@@ -181,17 +181,11 @@ export async function connectApp(
           decision.backing?.transport === 'registry-mcp'
             ? decision.backing.machineId
             : params.machineId,
+          existing?.change_id??null,randomUUID(),decision.reason,params.requestedBy,
         ],
       );
-      await db.query(
-        `INSERT INTO workspace_app_routes(id,app_id,route,transport,reason,requested_by)
-         VALUES ($1,$2,$3,$4,$5,$6)`,
-        [randomUUID(), id, decision.route, decision.transport, decision.reason, params.requestedBy],
-      );
-      console.log(
-        `connectApp: workspace=${params.workspaceId} owner=${params.ownerId} app=${key} route=${decision.route} transport=${decision.transport} reason="${decision.reason}"`,
-      );
       row = await readExisting(db);
+      if (!changed.rowCount && row) decision={kind:'keep',transport:row.transport};
     } else if (
       existing?.transport === 'registry-mcp' &&
       existing.connector_id &&
@@ -215,13 +209,12 @@ export async function connectApp(
     return { decision, row };
   });
 
-  if (applied.decision.kind === 'unavailable' || !applied.row)
+  if (!applied.row)
     return {
       status: 'unavailable',
       app: params.app,
       appKey: key,
-      next: nextStep({ status: 'unavailable', app: params.app, appKey: key }, { status: 'error' },
-        applied.decision.kind === 'unavailable' ? applied.decision.reason : undefined),
+      next: nextStep({ status: 'unavailable', app: params.app, appKey: key }, { status: 'error' }),
     };
   const row = applied.row;
   let authorizationUrl: string | undefined;
@@ -305,46 +298,40 @@ export async function disconnectApp(
   input: { readonly ownerId: string; readonly appId: string;
     readonly revokeComposio?: (accountId: string) => Promise<void> },
 ): Promise<{ helperAgentId?: string }> {
-  return database.transaction(async (db) => {
-    const row = (
-      await db.query<AppRow>(
-        `SELECT ${APP_COLUMNS} FROM workspace_apps a
-         WHERE a.id=$1::uuid AND a.owner_identity_id=$2 FOR UPDATE`,
-        [input.appId, input.ownerId],
-      )
-    ).rows[0];
-    if (!row) throw new Error('app not found (access denied)');
-    if (row.transport === 'composio' && row.composio_account_id) {
-      if (!input.revokeComposio) throw new Error('App connection cannot be revoked now');
-      await input.revokeComposio(row.composio_account_id);
-    }
-    await db.query(
-      `UPDATE workspace_apps SET state='disconnected',updated_at=now() WHERE id=$1::uuid`,
-      [row.id],
-    );
-    await db.query(
-      `UPDATE agent_grants g SET status='revoked',decided_by=$2,decided_at=now()
-       WHERE g.kind='mcp' AND g.target=$1 AND g.status IN ('pending','approved','once')
-         AND (g.app_id=$3::uuid OR (g.app_id IS NULL AND EXISTS (
-           SELECT 1 FROM agents a WHERE a.agent_id=g.agent_id AND a.owner_id=$2)))`,
-      [appResourceTarget(row.app_key), input.ownerId, row.id],
-    );
-    if (row.transport === 'composio') return {};
-    if (row.transport !== 'registry-mcp' || !row.connector_id) return {};
-    await db.query(`DELETE FROM workspace_connections WHERE connector_id=$1::uuid`, [
-      row.connector_id,
-    ]);
-    const connector = (
-      await db.query<{ helper_agent_id: string }>(
-        `UPDATE workspace_connectors
-         SET status='disconnected', status_steps='[]'::jsonb, status_error=NULL,
-             pending_ops='[]'::jsonb, connected_at=NULL, updated_at=now()
-         WHERE id=$1::uuid RETURNING helper_agent_id`,
-        [row.connector_id],
-      )
-    ).rows[0];
-    return connector ? { helperAgentId: connector.helper_agent_id } : {};
-  });
+  const observed=(await database.query<{transport:string;composio_account_id:string|null;change_id:string}>(
+    'SELECT transport,composio_account_id,xmin::text change_id FROM workspace_apps WHERE id=$1::uuid AND owner_identity_id=$2',
+    [input.appId,input.ownerId])).rows[0];
+  if(!observed) throw new Error('app not found (access denied)');
+  if(observed.transport==='composio' && observed.composio_account_id){
+    if(!input.revokeComposio) throw new Error('App connection cannot be revoked now');
+    await input.revokeComposio(observed.composio_account_id);
+  }
+  const row=(await database.query<{helper_agent_id:string|null}>(`
+    WITH disconnected AS (
+      UPDATE workspace_apps SET state='disconnected',updated_at=now()
+      WHERE id=$1::uuid AND owner_identity_id=$2
+        AND xmin::text=$3
+      RETURNING id,app_key,transport,connector_id,composio_account_id
+    ), revoked AS (
+      UPDATE agent_grants grant_row SET status='revoked',decided_by=$2,decided_at=now()
+      FROM disconnected app WHERE grant_row.kind='mcp'
+        AND grant_row.target='${appResourceTarget('')}'||app.app_key
+        AND grant_row.status IN ('pending','approved','once')
+        AND (grant_row.app_id=app.id OR (grant_row.app_id IS NULL AND EXISTS (
+          SELECT 1 FROM agents agent WHERE agent.agent_id=grant_row.agent_id AND agent.owner_id=$2)))
+      RETURNING grant_row.id
+    ), removed AS (
+      DELETE FROM workspace_connections connection USING disconnected app
+      WHERE app.transport='registry-mcp' AND connection.connector_id=app.connector_id RETURNING connection.reference
+    ), connector AS (
+      UPDATE workspace_connectors source SET status='disconnected',status_steps='[]'::jsonb,status_error=NULL,
+        pending_ops='[]'::jsonb,connected_at=NULL,updated_at=now()
+      FROM disconnected app WHERE app.transport='registry-mcp' AND source.id=app.connector_id
+      RETURNING source.helper_agent_id
+    ) SELECT (SELECT helper_agent_id FROM connector) helper_agent_id FROM disconnected app`,
+    [input.appId,input.ownerId,observed.change_id])).rows[0];
+  if(!row) throw new Error('App connection changed while disconnecting');
+  return row.helper_agent_id?{helperAgentId:row.helper_agent_id}:{};
 }
 
 

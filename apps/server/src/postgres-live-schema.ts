@@ -141,6 +141,14 @@ BEGIN
     WHEN 'workspace_connections' THEN
       payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', '', 'ownerId', COALESCE(NEW.owner_identity_id,OLD.owner_identity_id));
+    WHEN 'squire_machines' THEN
+      payload=jsonb_build_object('table',TG_TABLE_NAME,'operation',TG_OP,'roomId','',
+        'ownerId',COALESCE(NEW.owner_id,OLD.owner_id),
+        'resourceId','squire:'||COALESCE(NEW.machine_id,OLD.machine_id),
+        'squireAddress','squire:'||COALESCE(NEW.machine_id,OLD.machine_id),
+        'squireReportChanged',TG_OP<>'UPDATE' OR NEW.squire_report IS DISTINCT FROM OLD.squire_report,
+        'squireWorkChanged',TG_OP<>'UPDATE' OR (NEW.squire_work,NEW.generation,NEW.helper_agent_id)
+          IS DISTINCT FROM (OLD.squire_work,OLD.generation,OLD.helper_agent_id));
     WHEN 'wallet_bindings' THEN
       payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', '', 'ownerId', COALESCE(NEW.identity_id,OLD.identity_id));
@@ -162,11 +170,6 @@ BEGIN
           AND (to_jsonb(NEW)->'usage_snapshot' IS DISTINCT FROM to_jsonb(OLD)->'usage_snapshot'
             OR to_jsonb(NEW)->'usage_account_id' IS DISTINCT FROM to_jsonb(OLD)->'usage_account_id'
             OR to_jsonb(NEW)->'usage_owner_id' IS DISTINCT FROM to_jsonb(OLD)->'usage_owner_id') ELSE false END,
-        'squireReportChanged', CASE WHEN TG_OP='UPDATE' THEN
-          NEW.squire_report IS DISTINCT FROM OLD.squire_report ELSE false END,
-        'squireWorkChanged', CASE WHEN TG_OP='UPDATE' THEN
-          NEW.squire_work IS DISTINCT FROM OLD.squire_work ELSE false END,
-        'squireAddress', 'squire:' || COALESCE(NEW.machine_id,OLD.machine_id,NEW.agent_id,OLD.agent_id),
         'version', CASE WHEN TG_OP='DELETE' THEN NULL ELSE
           floor(extract(epoch FROM NEW.updated_at)*1000000)::bigint::text END);
     WHEN 'agent_avatars' THEN
@@ -372,7 +375,7 @@ BEGIN
     'needs_you_marks',
     'agent_grants', 'agent_schedules', 'agent_subscriptions', 'agent_commands',
     'github_installations', 'github_repositories',
-    'workspace_connectors', 'workspace_connections', 'wallet_bindings', 'agents', 'usage_accounts', 'agent_avatars', 'free_agent_usage',
+    'workspace_connectors', 'workspace_connections', 'squire_machines', 'wallet_bindings', 'agents', 'usage_accounts', 'agent_avatars', 'free_agent_usage',
     'registry_mcp_oauth_attempts', 'push_devices',
     'workspace_join_notifications',
     'helper_release_notifications', 'workspaces', 'identities'

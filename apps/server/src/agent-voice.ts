@@ -23,17 +23,16 @@ export class AgentVoiceService {
     workspaceId: string,
     agentId: string,
     viewerId: string,
-    db = this.db,
   ): Promise<Context> {
     const row = (
-      await db.query<Context>(
+      await this.db.query<Context>(
         `SELECT a.owner_id,a.chosen_voices,a.soul,i.name,i.handle,vm.role viewer_role
       FROM workspaces w JOIN memberships am ON am.workspace_id=w.id AND am.room_id IS NULL
         AND am.identity_id=$2 AND am.removed_at IS NULL
       JOIN agents a ON a.agent_id=am.identity_id JOIN identities i ON i.id=a.agent_id AND i.hidden_from_roster=false
       JOIN memberships vm ON vm.workspace_id=w.id AND vm.room_id IS NULL AND vm.identity_id=$3 AND vm.removed_at IS NULL
       JOIN identities v ON v.id=vm.identity_id AND v.kind='human'
-      WHERE w.id=$1 FOR SHARE OF w,am,vm,a`,
+      WHERE w.id=$1`,
         [workspaceId, agentId, viewerId],
       )
     ).rows[0];
@@ -115,33 +114,19 @@ export class AgentVoiceService {
     const { choices } = await this.library();
     if (!choices.some((v) => v.id === voiceId))
       throw Error('Unknown voice in the Aura library');
-    await this.db.transaction(async (db) => {
-      // Global voice fence covers agents belonging to several Workspaces and concurrent saves.
-      await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['agent-voice:aura-2']);
-      const current = await this.context(workspaceId, agentId, viewerId, db);
-      if (
-        current.owner_id !== viewerId ||
-        current.viewer_role === 'spectator'
-      )
-        throw Error('Agent ownership changed');
-      const conflict = (
-        await db.query<{ chosen_voices: Context['chosen_voices'] }>(
-          `SELECT other.chosen_voices FROM agents other
-        WHERE other.agent_id<>$1 AND other.chosen_voices<>'{}'::jsonb AND EXISTS (
-          SELECT 1 FROM room_access own JOIN room_access peer ON peer.room_id=own.room_id
-          JOIN rooms r ON r.id=own.room_id AND r.archived_at IS NULL
-          WHERE own.identity_id=$1 AND peer.identity_id=other.agent_id
-            AND own.removed_at IS NULL AND peer.removed_at IS NULL)`,
-          [agentId],
-        )
-      ).rows.some(other => savedAuraVoice(other.chosen_voices) === voiceId);
-      if (conflict)
-        throw Error('Another agent in this Room has chosen that voice. Choose a different voice.');
-      await db.query(
-        `UPDATE agents SET chosen_voices=jsonb_set(chosen_voices,ARRAY[$2::text],to_jsonb($3::text)),updated_at=now() WHERE agent_id=$1`,
-        [agentId, 'aura-2', voiceId],
-      );
-    });
+    const updated = await this.db.query(`WITH eligible AS MATERIALIZED (
+      SELECT 1 FROM workspaces workspace
+      JOIN memberships agent_member ON agent_member.workspace_id=workspace.id AND agent_member.room_id IS NULL
+        AND agent_member.identity_id=$2 AND agent_member.removed_at IS NULL
+      JOIN memberships viewer_member ON viewer_member.workspace_id=workspace.id AND viewer_member.room_id IS NULL
+        AND viewer_member.identity_id=$3 AND viewer_member.removed_at IS NULL AND viewer_member.role<>'spectator'
+      JOIN identities viewer ON viewer.id=$3 AND viewer.kind='human'
+      WHERE workspace.id=$1 FOR SHARE OF workspace,agent_member,viewer_member
+    ) UPDATE agents agent SET chosen_voices=jsonb_set(chosen_voices,ARRAY['aura-2'],to_jsonb($4::text)),updated_at=now()
+      FROM identities identity WHERE agent.agent_id=$2 AND agent.owner_id=$3
+        AND identity.id=agent.agent_id AND NOT identity.hidden_from_roster AND EXISTS(SELECT 1 FROM eligible)
+      RETURNING agent.agent_id`, [workspaceId,agentId,viewerId,voiceId]);
+    if (!updated.rowCount) throw Error('Agent ownership changed');
     return this.catalog(workspaceId, agentId, viewerId);
   }
   async preview(

@@ -1,3 +1,4 @@
+import { seedSquireMachine } from './test-fixtures/squire-machines.js';
 import { reportSquireWork, squireWorkStatus, SENTRY_TRIAGE_ROOM, sentryEligibilityKey, AGENT_SCHEDULE_DUE_KEY, subscribeCommandCompletion, EventEmitter, describe, expect, it, vi, LiveHub, claimAgentConnection, POSTGRES_LIVE_CHANNEL, PostgresLiveListener, PhoneService, MCP_WEBHOOK_TABLE, AUTHOR, WORKSPACE, ROOM, PgliteListenClient, eventually, settle, fixtureScope1, type LiveEvent, type LivePgClient } from './test-support-postgres-live.test-support.js';
 
 describe('Postgres live fanout', () => {
@@ -260,7 +261,7 @@ const scope1 = fixtureScope1();
     const live = new LiveHub();
     const client = new PgliteListenClient(scope1.database);
     const listener = new PostgresLiveListener(scope1.database, live, () => client);
-    scope1.listeners.push(listener);
+    listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
     void listener.run();
@@ -270,9 +271,7 @@ const scope1 = fixtureScope1();
     await scope1.database.query("INSERT INTO agents(agent_id,owner_id,machine_id) VALUES($1,$2,'machine')",
       [agent, AUTHOR]);
     await settle(received);
-    await scope1.database.query("UPDATE agents SET squire_report=$2::jsonb,squire_work=$3::jsonb WHERE agent_id=$1",
-      [agent, JSON.stringify({ status: 'error', errorMessage: 'Squire broker unavailable', reportedAt: 1 }),
-        JSON.stringify({ generation: 1, install: true, steps: [] })]);
+    await seedSquireMachine(scope1.database, agent, { generation: 1, squire_report: { status: 'error', errorMessage: 'Squire broker unavailable', reportedAt: 1 }, squire_work: { install: true, steps: [] } });
     await eventually(() => received.some((event) => event.type === 'resource-change' && event.resource === 'workbench')
       && received.some((event) => event.type === 'resource-change' && event.resource === 'install'));
     expect(received).toContainEqual({ type: 'resource-change', roomId: '', ownerId: AUTHOR, resource: 'workbench' });
@@ -285,16 +284,17 @@ const scope1 = fixtureScope1();
     const live = new LiveHub();
     const client = new PgliteListenClient(scope1.database);
     const listener = new PostgresLiveListener(scope1.database, live, () => client);
-    scope1.listeners.push(listener);
+    listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll(event => received.push(event));
     void listener.run();
     await eventually(() => listener.projectionHealth().connected);
     const agent = 'b'.repeat(64);
     await scope1.database.query("INSERT INTO identities(id,kind,name) VALUES($1,'agent','Helper')", [agent]);
-    await scope1.database.query("INSERT INTO agents(agent_id,owner_id,machine_id,squire_report,squire_work) VALUES($1,$2,'machine',$3::jsonb,$4::jsonb)",
-      [agent, AUTHOR, JSON.stringify({ status: 'error', errorMessage: 'Squire account sign-in required', reportedAt: 1 }),
-        JSON.stringify({ generation: 1, install: true, signIn: { method: 'oauth', url: 'https://squire.test/install' } })]);
+    await scope1.database.query("INSERT INTO agents(agent_id,owner_id,machine_id) VALUES($1,$2,'machine')",[agent,AUTHOR]);
+    await seedSquireMachine(scope1.database,agent,{generation:1,
+      squire_report:{status:'error',errorMessage:'Squire account sign-in required',reportedAt:1},
+      squire_work:{install:true,signIn:{method:'oauth',url:'https://squire.test/install'}}});
     await settle(received);
 
     // ConnectorAssignmentLoop commits installConnector before refreshVault.
@@ -305,8 +305,7 @@ const scope1 = fixtureScope1();
     await settle(received);
 
     // This later report is the first read boundary that can say connected.
-    await scope1.database.query('UPDATE agents SET squire_report=$2::jsonb WHERE agent_id=$1',
-      [agent, JSON.stringify({ status: 'connected', reportedAt: 2 })]);
+    await seedSquireMachine(scope1.database,agent,{squire_report:{status:'connected',reportedAt:2}});
     await eventually(() => received.some(event => event.type === 'resource-change' && event.resource === 'workbench'));
     expect((await squireWorkStatus(scope1.database, agent)).status).toBe('connected');
     expect(received).toContainEqual({ type: 'resource-change', roomId: '', ownerId: AUTHOR,

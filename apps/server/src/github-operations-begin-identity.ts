@@ -1,3 +1,5 @@
+import { storeGitHubInstallations } from './github-installation-store.js';
+import type { InstallationSnapshot } from './github-installation-store.js';
 import { cornerLifecycleSql } from './corner-github-cache.js';
 import { CommandRefusalError } from './command-refusal.js';
 import type { RepositorySignals } from './repository-onboarding.js';
@@ -140,92 +142,77 @@ import { GitHubOperations, Input, hash, challenge, record, GitHubRecord, text, i
 
 
   export async function gitHubOperationsCompleteInstallation(ctx: GitHubOperations, state: string, installationId?: number, code?: string, callbackUri?: string) {
-    try { return await ctx.database.transaction(async (database) => {
-      const flow = (
-        await database.query<{ identity_id: string; redirect_uri: string }>(
-          `SELECT identity_id,redirect_uri FROM github_auth_flows WHERE state_hash=$1 AND purpose='installation' AND consumed_at IS NULL AND expires_at>now() FOR UPDATE`,
-          [hash(state)],
-        )
-      ).rows[0];
-      if (!flow) throw new Error('GitHub installation flow not found or expired');
-      if (state.startsWith('github_bind_')) {
-        if (!code || !callbackUri) throw new Error('github_connection_canceled');
-        const identity = await ctx.oauth.exchangeCode(code, callbackUri, state);
-        await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`github:${identity.subject}`]);
-        await database.query(`SELECT id FROM identities WHERE id=$1 FOR UPDATE`, [flow.identity_id]);
-        const links = (await database.query<{ subject: string; identity_id: string }>(
-          `SELECT subject,identity_id FROM identity_external_links WHERE provider='github' AND (identity_id=$1 OR subject=$2) FOR UPDATE`,
-          [flow.identity_id, identity.subject])).rows;
-        if (links.some(link => link.identity_id !== flow.identity_id))
-          throw new Error('That GitHub account belongs to another Beeline account. Sign out and continue with GitHub to use it.');
-        if (links.some(link => link.subject !== identity.subject)) throw new Error('github_account_mismatch');
-        await database.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login)
-          VALUES('github',$1,$2,$3,$4,$5) ON CONFLICT(provider,subject) DO UPDATE SET provider_login=EXCLUDED.provider_login`,
-          [identity.subject, flow.identity_id, identity.issuer, GITHUB_IDENTITY_AUDIENCE, identity.login]);
-        await database.query(`UPDATE identities SET github_subject=$2,updated_at=now() WHERE id=$1`, [flow.identity_id, identity.subject]);
-        await database.query(`INSERT INTO github_user_tokens(subject,encrypted_token,encrypted_refresh_token,expires_at)
-          VALUES($1,$2,$3,$4) ON CONFLICT(subject) DO UPDATE SET encrypted_token=EXCLUDED.encrypted_token,
-          encrypted_refresh_token=EXCLUDED.encrypted_refresh_token,expires_at=EXCLUDED.expires_at,stale_at=NULL,updated_at=now()`,
-          [identity.subject, ctx.seal(identity.accessToken), identity.refreshToken ? ctx.seal(identity.refreshToken) : null,
-            identity.tokenExpiresIn ? new Date(Date.now()+identity.tokenExpiresIn*1000) : null]);
-      }
-      let installationIds: number[];
-      if (installationId !== undefined) {
-        installationIds = [installationId];
-      } else {
-        // OAuth-during-install returns an authorization code; the installation id
-        // is not required. Discover grants with the original flow owner's token.
-        const credential = await ctx.userCredential(flow.identity_id, database);
-        if (!credential?.token) throw new Error('GitHub installation access denied');
-        installationIds = [...(await ctx.listAdministeredInstallations(credential.token) ?? [])];
-        if (!installationIds.length || state.startsWith('github_bind_org_')) {
-          if (!state.startsWith('github_bind_')) throw new Error('GitHub installation access denied');
-          const nextState = `${state.startsWith('github_bind_org_') ? 'repository_install_' : 'github_bind_'}${randomBytes(32).toString('base64url')}`;
-          await database.query(
-            `INSERT INTO github_auth_flows(state_hash,identity_id,redirect_uri,purpose,expires_at) VALUES($1,$2,$3,'installation',now()+interval '15 minutes')`,
-            [hash(nextState), flow.identity_id, flow.redirect_uri],
-          );
-          await database.query(`UPDATE github_auth_flows SET consumed_at=now() WHERE state_hash=$1`, [hash(state)]);
-          return ctx.app.installationUrl(nextState, state.startsWith('github_bind_org_'));
+    const flow=(await ctx.database.query<{identity_id:string;redirect_uri:string}>(
+      `UPDATE github_auth_flows SET consumed_at=now() WHERE state_hash=$1 AND purpose='installation'
+        AND consumed_at IS NULL AND expires_at>now() RETURNING identity_id,redirect_uri`,[hash(state)])).rows[0];
+    if (!flow) throw new Error('GitHub installation flow not found or expired');
+    try {
+      const binding=state.startsWith('github_bind_');
+      if (binding && (!code || !callbackUri)) throw new Error('github_connection_canceled');
+      const identity=binding?await ctx.oauth.exchangeCode(code!,callbackUri!,state):undefined;
+      const credential=identity?{subject:identity.subject,token:identity.accessToken,refreshToken:identity.refreshToken}
+        :await ctx.userCredential(flow.identity_id,ctx.database);
+      if (!credential?.token) throw new Error('GitHub installation access denied');
+      const installationIds=installationId===undefined
+        ? [...(await ctx.listAdministeredInstallations(credential.token)??[])] : [installationId];
+      const chooseTarget=installationId===undefined && (!installationIds.length || state.startsWith('github_bind_org_'));
+      if (chooseTarget && !binding) throw new Error('GitHub installation access denied');
+      const snapshots:InstallationSnapshot[]=[];
+      if (!chooseTarget) for (const id of installationIds) {
+        const account=await ctx.app.installationAccount(id);
+        if (binding && !(account.type==='User'?account.id===credential.subject:
+          await ctx.app.organizationAdmin(credential.token,account.login))) {
+          if (installationId===undefined) continue;
+          throw new Error('github_installation_admin_required');
         }
-      }
-      let installed = 0;
-      for (const id of installationIds) {
-        if (state.startsWith('github_bind_')) {
-          const account = await ctx.app.installationAccount(id);
-          const credential = await ctx.userCredential(flow.identity_id, database);
-          const administers = credential?.token && (account.type === 'User' ? account.id === credential.subject
-            : await ctx.app.organizationAdmin(credential.token, account.login));
-          if (!administers) {
-            if (installationId === undefined) continue;
-            throw new Error('github_installation_admin_required');
-          }
+        let accessible:boolean|undefined;
+        try { accessible=await ctx.userCanAdministerInstallation(credential.token,id,account.type); }
+        catch(error){
+          if (identity || !credential.refreshToken || !(error instanceof GitHubHttpError) || error.status!==401) throw error;
+          const token=await ctx.rotateUserCredential(credential,ctx.database);
+          if (!token) throw new Error('GitHub installation access denied');
+          credential.token=token;
+          accessible=await ctx.userCanAdministerInstallation(token,id,account.type);
         }
-        await ctx.assertInstallationAccess(flow.identity_id, id, database);
-        await ctx.syncInstallation(flow.identity_id, id, database);
-        installed++;
+        if (!(account.type==='User'?accessible===true:accessible!==false)) throw new Error('GitHub installation access denied');
+        snapshots.push({id,account,repositories:await ctx.app.listRepositories(id)});
       }
-      if (!installed) throw new Error('github_installation_admin_required');
-      await database.query(`UPDATE github_auth_flows SET consumed_at=now() WHERE state_hash=$1`, [
-        hash(state),
-      ]);
-      const redirect = new URL(flow.redirect_uri);
-      redirect.searchParams.set('installed', '1');
-      return redirect.toString();
-    });
+      if (!chooseTarget && !snapshots.length) throw new Error('github_installation_admin_required');
+      return await ctx.database.transaction(async database=>{
+        if (identity) {
+          const bound=await database.query(`WITH linked AS (
+            INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login)
+            VALUES('github',$1,$2,$3,$4,$5) ON CONFLICT(provider,subject) DO UPDATE SET provider_login=EXCLUDED.provider_login
+              WHERE identity_external_links.identity_id=EXCLUDED.identity_id RETURNING subject
+          ), bound AS (
+            UPDATE identities SET github_subject=linked.subject,updated_at=now() FROM linked
+              WHERE id=$2 RETURNING id
+          ) INSERT INTO github_user_tokens(subject,encrypted_token,encrypted_refresh_token,expires_at)
+            SELECT linked.subject,$6,$7,$8 FROM linked CROSS JOIN bound
+            ON CONFLICT(subject) DO UPDATE SET encrypted_token=EXCLUDED.encrypted_token,
+              encrypted_refresh_token=EXCLUDED.encrypted_refresh_token,expires_at=EXCLUDED.expires_at,stale_at=NULL,updated_at=now()
+            RETURNING subject`,[identity.subject,flow.identity_id,identity.issuer,GITHUB_IDENTITY_AUDIENCE,identity.login,
+              ctx.seal(identity.accessToken),identity.refreshToken?ctx.seal(identity.refreshToken):null,
+              identity.tokenExpiresIn?new Date(Date.now()+identity.tokenExpiresIn*1000):null]);
+          if (!bound.rowCount) throw new Error('That GitHub account belongs to another Beeline account. Sign out and continue with GitHub to use it.');
+        }
+        if (chooseTarget) {
+          const nextState=`${state.startsWith('github_bind_org_')?'repository_install_':'github_bind_'}${randomBytes(32).toString('base64url')}`;
+          await database.query(`INSERT INTO github_auth_flows(state_hash,identity_id,redirect_uri,purpose,expires_at)
+            VALUES($1,$2,$3,'installation',now()+interval '15 minutes')`,[hash(nextState),flow.identity_id,flow.redirect_uri]);
+          return ctx.app.installationUrl(nextState,state.startsWith('github_bind_org_'));
+        }
+        await storeGitHubInstallations(database,flow.identity_id,snapshots);
+        const redirect=new URL(flow.redirect_uri);redirect.searchParams.set('installed','1');return redirect.toString();
+      });
     } catch (reason) {
       if (!state.startsWith('github_bind_')) throw reason;
-      const flow = (await ctx.database.query<{ redirect_uri: string }>(
-        `UPDATE github_auth_flows SET consumed_at=now() WHERE state_hash=$1 AND purpose='installation'
-         AND consumed_at IS NULL AND expires_at>now() RETURNING redirect_uri`, [hash(state)])).rows[0];
-      if (!flow) throw reason;
-      const message = reason instanceof Error ? reason.message : '';
-      const error = message === 'github_installation_admin_required' ? message : message === 'github_account_mismatch' ? 'github_account_mismatch'
-        : message.startsWith('That GitHub account belongs') ? 'github_account_already_linked'
-        : message === 'github_connection_canceled' ? message : 'github_connection_failed';
-      const redirect = new URL(flow.redirect_uri);
-      redirect.searchParams.set('installed', '0');
-      redirect.searchParams.set('error', error);
+      const message=reason instanceof Error?reason.message:'';
+      const error=message==='github_installation_admin_required'?message:
+        message==='github_account_mismatch' || (reason as {constraint?:string})?.constraint==='identity_github_owner_unique'?'github_account_mismatch':
+        message.startsWith('That GitHub account belongs')?'github_account_already_linked':
+        message==='github_connection_canceled'?message:'github_connection_failed';
+      const redirect=new URL(flow.redirect_uri);redirect.searchParams.set('installed','0');redirect.searchParams.set('error',error);
       return redirect.toString();
     }
   }

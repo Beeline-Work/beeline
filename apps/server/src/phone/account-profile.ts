@@ -5,7 +5,6 @@ import { collapseTombstonedCornerHolds } from '../corner-holds.js';
 import { isFaceId, isPushLevel } from '@beeline/api-contract/phone';
 import { lockCornerLifecycle, clearCornerReviewers } from '../corner-lifecycle.js';
 import { transferWorkspaceOwnership, transferRoomOwnership, writeSurfacePushState } from '../membership-join.js';
-import { lockIdentityHandleWorkspaces, reassignCollidingAgentHandles } from '../workspace-handles.js';
 import { ARTIFACT_TTL_HOURS, mediaTtlHours } from '../media-ttl.js';
 import { closeCornerState, lockCornerArchivalAuthority, markOwnedCornersAbandoned } from '../corner-close.js';
 import { DELETED_ACCOUNT_IDENTITY_ID, DELETED_ACCOUNT_NAME, SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
@@ -319,29 +318,22 @@ import { phoneManagedIdentity } from './repositories.js';
       if (input.handle !== undefined) {
         if (['channel', 'system', 'play-review', 'review', 'scheduler'].includes(input.handle))
           throw new Error('invalid reserved handle');
-        await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-          'workspace-handle-allocation',
-        ]);
-        const taken = await database.query(
-          `SELECT 1 FROM identities WHERE kind='human' AND id<>$1 AND lower(handle)=lower($2)`,
-          [viewerId, input.handle],
-        );
-        if (taken.rowCount) throw new Error('managed handle is already claimed');
-        const workspaceIds = await lockIdentityHandleWorkspaces(database, viewerId);
-        await reassignCollidingAgentHandles(database, viewerId, input.handle, workspaceIds);
       }
       const updated = await database.query<IdentityRow>(
-        `UPDATE identities
+        `WITH target AS MATERIALIZED (SELECT id FROM identities WHERE id=$1 FOR UPDATE),
+         claimed AS MATERIALIZED (
+           SELECT CASE WHEN $3::text IS NULL THEN NULL ELSE beeline_identity_handle($1,$3,true) END handle FROM target
+         ) UPDATE identities
          SET name=CASE WHEN $2::text IS NULL THEN name ELSE $2 END,
-             handle=CASE WHEN $3::text IS NULL THEN handle ELSE $3 END,
+             handle=CASE WHEN $3::text IS NULL THEN identities.handle ELSE claimed.handle END,
              avatar=CASE WHEN $4::text IS NULL THEN avatar ELSE NULLIF($4,'') END,
              updated_at=now()
-         WHERE id=$1
-         RETURNING id,kind,name,handle,avatar`,
+         FROM claimed WHERE id=$1 AND ($3::text IS NULL OR claimed.handle=$3)
+         RETURNING id,kind,name,identities.handle,avatar`,
         [viewerId, input.name ?? null, input.handle ?? null, input.avatar ?? null],
       );
       const profile = updated.rows[0];
-      if (!profile) throw new Error('identity not found');
+      if (!profile) throw new Error(input.handle===undefined?'identity not found':'managed handle is already claimed');
       return {
         personId: profile.id,
         name: profile.name,

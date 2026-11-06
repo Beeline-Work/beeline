@@ -20,16 +20,14 @@ import { seconds } from './values.js';
 
 
 
-  export async function phoneReadConnectorInstall(ctx: PhoneContext,
-    input: Input<'readConnectorInstall'>,
-    viewerId: string,
-  ): Promise<Output<'readConnectorInstall'>> {
+  export async function phoneReadConnectorInstall(ctx: PhoneContext, input: Input<'readConnectorInstall'>, viewerId: string): Promise<Output<'readConnectorInstall'>> {
     if (input.connectorId === 'trusty-squire' || squireMachineId(input.connectorId)) {
       const machineId = squireMachineId(input.connectorId);
       const agent = (await ctx.database.query<{ agent_id: string }>(
-        `SELECT agent_id FROM agents WHERE owner_id=$1
-          AND ($2::text IS NULL OR COALESCE(machine_id,agent_id)=$2)
-        ORDER BY (squire_work->>'install') DESC NULLS LAST,updated_at DESC LIMIT 1`,
+        `SELECT agent.agent_id FROM agents agent LEFT JOIN squire_machines source
+          ON source.owner_id=agent.owner_id AND source.machine_id=COALESCE(agent.machine_id,agent.agent_id)
+        WHERE agent.owner_id=$1 AND ($2::text IS NULL OR COALESCE(agent.machine_id,agent.agent_id)=$2)
+        ORDER BY (source.squire_work->>'install') DESC NULLS LAST,agent.updated_at DESC LIMIT 1`,
         [viewerId, machineId ?? null],
       )).rows[0];
       if (!agent) {
@@ -84,10 +82,7 @@ import { seconds } from './values.js';
    * per workspace. Read both halves by owner. `input.workspaceId` is accepted
    * and ignored for wire compatibility with clients that still send it.
    */
-  export async function phoneReadWorkbench(ctx: PhoneContext,
-    input: Input<'readWorkbench'>,
-    viewerId: string,
-  ): Promise<Output<'readWorkbench'>> {
+  export async function phoneReadWorkbench(ctx: PhoneContext, input: Input<'readWorkbench'>, viewerId: string): Promise<Output<'readWorkbench'>> {
     const linkAccount = (await ctx.linkWallet?.status(viewerId));
     if ((input.refreshVault)) {
       const machines = (await ctx.database.query<{ machine_id: string }>(
@@ -161,7 +156,7 @@ import { seconds } from './values.js';
         id: string;
         name: string;
         online: boolean;
-        squire_report: import('@beeline/api-contract/workbench').SquireMachineReport | null;
+        broker_report: import('@beeline/api-contract/workbench').SquireMachineReport | null;
         reconnecting: boolean;
         google_session_expired: boolean;
         squire_error: string | null;
@@ -179,12 +174,11 @@ import { seconds } from './values.js';
         `SELECT COALESCE(a.machine_id,a.agent_id) id,
                 COALESCE(MAX(a.machine_name),MIN(i.name)) name,
                 bool_or(p.online) online,
-                bool_or(COALESCE(work.current->>'install','false')='true' AND NOT work.current ? 'errorMessage') reconnecting,
-                MAX(work.current->>'signedInAs') signed_in_as,
-                MAX(work.current->>'errorMessage') squire_error,
-                bool_or(work.current->>'forceReloginProvider'='google') google_session_expired,
-                (array_agg(a.squire_report ORDER BY (a.squire_report->>'status'='connected') DESC NULLS LAST, (a.squire_report->>'reportedAt')::double precision DESC NULLS LAST)
-                  FILTER (WHERE a.squire_report IS NOT NULL))[1] squire_report
+                bool_or(COALESCE(source.squire_work->>'install','false')='true' AND NOT source.squire_work ? 'errorMessage') reconnecting,
+                MAX(source.squire_work->>'signedInAs') signed_in_as,
+                MAX(source.squire_work->>'errorMessage') squire_error,
+                bool_or(source.squire_work->>'forceReloginProvider'='google') google_session_expired,
+                (array_agg(source.squire_report) FILTER(WHERE source.squire_report IS NOT NULL))[1] AS broker_report
          FROM agents a
          JOIN identities i ON i.id=a.agent_id AND NOT i.hidden_from_roster
          JOIN memberships m ON m.identity_id=a.agent_id
@@ -197,19 +191,7 @@ import { seconds } from './values.js';
                AND (p.updated_at>now()-interval '90 seconds' OR p.body->>'held'='true')
            ) online
          ) p ON true
-         LEFT JOIN LATERAL (
-           SELECT MAX((s.squire_report->>'reportedAt')::double precision) connected_at
-           FROM agents s JOIN identities si ON si.id=s.agent_id AND NOT si.hidden_from_roster
-           WHERE s.owner_id=a.owner_id AND COALESCE(s.machine_id,s.agent_id)=COALESCE(a.machine_id,a.agent_id)
-             AND s.squire_report->>'status'='connected'
-             AND EXISTS (SELECT 1 FROM memberships sm WHERE sm.identity_id=s.agent_id
-               AND sm.room_id IS NULL AND sm.removed_at IS NULL)
-         ) latest ON true
-         CROSS JOIN LATERAL (
-           SELECT CASE WHEN COALESCE((a.squire_work->>'reportedAt')::double precision,
-             (a.squire_report->>'reportedAt')::double precision,0) < latest.connected_at
-             THEN '{}'::jsonb ELSE a.squire_work END current
-         ) work
+         LEFT JOIN squire_machines source ON source.owner_id=a.owner_id AND source.machine_id=COALESCE(a.machine_id,a.agent_id)
          WHERE a.owner_id=$1
            AND NOT EXISTS (SELECT 1 FROM rooms_mcp_members remote WHERE remote.member_id=a.agent_id)
          GROUP BY COALESCE(a.machine_id,a.agent_id)
@@ -239,7 +221,7 @@ import { seconds } from './values.js';
         .filter((app) => app.transport === 'composio')
         .map((app) => composioToolkitForApp(app.appKey)),
     ]);
-    const appCatalog = (await phoneReadAppCatalog(ctx, catalogKeys));
+    const appCatalog = (await ctx.readAppCatalog(catalogKeys));
     const appMetadata = new Map(appCatalog.map((item) => [item.appKey, item]));
     const uniqueConnections = uniqueVaultConnections(connections);
     const walletRow = (
@@ -295,8 +277,8 @@ import { seconds } from './values.js';
         name: row.name,
         online: row.online,
         squireEligible: true,
-        ...(row.squire_report || row.reconnecting || row.google_session_expired || row.squire_error ? {
-          squire: { ...(row.squire_report ?? { status: 'not-added' as const, reportedAt: 0 }),
+        ...(row.broker_report || row.reconnecting || row.google_session_expired || row.squire_error ? {
+          squire: { ...(row.broker_report ?? { status: 'not-added' as const, reportedAt: 0 }),
             ...(row.squire_error ? { status: 'error' as const, errorMessage: row.squire_error } : {}),
             reconnecting: row.reconnecting, googleSessionExpired: row.google_session_expired ?? false,
             ...(row.signed_in_as ? { signedInAs: row.signed_in_as } : {}) },

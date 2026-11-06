@@ -196,7 +196,7 @@ describe('sensitivity boundaries and replacement slots', () => {
     expect(byId.get(mention)).toBe(mention);
   });
 
-  it('updates consecutive human attention within 20 seconds but starts a new slot after an intervening sender', async () => {
+  it('keeps consecutive human attention in independent slots across intervening senders', async () => {
     const first = await post('@owner first', teammate, room);
     await loop.runOnce();
     const second = await post('@owner second', teammate, room);
@@ -208,7 +208,7 @@ describe('sensitivity boundaries and replacement slots', () => {
       send.mock.calls.map(([, message]) => [message.messageId, message.collapseId]),
     );
     expect(slots.get(first)).toBe(first);
-    expect(slots.get(second)).toBe(first);
+    expect(slots.get(second)).toBe(second);
     expect(slots.get(third)).toBe(third);
   });
 
@@ -326,7 +326,7 @@ it.each(['off', 'attention', 'full'] as const)(
   },
 );
 
-it('keeps human DMs in Attention and respects the human burst timeout', async () => {
+it('keeps each human DM independently visible in Attention', async () => {
   await db.query(`UPDATE agent_commands SET root_source_message_id='agent-initiated' WHERE room_id=$1 AND reason='corner_objective'`, [corner]);
   await post('Opened-corner update', agent, corner);
   expect(await loop.runOnce()).toBe(0);
@@ -339,13 +339,7 @@ it('keeps human DMs in Attention and respects the human burst timeout', async ()
   await loop.runOnce();
   const second = await post('Consecutive DM', teammate, room);
   await loop.runOnce();
-  expect(send.mock.calls.at(-1)?.[1]).toMatchObject({ messageId: second, collapseId: first });
-  await db.query(`UPDATE messages SET created_at=now()-interval '21 seconds' WHERE room_id=$1`, [
-    room,
-  ]);
-  const third = await post('Next DM burst', teammate, room);
-  await loop.runOnce();
-  expect(send.mock.calls.at(-1)?.[1]).toMatchObject({ messageId: third, collapseId: third });
+  expect(send.mock.calls.map(([,message])=>[message.messageId,message.collapseId])).toEqual([[first,first],[second,second]]);
 });
 
 it.each(['off', 'attention', 'full'] as const)(

@@ -1,3 +1,4 @@
+import { messageColumns } from './message-columns.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import { tagsKnownIdentitySql } from './message-mentions.js';
 
@@ -11,16 +12,16 @@ export function humanReportCornerSql(message: string): string {
 
 /** Keep forwarded reports on their origin index, with a separate legacy fallback. */
 export function cornerHumanReportsSql(cornerId: string, workerId: string): string {
-  return `SELECT message.* FROM messages message
+  return `SELECT ${messageColumns('message')} FROM messages message
     WHERE message.author_id=${workerId} AND message.card->>'reportToId' IS NOT NULL
       AND message.card->>'sourceRoomId'=(${cornerId})::text
     UNION ALL
-    SELECT message.* FROM messages message
+    SELECT ${messageColumns('message')} FROM messages message
     WHERE message.room_id=${cornerId} AND message.author_id=${workerId}
       AND message.card->>'reportToId' IS NOT NULL AND message.card->>'sourceRoomId' IS NULL
       AND ${humanReportCornerSql('message')}=(${cornerId})::text
     UNION ALL
-    SELECT message.* FROM messages message
+    SELECT ${messageColumns('message')} FROM messages message
     WHERE message.author_id=${workerId}
       AND EXISTS (SELECT 1 FROM agent_commands source
         WHERE source.id=message.request_id AND source.agent_id=message.author_id

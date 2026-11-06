@@ -26,23 +26,23 @@ describe('Reproduction S-07: every reviewer waits for a quiet corner', () => {
 describe('Reproduction R5a: entry paths lock the run before corner rows', () => {
   it.each(['check webhook', 'merged webhook', 'approval', 'hold', 'brief', 'create', 'zero-check', 'blocker reconciliation', 'agent close', 'phone close'])('%s', async path => {
     const cornerId = await inReview();
-    const recording = new RecordingDatabase(rootFixture.db);
+    const recording = new RecordingDatabase(db);
     const recordedDaemon = new DaemonService(recording, new LiveHub());
-    const recordedGithub = new GitHubOperations(recording, {} as GitHubOAuthClient, rootFixture.githubApp as unknown as GitHubAppClient, 'secret');
+    const recordedGithub = new GitHubOperations(recording, {} as GitHubOAuthClient, githubApp as unknown as GitHubAppClient, 'secret');
     vi.spyOn(recordedGithub, 'assertCornerReviewerNotAuthor').mockResolvedValue(undefined);
     Object.assign(recordedDaemon, { github: recordedGithub });
     let lockId = cornerId;
     if (path === 'check webhook') {
-      rootFixture.githubRollupState = 'passed';
+      githubRollupState = 'passed';
       await recordedGithub.processWebhook('check_run', {
         installation: { id: 77 }, repository: { id: 101, full_name: 'owner/widgets' }, action: 'completed',
         check_run: { id: 5, name: 'typecheck', status: 'completed', conclusion: 'success',
           check_suite: { head_branch: branchOf(cornerId), head_sha: SHA } },
       });
     } else if (path === 'merged webhook') {
-      const previous = rootFixture.github;
-      rootFixture.github = recordedGithub;
-      try { await mergedWebhook(cornerId, 7, SHA); } finally { rootFixture.github = previous; }
+      const previous = github;
+      github = recordedGithub;
+      try { await mergedWebhook(cornerId, 7, SHA); } finally { github = previous; }
     } else if (path === 'approval') {
       await recordedDaemon.execute('approveCornerMerge', { cornerId, headSha: SHA }, B);
     } else if (path === 'hold') {
@@ -60,9 +60,9 @@ describe('Reproduction R5a: entry paths lock the run before corner rows', () => 
         brief: brief(command.sourceMessageId) }, A);
       lockId = created.cornerId;
     } else if (path === 'zero-check') {
-      await rootFixture.db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(jsonb_set(lifecycle,'{checks}','"unknown"'),'{pr,mergeability}','"clean"') WHERE corner_id=$1`, [cornerId]);
+      await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(jsonb_set(lifecycle,'{checks}','"unknown"'),'{pr,mergeability}','"clean"') WHERE corner_id=$1`, [cornerId]);
       const command = await commissioned(cornerId);
-      const status = { ...(await rootFixture.github.prChecksStatus({ cornerId })), checks: 'pending' as const, checkCount: 0, zeroChecksConfirmed: true };
+      const status = { ...(await github.prChecksStatus({ cornerId })), checks: 'pending' as const, checkCount: 0, zeroChecksConfirmed: true };
       const completion = new DaemonService(recording, new LiveHub(), undefined, undefined, false, undefined, false, undefined, async () => {
         // Completion runs after the reply transaction commits; inspect its own locks.
         recording.calls.length = 0;
@@ -71,20 +71,17 @@ describe('Reproduction R5a: entry paths lock the run before corner rows', () => 
       await completion.execute('postRoomMessage', { roomId: cornerId, requestId: command.turnRequestId,
         generationId: 'g1', text: 'https://github.com/owner/widgets/pull/7' }, A);
     } else {
-      await rootFixture.db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checks}','"failing"') WHERE corner_id=$1`, [cornerId]);
+      await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checks}','"failing"') WHERE corner_id=$1`, [cornerId]);
       await reconcileCornerMergeBlockers(recording, cornerId);
     }
-    const lock = recording.calls.findIndex(call => call.sql === 'SELECT pg_advisory_xact_lock(hashtext($1))'
-      && call.values?.[0] === workflowRunLockKey(lockId));
-    const rowLock = recording.calls.findIndex(call => /FOR (UPDATE|KEY SHARE)/.test(call.sql) && /FROM (corner_facts|rooms)|JOIN corner_facts/.test(call.sql)
-      || /^UPDATE rooms/.test(call.sql));
-    expect(rowLock, 'path exercised a corner row lock or update').toBeGreaterThanOrEqual(0);
-    expect(lock, 'corner run lock was taken').toBeGreaterThanOrEqual(0);
-    expect(lock, 'run lock precedes corner row locks').toBeLessThan(rowLock);
-    if (path === 'blocker reconciliation') {
-      const write = recording.calls.findIndex(call => /^INSERT INTO messages|^UPDATE corner_facts/.test(call.sql));
-      expect(write, 'reconciliation performed a write').toBeGreaterThanOrEqual(0);
-      expect(lock, 'run lock precedes foreign-key writes').toBeLessThan(write);
+    const retained = recording.calls.findIndex(call => call.values?.[0] === lockId
+      && (/FROM corner_facts/.test(call.sql) && /FOR UPDATE/.test(call.sql) || /^INSERT INTO corner_facts/.test(call.sql)));
+    const write = recording.calls.findIndex(call => /^UPDATE corner_facts|^INSERT INTO corner_(?:brief_revisions|merge_holds|merge_approvals)/.test(call.sql));
+    expect(retained, 'native state row was retained').toBeGreaterThanOrEqual(0);
+    if (path === 'zero-check') expect(write, 'zero-check is read-only').toBe(-1);
+    else {
+      expect(write, 'path wrote its corner effect').toBeGreaterThanOrEqual(0);
+      expect(retained, 'state retention precedes effects').toBeLessThan(write);
     }
   });
 });

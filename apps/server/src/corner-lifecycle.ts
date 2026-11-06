@@ -12,7 +12,7 @@ import { firstHealthyAgent } from './agent-health.js';
 import { ensureSystemIdentity, GITHUB_SUBJECT, systemLine } from './system-line.js';
 import { abandonCornerWorkflowRuns } from './workflow-runs.js';
 import { cornerIdleSql, type CornerIdleRow } from './corner-idle.js';
-import { CornerCheckObservation, CornerMachine, transitionCorner, loadCorner, CornerMachineFacts, CornerRow, CornerMachineEvent, deriveCornerState, planCornerCheckObservation, checksSettled, checksRestarted, actionsJobId } from './corner-lifecycle-read-state.js';
+import { CornerCheckObservation, CornerMachine, transitionCorner, loadCorner, loadCornerQuestion, CornerMachineFacts, CornerRow, CornerMachineEvent, deriveCornerState, planCornerCheckObservation, checksSettled, checksRestarted, actionsJobId } from './corner-lifecycle-read-state.js';
 import { lockCornerArchivalAuthority, lockCornerLifecycle, CornerAdvance, blockingReview, cornerMergeGate, independentReviewerConfigured, RevisionWake, Applied, noteReviewDispatchFailure, reachableReviewer, backfillCornerLifecycleRuns, archiveCornerState, cornerReviewWokenSql, CornerMergeGate, CornerMergeabilityInput, cornerMergeability, confirmCornerMergeAuthority, deleteStoredCornerWorkflows } from './corner-lifecycle-review-state.js';
 import { OK, reviewChecksSql, CORNER_LIFECYCLE_SLUG, CORNER_MACHINE_SCHEMA } from './corner-lifecycle-values.js';
 
@@ -304,7 +304,10 @@ export async function advanceCorner(
         AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at>now())
        ORDER BY created_at,id LIMIT 1`, [cornerId],
     )).rows[0];
+    const question = !pendingGrant && (!row?.waiting_reason || row.waiting_reason === 'question')
+      ? await loadCornerQuestion(db, cornerId, row?.waiting_item_id) : undefined;
     const facts: CornerMachineFacts = {
+      ...(question ? { question: { postedAt: question.asked_at, answeredAt: question.answered_at } } : {}),
       archived: corner.archived,
       locked: corner.locked,
       lifecycle: corner.lifecycle,
@@ -340,6 +343,8 @@ export async function advanceCorner(
               ...(row.waiting_kind ? { blocker: { kind: row.waiting_kind } } : {}),
             },
           }
+        : question && !question.answered_at
+        ? { blocker: { reason: 'question' as const, itemId: question.id, blocker: { kind: question.kind } } }
         : {}),
       checkSourceId:
         sourceHead && sourceHead !== head

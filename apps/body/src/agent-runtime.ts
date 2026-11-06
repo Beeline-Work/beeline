@@ -22,7 +22,7 @@ import { ConnectorAssignmentLoop } from './connector-assignments.js';
 import { RegistryMcpHostBroker, registryMcpBrokerSocketPath } from './registry-mcp.js';
 import { BrowserShareHost, browserShareHostPath } from './browser-share-host.js';
 import { ThinDaemonCore } from './thin-core.js';
-import { AgentLifecycle, retryBeforeReady, type AgentExitReason } from './helper-lifecycle.js';
+import { AgentLifecycle, type AgentExitReason } from './helper-lifecycle.js';
 import { migrateLegacyDaemonTransport } from './legacy-daemon-migration.js';
 import { activateDaemonTransport, DaemonApiError } from './daemon-api-client.js';
 import { reportInterruptedTurns } from './force-update-journal.js';
@@ -216,7 +216,6 @@ export async function runAgentRuntime(
   console.log(`[body] agent binary: ${formatAgentCommand(agent)}`);
   console.log(`[body] ${sandbox.advisory}`);
 
-  let privateStorageTimer: ReturnType<typeof setInterval> | undefined;
   let discoveryReady = false;
   const markEstablished = () => {
     if (controller.signal.aborted || !discoveryReady || !daemonApi.channel.isOpen()) return;
@@ -287,11 +286,7 @@ export async function runAgentRuntime(
   let exitReason: AgentExitReason | undefined;
   try {
     // Credential activation and interruption replay precede every intake.
-    await retryBeforeReady(() => reportInterruptedTurns(runtimeDir, daemonApi, agentId), {
-      onLinkOpen: (listener) => daemonApi.onLiveOpen(listener),
-      extendStartTimeout: extendSystemdStartTimeout,
-      signal: controller.signal,
-    });
+    await reportInterruptedTurns(runtimeDir, daemonApi, agentId);
     registryMcpBroker = new RegistryMcpHostBroker(
       config.operatorHome,
       fetch,
@@ -319,35 +314,10 @@ export async function runAgentRuntime(
     );
     await browserShareHost.start();
     config.browserShareHostSocket = browserShareHost.socketPath;
-    let lifecycleRestart: Promise<void> | undefined;
     const core = new ThinDaemonCore(runtime, configPath, config, {
       daemonApi,
       onConfigChanged: refreshCatalog,
-      onRestartRequested: () => {
-        // `/restart` cancels at once, and takes over an update still waiting.
-        if (lifecycleRestart || !lifecycle.quiesce('restart')) return;
-        lifecycleRestart = (async () => {
-          const cancelled = await core.cancelActiveWorkForRestart();
-          host.progress(
-            agentId,
-            cancelled
-              ? 'restart requested; active work cancelled'
-              : 'restart requested; no active work',
-          );
-          lifecycle.stop('restart-requested');
-        })().catch((error) => {
-          console.error('[thin-core] requested restart failed:', error);
-          lifecycle.stop('restart-requested');
-        });
-      },
     });
-    // The existing six-hour local-disk timer now reclaims whole unused objects
-    // from previously confirmed lifecycle facts. It makes no server reads.
-    privateStorageTimer = setInterval(() => {
-      void core.reclaimKnownPrivateStorage().catch(error =>
-        console.error('[body] private storage cleanup deferred:', error));
-    }, 6 * 60 * 60_000);
-    privateStorageTimer.unref();
     leaveHost = host.attach({ agentId, runtimeDir, lifecycle, core });
     daemonApi.setForceUpdateListener((minVersion) => host.requestForceUpdate(minVersion));
     daemonApi.setHelperReleaseListener(({ version, sha }) => {
@@ -439,7 +409,6 @@ export async function runAgentRuntime(
   } finally {
     signal.removeEventListener('abort', abortFromHost);
     leaveHost?.();
-    clearInterval(privateStorageTimer);
     connectorLoop?.stop();
     agentSignIn?.stop();
     await registryMcpBroker?.stop();
@@ -458,6 +427,5 @@ export async function runAgentRuntime(
 /** The force-update journal entries for one hosted agent. */
 export function interruptHostedAgent(agent: HostedAgent): InterruptedTurn[] {
   agent.lifecycle.quiesce('force-update');
-  agent.core.setDrainDeadlineAt(Date.now() + 60_000);
   return agent.core.interruptForServerMinimum();
 }

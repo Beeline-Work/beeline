@@ -27,7 +27,7 @@ import { cornerImplementerSql, cornerOwnerSql } from './corner-worker.js';
 import { ObjectService } from './object-service.js';
 import { TokenAuth, tokenHash } from './auth.js';
 import { PhoneService, REVIEW_LOCKED_OPERATIONS } from './phone-service.js';
-import { DaemonService } from './daemon-service.js';
+import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';
 import { LiveHub } from './live.js';
 import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
 import { MediaExpiryLoop, PushDeliveryLoop } from './background.js';

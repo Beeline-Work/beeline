@@ -1,3 +1,4 @@
+import { waitForPathRemoval } from './filesystem-change.js';
 import { piNoRetrySettings } from './pi-retry-settings.js';
 /**
  * Per-room-instance harness state directories.
@@ -393,7 +394,7 @@ async function withSharedClaudeLoginLock<T>(
         continue;
       }
       if (Date.now() >= deadline) return undefined;
-      await new Promise((settle) => setTimeout(settle, 20));
+      await waitForPathRemoval(lock);
     }
   }
   try {

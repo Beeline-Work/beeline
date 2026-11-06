@@ -1,4 +1,4 @@
-import { HELPER_USAGE_OPERATIONS, type HelperUsageOperation } from './helper-usage-channel.js';
+import { renewSquireShareOnViewerActivity } from './squire-share-renewals.js';
 import { invalidateUsageAccountAttachment } from './helper-usage-publisher.js';
 import { postChangedAgentUsage } from './helper-usage-binding.js';
 import {
@@ -10,9 +10,7 @@ import {
 import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { helperVersion, helperVersionHeader } from './helper-version.js';
-import { HostReadBudget, hostReadBudget, ReadBudgetFullError } from './host-read-budget.js';
 import {
-  isNetworkFailure,
   retryAfterMs,
   type LiveLink,
   type LiveLinkTiming,
@@ -127,8 +125,8 @@ export type DaemonClientMetrics = {
   readonly readQueueWaitMs: number;
 };
 
-const REQUEST_DEADLINE_MS = 30_000;
 const DAEMON_LIVE_EVENT_TYPES = new Set<unknown>([
+  'share-viewer-activity',
   'vault-save',
   'helper-release',
   'rooms-changed',
@@ -166,18 +164,15 @@ export class DaemonApiClient {
   readonly #channel: AgentChannel;
   /** Features can observe negotiation and use the existing overlay owner, but
    * cannot obtain ordinary/turn/usage/activation request capabilities. */
-  readonly channel: Readonly<Pick<AgentChannel, 'isOpen' | 'activationScope' | 'activationContextSelected' |
-    'usageAccountScope' | 'usageAccountSelected' | 'overlay'>>;
-  readonly machine: MachineLink;
+  readonly channel: Readonly<Pick<AgentChannel, 'isOpen' | 'activationScope' | 'usageAccountScope' | 'overlay'>>;
+  readonly #machine: MachineLink;
   private registrationRefusal?: DaemonApiError;
   private authorityRefusalListener?: (error: DaemonApiError) => void;
   private channelStateListener?: (connected: boolean, refusal?: string) => void;
   private inFlight = 0;
   private requestCount = 0;
-  private timeoutCount = 0;
   private subscriptionCount = 0;
   private operationChannelDemanded = false;
-  private readonly readBudget?: HostReadBudget;
   private readonly liveRooms = new Map<
     string,
     {
@@ -213,22 +208,18 @@ export class DaemonApiClient {
     readonly agentId: string,
     private readonly fetchImpl: DaemonFetch = fetch,
     webSocketFactory?: DaemonWebSocketFactory,
-    readBudget?: HostReadBudget,
     linkTiming?: Partial<LiveLinkTiming>,
     /** The process's shared machine socket; a standalone client opens its own. */
     machine?: MachineLink,
   ) {
-    // Test transports may supply their own admission model. The real network
-    // transport always takes the machine-wide budget.
-    this.readBudget = readBudget ?? (fetchImpl === fetch ? hostReadBudget : undefined);
-    this.machine =
+    this.#machine =
       machine ??
       new MachineLink({
         baseUrl,
         ...(webSocketFactory ? { factory: webSocketFactory } : {}),
         ...(linkTiming ? { timing: linkTiming } : {}),
       });
-    this.#channel = this.machine.attach(agentId, {
+    this.#channel = this.#machine.attach(agentId, {
       registration: () => ({
         token: this.daemonToken,
         lifecycleId: this.presenceLifecycleId,
@@ -262,11 +253,11 @@ export class DaemonApiClient {
   }
 
   /** Refresh the shared machine observation after an explicit local vault event. */
-  refreshMachineVault(): Promise<void> { return this.machine.refreshVault(); }
+  refreshMachineVault(): Promise<void> { return this.#machine.refreshVault(); }
 
   /** The machine socket under this agent's registration. */
-  get link(): LiveLink {
-    return this.machine.link;
+  get link(): Pick<LiveLink,'state'|'isOpen'|'onOpen'|'reconnects'> {
+    return this.#machine.link;
   }
 
   /** Connection material for the daemon-owned MCP proxy and corner credentials. */
@@ -284,7 +275,7 @@ export class DaemonApiClient {
       releaseVersion: helperVersion(identity.releaseVersion),
       ...(identity.sourceSha ? { sourceSha: identity.sourceSha } : {}),
     };
-    this.machine.setHelperIdentity(identity);
+    this.#machine.setHelperIdentity(identity);
   }
 
   setForceUpdateListener(listener: (minVersion: string) => void): void {
@@ -298,15 +289,14 @@ export class DaemonApiClient {
   }
 
   metrics(): DaemonClientMetrics {
-    const budget = this.readBudget?.metrics();
     return {
       inFlight: this.inFlight,
       requests: this.requestCount,
-      timeouts: this.timeoutCount,
+      timeouts: 0,
       reconnects: this.#channel.reconnects,
       subscriptionsSent: this.subscriptionCount,
-      readQueueDepth: budget?.waiting ?? 0,
-      readQueueWaitMs: budget?.totalWaitMs ?? 0,
+      readQueueDepth: 0,
+      readQueueWaitMs: 0,
     };
   }
 
@@ -349,7 +339,6 @@ export class DaemonApiClient {
       this.liveRooms.delete(roomId);
       this.liveSubscriptions.delete(roomId);
       this.#channel.send({ type: 'unsubscribe', roomId });
-      this.completeLiveRecovery();
       if (!this.liveRooms.size && !this.roomsChangedListener && !this.operationChannelDemanded) this.#channel.stop();
     };
   }
@@ -393,7 +382,7 @@ export class DaemonApiClient {
     // operation/turn authority. Only whitelisted metadata leaves the helper.
     await this.fetchImpl(endpoint(this.baseUrl, '/v1/vault-save/answer'), {
       method: 'POST', headers: { authorization: `Bearer ${this.daemonToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ attemptId, answer }), signal: AbortSignal.timeout(10_000),
+      body: JSON.stringify({ attemptId, answer }), signal: undefined,
     });
   }
 
@@ -429,7 +418,7 @@ export class DaemonApiClient {
     const identity=input&&typeof input==='object'?Object.getOwnPropertyDescriptor(input,'agentId'):undefined;
     if(!identity||!('value' in identity)||identity.value!==this.agentId)throw new Error('Activation runtime identity mismatch');
     this.requestCount++;this.inFlight++;
-    try{return await this.#channel.activation.request(input);}finally{this.inFlight--;}
+    try{await this.#channel.operationReady();return await this.#channel.requestOperation('readCommandActivation',input);}finally{this.inFlight--;}
   }
 
   turnOwnershipScope(): import('@beeline/api-contract/helper-turn-ownership').HelperTurnOwnershipSource | undefined {
@@ -461,92 +450,38 @@ export class DaemonApiClient {
     if (typeof candidate.agentId === 'string' && candidate.agentId !== this.agentId) {
       throw new Error('daemon operation agentId does not match the runtime identity');
     }
-    // Bootstrap is needed before the registration exists. Every other family
-    // waits for the channel's negotiated transport; a selected channel never
-    // re-enters the old-server HTTP adapter, even after losing its socket.
-    const selectedControl = this.#channel.turn.selected &&
-      ['claimAgentCommand', 'acknowledgeAgentCommand', 'postAgentTurnReceipt'].includes(name) ||
-      this.#channel.usageAccountSelected && (HELPER_USAGE_OPERATIONS as readonly string[]).includes(name);
-    if (!selectedControl && (name !== 'getDaemonBootstrap' || this.#channel.isOpen() || this.#channel.operationsSelected)) {
-      this.operationChannelDemanded = true;
-      await this.#channel.operationReady();
-    }
-    // A recorded legacy generation must finish with its original ownership;
-    // negotiating a new source cannot retroactively bind that receipt.
-    if (((name === 'claimAgentCommand' || name === 'acknowledgeAgentCommand') && this.#channel.turn.selected) ||
-        (name === 'postAgentTurnReceipt' && this.#channel.turn.selected && !this.#channel.turn.isLegacy(input as Input<'postAgentTurnReceipt'>))) {
-      this.requestCount++; this.inFlight++;
-      try {
-        return await this.#channel.turn.request(name as import('@beeline/api-contract/helper-turn-ownership').HelperTurnOperation,
-          input as Input<'claimAgentCommand'> | Input<'postAgentTurnReceipt'>) as Output<Name>;
-      } catch (error) {
-        const status = (error as {status?:number}).status ?? 503;
-        throw new DaemonApiError('Turn operation outcome is UNKNOWN; keep the same command and generation.',
-          status, status === 408 || status === 429 || status >= 500, 'turn ownership outcome unknown');
-      } finally { this.inFlight--; }
-    }
-    if((HELPER_USAGE_OPERATIONS as readonly string[]).includes(String(name)) &&
-      (name!=='postAgentUsage'||candidate.usageSource!==undefined||this.#channel.usageAccountSelected)){
-      // Existing collectors need not construct protocol ownership metadata.
-      // Bind their report to this negotiated actor before the single socket write.
-      if(name==='postAgentUsage'&&candidate.usageSource===undefined)
-        return postChangedAgentUsage(this,this.agentId,(input as Input<'postAgentUsage'>).usage) as Promise<Output<Name>>;
-      this.requestCount++;this.inFlight++;
-      try{
-        const result=await this.#channel.usage.request(name as HelperUsageOperation,input as never);
-        if(name==='postAgentUsage'&&(input as {usage?:{spend?:unknown}}).usage?.spend){const scope=this.#channel.usageAccountScope();
-          if(scope)invalidateUsageAccountAttachment(scope.origin,scope.ownerId,this.agentId);}
-        return result as Output<Name>;
-      }finally{this.inFlight--;}
-    }
-    if (this.#channel.operationsSelected) {
-      // Preserve existing diagnostics without extending HTTP read admission.
-      this.requestCount++; this.inFlight++;
-      try {
-        return await this.#channel.requestOperation(name, input);
-      } catch (error) {
-        const failure = error as {status?: number; code?: string};
-        const status = failure.status ?? 503;
-        if (failure.code === 'deadline_exceeded') this.timeoutCount++;
-        const refusal = new DaemonApiError(error instanceof Error ? error.message : 'Machine operation outcome is UNKNOWN',
-          status, status === 408 || status === 429 || status >= 500, failure.code ?? 'outcome_unknown');
-        if (status === 401) this.authorityRefusalListener?.(refusal);
-        throw refusal;
-      } finally { this.inFlight--; }
-    }
-    return this.#requestHttp(name, input);
+    this.operationChannelDemanded = true;
+    await this.#channel.operationReady();
+    if (name === 'postAgentUsage' && candidate.usageSource === undefined)
+      return postChangedAgentUsage(this,this.agentId,(input as Input<'postAgentUsage'>).usage) as Promise<Output<Name>>;
+    this.requestCount++; this.inFlight++;
+    try {
+      const result = await this.#channel.requestOperation(name,input);
+      if (name === 'postAgentUsage' && (input as Input<'postAgentUsage'>).usage?.spend) {
+        const scope=this.#channel.usageAccountScope();
+        if(scope)invalidateUsageAccountAttachment(scope.origin,scope.ownerId,this.agentId);
+      }
+      return result;
+    } catch (error) {
+      const failure=error as {status?:number;code?:string};
+      const status=failure.status??503;
+      const refusal=new DaemonApiError(error instanceof Error?error.message:'Machine operation refused',status,
+        status===408||status===429||status>=500,failure.code);
+      if(status===401)this.authorityRefusalListener?.(refusal);
+      throw refusal;
+    } finally { this.inFlight--; }
   }
 
-  /** Old servers have no declared protocol floor (HelperVersionGate is opt-in).
-   * Keep their wire adapter, bootstrap and one-shot Git credential read private.
-   * Neither a selected socket failure nor an arbitrary caller can enter here. */
+  /** The explicit one-shot repository credential read cannot register another
+   * machine owner. Every ordinary runtime operation uses the live connection. */
   async #requestHttp<Name extends keyof DaemonOperationMap>(name: Name, input: Input<Name>): Promise<Output<Name>> {
     const repositoryCredential = name === 'getRoomGitHubToken' && this.#repositoryCredentialRoom !== undefined &&
       (input as Input<'getRoomGitHubToken'>).roomId === this.#repositoryCredentialRoom;
-    if (!repositoryCredential && (this.#channel.operationsSelected || (name !== 'getDaemonBootstrap' && !this.#channel.isOpen())))
+    if (!repositoryCredential)
       throw new Error('HTTP daemon operation requires bootstrap or a registered old server');
-    const controller = new AbortController();
-    const deadline = setTimeout(() => controller.abort(), REQUEST_DEADLINE_MS);
-    deadline.unref?.();
     this.requestCount += 1;
-    let release: (() => Promise<void>) | undefined;
-    let admitted = false;
-    let output: Output<Name>;
+    this.inFlight += 1;
     try {
-      const operation = String(name);
-      if (this.readBudget && /^(get|list|read|search)/.test(operation)) {
-        release = await this.readBudget.acquire(
-          operation === 'getAgentCommands' ||
-            operation === 'getRoomInbox' ||
-            operation === 'getDaemonBootstrap'
-            ? 'urgent'
-            : 'background',
-          Date.now() + REQUEST_DEADLINE_MS,
-          controller.signal,
-        );
-      }
-      this.inFlight += 1;
-      admitted = true;
       const response = await this.fetchImpl(
         endpoint(this.baseUrl, `/v1/daemon/operations/${String(name)}`),
         {
@@ -557,7 +492,6 @@ export class DaemonApiClient {
             ...helperVersionHeader(this.helperIdentity.releaseVersion),
           },
           body: JSON.stringify(input),
-          signal: controller.signal,
         },
       );
       if (!response.ok) {
@@ -567,35 +501,10 @@ export class DaemonApiClient {
           this.#channel.requireUpdate(error.minVersion);
         throw error;
       }
-      output = (await response.json()) as Output<Name>;
-    } catch (error) {
-      if (error instanceof ReadBudgetFullError) {
-        throw new DaemonApiError(error.message, 429, true, 'read_budget_full', 1_000);
-      }
-      if (controller.signal.aborted) {
-        this.timeoutCount += 1;
-        // An admitted request that hears nothing for its whole deadline may be
-        // riding a dead path; ask the socket. A queued one only waited here.
-        if (admitted) this.#channel.suspect();
-        throw new DaemonApiError(
-          `monolith daemon ${String(name)} timed out`,
-          408,
-          true,
-          'deadline_exceeded',
-        );
-      }
-      if (isNetworkFailure(error)) this.#channel.suspect();
-      throw error;
+      return (await response.json()) as Output<Name>;
     } finally {
-      clearTimeout(deadline);
-      if (admitted) this.inFlight -= 1;
-      await release?.();
+      this.inFlight -= 1;
     }
-    if(name==='postAgentUsage'&&(input as {usage?:{spend?:unknown}}).usage?.spend){
-      const scope=this.#channel.usageAccountScope();
-      if(scope)invalidateUsageAccountAttachment(scope.origin,scope.ownerId,this.agentId);
-    }
-    return output;
   }
 
   private ensureLiveSocket(): void {
@@ -613,10 +522,6 @@ export class DaemonApiClient {
     capabilities?: {pushIntake:boolean; connectionPresence:boolean; connectionGeneration:number};
   }>();
 
-  private completeLiveRecovery(): void {
-    if (![...this.liveSubscriptions.values()].some(subscription => !subscription.ready)) this.#channel.recovered();
-  }
-
   private completeLiveSubscription(roomId: string): void {
     const current = this.liveSubscriptions.get(roomId);
     if (!current || current.ready || !current.capabilities || !current.commandsSeen ||
@@ -624,7 +529,6 @@ export class DaemonApiClient {
     current.ready = true;
     for (const registration of this.liveRooms.get(roomId)?.registrations ?? [])
       registration.onState?.(true, current.capabilities);
-    this.completeLiveRecovery();
   }
 
   private currentLiveSubscription(event: Record<string, unknown>) {
@@ -645,10 +549,10 @@ export class DaemonApiClient {
     // so the reconciliation and the drain still reach them.
     this.roomsChangedListener?.();
     this.connectorAssignmentListener?.();
-    this.completeLiveRecovery();
   }
 
   private liveMessage(event: Record<string, unknown>): void {
+    if(event.type==='share-viewer-activity'&&typeof event.sessionId==='string'){renewSquireShareOnViewerActivity(event.sessionId);return;}
     if (event.type === 'vault-save') {
       this.vaultSaveListener?.(event);
       return;
@@ -769,7 +673,6 @@ export class DaemonApiClient {
     const current = { requestId: randomUUID(), inboxRequested, commandsSeen: false, inboxSeen: false,
       inboxRequired: true, ready: false };
     this.liveSubscriptions.set(roomId, current);
-    this.#channel.awaitInitialRecovery();
     this.subscriptionCount += 1;
     if (!this.#channel.send({
       type: 'subscribe',
@@ -818,7 +721,6 @@ export async function activateDaemonTransport(
         fetchImpl,
         undefined,
         undefined,
-        undefined,
         machine,
       ),
     };
@@ -854,7 +756,6 @@ export async function activateDaemonTransport(
       result.daemonToken,
       runtime.agent.publicKey,
       fetchImpl,
-      undefined,
       undefined,
       undefined,
       machine,

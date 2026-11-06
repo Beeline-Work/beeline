@@ -26,13 +26,13 @@ it('corner-read-token exits without replacing the helper registration or cancell
   let owner: import('ws').WebSocket | undefined;
   sockets.on('connection', socket => socket.on('message', raw => {
     const frame = JSON.parse(String(raw));
-    if (frame.type === 'register') {
+    if (frame.type === 'register-machine') {
       registrations++;
       if (registrations > 2) return;
       if (owner && owner !== socket) owner.send(JSON.stringify({ type: 'unregistered', agentId: identity.publicKey, reason: 'replaced' }));
       owner = socket;
-      socket.send(JSON.stringify({ type: 'registered', agentId: identity.publicKey,
-        capabilities: { daemonOperationsV1: true, turnOwnershipV1: true, turnConnectionId: 'parent', turnConnectionEpoch: 1 } }));
+      socket.send(JSON.stringify({type:'registered-machine',agents:[{type:'registered',agentId:identity.publicKey,
+        capabilities:{daemonOperationsV1:true,turnOwnershipV1:true,turnConnectionId:'parent',turnConnectionEpoch:1}}]}));
     }
     if (frame.type === 'daemon-operation') socket.send(JSON.stringify({ type: 'daemon-operation-result',
       agentId: identity.publicKey, requestId: frame.requestId, result: { token: 'fixture-repository-token', expiresAt: Date.now() + 60_000 } }));

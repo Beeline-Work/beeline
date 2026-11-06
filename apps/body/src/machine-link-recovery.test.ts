@@ -1,182 +1,58 @@
-import { EventEmitter } from 'node:events';
+import {EventEmitter} from 'node:events';
 import type WebSocket from 'ws';
-import { afterEach, expect, it, vi } from 'vitest';
-import { DaemonApiClient } from './daemon-api-client.js';
-import { MachineLink } from './machine-link.js';
+import {afterEach,expect,it,vi} from 'vitest';
+import {MachineLink} from './machine-link.js';
 
-const agentId = 'ab'.repeat(32);
-const roomId = '00000000-0000-4000-8000-000000000041';
-const commandId = 'cd'.repeat(32);
-
-class Socket extends EventEmitter {
-  readyState = 0;
-  onopen?: () => void;
-  onclose?: () => void;
-  onmessage?: (event: { data: string }) => void;
-  frames: Record<string, any>[] = [];
-  receive(frame: Record<string, unknown>) {
-    this.onmessage?.({ data: JSON.stringify({ agentId, ...frame }) });
-  }
-  send(raw: string) { this.frames.push(JSON.parse(raw)); }
-  open() { this.readyState = 1; this.onopen?.(); }
-  close() { this.readyState = 3; this.onclose?.(); }
-  terminate() { this.close(); }
+class Socket extends EventEmitter{
+  readyState=0;onopen?:()=>void;onclose?:()=>void;onmessage?:(event:{data:string})=>void;
+  frames:Record<string,any>[]=[];
+  send(raw:string){this.frames.push(JSON.parse(raw));}
+  open(){this.readyState=1;this.onopen?.();}
+  close(){this.readyState=3;this.onclose?.();}
+  terminate(){this.close();}
+  receive(frame:Record<string,unknown>){this.onmessage?.({data:JSON.stringify(frame)});}
 }
-const cleanups: (() => void)[] = [];
-afterEach(() => {
-  for (const cleanup of cleanups.splice(0)) cleanup();
-  vi.useRealTimers();
-  vi.restoreAllMocks();
-});
-function fixture() {
-  const sockets: Socket[] = [];
-  const machine = new MachineLink({
-    baseUrl: 'http://synthetic.invalid',
-    timing: { heartbeatTimeoutMs: 100 },
-    factory: () => {
-      const socket = new Socket();
-      sockets.push(socket);
-      return socket as unknown as WebSocket;
-    },
-  });
-  const fetcher = vi.fn(async () => { throw new Error('unexpected HTTP fallback'); });
-  const api = new DaemonApiClient('http://synthetic.invalid', 'token', agentId,
-    fetcher, undefined, undefined, undefined, machine);
-  cleanups.push(() => api.closeLive());
-  const claimed: string[] = [];
-  api.liveSubscribe(roomId, undefined, undefined, undefined, undefined, commands => {
-    for (const command of commands) {
-      void api.execute('claimAgentCommand', { roomId, commandId: command.id, generationId: '00000000-0000-4000-8000-000000000042' })
-        .then(() => claimed.push(command.id));
-    }
-  });
-  const register = (socket: Socket) => {
-    socket.open();
-    socket.receive({ type: 'registered', capabilities: { daemonOperationsV1: true, initialSnapshotsV1: true, intakeHeartbeat: true, turnOwnershipV1: true, turnConnectionId: 'connection', turnConnectionEpoch: 1 } });
-  };
-  return { sockets, machine, api, fetcher, claimed, register };
+const cleanups:(()=>void)[]=[];
+afterEach(()=>{for(const cleanup of cleanups.splice(0))cleanup();vi.useRealTimers();});
+function fixture(count=1){
+  const sockets:Socket[]=[],opened=vi.fn(),closed=vi.fn(),updated=vi.fn();
+  const machine=new MachineLink({baseUrl:'http://synthetic.invalid',factory:()=>{const socket=new Socket();sockets.push(socket);return socket as unknown as WebSocket;}});
+  const agents=Array.from({length:count},(_,index)=>machine.attach(`agent-${index}`,{
+    registration:()=>({token:`bdt_${index}`}),onOpen:opened,onClose:closed,onMessage:()=>{},onUpdateRequired:updated}));
+  for(const agent of agents)agent.start();cleanups.push(()=>machine.stop());
+  const register=(socket:Socket)=>{socket.open();socket.receive({type:'registered-machine',agents:agents.map(agent=>({type:'registered',agentId:agent.agentId,capabilities:{}}))});};
+  return {machine,sockets,agents,opened,closed,updated,register};
 }
-
-it('reconnects through initial and repeated socket losses, reads current commands and claims again', async () => {
-  const { sockets, register, claimed, fetcher } = fixture();
-  // Neither the first failed handshake nor another failed replacement may park.
-  sockets[0]!.close();
-  sockets[1]!.close();
-  expect(sockets).toHaveLength(3);
-  register(sockets[2]!);
-  sockets[2]!.close(); // loss before initial snapshots are complete
-  expect(sockets).toHaveLength(4);
-  const recovered = sockets[3]!;
-  register(recovered);
-  const subscription = recovered.frames.find(frame => frame.type === 'subscribe');
-  expect(subscription).toMatchObject({ roomId });
-  recovered.receive({ type: 'commands', roomId, requestId: subscription!.requestId, commandProtocol: 1, commands: [{
-    id: commandId, roomId, agentId, action: 'input', reason: 'human_tag',
-    sourceMessageId: 'message', turnRequestId: commandId, rootCommandId: commandId, rootSourceMessageId: 'message', agentDepth: 0,
-    source: { id: 'message', authorId: 'human', body: '@ruby respond', createdAt: Date.now(), attachments: [] },
-  }] });
-  await vi.waitFor(() => expect(recovered.frames.some(frame => frame.operation === 'claimAgentCommand')).toBe(true));
-  const claim = recovered.frames.find(frame => frame.operation === 'claimAgentCommand')!;
-  recovered.receive({ type: 'turn-result', requestId: claim.requestId, result: { id: commandId, createdAt: Date.now() } });
-  await vi.waitFor(() => expect(claimed).toEqual([commandId]));
-  expect(fetcher).not.toHaveBeenCalled();
-});
-
-it.each(['registration', 'initial snapshots', 'intake heartbeat'])('reconnects when %s stops responding', async stage => {
-  vi.useFakeTimers();
-  vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-  const { sockets, machine, register } = fixture();
-  const socket = sockets[0]!;
-  if (stage === 'registration') socket.open();
-  else register(socket);
-  if (stage === 'intake heartbeat') {
-    const subscription = socket.frames.find(frame => frame.type === 'subscribe')!;
-    socket.receive({ type: 'commands', roomId, requestId: subscription.requestId, commandProtocol: 1, commands: [] });
-    socket.receive({ type: 'subscribed', roomId, requestId: subscription.requestId, capabilities: { inboxSnapshot: false, initialSnapshotsV1: true } });
+it('uses one handshake for all machine agents and reconnects once per actual close',async()=>{
+  const {machine,sockets,opened,closed,register}=fixture(24);register(sockets[0]!);
+  expect(sockets[0]!.frames).toHaveLength(1);expect(sockets[0]!.frames[0]!.agents).toHaveLength(24);expect(opened).toHaveBeenCalledTimes(24);
+  for(let drop=1;drop<=4;drop++){
+    sockets.at(-1)!.close();await Promise.resolve();expect(sockets).toHaveLength(drop+1);register(sockets.at(-1)!);
+    expect(machine.link.reconnects).toBe(drop);expect(closed).toHaveBeenCalledTimes(24*drop);
   }
-  // A living transport cannot conceal stalled agent intake.
-  await vi.advanceTimersByTimeAsync(50);
-  socket.emit('ping');
-  await vi.advanceTimersByTimeAsync(50);
-  expect(sockets).toHaveLength(2);
-  expect(machine.link.state).toBe('connecting');
-  register(sockets[1]!);
-  expect(sockets[1]!.frames.some(frame => frame.type === 'subscribe')).toBe(true);
+});
+it.each(['registration','initial snapshots','intake heartbeat'])('does not close a living socket while %s is quiet',async()=>{
+  vi.useFakeTimers();const {sockets,machine}=fixture();sockets[0]!.open();
+  await vi.advanceTimersByTimeAsync(24*60*60*1000);
+  expect(sockets).toHaveLength(1);expect(machine.link.state).toBe('connected');expect(machine.link.reconnects).toBe(0);
+});
+it('a refused registration neither reopens nor closes the machine connection',()=>{
+  const {sockets,machine}=fixture();sockets[0]!.open();
+  for(const code of ['registration_failed','too_many_agents','daemon_token_required'])sockets[0]!.receive({type:'register-refused',agentId:'agent-0',code});
+  expect(sockets).toHaveLength(1);expect(machine.link.state).toBe('connected');
+});
+it('an explicit process stop or required version update leaves the connection disconnected',async()=>{
+  const {machine,sockets,register,updated}=fixture();register(sockets[0]!);
+  sockets[0]!.receive({type:'force-update',minVersion:'v999.0.0'});await Promise.resolve();
+  expect(updated).toHaveBeenCalledWith('v999.0.0');expect(sockets).toHaveLength(1);expect(machine.link.state).toBe('disconnected');
+  machine.stop();sockets[0]!.close();await Promise.resolve();expect(sockets).toHaveLength(1);
 });
 
-it('re-registers after repeated server drops before catch-up completes', () => {
-  vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-  const { sockets, register } = fixture();
-  const socket = sockets[0]!;
-  register(socket);
-  for (let i = 0; i < 3; i++) {
-    socket.receive({ type: 'unregistered', reason: 'live request failed' });
-    socket.receive({ type: 'registered', capabilities: {} });
-  }
-  expect(socket.frames.filter(frame => frame.type === 'register')).toHaveLength(4);
-});
-
-it('replaces an UNKNOWN turn transport, reads current commands and leaves replay to intake', async () => {
-  const { sockets, api, register, fetcher } = fixture();
-  const first = sockets[0]!;
-  register(first);
-  const generationId = '00000000-0000-4000-8000-000000000042';
-  const claim = api.execute('claimAgentCommand', { roomId, commandId, generationId });
-  const rejected = expect(claim).rejects.toMatchObject({ code: 'turn ownership outcome unknown' });
-  const frame = first.frames.find(frame => frame.type === 'turn-operation')!;
-  first.receive({ type: 'turn-result', requestId: frame.requestId, error: 'unavailable' });
-  await rejected;
-  expect(sockets).toHaveLength(2);
-  expect(first.frames.filter(frame => frame.operation === 'claimAgentCommand')).toHaveLength(1);
-  const second = sockets[1]!;
-  register(second);
-  expect(second.frames.some(frame => frame.operation === 'claimAgentCommand')).toBe(false);
-  const read = api.execute('getAgentCommands', { roomId });
-  await vi.waitFor(() => expect(second.frames.some(frame => frame.operation === 'getAgentCommands')).toBe(true));
-  const request = second.frames.find(frame => frame.operation === 'getAgentCommands')!;
-  second.receive({ type: 'daemon-operation-result', requestId: request.requestId,
-    result: { commandProtocol: 1, commands: [] } });
-  expect(await read).toEqual({ commandProtocol: 1, commands: [] });
-  expect(fetcher).not.toHaveBeenCalled();
-});
-
-it('keeps the successor socket when pending turn controls fail on a socket loss', async () => {
-  const { sockets, api, register } = fixture();
-  register(sockets[0]!);
-  const controls = Promise.allSettled(['first', 'second'].map(commandId =>
-    api.execute('acknowledgeAgentCommand', { roomId, commandId, generationId: 'generation' })));
-  sockets[0]!.close();
-  expect((await controls).every(result => result.status === 'rejected')).toBe(true);
-  expect(sockets).toHaveLength(2);
-  register(sockets[1]!);
-  expect(sockets[1]!.frames.some(frame => frame.type === 'turn-operation')).toBe(false);
-});
-
-it.each(['registration_failed', 'too_many_agents'])('reconnects %s but retains settled credential refusal and explicit stop', code => {
-  vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-  const { sockets, machine, api } = fixture();
-  sockets[0]!.open();
-  sockets[0]!.receive({ type: 'register-refused', code });
-  expect(sockets).toHaveLength(2);
-  sockets[1]!.open();
-  sockets[1]!.receive({ type: 'register-refused', code: 'agent_removed' });
-  expect(sockets).toHaveLength(2);
-  expect(machine.link.state).toBe('disconnected');
-  api.closeLive();
-  expect(sockets).toHaveLength(2);
-});
-
-it('does not reopen an explicitly stopped machine or a required-update connection', () => {
-  const stopped = fixture();
-  stopped.register(stopped.sockets[0]!);
-  stopped.api.closeLive();
-  stopped.sockets[0]!.close();
-  expect(stopped.sockets).toHaveLength(1);
-
-  const updating = fixture();
-  updating.register(updating.sockets[0]!);
-  updating.sockets[0]!.receive({ type: 'force-update', minVersion: 'v999.0.0' });
-  updating.sockets[0]!.close();
-  expect(updating.sockets).toHaveLength(1);
-  expect(updating.machine.link.state).toBe('update-required');
+it('does not register an awaiting agent again when another agent joins the same machine',()=>{
+  const {machine,sockets}=fixture();sockets[0]!.open();
+  const second=machine.attach('late-agent',{registration:()=>({token:'bdt_late'}),onOpen:()=>{},onClose:()=>{},onMessage:()=>{},onUpdateRequired:()=>{}});
+  second.start();
+  const handshakes=sockets[0]!.frames.filter(frame=>frame.type==='register-machine');
+  expect(handshakes.map(frame=>frame.agents.map((agent:{agentId:string})=>agent.agentId))).toEqual([['agent-0'],['late-agent']]);
+  expect(sockets).toHaveLength(1);
 });

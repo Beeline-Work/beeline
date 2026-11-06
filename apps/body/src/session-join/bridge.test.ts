@@ -1,7 +1,7 @@
 
 import { afterEach as m40_afterEach, describe as m40_describe, expect as m40_expect, it as m40_it, vi as m40_vi } from 'vitest';
 
-import { mkdtempSync as m40_mkdtempSync, readdirSync as m40_readdirSync, renameSync as m40_renameSync, rmSync as m40_rmSync } from 'node:fs';
+import { mkdtempSync as m40_mkdtempSync, readdirSync as m40_readdirSync, renameSync as m40_renameSync, writeFileSync as m40_writeFileSync, rmSync as m40_rmSync } from 'node:fs';
 
 import { tmpdir as m40_tmpdir } from 'node:os';
 
@@ -57,18 +57,20 @@ m40_describe('durable member delivery ownership',()=>{
     await m40_expect(m40_acceptMemberDelivery(dir,joined.key,runner,{v:1,type:'checkpoint',cursor:{epoch,through:7},mentionCursor:'1'})).rejects.toThrow('backwards');
     m40_expect(m40_readState(dir).sessions[0]).toMatchObject({cursor:'2',streamCursor:{epoch,through:8}});
   });
-  m40_it('never permits direct fallback once a filesystem request was claimed',async()=>{
-    m40_vi.useFakeTimers();const cwd=scratch();const waiting=m40_toolViaOutbox(cwd,'send_message',{text:'synthetic'},1000);
+  m40_it.each([false,true])('waits for the outbox result without timed fallback (claimed=%s)',async claimed=>{
+    m40_vi.useFakeTimers();const cwd=scratch();
+    let settled=false;
+    const waiting=m40_toolViaOutbox(cwd,'send_message',{text:'synthetic'}).then(result=>{settled=true;return result;});
     const folder=m40_join(cwd,'.beeline','outbox');
     const request=m40_readdirSync(folder).find(name=>name.endsWith('.request.json'))!;
-    m40_renameSync(m40_join(folder,request),m40_join(folder,request+'.taking'));
-    await m40_vi.advanceTimersByTimeAsync(1000);
-    m40_expect(await waiting).toEqual({ok:false,error:'Beeline tool result is awaiting confirmation'});
-  });
-  m40_it('permits direct fallback only after atomically withdrawing an unclaimed request',async()=>{
-    m40_vi.useFakeTimers();const cwd=scratch();const waiting=m40_toolViaOutbox(cwd,'read_room',{},1000);
-    await m40_vi.advanceTimersByTimeAsync(1000);
-    m40_expect(await waiting).toBeUndefined();m40_expect(m40_readdirSync(m40_join(cwd,'.beeline','outbox'))).toEqual([]);
+    if(claimed)m40_renameSync(m40_join(folder,request),m40_join(folder,request+'.taking'));
+    await m40_vi.advanceTimersByTimeAsync(24*60*60*1000);
+    m40_expect(settled).toBe(false);
+    m40_vi.useRealTimers();
+    const result=m40_join(folder,request.replace('.request.json','.result.json'));
+    m40_writeFileSync(result+'.tmp',JSON.stringify({ok:true,data:'committed'}));
+    m40_renameSync(result+'.tmp',result);
+    m40_expect(await waiting).toEqual({ok:true,data:'committed'});
   });
 });
 

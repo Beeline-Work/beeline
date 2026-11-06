@@ -5,7 +5,6 @@ import { RoomRuntimeCoordinator } from './room-runtime.js';
 import type { InterruptedTurn } from './force-update-journal.js';
 
 export {
-  DEFAULT_DRAIN_DEADLINE_MS,
   REMOVAL_CONFIRMATION_READS,
   ROOM_JOIN_CONCURRENCY,
   mapWithConcurrency,
@@ -26,9 +25,7 @@ export class ThinDaemonCore {
     baseConfig: BodyConfig,
     options: {
       now?: () => number;
-      drainDeadlineMs?: number;
       daemonApi: DaemonApiClient;
-      onRestartRequested?: () => void;
       onConfigChanged?: () => void | Promise<void>;
     },
   ) {
@@ -64,10 +61,6 @@ export class ThinDaemonCore {
 
   workLoopDiagnostics() {
     return this.roomRuntime.reconciliationDiagnostics();
-  }
-
-  reclaimKnownPrivateStorage(): Promise<void> {
-    return this.roomRuntime.reclaimKnownPrivateStorage();
   }
 
   activeRoomIds(): string[] {
@@ -107,21 +100,6 @@ export class ThinDaemonCore {
   interruptForServerMinimum(): InterruptedTurn[] {
     return this.roomRuntime.interruptForServerMinimum();
   }
-  setDrainDeadlineAt(deadlineAt: number): void {
-    this.roomRuntime.setDrainDeadlineAt(deadlineAt);
-  }
-  /**
-   * `/restart` cancels active work instead of draining it: shutdown reaches its
-   * deadline at once and force-cancels every busy session. Returns whether any
-   * turn was running.
-   */
-  async cancelActiveWorkForRestart(): Promise<boolean> {
-    this.roomRuntime.setDrainDeadlineAt(Date.now());
-    if (this.roomRuntime.quiesceForUpdateIfIdle()) return false;
-    await this.roomRuntime.prepareForForcedUpdateRestart();
-    return true;
-  }
-
   async run(
     opts: {
       pollMs?: number;
@@ -131,7 +109,6 @@ export class ThinDaemonCore {
     } = {},
   ): Promise<'aborted' | 'agent-removed'> {
     const stop = () => {
-      this.roomRuntime.setDrainDeadlineAt(Date.now() + 45_000);
       this.roomRuntime.beginShutdown();
     };
     opts.signal?.addEventListener('abort', stop, { once: true });

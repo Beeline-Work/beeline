@@ -288,7 +288,7 @@ export async function noteFirstSilence(
           input.roomId,
           input.requestId,
           input.agentId,
-          input.reasonKind === 'update-interrupted' ||
+          ['update-interrupted', 'process-exited'].includes(input.reasonKind ?? '') ||
             Boolean(input.reason?.startsWith('turn_backstop:')) || isModelCapacityFault(input.reason),
           systemMessage("system-line.agent-name"),
         ],
@@ -447,7 +447,7 @@ async function inscribeSilence(
       isModelCapacityFault(input.reason) ? 30 * 2 ** (attempt - 1) : 0,
     );
     hiccupRestart = reopened;
-  } else if (classified.kind === 'update-interrupted' && command) {
+  } else if (['update-interrupted', 'process-exited'].includes(classified.kind) && command) {
     // Presence may have already reopened this exact command while the helper
     // was installing. Its generation-free receipt confirms the original
     // request is pending without posting a Room failure line.

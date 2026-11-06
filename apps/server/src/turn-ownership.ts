@@ -1,6 +1,7 @@
 import type { HelperTurnOwnershipSource } from '@beeline/api-contract/helper-turn-ownership';
 import type { SqlDatabase } from './database.js';
 import { OWNED_MODEL_OWNER_END_SCHEMA } from './owned-model-parking.js';
+import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
 
 /** Independent rollout gate. Legacy rows and helpers retain their receipt adapter. */
 export { networkRouterEnabled as turnOwnershipEnabled } from './network-router-rollout.js';
@@ -251,4 +252,22 @@ export async function registerOwnedEffectFence(database: SqlDatabase, command: {
   await database.query('SELECT beeline_register_owned_effect($1,$2,$3,$4,$5)', [
     command.id, command.agent_id, command.generation_id, command.turn_owner_connection_id, command.turn_owner_epoch,
   ]);
+}
+
+/** Archived corners retain only their exact queued cleanup controls. The
+ * current parent and Workspace membership still share the authority fence. */
+export async function lockOwnedTurnRoomAccess(
+  database: SqlDatabase, roomId: string, agentId: string, controlId?: string,
+): Promise<boolean> {
+  await database.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', [ROUTER_AUTHORITY_LOCK]);
+  const access = await database.query(`SELECT 1 FROM rooms room JOIN room_access member
+    ON member.room_id=CASE WHEN room.archived_at IS NULL THEN room.id ELSE room.parent_id END
+    JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
+      AND workspace_member.room_id IS NULL AND workspace_member.identity_id=member.identity_id
+      AND workspace_member.removed_at IS NULL
+    WHERE room.id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL
+      AND (room.archived_at IS NULL OR EXISTS(SELECT 1 FROM agent_commands control
+        WHERE control.id=$3 AND control.room_id=room.id AND control.agent_id=$2
+          AND control.action IN ('stop','restart')))`, [roomId, agentId, controlId ?? null]);
+  return Boolean(access.rowCount);
 }

@@ -1,5 +1,5 @@
 import type { TurnTrace } from './turn-trace.js';
-import type { SessionLifecycle } from './session-scheduler.js';
+import type { AgentProcessLifecycle } from './agent-process.js';
 import { mkdir, writeFile } from 'node:fs/promises';
 import type { AgentModelConfigOption } from './model-types.js';
 import { claimGrantedHostRoutes } from './host-mcp-route.js';
@@ -195,12 +195,12 @@ export function recordSessionModelFallback(
   }).catch(error => console.error(`[thin-core] failed to persist automatic model fallback for ${surface}:`, error));
 }
 
-/** Close capacity-wait timing at the actual activation/current-session check. */
-export function tracedSessionLifecycle(
+/** Close queue timing at the actual activation/current-session check. */
+export function tracedAgentProcessLifecycle(
   activate: () => Promise<string>, isCurrent: () => Promise<boolean>, trace?: TurnTrace,
-): Pick<SessionLifecycle, 'activate' | 'isCurrent' | 'onStateChange'> {
+): Pick<AgentProcessLifecycle, 'start' | 'isCurrent'> {
   return {
-    activate: async () => {
+    start: async () => {
       trace?.end('queue-wait');
       return trace ? trace.measure('activation', activate) : activate();
     },
@@ -208,6 +208,5 @@ export function tracedSessionLifecycle(
       trace?.end('queue-wait');
       return trace ? trace.measure('activation', isCurrent) : isCurrent();
     },
-    onStateChange: state => { if (state === 'waiting-for-slot') trace?.noteCapacityWait(); },
   };
 }

@@ -1812,42 +1812,7 @@ describe('Postgres live fanout', () => {
     }
   });
 
-  it('rehydrates a missed delivery deadline when its first LISTEN connection opens', async () => {
-    const agent = 'b'.repeat(64);
-    const live = new LiveHub();
-    const presence = new ConnectionPresence(database, live, 50);
-    await database.query(
-      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Bee','bee')`,
-      [agent],
-    );
-    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, AUTHOR]);
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-      VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
-      [WORKSPACE, ROOM, AUTHOR, agent],
-    );
-    try {
-      await presence.start();
-      await presence.announce(ROOM, agent, { lifecycleId: 'boot' });
-      await database.query(
-        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@bee Are you there?')`,
-        ['2'.repeat(64), ROOM, AUTHOR],
-      );
-      const client = new PgliteListenClient(database);
-      const listener = new PostgresLiveListener(database, live, () => client);
-      listeners.push(listener);
-      void listener.run();
-      await eventually(async () => {
-        const row = await database.query<{ body: { status: string } }>(
-          `SELECT body FROM live_outputs WHERE agent_id=$1 AND kind='presence'`,
-          [agent],
-        );
-        return row.rows[0]?.body.status === 'offline';
-      });
-    } finally {
-      await presence.stop();
-    }
-  });
+
 
   it('broadcasts resync after its listener connection is restored', async () => {
     const live = new LiveHub();

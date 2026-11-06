@@ -9,7 +9,7 @@ import { migrate, migrateData, type QueryResult, type SqlDatabase } from './data
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { describedWorkflow, PgliteDatabase, migratedDatabase, assignCornerWorker } from './test-support.js';
 import { PhoneService } from './phone-service.js';
-import { DaemonService } from './daemon-service.js';
+import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';
 import { GitHubOperations } from './github-operations.js';
 import { LiveHub } from './live.js';
 import { backfillArchivedCornerCleanup } from './corner-cleanup-backfill.js';
@@ -3360,7 +3360,7 @@ describe('the gate stays shut (AC-8)', () => {
   it('Demonstrated R8-HOLD and HOLD-IDS: HTTP agent and socket person hold release stay separate', async () => {
     const { createBeelineServer } = await import('../dist/server.js');
     const { PhoneService: BuiltPhone } = await import('../dist/phone-service.js');
-    const { DaemonService: BuiltDaemon } = await import('../dist/daemon-service.js');
+    const { HelperDaemonService: BuiltDaemon } = await import('../dist/test-fixtures/helper-daemon.js');
     const { GitHubOperations: BuiltGitHub } = await import('../dist/github-operations.js');
     const { TokenAuth, tokenHash } = await import('./auth.js');
     const auth = new TokenAuth(db, async () => { throw new Error('fixture does not sign in'); });

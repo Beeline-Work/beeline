@@ -73,7 +73,7 @@ export function freeAgentPiConfig(grant: Pick<FreeAgentGrant, 'modelBaseUrl' | '
 async function freeAgentInput(model: string): Promise<Array<'text' | 'image'>> {
   try {
     const response = await fetch(`https://openrouter.ai/api/v1/models/${model}/endpoints`, {
-      signal: AbortSignal.timeout(10_000),
+      signal: undefined,
     });
     if (!response.ok) return ['text'];
     return piInputModalities(parseOpenRouterEndpoints(await response.json()).inputModalities) ?? ['text'];
@@ -104,7 +104,7 @@ export async function fetchFreeAgentGrant(
   _legacySleep?: (ms: number) => Promise<void>,
 ): Promise<FreeAgentGrant> {
   const response=await fetchImpl(new URL('/v1/free-agents/bootstrap',serverUrl),{
-    method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({token}),signal:AbortSignal.timeout(30_000),
+    method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({token}),signal:undefined,
   });
   if(response.status===401)throw new Error('free agent bootstrap token was refused');
   if(!response.ok)throw new Error(`free agent bootstrap failed: HTTP ${response.status}`);
@@ -241,7 +241,7 @@ export async function requestFreeAgentSleep(
     method: 'POST',
     headers: { authorization: `Bearer ${transport.daemonToken}`, 'content-type': 'application/json' },
     body: JSON.stringify({ refresh: options.refresh === true }),
-    signal: AbortSignal.timeout(15_000),
+    signal: undefined,
   });
   if (!response.ok) throw new Error(`sleep request failed: HTTP ${response.status}`);
   return ((await response.json()) as { sleep?: unknown }).sleep === true;

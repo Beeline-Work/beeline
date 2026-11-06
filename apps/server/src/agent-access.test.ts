@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { taggedIdentityIdsSql } from './message-mentions.js';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { PhoneService, ACCESS_POLICY_AUTHORITY_MESSAGE } from './phone-service.js';
-import { DaemonService } from './daemon-service.js';
+import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';
 import { LiveHub } from './live.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { AGENT_MENTION_NOTICE_GRACE_MS } from '@beeline/api-contract/agent-access';

@@ -1,0 +1,94 @@
+{
+  "apps/body/src/live-link.ts::start::#connect": {
+    "count": 1,
+    "reason": "Initial open, actual socket close, and explicit login/version/process end."
+  },
+  "apps/body/src/live-link.ts::stop::close": {
+    "count": 1,
+    "reason": "Initial open, actual socket close, and explicit login/version/process end."
+  },
+  "apps/body/src/live-link.ts::send::send": {
+    "count": 1,
+    "reason": "Initial open, actual socket close, and explicit login/version/process end."
+  },
+  "apps/body/src/live-link.ts::#connect::terminate": {
+    "count": 1,
+    "reason": "Initial open, actual socket close, and explicit login/version/process end."
+  },
+  "apps/body/src/live-link.ts::#connect::#connect": {
+    "count": 1,
+    "reason": "Initial open, actual socket close, and explicit login/version/process end."
+  },
+  "apps/body/src/machine-link.ts::<module>::send": {
+    "count": 1,
+    "reason": "Machine registration, request correlation, and explicit process stop."
+  },
+  "apps/body/src/machine-link.ts::#dispatch::send": {
+    "count": 2,
+    "reason": "Machine registration, request correlation, and explicit process stop."
+  },
+  "apps/body/src/machine-link.ts::stop::send": {
+    "count": 1,
+    "reason": "Machine registration, request correlation, and explicit process stop."
+  },
+  "apps/body/src/machine-link.ts::send::send": {
+    "count": 2,
+    "reason": "Machine registration, request correlation, and explicit process stop."
+  },
+  "apps/body/src/machine-link.ts::receive::send": {
+    "count": 1,
+    "reason": "Machine registration, request correlation, and explicit process stop."
+  },
+  "apps/body/src/machine-link.ts::#register::send": {
+    "count": 1,
+    "reason": "Machine registration, request correlation, and explicit process stop."
+  },
+  "apps/server/src/machine-connection.ts::<module>::close": {
+    "count": 1,
+    "reason": "Authenticated machine output and login/version changes."
+  },
+  "apps/server/src/machine-connection.ts::#forceUpdate::send": {
+    "count": 1,
+    "reason": "Authenticated machine output and login/version changes."
+  },
+  "apps/server/src/machine-connection.ts::admit::close": {
+    "count": 1,
+    "reason": "Authenticated machine output and login/version changes."
+  },
+  "apps/server/src/machine-connection.ts::serveAgentSocket::close": {
+    "count": 3,
+    "reason": "Authenticated machine output and login/version changes."
+  },
+  "apps/server/src/machine-connection.ts::serveAgentSocket::terminate": {
+    "count": 1,
+    "reason": "Authenticated machine output and login/version changes."
+  },
+  "apps/server/src/machine-connection.ts::serveAgentSocket::send": {
+    "count": 1,
+    "reason": "Authenticated machine output and login/version changes."
+  },
+  "apps/server/src/machine-connection.ts::serveMachineSocket::close": {
+    "count": 5,
+    "reason": "Authenticated machine output and login/version changes."
+  },
+  "apps/server/src/machine-connection.ts::serveMachineSocket::send": {
+    "count": 5,
+    "reason": "Authenticated machine output and login/version changes."
+  },
+  "apps/server/src/machine-connection.ts::machineConnectionOutput::send": {
+    "count": 1,
+    "reason": "Authenticated machine output and login/version changes."
+  },
+  "apps/server/src/server.ts::createBeelineServer::terminate": {
+    "count": 1,
+    "reason": "Server shutdown or phone socket output; helper frames use the machine connection owner."
+  },
+  "apps/server/src/server.ts::createBeelineServer::close": {
+    "count": 1,
+    "reason": "Server shutdown or phone socket output; helper frames use the machine connection owner."
+  },
+  "apps/body/src/live-link.ts::#connect::new WebSocket": {
+    "count": 1,
+    "reason": "The single physical machine WebSocket constructor; only start and actual close enter it."
+  }
+}

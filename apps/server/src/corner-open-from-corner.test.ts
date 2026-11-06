@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
-import { DaemonService } from './daemon-service.js';
+import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';
 import { LiveHub } from './live.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 

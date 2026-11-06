@@ -425,6 +425,7 @@ export async function serveComputerSession(
     response.writeHead(307, { 'fly-replay': `instance=${row.relay_instance_id}`, 'cache-control': 'no-store' }).end();
     return;
   }
+  live.publish({type:'invalidate',roomId:row.room_id,reason:'computer-viewer-activity',targetAgentId:row.agent_id,requestId:id});
   if (row.upstream_url !== 'body:') {
     if (new URL(request.url ?? '/', 'http://beeline.local').pathname === `/s/${id}`) {
       response.writeHead(308, { location: `/s/${id}/`, 'cache-control': 'no-store' }).end();
@@ -970,6 +971,8 @@ export async function upgradeComputerSession(
   let preview = fixedPreview || warm;
   const viewerId = query.get('access')!.split('.')[0]!;
   computerWebSockets.handleUpgrade(request, socket, head, (viewer) => {
+    const activity=()=>live?.publish({type:'invalidate',roomId:row.room_id,reason:'computer-viewer-activity',targetAgentId:row.agent_id,requestId:id});
+    activity();
     const channel = squireChannel(id);
     const startedAt = Date.now();
     channel.viewers.add(viewer);
@@ -997,6 +1000,7 @@ export async function upgradeComputerSession(
       if (Buffer.byteLength(data.toString()) > 4_096) return;
       let message: { type?: string };
       try { message = JSON.parse(data.toString()) as typeof message; } catch { return; }
+      activity();
       if (warm && message.type === 'viewer-mode') {
         preview = fixedPreview || !(message as { interactive?: boolean }).interactive;
         if (preview) {

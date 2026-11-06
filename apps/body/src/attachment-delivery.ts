@@ -65,7 +65,7 @@ export async function fetchBoundedBytes(
   fetchImpl: typeof fetch = fetch,
 ): Promise<BoundedFetchResult> {
   const response = await fetchImpl(url, {
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    signal: undefined,
   });
   if (response.status === 410 || !response.ok) {
     await response.body?.cancel();

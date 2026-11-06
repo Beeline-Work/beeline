@@ -42,7 +42,6 @@ export class ReleaseTransaction {
   #handoffAt: number | undefined;
   #interruptAt: number | undefined;
   #deadlineAt: number | undefined;
-  #timer: ReturnType<typeof setTimeout> | undefined;
   #handingOff: Promise<void> | undefined;
   #notice: string | undefined;
   #completed = false;
@@ -94,7 +93,6 @@ export class ReleaseTransaction {
       });
       if (!identity?.version || !versionAtLeast(identity.version, this.#minimum)) {
         this.#prepared = undefined;
-        clearTimeout(this.#timer);
         throw new Error(
           `published helper ${identity?.version ?? 'unknown'} is below required ${this.#minimum}`,
         );
@@ -106,8 +104,6 @@ export class ReleaseTransaction {
       this.#handoffAt = undefined;
       this.#interruptAt = undefined;
       this.#draining = false;
-      clearTimeout(this.#timer);
-      this.#timer = undefined;
       this.options.changed(undefined);
       return;
     }
@@ -119,14 +115,6 @@ export class ReleaseTransaction {
     );
     this.#interruptAt ??= this.now() + UPDATE_INTERRUPT_DEADLINE_MS;
     this.options.changed(releaseId);
-    if (!this.#timer)
-      this.#timer = setTimeout(
-        () => {
-          this.#timer = undefined;
-          void this.idleChanged();
-        },
-        Math.max(0, this.#handoffAt - this.now()),
-      );
     await this.idleChanged();
   }
   async idleChanged(): Promise<void> {
@@ -151,14 +139,8 @@ export class ReleaseTransaction {
           this.options.failed(error, this.#minimum);
         }
       }
-      if (!this.#timer && this.now() >= this.#handoffAt!)
-        this.#timer = setTimeout(() => {
-          this.#timer = undefined;
-          void this.idleChanged();
-        }, Math.max(0, this.#interruptAt! - this.now()));
       return;
     }
-    clearTimeout(this.#timer);
     const target = this.#prepared;
     this.#handingOff = this.options
       .handoff(target, interrupted)
@@ -176,7 +158,6 @@ export class ReleaseTransaction {
     await this.#handingOff;
   }
   dispose(): void {
-    clearTimeout(this.#timer);
   }
   private now(): number {
     return (this.options.now ?? Date.now)();
@@ -255,27 +236,10 @@ export async function prepareReleaseInWorker(
     child.stderr!.on('data', (chunk: string) => {
       stderr = (stderr + chunk).slice(-16_000);
     });
-    const kill = (signal: NodeJS.Signals) => {
-      try {
-        process.kill(-child.pid!, signal);
-      } catch {
-        child.kill(signal);
-      }
-    };
-    const timer = setTimeout(
-      () => {
-        kill('SIGTERM');
-        setTimeout(() => kill('SIGKILL'), 1000).unref();
-        reject(new Error('release prepare deadline exceeded'));
-      },
-      Math.max(0, deadlineAt - Date.now()),
-    );
     child.once('error', (error) => {
-      clearTimeout(timer);
       reject(error);
     });
     child.once('exit', (code) => {
-      clearTimeout(timer);
       if (code !== 0)
         return reject(new Error(`release preparation failed (${code}): ${stderr.trim()}`));
       try {

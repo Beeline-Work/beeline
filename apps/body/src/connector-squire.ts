@@ -209,7 +209,6 @@ export type StreamedShellRunner = (
 export const CONNECT_TIMEOUT_MS = 300_000;
 
 /** How long a connect that reported `connected` may keep running before it is ended. */
-const CONNECTED_EXIT_GRACE_MS = 2_000;
 
 /**
  * Default streamed runner: spawns the process, reads its NEWLINE-DELIMITED
@@ -245,24 +244,8 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env, o
     // The one copy of the run's answer: the last report received. Nothing
     // else is remembered and nothing is inferred from it.
     let report: SquireConnectReport | undefined;
-    let finishing: ReturnType<typeof setTimeout> | undefined;
-
-    // This timer bounds the ceremony itself, not just the wait for its URL: it
-    // stays armed after the surface is published, because nothing downstream
-    // reaps the connect once the connector row leaves `installing`. The human
-    // has until it fires to finish; after that the Xvfb/x11vnc/websockify/
-    // cloudflared rig under the connect goes with the process group.
-    const safetyTimer = setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        resolve({ stdout, stderr, pid: child.pid ?? undefined, report, abort: () => {} });
-      }
-      killConnectTree(child);
-    }, CONNECT_TIMEOUT_MS);
 
     const abort = () => {
-      clearTimeout(safetyTimer);
-      clearTimeout(finishing);
       killConnectTree(child);
     };
 
@@ -299,7 +282,6 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env, o
     };
 
     const settle = (result: StreamedCommandResult) => {
-      clearTimeout(safetyTimer);
       finish(result);
     };
 
@@ -334,8 +316,8 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env, o
       // signs in, but its process can outlive it while the remote-login rig
       // winds down. The exit is what re-drains this helper, so end it here
       // instead of leaving the row installing until the safety timer.
-      if (resolved && report?.terminal && report.state === 'connected' && !finishing) {
-        finishing = setTimeout(abort, CONNECTED_EXIT_GRACE_MS);
+      if (resolved && report?.terminal && report.state === 'connected') {
+        abort();
       }
     };
 
@@ -351,7 +333,6 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env, o
     });
 
     child.on('close', () => {
-      clearTimeout(finishing);
       notifyExit();
       consumeReports(true);
       settle({
@@ -364,7 +345,6 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env, o
     });
 
     child.on('error', () => {
-      clearTimeout(finishing);
       notifyExit();
       settle({ stdout, stderr, pid: child.pid ?? undefined, report, abort: () => {} });
     });
@@ -680,17 +660,12 @@ export async function resolveSquireConnectSpec(run: ShellRunner): Promise<Squire
 export async function prepareHostedSquire(
   run: ShellRunner,
   sockets: { brokerSocket: string; mcpSocket: string },
-  timeoutMs = 60_000,
+  _timeoutMs = 60_000,
 ): Promise<boolean> {
-  const started = await run('systemctl', ['--user', '--no-block', 'start', 'trusty-squire-broker.service']);
+  const started = await run('systemctl', ['--user', 'start', 'trusty-squire-broker.service']);
   if (started.code !== 0) return false;
-  const deadline = Date.now() + timeoutMs;
-  do {
-    if (await squireBrokerSocketReady(sockets.brokerSocket) && await squireBrokerSocketReady(sockets.mcpSocket))
-      return true;
-    await new Promise(resolve => setTimeout(resolve, Math.min(100, Math.max(0, deadline - Date.now()))));
-  } while (Date.now() < deadline);
-  return false;
+  return await squireBrokerSocketReady(sockets.brokerSocket) && await squireBrokerSocketReady(sockets.mcpSocket);
+
 }
 
 /**
@@ -912,9 +887,9 @@ const PAGE_READY_TIMEOUT_MS = 30_000;
 
 /** One admitted readiness observation. A pending tunnel never schedules another
  * GET; another explicit setup action or actual report can observe it anew. */
-export async function awaitPublicPage(url: string, timeoutMs = PAGE_READY_TIMEOUT_MS): Promise<boolean> {
+export async function awaitPublicPage(url: string, _timeoutMs = PAGE_READY_TIMEOUT_MS): Promise<boolean> {
   try {
-    const response = await fetch(url, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(Math.max(1,Math.min(5_000,timeoutMs))) });
+    const response = await fetch(url, { method: 'GET', redirect: 'manual', signal: undefined });
     await response.body?.cancel().catch(() => undefined);
     return response.status < 500;
   } catch { return false; }

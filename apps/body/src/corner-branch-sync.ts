@@ -3,7 +3,6 @@ import { access, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 export const CORNER_GIT_SYNC_TIMEOUT_MS = 120_000;
-export const CORNER_GIT_SYNC_KILL_GRACE_MS = 1_000;
 
 class CornerGitSyncInterruptedError extends Error {}
 
@@ -41,15 +40,13 @@ export async function syncCornerBranch(input: CornerBranchSyncInput): Promise<Co
     const signal = input.signal && !cleanup
       ? AbortSignal.any([input.signal, controller.signal])
       : controller.signal;
-    const timer = setTimeout(() => controller.abort(), CORNER_GIT_SYNC_TIMEOUT_MS);
     const interrupted = () =>
       new CornerGitSyncInterruptedError(
         `corner git sync ${args[0]} ${controller.signal.aborted ? `timed out after ${CORNER_GIT_SYNC_TIMEOUT_MS}ms` : 'stopped'}`,
       );
-    try {
+    {
       if (signal.aborted) throw interrupted();
       return await new Promise<string>((resolve, reject) => {
-        let killTimer: NodeJS.Timeout | undefined;
         let stdout = '';
         let failure: Error | null = null;
         const child = input.git
@@ -72,13 +69,12 @@ export async function syncCornerBranch(input: CornerBranchSyncInput): Promise<Co
             cleanup();
             reject(interrupted());
           } else {
-            killTimer = setTimeout(() => child.kill('SIGKILL'), CORNER_GIT_SYNC_KILL_GRACE_MS);
+            child.kill('SIGKILL');
           }
         };
         signal.addEventListener('abort', abort, { once: true });
         const cleanup = () => {
           signal.removeEventListener('abort', abort);
-          if (killTimer) clearTimeout(killTimer);
         };
         if (child)
           child.once('close', () => {
@@ -89,8 +85,6 @@ export async function syncCornerBranch(input: CornerBranchSyncInput): Promise<Co
           });
         else input.git!(args).then(resolve, reject).finally(cleanup);
       });
-    } finally {
-      clearTimeout(timer);
     }
   };
   const marker = await readFile(resolve(input.worktreePath, '.git'), 'utf8').catch(() => '');

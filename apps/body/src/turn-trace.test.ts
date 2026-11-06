@@ -73,16 +73,13 @@ describe('turn phase trace', () => {
     const { now, advance } = clock();
     const turn = trace(now);
     turn.noteScheduler('queue', {
-      live: 4,
-      pending: 0,
+      running: 4,
+      warm: 0,
       busy: 4,
       queuedChannels: 2,
-      maxLive: 4,
-      perRoom: 10,
     });
     turn.start('queue-wait');
     advance(2_500);
-    turn.noteCapacityWait();
     turn.end('queue-wait');
     turn.noteActivation('cold');
     turn.start('activation');
@@ -104,7 +101,6 @@ describe('turn phase trace', () => {
     expect(record.attempts).toHaveLength(1);
     const [attempt] = record.attempts;
     expect(attempt!.activation).toBe('cold');
-    expect(attempt!.capacityWait).toBe(true);
     expect(attempt!.phases).toEqual({
       'queue-wait': 2_500,
       activation: 3_100,
@@ -114,7 +110,7 @@ describe('turn phase trace', () => {
       publish: 180,
     });
     expect(record.totalMs).toBe(10_800);
-    expect(record.scheduler.atQueue?.maxLive).toBe(4);
+    expect(record.scheduler.atQueue?.running).toBe(4);
   });
 
   it('records how the institutional-memory snapshot fetch resolved, absent when it never ran', async () => {

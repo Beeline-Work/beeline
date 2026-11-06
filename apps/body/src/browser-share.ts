@@ -15,7 +15,7 @@ export type ComputerActivityEvent = {
 export async function findChromiumPage(debugUrl: string, target?: string): Promise<ChromiumPage> {
   const origin = new URL(debugUrl);
   if (!['http:', 'https:'].includes(origin.protocol)) throw new Error('Chromium debug URL is invalid');
-  const response = await fetch(new URL('/json/list', origin), { signal: AbortSignal.timeout(5_000) });
+  const response = await fetch(new URL('/json/list', origin), { signal: undefined });
   if (!response.ok) throw new Error('Chromium debugging endpoint is unavailable');
   const pages = (await response.json()) as ChromiumPage[];
   const page = pages.find((item) => item.type === 'page' &&
@@ -67,13 +67,11 @@ export async function shareChromiumPage(input: {
     cdp.send(JSON.stringify({ id, method, params }));
     return id;
   };
-  let lastFrameAt = 0;
   let firstFrameLogged = false;
   let inputCount = 0;
   let screenshotId: number | undefined;
   let copyId: number | undefined;
   let screenshotStartedAt = 0;
-  let fallbackTimer: NodeJS.Timeout | undefined;
   const capture = () => {
     if (screenshotId !== undefined && Date.now() - screenshotStartedAt < 5_000) return;
     screenshotId = sendCdp('Page.captureScreenshot', { format: 'jpeg', quality: 65, captureBeyondViewport: false });
@@ -110,7 +108,6 @@ export async function shareChromiumPage(input: {
       return;
     }
     if (message.method !== 'Page.screencastFrame') return;
-    lastFrameAt = Date.now();
     if (!firstFrameLogged) { firstFrameLogged = true; console.error('[computer-share] first JPEG forwarded from screencast'); }
     // CDP frames are JSON text. `ws` passes incoming text as a Buffer, but
     // sending that Buffer makes the viewer receive a binary Blob instead.
@@ -122,6 +119,7 @@ export async function shareChromiumPage(input: {
   relay.on('message', (data) => {
     let message: { type?: string; method?: string; params?: Record<string, unknown> };
     try { message = JSON.parse(data.toString()) as typeof message; } catch { return; }
+    if(message.type==='frame'){capture();return;}
     if (message.type === 'takeover') { share.controlled = true; console.error('[computer-share] viewer took control'); }
     else if (message.type === 'release') { share.controlled = false; console.error('[computer-share] viewer released control'); }
     else if (share.controlled && message.type === 'copy')
@@ -135,7 +133,6 @@ export async function shareChromiumPage(input: {
   const finish = () => {
     if (shares.get(input.page.id) !== share) return;
     shares.delete(input.page.id);
-    clearTimeout(fallbackTimer);
     cdp.close(); relay.close();
     void input.onEnded();
   };
@@ -146,15 +143,7 @@ export async function shareChromiumPage(input: {
   // A static or externally driven tab may never deliver a screencast frame.
   // Capture one immediately, then keep a slow fallback only while it is quiet.
   capture();
-  const scheduleFallback = () => {
-    fallbackTimer = setTimeout(() => {
-      if (shares.get(input.page.id) !== share) return;
-      if (Date.now() - lastFrameAt > 1_500) capture();
-      scheduleFallback();
-    }, 1_000);
-    fallbackTimer.unref();
-  };
-  scheduleFallback();
+
 }
 
 /** One live event wait, with one authoritative reconcile if the socket reconnects. */
@@ -174,11 +163,6 @@ export async function waitForComputerHandback(input: {
     const result = await new Promise<{ type: 'handoff' | 'ended'; note?: string; events: ComputerActivityEvent[] } | undefined>((resolve, reject) => {
       const socket = new WebSocket(url, { headers: { authorization: `Bearer ${input.daemonToken}` } });
       let settled = false;
-      const timer = input.expiresAt === undefined ? undefined : setTimeout(() => {
-        settled = true;
-        resolve({ type: 'ended', note: 'Squire live share expired', events });
-        socket.close();
-      }, Math.max(0, input.expiresAt - Date.now()));
       socket.on('message', (data) => {
         try {
           const value = JSON.parse(data.toString()) as {
@@ -206,13 +190,12 @@ export async function waitForComputerHandback(input: {
             return;
           }
           settled = true;
-          if (timer) clearTimeout(timer);
           resolve({ type: value.type, ...(value.note ? { note: value.note } : {}), events });
           socket.close();
-        } catch (error) { if (timer) clearTimeout(timer); reject(error); socket.close(); }
+        } catch (error) { reject(error); socket.close(); }
       });
-      socket.once('close', () => { if (timer) clearTimeout(timer); if (!settled) resolve(undefined); });
-      socket.once('error', () => { if (timer) clearTimeout(timer); if (!settled) resolve(undefined); });
+      socket.once('close', () => { if (!settled) resolve(undefined); });
+      socket.once('error', () => { if (!settled) resolve(undefined); });
     });
     if (result) return result;
   }

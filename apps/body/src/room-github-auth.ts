@@ -48,7 +48,7 @@ async function squire(context, name, args) {
   const response = await fetch(config.relay.url + '/mcp', {
     method: 'POST', headers: { authorization: 'Bearer ' + config.relay.token, 'content-type': 'application/json' },
     body: JSON.stringify({ ...context, method: 'tools/call', params: { name, arguments: args } }),
-    signal: AbortSignal.timeout(210000),
+    signal: undefined,
   });
   const payload = await response.json();
   if (!response.ok || payload.error) throw new Error('GitHub connection could not be used');
@@ -62,7 +62,7 @@ async function daemon(auth, context, name, args) {
     method: 'POST', headers: { authorization: 'Bearer ' + auth.daemonToken,
       'content-type': 'application/json', 'x-beeline-helper-version': auth.helperVersion ?? 'v0.0.0' },
     body: JSON.stringify({ ...context, agentId: auth.agentId, ...args }),
-    signal: AbortSignal.timeout(210000),
+    signal: undefined,
   });
   if (!response.ok) throw new Error('GitHub app tool request failed');
   return await response.json();
@@ -73,7 +73,6 @@ function registry(connectorId, context, connectionId, method, params, id) {
     const socket = createConnection(config.registryBrokerSocket);
     let output = '';
     socket.setEncoding('utf8');
-    socket.setTimeout(125000, () => socket.destroy(new Error('GitHub MCP request timed out')));
     socket.on('error', reject);
     socket.on('connect', () => socket.end(JSON.stringify({ connectorId, turn: context, connectionId,
       line: JSON.stringify({ jsonrpc: '2.0', ...(id === undefined ? {} : { id }), method, params }) })));
@@ -190,7 +189,7 @@ async function main() {
     method: 'POST',
     headers: { authorization: 'Bearer ' + auth.daemonToken, 'content-type': 'application/json',
       'x-beeline-helper-version': auth.helperVersion ?? 'v0.0.0' },
-    body: JSON.stringify({ roomId: context.roomId }), signal: AbortSignal.timeout(30000),
+    body: JSON.stringify({ roomId: context.roomId }), signal: undefined,
   });
   if (!response.ok) throw new Error('GitHub connection could not be checked');
   const workbench = await response.json();

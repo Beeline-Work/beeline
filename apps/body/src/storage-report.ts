@@ -32,7 +32,7 @@ export async function helperStorageReport(supervisorRoot = defaultSupervisorRoot
       const operation = async <T>(name: 'getDaemonBootstrap' | 'listRoomCorners', operationInput: unknown): Promise<T> => {
         const response = await fetch(new URL(`/v1/daemon/operations/${name}`, runtime.transport!.baseUrl), {
           method: 'POST', headers: { authorization: `Bearer ${runtime.transport!.daemonToken}`, 'content-type': 'application/json' },
-          body: JSON.stringify(operationInput), signal: AbortSignal.timeout(30_000),
+          body: JSON.stringify(operationInput), signal: undefined,
         });
         if (!response.ok) {
           const payload = await response.json().catch(() => ({})) as { error?: string; code?: string };

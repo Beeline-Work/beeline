@@ -2,7 +2,7 @@ import { phoneFetch } from '../../../tests/helpers/phone-operation.js';
 import type { AddressInfo } from 'node:net';
 import WebSocket from 'ws';
 import { TokenAuth } from './auth.js';
-import { DaemonService } from './daemon-service.js';
+import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';
 import { createBeelineServer } from './server.js';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';

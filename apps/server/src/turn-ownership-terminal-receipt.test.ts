@@ -7,7 +7,7 @@ import { migratedDatabase, type PgliteDatabase } from './test-support.js';
 const room='11111111-1111-4111-8111-111111111111',workspace='22222222-2222-4222-8222-222222222222';
 const owner='b'.repeat(64),agent='a'.repeat(64),source={connectionId:'receipt-owner',epoch:1};
 const input={roomId:room,requestId:'receipt-request',generationId:'receipt-generation'};
-describe('owned terminal receipt after committed requeue',()=>{
+describe('owned terminal receipts and archived cleanup controls',()=>{
   let db:PgliteDatabase,daemon:DaemonService,commandId:string;
   beforeEach(async()=>{
     db=await migratedDatabase();daemon=new DaemonService(db,new LiveHub());
@@ -66,4 +66,29 @@ describe('owned terminal receipt after committed requeue',()=>{
       ()=>frames.push('must-not-confirm-foreign-binding'))).rejects.toThrow();
     expect(frames).toEqual([]);
   });
+
+  it('admits only exact archived-corner controls under current parent and Workspace membership', async () => {
+    const corner = '33333333-3333-4333-8333-333333333333';
+    await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Cleanup corner')`, [corner,workspace,room]);
+    const work = (await createAgentCommand(db, { roomId:corner, agentId:agent, sourceMessageId:input.requestId, reason:'human_mention' }))!;
+    const stop = (await createAgentCommand(db, { roomId:corner, agentId:agent, sourceMessageId:input.requestId,
+      reason:'corner_close', action:'stop', turnRequestId:work.turn_request_id }))!;
+    await db.query('UPDATE rooms SET archived_at=now() WHERE id=$1', [corner]);
+    const control = { roomId:corner, commandId:stop.id, generationId:'cleanup-generation' };
+    await daemon.execute('claimAgentCommand', control, agent, source);
+    const frames:string[] = [];
+    await daemon.fenceOwnedTurnReply(agent, source, control, () => frames.push('claimed'), true);
+    await daemon.execute('acknowledgeAgentCommand', control, agent, source);
+    await daemon.fenceOwnedTurnReply(agent, source, control, () => frames.push('acknowledged'));
+    expect(frames).toEqual(['claimed','acknowledged']);
+    await expect(daemon.execute('claimAgentCommand', { ...control, commandId:work.id }, agent, source)).rejects.toThrow();
+    await db.query('UPDATE memberships SET removed_at=now() WHERE identity_id=$1 AND room_id IS NULL', [agent]);
+    await expect(daemon.execute('acknowledgeAgentCommand', control, agent, source)).rejects.toThrow('access denied');
+    await expect(daemon.fenceOwnedTurnReply(agent, source, control, () => frames.push('revoked-workspace'))).rejects.toThrow();
+    await db.query('UPDATE memberships SET removed_at=NULL WHERE identity_id=$1 AND room_id IS NULL', [agent]);
+    await db.query('UPDATE memberships SET removed_at=now() WHERE identity_id=$1 AND room_id=$2', [agent,room]);
+    await expect(daemon.execute('acknowledgeAgentCommand', control, agent, source)).rejects.toThrow('access denied');
+    expect(frames).toHaveLength(2);
+  });
+
 });

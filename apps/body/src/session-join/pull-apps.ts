@@ -1,3 +1,4 @@
+import { watch } from 'node:fs/promises';
 // Apps that collect Beeline messages themselves: ZCode through a small MCP server of ours, Antigravity's App through
 // a sidecar that hands them to `agentapi`. Ported from Reason Network (src/setup/zcode.rs, src/antigravity.rs),
 // Copyright 2026 Reason Machines, Inc., MIT OR Apache-2.0. See ./NOTICE and ./UPSTREAM.json for the copied commit.
@@ -66,8 +67,9 @@ export async function antigravityOnce(dir: string, live: HookSession[], send: Se
 
 /** The App launches this sidecar with `agentapi` on PATH. */
 export async function runAntigravitySidecar(dir: string): Promise<never> {
-  for (;;) {
-    await antigravityOnce(dir, hookSessions(dir)).catch(() => 0);
-    await new Promise(resolve => setTimeout(resolve, 3000));
+  await antigravityOnce(dir,hookSessions(dir)).catch(()=>0);
+  for await(const event of watch(dir,{recursive:true})){
+    if(event.filename?.startsWith('inbox/'))await antigravityOnce(dir,hookSessions(dir)).catch(()=>0);
   }
+  throw new Error('session inbox watcher closed');
 }

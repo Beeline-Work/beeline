@@ -878,12 +878,8 @@ describe('connect_app', () => {
     const generationId = owned ? 'owned-provider-parity' : GENERATION;
     if (presence) {
       const epoch = await presence.claimConnection(HELPER, {connectionId:'owned-provider-parity'});
-      // A fresh binding leaves the fixture's historical legacy generation intact.
-      await database.query(`UPDATE agent_commands SET generation_id=$2,
-        turn_owner_connection_id=$3,turn_owner_epoch=$4,lease_expires_at=NULL WHERE id=$1`,
-        [COMMAND,generationId,'owned-provider-parity',epoch]);
-      await database.query(`UPDATE agent_turns SET generation_id=$3 WHERE room_id=$1 AND request_id=$2`,
-        [ROOM,REQUEST,generationId]);
+      await daemon.execute('claimAgentCommand', { roomId: ROOM, commandId: COMMAND, generationId },
+        HELPER, { connectionId: 'owned-provider-parity', epoch });
     }
     const callTurn = {...turn,generationId};
     try {

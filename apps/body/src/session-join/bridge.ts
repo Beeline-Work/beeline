@@ -214,7 +214,7 @@ export async function serveOutboxes(dir: string): Promise<number> {
 }
 
 /** Leaves a tool call in the working folder's outbox and waits for the bridge's answer. */
-export async function toolViaOutbox(cwd: string, name: string, args: Record<string, unknown>, timeoutMs = 90_000): Promise<{ ok: boolean; data?: unknown; error?: string } | undefined> {
+export async function toolViaOutbox(cwd: string, name: string, args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; error?: string } | undefined> {
   const dirPath = outboxDir(cwd);
   mkdirSync(dirPath, { recursive: true });
   // Keep the outbox out of the person's repository.
@@ -226,7 +226,7 @@ export async function toolViaOutbox(cwd: string, name: string, args: Record<stri
   return new Promise(resolve=>{
     let settled=false;
     const finish=(answer:{ok:boolean;data?:unknown;error?:string}|undefined)=>{
-      if(settled)return;settled=true;clearTimeout(deadline);watcher.close();resolve(answer);
+      if(settled)return;settled=true;watcher.close();resolve(answer);
     };
     const inspect=()=>{
       try{
@@ -235,14 +235,6 @@ export async function toolViaOutbox(cwd: string, name: string, args: Record<stri
       }catch{/* Only a completed atomic result rename admits another inspection. */}
     };
     const watcher=watch(dirPath,(_event,file)=>{if(String(file??'')===`${id}.result.json`)inspect();});
-    const deadline=setTimeout(()=>{
-      inspect();if(settled)return;
-      // Atomically take back an unclaimed request before permitting direct
-      // fallback. A bridge-claimed write has an UNKNOWN outcome, never a retry.
-      const abandoned=request+'.abandoned';
-      try{renameSync(request,abandoned);rmSync(abandoned,{force:true});finish(undefined);}
-      catch{finish({ok:false,error:'Beeline tool result is awaiting confirmation'});}
-    },timeoutMs);
     inspect();
   });
 }
@@ -261,7 +253,6 @@ export function toolViaBridge(dir: string, key: string, name: string, args: Reco
     connection.once('error', () => finish(sent ? unknown : undefined));
     connection.on('data', chunk => { text += chunk; });
     connection.on('end', () => { try { finish(JSON.parse(text) as { ok: boolean }); } catch { finish(sent ? unknown : undefined); } });
-    connection.setTimeout(90_000, () => finish(sent ? unknown : undefined));
   });
 }
 
@@ -278,7 +269,7 @@ export async function runBridge(dir: string, runner: Runner): Promise<void> {
     writeFileSync(pidFile, String(process.pid), { mode: 0o600 });
   }
   const sources = machineSources(dir);
-  type Stream={fingerprint:string;controller:AbortController;expiry?:ReturnType<typeof setTimeout>};
+  type Stream={fingerprint:string;controller:AbortController};
   const streams=new Map<string,Stream>();
   const outboxWatches=new Map<string,ReturnType<typeof watch>>();
   let localDirty=true,wake:(()=>void)|undefined;
@@ -289,7 +280,7 @@ export async function runBridge(dir: string, runner: Runner): Promise<void> {
     if(path==='state.json'||path.startsWith('hooks/')||path.startsWith('inbox/')||path.startsWith('deliveries/'))changed();
   });
   const stop = () => {
-    for(const stream of streams.values()){stream.controller.abort();if(stream.expiry)clearTimeout(stream.expiry);}
+    for(const stream of streams.values()){stream.controller.abort();}
     localWatch.close();for(const watcher of outboxWatches.values())watcher.close();
     rmSync(pidFile,{force:true});rmSync(join(dir,'bridge.sock'),{force:true});process.exit(0);
   };
@@ -300,14 +291,6 @@ export async function runBridge(dir: string, runner: Runner): Promise<void> {
   const start=(joined:JoinedSession)=>{
     const controller=new AbortController(),entry:Stream={fingerprint:fingerprint(joined),controller};
     streams.set(joined.key,entry);
-    const remaining=(joined.accessExpiresAt??0)-Date.now();
-    if(remaining>0){
-      // One real persisted credential expiry, never a failed-observation retry.
-      entry.expiry=setTimeout(()=>{
-        controller.abort();
-        void accessToken(dir,joined.key).then(changed,error=>log(dir,`${joined.key}: credential renewal ended: ${String(error)}`));
-      },remaining);entry.expiry.unref?.();
-    }
     void(async()=>{
       let recovered=false;
       while(!controller.signal.aborted){
@@ -335,12 +318,12 @@ export async function runBridge(dir: string, runner: Runner): Promise<void> {
       const sessions=readState(dir).sessions;
       if(!sessions.length)break;
       for(const [key,stream]of streams)if(!sessions.some(session=>session.key===key)){
-        stream.controller.abort();if(stream.expiry)clearTimeout(stream.expiry);streams.delete(key);
+        stream.controller.abort();streams.delete(key);
       }
       for(const joined of sessions){
         const old=streams.get(joined.key);
         if(!old||old.fingerprint!==fingerprint(joined)){
-          old?.controller.abort();if(old?.expiry)clearTimeout(old.expiry);start(joined);
+          old?.controller.abort();start(joined);
         }
         const path=outboxDir(joined.cwd);
         if(!outboxWatches.has(path)){
@@ -356,7 +339,7 @@ export async function runBridge(dir: string, runner: Runner): Promise<void> {
     }
   }finally{
     localWatch.close();for(const watcher of outboxWatches.values())watcher.close();
-    for(const stream of streams.values()){stream.controller.abort();if(stream.expiry)clearTimeout(stream.expiry);}
+    for(const stream of streams.values()){stream.controller.abort();}
   }
   log(dir, `bridge ${process.pid} stopped: no joined sessions`);
   rmSync(pidFile, { force: true });

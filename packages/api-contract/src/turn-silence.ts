@@ -25,6 +25,7 @@ export const TURN_SILENCE_KINDS = [
   'workspace-failure',
   'helper-out-of-date',
   'update-interrupted',
+  'process-exited',
   'offline',
   'context-overflow',
   'resource-limit',
@@ -40,6 +41,7 @@ export const TURN_RECEIPT_REASON_KINDS = [
   'workspace-failure',
   'helper-out-of-date',
   'update-interrupted',
+  'process-exited',
   'offline',
   'context-overflow',
   'resource-limit',
@@ -296,7 +298,7 @@ export function isStandingWorkspaceConfigurationFault(text: string): boolean {
  * startCorner can answer the original request without a helper-process restart.
  */
 export function shouldCompletePendingFailedCommand(kind: TurnSilenceKind, reason = ''): boolean {
-  if (kind === 'hiccup' || kind === 'offline' || kind === 'update-interrupted') return false;
+  if (kind === 'hiccup' || kind === 'offline' || kind === 'update-interrupted' || kind === 'process-exited') return false;
   if (kind === 'workspace-failure') return isStandingWorkspaceConfigurationFault(reason);
   return true;
 }
@@ -381,6 +383,8 @@ export function phraseTurnSilence(
       );
     case 'update-interrupted':
       return capLine(agent, systemMessage("turn-silence.was-interrupted-by-an-update"), systemMessage("turn-silence.the-request-is-queued-to-resume"));
+    case 'process-exited':
+      return capLine(agent, systemMessage("turn-silence.could-not-answer"), systemMessage("turn-silence.the-request-is-queued-to-resume"));
     case 'offline':
       return capLine(
         agent,

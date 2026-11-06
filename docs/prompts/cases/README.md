@@ -82,10 +82,9 @@ npm run test:prompt-cases     # rule tests, case validity, one case per section
 
 ## Replay
 
-Repository event subscriptions automatically assign prompt PR replays to one
-subscription-backed agent; setup and the controller are documented in
-[Automatic prompt PR replay](../pr-replay.md). A worker may also order one other
-agent to replay the exact pull request head as a recovery path. Feedback triage writes
+Automatic prompt PR replay is paused. A worker may explicitly order one other
+agent to replay the exact pull request head with
+[`scripts/prompt-pr-replay.mjs`](../../../scripts/prompt-pr-replay.mjs). Feedback triage writes
 this into every prompt-fix brief, and the reviewer does not pass the pull
 request without the posted table. The replaying agent:
 

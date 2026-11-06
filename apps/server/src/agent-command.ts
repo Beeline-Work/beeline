@@ -224,9 +224,10 @@ export type CommandRow = {
  * A claimed command retains its connection owner until it reports a result
  * or that connection closes.
  */
-export function commandValidityCtes(roomSql: string, agentSql: string, claimSql = 'NULL::text', idleFence = true): string {
+export function commandValidityCtes(roomSql: string, agentSql: string, claimSql = 'NULL::text', claimFence = false, idleFence = true): string {
   const validity = `command_scope AS MATERIALIZED (
     SELECT command.* FROM agent_commands command
+    ${claimFence ? 'CROSS JOIN claim_fence' : ''}
     WHERE command.room_id=${roomSql} AND command.agent_id=${agentSql}
       AND beeline_command_claim_open(command.id)
       AND command.action IN ('input','resume') AND NOT command.avatar_job

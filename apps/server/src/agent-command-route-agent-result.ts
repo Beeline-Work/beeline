@@ -150,7 +150,11 @@ export async function claimAgentCommand(
   allPending = false,
 ): Promise<CommandRow> {
   if (!generation || generation.length > 200) throw new Error('command generation is required');
-  const result=await db.transaction(async db=>{
+  // Owned claims retain their connection and deferred effect checks through commit.
+  // Other claims take the queue fence and commit the turn in their one statement.
+  const run = owner ? db.transaction.bind(db)
+    : <T>(work: (db: SqlDatabase) => Promise<T>) => work(db);
+  const result = await run(async db => {
   if (owner) {
     await assertCurrentTurnOwner(db, agentId, owner);
     const existing = (await db.query<CommandRow & { turn_cancelled: boolean }>(
@@ -169,17 +173,17 @@ export async function claimAgentCommand(
       return existing; // A resolved replay is a read, never a fake working/progress write.
     }
   }
-  await lockAgentCommandQueue(db,roomId,agentId);
     const row = (
       await db.query<CommandRow & WakeDropLog & { turn_claimed: boolean }>(
-        `WITH ${commandValidityCtes('$2', '$3', '$1', false)}, eligible AS MATERIALIZED (
-             SELECT agent_commands.* FROM agent_commands
+        `WITH claim_fence AS MATERIALIZED (
+             SELECT member.removed_at FROM memberships member JOIN rooms room ON room.id=$2
+             WHERE member.room_id=COALESCE(room.parent_id,room.id) AND member.identity_id=$3
+             FOR UPDATE OF member
+           ), ${commandValidityCtes('$2', '$3', '$1', true, false)}, eligible AS MATERIALIZED (
+             SELECT agent_commands.* FROM agent_commands CROSS JOIN claim_fence
              WHERE (id=$1 OR ($7::boolean AND state='pending' AND action IN ('input','resume')))
                AND room_id=$2 AND agent_id=$3 AND
-               EXISTS(SELECT 1 FROM rooms surface JOIN memberships current_member
-                 ON current_member.room_id=COALESCE(surface.parent_id,surface.id)
-                   AND current_member.identity_id=$3 AND current_member.removed_at IS NULL
-                 WHERE surface.id=$2) AND
+               claim_fence.removed_at IS NULL AND
                beeline_command_claim_open(id) AND
                (state='pending' OR (state='claimed' AND generation_id=$4)
                 )
@@ -244,7 +248,6 @@ export async function claimAgentCommand(
     if (owner) await registerOwnedEffectFence(db, row);
     return row;
   });
-  // Standalone calls retain the fence through the claim and commit stale cleanup.
   if(result instanceof Error)throw result;
   return result;
 }

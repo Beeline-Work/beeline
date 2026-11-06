@@ -18,6 +18,9 @@ inputs:
     required: true
   release_version:
     required: true
+  free_agent_image_token:
+    required: true
+    description: Image-only authority to publish the matching free starter agent image
   previous_server_image_ref:
     required: false
     default: ''
@@ -75,6 +78,48 @@ runs:
       if: steps.fleet.outputs.shipped == 'true'
       shell: bash
       run: echo "Every beeline-server Machine already runs ${{ steps.fleet.outputs.image_ref }}; nothing to deploy." | tee -a "$GITHUB_STEP_SUMMARY"
+    # Publish before the existing server rollout: staging a secret must never
+    # cause a second restart after the release has already completed.
+    - name: Install the free starter agent image build dependencies
+      if: steps.fleet.outputs.shipped != 'true'
+      shell: bash
+      run: bash scripts/npm-ci-timed.sh
+    - uses: dtolnay/rust-toolchain@1.95.0
+      if: steps.fleet.outputs.shipped != 'true'
+    - uses: ./.github/actions/buzz-agent-cache
+      if: steps.fleet.outputs.shipped != 'true'
+      with:
+        platform: linux-x64
+    - name: Publish the matching free starter agent image
+      id: free_agent_image
+      if: steps.fleet.outputs.shipped != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        image_label="${RELEASE_VERSION#v}-${RELEASE_SHA:0:12}"
+        BEELINE_RELEASE_SHA="$RELEASE_SHA" BEELINE_RELEASE_VERSION="$RELEASE_VERSION" \
+          bash scripts/stage-free-agent-helper.sh
+        flyctl deploy . \
+          --local-only --config fly.beeline-free-agents.toml \
+          --dockerfile infra/free-agent/Dockerfile --app beeline-free-agents \
+          --build-arg "BEELINE_RELEASE_SHA=$RELEASE_SHA" \
+          --build-arg "BEELINE_RELEASE_VERSION=$RELEASE_VERSION" \
+          --image-label "$image_label" --build-only --push --yes
+        flyctl auth docker
+        image="registry.fly.io/beeline-free-agents:$image_label"
+        docker manifest inspect --verbose "$image" > "$RUNNER_TEMP/free-agent-manifest.json"
+        digest=$(node -e 'const m=require(process.argv[1]); const d=m.Descriptor?.digest; if(!/^sha256:[0-9a-f]{64}$/.test(d)) throw Error("Missing published image digest"); console.log(d)' "$RUNNER_TEMP/free-agent-manifest.json")
+        echo "image_ref=$image@$digest" >> "$GITHUB_OUTPUT"
+      env:
+        FLY_API_TOKEN: ${{ inputs.free_agent_image_token }}
+        RELEASE_SHA: ${{ inputs.release_sha }}
+        RELEASE_VERSION: ${{ inputs.release_version }}
+    - name: Stage the free starter image for this server rollout
+      if: steps.fleet.outputs.shipped != 'true'
+      shell: bash
+      env:
+        IMAGE_REF: ${{ steps.free_agent_image.outputs.image_ref }}
+      run: flyctl secrets set --app beeline-server --stage "FLY_FREE_AGENT_IMAGE=$IMAGE_REF"
     - name: Build the exact Fly image and capture the two-Machine rollback plan
       if: steps.fleet.outputs.shipped != 'true'
       shell: bash
@@ -381,3 +426,23 @@ runs:
       env:
         RELEASE_SHA: ${{ inputs.release_sha }}
         RELEASE_VERSION: ${{ inputs.release_version }}
+
+    - name: Verify the free starter image and refresh its helpers without restarting servers
+      if: steps.fleet.outputs.shipped != 'true'
+      shell: bash
+      env:
+        IMAGE_REF: ${{ steps.free_agent_image.outputs.image_ref }}
+      run: |
+        set -euo pipefail
+        flyctl machine list --app beeline-server --json > "$RUNNER_TEMP/server-release/free-agent-servers.json"
+        node -e 'for(const m of require(process.argv[1]).filter(m=>m.state!=="destroyed")) console.log(m.id)' "$RUNNER_TEMP/server-release/free-agent-servers.json" > "$RUNNER_TEMP/server-release/free-agent-server-ids"
+        test -s "$RUNNER_TEMP/server-release/free-agent-server-ids"
+        while read -r machine; do
+          actual=$(flyctl machine exec "$machine" --app beeline-server 'printenv FLY_FREE_AGENT_IMAGE')
+          if [ "$actual" != "$IMAGE_REF" ]; then
+            echo "::error::Server $machine still uses an older free-agent image"
+            exit 1
+          fi
+        done < "$RUNNER_TEMP/server-release/free-agent-server-ids"
+        machine=$(head -n 1 "$RUNNER_TEMP/server-release/free-agent-server-ids")
+        flyctl machine exec "$machine" --app beeline-server 'node apps/server/dist/index.js --refresh-free-agents'

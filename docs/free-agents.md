@@ -79,7 +79,7 @@ soul. Existing free agents keep their names.
   Every committed `agent_commands` INSERT for a free agent calls
   `FreeAgentService.wake`. A committed connector-assignment notification also
   wakes a free agent with active connector installation or sign-in work, through
-  the same budget and start-limit fences. Committed family sources and stored command, turn-cap, idle and retention
+  the same budget and start-limit fences. Committed family sources and stored command, idle and retention
   deadlines admit leader recovery; there is no 15-second sweep. A failed
   provider observation parks until an actual input or recovery boundary. Wakes are never
   suppressed for an offline Machine (`agentMachineOfflineSql` exempts free agents). A
@@ -88,9 +88,9 @@ soul. Existing free agents keep their names.
   monotonic clock. It then replaces its socket at once (`LiveLink.reconnectNow`).
   For every agent, dispatch also writes a working turn before helper pickup.
   A helper claim replaces the reserved `pending:<command id>` generation in
-  that same row. If nobody claims it in **90 seconds**, the existing server
-  pickup deadline clears the optimistic row and invalidates the Room; the
-  command remains available. Optimistic turns are not helper-presence evidence.
+  that same row. Claimed work belongs to its connection until it reports a result.
+  A disconnect returns unfinished commands to pending without a failure notice.
+  The next connection claims them again; no pickup or silence timer ends a turn.
   Delayed wakes paint when released; passive computer observations stay silent.
 - **Reaper (leader).** A running Machine with no work for 5 minutes is stopped. A
   Machine with no activity for 30 days is deleted. A later wake recreates it from the
@@ -184,13 +184,16 @@ resubmits. A separately admitted model call can obtain a fresh result. Other
 
 Each server process runs at most `BEELINE_FREE_AGENT_MAX_CONCURRENT_CALLS`
 (default 8) upstream calls at once, across all free agents. Further calls wait
-in arrival order. A queued call gives up when its caller disconnects or its
-turn reaches the 15-minute cap, refunds its reservation and gets HTTP 503.
+in arrival order. A queued call gives up when its caller disconnects. At provider admission it
+checks the turn budget again; an overlong turn is refused and ends through
+`agent-turn-end.ts`, without a timeout sweep or a machine-stop request.
 The limit is per process: production runs two machines, so the real ceiling
 is twice the setting.
 
-Helper model calls require a claimed `input`/`resume` command with a live lease and a
-claim younger than the hard turn cap. Pending and completed commands do not
+Helper model calls require a claimed `input`/`resume` command and its current
+connection owner. Every request checks elapsed turn time and the shared cost
+budget; a refusal ends that turn through the single terminal owner. The Machine
+then sleeps at its normal idle boundary. Pending and completed commands do not
 permit calls, including copied model tokens used from outside Beeline. The
 helper retains the command claim through model retries and tool follow-ups;
 there is no post-completion grace that would authorize idle calls. Server-owned starter banter is a separate internal entry: a recent generating onboarding run must bind the agent and owner to the current Room team. It shares the same allowance, dollar budget, queue and settlement code; the HTTP endpoint retains its live-turn requirement.
@@ -203,9 +206,9 @@ contacting the model. Successful calls settle to OpenRouter `usage.cost`, or to
 configured input/output prices when cost is absent. Failed upstream calls refund
 the reservation; interrupted replies without usage keep it. Each settlement
 records `model_usage` (day, charged tokens, USD). A `budget_reached` event records
-refused model calls and wakes. At the budget, calls return a first-person pause
-message and provisioning/waking cannot start Machines. Queued wakes remain for
-the next UTC day. Operators must keep fallback prices at or above their pinned
+refused model calls and wakes. At the budget, model calls refuse with the allowance reason and end the
+current turn once; provisioning/waking cannot start Machines. A fresh request
+gets a fresh cost check without parking or rearming old commands. Operators must keep fallback prices at or above their pinned
 model's worst-case prices; changing models requires checking these prices.
 
 Admission estimates tokenized text as `ceil(UTF-8 bytes / 3) + 256`, including

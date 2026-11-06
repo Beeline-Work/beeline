@@ -46,7 +46,6 @@ const command: CommandRow = {
   generation_id: 'generation-1',
   lease_expires_at: new Date(Date.now() + 60_000),
   result_message_id: null,
-  hiccup_attempts: 0,
   lifecycle_before: null,
   restart_confirmed_at: null,
 };

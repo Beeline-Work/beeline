@@ -1044,7 +1044,6 @@ export async function runMaintenance(database: SqlDatabase): Promise<void> {
     ['live_outputs', "updated_at<now()-interval '2 hours' AND kind<>'presence'"],
     ['github_auth_flows', "expires_at<now()-interval '1 day'"],
     ['daemon_token_exchanges', "expires_at<now()-interval '1 day'"],
-    ['pending_mention_notices', "due_at<now()-interval '30 days'"],
   ] as const;
   for (const [table, predicate] of expired) {
     await database.query(`DELETE FROM ${table} WHERE ctid IN (

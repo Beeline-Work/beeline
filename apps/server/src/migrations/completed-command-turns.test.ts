@@ -2,8 +2,9 @@ import { expect, it } from 'vitest';
 import { migrate, migrateData } from '../database.js';
 import { PgliteDatabase } from '../test-support.js';
 import { createAgentCommand, claimAgentCommand } from '../agent-command.js';
+import { workingTurnFreshSql } from '../turn-ownership.js';
 
-it('stuck-turn-1: release migration closes orphan turns once and preserves a live claimed successor', async () => {
+it('release migration invents no terminal results and exposes only a live claimed successor', async () => {
   const database = new PgliteDatabase();
   const human = 'a'.repeat(64),
     agent = 'b'.repeat(64);
@@ -76,8 +77,8 @@ it('stuck-turn-1: release migration closes orphan turns once and preserves a liv
       ).rows,
     ).toEqual(
       Array.from({ length: 5 }, () => ({
-        status: 'failed',
-        failure_reason: 'the command completed without a terminal turn receipt',
+        status: 'working',
+        failure_reason: null,
       })),
     );
     expect(
@@ -87,7 +88,10 @@ it('stuck-turn-1: release migration closes orphan turns once and preserves a liv
         ])
       ).rows,
     ).toEqual([{ status: 'working', generation_id: 'live-successor' }]);
-    // The release marker prevents a later release from running this repair again.
+    expect((await database.query(`SELECT request_id FROM agent_turns turn
+      WHERE turn.status='working' AND ${workingTurnFreshSql('turn')}`)).rows)
+      .toEqual([{ request_id: '5'.repeat(64) }]);
+    // Completed commands never authorize a synthetic failure on a later release.
     await database.query(
       `UPDATE agent_commands SET state='complete' WHERE generation_id='live-successor'`,
     );
@@ -96,6 +100,8 @@ it('stuck-turn-1: release migration closes orphan turns once and preserves a liv
       (await database.query(`SELECT status FROM agent_turns WHERE request_id=$1`, ['5'.repeat(64)]))
         .rows,
     ).toEqual([{ status: 'working' }]);
+    expect((await database.query(`SELECT request_id FROM agent_turns turn
+      WHERE turn.status='working' AND ${workingTurnFreshSql('turn')}`)).rows).toEqual([]);
   } finally {
     await database.close();
   }

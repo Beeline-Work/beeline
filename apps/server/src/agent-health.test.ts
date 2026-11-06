@@ -33,7 +33,7 @@ async function reportPresence(agentId: string, status: 'online' | 'offline', age
   );
 }
 
-/** A failed turn plus its `turn-failed` card, as `turn-silence-notice.ts` writes them. */
+/** A failed turn plus its `turn-failed` card, as `agent-turn-failure.ts` writes them. */
 async function reportFailure(
   agentId: string,
   silenceKind: string,
@@ -56,15 +56,6 @@ async function reportFailure(
       JSON.stringify({ requestId, agentId, state: 'failed', silenceKind }),
       ageSeconds,
     ],
-  );
-}
-
-async function reportSuccess(agentId: string, ageSeconds = 0, roomId = ROOM) {
-  const requestId = `req-${agentId}-${Math.random().toString(16).slice(2)}`;
-  await database.query(
-    `INSERT INTO agent_turns(room_id,request_id,agent_id,status,created_at)
-     VALUES($1,$2,$3,'complete',now() - make_interval(secs => $4))`,
-    [roomId, requestId, agentId, ageSeconds],
   );
 }
 
@@ -104,34 +95,12 @@ describe('roomAgentHealth', () => {
     expect(health.get(AGENT_TWO)).toEqual({ healthy: false, reason: 'offline' });
   });
 
-  it('marks an agent that failed within the last few minutes unhealthy', async () => {
-    await reportPresence(AGENT_ONE, 'online');
+  it.each(['not-signed-in','wrong-model','allowance-spent'])('past %s failures never gate the next command', async kind => {
     await reportPresence(AGENT_TWO, 'online');
-    await reportFailure(AGENT_TWO, 'not-signed-in', 30);
-    const health = await roomAgentHealth(database, ROOM, ALL());
-    expect(health.get(AGENT_TWO)).toEqual({ healthy: false, reason: 'recent-failure' });
-  });
-
-  it('a generic failure clears after the recent-failure window', async () => {
-    await reportPresence(AGENT_TWO, 'online');
-    await reportFailure(AGENT_TWO, 'wrong-model', 10 * 60);
-    expect((await roomAgentHealth(database, ROOM, ALL())).get(AGENT_TWO)).toEqual({ healthy: true });
-  });
-
-  it('marks an out-of-credit agent unhealthy regardless of how long ago it failed', async () => {
-    await reportPresence(AGENT_TWO, 'online');
-    await reportFailure(AGENT_TWO, 'allowance-spent', 60 * 60);
-    expect((await roomAgentHealth(database, ROOM, ALL())).get(AGENT_TWO)).toEqual({
-      healthy: false,
-      reason: 'out-of-credit',
-    });
-  });
-
-  it('a later success clears a standing out-of-credit mark', async () => {
-    await reportPresence(AGENT_TWO, 'online');
-    await reportFailure(AGENT_TWO, 'allowance-spent', 60 * 60);
-    await reportSuccess(AGENT_TWO, 30 * 60);
-    expect((await roomAgentHealth(database, ROOM, ALL())).get(AGENT_TWO)).toEqual({ healthy: true });
+    await reportFailure(AGENT_TWO, kind, 0);
+    expect((await roomAgentHealth(database, ROOM, ALL())).get(AGENT_TWO)).toEqual({healthy:true});
+    await database.query("UPDATE agent_turns SET created_at=now()-interval '1 day'");
+    expect((await roomAgentHealth(database, ROOM, ALL())).get(AGENT_TWO)).toEqual({healthy:true});
   });
 
   it('leaves out an agent that is not a current member of the Room', async () => {

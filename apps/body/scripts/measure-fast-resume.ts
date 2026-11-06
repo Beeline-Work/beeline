@@ -169,7 +169,8 @@ try {
         if (name === 'getRoomGitHubToken') return { token: 'fixture-unused' };
         if (name === 'getAgentCommands') return { commandProtocol: 1,
           commands: i === 0 && input.roomId === target && firstClaimMs === undefined ? [pending] : [] };
-        if (name === 'claimAgentCommand') { firstClaimMs = performance.now() - startedAt; return { id: 'claimed' }; }
+        if (name === 'claimAgentTurn') { firstClaimMs = performance.now() - startedAt; return { commands: [pending] }; }
+        if (name === 'releaseAgentTurn') return { commands: [] };
         throw new Error(`unexpected fixture operation ${name}`);
       } finally { await release?.(); }
     };

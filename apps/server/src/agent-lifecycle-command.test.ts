@@ -132,7 +132,7 @@ describe('tagged agent lifecycle commands', () => {
     ).toEqual([{ lifecycle_before: 'boot-1', state: 'pending' }]);
   });
 
-  it.each(['pending', 'expired', 'mismatched', 'complete', 'live'])(
+  it.each(['pending', 'past-lease', 'mismatched', 'complete', 'live'])(
     'uses live execution evidence for lifecycle status and restart (%s)', async state => {
       const ask = 'e'.repeat(64);
       await send(ask, OWNER, '@bee work');
@@ -140,22 +140,23 @@ describe('tagged agent lifecycle commands', () => {
         `SELECT id FROM agent_commands WHERE source_message_id=$1`, [ask])).rows[0]!;
       if (state !== 'pending') {
         await claimAgentCommand(database, ROOM, AGENT, command.id, 'old-process');
-        if (state === 'expired') await database.query(
+        if (state === 'past-lease') await database.query(
           `UPDATE agent_commands SET lease_expires_at=now()-interval '1 second' WHERE id=$1`, [command.id]);
         if (state === 'mismatched') await database.query(
           `UPDATE agent_turns SET generation_id='another-process' WHERE request_id=$1`, [ask]);
         if (state === 'complete') await database.query(
           `UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1`, [command.id]);
       }
+      const running = state === 'live' || state === 'past-lease';
       const texts = async () => (await database.query<{ text: string }>(
         `SELECT text FROM messages WHERE presentation='system' ORDER BY created_at,id`)).rows.map(row => row.text);
       await send('f'.repeat(64), OWNER, '@bee status');
-      expect(await texts()).toContain(`@bee is online · ${state === 'live' ? 'one turn is running' : 'no turn is running'}`);
+      expect(await texts()).toContain(`@bee is online · ${running ? 'one turn is running' : 'no turn is running'}`);
       await send('1'.repeat(64), OWNER, '@bee debug');
       expect((await texts()).find(text => text.includes('reported diagnostics')))
-        .toContain(state === 'live' ? `turn ${ask}` : 'no active turn');
+        .toContain(running ? `turn ${ask}` : 'no active turn');
       await send('2'.repeat(64), OWNER, '@bee restart');
-      expect(await texts()).toContain(`@bee queued a restart · ${state === 'live' ? 'running turn will drain first' : 'helper will reconnect to confirm'}`);
+      expect(await texts()).toContain(`@bee queued a restart · ${running ? 'running turn will drain first' : 'helper will reconnect to confirm'}`);
       const restart = (await database.query<{ id: string }>(
         `SELECT id FROM agent_commands WHERE action='restart'`)).rows[0]!;
       await claimAgentCommand(database, ROOM, AGENT, restart.id, 'restart-process');

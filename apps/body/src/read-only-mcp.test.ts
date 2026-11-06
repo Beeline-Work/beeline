@@ -226,7 +226,6 @@ import {
   emitEvent as m8_emitEvent,
   listEventSubscriptions as m8_listEventSubscriptions,
   subscribeEvents as m8_subscribeEvents,
-  setWakeDelivery as m8_setWakeDelivery,
   type AgentScheduleDeps as m8_AgentScheduleDeps,
 } from "./read-only-mcp.js";
 import { describe as mergedDescribe8 } from 'vitest';
@@ -253,15 +252,6 @@ function deps(
 
 
 m8_describe('beeline-agent event tools', () => {
-  m8_it('sets its own whole inbox setting without transmitting an agent identity', async () => {
-    const calls: Call[] = [];
-    const result = await m8_setWakeDelivery({ delivery: 'batch:5', agentId: 'someone-else' },
-      deps(calls, { setWakeDelivery: { delivery: 'batch:5' } }));
-    m8_expect(calls).toEqual([{ name: 'setWakeDelivery', input: { roomId: 'room-1', delivery: 'batch:5' } }]);
-    m8_expect(result).toContain('batch:5');
-    await m8_expect(m8_setWakeDelivery({ delivery: 'batch:0' }, deps(calls))).rejects.toThrow('positive whole minutes');
-    m8_expect(calls).toHaveLength(1);
-  });
   m8_it('an agent subscribes itself, and the reply names the whole resulting list', async () => {
     const calls: Call[] = [];
     const result = await m8_subscribeEvents(

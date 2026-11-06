@@ -1,3 +1,4 @@
+import { endAgentTurn } from './agent-turn-end.js';
 import { RoomsMcpAgentTools } from './rooms-mcp-agent.js';
 import type { DaemonService } from './daemon-service.js';
 import { randomUUID } from 'node:crypto';
@@ -10,7 +11,6 @@ import {
   createClaimedMcpAgentCommand,
   dismissAgentCommandWakes,
   releaseUnreportedMcpOrder,
-  settleAgentCommand,
   type CommandRow,
 } from './agent-command.js';
 import { PhoneService } from './phone-service.js';
@@ -79,19 +79,6 @@ for (const ingress of ['helper', 'MCP implicit', 'MCP commandId'] as const) {
           .rows[0],
       ).toMatchObject({ state: 'pending', generation_id: null });
     });
-    it('honors delayed wakes until the due owner releases them', async () => {
-      const command = await order();
-      await db.query(`UPDATE agent_commands SET wake_after=now()+interval '1 hour' WHERE id=$1`, [
-        command.id,
-      ]);
-      await expect(claim(command)).rejects.toThrow();
-      expect(
-        (await db.query(`SELECT state FROM agent_commands WHERE id=$1`, [command.id])).rows[0]!
-          .state,
-      ).toBe('pending');
-      await db.query(`UPDATE agent_commands SET wake_after=NULL WHERE id=$1`, [command.id]);
-      expect((await claim(command)).state).toBe('claimed');
-    });
     it('cannot revive a human Stop through claim, release or completion', async () => {
       const command = await order(),
         claimed = await claim(command);
@@ -110,7 +97,7 @@ for (const ingress of ['helper', 'MCP implicit', 'MCP commandId'] as const) {
       await db.transaction((tx) =>
         releaseUnreportedMcpOrder(tx, command.id, claimed.generation_id!),
       );
-      await settleAgentCommand(db, claimed, 'complete');
+      await endAgentTurn(db, claimed, 'complete');
       expect(
         (await db.query(`SELECT state FROM agent_commands WHERE id=$1`, [command.id])).rows[0]!
           .state,
@@ -176,7 +163,7 @@ it('does not complete directly when the normal connected-app receipt is refused'
   expect((await db.query(`SELECT status FROM agent_turns`)).rows).toEqual([{ status: 'working' }]);
 });
 
-it('dismisses an expired non-order through the command and turn settlement owner', async () => {
+it('keeps a claimed non-order owned even after the obsolete lease clock expires', async () => {
   const command = (await createAgentCommand(db, {
     roomId: room,
     agentId: agent,
@@ -191,10 +178,10 @@ it('dismisses an expired non-order through the command and turn settlement owner
     `UPDATE agent_commands SET lease_expires_at=now()-interval '1 minute' WHERE id=$1`,
     [command.id],
   );
-  expect(await dismissAgentCommandWakes(db, room, agent, command.id)).toBe(1);
+  expect(await dismissAgentCommandWakes(db, room, agent, command.id)).toBe(0);
   expect(
     (await db.query(`SELECT state FROM agent_commands WHERE id=$1`, [command.id])).rows[0]!.state,
-  ).toBe('complete');
+  ).toBe('claimed');
   expect(
     (
       await db.query(
@@ -202,5 +189,5 @@ it('dismisses an expired non-order through the command and turn settlement owner
         [room, agent, claimed.turn_request_id, claimed.generation_id],
       )
     ).rows[0]!.status,
-  ).toBe('complete');
+  ).toBe('working');
 });

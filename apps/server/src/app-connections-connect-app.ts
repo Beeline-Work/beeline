@@ -121,6 +121,7 @@ export async function connectApp(
     resolveAppRoute(
       {
         ...(row ? { existing: await existingFacts(db, row) } : {}),
+        appKey: key,
         reconnect: params.reconnect === true,
         noApi: params.noApi === true,
         ...(params.preferredRoute ? { preferredRoute: params.preferredRoute } : {}),

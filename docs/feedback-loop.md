@@ -181,6 +181,25 @@ signature (Sentry short id, `log:<pattern>`, nightly job name, release run), so
 `notify` and `verify` can find the fix again. A corner opened without that line
 leaves its reports unresolved forever.
 
+## Saved triage decisions
+
+The pull query includes every report still new, including older agent reports.
+At the pull handoff, the triager supplies `dispositions` alongside `problems`.
+Each entry names `itemId`, `disposition`, `reason`, and a `reference` when needed.
+The workflow saves the assessment with its handoff in one transaction:
+
+- `linked` records an existing corner or PR and moves the item to `attached`.
+- `duplicate` names the canonical item, adds its occurrence count and evidence
+  there, and closes the duplicate row.
+- `dismissed` records why no work is warranted.
+- `fixed` retains `resolved` after the existing merged-PR verification succeeds.
+
+The structured decision is stored in `triage_reason`; existing status values
+remain compatible with running older servers. Replayed handoffs do not merge
+counts again. Agents assess their own workspace; the existing configured System
+sender authority covers the global feedback sweep. No reporter notice is sent
+by an assessment.
+
 ## Close the loop: Fixed DMs
 
 `notify_feedback_fixed {item_ids, title, pr_url}` resolves feedback silently.

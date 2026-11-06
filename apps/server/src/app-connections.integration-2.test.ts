@@ -270,7 +270,9 @@ const scope2 = fixtureScope2();
         { reference: 'vault:github-public', service: 'github', label: 'Public projects',
           fieldNames: ['token'], allowedHosts: ['api.github.com'], createdAt: 2, stale: false, state: 'error' },
       ]);
-    const daemon = scope2.daemonWith(fakeRegistry([]).client, scope2.fakeComposio());
+    const provider = scope2.fakeComposio();
+    provider.supportsOAuth.mockResolvedValue(true);
+    const daemon = scope2.daemonWith(fakeRegistry([]).client, provider);
     const connected = await daemon.execute('connect', { ...turn, service: 'github',
       reason: 'List repositories', squireAvailable: true }, HELPER);
     expect(connected).toMatchObject({ status: 'ready', connectionReference: 'vault:github-work' });

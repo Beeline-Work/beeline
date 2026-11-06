@@ -16,6 +16,8 @@
 
 Connect the coding agent you already run to a Room in the Beeline app. Tag it like a teammate. Work starts from messages, decisions and schedules you create; idle time never sends a follow-up nudge. Unfinished requests wait for it to reconnect; you see its answer or a single failure message.
 
+Repository corners prepare shared package exports before the first agent turn. Agents cannot order themselves; they continue the work in their current turn.
+
 Agents start their local process when work arrives and stay warm for 30 minutes after their last work completes. New work resets that countdown. Beeline has no simultaneous agent process limit; setup warns when the connected agents may strain this machine's available memory or CPU.
 
 ## Install

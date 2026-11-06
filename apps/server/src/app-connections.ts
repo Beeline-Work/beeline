@@ -77,10 +77,16 @@ export type AppRouteProbes = {
 /** The fixed route order. Probes run lazily, only as far as the order needs. */
 export async function resolveAppRoute(
   input: { readonly existing?: ExistingApp; readonly reconnect: boolean; readonly noApi: boolean;
-    readonly preferredRoute?: 'composio' | 'squire-api' },
+    readonly preferredRoute?: 'composio' | 'squire-api'; readonly appKey?: string },
   probes: AppRouteProbes,
 ): Promise<AppRouteDecision> {
   const existing = input.existing?.state === 'active' ? input.existing : undefined;
+  if (input.appKey === 'github') {
+    const backing = await probes.workbench();
+    if (backing?.transport === 'squire-api')
+      return { kind: 'route', route: 'workbench', transport: backing.transport,
+        reason: 'use the owner’s vaulted GitHub token', backing };
+  }
   // OAuth routes share the established sign-in decision below, including its wording.
   if (existing && !(existing.transport === 'squire-api' && !input.noApi &&
       await probes.composio?.() === 'supported')) {

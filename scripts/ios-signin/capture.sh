@@ -94,8 +94,26 @@ xcodebuild -workspace "$workspace" -scheme "$scheme" -configuration Release \
 app=$(find "$derived_data/Build/Products/Release-iphonesimulator" -maxdepth 1 -name '*.app' -print -quit)
 test -n "$app"
 cp "$app/Info.plist" "$EVIDENCE/app-info.plist"
-codesign --display --entitlements - "$app" > "$EVIDENCE/signed-entitlements.plist" 2> "$EVIDENCE/codesign.log"
-/usr/libexec/PlistBuddy -c 'Print :keychain-access-groups:0' "$EVIDENCE/signed-entitlements.plist" > "$EVIDENCE/keychain-group.txt"
+executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Info.plist")
+# Simulator entitlements live in the Mach-O section, outside the code signature.
+if ! node --input-type=module - "$app/$executable" "$EVIDENCE" <<'ENTITLEMENTS'
+import { readFileSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+const [binary, evidence] = process.argv.slice(2);
+const result = spawnSync('xcrun', ['otool', '-l', binary], { encoding: 'utf8' });
+writeFileSync(`${evidence}/binary-load-commands.txt`, result.stdout || result.stderr || '');
+const section = result.stdout?.match(/sectname __entitlements\s+segname __TEXT[\s\S]*?size (0x[0-9a-f]+)\s+offset (\d+)/i);
+if (result.status !== 0 || !section) throw new Error('Embedded Simulator entitlement section unavailable');
+const offset = Number(section[2]);
+const size = Number.parseInt(section[1], 16);
+writeFileSync(`${evidence}/embedded-entitlements.plist`, readFileSync(binary).subarray(offset, offset + size));
+ENTITLEMENTS
+then
+  echo 'Warning: could not extract embedded Simulator entitlements; continuing to app launch' >&2
+fi
+if ! /usr/libexec/PlistBuddy -c 'Print :keychain-access-groups:0' "$EVIDENCE/embedded-entitlements.plist" > "$EVIDENCE/keychain-group.txt" 2> "$EVIDENCE/entitlements-check.log"; then
+  echo 'Warning: embedded Keychain group unavailable; continuing to app launch' >&2
+fi
 xcrun simctl install "$device" "$app"
 xcrun simctl spawn "$device" log stream --style compact --level debug \
   --predicate 'process CONTAINS[c] "Beeline" OR process CONTAINS[c] "buzzy" OR process CONTAINS[c] "SafariViewService" OR process CONTAINS[c] "AuthenticationServices" OR subsystem CONTAINS[c] "AuthenticationServices" OR subsystem CONTAINS[c] "SafariServices"' \

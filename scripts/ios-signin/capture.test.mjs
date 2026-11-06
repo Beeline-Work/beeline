@@ -62,6 +62,10 @@ test('Xcode signs the Simulator executable and launch diagnostics precede provid
   assert.match(entitlements, /keychain-access-groups/);
   assert.doesNotMatch(entitlements, /application-identifier/);
   assert.match(capture, /Print :keychain-access-groups:0/);
+  assert.match(capture, /\['otool', '-l', binary\]/);
+  assert.match(capture, /if ! node --input-type=module/);
+  assert.match(capture, /Warning: embedded Keychain group unavailable; continuing to app launch/);
+  assert.doesNotMatch(capture, /codesign --display --entitlements/);
   assert.ok(capture.indexOf('simctl launch --console-pty') < capture.indexOf('for provider in'));
   assert.match(capture, /launch-stderr.log/);
   assert.match(capture, /DiagnosticReports.*-newer/);

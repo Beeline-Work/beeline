@@ -297,6 +297,14 @@ export async function advanceCorner(
       head && corner.lifecycle.pr?.number
         ? await cornerMergeGate(db, cornerId, { number: corner.lifecycle.pr.number, headSha: head })
         : undefined;
+    // Personal-resource cards live in the owner's System DM. Their source
+    // message can be in the parent Room; the grant's room_id owns this wait.
+    // Only read the wait identity here, never project private approval details.
+    const pendingGrant = (await db.query<{ id: string }>(
+      `SELECT id FROM agent_grants WHERE room_id=$1 AND status='pending'
+        AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at>now())
+       ORDER BY created_at,id LIMIT 1`, [cornerId],
+    )).rows[0];
     const facts: CornerMachineFacts = {
       archived: corner.archived,
       locked: corner.locked,
@@ -310,7 +318,8 @@ export async function advanceCorner(
       lostEffects: receipts.filter(receipt => !active?.retained?.includes(receipt.id)).flatMap(receipt => [receipt.key, receipt.marker]),
       draftReadyFailure: (corner.lifecycle as CornerLifecycleView & { draftReadyFailure?: { headSha?: string } }).draftReadyFailure?.headSha === head && Boolean(head),
       reviewerConfigured: independentReviewerConfigured(corner),
-      ...(/^blocked:/.test(waitText ?? '') ? { waitReason: 'blocked' as const } : {}),
+      ...(pendingGrant ? { waitReason: 'user_action' as const }
+        : /^blocked:/.test(waitText ?? '') ? { waitReason: 'blocked' as const } : {}),
       ...(ended || completed
         ? {
             reviewEnded: {
@@ -322,7 +331,9 @@ export async function advanceCorner(
             },
           }
         : {}),
-      ...(row && row.waiting_item_id && row.waiting_reason
+      ...(pendingGrant
+        ? { blocker: { reason: 'approve' as const, itemId: `grant:${pendingGrant.id}` } }
+        : row && row.waiting_item_id && row.waiting_reason
         ? {
             blocker: {
               reason: row.waiting_reason,

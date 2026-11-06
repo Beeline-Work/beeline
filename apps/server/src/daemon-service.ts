@@ -1642,7 +1642,7 @@ export class DaemonService {
           const commandId = createHash('sha256').update(JSON.stringify([
             'background-tool', origin.id, completion.generationId, completion.toolCallId,
           ])).digest('hex');
-          await createAgentCommand(db, {
+          await advanceCorner(db, completion.roomId, { kind: 'command', command: {
             id: commandId, roomId: completion.roomId, agentId: authenticatedAgentId,
             sourceMessageId: null, parent: origin, retainDepth: true,
             reason: 'corner_background_tool',
@@ -1650,7 +1650,7 @@ export class DaemonService {
               kind: 'lifecycle', authorId: SYSTEM_IDENTITY_ID, fromRoomId: completion.roomId,
               text: `Your background tool ${completion.title.slice(0, 500)} (${completion.toolCallId}) ${completion.status}. Continue the work from its result.`,
             },
-          });
+          } });
           return this.writeResult();
         }) as Output<Name>;
       }
@@ -8291,8 +8291,9 @@ export class DaemonService {
           ],
         );
       }
-      // Only the implementer gets the objective; other members work when tagged.
-      await createAgentCommand(db, {
+      await advanceCorner(db, cornerId, {
+        kind: 'open',
+        command: {
         roomId: cornerId,
         agentId: implementerAgentId,
         sourceMessageId: null,
@@ -8301,6 +8302,7 @@ export class DaemonService {
         parent: parentCommand,
         retainDepth: true,
         turnRequestId: input.requestId,
+      },
       });
       // After the opening order: the reviewer must be independent of the agent it assigns.
       if (input.reviewer !== undefined) await setCornerReviewer(db, cornerId, input.reviewer, agentId,
@@ -8337,11 +8339,7 @@ export class DaemonService {
           afterMessageId: destination.sourceMessageId,
         });
       }
-      await advanceCorner(db, cornerId, {
-        kind: 'open',
-        workspaceId: parent.workspace_id,
-        implementerAgentId,
-      });
+
 
     });
     const watch = (

@@ -1277,7 +1277,7 @@ describe('Postgres live fanout', () => {
       VALUES($1,$2,'owner')`, [corner,reader]));
     await expectNudge(() => database.query(`UPDATE corner_merge_holds SET released_at=now(),released_by=$2
       WHERE corner_id=$1`, [corner,reader]));
-    // A review verdict or ask_human writes only a run card.
+    // Historical lifecycle cards still invalidate their visible Room transcript.
     await expectNudge(() => recordCornerRun(database, corner, 'review'));
     await expectNudge(() => recordCornerRun(database, corner, 'ask_human'));
     await expectNudge(() => database.query(

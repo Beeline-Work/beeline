@@ -370,9 +370,9 @@ describe('deleteAccount', () => {
       1,
     );
     // It closes through closeCornerState, as a human close does: the corner
-    // state machine reaches `closed` with the archival.
+    // state machine reaches its terminal archived state.
     await expectRowCount(
-      `SELECT 1 FROM corner_facts WHERE corner_id=$1 AND ${cornerRunStateSql('corner_id')}='closed'`,
+      `SELECT 1 FROM corner_facts f WHERE f.corner_id=$1 AND ${cornerRunStateSql('f.corner_id')}='archived'`,
       [CORNER],
       1,
     );

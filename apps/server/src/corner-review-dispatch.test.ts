@@ -1,4 +1,4 @@
-
+import { cornerImplementerSql } from './corner-worker.js';
 import { INSTITUTIONAL_MEMORY_ON } from './institutional-memory-shadow.js';
 import { readFileSync } from 'node:fs';
 import { cornerRunStateSql } from './corner-run.js';
@@ -93,6 +93,7 @@ beforeEach(async () => {
   Object.assign(daemon, { github: { assertCornerReviewerNotAuthor: async () => {} } });
   await db.query('DELETE FROM free_agents WHERE agent_id=$1', [B]);
   // Each case starts a fresh failure episode despite reusing the same corner.
+  await db.query('UPDATE corner_facts SET machine=NULL');
   await db.query(`DELETE FROM agent_commands`);
   await db.query(`DELETE FROM corner_merge_approvals`);
   await db.query(`DELETE FROM agent_turns`);
@@ -111,6 +112,11 @@ beforeEach(async () => {
 
 /** Put the corner in the state a green transition leaves it in. */
 async function greenHead(number: number, headSha: string, checks = 'passing') {
+  await db.query(`SELECT (terminal.ended).* FROM (SELECT beeline_end_agent_turn(command.id,command.generation_id,'complete',NULL,NULL) ended
+    FROM agent_commands command JOIN rooms corner ON corner.id=command.room_id JOIN corner_facts fact ON fact.corner_id=corner.id
+    WHERE command.room_id=$1 AND command.agent_id=${cornerImplementerSql('fact','corner')}
+      AND command.state IN ('pending','claimed') AND command.action IN ('input','resume')
+      AND (SELECT lifecycle->'pr'->>'headSha' FROM corner_github_cache WHERE corner_id=$1) IS DISTINCT FROM $2::text) terminal`, [C, headSha]);
   await db.query(
     `UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`,
     [
@@ -338,6 +344,8 @@ describe('corner message attribution', () => {
     const noReviewerWorker = (await commands(A, C)).find(command => command.id === opening!.id);
     await claim(noReviewerWorker!, 'g2');
     await result(noReviewerWorker!, 'https://github.com/acme/repo/pull/7', 'g2');
+    await daemon.execute('postAgentTurnReceipt', { roomId: C, requestId: noReviewerWorker!.turnRequestId, generationId: 'g2', status: 'complete' }, A);
+    await advanceCorner(db, C, { kind: 'reconcile' });
     expect(checkGate).toHaveBeenCalledTimes(2);
     const notices = (await commands(A, C)).filter(command => command.reason === 'corner_review_needed');
     expect(notices).toHaveLength(1);
@@ -483,7 +491,7 @@ describe('corner message attribution', () => {
     expect(handoff.map((command) => command.reason)).toEqual(['agent_tag']);
   });
 
-  it('hands nothing back when the reviewer ends a turn on a head that is not green', async () => {
+  it('hands a missing verdict back instead of repeating the same-head review after checks return', async () => {
     // A reviewer that ends its turn to WAIT for CI has not finished reviewing.
     // Pushing the worker here would send it at a pull request still mid-run.
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
@@ -498,9 +506,10 @@ describe('corner message attribution', () => {
     await advanceCorner(db, C, { kind: 'checks-pending' });
     await result(review!, 'Checks are still running on this head; I will look when they land.');
     expect(await commands(A, C)).toEqual([]);
-    // The next green transition dispatches the reviewer again, unspent.
+    // Completion without a verdict returns ownership; it never retries that head.
     await greenHead(14, '1'.repeat(40));
-    expect((await commands(B, C)).map((command) => command.reason)).toEqual(['subscribed_event']);
+    expect(await commands(B, C)).toEqual([]);
+    expect((await commands(A, C)).some(command => command.source.body.includes('without a verdict'))).toBe(true);
   });
 
   it('Reproduction C3-1: a green re-report on the same head does not re-wake a reviewer that already reviewed it', async () => {
@@ -687,7 +696,7 @@ describe('corner message attribution', () => {
     expect(await commands(B, C)).toEqual([]);
     expect((await db.query<{ workflow_state: string }>(
       `SELECT ${cornerRunStateSql('corner_id')} workflow_state FROM corner_facts WHERE corner_id=$1`, [C],
-    )).rows[0]).toEqual({ workflow_state: 'review' });
+    )).rows[0]).toEqual({ workflow_state: 'working' });
   });
 
   it('returns a completed review without PASS to the implementer without re-waking the reviewer on that head', async () => {
@@ -1491,4 +1500,76 @@ it.each(['complete','failed'] as const)('Reproduction review-1: a delivered repa
   await db.query("UPDATE agent_commands SET state='complete',completed_at=now() WHERE room_id=$1 AND agent_id=$2",[C,A]);
   await reconcileConfiguredCornerReviewers(db,R);
   expect(await commands(B,C)).toEqual([]);
+});
+
+it('committed-event recovery: startup green, lost command and reviewer completion share one timer-free runtime', async () => {
+  const { CornerMachineEvents } = await import('./corner-attention.js');
+  const { POSTGRES_LIVE_CHANNEL } = await import('./postgres-live.js');
+  await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+  const headSha = '6'.repeat(40);
+  // Startup has no GitHub client and no repair interval.
+  await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [C,
+    JSON.stringify({ lifecycle: 'in-review', checks: 'passing', pr: { number: 98, headSha, url: 'https://github.com/acme/repo/pull/98' } })]);
+  const live = new LiveHub();
+  const errors: unknown[] = [];
+  const machine = new CornerMachineEvents(db, live, error => errors.push(error));
+  const release = await db.client.listen(POSTGRES_LIVE_CHANNEL, payload => {
+    const event = JSON.parse(payload);
+    if (event.table === 'corner_state') live.publish({ type: 'invalidate', roomId: event.roomId, reason: 'postgres:corner_state' });
+  });
+  try {
+    live.resync();
+    await vi.waitFor(async () => expect(await commands(B, C)).toHaveLength(1));
+    const [lost] = await commands(B, C);
+    expect(lost).toBeDefined();
+    expect(await commands(B, R)).toEqual([]);
+    await db.query('DELETE FROM agent_commands WHERE id=$1', [lost!.id]);
+    await vi.waitFor(async () => expect(await commands(B, C)).toHaveLength(1));
+    const [review] = await commands(B, C);
+    await claim(review!);
+    await daemon.execute('postAgentTurnReceipt', { roomId: C, requestId: review!.turnRequestId,
+      generationId: 'g1', status: 'complete' }, B);
+    await vi.waitFor(async () => {
+      const handbacks = (await commands(A, C)).filter(command => command.reason === 'corner_review_needed');
+      expect(handbacks).toHaveLength(1);
+      expect(handbacks[0]?.source.body).toContain('without a verdict');
+      expect(handbacks[0]?.source.body).toContain(headSha);
+    });
+    for (let replay = 0; replay < 3; replay++) live.publish({ type: 'invalidate', roomId: C, reason: 'postgres:corner_state' });
+    await machine.refresh(C);
+    expect((await commands(A, C)).filter(command => command.reason === 'corner_review_needed')).toHaveLength(1);
+    expect(await commands(B, C)).toEqual([]);
+    expect(errors).toEqual([]);
+    await machine.stop();
+    // A preceding image closed the Room while this listener was down.
+    await db.query('UPDATE rooms SET archived_at=now() WHERE id=$1', [C]);
+    const recovery = new CornerMachineEvents(db, live, error => errors.push(error));
+    try {
+      await recovery.start();
+      expect((await db.query(`SELECT machine->>'state' state FROM corner_facts WHERE corner_id=$1`, [C])).rows).toEqual([{state:'archived'}]);
+    } finally { await recovery.stop(); }
+  } finally {
+    await machine.stop();
+    await release();
+  }
+});
+
+it('event recovery drains its startup scan before shutdown', async () => {
+  const { CornerMachineEvents } = await import('./corner-attention.js');
+  let release!: () => void, entered!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const scan = new Promise<void>(resolve => { entered = resolve; });
+  const query = db.query.bind(db), errors: unknown[] = [];
+  const runtime = new CornerMachineEvents({
+    query: async (sql, values) => {
+      if (sql.includes('LEFT JOIN corner_facts fact ON fact.corner_id=corner.id')) { entered(); await gate; }
+      return query(sql, values);
+    }, transaction: work => db.transaction(work),
+  }, new LiveHub(), error => errors.push(error));
+  const recovery = runtime.start(); await scan;
+  let stopped = false;
+  const stopping = runtime.stop().then(() => { stopped = true; });
+  await Promise.resolve(); expect(stopped).toBe(false);
+  release(); await Promise.all([recovery, stopping]);
+  expect(errors).toEqual([]);
 });

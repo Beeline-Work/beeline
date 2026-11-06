@@ -65,7 +65,7 @@ import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { PER_ITEM_EVENT_KINDS, uniqueAgentHandle } from '@beeline/api-contract/phone';
 import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
-import { CORNER_GITHUB_CACHE_MIRROR_SQL, backfillCornerLifecycleRuns, deleteStoredCornerWorkflows } from './corner-lifecycle.js';
+import { CORNER_MACHINE_SCHEMA, CORNER_GITHUB_CACHE_MIRROR_SQL, backfillCornerLifecycleRuns, deleteStoredCornerWorkflows } from './corner-lifecycle.js';
 import { backfillFeedbackTriageWorkflow, backfillFeedbackSignalWalk, backfillWorkspaceWalkHistory } from './feedback-triage-workflow.js';
 import { backfillWorkflowSkillDescriptions, closeStaleWorkflowGateChoices } from './workflow-runs.js';
 import { upgradeGrantPolicy, withdrawSupersededGrantAsks } from './grant-policy-upgrade.js';
@@ -1934,6 +1934,7 @@ DROP TRIGGER IF EXISTS corner_github_cache_touch ON corner_github_cache;
 CREATE TRIGGER corner_github_cache_touch BEFORE UPDATE OF lifecycle ON corner_github_cache
   FOR EACH ROW EXECUTE FUNCTION corner_github_cache_touch();
 ${CORNER_GITHUB_CACHE_MIRROR_SQL}
+${CORNER_MACHINE_SCHEMA}
 
 CREATE TABLE IF NOT EXISTS corner_watches (
   watcher_room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,

@@ -12,9 +12,8 @@ import { answerRoomChoice, postRoomChoice } from './room-choice.js';
 import { handoff, saveWorkflow, startWorkflow, settleWorkflowGate, cancelWorkflowRun, assignWorkflowRole } from './workflow-runs.js';
 
 /**
- * The phone's workflow run reads over real `workflow-handoff` cards written by
- * `startWorkflow`/`handoff`, and a corner's own lifecycle cards written by
- * `advanceCorner` — never hand-built rows.
+ * Workflow runs use real `workflow-handoff` cards. Retired corner lifecycle
+ * cards are seeded only to prove they remain hidden during the expand release.
  */
 
 vi.mock('node:crypto', async (importOriginal) => {
@@ -168,8 +167,6 @@ describe('listRoomWorkflowRuns', () => {
     const runId = await triageRun();
     await advanceCorner(database, CORNER, {
       kind: 'open',
-      workspaceId: WORKSPACE,
-      implementerAgentId: TRIAGER,
     });
     const listed = await phone.execute('listRoomWorkflowRuns', { roomId: ROOM }, OWNER);
     const bySlug = Object.fromEntries(listed.workflows.map((run) => [run.workflowSlug, run]));
@@ -205,8 +202,6 @@ describe('listRoomWorkflowRuns', () => {
     });
     await advanceCorner(database, CORNER, {
       kind: 'open',
-      workspaceId: WORKSPACE,
-      implementerAgentId: TRIAGER,
     });
     expect(
       (await advanceCorner(database, CORNER, { kind: 'closed' })).accepted,
@@ -361,11 +356,13 @@ describe('readWorkflowRun', () => {
 
   it('Reproduction C1: a corner lifecycle has no workflow listing or run page, including legacy cards', async () => {
     await advanceCorner(database, CORNER, {
-      kind: 'open', workspaceId: WORKSPACE, implementerAgentId: TRIAGER,
+      kind: 'open',
     });
     for (const legacy of [false, true]) {
       if (legacy) await database.query(
-        `UPDATE messages SET card=card || '{"workflowSlug":"corner","workflowVersion":7}'::jsonb WHERE room_id=$1`, [CORNER],
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+         VALUES('legacy-corner',$1::uuid,$2,'Historical corner','card','corner-workflow-handoff',
+           jsonb_build_object('runId',$1::text,'workflowSlug','corner','workflowVersion',7,'toState','implement','seq',1))`, [CORNER,TRIAGER],
       );
       for (const roomId of [ROOM, CORNER]) {
         expect((await phone.execute('listRoomWorkflowRuns', { roomId }, OWNER)).workflows).toEqual([]);
@@ -394,18 +391,13 @@ describe('readWorkflowRun', () => {
     });
     await advanceCorner(database, CORNER, {
       kind: 'open',
-      workspaceId: WORKSPACE,
-      implementerAgentId: TRIAGER,
     });
     const lifecycleCards = await database.query<{ slug: string | null; version: string | null }>(
       `SELECT card->>'workflowSlug' slug,card->>'workflowVersion' version FROM messages
        WHERE room_id=$1 AND card_type='corner-workflow-handoff'`,
       [CORNER],
     );
-    expect(lifecycleCards.rows).toEqual([
-      { slug: null, version: null },
-      { slug: null, version: null },
-    ]);
+    expect(lifecycleCards.rows).toEqual([]);
 
     const listed = await phone.execute('listRoomWorkflowRuns', { roomId: ROOM }, OWNER);
     const byRun = Object.fromEntries(listed.workflows.map((run) => [run.runId, run]));

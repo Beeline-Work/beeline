@@ -7,7 +7,7 @@ export const cornerRoomColumnsSql = `c.id,c.workspace_id,${CORNER_ROW_ROOM_COLUM
   (column) => `c.${column}`,
 ).join(',')}`;
 export const CORNER_ROW_FACT_COLUMNS = [
-  'locked',
+  'locked', 'machine',
 ] as const;
 /** The GitHub display cache (`gh`, `corner_github_cache`) columns the corner row reads. */
 export const CORNER_ROW_CACHE_COLUMNS = [

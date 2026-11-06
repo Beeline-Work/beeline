@@ -146,3 +146,20 @@ it('allows removing an owner and its sink without allowing new terminal owners',
   assert.deepEqual(strictRelaxations('',{rules:[before]},{rules:[tightened]}),[]);
   assert.notDeepEqual(strictRelaxations('',{rules:[tightened]},{rules:[before]}),[]);
 });
+
+it('permits relocating unchanged strict functions, never altered bodies or a second owner', async () => {
+  const { strictRelaxations } = await import('./architecture-invariants.mjs');
+  const root = mkdtempSync(path.join(process.cwd(), '.beeline-proof', 'owner-relocation-'));
+  const source = 'export async function original(db) { await db.query(`UPDATE rooms SET archived_at=now()`); }';
+  const before = { id:'archive',strict:true,total:0,owners:['old.ts'],ownerFunctions:{'old.ts':['original']},ownerSites:1 };
+  const after = {...before,owners:['new.ts'],ownerFunctions:{'new.ts':['moved']}};
+  const check = rule => strictRelaxations(root,{rules:[before]},{rules:[rule]},() => source);
+  try {
+    writeFileSync(path.join(root,'new.ts'), source.replace('original','moved'));
+    assert.deepEqual(check(after),[]);
+    assert.notDeepEqual(check({...after,owners:['old.ts','new.ts']}),[]);
+    assert.notDeepEqual(check({...after,ownerSites:2}),[]);
+    writeFileSync(path.join(root,'new.ts'), source.replace('original','moved').replace('now()','NULL'));
+    assert.notDeepEqual(check(after),[]);
+  } finally { rmSync(root,{recursive:true,force:true}); }
+});

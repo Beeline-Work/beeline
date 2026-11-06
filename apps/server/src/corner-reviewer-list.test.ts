@@ -145,7 +145,7 @@ async function failTurn(c: AgentCommand) {
 }
 
 const reviews = async (agentId: string) =>
-  (await commands(agentId)).filter((c) => c.reason === 'subscribed_event');
+  (await commands(agentId)).filter((c) => ['subscribed_event', 'corner_review_dispatch'].includes(c.reason));
 
 async function setReviewer(id: string | null) {
   await phone.execute('updateRoom', { roomId: R, reviewerAgentId: id }, H);

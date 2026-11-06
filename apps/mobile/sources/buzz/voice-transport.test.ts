@@ -38,6 +38,11 @@ vi.mock('livekit-client', () => ({
 import * as nativeTransport from './voice-transport.native';
 import { createVoiceRoom, subscribeVoiceResume, routeVoiceResumeNotification } from './voice-transport.native';
 
+it('implements the complete shared voice transport contract on native', () => {
+  const contract: typeof import('./voice-transport') = nativeTransport;
+  expect(contract.subscribeVoiceMicrophone).toBeTypeOf('function');
+});
+
 it('starts native audio only when voice mode opens and exposes cleanup for leave/unmount', async () => {
   expect(native.AudioSession.startAudioSession).not.toHaveBeenCalled();
   const transport = await createVoiceRoom();

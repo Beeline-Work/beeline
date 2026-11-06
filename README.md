@@ -31,7 +31,7 @@ npx usebeeline connect
 Sign in to Beeline in the [iOS](https://apps.apple.com/app/id6803948500) or [Android](https://play.google.com/store/apps/details?id=app.usebeeline) app. Enter its pairing code on your agent's machine.
 Requires Node 20.11+ and Linux x64 or macOS. [Setup details](https://github.com/Beeline-Work/beeline/blob/main/docs/getting-started.md#install).
 
-Installed helpers follow the latest release by default. The team dogfoods a separate `next` channel on Android private beta and the squire helper; an owner command promotes it to latest. [Release channels](docs/release-pipeline.md#next-and-latest).
+Installed helpers follow the latest release by default. The team dogfoods a separate `next` channel on Android private beta and the squire helper; next releases carry versions such as `0.1.184-rc.3`, and an owner command rebuilds that commit as the final `0.1.184` for latest. [Release channels](docs/release-pipeline.md#next-and-latest).
 
 Already in a Claude Code, Codex, OpenCode, Pi, Antigravity, Gemini CLI, Hermes or ZCode session? Paste one line into it:
 

@@ -42,7 +42,7 @@ import { liveDraftRowId } from '@/buzz/draft-settle';
 import {
   applyLiveOverlayStructure,
   liveDraftDrainKey,
-  liveDraftDrainStore,
+  createLiveDraftDrainStore,
   type LiveDraftDrainStore,
 } from '@/buzz/live-draft-drain';
 import { createRoomOutbox, mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
@@ -281,6 +281,7 @@ export function useRoomSurfaceSession({
   isFocused = true,
   bindingsRef,
 }: UseRoomSurfaceSessionOptions): UseRoomSurfaceSessionResult {
+  const liveDraftDrainStore = useMemo(() => createLiveDraftDrainStore(), [channelId]);
 
   const [openingCache] = useState(() => {
 

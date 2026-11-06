@@ -303,7 +303,7 @@ import { RoomUnreadControls } from '@/components/buzz/RoomUnreadControls';
 import { TranscriptScrubber } from '@/components/buzz/TranscriptScrubber';
 import { usePhoneUnderfillHistory } from '@/buzz/phone-underfill-history';
 import { createTranscriptCardMotionStore } from '@/components/buzz/transcript-card-motion-context';
-import { isAgentTurnActive, nextAgentPresenceTransitionAt, nextAgentTurnExpiryAt, activeMentionCandidates } from '@/buzz/agent-presence';
+import { isAgentTurnActive, nextAgentPresenceTransitionAt, activeMentionCandidates } from '@/buzz/agent-presence';
 import {
   sameElementRefs,
   sameMessageRefMap,
@@ -2102,16 +2102,8 @@ export function BuzzChatSurface({
   // Every agent answering right now, not just the first: two agents asked in
   // one message run two concurrent turns and each owns its own live lane.
   const rawActiveAgentTurns = useMemo(
-    () =>
-      agentTurnMarkers.filter((turn) =>
-        isAgentTurnActive(
-          turn,
-          agentPresences[turn.agentPubkey],
-          presenceNow,
-          presenceReconnectGrace[turn.agentPubkey],
-        ),
-      ),
-    [agentTurnMarkers, agentPresences, presenceNow, presenceReconnectGrace],
+    () => agentTurnMarkers.filter(isAgentTurnActive),
+    [agentTurnMarkers],
   );
   // A filter rebuilds its array on every presence tick even when it selected
   // the same receipts, and this feeds the transcript projection.
@@ -3539,13 +3531,7 @@ export function BuzzChatSurface({
     // someone was typing, which made the foreground intermittently unresponsive.
     const now = Date.now();
     const presenceDeadline = nextAgentPresenceTransitionAt(agentPresences, now);
-    const turnDeadline = nextAgentTurnExpiryAt(agentTurnMarkers, now);
-    const deadline =
-      presenceDeadline === undefined
-        ? turnDeadline
-        : turnDeadline === undefined
-          ? presenceDeadline
-          : Math.min(presenceDeadline, turnDeadline);
+    const deadline = presenceDeadline;
     if (deadline === undefined) return;
     const delay = Math.max(1, deadline - now + 1);
     const timer = setTimeout(() => setPresenceNow(Date.now()), delay);

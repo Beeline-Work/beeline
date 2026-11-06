@@ -357,7 +357,7 @@ function CornerCockpit({
     return () => clearInterval(timer);
   }, []);
   const turn = detail?.latestAgentTurns.find((candidate) =>
-    isAgentTurnActive(candidate, undefined, now),
+    isAgentTurnActive(candidate),
   );
   const ack = selectComposerAckPresentation({
     isCorner: true,

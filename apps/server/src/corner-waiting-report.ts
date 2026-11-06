@@ -42,7 +42,7 @@ export function cornerHumanReportsSql(cornerId: string, workerId: string): strin
  * `message_id` is the display target; `card_id` also retains cross-Room report cards
  * so clearing marks both the private command and its visible record answered.
  */
-export function cornerWaitingReportSql(corner: string): string {
+export function cornerWaitingReportSql(corner: string, includeAnswered = false): string {
   return `SELECT ${corner}.id corner_id,latest.report_id,latest.message_id,latest.card_id,
     latest.return_room_id,latest.created_at,latest.commander_id,person.id person_id
   FROM corner_facts waiting_fact
@@ -81,7 +81,7 @@ export function cornerWaitingReportSql(corner: string): string {
   ) AND ${tagsKnownIdentitySql('item', 'person.id', 'person.handle', 'person.kind')})
   WHERE waiting_fact.corner_id=${corner}.id
     AND latest.text ~ '^(needs-decision|blocked):'
-    AND latest.answered IS DISTINCT FROM 'true'`;
+    ${includeAnswered ? '' : "AND latest.answered IS DISTINCT FROM 'true'"}`;
 }
 
 /**

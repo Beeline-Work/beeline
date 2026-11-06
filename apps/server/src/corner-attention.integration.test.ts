@@ -531,7 +531,7 @@ it.each(['agent', 'human'] as const)('REPORT-WAITING-DERIVED: %s report quiets w
     if (event.table === 'corner_state') changes.push(event.roomId);
   }) : undefined;
   try {
-    for (const input of ['return-room-answer', 'commander-order'] as const) {
+    for (const input of ['return-room-answer', 'commander-order', 'new-head'] as const) {
       const automatic = await createAgentCommand(db, { id: `automatic-${input}`, roomId: C, agentId: WORKER,
         sourceMessageId: null, reason: 'corner_lifecycle',
         privatePayload: { kind: 'lifecycle', authorId: SYSTEM_IDENTITY_ID, fromRoomId: C, text: 'Continue automatically' } });
@@ -565,6 +565,8 @@ it.each(['agent', 'human'] as const)('REPORT-WAITING-DERIVED: %s report quiets w
           sourceMessageId: null, reason: 'order', privatePayload: { kind: 'order', authorId: recipient, fromRoomId: ROOM, text: 'Proceed' } });
         await db.query(`UPDATE agent_commands SET state='complete' WHERE id=$1`, [next!.id]);
         await db.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1 AND request_id=$2`, [C,next!.turn_request_id]);
+      } else {
+        await db.query(`UPDATE corner_github_cache SET lifecycle='{"pr":{"headSha":"new-head"},"checks":"failing"}'::jsonb WHERE corner_id=$1`, [C]);
       }
       expect(await cornerReportWaiting(db, C)).toBe(false);
       if (unlisten) expect(changes).toContain(C);

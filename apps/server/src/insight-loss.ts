@@ -46,20 +46,25 @@ const LOSS_SQL = String.raw`WITH ${COHORT_SQL}, loss_workspaces AS (
   UNION ALL
   SELECT room_id,id,created_at,'restatement',3 FROM similarity WHERE similarity>=0.7
   UNION ALL
-  SELECT p.room_id,p.id,p.created_at,'silence_nudge',3 FROM pairs p
-  WHERE p.created_at-p.previous_at>=interval '90 seconds'
-    AND p.text ~* '(\m(still|again|hello|waiting|any update)\M|\mu there\M|\?\?)'
-    AND NOT EXISTS (SELECT 1 FROM messages reply WHERE reply.room_id=p.room_id
-      AND reply.author_id=p.agent_id AND reply.presentation='message' AND reply.deleted_at IS NULL
-      AND reply.created_at>p.previous_at AND reply.created_at<p.created_at)
+  SELECT h.room_id,h.id,h.created_at,'silence_nudge',3 FROM humans h CROSS JOIN bounds b
+  JOIN LATERAL (
+    SELECT t.agent_id,t.created_at FROM targets t
+    WHERE t.room_id=h.room_id AND t.author_id=h.author_id AND t.created_at<h.created_at
+    ORDER BY t.created_at DESC,t.id DESC,t.agent_id LIMIT 1
+  ) prior ON true
+  WHERE h.created_at>=b.since AND h.created_at-prior.created_at>=interval '90 seconds'
+    AND h.text ~* '(\m(still|again|hello|waiting|any update)\M|\mu there\M|\?\?)'
+    AND NOT EXISTS (SELECT 1 FROM messages reply WHERE reply.room_id=h.room_id
+      AND reply.author_id=prior.agent_id AND reply.presentation='message' AND reply.deleted_at IS NULL
+      AND reply.created_at>prior.created_at AND reply.created_at<h.created_at)
   UNION ALL
   SELECT h.room_id,h.id,h.created_at,'failure_followup',3 FROM humans h CROSS JOIN bounds b
   WHERE h.created_at>=b.since AND EXISTS (
     SELECT 1 FROM messages failure WHERE failure.room_id=h.room_id
-      AND failure.presentation='system' AND failure.deleted_at IS NULL
+      AND failure.presentation IN ('system','card') AND failure.deleted_at IS NULL
       AND failure.created_at>=b.since AND failure.created_at<h.created_at
       AND failure.created_at>=h.created_at-interval '15 minutes'
-      AND failure.text ~* '(could not answer|is offline|helper is unreachable)'
+      AND (failure.card_type='turn-failed' OR failure.text ~* '(could not answer|could not finish this request|is offline|helper is unreachable)')
       AND NOT EXISTS (SELECT 1 FROM messages reply JOIN identities agent ON agent.id=reply.author_id AND agent.kind='agent'
         WHERE reply.room_id=h.room_id AND reply.deleted_at IS NULL AND reply.presentation='message'
           AND reply.created_at>failure.created_at AND reply.created_at<h.created_at)
@@ -86,13 +91,13 @@ const LOSS_SQL = String.raw`WITH ${COHORT_SQL}, loss_workspaces AS (
   WHERE f.source_kind='human' AND f.created_at>=b.since AND f.created_at<b.through
 ), ranked AS (
   SELECT room_id,sum(weight)::integer AS score, count(*)::integer AS signal_count,
-    max(observed_at) AS last_observed_at,
-    jsonb_agg(jsonb_build_object('kind',signal,'messageId',message_id,'observedAt',observed_at,'weight',weight)
-      ORDER BY observed_at DESC,signal) AS signals
+    max(observed_at) AS last_observed_at
   FROM signals GROUP BY room_id ORDER BY score DESC,last_observed_at DESC,room_id LIMIT 10
 )
 SELECT ranked.room_id, r.workspace_id, ranked.score, ranked.signal_count,ranked.last_observed_at,
-  (SELECT jsonb_agg(item) FROM (SELECT value AS item FROM jsonb_array_elements(ranked.signals) LIMIT 20) limited) AS signals,
+  (SELECT jsonb_agg(jsonb_build_object('kind',signal,'messageId',message_id,'observedAt',observed_at,'weight',weight)
+      ORDER BY observed_at DESC,signal)
+    FROM (SELECT * FROM signals WHERE room_id=ranked.room_id ORDER BY observed_at DESC,signal LIMIT 20) limited) AS signals,
   coalesce(context.messages,'[]'::jsonb) AS messages,
   b.since AS window_start,b.through AS window_end
 FROM ranked JOIN rooms r ON r.id=ranked.room_id CROSS JOIN bounds b

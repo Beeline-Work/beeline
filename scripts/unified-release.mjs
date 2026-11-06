@@ -256,11 +256,8 @@ function matchesRule(path, rule) { return rule.exact === path || (rule.prefix &&
 export function selectReleaseComponents(paths, { selection = 'auto', storeTrack = 'none' } = {}) {
   if (!['none', 'production', 'beta'].includes(storeTrack)) fail(`invalid store track: ${storeTrack}`);
   const explicit = selection !== 'auto' && selection !== '';
-  // RELEASE POLICY: OTA is the default delivery and never publishes to a
-  // store by itself. Store publishing happens only on an explicit
-  // --store-track. A runtime-pin change does not change that: the OTA goes to
-  // every runtime live in the stores today, and the new runtime waits for a
-  // store release the owner chooses.
+  // The routine planner resolves native fingerprints/pins into an effective
+  // store track before applying this path map. Paths alone do not select stores.
   let selected;
   if (selection === 'all') selected = new Set(RELEASE_COMPONENTS);
   else if (selection === 'auto' || selection === '') {
@@ -275,7 +272,7 @@ export function selectReleaseComponents(paths, { selection = 'auto', storeTrack 
     for (const component of selected) assertComponent(component);
   }
   // Path changes alone never authorize a routine native build. Explicit
-  // component selection remains available for build-only recovery.
+  // component selection remains available for native recovery.
   if (!explicit && storeTrack === 'none') selected.delete('mobile-native');
   if (storeTrack !== 'none') selected.add('mobile-native');
   return RELEASE_COMPONENTS.filter((component) => selected.has(component));

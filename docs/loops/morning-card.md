@@ -32,7 +32,8 @@ Missing deployment evidence is **OPEN QUESTION**, never a clean bill of health.
    (or "no demonstrated improvement") after the same freshness/dedupe gate.
    On the next card after installing these skills, first recheck the grader
    false-pass candidate in [prompt-weekly](prompt-weekly.md#first-candidate), then
-   offer its truthfulness/authority fix. The research report alone is not proof
+   reserve its slot and offer its truthfulness/authority fix as the first tuple.
+   The research report alone is not proof
    of a current-release bug.
 
 At 09:00 publish the release line plus at most three compact tuples and their

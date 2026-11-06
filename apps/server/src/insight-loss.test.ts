@@ -55,7 +55,7 @@ it('scores restatements only to the same agent within 15 minutes, and excludes s
 });
 it('finds a long silence followed by a nudge, but an agent reply clears the silence signal', async () => {
   await message('Can you prepare the release notes?',45,agent);
-  await message('hello, any update?',2,agent);
+  await message('hello, any update?',2); // A Room nudge need not tag the agent again.
   expect(kinds(await read())).toContain('silence_nudge');
   await message('I have the release notes.',20,undefined,agent);
   expect(kinds(await read())).not.toContain('silence_nudge');
@@ -64,6 +64,8 @@ it('scores failures followed by humans, human Stop taps, cancelled commands and 
   const failure = await message('@worker could not answer',10,undefined,agent);
   await db.query(`UPDATE messages SET presentation='system' WHERE id=$1`,[failure]);
   await message('still not working??',9,agent);
+  expect(kinds(await read())).toContain('failure_followup');
+  await db.query(`UPDATE messages SET text='Could not finish this request',presentation='card',card_type='turn-failed' WHERE id=$1`,[failure]);
   const stop = await message('stopped worker',8);
   await db.query(`UPDATE messages SET presentation='system',system_event='{"kind":"turn-cancelled"}'::jsonb WHERE id=$1`,[stop]);
   // A command started before this release can be stopped on the current one.
@@ -103,6 +105,7 @@ it('requires the private operator credential and current SHA, refuses malformed 
   expect((await get(query.replace(sha,'e'.repeat(40)))).status).toBe(409);
   expect((await get(query+'&since='+since)).status).toBe(400);
   expect((await get('?since=invalid&sourceSha='+sha)).status).toBe(400);
+  expect((await get('?since=1&sourceSha='+sha)).status).toBe(400);
   const response = await get();
   expect(response.status).toBe(200);
   expect(response.headers.get('cache-control')).toBe('private, no-store');

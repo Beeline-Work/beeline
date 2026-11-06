@@ -143,8 +143,9 @@ non-`none` store track always selects `mobile-native`. Routine planning resolves
 changed native fingerprints or runtime versions select both production platforms.
 Explicit recovery selection (`all` or `mobile-native`) also publishes every new
 Android binary to Play production by default; only explicit `store_track=beta`
-chooses Play beta. iOS store uploads require an explicit store track and only
-`production` submits for App Review. Android listing text/images remain locked unless the
+chooses Play beta. iOS store uploads require a non-none effective store track
+(resolved automatically for routine native changes); only `production` submits
+for App Review. Android listing text/images remain locked unless the
 owner explicitly commands a listing publish. The pre-commit gate stops on any
 listing change; a passing build edit commits without `changesNotSentForReview`.
 

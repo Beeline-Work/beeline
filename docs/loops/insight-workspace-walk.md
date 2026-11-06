@@ -21,7 +21,7 @@ human message activity in the last 24 hours, honors `allow_fix_sweep`, excludes 
 any workspace containing `lunchboxfortwo` or `methoxine` in active membership
 (including Room membership). Query once; never redraw to find a better story.
 Record eligible count, sample IDs and window privately. If fewer than five are
-eligible, inspect all returned; if zero, report exactly `0 active workspaces.`
+eligible, inspect all returned; if zero, report exactly `0 eligible active workspaces.`
 For sampled workspaces read only current-release context within the last 24h,
 using the authorized triage/workspace read route; no corpus-wide model sweep.
 
@@ -37,8 +37,8 @@ For each workspace ask, in this fixed order:
 
 Keep per-workspace observations private. Output only supported problem → fix
 (or **OPEN QUESTION**) tuples; successful use without a problem is not filler.
-At 14:00 the card owner also calls [insight-loss](insight-loss.md), merges only
-these two sources, applies ledger dedupe, and uses the card delivery procedure
+At 14:00 the card owner combines this result with one run of
+[insight-loss](insight-loss.md), reusing that result if already collected, applies ledger dedupe, and uses the card delivery procedure
 in [contract.md](contract.md#cards). No velocity, rival scan or ads metrics enter
 this card. An honest zero must remain visible even if insight-loss found tuples.
 

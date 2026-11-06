@@ -1828,7 +1828,8 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
       json(response, 403, { error: 'access_denied' }); return;
     }
     const since = url.searchParams.get('since'), sourceSha = url.searchParams.get('sourceSha');
-    if (!since || !Number.isFinite(Date.parse(since)) || Date.parse(since) > Date.now() ||
+    if (!since || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(since) ||
+        !Number.isFinite(Date.parse(since)) || Date.parse(since) > Date.now() ||
         !sourceSha || !/^[a-f0-9]{40}$/.test(sourceSha) ||
         [...url.searchParams.keys()].some(key => !['since', 'sourceSha'].includes(key)) ||
         url.searchParams.getAll('since').length !== 1 || url.searchParams.getAll('sourceSha').length !== 1) {

@@ -46,7 +46,10 @@ Each private handoff is a JSON array. Each tuple has:
   retain the complete spec and regression criteria in `details` privately.
 - `evidence`: a real HTTPS issue/run/artifact link or `#beeline/.../...` message
   reference, readable by the owner; no raw transcripts, customer identities or secrets.
-- `sourceSha`, `observedAt`, `deploymentAt`: verified component SHA and timestamps.
+- `sourceSha`: the pinned live release SHA used by the card. `componentSha`,
+  `observedAt`, `deploymentAt`: the affected component's verified artifact SHA
+  and timestamps. Keep a carried component's older artifact SHA explicit; verify
+  the defect still exists in that component of the current release.
 - `confidence`: `high`, `medium` or `low`; `openQuestion`: explicit boolean. When
   true, `fix` names the missing observation/decision and no fix approval is offered.
 - Severity/affected-user counts from the existing triage skill, when applicable;
@@ -92,7 +95,7 @@ method. Merely merging, or one quiet night, does not mark a tuple verified.
 At 09:00 the owner combines the release outcome line with the overnight findings.
 At 14:00 the same owner runs **only insight-loss and insight-workspace-walk**, then
 combines their tuples. The walk's sampling count remains explicit, including
-`0 active workspaces.`. Use at most three display tuples per card; rank first,
+`0 eligible active workspaces.`. Use at most three display tuples per card; rank first,
 then carry excess unpresented candidates in the private backlog for revalidation.
 
 Use the existing workflow gate, which already posts single-tap choices and

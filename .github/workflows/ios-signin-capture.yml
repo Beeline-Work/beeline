@@ -101,7 +101,7 @@ jobs:
           echo "dbdcfbe2b673e1a6f40c65664f1ed5becad0b0a40e35d0e203dff511d05032f6  $RUNNER_TEMP/maestro-signin.zip" | shasum -a 256 -c -
           unzip -q -o "$RUNNER_TEMP/maestro-signin.zip" -d "$RUNNER_TEMP/maestro-signin"
           echo "$RUNNER_TEMP/maestro-signin/maestro/bin" >> "$GITHUB_PATH"
-      - name: Build unsigned Simulator app and capture both providers
+      - name: Build ad hoc signed Simulator app and capture both providers
         env:
           SOURCE_DIR: ${{ github.workspace }}/source
           HARNESS_DIR: ${{ github.workspace }}/harness

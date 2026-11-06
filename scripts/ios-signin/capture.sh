@@ -5,7 +5,7 @@ set -euo pipefail
 derived_data="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/ios-signin-dd-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}"
 mkdir -p "$EVIDENCE"
 missing=0
-for tool in xcodebuild xcrun node npm npx pod java maestro; do
+for tool in xcodebuild xcrun node npm npx pod java maestro codesign; do
   if tool_path=$(command -v "$tool"); then
     printf '%s: %s\n' "$tool" "$tool_path"
   else
@@ -78,6 +78,21 @@ xcodebuild -workspace "$workspace" -scheme "$scheme" -configuration Release \
 app=$(find "$derived_data/Build/Products/Release-iphonesimulator" -maxdepth 1 -name '*.app' -print -quit)
 test -n "$app"
 cp "$app/Info.plist" "$EVIDENCE/app-info.plist"
+# An unsigned Simulator executable launches, but iOS Keychain refuses it with
+# errSecMissingEntitlement (-34018). Use an isolated ad hoc identity, no runner
+# signing certificate or production access group.
+cat > "$EVIDENCE/simulator-entitlements.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>application-identifier</key><string>BEELINESIM.app.usebeeline.mobile</string>
+  <key>keychain-access-groups</key><array><string>BEELINESIM.app.usebeeline.mobile</string></array>
+</dict></plist>
+PLIST
+codesign --force --sign - --entitlements "$EVIDENCE/simulator-entitlements.plist" \
+  --generate-entitlement-der "$app" > "$EVIDENCE/codesign.log" 2>&1
+codesign --verify --strict "$app" >> "$EVIDENCE/codesign.log" 2>&1
+codesign --display --entitlements - "$app" > "$EVIDENCE/signed-entitlements.plist" 2>> "$EVIDENCE/codesign.log"
 xcrun simctl install "$device" "$app"
 xcrun simctl spawn "$device" log stream --style compact --level debug \
   --predicate 'process CONTAINS[c] "Beeline" OR process CONTAINS[c] "buzzy" OR process CONTAINS[c] "SafariViewService" OR process CONTAINS[c] "AuthenticationServices" OR subsystem CONTAINS[c] "AuthenticationServices" OR subsystem CONTAINS[c] "SafariServices"' \

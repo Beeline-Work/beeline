@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-test('missing CocoaPods is named before prebuild or simulator work starts', () => {
+for (const missing of ['pod', 'codesign']) {
+test(`missing ${missing} is named before prebuild or simulator work starts`, () => {
   const root = mkdtempSync(join(tmpdir(), 'signin-preflight-'));
   try {
     const bin = join(root, 'bin');
@@ -13,7 +14,8 @@ test('missing CocoaPods is named before prebuild or simulator work starts', () =
     mkdirSync(join(root, 'apps/mobile'), { recursive: true });
     symlinkSync('/bin/rm', join(bin, 'rm'));
     symlinkSync('/bin/mkdir', join(bin, 'mkdir'));
-    for (const tool of ['xcodebuild', 'xcrun', 'node', 'npm', 'npx', 'java', 'maestro']) {
+    const available = ['xcodebuild', 'xcrun', 'node', 'npm', 'npx', 'pod', 'java', 'maestro', 'codesign'].filter(tool => tool !== missing);
+    for (const tool of available) {
       writeFileSync(join(bin, tool), '#!/bin/sh\necho "Unexpected tool invocation" >&2\nexit 99\n', { mode: 0o755 });
     }
     const result = spawnSync('/bin/bash', [resolve('scripts/ios-signin/capture.sh')], {
@@ -21,15 +23,16 @@ test('missing CocoaPods is named before prebuild or simulator work starts', () =
       env: { ...process.env, PATH: bin, SOURCE_DIR: root, HARNESS_DIR: root, EVIDENCE: join(root, 'evidence') },
     });
     assert.equal(result.status, 127);
-    assert.match(result.stderr, /Missing required tool: pod/);
+    assert.ok(result.stderr.includes(`Missing required tool: ${missing}`));
     assert.doesNotMatch(result.stderr, /Unexpected tool invocation/);
-    for (const tool of ['xcodebuild', 'xcrun', 'node', 'npm', 'npx', 'java', 'maestro']) {
+    for (const tool of available) {
       assert.ok(result.stdout.includes(`${tool}: ${join(bin, tool)}`));
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
+}
 
 test('Simulator selection uses runtime compatibility rather than the final legacy iPhone type', async () => {
   const { readFileSync } = await import('node:fs');

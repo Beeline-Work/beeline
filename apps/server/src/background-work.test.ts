@@ -62,8 +62,14 @@ describe('event-only background work', () => {
 });
 describe('owner-created schedule clock', () => {
   it('shutdown clears its own handle and preserves another owner timer', async () => {
+    const nativeSetTimeout = globalThis.setTimeout, nativeClearTimeout = globalThis.clearTimeout;
     vi.useFakeTimers();
-    const set = vi.spyOn(globalThis, 'setTimeout'), clear = vi.spyOn(globalThis, 'clearTimeout');
+    const fakeSetTimeout = globalThis.setTimeout, fakeClearTimeout = globalThis.clearTimeout;
+    const set = vi.fn(fakeSetTimeout), clear = vi.fn(fakeClearTimeout);
+    // Global spies retain the fake timer descriptor and Vitest restores them
+    // again after this file. Install local recording wrappers instead.
+    globalThis.setTimeout = set;
+    globalThis.clearTimeout = clear;
     const outside = vi.fn(), fire = vi.fn(), clock = new OwnerScheduleClock(fire);
     const unrelated = setTimeout(outside, 60_000);
     try {
@@ -75,7 +81,22 @@ describe('owner-created schedule clock', () => {
       await vi.advanceTimersByTimeAsync(60_000);
       expect(outside).toHaveBeenCalledOnce();
       expect(fire).not.toHaveBeenCalled();
-    } finally { clock.stop(); clearTimeout(unrelated); set.mockRestore(); clear.mockRestore(); }
+    } finally {
+      clock.stop(); clearTimeout(unrelated);
+      globalThis.setTimeout = fakeSetTimeout;
+      globalThis.clearTimeout = fakeClearTimeout;
+      vi.useRealTimers();
+    }
+    // Vitest restores registered spies again when the file ends. That must
+    // not reinstall the fake clock into the worker running the next file.
+    try {
+      vi.restoreAllMocks();
+      expect(globalThis.setTimeout).toBe(nativeSetTimeout);
+      expect(globalThis.clearTimeout).toBe(nativeClearTimeout);
+    } finally {
+      globalThis.setTimeout = nativeSetTimeout;
+      globalThis.clearTimeout = nativeClearTimeout;
+    }
   });
 
   it('fires only at the supplied time, once, and parks without another schedule', async () => {

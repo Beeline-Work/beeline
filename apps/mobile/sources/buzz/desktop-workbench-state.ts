@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { DesktopArtifactSelection } from '@/buzz/desktop-artifact-pane';
-import type { ComputerSessionView } from '@/components/buzz/ComputerSession';
+import type { ComputerSessionView } from './computer-session';
 
 export const DESKTOP_NAV_MIN_WIDTH = 240;
 export const DESKTOP_NAV_MAX_WIDTH = 420;

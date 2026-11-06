@@ -1,4 +1,4 @@
-import type { ComputerSessionView } from '@/components/buzz/ComputerSession';
+import type { ComputerSessionView } from './computer-session';
 
 type WarmComputer = {
   session: ComputerSessionView;

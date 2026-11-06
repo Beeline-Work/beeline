@@ -13,14 +13,11 @@
  * blob module, and the one-shot navigation guard refuses every request after
  * the initial load), no message bridge back to the app, and no file access.
  *
- * pdf.js needs a real origin — inside an opaque one (a `sandbox` iframe, a
- * `srcdoc` frame) its module load and worker never settle, so the renderer
- * hangs on a blank page. Hence the blob URL on web and the `baseUrl` on
- * Android, and hence the main-thread "fake worker": it removes the blob
- * `Worker` construction, which is the step that hangs silently.
+ * A blob URL on web and a baseUrl on Android give the module renderer a
+ * real origin. Its worker stays inside a local blob under the document CSP.
  */
 export const ARTIFACT_PDF_CSP =
-  "default-src 'none'; script-src 'unsafe-inline' blob:; style-src 'unsafe-inline'; img-src data: blob:; connect-src blob:; base-uri 'none'; form-action 'none'; frame-src 'none'";
+  "default-src 'none'; script-src 'unsafe-inline' blob:; style-src 'unsafe-inline'; img-src data: blob:; connect-src blob:; worker-src blob:; base-uri 'none'; form-action 'none'; frame-src 'none'";
 
 /**
  * The origin the Android WebView document is given. It is never fetched: the
@@ -32,18 +29,7 @@ export const ARTIFACT_PDF_BASE_URL = 'https://artifact.usebeeline.app/';
 /** The card crop renders page one only; the viewer renders the whole file. */
 export type ArtifactPdfMode = 'preview' | 'viewer';
 
-/** A PDF that never finishes rendering must say so rather than sit blank. */
-export const ARTIFACT_PDF_RENDER_TIMEOUT_MS = 20_000;
 export const ARTIFACT_PDF_FAILURE_TEXT = 'This PDF could not be rendered here — use Open in browser.';
-
-/**
- * The document's one signal back to the app, and it is not a bridge: when the
- * page has finished painting (or given up) it navigates here, the navigation
- * guard refuses the request as it refuses every other, and the refusal is the
- * message. The card needs it because pdf.js paints well after the page's own
- * load event — snapshotting on load would cache a blank thumbnail.
- */
-export const ARTIFACT_PDF_RENDERED_URL = 'beeline-artifact://pdf-rendered';
 
 export interface PdfViewerDocumentOptions {
   /** The file's bytes, base64 encoded. */
@@ -53,14 +39,7 @@ export interface PdfViewerDocumentOptions {
   /** `pdf.worker.min.mjs` source text. */
   workerSource: string;
   mode: ArtifactPdfMode;
-  /**
-   * Navigate to `ARTIFACT_PDF_RENDERED_URL` once the page has settled. Only
-   * the Android card wants it — it is the cue to snapshot the thumbnail. The
-   * desktop frame paints live and has no snapshot to take, so its document
-   * leaves the signal out rather than aiming the browser at a scheme it has
-   * no handler for.
-   */
-  signalRendered?: boolean;
+
 }
 
 /**
@@ -77,7 +56,6 @@ export function pdfViewerDocument({
   mainSource,
   workerSource,
   mode,
-  signalRendered = false,
 }: PdfViewerDocumentOptions): string {
   const preview = mode === 'preview';
   return [
@@ -100,8 +78,6 @@ export function pdfViewerDocument({
     `var PDF_BASE64=${inlineScriptString(pdfBase64)};`,
     `var PAGE_LIMIT=${preview ? 1 : 0};`,
     `var FAILURE_TEXT=${inlineScriptString(ARTIFACT_PDF_FAILURE_TEXT)};`,
-    `var RENDER_TIMEOUT_MS=${ARTIFACT_PDF_RENDER_TIMEOUT_MS};`,
-    `var RENDERED_URL=${signalRendered ? inlineScriptString(ARTIFACT_PDF_RENDERED_URL) : 'null'};`,
     PDF_RENDER_SCRIPT,
     '</script></body></html>',
   ].join('');
@@ -113,27 +89,8 @@ export function pdfViewerDocument({
  */
 const PDF_RENDER_SCRIPT = `
 (function () {
-  // pdf.js reaches for a Worker first and, from a blob URL, that construction
-  // can resolve to a worker that never answers — the promise then hangs with
-  // no error. Taking Worker away puts it on its documented main-thread path.
-  try { Object.defineProperty(window, 'Worker', { value: undefined, configurable: true }); } catch (error) {}
   var pages = document.getElementById('pages');
   var settled = false;
-  var signalled = false;
-  // The page's one cue back to the host, and it is not a bridge: a navigation
-  // the guard refuses, whose refusal is the message. Sent only once the
-  // browser has actually painted — the render promise resolves when the
-  // bitmap is written, not when it is on screen, and the host snapshots what
-  // is on screen. Two frames is what guarantees the paint has landed.
-  function signal() {
-    if (!RENDERED_URL || signalled) return;
-    signalled = true;
-    requestAnimationFrame(function () {
-      requestAnimationFrame(function () {
-        window.location.href = RENDERED_URL;
-      });
-    });
-  }
   function fail() {
     if (settled) return;
     settled = true;
@@ -141,9 +98,7 @@ const PDF_RENDER_SCRIPT = `
     var note = document.getElementById('fallback');
     note.textContent = FAILURE_TEXT;
     note.style.display = 'block';
-    signal();
   }
-  var timer = setTimeout(fail, RENDER_TIMEOUT_MS);
   function bytesFromBase64(encoded) {
     var raw = atob(encoded);
     var bytes = new Uint8Array(raw.length);
@@ -154,9 +109,9 @@ const PDF_RENDER_SCRIPT = `
     return pdf.getPage(number).then(function (page) {
       var unscaled = page.getViewport({ scale: 1 });
       var width = document.documentElement.clientWidth || unscaled.width;
-      // Draw at the device's pixel density (capped) so the fitted page is
+      // Draw at the device's pixel density so the fitted page is
       // sharp, then let CSS scale the canvas back down to the frame width.
-      var density = Math.min(window.devicePixelRatio || 1, 2);
+      var density = window.devicePixelRatio || 1;
       var viewport = page.getViewport({ scale: (width / unscaled.width) * density });
       var canvas = document.createElement('canvas');
       canvas.width = Math.max(1, Math.floor(viewport.width));
@@ -189,15 +144,11 @@ const PDF_RENDER_SCRIPT = `
       .then(function () {
         if (settled) return;
         settled = true;
-        clearTimeout(timer);
-        signal();
       })
       .catch(function () {
-        clearTimeout(timer);
         fail();
       });
   } catch (error) {
-    clearTimeout(timer);
     fail();
   }
 })();
@@ -211,7 +162,6 @@ const PDF_RENDER_SCRIPT = `
 export async function loadPdfViewerDocument(options: {
   pdfBase64: string;
   mode: ArtifactPdfMode;
-  signalRendered?: boolean;
 }): Promise<string> {
   const { PDFJS_MAIN_SOURCE, PDFJS_WORKER_SOURCE } = await import('@/vendor/pdfjs/pdfjs.gen');
   return pdfViewerDocument({
@@ -219,6 +169,5 @@ export async function loadPdfViewerDocument(options: {
     mainSource: PDFJS_MAIN_SOURCE,
     workerSource: PDFJS_WORKER_SOURCE,
     mode: options.mode,
-    signalRendered: options.signalRendered,
   });
 }

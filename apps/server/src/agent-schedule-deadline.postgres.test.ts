@@ -29,7 +29,7 @@ describe.skipIf(!url)('Persisted schedule clock admission', () => {
           owner_id text,workflow_slug text,human_command_message_id text,cadence jsonb,message text,
           max_runs int,run_count int DEFAULT 0,next_run_at timestamptz,updated_at timestamptz DEFAULT now(),
           paused_at timestamptz,failed_due_at timestamptz,failed_revision timestamptz);`);
-      const source = readFileSync(new URL('./database.ts', import.meta.url), 'utf8');
+      const source = readFileSync(new URL('./database-schema-institutional-memory-items.ts', import.meta.url), 'utf8');
       const index = source.match(/CREATE INDEX IF NOT EXISTS agent_schedules_admitted_due_idx[^;]+;/)?.[0];
       expect(index).toBeTruthy(); await pool.query(index!);
       await pool.query('INSERT INTO rooms(id) VALUES($1)', [room]);

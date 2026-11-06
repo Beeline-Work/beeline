@@ -13,15 +13,15 @@ const OWNER = '1'.repeat(64);
 const PEER = '2'.repeat(64);
 
 describe('one System thread migration', () => {
-  it('keeps System lazy on an empty database and drops legacy release replay data', async () => {
+  it('keeps System lazy on an empty database and preserves legacy release replay data during overlap', async () => {
     const db = new PgliteDatabase();
     try {
       await db.query(`CREATE TABLE push_release_catchups(device_token text PRIMARY KEY);
         INSERT INTO push_release_catchups VALUES('old-device')`);
       await migrate(db);
       expect((await db.query('SELECT 1 FROM identities WHERE id=$1', [SYSTEM_IDENTITY_ID])).rowCount).toBe(0);
-      expect((await db.query("SELECT to_regclass('push_release_catchups') retired")).rows)
-        .toEqual([{ retired: null }]);
+      expect((await db.query('SELECT device_token FROM push_release_catchups')).rows)
+        .toEqual([{ device_token: 'old-device' }]);
     } finally { await db.close(); }
   });
 

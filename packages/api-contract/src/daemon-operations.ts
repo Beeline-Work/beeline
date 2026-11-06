@@ -7,8 +7,7 @@ import { isAgentCommand } from './daemon-operations-is-agent-command.js';
 
 
 
-/** Maximum number of consecutive agent-authored turns in one Room exchange. */
-export const AGENT_TO_AGENT_HOP_CAP = 3;
+
 
 
 export type CreateAgentScheduleInput = AgentRoomInput & {

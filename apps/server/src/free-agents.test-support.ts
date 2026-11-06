@@ -83,7 +83,7 @@ export const OWNER = 'a'.repeat(64);
 
 export const FRIEND = 'b'.repeat(64);
 
-export const ORDINARY = 'c'.repeat(64);
+const ORDINARY = 'c'.repeat(64);
 
 
 export const TEST_FREE_AGENT_CONFIG: FreeAgentConfig = {

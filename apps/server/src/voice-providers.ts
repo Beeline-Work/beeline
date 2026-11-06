@@ -88,12 +88,11 @@ export function fluxFactory(token: string, accountId: string,
     let sequence = -1;
     socket.once('unexpected-response', (_request, response) => {
       let finished = false;
-      let body = ''; const timer = setTimeout(() => finish(), 2000);
-      timer.unref();
+      let body = '';
       const finish = () => {
         if (finished) return;
         finished = true;
-        clearTimeout(timer); closing = true;
+        closing = true;
         let quota = false;
         try { quota = response.statusCode === 429 && quotaExhausted(JSON.parse(body)); } catch {}
         reject(quota ? new VoiceQuotaError() : new Error('Speech input connection refused'));
@@ -161,39 +160,38 @@ export interface VoiceSpeech {
 /** Bounds even providers that ignore abort; late results never reach playback. */
 class VoiceDeadline {
   readonly controller = new AbortController();
-  private readonly first: ReturnType<typeof setTimeout>;
-  private total: ReturnType<typeof setTimeout>;
-  private remainingMs: number;
-  private resumedAt: number;
-  private readonly aborted: Promise<never>;
   private readonly cancel: () => void;
-  constructor(private readonly parent: AbortSignal, firstMs: number, totalMs: number) {
+  private readonly aborted: Promise<never>;
+  private readonly startedAt = performance.now();
+  private receivedFirst = false;
+  private remainingMs: number;
+  private resumedAt = performance.now();
+  constructor(private readonly parent: AbortSignal, private readonly firstMs: number, totalMs: number) {
     this.remainingMs = totalMs;
-    this.resumedAt = performance.now();
     this.cancel = () => this.controller.abort(parent.reason);
     this.aborted = new Promise<never>((_, reject) => {
       this.controller.signal.addEventListener('abort', () => reject(this.controller.signal.reason), { once: true });
     });
     void this.aborted.catch(() => {});
-    const expire = () => this.controller.abort(new Error('Voice provider timed out; please try again'));
-    this.first = setTimeout(expire, firstMs);
-    this.total = setTimeout(expire, totalMs);
     parent.addEventListener('abort', this.cancel, { once: true });
     if (parent.aborted) this.cancel();
   }
-  received() { clearTimeout(this.first); }
-  /** Only provider work spends the total budget; RTC playback may apply backpressure. */
-  pause() {
-    clearTimeout(this.total);
-    this.remainingMs = Math.max(0, this.remainingMs - (performance.now() - this.resumedAt));
+  received() { this.receivedFirst = true; }
+  pause() { this.remainingMs = Math.max(0, this.remainingMs - (performance.now() - this.resumedAt)); }
+  resume() { this.resumedAt = performance.now(); }
+  private check() {
+    if ((!this.receivedFirst && performance.now() - this.startedAt >= this.firstMs) ||
+      performance.now() - this.resumedAt >= this.remainingMs)
+      this.controller.abort(new Error('Voice provider timed out; please try again'));
+    this.controller.signal.throwIfAborted();
   }
-  resume() {
-    this.resumedAt = performance.now();
-    this.total = setTimeout(() => this.controller.abort(new Error('Voice provider timed out; please try again')), this.remainingMs);
+  async wait<T>(work: PromiseLike<T>): Promise<T> {
+    this.check();
+    const result = await Promise.race([work, this.aborted]);
+    this.check();
+    return result;
   }
-  wait<T>(work: PromiseLike<T>): Promise<T> { return Promise.race([work, this.aborted]); }
   close() {
-    clearTimeout(this.first); clearTimeout(this.total);
     this.parent.removeEventListener('abort', this.cancel);
     this.controller.abort(new DOMException('Finished', 'AbortError'));
   }

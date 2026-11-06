@@ -1,11 +1,10 @@
 import { committedCommandNotificationSchema } from './postgres-live.js';
 /** A notification is only a wake hint. Every wake checks the durable row again.
  * The process's existing PostgreSQL listener calls notifyCommandCompletion;
- * reconnect calls recoverCommandCompletions after LISTEN has committed. */
+ * only committed source notifications wake its subscribers. */
 export { COMMAND_COMPLETION_CHANNEL } from './postgres-live-notifications.js';
 export interface CommandCompletionKey { principal: string; operation: string; commandId: string }
 const listeners = new Map<string, Set<() => void>>();
-const families = new Map<string, Set<(key?: CommandCompletionKey) => void>>();
 const keyOf = (key: CommandCompletionKey) => JSON.stringify([key.principal, key.operation, key.commandId]);
 export function notifyCommandCompletion(payload: string | CommandCompletionKey): void {
   let key: CommandCompletionKey;
@@ -16,17 +15,6 @@ export function notifyCommandCompletion(payload: string | CommandCompletionKey):
     if (![key.principal, key.operation, key.commandId].every(value => typeof value === 'string')) return;
   } catch { return; }
   for (const listener of listeners.get(keyOf(key)) ?? []) listener();
-  for (const listener of families.get(JSON.stringify([key.principal,key.operation])) ?? []) listener(key);
-}
-export function recoverCommandCompletions(): void {
-  for (const group of listeners.values()) for (const listener of group) listener();
-  for (const group of families.values()) for (const listener of group) listener();
-}
-/** Private committed-record control evidence; not a data-read admission. */
-export function subscribeCommandCompletionFamily(principal:string,operation:string,listener:(key?:CommandCompletionKey)=>void):()=>void{
-  const id=JSON.stringify([principal,operation]);let group=families.get(id);
-  if(!group)families.set(id,group=new Set());group.add(listener);
-  return()=>{group.delete(listener);if(!group.size)families.delete(id);};
 }
 export function subscribeCommandCompletion(key: CommandCompletionKey, listener: () => void): () => void {
   const id = keyOf(key);
@@ -36,13 +24,12 @@ export function subscribeCommandCompletion(key: CommandCompletionKey, listener: 
   return () => { group.delete(listener); if (!group.size) listeners.delete(id); };
 }
 
-/** Subscribe before the initial inspection. One terminal deadline ends this
+/** Subscribe before the initial inspection. A committed event ends this
  * wait; it never schedules another observation. Dirty coalescing preserves an
  * event received while the initial inspection is in flight. */
 export async function waitForCommittedChange<T>(
   subscribe: (listener: () => void) => (() => void) | Promise<() => void>,
   read: () => Promise<T | undefined>,
-  timeoutMs: number,
   signal?: AbortSignal,
 ): Promise<T | undefined> {
   signal?.throwIfAborted();
@@ -52,14 +39,11 @@ export async function waitForCommittedChange<T>(
     const finish = (error?: unknown, result?: T) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
       signal?.removeEventListener('abort', abort);
       unsubscribe?.();
       if (error !== undefined) reject(error); else resolve(result);
     };
     const abort = () => finish(signal?.reason ?? new Error('aborted'));
-    const timer = setTimeout(() => finish(), Math.max(0, timeoutMs));
-    timer.unref?.();
     const inspect = async () => {
       dirty = true;
       if (reading || settled) return;

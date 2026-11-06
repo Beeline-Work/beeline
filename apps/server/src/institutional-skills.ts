@@ -15,7 +15,7 @@ import {
 import type { CommandRow } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
 import { scheduleEmbedWorkspaceSkillVersion, memoryEnvLimit, createDefaultEmbedFn,
-  withDeadline, pgvectorLiteral, runAfterCommit, type AfterCommit, type EmbedFn,
+  pgvectorLiteral, runAfterCommit, type AfterCommit, type EmbedFn,
 } from './institutional-memory-embeddings.js';
 
 export const WORKSPACE_SKILL_ACTIVE_MAX = 100;
@@ -351,7 +351,7 @@ async function similarWorkspaceSkills(
   markdown: string,
   embed: EmbedFn,
 ): Promise<{ slug: string; description: string }[]> {
-  const query = await withDeadline(embed, 3_000)(
+  const query = await embed(
     `${slug.replace(/-/g, ' ')}: ${description}\n${markdown.slice(0, 600)}`, 'query');
   return query.outcome === 'served' && query.vector
     ? (await database.query<{ slug: string; description: string }>(

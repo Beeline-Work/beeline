@@ -25,11 +25,6 @@ import type { SqlDatabase } from './database.js';
 import type { LiveEvent, LiveHub } from './live.js';
 
 export { AGENT_SIGN_IN_TABLE, readAgentSignInLink, decodeAgentSignInNotification } from './postgres-live-notifications.js';
-/** The helper answers `start` with what it read from the harness's own login. */
-export const AGENT_SIGN_IN_LINK_WAIT_MS = 30_000;
-/** A pasted code or key: the helper's exchange has its own 30 s deadline; this covers it. */
-export const AGENT_SIGN_IN_RESULT_WAIT_MS = 45_000;
-
 export const AGENT_SIGN_IN_OFFLINE_MESSAGE =
   "The agent's machine is offline. Start its helper with `beeline start`, then try again.";
 export const AGENT_SIGN_IN_NO_ANSWER_MESSAGE =
@@ -57,8 +52,7 @@ async function notify(
 }
 
 /**
- * Resolve with the first matching event for this attempt, or reject with the
- * no-answer message once `timeoutMs` passes. Subscribe before notifying so a
+ * Resolve with the first matching event for this attempt. Subscribe before notifying so a
  * fast helper cannot answer into the void.
  */
 function awaitAnswer(
@@ -66,10 +60,8 @@ function awaitAnswer(
   agentId: string,
   attemptId: string,
   steps: readonly Step[],
-  timeoutMs: number,
 ): { readonly answer: Promise<AgentSignInEvent>; readonly cancel: () => void } {
   let release = () => {};
-  let timer: ReturnType<typeof setTimeout> | undefined;
   const answer = new Promise<AgentSignInEvent>((resolve, reject) => {
     release = live.subscribeAll((event) => {
       if (
@@ -81,12 +73,9 @@ function awaitAnswer(
         resolve(event);
       }
     });
-    timer = setTimeout(() => reject(new Error(AGENT_SIGN_IN_NO_ANSWER_MESSAGE)), timeoutMs);
-    timer.unref?.();
   });
   const cancel = () => {
     release();
-    if (timer) clearTimeout(timer);
   };
   void answer.then(cancel, cancel);
   return { answer, cancel };
@@ -114,7 +103,6 @@ export async function startAgentSignIn(
   live: LiveHub,
   agentId: string,
   attempt: { readonly attemptId: string; readonly cardId: string },
-  options: { readonly timeoutMs?: number } = {},
 ): Promise<AgentSignInLink> {
   if (!(await agentHelperOnline(database, agentId))) throw new Error(AGENT_SIGN_IN_OFFLINE_MESSAGE);
   const waiter = awaitAnswer(
@@ -122,7 +110,6 @@ export async function startAgentSignIn(
     agentId,
     attempt.attemptId,
     ['link', 'result'],
-    options.timeoutMs ?? AGENT_SIGN_IN_LINK_WAIT_MS,
   );
   try {
     await notify(database, { agentId, ...attempt, step: 'start' });
@@ -143,7 +130,6 @@ export async function completeAgentSignIn(
   live: LiveHub,
   agentId: string,
   input: { readonly attemptId: unknown; readonly code: unknown },
-  options: { readonly timeoutMs?: number } = {},
 ): Promise<CompleteAgentSignInResult> {
   if (typeof input.attemptId !== 'string' || !ATTEMPT_ID.test(input.attemptId))
     throw new Error('sign-in attempt is invalid');
@@ -157,7 +143,6 @@ export async function completeAgentSignIn(
     agentId,
     attemptId,
     ['result'],
-    options.timeoutMs ?? AGENT_SIGN_IN_RESULT_WAIT_MS,
   );
   try {
     await notify(database, { agentId, attemptId, step: 'code', code });
@@ -260,7 +245,6 @@ export async function beginAgentSignInCards(
   live: LiveHub,
   roomId: string,
   sourceMessageId: string,
-  options: { readonly timeoutMs?: number } = {},
 ): Promise<void> {
   const cards = await database.query<{ id: string; card: StoredCard }>(
     `SELECT id,card FROM messages WHERE room_id=$1 AND card_type='${CARD_TYPE}'
@@ -273,7 +257,7 @@ export async function beginAgentSignInCards(
     const attemptId = randomUUID();
     await settleCard(database, { messageId: id }, { attemptId }, false);
     try {
-      const link = await startAgentSignIn(database, live, card.agentId, { attemptId, cardId: id }, options);
+      const link = await startAgentSignIn(database, live, card.agentId, { attemptId, cardId: id });
       await settleCard(database, { messageId: id, attemptId }, { status: 'pending', ...link }, true);
     } catch (error) {
       await settleCard(
@@ -298,7 +282,6 @@ export async function completeAgentSignInCard(
   live: LiveHub,
   input: { readonly roomId: unknown; readonly messageId: unknown; readonly code: unknown },
   viewerId: string,
-  options: { readonly timeoutMs?: number } = {},
 ): Promise<CompleteAgentSignInResult> {
   if (typeof input.roomId !== 'string' || typeof input.messageId !== 'string')
     throw new Error('sign-in card is invalid');
@@ -329,7 +312,6 @@ export async function completeAgentSignInCard(
       live,
       card.agentId,
       { attemptId: card.attemptId, code: input.code },
-      options,
     );
     await settleCard(database, where, { status: 'signed-in' }, true);
     return result;

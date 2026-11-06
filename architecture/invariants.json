@@ -266,14 +266,30 @@
     {
       "id": "timers.server-interval",
       "module": "Background work and timers",
-      "invariant": "Server background work runs on owned work queues or connection timeout chains, not on free-running intervals.",
-      "pattern": "\\bsetInterval\\s*\\(",
+      "invariant": "Server work runs only on events or owner-created schedules.",
+      "pattern": "\\bsetInterval\\b",
       "scope": [
         "apps/server/src"
       ],
       "owners": [],
       "total": 0,
-      "fix": "Use leader work.add for shared jobs; startBackgroundWork in apps/server/src/background-work.ts for instance-local memory flushes/channel cleanup; startConnectionWork there for a connection-owned timeout chain cancelled on close; or a due-time wake (agent_schedules/work_schedules). Do not add a setInterval."
+      "fix": "Delete the interval. Use the committed event that authorizes the work.",
+      "strict": true
+    },
+    {
+      "id": "timers.server-timeout",
+      "module": "Background work and timers",
+      "invariant": "Only owner-schedule-clock.ts may create a server timer, solely for owner-created schedules.",
+      "pattern": "\\bsetTimeout\\b|\\bAbortSignal\\s*\\.\\s*timeout\\s*\\(",
+      "scope": [
+        "apps/server/src"
+      ],
+      "owners": [
+        "apps/server/src/owner-schedule-clock.ts"
+      ],
+      "total": 0,
+      "strict": true,
+      "fix": "Delete the timer and drive the effect from its source event. Owner-created schedules use apps/server/src/owner-schedule-clock.ts."
     },
     {
       "id": "access.membership-writes",
@@ -444,7 +460,7 @@
       "id": "phone.connection-error-surface",
       "module": "Phone connection failures",
       "invariant": "Connection failure copy and the connection failure hook belong only to the app-wide banner.",
-      "pattern": "Beeline (?:isn[\\x27\u2019]t|is not) connected|Could(?:n[\\x27\u2019]t| not) reach Beeline|[Cc]heck your connection|Showing saved messages|connectionError(?:Title|Description)|\\buseConnectionFailure\\s*\\(|No connection to the server|Not connected yet|No connection(?!s)|You[\u2019']re offline",
+      "pattern": "Beeline (?:isn[\\x27’]t|is not) connected|Could(?:n[\\x27’]t| not) reach Beeline|[Cc]heck your connection|Showing saved messages|connectionError(?:Title|Description)|\\buseConnectionFailure\\s*\\(|No connection to the server|Not connected yet|No connection(?!s)|You[’']re offline",
       "scope": [
         "apps/mobile/sources"
       ],
@@ -599,8 +615,8 @@
       "apps/server/src",
       "apps/auth/src"
     ],
-    "bootstrapTotal": 1717,
-    "unusedTotal": 181,
+    "bootstrapTotal": 1666,
+    "unusedTotal": 176,
     "tables": {
       "agent_avatars": {
         "module": "Agent types",
@@ -642,7 +658,6 @@
             "reason": "Retained without runtime use until the previous server drains during this rolling release.",
             "drop": "Next release after turn-lifecycle cleanup: docs/agent-server-surfaces.md#turn-recovery-storage-retirement"
           },
-          "renudged_at": "existing before the registry; weekly audit reviews",
           "lifecycle_before": "existing before the registry; weekly audit reviews",
           "review_context": "existing before the registry; weekly audit reviews",
           "wake_context": "existing before the registry; weekly audit reviews",
@@ -791,7 +806,7 @@
         "module": "Background work and timers",
         "reason": "existing before the registry; weekly audit reviews",
         "columns": {
-          "paused_at": "Preserves suspension managed by away-auto-pause.ts and agent-wake-pause.ts so schedule admission stops without deleting its cadence or prompt.",
+          "paused_at": "Preserves explicit suspension managed by agent-wake-pause.ts so schedule admission stops without deleting its cadence or prompt.",
           "id": "existing before the registry; weekly audit reviews",
           "workspace_id": "existing before the registry; weekly audit reviews",
           "room_id": "existing before the registry; weekly audit reviews",
@@ -809,7 +824,6 @@
           "title": "existing before the registry; weekly audit reviews",
           "last_reported_blocking_run_id": "existing before the registry; weekly audit reviews",
           "updated_by": "existing before the registry; weekly audit reviews",
-          "workflow_run": "existing before the registry; weekly audit reviews",
           "owner_id": "existing before the registry; weekly audit reviews",
           "failed_due_at": "Records the exact failed scheduled occurrence so the same due work cannot retry on a timer.",
           "failed_revision": "Records the exact failed schedule revision; a committed edit or advance permits new work without altering the authorized due time."
@@ -819,7 +833,7 @@
         "module": "Background work and timers",
         "reason": "existing before the registry; weekly audit reviews",
         "columns": {
-          "paused_at": "Preserves suspension managed by away-auto-pause.ts and agent-wake-pause.ts so every event ingress stops wakes without deleting the subscription.",
+          "paused_at": "Preserves explicit suspension managed by agent-wake-pause.ts so every event ingress stops wakes without deleting the subscription.",
           "id": "existing before the registry; weekly audit reviews",
           "workspace_id": "existing before the registry; weekly audit reviews",
           "room_id": "existing before the registry; weekly audit reviews",
@@ -1287,7 +1301,6 @@
           "sealed_keys": "existing before the registry; weekly audit reviews",
           "bootstrap_hash": "existing before the registry; weekly audit reviews",
           "model_token_hash": "existing before the registry; weekly audit reviews",
-          "last_activity_at": "existing before the registry; weekly audit reviews",
           "wake_requested_at": "existing before the registry; weekly audit reviews",
           "provision_started_at": "existing before the registry; weekly audit reviews",
           "provision_attempts": "existing before the registry; weekly audit reviews",
@@ -1398,8 +1411,6 @@
         "module": "Identity and sign-in",
         "reason": "existing before the registry; weekly audit reviews",
         "columns": {
-          "last_app_active_at": "Persists the person's last app interaction for away-auto-pause.ts; agent output and delivery cannot reconstruct this activity.",
-          "away_warning_at": "Persists when away-auto-pause.ts warned the person so one warning grants a full day across scheduler passes and restarts.",
           "id": "existing before the registry; weekly audit reviews",
           "kind": "existing before the registry; weekly audit reviews",
           "name": "existing before the registry; weekly audit reviews",
@@ -1876,34 +1887,6 @@
           "reminder_dismissed_at": "existing before the registry; weekly audit reviews"
         }
       },
-      "next_day_checkin_candidates": {
-        "module": "Rooms and messages",
-        "reason": "existing before the registry; weekly audit reviews",
-        "columns": {
-          "identity_id": "existing before the registry; weekly audit reviews",
-          "first_at": "existing before the registry; weekly audit reviews",
-          "due_at": "existing before the registry; weekly audit reviews",
-          "processed": "existing before the registry; weekly audit reviews"
-        }
-      },
-      "next_day_checkins": {
-        "module": "Rooms and messages",
-        "reason": "existing before the registry; weekly audit reviews",
-        "columns": {
-          "identity_id": "existing before the registry; weekly audit reviews",
-          "due_at": "existing before the registry; weekly audit reviews",
-          "room_id": "existing before the registry; weekly audit reviews",
-          "agent_id": "existing before the registry; weekly audit reviews",
-          "command_id": "existing before the registry; weekly audit reviews",
-          "message_id": "existing before the registry; weekly audit reviews",
-          "sent_at": "existing before the registry; weekly audit reviews",
-          "skip_reason": "existing before the registry; weekly audit reviews",
-          "email_status": "existing before the registry; weekly audit reviews",
-          "email_attempted_at": "existing before the registry; weekly audit reviews",
-          "push_outcomes": "existing before the registry; weekly audit reviews",
-          "measured_at": "existing before the registry; weekly audit reviews"
-        }
-      },
       "object_expirations": {
         "module": "Rooms and messages",
         "reason": "existing before the registry; weekly audit reviews",
@@ -2067,7 +2050,6 @@
           "completed_at": "existing before the registry; weekly audit reviews",
           "error": "existing before the registry; weekly audit reviews",
           "attempts": "existing before the registry; weekly audit reviews",
-          "next_retry_at": "existing before the registry; weekly audit reviews",
           "read_cleared_at": "existing before the registry; weekly audit reviews"
         }
       },
@@ -2119,26 +2101,7 @@
         "columns": {
           "message_id": "existing before the registry; weekly audit reviews",
           "device_token": "existing before the registry; weekly audit reviews",
-          "not_before": "existing before the registry; weekly audit reviews",
           "expires_at": "existing before the registry; weekly audit reviews"
-        }
-      },
-      "push_outbox_retirements": {
-        "module": "Live fanout and push",
-        "reason": "existing before the registry; weekly audit reviews",
-        "columns": {
-          "message_id": "existing before the registry; weekly audit reviews",
-          "device_token": "existing before the registry; weekly audit reviews",
-          "reason": "existing before the registry; weekly audit reviews",
-          "retired_at": "existing before the registry; weekly audit reviews"
-        }
-      },
-      "push_read_clears": {
-        "module": "Live fanout and push",
-        "reason": "existing before the registry; weekly audit reviews",
-        "columns": {
-          "device_token": "existing before the registry; weekly audit reviews",
-          "sent_at": "existing before the registry; weekly audit reviews"
         }
       },
       "registry_mcp_oauth_attempts": {
@@ -2311,9 +2274,7 @@
           "room_id": "existing before the registry; weekly audit reviews",
           "event_id": "existing before the registry; weekly audit reviews",
           "body": "existing before the registry; weekly audit reviews",
-          "attempts": "existing before the registry; weekly audit reviews",
           "claimed_at": "existing before the registry; weekly audit reviews",
-          "next_attempt_at": "existing before the registry; weekly audit reviews",
           "delivered_at": "existing before the registry; weekly audit reviews",
           "command_id": "existing before the registry; weekly audit reviews"
         }
@@ -2398,8 +2359,7 @@
           "workspace_ids": "existing before the registry; weekly audit reviews",
           "callback_url": "existing before the registry; weekly audit reviews",
           "callback_secret": "existing before the registry; weekly audit reviews",
-          "profile_set": "existing before the registry; weekly audit reviews",
-          "last_bridge_poll_at": "existing before the registry; weekly audit reviews"
+          "profile_set": "existing before the registry; weekly audit reviews"
         }
       },
       "rooms_mcp_mentions": {
@@ -2411,20 +2371,7 @@
           "room_id": "existing before the registry; weekly audit reviews",
           "message_id": "existing before the registry; weekly audit reviews",
           "created_at": "existing before the registry; weekly audit reviews",
-          "cleared_at": "existing before the registry; weekly audit reviews",
-          "rewakes": "existing before the registry; weekly audit reviews"
-        }
-      },
-      "rooms_mcp_pending_routes": {
-        "module": "Tools and connectors",
-        "reason": "existing before the registry; weekly audit reviews",
-        "columns": {
-          "message_id": "existing before the registry; weekly audit reviews",
-          "room_id": "existing before the registry; weekly audit reviews",
-          "member_id": "existing before the registry; weekly audit reviews",
-          "attempts": "existing before the registry; weekly audit reviews",
-          "last_error": "existing before the registry; weekly audit reviews",
-          "created_at": "existing before the registry; weekly audit reviews"
+          "cleared_at": "existing before the registry; weekly audit reviews"
         }
       },
       "rooms_mcp_refresh": {
@@ -2460,7 +2407,6 @@
           "room_id": "existing before the registry; weekly audit reviews",
           "message_id": "existing before the registry; weekly audit reviews",
           "body": "existing before the registry; weekly audit reviews",
-          "attempts": "existing before the registry; weekly audit reviews",
           "claimed_at": "existing before the registry; weekly audit reviews",
           "created_at": "existing before the registry; weekly audit reviews",
           "delivered_at": "existing before the registry; weekly audit reviews"
@@ -2493,19 +2439,14 @@
           "last_seen": "existing before the registry; weekly audit reviews",
           "event_count": "existing before the registry; weekly audit reviews",
           "delivery_hash": "existing before the registry; weekly audit reviews",
-          "pending": "existing before the registry; weekly audit reviews",
-          "last_digested_at": "existing before the registry; weekly audit reviews",
-          "last_digested_level": "existing before the registry; weekly audit reviews",
-          "urgent": "existing before the registry; weekly audit reviews"
+          "pending": "existing before the registry; weekly audit reviews"
         }
       },
       "sentry_wake_state": {
         "module": "Background work and timers",
         "reason": "existing before the registry; weekly audit reviews",
         "columns": {
-          "singleton": "existing before the registry; weekly audit reviews",
-          "last_wake_at": "existing before the registry; weekly audit reviews",
-          "last_daily_wake_at": "existing before the registry; weekly audit reviews"
+          "singleton": "existing before the registry; weekly audit reviews"
         }
       },
       "service_review_visits": {
@@ -3084,7 +3025,6 @@
           "event_id": "existing before the registry; weekly audit reviews",
           "sent_at": "existing before the registry; weekly audit reviews",
           "attempts": "existing before the registry; weekly audit reviews",
-          "next_attempt_at": "existing before the registry; weekly audit reviews",
           "delivery_failed": "existing before the registry; weekly audit reviews"
         }
       },
@@ -3284,32 +3224,6 @@
           "settled_at": "Records when the first durable settlement committed so later evidence cannot renew it.",
           "created_at": "Records durable provider admission time independently of eventual settlement."
         }
-      },
-      "agent_startup_backoff": {
-        "module": "Background work and timers",
-        "reason": "Retained without runtime use until the previous server drains during this rolling release.",
-        "columns": {
-          "agent_id": "Retained without runtime use until the previous server drains during this rolling release.",
-          "failures": "Retained without runtime use until the previous server drains during this rolling release.",
-          "window_started_at": "Retained without runtime use until the previous server drains during this rolling release.",
-          "paused_until": "Retained without runtime use until the previous server drains during this rolling release."
-        },
-        "drop": "Next release after turn-lifecycle cleanup: docs/agent-server-surfaces.md#turn-recovery-storage-retirement"
-      },
-      "pending_mention_notices": {
-        "module": "Work authority",
-        "reason": "Retained without runtime use until the previous server drains during this rolling release.",
-        "columns": {
-          "room_id": "Retained without runtime use until the previous server drains during this rolling release.",
-          "agent_id": "Retained without runtime use until the previous server drains during this rolling release.",
-          "sender_id": "Retained without runtime use until the previous server drains during this rolling release.",
-          "source_message_id": "Retained without runtime use until the previous server drains during this rolling release.",
-          "reason": "Retained without runtime use until the previous server drains during this rolling release.",
-          "due_at": "Retained without runtime use until the previous server drains during this rolling release.",
-          "notice_id": "Retained without runtime use until the previous server drains during this rolling release.",
-          "notified_at": "Retained without runtime use until the previous server drains during this rolling release."
-        },
-        "drop": "Next release after turn-lifecycle cleanup: docs/agent-server-surfaces.md#turn-recovery-storage-retirement"
       }
     },
     "jsonb": {
@@ -3339,10 +3253,6 @@
       "script": {},
       "mandate": {},
       "cadence": {},
-      "workflow_run": {
-        "timer": "existing before the registry; weekly audit reviews",
-        "attempt": "existing before the registry; weekly audit reviews"
-      },
       "reply_message_ids": {},
       "trace": {},
       "access_policy": {},
@@ -3493,7 +3403,6 @@
         "subject": "existing before the registry; weekly audit reviews"
       },
       "source_client": {},
-      "push_outcomes": {},
       "recipients": {},
       "scope": {},
       "web_keys": {},

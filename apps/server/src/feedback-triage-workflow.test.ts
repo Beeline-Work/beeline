@@ -227,8 +227,7 @@ describe('feedback-triage workflow', () => {
     await backfillFeedbackSignalWalk(database);
     const cadenceRows = await database.query<{ workflow_slug: string; cadence: unknown }>(
       `SELECT workflow_slug,cadence FROM agent_schedules WHERE room_id=$1`,[TRIAGE_CORNER]);
-    expect(cadenceRows.rows.some(row => row.workflow_slug === 'workspace-walk'
-      && JSON.stringify(row.cadence).includes('0 6 * * *'))).toBe(true);
+    expect(cadenceRows.rows.some(row => row.workflow_slug === 'workspace-walk')).toBe(false); // No unrequested schedule is created.
     for (let n=1;n<=7;n++) {
       const workspace = `40000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
       const room = `50000000-0000-4000-8000-${String(n).padStart(12,'0')}`;

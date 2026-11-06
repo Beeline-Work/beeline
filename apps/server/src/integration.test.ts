@@ -2,7 +2,6 @@ import { phoneFetch } from '../../../tests/helpers/phone-operation.js';
 import { setRoomEventSubscriptions, migrateMembershipSubscriptions } from './agent-subscriptions.js';
 import { cornerObjectiveSql } from './corner-objective.js';
 import { cornerCommissionerSql, cornerKindSql, cornerRequestSql } from './corner-opening.js';
-import { ConnectorOfferExpiryLoop } from './connector-offer-expiry.js';
 import { cornerRunStateSql } from './corner-run.js';
 import * as approvalSources from './approval-card-source.js';
 import * as serverSentry from './sentry.js';
@@ -30,7 +29,7 @@ import { PhoneService, REVIEW_LOCKED_OPERATIONS } from './phone-service.js';
 import { HelperDaemonService as DaemonService } from './test-fixtures/helper-daemon.js';
 import { LiveHub } from './live.js';
 import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
-import { MediaExpiryLoop, PushDeliveryLoop } from './background.js';
+import { PushDeliveryLoop } from './background.js';
 import { GitHubOperations } from './github-operations.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { GitHubHttpError } from '@beeline/auth/github';
@@ -52,7 +51,6 @@ import { REVIEW_IDENTITY_ID, ReviewAccess } from './review-access.js';
 import { announceAgentLifecycle } from './connection-presence.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { taggedIdentityIdsSql } from './message-mentions.js';
-import { closeExpiredChoices } from './room-choice.js';
 
 /** Who a message tags, read the way every surface reads it: from its own text. */
 async function taggedBy(database: PgliteDatabase, messageId: string): Promise<string[]> {
@@ -5942,101 +5940,6 @@ describe('monolith integration', () => {
     expect(tooLarge.status).toBe(400);
   });
 
-  it('expires attachment bytes after the TTL and keeps the message that carried them', async () => {
-    const upload = await phoneFetch(`${origin}/v1/phone/media`, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${accessToken}`,
-        'content-type': 'text/plain',
-        'x-file-name': 'receipt.txt',
-      },
-      body: Buffer.from('receipt-bytes'),
-    });
-    expect(upload.status).toBe(201);
-    const attachment = (await upload.json()) as { url: string };
-    const sent = await request('/v1/phone/operations/sendRoomMessage', 'POST', {
-      roomId: ROOM,
-      text: 'the receipt',
-      attachments: [{ url: attachment.url, name: 'receipt.txt', mimeType: 'text/plain', size: 13 }],
-    });
-    expect(sent.status).toBe(200);
-
-    await database.query(`UPDATE objects SET expires_at=now()-interval '1 minute'`);
-    expect(
-      await new MediaExpiryLoop(database, 24, 0, {
-        storage: objectStorage.asStorage(),
-        service: objectService,
-      }).runOnce(),
-    ).toBeGreaterThan(0);
-
-    // The bytes are gone for good, and the endpoint says so in one status.
-    const gone = await phoneFetch(attachment.url, {
-      headers: { authorization: `Bearer ${accessToken}` },
-    });
-    expect(gone.status).toBe(410);
-    expect(await gone.json()).toMatchObject({ error: 'media_expired', ttlHours: 24 });
-    // An id that never existed is still absent, not expired.
-    expect(
-      (
-        await phoneFetch(`${origin}/v1/media/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`, {
-          headers: { authorization: `Bearer ${accessToken}` },
-        })
-      ).status,
-    ).toBe(404);
-
-    // The message survives with its metadata, and the projection states the loss.
-    const roomView = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
-    expect(isRoomView(roomView)).toBe(true);
-    const carried = roomView.messages.find((message) => message.text === 'the receipt');
-    expect(carried?.attachments?.[0]).toMatchObject({
-      name: 'receipt.txt',
-      mimeType: 'text/plain',
-      size: 13,
-      expired: true,
-    });
-    const history = (await (await request(`/v1/phone/rooms/${ROOM}/history`)).json()) as {
-      messages: RoomView['messages'];
-    };
-    expect(
-      history.messages.find((message) => message.text === 'the receipt')?.attachments?.[0],
-    ).toMatchObject({ expired: true });
-
-    // And an agent is told the bytes expired rather than handed a dead URL.
-    const inbox = (await (
-      await daemonOperation('getRoomConversation', { roomId: ROOM })
-    ).json()) as { items: { body: string; attachments: { expired?: boolean }[] }[] };
-    expect(inbox.items.find((item) => item.body === 'the receipt')?.attachments[0]).toMatchObject({
-      expired: true,
-    });
-
-    // Posting a file again is an upload: identical bytes deduplicate, and the
-    // window restarts rather than the new message inheriting an old row's age.
-    const repost = async () =>
-      (await (
-        await phoneFetch(`${origin}/v1/phone/media`, {
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${accessToken}`,
-            'content-type': 'text/plain',
-            'x-file-name': 'receipt.txt',
-          },
-          body: Buffer.from('receipt-bytes'),
-        })
-      ).json()) as { url: string };
-    const reposted = await repost();
-    await database.query(`UPDATE objects SET expires_at=now()-interval '1 minute'`);
-    expect((await repost()).url).toBe(reposted.url);
-    expect(
-      await new MediaExpiryLoop(database, 24, 0, {
-        storage: objectStorage.asStorage(),
-        service: objectService,
-      }).runOnce(),
-    ).toBe(0);
-    expect(
-      (await phoneFetch(reposted.url, { headers: { authorization: `Bearer ${accessToken}` } })).status,
-    ).toBe(200);
-  });
-
   it('retires the agent bytea-media upload and still drains queued attachments', async () => {
     // The agent file-sharing path is post_artifact (object storage); the bytea
     // media store answers a 410 that names the replacement instead of a bare
@@ -9655,12 +9558,6 @@ describe('monolith integration', () => {
     await database.query(`UPDATE objects SET expires_at=now()-interval '1 minute' WHERE id=$1`, [
       mediaId,
     ]);
-    expect(
-      await new MediaExpiryLoop(database, 24, 0, {
-        storage: objectStorage.asStorage(),
-        service: objectService,
-      }).runOnce(),
-    ).toBe(0);
     expect((await phoneFetch(`${origin}/v1/media/${mediaId}`)).status).toBe(200);
     await database.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
       VALUES($1,$2,'presence','presence','{"status":"online"}')`, [ROOM, AGENT]);
@@ -13043,7 +12940,7 @@ describe('monolith integration', () => {
     expect((await phone.readRoom(ROOM, HUMAN))?.messages.find(message => message.id === messageId)?.connectorOffer?.status).toBe('accepted');
   });
 
-  it.each([['reported','trusty-squire'], ['timeout','trusty-squire'], ['reported','tailscale'], ['timeout','tailscale']] as const)('HOSTED-SQUIRE: %s %s install failure settles the phone card, resumes and retries', async (failure, connectorType) => {
+  it.each(['trusty-squire', 'tailscale'] as const)('HOSTED-SQUIRE: %s reported install failure settles the phone card and allows an explicit retry', async (connectorType) => {
     await database.query(`UPDATE agents SET machine_id='proof-machine' WHERE agent_id=$1`, [AGENT]);
     const asked = (await (await operation('sendRoomMessage', { roomId: ROOM, text: '@bee connect Trusty Squire', mentions: [AGENT] })).json()) as { messageId: string };
     const offered = await daemonOperation('offerConnector', { roomId: ROOM, requestId: asked.messageId,
@@ -13055,22 +12952,10 @@ describe('monolith integration', () => {
     const { connectorId } = await accepted.json() as { connectorId: string };
     const assignments = await (await daemonOperation('getConnectorAssignments', { agentId: AGENT })).json() as {
       assignments: Array<{ pairingGeneration: number }> };
-    if (failure === 'reported') {
       const report = await daemonOperation('postConnectorStatus', { connectorId,
         pairingGeneration: assignments.assignments[0]!.pairingGeneration, steps: [], errorMessage: 'Squire MCP connection closed' });
       expect(report.status).toBe(200);
-    } else {
-      const expiry = new ConnectorOfferExpiryLoop(database);
-      const delay = await expiry.runOnce();
-      expect(delay).toBeGreaterThan(14 * 60_000);
-      expect(delay).toBeLessThanOrEqual(15 * 60_000);
-      await database.query(`UPDATE connector_offers SET accepted_at=now()-interval '16 minutes' WHERE id=$1`, [offerId]);
-      await database.query(`UPDATE agents SET squire_work=jsonb_set(squire_work,'{reportedAt}',
-        to_jsonb(extract(epoch FROM now())-960)) WHERE agent_id=$1`, [AGENT]);
-      if (connectorType !== 'trusty-squire') await database.query(`UPDATE workspace_connectors SET updated_at=now()-interval '16 minutes' WHERE id=$1`, [connectorId]);
-      expect(await expiry.runOnce()).toBeUndefined();
-      expect(await expiry.runOnce()).toBeUndefined();
-    }
+
     const room = await phone.readRoom(ROOM, HUMAN);
     expect(isRoomView(room)).toBe(true);
     expect(room?.messages.find(message => message.id === messageId)?.connectorOffer?.status).toBe('failed');
@@ -14242,40 +14127,6 @@ describe('monolith integration', () => {
     ).toEqual(
       expect.objectContaining({ mode: 'poll', status: 'closed', outcome: 'tie', votedCount: 2 }),
     );
-  });
-
-  it('expires an unanswered question as skipped and shows the skip as a line', async () => {
-    const posted = await daemonOperation('askRoomChoice', {
-      roomId: ROOM,
-      prompt: 'Which paper API?',
-      ttlSeconds: 300,
-      options: [
-        { label: 'Kraken paper', consequence: 'plugin auth' },
-        { label: 'Keep waiting', consequence: 'blocked' },
-      ],
-    });
-    expect(posted.status).toBe(200);
-    const body = (await posted.json()) as { choiceId: string };
-    await database.query(
-      `UPDATE room_choices SET closes_at=now() - interval '1 second' WHERE id=$1`,
-      [body.choiceId],
-    );
-    expect(await closeExpiredChoices(database)).toBe(1);
-    const room = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
-    expect(isRoomView(room)).toBe(true);
-    expect(room.messages.find((message) => message.choice)?.choice).toEqual(
-      expect.objectContaining({ status: 'skipped', footer: 'expired · no answer' }),
-    );
-    const skippedLine = room.messages.find(
-      (message) => message.systemEvent?.kind === 'choice-skipped',
-    );
-    expect(skippedLine?.text).toBe('@bee asked · expired · no answer');
-    const skippedRow = await database.query<{ id: string }>(
-      `SELECT id FROM messages WHERE room_id=$1 AND card_type='choice-skipped'`,
-      [ROOM],
-    );
-    expect(skippedRow.rows).toHaveLength(1);
-    expect(await wokenBy(database, skippedRow.rows[0]!.id)).toEqual([AGENT]);
   });
 });
 

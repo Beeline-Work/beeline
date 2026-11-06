@@ -672,6 +672,22 @@ describe('free agent model proxy', () => {
     expect(upstream).toHaveLength(1);
   });
 
+  it('refuses the first expired upstream chunk without a clock or another request', async () => {
+    const now = Date.now(), clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+    reply = () => new Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        clock.mockReturnValue(now + DEFAULT_FREE_AGENT_LIMITS.maxTurnMs + 1);
+        controller.enqueue(new TextEncoder().encode('expired-authorized-content'));
+        controller.close();
+      },
+    }), { headers: { 'content-type': 'text/event-stream' } });
+    try {
+      const response = await call({ stream: true, messages: [] });
+      expect(await response.text()).not.toContain('expired-authorized-content');
+      expect(upstream).toHaveLength(1);
+    } finally { clock.mockRestore(); }
+  });
+
   it('refunds tokens and dollars when the upstream connection fails', async () => {
     reply = () => { throw new Error('connection reset'); };
     const response = await call({ messages: [{ role: 'user', content: 'hi' }] });

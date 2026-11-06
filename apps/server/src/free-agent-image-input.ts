@@ -6,7 +6,7 @@ export async function freeAgentModelTakesImages(model: string): Promise<boolean>
   if (cached && cached.expires > Date.now()) return cached.images;
   try {
     const response = await fetch(`https://openrouter.ai/api/v1/models/${model}/endpoints`, {
-      signal: AbortSignal.timeout(10_000),
+
     });
     if (!response.ok) return false;
     const payload = await response.json() as { data?: { architecture?: { input_modalities?: unknown } } };

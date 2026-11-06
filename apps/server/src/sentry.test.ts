@@ -259,7 +259,7 @@ it('SENTRY-7807034373: schedule HTTP refusals stay visible without Sentry events
   } finally { await new Promise<void>(r => collector.close(() => r())); }
 }, 60_000);
 
-it('R-CHECKIN-ACTIVITY: invalid final output is actionable while unexpected database errors still alert', async () => {
+it('unexpected database errors still alert with retired validation wording', async () => {
   const envelopes: string[] = [];
   const collector = createServer(async (request, response) => {
     const chunks: Buffer[] = [];
@@ -287,9 +287,7 @@ it('R-CHECKIN-ACTIVITY: invalid final output is actionable while unexpected data
       await db.query("INSERT INTO workspaces(id,name) VALUES($1,'Test')",[workspace]);
       await db.query("INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Test')",[room,workspace]);
       await db.query("INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$3,'member'),($1,$2,$3,'member')",[workspace,room,agent]);
-      const command=await createAgentCommand(db,{roomId:room,agentId:agent,sourceMessageId:null,reason:'free_agent_checkin'});
-      await db.query("INSERT INTO next_day_checkin_candidates(identity_id,first_at,due_at) VALUES($1,now()-interval '1 day',now())",[human]);
-      await db.query("INSERT INTO next_day_checkins(identity_id,due_at,room_id,agent_id,command_id) VALUES($1,now(),$2,$3,$4)",[human,room,agent,command.id]);
+      const command=await createAgentCommand(db,{roomId:room,agentId:agent,sourceMessageId:null,reason:'human_tag'});
       await claimAgentCommand(db,room,agent,command.id,'proof');
       const live=new LiveHub(), daemon=new DaemonService(db,live);
       const server=createBeelineServer({database:db,live,daemon,phone:{},
@@ -304,11 +302,6 @@ it('R-CHECKIN-ACTIVITY: invalid final output is actionable while unexpected data
       try {
         const activity={activity:[{kind:'thinking',title:'Working',status:'in_progress'}]};
         assert.equal((await call('postAgentActivity',activity)).status,200);
-        for (const output of [{text:'   '},{text:'Card',presentation:'card'}]) {
-          const result=await call('postRoomMessage',output);
-          assert.match(result.body.error,/Post nonempty text with message presentation/);
-        }
-        assert.equal((await db.query('SELECT sent_at FROM next_day_checkins')).rows[0].sent_at,null);
         // Exercise an actual database failure with the old validation wording.
         await db.query(\`CREATE FUNCTION fail_checkin_activity() RETURNS trigger LANGUAGE plpgsql AS $$
           BEGIN RAISE EXCEPTION 'A check-in must be one plain Room message'; END $$;

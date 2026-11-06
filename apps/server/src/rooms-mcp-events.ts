@@ -140,10 +140,10 @@ export class RoomsMcpEvents {
 }
 
 /** Called inside the existing mention write transaction, so retries cannot enqueue a tag twice. */
-export async function queueMcpMentionEvents(db: SqlDatabase, member: string, room: string, message: string, rewake = 0): Promise<void> {
+export async function queueMcpMentionEvents(db: SqlDatabase, member: string, room: string, message: string): Promise<void> {
   const queued = await db.query(`INSERT INTO rooms_mcp_event_deliveries(subscription_id,message_id,room_id,event_id,body)
-    SELECT s.id,m.id,m.room_id,'evt_'||s.id||'_'||m.id||'_'||$4::text,
-      json_build_object('eventId','evt_'||s.id||'_'||m.id||'_'||$4::text,'name','mention','timestamp',m.created_at,
+    SELECT s.id,m.id,m.room_id,'evt_'||s.id||'_'||m.id||'_'||'0',
+      json_build_object('eventId','evt_'||s.id||'_'||m.id||'_'||'0','name','mention','timestamp',m.created_at,
         'data',json_build_object('roomId',m.room_id,'messageId',m.id,'memberId',s.member_id,'replyRule','answer in this Room with replyTo '||m.id,
           'idempotencyKey','mention:'||s.member_id||':'||m.id,'text',left(m.text,16000),
           'author',json_build_object('id',m.author_id,'handle',i.handle,'name',i.name)), 'cursor',NULL)::text
@@ -152,10 +152,8 @@ export async function queueMcpMentionEvents(db: SqlDatabase, member: string, roo
     JOIN messages m ON m.id=$3 AND m.room_id=$2 AND m.deleted_at IS NULL
     JOIN identities i ON i.id=m.author_id
     WHERE s.member_id=$1 AND s.expires_at>now() AND s.event_name='mention'
-    ON CONFLICT(subscription_id,message_id) WHERE message_id IS NOT NULL DO UPDATE SET event_id=EXCLUDED.event_id,body=EXCLUDED.body,
-      delivered_at=NULL,claimed_at=NULL,attempts=0,next_attempt_at=now()
-      WHERE $4::integer>0
-    RETURNING subscription_id`, [member, room, message, rewake]);
+    ON CONFLICT(subscription_id,message_id) WHERE message_id IS NOT NULL DO NOTHING
+    RETURNING subscription_id`, [member, room, message]);
   if (queued.rowCount) await notifyMcpWebhook(db, room);
 }
 
@@ -210,24 +208,25 @@ export function mcpCommandWakeSql(first: number): { cte: string; join: string; p
   };
 }
 
-/** Drained by committed webhook notifications and persisted due/claim deadlines. */
-export async function deliverMcpEvents(db: SqlDatabase, transport: Transport, limit: number, signal?: AbortSignal): Promise<number> {
+/** Each committed webhook notification drains its deliveries once. */
+export async function deliverMcpEvents(db: SqlDatabase, transport: Transport, signal?: AbortSignal): Promise<number> {
   let delivered = 0;
-  for (let index = 0; index < limit; index++) {
+  for (;;) {
     if (signal?.aborted) break;
-    const row = (await db.query<Subscription & { event_id: string; body: string; attempts: number; deliverable: boolean }>(`
+    const row = (await db.query<Subscription & { event_id: string; body: string; deliverable: boolean }>(`
       WITH claimed AS (
-        UPDATE rooms_mcp_event_deliveries d SET attempts=d.attempts+1,claimed_at=now()
+        UPDATE rooms_mcp_event_deliveries d SET claimed_at=now()
         WHERE d.event_id IN (
           SELECT event_id FROM rooms_mcp_event_deliveries
-          WHERE delivered_at IS NULL AND attempts<5 AND next_attempt_at<=now()
-            AND (claimed_at IS NULL OR claimed_at<now()-interval '1 minute')
-          ORDER BY next_attempt_at LIMIT 1 FOR UPDATE SKIP LOCKED)
+          WHERE delivered_at IS NULL AND claimed_at IS NULL
+          ORDER BY event_id LIMIT 1 FOR UPDATE SKIP LOCKED)
         RETURNING d.*)
-      SELECT s.*,d.event_id,d.body,d.attempts,
+      SELECT s.*,d.event_id,d.body,
         (s.expires_at>now() AND c.revoked_at IS NULL AND c.client_id IS NOT NULL
          AND r.archived_at IS NULL AND r.id IS NOT NULL
-         AND ((d.command_id IS NULL AND m.deleted_at IS NULL AND m.id IS NOT NULL)
+         AND ((d.command_id IS NULL AND m.deleted_at IS NULL AND m.id IS NOT NULL
+             AND NOT EXISTS(SELECT 1 FROM rooms_mcp_mentions mention WHERE mention.member_id=s.member_id
+               AND mention.message_id=d.message_id AND mention.cleared_at IS NOT NULL))
            OR (d.command_id IS NOT NULL AND command.id IS NOT NULL AND command.action IN ('input','resume')
              AND command.reason<>'mcp_call'
              AND command.state='pending'))
@@ -238,7 +237,6 @@ export async function deliverMcpEvents(db: SqlDatabase, transport: Transport, li
       LEFT JOIN rooms r ON r.id=d.room_id LEFT JOIN messages m ON m.id=d.message_id
       LEFT JOIN agent_commands command ON command.id=d.command_id`)).rows[0];
     if (!row || signal?.aborted) break;
-    let finished = !row.deliverable;
     if (row.deliverable) {
       try {
         const response = await transport(row.url, { body: row.body,
@@ -246,13 +244,10 @@ export async function deliverMcpEvents(db: SqlDatabase, transport: Transport, li
             row.previous_secret && row.rotation_until && row.rotation_until.getTime() > Date.now()
               ? openSecrets<string>(key(), row.previous_secret) : undefined) });
         if (response.ok) delivered++;
-        finished = response.ok || response.status === 410 || response.status === 413 ||
-          (response.status >= 400 && response.status < 500 && response.status !== 429);
-      } catch { /* Transient connection failures use the same bounded backoff. */ }
+
+      } catch { /* Best effort; a failure creates no future delivery. */ }
     }
-    await db.query(`UPDATE rooms_mcp_event_deliveries SET delivered_at=CASE WHEN $2 OR attempts>=5 THEN now() ELSE NULL END,
-      claimed_at=NULL,next_attempt_at=now()+($3 * interval '1 second') WHERE event_id=$1`,
-    [row.event_id, finished, 30 * 2 ** (row.attempts - 1)]);
+    await db.query(`UPDATE rooms_mcp_event_deliveries SET delivered_at=now() WHERE event_id=$1`, [row.event_id]);
   }
   return delivered;
 }

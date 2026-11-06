@@ -30,10 +30,7 @@ export async function publicIconResponse(url: URL, redirects = 0, deadline = Dat
     throw new Error('invalid company icon address');
   const remaining = deadline - Date.now();
   if (remaining <= 0) throw new Error('company icon timeout');
-  const answers = await Promise.race([
-    lookup(url.hostname, { all: true, verbatim: true }),
-    new Promise<never>((_, reject) => { const timer = setTimeout(() => reject(new Error('icon DNS timeout')), Math.min(2000, remaining)); timer.unref(); }),
-  ]);
+  const answers = await lookup(url.hostname, { all: true, verbatim: true });
   if (!answers.length || answers.some(a => !publicAddress(a.address))) throw new Error('non-public company icon');
   const address = answers[0]!;
   const agent = new Agent({ autoSelectFamily: false, lookup(hostname, _options, callback) {
@@ -42,7 +39,7 @@ export async function publicIconResponse(url: URL, redirects = 0, deadline = Dat
   } });
   try {
     const response = await new Promise<{ bytes: Buffer; mime: string; location?: string; status: number }>((resolve, reject) => {
-      const req = get(url, { agent, signal: AbortSignal.timeout(Math.max(1, Math.min(4500, deadline - Date.now()))), headers: { accept: 'image/*,text/html;q=0.5', 'user-agent': 'Beeline company icons' } }, res => {
+      const req = get(url, { agent,  headers: { accept: 'image/*,text/html;q=0.5', 'user-agent': 'Beeline company icons' } }, res => {
         const chunks: Buffer[] = []; let size = 0;
         res.on('data', (chunk: Buffer) => { size += chunk.length; if (size > LIMIT) req.destroy(new Error('company icon too large')); else chunks.push(chunk); });
         res.on('error', reject);

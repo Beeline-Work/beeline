@@ -6,7 +6,6 @@ import type { QueryResultRow } from 'pg';
 import { type QueryResult, type SqlDatabase } from '../database.js';
 import { PgliteDatabase } from '../test-support.js';
 import { createAgentCommand, type CommandRow } from '../agent-command.js';
-import { AgentScheduleLoop } from '../agent-schedules.js';
 import { handoff, getWorkflowRun, saveWorkflow, settleWorkflowGate, startWorkflow } from '../workflow-runs.js';
 
 /**
@@ -375,15 +374,7 @@ export async function runCards(runId: string): Promise<Array<{ id: string; autho
   ).rows;
 }
 
-/** Make the run's timer of this kind due now and run one scheduler pass. */
-export async function fireTimer(runId: string, timer: 'step' | 'deadline'): Promise<number> {
-  await database.query(
-    `UPDATE agent_schedules SET next_run_at=now()-interval '1 minute'
-     WHERE workflow_run->>'runId'=$1 AND workflow_run->>'timer'=$2`,
-    [runId, timer],
-  );
-  return new AgentScheduleLoop(database).runOnce();
-}
+
 
 export async function addAgent(id: string, online = true): Promise<void> {
   await database.query(`INSERT INTO agents(agent_id,owner_id,selected_model) VALUES($1,$2,'opus-4-5') ON CONFLICT DO NOTHING`, [id, OWNER]);

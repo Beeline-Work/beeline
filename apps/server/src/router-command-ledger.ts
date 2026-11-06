@@ -132,12 +132,12 @@ export class RouterCommandLedger {
     }
   }
   /** Caller supplies the immutable original args, never a digest from the wire. */
-  wait(key: CommandCompletionKey, args: unknown, timeoutMs = 15_000, signal?: AbortSignal) {
+  wait(key: CommandCompletionKey, args: unknown, signal?: AbortSignal) {
     const digest = commandArgumentDigest(key.operation, args);
     return waitForCommittedChange(listener => subscribeCommandCompletion(key, listener), async () => {
       const receipt = await this.inspect(this.database, key, digest);
       return receipt.state === 'pending' ? undefined : receipt;
-    }, timeoutMs, signal);
+    }, signal);
   }
   /** Bounded result compaction retains the permanent identity/digest fence. */
   async compactResults(limit = 1000): Promise<number> {

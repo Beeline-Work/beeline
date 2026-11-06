@@ -569,15 +569,7 @@ export async function backfillFeedbackSignalWalk(database: SqlDatabase): Promise
           CASE WHEN (now() AT TIME ZONE 'America/New_York')::time>=time '07:00' THEN interval '1 day' ELSE interval '0 days' END)
           AT TIME ZONE 'America/New_York',updated_at=now()
         WHERE room_id=$1 AND message=$2`,[schedule.room_id,FEEDBACK_TRIAGE_SCHEDULE_PROMPT]);
-      const result = await db.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,workflow_slug)
-        SELECT $1,$2,$3,$4,$5,'{"kind":"cron","expression":"0 6 * * *","timeZone":"America/New_York"}'::jsonb,
-          $6,(date_trunc('day',now() AT TIME ZONE 'America/New_York')+interval '6 hours'+
-            CASE WHEN (now() AT TIME ZONE 'America/New_York')::time>=time '06:00' THEN interval '1 day' ELSE interval '0 days' END)
-            AT TIME ZONE 'America/New_York','workspace-walk'
-        WHERE NOT EXISTS(SELECT 1 FROM agent_schedules WHERE room_id=$3 AND workflow_slug='workspace-walk')`,
-        [randomBytes(16).toString('hex'),schedule.workspace_id,schedule.room_id,schedule.agent_id,schedule.creator_id,
-          'Start workspace-walk binding triager to yourself; read workspace-browse-sweep and complete every receipt.']);
-      changed += result.rowCount ?? 0;
+
     });
   }
   return changed;

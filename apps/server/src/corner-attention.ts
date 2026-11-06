@@ -1,11 +1,6 @@
-import { notifyCornerStateSql } from './postgres-live.js';
-import { createHash } from 'node:crypto';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
-import type { SqlDatabase } from './database.js';
-import type { LiveHub } from './live.js';
-import { cornerIdleSql, cornerCanReportIdle, type CornerIdleRow } from './corner-idle.js';
+import { notifyCornerStateSql } from './postgres-live.js';
 import { humanReportCornerSql } from './corner-waiting-report.js';
-import { reportToCommander } from './commander.js';
 
 export const CORNER_ATTENTION_SCHEMA = `
 ALTER TABLE needs_you_marks ADD COLUMN IF NOT EXISTS reminder_dismissed_at timestamptz;
@@ -94,94 +89,3 @@ DROP TRIGGER IF EXISTS corner_activity_schedule ON agent_schedules;
 CREATE TRIGGER corner_activity_schedule AFTER INSERT OR UPDATE OR DELETE ON agent_schedules
  FOR EACH ROW EXECUTE FUNCTION notify_corner_activity();
 `;
-
-/** A committed event emits one immediate idle signal when no work remains. */
-export async function refreshCornerAttention(
-  db: SqlDatabase,
-  cornerId: string,
-): Promise<{ parentId: string } | undefined> {
-  return db.transaction(async (tx) => {
-    const row = (await tx.query<CornerIdleRow>(cornerIdleSql('$1'), [cornerId])).rows[0];
-    if (!row) return;
-    const current = cornerCanReportIdle(row) ? row.idle_since : null;
-    // A queued alert for an episode that has ended is withdrawn before anyone
-    // claims it; a claimed or delivered alert keeps its history.
-    await tx.query(
-      `SELECT (terminal.ended).* FROM (SELECT beeline_end_agent_turn(agent_commands.id,agent_commands.generation_id,'cancelled','stale_idle_alert',NULL) ended FROM agent_commands WHERE state='pending' AND reason='report'
-         AND private_payload->>'authorId'=$3
-         AND private_payload->>'idleSince' IS NOT NULL
-         AND COALESCE(private_payload->>'originCornerId',private_payload->>'fromRoomId')=$1::text
-         AND private_payload->>'idleSince' IS DISTINCT FROM $2::text) terminal`,
-      [cornerId, current, SYSTEM_IDENTITY_ID],
-    );
-    if (!current) return { parentId: row.parent_id };
-    const id = createHash('sha256').update(`idle:${cornerId}:${row.idle_since}`).digest('hex');
-    await reportToCommander(tx, cornerId, SYSTEM_IDENTITY_ID,
-      `blocked: Corner ${row.name} is idle. Resume it, set a hold, or close it.`, undefined, id,
-      { automatic: true, agentOnly: true, wakeInCorner: true, idleSince: row.idle_since });
-    return { parentId: row.parent_id };
-  });
-}
-
-/** Startup recovery only; ordinary events address one corner. */
-export async function runCornerAttention(db: SqlDatabase): Promise<void> {
-  const rows = (
-    await db.query<{ id: string }>(
-      `SELECT id FROM rooms WHERE parent_id IS NOT NULL AND archived_at IS NULL`,
-    )
-  ).rows;
-  for (const row of rows) await refreshCornerAttention(db, row.id);
-}
-
-/** Recompute the immediate idle signal from committed source events. */
-export class CornerAttentionDeadlines {
-  private release: () => void;
-  private resync: () => void;
-  private stopped = false;
-  private readonly refreshing = new Map<string, { again: boolean; done: Promise<void> }>();
-  constructor(
-    private db: SqlDatabase,
-    private live: LiveHub,
-    private report: (error: unknown) => void,
-  ) {
-    this.release = live.subscribeAll((event) => {
-      if (event.type === 'invalidate' && event.reason === 'postgres:corner_state')
-        void this.refresh(event.roomId).catch(report);
-    });
-    this.resync = live.subscribeResync(() => {
-      void this.start().catch(report);
-    });
-  }
-  async start(): Promise<void> {
-    const rows = (
-      await this.db.query<{ id: string }>(
-        `SELECT id FROM rooms WHERE parent_id IS NOT NULL AND archived_at IS NULL`,
-      )
-    ).rows;
-    for (const row of rows) await this.refresh(row.id);
-  }
-  async refresh(id: string): Promise<void> {
-    if (this.stopped) return;
-    const running = this.refreshing.get(id);
-    if (running) { running.again = true; return running.done; }
-    // Presence and committed source events can arrive together. Share the
-    // snapshot in flight and re-read once for changes committed during it.
-    const state = { again: false, done: Promise.resolve() };
-    this.refreshing.set(id, state);
-    state.done = (async () => {
-      do {
-        state.again = false;
-        const next = await refreshCornerAttention(this.db, id);
-        if (next && !this.stopped)
-          this.live.publish({ type: 'invalidate', roomId: next.parentId, reason: 'corner-status' });
-      } while (state.again && !this.stopped);
-    })();
-    try { await state.done; } finally { this.refreshing.delete(id); }
-  }
-
-  stop(): void {
-    this.stopped = true;
-    this.release();
-    this.resync();
-  }
-}

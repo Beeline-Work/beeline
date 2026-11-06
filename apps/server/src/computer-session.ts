@@ -273,59 +273,6 @@ function closeComputerChannels(id: string): void {
   squireChannels.delete(id);
 }
 
-/** The committed lease is the view's authority bound. Expiry is a terminal
- * transition, never permission to repeatedly probe an upstream status page. */
-export async function expireComputerSessions(database: SqlDatabase, live: LiveHub | undefined): Promise<number> {
-  const local = [...new Set([...bodyChannels.keys(), ...squireChannels.keys(), ...handbackWaiters.keys()])];
-  if(local.length){
-    const current=await database.query<{id:string;status:string}>('SELECT id,status FROM computer_sessions WHERE id=ANY($1::text[])',[local]);
-    const active=new Set(current.rows.filter(row=>row.status==='live').map(row=>row.id));
-    for(const id of local)if(!active.has(id))closeComputerChannels(id);
-  }
-  const rows = (await database.query<ComputerSessionRow>(
-    `SELECT id,room_id,message_id,agent_id,source_session_id,upstream_url,status,relay_instance_id,handoff_count,view_secret,expires_at,expires_at::text expiry_version
-     FROM computer_sessions WHERE expires_at<=now() AND status='live' ORDER BY expires_at,id LIMIT 100`,
-  )).rows;
-  for (const row of rows) {
-    // Both exact captured expiry and current due state are checked under the
-    // update lock. A newer successful renewal wins even after selection.
-    await endComputerSession(database, live, row, true);
-  }
-  return rows.length;
-}
-
-/** Existing startup adapter, now one actual deadline. The legacy interval
- * argument is accepted for source compatibility and never admits a scan. */
-export function startComputerExpirySweep(database: SqlDatabase, live: LiveHub, _legacyIntervalMs?:number,
-  timers: import('./background-work.js').WorkTimers = { setTimeout, clearTimeout }): () => void {
-  let closed=false,running=false,dirty=false,timer:ReturnType<typeof setTimeout>|undefined;
-  const arm=(due:number)=>{
-    if(closed)return;
-    timer=timers.setTimeout(()=>{
-      timer=undefined;if(Date.now()<due)arm(due);else void drain();
-    },Math.min(2_147_483_647,Math.max(0,due-Date.now())));timer.unref?.();
-  };
-  const drain=async()=>{
-    dirty=true;if(closed||running)return;running=true;
-    try{
-      do{
-        dirty=false;timers.clearTimeout(timer);timer=undefined;
-        await expireComputerSessions(database,live);if(closed)return;
-        const next=(await database.query<{delay_ms:number}>(`SELECT EXTRACT(epoch FROM (expires_at-clock_timestamp()))::double precision*1000 delay_ms FROM computer_sessions
-          WHERE status='live' AND expires_at IS NOT NULL ORDER BY expires_at LIMIT 1`)).rows[0]?.delay_ms;
-        if(next!==undefined&&!closed){
-          if(!Number.isFinite(Number(next)))throw new Error('Invalid computer expiry');
-          arm(Date.now()+Math.max(0,Math.ceil(Number(next))));
-        }
-      }while(dirty&&!closed);
-    }catch{console.warn('[computer-share] expiry unavailable; awaiting committed change or recovery');}
-    finally{running=false;if(dirty&&!closed)void drain();}
-  };
-  const stopSource=subscribeCommandCompletion({principal:'computer',operation:'expiry',commandId:'pending'},()=>{void drain();});
-  const stopRecovery=database.onRecovery?.(()=>{void drain();});void drain();
-  return()=>{closed=true;timers.clearTimeout(timer);stopSource();stopRecovery?.();};
-}
-
 /** One authoritative read when a live viewer's socket reconnects. */
 export async function serveComputerStatus(request: IncomingMessage, response: ServerResponse, database: SqlDatabase, id: string): Promise<void> {
   const row = await getComputerSession(database, id);
@@ -434,7 +381,7 @@ export async function serveComputerSession(
     const fetchStartedAt = Date.now();
     const channel = squireChannel(id);
     const htmlWasCached = Boolean(channel.html);
-    const upstream = channel.html ? undefined : await fetch(row.upstream_url, { redirect: 'error', signal: AbortSignal.timeout(4_000) })
+    const upstream = channel.html ? undefined : await fetch(row.upstream_url, { redirect: 'error',  })
       .catch(() => undefined);
     if (!upstream && !channel.html) { console.warn(`[computer-share] Squire HTML unavailable session=${id.slice(0, 8)}`); serveComputerRetry(request, response); return; }
     if (upstream && !upstream.ok) {
@@ -690,7 +637,7 @@ export function computerViewerHtml(id: string): string {
   // Copy the remote selection to this device. The clipboard write starts
   // inside the key press, which browsers require, and resolves on the answer.
   let copied;
-  function copySelection(){if(preview)return;takeover();const text=new Promise(resolve=>{copied=resolve;setTimeout(()=>resolve(''),3000);});
+  function copySelection(){if(preview)return;takeover();const text=new Promise(resolve=>{copied=resolve;});
     send({type:'copy'});
     if(window.ReactNativeWebView){text.then(value=>{if(value)window.ReactNativeWebView.postMessage(JSON.stringify({type:'computer-copy',id:'${id}',text:value}));});return;}
     try{navigator.clipboard.write([new ClipboardItem({'text/plain':text.then(value=>{if(!value)throw new Error('nothing selected');return new Blob([value],{type:'text/plain'});})})]).catch(()=>{});}
@@ -1112,7 +1059,7 @@ export async function upgradeComputerSession(
         return;
       }
       // Tunnel loss is not share expiry. Reconcile the upstream status once.
-      void fetch(row.upstream_url, { redirect: 'error', signal: AbortSignal.timeout(5_000) })
+      void fetch(row.upstream_url, { redirect: 'error',  })
         .then(async (reply) => {
           if (reply.status === 404 || reply.status === 410) {
             for (const recipient of channel.viewers) if (recipient.readyState === WebSocket.OPEN)

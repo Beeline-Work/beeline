@@ -28,7 +28,7 @@ describe('actual selected model credential claim socket', () => {
     await f.db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('model-socket-request',$1,$2,'Synthetic socket claim')`, [MODEL_ROOM, MODEL_OWNER]);
     commandId = (await createAgentCommand(f.db, { roomId: MODEL_ROOM, agentId: MODEL_AGENT, sourceMessageId: 'model-socket-request', reason: 'human_mention' }))!.id;
     const live = new LiveHub(); daemon = new DaemonService(f.db, live); daemon.setOwnedModel({ credentials: f.credentials, ready: () => true });
-    const presence = { instanceId: 'synthetic-server', holdServerConnection: () => () => {},
+    const presence = { instanceId: 'synthetic-server', holdServerConnection: () => () => {}, renewLease: async () => {},
       claimConnection: async (agent: string, input: { connectionId: string }) => {
         epoch++; await f.db.query(`UPDATE agent_connections SET connection_id=$2,epoch=$3,released_at=NULL WHERE agent_id=$1`, [agent, input.connectionId, epoch]); return epoch;
       }, releaseConnection: async () => {}, evidence: async () => {},

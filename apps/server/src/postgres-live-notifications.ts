@@ -8,7 +8,6 @@ export const AGENT_SIGN_IN_TABLE = 'agent_sign_in';
 export const USAGE_REFRESH_TABLE = 'agent_usage_refresh';
 export const USAGE_REFRESH_RESULT_TABLE = 'agent_usage_refresh_result';
 export const X_SIGNUP_DELIVERY_TABLE = 'x_signup_delivery';
-export const SERVER_LEASE_EVIDENCE_TABLE = 'server_lease_evidence';
 export const MCP_WEBHOOK_TABLE = 'rooms_mcp_webhook_outbox';
 type AgentSignInEvent = Extract<LiveEvent, { type: 'agent-sign-in' }>;
 type Step = AgentSignInEvent['step'];

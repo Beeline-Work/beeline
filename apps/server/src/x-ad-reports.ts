@@ -60,7 +60,7 @@ export function xAdsGet(
         .join(', ');
     const response = await send(url, {
       headers: { authorization },
-      signal: AbortSignal.timeout(15_000),
+
     });
     if (!response.ok) throw new Error(`X ad report HTTP ${response.status}`);
     return (await response.json()) as T;

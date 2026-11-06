@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PgliteDatabase } from './test-support.js';
 import { RouterCommandLedger, ROUTER_COMMAND_SCHEMA, CommandDigestConflict, commandArgumentDigest } from './router-command-ledger.js';
-import { notifyCommandCompletion, recoverCommandCompletions, subscribeCommandCompletion, waitForCommittedChange } from './command-completion.js';
+import { notifyCommandCompletion, subscribeCommandCompletion, waitForCommittedChange } from './command-completion.js';
 import { CommandScopedDatabase } from './command-scoped-database.js';
 
 const key = { principal: 'reader', operation: 'create', commandId: 'intent-1' };
@@ -75,7 +75,7 @@ describe('P7 durable command identity', () => {
     const original = first.external(key, {}, effect);
     await running;
     expect(await second.external(key, {}, effect)).toMatchObject({ state: 'pending' });
-    const completion = second.wait(key, {}, 1000);
+    const completion = second.wait(key, {});
     release();
     await original;
     expect(await completion).toMatchObject({ state: 'committed', result: { effectId: 'once' } });
@@ -102,7 +102,7 @@ describe('P7/P12 subscribe-before-read completion', () => {
   it('observes completion already committed when the listener is installed', async () => {
     const read = vi.fn(async () => 'committed');
     const unsubscribe = vi.fn();
-    await expect(waitForCommittedChange(() => unsubscribe, read, 1000)).resolves.toBe('committed');
+    await expect(waitForCommittedChange(() => unsubscribe, read)).resolves.toBe('committed');
     expect(read).toHaveBeenCalledTimes(1);
     expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
@@ -111,37 +111,40 @@ describe('P7/P12 subscribe-before-read completion', () => {
     const blocked = new Promise<string | undefined>(resolve => { resolveRead = resolve; });
     const read = vi.fn().mockImplementationOnce(() => blocked).mockResolvedValue('completed-during-read');
     const release = vi.fn();
-    const result = waitForCommittedChange(next => { listener = next; return release; }, read, 1000);
+    const result = waitForCommittedChange(next => { listener = next; return release; }, read);
     await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
     listener(); resolveRead(undefined);
     expect(await result).toBe('completed-during-read');
     expect(read).toHaveBeenCalledTimes(2);
     expect(release).toHaveBeenCalledTimes(1);
   });
-  it('pending 85 seconds performs one inspection; terminal deadline removes listener', async () => {
+  it('an idle day performs one inspection; only cancellation removes the waiter', async () => {
     vi.useFakeTimers();
     try {
-      const read = vi.fn(async () => undefined), release = vi.fn();
-      const waiting = waitForCommittedChange(() => release, read, 85_000);
-      await vi.advanceTimersByTimeAsync(84_999);
+      const read = vi.fn(async () => undefined), release = vi.fn(), controller = new AbortController();
+      const waiting = waitForCommittedChange(() => release, read, controller.signal);
+      await vi.advanceTimersByTimeAsync(86400_000);
       expect(read).toHaveBeenCalledTimes(1);
-      await vi.advanceTimersByTimeAsync(1);
-      expect(await waiting).toBeUndefined();
-      expect(release).toHaveBeenCalledTimes(1);
+      expect(release).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+      const settled = expect(waiting).rejects.toThrow('stopped');
+      controller.abort(new Error('stopped'));
+      await settled;
+      expect(release).toHaveBeenCalledOnce();
     } finally { vi.useRealTimers(); }
   });
-  it('actual listener recovery wakes durable inspection; unrelated command does not', async () => {
+  it('only the matching committed source wakes durable inspection', async () => {
     const wake = vi.fn(), stop = subscribeCommandCompletion(key, wake);
     notifyCommandCompletion({ ...key, principal: 'unrelated' });
     expect(wake).not.toHaveBeenCalled();
-    recoverCommandCompletions();
+    notifyCommandCompletion(key);
     expect(wake).toHaveBeenCalledTimes(1);
     stop(); notifyCommandCompletion(key);
     expect(wake).toHaveBeenCalledTimes(1);
   });
   it('cancellation removes the waiter without canceling an admitted effect', async () => {
     const controller = new AbortController(), release = vi.fn();
-    const waiting = waitForCommittedChange(() => release, async () => undefined, 1000, controller.signal);
+    const waiting = waitForCommittedChange(() => release, async () => undefined, controller.signal);
     await Promise.resolve(); await Promise.resolve();
     controller.abort(new Error('stopped waiting'));
     await expect(waiting).rejects.toThrow('stopped waiting');

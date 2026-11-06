@@ -1,5 +1,4 @@
 import { phoneFetch } from '../../../tests/helpers/phone-operation.js';
-import { BackgroundWork } from './background-work.js';
 import { COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion } from './command-completion.js';
 import { cornerOwnerSql } from './corner-worker.js';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -27,7 +26,7 @@ import { claimAgentCommand, createAgentCommand, routeHumanMessage, routeAgentRes
 import { cornerWorkSql } from './chat-corner-counts.js';
 import { openSecrets } from './free-agents.js';
 import { deliverMcpMemberWebhooks, runMcpWebhookDelivery } from './rooms-mcp-members.js';
-import { runMaintenance } from './background.js';
+
 import { PREREGISTERED_MCP_CLIENTS } from './rooms-mcp-preregistered.js';
 import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
@@ -257,7 +256,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect((await client.callTool({ name: 'send_message', arguments: { room: ROOM, text } })).isError).not.toBe(true);
     expect(JSON.stringify(await phone.readRoom(ROOM, USER))).toContain(text);
   }, 60_000);
-  it.each(['webhook', 'events', 'bridge', 'none', 'expired bridge', 'expired events'])(
+  it.each(['webhook', 'events', 'none', 'expired events'])(
     'R2: tag receipt accounts for connected member route %s', async route => {
       const fixture = await eventFixture();
       const { member, token, params, grant, client } = fixture;
@@ -267,15 +266,10 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
         expect((await eventCall(token, 'events/subscribe', params)).error).toBeUndefined();
         if (route === 'expired events') await db.query("UPDATE rooms_mcp_event_subscriptions SET expires_at=now()-interval '1 second' WHERE member_id=$1", [member]);
       }
-      if (route.includes('bridge')) {
-        const now = new Date().toISOString();
-        await client.callTool({ name: 'list_mentions', arguments: { waitSeconds: 1, wakesAfter: now } });
-        if (route === 'expired bridge') await db.query("UPDATE rooms_mcp_members SET last_bridge_poll_at=now()-interval '61 seconds' WHERE member_id=$1", [member]);
-      }
       const sender = await connected();
       const response = await sender.client.callTool({ name: 'send_message', arguments: { room: ROOM, text: `@${handle} check this tag` } }) as { content: { text: string }[] };
       const receipt = JSON.parse(response.content[0]!.text).data;
-      const live = ['webhook', 'events', 'bridge'].includes(route);
+      const live = ['webhook', 'events'].includes(route);
       expect(receipt.woken).toEqual(live ? [handle] : []);
       expect(receipt.notWoken).toEqual(live ? [] : [{ handle, reason: 'no live wake route; sees it on next list_mentions' }]);
       expect((await db.query('SELECT 1 FROM rooms_mcp_mentions WHERE member_id=$1 AND message_id=$2', [member, receipt.messageId])).rowCount).toBe(1);
@@ -310,39 +304,9 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect((await eventCall(token, 'events/unsubscribe', { name: 'mention', arguments: {}, delivery })).result).toEqual({});
     expect((await db.query('SELECT id FROM rooms_mcp_event_subscriptions WHERE member_id=$1', [member])).rowCount).toBe(0);
   });
-  it('MCP-WEBHOOK-DEADLINE: an empty owner stays idle for a day, then a committed delivery wakes it once', async () => {
-    await db.query('DELETE FROM rooms_mcp_webhook_outbox');
-    const { token, params, member } = await eventFixture();
-    await eventCall(token, 'events/subscribe', params);
-    const transport = vi.fn(async () => new Response(null, { status: 204 }));
-    let now = 0;
-    const work = new BackgroundWork(() => now, () => {});
-    const drain = vi.fn(() => runMcpWebhookDelivery(db, transport));
-    work.addDeadline('mcp-webhooks', drain);
-    await work.run(true);
-    for (now = 60_000; now <= 24 * 60 * 60_000; now += 60_000) await work.run(false);
-    expect(drain).toHaveBeenCalledOnce(); expect(transport).not.toHaveBeenCalled();
-    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
-    await phone.execute('sendRoomMessage', { roomId: ROOM, text: '@' + handle + ' committed delivery' }, USER);
-    work.wake('mcp-webhooks'); await work.run(false);
-    expect(transport).toHaveBeenCalledOnce(); expect(drain).toHaveBeenCalledTimes(2);
-    now += 24 * 60 * 60_000; await work.run(false);
-    expect(drain).toHaveBeenCalledTimes(2);
-  });
 
-  it('MCP-WEBHOOK-DEADLINE: a bounded legacy bearer batch continues only for remaining rows', async () => {
-    await db.query('DELETE FROM rooms_mcp_webhook_outbox');
-    const { client, member } = await eventFixture();
-    await client.callTool({ name: 'set_webhook', arguments: { url: 'https://hooks.example/bearer', secret: 'legacy-bearer' } });
-    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
-    for (const text of ['first', 'second'])
-      await phone.execute('sendRoomMessage', { roomId: ROOM, text: '@' + handle + ' ' + text }, USER);
-    const transport = vi.fn(async () => new Response(null, { status: 204 }));
-    expect(await runMcpWebhookDelivery(db, transport, 1)).toBe(1);
-    expect(transport).toHaveBeenCalledOnce();
-    expect(await runMcpWebhookDelivery(db, transport, 1)).toBeUndefined();
-    expect(transport).toHaveBeenCalledTimes(2);
-  });
+
+
 
   it('MCP-WEBHOOK-DEADLINE: shutdown drains its active delivery and leaves the next row unclaimed', async () => {
     await db.query('DELETE FROM rooms_mcp_webhook_outbox');
@@ -356,50 +320,17 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const held = new Promise<void>(resolve => { release = resolve; });
     const transport = vi.fn(async () => { entered(); await held; return new Response(null, { status: 204 }); });
     const controller = new AbortController();
-    const flight = runMcpWebhookDelivery(db, transport, 50, controller.signal);
+    const flight = runMcpWebhookDelivery(db, transport, controller.signal);
     await ready; controller.abort(); release();
     expect(await flight).toBeUndefined(); expect(transport).toHaveBeenCalledOnce();
-    expect((await db.query('SELECT attempts,claimed_at FROM rooms_mcp_event_deliveries WHERE delivered_at IS NULL')).rows)
-      .toEqual([{ attempts: 0, claimed_at: null }]);
+    expect((await db.query('SELECT claimed_at FROM rooms_mcp_event_deliveries WHERE delivered_at IS NULL')).rows)
+      .toEqual([{ claimed_at: null }]);
     expect(await runMcpWebhookDelivery(db, transport)).toBeUndefined(); expect(transport).toHaveBeenCalledTimes(2);
   });
 
-  it('MCP-WEBHOOK-DEADLINE: persisted finite delivery attempts keep identity and terminate', async () => {
-    await db.query('DELETE FROM rooms_mcp_webhook_outbox');
-    const { token, params, member } = await eventFixture();
-    await eventCall(token, 'events/subscribe', params);
-    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
-    await phone.execute('sendRoomMessage', { roomId: ROOM, text: '@' + handle + ' finite dispatch' }, USER);
-    const bodies: string[] = [], ids: string[] = [];
-    const transport: typeof postMcpWebhook = async (_url, init) => {
-      bodies.push(init.body); ids.push(init.headers['webhook-id']!);
-      return new Response(null, { status: 503 });
-    };
-    for (let attempt = 1; attempt <= 5; attempt++) {
-      await db.query("UPDATE rooms_mcp_event_deliveries SET next_attempt_at=now()-interval '1 second' WHERE delivered_at IS NULL");
-      const delay = await runMcpWebhookDelivery(db, transport);
-      expect(bodies).toHaveLength(attempt);
-      if (attempt < 5) { expect(delay).toBeGreaterThan(25_000); expect(delay).toBeLessThanOrEqual(240_000); }
-      else expect(delay).toBeUndefined();
-    }
-    expect(new Set(bodies).size).toBe(1); expect(new Set(ids).size).toBe(1);
-    expect(await runMcpWebhookDelivery(db, transport)).toBeUndefined(); expect(bodies).toHaveLength(5);
-  });
 
-  it('MCP-WEBHOOK-DEADLINE: an in-flight persisted claim supplies its actual expiry', async () => {
-    await db.query('DELETE FROM rooms_mcp_webhook_outbox');
-    const { token, params, member } = await eventFixture();
-    await eventCall(token, 'events/subscribe', params);
-    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
-    await phone.execute('sendRoomMessage', { roomId: ROOM, text: '@' + handle + ' abandoned claim' }, USER);
-    await db.query('UPDATE rooms_mcp_event_deliveries SET claimed_at=now(),attempts=1 WHERE delivered_at IS NULL');
-    const transport = vi.fn(async () => new Response(null, { status: 204 }));
-    const delay = await runMcpWebhookDelivery(db, transport);
-    expect(delay).toBeGreaterThan(50_000); expect(delay).toBeLessThanOrEqual(60_000);
-    expect(transport).not.toHaveBeenCalled();
-    await db.query("UPDATE rooms_mcp_event_deliveries SET claimed_at=now()-interval '61 seconds' WHERE delivered_at IS NULL");
-    expect(await runMcpWebhookDelivery(db, transport)).toBeUndefined(); expect(transport).toHaveBeenCalledOnce();
-  });
+
+
 
   it('MCP-EVENTS-1: a human tag reaches a local receiver once, and the connected member replies under its own byline', async () => {
     const fixture = await eventFixture();
@@ -497,7 +428,6 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     await phone.execute('sendRoomMessage', { roomId: ROOM, text: '@' + handle + ' terminal response' }, USER);
     const transport = vi.fn(async () => new Response(null, { status }));
     await deliverMcpMemberWebhooks(db, transport);
-    await db.query('UPDATE rooms_mcp_event_deliveries SET next_attempt_at=now()');
     await deliverMcpMemberWebhooks(db, transport);
     expect(transport).toHaveBeenCalledTimes(1);
   });
@@ -519,7 +449,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(await first).toBe(1);
     expect(transport).toHaveBeenCalledTimes(1);
   });
-  it('MCP-EVENTS-1: secret rotation keeps both signatures briefly; retries preserve event identity', async () => {
+  it('MCP-EVENTS-1: secret rotation keeps both signatures briefly and a failed event is not retried', async () => {
     const { token, params, member, secret } = await eventFixture();
     await eventCall(token, 'events/subscribe', params);
     const replacement = 'whsec_' + randomBytes(32).toString('base64');
@@ -539,10 +469,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     };
     expect(await deliverMcpMemberWebhooks(db, transport)).toBe(0);
     expect(await deliverMcpMemberWebhooks(db, transport)).toBe(0);
-    await db.query('UPDATE rooms_mcp_event_deliveries SET next_attempt_at=now() WHERE delivered_at IS NULL');
-    expect(await deliverMcpMemberWebhooks(db, transport)).toBe(1);
-    expect(attempts).toHaveLength(2);
-    expect(attempts[1]).toBe(attempts[0]);
+    expect(attempts).toHaveLength(1);
+    expect((await db.query('SELECT 1 FROM rooms_mcp_event_deliveries WHERE delivered_at IS NULL')).rowCount).toBe(0);
   });
   it('MCP-WAKE-1: a subscribed member gets one signed wake for an order, a report, and a corner assignment', async () => {
     const fixture = await eventFixture();
@@ -1518,7 +1446,6 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       await client.callTool({ name: 'set_webhook', arguments: { url } });
     if (callback === 'client')
       await db.query('UPDATE rooms_mcp_clients SET callback_url=$2 WHERE id=$1', [grant.clientId, url]);
-    await db.query("UPDATE rooms_mcp_members SET last_bridge_poll_at=now()-interval '1 hour' WHERE member_id=$1", [member]);
     expect((await db.query('SELECT 1 FROM rooms_mcp_event_subscriptions WHERE member_id=$1', [member])).rowCount).toBe(0);
     const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
     const source = await phone.execute('sendRoomMessage', { roomId: ROOM, text: '@demo-agent report back' }, USER);
@@ -1648,13 +1575,12 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     }) as unknown as typeof fetch;
     const first = deliverMcpMemberWebhooks(db, transport);
     await firstStarted;
-    // The first drain is still sending its first row. Backdate every other
-    // queued claim to simulate a batch that has outlived the one-minute lease.
+    // An active delivery remains claimed even past its former lease window.
     const inFlightId = (await db.query<{ message_id: string }>(
       'SELECT message_id FROM rooms_mcp_webhook_outbox WHERE body=$1 AND delivered_at IS NULL', [inFlight])).rows[0]!.message_id;
     await db.query(
       `UPDATE rooms_mcp_webhook_outbox SET claimed_at=now()-interval '2 minutes'
-       WHERE delivered_at IS NULL AND message_id<>$1`, [inFlightId]);
+       WHERE delivered_at IS NULL AND message_id=$1`, [inFlightId]);
     const overlapping = await deliverMcpMemberWebhooks(db, transport);
     release();
     await first;
@@ -1899,28 +1825,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     await phone.execute('removeRoomMember', { roomId: later, memberId: member }, USER);
     expect(await rooms()).not.toContain(later);
   });
-  it('signs Meta Muse in with its published client id, which maintenance never deletes', async () => {
-    const muse = PREREGISTERED_MCP_CLIENTS[0];
-    expect(muse.id).toBe('6Zxge0aVJeCxF8Jvshy-oYTjYPJmrFHdTnwVfvkaF0o');
-    const row = (await db.query<{ name: string; redirects: string[]; preregistered: boolean; auth_method: string; logo: string | null }>(
-      'SELECT name,redirects,preregistered,auth_method,logo FROM rooms_mcp_clients WHERE id=$1', [muse.id])).rows[0]!;
-    expect(row).toMatchObject({ name: 'Meta Muse', redirects: ['https://agent.meta.ai/api/hatch/oauth/callback'], preregistered: true, auth_method: 'none' });
-    expect(row.logo).toMatch(/^data:image\/png;base64,/);
-    // Nobody registers anything: the published id signs in at once.
-    const grant = await authorize('rooms:read rooms:write', 'allow', muse.id, muse.redirects[0]);
-    expect(grant.code).toBeTruthy();
-    expect((await exchange(grant, { redirect_uri: muse.redirects[0] })).status).toBe(200);
-    // Unused for 30 days: an ordinary registration expires, the published one stays.
-    const unused = await (await post('/mcp/oauth/register', { client_name: 'Unused', redirect_uris: ['https://example.com/cb'] })).json() as { client_id: string };
-    await db.query(`UPDATE rooms_mcp_connections SET revoked_at=now()-interval '40 days' WHERE client_id=$1`, [muse.id]);
-    await db.query(`DELETE FROM rooms_mcp_tokens WHERE client_id=$1`, [muse.id]);
-    await db.query(`UPDATE rooms_mcp_clients SET created_at=now()-interval '40 days' WHERE id=ANY($1)`, [[muse.id, unused.client_id]]);
-    await runMaintenance(db);
-    await db.query(`DELETE FROM rooms_mcp_connections WHERE client_id=$1`, [muse.id]);
-    await runMaintenance(db);
-    expect((await db.query('SELECT 1 FROM rooms_mcp_clients WHERE id=$1', [unused.client_id])).rowCount).toBe(0);
-    expect((await db.query('SELECT 1 FROM rooms_mcp_clients WHERE id=$1 AND preregistered', [muse.id])).rowCount).toBe(1);
-  });
+
   it.each([
     ['Cursor', ['https://www.cursor.com/agents/mcp/oauth/callback', 'http://localhost:8787/callback'], 'Grok Bot'],
     ['Cursor', ['cursor://anysphere.cursor-mcp/oauth/callback'], 'Cursor'],
@@ -2121,27 +2026,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const third = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} third` }, USER);
     expect(data(await client.callTool({ name: 'list_mentions', arguments: { cursor: page.nextCursor } })).mentions.map((m: { id: string }) => m.id)).toEqual([third.messageId]);
   });
-  it('SESSION-JOIN-1: a long poll returns at once when a tag arrives, and after its wait otherwise', async () => {
-    const { client, member } = await connected();
-    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
-    // A client learns the name and handle its owner allowed.
-    expect(data(await client.callTool({ name: 'list_rooms', arguments: {} })).you).toEqual({ id: member, name: expect.any(String), handle });
-    const first = data(await client.callTool({ name: 'list_mentions', arguments: {} }));
-    const now = new Date().toISOString();
-    let started = Date.now();
-    const empty = data(await client.callTool({ name: 'list_mentions', arguments: { cursor: first.nextCursor, waitSeconds: 1, wakesAfter: now } }));
-    expect(empty.mentions).toEqual([]);
-    expect(Date.now() - started).toBeGreaterThanOrEqual(900);
-    started = Date.now();
-    const waiting = client.callTool({ name: 'list_mentions', arguments: { cursor: first.nextCursor, waitSeconds: 20, wakesAfter: now } });
-    await new Promise(resolve => setTimeout(resolve, 300));
-    const tag = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} are you there?` }, USER);
-    const page = data(await waiting);
-    expect(page.mentions.map((m: { id: string }) => m.id)).toEqual([tag.messageId]);
-    expect(Date.now() - started).toBeLessThan(5000);
-    const refused = await client.callTool({ name: 'list_mentions', arguments: { waitSeconds: 26 } });
-    expect(refused.isError).toBe(true);
-  });
+
   it.each([{ fallback: false, app: 'Claude Code' }, { fallback: true, app: 'Claude Code' }, { fallback: false, app: 'Codex' }])('SESSION-JOIN-1: a headless $app session signs in with fallback consent=$fallback and collects its code by state', async ({ fallback, app }) => {
     const label = app === 'Codex' ? 'codex' : fallback ? 'fallback' : 'api';
     const memberName = `payments ${label}`, memberHandle = `payments_${label}`;
@@ -2227,28 +2112,6 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(profile.seededSoul).toContain('Local MCP reviewer');
     expect(Object.values(FACE_SOULS)).not.toContain(profile.seededSoul);
   });
-  it.each([false, true])('commits the post and routing record atomically (reply=%s)', async reply => {
-    const { client, member } = await connected();
-    const parent = reply ? await phone.execute('sendRoomMessage', { roomId: ROOM, text: 'atomic reply parent' }, USER) : undefined;
-    const args = { room: ROOM, text: '@demo-agent please handle this atomic post', idempotencyKey: `atomic-${reply}`,
-      ...(parent ? { replyTo: parent.messageId } : {}) };
-    const id = createHash('sha256').update(`rooms-mcp-message:${member}:${args.idempotencyKey}`).digest('hex');
-    await db.query(`CREATE FUNCTION reject_mcp_route_proof() RETURNS trigger LANGUAGE plpgsql AS $$
-      BEGIN RAISE EXCEPTION 'proof: pending route storage unavailable'; END $$;
-      CREATE TRIGGER reject_mcp_route_proof BEFORE INSERT ON rooms_mcp_pending_routes
-      FOR EACH ROW EXECUTE FUNCTION reject_mcp_route_proof()`);
-    try {
-      expect((await client.callTool({ name: 'send_message', arguments: args })).isError).toBe(true);
-      expect((await db.query('SELECT 1 FROM messages WHERE id=$1', [id])).rowCount).toBe(0);
-      expect((await db.query('SELECT 1 FROM rooms_mcp_pending_routes WHERE message_id=$1', [id])).rowCount).toBe(0);
-    } finally {
-      await db.query('DROP TRIGGER reject_mcp_route_proof ON rooms_mcp_pending_routes; DROP FUNCTION reject_mcp_route_proof()');
-    }
-    await db.query("UPDATE rooms_mcp_idempotency SET claimed_at=now()-interval '2 minutes' WHERE member_id=$1", [member]);
-    const retry = data(await client.callTool({ name: 'send_message', arguments: args }));
-    expect(retry.woken).toEqual(['demo-agent']);
-    expect((await db.query('SELECT 1 FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2', [id, AGENT])).rowCount).toBe(1);
-  });
   it('resumes a saved post after interruption before routing, without posting twice', async () => {
     const { client, member } = await connected();
     const args = { room: ROOM, text: '@demo-agent please resume this saved post', idempotencyKey: 'saved-post' };
@@ -2261,7 +2124,6 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     try {
       expect((await client.callTool({ name: 'send_message', arguments: args })).isError).toBe(true);
     } finally { fault.mockRestore(); }
-    expect((await db.query('SELECT 1 FROM rooms_mcp_pending_routes WHERE message_id=$1', [id])).rowCount).toBe(1);
     await db.query("UPDATE rooms_mcp_idempotency SET claimed_at=now()-interval '2 minutes' WHERE member_id=$1", [member]);
     const retry = data(await client.callTool({ name: 'send_message', arguments: args }));
     expect(retry.woken).toEqual(['demo-agent']);
@@ -2269,54 +2131,24 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect((await db.query('SELECT 1 FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2', [id, AGENT])).rowCount).toBe(1);
     expect(data(await client.callTool({ name: 'send_message', arguments: args }))).toEqual(retry);
   });
-  it('retries a cached routing failure instead of returning it forever', async () => {
-    const { client } = await connected();
-    const args = { room: ROOM, text: '@demo-agent please retry this failed wake', idempotencyKey: 'cached-failed-wake' };
-    const query = db.query.bind(db);
-    let injected = false;
-    const fault = vi.spyOn(db, 'query').mockImplementation(async (sql, values) => {
-      if (!injected && sql.includes('SELECT text,room_id FROM messages')) {
-        injected = true;
-        throw new Error('proof: transient wake routing failure');
-      }
-      return query(sql, values);
-    });
-    let first: ReturnType<typeof data>;
-    try {
-      first = data(await client.callTool({ name: 'send_message', arguments: args }));
-      expect(first.routing).toBe('retrying');
-    } finally { fault.mockRestore(); }
-    expect(injected).toBe(true);
-    const retry = data(await client.callTool({ name: 'send_message', arguments: args }));
-    expect(retry.messageId).toBe(first!.messageId);
-    expect(retry.woken).toEqual(['demo-agent']);
-    expect(retry.routing).toBeUndefined();
-    expect((await db.query('SELECT 1 FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2', [retry.messageId, AGENT])).rowCount).toBe(1);
-  });
-  it('review proof: an interrupted routing record cannot lose a tagged wake on retry', async () => {
+  it('reports routing failure and routes again only on an explicit repeat request', async () => {
     const { client, member } = await connected();
-    const args = { room: ROOM, text: '@demo-agent please handle this interrupted post', idempotencyKey: 'interrupted-route' };
+    const args = { room: ROOM, text: '@demo-agent please retry this failed wake', idempotencyKey: 'cached-failed-wake' };
     const id = createHash('sha256').update(`rooms-mcp-message:${member}:${args.idempotencyKey}`).digest('hex');
-    const query = db.query.bind(db);
-    let injected = false;
-    const fault = vi.spyOn(db, 'query').mockImplementation(async (sql, values) => {
-      if (!injected && sql.includes('INSERT INTO rooms_mcp_pending_routes')) {
-        injected = true;
-        throw new Error('review proof: interrupted routing insert');
-      }
-      return query(sql, values);
-    });
+    await db.query(`CREATE FUNCTION reject_mcp_route() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'routing failed'; END $$;
+      CREATE TRIGGER reject_mcp_route BEFORE INSERT ON agent_commands
+      FOR EACH ROW EXECUTE FUNCTION reject_mcp_route()`);
     try {
       expect((await client.callTool({ name: 'send_message', arguments: args })).isError).toBe(true);
-    } finally { fault.mockRestore(); }
-    expect(injected).toBe(true);
-    await db.query("UPDATE rooms_mcp_idempotency SET claimed_at=now()-interval '2 minutes' WHERE member_id=$1", [member]);
-    const retry = data(await client.callTool({ name: 'send_message', arguments: args }));
-    expect(retry.messageId).toBe(id);
-    expect(retry.woken).toEqual(['demo-agent']);
+    } finally { await db.query('DROP TRIGGER reject_mcp_route ON agent_commands; DROP FUNCTION reject_mcp_route()'); }
     expect((await db.query('SELECT 1 FROM messages WHERE id=$1', [id])).rowCount).toBe(1);
+    expect((await db.query('SELECT 1 FROM agent_commands WHERE source_message_id=$1', [id])).rowCount).toBe(0);
+    const repeated = data(await client.callTool({ name: 'send_message', arguments: args }));
+    expect(repeated.messageId).toBe(id);
+    expect(repeated.woken).toEqual(['demo-agent']);
     expect((await db.query('SELECT 1 FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2', [id, AGENT])).rowCount).toBe(1);
-    expect((await db.query('SELECT 1 FROM rooms_mcp_pending_routes WHERE message_id=$1', [id])).rowCount).toBe(0);
+    expect(data(await client.callTool({ name: 'send_message', arguments: args }))).toEqual(repeated);
   });
   describe('in a Room of 20,000 messages', () => {
     const BIG = '66666666-6666-4666-8666-666666666666';
@@ -2379,7 +2211,6 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
         expect(await commands(sent.messageId)).toBe(1);
         const command = (await db.query<{ agent_depth: number }>('SELECT agent_depth FROM agent_commands WHERE source_message_id=$1', [sent.messageId])).rows[0]!;
         expect(command.agent_depth).toBe(1);
-        expect((await db.query('SELECT 1 FROM rooms_mcp_pending_routes WHERE message_id=$1', [sent.messageId])).rowCount).toBe(0);
       } finally {
         fault.mockRestore();
       }

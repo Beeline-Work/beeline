@@ -53,7 +53,7 @@ export async function sendSentryTelegram(
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ chat_id: config.chatId, text: message, link_preview_options: { is_disabled: true } }),
-      signal: AbortSignal.timeout(5000),
+
     });
     const result = await response.json() as { ok?: boolean; result?: { message_id?: number } };
     if (!response.ok || result.ok !== true) throw new Error('delivery refused');

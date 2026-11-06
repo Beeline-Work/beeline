@@ -41,7 +41,6 @@ beforeEach(async () => {
   Object.assign(daemon, { github: undefined });
   await db.query(`DELETE FROM agent_commands`);
   await db.query('DELETE FROM agent_connections');
-  await db.query('UPDATE agents SET wake_batch_minutes=0');
   await db.query(`DELETE FROM workspaces`);
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Review command proof')`, [WS]);
   await db.query(`INSERT INTO rooms(id,workspace_id,name,direct_participants,created_by)

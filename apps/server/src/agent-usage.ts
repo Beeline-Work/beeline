@@ -250,8 +250,6 @@ export async function saveAgentUsage(
 }
 
 export { USAGE_REFRESH_TABLE, USAGE_REFRESH_RESULT_TABLE, decodeUsageRefreshResult } from './postgres-live-notifications.js';
-/** Longer than a practical helper read; the phone waits longer than this. */
-export const USAGE_REFRESH_WAIT_MS = 20_000;
 const REQUEST_ID = /^[0-9a-f-]{36}$/;
 
 
@@ -290,12 +288,10 @@ export async function requestUsageRefresh(
   database: Pick<SqlDatabase, 'query'>,
   live: LiveHub | undefined,
   agentId: string,
-  options: { timeoutMs?: number } = {},
 ): Promise<UsageRefreshOutcome> {
   if (!(await agentHelperOnline(database, agentId))) return { status: 'offline' };
   const requestId = randomUUID();
   let release = () => {};
-  let timer: ReturnType<typeof setTimeout> | undefined;
   // Subscribe before asking, so a fast helper cannot answer into the void.
   const answer = live
     ? new Promise<UsageRefreshOutcome>((resolve) => {
@@ -304,8 +300,6 @@ export async function requestUsageRefresh(
               (event.requestId === undefined || event.requestId === requestId))
             resolve(event.outcome);
         });
-        timer = setTimeout(() => resolve({ status: 'no_answer' }), options.timeoutMs ?? USAGE_REFRESH_WAIT_MS);
-        timer.unref?.();
       })
     : Promise.resolve<UsageRefreshOutcome>({ status: 'no_answer' });
   try {
@@ -313,6 +307,5 @@ export async function requestUsageRefresh(
     return await answer;
   } finally {
     release();
-    if (timer) clearTimeout(timer);
   }
 }

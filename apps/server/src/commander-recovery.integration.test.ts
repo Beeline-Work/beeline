@@ -253,8 +253,8 @@ it('keeps approval resume provenance and posts progress only in the corner', asy
     turn = await worker(opened.cornerId);
   await systemLine(db, {
     roomId: opened.cornerId,
-    authorId: WORKER,
-    subject: { kind: 'agent', id: WORKER, name: 'Worker' },
+    authorId: HUMAN,
+    subject: { kind: 'person', id: HUMAN, name: 'Captain' },
     verb: 'received approval',
     kind: 'squire-approval-decided',
     wakes: [WORKER],
@@ -294,8 +294,8 @@ it('retains workflow run and attempt guidance in private commands', async () => 
   await systemLine(db, {
     id: 'specific-run-id',
     roomId: opened.cornerId,
-    authorId: WORKER,
-    subject: { kind: 'agent', id: WORKER, name: 'Worker' },
+    authorId: RUBY,
+    subject: { kind: 'agent', id: RUBY, name: 'Ruby' },
     verb: 'started',
     object: 'a workflow',
     kind: 'workflow-handoff',
@@ -556,8 +556,8 @@ it('rejects stale private workflow wakes after their run ends', async () => {
   await systemLine(db, {
     id: run,
     roomId: opened.cornerId,
-    authorId: WORKER,
-    subject: { kind: 'agent', id: WORKER, name: 'Worker' },
+    authorId: RUBY,
+    subject: { kind: 'agent', id: RUBY, name: 'Ruby' },
     verb: 'started',
     object: 'a workflow',
     kind: 'workflow-handoff',
@@ -839,8 +839,8 @@ it('keeps unrelated Room subscriptions independent of completed orders', async (
   );
   await systemLine(db, {
     roomId: ROOM,
-    authorId: WORKER,
-    subject: { kind: 'agent', id: WORKER, name: 'Worker' },
+    authorId: HUMAN,
+    subject: { kind: 'person', id: HUMAN, name: 'Captain' },
     verb: 'received',
     object: 'an unrelated Room event',
     kind: 'subscription-fired',

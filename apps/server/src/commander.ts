@@ -166,8 +166,8 @@ export async function sendOrder(
   }
   if (worker === agentId && target.id === command.room_id)
     throw new CommandRefusalError('an agent cannot order itself in its current place', 400);
-  // Self-wakes across places and peer recruitment consume the existing depth
-  // budget; handoffs to another implementer retain it.
+  // Peer recruitment consumes the existing depth budget; handoffs to another
+  // implementer retain it. Self-addressed output remains a completed receipt.
   const peerOrder = worker === agentId || Boolean(source?.parent_id && (!target.parent_id || worker !== target.worker));
   if (peerOrder && nextAgentDepth(command.agent_depth) === undefined)
     throw new CommandRefusalError('agent order chain depth limit reached', 400);
@@ -188,7 +188,9 @@ export async function sendOrder(
     await recordAgentCommandCard(db, { id: queued.id, cornerId: address, kind: 'order', authorId: agentId, recipientId: worker, text });
   return { id: queued.id, createdAt: Math.floor(Date.now() / 1000),
     effect: 'order', address, agent: worker, visibility: 'private', reportsAssignment: false,
-    accepted: true, executionConfirmed: false, receipt: 'Order queued privately; not confirmation of execution.' };
+    accepted: true, executionConfirmed: false, receipt: queued.state === 'complete'
+      ? 'Own output recorded; no additional turn queued.'
+      : 'Order queued privately; not confirmation of execution.' };
 }
 
 /**
@@ -386,6 +388,14 @@ export async function reportToCommander(
         )).rowCount
         ? origin
         : returnRoom;
+      // System attention reports describe the worker's own work. Preserve that
+      // source separately from the visible System author so shared admission
+      // cannot wake a worker that is also its own commander.
+      const sourceAgentId = options.automatic && agentId === SYSTEM_IDENTITY_ID && origin
+        ? (await db.query<{ agent_id: string }>(`SELECT ${cornerImplementerSql('fact', 'corner')} agent_id
+            FROM rooms corner JOIN corner_facts fact ON fact.corner_id=corner.id WHERE corner.id=$1`,
+          [origin])).rows[0]?.agent_id
+        : undefined;
       const queued = await createAgentCommand(db, {
         id: reportId,
         roomId: wakeRoom,
@@ -394,6 +404,7 @@ export async function reportToCommander(
         privatePayload: {
           text,
           authorId: agentId,
+          ...(sourceAgentId ? { sourceAgentId } : {}),
           fromRoomId: roomId,
           kind: 'report',
           ask,

@@ -21,7 +21,7 @@ process.on('unhandledRejection', error => {
   console.error('[unhandled-rejection]', error instanceof Error ? error.name : 'Unknown rejection');
 });
 import { sentryTelegramFromEnv } from './sentry-telegram.js';
-import { runSentryWakeDeadline, sentryWakeAgentFromEnv } from './sentry-wake.js';
+import { runSentryWakes, sentryWakeAgentFromEnv } from './sentry-wake.js';
 import { randomUUID } from 'node:crypto';
 import { assertSchemaCurrent, markSchemaCurrent, migrate, migrateData, PostgresDatabase } from './database.js';
 import { runMigrationStep } from './migration-steps.js';
@@ -495,9 +495,9 @@ async function main() {
     const due = await backgroundJobs.run('schedule-next-due', () => schedules.nextDelayMs());
     if (due.ok) return due.value;
   });
+  // Event-only owner: Sentry ingestion/recovery never returns a timer deadline.
   work.addDeadline('sentry', async () => {
-    const due = await backgroundJobs.run('sentry-wakes', () => runSentryWakeDeadline(jobsDatabase, sentryWakeAgentId));
-    if (due.ok) return due.value;
+    await backgroundJobs.run('sentry-wakes', () => runSentryWakes(jobsDatabase, sentryWakeAgentId));
   });
   work.addDeadline('connector-offer-expiry', async () => {
     const due = await backgroundJobs.run('connector-offer-expiry', () => connectorOfferExpiry.runOnce());

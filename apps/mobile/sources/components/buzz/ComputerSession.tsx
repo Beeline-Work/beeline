@@ -62,6 +62,10 @@ function ComputerStream({ session, preview = false, onEnded, onFirstFrame, onAcc
   const webViewRef = React.useRef<{ injectJavaScript(script: string): void } | null>(null);
   const pendingCaptures = React.useRef(new Map<number, (image: string | null) => void>());
   const nextCapture = React.useRef(0);
+  const releaseCaptures = React.useCallback(() => {
+    for (const resolve of pendingCaptures.current.values()) resolve(null);
+    pendingCaptures.current.clear();
+  }, []);
   const streamUrl = new URL(session.url);
   if (session.access) streamUrl.searchParams.set('access', session.access);
   streamUrl.searchParams.set('embedded', '1');
@@ -73,7 +77,7 @@ function ComputerStream({ session, preview = false, onEnded, onFirstFrame, onAcc
     const origin = new URL(session.url).origin;
     const handle = (event: MessageEvent) => {
       if (event.origin !== origin || event.data?.id !== session.id) return;
-      if (event.data.type === 'computer-ended') onEnded?.();
+      if (event.data.type === 'computer-ended') { releaseCaptures(); onEnded?.(); }
       if (event.data.type === 'computer-first-frame') onFirstFrame?.();
       if (event.data.type === 'computer-snapshot') {
         const resolve = pendingCaptures.current.get(event.data.requestId);
@@ -82,9 +86,10 @@ function ComputerStream({ session, preview = false, onEnded, onFirstFrame, onAcc
     };
     window.addEventListener('message', handle);
     return () => window.removeEventListener('message', handle);
-  }, [onEnded, onFirstFrame, session.id, session.url]);
+  }, [onEnded, onFirstFrame, releaseCaptures, session.id, session.url]);
   React.useEffect(() => {
     if (!captureRef) return;
+    if (session.status === 'ended') { captureRef.current = null; releaseCaptures(); return; }
     captureRef.current = () => new Promise((resolve) => {
       const requestId = ++nextCapture.current;
       pendingCaptures.current.set(requestId, resolve);
@@ -93,9 +98,8 @@ function ComputerStream({ session, preview = false, onEnded, onFirstFrame, onAcc
       else if (webViewRef.current) webViewRef.current.injectJavaScript(`window.postMessage(${JSON.stringify(request)}, '*'); true;`);
       else { pendingCaptures.current.delete(requestId); resolve(null); }
     });
-    return () => { captureRef.current = null; for (const resolve of pendingCaptures.current.values()) resolve(null);
-      pendingCaptures.current.clear(); };
-  }, [captureRef, preview, session.id, session.url]);
+    return () => { captureRef.current = null; releaseCaptures(); };
+  }, [captureRef, preview, releaseCaptures, session.id, session.status, url]);
   const setViewerMode = React.useCallback(() => {
     if (!warm) return;
     const mode = { type: 'viewer-mode', id: session.id, interactive };
@@ -112,7 +116,7 @@ function ComputerStream({ session, preview = false, onEnded, onFirstFrame, onAcc
         webViewRef.current?.injectJavaScript(`window.postMessage(${JSON.stringify(paste)}, '*'); true;`);
       }).catch(() => {});
       if (message.type === 'computer-copy' && typeof message.text === 'string') void Clipboard.setStringAsync(message.text).catch(() => {});
-      if (message.type === 'computer-ended') onEnded?.();
+      if (message.type === 'computer-ended') { releaseCaptures(); onEnded?.(); }
       if (message.type === 'computer-first-frame') onFirstFrame?.();
       if (message.type === 'computer-snapshot' && message.requestId !== undefined) {
         const resolve = pendingCaptures.current.get(message.requestId);

@@ -11,5 +11,8 @@ export function subscribePhoneLiveEvents(listener: (event: PhoneLiveEvent) => vo
 }
 
 export function publishPhoneLiveEvent(event: PhoneLiveEvent): void {
-  for (const listener of listeners) listener(event);
+  for (const listener of listeners) {
+    try { listener(event); }
+    catch (reason) { console.warn('[phone-live] Observer failed', reason instanceof Error ? reason.name : 'unknown'); }
+  }
 }

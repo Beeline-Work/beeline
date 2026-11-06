@@ -40,14 +40,14 @@ describe('helper release delivery', () => {
   beforeEach(async () => { database = await fixture(); });
   afterEach(() => database.close());
 
-  it('wakes helpers without posting any message or creating any bot DM', async () => {
+  it('reannounces a promoted build without posting messages or creating bot DMs', async () => {
     const notifier = new ReleaseNotifier(database);
     const push = vi.fn();
     const stop = notifier.subscribeHelperRelease(push);
     const input = { version: 'v0.0.128', sha: 'a'.repeat(40), changelogUrl: 'https://example.test/128' };
     expect(await notifier.notifyReleaseDelivered(input)).toEqual({ notified: 0, skipped: 0 });
     await notifier.notifyReleaseDelivered(input);
-    expect(push).toHaveBeenCalledTimes(1);
+    expect(push).toHaveBeenCalledTimes(2);
     expect(push).toHaveBeenCalledWith({ version: input.version, sha: input.sha });
     expect((await database.query('SELECT 1 FROM messages')).rowCount).toBe(0);
     expect((await database.query('SELECT 1 FROM rooms WHERE direct_participants IS NOT NULL')).rowCount).toBe(0);

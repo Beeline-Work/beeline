@@ -54,7 +54,7 @@ describe('solo-agent-untagged-silence', () => {
     // Each statement is another database round trip before the send receipt.
     // The corner front door classifies the address with one indexed Room lookup.
     // The receipt reads which external MCP agents were notified.
-    expect(statements).toHaveLength(11);
+    expect(statements).toHaveLength(10);
     expect(commands).toHaveLength(1);
     expect(commands[0]).toMatchObject({ agent_id: AGENT, source_message_id: MESSAGE });
     await routeHumanMessage(db, MESSAGE);

@@ -1,7 +1,7 @@
+import { maskCredentialResult } from './mask-credential-result.js';
 import { readFile, rm } from 'node:fs/promises';
 import { writePrivateFileAtomically } from './atomic-private-file.js';
 import type { PromptResult } from './acp.js';
-import { redactToolDetail } from './turn-failure-reason.js';
 
 const normalizeRequest = (request: string): string =>
   request.trim().replace(/^@\S+\s+/, '').toLowerCase().replace(/[.!?]+$/, '');
@@ -47,9 +47,8 @@ export class FreeAgentContinuation {
     this.checkpoint = {
       request: previous?.request ?? this.request,
       partial: [previous?.partial, result.agentText].filter(Boolean).join('\n\n').slice(-8_000),
-      tools: [...(previous?.tools ?? []), ...result.toolCalls.map(call =>
-        `${redactToolDetail(call.title ?? call.kind ?? 'tool').slice(0, 120)}: ${['completed', 'failed'].includes(call.status ?? '') ? call.status : 'unfinished'}\n${redactToolDetail(JSON.stringify({ input: call.rawInput, output: call.rawOutput ?? call.content }, (key, value) =>
-          /token|secret|password|authorization|credential|cookie|api[_-]?key/i.test(key) ? '[REDACTED]' : value) ?? '').slice(0, 500)}`)].slice(-12),
+      tools: [...(previous?.tools ?? []), ...result.toolCalls.map(call => maskCredentialResult(call)).map(call =>
+        `${(call.title ?? call.kind ?? 'tool').slice(0, 120)}: ${['completed', 'failed'].includes(call.status ?? '') ? call.status : 'unfinished'}\n${(JSON.stringify({ input: call.rawInput, output: call.rawOutput ?? call.content }) ?? '').slice(0, 500)}`)].slice(-12),
       limits: (previous?.limits ?? 0) + 1,
     };
     if (this.path) await writePrivateFileAtomically(this.path, JSON.stringify({ version: 1, ...this.checkpoint }));

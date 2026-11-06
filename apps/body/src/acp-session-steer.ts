@@ -1,3 +1,4 @@
+import { maskCredentialResult } from './mask-credential-result.js';
 import { AcpClient, flattenHarnessCause, AcpRuntimeExitedError, SessionUpdate, toolCallEntries, asyncTaskCall, SteerResult, AcpRequestError, parseAcpUsage, parseAvailableCommands, AcpPermissionRequest, AcpPermissionDecision } from './acp.js';
 
 
@@ -197,7 +198,7 @@ import { AcpClient, flattenHarnessCause, AcpRuntimeExitedError, SessionUpdate, t
         const key = `${params.sessionId}\0${task?.id ?? String(params.update.toolCallId ?? '')}`;
         const detached = ctx.detachedTools.get(key);
         if (detached) {
-          detached.call = { ...detached.call, ...(task ?? toolCallEntries([u])[0]) };
+          detached.call = maskCredentialResult({ ...detached.call, ...(task ?? toolCallEntries([u])[0]) });
           if (detached.call.status === 'completed' || detached.call.status === 'failed' ||
               detached.call.resultReceived) {
             ctx.detachedTools.delete(key);

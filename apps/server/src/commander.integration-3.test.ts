@@ -305,18 +305,16 @@ it('WAKE-STORM: a later delegate report publishes its reply without re-answering
 });
 
 
-it('Reproduction SELF-1: self-orders in another Room and corner retain receipts without wakes', async () => {
-  const receipt = await rootFixture.daemon.execute('order', { ...authority(rootFixture.order), address: ROOM, agent: 'ruby', text: 'Continue in the Room' }, RUBY);
-  expect(receipt.accepted).toBe(true);
+it('Reproduction SELF-1: refuses self-orders in every place without accepting a receipt', async () => {
+  await expect(rootFixture.daemon.execute('order', { ...authority(rootFixture.order), address: ROOM, agent: 'ruby', text: 'Continue in the Room' }, RUBY))
+    .rejects.toThrow('an agent cannot order itself');
   expect(await commands(ROOM, RUBY)).toEqual([]);
-  expect((await rootFixture.db.query(`SELECT state FROM agent_commands WHERE id=$1`,[receipt.id])).rows).toEqual([{state:'complete'}]);
   const opened = await rootFixture.daemon.execute('createCorner', { ...authority(rootFixture.order), targetRoomId: ROOM,
     name: 'self-work', objective: 'Continue own work', implementer: 'ruby',
     brief: { spec: 'Continue own work', repositoryWork: false } }, RUBY);
-  await rootFixture.daemon.execute('order', { ...authority(rootFixture.order), address: opened.cornerId, text: 'Resume own corner' }, RUBY);
+  await expect(rootFixture.daemon.execute('order', { ...authority(rootFixture.order), address: opened.cornerId, text: 'Resume own corner' }, RUBY))
+    .rejects.toThrow('an agent cannot order itself');
   expect((await commands(opened.cornerId, RUBY)).map(c => c.reason)).toEqual(['corner_objective']);
-  await expect(rootFixture.daemon.execute('order', { ...authority(rootFixture.order), address: DM, agent: 'ruby', text: 'Recurse' }, RUBY))
-    .rejects.toThrow('current place');
 });
 
 
@@ -327,16 +325,6 @@ it('Reproduction SELF-1: cross-place self-tags never start a ping-pong chain', a
     expect(posted.woken).toEqual([]);
     expect(await commands(cornerId,RUBY)).toEqual([]);
   }
-});
-
-
-it('Reproduction SELF-1: replaying a self-order retains one completed receipt and zero wakes', async () => {
-  const input = {...authority(rootFixture.order),address:ROOM,agent:'ruby',text:'Continue elsewhere'};
-  const first = await rootFixture.daemon.execute('order',input,RUBY);
-  const replay = await rootFixture.daemon.execute('order',input,RUBY);
-  expect(replay.id).toBe(first.id);
-  expect(await commands(ROOM,RUBY)).toEqual([]);
-  expect((await rootFixture.db.query(`SELECT state FROM agent_commands WHERE id=$1`,[first.id])).rows).toEqual([{state:'complete'}]);
 });
 
 

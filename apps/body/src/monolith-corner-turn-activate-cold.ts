@@ -316,6 +316,15 @@ import { MonolithCornerTurnLoop, execFileAsync } from './monolith-corner-turn.js
       dependencyPaths.push(...await prepareDependencyGeneration({
         root: ctx.options.worktreePath, store: warmNodeModulesStoreDir(ctx.options.runtime.supervisorRoot), npm, cache: npmCacheDir, install: install(ctx.options.worktreePath),
       }));
+      if (cornerPrepareScript) {
+        const command = wrapAgentCommand({ bwrapPath: ctx.options.config.bwrapPath,
+          spec: sandboxSpec, command: npm, args: ['run', 'corner:prepare'] });
+        await execFileAsync(command.command, command.args, {
+          cwd: ctx.options.worktreePath,
+          env: { ...process.env, ...agentEnv, BEELINE_READONLY_DEPENDENCIES: '1' },
+          maxBuffer: 16 * 1024 * 1024,
+        });
+      }
       const mobile = resolve(ctx.options.worktreePath, 'apps/mobile');
       if (existsSync(resolve(mobile, 'node_modules')) || existsSync(resolve(ctx.options.worktreePath, dependencyRequest))) dependencyPaths.push(...await prepareDependencyGeneration({
         root: mobile, store: mobileNodeModulesStoreDir(ctx.options.runtime.supervisorRoot), npm, cache: npmCacheDir, install: install(mobile),

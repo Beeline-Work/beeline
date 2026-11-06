@@ -16,7 +16,8 @@ it.each([true, false])('never redispatches a failed effect after 24h (owned=%s)'
   const result=daemon.execute('postAgentActivity',input,'synthetic-agent').catch(error=>error);
   await vi.advanceTimersByTimeAsync(24*60*60_000);
   expect(await result).toBe(deadlock);
-  // Assert the effect itself; unrelated HTTP parser timers can run in this worker.
+  // Assert the effect itself: unrelated HTTP parser timers can fire in the
+  // reused CI worker while its clock advances.
   expect(transaction).toHaveBeenCalledOnce();
   expect(query).toHaveBeenCalledTimes(2);
   expect(input).toMatchObject({requestId:'same-request',generationId:'same-generation'});

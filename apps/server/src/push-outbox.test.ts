@@ -77,6 +77,10 @@ describe.skipIf(!postgresUrl)('R-PUSH-SCAN-LOCK', () => {
       await owner.query(`ALTER TABLE messages ENABLE TRIGGER beeline_notify_live_messages`);
       await owner.query(`INSERT INTO messages(id,room_id,author_id,text)
         SELECT 'fresh-'||n,$1,$2,'@owner fresh' FROM generate_series(1,300) n`, [room, author]);
+      // Finish fixture statistics before measuring worker lock handoff. The
+      // bulk insert otherwise schedules autoanalyze, whose table lock competes
+      // with ACCESS EXCLUSIVE independently of push delivery.
+      await owner.query('ANALYZE messages');
       // Negative control matches the long-held ACCESS SHARE incident. No retries.
       const legacy = await admin.connect();
       try {

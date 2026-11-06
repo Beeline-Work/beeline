@@ -99,6 +99,8 @@ jobs:
       - uses: ./.github/actions/ci-workspace
         with:
           mobile: "true"
+      - name: Prove corner preparation and iOS capture runner setup
+        run: node --test scripts/prepare-corner.test.mjs scripts/ios-signin/capture.test.mjs
       - name: Test feedback grouping and ranking
         run: npm run test:feedback-signals
       - name: Test nightly dispatch and main-failure reporting

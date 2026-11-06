@@ -158,11 +158,11 @@ export async function sendOrder(
       throw new CommandRefusalError('order must name exactly one agent: pass agent with its handle or id', 400);
     worker = matches[0]!.id;
   }
-  if (worker === agentId && target.id === command.room_id)
-    throw new CommandRefusalError('an agent cannot order itself in its current place', 400);
+  if (worker === agentId)
+    throw new CommandRefusalError('an agent cannot order itself; continue the work in the current turn', 400);
   // Peer recruitment consumes the existing depth budget; handoffs to another
-  // implementer retain it. Self-addressed output remains a completed receipt.
-  const peerOrder = worker === agentId || Boolean(source?.parent_id && (!target.parent_id || worker !== target.worker));
+  // implementer retain it.
+  const peerOrder = Boolean(source?.parent_id && (!target.parent_id || worker !== target.worker));
   if (peerOrder && nextAgentDepth(command.agent_depth) === undefined)
     throw new CommandRefusalError('agent order chain depth limit reached', 400);
   const queued = await createAgentCommand(db, {

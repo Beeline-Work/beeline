@@ -155,7 +155,7 @@ function WorkflowLine({
       testID={testID}
     >
       <WorkflowGlyph size={CORNER_META_SIZE} />
-      <Text style={styles.workflowCopy} testID={`${testID}-copy`}>
+      <Text numberOfLines={1} style={styles.workflowCopy} testID={`${testID}-copy`}>
         {label}
       </Text>
     </ContentTarget>

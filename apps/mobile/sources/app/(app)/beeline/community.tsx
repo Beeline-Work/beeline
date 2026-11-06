@@ -160,7 +160,7 @@ export default function WorkspaceChoice() {
         testID="workspace-choice"
       >
         <View style={[styles.column, desktopPageLayout && { maxWidth: desktopColumnWidths.detail }]}>
-          <Text ref={welcomeRef} adjustsFontSizeToFit accessibilityRole="header" testID="choice-title" style={styles.title}>{welcomeText}</Text>
+          <Text ref={welcomeRef} adjustsFontSizeToFit numberOfLines={2} accessibilityRole="header" testID="choice-title" style={styles.title}>{welcomeText}</Text>
           <Text style={styles.copy}>
             {`Start a ${WORKSPACE_LABEL}, or join one you were invited to.`}
           </Text>

@@ -69,14 +69,14 @@ export function SettingsScopeTabs({
                 testID={tab.tileTestID}>
                 <View style={styles.seat}>{tab.picture}</View>
               </View>
-              <Text style={[styles.label, selected && styles.labelSelected]}>
+              <Text numberOfLines={1} style={[styles.label, selected && styles.labelSelected]}>
                 {tab.label}
               </Text>
             </ContentTarget>
           );
         })}
       </View>
-      {caption ? <Text style={styles.caption} testID="settings-scope-caption">{caption}</Text> : null}
+      {caption ? <Text numberOfLines={2} style={styles.caption} testID="settings-scope-caption">{caption}</Text> : null}
     </View>
   );
 }

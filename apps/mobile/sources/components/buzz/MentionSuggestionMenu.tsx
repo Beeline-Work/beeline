@@ -164,13 +164,13 @@ export function MentionSuggestionMenu({
                         ✓
                       </Text>
                     ) : model ? (
-                      <Text style={styles.mentionModel}>
+                      <Text numberOfLines={1} style={styles.mentionModel}>
                         {model}
                       </Text>
                     ) : null}
                   </View>
                   {subtitle !== undefined ? (
-                    <Text style={styles.mentionHandle}>
+                    <Text numberOfLines={1} style={styles.mentionHandle}>
                       {subtitle}
                     </Text>
                   ) : null}
@@ -178,12 +178,12 @@ export function MentionSuggestionMenu({
               ) : (
                 <>
                   <View style={styles.mentionIdentity}>
-                    <Text style={styles.mentionName}>
+                    <Text numberOfLines={1} style={styles.mentionName}>
                       {participant.pubkey === CHANNEL_MENTION_PUBKEY
                         ? 'Everyone in this Room'
                         : SYSTEM_MENTION_LABEL}
                     </Text>
-                    <Text style={styles.mentionHandle}>
+                    <Text numberOfLines={1} style={styles.mentionHandle}>
                       @{participant.handle}
                     </Text>
                   </View>
@@ -272,11 +272,11 @@ export function ChannelSuggestionMenu({
                 )}
               </View>
               <View style={styles.mentionAgentIdentity}>
-                <Text style={[styles.mentionName, styles.channelToken]}>
+                <Text numberOfLines={1} style={[styles.mentionName, styles.channelToken]}>
                   #{suggestion.token}
                 </Text>
                 {subtitle ? (
-                  <Text style={styles.mentionHandle}>
+                  <Text numberOfLines={1} style={styles.mentionHandle}>
                     {subtitle}
                   </Text>
                 ) : null}

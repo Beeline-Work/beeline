@@ -668,13 +668,13 @@ export default function TrayScreen() {
         testID={`bookmark-${bookmark.messageId}`}
       >
         <View style={styles.originLine} testID={`bookmark-save-line-${bookmark.messageId}`}>
-          <Text style={styles.author}>
+          <Text numberOfLines={1} style={styles.author}>
             {bookmark.available ? bookmark.author?.name : 'Source unavailable'}
           </Text>
-          <Text style={styles.time}>{compactRelativeTime(bookmark.bookmarkedAt, now)}</Text>
+          <Text numberOfLines={1} style={styles.time}>{compactRelativeTime(bookmark.bookmarkedAt, now)}</Text>
         </View>
         {bookmark.available ? (
-          <Text style={[styles.excerpt, styles.quote]}
+          <Text numberOfLines={desktop ? 2 : 3} style={[styles.excerpt, styles.quote]}
             testID={`bookmark-text-${bookmark.messageId}`}>
             {boldRuns(bookmark.text ?? '').map((run, index) => run.bold
               ? <Text key={index} style={styles.excerptBold}>{run.text}</Text>
@@ -688,7 +688,7 @@ export default function TrayScreen() {
             {bookmark.roomKind === 'corner'
               ? <CornerGlyph size={CORNER_META_SIZE} testID={`bookmark-corner-mark-${bookmark.messageId}`} />
               : <Text style={styles.originSigil}>#</Text>}
-            <Text style={styles.origin}>{sourceTitle(bookmark)}</Text>
+            <Text numberOfLines={1} style={styles.origin}>{sourceTitle(bookmark)}</Text>
           </InlineRow>
         ) : null}
         {desktop && bookmark.available ? (

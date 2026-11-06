@@ -679,7 +679,7 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
         return;
       }
       try {
-        if (!(await authorizeResourceMessage(message, target, authFile, spendsGrant, fetch, transport.signal)))
+        if (!(await authorizeResourceMessage(message, target, authFile, spendsGrant, undefined, transport.signal)))
           throw new Error('resource approval required');
         if (target === 'squire' && message.method === 'tools/call') {
           const call = record(message.params);

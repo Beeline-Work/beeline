@@ -1,0 +1,37 @@
+{
+  "sources": [
+    "https://developers.google.com/android-publisher/api-ref/rest/v3/edits/insert",
+    "https://developers.google.com/android-publisher/api-ref/rest/v3/edits.tracks/get",
+    "https://developers.google.com/android-publisher/api-ref/rest/v3/edits/delete"
+  ],
+  "note": "Synthetic response fixtures based on documented API shapes, not live store evidence.",
+  "insert": {
+    "id": "fixture-edit",
+    "expiryTimeSeconds": "1794058200"
+  },
+  "production": {
+    "track": "production",
+    "releases": [
+      {
+        "name": "production-fixture",
+        "status": "completed",
+        "versionCodes": [
+          "144"
+        ]
+      }
+    ]
+  },
+  "beta": {
+    "track": "beta",
+    "releases": [
+      {
+        "name": "beta-fixture",
+        "status": "completed",
+        "versionCodes": [
+          "146"
+        ]
+      }
+    ]
+  },
+  "delete": {}
+}

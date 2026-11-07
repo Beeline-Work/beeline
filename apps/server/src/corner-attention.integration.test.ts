@@ -329,7 +329,7 @@ it.each(['blocked', 'needs-decision'] as const)(
   async (status) => {
     await db.query(
       `UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{fromRoomId}',to_jsonb($1::text))
-       WHERE id='opening-order'`, [C],
+       WHERE room_id=$1 AND reason='corner_objective'`, [C],
     );
     const { reportToCommander } = await import('./commander.js');
     const text = `${status}: Choose a direction.`;
@@ -524,7 +524,7 @@ it.each(['agent', 'human'] as const)('REPORT-WAITING-DERIVED: %s report quiets w
   const { reportToCommander } = await import('./commander.js');
   const recipient = recipientKind === 'agent' ? COMMANDER : HUMAN;
   await db.query(`UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{authorId}',to_jsonb($1::text))
-    WHERE id='opening-order'`, [recipient]);
+    WHERE room_id=$2 AND reason='corner_objective'`, [recipient,C]);
   const changes: string[] = [];
   const unlisten = db instanceof PgliteDatabase ? await db.client.listen('beeline_live_v1', raw => {
     const event = JSON.parse(raw);
@@ -595,7 +595,7 @@ it('REPORT-WAITING-DERIVED: automatic blocked prose preserves the committed turn
 });
 
 it('IDLE-DERIVED: a human-directed report resolves from the message log once answered', async () => {
-  await db.query(`UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{authorId}',to_jsonb($1::text)) WHERE id='opening-order'`,[HUMAN]);
+  await db.query(`UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{authorId}',to_jsonb($1::text)) WHERE room_id=$2 AND reason='corner_objective'`,[HUMAN,C]);
   const { reportToCommander } = await import('./commander.js');
   const report = await reportToCommander(db,C,WORKER,'blocked: Which scope?');
   expect(await cornerReportWaiting(db, C)).toBe(true);

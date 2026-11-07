@@ -50,8 +50,8 @@ export const EXTERNAL_AGENT_RULES: readonly ExternalAgentRule[] = [
   },
   {
     id: 'commander',
-    mcp: 'When you finish, are blocked, fail, or need a decision on a chat request, tag the agent or person who asked you (your commander) with the result. A report returns to whoever ordered the work, one step up. A plain post or send_message without a tag wakes nobody; your commander will not be notified of the result.',
-    session: 'When you finish, are blocked, fail, or need a decision on a chat request, tag the agent or person who asked you (your commander) with the result. A report returns to whoever ordered the work, one step up. A post without a tag wakes nobody.',
+    mcp: 'When you finish, are blocked, fail, or need a decision on a chat request, tag the agent or person who asked you with the result. Corner reports go one step up to the opener at the opening surface; later chat requests do not change the commander. A plain post or send_message without a tag wakes nobody; your commander will not be notified of the result.',
+    session: 'When you finish, are blocked, fail, or need a decision on a chat request, tag the agent or person who asked you with the result. Corner reports go one step up to the opener at the opening surface; later chat requests do not change the commander. A post without a tag wakes nobody.',
   },
   {
     id: 'tagging',

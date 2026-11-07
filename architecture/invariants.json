@@ -650,7 +650,7 @@
       "apps/auth/src"
     ],
     "bootstrapTotal": 1664,
-    "unusedTotal": 175,
+    "unusedTotal": 174,
     "tables": {
       "agent_avatars": {
         "module": "Agent types",
@@ -742,6 +742,7 @@
       "agent_grant_policy_revocations": {
         "module": "Tools and connectors",
         "reason": "existing before the registry; weekly audit reviews",
+        "drop": "docs/approval-matrix.md (retired policy-upgrade ledger; retain until separately authorized grant recovery and retention review)",
         "columns": {
           "grant_id": "existing before the registry; weekly audit reviews",
           "agent_id": "existing before the registry; weekly audit reviews",

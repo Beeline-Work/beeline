@@ -280,26 +280,6 @@ export const SYSTEM_MESSAGE_DAEMON_SERVICE = {
     variables: [],
   },
 
-  'grant-policy-upgrade.system': {
-    parts: ['@system'],
-    variables: [],
-  },
-
-  'grant-policy-upgrade.revoked-a-legacy-grant-for': {
-    parts: ['revoked a legacy grant for'],
-    variables: [],
-  },
-
-  'grant-policy-upgrade.grant-target': {
-    parts: ['', ' ', ''],
-    variables: ['grant_kind', 'grant_target'],
-  },
-
-  'grant-policy-upgrade.permission-policy-upgraded': {
-    parts: ['permission policy upgraded'],
-    variables: [],
-  },
-
   'membership-join.joined': {
     parts: ['joined'],
     variables: [],

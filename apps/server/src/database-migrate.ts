@@ -51,7 +51,7 @@ import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { backfillCornerLifecycleRuns, deleteStoredCornerWorkflows } from './corner-lifecycle.js';
 import { backfillFeedbackTriageWorkflow, backfillFeedbackSignalWalk, backfillWorkspaceWalkHistory } from './feedback-triage-workflow.js';
 import { backfillWorkflowSkillDescriptions, closeStaleWorkflowGateChoices } from './workflow-runs.js';
-import { upgradeGrantPolicy, withdrawSupersededGrantAsks } from './grant-policy-upgrade.js';
+import { withdrawSupersededGrantAsks } from './grant-policy-upgrade.js';
 import { backfillRegistryApps } from './app-connections.js';
 import { syncTopLevelSharedRoomRoles } from './membership-join.js';
 import { postgresLiveSchema } from './postgres-live.js';
@@ -772,7 +772,6 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   });
   await dataStep('connector machine IDs', () => backfillConnectorMachineId(database));
   await dataStep('registry apps', () => backfillRegistryApps(database));
-  await dataStep('grant policy', () => upgradeGrantPolicy(database));
   const withdrawn = await dataStep('superseded grant asks', () =>
     withdrawSupersededGrantAsks(database));
   if (withdrawn) console.log(`withdrawSupersededGrantAsks: withdrew ${withdrawn} pending ask(s)`);

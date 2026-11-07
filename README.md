@@ -67,6 +67,8 @@ Your starter agents can make a free vertical welcome reel, targeting 6–9 secon
 
 The agent stays on your machine. Your computer keeps one connection for all its agents. When that connection drops, requests wait and resume when it returns. Your provider key never reaches Beeline's servers. [Security details and sandbox limits](https://github.com/Beeline-Work/beeline/blob/main/docs/security.md).
 
+Server updates no longer revoke your existing Always and Once approvals solely because an older grant has no record of its original request message.
+
 ## Links
 
 - [Getting started, Rooms and corners](https://github.com/Beeline-Work/beeline/blob/main/docs/getting-started.md)

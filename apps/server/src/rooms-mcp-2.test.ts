@@ -455,7 +455,7 @@ const scope1 = fixtureScope1();
     expect((await phoneFetch(scope1.origin + '/mcp', { headers: { authorization: `Bearer ${token}` } })).status).toBe(401);
   });
 
-  it.each(['send_message', 'post'])('keeps the wake chain across member replies through %s so a tag loop still stops at the depth limit', async replyTool => {
+  it.each([['send_message', 'recent'], ['post', 'recent'], ['send_message', 'old-reply'], ['send_message', 'old-fresh'], ['post', 'old-fresh']])('R1: MCP chain via %s (%s) wakes fresh requests and limits replies', async (replyTool, mode) => {
     const { client, grant, member } = await scope1.connected();
     await scope1.db.query(`UPDATE rooms_mcp_clients SET callback_url='https://hooks.example/loop' WHERE id=$1`, [grant.clientId]);
     const handle = (await scope1.db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
@@ -495,14 +495,27 @@ const scope1 = fixtureScope1();
     await scope1.daemon.execute('postRoomMessage', { roomId: ROOM, requestId: secondCommand.turn_request_id, generationId: 'loop-2', text: `@${handle} step two done` }, AGENT);
     expect(await latestMemberCommand()).toEqual(stopped);
     expect((await scope1.db.query('SELECT 1 FROM rooms_mcp_webhook_outbox WHERE member_id=$1', [member])).rowCount).toBe(3);
-    // Its reply retains that depth, so it cannot start a fourth helper hop.
+    const tagging = (await scope1.db.query<{ id: string }>(
+      'SELECT id FROM messages WHERE room_id=$1 AND author_id=$2 AND request_id=$3',
+      [ROOM, AGENT, secondCommand.turn_request_id])).rows[0]!.id;
+    if (mode.startsWith('old-')) await scope1.db.query(
+      "UPDATE messages SET created_at=created_at-interval '10 hours' WHERE room_id=$1", [ROOM]);
+    // R1: a fresh top-level request ten hours later must start a new chain.
     const reply = await client.callTool(replyTool === 'post'
       ? { name: 'post', arguments: { address: ROOM, text: '@demo-agent step three' } }
-      : { name: 'send_message', arguments: { room: ROOM, text: '@demo-agent step three' } });
+      : { name: 'send_message', arguments: { room: ROOM, text: '@demo-agent step three', ...(mode === 'old-reply' ? { replyTo: tagging } : {}) } });
     expect(reply.isError).not.toBe(true);
     const replyId = (await scope1.db.query<{ id: string }>(
       'SELECT id FROM messages WHERE room_id=$1 AND author_id=$2 ORDER BY created_at DESC,id DESC LIMIT 1', [ROOM, member])).rows[0]!.id;
-    expect((await scope1.db.query('SELECT 1 FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2', [replyId, AGENT])).rowCount).toBe(0);
+    const commands = (await scope1.db.query<{ agent_depth: number }>(
+      'SELECT agent_depth FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2', [replyId, AGENT])).rows;
+    if (mode === 'old-fresh') {
+      expect(commands).toEqual([{ agent_depth: 1 }]);
+      if (replyTool === 'send_message') expect(scope1.data(reply)).toMatchObject({ woken: ['demo-agent'], notWoken: [] });
+    } else {
+      expect(commands).toEqual([]);
+      if (replyTool === 'send_message') expect(scope1.data(reply).notWoken).toContainEqual({ handle: 'demo-agent', reason: 'agent tag chain depth limit reached' });
+    }
   });
 
   it.each([

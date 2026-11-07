@@ -53,26 +53,46 @@ function publishedWindow(platform, numbers, historicalNumbers, builds) {
   return records;
 }
 
+// Use the same Android package as app.config.js and the Play upload workflow.
+// https://developers.google.com/android-publisher/api-ref/rest/v3/edits.tracks/get
 async function readPlayTrack(track, token, fetchImpl) {
-  const url = `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/app.usebeeline/tracks/${track}/releases?alt=json`;
-  const response = await fetchImpl(url, {
-    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-    signal: AbortSignal.timeout(30_000),
-  });
-  // Consume the body once and wait for completion. An empty/truncated success
-  // response is a failed observation, never proof that a track has no users.
-  const context = `Play ${track} GET ${url} HTTP ${response.status}`;
-  let body;
-  try { body = await response.text(); }
-  catch { throw new Error(`${context}: response body read failed`); }
-  if (!response.ok) throw new Error(context);
-  if (!body.trim()) throw new Error(`${context}: empty response body`);
-  let payload;
-  try { payload = JSON.parse(body); }
-  catch {
-    throw new Error(`${context}: invalid JSON (${response.headers.get('content-type') ?? 'unknown content type'}, ${body.length} characters)`);
+  const base = 'https://androidpublisher.googleapis.com/androidpublisher/v3/applications/app.usebeeline';
+  const call = async (method, path) => {
+    const url = `${base}${path}`;
+    const response = await fetchImpl(url, {
+      method,
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json',
+        ...(method === 'POST' ? { 'Content-Type': 'application/json' } : {}) },
+      ...(method === 'POST' ? { body: '{}' } : {}),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const context = `Play ${track} ${method} ${url} HTTP ${response.status}`;
+    let body;
+    try { body = await response.text(); }
+    catch { throw new Error(`${context}: response body read failed`); }
+    if (!response.ok) throw new Error(context);
+    // edits.delete may return an empty success body. Reads must contain JSON.
+    if (method === 'DELETE' && !body.trim()) return;
+    if (!body.trim()) throw new Error(`${context}: empty response body`);
+    try { return JSON.parse(body); }
+    catch {
+      throw new Error(`${context}: invalid JSON (${response.headers.get('content-type') ?? 'unknown content type'}, ${body.length} characters)`);
+    }
+  };
+  const edit = await call('POST', '/edits');
+  if (typeof edit?.id !== 'string' || !edit.id) throw new Error(`Play ${track} edits.insert returned no edit id`);
+  const path = `/edits/${encodeURIComponent(edit.id)}`;
+  let readError;
+  try {
+    return playLiveBuilds(await call('GET', `${path}/tracks/${track}`), track);
+  } catch (error) {
+    readError = error;
+    throw error;
+  } finally {
+    // Never commit the observation edit, including after a malformed read.
+    try { await call('DELETE', path); }
+    catch (error) { if (!readError) throw error; }
   }
-  return playLiveBuilds(payload, track);
 }
 
 export async function readStores({ builds, env = process.env, fetchImpl = fetch, appleApi } = {}) {

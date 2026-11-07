@@ -621,11 +621,18 @@ concurrency group and has a `dry_run` mode.
 ## Compatibility and signing invariants
 
 - OTA targets include each platform's newest live store runtime and the two
-  newest older runtimes confirmed live on that store. A current pin still in
-  review gets no OTA target. OTA history, uploads and TestFlight do not count as store publication.
-  The `next` channel reads both `applications/app.usebeeline/tracks/production/releases`
-  and `tracks/beta/releases`, using their
-  `PUBLISHED` lifecycle state (not edit-track `completed`, which can await review).
+  newest older runtimes confirmed live on that store. A current pin alone gets no OTA target. OTA history, uploads and TestFlight do not count as store publication.
+  The Android Play package is `app.usebeeline`, matching `app.config.js` and
+  the successful Play upload path; legacy registry bundle IDs are not Play
+  package names. The `next` channel reads production and beta independently
+  through [edits.insert](https://developers.google.com/android-publisher/api-ref/rest/v3/edits/insert),
+  [edits.tracks.get](https://developers.google.com/android-publisher/api-ref/rest/v3/edits.tracks/get),
+  and [edits.delete](https://developers.google.com/android-publisher/api-ref/rest/v3/edits/delete).
+  Each temporary edit is deleted even after a failed read, and never committed.
+  Track `releases[].versionCodes` map to known runtime identities. Completed,
+  staged (`inProgress`) and halted releases retain their installed audience;
+  drafts are excluded. Edit-track status does not distinguish review approval,
+  so a completed release can receive an OTA before store review finishes.
   Beta runtimes are added alongside the production retention window; they
   never replace its anchor or enter production publication history. Each Play
   track is read independently with an explicit JSON response format, so an

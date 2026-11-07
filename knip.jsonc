@@ -68,6 +68,8 @@
         "scripts/prove-agent-merge-holds.mjs",
         // The report/post delivery runbook invokes this built HTTP proof by path.
         "scripts/prove-report-post-delivery.mjs",
+        // The workflow guide invokes this isolated scheduler/report proof by path.
+        "scripts/prove-schedule-report-owner.mjs",
         // BRIEF-CITATION invokes the isolated built Body/HTTP proof by path.
         "scripts/prove-brief-citation.mjs",
         // The corner membership migration guide invokes the owner-shaped HTTP/socket proof by path.

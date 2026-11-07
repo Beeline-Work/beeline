@@ -51,7 +51,7 @@ beforeEach(() => { resetInitialLandingForTests(); early.response = null; early.p
 
 for (const [wrapper, wrap] of Object.entries(wrappers)) {
   for (const entry of ['cold', 'background', 'foreground'] as const) {
-    it(`opens the new message in a replaced notification slot: ${entry}, ${wrapper}`, async () => {
+    it.each(['room', 'other-room'])(`opens the new message after an inline action: ${entry}, ${wrapper}, from %s`, async (currentRoom) => {
       let state = stackRouter.getInitialState(options);
       const dispatch = vi.fn((action: NotificationNavigationAction) => {
         const next = stackRouter.getStateForAction(state, action as never, options);
@@ -91,9 +91,9 @@ for (const [wrapper, wrap] of Object.entries(wrappers)) {
       markInitialLandingResolved();
       await route(tap('b'.repeat(64)));
       expect(state.routes[state.index]?.name).toBe('beeline/chat/[channelId]');
-      // The reader returns to the deck, then another message replaces the
-      // same Android notification slot. A slot is not a response identity.
-      state = stackRouter.getInitialState(options);
+      // Keep a Room mounted while another message replaces its Android slot.
+      // The tap must switch Rooms or update the same Room's message anchor.
+      state.routes[state.index] = { ...state.routes[state.index]!, params: { channelId: currentRoom } };
       dispatch.mockClear();
       clearLastResponse.mockClear();
       if (entry === 'cold') {
@@ -107,6 +107,9 @@ for (const [wrapper, wrap] of Object.entries(wrappers)) {
       let fail!: (error: unknown) => void;
       const delivered = new Promise<void>((resolve, reject) => { finish = resolve; fail = reject; });
       const response = tap(messageId);
+      await route({ ...response, actionIdentifier: 'beeline.reply' });
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(clearLastResponse).not.toHaveBeenCalled();
       early.response = response;
       prefetchLastPushedRoom();
       expect(early.prefetch).toHaveBeenCalledExactlyOnceWith(messageId, 'room');
@@ -136,3 +139,73 @@ for (const [wrapper, wrap] of Object.entries(wrappers)) {
     });
   }
 }
+
+it('does not let an inline action consume a later body tap for the same message', async () => {
+  const navigator = { openStack: vi.fn() };
+  const handled = new Set<string>();
+  const clearLastResponse = vi.fn(async () => {});
+  const routing = {
+    navigator, handled, defaultActionIdentifier: defaultAction,
+    waitForInitialLanding: async () => 'committed' as const,
+    suppressPendingInitialLanding: vi.fn(), clearLastResponse,
+    resolveTarget: async (target: import('@/utils/notificationRouting').BuzzNotificationTarget) => target,
+    log: () => {},
+  };
+  const notification = { request: { identifier: 'room-slot', content: { data: serverPush(messageId).data } } };
+  await routeBuzzNotificationResponse({ actionIdentifier: 'beeline.reply', notification }, routing);
+  expect(navigator.openStack).not.toHaveBeenCalled();
+  expect(clearLastResponse).not.toHaveBeenCalled();
+  await routeBuzzNotificationResponse({ actionIdentifier: defaultAction, notification }, routing);
+  expect(navigator.openStack).toHaveBeenCalledOnce();
+});
+
+it('discards a stale cold response when a live tap arrives while the native getter is pending', async () => {
+  let listener!: (response: TappedNotificationResponse) => void;
+  let resolveCold!: (response: TappedNotificationResponse) => void;
+  const cold = new Promise<TappedNotificationResponse>((resolve) => { resolveCold = resolve; });
+  const route = vi.fn(async () => {});
+  const stop = startNotificationResponseEntries({
+    addResponseListener: (callback) => { listener = callback; return { remove: vi.fn() }; },
+    getLastResponse: () => cold,
+    getAppState: () => 'active', route,
+  });
+  const response = (id: string) => ({ actionIdentifier: defaultAction,
+    notification: { request: { identifier: id, content: { data: serverPush(id).data } } } });
+  try {
+    const latest = response(messageId);
+    listener(latest);
+    resolveCold(response('b'.repeat(64)));
+    await cold;
+    await Promise.resolve();
+    expect(route).toHaveBeenCalledExactlyOnceWith(latest, 'foreground');
+  } finally { stop(); }
+});
+
+it('cancels a cold replay waiting for durable deduplication when a newer live tap arrives', async () => {
+  let listener!: (response: TappedNotificationResponse) => void;
+  let releaseCold!: (consumed: boolean) => void;
+  let coldChecked!: () => void;
+  const checking = new Promise<void>((resolve) => { coldChecked = resolve; });
+  const check = new Promise<boolean>((resolve) => { releaseCold = resolve; });
+  const response = (id: string) => ({ actionIdentifier: defaultAction,
+    notification: { request: { identifier: id, content: { data: serverPush(id).data } } } });
+  const old = response('b'.repeat(64));
+  const latest = response(messageId);
+  const route = vi.fn(async () => {});
+  const stop = startNotificationResponseEntries({
+    addResponseListener: (callback) => { listener = callback; return { remove: vi.fn() }; },
+    getLastResponse: async () => old, getAppState: () => 'background', route,
+    consumedResponses: {
+      has: async (id) => { if (id === messageId) return false; coldChecked(); return check; },
+      add: async () => {},
+    },
+  });
+  try {
+    await checking;
+    listener(latest);
+    releaseCold(false);
+    await check;
+    await Promise.resolve();
+    expect(route).toHaveBeenCalledExactlyOnceWith(latest, 'background');
+  } finally { stop(); }
+});

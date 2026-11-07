@@ -123,8 +123,10 @@ async function dispatchNotificationResponse(
 /** Wire every Expo response entry path to the same payload resolver. */
 export function startNotificationResponseEntries(entries: NotificationResponseEntries): () => void {
   let active = true;
+  let receivedLiveResponse = false;
   const stillActive = () => active;
   const subscription = entries.addResponseListener((response) => {
+    receivedLiveResponse = true;
     markRoomOpen('push-entry-event');
     const entry = entries.getAppState() === 'active' ? 'foreground' : 'background';
     void dispatchNotificationResponse(entries, response, entry, stillActive).catch((error) =>
@@ -134,12 +136,14 @@ export function startNotificationResponseEntries(entries: NotificationResponseEn
   void entries
     .getLastResponse()
     .then((response) => {
-      if (!active) return;
+      // The native getter may have captured an older response before a live
+      // tap arrived. That replay must never overwrite the newer destination.
+      if (!active || receivedLiveResponse) return;
       if (!response) {
         entries.log?.('[PUSH ROUTING] cold getLastResponse is null');
         return;
       }
-      return dispatchNotificationResponse(entries, response, 'cold', stillActive);
+      return dispatchNotificationResponse(entries, response, 'cold', () => active && !receivedLiveResponse);
     })
     .catch((error) => entries.log?.('Failed to read last notification response:', error));
   return () => {
@@ -197,6 +201,13 @@ export async function routeBuzzNotificationResponse(
 
   log('[PUSH ROUTING] Full notification response:\n' + stringifyNotificationPayload(response));
 
+  // Inline actions belong to the action runtime. They must neither claim the
+  // body's message id nor clear the native response it may still be reading.
+  if (response.actionIdentifier !== routing.defaultActionIdentifier) {
+    log(`[PUSH ROUTING] Ignoring non-default action: ${response.actionIdentifier}`);
+    return null;
+  }
+
   const responseId = getNotificationResponseId(response);
   if (responseId) {
     if (routing.handled.has(responseId)) {
@@ -216,11 +227,6 @@ export async function routeBuzzNotificationResponse(
   }
 
   try {
-    if (response.actionIdentifier !== routing.defaultActionIdentifier) {
-      log(`[PUSH ROUTING] Ignoring non-default action: ${response.actionIdentifier}`);
-      return null;
-    }
-
     log(
       '[PUSH ROUTING] notification.request.content.data:\n' +
         stringifyNotificationPayload(response.notification?.request?.content?.data),

@@ -883,3 +883,25 @@ it.each(['https://evil.test/repos/a/b', '//evil.test/repos/a/b', '/user', '/repo
     tool: 'BEELINE_GITHUB_REST_READ', arguments: { path } })).rejects.toThrow('GitHub read requires a repository API path');
   expect(transport).toHaveBeenCalledTimes(1);
 });
+
+it.each([
+  ['BEELINE_GITHUB_GRAPHQL_READ', { query: '{viewer{login}}' }, 'POST', '/graphql', { query: '{viewer{login}}' }],
+  ['BEELINE_GITHUB_CONTENTS_PUT', { path: '/repos/a/b/contents/proof.txt', body: { message: 'proof', content: 'eA==' } }, 'PUT', '/repos/a/b/contents/proof.txt', { message: 'proof', content: 'eA==' }],
+])('gh-personal-502: bridges %s at the authenticated provider boundary', async (tool, args, method, path, body) => {
+  const transport = vi.fn(async (url: URL | string, init?: RequestInit) => {
+    if (String(url).includes('/connected_accounts/')) return json({ id: ACCOUNT, user_id: PERSON, status: 'ACTIVE', toolkit: { slug: 'github' } });
+    expect(JSON.parse(String(init?.body))).toEqual({ connected_account_id: ACCOUNT, endpoint: 'https://api.github.com' + path, method, body, parameters: [] });
+    return json({ status: 200, headers: {}, data: { ok: true } });
+  });
+  expect(await new ComposioApps('fixture-only', transport as typeof fetch).execute({ accountId: ACCOUNT, userId: PERSON, toolkit: 'github', tool: tool as string, arguments: args as Record<string, unknown> })).toMatchObject({ status: 200, body: '{"ok":true}' });
+});
+it.each(['mutation { deleteIssue(input:{id:"x"}){clientMutationId} }', 'query {viewer{login}} mutation {x}', '# comment\nmutation {x}', 'subscription {x}'])('refuses write operations in read GraphQL: %s', async query => {
+  const transport = vi.fn(async () => json({ id: ACCOUNT, user_id: PERSON, status: 'ACTIVE', toolkit: { slug: 'github' } }));
+  await expect(new ComposioApps('fixture-only', transport as typeof fetch).execute({ accountId: ACCOUNT, userId: PERSON, toolkit: 'github', tool: 'BEELINE_GITHUB_GRAPHQL_READ', arguments: { query } })).rejects.toThrow('read queries only');
+  expect(transport).toHaveBeenCalledTimes(1);
+});
+it.each(['/repos/a/b/issues/1', '/repos/a/b/contents/../../issues/1', '//evil.test/repos/a/b/contents/x', '/repos/a/b/contents/x?ref=main'])('refuses contents writes outside the file path: %s', async path => {
+  const transport = vi.fn(async () => json({ id: ACCOUNT, user_id: PERSON, status: 'ACTIVE', toolkit: { slug: 'github' } }));
+  await expect(new ComposioApps('fixture-only', transport as typeof fetch).execute({ accountId: ACCOUNT, userId: PERSON, toolkit: 'github', tool: 'BEELINE_GITHUB_CONTENTS_PUT', arguments: { path, body: {} } })).rejects.toThrow();
+  expect(transport).toHaveBeenCalledTimes(1);
+});

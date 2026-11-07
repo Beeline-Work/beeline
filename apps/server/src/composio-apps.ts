@@ -163,6 +163,19 @@ const githubRestReadTool = {
     properties: { path: { type: 'string', description: 'Repository API path, including query parameters.' } } },
 };
 
+const githubGraphqlReadTool = {
+  slug: 'BEELINE_GITHUB_GRAPHQL_READ', name: 'GitHub GraphQL read',
+  description: 'Run read-only GitHub GraphQL queries. Mutations and subscriptions are refused.',
+  inputParameters: { type: 'object', required: ['query'], additionalProperties: false,
+    properties: { query: { type: 'string' }, variables: { type: 'object' }, operationName: { type: 'string' } } },
+};
+const githubContentsPutTool = {
+  slug: 'BEELINE_GITHUB_CONTENTS_PUT', name: 'GitHub repository contents write',
+  description: 'Create or update one repository file through the connected personal account.',
+  inputParameters: { type: 'object', required: ['path', 'body'], additionalProperties: false,
+    properties: { path: { type: 'string' }, body: { type: 'object' } } },
+};
+
 const youtubeAnalyticsTool = {
   slug: YOUTUBE_ANALYTICS_TOOL,
   name: 'YouTube Analytics report',
@@ -669,7 +682,7 @@ export class ComposioApps {
       inputParameters: stripSecrets(row.input_parameters ?? {}),
     }));
     const catalog = toolkit === 'youtube' && !page.cursor ? [youtubeAnalyticsTool, ...tools]
-      : toolkit === 'github' && !page.cursor ? [...tools, githubRestReadTool] : tools;
+      : toolkit === 'github' && !page.cursor ? [...tools, githubRestReadTool, githubGraphqlReadTool, githubContentsPutTool] : tools;
     if (query?.trim()) {
       const search = query.trim().toLowerCase();
       const exact = catalog.filter(tool => tool.slug.toLowerCase() === search || tool.name.toLowerCase() === search);
@@ -759,17 +772,34 @@ export class ComposioApps {
       throw new CommandRefusalError('Room files are unavailable for app tools', 400);
     if (!(await this.account(input.accountId, input.userId, input.toolkit)))
       throw new CommandRefusalError('App connection is unavailable', 409);
-    if (input.tool === githubRestReadTool.slug && input.toolkit === 'github') {
-      const path = input.arguments.path;
+    if ([githubRestReadTool.slug, githubGraphqlReadTool.slug, githubContentsPutTool.slug].includes(input.tool) && input.toolkit === 'github') {
+      const graphql = input.tool === githubGraphqlReadTool.slug;
+      const write = input.tool === githubContentsPutTool.slug;
+      const path = graphql ? '/graphql' : input.arguments.path;
       const url = typeof path === 'string' ? new URL(path, 'https://api.github.com') : undefined;
-      if (!url || !path || typeof path !== 'string' || !path.startsWith('/repos/') ||
+      if (!graphql && (!url || !path || typeof path !== 'string' || !path.startsWith('/repos/') ||
         url.origin !== 'https://api.github.com' || !/^\/repos\/[^/]+\/[^/]+(?:\/|$)/.test(url.pathname) ||
-        url.hash || Object.keys(input.arguments).some(key => key !== 'path'))
+        url.hash || Object.keys(input.arguments).some(key => !['path', ...(write ? ['body'] : [])].includes(key))))
         throw new CommandRefusalError('GitHub read requires a repository API path', 400);
-      if (files.size) throw new CommandRefusalError('GitHub reads do not take files', 400);
+      // Fail closed across every operation in a document, including an unselected
+      // mutation. Keyword checks are conservative even inside strings/comments.
+      if (graphql && (typeof input.arguments.query !== 'string' ||
+        !/^(?:\s|,|#[^\r\n]*(?:\r?\n|$))*(?:query\b|\{)/.test(input.arguments.query) ||
+        /\b(?:mutation|subscription)\b/.test(input.arguments.query) ||
+        Object.keys(input.arguments).some(key => !['query', 'variables', 'operationName'].includes(key))))
+        throw new CommandRefusalError('GitHub GraphQL accepts read queries only', 400);
+      if (write && (!url || !/^\/repos\/[^/]+\/[^/]+\/contents\/.+/.test(url.pathname) || url.search ||
+        url.pathname.split('/').some(part => {
+          const decoded = decodeURIComponent(part);
+          return decoded === '..' || decoded === '.' || /[/\\%]/.test(decoded);
+        }) ||
+        !input.arguments.body || typeof input.arguments.body !== 'object' || Array.isArray(input.arguments.body)))
+        throw new CommandRefusalError('GitHub write requires a repository contents path and body', 400);
+      if (files.size) throw new CommandRefusalError('GitHub requests do not take files', 400);
       const result = await this.request('/tools/execute/proxy', 'POST', {
-        connected_account_id: input.accountId, endpoint: url.origin + url.pathname, method: 'GET',
-        parameters: [...url.searchParams].map(([name, value]) => ({ name, value, type: 'query' })),
+        connected_account_id: input.accountId, endpoint: url!.origin + url!.pathname, method: graphql ? 'POST' : write ? 'PUT' : 'GET',
+        ...(graphql ? { body: input.arguments } : write ? { body: input.arguments.body } : {}),
+        parameters: [...url!.searchParams].map(([name, value]) => ({ name, value, type: 'query' })),
       }, 'v3.1');
       if (!Number.isInteger(result.status) || Number(result.status) < 100 || Number(result.status) > 599)
         throw new Error('GitHub returned an invalid response status');

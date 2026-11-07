@@ -16,6 +16,7 @@ vi.mock('@/auth/monolith-session', () => ({
 vi.mock('react', () => ({ useSyncExternalStore: (_subscribe: unknown, snapshot: () => unknown) => snapshot() }));
 import { LiveConnection, useConnectionFailure, subscribeNetworkOnline, sharedLiveConnection, resetSharedLiveConnection, reconnectNow } from './live-connection';
 import { PhoneSocketDisconnectedError } from './phone-socket-error';
+import { MonolithRequestTimeoutError } from '@/auth/monolith-session';
 
 class Socket {
   static readonly OPEN = 1;
@@ -54,6 +55,61 @@ beforeEach(()=>{vi.useFakeTimers();Socket.instances=[];state.currentState='activ
 afterEach(()=>{resetSharedLiveConnection();for(const connection of connections.splice(0))connection.dispose();state.listeners.clear();vi.useRealTimers();vi.unstubAllGlobals();});
 
 describe('the one phone socket',()=>{
+  it('a foreground session starts without the preceding session’s failure', async () => {
+    const { connection } = setup();
+    const failed = connection.request('readRoom', { roomId: 'a' }).catch(error => error);
+    const socket = await open(); socket.drop(); await failed;
+    expect(useConnectionFailure()).toBe(true);
+    appState('background'); appState('active');
+    expect(useConnectionFailure()).toBe(false);
+    const read = connection.request('readRoom', { roomId: 'a' });
+    expect(useConnectionFailure()).toBe(false);
+    const replacement = await open();
+    expect(useConnectionFailure()).toBe(false);
+    replacement.reply({}); await read;
+    expect(useConnectionFailure()).toBe(false);
+  });
+  it('an old request deadline cannot announce a failure after resume', async () => {
+    const { connection } = setup();
+    const old = connection.request('readRoom', { roomId: 'a' }, { timeoutMs: 100 }).catch(error => error);
+    const socket = await open();
+    appState('background'); appState('active');
+    await vi.advanceTimersByTimeAsync(100); await old;
+    expect(useConnectionFailure()).toBe(false);
+    const read = connection.request('readRoom', { roomId: 'a' });
+    socket.reply({}, 1); await read;
+    expect(useConnectionFailure()).toBe(false);
+  });
+  it('an authorization timeout before a socket exists cannot announce a socket failure', async () => {
+    const { connection } = setup(vi.fn(async () => { throw new MonolithRequestTimeoutError(); }));
+    await expect(connection.request('readRoom', { roomId: 'a' })).rejects.toBeInstanceOf(MonolithRequestTimeoutError);
+    expect(Socket.instances).toHaveLength(0);
+    expect(useConnectionFailure()).toBe(false);
+  });
+  it('an identity reset clears the previous account’s failure', async () => {
+    const { connection, changeIdentity } = setup();
+    const failed = connection.request('readRoom', { roomId: 'a' }).catch(error => error);
+    const socket = await open(); socket.drop(); await failed;
+    changeIdentity();
+    expect(useConnectionFailure()).toBe(false);
+  });
+  it('a background read failure is not carried into the next foreground', async () => {
+    const { connection } = setup();
+    const read = connection.request('readRoom', { roomId: 'a' }).catch(error => error);
+    const socket = await open();
+    appState('background'); socket.drop(); await read;
+    expect(useConnectionFailure()).toBe(false);
+    appState('active');
+    expect(useConnectionFailure()).toBe(false);
+  });
+  it('a request deadline waiting for authorization cannot announce a socket failure', async () => {
+    const { connection } = setup(vi.fn(() => new Promise<string>(() => {})));
+    const read = connection.request('readRoom', { roomId: 'a' }, { timeoutMs: 100 }).catch(error => error);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(await read).toBeInstanceOf(MonolithRequestTimeoutError);
+    expect(Socket.instances).toHaveLength(0);
+    expect(useConnectionFailure()).toBe(false);
+  });
   it('the shared production owner supplies and disposes native online events',()=>{
     expect(state.network.size).toBe(0);
     sharedLiveConnection();expect(state.network.size).toBe(1);

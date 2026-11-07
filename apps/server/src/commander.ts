@@ -584,6 +584,25 @@ export async function commanderReportAddress(db: SqlDatabase, roomId: string, co
     // Legacy opening orders can omit fromRoomId; their recorded parent still
     // names the opening surface. Never consult a later order for this route.
     returnRoom ??= command.parent_command_id ? parent?.room_id : undefined;
+  } else if (command?.reason === 'schedule' && command.source_message_id) {
+    // The occurrence retains its owner after a one-shot schedule is deleted.
+    // A system scheduler authors the wake, but never commands the worker.
+    const source = (await db.query<{ recipient: string | null; room_id: string }>(
+      `SELECT COALESCE(NULLIF(source.card->>'ownerId',$2),root.author_id,
+          CASE WHEN author.kind='human' AND NOT author.hidden_from_roster THEN source.author_id END,worker.owner_id) recipient,
+          source.room_id
+       FROM messages source JOIN identities author ON author.id=source.author_id
+       LEFT JOIN agents worker ON worker.agent_id=$2
+       LEFT JOIN messages root ON root.id=$3 AND root.system_event IS NULL AND root.deleted_at IS NULL
+         AND EXISTS(SELECT 1 FROM identities person WHERE person.id=root.author_id
+           AND person.kind='human' AND NOT person.hidden_from_roster)
+         AND EXISTS(SELECT 1 FROM rooms root_room JOIN rooms execution
+           ON execution.workspace_id=root_room.workspace_id WHERE root_room.id=root.room_id AND execution.id=$4)
+       WHERE source.id=$1 AND source.card->'trigger'->>'scheduleId' IS NOT NULL`,
+      [command.source_message_id, command.agent_id, command.root_source_message_id, roomId],
+    )).rows[0];
+    recipient = source?.recipient ?? undefined;
+    returnRoom = source?.room_id;
   } else if (command?.source_message_id) {
     const source = (
       await db.query<{ author_id: string; room_id: string }>(

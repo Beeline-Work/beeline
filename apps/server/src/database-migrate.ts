@@ -52,6 +52,7 @@ import { backfillCornerLifecycleRuns, deleteStoredCornerWorkflows } from './corn
 import { backfillFeedbackTriageWorkflow, backfillFeedbackSignalWalk, backfillWorkspaceWalkHistory } from './feedback-triage-workflow.js';
 import { backfillWorkflowSkillDescriptions, closeStaleWorkflowGateChoices } from './workflow-runs.js';
 import { withdrawSupersededGrantAsks } from './grant-policy-upgrade.js';
+import { restoreOwnerApprovedGrants } from './migrations/owner-approved-grants.js';
 import { backfillRegistryApps } from './app-connections.js';
 import { syncTopLevelSharedRoomRoles } from './membership-join.js';
 import { postgresLiveSchema } from './postgres-live.js';
@@ -714,6 +715,8 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   });
   await dataStep('connector machine IDs', () => backfillConnectorMachineId(database));
   await dataStep('registry apps', () => backfillRegistryApps(database));
+  await dataStep('restore owner-approved grants', () => workflowBackfillOnce(
+    database, 'owner-approved-grant-restore-v1', restoreOwnerApprovedGrants));
   const withdrawn = await dataStep('superseded grant asks', () =>
     withdrawSupersededGrantAsks(database));
   if (withdrawn) console.log(`withdrawSupersededGrantAsks: withdrew ${withdrawn} pending ask(s)`);

@@ -11,6 +11,96 @@ if (postgresUrl && !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(postgre
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('release-owned migration steps', () => {
+  it.skipIf(!postgresUrl)('restores only unexpired owner approvals revoked by the provenance upgrade, once', async () => {
+    const schema = `grant_restore_${randomUUID().replaceAll('-', '')}`;
+    const admin = new Pool({ connectionString: postgresUrl, max: 1 });
+    const database = new PostgresDatabase('', 1, { pool: new Pool({
+      connectionString: postgresUrl, max: 1, options: `-c search_path=${schema},public`,
+    }) });
+    const owner = 'a'.repeat(64), other = 'b'.repeat(64), agent = 'c'.repeat(64);
+    const workspace = randomUUID(), room = randomUUID();
+    try {
+      await admin.query(`CREATE SCHEMA ${schema}`);
+      await migrate(database, { deferData: true });
+      await database.query(`INSERT INTO identities(id,kind,name)
+        VALUES($1,'human','Owner'),($2,'human','Other'),($3,'agent','BBC')`, [owner, other, agent]);
+      await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, owner]);
+      await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Recovery')`, [workspace]);
+      await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Recovery')`, [room, workspace]);
+
+      type GrantCase = {
+        name: string; restore?: boolean; status?: string; decider?: string | null;
+        decidedAt?: string | null; expiresAt?: string | null; reason?: string;
+        previousStatus?: string | null; ledger?: boolean;
+      };
+      const cases: GrantCase[] = [
+        { name: 'Squire owner approval without requester provenance', restore: true },
+        { name: 'decision at the revocation timestamp', decidedAt: '2026-01-02Z', restore: true },
+        { name: 'unexpired approval', expiresAt: '2999-01-01Z', restore: true },
+        { name: 'expired approval', expiresAt: '2000-01-01Z' },
+        { name: 'newer owner revocation', decidedAt: '2026-01-03Z' },
+        { name: 'missing decision timestamp', decidedAt: null },
+        { name: 'non-owner decision', decider: other },
+        { name: 'no decider', decider: null },
+        { name: 'third-party automatic resource', reason: 'third-party-auto-resource' },
+        { name: 'retired budget', reason: 'budget-retired' },
+        { name: 'non-owner resource decision', reason: 'non-owner-resource-decision' },
+        { name: 'Once grant', previousStatus: 'once' },
+        { name: 'pending grant', previousStatus: 'pending' },
+        { name: 'unknown previous status', previousStatus: null },
+        ...['approved', 'once', 'pending', 'denied'].map(status => ({ name: status, status })),
+        { name: 'no policy revocation', ledger: false },
+      ];
+      const restored = new Set<string>();
+      const insert = async (fixture: GrantCase) => {
+        const id = randomUUID();
+        // Wallet pending asks survive the separate superseded-ask withdrawal.
+        const target = fixture.status === 'pending' ? 'wallet' : 'squire';
+        await database.query(`INSERT INTO agent_grants(id,agent_id,workspace_id,room_id,kind,target,
+          reason,requested_by,status,decided_by,decided_at,expires_at)
+          VALUES($1,$2,$3,$4,'mcp',$11,$5,$6,$7,$8,$9,$10)`,
+        [id, agent, workspace, room, fixture.name, other, fixture.status ?? 'revoked',
+          fixture.decider === undefined ? owner : fixture.decider,
+          fixture.decidedAt === undefined ? '2026-01-01Z' : fixture.decidedAt,
+          fixture.expiresAt ?? null, target]);
+        if (fixture.ledger !== false) {
+          await database.query(`INSERT INTO agent_grant_policy_revocations(grant_id,agent_id,workspace_id,
+            room_id,owner_id,kind,target,requested_by,previous_status,reason,revoked_at)
+            VALUES($1,$2,$3,$4,$5,'mcp',$9,$6,$7,$8,'2026-01-02Z')`,
+          [id, agent, workspace, room, owner, other,
+            fixture.previousStatus === undefined ? 'approved' : fixture.previousStatus,
+            fixture.reason ?? 'missing-requester-provenance', target]);
+        }
+        if (fixture.restore) restored.add(id);
+        return id;
+      };
+      for (const fixture of cases) await insert(fixture);
+      const grants = async () => (await database.query(`SELECT * FROM agent_grants ORDER BY id`)).rows;
+      const ledger = async () => (await database.query(`SELECT * FROM agent_grant_policy_revocations ORDER BY grant_id`)).rows;
+      const before = await grants(), ledgerBefore = await ledger();
+
+      await migrateData(database);
+
+      expect(await grants()).toEqual(before.map(grant =>
+        restored.has(grant.id) ? { ...grant, status: 'approved' } : grant));
+      expect(await ledger()).toEqual(ledgerBefore);
+      // A later explicit owner revocation must survive subsequent releases.
+      await database.query(`UPDATE agent_grants SET status='revoked',decided_at=now() WHERE id=$1`,
+        [[...restored][0]]);
+      // Even a newly eligible ledger row cannot turn this one-time repair into policy.
+      await insert({ name: 'appeared after recovery' });
+      const after = await grants(), ledgerAfter = await ledger();
+      await migrate(database);
+      await migrateData(database);
+      expect(await grants()).toEqual(after);
+      expect(await ledger()).toEqual(ledgerAfter);
+    } finally {
+      await database.close();
+      await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+      await admin.end();
+    }
+  }, 60_000);
+
   it.each(['40P01', '55P03', '57014', '42601'])('returns %s once and stays idle until another release command', async code => {
     vi.useFakeTimers();
     vi.spyOn(console, 'warn').mockImplementation(() => {});

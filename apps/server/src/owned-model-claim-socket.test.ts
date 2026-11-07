@@ -78,7 +78,7 @@ describe('actual selected model credential claim socket', () => {
     expect(frames.filter(frame => frame.type !== 'turn-result').some(frame => JSON.stringify(frame).includes('bfmc_'))).toBe(false);
   });
 
-  it('claims waiting requests together on the machine operation door and releases only unanswered work', async () => {
+  it('claims waiting wakes together and consumes them when the invocation ends', async () => {
     const registered = await register();
     await f.db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('model-socket-next',$1,$2,'Another request')`, [MODEL_ROOM, MODEL_OWNER]);
     const another = (await createAgentCommand(f.db, {roomId:MODEL_ROOM,agentId:MODEL_AGENT,sourceMessageId:'model-socket-next',reason:'human_mention'}))!;
@@ -95,11 +95,11 @@ describe('actual selected model credential claim socket', () => {
     await operation('postRoomMessage','batch-answer',{roomId:MODEL_ROOM,requestId:'model-socket-request',generationId:'socket-batch',text:'Here is the answer.'});
     await expect(f.credentials.assertCurrent(f.db,actor)).resolves.toHaveProperty('untilMs');
     const released=await operation('releaseAgentTurn','batch-release',{roomId:MODEL_ROOM,generationId:'socket-batch'});
-    expect(released.commands?.map(command=>command.id)).toEqual([another.id]);
+    expect(released.commands).toEqual([]);
     await expect(f.credentials.authenticate(f.db,claimed.modelCredential!.token)).rejects.toThrow('authority');
     expect((await f.db.query('SELECT state FROM agent_commands WHERE id=$1',[commandId])).rows).toEqual([{state:'complete'}]);
     expect((await f.db.query('SELECT state,turn_owner_connection_id FROM agent_commands WHERE id=$1',[another.id])).rows)
-      .toEqual([{state:'pending',turn_owner_connection_id:null}]);
+      .toEqual([{state:'complete',turn_owner_connection_id:registered.capabilities?.turnConnectionId}]);
   });
 
   it.each(['unknown','succeeded'] as const)('acknowledges exact owner end over the socket without changing the %s provider outcome', async outcome => {

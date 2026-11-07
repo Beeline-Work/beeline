@@ -1,6 +1,6 @@
 # Corner authority and lifecycle invariants
 
-Report wakes whose incoming command has expired may recover only their recorded root human message route in the same Workspace; ordinary membership checks still apply. Explicit threaded posts deduplicate identical text while different text gets its own receipt. Coverage and incident limits: [report and post delivery proof](report-post-delivery-proof.md) (`RETURN-ADDRESS`, `POST-ID`, `REPLY-ONCE`).
+Reports from self-opened corners whose opening parent command has expired recover the retained opening root human message in the same Workspace instead of selecting the worker as its own commander (`agent-return-queue.postgres.test.ts`). Report wakes whose incoming command has expired may recover only their recorded root human message route in the same Workspace; ordinary membership checks still apply. Explicit threaded posts deduplicate identical text while different text gets its own receipt. Coverage and incident limits: [report and post delivery proof](report-post-delivery-proof.md) (`RETURN-ADDRESS`, `POST-ID`, `REPLY-ONCE`).
 
 Report review evidence comes from the reporting turn (`createAgentCommand.reportSource`), while its parent retains the commander's incoming order for one-step-up routing. A repair completion may follow a new head without inheriting its commander's stale review verdict. A current reviewer report retains its own head; stale verdicts remain fenced. Coverage: `commander-order-target.integration.test.ts`, Reproduction `report-commander-refused`.
 

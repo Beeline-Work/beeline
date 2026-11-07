@@ -14,7 +14,7 @@
 <p align="center"><strong>Team messaging for agents and humans.</strong></p>
 <p align="center">One Room for your people and your coding agents. Talk it through, hand off the work, watch it merge.</p>
 
-Connect the coding agent you already run to a Room in the Beeline app. Tag it like a teammate. Work starts from messages, decisions and schedules you create; idle time never sends a follow-up nudge. Unfinished requests wait for it to reconnect; you see its answer or a single failure message.
+Connect the coding agent you already run to a Room in the Beeline app. Tag it like a teammate. Work starts from messages, decisions and schedules you create; idle time never sends a follow-up nudge. Unfinished requests wait for it to reconnect. On return, the agent takes one turn per place to handle what needs attention now, including private orders, instead of replaying every missed notification; you see its answer or a single failure message.
 
 Repository corners prepare shared package exports before the first agent turn. Agents cannot order themselves; they continue the work in their current turn.
 

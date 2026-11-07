@@ -28,14 +28,13 @@ beforeAll(async()=>{
 },30_000);
 afterAll(()=>db.close());
 
-it('three messages during a running turn use one follow-up claim; two answers leave one request for the next invocation',async()=>{
+it('three messages during a running turn use one current-state follow-up without replaying unanswered wakes',async()=>{
   const scratch=await mkdtemp(join(tmpdir(),'beeline-batch-'));
   const abort=new AbortController(), context=new CommandExecutionContext(scratch), errors:unknown[]=[], invocations:AgentCommand[][]=[];
   let push:((commands:readonly AgentCommand[])=>void)|undefined;
-  let finishFirst!:()=>void,finishFollowup!:()=>void,finishLast!:()=>void;
+  let finishFirst!:()=>void,finishFollowup!:()=>void;
   const first=new Promise<void>(resolve=>{finishFirst=resolve;});
   const followup=new Promise<void>(resolve=>{finishFollowup=resolve;});
-  const last=new Promise<void>(resolve=>{finishLast=resolve;});
   const claims:{ids:string[];generation:string}[]=[];
   const releases:string[][]=[];
   const api={
@@ -59,7 +58,9 @@ it('three messages during a running turn use one follow-up claim; two answers le
       const group=[...context.commands];invocations.push(group);
       if(invocations.length===1){await first;await answer(group[0]!);}
       else if(invocations.length===2){
-        for(const item of group)expect(command.source.body).toContain(item.turnRequestId);
+        expect(command.source.body).toContain('current state');
+        expect(command.source.body).toContain('Third question');
+        expect(command.source.body).not.toContain('First question');
         await followup;
         await answer(group[0]!);
         const active=(await phone.readRoom(R,H))!.latestAgentTurns.find(turn=>turn.agentPubkey===A)!;
@@ -72,7 +73,8 @@ it('three messages during a running turn use one follow-up claim; two answers le
         expect((await db.query('SELECT status,tool_calls FROM agent_turns WHERE room_id=$1 AND request_id=$2',
           [R,group[2]!.turnRequestId])).rows).toEqual([{status:'working',tool_calls:2}]);
         expect((await db.query('SELECT state FROM agent_commands WHERE id=$1',[group[2]!.id])).rows).toEqual([{state:'claimed'}]);
-      }else{await last;await answer(group[0]!);abort.abort();}
+        abort.abort();
+      }
     }});
   try{
     await vi.waitFor(()=>expect(invocations).toHaveLength(1));
@@ -84,23 +86,18 @@ it('three messages during a running turn use one follow-up claim; two answers le
     await vi.waitFor(()=>expect(invocations).toHaveLength(2));
     expect(invocations[1]!.map(command=>command.source.body)).toEqual(['@worker First question','@worker Second question','@worker Third question']);
     expect(claims[1]!.ids).toEqual(invocations[1]!.map(command=>command.id));
-    const unanswered=invocations[1]![2]!;
-    finishFollowup();
-    await vi.waitFor(()=>expect(invocations).toHaveLength(3));
-    expect(releases[1]).toEqual([unanswered.id]);
-    expect(invocations[2]!.map(command=>command.id)).toEqual([unanswered.id]);
-    expect(claims[2]!.generation).not.toBe(claims[1]!.generation);
-    expect((await db.query('SELECT state FROM agent_commands WHERE id=ANY($1::text[])',[invocations[1]!.slice(0,2).map(command=>command.id)])).rows)
-      .toEqual([{state:'complete'},{state:'complete'}]);
-    finishLast();await running;
-    expect(invocations).toHaveLength(3);
+    finishFollowup();await running;
+    expect(releases[1]).toEqual([]);
+    expect(invocations).toHaveLength(2);
+    expect((await db.query('SELECT state FROM agent_commands WHERE id=ANY($1::text[])',[invocations[1]!.map(command=>command.id)])).rows)
+      .toEqual([{state:'complete'},{state:'complete'},{state:'complete'}]);
     expect((await daemon.execute('getAgentCommands',{roomId:R},A)).commands).toEqual([]);
     expect(errors).toEqual([]);
     expect((await db.query("SELECT id FROM messages WHERE room_id=$1 AND card_type='turn-failed'",[R])).rows).toEqual([]);
-  }finally{abort.abort();finishFirst();finishFollowup();finishLast();await running;await rm(scratch,{recursive:true,force:true});}
+  }finally{abort.abort();finishFirst();finishFollowup();await running;await rm(scratch,{recursive:true,force:true});}
 });
 
-it('only the current connection releases unfinished claims; replay and a late result cannot consume them',async()=>{
+it('only the current connection consumes an invocation; repeated release never requeues it',async()=>{
   for(const text of ['Another question','Last question'])await phone.execute('sendRoomMessage',{roomId:R,text:`@worker ${text}`},H);
   const pending=(await daemon.execute('getAgentCommands',{roomId:R},A)).commands;
   const result=await daemon.execute('claimAgentTurn',{roomId:R,commandId:pending[0]!.id,generationId:'batch-stale'},A,owner);
@@ -109,11 +106,11 @@ it('only the current connection releases unfinished claims; replay and a late re
   expect((await db.query("SELECT state FROM agent_commands WHERE id=ANY($1::text[])",[pending.map(command=>command.id)])).rows).toEqual([{state:'claimed'},{state:'claimed'}]);
   for(let replay=0;replay<2;replay++){
     const released=await daemon.execute('releaseAgentTurn',{roomId:R,generationId:'batch-stale'},A,owner);
-    expect(released.commands.map(command=>command.id)).toEqual(pending.map(command=>command.id));
+    expect(released.commands).toEqual([]);
   }
   expect((await phone.readRoom(R,H))?.latestAgentTurns?.some(turn=>turn.status==='working')).toBe(false);
-  await expect(daemon.execute('postRoomMessage',{roomId:R,requestId:pending[0]!.turnRequestId,generationId:'batch-stale',text:'Late result'},A)).rejects.toThrow('authority rejected');
-  const next=await daemon.execute('claimAgentTurn',{roomId:R,commandId:pending[0]!.id,generationId:'batch-next'},A,owner);
-  expect(next.commands?.map(command=>command.id)).toEqual(pending.map(command=>command.id));
-  for(const command of next.commands!)await daemon.execute('postRoomMessage',{roomId:R,requestId:command.turnRequestId,generationId:'batch-next',text:'Answered'},A);
+  expect((await db.query("SELECT state FROM agent_commands WHERE id=ANY($1::text[])",[pending.map(command=>command.id)])).rows)
+    .toEqual([{state:'complete'},{state:'complete'}]);
+  await expect(daemon.execute('claimAgentTurn',{roomId:R,commandId:pending[0]!.id,generationId:'batch-next'},A,owner))
+    .rejects.toThrow('command claim conflict');
 });

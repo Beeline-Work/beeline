@@ -611,15 +611,22 @@ export async function commanderReportAddress(db: SqlDatabase, roomId: string, co
   if (!recipient || !returnRoom) {
     const corner = (
       await db.query<{ created_by: string; return_room: string; parent_command: string | null }>(
-        `SELECT room.created_by,COALESCE(parent.room_id,source.room_id,room.parent_id) return_room,
+        `SELECT CASE WHEN room.created_by=COALESCE($2::text,${cornerImplementerSql('fact', 'room')})
+           THEN CASE WHEN source_author.kind='human' AND source.system_event IS NULL
+             AND source.deleted_at IS NULL AND source_room.workspace_id=room.workspace_id THEN source.author_id END
+           ELSE room.created_by END created_by,
+         COALESCE(parent.room_id,source.room_id,room.parent_id) return_room,
          parent.id parent_command FROM rooms room
+       LEFT JOIN corner_facts fact ON fact.corner_id=room.id
        LEFT JOIN LATERAL (SELECT opened.* FROM agent_commands opened
          WHERE opened.room_id=room.id AND opened.reason='corner_objective'
          ORDER BY opened.created_at,opened.id LIMIT 1) opened ON true
        LEFT JOIN agent_commands parent ON parent.id=opened.parent_command_id
        LEFT JOIN messages source ON source.id=opened.root_source_message_id
+       LEFT JOIN identities source_author ON source_author.id=source.author_id
+       LEFT JOIN rooms source_room ON source_room.id=source.room_id
        WHERE room.id=$1 AND room.parent_id IS NOT NULL`,
-        [roomId],
+        [roomId, incoming?.agent_id ?? null],
       )
     ).rows[0];
     recipient = corner?.created_by;

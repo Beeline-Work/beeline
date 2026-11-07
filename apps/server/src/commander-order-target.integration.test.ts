@@ -146,10 +146,13 @@ it.each(['done', 'blocked', 'failed', 'needs_decision'])('Reproduction report-co
     .toMatchObject({ state: 'claimed', parent_command_id: order.id, review_context: null });
   expect((await db.query(`SELECT 1 FROM agent_commands WHERE reason='report' AND agent_id=$1`, [CANDY])).rowCount).toBe(0);
   expect((await db.query(`SELECT 1 FROM messages WHERE text=$1`, [text])).rowCount).toBe(0);
-  // The old review itself still cannot publish a verdict on the replacement head.
-  const stale = await daemon.execute('report', { roomId: incoming.roomId, requestId: incoming.turnRequestId,
-    generationId: 'guard', status: 'done', text: 'done: stale review verdict' }, CANDY);
-  expect(stale).toMatchObject({ skipped: true });
+  // An obsolete verdict cannot dispatch work on the replacement head, but
+  // refusing that dispatch must leave the running review's authority intact.
+  await expect(daemon.execute('report', { roomId: incoming.roomId, requestId: incoming.turnRequestId,
+    generationId: 'guard', status: 'done', text: 'done: stale review verdict' }, CANDY))
+    .rejects.toThrow('commander could not receive report');
+  expect((await db.query('SELECT state FROM agent_commands WHERE id=$1', [incoming.id])).rows)
+    .toEqual([{ state: 'claimed' }]);
   expect((await db.query(`SELECT 1 FROM agent_commands WHERE private_payload->>'text'='done: stale review verdict'`)).rowCount).toBe(0);
   console.info(`Demonstrated Reproduction report-commander-refused: ${status} after repair delivered privately and claimed by opening commander`);
 });

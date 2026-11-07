@@ -6,7 +6,7 @@ import type { HelperTurnOwnershipSource } from '@beeline/api-contract/helper-tur
 import { cleanVoiceReply } from '../voice-reply.js';
 import { queueDatabaseWork } from '../database-work-queue.js';
 import { hasOrderContinuation, CommandRefusalError } from '../commander.js';
-import { authorizeCommandOutput, supersededReview, routeAgentResult, type CommandRow } from '../agent-command.js';
+import { authorizeCommandOutput, routeAgentResult, type CommandRow } from '../agent-command.js';
 import { randomBytes } from 'node:crypto';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { lockCornerLifecycle } from '../corner-lifecycle.js';
@@ -322,10 +322,6 @@ import { daemonExecuteOperation } from './operations.js';
               turnOwner.epoch !== Number(command.turn_owner_epoch))
             throw new Error('Turn receipt requires its negotiated machine owner');
           if (candidate.heartbeat) throw new Error('Owned turns do not accept freshness receipts');
-        }
-        if (['postRoomMessage', 'postCornerMessage', 'order', 'report'].includes(name) && command.review_context?.purpose !== 'repair' && await supersededReview(db, command)) {
-          await endAgentTurn(db, command, 'cancelled', 'superseded_review');
-          return { ...daemonWriteResult(ctx), id: command.id, skipped: true } as Output<Name>;
         }
         // Helpers cannot impose an order outcome on an informational wake.
         // The stored command and its delivered receipt own that obligation.

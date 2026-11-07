@@ -220,17 +220,17 @@ export type CommandRow = {
  * Reconcile return traffic at both delivery and claim, in the same statement
  * as either operation. A cached helper snapshot therefore grants no right to
  * run a superseded wake. Controls and avatar jobs retain their own authority.
- * A claimed command retains its connection owner until it reports a result
- * or that connection closes.
+ * Only pending work is reconciled. A running command retains its authority
+ * until it reports a result or its connection closes; newer work runs next.
  */
-export function commandValidityCtes(roomSql: string, agentSql: string, claimSql = 'NULL::text', claimFence = false, idleFence = true): string {
+export function commandValidityCtes(roomSql: string, agentSql: string, claimFence = false, idleFence = true): string {
   const validity = `command_scope AS MATERIALIZED (
     SELECT command.* FROM agent_commands command
     ${claimFence ? 'CROSS JOIN claim_fence' : ''}
     WHERE command.room_id=${roomSql} AND command.agent_id=${agentSql}
       AND beeline_command_claim_open(command.id)
       AND command.action IN ('input','resume') AND NOT command.avatar_job
-      AND (command.state='pending' OR (command.state='claimed' AND command.id=${claimSql}))
+      AND command.state='pending'
     ORDER BY command.created_at,command.id FOR UPDATE OF command
   ), command_workflows AS MATERIALIZED (
     SELECT command.id,COALESCE(source.card->>'runId',choice_source.card->>'runId',parent_source.card->>'runId') run_id,
@@ -253,7 +253,6 @@ export function commandValidityCtes(roomSql: string, agentSql: string, claimSql 
     WHERE source.card_type IS DISTINCT FROM '${CORNER_LIFECYCLE_CARD_TYPE}'
   ), answered_reports AS MATERIALIZED (
     SELECT command.id FROM command_scope command WHERE command.reason='report'
-      AND command.state='pending'
       AND (command.private_payload->>'waitingAnswered'='true' OR (
         command.private_payload->>'text' ~ '^(blocked|needs-decision):'
         AND EXISTS (SELECT 1 FROM agent_commands answer

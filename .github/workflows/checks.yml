@@ -405,6 +405,7 @@ jobs:
           npx vitest run tests/seams/server-db.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/production-deadlocks.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/connection-presence.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/running-turn-continuity.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/mcp-webhook-delivery.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/agent-schedule-deadline.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/background-work.test.ts --maxWorkers=2 --minWorkers=1

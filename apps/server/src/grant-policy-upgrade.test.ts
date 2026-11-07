@@ -91,7 +91,7 @@ describe('withdrawSupersededGrantAsks', () => {
     )).rows).toEqual(grantedBefore);
   });
 
-  it('preserves owner approvals without requester provenance and the revocation ledger across repeated migrations', async () => {
+  it('restores revoked owner approvals once while preserving existing approvals, Once grants and the ledger', async () => {
     const approved = '40000000-0000-4000-8000-000000000001';
     const once = '40000000-0000-4000-8000-000000000002';
     const revoked = '40000000-0000-4000-8000-000000000003';
@@ -108,7 +108,10 @@ describe('withdrawSupersededGrantAsks', () => {
     ) VALUES($1,$2,$3,$4,$5,'mcp','connection-install:trustysquire',$5,
       'approved','missing-requester-provenance','not-active')`,
     [revoked, AGENT, WORKSPACE, ROOM, OWNER]);
-    const grantsBefore = (await database.query(`SELECT * FROM agent_grants ORDER BY id`)).rows;
+    // The shared test snapshot already ran the recovery against an empty ledger.
+    await database.query(`DELETE FROM workflow_backfills WHERE name='owner-approved-grant-restore-v1'`);
+    const grantsBefore = (await database.query(`SELECT * FROM agent_grants ORDER BY id`)).rows
+      .map(grant => grant.id === revoked ? { ...grant, status: 'approved' } : grant);
     const ledgerBefore = (await database.query(`SELECT * FROM agent_grant_policy_revocations`)).rows;
 
     for (let boot = 0; boot < 2; boot++) {

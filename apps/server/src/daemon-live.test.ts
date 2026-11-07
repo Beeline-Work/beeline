@@ -531,6 +531,126 @@ it('rejects unknown operations before effects', async () => {
   expect(daemon.execute).not.toHaveBeenCalled();
 });
 
+it('publishes a final reply over 64 KB without dropping its tool steps', async () => {
+  const daemon = daemonStub();
+  vi.mocked(daemon.execute).mockResolvedValue({id:'final-reply',createdAt:1});
+  const {port} = await start({daemon});
+  const client = await machine(port);
+  client.send({type:'register',agentId:AGENT_A,token:'bdt_a',daemonOperationsV1:true});
+  await client.next(frame => frame.type === 'registered');
+  const input = {roomId:'room',requestId:'turn',text:'Finished.',steps:Array.from({length:70},(_,index) => ({
+    kind:'tool',title:`Read ${index}`,operation:'read',status:'completed',output:'a'.repeat(3000),
+  }))};
+  expect(Buffer.byteLength(JSON.stringify(input))).toBeGreaterThan(64 * 1024);
+  client.send({type:'daemon-operation',agentId:AGENT_A,requestId:'publish',operation:'postRoomMessage',input});
+  expect(await client.next(frame => frame.requestId === 'publish')).toMatchObject({
+    type:'daemon-operation-result',result:{id:'final-reply'},
+  });
+  expect(daemon.execute).toHaveBeenCalledWith('postRoomMessage',input,AGENT_A,undefined,undefined);
+  client.send({type:'daemon-operation',agentId:AGENT_A,requestId:'publish',operation:'postRoomMessage',
+    input:{...input,text:'changed intent'}});
+  expect(await client.next(frame => frame.requestId === 'publish' && frame.status === 409))
+    .toMatchObject({error:'request_identity_conflict'});
+  expect(daemon.execute).toHaveBeenCalledTimes(1);
+});
+
+it('completes a large Claude final reply before claiming the wake queued during that turn', async () => {
+  const {mkdtemp,rm} = await import('node:fs/promises');
+  const {tmpdir} = await import('node:os');
+  const {join} = await import('node:path');
+  const {DaemonApiClient} = await import('../../body/src/daemon-api-client.js');
+  const {CommandExecutionContext,runServerCommandIntake} = await import('../../body/src/server-command-intake.js');
+  const {AcpClient,agentTurnSteps} = await import('../../body/src/acp.js');
+  const {AgentTurnStream} = await import('../../body/src/turn-stream.js');
+  const {roomReplySteps} = await import('../../body/src/room-turn-steps.js');
+  const command = (id:string) => ({id,roomId:'room',agentId:AGENT_A,turnRequestId:id,
+    sourceMessageId:id,action:'input' as const,reason:'agent_tag' as const,rootCommandId:id,
+    rootSourceMessageId:id,agentDepth:0,source:{id,authorId:AGENT_B,body:id,createdAt:1,attachments:[]}});
+  const queue = [command('original')];
+  const transitions: string[] = [];
+  let notify!: (commands:ReturnType<typeof command>[]) => void;
+  const daemon = daemonStub();
+  vi.mocked(daemon.execute).mockImplementation(async (name:string,input:Record<string,unknown>) => {
+    if(name === 'getAgentCommands') return {commandProtocol:1,commands:[...queue]};
+    if(name === 'claimAgentTurn') { transitions.push(`claim:${input.commandId}`); return {commands:[queue.shift()!]}; }
+    if(name === 'releaseAgentTurn') return {commands:[...queue]};
+    if(name === 'postRoomMessage') transitions.push(`reply:${input.requestId}`);
+    if(name === 'postAgentTurnReceipt') transitions.push(`complete:${input.requestId}`);
+    return {id:'written',createdAt:1};
+  });
+  const {port} = await start({daemon});
+  const api = new DaemonApiClient(`http://127.0.0.1:${port}`,'bdt_a',AGENT_A);
+  const root = await mkdtemp(join(tmpdir(),'beeline-large-completion-'));
+  const context = new CommandExecutionContext(root), abort = new AbortController();
+  const client = new AcpClient({agentCommand:'claude-agent-acp',agentEnv:{}});
+  const errors: unknown[] = [];
+  let completed = 0;
+  vi.spyOn(client,'request').mockImplementation(async (_method,params) => {
+    const {sessionId} = params as {sessionId:string};
+    if(!completed) { queue.push(command('new-wake')); notify([...queue]); }
+    for(let index=0;index<70;index++) client.emit('session/update',{sessionId,update:{
+      sessionUpdate:'tool_call',toolCallId:String(index),title:'read',kind:'read',
+      rawInput:{path:`file-${index}`},
+      status:'completed',content:[{type:'content',content:{type:'text',text:'a'.repeat(3000)}}],
+    }});
+    client.emit('session/update',{sessionId,update:{sessionUpdate:'agent_message_chunk',
+      content:{type:'text',text:'Finished.'}}});
+    return {stopReason:'end_turn'};
+  });
+  // The intake uses the real machine request owner; only the harness/provider
+  // and daemon's durable effects are fixtures. No helper process is launched.
+  const running = runServerCommandIntake({api:{execute:api.execute.bind(api)} as never,
+    roomId:'room',agentId:AGENT_A,context,signal:abort.signal,stop:()=>{},
+    onWake:wake => {if(wake) notify=wake;},onError:error => {errors.push(error);abort.abort();},
+    run:async item => {
+      const result = await client.sessionPrompt('claude',item.source.body);
+      expect(result.agentText).toBe('Finished.');
+      expect(result.toolCalls).toHaveLength(70);
+      const stream = new AgentTurnStream({api,roomId:'room',agentId:AGENT_A,requestId:item.id,label:'large reply proof'});
+      await stream.settle(result.agentText,{steps:roomReplySteps(agentTurnSteps(result.updates))});
+      await api.execute('postAgentTurnReceipt',{agentId:AGENT_A,roomId:'room',requestId:item.id,status:'complete'});
+      if(++completed === 2) abort.abort();
+    }});
+  try {
+    await vi.waitFor(() => {expect(errors).toEqual([]);expect(completed).toBe(2);},{timeout:5000});
+    await running;
+    expect(errors).toEqual([]);
+    expect(transitions).toEqual(['claim:original','reply:original','complete:original',
+      'claim:new-wake','reply:new-wake','complete:new-wake']);
+    const replies = vi.mocked(daemon.execute).mock.calls.filter(([name]) => name === 'postRoomMessage');
+    expect(replies).toHaveLength(2);
+    expect(Buffer.byteLength(JSON.stringify(replies[0]![1]))).toBeGreaterThan(64 * 1024);
+    expect((replies[0]![1] as {steps:unknown[]}).steps).toHaveLength(70);
+  } finally {
+    abort.abort();api.closeLive();await running;await rm(root,{recursive:true,force:true});
+  }
+});
+
+it('answers a request admission failure instead of leaving the helper waiting', async () => {
+  const database = new PgliteDatabase();
+  requestDatabases.push(database);
+  const query = database.query.bind(database);
+  vi.spyOn(database,'query').mockImplementation((sql,values) => {
+    if(sql.includes('INSERT INTO router_commands')) return Promise.reject(new Error('fixture admission failure'));
+    return query(sql,values);
+  });
+  const error = vi.spyOn(console,'error').mockImplementation(() => undefined);
+  try {
+    const daemon = daemonStub();
+    const {port} = await start({database,daemon});
+    const client = await machine(port);
+    client.send({type:'register',agentId:AGENT_A,token:'bdt_a',daemonOperationsV1:true});
+    await client.next(frame => frame.type === 'registered');
+    client.send({type:'daemon-operation',agentId:AGENT_A,requestId:'publish',operation:'postRoomMessage',
+      input:{roomId:'room',requestId:'turn',text:'Finished.'}});
+    expect(await client.next(frame => frame.requestId === 'publish')).toMatchObject({
+      type:'daemon-operation-result',error:'machine_request_failed',status:503,
+    });
+    expect(daemon.execute).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith('[live] machine request failed',expect.any(Error));
+  } finally { error.mockRestore(); }
+});
+
 it('rechecks token revocation before an ordinary operation on an already registered socket', async () => {
   const tokenAuth = auth(), daemon = daemonStub();
   const {port} = await start({auth: tokenAuth, daemon});

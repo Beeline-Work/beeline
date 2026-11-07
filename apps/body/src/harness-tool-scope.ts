@@ -104,6 +104,9 @@ const CLAUDE_PROFILE: ToolScopeProfile = {
   note: 'claude-agent-acp forwards _meta.claudeCode.options to the Claude Agent SDK; user-only settingSources loads MCP from the isolated CLAUDE_CONFIG_DIR without repository/local settings, while disableClaudeAiConnectors keeps account-bound connectors off',
   sessionMeta: {
     claudeCode: {
+      // Observe native terminal events separately from the ACP prompt response.
+      // The helper logs only their type/stop reason, never the message content.
+      emitRawSDKMessages: [{ type: 'assistant' }, { type: 'result' }],
       options: {
         // Only the sanitized user config in the isolated CLAUDE_CONFIG_DIR;
         // never a repository's .mcp.json, local settings, or plugins.

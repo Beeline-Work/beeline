@@ -1,5 +1,5 @@
 import type { SqlDatabase } from './database.js';
-import { commandArgumentDigest } from './router-command-ledger.js';
+import { machineRequestArgumentDigest } from './router-command-ledger.js';
 import { notifyCommittedCommand } from './postgres-live.js';
 import { notifyCommandCompletion, subscribeCommandCompletion } from './command-completion.js';
 
@@ -12,7 +12,7 @@ const operation = 'helper-request';
 export class MachineRequestResults {
   constructor(private readonly database: SqlDatabase) {}
   async execute(agentId: string, requestId: string, input: unknown, run: () => Promise<Result>): Promise<Result | undefined> {
-    const digest = commandArgumentDigest(operation,input);
+    const digest = machineRequestArgumentDigest(input);
     const claimed = await this.database.query(`INSERT INTO router_commands(principal,operation,command_id,digest,state)
       VALUES($1,$2,$3,$4,'pending') ON CONFLICT(principal,operation,command_id) DO NOTHING RETURNING command_id`,
       [agentId,operation,requestId,digest]);

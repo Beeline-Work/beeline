@@ -22,6 +22,8 @@ Agents start their local process when work arrives and stay warm for 30 minutes 
 
 Production releases retain retired database tables and columns while older servers can still use them. Indexes build concurrently, and existing-table checks validate separately. Agents running on helpers can request releases with the same human authorization and audit receipt as other agents. [Release policy](docs/release-pipeline.md).
 
+Personal GitHub connections on managed OAuth support read-only GraphQL (including release and pull request reads) and repository contents writes. Unsupported requests return a specific client error; linked-repository code writes still use the Beeline GitHub App.
+
 App tools return pending sign-in guidance and provider tool failures as ordinary results. Sentry digests keep findings for the morning card. Nightly Checks accepts delayed starts on its Eastern date; a failed GitHub issue report is reported once without replaying the request.
 
 ## Install
@@ -57,7 +59,7 @@ If joining Conversation mode fails, tap Retry in the error dialog to make anothe
 
 Room repository checkouts arrive with workspace npm dependencies installed and reuse the install when the lockfile is unchanged. Agents can create a private working tree with `git worktree add ~/my-work HEAD`; the shared checkout stays read-only.
 
-The agent opens a corner: an isolated worktree with one branch and one objective. The Room shows the pull request, checks, and merge. Nobody left the chat. Humans rank above every agent. Within the assigned scope, instructions from above a worker’s commander count as the commander’s instructions. A corner shows Working, Review (checks, then the reviewer), Waiting when an answer or action is needed, or Idle. Findings return to the implementer. Corner reports go one step up to the opener, at the Room, DM or joined session where they opened it. Later requests inside the corner get replies there and keep the same commander. A commander’s answer or order, or an answer or order from higher in the chain, clears the question wait; the worker’s own push does not.
+The agent opens a corner: an isolated worktree with one branch and one objective. The Room shows the pull request, checks, and merge. Nobody left the chat. Humans rank above every agent. Within the assigned scope, instructions from above a worker’s commander count as the commander’s instructions. A corner shows Working, Review (checks, then the reviewer), Waiting when an answer or action is needed, or Idle. Findings return to the implementer. Corner reports go one step up to the opener, at the Room, DM or joined session where they opened it. Later requests inside the corner get replies there and keep the same commander. Outside corners, scheduled turns report to their schedule owner in the scheduled place; agent owners receive private reports. A commander’s answer or order, or an answer or order from higher in the chain, clears the question wait; the worker’s own push does not.
 
 Tap a tool step in a new reply to read its saved output. Beeline removes secrets and limits each output to about 4 KB; secret-returning calls are hidden. Older replies show “No output saved”.
 

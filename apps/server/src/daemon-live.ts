@@ -393,9 +393,11 @@ export class DaemonAgentSession {
         }
       }));
     } catch(error) {
-      // Persistence/read failure is not a socket failure and does not turn an
-      // admitted request into an invented outcome. Recovery re-reads its id.
-      console.error('[live] machine request storage failed',error);
+      // A refused admission or result write must answer the correlated request.
+      // Otherwise a finished harness stays working while publication waits forever.
+      // Keep the durable request identity: no failed operation is resubmitted here.
+      console.error('[live] machine request failed',error);
+      reply({error:'machine_request_failed',status:503});
     }
   }
 

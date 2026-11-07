@@ -16,7 +16,7 @@ import { visibleMessageSql, viewerReadCursorSql } from '../read-cursor.js';
 import { mediaIdFromUrl } from '../media-ttl.js';
 import type { PhoneContext } from './context.js';
 import { ArchivedCornerCursor, ARCHIVED_CORNER_PAGE, OPEN_CORNER_PAGE, unix } from './values.js';
-import { deckCornerSummary, DeckCornerFacts, RoomRow, CornerRow, RoomReadRow, MemberRow, AttachmentFacts, RoomReadEnrichment } from './types.js';
+import { deckCornerSummary, DeckCornerFacts, RoomRow, CornerRow, RoomReadRow, MemberRow, AttachmentFacts, RoomReadEnrichment, mcpClientIdentitySql } from './types.js';
 import { reviveDates, roomHeader, reactionIdentitiesSql, projectedMessage } from './read-projection.js';
 import { phoneOptionalEnrichment } from './optional-enrichment.js';
 
@@ -172,6 +172,8 @@ import { phoneOptionalEnrichment } from './optional-enrichment.js';
            WHERE room.id=$1 ${('')}
          ), member_rows AS (
            SELECT i.id,i.kind,i.name,i.handle,i.avatar,i.face_id,
+             agent.selected_model,agent.model_catalog,
+             ${mcpClientIdentitySql('i.id')} mcp_client,
              COALESCE(roster_workspace.role,roster_member.role) role,NULL::jsonb presence_body,
              NULL::timestamptz presence_updated_at
            FROM authorized_room room
@@ -181,6 +183,7 @@ import { phoneOptionalEnrichment } from './optional-enrichment.js';
              AND roster_workspace.room_id IS NULL AND roster_workspace.identity_id=roster_member.identity_id
              AND roster_workspace.removed_at IS NULL
            JOIN identities i ON i.id=roster_member.identity_id
+           LEFT JOIN agents agent ON agent.agent_id=i.id
            WHERE roster_member.removed_at IS NULL AND i.hidden_from_roster=false
            ORDER BY (i.id<>$2),i.id LIMIT (SELECT CASE WHEN parent_id IS NULL THEN 2147483647
              ELSE ${ROOM_VIEW_MEMBER_LIMIT} END FROM authorized_room)

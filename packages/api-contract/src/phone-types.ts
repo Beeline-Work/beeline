@@ -159,6 +159,8 @@ export type RoomViewIdentity = {
 export type RoomViewMember = {
   readonly identity: RoomViewIdentity;
   readonly role: 'owner' | 'admin' | 'member' | 'spectator';
+  /** Selected model label for agent bylines, available on the Room read itself. */
+  readonly model?: string;
   readonly presence?: {
     readonly status: 'online' | 'offline';
     readonly observedAt: number;
@@ -173,8 +175,6 @@ export type RoomViewMember = {
 export type WorkspaceAgentView = RoomViewMember & {
   /** Owner-only plan, allowance or key spend; absent for other viewers. */
   readonly usage?: AgentUsage;
-  /** Selected model label, resolved from the latest catalog when available. */
-  readonly model?: string;
   /** The person who connected and owns this agent's configuration. */
   readonly owner?: RoomViewIdentity;
 };

@@ -105,18 +105,23 @@ interface McpStreamPage {
   nextCursor: string; more: boolean;
 }
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+class McpStreamExpired extends Error {}
 // Refuse a busy credential writer before enqueue rather than forming an
 // inverse wait with that writer's later membership or Room changes.
 async function currentCredential(db: SqlDatabase, principal: McpPrincipal, lock = false): Promise<Date | undefined> {
-  return (await db.query<{expires_at: Date}>(`SELECT t.expires_at FROM rooms_mcp_tokens t
+  const credential = (await db.query<{expires_at: Date; current: boolean}>(`SELECT t.expires_at,t.expires_at>now() AS current FROM rooms_mcp_tokens t
     LEFT JOIN LATERAL (SELECT f.* FROM rooms_mcp_families f WHERE f.id=t.family_id ${lock ? 'FOR SHARE OF f NOWAIT' : ''}) f ON true
     JOIN rooms_mcp_connections c ON c.client_id=t.client_id AND c.identity_id=t.identity_id AND c.revoked_at IS NULL
     JOIN rooms_mcp_members m ON m.client_id=c.client_id AND m.owner_id=c.identity_id AND m.member_id=$4
-    WHERE t.hash=$1 AND t.client_id=$2 AND t.identity_id=$3 AND t.revoked_at IS NULL AND t.expires_at>now()
+    WHERE t.hash=$1 AND t.client_id=$2 AND t.identity_id=$3 AND t.revoked_at IS NULL
       AND t.scope ~ '(^| )rooms:read( |$)' AND c.scope ~ '(^| )rooms:read( |$)'
       AND (t.family_id IS NULL OR (f.id IS NOT NULL AND f.revoked_at IS NULL AND f.client_id=t.client_id AND f.identity_id=t.identity_id))
       ${lock ? 'FOR SHARE OF t,c,m NOWAIT' : ''}`,
-    [principal.hash,principal.client_id,principal.identity_id,principal.member_id])).rows[0]?.expires_at;
+    [principal.hash,principal.client_id,principal.identity_id,principal.member_id])).rows[0];
+  // Only expiry of an otherwise current grant can be renewed. Revoked tokens,
+  // consent, families and member mappings remain terminal, even after expiry.
+  if (credential && !credential.current) throw new McpStreamExpired();
+  return credential?.expires_at;
 }
 async function scopes(db: SqlDatabase, member: string, rooms: readonly string[]) {
   const expected = await db.query<{scope: string; epoch: string}>(`SELECT scope,epoch::text FROM router_authority WHERE scope='mcp:'||$1 OR scope IN (
@@ -208,7 +213,7 @@ export async function serveMcpMemberStream(database: SqlDatabase, principal: Mcp
         });
         position=prepared.to; mentionCursor=prepared.after; initial=false;
       }
-    } catch { close('unavailable'); } finally { running=false; }
+    } catch (error) { close(error instanceof McpStreamExpired ? 'expired' : 'unavailable'); } finally { running=false; }
   };
   await drain();
 }

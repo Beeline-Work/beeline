@@ -1,10 +1,16 @@
 name: Checks
 run-name: ${{ inputs.nightly_id && format('Nightly Checks {0}', inputs.nightly_id) || github.event.pull_request.title || github.workflow }}
 on:
-  push:
-    branches:
-      - main
   pull_request: {}
+  workflow_call:
+    inputs:
+      suite:
+        type: string
+        default: all
+      release_sha:
+        description: Exact commit to validate and record for release
+        type: string
+        required: true
   workflow_dispatch:
     inputs:
       nightly_id:
@@ -35,8 +41,8 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.event_name == 'push' && github.ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+  group: checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 env:
   CI_TEST_WORKERS: "2"
   UV_THREADPOOL_SIZE: "1"
@@ -55,9 +61,9 @@ jobs:
     timeout-minutes: 30
     env:
       CI_TEST_WORKERS: "1"
-      CI_BASE_SHA: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha || github.sha }}
+      CI_BASE_SHA: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha || inputs.release_sha || github.sha }}
       JAVA_TOOL_OPTIONS: -XX:ActiveProcessorCount=2
-      RUN_TYPECHECK: ${{ ((github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') || inputs.suite == 'all' || inputs.suite == 'typecheck') }}
+      RUN_TYPECHECK: ${{ ((github.event_name == 'pull_request' || github.event_name == 'merge_group') || inputs.suite == 'all' || inputs.suite == 'typecheck') }}
       RUN_DEAD_CODE: "false"
       RUN_NATIVE_FINGERPRINT: "false"
       RUN_MOBILE_EXPORT: "false"
@@ -67,6 +73,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 3
+          ref: ${{ inputs.release_sha || github.sha }}
           clean: ${{ !startsWith(runner.name, 'beeline-ci-squire-') }}
       - uses: ./.github/actions/ci-workspace
         with:
@@ -95,14 +102,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.release_sha || github.sha }}
           clean: ${{ !startsWith(runner.name, 'beeline-ci-squire-') }}
       - uses: ./.github/actions/ci-workspace
         with:
           mobile: "true"
+      - name: Prove corner preparation and iOS capture runner setup
+        run: node --test scripts/prepare-corner.test.mjs scripts/ios-signin/capture.test.mjs
       - name: Test feedback grouping and ranking
         run: npm run test:feedback-signals
       - name: Test nightly dispatch and main-failure reporting
         run: node --test scripts/nightly-checks.test.mjs scripts/report-main-checks.test.mjs
+      - name: Test server coverage records and PR selection
+        run: node --test --test-concurrency=1 scripts/server-test-selection.test.mjs scripts/coverage-map-artifact.test.mjs
       - name: Protect nightly latency history and measured Loops publication
         run: node --test --test-concurrency=1 scripts/latency-rig/nightly-*.test.mjs
       - name: Block unbounded outside requests and waiting-screen regressions
@@ -137,6 +149,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.release_sha || github.sha }}
           clean: ${{ !startsWith(runner.name, 'beeline-ci-squire-') }}
       - name: Decide in this checkout
         id: changes
@@ -175,6 +188,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.release_sha || github.sha }}
           clean: ${{ !startsWith(runner.name, 'beeline-ci-squire-') }}
       - name: Decide in this checkout
         id: changes
@@ -238,6 +252,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.release_sha || github.sha }}
           clean: ${{ !startsWith(runner.name, 'beeline-ci-squire-') }}
           fetch-depth: 0
           filter: blob:none
@@ -258,34 +273,17 @@ jobs:
           fi
           echo "run=$run" >> "$GITHUB_OUTPUT"
           echo "This job runs: $run"
-      - name: Record complete main coverage
-        if: steps.changes.outputs.run == 'true' && (github.event_name == 'push')
+      - name: Record coverage from the full release run
+        if: steps.changes.outputs.run == 'true' && inputs.release_sha != ''
         run: echo "SERVER_COVERAGE_MAP_DIR=$RUNNER_TEMP/coverage-records" >> "$GITHUB_ENV"
       - uses: ./.github/actions/ci-workspace
         id: workspace
         if: steps.changes.outputs.run == 'true'
-      - name: Download the newest coverage map in this PR's history
+      - name: Download the newest usable coverage map
         env:
           GH_TOKEN: ${{ github.token }}
-          BASE_REF: ${{ github.base_ref }}
-          HEAD_REF: ${{ github.head_ref }}
-        run: |
-          set -euo pipefail
-          best='' best_distance=''
-          while read -r run sha branch; do
-            [ "$branch" = "$BASE_REF" ] || [ "$branch" = "$HEAD_REF" ] || continue
-            git merge-base --is-ancestor "$sha" HEAD 2>/dev/null || continue
-            distance=$(git rev-list --count "$sha..HEAD")
-            if [ -z "$best" ] || [ "$distance" -lt "$best_distance" ]; then best=$run best_distance=$distance; fi
-          done < <(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=server-coverage-map&per_page=100" \
-            --jq '.artifacts[] | select(.expired | not) | "\(.workflow_run.id) \(.workflow_run.head_sha) \(.workflow_run.head_branch)"')
-          if [ -n "$best" ]; then
-            gh run download "$best" --repo "$GITHUB_REPOSITORY" --name server-coverage-map --dir "$RUNNER_TEMP/map"
-            echo "Coverage map from run $best, $best_distance commits behind this PR."
-          else
-            echo "No coverage map from $BASE_REF or $HEAD_REF in this PR's history; every server test will run."
-          fi
-        if: steps.changes.outputs.run == 'true' && (github.event_name == 'pull_request')
+        run: node apps/server/scripts/coverage-map-artifact.mjs --out "$RUNNER_TEMP/map"
+        if: steps.changes.outputs.run == 'true' && github.event_name == 'pull_request'
         continue-on-error: true
       - name: Select server tests in this shard
         if: steps.changes.outputs.run == 'true' && (github.event_name == 'pull_request')
@@ -294,19 +292,19 @@ jobs:
           node apps/server/scripts/test-selection.mjs select --map "$RUNNER_TEMP/map/server-coverage-map.json" --out "$RUNNER_TEMP/server-test-selection.json"
           echo "SERVER_TEST_SELECTION=$RUNNER_TEMP/server-test-selection.json" >> "$GITHUB_ENV"
       - name: Run the balanced server suite shard
-        if: steps.changes.outputs.run == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push' || inputs.suite != 'server-integration')
+        if: steps.changes.outputs.run == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || inputs.suite != 'server-integration')
         working-directory: apps/server
         env:
-          SERVER_HOSTED_TIMING: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+          SERVER_HOSTED_TIMING: ${{ github.event_name == 'pull_request' }}
         run: node scripts/run-ci-shard.mjs ${{ matrix.shard }}/8
       - name: Run one bounded integration batch
-        if: steps.changes.outputs.run == 'true' && (!cancelled() && steps.workspace.outcome == 'success' && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push' || inputs.suite == 'all' || inputs.suite == 'server-integration'))
+        if: steps.changes.outputs.run == 'true' && (!cancelled() && steps.workspace.outcome == 'success' && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || inputs.suite == 'all' || inputs.suite == 'server-integration'))
         working-directory: apps/server
         env:
           SHARD: ${{ matrix.shard }}
         run: node scripts/run-integration-shard.mjs "$SHARD/8"
       - uses: actions/upload-artifact@v4
-        if: steps.changes.outputs.run == 'true' && (github.event_name == 'push' && always())
+        if: steps.changes.outputs.run == 'true' && (inputs.release_sha != '' && always())
         with:
           name: server-coverage-records-${{ matrix.shard }}
           path: ${{ runner.temp }}/coverage-records
@@ -315,39 +313,29 @@ jobs:
     permissions:
       contents: read
       actions: read
-  main-coverage-map:
+  coverage-map-check:
     name: SERVER COVERAGE MAP
-    if: github.event_name == 'push'
-    needs:
-      - server-suite-shard
-      - production-corpus-replay
-    runs-on:
-      - self-hosted
-      - Linux
-      - X64
-      - beeline-ci
-      - beeline-ci-control
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v4
         with:
-          clean: ${{ !startsWith(runner.name, 'beeline-ci-squire-') }}
+          fetch-depth: 0
       - uses: ./.github/actions/ci-workspace
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: server-coverage-records-*
-          merge-multiple: true
-          path: ${{ runner.temp }}/coverage-records
-      - name: Publish complete main coverage for later PR selections
+      - name: Check the map used by PR selection
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          node apps/server/scripts/test-selection.mjs build-map --records "$RUNNER_TEMP/coverage-records" --commit "$GITHUB_SHA" --out "$RUNNER_TEMP/server-coverage-map.json"
-          node apps/server/scripts/test-selection.mjs check-map "$RUNNER_TEMP/server-coverage-map.json"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: server-coverage-map
-          path: ${{ runner.temp }}/server-coverage-map.json
-          retention-days: 14
-          if-no-files-found: error
+          node apps/server/scripts/coverage-map-artifact.mjs --out "$RUNNER_TEMP/map"
+          if [ -f "$RUNNER_TEMP/map/server-coverage-map.json" ]; then
+            node apps/server/scripts/test-selection.mjs check-map "$RUNNER_TEMP/map/server-coverage-map.json"
+          else
+            echo 'No usable map: server selection must run the full suite.'
+          fi
   coverage-map:
     name: SERVER COVERAGE MAP (on demand)
     if: github.event_name == 'workflow_dispatch' && inputs.suite == 'coverage-map'
@@ -368,6 +356,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.release_sha || github.sha }}
           clean: ${{ !startsWith(runner.name, 'beeline-ci-squire-') }}
       - name: Decide in this checkout
         id: changes
@@ -390,6 +379,9 @@ jobs:
         with:
           mobile: true
         if: steps.changes.outputs.run == 'true'
+      - name: Record PostgreSQL proof coverage from the full release run
+        if: steps.changes.outputs.run == 'true' && inputs.release_sha != ''
+        run: echo "SERVER_COVERAGE_MAP_DIR=$RUNNER_TEMP/coverage-records" >> "$GITHUB_ENV"
       - name: Prove incident deadlock recovery on isolated PostgreSQL
         run: npm test -w @beeline/server -- --run src/incident-deadlocks.test.ts --maxWorkers=1 --minWorkers=1
         env:
@@ -432,6 +424,13 @@ jobs:
           npm test -w @beeline/server -- src/helper-activation.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/operator-system-dm-source.postgres.test.ts --maxWorkers=2 --minWorkers=1
         if: steps.changes.outputs.run == 'true'
+      - uses: actions/upload-artifact@v4
+        if: always() && inputs.release_sha != ''
+        with:
+          name: server-coverage-records-postgres
+          path: ${{ runner.temp }}/coverage-records
+          retention-days: 3
+          if-no-files-found: error
   mobile-suite:
     name: MOBILE SUITE
     if: "!cancelled() && (github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'mobile-suite')"
@@ -448,6 +447,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.release_sha || github.sha }}
           clean: ${{ !startsWith(runner.name, 'beeline-ci-squire-') }}
       - name: Decide in this checkout
         id: changes
@@ -502,6 +502,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.release_sha || github.sha }}
           clean: ${{ !startsWith(runner.name, 'beeline-ci-squire-') }}
       - name: Decide in this checkout
         id: changes
@@ -528,7 +529,7 @@ jobs:
         run: timeout 30m bash scripts/ci-workspace-tasks.sh mobile-export-reachability
         if: steps.changes.outputs.run == 'true'
   # Required check. Its decision matches the server shards', which leave the
-  # wall-clock budgets to this job on PRs and main pushes (SERVER_HOSTED_TIMING).
+  # wall-clock budgets to this job on PRs (SERVER_HOSTED_TIMING).
   production-corpus-replay:
     name: PRODUCTION-CORPUS REPLAY
     if: "!cancelled() && (github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'production-corpus-replay')"
@@ -537,6 +538,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.release_sha || github.sha }}
           clean: ${{ !startsWith(runner.name, 'beeline-ci-squire-') }}
       - name: Decide in this checkout
         id: changes
@@ -555,8 +557,8 @@ jobs:
           fi
           echo "run=$run" >> "$GITHUB_OUTPUT"
           echo "This job runs: $run"
-      - name: Record complete main coverage
-        if: steps.changes.outputs.run == 'true' && github.event_name == 'push'
+      - name: Record coverage from the full release run
+        if: steps.changes.outputs.run == 'true' && inputs.release_sha != ''
         run: echo "SERVER_COVERAGE_MAP_DIR=$RUNNER_TEMP/coverage-records" >> "$GITHUB_ENV"
       - uses: ./.github/actions/ci-workspace
         if: steps.changes.outputs.run == 'true'
@@ -580,7 +582,7 @@ jobs:
           path: ${{ runner.temp }}/beeline-production-corpus
           key: ${{ steps.corpus.outputs.cache-primary-key }}
       - name: Run server wall-clock budgets outside the shared quota
-        if: steps.changes.outputs.run == 'true' && (github.event_name == 'pull_request' || github.event_name == 'push')
+        if: steps.changes.outputs.run == 'true' && (github.event_name == 'pull_request')
         working-directory: apps/server
         run: npx vitest run src/production-corpus-width.test.ts src/phone-service.read-room-latency.test.ts src/daemon-service.completion-latency.test.ts --maxWorkers=1 --minWorkers=1
       - uses: actions/upload-artifact@v4
@@ -590,7 +592,7 @@ jobs:
           path: ${{ runner.temp }}/beeline-production-plans
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
-        if: always() && steps.changes.outputs.run == 'true' && github.event_name == 'push'
+        if: always() && steps.changes.outputs.run == 'true' && inputs.release_sha != ''
         with:
           name: server-coverage-records-timing
           path: ${{ runner.temp }}/coverage-records
@@ -664,6 +666,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.release_sha || github.sha }}
           clean: ${{ !startsWith(runner.name, 'beeline-ci-squire-') }}
       - name: Decide in this checkout
         id: changes
@@ -717,6 +720,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.release_sha || github.sha }}
           clean: ${{ !startsWith(runner.name, 'beeline-ci-squire-') }}
       - name: Decide in this checkout
         id: changes
@@ -751,6 +755,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.release_sha || github.sha }}
           clean: ${{ !startsWith(runner.name, 'beeline-ci-squire-') }}
       - name: Decide in this checkout
         id: changes
@@ -790,7 +795,7 @@ jobs:
         run: npm run lint:shell
         if: steps.changes.outputs.run == 'true'
       - name: Test release preflight, failure intake and governor regressions
-        run: node --test --test-concurrency=1 scripts/unified-release.test.mjs scripts/release-channel.test.mjs scripts/pr-store-build.test.mjs scripts/ota-launch-proof.test.mjs scripts/npm-package-visibility.test.mjs scripts/smoke-helper-package.test.mjs       scripts/release-artifact-allowlist.test.mjs scripts/assert-mobile-release-origin.test.mjs scripts/rollout-schema.test.mjs
+        run: node --test --test-concurrency=1 scripts/unified-release.test.mjs scripts/release-channel.test.mjs scripts/pr-store-build.test.mjs scripts/ota-launch-proof.test.mjs scripts/npm-package-visibility.test.mjs scripts/smoke-helper-package.test.mjs       scripts/release-artifact-allowlist.test.mjs scripts/assert-mobile-release-origin.test.mjs scripts/rollout-schema.test.mjs scripts/release-test-report.test.mjs scripts/ci-release-contract.test.mjs
         if: steps.changes.outputs.run == 'true'
       - name: Refuse release state in artifacts and caches
         run: node scripts/release-artifact-allowlist.mjs
@@ -809,6 +814,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.release_sha || github.sha }}
           clean: ${{ !startsWith(runner.name, 'beeline-ci-squire-') }}
       - name: Decide in this checkout
         id: changes
@@ -848,6 +854,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.release_sha || github.sha }}
           clean: ${{ !startsWith(runner.name, 'beeline-ci-squire-') }}
       - name: Log in to GHCR
         uses: docker/login-action@v3

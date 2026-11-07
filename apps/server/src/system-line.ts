@@ -119,9 +119,16 @@ export function directMessageRoomId(
 }
 
 export async function ensureSystemIdentity(database: SqlDatabase): Promise<void> {
+  // Existing canonical authors need no write lock. An unconditional conflict
+  // UPDATE serializes unrelated corner transactions on this shared row.
   await database.query(
     `INSERT INTO identities(id,kind,name,handle,hidden_from_roster,avatar)
-     VALUES ($1,'human',$2,$3,true,$4) ON CONFLICT(id) DO UPDATE
+     SELECT $1,'human',$2,$3,true,$4
+     WHERE NOT EXISTS (
+       SELECT 1 FROM identities WHERE id=$1
+         AND (name,handle,hidden_from_roster,avatar)
+           IS NOT DISTINCT FROM ($2::text,$3::text,true,$4::text)
+     ) ON CONFLICT(id) DO UPDATE
      SET name=EXCLUDED.name,handle=EXCLUDED.handle,hidden_from_roster=true,
          avatar=EXCLUDED.avatar,updated_at=now()`,
     [

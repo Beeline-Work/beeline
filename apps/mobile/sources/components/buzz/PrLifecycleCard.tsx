@@ -170,7 +170,13 @@ export function RepositoryLifecycleRow({
 
 const styles = StyleSheet.create(({ buzz }) => ({
   failed: { color: buzz.accent },
-  cornerCopy: { flexDirection: 'row', alignItems: 'baseline' },
+  // Centre the body line in the existing copy target without moving either icon
+  // or changing the row's layout and hit target (approved title-alignment mock).
+  cornerCopy: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    transform: [{ translateY: (44 - 2 * buzz.space.sm - buzz.type.body.lineHeight) / 2 }],
+  },
   cornerName: { flexShrink: 1, minWidth: 0 },
   cornerNumber: { flexShrink: 0, marginLeft: buzz.space.xs },
   repositoryTitle: { ...buzz.type.body, color: buzz.textSecondary, marginVertical: 0 },

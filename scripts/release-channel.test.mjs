@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { parse } from 'yaml';
 import { releaseChannel, channelComponents, promotionSource } from './release-channel.mjs';
 import { initializeRelease, planOutputs, restoreReleasePlan, applyJobFacts, applyComponentCheckpoints, checkpointsFromJobs } from './unified-release.mjs';
-import { latestPublished, assignReleaseVersion } from './release-record.mjs';
+import { latestPublished, assignReleaseVersion, compareVersions, versionedReleases, staleDrafts } from './release-record.mjs';
 import { pagesChannelTag, publishPagesChannel, downloadPagesChannel } from './pages-channel.mjs';
 import { buildPagesSite } from './pages-site.mjs';
 import { readStores } from './read-store-runtimes.mjs';
@@ -27,11 +27,11 @@ const delivered = (version = 'v0.1.1', sourceSha = previousSha) => {
   return record;
 };
 const nextRecord = () => {
-  const record = delivered('v0.1.2', sha);
+  const record = delivered('v0.1.2-rc.3', sha);
   record.channel = 'next';
   record.components.desktop = delivered().components.desktop;
   record.components.website = delivered().components.website;
-  record.components['mobile-ota'].otaBranch = 'release-v0.1.2';
+  record.components['mobile-ota'].otaBranch = 'release-v0.1.2-rc.3';
   return record;
 };
 const fixture = (fn) => {
@@ -44,7 +44,7 @@ test('channel defaults to next; native consent and latest selection stay separat
   assert.equal(releaseChannel(), 'next');
   assert.throws(() => releaseChannel('beta'), /invalid release channel/);
   assert.deepEqual(channelComponents(['helper', 'mobile-ota', 'desktop', 'website']), ['server', 'helper', 'mobile-ota']);
-  assert.deepEqual(channelComponents(['mobile-native'], { storeTrack: 'beta' }), ['server', 'mobile-native']);
+  assert.deepEqual(channelComponents(['mobile-native'], { storeTrack: 'beta' }), ['server', 'helper', 'mobile-ota', 'mobile-native']);
   assert.throws(() => channelComponents(['mobile-native']), /explicit store_track=beta/);
   assert.throws(() => channelComponents([], { storeTrack: 'production' }), /store_track=beta/);
   assert.deepEqual(channelComponents([], { channel: 'latest' }), ['helper', 'mobile-ota', 'desktop', 'website']);
@@ -60,23 +60,83 @@ test('retired nightly channel is rejected without aliases', () => {
   assert.throws(() => promotionSource({ ...nextRecord(), channel: 'nightly' }), /successfully published next/);
 });
 
-test('promotion pins a successful next and refuses a different source or incomplete evidence', () => {
+test('promotion pins a successful rc commit and strips its suffix', () => {
   const next = nextRecord();
   assert.equal(promotionSource(next).sourceSha, sha);
   assert.throws(() => promotionSource(next, previousSha), /current next source SHA/);
   assert.throws(() => promotionSource(delivered()), /successfully published next/);
-  next.components['mobile-ota'].otaTargets = [];
-  assert.throws(() => promotionSource(next), /immutable OTA branch and targets/);
+  assert.equal(promotionSource(next).version, 'v0.1.2');
+  assert.throws(() => promotionSource({ ...next, version: 'v0.1.2' }), /next rc version/);
+  assert.throws(() => promotionSource({ ...next, version: 'v0.1.2-rc3' }), /next rc version/);
 });
 
 test('next release records cannot become GitHub latest; identities include reserved next releases', () => {
   const stable = { tag_name: 'v0.1.1', target_commitish: previousSha, published_at: '2026-01-01', draft: false, prerelease: false };
-  const next = { tag_name: 'v0.1.2', target_commitish: sha, published_at: '2026-01-02', draft: false, prerelease: true };
+  const next = { tag_name: 'v0.1.2-rc.3', target_commitish: sha, published_at: '2026-01-02', draft: false, prerelease: true };
   const rolling = { tag_name: pagesChannelTag('next'), published_at: '2026-01-03', prerelease: true };
   assert.equal(latestPublished([stable, next, rolling]).tag_name, stable.tag_name);
   assert.equal(latestPublished([stable, next, rolling], 'next').tag_name, next.tag_name);
-  assert.equal(assignReleaseVersion({ releases: [stable, next], previous: delivered(), sha: 'c'.repeat(40) }).version, 'v0.1.3');
+  assert.equal(assignReleaseVersion({ releases: [stable, next], previous: delivered(), sha: 'c'.repeat(40) }).version, 'v0.1.2-rc.4');
 });
+
+test('rc versions sort numerically, below their final, and drafts reserve rc counters', () => {
+  const release = (tag_name, target_commitish = previousSha, draft = false) => ({ tag_name, target_commitish, draft });
+  const releases = ['v0.1.184-rc.9', 'v0.1.184', 'v0.1.184-rc.10', 'v0.1.184-rc.2'].map(v => release(v));
+  assert.deepEqual(versionedReleases(releases).map(r => r.tag_name),
+    ['v0.1.184', 'v0.1.184-rc.10', 'v0.1.184-rc.9', 'v0.1.184-rc.2']);
+  assert.ok(compareVersions('v0.1.184-rc.10', 'v0.1.184-rc.9') > 0);
+  assert.ok(compareVersions('v0.1.184-rc.10', 'v0.1.184') < 0);
+  const previous = delivered('v0.1.183');
+  assert.equal(assignReleaseVersion({ releases: [], previous, sha }).version, 'v0.1.184-rc.1');
+  const reserved = [release('v0.1.184-rc.9'), release('v0.1.184-rc.10', previousSha, true)];
+  assert.equal(assignReleaseVersion({ releases: reserved, previous, sha }).version, 'v0.1.184-rc.11');
+  reserved.push(release('v0.1.184-rc.11', sha, true));
+  assert.equal(assignReleaseVersion({ releases: reserved, previous, sha }).reason, 'resume-draft');
+  assert.deepEqual(staleDrafts(reserved, 'v0.1.184').map(r => r.tag_name), ['v0.1.184-rc.11', 'v0.1.184-rc.10']);
+  reserved.push(release('v0.1.184', previousSha, true));
+  assert.equal(assignReleaseVersion({ releases: reserved, previous, sha }).version, 'v0.1.185-rc.1');
+  const next = nextRecord();
+  assert.equal(assignReleaseVersion({ releases: [], previous: next, sha }).reason, 'already-published');
+  assert.equal(assignReleaseVersion({ releases: [], previous: next, sha: previousSha }).version, 'v0.1.2-rc.4');
+  assert.throws(() => assignReleaseVersion({ releases: [], previous, sha, requestedVersion: 'v0.1.184' }), /requires an rc/);
+  assert.throws(() => assignReleaseVersion({ releases: [], previous, sha, requestedVersion: 'v0.1.184-rc10' }), /requires an rc/);
+});
+
+test('latest reserves the final at the rc source and rejects a conflicting identity', () => {
+  const next = nextRecord();
+  const assign = options => assignReleaseVersion({ releases: [], channel: 'latest', next, sha, ...options });
+  assert.deepEqual(assign({}), { version: 'v0.1.2', reason: 'promotion' });
+  assert.equal(assign({ releases: [{ tag_name: 'v0.1.2', target_commitish: sha, draft: true }] }).reason, 'existing-identity');
+  assert.throws(() => assign({ releases: [{ tag_name: 'v0.1.2', target_commitish: previousSha }] }), /another commit|not/);
+  assert.throws(() => assign({ sha: previousSha }), /current next source SHA/);
+  assert.throws(() => assign({ requestedVersion: next.version }), /final version/);
+});
+
+test('the workflow publishes rc with next and final with the default npm tag, using OIDC', () => fixture(directory => {
+  const publish = workflow.jobs.helper.steps.find(s => s.name === 'Publish the exact helper CLI package');
+  assert.equal(publish.if, undefined);
+  assert.equal(workflow.jobs.helper.permissions['id-token'], 'write');
+  const calls = join(directory, 'npm-calls.jsonl');
+  writeFileSync(join(directory, 'npm'), `#!${process.execPath}
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+fs.appendFileSync(process.env.CALLS, JSON.stringify(args) + '\\n');
+if (args[0] === 'view') process.exit(1);
+`);
+  chmodSync(join(directory, 'npm'), 0o755);
+  for (const channel of ['next', 'latest']) {
+    writeFileSync(calls, '');
+    const version = channel === 'next' ? 'v0.1.184-rc.10' : 'v0.1.184';
+    const tarball = join(directory, `usebeeline-${version.slice(1)}.tgz`);
+    execFileSync('bash', ['-c', publish.run], { env: { ...process.env,
+      PATH: `${directory}:${process.env.PATH}`, CALLS: calls, CHANNEL: channel, RELEASE_VERSION: version, HELPER_TARBALL: tarball } });
+    const commands = readFileSync(calls, 'utf8').trim().split('\n').map(JSON.parse);
+    assert.deepEqual(commands.find(c => c[0] === 'view'), ['view', `usebeeline@${version.slice(1)}`, 'version']);
+    assert.deepEqual(commands.find(c => c[0] === 'publish'),
+      ['publish', '--no-provenance', ...(channel === 'next' ? ['--tag', 'next'] : []), tarball]);
+    assert.equal(commands.some(c => c[0] === 'dist-tag'), false);
+  }
+}));
 
 for (const channel of ['next', 'latest']) test(`offline workflow plan: ${channel}`, () => fixture(directory => {
   const previous = delivered();
@@ -87,7 +147,7 @@ for (const channel of ['next', 'latest']) test(`offline workflow plan: ${channel
   writeFileSync(join(directory, 'previous.json'), JSON.stringify(previous));
   writeFileSync(join(directory, 'next.json'), JSON.stringify(next));
   writeFileSync(join(directory, 'paths.txt'), 'apps/body/src/self-update-manifest.ts\napps/mobile/sources/app/index.tsx\n');
-  const args = ['scripts/unified-release.mjs', 'plan', '--version', 'v0.1.2', '--sha', sha,
+  const args = ['scripts/unified-release.mjs', 'plan', '--version', channel === 'next' ? next.version : promotionSource(next).version, '--sha', sha,
     '--paths', join(directory, 'paths.txt'), '--previous', join(directory, 'previous.json'),
     '--channel', channel, '--state', join(directory, 'state.json'), '--outputs', join(directory, 'outputs.txt')];
   if (channel === 'latest') args.push('--next', join(directory, 'next.json'));
@@ -104,40 +164,42 @@ for (const channel of ['next', 'latest']) test(`offline workflow plan: ${channel
   assert.equal(restored.channel, channel);
   assert.deepEqual(restored.plan.selected, state.plan.selected);
   if (channel === 'latest') {
-    assert.equal(outputs.ota_branch, next.components['mobile-ota'].otaBranch);
+    assert.equal(outputs.ota_branch, undefined);
+    assert.equal(restored.components.helper.version, 'v0.1.2');
     assert.equal(restored.components.server.imageRef, next.components.server.imageRef);
   }
 }));
 
-test('promotion carries older helper and OTA identities without assigning them this release SHA', () => {
+test('promotion rebuilds helper and OTA with the final version at the rc commit', () => {
   const previous = delivered();
   const next = nextRecord();
-  next.components.helper = previous.components.helper;
-  next.components['mobile-ota'] = previous.components['mobile-ota'];
-  const state = initializeRelease({ version: next.version, sourceSha: sha, previous, next,
+  const version = promotionSource(next).version;
+  const state = initializeRelease({ version, sourceSha: sha, previous, next,
     channel: 'latest', selectedComponents: channelComponents([], { channel: 'latest' }) });
-  const outputs = Object.fromEntries(planOutputs(state, previous, next).trim().split('\n').map(line => {
-    const i = line.indexOf('='); return [line.slice(0, i), line.slice(i + 1)];
-  }));
-  const needs = { initialize: { outputs }, helper: { result: 'success' }, mobile_ota: { result: 'success', outputs: {
-    ota_branch: outputs.ota_branch, ota_targets: outputs.ota_targets,
+  const needs = { initialize: { outputs: { run_helper: 'true', run_mobile_ota: 'true' } }, helper: { result: 'success' }, mobile_ota: { result: 'success', outputs: {
+    ota_branch: `release-${version}`, ota_targets: 'android@1,ios@2',
   } } };
-  applyComponentCheckpoints(state, checkpointsFromJobs(needs, { version: next.version, sourceSha: sha, releaseId: 'fixture' }));
+  applyComponentCheckpoints(state, checkpointsFromJobs(needs, { version, sourceSha: sha, releaseId: 'fixture' }));
   applyJobFacts(state, needs, { previous });
-  assert.equal(state.components.helper.sourceSha, previousSha);
-  assert.equal(state.components.helper.version, previous.version);
-  assert.equal(outputs.ota_sha, previousSha);
+  for (const component of ['helper', 'mobile-ota']) {
+    assert.equal(state.components[component].sourceSha, sha);
+    assert.equal(state.components[component].version, version);
+  }
+  assert.equal(state.components['mobile-ota'].otaBranch, `release-${version}`);
+  assert.equal(state.components.server.version, next.version);
+  assert.equal(state.components.server.selected, false);
+  assert.throws(() => initializeRelease({ version: next.version, sourceSha: sha, previous, next, channel: 'latest' }), /final version/);
 });
 
-test('workflow reuses native beta and OTA legs, skipping helper compilation during promotion', () => {
+test('workflow rebuilds both channels and preserves native beta selection', () => {
   assert.deepEqual(workflow.on.workflow_dispatch.inputs.channel.options, ['next', 'latest']);
   assert.equal(workflow.on.workflow_dispatch.inputs.channel.default, 'next');
-  for (const name of ['helper_linux', 'helper_macos']) assert.match(workflow.jobs[name].if, /channel == 'next'/);
+  for (const name of ['helper_linux', 'helper_macos']) assert.equal(workflow.jobs[name].if, "needs.release_validation.result == 'success' && needs.initialize.outputs.run_helper == 'true'");
   for (const name of ['mobile_ota', 'mobile_ota_after_proof']) {
     const action = workflow.jobs[name].steps.find(s => s.uses === './.github/actions/mobile-ota-leg');
-    assert.equal(action.with.beta_channel, 'next');
-    assert.equal(action.with.promote, 'false');
-    assert.match(action.with.mode, /latest.*promote/);
+    assert.match(action.with.channel, /channel == 'next' && 'next' \|\| 'production'/);
+    assert.equal(action.with.mode, undefined);
+    assert.equal(action.with.targets, undefined);
   }
   const config = JSON.parse(readFileSync('apps/mobile/eas.json'));
   assert.equal(config.build['next-ci'], undefined);
@@ -146,8 +208,12 @@ test('workflow reuses native beta and OTA legs, skipping helper compilation duri
   assert.equal(profile.channel, 'next');
   assert.equal(profile.env, undefined);
   const ota = parse(readFileSync('.github/actions/mobile-ota-leg/action.yml', 'utf8'));
-  assert.equal(ota.runs.steps.find(s => s.id === 'publish').if, "inputs.mode == 'publish'");
-  assert.match(workflow.jobs.release_result.steps.find(s => s.name?.startsWith('Publish the next record')).run, /--prerelease --latest=false/);
+  assert.equal(ota.runs.steps.find(s => s.id === 'publish').if, undefined);
+  assert.equal(ota.inputs.mode, undefined);
+  assert.equal(workflow.jobs.helper.steps.some(s => /exact next helper/.test(s.name)), false);
+  const nextPublication = workflow.jobs.release_result.steps.find(s => s.name?.startsWith('Publish the next record'));
+  assert.match(nextPublication.run, /--prerelease --latest=false/);
+  assert.match(nextPublication.if, /channel == 'next'/);
   assert.match(readFileSync('scripts/gh-release-retry.sh', 'utf8'), /--prerelease=false --latest/);
 });
 
@@ -187,7 +253,7 @@ test('Pages preserves stable website and latest bytes while serving next beside 
   assert.deepEqual(readFileSync(join(outputRoot, 'dl/next/beeline-linux-x64.tar.gz')), readFileSync(join(nextDir, 'beeline-linux-x64.tar.gz')));
 }));
 
-test('durable helper channels round-trip and promote the exact validated bytes', () => fixture(async directory => {
+test('durable helper channels retain separately stamped rc and final archives', () => fixture(async directory => {
   const releases = new Map(), payloads = new Map(); let nextId = 1;
   const github = { rest: { repos: {
     async getReleaseByTag({ tag }) { if (!releases.has(tag)) throw Object.assign(new Error('absent'), { status: 404 }); return { data: releases.get(tag) }; },
@@ -197,17 +263,20 @@ test('durable helper channels round-trip and promote the exact validated bytes',
     async deleteReleaseAsset({ asset_id }) { for (const r of releases.values()) r.assets = r.assets.filter(a => a.id !== asset_id); },
   } } };
   assert.equal(await downloadPagesChannel({ github, repo: {}, channel: 'next', allowMissing: true, directory: join(directory, 'absent') }), null);
-  const candidate = join(directory, 'candidate'); const expected = bundle(candidate, 'v0.1.2', sha);
+  const candidate = join(directory, 'candidate'); const expected = bundle(candidate, 'v0.1.2-rc.3', sha);
   await publishPagesChannel({ github, repo: {}, channel: 'next', directory: candidate });
   const downloaded = join(directory, 'downloaded');
   assert.deepEqual(await downloadPagesChannel({ github, repo: {}, channel: 'next', directory: downloaded }), expected);
-  await publishPagesChannel({ github, repo: {}, directory: downloaded });
+  const final = join(directory, 'final');
+  bundle(final, 'v0.1.2', sha);
+  await publishPagesChannel({ github, repo: {}, directory: final });
   assert.equal(releases.get(pagesChannelTag()).prerelease, true);
   assert.equal(releases.get(pagesChannelTag()).make_latest, 'false');
   const promoted = join(directory, 'promoted');
   await downloadPagesChannel({ github, repo: {}, directory: promoted });
   for (const name of ['manifest.json', 'beeline-linux-x64.tar.gz', 'beeline-linux-x64.tar.gz.sha256'])
-    assert.deepEqual(readFileSync(join(promoted, name)), readFileSync(join(candidate, name)));
+    assert.deepEqual(readFileSync(join(promoted, name)), readFileSync(join(final, name)));
+  assert.notDeepEqual(readFileSync(join(promoted, 'beeline-linux-x64.tar.gz')), readFileSync(join(downloaded, 'beeline-linux-x64.tar.gz')));
   assert.throws(() => pagesChannelTag('../escape'), /invalid helper channel/);
   payloads.delete(releases.get(pagesChannelTag('next')).assets.find(a => a.name === 'manifest.json').id);
   await assert.rejects(downloadPagesChannel({ github, repo: {}, channel: 'next', allowMissing: true, directory: downloaded }), /missing asset/);
@@ -215,15 +284,15 @@ test('durable helper channels round-trip and promote the exact validated bytes',
 
 test('a next at the promoted SHA gets a fresh prerelease identity and cannot demote latest', () => {
   const previous = delivered('v0.1.2', sha);
-  previous.channel = 'latest'; previous.promotedFrom = previous.version;
+  previous.channel = 'latest'; previous.promotedFrom = 'v0.1.2-rc.3';
   const releases = [{ tag_name: previous.version, target_commitish: sha, draft: false, prerelease: false }];
-  const { version } = assignReleaseVersion({ releases, previous, sha, reusePublished: false });
-  assert.equal(version, 'v0.1.3');
+  const { version } = assignReleaseVersion({ releases, previous, sha });
+  assert.equal(version, 'v0.1.3-rc.1');
   const next = initializeRelease({ version, sourceSha: sha, previous, channel: 'next', selectedComponents: ['server'] });
   assert.equal(next.state, 'planned');
   assert.equal(next.version, version);
   next.state = 'delivered';
-  const promoted = initializeRelease({ version, sourceSha: sha, previous, next, channel: 'latest',
+  const promoted = initializeRelease({ version: promotionSource(next).version, sourceSha: sha, previous, next, channel: 'latest',
     selectedComponents: channelComponents([], { channel: 'latest' }) });
   assert.equal(promoted.state, 'planned');
   assert.equal(promoted.channel, 'latest');
@@ -261,41 +330,54 @@ test('next OTA retains production and beta live runtimes even across a larger ru
   assert.deepEqual(targets.filter(t => t.platform === 'android').map(t => t.runtimeVersion).sort(), ['1', '2', '3', '4']);
 });
 
-
-test('OTA promotion points production at the exact next groups without exporting or uploading', () => fixture(directory => {
+test('OTA rebuilds from the rc commit with the final stamp, then reuses only that final branch on rerun', () => fixture(directory => {
   const eas = join(directory, 'eas-stub.mjs');
-  const calls = join(directory, 'calls.jsonl');
-  const pointer = join(directory, 'pointer.txt');
-  const branch = 'release-v0.1.2';
-  const updates = ['android', 'ios'].map((platform, i) => ({ platform, runtimeVersion: String(i + 1),
-    group: `immutable-next-group-${platform}`, message: `release ${sha.slice(0, 12)} ${platform}@${i + 1}` }));
-  writeFileSync(eas, String.raw`#!/usr/bin/env node
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
-const args = process.argv.slice(2);
-appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args) + '\n');
-if (args[0] === 'update:list') console.log(JSON.stringify(${JSON.stringify(updates)}));
-else if (args[0] === 'channel:view') console.log(JSON.stringify({ name:'production',
-  branchMapping:{ data:[{ branchId:'pointer',branchMappingLogic:'true' }] },
-  updateBranches:[{ id:'pointer',name:existsSync(${JSON.stringify(pointer)}) ? readFileSync(${JSON.stringify(pointer)},'utf8') : 'release-v0.1.1' }] }));
-else if (args[0] === 'channel:edit') { writeFileSync(${JSON.stringify(pointer)}, args[args.indexOf('--branch')+1]); console.log('{}'); }
-else { console.error('unexpected command: ' + args[0]); process.exit(1); }
+  const calls = join(directory, 'eas-calls.jsonl');
+  const store = join(directory, 'eas-state.json');
+  writeFileSync(store, JSON.stringify({ branches: {}, channels: { next: 'release-v0.1.1', production: 'release-v0.1.1' } }));
+  writeFileSync(eas, `#!${process.execPath}
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+const args = process.argv.slice(2), value = flag => args[args.indexOf(flag) + 1];
+const state = JSON.parse(readFileSync(process.env.STUB_STATE, 'utf8'));
+appendFileSync(process.env.STUB_CALLS, JSON.stringify({ args, version: process.env.EXPO_PUBLIC_BEELINE_RELEASE_VERSION, sha: process.env.EXPO_PUBLIC_BEELINE_RELEASE_SHA }) + '\\n');
+const branch = value('--branch');
+if (args[0] === 'update:list') console.log(JSON.stringify(state.branches[branch] ?? []));
+else if (args[0] === 'update') {
+  const update = { platform: value('--platform'), runtimeVersion: process.env.EXPO_RUNTIME_OVERRIDE,
+    group: branch + '-' + value('--platform'), message: value('--message') };
+  (state.branches[branch] ??= []).push(update);
+  console.log(JSON.stringify([update]));
+} else if (args[0] === 'channel:view') console.log(JSON.stringify({ name: args[1],
+  branchMapping: { data: [{ branchMappingLogic: 'true', branchId: 'pointer' }] },
+  updateBranches: [{ id: 'pointer', name: state.channels[args[1]] }] }));
+else if (args[0] === 'channel:edit') { state.channels[args[1]] = branch; console.log('{}'); }
+else { console.error('unexpected EAS command: ' + args[0]); process.exit(1); }
+writeFileSync(process.env.STUB_STATE, JSON.stringify(state));
 `);
   chmodSync(eas, 0o755);
-  writeFileSync(join(directory, 'targets.json'), JSON.stringify({ targets: updates.map(({ platform, runtimeVersion }) => ({ platform, runtimeVersion })) }));
-  execFileSync(process.execPath, ['scripts/ota-release.mjs', 'promote', '--sha', sha, '--branch', branch,
-    '--channel', 'production', '--targets', join(directory, 'targets.json'), '--output', join(directory, 'facts.json')],
-  { cwd: 'apps/mobile', env: { ...process.env, EAS_CLI_PATH: eas }, encoding: 'utf8' });
-  const facts = JSON.parse(readFileSync(join(directory, 'facts.json')));
-  assert.deepEqual(facts.groups, { 'android@1': 'immutable-next-group-android', 'ios@2': 'immutable-next-group-ios' });
-  assert.equal(readFileSync(pointer, 'utf8'), branch);
-  const commands = readFileSync(calls, 'utf8').trim().split('\n').map(line => JSON.parse(line)[0]);
-  assert.deepEqual(commands, ['update:list', 'channel:view', 'channel:edit', 'channel:view']);
+  const targets = join(directory, 'targets.json');
+  writeFileSync(targets, JSON.stringify({ targets: [{ platform: 'android', runtimeVersion: '1' }, { platform: 'ios', runtimeVersion: '2' }] }));
+  const publish = (version, channel) => execFileSync(process.execPath, ['scripts/ota-release.mjs', 'publish',
+    '--sha', sha, '--release-version', version, '--channel', channel, '--targets', targets,
+    '--output', join(directory, `${channel}-facts.json`)], { cwd: 'apps/mobile', encoding: 'utf8',
+    env: { ...process.env, TMPDIR: directory, EAS_CLI_PATH: eas, STUB_STATE: store, STUB_CALLS: calls, SENTRY_AUTH_TOKEN: '' } });
+  publish('v0.1.2-rc.3', 'next');
+  publish('v0.1.2', 'production');
+  const updates = () => readFileSync(calls, 'utf8').trim().split('\n').map(JSON.parse).filter(c => c.args[0] === 'update');
+  assert.deepEqual(updates().map(c => c.version), ['v0.1.2-rc.3', 'v0.1.2-rc.3', 'v0.1.2', 'v0.1.2']);
+  assert.ok(updates().every(c => c.sha === sha && c.args.includes('--clear-cache')));
+  const state = JSON.parse(readFileSync(store, 'utf8'));
+  assert.equal(state.channels.next, 'release-v0.1.2-rc.3');
+  assert.equal(state.channels.production, 'release-v0.1.2');
+  publish('v0.1.2', 'production');
+  assert.equal(updates().length, 4);
 }));
+
 
 test('an explicit store build cannot reuse a binary subscribed to the other OTA channel', () => {
   const next = nextRecord();
   next.components['mobile-native'].storeTrack = 'beta';
-  const latest = initializeRelease({ version: next.version, sourceSha: sha, previous: delivered(), next,
+  const latest = initializeRelease({ version: promotionSource(next).version, sourceSha: sha, previous: delivered(), next,
     channel: 'latest', selectedComponents: channelComponents([], { channel: 'latest' }) });
   latest.state = 'delivered';
   for (const entry of Object.values(latest.components)) if (entry.selected) entry.state = 'checked';

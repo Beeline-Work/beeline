@@ -8,6 +8,7 @@ export { networkRouterEnabled as turnOwnershipEnabled } from './network-router-r
 /** Actual access rows are retained only at the final commit check or
  * synchronous transport enqueue. Earlier authorization is a read. */
 export function ownedRoomAccessSql(room:string,agent:string,control:string,retain=false):string {
+  if(retain)return `SELECT 1 FROM beeline_retain_owned_access(${room},${agent},${control})`;
   return `SELECT 1 FROM rooms room JOIN rooms parent ON parent.id=COALESCE(room.parent_id,room.id)
     JOIN memberships member ON member.room_id=parent.id AND member.identity_id=${agent} AND member.removed_at IS NULL
     JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
@@ -16,7 +17,7 @@ export function ownedRoomAccessSql(room:string,agent:string,control:string,retai
     WHERE room.id=${room} AND (room.archived_at IS NULL OR (room.parent_id IS NOT NULL AND EXISTS(SELECT 1 FROM agent_commands control
       WHERE control.id=${control} AND control.room_id=room.id AND control.agent_id=${agent}
         AND control.action IN ('stop','restart'))))
-    ${retain?'FOR SHARE OF room,parent,member,workspace_member NOWAIT':''}`;
+    `;
 }
 
 export const TURN_OWNERSHIP_SCHEMA = `
@@ -162,6 +163,16 @@ CREATE OR REPLACE FUNCTION beeline_command_owner_live(
         AND server.renewed_at>clock_timestamp()-interval '90 seconds'))
   ) END;
 $$ LANGUAGE sql VOLATILE;
+-- Queue writers take membership before command rows, while final effects can
+-- already hold command/source rows. Bound the reverse-order wait below the
+-- deadlock detector instead of NOWAIT, allowing brief queue contention to clear.
+-- Function-local configuration restores the caller's timeout even on failure.
+CREATE OR REPLACE FUNCTION beeline_retain_owned_access(access_room uuid,access_agent text,access_control text)
+RETURNS SETOF integer LANGUAGE plpgsql SET lock_timeout='500ms' AS $$
+BEGIN
+  RETURN QUERY ${ownedRoomAccessSql('access_room','access_agent','access_control')}
+    FOR SHARE OF room,parent,member,workspace_member;
+END; $$;
 -- This additive checkpoint survives a preceding installer replacing the
 -- owner-binding callback while new readers still serve during rollback.
 CREATE OR REPLACE FUNCTION beeline_commit_owned_access() RETURNS trigger LANGUAGE plpgsql AS $$

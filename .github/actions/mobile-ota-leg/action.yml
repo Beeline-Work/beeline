@@ -1,27 +1,10 @@
-# Phone OTA leg of the unified release, by channel pointer (Expo's branch
-# promotion pattern). It publishes this release to its own EAS branch,
-# `release-<version>`, with one update per runtime live in the stores, points
-# the `beta` channel at it, and (promote=true) points `production` at the same
-# branch, so production serves the exact bundles beta got.
-#
-# Nothing is handed between steps, jobs or runs through a file: every step
-# asks EAS. A rerun publishes only the runtimes the branch still lacks and
-# skips a channel that already points at the branch. The caller checks out
-# the release SHA, installs Node 22 and the pinned eas-cli (EAS_CLI_PATH), and
-# provides the Play/App Store read credentials in the job env.
+# Build and stamp an immutable release-<version> OTA branch, then move the
+# requested channel. Next and latest each publish their own versioned bundles.
+# Reruns reuse only updates already published on this release's own branch.
 name: Mobile OTA release leg
 description: Publish this release's OTA branch for every live store runtime and move the channel pointers
 
 inputs:
-  mode:
-    description: publish builds a next branch; promote only moves an existing pointer
-    default: publish
-  source_sha:
-    description: Source of the carried OTA branch (may predate this release)
-    default: ''
-  targets:
-    description: Recorded next platform@runtime targets for exact promotion
-    default: ''
   release_sha:
     required: true
   release_version:
@@ -37,20 +20,9 @@ inputs:
     description: Encoded public metadata from the initialize job — store build identities and the runtimes the previous release served
     required: false
     default: '{}'
-  branch:
-    description: EAS branch for this release; empty means release-<release_version>
-    required: false
-    default: ''
-  beta_channel:
+  channel:
     required: false
     default: beta
-  production_channel:
-    required: false
-    default: production
-  promote:
-    description: true moves the production channel to the branch after beta
-    required: false
-    default: 'true'
 
 outputs:
   ota_branch:
@@ -73,17 +45,15 @@ runs:
       shell: bash
       working-directory: apps/mobile
       run: |
-        echo "OTA_LEG_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
         bash ../../scripts/npm-ci-timed.sh
         npm run eas-build-post-install
     - name: Read the live store runtimes
-      if: inputs.mode == 'publish'
       shell: bash
       working-directory: apps/mobile
       env:
         EXPO_TOKEN_SECRET: ${{ inputs.expo_token }}
         OTA_MEMORY: ${{ inputs.ota_memory }}
-        BEELINE_RELEASE_CHANNEL: ${{ inputs.beta_channel }}
+        BEELINE_RELEASE_CHANNEL: ${{ inputs.channel }}
       run: |
         set -euo pipefail
         if [ -n "$EXPO_TOKEN_SECRET" ]; then export EXPO_TOKEN="$EXPO_TOKEN_SECRET"; fi
@@ -93,9 +63,8 @@ runs:
         export OTA_MEMORY="$memory"
         node ../../scripts/release-job-output.mjs OTA_MEMORY "$RUNNER_TEMP/ota/memory.json"
         node scripts/ota-release.mjs targets --memory "$RUNNER_TEMP/ota/memory.json" --output "$RUNNER_TEMP/ota/targets.json"
-    - name: Publish every live runtime to the release branch and point beta at it
+    - name: Publish every live runtime and move the requested channel
       id: publish
-      if: inputs.mode == 'publish'
       shell: bash
       working-directory: apps/mobile
       env:
@@ -103,8 +72,8 @@ runs:
         SENTRY_AUTH_TOKEN: ${{ inputs.sentry_auth_token }}
         RELEASE_SHA: ${{ inputs.release_sha }}
         RELEASE_VERSION: ${{ inputs.release_version }}
-        BRANCH: ${{ inputs.branch || format('release-{0}', inputs.release_version) }}
-        BETA_CHANNEL: ${{ inputs.beta_channel }}
+        BRANCH: ${{ format('release-{0}', inputs.release_version) }}
+        CHANNEL: ${{ inputs.channel }}
       run: |
         set -euo pipefail
         if [ -n "$EXPO_TOKEN_SECRET" ]; then export EXPO_TOKEN="$EXPO_TOKEN_SECRET"; fi
@@ -113,60 +82,18 @@ runs:
         OTA_TMPDIR="$(mktemp -d)"
         TMPDIR="$OTA_TMPDIR" node scripts/ota-release.mjs publish \
           --sha "$RELEASE_SHA" --release-version "$RELEASE_VERSION" --branch "$BRANCH" \
-          --channel "$BETA_CHANNEL" --targets "$RUNNER_TEMP/ota/targets.json" \
+          --channel "$CHANNEL" --targets "$RUNNER_TEMP/ota/targets.json" \
           --output "$RUNNER_TEMP/ota/published.json"
         echo "OTA branch publish: $(( $(date +%s) - started ))s" >> "$GITHUB_STEP_SUMMARY"
-    - name: Restore the recorded next targets without querying or rebuilding stores
-      if: inputs.mode == 'promote'
-      shell: bash
-      env:
-        TARGETS: ${{ inputs.targets }}
-      run: |
-        mkdir -p "$RUNNER_TEMP/ota"
-        node --input-type=module - "$RUNNER_TEMP/ota/targets.json" <<'NODE'
-        import { writeFileSync } from 'node:fs';
-        const targets = process.env.TARGETS.split(',').map(key => {
-          const match = /^(android|ios)@(\d+)$/.exec(key);
-          if (!match) throw new Error(`invalid next OTA target: ${key}`);
-          return { platform: match[1], runtimeVersion: match[2] };
-        });
-        writeFileSync(process.argv[2], JSON.stringify({ targets }));
-        NODE
-    - name: Point production at the exact branch beta got
-      id: promote
-      if: inputs.mode == 'promote' || inputs.promote == 'true'
-      shell: bash
-      working-directory: apps/mobile
-      env:
-        EXPO_TOKEN_SECRET: ${{ inputs.expo_token }}
-        RELEASE_SHA: ${{ inputs.source_sha || inputs.release_sha }}
-        BRANCH: ${{ inputs.branch || format('release-{0}', inputs.release_version) }}
-        PRODUCTION_CHANNEL: ${{ inputs.production_channel }}
-      run: |
-        set -euo pipefail
-        if [ -n "$EXPO_TOKEN_SECRET" ]; then export EXPO_TOKEN="$EXPO_TOKEN_SECRET"; fi
-        node scripts/ota-release.mjs promote --sha "$RELEASE_SHA" --branch "$BRANCH" \
-          --channel "$PRODUCTION_CHANNEL" --targets "$RUNNER_TEMP/ota/targets.json" \
-          --output "$RUNNER_TEMP/ota/promoted.json"
-        echo "completed_at=$(date +%s)" >> "$GITHUB_OUTPUT"
-        {
-          echo "## Phone OTA"
-          echo "- $PRODUCTION_CHANNEL -> $BRANCH"
-          echo "- Targets: ${{ inputs.targets }}"
-          echo "- OTA leg: $(( $(date +%s) - OTA_LEG_STARTED_AT ))s"
-        } >> "$GITHUB_STEP_SUMMARY"
     - name: Report the delivered branch identity
       id: facts
       shell: bash
       working-directory: apps/mobile
-      env:
-        MODE: ${{ inputs.mode }}
       run: |
         node --input-type=module - "$RUNNER_TEMP/ota" >> "$GITHUB_OUTPUT" <<'NODE'
         import { readFileSync } from 'node:fs';
         import { encodeReleaseOutput } from '../../scripts/release-job-output.mjs';
-        const name = process.env.MODE === 'promote' ? 'promoted' : 'published';
-        const facts = JSON.parse(readFileSync(`${process.argv[2]}/${name}.json`, 'utf8'));
+        const facts = JSON.parse(readFileSync(`${process.argv[2]}/published.json`, 'utf8'));
         console.log(`branch=${facts.branch}`);
         console.log(`targets=${facts.targets.map(t => `${t.platform}@${t.runtimeVersion}`).join(',')}`);
         if (facts.storeRuntime) console.log(`store_runtime=${encodeReleaseOutput({ previouslyLive: facts.storeRuntime.previouslyLive ?? [] })}`);

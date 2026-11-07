@@ -38,7 +38,7 @@ export function targetKey(target) {
 }
 
 export function releaseBranchName(version) {
-  if (!/^v\d+\.\d+\.\d+$/.test(version ?? '')) fail(`invalid release version: ${version}`);
+  if (!/^v\d+\.\d+\.\d+(?:-rc\.[1-9]\d*)?$/.test(version ?? '')) fail(`invalid release version: ${version}`);
   return `release-${version}`;
 }
 
@@ -411,24 +411,6 @@ function publish(options) {
   return facts;
 }
 
-function promote(options) {
-  if (!SHA.test(options.sha ?? '')) fail('promote requires --sha <40-hex release sha>');
-  const branch = options.branch ?? releaseBranchName(options.releaseVersion);
-  const channel = options.channel ?? 'production';
-  const targets = options.targets ? readJson(options.targets).targets : null;
-  if (!Array.isArray(targets) || targets.length === 0) fail('promote requires --targets naming every runtime the branch must serve');
-  const updates = assertBranchCovers({ branch, targets, branchUpdates: listBranch(branch), sha: options.sha });
-  const pointer = pointChannel(channel, branch, options);
-  const facts = {
-    branch, channel, sourceSha: options.sha, targets,
-    groups: Object.fromEntries(updates.map((update) => [targetKey(update), update.group])),
-    changed: pointer.changed, observedPreviousBranch: pointer.previousBranch, promotedAt: new Date().toISOString(),
-  };
-  console.log(`promoted ${channel} -> ${branch} (${targets.map(targetKey).join(', ')})`);
-  writeJson(options.output, facts);
-  return facts;
-}
-
 function rollback(options) {
   const channel = options.channel ?? 'production';
   const target = options.toBranch;
@@ -480,8 +462,6 @@ export function main(argv = process.argv.slice(2)) {
       return targetsCommand(options);
     case 'publish':
       return publish(options);
-    case 'promote':
-      return promote(options);
     case 'rollback':
       return rollback(options);
     case 'verify-branch':
@@ -490,7 +470,7 @@ export function main(argv = process.argv.slice(2)) {
       console.log(readChannelBranch(options.channel ?? 'production') ?? '');
       return undefined;
     default:
-      fail('Usage: ota-release.mjs <targets|publish|promote|rollback|verify-branch|channel-branch> [options]');
+      fail('Usage: ota-release.mjs <targets|publish|rollback|verify-branch|channel-branch> [options]');
   }
   return undefined;
 }

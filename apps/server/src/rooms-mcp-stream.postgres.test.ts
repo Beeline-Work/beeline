@@ -15,17 +15,17 @@ class Reply extends EventEmitter {
   end(){this.writableEnded=true;this.emit('close');}
 }
 describe.skipIf(!url)('MCP real PostgreSQL final authority contention',()=>{
-  it('blocks final enqueue behind the actual revocation writer and never releases prepared private content',async()=>{
+  it('refuses final enqueue while the actual revocation writer holds the credential and never releases prepared private content',async()=>{
     const schema='mcp_'+randomUUID().replaceAll('-',''),admin=new Pool({connectionString:url,max:1});
     await admin.query(`CREATE SCHEMA ${schema}`);
     const config={connectionString:url,options:`-c search_path=${schema},public`,max:2};
     const first=new PostgresDatabase('',2,{pool:new Pool(config)}),second=new PostgresDatabase('',2,{pool:new Pool(config)});
     const room='11111111-1111-4111-8111-111111111111',workspace='22222222-2222-4222-8222-222222222222';
     const pageEntered=deferred(),allowPage=deferred(),writerHeld=deferred(),commitWriter=deferred(),fenceEntered=deferred();
-    const output=new Reply();let revoke:Promise<void>|undefined;
+    const output=new Reply();let revoke:Promise<void>|undefined,credentialLockError:string|undefined;
     try{
       await first.query(`CREATE TABLE router_authority(scope text PRIMARY KEY,epoch bigint NOT NULL DEFAULT 1);
-        CREATE TABLE rooms(id uuid PRIMARY KEY,workspace_id uuid,archived_at timestamptz);
+        CREATE TABLE rooms(id uuid PRIMARY KEY,workspace_id uuid,archived_at timestamptz,parent_id uuid);
         CREATE TABLE room_access(room_id uuid,identity_id text,removed_at timestamptz);
         CREATE TABLE memberships(workspace_id uuid,room_id uuid,identity_id text,role text,removed_at timestamptz);
         CREATE TABLE rooms_mcp_mentions(seq bigserial PRIMARY KEY,member_id text,room_id uuid,message_id text,cleared_at timestamptz);
@@ -35,16 +35,20 @@ describe.skipIf(!url)('MCP real PostgreSQL final authority contention',()=>{
         CREATE TABLE rooms_mcp_connections(client_id text,identity_id text,scope text,revoked_at timestamptz);
         CREATE TABLE rooms_mcp_families(id text,client_id text,identity_id text,revoked_at timestamptz);`);
       await first.query(COMMITTED_JOURNAL_SCHEMA);await first.query(MCP_MEMBER_STREAM_SCHEMA);
-      await first.query(`INSERT INTO rooms VALUES($1,$2,NULL)`,[room,workspace]);
+      await first.query(`INSERT INTO rooms VALUES($1,$2,NULL,NULL)`,[room,workspace]);
       await first.query(`INSERT INTO room_access VALUES($1,'member',NULL)`,[room]);
       await first.query(`INSERT INTO memberships VALUES($1,NULL,'member','member',NULL)`,[workspace]);
+      await first.query(`INSERT INTO memberships VALUES($1,$2,'member','member',NULL)`,[workspace,room]);
       await first.query(`INSERT INTO rooms_mcp_members VALUES('client','owner','member');
         INSERT INTO rooms_mcp_connections VALUES('client','owner','rooms:read',NULL);
         INSERT INTO rooms_mcp_tokens VALUES('synthetic-token','client','owner',NULL,'rooms:read',now()+interval '1 hour',NULL);`);
       const observed:SqlDatabase={query:(sql,values)=>first.query(sql,values),transaction:work=>first.transaction(tx=>work({
         transaction:nested=>tx.transaction(nested),query:(sql,values)=>{
           const pending=tx.query(sql,values);
-          if(sql.includes('pg_advisory_xact_lock_shared'))fenceEntered.resolve();
+          if(sql.includes('FOR SHARE OF t,c,m NOWAIT')){
+            fenceEntered.resolve();
+            return pending.catch(error=>{credentialLockError=error.code;throw error;});
+          }
           return pending;
         },
       }))};
@@ -55,14 +59,16 @@ describe.skipIf(!url)('MCP real PostgreSQL final authority contention',()=>{
         });
       await pageEntered.promise;
       revoke=second.transaction(async tx=>{
-        // Actual production BEFORE trigger obtains exclusive authority lock.
+        // The production UPDATE holds the token row through revocation commit.
         await tx.query(`UPDATE rooms_mcp_tokens SET revoked_at=now() WHERE hash='synthetic-token'`);
         writerHeld.resolve();await commitWriter.promise;
       });
       await writerHeld.promise;allowPage.resolve();await fenceEntered.promise;
       expect(output.frames).toEqual([]);
-      commitWriter.resolve();await revoke;await serving;
+      await serving;
+      expect(credentialLockError).toBe('55P03');
       expect(output.frames).toEqual([{v:1,type:'ended',reason:'unavailable'}]);expect(output.writableEnded).toBe(true);
+      commitWriter.resolve();await revoke;
     }finally{
       allowPage.resolve();commitWriter.resolve();await revoke?.catch(()=>undefined);output.end();
       await Promise.all([first.close(),second.close()]);await admin.query(`DROP SCHEMA ${schema} CASCADE`);await admin.end();

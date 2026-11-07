@@ -16,6 +16,22 @@ test('every release workflow and the actions it uses hand over build outputs onl
   }
 });
 
+test('release test coverage is allowed only within its own run and release workflow', () => {
+  const transfer = workflow(`      - uses: actions/download-artifact@v4
+        with:
+          pattern: server-coverage-records-*
+          path: coverage-records
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-coverage-map
+          path: server-coverage-map.json
+`);
+  assert.deepEqual(checkDocument('.github/workflows/unified-release.yml', transfer).violations, []);
+  assert.equal(checkDocument('.github/workflows/server-rollback.yml', transfer).violations.length, 2);
+  assert.match(checkDocument('.github/workflows/unified-release.yml', transfer.replace('pattern: server-coverage-records-*',
+    'pattern: server-coverage-records-*\n          run-id: 123')).violations[0], /from another run/);
+});
+
 // Reproduction NEW-STATE-FILE: someone adds a cross-step state file to a
 // release workflow; CI must fail.
 test('NEW-STATE-FILE: a new state artifact, a cross-run download or an artifact lookup fails the check', () => {

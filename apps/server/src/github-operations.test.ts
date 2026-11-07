@@ -1,4 +1,19 @@
-import { createHash, describe, expect, it, vi, cornerRunStateSql, generateKeyPair, exportPKCS8, GitHubAppClient, GitHubHttpError, GitHubOAuthClient, seedCornerOpening, setCornerOwner, GitHubOperations, readAgentCommands, DaemonService, LiveHub, PhoneService, readRoomView, checkStatusLine, HUMAN, REVIEWER, fixtureScope1, type SqlDatabase } from './test-support-github-operations.test-support.js';
+import { createHash, describe, expect, it, vi, cornerRunStateSql, generateKeyPair, exportPKCS8, GitHubAppClient, GitHubHttpError, GitHubOAuthClient, seedCornerOpening, setCornerOwner, GitHubOperations, readAgentCommands, DaemonService, LiveHub, PhoneService, readRoomView, HUMAN, REVIEWER, fixtureScope1, type SqlDatabase } from './test-support-github-operations.test-support.js';
+import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
+import { transformSync } from 'esbuild';
+
+// Keep the source read in this test so the coverage selector always runs it.
+// Transform explicitly: server CI does not install the mobile Expo tsconfig.
+function checkStatusLine(lifecycle: unknown): string | undefined {
+  const formatter = transformSync(readFileSync(new URL('../../mobile/sources/buzz/corner-status-line.ts', import.meta.url), 'utf8'), {
+    loader: 'ts', format: 'cjs', tsconfigRaw: {},
+  });
+  const module = { exports: {} };
+  runInNewContext(formatter.code, { module, exports: module.exports });
+  return (module.exports as typeof import('../../mobile/sources/buzz/corner-status-line.js'))
+    .cornerStatusLine(lifecycle as import('@beeline/api-contract/phone').CornerLifecycleView, false);
+}
 
 describe('GitHub phone operations', () => {
 const scope1 = fixtureScope1();

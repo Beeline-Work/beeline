@@ -39,6 +39,7 @@ vi.mock('./IdentityMark', () => ({
 vi.mock('./BeelineMarkSpinner', () => ({
   BeelineMarkSpinner: (props: any) => React.createElement('BeelineMarkSpinner', props),
 }));
+vi.mock('./Button', () => ({ Button: (props: any) => React.createElement('Button', props, props.label) }));
 vi.mock('./HullActionSheet', () => ({
   HULL_SHEET_INSET: 22,
   HullActionSheetModal: (props: any) =>
@@ -145,7 +146,7 @@ describe('one-line tool ledger', () => {
     expect(text).not.toContain('pnpm: not found');
   });
 
-  it('a transport envelope is not output: the line has nothing to open onto', () => {
+  it('a transport envelope opens the empty output state', () => {
     const renderer = render(
       <ActivityTimeline
         items={[
@@ -176,7 +177,9 @@ describe('one-line tool ledger', () => {
     ).toHaveLength(1);
     expect(
       renderer.root.findByProps({ testID: 'tool-ledger-line-shell' }).props.onPress,
-    ).toBeUndefined();
+    ).toBeTypeOf('function');
+    act(() => renderer.root.findByProps({ testID: 'tool-ledger-line-shell' }).props.onPress());
+    expect(renderer.root.findByProps({ testID: 'tool-output-text' }).props.children).toBe('No output saved');
   });
 
   it('names failed steps in brass and omits settled verdict glyphs', () => {
@@ -211,7 +214,7 @@ describe('one-line tool ledger', () => {
     expect(spinner.props.children.props.live).toBe(true);
   });
 
-  it('every line is a 44-minimum tap target, and pressable only when it has output', () => {
+  it('every line is a 44-minimum tap target and opens its output state', () => {
     const renderer = render(
       <ActivityTimeline
         active={false}
@@ -229,7 +232,9 @@ describe('one-line tool ledger', () => {
     expect(renderer.root.findByProps({ testID: 'tool-ledger-line-read' }).findByType('Pressable').props.accessibilityRole).toBe('button');
     expect(
       renderer.root.findByProps({ testID: 'tool-ledger-line-bare' }).props.onPress,
-    ).toBeUndefined();
+    ).toBeTypeOf('function');
+    act(() => renderer.root.findByProps({ testID: 'tool-ledger-line-bare' }).props.onPress());
+    expect(renderer.root.findByProps({ testID: 'tool-output-text' }).props.children).toBe('No output saved');
     expect(renderedText(renderer)).toContain('project task');
   });
 
@@ -416,6 +421,26 @@ describe('a reply’s steps line', () => {
 });
 
 describe('the output sheet', () => {
+  it.each([
+    ...[ActivityTimeline, TurnStepsLine].flatMap(Component => [
+      [Component, undefined, 'completed'],
+      [Component, 'Output hidden: contains a secret.', 'completed'],
+      [Component, 'Output hidden: contains a secret.', 'failed'],
+    ] as const),
+  ] as const)(
+    'shows an empty or hidden output without a copy control (%s, %s, %s)', (Component, output, status) => {
+      const renderer = render(<Component items={[{
+        kind: 'tool', id: 'empty', title: 'Read', toolKind: 'read', status, output,
+        requestedBy: { pubkey: 'owner', name: 'lunchbox' },
+      }]} />);
+      expandRun(renderer, 'empty');
+      act(() => renderer.root.findByProps({ testID: 'tool-ledger-line-empty' }).props.onPress());
+      expect(renderer.root.findByProps({ testID: 'tool-output-sheet' }).props.subtitle).toBe(status === 'failed' ? output : "at lunchbox's request");
+      expect(renderer.root.findAllByProps({ testID: 'tool-output-copy' })).toHaveLength(0);
+      expect(renderer.root.findByProps({ testID: 'tool-output-text' }).props.children).toBe(output ?? 'No output saved');
+    },
+  );
+
   it('a tap opens the full raw output — flat, mono, no inline expansion in the transcript', () => {
     const renderer = render(
       <ActivityTimeline
@@ -468,13 +493,15 @@ describe('the output sheet', () => {
     act(() => renderer.root.findByProps({ testID: 'tool-ledger-line-out' }).props.onPress());
     const body = renderer.root.findByProps({ testID: 'tool-output-text' });
     expect(body.props.selectable).toBe(true);
+    expect(renderer.root.findByProps({ testID: 'tool-output-copy' }).props.appearance.label.fontSize)
+      .toBe(body.props.style.fontSize);
     expect(body.props.children).toContain('tests passed');
     expect(Clipboard.setStringAsync).not.toHaveBeenCalled();
     await act(async () => {
       await renderer.root.findByProps({ testID: 'tool-output-copy' }).props.onPress();
     });
     expect(Clipboard.setStringAsync).toHaveBeenCalledWith(expect.stringContaining('tests passed'));
-    expect(renderer.root.findByProps({ testID: 'tool-output-copy' }).props.metadata).toBe('Copied');
+    expect(renderer.root.findByProps({ testID: 'tool-output-copy' }).props.label).toBe('Copied');
   });
 
   it('a failed call’s sheet leads with the distilled reason as the subtitle', () => {
@@ -897,20 +924,42 @@ it('retains Failed and a brass cross for a failed named MCP tool', () => {
 });
 
 
-it('F07: collapsed 200-step summary reads zero; disclosure and output presses each load only their bounded target',async()=>{
+it.each([ActivityTimeline, TurnStepsLine].flatMap(Component => [
+  [Component, 'completed', 'x'.repeat(32768)],
+  [Component, 'failed', 'permission denied'],
+  [Component, 'failed', 'Output hidden: contains a secret.'],
+] as const))('F07: collapsed summary reads zero; lazy disclosure and tap preserve the fetched failure reason (%s, %s)',async(Component, status, output)=>{
   toolReader.mockReset();
   const roomId='22222222-2222-4222-8222-222222222222',anchor='d'.repeat(64);
   const message={id:anchor,text:'',createdAt:1,presentation:'activity',author:{pubkey:'b'.repeat(64),kind:'agent',name:'Worker'},
-    activity:[{kind:'tool',title:'Synthetic tool',output:'excerpt',toolOutput:{roomId,anchor,messageId:anchor}}]};
+    activity:[{kind:'tool',title:'Synthetic tool',status,toolOutput:{roomId,anchor,messageId:anchor}}]};
   toolReader.mockResolvedValueOnce({roomId,messages:[message],next:'tool-anchor'});
-  const renderer=render(<TurnStepsLine items={[{kind:'tool',id:'aggregate',title:'200 steps',toolGroup:{roomId,anchor,count:200}}]}/>);
+  const renderer=render(<Component items={[{kind:'tool',id:'aggregate',title:'200 steps',toolGroup:{roomId,anchor,count:200}}]}/>);
   expect(toolReader).not.toHaveBeenCalled();
   expect(renderer.root.findByProps({testID:'tool-run-group-aggregate'}).props.accessibilityLabel).toContain('200 steps');
   await act(async()=>expandRun(renderer,'aggregate'));
   expect(toolReader).toHaveBeenCalledTimes(1);expect(toolReader.mock.calls[0][0]).toMatchObject({roomId,anchor});
-  toolReader.mockResolvedValueOnce({roomId,messages:[{...message,activity:[{kind:'tool',title:'Synthetic tool',output:'x'.repeat(32768)}]}]});
+  toolReader.mockResolvedValueOnce({roomId,messages:[{...message,activity:[{kind:'tool',title:'Synthetic tool',status,output}]}]});
   await act(async()=>renderer.root.findByProps({testID:`tool-ledger-line-${anchor}:0`}).props.onPress());
   expect(toolReader).toHaveBeenCalledTimes(2);expect(toolReader.mock.calls[1][0]).toEqual({roomId,anchor,messageId:anchor});
-  expect(renderer.root.findByProps({testID:'tool-output-text'}).props.children).toBe('x'.repeat(32768));
+  expect(renderer.root.findByType('HullActionSheetModal').props.subtitle).toBe(status === 'failed' ? output : undefined);
+  expect(renderer.root.findByProps({testID:'tool-output-text'}).props.children).toContain(output);
+  if (output === 'Output hidden: contains a secret.') {
+    expect(renderer.root.findAllByProps({testID:'tool-output-copy'})).toHaveLength(0);
+    expect(renderer.root.findByProps({testID:'tool-output-text'}).props.children).toBe(output);
+  }
   await act(async()=>renderer.unmount());
+});
+
+
+it.each([ActivityTimeline, TurnStepsLine])('shows a requested failed tool reason in the sheet (%s)', (Component) => {
+  const renderer = render(<Component items={[{
+    kind: 'tool', id: 'requested-failure', title: 'Bash', toolKind: 'execute',
+    command: 'pnpm fast-gate', status: 'failed', output: 'sh: 1: pnpm: not found',
+    requestedBy: { pubkey: 'abc123', name: 'lunchbox' },
+  }]} />);
+  expandRun(renderer, 'requested-failure');
+  act(() => renderer.root.findByProps({ testID: 'tool-ledger-line-requested-failure' }).props.onPress());
+  expect(renderer.root.findByType('HullActionSheetModal').props.subtitle).toBe('command not found: pnpm');
+  expect(renderer.root.findByProps({ testID: 'tool-output-text' }).props.children).toContain('command not found: pnpm');
 });

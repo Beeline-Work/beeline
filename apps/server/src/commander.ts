@@ -158,11 +158,11 @@ export async function sendOrder(
       throw new CommandRefusalError('order must name exactly one agent: pass agent with its handle or id', 400);
     worker = matches[0]!.id;
   }
-  if (worker === agentId && target.id === command.room_id)
-    throw new CommandRefusalError('an agent cannot order itself in its current place', 400);
+  if (worker === agentId)
+    throw new CommandRefusalError('an agent cannot order itself; continue the work in the current turn', 400);
   // Peer recruitment consumes the existing depth budget; handoffs to another
-  // implementer retain it. Self-addressed output remains a completed receipt.
-  const peerOrder = worker === agentId || Boolean(source?.parent_id && (!target.parent_id || worker !== target.worker));
+  // implementer retain it.
+  const peerOrder = Boolean(source?.parent_id && (!target.parent_id || worker !== target.worker));
   if (peerOrder && nextAgentDepth(command.agent_depth) === undefined)
     throw new CommandRefusalError('agent order chain depth limit reached', 400);
   const queued = await createAgentCommand(db, {
@@ -292,6 +292,38 @@ async function recordAgentCommandCard(db: SqlDatabase, input: {
 }
 
 export const AGENT_COMMAND_CARD_TYPE = 'agent-command';
+
+/** Commanders come from the assignment at the question boundary and its recorded
+ * parents. Humans with current access outrank agents; peer activity never does.
+ * Expressions refer to the caller's question row, not to later replacement orders.
+ */
+export function commanderChainSql(corner: string, asker: string, askedAt: string): string {
+  return `WITH RECURSIVE assignment_chain AS (
+    SELECT seed.* FROM agent_commands seed WHERE seed.id IN (
+      (SELECT assigned.id FROM agent_commands assigned
+        WHERE assigned.room_id=${corner}.id AND assigned.agent_id=${asker}
+          AND assigned.created_at<=${askedAt}
+          AND (assigned.private_payload->>'kind'='order' OR assigned.reason='human_tag')
+        ORDER BY assigned.created_at DESC,assigned.id DESC LIMIT 1),
+      (SELECT opened.id FROM agent_commands opened WHERE opened.room_id=${corner}.id
+        AND opened.reason='corner_objective' ORDER BY opened.created_at,opened.id LIMIT 1))
+    UNION
+    SELECT parent.* FROM agent_commands parent JOIN assignment_chain child ON parent.id=child.parent_command_id
+  ), commanders AS (
+    SELECT ${corner}.created_by id
+    UNION SELECT assigned.private_payload->>'authorId' FROM assignment_chain assigned
+      WHERE assigned.private_payload->>'kind'='order'
+    UNION SELECT source.author_id FROM assignment_chain assigned
+      JOIN messages source ON source.id=assigned.source_message_id AND source.system_event IS NULL
+    UNION SELECT source.author_id FROM assignment_chain assigned
+      JOIN messages source ON source.id=assigned.root_source_message_id AND source.system_event IS NULL
+  ) SELECT member.identity_id id FROM room_access member JOIN identities identity ON identity.id=member.identity_id
+    WHERE member.room_id=${corner}.id AND member.removed_at IS NULL
+      AND identity.id<>'${SYSTEM_IDENTITY_ID}'
+      AND identity.id IS DISTINCT FROM (SELECT ${cornerImplementerSql('chain_fact', corner)}
+        FROM corner_facts chain_fact WHERE chain_fact.corner_id=${corner}.id)
+      AND (identity.kind='human' OR identity.id IN (SELECT id FROM commanders))`;
+}
 
 /** Derive the return route from the open command or the current order; no work ledger. */
 export async function reportToCommander(

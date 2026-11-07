@@ -23,7 +23,7 @@ export async function readRoomTools(database: SqlDatabase, input: RoomToolRefere
     ), cursor AS (SELECT created_at,id FROM messages WHERE id=$3 AND room_id=$1), page AS (
       SELECT message.id,message.author_id,message.created_at,message.request_id,
         ${full ? `(SELECT jsonb_agg(item) FROM jsonb_array_elements(message.activity) item WHERE item->>'kind'='tool')` : `(SELECT jsonb_agg(jsonb_build_object('kind','tool','title',left(item->>'title',128),
-          'operation',left(item->>'operation',64),'status',left(item->>'status',32),'output',left(item->>'output',128),
+          'operation',left(item->>'operation',64),'status',left(item->>'status',32),
           'toolOutput',jsonb_build_object('roomId',$1::text,'anchor',$2::text,'messageId',message.id)))
           FROM jsonb_array_elements(message.activity) item WHERE item->>'kind'='tool')`} activity
       FROM messages message JOIN anchor ON message.author_id=anchor.author_id

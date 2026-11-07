@@ -605,6 +605,9 @@ import { GitHubOperations, reviewerWakeFromFacts, Input, LandCornerOutcome, Corn
         if (staleBase && pr.mergeability !== 'dirty') continue;
         const baseSha = staleBase ? row.base_sha! : pr.baseSha;
         await ctx.database.transaction(async (tx) => {
+          // Conflict dispatch advances the lifecycle in this transaction, like
+          // check refresh. Take its lock before retaining the cache row.
+          await lockCornerLifecycle(tx, row.corner_id);
           const current = (
             await tx.query<{ lifecycle: CornerLifecycleView }>(
               `SELECT lifecycle FROM corner_github_cache WHERE corner_id=$1 FOR UPDATE`,

@@ -11,6 +11,70 @@ const noteText = (rows: ReturnType<typeof roomReplySteps>) =>
   rows.filter((row) => row.kind === 'note').map((row) => row.text).join('');
 
 describe('roomReplySteps', () => {
+  it('saves redacted output within a UTF-8 byte cap with a cut-off marker', () => {
+    const step: AgentTurnStep = { kind: 'tool', call: {
+      title: 'exec_command', content: [{ type: 'text', text: 'token=planted-secret\n-----BEGIN PRIVATE KEY-----\nplanted-pem\n-----END PRIVATE KEY-----\n' + '😀'.repeat(2000) }],
+    } };
+    const output = roomReplySteps([step])[0]!.output!;
+    expect(output).not.toContain('planted-secret');
+    expect(output).not.toContain('planted-pem');
+    expect(output).toContain('[REDACTED]');
+    expect(Buffer.byteLength(output)).toBeLessThanOrEqual(4096);
+    expect(output).toMatch(/\[cut off\]$/);
+  });
+
+  it.each([
+    { title: 'squire__fetch_credential' },
+    { title: 'read_credential' },
+    { title: 'read_file', rawInput: { path: '/tmp/.env' } },
+    { title: 'exec_command', rawInput: { cmd: 'cat /tmp/credentials.json' } },
+  ])('never saves secret-returning call contents: %j', (call) => {
+    const rows = roomReplySteps([{ kind: 'tool', call: { ...call, content: 'planted-secret' } }]);
+    expect(rows[0]!.output).toBe('Output hidden: contains a secret.');
+    expect(JSON.stringify(rows)).not.toContain('planted-secret');
+  });
+
+  it.each(['.netrc', '_netrc', '.pgpass', '.git-credentials', '.npmrc', '.pypirc', '.docker/config.json', '.aws/credentials', '.env', '.envrc', '.env.local', 'id_rsa', 'id_ed25519', 'service.pem', 'service.key'])('hides synthetic credential-file reads of %s before persistence', (filename) => {
+    for (const call of [
+      { title: 'read_file', rawInput: { path: `/synthetic/${filename}` } },
+      ...['cat', 'head', 'tail', 'less', 'sed', 'awk', 'xxd', 'cp', 'python -c'].map(command => ({ title: 'exec_command', rawInput: { cmd: `${command} /synthetic/${filename}` } })),
+    ]) {
+      const rows = roomReplySteps([{ kind: 'tool', call: {
+        ...call,
+        content: 'machine example.invalid login synthetic password planted-netrc-password',
+      } }]);
+      expect(rows[0]!.output).toBe('Output hidden: contains a secret.');
+      expect(JSON.stringify(rows)).not.toContain('planted-netrc-password');
+    }
+  });
+
+  it('hides a synthetic sed pgpass read before persistence', () => {
+    const rows = roomReplySteps([{ kind: 'tool', call: {
+      title: 'exec_command', rawInput: { cmd: "sed -n '1,10p' /synthetic/.pgpass" },
+      content: 'example.invalid:5432:synthetic:reader:planted-pgpass-password',
+    } }]);
+    expect(rows[0]!.output).toBe('Output hidden: contains a secret.');
+    expect(JSON.stringify(rows)).not.toContain('planted-pgpass-password');
+  });
+
+  it.each([
+    'machine example.invalid login synthetic password planted-netrc-password',
+    'machine example.invalid\nlogin synthetic\npassword\nplanted-netrc-password',
+    'machine example.invalid login synthetic passwd planted-netrc-password',
+    'machine example.invalid\nlogin synthetic\npasswd\nplanted-netrc-password',
+  ])('redacts synthetic netrc passwords before persistence: %s', (content) => {
+    const rows = roomReplySteps([{ kind: 'tool', call: { title: 'exec_command', content } }]);
+    expect(JSON.stringify(rows)).not.toContain('planted-netrc-password');
+    expect(rows[0]!.output).toContain('[REDACTED]');
+    expect(rows[0]!.output).toContain('machine example.invalid');
+  });
+
+  it.each(['machine example.invalid login planted-netrc-login', 'machine example.invalid\nlogin\nplanted-netrc-login'])('redacts synthetic netrc logins before persistence: %s', (content) => {
+    const rows = roomReplySteps([{ kind: 'tool', call: { title: 'exec_command', content } }]);
+    expect(JSON.stringify(rows)).not.toContain('planted-netrc-login');
+    expect(rows[0]!.output).toContain('[REDACTED]');
+  });
+
   it('keeps every note whole and in order between the tools', () => {
     expect(roomReplySteps([note('First.'), tool('a'), note('Second.'), tool('b')])).toEqual([
       { kind: 'note', title: 'Note', text: 'First.' },

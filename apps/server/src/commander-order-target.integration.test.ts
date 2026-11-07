@@ -67,12 +67,10 @@ it('refuses a Room order naming a non-member or a human', async () => {
   expect(await orderWakes()).toEqual([]);
 });
 
-it('Reproduction SELF-1: accepts a self-order from the DM into the Room', async () => {
-  await daemon.execute('order', { ...authority(), address: ROOM, agent: 'jellybean', text: 'Continue in the Room' }, JELLYBEAN);
-  expect(await orderWakes()).toEqual([{ agent_id: JELLYBEAN, room_id: ROOM }]);
-  await expect(daemon.execute('order', { ...authority(), address: DM, agent: 'jellybean', text: 'Repeat here' }, JELLYBEAN))
+it('Reproduction SELF-1: refuses a self-order from the DM into the Room', async () => {
+  await expect(daemon.execute('order', { ...authority(), address: ROOM, agent: 'jellybean', text: 'Continue in the Room' }, JELLYBEAN))
     .rejects.toThrow('itself');
-  expect(await orderWakes()).toEqual([{ agent_id: JELLYBEAN, room_id: ROOM }]);
+  expect(await orderWakes()).toEqual([]);
 });
 
 it('allows named corner peers and preserves agent DM orders', async () => {

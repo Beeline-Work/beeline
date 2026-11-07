@@ -257,7 +257,7 @@ export async function runServerCommandIntake(options: {
                 command = { ...command, source: { ...command.source,
                   body: 'This is one turn for the current state of this place. Read its current conversation, brief and relevant live state, then resolve what still needs attention now. Missed mentions, schedule runs and lifecycle wakes are notifications, not separate jobs to replay or report on individually. This turn consumes the claimed wakes; they will not be replayed when it ends.\n' +
                     (latestWake ? '\nLatest wake:\n' + JSON.stringify({requestId:latestWake.turnRequestId,reason:latestWake.reason,source:latestWake.source}) + '\n' : '') +
-                    (privateDeliveries.length ? '\nPrivate deliveries, each included once. Preserve their instructions and files. Use a delivery’s requestId when directing tools or a report to its own return address:\n' +
+                    (privateDeliveries.length ? '\nPrivate deliveries, each included once. Preserve their instructions and files. Use a delivery’s requestId when directing tools for it. In a corner, reports follow its opening commander; later deliveries do not change that route:\n' +
                       privateDeliveries.map(item => JSON.stringify({requestId:item.turnRequestId,reason:item.reason,source:item.source})).join('\n') : ''),
                 } };
               }

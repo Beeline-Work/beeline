@@ -750,7 +750,7 @@ const fixture = monolithFixture();
   });
 
 
-  it('tags and pushes a human question from an agent in a corner', async () => {
+  it('reports and pushes a corner question at the human opening Room', async () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const loop = new PushDeliveryLoop(fixture.database, { send });
     await loop.runOnce();
@@ -759,9 +759,13 @@ const fixture = monolithFixture();
        VALUES('corner-question-owner-device-token-1234567890',$1,'android','physical')`,
       [HUMAN],
     );
+    const openingRequest = 'corner-question-tag-turn';
+    const openingSource = createHash('sha256').update(openingRequest).digest('hex');
+    await fixture.database.query(`INSERT INTO messages(id,room_id,author_id,text,presentation)
+      VALUES($1,$2,$3,'@bee Ship the widget','message')`, [openingSource, ROOM, HUMAN]);
     const created = await fixture.daemonOperation('createCorner', {
       roomId: ROOM,
-      requestId: 'corner-question-tag-turn',
+      requestId: openingRequest,
       name: 'Ship-the-widget',
       objective: 'Ship the widget end to end',
     });
@@ -771,27 +775,30 @@ const fixture = monolithFixture();
     // the next delivery proves the agent's question itself is a candidate.
     await loop.runOnce();
     send.mockClear();
-    const reply = await fixture.daemonOperation('postRoomMessage', {
-      roomId: cornerId,
-      requestId: 'corner-question-tag-reply',
-      text: '@owner which release should I target?',
+    const opening = (await fixture.database.query<{ id: string; turn_request_id: string }>(
+      `SELECT id,turn_request_id FROM agent_commands WHERE room_id=$1 AND reason='corner_objective'`, [cornerId],
+    )).rows[0]!;
+    await claimAgentCommand(fixture.database, cornerId, AGENT, opening.id, 'question-generation');
+    const reply = await fixture.daemonOperation('report', {
+      roomId: cornerId, requestId: opening.turn_request_id, generationId: 'question-generation',
+      status: 'needs_decision', text: '@owner which release should I target?',
     });
     expect(reply.status).toBe(200);
     const stored = await fixture.database.query<{ tagged_ids: string[] }>(
       `SELECT ${taggedIdentityIdsSql('m')} tagged_ids FROM messages m
-       WHERE m.room_id=$1 AND m.author_id=$2`,
-      [cornerId, AGENT],
+       WHERE m.room_id=$1 AND m.author_id=$2 AND m.presentation='message' AND m.text LIKE '%which release%'`,
+      [ROOM, AGENT],
     );
     expect(stored.rows).toHaveLength(1);
     expect(stored.rows[0]!.tagged_ids).toEqual([HUMAN]);
-    const projected = (await new PhoneService(fixture.database, fixture.origin).readRoom(cornerId, HUMAN))!;
+    const projected = (await new PhoneService(fixture.database, fixture.origin).readRoom(ROOM, HUMAN))!;
     expect(
       projected.messages.find((message) => message.text.includes('which release'))?.mentionPubkeys,
     ).toEqual([HUMAN]);
     expect(await loop.runOnce()).toBe(1);
     expect(send).toHaveBeenCalledWith(
       'corner-question-owner-device-token-1234567890',
-      expect.objectContaining({ channelId: cornerId, cornerId }),
+      expect.objectContaining({ channelId: ROOM }),
     );
   });
 });

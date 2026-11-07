@@ -334,11 +334,11 @@ describe('the gate stays shut (AC-8)', () => {
   });
 });
 describe('zero checks with no reviewer wait for the commander', () => {
-  it.each(['agent', 'person'] as const)('lands only after the %s commander says yes on the completed head', async (kind) => {
-    const cornerId = await open('owner/widgets');
+  it.each(['agent', 'person'] as const)('lands only after the %s gives the required yes on the completed head', async (kind) => {
+    const cornerId = await open('owner/widgets', undefined, kind === 'agent' ? B : A);
     rootFixture.githubHead = SHA;
     rootFixture.githubApp.readCommitCheckRollup.mockResolvedValue({ state: 'pending', total: 0, failing: [], checks: [] });
-    // Use an agent order to establish the same private return route as a dispatched corner.
+    // Later orders retain the commander fixed by the opening assignment.
     await createAgentCommand(rootFixture.db, { roomId: cornerId, agentId: A, sourceMessageId: null,
       privatePayload: { kind: 'order', authorId: kind === 'agent' ? B : H, fromRoomId: R, text: 'Finish the widget' }, reason: 'order' });
     await pushToCorner(cornerId, SHA);

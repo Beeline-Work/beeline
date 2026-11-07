@@ -365,12 +365,11 @@ export const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "report",
-    "description": "Report the assigned outcome one step up through command provenance. Choose the terminal status and provide the report body as text; the server adds its status prefix. No address. Feedback is separate from assignment completion. Optional `to`: who receives this report, when the default recipient is wrong. Local proof paths are refused. First upload each proof with post_artifact, then cite its attachment filename instead of a local path.",
+    "description": "Report the assigned outcome one step up. In a corner, the opening order fixes the commander and return place. Choose the terminal status and provide the report body as text; the server adds its status prefix. No address. Feedback is separate from assignment completion. Local proof paths are refused. First upload each proof with post_artifact, then cite its attachment filename instead of a local path.",
     "inputSchema": {
       "type": "object",
       "required": ["status", "text"],
       "properties": {
-        "to": {"type": "string", "minLength": 1, "description": "Member handle or id to receive this report."},
         "ask": {"type": "string", "minLength": 1, "maxLength": 140, "description": "Optional plain text ask: one sentence on one line, at most 140 characters."},
         "status": {"type": "string", "enum": ["done", "blocked", "failed", "needs_decision"]},
         "text": {"type": "string", "minLength": 1, "maxLength": 16000, "description": "Report text, at most 16000 UTF-16 code units."}

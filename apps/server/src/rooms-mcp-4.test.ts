@@ -81,6 +81,32 @@ const scope3 = fixtureScope3(scope1);
       expect((await scope1.db.query('SELECT 1 FROM rooms WHERE parent_id=$1', [repoRoom])).rowCount).toBe(0);
     });
 
+    it('opening commander escalation returns to the joined MCP session instead of the corner', async () => {
+      const { client, member } = await scope1.connected();
+      const handle = (await scope1.db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+      const request = await scope1.phone.execute('sendRoomMessage', { roomId: ROOM,
+        text: `@${handle} Check the nebula numbers` }, USER);
+      const opened = await scope3.ok(client, 'open_corner', { room: ROOM, name: 'nebula-check', objective: 'Check the nebula numbers',
+        implementer: 'demo-agent', brief: { spec: 'Check the nebula numbers.', repositoryWork: false,
+          approval: { sourceMessageId: request.messageId } } });
+      const corner = opened.address as string;
+      const assignment = (await scope1.db.query<{ id: string; turn_request_id: string }>(
+        `SELECT id,turn_request_id FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND reason='corner_objective'`, [corner, AGENT])).rows[0]!;
+      await scope1.daemon.execute('claimAgentCommand', { roomId: corner, commandId: assignment.id, generationId: 'blocked-worker' }, AGENT);
+      await scope1.daemon.execute('report', { roomId: corner, requestId: assignment.turn_request_id,
+        generationId: 'blocked-worker', status: 'blocked', text: 'Choose the nebula source' }, AGENT);
+      const handback = (await scope1.db.query<{ id: string; room_id: string }>(
+        `SELECT id,room_id FROM agent_commands WHERE agent_id=$1 AND reason='report'`, [member])).rows[0]!;
+      expect(handback.room_id).toBe(ROOM);
+      await scope1.phone.execute('sendRoomMessage', { roomId: corner, text: `@${handle} Inspect the blocker` }, USER);
+      const result = await scope3.ok(client, 'report', { address: corner,
+        status: 'needs_decision', text: 'Choose the nebula source' });
+      expect((await scope1.db.query(`SELECT room_id,card->>'reportToId' recipient FROM messages WHERE id=$1`, [result.id])).rows)
+        .toEqual([{ room_id: ROOM, recipient: USER }]);
+      expect((await scope1.db.query(`SELECT id FROM messages WHERE room_id=$1 AND presentation='message' AND text=$2`,
+        [corner, 'needs-decision: Choose the nebula source'])).rows).toEqual([]);
+    });
+
     it('R-MCP-CORNER: opens a corner with another implementer and posts in it', async () => {
       const { client } = await scope1.connected();
       const opened = await scope3.ok(client, 'open_corner', { room: ROOM, name: 'nebula-check', objective: 'Check the nebula numbers',

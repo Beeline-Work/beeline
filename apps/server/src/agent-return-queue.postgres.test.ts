@@ -109,20 +109,21 @@ describe.skipIf(!url)('returning helper consumes the current place once (real Po
       } finally { abort.abort(); await running; await rm(scratch,{recursive:true,force:true}); }
     }
   }, 30_000);
-  it('a self-opened corner whose parent command expired reports to its recorded human opening request', async () => {
+  it.each([false,true])('a self-opened corner whose parent expired retains its opening route (private opening: %s)', async privateOpening => {
     const db = fixture.database, parentRoom = await place(), corner = await place(parentRoom), root = randomUUID();
     await db.query("INSERT INTO corner_facts(corner_id) VALUES($1)",[corner]);
     await db.query("INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Do operations in a corner and report here')",[root,parentRoom,human]);
-    const opening = (await createAgentCommand(db,{roomId:corner,agentId:agent,sourceMessageId:root,reason:'corner_objective'}))!;
+    const opening = (await createAgentCommand(db,{roomId:corner,agentId:agent,sourceMessageId:root,reason:'corner_objective',
+      ...(privateOpening ? {privatePayload:{kind:'order' as const,authorId:agent,fromRoomId:parentRoom,text:'Do operations here'}} : {})}))!;
     await db.query("UPDATE agent_commands SET parent_command_id='expired-parent' WHERE id=$1",[opening.id]);
     const source = randomUUID();
     await db.query(`INSERT INTO messages(id,room_id,author_id,text,system_event) VALUES($1,$2,$3,'Scheduled work','{"kind":"schedule-ran"}')`,[source,corner,human]);
     const wake = (await createAgentCommand(db,{roomId:corner,agentId:agent,sourceMessageId:source,reason:'schedule'}))!;
     expect(await commanderReportAddress(db,corner,wake)).toMatchObject({recipient:human,returnRoom:parentRoom});
     expect(await commanderReportAddress(db,corner,{...wake,agent_id:commander}))
-      .toMatchObject({recipient:agent,returnRoom:parentRoom});
+      .toMatchObject({recipient:privateOpening ? agent : human,returnRoom:parentRoom});
     await reportToCommander(db,corner,agent,'blocked: Current work needs its commander',wake);
-    expect((await db.query("SELECT author_id,room_id FROM messages WHERE text='blocked: Current work needs its commander'")).rows)
+    expect((await db.query("SELECT author_id,room_id FROM messages WHERE text='blocked: Current work needs its commander' AND room_id=$1",[parentRoom])).rows)
       .toEqual([{author_id:agent,room_id:parentRoom}]);
     expect((await db.query("SELECT id FROM agent_commands WHERE reason='report' AND agent_id=$1",[agent])).rows).toEqual([]);
   });

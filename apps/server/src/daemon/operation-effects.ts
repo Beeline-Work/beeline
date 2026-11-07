@@ -189,11 +189,16 @@ export async function releaseAgentTurnOperation<Name extends keyof DaemonOperati
         const released = await ctx.database.transaction(async db => {
           await assertCurrentTurnOwner(db, authenticatedAgentId, turnOwner);
           await lockAgentCommandQueue(db, scopedRoom!, authenticatedAgentId);
-          await db.query(`UPDATE agent_commands SET state='pending',generation_id=NULL,
-            lease_expires_at=NULL,claimed_at=NULL,turn_owner_connection_id=NULL,turn_owner_epoch=NULL
+          // The invocation has seen these wakes. Ending it consumes them;
+          // only events admitted after its claim may start another invocation.
+          // A lost connection still releases unfinished work through its owner.
+          const consumed = await db.query<CommandRow>(`SELECT (ended).* FROM (
+            SELECT beeline_end_agent_turn(id,generation_id,'complete') ended FROM agent_commands
             WHERE room_id=$1 AND agent_id=$2 AND state='claimed' AND generation_id=$3
-              AND action IN ('input','resume') AND turn_owner_connection_id=$4 AND turn_owner_epoch=$5`,
+              AND action IN ('input','resume') AND turn_owner_connection_id=$4 AND turn_owner_epoch=$5
+            ORDER BY created_at,id) consumed`,
             [scopedRoom,authenticatedAgentId,candidate.generationId,turnOwner.connectionId,turnOwner.epoch]);
+          if (consumed.rows[0]) await registerOwnedEffectFence(db,consumed.rows[0]);
           return readAgentCommands(db, scopedRoom!, authenticatedAgentId);
         });
         ctx.live.publish({type:'invalidate',roomId:scopedRoom!,reason:'turn',agentId:authenticatedAgentId});

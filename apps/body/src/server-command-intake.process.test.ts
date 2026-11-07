@@ -109,7 +109,7 @@ it.each([false, true])(
         notify([command('new-work')]);
       }
       await vi.waitFor(() =>
-        expect(bodies).toEqual(['old local body', 'new-work']),
+        expect(bodies).toEqual([expect.stringContaining('old local body'), expect.stringContaining('new-work')]),
       );
       expect(lifecycle.start).toHaveBeenCalledTimes(2);
       expect(

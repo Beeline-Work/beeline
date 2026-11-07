@@ -69,6 +69,57 @@ describe('withdrawSupersededGrantAsks', () => {
     );
   }
 
+  it('withdraws only pending asks and preserves approved and Once grants', async () => {
+    const pending = '30000000-0000-4000-8000-000000000001';
+    const approved = '30000000-0000-4000-8000-000000000002';
+    const once = '30000000-0000-4000-8000-000000000003';
+    for (const id of [pending, approved, once]) {
+      await pendingAsk(id, 'mcp', 'connection-install:trustysquire');
+    }
+    await database.query(`UPDATE agent_grants SET status=CASE WHEN id=$1 THEN 'approved' ELSE 'once' END,
+      decided_by=$3,decided_at=now() WHERE id IN ($1,$2)`, [approved, once, OWNER]);
+    const grantedBefore = (await database.query(
+      `SELECT * FROM agent_grants WHERE id IN ($1,$2) ORDER BY id`, [approved, once],
+    )).rows;
+
+    expect(await withdrawSupersededGrantAsks(database)).toBe(1);
+
+    expect((await database.query(`SELECT status FROM agent_grants WHERE id=$1`, [pending])).rows)
+      .toEqual([{ status: 'revoked' }]);
+    expect((await database.query(
+      `SELECT * FROM agent_grants WHERE id IN ($1,$2) ORDER BY id`, [approved, once],
+    )).rows).toEqual(grantedBefore);
+  });
+
+  it('preserves owner approvals without requester provenance and the revocation ledger across repeated migrations', async () => {
+    const approved = '40000000-0000-4000-8000-000000000001';
+    const once = '40000000-0000-4000-8000-000000000002';
+    const revoked = '40000000-0000-4000-8000-000000000003';
+    for (const id of [approved, once, revoked]) {
+      await pendingAsk(id, 'mcp', 'connection-install:trustysquire');
+    }
+    // Legacy owner decisions have no surviving requester-authored root command.
+    await database.query(`UPDATE agent_grants SET command_id=NULL,decided_by=$4,decided_at=now(),
+      status=CASE WHEN id=$1 THEN 'approved' WHEN id=$2 THEN 'once' ELSE 'revoked' END
+      WHERE id IN ($1,$2,$3)`, [approved, once, revoked, OWNER]);
+    await database.query(`INSERT INTO agent_grant_policy_revocations(
+      grant_id,agent_id,workspace_id,room_id,owner_id,kind,target,requested_by,
+      previous_status,reason,turn_disposition
+    ) VALUES($1,$2,$3,$4,$5,'mcp','connection-install:trustysquire',$5,
+      'approved','missing-requester-provenance','not-active')`,
+    [revoked, AGENT, WORKSPACE, ROOM, OWNER]);
+    const grantsBefore = (await database.query(`SELECT * FROM agent_grants ORDER BY id`)).rows;
+    const ledgerBefore = (await database.query(`SELECT * FROM agent_grant_policy_revocations`)).rows;
+
+    for (let boot = 0; boot < 2; boot++) {
+      await migrate(database);
+      expect((await database.query(`SELECT * FROM agent_grants ORDER BY id`)).rows)
+        .toEqual(grantsBefore);
+      expect((await database.query(`SELECT * FROM agent_grant_policy_revocations`)).rows)
+        .toEqual(ledgerBefore);
+    }
+  });
+
   it('R1: withdraws pending owner connection installs and settles their cards', async () => {
     const builtin = '20000000-0000-4000-8000-000000000001';
     const external = '20000000-0000-4000-8000-000000000002';

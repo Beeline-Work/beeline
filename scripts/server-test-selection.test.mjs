@@ -49,18 +49,34 @@ test('maps from nonancestor, stale or distant release commits require full suite
 test('the map CLI stamps the release SHA and rejects foreign-commit provenance', () => {
   const directory = mkdtempSync(join(tmpdir(), 'release-map-'));
   const output = join(directory, 'map.json');
+  const cli = join(directory, 'apps/server/scripts/test-selection.mjs');
+  const nodePath = join(process.cwd(), 'node_modules');
+  const git = args => execFileSync('git', args, { cwd: directory, encoding: 'utf8' }).trim();
+  const run = args => execFileSync(process.execPath, args,
+    { cwd: directory, env: { ...process.env, NODE_PATH: nodePath }, stdio: 'pipe' });
   try {
+    mkdirSync(join(directory, 'apps/server/scripts'), { recursive: true });
+    copyFileSync('apps/server/scripts/test-selection.mjs', cli);
+    git(['init', '--quiet']);
+    git(['config', 'user.name', 'Fixture']);
+    git(['config', 'user.email', 'fixture@example.invalid']);
+    git(['-c', 'commit.gpgsign=false', 'commit', '--quiet', '--allow-empty', '-m', 'previous release']);
+    const previous = git(['rev-parse', 'HEAD']);
+    git(['-c', 'commit.gpgsign=false', 'commit', '--quiet', '--allow-empty', '-m', 'current release']);
     writeFileSync(join(directory, 'record.json'), JSON.stringify(records[0]));
-    const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-    const args = ['apps/server/scripts/test-selection.mjs', 'build-map', '--records', directory,
+    const sha = git(['rev-parse', 'HEAD']);
+    const args = [cli, 'build-map', '--records', directory,
       '--commit', sha, '--release-run', '123', '--out', output];
-    execFileSync(process.execPath, args, { stdio: 'pipe' });
+    run(args);
     const built = JSON.parse(readFileSync(output, 'utf8'));
     assert.equal(built.commit, sha);
     assert.deepEqual(built.provenance, { kind: 'release', runId: '123', commit: sha });
     rmSync(output);
-    args[args.indexOf('--commit') + 1] = execFileSync('git', ['rev-parse', 'HEAD~1'], { encoding: 'utf8' }).trim();
-    assert.throws(() => execFileSync(process.execPath, args, { stdio: 'pipe' }), /Command failed/);
+    args[args.indexOf('--commit') + 1] = previous;
+    assert.throws(() => run(args), error => {
+      assert.match(error.stderr.toString(), /release coverage must describe the checked-out release SHA/);
+      return true;
+    });
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 

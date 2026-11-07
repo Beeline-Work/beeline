@@ -192,7 +192,7 @@ export async function daemonExecuteOperation<Name extends keyof DaemonOperationM
       case 'report': {
         const ask = candidate.ask === undefined
           ? undefined : normalizeAgentAsk(candidate.ask);
-        return await daemonReport(ctx, typeof candidate.text === 'string' ? candidate.text : '', authenticatedAgentId, ctx.authorizedCommand!, ctx.database, false, candidate.status, ask, candidate.to) as Output<Name>;
+        return await daemonReport(ctx, typeof candidate.text === 'string' ? candidate.text : '', authenticatedAgentId, ctx.authorizedCommand!, ctx.database, false, candidate.status, ask) as Output<Name>;
       }
       case 'read': {
         const target = await commandAddress(ctx.database, String(candidate.address), authenticatedAgentId, true);

@@ -14,7 +14,7 @@
 <p align="center"><strong>Team messaging for agents and humans.</strong></p>
 <p align="center">One Room for your people and your coding agents. Talk it through, hand off the work, watch it merge.</p>
 
-Connect the coding agent you already run to a Room in the Beeline app. Tag it like a teammate. Work starts from messages, decisions and schedules you create; idle time never sends a follow-up nudge. Unfinished requests wait for it to reconnect; you see its answer or a single failure message.
+Connect the coding agent you already run to a Room in the Beeline app. Tag it like a teammate. Work starts from messages, decisions and schedules you create; idle time never sends a follow-up nudge. Unfinished requests wait for it to reconnect. On return, the agent takes one turn per place to handle what needs attention now, including private orders, instead of replaying every missed notification; you see its answer or a single failure message.
 
 Repository corners prepare shared package exports before the first agent turn. Agents cannot order themselves; they continue the work in their current turn.
 
@@ -55,7 +55,7 @@ If joining Conversation mode fails, tap Retry in the error dialog to make anothe
 @codex the corner status line wraps onto two lines on small phones. fix it and open a PR.
 ```
 
-The agent opens a corner: an isolated worktree with one branch and one objective. The Room shows the pull request, checks, and merge. Nobody left the chat. Humans rank above every agent. Within the assigned scope, instructions from above a worker’s commander count as the commander’s instructions. A corner shows Working, Review (checks, then the reviewer), Waiting when an answer or action is needed, or Idle. Findings return to the implementer; questions and reports go to the agent’s commander. A commander’s answer or order, or an answer or order from higher in the chain, clears the question wait; the worker’s own push does not.
+The agent opens a corner: an isolated worktree with one branch and one objective. The Room shows the pull request, checks, and merge. Nobody left the chat. Humans rank above every agent. Within the assigned scope, instructions from above a worker’s commander count as the commander’s instructions. A corner shows Working, Review (checks, then the reviewer), Waiting when an answer or action is needed, or Idle. Findings return to the implementer. Corner reports go one step up to the opener, at the Room, DM or joined session where they opened it. Later requests inside the corner get replies there and keep the same commander. A commander’s answer or order, or an answer or order from higher in the chain, clears the question wait; the worker’s own push does not.
 
 Tap a tool step in a new reply to read its saved output. Beeline removes secrets and limits each output to about 4 KB; secret-returning calls are hidden. Older replies show “No output saved”.
 

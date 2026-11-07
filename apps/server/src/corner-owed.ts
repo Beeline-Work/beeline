@@ -1,6 +1,6 @@
 import { cornerImplementerSql, cornerOwnerSql } from './corner-worker.js';
 import { cornerCommissionerSql } from './corner-opening.js';
-import { cornerWaitingReportSql, humanReportCornerSql, cornerHumanReportsSql } from './corner-waiting-report.js';
+import { cornerWaitingReportSql, humanReportCornerSql, cornerHumanReportsSql, reportAnswerMessageSql } from './corner-waiting-report.js';
 import { CHOICE_CARD_TYPE } from '@beeline/api-contract/phone';
 import {
   CORNER_AGENT_UNREACHABLE_CARD_TYPE,
@@ -248,7 +248,7 @@ function reportAnswerSql(report: string, answer: string, order = false): string 
   if (order) return `${answer}.room_id=${report}.corner_id
     AND ${answer}.private_payload->>'kind'='order'
     AND ${answer}.private_payload->>'authorId'=${report}.commander_id`;
-  return `${answer}.presentation='message' AND ${answer}.system_event IS NULL AND ${answer}.deleted_at IS NULL
+  return `${reportAnswerMessageSql(answer)}
     AND ${answer}.room_id IN (${report}.corner_id,${report}.return_room_id)
     AND ${answer}.created_at>${report}.created_at
     AND (${answer}.author_id=${report}.commander_id OR EXISTS (
@@ -298,7 +298,7 @@ export function cornerReportAnswerTimesSql(corner: string): string {
       CROSS JOIN LATERAL (
         SELECT answer.created_at FROM messages answer
         WHERE answer.room_id=scope.room_id AND answer.author_id=person.person_id
-          AND answer.presentation='message' AND answer.system_event IS NULL AND answer.deleted_at IS NULL
+          AND ${reportAnswerMessageSql('answer')}
           AND answer.created_at>report.created_at
         ORDER BY answer.created_at LIMIT 1
       ) answer
@@ -381,7 +381,7 @@ CREATE OR REPLACE FUNCTION clear_corner_report_blockers() RETURNS trigger LANGUA
 DECLARE scope uuid; answer_author text; answer_at timestamptz; answer_room uuid; candidate_ids uuid[];
 BEGIN
   IF TG_TABLE_NAME='messages' THEN
-    IF NEW.presentation<>'message' OR NEW.system_event IS NOT NULL OR NEW.deleted_at IS NOT NULL THEN RETURN NULL; END IF;
+    IF NOT (${reportAnswerMessageSql('NEW')}) THEN RETURN NULL; END IF;
     answer_author=NEW.author_id; answer_at=NEW.created_at; answer_room=NEW.room_id;
   ELSIF TG_TABLE_NAME='agent_commands' THEN
     IF NEW.private_payload->>'kind' IS DISTINCT FROM 'order' THEN RETURN NULL; END IF;

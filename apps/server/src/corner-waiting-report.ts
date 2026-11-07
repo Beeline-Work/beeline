@@ -1,6 +1,12 @@
 import { cornerImplementerSql } from './corner-worker.js';
 import { tagsKnownIdentitySql } from './message-mentions.js';
 
+/** Forwarding an escalation remains a question, rather than an answer to its source. */
+export function reportAnswerMessageSql(message: string): string {
+  return `${message}.presentation='message' AND ${message}.system_event IS NULL AND ${message}.deleted_at IS NULL
+    AND ${message}.card->>'reportToId' IS NULL`;
+}
+
 /** The report's originating corner, including a human report in its return Room. */
 export function humanReportCornerSql(message: string): string {
   return `COALESCE(${message}.card->>'sourceRoomId',(

@@ -5,7 +5,7 @@ import { ExpectedRefusalError } from '../command-refusal.js';
 import { CommandRefusalError } from '../commander.js';
 import { firstPartyIntegration } from '../first-party-integrations.js';
 import { waitForConnection } from '../connection-wait.js';
-import { machineSquireReport, queueSquireWork, squireMachineAddress, squireWorkStatus, recordSquireSignIn, forgetSquireSignIn, squireSignedIn } from '../squire-machine.js';
+import { machineSquireReport, squireSetupApproved, queueSquireWork, squireMachineAddress, squireWorkStatus, recordSquireSignIn, forgetSquireSignIn, squireSignedIn } from '../squire-machine.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { type SqlDatabase } from '../database.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
@@ -80,7 +80,7 @@ import { daemonRequestAgentGrant, daemonGrantRequester, daemonConsumeAgentGrant 
         const status = await squireWorkStatus(ctx.database, agentId);
         if (status.status === 'connected' && !input.reconnect && !input.switchGoogleAccount)
           return { status: 'ready', app: name, connectorId, next: `${name} is ready.` };
-        if (status.status !== 'connected') {
+        if (status.status !== 'connected' && !await squireSetupApproved(ctx.database, agentId, context.workspaceId)) {
           const offer = await ctx.offerConnector({ roomId: input.roomId,
             connectorType: 'trusty-squire', reason }, agentId, true);
           if (commandId && !offer.joined) await ctx.database.query(
@@ -193,13 +193,8 @@ import { daemonRequestAgentGrant, daemonGrantRequester, daemonConsumeAgentGrant 
       });
     }
     if (outcome.transport !== 'squire-api' && outcome.transport !== 'squire-browser') return result;
-    if ((await machineSquireReport(ctx.database, context.owner.pubkey, context.machine.machineId))?.status !== 'connected') {
-      const offer = await ctx.offerConnector({ roomId: input.roomId,
-        connectorType: 'trusty-squire', reason }, agentId, true);
-      if (commandId && !offer.joined) await ctx.database.query('UPDATE connector_offers SET command_id=$2 WHERE id=$1', [offer.offerId, commandId]);
-      return { ...result, status: 'needs_approval',
-        next: 'The Trusty Squire connector card is ready. Tap it to install Squire on your agent’s machine, including its hosted machine; complete any sign-in on your phone, then this request resumes.' };
-    }
+    if ((await machineSquireReport(ctx.database, context.owner.pubkey, context.machine.machineId))?.status !== 'connected')
+      return machine('trusty-squire');
     if (!outcome.appId || !outcome.appKey || !commandId) return result;
     if (input.squireAvailable !== true)
       return { ...result, status: 'unavailable',

@@ -75,6 +75,7 @@ describe('canonical tool contracts', () => {
 
   it('separates assignment completion, feedback, discovery and execution', () => {
     expect(Check(schema('report'),{status:'blocked',text:'blocked: input required'})).toBe(true);
+    expect(Check(schema('report'),{status:'blocked',text:'input required',to:'captain'})).toBe(false);
     expect(Check(schema('report'),{category:'bug',summary:'Broken tool'})).toBe(false);
     expect(Check(schema('report_feedback'),{category:'bug',summary:'Broken tool'})).toBe(true);
     expect(Check(schema('app_tool'),{app:'beeline:workflow'})).toBe(true);

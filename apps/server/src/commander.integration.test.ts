@@ -101,7 +101,7 @@ it('chain of command: a corner agent cannot tag a person above its commander', a
   const opened = await open(), turn = await worker(opened.cornerId);
   const text = '@captain Approve the reviewer-link fetch here?';
   await expect(rootFixture.daemon.execute('postCornerMessage', { ...authority(turn), cornerId: opened.cornerId, text }, WORKER))
-    .rejects.toThrow('@captain is not your direct commander. Your commander is @ruby in Captain and Ruby.');
+    .rejects.toThrow('@captain is not your direct commander at this place. Your commander is @ruby in Captain and Ruby.');
   await expect(rootFixture.daemon.execute('postCornerMessage', { ...authority(turn), cornerId: opened.cornerId, text: '@channel approve?' }, WORKER))
     .rejects.toThrow('not your direct commander');
   await expect(rootFixture.daemon.execute('postRoomMessage', { ...authority(turn), text }, WORKER))
@@ -207,16 +207,8 @@ it('a configured reviewer can record PASS from its DM without changing the revie
     .rejects.toThrow('configured reviewer');
 });
 
-it.each(['@ruby', RUBY, '@opener', '@captain', undefined] as const)('Reproduction R1: a scheduled report uses explicit recipient %s and preserves the default', async to => {
-  const opener = '8'.repeat(64);
-  await rootFixture.db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Opener','opener') ON CONFLICT DO NOTHING`, [opener]);
-  await rootFixture.db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [opener, HUMAN]);
-  await rootFixture.db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')`, [WS, opener]);
-  await rootFixture.db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WS, ROOM, opener]);
-  await rootFixture.db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WS, DM, opener]);
-  const opened = await open();
-  await rootFixture.db.query(`UPDATE rooms SET created_by=$2 WHERE id=$1`, [opened.cornerId, opener]);
-  const initial = await worker(opened.cornerId);
+it('a scheduled report keeps the opening commander after a later private order', async () => {
+  const opened = await open(), initial = await worker(opened.cornerId);
   await rootFixture.daemon.execute('postAgentTurnReceipt', { ...authority(initial), agentId: WORKER, status: 'complete' }, WORKER);
   await rootFixture.daemon.execute('order', { ...authority(rootFixture.order), address: opened.cornerId, text: 'Watch the release and report back' }, RUBY);
   const assigned = (await commands(opened.cornerId, WORKER)).find(c => c.reason === 'order')!;
@@ -228,29 +220,14 @@ it.each(['@ruby', RUBY, '@opener', '@captain', undefined] as const)('Reproductio
   expect(await new AgentScheduleLoop(rootFixture.db).runOnce()).toBe(1);
   const wake = (await commands(opened.cornerId, WORKER)).find(c => c.reason === 'schedule')!;
   await claim(wake);
-  for (const invalid of ['@missing']) {
-    await expect(rootFixture.daemon.execute('report', { ...authority(wake), to: invalid, status: 'done', text: 'done: release finished' }, WORKER))
-      .rejects.toThrow('current member handle or id');
-  }
-  expect((await rootFixture.db.query(`SELECT id FROM agent_commands WHERE reason='report'`)).rows).toEqual([]);
-  await expect(rootFixture.daemon.execute('report', { ...authority(wake), to, status: 'done', text: 'done: release finished' }, WORKER))
-    .resolves.toMatchObject({ delivered: true });
-  if (to === '@captain') {
-    expect((await rootFixture.db.query(`SELECT text FROM messages WHERE room_id=$1 AND text=$2`, [opened.cornerId, 'done: release finished'])).rows)
-      .toEqual([{ text: 'done: release finished' }]);
-  } else {
-    const recipient = to === '@opener' || !to ? opener : RUBY;
-    const returnRoom = to === '@opener' ? opened.cornerId : DM;
-    expect((await commands(returnRoom, recipient)).filter(c => c.reason === 'report'))
-      .toEqual([expect.objectContaining({ source: expect.objectContaining({ body: 'done: release finished', authorId: WORKER }) })]);
-    expect((await rootFixture.db.query(`SELECT id FROM agent_commands WHERE agent_id=$1 AND reason='report'`, [recipient === RUBY ? opener : RUBY])).rows).toEqual([]);
-  }
-  if (to === '@ruby' || to === RUBY) await expect(rootFixture.daemon.execute('report', { ...authority(wake), to, status: 'done', text: 'done: release finished' }, WORKER))
-    .rejects.toThrow('command output authority rejected');
-
+  await rootFixture.daemon.execute('report', { ...authority(wake), status: 'done', text: 'release finished' }, WORKER);
+  expect((await commands(DM, RUBY)).filter(c => c.reason === 'report'))
+    .toEqual([expect.objectContaining({ source: expect.objectContaining({ body: 'done: release finished', authorId: WORKER }) })]);
+  expect((await rootFixture.db.query(`SELECT id FROM messages WHERE room_id=$1 AND text=$2 AND presentation='message'`,
+    [opened.cornerId, 'done: release finished'])).rows).toEqual([]);
 });
 
-it('report to answers the latest human command from a later system wake', async () => {
+it('a later human command does not redirect a scheduled report', async () => {
   const opened = await open(), initial = await worker(opened.cornerId);
   await rootFixture.daemon.execute('postAgentTurnReceipt', { ...authority(initial), agentId: WORKER, status: 'complete' }, WORKER);
   const messageId = randomBytes(32).toString('hex');
@@ -262,10 +239,11 @@ it('report to answers the latest human command from a later system wake', async 
     verb: 'ran a schedule', kind: 'schedule-ran', wakes: [WORKER] });
   const wake = (await commands(opened.cornerId, WORKER)).find(c => c.reason === 'schedule')!;
   await claim(wake);
-  await expect(rootFixture.daemon.execute('report', { ...authority(wake), to: '@captain', status: 'done', text: 'done: human check finished' }, WORKER))
-    .resolves.toMatchObject({ delivered: true });
+  await rootFixture.daemon.execute('report', { ...authority(wake), status: 'done', text: 'human check finished' }, WORKER);
+  expect((await commands(DM, RUBY)).filter(c => c.reason === 'report'))
+    .toEqual([expect.objectContaining({ source: expect.objectContaining({ body: 'done: human check finished' }) })]);
   expect((await rootFixture.db.query(`SELECT report_outcome FROM agent_commands WHERE id=$1`, [directed.id])).rows[0])
-    .toMatchObject({ report_outcome: 'done' });
+    .toMatchObject({ report_outcome: null });
 });
 
 it.each([false, true])('REPORT-RETURN-403: scheduled completion uses opening commander and enforces revocation=%s', async (revoked) => {

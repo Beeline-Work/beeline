@@ -228,11 +228,19 @@ describe('each transition wakes the next role exactly once (AC-2)', () => {
       await rootFixture.daemon.execute('postAgentTurnReceipt', { roomId: cornerId, requestId: tagged.turnRequestId,
         generationId: 'g1', agentId: A, status: 'complete', completionKind: 'no-reply' }, A);
     }
-    const returned = (await commands(B, R)).find(command => command.reason === 'report')!;
-    await claim(returned);
-    await rootFixture.daemon.execute('report', { status: 'blocked', roomId: R, requestId: returned.turnRequestId, generationId: 'g1',
-      text: 'blocked: required entry point is unavailable' }, B);
-    await result(returned, 'Reported the remaining capability blocker to the commander.');
+    // The implementer opened this corner itself, so its escalation returns
+    // directly to its original human requester rather than its later reviewer.
+    expect((await commands(B, R)).filter(command => command.reason === 'report')).toEqual([]);
+    expect((await rootFixture.db.query(`SELECT text FROM messages WHERE room_id=$1 AND presentation='message'
+      AND text=$2`, [R, 'blocked: the proof is attached; a required entry point is still unavailable.'])).rows)
+      .toEqual([{ text: 'blocked: the proof is attached; a required entry point is still unavailable.' }]);
+    expect(await currentState(cornerId)).toBe('waiting');
+    const { loadCornerQuestion } = await import('./corner-lifecycle-read-state.js');
+    const unanswered = await loadCornerQuestion(rootFixture.db, cornerId);
+    expect(unanswered).toMatchObject({ answered_at: null });
+    await say(R, 'Proceed with the available proof and report the missing review capability.');
+    expect(await loadCornerQuestion(rootFixture.db, cornerId))
+      .toMatchObject({ id: unanswered!.id, answered_at: expect.any(Date) });
     const before = await cards(cornerId);
     for (let replay = 0; replay < 2; replay++)
       await advanceCorner(rootFixture.db, cornerId, { kind: 'checks', result: 'passing', sourceMessageId: review!.sourceMessageId });

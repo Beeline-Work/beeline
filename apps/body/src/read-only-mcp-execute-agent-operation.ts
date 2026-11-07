@@ -389,13 +389,13 @@ export async function executeAgentOperation(
       if (!args.messageId && !nonhumanSilentWake(commandReason)) throw new Error('no_reply_needed requires a nonhuman report, order, lifecycle, scheduler or system wake. Call post({text: <your reply>}), then end the turn.');
       await daemonExecute('markAgentTurnSilent', { ...(args.messageId ? { messageId: args.messageId } : {}) });
       // The server ends only this request. End the invocation after delivering
-      // its tool result; intake returns every unanswered request to pending.
+      // its tool result; intake consumes the other wakes seen by this turn.
       const path = requiredEnv('BEELINE_TURN_CONTEXT_FILE');
       writeFileSync(path, JSON.stringify({ ...context, terminalReason: 'no-reply' }), { mode: 0o600 });
       return JSON.stringify({ acknowledged: true });
     }
     case 'report':
-      return JSON.stringify(await daemonExecute('report', { status: args.status as import('@beeline/api-contract/daemon').AgentReportStatus, text: args.text as string, ask: args.ask as string | undefined, to: args.to as string | undefined }));
+      return JSON.stringify(await daemonExecute('report', { status: args.status as import('@beeline/api-contract/daemon').AgentReportStatus, text: args.text as string, ask: args.ask as string | undefined }));
     case 'inspect_corner': {
       if (typeof args.cornerId !== 'string' || !args.cornerId)
         throw new Error('cornerId is required');

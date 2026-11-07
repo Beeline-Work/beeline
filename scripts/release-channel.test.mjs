@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createHash, generateKeyPairSync } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, rmSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
@@ -14,6 +14,7 @@ import { buildPagesSite } from './pages-site.mjs';
 import { readStores } from './read-store-runtimes.mjs';
 import { androidReleaseProfile } from './android-release-channel.mjs';
 import { computeTargets } from '../apps/mobile/scripts/ota-release.mjs';
+import { playLiveBuilds } from '../apps/mobile/scripts/store-runtime-targets.mjs';
 
 const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 // Unit fixture identities must work in CI's single-commit checkout.
@@ -328,36 +329,146 @@ test('a next at the promoted SHA gets a fresh prerelease identity and cannot dem
 });
 
 
-test('next reads Play beta and production; latest reads production alone', async () => {
-  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
-  const key = JSON.stringify({ type: 'service_account', client_email: 'fixture@example.test', private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }) });
-  for (const channel of ['next', 'latest']) {
+const { privateKey: playPrivateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+const playKey = JSON.stringify({ type: 'service_account', client_email: 'fixture@example.test',
+  private_key: playPrivateKey.export({ type: 'pkcs8', format: 'pem' }) });
+const storeBuilds = [{ platform: 'android', buildNumber: '144', runtimeVersion: '44' },
+  { platform: 'android', buildNumber: '146', runtimeVersion: '47' }];
+const liveRelease = (track, versionCode) => ({ track,
+  releaseLifecycleState: 'RELEASE_LIFECYCLE_STATE_PUBLISHED', activeArtifacts: [{ versionCode }] });
+const iosStore = { status: 'readable', live: [{ platform: 'ios', runtimeVersion: '36' }] };
+const storeMemory = { previouslyLive: ['39', '40'].map(runtimeVersion => ({ platform: 'android', runtimeVersion })),
+  previousTargets: ['44', '40', '39'].map(runtimeVersion => ({ platform: 'android', runtimeVersion })) };
+const planStoreTargets = (stores, channel) => computeTargets({ pins: { android: '47', ios: '38' },
+  stores: { ...stores, ios: iosStore }, memory: storeMemory, channel }).targets.map(t => `${t.platform}@${t.runtimeVersion}`);
+
+async function playStores(channel, responseForTrack, requests = []) {
+  return readStores({ builds: storeBuilds,
+    env: { GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: playKey, BEELINE_RELEASE_CHANNEL: channel },
+    appleApi: async () => ({ data: [] }),
+    fetchImpl: async (url, options) => {
+      if (url.includes('oauth2')) return Response.json({ access_token: 'fixture' });
+      const track = new URL(url).pathname.split('/').at(-2);
+      requests.push({ url, options, track });
+      return responseForTrack(track);
+    },
+  });
+}
+
+test('next adds published Play beta runtime without evicting production retention; latest reads production alone', async () => {
+  for (const channel of ['next', 'latest', 'production']) {
     const requests = [];
-    const stores = await readStores({
-      env: { GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: key, BEELINE_RELEASE_CHANNEL: channel },
-      builds: [{ platform: 'android', buildNumber: '10', runtimeVersion: '1' }, { platform: 'android', buildNumber: '11', runtimeVersion: '4' }],
-      appleApi: async () => ({ data: [] }),
-      fetchImpl: async url => {
-        if (url.includes('oauth2')) return new Response(JSON.stringify({ access_token: 'fixture' }));
-        requests.push(url);
-        const track = url.includes('/beta/') ? 'beta' : 'production';
-        return new Response(JSON.stringify({ releases: [{ track,
-          releaseLifecycleState: 'RELEASE_LIFECYCLE_STATE_PUBLISHED', activeArtifacts: [{ versionCode: track === 'beta' ? '11' : '10' }] }] }));
-      },
-    });
+    const stores = await playStores(channel, track => Response.json({ releases: [
+      liveRelease(track, track === 'beta' ? 146 : 144),
+      { ...liveRelease(track, 999), releaseLifecycleState: 'RELEASE_LIFECYCLE_STATE_IN_REVIEW' },
+    ] }), requests);
     assert.equal(stores.android.status, 'readable');
-    assert.equal(requests.length, channel === 'next' ? 2 : 1);
-    assert.deepEqual(stores.android.live.map(t => t.runtimeVersion), channel === 'next' ? ['1', '4'] : ['1']);
+    assert.deepEqual(requests.map(r => r.track), channel === 'next' ? ['production', 'beta'] : ['production']);
+    for (const request of requests) {
+      assert.equal(request.options.headers.Accept, 'application/json');
+      assert.equal(new URL(request.url).searchParams.get('alt'), 'json');
+    }
+    assert.deepEqual(stores.android.live.map(t => t.runtimeVersion), ['44']);
+    assert.deepEqual(planStoreTargets(stores, channel), channel === 'next'
+      ? ['android@44', 'android@40', 'android@39', 'android@47', 'ios@36']
+      : ['android@44', 'android@40', 'android@39', 'ios@36']);
   }
 });
 
-test('next OTA retains production and beta live runtimes even across a larger runtime gap', () => {
-  const live = [1, 2, 3, 4].map(n => ({ platform: 'android', runtimeVersion: String(n) }));
-  const { targets } = computeTargets({ pins: { android: '4', ios: '1' }, includeAllAndroidLive: true,
-    stores: { android: { status: 'readable', live, latestRuntimeVersion: '4' },
-      ios: { status: 'readable', live: [{ platform: 'ios', runtimeVersion: '1' }] } } });
-  assert.deepEqual(targets.filter(t => t.platform === 'android').map(t => t.runtimeVersion).sort(), ['1', '2', '3', '4']);
+test('a broken production response cannot hide a readable Play beta runtime', async () => {
+  const requests = [];
+  const stores = await playStores('next', track => track === 'production'
+    ? new Response('', { status: 200, headers: { 'content-type': 'application/json' } })
+    : Response.json({ releases: [liveRelease('beta', 146)] }), requests);
+  assert.equal(stores.android.status, 'unavailable');
+  assert.match(stores.android.reason, /Play production.*HTTP 200.*empty response body/);
+  assert.deepEqual(requests.map(r => r.track), ['production', 'beta']);
+  assert.deepEqual(planStoreTargets(stores, 'next'), ['android@44', 'android@40', 'android@39', 'android@47', 'ios@36']);
 });
+
+test('a broken beta response preserves production targets and reports its exact track and response failure', async () => {
+  for (const [response, reason] of [
+    [() => new Response(''), /empty response body/],
+    [() => new Response('<html>gateway</html>', { headers: { 'content-type': 'text/html' } }), /invalid JSON.*text\/html/],
+    [() => new Response('{"releases":['), /invalid JSON/],
+    [() => new Response(new ReadableStream({ start(controller) { controller.error(new Error('terminated')); } })), /response body read failed/],
+    [() => Response.json({ error: { message: 'denied' } }, { status: 403 }), /HTTP 403/],
+    [() => Response.json({ releases: [liveRelease('beta', 999)] }), /Cannot prove runtime/],
+  ]) {
+    const requests = [];
+    const stores = await playStores('next', track => track === 'beta' ? response()
+      : Response.json({ releases: [liveRelease('production', 144)] }), requests);
+    assert.equal(stores.android.status, 'readable');
+    assert.match(stores.android.warnings.join(' '), /Play beta/);
+    assert.match(stores.android.warnings.join(' '), reason);
+    assert.deepEqual(planStoreTargets(stores, 'next'), ['android@44', 'android@40', 'android@39', 'ios@36']);
+    assert.equal(requests.length, 2, 'one read per track, no retry');
+  }
+});
+
+test('the Play reader waits for the complete response body before parsing JSON', async () => {
+  const stores = await playStores('next', track => new Response(new ReadableStream({
+    async start(controller) {
+      const body = JSON.stringify({ releases: [liveRelease(track, track === 'beta' ? 146 : 144)] });
+      controller.enqueue(new TextEncoder().encode(body.slice(0, 20)));
+      await Promise.resolve();
+      controller.enqueue(new TextEncoder().encode(body.slice(20)));
+      controller.close();
+    },
+  }), { headers: { 'content-type': 'application/json' } }));
+  assert.equal(stores.android.status, 'readable');
+  assert.deepEqual(stores.android.betaLive.map(t => t.runtimeVersion), ['47']);
+});
+
+test('Play publication parsing excludes review, approved, draft and wrong-track releases', () => {
+  const releases = ['DRAFT', 'IN_REVIEW', 'APPROVED_NOT_PUBLISHED'].map(state => ({
+    ...liveRelease('beta', 147), releaseLifecycleState: `RELEASE_LIFECYCLE_STATE_${state}`,
+  }));
+  assert.deepEqual(playLiveBuilds({ releases: [...releases, liveRelease('beta', 146)] }, 'beta'), ['146']);
+  assert.throws(() => playLiveBuilds({ releases: [liveRelease('production', 146)] }, 'beta'), /Invalid Play beta/);
+});
+
+test('next keeps every live production runtime and deduplicates beta without polluting production history', () => {
+  const live = ['44', '40', '39', '38'].map(runtimeVersion => ({ platform: 'android', runtimeVersion }));
+  const stores = { android: { status: 'readable', live, latestRuntimeVersion: '44',
+    betaLive: [{ platform: 'android', runtimeVersion: '47' }, ...live] }, ios: iosStore };
+  const plan = computeTargets({ stores, memory: storeMemory, pins: { android: '47', ios: '38' }, channel: 'next' });
+  assert.deepEqual(plan.targets.map(t => `${t.platform}@${t.runtimeVersion}`),
+    ['android@44', 'android@40', 'android@39', 'android@38', 'android@47', 'ios@36']);
+  assert.ok(!plan.previouslyLive.some(t => t.runtimeVersion === '47'));
+  assert.deepEqual(planStoreTargets(stores, 'latest'), ['android@44', 'android@40', 'android@39', 'ios@36']);
+});
+
+test('a beta read failure retains the previous beta audience; a successful empty beta read does not', () => {
+  const memory = { ...storeMemory, previousTargets: [...storeMemory.previousTargets,
+    { platform: 'android', runtimeVersion: '47' }] };
+  const android = { status: 'readable', live: [{ platform: 'android', runtimeVersion: '44' }] };
+  for (const warnings of [undefined, ['Play beta HTTP 503']]) {
+    const { targets } = computeTargets({ pins: { android: '47', ios: '38' }, channel: 'next', memory,
+      stores: { android: { ...android, warnings, betaLive: [] }, ios: iosStore } });
+    assert.equal(targets.some(t => t.runtimeVersion === '47'), !!warnings);
+  }
+  assert.equal(memory.previousTargets.length, 4);
+});
+
+test('targets CLI reports store failures in Actions and the summary while preserving delivery', () => fixture(directory => {
+  const status = join(directory, 'stores.json'), memory = join(directory, 'memory.json');
+  const summary = join(directory, 'summary.md'), output = join(directory, 'targets.json');
+  writeFileSync(status, JSON.stringify({ stores: {
+    android: { status: 'unavailable', reason: 'Play production HTTP 200: empty response body',
+      betaLive: [{ platform: 'android', runtimeVersion: '47' }] }, ios: iosStore,
+  } }));
+  writeFileSync(memory, JSON.stringify(storeMemory));
+  const result = spawnSync(process.execPath, ['scripts/ota-release.mjs', 'targets', '--channel', 'next',
+    '--store-status', status, '--memory', memory, '--output', output], {
+    cwd: 'apps/mobile', encoding: 'utf8', env: { ...process.env, GITHUB_STEP_SUMMARY: summary },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /ota_targets=android@44,android@40,android@39,android@47,ios@36/);
+  assert.match(result.stderr, /::warning::android store status unavailable/);
+  assert.match(readFileSync(summary, 'utf8'), /OTA store runtime lookup warnings[\s\S]*Play production HTTP 200: empty response body/);
+  assert.ok(JSON.parse(readFileSync(output)).targets.some(t => t.platform === 'android' && t.runtimeVersion === '47'));
+}));
 
 test('OTA rebuilds from the rc commit with the final stamp, then reuses only that final branch on rerun', () => fixture(directory => {
   const eas = join(directory, 'eas-stub.mjs');

@@ -83,6 +83,26 @@ export async function machineSquireReport(database: SqlDatabase, ownerId: string
     ORDER BY (squire_report->>'reportedAt')::double precision DESC LIMIT 1`,[ownerId,machineId??null])).rows[0]?.squire_report;
 }
 
+/** Setup consent survives a lost MCP session. Explicit owner unpair wins;
+ * legacy accepted installs cover machines predating the canonical state row. */
+export async function squireSetupApproved(database: SqlDatabase, agentId: string, workspaceId: string): Promise<boolean> {
+  const row = (await database.query<{ approved: boolean }>(`SELECT
+    COALESCE(source.squire_work->>'disconnected','false')<>'true' AND (
+      EXISTS (SELECT 1 FROM agent_grants grant_row WHERE grant_row.agent_id=agent.agent_id
+        AND grant_row.workspace_id=$2 AND grant_row.kind='mcp' AND grant_row.target=$3
+        AND grant_row.status='approved' AND grant_row.decided_by=agent.owner_id
+        AND (grant_row.expires_at IS NULL OR grant_row.expires_at>now()))
+      OR (source.generation>0 AND source.helper_agent_id IS NOT NULL)
+      OR (source.owner_id IS NULL AND EXISTS (SELECT 1 FROM connector_offers offer
+        WHERE offer.addressee_id=agent.owner_id AND offer.accepted_by=agent.owner_id
+          AND offer.machine_id=COALESCE(agent.machine_id,agent.agent_id)
+          AND offer.connector_type='trusty-squire' AND offer.status='accepted'))
+    ) approved FROM agents agent LEFT JOIN squire_machines source
+      ON source.owner_id=agent.owner_id AND source.machine_id=COALESCE(agent.machine_id,agent.agent_id)
+    WHERE agent.agent_id=$1`, [agentId, workspaceId, SQUIRE_MCP_TARGET])).rows[0];
+  return row?.approved === true;
+}
+
 export async function queueSquireWork(database: SqlDatabase, agentId: string,
   input: { install?: boolean; forceReloginProvider?: string; op?: string }): Promise<number> {
   const agent=(await database.query<{owner_id:string;machine_id:string}>(

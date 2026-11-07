@@ -227,6 +227,68 @@ const scope2 = fixtureScope2();
   });
 
 
+  it.each(['grant', 'machine', 'legacy', 'app'])('reconnects approved Squire after MCP closes without an add card (%s)', async consent => {
+    const { grantSquireToOwnerMachineAgents } = await import('./workbench.js');
+    if (consent === 'grant' || consent === 'app')
+      await grantSquireToOwnerMachineAgents(scope2.database, {
+        workspaceId: WORKSPACE, ownerIdentityId: OWNER, machineId: 'machine-one',
+      });
+    if (consent === 'legacy') {
+      // BBC's production shape: owner-accepted install, no canonical machine row.
+      await scope2.database.query(`INSERT INTO connector_offers
+        (id,agent_id,workspace_id,room_id,addressee_id,connector_type,reason,machine_id,status,accepted_by,accepted_at)
+        VALUES(gen_random_uuid(),$1,$2,$3,$4,'trusty-squire','Use the browser','machine-one','accepted',$4,now())`,
+        [HELPER, WORKSPACE, ROOM, OWNER]);
+    } else await seedSquireMachine(scope2.database, HELPER, {
+      generation: consent === 'machine' ? 1 : 0,
+      squire_report: { status: 'error', errorMessage: 'MCP connection closed', reportedAt: Date.now() / 1000 },
+    });
+    const daemon = scope2.daemonWith(fakeRegistry([]).client);
+    const connecting = daemon.execute('connect', { ...turn,
+      service: consent === 'app' ? 'shopify' : 'squire', reconnect: true,
+      reason: 'Reconnect the existing browser', squireAvailable: false }, HELPER);
+    await vi.waitFor(async () => {
+      expect((await scope2.database.query(`SELECT squire_work FROM squire_machines`))
+        .rows[0]!.squire_work.install).toBe(true);
+    });
+    expect((await scope2.database.query("SELECT id FROM messages WHERE card_type='connector-offer'")).rows).toEqual([]);
+    await seedSquireMachine(scope2.database, HELPER, { squire_work: {},
+      squire_report: { status: 'connected', reportedAt: Date.now() / 1000 } });
+    expect(await connecting).toMatchObject({ status: 'ready', app: 'Trusty Squire' });
+    expect((await scope2.database.query("SELECT id FROM messages WHERE card_type IS NOT NULL")).rows).toEqual([]);
+  });
+
+
+  it.each(['missing', 'revoked', 'expired', 'disconnected'])('requires Squire approval when consent is %s', async consent => {
+    const { grantSquireToOwnerMachineAgents } = await import('./workbench.js');
+    const { unpairSquireMachine } = await import('./squire-machine.js');
+    const daemon = scope2.daemonWith(fakeRegistry([]).client);
+    if (consent !== 'missing') {
+      await grantSquireToOwnerMachineAgents(scope2.database, {
+        workspaceId: WORKSPACE, ownerIdentityId: OWNER, machineId: 'machine-one',
+      });
+      if (consent === 'disconnected') {
+        await unpairSquireMachine(scope2.database, OWNER, 'machine-one');
+        // Historical owner acceptance must not override a later explicit unpair.
+        await scope2.database.query(`INSERT INTO connector_offers
+          (id,agent_id,workspace_id,room_id,addressee_id,connector_type,reason,machine_id,status,accepted_by,accepted_at)
+          VALUES(gen_random_uuid(),$1,$2,$3,$4,'trusty-squire','Use the browser','machine-one','accepted',$4,now())`,
+          [HELPER, WORKSPACE, ROOM, OWNER]);
+      } else await scope2.database.query(consent === 'revoked'
+        ? "UPDATE agent_grants SET status='revoked'"
+        : "UPDATE agent_grants SET expires_at=now()-interval '1 second'");
+    }
+    if (consent !== 'disconnected') await seedSquireMachine(scope2.database, HELPER, {
+      squire_report: { status: 'error', errorMessage: 'MCP connection closed', reportedAt: Date.now() / 1000 },
+    });
+    expect(await daemon.execute('connect', { ...turn, service: 'squire', reconnect: true,
+      reason: 'Use the browser' }, HELPER)).toMatchObject({ status: 'needs_approval' });
+    expect((await scope2.database.query("SELECT id FROM messages WHERE card_type='connector-offer'")).rows).toHaveLength(1);
+    expect((await scope2.database.query('SELECT squire_work FROM squire_machines'))
+      .rows[0]!.squire_work.install).not.toBe(true);
+  });
+
+
   it('keeps real app names out of the AI-assistant route', async () => {
     await scope2.connectSquire();
     const daemon = scope2.daemonWith(fakeRegistry([]).client, scope2.fakeComposio());

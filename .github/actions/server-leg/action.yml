@@ -428,7 +428,6 @@ runs:
         RELEASE_VERSION: ${{ inputs.release_version }}
 
     - name: Verify the free starter image and refresh its helpers without restarting servers
-      if: steps.fleet.outputs.shipped != 'true'
       shell: bash
       env:
         IMAGE_REF: ${{ steps.free_agent_image.outputs.image_ref }}
@@ -437,6 +436,13 @@ runs:
         flyctl machine list --app beeline-server --json > "$RUNNER_TEMP/server-release/free-agent-servers.json"
         node -e 'for(const m of require(process.argv[1]).filter(m=>m.state!=="destroyed")) console.log(m.id)' "$RUNNER_TEMP/server-release/free-agent-servers.json" > "$RUNNER_TEMP/server-release/free-agent-server-ids"
         test -s "$RUNNER_TEMP/server-release/free-agent-server-ids"
+        machine=$(head -n 1 "$RUNNER_TEMP/server-release/free-agent-server-ids")
+        # A rerun must revisit a failed refresh even when the servers shipped.
+        if [ -z "$IMAGE_REF" ]; then
+          IMAGE_REF=$(flyctl machine exec "$machine" --app beeline-server 'printenv FLY_FREE_AGENT_IMAGE')
+        fi
+        [[ "$IMAGE_REF" == registry.fly.io/beeline-free-agents:*@sha256:* ]]
+        [[ "${IMAGE_REF##*@}" =~ ^sha256:[0-9a-f]{64}$ ]]
         while read -r machine; do
           actual=$(flyctl machine exec "$machine" --app beeline-server 'printenv FLY_FREE_AGENT_IMAGE')
           if [ "$actual" != "$IMAGE_REF" ]; then
@@ -445,4 +451,18 @@ runs:
           fi
         done < "$RUNNER_TEMP/server-release/free-agent-server-ids"
         machine=$(head -n 1 "$RUNNER_TEMP/server-release/free-agent-server-ids")
-        flyctl machine exec "$machine" --app beeline-server 'node apps/server/dist/index.js --refresh-free-agents'
+        # Machine exec starts at /, not the image WORKDIR. flyctl also exits
+        # successfully when the remote command fails; check the JSON receipt.
+        flyctl machine exec "$machine" --app beeline-server --json --timeout 120 \
+          'node /app/apps/server/dist/index.js --refresh-free-agents' \
+          > "$RUNNER_TEMP/server-release/free-agent-refresh.json"
+        node - "$RUNNER_TEMP/server-release/free-agent-refresh.json" <<'NODE'
+        const result = JSON.parse(require('node:fs').readFileSync(process.argv[2], 'utf8'));
+        if (!result || Array.isArray(result) || typeof result !== 'object') throw Error('Invalid Fly exec receipt');
+        if (result.stdout) process.stdout.write(result.stdout);
+        if (result.stderr) process.stderr.write(result.stderr);
+        // Fly omits exit_code for a successful command.
+        if (result.exit_code !== undefined && result.exit_code !== 0) {
+          throw Error(`Free-agent refresh exited with code ${result.exit_code}`);
+        }
+        NODE

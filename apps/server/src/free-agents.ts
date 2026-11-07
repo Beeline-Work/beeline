@@ -484,9 +484,13 @@ const connectorWorkSql = (agent: string): string => `(
 /**
  * Whether a wake is due for the row `f`: pending work, a Machine, and the
  * agent not serving. A waking or running agent waits 20 seconds between starts.
+ * $2 is a Machine whose completed suspension proves it needs a resume, even
+ * if work was already claimed or a concurrent start just marked it waking.
  */
 const WAKE_DUE_SQL = `f.removed_at IS NULL AND f.fly_machine_id IS NOT NULL
+  AND ($2::text IS NULL OR (f.fly_machine_id=$2 AND f.state<>'stopped'))
   AND (f.state IN ('sleeping','stopped')
+    OR ($2::text=f.fly_machine_id AND f.state IN ('waking','running'))
     OR (f.state IN ('waking','running')
       AND (f.wake_requested_at IS NULL OR f.wake_requested_at<clock_timestamp()-interval '20 seconds')
       AND NOT EXISTS (SELECT 1 FROM agent_connections connection
@@ -494,7 +498,8 @@ const WAKE_DUE_SQL = `f.removed_at IS NULL AND f.fly_machine_id IS NOT NULL
         WHERE connection.agent_id=f.agent_id AND connection.released_at IS NULL
           AND server.renewed_at>clock_timestamp()-interval '90 seconds')))
   AND (${connectorWorkSql('f.agent_id')} OR EXISTS (SELECT 1 FROM agent_commands command
-    WHERE command.agent_id=f.agent_id AND command.state='pending'))`;
+    WHERE command.agent_id=f.agent_id AND (command.state='pending'
+      OR ($2::text=f.fly_machine_id AND command.state='claimed'))))`;
 
 /**
  * The start limit for one agent. A `connected` event ends an episode. A
@@ -669,6 +674,11 @@ export class FreeAgentService {
   }
 
   async wake(agentId: string, cause: WakeCause = 'command'): Promise<boolean> {
+    return this.#wake(agentId, cause);
+  }
+
+  /** A completed Fly suspension proves even a recent/connected helper is frozen. */
+  async #wake(agentId: string, cause: WakeCause, suspendedMachineId?: string): Promise<boolean> {
     if (await this.#budgetPaused(agentId)) return false;
     const decision = await this.database.transaction(async (db) => {
       // The row lock is the fence: one instance decides each start or stop.
@@ -676,7 +686,7 @@ export class FreeAgentService {
       const due = (
         await db.query<{ fly_machine_id: string; previous: string }>(
           `SELECT f.fly_machine_id,f.state previous FROM free_agents f WHERE f.agent_id=$1 AND ${WAKE_DUE_SQL}`,
-          [agentId],
+          [agentId, suspendedMachineId ?? null],
         )
       ).rows[0];
       if (!due) return undefined;
@@ -775,8 +785,8 @@ export class FreeAgentService {
   }
 
   /**
-   * The helper reports a minute without work. Refuse while a wake is pending;
-   * otherwise refresh an outdated Machine or suspend its ready helper.
+   * A connection, completed command or connector report admits idle sleep.
+   * Refuse while work remains; otherwise refresh or suspend the ready helper.
    */
   async requestSleep(agentId: string, options: { refresh?: boolean } = {}): Promise<{ sleep: boolean }> {
     const slept = (
@@ -803,14 +813,18 @@ export class FreeAgentService {
       `SELECT agent_id,fly_machine_id FROM free_agents
        WHERE removed_at IS NULL AND fly_machine_id IS NOT NULL AND state='sleeping'`,
     );
+    this.log(`release refresh selected ${sleepers.rows.length} sleeping Machines`);
+    let refreshed = 0;
     const results = await Promise.allSettled(sleepers.rows.map(async row => {
       if (await this.machines.refresh(row.fly_machine_id, this.config.image)) {
         await recordFreeAgentEvent(this.database, row.agent_id, 'refresh_started', {
           machineId: row.fly_machine_id, image: this.config.image,
         });
+        refreshed++;
       }
     }));
     const failures = results.filter(result => result.status === 'rejected');
+    this.log(`release refresh started ${refreshed}; unchanged ${results.length - failures.length - refreshed}; failed ${failures.length}`);
     if (failures.length) throw new AggregateError(failures.map(result => result.reason),
       `Free-agent image refresh failed: ${failures.map(result => String(result.reason)).join('; ')}`);
   }
@@ -829,11 +843,12 @@ export class FreeAgentService {
       // actually asleep, not the request.
       await this.machines.waitFor(machineId, 'suspended', 60);
       await recordFreeAgentEvent(this.database, agentId, 'slept', { machineId, state: 'suspended' });
+      // A command can arrive and even be claimed while Fly is snapshotting.
+      // This actual completion, rather than elapsed time, admits its resume.
+      await this.#wake(agentId, 'command', machineId);
     } catch (error) {
       this.log(`agent ${agentId.slice(0, 12)} sleep failed: ${String(error)}`);
     }
-    // A wake that arrived while Fly was suspending must be handled by this completion event.
-    this.kick(agentId, 'command');
   }
 
   /**
@@ -925,11 +940,23 @@ export class FreeAgentService {
 
   /** Committed work wakes the Machine; the source event is the only wake. */
   subscribeToWakes(live: LiveHub): () => void {
+    const sleep = (agentId: string) => {
+      void this.requestSleep(agentId).catch(error =>
+        this.log(`idle sleep ${agentId.slice(0, 12)}: ${String(error)}`));
+    };
     return live.subscribeAll((event) => {
+      // A refreshed helper's authenticated connection is the readiness event.
+      // The conditional sleep update arbitrates peers and concurrent new work.
+      if (event.type === 'agent-connection') { sleep(event.agentId); return; }
       if (event.type !== 'invalidate' || !event.targetAgentId) return;
-      if (event.reason === 'connector-assignment') this.kickIfFree(event.targetAgentId, 'connector');
+      if (event.reason === 'connector-assignment') {
+        this.kickIfFree(event.targetAgentId, 'connector');
+        sleep(event.targetAgentId);
+      }
       else if (event.reason === 'postgres:agent_commands' && event.operation === 'INSERT')
         this.kickIfFree(event.targetAgentId);
+      else if (event.reason === 'postgres:agent_commands' && event.operation === 'UPDATE')
+        sleep(event.targetAgentId);
     });
   }
 

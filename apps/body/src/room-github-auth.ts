@@ -27,7 +27,7 @@ ${launcherSource}
 
 // Native gh owns argument parsing, pagination, jq and GraphQL. Its supported
 // HTTP socket transport forwards requests through sealed providers: Squire
-// supports HTTP, while managed OAuth and registry MCP translate issue comments.
+// supports HTTP; managed OAuth bridges reads and file writes, while registry MCP translates issue comments.
 // Provider tokens never enter the helper or the harness.
 const launcherSource = String.raw`
 const { readFile, mkdtemp, writeFile, rm } = require('node:fs/promises');
@@ -64,7 +64,10 @@ async function daemon(auth, context, name, args) {
     body: JSON.stringify({ ...context, agentId: auth.agentId, ...args }),
     signal: undefined,
   });
-  if (!response.ok) throw new Error('GitHub app tool request failed');
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({}));
+    throw Object.assign(new Error(detail.message ?? detail.error ?? 'GitHub app tool request failed'), { status: response.status });
+  }
   return await response.json();
 }
 function registry(connectorId, context, connectionId, method, params, id) {
@@ -112,7 +115,7 @@ async function issueCommentRoute(personal, auth, context) {
   }
   const name = managed ? 'GITHUB_CREATE_AN_ISSUE_COMMENT' : 'add_issue_comment';
   const tool = tools?.find(tool => (managed ? tool.slug : tool.name) === name);
-  if (!tool) throw new Error('The connected GitHub provider has no issue-comment tool');
+  if (!managed && !tool) throw new Error('The connected GitHub provider has no issue-comment tool');
   const subjects = new Map();
   const json = (data, status = 200) => ({ status,
     headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) });
@@ -134,8 +137,11 @@ async function issueCommentRoute(personal, auth, context) {
   return async (request, body) => {
     if (managed && request.method === 'GET' && request.headers.host === 'api.github.com')
       return await execute('BEELINE_GITHUB_REST_READ', { path: request.url });
+    if (managed && request.method === 'PUT' && request.headers.host === 'api.github.com' &&
+        /^\/repos\/[^/]+\/[^/]+\/contents\/.+/.test(request.url))
+      return await execute('BEELINE_GITHUB_CONTENTS_PUT', { path: request.url, body: JSON.parse(body) });
     if (request.method !== 'POST' || request.headers.host !== 'api.github.com')
-      throw new Error('This GitHub provider supports issue-comment requests only');
+      throw Object.assign(new Error('Unsupported GitHub request: ' + request.method + ' ' + request.url), { status: 400 });
     const input = JSON.parse(body);
     if (request.url === '/graphql') {
       // Only bridge native gh's issue lookup and comment creation. The opaque
@@ -144,7 +150,7 @@ async function issueCommentRoute(personal, auth, context) {
       if (query === 'query IssueByNumber($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { hasIssuesEnabled issue: issueOrPullRequest(number: $number) { __typename ...on Issue{id,url} ...on PullRequest{id,url} } } }') {
         const { owner, repo, number } = input.variables ?? {};
         if (typeof owner !== 'string' || typeof repo !== 'string' || !Number.isSafeInteger(number) || number < 1)
-          throw new Error('Invalid issue lookup');
+          throw Object.assign(new Error('Invalid issue lookup'), { status: 400 });
         const args = { owner, repo, issue_number: number };
         const result = await execute(managed ? 'GITHUB_GET_AN_ISSUE' : 'issue_read',
           managed ? args : { ...args, method: 'get' });
@@ -159,17 +165,21 @@ async function issueCommentRoute(personal, auth, context) {
         const comment = input.variables?.input;
         const args = subjects.get(comment?.subjectId);
         if (!args || typeof comment.body !== 'string' || Object.keys(comment).some(key => !['subjectId', 'body'].includes(key)))
-          throw new Error('Invalid issue-comment request');
+          throw Object.assign(new Error('Invalid issue-comment request'), { status: 400 });
         const data = await execute(name, { ...args, body: comment.body });
         if (typeof data?.html_url !== 'string') throw new Error('Comment response unavailable');
         return json({ data: { addComment: { commentEdge: { node: { url: data.html_url } } } } });
       }
-      throw new Error('Unsupported GitHub GraphQL request');
+      if (managed && typeof input.query === 'string' &&
+          /^(?:\s|,|#[^\r\n]*(?:\r?\n|$))*(?:query\b|\{)/.test(input.query) &&
+          !/\b(?:mutation|subscription)\b/.test(input.query))
+        return await execute('BEELINE_GITHUB_GRAPHQL_READ', input);
+      throw Object.assign(new Error('Unsupported GitHub GraphQL request: only read queries are supported'), { status: 400 });
     }
     const match = /^\/repos\/([^/]+)\/([^/]+)\/issues\/([1-9][0-9]*)\/comments$/.exec(request.url);
-    if (!match) throw new Error('This GitHub provider supports issue-comment requests only');
+    if (!match) throw Object.assign(new Error('Unsupported GitHub request: ' + request.method + ' ' + request.url), { status: 400 });
     if (typeof input.body !== 'string' || Object.keys(input).some(key => key !== 'body'))
-      throw new Error('Invalid issue-comment request');
+      throw Object.assign(new Error('Invalid issue-comment request'), { status: 400 });
     const args = { owner: decodeURIComponent(match[1]), repo: decodeURIComponent(match[2]),
       issue_number: Number(match[3]), body: input.body };
     return json(await execute(name, args), 201);
@@ -234,8 +244,10 @@ async function main() {
           outgoing[name] = value;
       }
       reply.writeHead(upstream.status, outgoing).end(upstream.body ?? '');
-    } catch {
-      reply.writeHead(502, { 'content-type': 'application/json' }).end(JSON.stringify({ message: 'The personal GitHub request could not be completed' }));
+    } catch (error) {
+      const status = Number.isInteger(error.status) && error.status >= 400 && error.status <= 599
+        ? error.status : error instanceof SyntaxError ? 400 : 502;
+      reply.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify({ message: error.message }));
     }
   });
   try {

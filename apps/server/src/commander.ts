@@ -531,6 +531,7 @@ async function cornerReportOpening(db: SqlDatabase, roomId: string) {
 
 /** The recorded return route shared by lifecycle reports and commander approvals. */
 export async function commanderReportAddress(db: SqlDatabase, roomId: string, command?: CommandRow) {
+  const reporter = command?.agent_id;
   const corner = await cornerReportOpening(db, roomId);
   const incoming = command ?? corner?.opening ?? undefined;
   const places = [
@@ -552,7 +553,7 @@ export async function commanderReportAddress(db: SqlDatabase, roomId: string, co
     command = corner.opening ?? undefined;
     // The opener inspecting its own corner escalates through the order from
     // which it opened it. A nested worker still reports only one step up.
-    if (command && incoming && command.private_payload?.authorId === incoming.agent_id) {
+    if (command && reporter && command.private_payload?.authorId === reporter) {
       const opening = command;
       command = opening.parent_command_id
         ? (await db.query<CommandRow>('SELECT * FROM agent_commands WHERE id=$1', [opening.parent_command_id])).rows[0]

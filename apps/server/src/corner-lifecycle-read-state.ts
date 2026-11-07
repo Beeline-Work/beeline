@@ -6,28 +6,30 @@ import type { SqlDatabase } from './database.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import { CornerEvent } from './corner-lifecycle.js';
 import { commanderChainSql } from './commander.js';
-import { cornerWaitingReportSql } from './corner-waiting-report.js';
+import { cornerWaitingReportSql, reportAnswerMessageSql } from './corner-waiting-report.js';
 
 /** Read the question boundary and the newest accepted input, without changing cards.
  * Message probes use the Room/author index once per current chain member.
  * Reports retain their original boundary even if a legacy push marked them answered.
+ * Their stored delivery Room is commanderReportAddress's resolved return place;
+ * never derive a different route from a later order or the corner parent.
  */
 export async function loadCornerQuestion(db: SqlDatabase, cornerId: string, itemId?: string | null) {
   return (await db.query<{
     id: string; asked_at: Date; answered_at: Date | null; text: string; kind: 'message' | 'report';
   }>(`WITH question AS MATERIALIZED (
-    SELECT item.id,item.author_id,item.created_at asked_at,item.text,'message'::text kind
+    SELECT item.id,item.author_id,item.created_at asked_at,item.text,'message'::text kind,item.room_id return_room_id
       FROM messages item WHERE item.id=$2 AND item.text ~ '^(needs-decision|blocked):'
         AND item.card_type IS NULL AND item.deleted_at IS NULL
     UNION ALL
     SELECT command.id,command.private_payload->>'authorId',visible.created_at,
-      command.private_payload->>'text','report' FROM agent_commands command
+      command.private_payload->>'text','report',command.room_id FROM agent_commands command
       JOIN messages visible ON visible.id=encode(sha256(convert_to('agent-command-card:'||command.id,'UTF8')),'hex')
       WHERE command.id=$2 AND command.private_payload->>'kind'='report'
     UNION ALL
     SELECT COALESCE(report.report_id,report.message_id),${cornerImplementerSql('question_fact', 'question_corner')},
       COALESCE(visible.created_at,report.created_at),COALESCE(command.private_payload->>'text',message.text),
-      CASE WHEN report.report_id IS NULL THEN 'message' ELSE 'report' END
+      CASE WHEN report.report_id IS NULL THEN 'message' ELSE 'report' END,report.return_room_id
       FROM rooms question_corner JOIN corner_facts question_fact ON question_fact.corner_id=question_corner.id
       CROSS JOIN LATERAL (${cornerWaitingReportSql('question_corner', true)}) report
       LEFT JOIN agent_commands command ON command.id=report.report_id
@@ -40,8 +42,8 @@ export async function loadCornerQuestion(db: SqlDatabase, cornerId: string, item
       SELECT max(input.at) at FROM (${commanderChainSql('question_corner', 'question.author_id', 'question.asked_at')}) commander
       CROSS JOIN LATERAL (
         (SELECT message.created_at at FROM messages message
-          WHERE message.room_id=question_corner.id AND message.author_id=commander.id
-            AND message.presentation='message' AND message.system_event IS NULL AND message.deleted_at IS NULL
+          WHERE message.room_id IN (question_corner.id,question.return_room_id) AND message.author_id=commander.id
+            AND ${reportAnswerMessageSql('message')}
             AND message.created_at>question.asked_at ORDER BY message.created_at DESC LIMIT 1)
         UNION ALL
         (SELECT ordered.created_at FROM agent_commands ordered

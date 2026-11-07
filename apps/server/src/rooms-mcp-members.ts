@@ -556,21 +556,30 @@ export async function setMcpMemberWebhook(
 
 /**
  * The wake chain a member's reply continues: the helper command behind the
- * latest message addressed to it in this Room, read from the mentions ledger
- * by index. Bounded, so a slow read can never hold a wake.
+ * explicitly answered tag, or the latest tag within five minutes when no
+ * reply link is available. An unrelated later
+ * request starts a new chain. Bounded, so a slow read cannot hold a wake.
  */
-export async function mcpProvenance(db: SqlDatabase, memberId: string, roomId: string, messageId?: string) {
+export async function mcpProvenance(db: SqlDatabase, memberId: string, roomId: string, messageId?: string, replyTo?: string) {
   return db.transaction(async tx => {
     await tx.query("SET LOCAL statement_timeout='2s'");
     return (await tx.query<{ command: CommandRow | null }>(
-      `SELECT to_jsonb(command) command FROM rooms_mcp_mentions mention
+      `SELECT provenance.command FROM (
+       SELECT to_jsonb(command) command, m.created_at tagged_at, posted.created_at posted_at,
+         COALESCE($4::text, posted.reply_to_message_id) reply_to FROM rooms_mcp_mentions mention
        JOIN messages m ON m.id=mention.message_id AND m.deleted_at IS NULL
+       LEFT JOIN messages posted ON posted.id=$3 AND posted.room_id=$2 AND posted.author_id=$1
        LEFT JOIN LATERAL (SELECT c.* FROM agent_commands c
          WHERE c.room_id=m.room_id AND c.agent_id=m.author_id AND c.turn_request_id=m.request_id
          ORDER BY c.created_at DESC,c.id DESC LIMIT 1) command ON true
        WHERE mention.member_id=$1 AND mention.room_id=$2 AND ($3::text IS NULL OR mention.message_id<>$3)
-       ORDER BY mention.seq DESC LIMIT 1`,
-      [memberId, roomId, messageId ?? null],
+       AND (COALESCE($4::text, posted.reply_to_message_id) IS NULL
+         OR mention.message_id=COALESCE($4::text, posted.reply_to_message_id))
+       ORDER BY mention.seq DESC LIMIT 1) provenance
+       WHERE provenance.reply_to IS NOT NULL
+         OR provenance.tagged_at BETWEEN COALESCE(provenance.posted_at, now()) - interval '5 minutes'
+                                    AND COALESCE(provenance.posted_at, now())`,
+      [memberId, roomId, messageId ?? null, replyTo ?? null],
     )).rows[0];
   });
 }
@@ -585,5 +594,5 @@ export async function routeMcpMemberPost(
   catch (error) { console.error('[rooms-mcp] provenance lookup failed; routing without a parent', error); }
   const parent = incoming?.command ? { ...incoming.command, agent_depth: incoming.command.agent_depth + 1 } : undefined;
   return routeAgentResult(db, parent, messageId,
-    { roomId, agentId: memberId, initialAgentDepth: incoming === null || incoming ? 1 : undefined });
+    { roomId, agentId: memberId, initialAgentDepth: 1 });
 }

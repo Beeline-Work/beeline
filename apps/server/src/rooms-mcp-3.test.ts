@@ -569,7 +569,7 @@ const scope2 = fixtureScope2(scope1);
       const fault = vi.spyOn(scope1.db, 'transaction').mockImplementation(work => transaction(async tx => {
         const query = tx.query.bind(tx);
         tx.query = ((sql: string, values?: unknown[]) => {
-          if (sql.includes('SELECT to_jsonb(command) command FROM rooms_mcp_mentions')) throw new Error('proof: provenance read failed');
+          if (sql.includes('SELECT to_jsonb(command) command, m.created_at tagged_at')) throw new Error('proof: provenance read failed');
           return query(sql, values);
         }) as typeof tx.query;
         return work(tx);

@@ -332,7 +332,9 @@ describe('corner message attribution', () => {
     const afterEcho = (await rootFixture.db.query<{ id: string }>(
       `SELECT id FROM agent_commands WHERE room_id=$1 AND agent_id=$2`, [C, B],
     )).rows.map(row => row.id);
-    expect(echoed).toMatchObject({ delivered: true, skipped: true });
+    expect(echoed).toMatchObject({ delivered: true });
+    expect((await commands(A, R)).find(command => command.id === echoed.id))
+      .toMatchObject({ private: true, source: { authorId: B, body: expect.stringContaining('failed: FAIL: the pull request is unchanged.') } });
     expect(afterEcho).toEqual(beforeEcho);
     await result(review!, 'FAIL: the pull request is unchanged.');
     const verdicted = new Set(afterEcho);

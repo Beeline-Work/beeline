@@ -142,13 +142,13 @@ export const MCP_AGENT_TOOLS: Tool[] = [
     address: address('Corner id.'), action: { type: 'string', enum: ['metadata', 'brief', 'install_brief'] }, reviewer: { type: 'string' },
     name: { type: 'string' }, objective: { type: 'string' }, brief, expectedRevision: { type: 'integer', minimum: 0 }, change: { type: 'string', maxLength: 1000 },
   }, ['address', 'action']),
-  tool('order', 'Privately assign one agent besides yourself. A Room address needs agent; a corner defaults to its implementer. The report returns to you: read it with list_mentions.', {
+  tool('order', 'Privately assign one agent besides yourself. A Room address needs agent; a corner defaults to its implementer. Corner reports return to the opening commander; read yours with list_mentions.', {
     address: address(), agent: { type: 'string', maxLength: 120 }, text: { type: 'string', minLength: 1, maxLength: 16000 },
   }, ['address', 'text']),
   tool('stop', 'Stop the running turn of an agent you ordered, or one working in a corner you opened.', {
     address: address(), agent: { type: 'string', maxLength: 120 },
   }, ['address']),
-  tool('report', 'Answer an order with its outcome to whoever ordered you. Answer chat requests with a tagged message instead. commandId binds the exact order. Without it, prefers an order at address, then a single pending order elsewhere; refuses an ambiguous fallback and lists waiting orders. Without an order, a corner address reports to its commander. Status and text prefix agree: done:, blocked:, failed:, needs-decision:.', {
+  tool('report', 'Report a corner outcome to its opening commander at the opening surface. Later chat requests get ordinary replies here. Room and DM order outcomes return to their sender. commandId binds the exact order. Without it, prefers an order at address, then a single pending order elsewhere; refuses an ambiguous fallback and lists waiting orders. Without an order, a corner address reports to its commander. Status and text prefix agree: done:, blocked:, failed:, needs-decision:.', {
     address: address(), status: { type: 'string', enum: ['done', 'blocked', 'failed', 'needs_decision'] },
     text: { type: 'string', minLength: 1, maxLength: 16000 }, ask: { type: 'string', maxLength: 140 },
   }, ['address', 'status', 'text']),

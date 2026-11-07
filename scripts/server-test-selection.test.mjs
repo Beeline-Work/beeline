@@ -59,8 +59,16 @@ test('the map CLI stamps the release SHA and rejects foreign-commit provenance',
     assert.equal(built.commit, sha);
     assert.deepEqual(built.provenance, { kind: 'release', runId: '123', commit: sha });
     rmSync(output);
-    args[args.indexOf('--commit') + 1] = `${sha[0] === '0' ? '1' : '0'}${sha.slice(1)}`;
-    assert.throws(() => execFileSync(process.execPath, args, { stdio: 'pipe' }), /Command failed/);
+    // CI may have only HEAD; create an unreferenced commit without requiring history.
+    args[args.indexOf('--commit') + 1] = execFileSync('git', ['commit-tree', 'HEAD^{tree}'], {
+      input: 'foreign release fixture\n', encoding: 'utf8',
+      env: { ...process.env, GIT_AUTHOR_NAME: 'Fixture', GIT_AUTHOR_EMAIL: 'fixture@example.invalid',
+        GIT_COMMITTER_NAME: 'Fixture', GIT_COMMITTER_EMAIL: 'fixture@example.invalid' },
+    }).trim();
+    assert.throws(() => execFileSync(process.execPath, args, { stdio: 'pipe' }), error => {
+      assert.match(error.stderr.toString(), /release coverage must describe the checked-out release SHA/);
+      return true;
+    });
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 

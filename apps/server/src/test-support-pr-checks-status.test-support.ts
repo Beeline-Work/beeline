@@ -367,12 +367,11 @@ export function fixtureScope2() {
         },
       }),
     ]);
-    const source = await systemLine(rootFixture.db, {
-      roomId: C,
-      authorId: H,
-      subject: { kind: 'person', id: H, name: 'Owner' },
-      verb: 'requested work',
-    });
+    const source = (await rootFixture.db.query<{ id: string }>(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation)
+       VALUES('no-ci-worker-request',$1,$2,'@author Finish the pull request','message') RETURNING id`,
+      [C,H],
+    )).rows[0]!;
     await createAgentCommand(rootFixture.db, {
       roomId: C,
       agentId: A,

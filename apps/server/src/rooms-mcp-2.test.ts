@@ -379,8 +379,9 @@ const scope1 = fixtureScope1();
       'Waking and reporting:',
       "start with the asker's exact @handle",
       'replyTo does not wake anyone',
-      'When you finish, are blocked, fail, or need a decision on a chat request, tag the agent or person who asked you (your commander) with the result.',
+      'When you finish, are blocked, fail, or need a decision on a chat request, tag the agent or person who asked you with the result.',
       'For orders under wakes, pass their id as commandId on tool calls; finish with report at that address, not a plain message.',
+      'Corner reports go one step up to the opener at the opening surface; later chat requests do not change the commander.',
       'Choose the terminal status',
       'server adds its status prefix',
       'A plain post or send_message without a tag wakes nobody',
@@ -395,13 +396,13 @@ const scope1 = fixtureScope1();
     const reportTool = tools.find(tool => tool.name === 'report')!;
     expect(reportTool.inputSchema.properties?.commandId).toMatchObject({ type: 'string', pattern: '^[0-9a-f]{64}$' });
     const report = reportTool.description;
-    expect(report).toContain('Answer an order');
+    expect(report).toContain('Report a corner outcome to its opening commander at the opening surface.');
     expect(report).toContain('commandId binds the exact order');
     expect(report).toContain('a single pending order elsewhere');
     expect(report).toContain('refuses an ambiguous fallback and lists waiting orders');
     expect(report).not.toContain('oldest pending order elsewhere');
     expect(report).toContain('done:, blocked:, failed:, needs-decision:');
-    expect(report).toContain('Answer chat requests with a tagged message instead');
+    expect(report).toContain('Later chat requests get ordinary replies here.');
   });
 
   it('hands finished local code to a corner implementer in every connected-app surface', async () => {

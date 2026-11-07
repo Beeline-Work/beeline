@@ -456,7 +456,7 @@ const scope1 = fixtureScope1();
     expect((await phoneFetch(scope1.origin + '/mcp', { headers: { authorization: `Bearer ${token}` } })).status).toBe(401);
   });
 
-  it.each([['send_message', 'recent'], ['post', 'recent'], ['send_message', 'old-reply'], ['send_message', 'old-fresh'], ['post', 'old-fresh']])('R1: MCP chain via %s (%s) wakes fresh requests and limits replies', async (replyTool, mode) => {
+  it.each([['send_message', 'recent'], ['post', 'recent'], ['send_message', 'old-reply'], ['post', 'old-reply'], ['send_message', 'old-fresh'], ['post', 'old-fresh']])('R1: MCP chain via %s (%s) wakes fresh requests and limits replies', async (replyTool, mode) => {
     const { client, grant, member } = await scope1.connected();
     await scope1.db.query(`UPDATE rooms_mcp_clients SET callback_url='https://hooks.example/loop' WHERE id=$1`, [grant.clientId]);
     const handle = (await scope1.db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
@@ -503,7 +503,7 @@ const scope1 = fixtureScope1();
       "UPDATE messages SET created_at=created_at-interval '10 hours' WHERE room_id=$1", [ROOM]);
     // R1: a fresh top-level request ten hours later must start a new chain.
     const reply = await client.callTool(replyTool === 'post'
-      ? { name: 'post', arguments: { address: ROOM, text: '@demo-agent step three' } }
+      ? { name: 'post', arguments: { address: ROOM, text: '@demo-agent step three', ...(mode === 'old-reply' ? { replyTo: tagging } : {}) } }
       : { name: 'send_message', arguments: { room: ROOM, text: '@demo-agent step three', ...(mode === 'old-reply' ? { replyTo: tagging } : {}) } });
     expect(reply.isError).not.toBe(true);
     const replyId = (await scope1.db.query<{ id: string }>(

@@ -286,7 +286,9 @@ export class RoomsMcpAgentTools {
     // tags in this turn count toward the same depth limit.
     let incoming: Awaited<ReturnType<typeof mcpProvenance>> | null = null;
     if (!order) try {
-      incoming = await mcpProvenance(this.db, member, roomId);
+      const replyTo = this.postReplyRouting.getStore();
+      incoming = await mcpProvenance(this.db, member, roomId, undefined,
+        typeof replyTo === 'string' ? replyTo : undefined);
     } catch (error) {
       console.error('[rooms-mcp] provenance lookup failed; starting the turn without a parent', error);
     }

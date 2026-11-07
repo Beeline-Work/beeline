@@ -557,28 +557,29 @@ export async function setMcpMemberWebhook(
 /**
  * The wake chain a member's reply continues: the helper command behind the
  * explicitly answered tag, or the latest tag within five minutes when no
- * reply link is available (including the MCP post tool). An unrelated later
+ * reply link is available. An unrelated later
  * request starts a new chain. Bounded, so a slow read cannot hold a wake.
  */
-export async function mcpProvenance(db: SqlDatabase, memberId: string, roomId: string, messageId?: string) {
+export async function mcpProvenance(db: SqlDatabase, memberId: string, roomId: string, messageId?: string, replyTo?: string) {
   return db.transaction(async tx => {
     await tx.query("SET LOCAL statement_timeout='2s'");
     return (await tx.query<{ command: CommandRow | null }>(
       `SELECT provenance.command FROM (
        SELECT to_jsonb(command) command, m.created_at tagged_at, posted.created_at posted_at,
-         posted.reply_to_message_id reply_to FROM rooms_mcp_mentions mention
+         COALESCE($4::text, posted.reply_to_message_id) reply_to FROM rooms_mcp_mentions mention
        JOIN messages m ON m.id=mention.message_id AND m.deleted_at IS NULL
        LEFT JOIN messages posted ON posted.id=$3 AND posted.room_id=$2 AND posted.author_id=$1
        LEFT JOIN LATERAL (SELECT c.* FROM agent_commands c
          WHERE c.room_id=m.room_id AND c.agent_id=m.author_id AND c.turn_request_id=m.request_id
          ORDER BY c.created_at DESC,c.id DESC LIMIT 1) command ON true
        WHERE mention.member_id=$1 AND mention.room_id=$2 AND ($3::text IS NULL OR mention.message_id<>$3)
-       AND (posted.reply_to_message_id IS NULL OR mention.message_id=posted.reply_to_message_id)
+       AND (COALESCE($4::text, posted.reply_to_message_id) IS NULL
+         OR mention.message_id=COALESCE($4::text, posted.reply_to_message_id))
        ORDER BY mention.seq DESC LIMIT 1) provenance
        WHERE provenance.reply_to IS NOT NULL
          OR provenance.tagged_at BETWEEN COALESCE(provenance.posted_at, now()) - interval '5 minutes'
                                     AND COALESCE(provenance.posted_at, now())`,
-      [memberId, roomId, messageId ?? null],
+      [memberId, roomId, messageId ?? null, replyTo ?? null],
     )).rows[0];
   });
 }

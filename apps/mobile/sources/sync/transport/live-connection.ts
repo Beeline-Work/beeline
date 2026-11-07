@@ -29,7 +29,7 @@ type PendingRequest = {
   read: boolean;
   socket?: WebSocket;
   resolve(value: unknown): void;
-  reject(reason: unknown): void;
+  reject(reason: unknown, transportFailed?: boolean): void;
 };
 type Dependencies = {
   authorization(): Promise<string>;
@@ -39,10 +39,19 @@ type Dependencies = {
   subscribeNetworkOnline?(listener: () => void): () => void;
 };
 let connectionFailed = false;
+let failureSession = 0;
+let outcomeSession = 0;
 const stateListeners = new Set<() => void>();
+const connectionFailure = () => connectionFailed && outcomeSession === failureSession;
+function resetConnectionFailure(): void {
+  // A new foreground/account session has no failed request outcome yet.
+  failureSession++;
+  for (const listener of stateListeners) listener();
+}
 function setConnectionFailure(failed: boolean): void {
-  if (connectionFailed === failed) return;
+  if (connectionFailure() === failed) return;
   connectionFailed = failed;
+  outcomeSession = failureSession;
   for (const listener of stateListeners) listener();
 }
 export function useConnectionFailure(): boolean {
@@ -51,7 +60,7 @@ export function useConnectionFailure(): boolean {
       stateListeners.add(listener);
       return () => stateListeners.delete(listener);
     },
-    () => connectionFailed,
+    connectionFailure,
     () => false,
   );
 }
@@ -106,20 +115,26 @@ export class LiveConnection {
   // An old screen's release must not hide a new identity's view of the same Room.
   private viewEpoch = 0;
   private disposed = false;
+  private foreground = AppState.currentState !== 'background' && AppState.currentState !== 'inactive';
   private readonly stopAppState: () => void;
   private readonly stopIdentity: () => void;
   private readonly stopNetwork: () => void;
 
   constructor(private readonly deps: Dependencies) {
+    resetConnectionFailure();
     const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') {
-        this.refreshRoom();
+      const foreground = state === 'active';
+      if (foreground !== this.foreground) {
+        this.foreground = foreground;
+        resetConnectionFailure();
       }
+      if (foreground) this.refreshRoom();
     });
     this.stopAppState = () => subscription.remove();
     this.stopNetwork = deps.subscribeNetworkOnline?.(() => this.refreshRoom()) ?? (() => {});
     this.stopIdentity = deps.subscribeIdentityChange(() => {
       this.identity++;
+      resetConnectionFailure();
       this.viewEpoch++;
       this.viewing.clear();
       this.dropConnection();
@@ -162,26 +177,18 @@ export class LiveConnection {
     options: RequestOptions = {},
   ): Promise<PhoneOperationMap[Name]['output']> {
     const identity = this.identity;
+    const session = failureSession;
     let failed: boolean | undefined;
     try {
-      const result = await this.sendRequest(operation, args, options);
-      failed = false;
-      return result as PhoneOperationMap[Name]['output'];
-    } catch (error) {
-      // A refusal is an answer. Publish an explicit transport failure on its
-      // first outcome; the next screen read or network-online event reconnects.
-      if (error instanceof PhoneSocketError) failed = false;
-      else if (!options.signal?.aborted &&
-        (error instanceof PhoneSocketDisconnectedError || error instanceof MonolithRequestTimeoutError))
-        failed = true;
-      throw error;
+      return await this.sendRequest(operation, args, options, (outcome) => {
+        failed = outcome;
+      }) as PhoneOperationMap[Name]['output'];
     } finally {
-      // The sole connection-banner trigger: an explicit socket request outcome.
-      if (failed !== undefined && identity === this.identity) {
-        const recovered = connectionFailed && !failed;
+      // Only this foreground session's explicit socket outcomes own the banner.
+      // Authorization, cancellation and old/background work cannot infer an outage.
+      if (failed !== undefined && !this.disposed && this.foreground && identity === this.identity && session === failureSession) {
+        const recovered = connectionFailure() && !failed;
         setConnectionFailure(failed);
-        // A failed request can leave an open socket (for example a write
-        // deadline). Its next answer recovers failed media on that socket too.
         if (recovered && isOpen(this.socket)) this.publishConnected();
       }
     }
@@ -197,18 +204,23 @@ export class LiveConnection {
     operation: string,
     args: unknown,
     options: RequestOptions,
+    outcome: (failed: boolean) => void,
   ): Promise<unknown> {
     if (options.signal?.aborted) return Promise.reject(this.abortError());
     // Native close callbacks can arrive late. Settle the old socket's requests
     // before admitting a replacement, so their deadlines cannot undo recovery.
-    if (this.socket && this.socket.readyState > 1) this.dropConnection();
+    if (this.socket && this.socket.readyState > 1) this.dropConnection(true);
     const id = String(++this.requestId);
     const read = (PHONE_READ_OPERATIONS as readonly string[]).includes(operation);
     return new Promise((resolve, reject) => {
+      let settled = false;
       const finish = () => {
+        if (settled) return false;
+        settled = true;
         clearTimeout(deadline);
         options.signal?.removeEventListener('abort', abort);
         this.requests.delete(id);
+        return true;
       };
       const request: PendingRequest = {
         frame: JSON.stringify({
@@ -219,11 +231,14 @@ export class LiveConnection {
         }),
         read,
         resolve: (value) => {
-          finish();
+          if (!finish()) return;
+          outcome(false);
           resolve(value);
         },
-        reject: (error) => {
-          finish();
+        reject: (error, transportFailed = false) => {
+          if (!finish()) return;
+          if (error instanceof PhoneSocketError) outcome(false);
+          else if (transportFailed) outcome(true);
           // A request deadline is not evidence that the shared socket closed.
           // Other requests (including a voice join) still own their answers.
           reject(error);
@@ -231,7 +246,10 @@ export class LiveConnection {
       };
       const abort = () => request.reject(this.abortError());
       const deadline = setTimeout(() => {
-        request.reject(Object.assign(new MonolithRequestTimeoutError(), { socketRequest: true }));
+        request.reject(
+          Object.assign(new MonolithRequestTimeoutError(), { socketRequest: true }),
+          Boolean(request.socket || this.socket),
+        );
       }, options.timeoutMs ?? 20_000);
       this.requests.set(id, request);
       options.signal?.addEventListener('abort', abort, { once: true });
@@ -260,7 +278,7 @@ export class LiveConnection {
   private ensureSocket(): Promise<void> {
     if (isOpen(this.socket)) return Promise.resolve();
     // A newly mounted screen can discover the same delayed native close.
-    if (this.socket && this.socket.readyState > 1) this.dropConnection();
+    if (this.socket && this.socket.readyState > 1) this.dropConnection(true);
     if (this.connecting) return this.connecting.promise;
     if (this.disposed) return Promise.reject(new PhoneSocketDisconnectedError());
     const identity = this.identity;
@@ -331,12 +349,12 @@ export class LiveConnection {
   private socketFailed(socket: WebSocket): void {
     if (this.socket !== socket) return;
     const waitingRead = [...this.requests.values()].some((request) => request.read);
-    this.dropConnection();
+    this.dropConnection(true);
     // An in-flight read receives the failure. An idle broken socket asks the
     // open screens to read, making the failed request and recovery visible.
     if (!waitingRead && AppState.currentState === 'active') this.refreshRoom();
   }
-  private dropConnection(): void {
+  private dropConnection(transportFailed = false): void {
     const socket = this.socket;
     this.socket = undefined;
     const connecting = this.connecting;
@@ -344,13 +362,13 @@ export class LiveConnection {
     connecting?.reject(new PhoneSocketDisconnectedError());
     socket?.close();
     for (const request of [...this.requests.values()])
-      request.reject(new PhoneSocketDisconnectedError());
+      request.reject(new PhoneSocketDisconnectedError(), transportFailed);
     this.paintOwners.clear();
     publishPhoneLiveEvent({ type: 'socket-dropped' });
     for (const listener of this.disconnected) listener();
   }
   reconnectNow(): void {
-    if (this.socket && this.socket.readyState > 1) this.dropConnection();
+    if (this.socket && this.socket.readyState > 1) this.dropConnection(true);
     if (!this.socket) void this.ensureSocket().catch(() => undefined);
   }
 
@@ -478,6 +496,7 @@ export class LiveConnection {
   dispose(): void {
     this.disposed = true;
     this.identity++;
+    resetConnectionFailure();
     this.dropConnection();
     this.stopAppState();
     this.stopIdentity();

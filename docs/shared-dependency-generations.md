@@ -40,3 +40,7 @@ Remaining fleet work: the shared main comparison checkout; cache/target consolid
 If the lockfile differs, the generation is stale, or required packages are missing, the helper installs into its fresh private worktree with `npm ci --prefix <path>`. The npm guard allows this only when the explicit target has no root dependencies and does not overlap any sealed dependency path. Existing managed trees remain protected. Installation failure stops preparation with a diagnostic explaining that neither reuse nor private installation succeeded.
 
 Reproduction `REVIEW-DEPS-1`: `node --import tsx scripts/prove-review-dependencies.mjs` exercises the real review helper and npm guard with detached fixture commits, a local npm tarball, workspace builds and tests that load the dependency. The matching lockfile skips installation; a changed lockfile installs privately. This is a stand-in for the production reviewer namespace.
+
+## Room checkout proof
+
+After `npm run build --workspace=@beeline/body`, run `npm run prove:room-checkout`. Reproduction `room-checkout-tools` uses the built helper, real npm workspace resolution and Git inside bubblewrap to demonstrate installed dependencies, unchanged-generation reuse, a private home worktree and refused writes to shared source. The fixture is isolated and removed afterward.

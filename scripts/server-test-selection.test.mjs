@@ -59,7 +59,7 @@ test('the map CLI stamps the release SHA and rejects foreign-commit provenance',
     assert.equal(built.commit, sha);
     assert.deepEqual(built.provenance, { kind: 'release', runId: '123', commit: sha });
     rmSync(output);
-    args[args.indexOf('--commit') + 1] = execFileSync('git', ['rev-parse', 'HEAD~1'], { encoding: 'utf8' }).trim();
+    args[args.indexOf('--commit') + 1] = `${sha[0] === '0' ? '1' : '0'}${sha.slice(1)}`;
     assert.throws(() => execFileSync(process.execPath, args, { stdio: 'pipe' }), /Command failed/);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });

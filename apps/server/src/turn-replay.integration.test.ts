@@ -63,7 +63,9 @@ it.each([
   let answeredTrigger=trigger;
   const abort = new AbortController(), scheduler = new AgentProcesses();
   let settled = false;
-  let interrupted = false;
+  let reportInterruption!: () => void, reportSettlement!: () => void;
+  const interruptionCommitted = new Promise<void>(resolve => { reportInterruption = resolve; });
+  const settlementCommitted = new Promise<void>(resolve => { reportSettlement = resolve; });
   let notifyCommands: ((commands: import('@beeline/api-contract/daemon').AgentCommand[]) => void) | undefined;
   let activeAuthority: Record<string,unknown> = {};
   const api = {
@@ -77,8 +79,13 @@ it.each([
       }
 
       const result = await executeOwned(name as never,input as never,AGENT);
-      if (name === 'postAgentTurnReceipt' && input.reasonKind === 'process-exited') interrupted = true;
-      else if (name === 'postAgentTurnReceipt' && input.status !== 'working') settled = true;
+      // Signal committed receipts so assertions follow database/harness
+      // completion independently of the worker's execution speed.
+      if (name === 'postAgentTurnReceipt' && input.reasonKind === 'process-exited') reportInterruption();
+      else if (name === 'postAgentTurnReceipt' && input.status !== 'working') {
+        settled = true;
+        reportSettlement();
+      }
       return result;
     },
     turnOwnershipScope:()=>source,
@@ -120,15 +127,16 @@ it.each([
     repository:{featureBranch:'feature/proof',targetBranch:'main',gitCommonDir:join(root,'.git')},
     onPoll:vi.fn(),onFailure:vi.fn(),onCloseRequested:vi.fn(async()=>undefined)});
   const running = loop.run();
+  const loopEnded = running.then(() => { throw new Error('turn loop ended before its receipt'); });
   try {
     if (crash) {
-      await vi.waitFor(() => expect(interrupted).toBe(true));
+      await Promise.race([interruptionCommitted, loopEnded]);
       expect(acp.startProcess).toHaveBeenCalledTimes(1);
       expect(prompts).toBe(1);
       expect(settled).toBe(false);
       expect((await db.query('SELECT state FROM agent_commands WHERE turn_request_id=$1',[trigger])).rows).toEqual([{state:'complete'}]);
       expect((await db.query('SELECT status FROM agent_turns WHERE request_id=$1',[trigger])).rows).toEqual([{status:'failed'}]);
-      expect((await db.query("SELECT 1 FROM messages WHERE room_id=$1 AND card_type='turn-failed'",[roomId])).rowCount).toBe(1);
+      expect((await db.query("SELECT 1 FROM messages WHERE room_id=$1 AND card_type='turn-failed' AND card->>'requestId'=$2",[roomId,trigger])).rowCount).toBe(1);
       const nudge = randomUUID();answeredTrigger=nudge;
       await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Continue with the interrupted work')`, [nudge,roomId,HUMAN]);
       await createAgentCommand(db, { roomId, agentId: AGENT, sourceMessageId: nudge, reason: 'human_tag' });
@@ -137,7 +145,7 @@ it.each([
       expect(notifyCommands).toBeTypeOf('function');
       notifyCommands?.(page.commands);
     }
-    await vi.waitFor(()=>expect(settled).toBe(true),{timeout:15000});
+    await Promise.race([settlementCommitted, loopEnded]);
     if (crash) expect(acp.startProcess).toHaveBeenCalledTimes(2);
     const rows = await db.query<{trigger_message_id:string;reply_message_ids:string[];outcome:string;trace:TurnReplay}>(
       `SELECT * FROM agent_turn_traces WHERE room_id=$1 AND agent_id=$2 AND request_id=$3`,[roomId,AGENT,answeredTrigger]);

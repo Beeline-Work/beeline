@@ -86,7 +86,7 @@ it.each(['report', 'postRoomMessage'] as const)('Reproduction FILE-HANDOFF: %s k
 });
 
 
-it('reports a later corner order to its actual orderer', async () => {
+it('reports a later corner order to the opening commander', async () => {
   const opened = await open();
   const OTHER = 'd'.repeat(64);
   await rootFixture.db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Other','other')`, [OTHER]);
@@ -127,9 +127,9 @@ it('reports a later corner order to its actual orderer', async () => {
   await claim(turn);
   await rootFixture.daemon.execute('report', { status: 'done', ...authority(turn), text: 'done: Other follow-up' }, WORKER);
   expect((await commands(DM, RUBY)).some((c) => c.source.body === 'done: Other follow-up')).toBe(
-    false,
+    true,
   );
-  expect((await commands(ROOM, OTHER)).some((c) => c.reason === 'report')).toBe(true);
+  expect((await commands(ROOM, OTHER)).some((c) => c.reason === 'report')).toBe(false);
 });
 
 it('keeps approval resume provenance and posts progress only in the corner', async () => {

@@ -4,6 +4,7 @@ import { createHash, generateKeyPairSync } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, rmSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
 import { parse } from 'yaml';
 import { releaseChannel, channelComponents, promotionSource } from './release-channel.mjs';
 import { initializeRelease, planOutputs, restoreReleasePlan, applyJobFacts, applyComponentCheckpoints, checkpointsFromJobs } from './unified-release.mjs';
@@ -250,6 +251,34 @@ test('Pages preserves stable website and latest bytes while serving next beside 
   assert.deepEqual(JSON.parse(readFileSync(join(outputRoot, 'dl/manifest.json'))), latest);
   assert.deepEqual(JSON.parse(readFileSync(join(outputRoot, 'dl/next/manifest.json'))), next);
   assert.deepEqual(readFileSync(join(outputRoot, 'index.html')), readFileSync('web/index.html'));
+  const html = readFileSync(join(outputRoot, 'index.html'), 'utf8');
+  const imagePath = 'og-4-bold-color-v2.png';
+  const imageUrl = `https://usebeeline.app/${imagePath}`;
+  assert.ok(html.includes(`<meta property="og:image" content="${imageUrl}">`));
+  assert.ok(html.includes(`<meta name="twitter:image" content="${imageUrl}">`));
+  assert.ok(html.includes('<meta name="twitter:card" content="summary_large_image">'));
+  const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+  const committedHash = hash(readFileSync(join('web', imagePath)));
+  assert.equal(committedHash, '6342a59cfe7ac6d1bc811e1643aa3e3594023e8052227f33bf85a8af40245f94');
+  assert.equal(hash(readFileSync(join(outputRoot, imagePath))), committedHash);
+  const server = createServer((request, response) => {
+    const image = request.url === `/${imagePath}`;
+    response.setHeader('Content-Type', image ? 'image/png' : 'text/html');
+    response.end(readFileSync(join(outputRoot, image ? imagePath : 'index.html')));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const servedHtml = await (await fetch(origin)).text();
+    assert.equal(servedHtml, html);
+    const publicImage = new URL(servedHtml.match(/property="og:image" content="([^"]+)"/)[1]);
+    const servedImage = await fetch(`${origin}${publicImage.pathname}`);
+    assert.equal(servedImage.status, 200);
+    assert.equal(servedImage.headers.get('content-type'), 'image/png');
+    assert.equal(hash(Buffer.from(await servedImage.arrayBuffer())), committedHash);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
   assert.deepEqual(readFileSync(join(outputRoot, 'dl/next/beeline-linux-x64.tar.gz')), readFileSync(join(nextDir, 'beeline-linux-x64.tar.gz')));
 }));
 

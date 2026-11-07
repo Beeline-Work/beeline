@@ -127,11 +127,15 @@ const fixture = monolithFixture();
     });
     expect(created.status).toBe(200);
     const { cornerId } = (await created.json()) as { cornerId: string };
+    const replyRequest = 'retired-peer-human-request';
+    const sourceId = createHash('sha256').update(replyRequest).digest('hex');
+    await fixture.database.query(`INSERT INTO messages(id,room_id,author_id,text,presentation)
+      VALUES($1,$2,$3,'@peer Can you answer this?','message')`, [sourceId, cornerId, HUMAN]);
     expect(
       (
         await fixture.daemonOperation(
           'postRoomMessage',
-          { roomId: cornerId, text: '@owner I last answered this person.' },
+          { roomId: cornerId, requestId: replyRequest, text: '@owner I last answered this person.' },
           peerToken,
         )
       ).status,

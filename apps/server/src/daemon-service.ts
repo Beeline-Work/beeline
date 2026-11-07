@@ -203,7 +203,7 @@ export class DaemonService {
   async commands(input: Input<'postAgentCommands'>, agentId: string) { return daemonCommands(this, input, agentId); }
   async modelCatalog(input: Input<'postAgentModelCatalog'>, agentId: string) { return daemonModelCatalog(this, input, agentId); }
   async machineReport(input: Input<'postAgentMachineReport'>, agentId: string) { return daemonMachineReport(this, input, agentId); }
-  async report(text: string, agentId: string, command = this.authorizedCommand!, database = this.database, automatic = false, status?: unknown, ask?: string, to?: unknown) { return daemonReport(this, text, agentId, command, database, automatic, status, ask, to); }
+  async report(text: string, agentId: string, command = this.authorizedCommand!, database = this.database, automatic = false, status?: unknown, ask?: string) { return daemonReport(this, text, agentId, command, database, automatic, status, ask); }
   async watchCorner(input: Input<'watchCorner'>, agentId: string): Promise<Output<'watchCorner'>> { return daemonWatchCorner(this, input, agentId); }
   async cornerRemote(input: Input<'postCornerRemoteState'>, agentId: string) { return daemonCornerRemote(this, input, agentId); }
   async cornerPlan(input: Input<'postCornerPlan'>, agentId: string) { return daemonCornerPlan(this, input, agentId); }

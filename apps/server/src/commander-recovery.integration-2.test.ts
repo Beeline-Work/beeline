@@ -26,7 +26,7 @@ it('keeps the originating corner waiting for a decision returned to its parent R
     RUBY,
   );
   const turn = await worker(opened.cornerId);
-  await rootFixture.daemon.execute(
+  const workerReport = await rootFixture.daemon.execute(
     'report',
     { status: 'needs_decision', ...authority(turn), ask: 'Which endpoint should we use?', text: 'needs-decision: choose endpoint' },
     WORKER,
@@ -38,6 +38,8 @@ it('keeps the originating corner waiting for a decision returned to its parent R
     { status: 'needs_decision', ...authority(returned), ask: 'Which endpoint should we use?', text: 'needs-decision: choose endpoint @captain' },
     RUBY,
   );
+  expect((await rootFixture.db.query(`SELECT private_payload->>'waitingAnswered' answered
+    FROM agent_commands WHERE id=$1`, [workerReport.id])).rows).toEqual([{ answered: null }]);
   expect(
     (await rootFixture.db.query(`SELECT 1 FROM corner_owed WHERE corner_id=$1`, [opened.cornerId])).rowCount,
   ).toBe(1);
@@ -64,7 +66,7 @@ it('keeps the originating corner waiting for a decision returned to its parent R
   expect(
     (await rootFixture.db.query(`SELECT 1 FROM corner_owed WHERE corner_id=$1`, [opened.cornerId])).rowCount,
   ).toBe(0);
-  expect(await state()).toBe('waiting');
+  expect(await state()).toBe('idle');
   await rootFixture.phone.execute(
     'sendRoomMessage',
     { roomId: opened.cornerId, messageId: randomBytes(32).toString('hex'), text: 'Use endpoint v2' },
@@ -74,8 +76,8 @@ it('keeps the originating corner waiting for a decision returned to its parent R
   await rootFixture.db.query('SELECT corner_owed_refresh($1,$2)', [opened.cornerId, HUMAN]);
   expect(await state()).toBe('idle');
   await rootFixture.db.query(
-    `UPDATE messages SET deleted_at=now() WHERE room_id=$1 AND text IN ('Use endpoint v2','@ruby Use endpoint v2')`,
-    [opened.cornerId],
+    `UPDATE messages SET deleted_at=now() WHERE room_id=ANY($1::uuid[]) AND text IN ('Use endpoint v2','@ruby Use endpoint v2')`,
+    [[opened.cornerId, ROOM]],
   );
   expect(await state()).toBe('waiting');
 });

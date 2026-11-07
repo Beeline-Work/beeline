@@ -24,31 +24,7 @@ import { daemonAccess, daemonIdentity } from './access.js';
 import { daemonCheckReviewerAuthors } from './corner-reads.js';
 
 
-  export async function daemonReport(ctx: DaemonContext, text: string, agentId: string, command = ctx.authorizedCommand!, database = ctx.database, automatic = false, status?: unknown, ask?: string, to?: unknown) {
-    let reportCommand = command;
-    let directRecipient: string | undefined;
-    if (to !== undefined) {
-      const target = typeof to === 'string' ? to.replace(/^@/, '') : '';
-      const recipient = (await database.query<{ id: string }>(
-        `SELECT identity.id FROM room_access member JOIN identities identity ON identity.id=member.identity_id
-         WHERE member.room_id=$1 AND member.removed_at IS NULL AND (identity.id=$2 OR identity.handle=$2)`,
-        [command.room_id, target],
-      )).rows[0];
-      if (!recipient) throw new CommandRefusalError('report to must name a current member handle or id', 400);
-      const selected = (await database.query<CommandRow>(
-        `SELECT directed.* FROM agent_commands directed
-         LEFT JOIN messages source ON source.id=directed.source_message_id
-         LEFT JOIN identities author ON author.id=source.author_id
-         WHERE directed.room_id=$1 AND directed.agent_id=$2 AND (
-           (directed.private_payload->>'kind'='order' AND directed.private_payload->>'authorId'=$3)
-           OR (directed.private_payload IS NULL AND source.author_id=$3 AND author.kind='human'
-             AND source.system_event IS NULL AND source.presentation='message'))
-         ORDER BY directed.created_at DESC,directed.id DESC LIMIT 1`, [command.room_id, agentId, recipient.id],
-      )).rows[0];
-      // The named recipient selects its latest recorded return route.
-      if (selected) reportCommand = selected;
-      else directRecipient = recipient.id;
-    }
+  export async function daemonReport(ctx: DaemonContext, text: string, agentId: string, command = ctx.authorizedCommand!, database = ctx.database, automatic = false, status?: unknown, ask?: string) {
     if (!automatic) {
       text = text.replace(/^(?:done|blocked|failed|needs[-_]decision):\s*/, '');
       if (!['done', 'blocked', 'failed', 'needs_decision'].includes(String(status)) || !text.trim())
@@ -100,8 +76,8 @@ import { daemonCheckReviewerAuthors } from './corner-reads.js';
       seen.add(id);
       return true;
     });
-    const result = await reportToCommander(database, command.room_id, agentId, text, reportCommand,
-      createHash('sha256').update(`report:${command.id}:${command.generation_id}:${reportCommand.id}:${directRecipient ?? ""}:${text}:${ask ?? ""}:${JSON.stringify(uniqueAttachments)}`).digest('hex'), { attachments: uniqueAttachments, automatic, ask, directRecipient });
+    const result = await reportToCommander(database, command.room_id, agentId, text, command,
+      createHash('sha256').update(`report:${command.id}:${command.generation_id}:${text}:${ask ?? ""}:${JSON.stringify(uniqueAttachments)}`).digest('hex'), { attachments: uniqueAttachments, automatic, ask });
     if (result.skipped || ('delivered' in result && !result.delivered)) return result;
     for (const attachment of pending) await database.query(
       `DELETE FROM agent_pending_attachments WHERE room_id=$1 AND agent_id=$2 AND id=$3`,

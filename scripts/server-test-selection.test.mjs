@@ -73,7 +73,10 @@ test('the map CLI stamps the release SHA and rejects foreign-commit provenance',
     assert.deepEqual(built.provenance, { kind: 'release', runId: '123', commit: sha });
     rmSync(output);
     args[args.indexOf('--commit') + 1] = previous;
-    assert.throws(() => run(args), /release coverage must describe the checked-out release SHA/);
+    assert.throws(() => run(args), error => {
+      assert.match(error.stderr.toString(), /release coverage must describe the checked-out release SHA/);
+      return true;
+    });
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 

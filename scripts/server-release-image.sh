@@ -17,7 +17,7 @@ if [ "$mode" = prebuild ]; then
     --build-arg BEELINE_RELEASE_VERSION=development --build-arg "BEELINE_RELEASE_SHA=$sha" \
     --image-label "source-$sha" --build-only --push --yes
 elif [ "$mode" = release ]; then
-  [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'invalid server release version' >&2; exit 1; }
+  [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]] || { echo 'invalid server release version' >&2; exit 1; }
   label="${version#v}-${sha:0:12}"
   release_image="registry.fly.io/beeline-server:$label"
   if docker pull "$source_image"; then

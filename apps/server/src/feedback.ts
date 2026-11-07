@@ -100,7 +100,7 @@ function feedbackItemId(): string {
 }
 
 /** The helper release and the phone's reported release share this shape. */
-const RELEASE_VERSION = /^v\d+\.\d+\.\d+$/;
+const RELEASE_VERSION = /^v\d+\.\d+\.\d+(?:-rc\.\d+)?$/;
 const HARNESS_NAME = /^[a-z][a-z0-9_-]{0,31}$/;
 const APP_PLATFORMS = new Set(['ios', 'android', 'web', 'macos', 'windows', 'linux']);
 

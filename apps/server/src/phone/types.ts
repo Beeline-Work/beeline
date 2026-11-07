@@ -90,6 +90,9 @@ export interface AgentTurnRow {
 }
 
 export interface MemberRow extends IdentityRow {
+  selected_model?: string | null;
+  model_catalog?: AgentDetailView['catalog'] | null;
+  mcp_client?: McpClientIdentity | null;
   role: 'owner' | 'admin' | 'member' | 'spectator';
   presence_body: { status: 'online' | 'offline'; observedAt: number; held?: unknown } | null;
   presence_updated_at: Date | null;

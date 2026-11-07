@@ -178,10 +178,12 @@ import { reviveDates, selectedModelLabel, projectAgentPresence } from './read-pr
     const rows = await ctx.database.query<MemberRow>(
       `SELECT i.id,
          i.kind,i.name,i.handle,i.avatar,
-         i.face_id,
+         i.face_id,agent.selected_model,agent.model_catalog,
+         ${mcpClientIdentitySql('i.id')} mcp_client,
          COALESCE(workspace_member.role,m.role) role,NULL::jsonb presence_body,
          NULL::timestamptz presence_updated_at
        FROM memberships m JOIN identities i ON i.id=m.identity_id
+       LEFT JOIN agents agent ON agent.agent_id=i.id
        LEFT JOIN memberships workspace_member ON workspace_member.workspace_id=m.workspace_id
          AND workspace_member.room_id IS NULL AND workspace_member.identity_id=m.identity_id
          AND workspace_member.removed_at IS NULL
@@ -220,11 +222,18 @@ import { reviveDates, selectedModelLabel, projectAgentPresence } from './read-pr
   }
 
   export function phoneProjectMembers(ctx: PhoneContext, rows: readonly MemberRow[], roomId: string | null): RoomViewMember[] {
-    return rows.map((row) => ({
-      identity: identity(row, ctx.publicOrigin),
-      role: row.role,
-      ...(row.presence_body && row.presence_updated_at
-        ? { presence: projectAgentPresence(row.presence_body, row.presence_updated_at, roomId) }
-        : {}),
-    }));
+    return rows.map((row) => {
+      const model = row.kind === 'agent'
+        ? row.mcp_client ? mcpClientName(row.mcp_client.name, row.mcp_client.redirects)
+          : selectedModelLabel(row.selected_model ?? null, row.model_catalog ?? [])
+        : undefined;
+      return {
+        identity: identity(row, ctx.publicOrigin),
+        role: row.role,
+        ...(model ? { model } : {}),
+        ...(row.presence_body && row.presence_updated_at
+          ? { presence: projectAgentPresence(row.presence_body, row.presence_updated_at, roomId) }
+          : {}),
+      };
+    });
   }

@@ -193,6 +193,7 @@ export function readMember(value: unknown): RoomViewMember | null {
   return {
     identity,
     role: role as RoomViewMember['role'],
+    ...field('model', identity.kind === 'agent' && typeof item.model === 'string' ? item.model : undefined),
     ...field('presence', readPresence(item.presence)),
   };
 }

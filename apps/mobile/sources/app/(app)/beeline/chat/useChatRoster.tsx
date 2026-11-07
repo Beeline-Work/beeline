@@ -319,16 +319,16 @@ export function useChatRoster([
 
   // Agents carry their model and owner, people their Room role, for the
   // roster sheet and @-mention menu.
-  /** Each agent's model as its Workspace profile holds it — the one source
-   *  every agent byline reads, step rows and replies alike. */
+  /** Room reads carry current labels even before the optional Workspace picker
+   *  has been opened. Held Workspace rows support older servers and past authors. */
   const agentProfileModelByPubkey = useStable(useMemo(
-    () =>
-      new Map(
-        (workspaceRoster?.agents ?? []).flatMap((agent) =>
-          agent.model ? [[agent.identity.pubkey, agent.model] as const] : [],
-        ),
+    () => new Map(
+      [...(workspaceRoster?.agents ?? []), ...(roomSurface?.members ?? [])].flatMap((member) =>
+        member.identity.kind === 'agent' && member.model
+          ? [[member.identity.pubkey, member.model] as const] : [],
       ),
-    [workspaceRoster],
+    ),
+    [workspaceRoster, roomSurface?.members],
   ), sameMessageRefMap);
 
   const describedRoomParticipants = useMemo(() => {

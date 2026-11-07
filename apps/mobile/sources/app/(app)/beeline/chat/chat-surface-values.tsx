@@ -57,10 +57,10 @@ export const COMPOSER_MAX_HEIGHT = COMPOSER_MAX_INPUT_HEIGHT;
 // or content height minus viewport height on the ordinary desktop list.
 export const TAIL_PIN_THRESHOLD = 50;
 
-// Rows the inverted phone list draws in its first render (FlatList's
-// `initialNumToRender`). A source landing scrolls only to a row this close to
-// the newest end; the store narrows the window for one further back.
-export const PHONE_FIRST_RENDER_ROWS = 2;
+// Keep earlier phone rows in the initial, retained FlatList window. Two
+// short rows can leave earlier messages blank while arrivals move the batched
+// window. Source landings also use this immediately available row budget.
+export const PHONE_FIRST_RENDER_ROWS = 10;
 
 // Open on the tail of a long transcript instead of the full history, then
 // page older messages in as the reader scrolls up.

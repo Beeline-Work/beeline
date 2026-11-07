@@ -1,0 +1,25 @@
+{
+  "before": {
+    "samplesMs": [
+      31.915105670690536,
+      26.74323895573616,
+      17.31401315331459,
+      22.572193324565887
+    ],
+    "medianMs": 24.657716140151024,
+    "maximumMs": 31.915105670690536,
+    "initialRows": 2
+  },
+  "after": {
+    "samplesMs": [
+      101.01714450120926,
+      89.45363119244576,
+      88.14434105157852,
+      74.97169896960258
+    ],
+    "medianMs": 88.79898612201214,
+    "maximumMs": 101.01714450120926,
+    "initialRows": 10
+  },
+  "scope": "React Profiler phone transcript subtree mount, repeated process restart then fixed proof Room open; grouped arms, four retained samples each; first attempt per arm excluded because it retains the preceding thinking-line Room mount. Not tap-to-paint or physical-device latency."
+}

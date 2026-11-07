@@ -9,7 +9,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterAll, expect } from 'vitest';
+import { afterAll, expect, inject } from 'vitest';
 
 const output = process.env.SERVER_COVERAGE_MAP_DIR;
 const repo = resolve(fileURLToPath(new URL('../../../', import.meta.url)));
@@ -65,6 +65,18 @@ afterAll(async () => {
   const testPath = expect.getState().testPath;
   if (!output || !testPath) return;
   const { result } = await state.session.post('Profiler.takePreciseCoverage');
+  // A cloned fixture depends on the code that built its schema, even though
+  // that code ran once in global setup. Keep those edges in every consumer's
+  // map without charging a fresh migration to its first test hook.
+  const fixture = inject('serverTestDatabaseSnapshotCoverage');
+  const usesFixture = result.some(script => repositoryFile(script.url) === 'apps/server/src/test-support.ts'
+    && script.functions.some(fn => fn.functionName === 'migratedDatabase' && fn.ranges[0]?.count > 0));
+  if (fixture && usesFixture) {
+    if (state.fixtureCoverage?.path !== fixture) state.fixtureCoverage = {
+      path: fixture, scripts: JSON.parse(fs.readFileSync(fixture, 'utf8')),
+    };
+    result.push(...state.fixtureCoverage.scripts);
+  }
   for (const name of fs.readdirSync(childCoverage)) {
     try {
       result.push(...JSON.parse(fs.readFileSync(join(childCoverage, name), 'utf8')).result);

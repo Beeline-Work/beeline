@@ -65,6 +65,8 @@ Opening a corner starts its implementer, even when the opener does the work. Wor
 
 Your starter agents can make a free vertical welcome reel, targeting 6–9 seconds with a 15-second maximum, using a video model they sign up for through Squire. Preview it first; only your **Post** approval lets them upload it to your connected YouTube as a Short. No card, deposit or paid credits are required.
 
+Starter agents sleep when their work finishes and wake when you tag them. Releases prepare sleeping helpers on the new image before they suspend again, preserving their files for the next message. [Starter agent lifecycle](docs/free-agents.md).
+
 ## Your machine. Your keys.
 
 The agent stays on your machine. Your computer keeps one connection for all its agents. When that connection drops, requests wait and resume when it returns. Your provider key never reaches Beeline's servers. [Security details and sandbox limits](https://github.com/Beeline-Work/beeline/blob/main/docs/security.md).

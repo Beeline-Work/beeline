@@ -5,10 +5,10 @@ by its creator, when the owner has room for both under the free-agent limit.
 Otherwise #general explains where the existing starter agents live and why a
 new team was not created.
 Existing Workspaces and the operator single-agent addition keep their existing
-behavior. Each agent runs on its own small Fly Machine in the `beeline-free-agents` app, which sleeps after
-a minute without work. People who only join an existing Workspace by invite get
+behavior. Each agent runs on its own small Fly Machine in the `beeline-free-agents` app, which sleeps when
+its work finishes. People who only join an existing Workspace by invite get
 none. Code: `apps/server/src/free-agents.ts`, `free-agent-model-proxy.ts`,
-`fly-machines.ts`; helper `apps/body/src/free-agent-vm.ts`, `free-agent-idle.ts`;
+`fly-machines.ts`; helper `apps/body/src/free-agent-vm.ts`;
 image `infra/free-agent/`.
 
 New starter teammates are named **Beebee** and **Luna**, using `@beebee` and
@@ -59,19 +59,23 @@ soul. Existing free agents keep their names.
   stops an old fallback helper after five minutes plus ten seconds; installer
   attempts are bounded to two minutes. Establishing the runtime cancels both
   startup watchdogs.
-- **Sleep.** The helper admits one idle episode at `POST /v1/free-agents/sleep` 60 s after the
-  last turn ends. The server refuses while a wake is pending or a connector
-  install/sign-in is active. The same connector work is checked at that request;
-  completion, failure or disconnect releases that protection. A refused or uncertain helper request stays parked until actual activity
-  or resume starts a new idle episode. Otherwise the server records
+- **Sleep.** Authenticated helper connections, committed command updates and
+  connector reports admit a sleep check through `FreeAgentService.subscribeToWakes`.
+  The server refuses while any command is pending or claimed, or a connector
+  install/sign-in is active. Completion, failure or disconnect releases that
+  protection on its own committed event. Otherwise the server records
   `sleeping` and asks Fly to suspend the Machine. Suspend failures are reported
   without falling back to a cold stop. A helper behind the announced release
   asks for `refresh`: the server boots it on the configured image immediately,
   so installation happens before the next message. The refreshed helper connects
-  and uses its normal idle boundary to suspend. Image promotion runs
+  and its connection event admits suspension once no work remains. Image promotion runs
   `--refresh-free-agents` to warm existing stopped or outdated sleeping Machines;
-  active helpers reconcile the image at their next idle boundary. The helper
-  never updates in place.
+  active helpers reconcile the image when their work finishes. There is no idle
+  countdown, polling, periodic sweep or timed retry. The legacy helper sleep
+  endpoint remains available. Confirmed Fly suspension checks for work that
+  arrived during the snapshot and admits one resume, including a command already
+  claimed by the still-serving helper. Removal, stop and budget fences remain.
+  The helper never updates in place.
 - **Wake.** The Fly adapter submits one start request per admitted action. HTTP 412 and lost replies return to the owner without a timer or resubmission (`fly-machines.test.ts`). Before starting an existing Machine, the server compares its image
   with the configured published digest and updates it while keeping its complete
   configuration and persistent rootfs. Cold boot reconciles the broker marker
@@ -84,17 +88,14 @@ soul. Existing free agents keep their names.
   actual request. Wakes are never
   suppressed for an offline Machine (`agentMachineOfflineSql` exempts free agents). A
   released connection keeps presence `online`, `held`, `asleep`, so mentions never get
-  "its helper is offline". On resume the helper sees the wall clock jump past its
-  monotonic clock. It then replaces its socket at once (`LiveLink.reconnectNow`).
+  "its helper is offline". `LiveLink` owns the machine socket; an actual socket
+  close admits reconnection.
   For every agent, dispatch also writes a working turn before helper pickup.
   A helper claim replaces the reserved `pending:<command id>` generation in
   that same row. Claimed work belongs to its connection until it reports a result.
   A disconnect returns unfinished commands to pending without a failure notice.
   The next connection claims them again; no pickup or silence timer ends a turn.
   Delayed wakes paint when released; passive computer observations stay silent.
-- **Reaper (leader).** A running Machine with no work for 5 minutes is stopped. A
-  Machine with no activity for 30 days is deleted. A later wake recreates it from the
-  sealed keys (its files are gone).
 - **Removal.** The existing Members remove action admits the agent owner or a
   Workspace owner/admin. Removal from any Workspace retires the free-agent runtime,
   matching the existing global daemon retirement. Its transaction keeps a permanent `removed_at` tombstone,
@@ -323,8 +324,15 @@ digest, and stages that digest as `FLY_FREE_AGENT_IMAGE` before the release's
 existing server rollout. Each server receives it during that rollout; no
 post-release job restarts server Machines. Publication failure stops the leg
 before deployment. After rollout, the leg verifies the setting on each server
-and refreshes the free-agent helpers. A fully shipped rerun skips image
-publication and server updates. `scripts/build-free-agent-image.sh` builds the
+and refreshes every eligible sleeping Machine. Fly exec uses the absolute
+`/app/apps/server/dist/index.js` entrypoint and checks the JSON remote exit code;
+flyctl's local exit status does not reflect remote command failure. The refresh
+logs selected, started, unchanged and failed counts. A fully shipped rerun skips
+image publication and server updates but still verifies and refreshes helpers,
+so a partial refresh failure cannot be hidden by an already-shipped server.
+`free-agent-refresh.test.ts` covers 32 sleepers, exclusion fences, partial
+failure, connection-driven suspension and subsequent warm wake.
+`scripts/build-free-agent-image.sh` builds the
 same image by hand.
 `npm run prove:free-agent:docker-machines` stands in for the Machines API with
 Docker for a local end-to-end run (suspend = `docker pause`). `npm run

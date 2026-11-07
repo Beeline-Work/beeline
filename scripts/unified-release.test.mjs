@@ -102,7 +102,8 @@ test('free-agent image publication stages its digest before the sole server roll
   const rollout = steps.findIndex(step => step.name?.startsWith('Canary one Machine'));
   const verify = steps.findIndex(step => step.name?.startsWith('Verify the free starter image'));
   assert.ok(publish < stage && stage < rollout && rollout < verify);
-  for (const index of [publish, stage, verify]) assert.equal(steps[index].if, "steps.fleet.outputs.shipped != 'true'");
+  for (const index of [publish, stage]) assert.equal(steps[index].if, "steps.fleet.outputs.shipped != 'true'");
+  assert.equal(steps[verify].if, undefined, 'a shipped server must not hide a failed helper refresh on rerun');
   const updates = steps.filter(step => /flyctl machine update/.test(step.run ?? ''));
   assert.equal(updates.length, 1);
   assert.equal(updates[0], steps[rollout]);
@@ -120,13 +121,20 @@ test('free-agent image publication stages its digest before the sole server roll
 printf '%s\\n' "$*" >> "$CALLS"
 case "$1 $2" in
   'machine list') printf '%s\\n' '[{"id":"one","state":"started"},{"id":"two","state":"started"}]' ;;
-  'machine exec') if [ "$6" = 'printenv FLY_FREE_AGENT_IMAGE' ]; then printf '%s\\n' "\${ACTUAL_IMAGE:-$IMAGE_REF}"; fi ;;
+  'machine exec')
+    if [ "$6" = 'printenv FLY_FREE_AGENT_IMAGE' ]; then
+      printf '%s\\n' "\${ACTUAL_IMAGE:-$IMAGE_REF}"
+    else
+      # Model Fly's independent remote and local exit codes, including omitempty.
+      printf '%s\\n' "$EXEC_RESULT"
+      exit "\${FLY_EXIT:-0}"
+    fi ;;
 esac
 `, { mode: 0o755 });
     const output = join(root, 'output');
     const env = { ...process.env, PATH: `${root}/bin:${process.env.PATH}`, RUNNER_TEMP: root,
       RELEASE_SHA: releaseSha, RELEASE_VERSION: 'v1.2.3', GITHUB_OUTPUT: output,
-      IMAGE_REF: image, CALLS: join(root, 'calls') };
+      IMAGE_REF: image, EXEC_RESULT: '{"stdout":"refreshed"}', CALLS: join(root, 'calls') };
     execFileSync('bash', ['-c', steps[publish].run], { cwd: root, env });
     assert.equal(readFileSync(output, 'utf8').trim(), `image_ref=${image}`);
     execFileSync('bash', ['-c', steps[stage].run], { cwd: root, env });
@@ -138,6 +146,21 @@ esac
     assert.match(calls, /machine exec one --app beeline-server printenv FLY_FREE_AGENT_IMAGE/);
     assert.match(calls, /machine exec two --app beeline-server printenv FLY_FREE_AGENT_IMAGE/);
     assert.match(calls, /--refresh-free-agents/);
+    assert.match(calls, /machine exec one --app beeline-server --json --timeout 120 node \/app\/apps\/server\/dist\/index.js --refresh-free-agents/);
+    // The command must work without Docker's /app WORKDIR, and remote failures
+    // must fail the release even when flyctl reports local success.
+    for (const receipt of ['{"exit_code":1,"stderr":"MODULE_NOT_FOUND"}',
+      '{"exit_code":1,"stderr":"Free-agent image refresh failed: one Machine refused"}', 'not-json', 'null']) {
+      assert.throws(() => execFileSync('bash', ['-c', steps[verify].run], {
+        cwd: root, env: { ...env, EXEC_RESULT: receipt }, stdio: 'pipe',
+      }), /Command failed/);
+    }
+    assert.throws(() => execFileSync('bash', ['-c', steps[verify].run], {
+      cwd: root, env: { ...env, FLY_EXIT: '1', EXEC_RESULT: '{}' }, stdio: 'pipe',
+    }), /Command failed/);
+    execFileSync('bash', ['-c', steps[verify].run], {
+      cwd: root, env: { ...env, IMAGE_REF: '', ACTUAL_IMAGE: image, EXEC_RESULT: '{"exit_code":0}' },
+    });
     assert.throws(() => execFileSync('bash', ['-c', steps[verify].run], {
       cwd: root, env: { ...env, ACTUAL_IMAGE: 'older-image' }, stdio: 'pipe',
     }), /Command failed/);

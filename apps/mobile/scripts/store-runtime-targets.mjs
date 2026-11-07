@@ -1,7 +1,7 @@
 // Store publication, not an OTA or upload receipt, admits a retention slot.
 export const runtimeKey = ({ platform, runtimeVersion }) => `${platform}@${runtimeVersion}`;
 
-export function storeRuntimeTargets({ pins, stores, previouslyLive = [], previousTargets = [] }) {
+export function storeRuntimeTargets({ pins, stores, previouslyLive = [], previousTargets = [], channel = 'production' }) {
   const result = [];
   for (const platform of ['android', 'ios']) {
     const pin = pins[platform];
@@ -18,6 +18,13 @@ export function storeRuntimeTargets({ pins, stores, previouslyLive = [], previou
     const selected = store?.status === 'readable'
       ? (anchor ? [{ platform, runtimeVersion: anchor }, ...older.map(runtimeVersion => ({ platform, runtimeVersion }))] : [])
       : retained;
+    if (channel === 'next') {
+      // Keep every previously served runtime if this additional audience could
+      // not be read, plus any beta runtimes independently proved live now.
+      if (store?.warnings?.length) selected.push(...previousTargets.filter(t => t.platform === platform));
+      selected.push(...live);
+      selected.push(...(store?.betaLive ?? []));
+    }
     for (const target of selected) {
       if (target.platform !== platform || !/^\d+$/.test(target.runtimeVersion)) {
         throw new Error(`Invalid store runtime: ${runtimeKey(target)}`);

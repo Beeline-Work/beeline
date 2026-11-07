@@ -626,6 +626,14 @@ concurrency group and has a `dry_run` mode.
   The `next` channel reads both `applications/app.usebeeline/tracks/production/releases`
   and `tracks/beta/releases`, using their
   `PUBLISHED` lifecycle state (not edit-track `completed`, which can await review).
+  Beta runtimes are added alongside the production retention window; they
+  never replace its anchor or enter production publication history. Each Play
+  track is read independently with an explicit JSON response format, so an
+  unreadable production response cannot hide a readable beta build (or vice
+  versa). Empty and malformed responses retain recorded targets and produce
+  an Actions warning and an OTA warning section in the release summary, with
+  the track, endpoint, HTTP status and response format when available. There
+  are no retries. Latest continues to read production alone.
   ASC uses distributed iOS versions and their exact build identities. Build
   numbers map to runtime pins through the committed
   `apps/mobile/store/native-runtime-builds.json`, the store builds recorded in

@@ -53,25 +53,38 @@ function publishedWindow(platform, numbers, historicalNumbers, builds) {
   return records;
 }
 
+async function readPlayTrack(track, token, fetchImpl) {
+  const url = `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/app.usebeeline/tracks/${track}/releases?alt=json`;
+  const response = await fetchImpl(url, {
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+    signal: AbortSignal.timeout(30_000),
+  });
+  // Consume the body once and wait for completion. An empty/truncated success
+  // response is a failed observation, never proof that a track has no users.
+  const context = `Play ${track} GET ${url} HTTP ${response.status}`;
+  let body;
+  try { body = await response.text(); }
+  catch { throw new Error(`${context}: response body read failed`); }
+  if (!response.ok) throw new Error(context);
+  if (!body.trim()) throw new Error(`${context}: empty response body`);
+  let payload;
+  try { payload = JSON.parse(body); }
+  catch {
+    throw new Error(`${context}: invalid JSON (${response.headers.get('content-type') ?? 'unknown content type'}, ${body.length} characters)`);
+  }
+  return playLiveBuilds(payload, track);
+}
+
 export async function readStores({ builds, env = process.env, fetchImpl = fetch, appleApi } = {}) {
   const stores = {};
   await Promise.all(['android', 'ios'].map(async platform => {
     let numbers = [];
+    let playToken;
     const historicalNumbers = [];
     try {
       if (platform === 'android') {
-        const token = await mintAccessToken(env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON, { fetchImpl });
-        // Next's Play beta binary can have a runtime not yet in production.
-        // Include both tracks so every installed dogfood phone receives OTA.
-        const tracks = env.BEELINE_RELEASE_CHANNEL === 'next' ? ['production', 'beta'] : ['production'];
-        for (const track of tracks) {
-          const response = await fetchImpl(`https://androidpublisher.googleapis.com/androidpublisher/v3/applications/app.usebeeline/tracks/${track}/releases`, {
-            headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(30_000),
-          });
-          if (!response.ok) throw new Error(`Play ${track} HTTP ${response.status}`);
-          numbers.push(...playLiveBuilds(await response.json(), track));
-        }
-        numbers = [...new Set(numbers)];
+        playToken = await mintAccessToken(env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON, { fetchImpl });
+        numbers = [...new Set(await readPlayTrack('production', playToken, fetchImpl))];
       } else {
         const appleEnv = env.EXPO_ASC_API_KEY_P8?.includes('-----BEGIN')
           ? { ...env, EXPO_ASC_API_KEY_P8: Buffer.from(env.EXPO_ASC_API_KEY_P8).toString('base64') } : env;
@@ -100,8 +113,21 @@ export async function readStores({ builds, env = process.env, fetchImpl = fetch,
       const newest = [...live].sort((a, b) => newestBuildFirst(a.buildNumber, b.buildNumber))[0];
       stores[platform] = { status: 'readable', live, historical, latestRuntimeVersion: newest?.runtimeVersion, buildNumbers: numbers };
     } catch (error) {
-      stores[platform] = { status: 'unavailable', reason: error.message,
+      stores[platform] = { status: 'unavailable',
+        reason: platform === 'android' ? `Play production runtime lookup failed: ${error.message}` : error.message,
         buildNumbers: numbers, historicalBuildNumbers: historicalNumbers };
+    }
+    // Beta is an additional audience, not the production retention anchor.
+    // Read it even if production failed; neither track can discard the other
+    // track's verified runtimes. A failed observation retains recorded targets.
+    if (platform === 'android' && env.BEELINE_RELEASE_CHANNEL === 'next' && playToken) {
+      try {
+        const betaNumbers = await readPlayTrack('beta', playToken, fetchImpl);
+        stores.android.betaLive = resolveStoreBuilds('android', betaNumbers, builds)
+          .map(target => ({ ...target, observedLiveAt: new Date().toISOString() }));
+      } catch (error) {
+        stores.android.warnings = [`Play beta runtime lookup failed: ${error.message}`];
+      }
     }
   }));
   return stores;

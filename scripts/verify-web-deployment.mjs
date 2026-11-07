@@ -20,7 +20,7 @@ export async function verifyWebDeployment({
     fail(`web verification origin must be ${WEB_APP_ORIGIN}`);
   }
   const expected = JSON.parse(await readFile(expectedReleasePath, 'utf8'));
-  if (!/^v\d+\.\d+\.\d+$/.test(expected.version ?? '')) fail('invalid expected web version');
+  if (!/^v\d+\.\d+\.\d+(?:-rc\.\d+)?$/.test(expected.version ?? '')) fail('invalid expected web version');
   if (!/^[0-9a-f]{7,64}$/.test(expected.sourceSha ?? '')) fail('invalid expected web sourceSha');
 
   let lastError = 'no response';

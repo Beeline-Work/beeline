@@ -66,6 +66,34 @@ async function fixture() {
   return database;
 }
 
+it.each([OWNER, OTHER_AGENT, null, AGENT])('Reproduction schedule-report-owner: scheduled report reaches owner %s once', async (owner) => {
+  const database = await fixture();
+  try {
+    await database.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)', [AGENT, OWNER]);
+    const daemon = new DaemonService(database, new LiveHub());
+    const scheduleId = randomUUID();
+    await database.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,owner_id,cadence,message,max_runs,next_run_at)
+      VALUES($1,$2,$3,$4,$4,$5,'{"kind":"interval","everyMinutes":1}','Check work',1,now()-interval '1 second')`,
+      [scheduleId, WORKSPACE, ROOM, AGENT, owner]);
+    expect(await new AgentScheduleLoop(database).runOnce()).toBe(1);
+    const [command] = (await daemon.execute('getAgentCommands', { roomId: ROOM }, AGENT)).commands;
+    await daemon.execute('claimAgentCommand', { roomId: ROOM, commandId: command!.id, generationId: 'schedule-proof' }, AGENT);
+    const authority = { roomId: ROOM, requestId: command!.turnRequestId, generationId: 'schedule-proof' };
+    await daemon.execute('postCornerMessage', { ...authority, cornerId: ROOM, text: 'Work posted' }, AGENT);
+    await expect(daemon.execute('report', { ...authority, status: 'done', text: 'Work complete' }, AGENT))
+      .resolves.toMatchObject({ delivered: true });
+    if (owner !== OTHER_AGENT) {
+      const phone = new PhoneService(database, new LiveHub());
+      expect((await phone.readRoom(ROOM, OWNER))!.messages.filter(row => row.text === 'done: Work complete'))
+        .toHaveLength(1);
+    } else {
+      expect((await database.query("SELECT agent_id FROM agent_commands WHERE reason='report'")).rows)
+        .toEqual([{ agent_id: OTHER_AGENT }]);
+      expect((await database.query("SELECT 1 FROM messages WHERE text='done: Work complete'")).rowCount).toBe(0);
+    }
+  } finally { await database.close(); }
+});
+
 describe('agent schedule cadence', () => {
   it('keeps interval cadence while skipping missed occurrences', () => {
     const cadence: RoomScheduleCadence = { kind: 'interval', everyMinutes: 5 };

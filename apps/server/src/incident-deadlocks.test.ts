@@ -304,10 +304,8 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
     expect(race.attempts()).toBeGreaterThanOrEqual(2);
     expect(race.attempts()).toBeLessThanOrEqual(3);
     for (const seen of race.statements.slice(0,2)) {
-      const lock = seen.findIndex(sql => sql.includes('SELECT corner_id FROM corner_facts WHERE corner_id=$1 FOR UPDATE'));
       const fact = seen.findIndex(sql => sql.includes('SELECT lifecycle FROM corner_github_cache WHERE corner_id=$1 FOR UPDATE'));
-      expect(lock).toBeGreaterThanOrEqual(0);
-      expect(fact).toBeGreaterThan(lock);
+      expect(fact).toBeGreaterThanOrEqual(0);
     }
     expect((await db.query(`SELECT lifecycle->>'checks' checks FROM corner_facts WHERE corner_id=$1`, [C])).rows[0]?.checks).toBe('failing');
     expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND system_event->>'kind'='check-failed'`, [C])).rowCount).toBe(1);

@@ -4,9 +4,6 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const contractRoot = 'apps/server/contracts/';
-// Already-applied, unrelated migrations are outside this repair's scope. The
-// two incident columns are deliberately absent and may never be grandfathered.
-const legacyDrops = JSON.parse(readFileSync(new URL('./rollout-schema-baseline.json', import.meta.url), 'utf8'));
 const serverFile = file => file.startsWith('apps/server/src/') && file.endsWith('.ts') && !/\.test\.ts$|test-support|\/fixtures\/|\/test-fixtures\//.test(file);
 const git = (...args) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
 
@@ -48,14 +45,11 @@ function readsColumn(source, table, column) {
 }
 
 export function schemaProblems(current, previous) {
-  const priorDrops = new Set(Object.values(previous).flatMap(columnDrops));
   const runtimeTrees = [['previous release', previous], ['candidate', current]].map(([revision, tree]) =>
     [revision, Object.entries(tree).filter(([name]) => serverFile(name)).map(([name, text]) => [name, runtimeSql(text)])]);
   const problems = [];
   for (const [file, source] of Object.entries(current)) {
     for (const drop of columnDrops(source)) {
-      if (!file.startsWith(contractRoot) && !['corner_facts.owner_agent_id', 'github_star_prompts.reached_milestone'].includes(drop) &&
-          (priorDrops.has(drop) || legacyDrops.includes(drop))) continue;
       const [table, column] = drop.split('.');
       for (const [revision, tree] of runtimeTrees) {
         const readers = tree.filter(([, sql]) => {

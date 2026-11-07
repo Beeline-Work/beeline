@@ -81,10 +81,9 @@ END;
 $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS clear_replied_room_mention ON messages;
 CREATE TRIGGER clear_replied_room_mention AFTER INSERT ON messages
-  FOR EACH ROW WHEN (NEW.reply_to_message_id IS NOT NULL AND NEW.presentation='message')
+  FOR EACH ROW WHEN (((NEW.reply_to_message_id IS NOT NULL) AND (NEW.presentation = 'message'::text)))
   EXECUTE FUNCTION clear_replied_room_mention();
 
-DROP TABLE IF EXISTS rooms_mcp_pending_routes;
 -- A client-supplied idempotency key returns the first message it already posted.
 CREATE TABLE IF NOT EXISTS rooms_mcp_idempotency (
   member_id text NOT NULL,
@@ -183,9 +182,10 @@ ALTER TABLE rooms_mcp_event_subscriptions ADD COLUMN IF NOT EXISTS event_name te
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='rooms_mcp_event_subscriptions_event_name') THEN
     ALTER TABLE rooms_mcp_event_subscriptions ADD CONSTRAINT rooms_mcp_event_subscriptions_event_name
-      CHECK (event_name IN ('mention','wake'));
+      CHECK (event_name IN ('mention','wake')) NOT VALID;
   END IF;
 END $$;
+ALTER TABLE rooms_mcp_event_subscriptions VALIDATE CONSTRAINT rooms_mcp_event_subscriptions_event_name;
 CREATE TABLE IF NOT EXISTS rooms_mcp_event_deliveries (
   subscription_id text NOT NULL REFERENCES rooms_mcp_event_subscriptions(id) ON DELETE CASCADE,
   message_id text NOT NULL, room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -208,11 +208,12 @@ DO $$ BEGIN
   END IF;
 END $$;
 ALTER TABLE rooms_mcp_event_deliveries ALTER COLUMN message_id DROP NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS rooms_mcp_event_deliveries_pkey ON rooms_mcp_event_deliveries(event_id);
 DO $$ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint WHERE conrelid='rooms_mcp_event_deliveries'::regclass AND contype='p'
   ) THEN
-    ALTER TABLE rooms_mcp_event_deliveries ADD CONSTRAINT rooms_mcp_event_deliveries_pkey PRIMARY KEY (event_id);
+    ALTER TABLE rooms_mcp_event_deliveries ADD CONSTRAINT rooms_mcp_event_deliveries_pkey PRIMARY KEY USING INDEX rooms_mcp_event_deliveries_pkey;
   END IF;
 END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS rooms_mcp_event_deliveries_message
@@ -222,7 +223,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS rooms_mcp_event_deliveries_command
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='rooms_mcp_event_deliveries_subject') THEN
     ALTER TABLE rooms_mcp_event_deliveries ADD CONSTRAINT rooms_mcp_event_deliveries_subject
-      CHECK ((message_id IS NOT NULL) <> (command_id IS NOT NULL));
+      CHECK ((message_id IS NOT NULL) <> (command_id IS NOT NULL)) NOT VALID;
   END IF;
 END $$;
+ALTER TABLE rooms_mcp_event_deliveries VALIDATE CONSTRAINT rooms_mcp_event_deliveries_subject;
 `;

@@ -1,5 +1,4 @@
 import { VOICE_SCHEMA } from './voice-schema.js';
-import { retireWorkspaceBansSql } from './membership-join.js';
 import { messageSearchDocumentSql } from './message-search-document-sql.js';
 export const DATABASE_SCHEMA_WORKFLOW_BACKFILLS = `
 CREATE TABLE IF NOT EXISTS workflow_backfills (
@@ -26,7 +25,6 @@ DROP TRIGGER IF EXISTS beeline_agent_schedule_due ON identities;
 -- completion changes it to false and follows the account across devices.
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS welcome_cards_due boolean;
 ALTER TABLE identities ALTER COLUMN welcome_cards_due SET DEFAULT true;
-ALTER TABLE identities DROP COLUMN IF EXISTS tour_seen_tips;
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS speaking_speed double precision NOT NULL DEFAULT 1.15 CHECK (speaking_speed IN (1.15,1.3,1.5));
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS push_level text NOT NULL DEFAULT 'attention';
 ALTER TABLE identities DROP CONSTRAINT IF EXISTS identities_push_level_check;
@@ -53,9 +51,10 @@ END $push_tiers$;
 ALTER TABLE identities ALTER COLUMN push_level SET DEFAULT 'attention';
 DO $$ BEGIN
   ALTER TABLE identities ADD CONSTRAINT identities_push_level_check
-    CHECK(push_level IN ('off','attention','full'));
+    CHECK(push_level IN ('off','attention','full')) NOT VALID;
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
+ALTER TABLE identities VALIDATE CONSTRAINT identities_push_level_check;
 
 CREATE TABLE IF NOT EXISTS identity_external_links (
   provider text NOT NULL,
@@ -165,7 +164,6 @@ UPDATE workspaces SET internal=true WHERE NOT internal AND id IN (
 );
 
 -- Retired: empty in production on 2026-11-02 and written by nothing on main.
-DROP TABLE IF EXISTS service_review_notice_deliveries;
 CREATE TABLE IF NOT EXISTS service_review_visits (
   agent_id text,
   run_id text,
@@ -228,14 +226,10 @@ CREATE TABLE IF NOT EXISTS memberships (
   joined_at timestamptz NOT NULL DEFAULT now(),
   removed_at timestamptz
 );
--- Workspace bans are retired: a human is removed instead, and a removed
--- person simply needs a fresh invite to rejoin (the invite itself is now
--- single-use). Existing ban rows become plain removals before the table goes,
--- so no banned person is restored by the drop.
-${retireWorkspaceBansSql()}
+-- Retired ban rows remain for rollout storage compatibility. Deployment does
+-- not apply them again to people who have since received a fresh invite.
 DROP TRIGGER IF EXISTS membership_workspace_ban ON memberships;
 DROP FUNCTION IF EXISTS enforce_workspace_ban();
-DROP TABLE IF EXISTS workspace_bans;
 ALTER TABLE memberships DROP CONSTRAINT IF EXISTS memberships_role_check;
 ALTER TABLE memberships ADD CONSTRAINT memberships_role_check CHECK(role IN ('owner','admin','member','spectator'));
 ALTER TABLE memberships ADD COLUMN IF NOT EXISTS identity_profile jsonb;
@@ -309,7 +303,6 @@ CREATE TABLE IF NOT EXISTS usage_accounts (
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS usage_account_id bigint REFERENCES usage_accounts(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS agents_usage_account ON agents(usage_account_id) WHERE usage_account_id IS NOT NULL;
 -- Retired: never non-empty in production; nothing reads it since schedules moved to the server.
-ALTER TABLE agents DROP COLUMN IF EXISTS schedule_ids;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_mode boolean NOT NULL DEFAULT true;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_by text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_at timestamptz;
@@ -386,7 +379,6 @@ CREATE TABLE IF NOT EXISTS computer_sessions (
 CREATE INDEX IF NOT EXISTS computer_sessions_room_idx ON computer_sessions(room_id);
 CREATE INDEX IF NOT EXISTS computer_sessions_agent_idx ON computer_sessions(agent_id);
 ALTER TABLE computer_sessions ADD COLUMN IF NOT EXISTS view_secret bytea;
-ALTER TABLE computer_sessions DROP COLUMN IF EXISTS last_frame;
 -- A Squire share link has an absolute expiry. Rows without one never expire.
 ALTER TABLE computer_sessions ADD COLUMN IF NOT EXISTS expires_at timestamptz;
 CREATE INDEX IF NOT EXISTS computer_sessions_live_expiry_idx ON computer_sessions(expires_at)
@@ -435,7 +427,6 @@ CREATE TABLE IF NOT EXISTS needs_you_marks (
 -- cascade-delete.
 CREATE INDEX IF NOT EXISTS needs_you_marks_message_idx ON needs_you_marks(message_id);
 CREATE INDEX IF NOT EXISTS needs_you_marks_workspace_idx ON needs_you_marks(workspace_id);
-DROP TABLE IF EXISTS pending_mention_notices;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS agent_hop_count integer NOT NULL DEFAULT 0;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS system_event jsonb;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
@@ -481,7 +472,6 @@ CREATE TRIGGER messages_search_document_trg
 -- was that frozen list, and it drifted: a handle renamed, a member removed, or a
 -- person joining after the fact left stored ids that no longer matched the words
 -- anybody could see. Deriving on read is the only way the two can never disagree.
-ALTER TABLE messages DROP COLUMN IF EXISTS mention_ids;
 -- Kinded events retain their committed cause, first root and causal distance.
 -- These trace fields are derived by the server.
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS event_cause_id text;
@@ -500,7 +490,6 @@ CREATE INDEX IF NOT EXISTS messages_room_page_idx ON messages(room_id, created_a
 CREATE INDEX IF NOT EXISTS messages_request_idx ON messages(room_id, request_id) WHERE request_id IS NOT NULL;
 
 -- Retired: empty in production on 2026-11-02 and written by nothing on main.
-DROP TABLE IF EXISTS legacy_room_events;
 
 CREATE TABLE IF NOT EXISTS agent_turns (
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -535,7 +524,6 @@ ALTER TABLE agent_turns ADD CONSTRAINT agent_turns_output_tokens_check
 ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS started_at timestamptz;
 UPDATE agent_turns SET started_at=created_at WHERE started_at IS NULL;
 ALTER TABLE agent_turns ALTER COLUMN started_at SET DEFAULT now();
-ALTER TABLE agent_turns ALTER COLUMN started_at SET NOT NULL;
 -- 'cancelled' joined the vocabulary when the requester gained a stop control.
 -- A table created before that carries the older three-word CHECK, and a CHECK
 -- is not IF NOT EXISTS-able by definition: drop the constraint by its

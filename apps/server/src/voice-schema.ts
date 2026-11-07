@@ -1,6 +1,5 @@
 export const VOICE_SCHEMA = `
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS chosen_voices jsonb NOT NULL DEFAULT '{}'::jsonb;
-ALTER TABLE workspaces DROP COLUMN IF EXISTS voice_provider;
 UPDATE agents SET chosen_voices = CASE
   WHEN chosen_voices ? 'aura-2' THEN jsonb_build_object('aura-2', chosen_voices->'aura-2')
   ELSE '{}'::jsonb END
@@ -27,7 +26,6 @@ CREATE TABLE IF NOT EXISTS voice_participants (
 ALTER TABLE voice_participants ADD COLUMN IF NOT EXISTS parked_at timestamptz;
 ALTER TABLE voice_participants ADD COLUMN IF NOT EXISTS session_id text NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS voice_participants_identity_idx ON voice_participants(identity_id);
-DROP TABLE IF EXISTS voice_daily_usage;
 CREATE TABLE IF NOT EXISTS voice_workspace_usage (
   workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   -- Retain charged time even when the call or its Room is deleted.

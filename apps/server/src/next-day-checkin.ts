@@ -8,5 +8,4 @@ DO $$ BEGIN
  FROM agent_commands command WHERE command.state='pending' AND command.id IN (SELECT command_id FROM next_day_checkins);
  END IF;
 END $$;
-DROP TABLE IF EXISTS next_day_checkins,next_day_checkin_candidates;
 `;

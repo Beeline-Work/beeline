@@ -25,8 +25,6 @@ CREATE TABLE IF NOT EXISTS operator_system_dm_deliveries (
  PRIMARY KEY(send_id,recipient_id)
 );
 -- Retired copies: the hash was never compared and the count is the send's delivery rows.
-ALTER TABLE operator_system_dm_sends DROP COLUMN IF EXISTS text_hash;
-ALTER TABLE operator_system_dm_sends DROP COLUMN IF EXISTS recipient_count;
 CREATE INDEX IF NOT EXISTS operator_system_dm_pending ON operator_system_dm_deliveries(send_id,recipient_id)
  WHERE state='pending';
 CREATE OR REPLACE FUNCTION beeline_operator_system_dm_pending() RETURNS trigger AS $$

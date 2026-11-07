@@ -134,7 +134,7 @@ it('reads only a valid saved Aura choice', () => {
   expect(savedAuraVoice({})).toBeUndefined();
 });
 
-it('drops the old provider column and CHECK idempotently while preserving saved Aura voices', async () => {
+it('retains the old provider column during release overlap while preserving saved Aura voices', async () => {
   await db.query(`ALTER TABLE workspaces ADD COLUMN voice_provider text NOT NULL DEFAULT 'aura-2'
     CHECK (voice_provider IN ('aura-2', 'retired-provider'))`);
   await db.query(`UPDATE agents SET chosen_voices=$2::jsonb WHERE agent_id=$1`,
@@ -144,7 +144,8 @@ it('drops the old provider column and CHECK idempotently while preserving saved 
   await db.query(VOICE_SCHEMA);
   await db.query(VOICE_SCHEMA);
   expect((await db.query(`SELECT column_name FROM information_schema.columns
-    WHERE table_name='workspaces' AND column_name='voice_provider'`)).rows).toEqual([]);
+    WHERE table_name='workspaces' AND column_name='voice_provider'`)).rows)
+    .toEqual([{ column_name: 'voice_provider' }]);
   expect((await db.query(`SELECT chosen_voices FROM agents WHERE agent_id=$1`, [a])).rows[0]?.chosen_voices)
     .toEqual({ 'aura-2': 'apollo' });
   expect((await db.query(`SELECT chosen_voices FROM agents WHERE agent_id=$1`, [b])).rows[0]?.chosen_voices)

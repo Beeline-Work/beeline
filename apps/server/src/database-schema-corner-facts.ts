@@ -28,23 +28,12 @@ DROP TRIGGER IF EXISTS corner_follows_facts_update ON corner_facts;
 DROP TRIGGER IF EXISTS corner_attention_head ON corner_facts;
 DROP TRIGGER IF EXISTS corner_attention_open ON corner_facts;
 DROP TRIGGER IF EXISTS corner_state_facts ON corner_facts;
-DROP TABLE IF EXISTS corner_validation_stages, corner_attention_flags, corner_pr_closures,
-  corner_branch_deletions, corner_report_blockers, corner_attention_spans, automatic_report_wakes;
 DROP INDEX IF EXISTS corner_facts_opened_from_idx;
 DROP INDEX IF EXISTS corner_facts_owner_agent_idx;
 DROP INDEX IF EXISTS corner_facts_commissioned_by_idx;
 DROP INDEX IF EXISTS corner_facts_workflow_land_idx;
 ALTER TABLE corner_facts DROP CONSTRAINT IF EXISTS corner_facts_kind_check;
 ALTER TABLE corner_facts DROP CONSTRAINT IF EXISTS corner_facts_lane_check;
-ALTER TABLE corner_facts
-  DROP COLUMN IF EXISTS plan, DROP COLUMN IF EXISTS review_handback_head, DROP COLUMN IF EXISTS review_handback_count,
-  DROP COLUMN IF EXISTS command_check_state, DROP COLUMN IF EXISTS worker_agent_id,
-  DROP COLUMN IF EXISTS merge_attempt_head, DROP COLUMN IF EXISTS workflow_state, DROP COLUMN IF EXISTS workflow_outcome,
-  DROP COLUMN IF EXISTS feature_branch, DROP COLUMN IF EXISTS close_requested, DROP COLUMN IF EXISTS kind,
-  DROP COLUMN IF EXISTS commissioned_by, DROP COLUMN IF EXISTS opened_from_corner_id, DROP COLUMN IF EXISTS request_id,
-  DROP COLUMN IF EXISTS open_idempotency_key, DROP COLUMN IF EXISTS title_generated, DROP COLUMN IF EXISTS objective,
-  DROP COLUMN IF EXISTS updated_at, DROP COLUMN IF EXISTS feedback_triage, DROP COLUMN IF EXISTS lane;
-ALTER TABLE rooms DROP COLUMN IF EXISTS reviewer_class, DROP COLUMN IF EXISTS reviewer_fallback_ids;
 
 -- GitHub's display cache for a corner (PR, checks, mergeability), written only
 -- from GitHub and helper remote-state reports. Disposable: it is never corner
@@ -145,7 +134,6 @@ CREATE TABLE IF NOT EXISTS corner_app_bindings (
 );
 
 -- Check verdicts come from GitHub's statusCheckRollup. Retire the old webhook-derived cache.
-DROP TABLE IF EXISTS corner_check_facts;
 
 CREATE TABLE IF NOT EXISTS corner_merge_approvals (
   corner_id uuid PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
@@ -156,8 +144,6 @@ CREATE TABLE IF NOT EXISTS corner_merge_approvals (
 );
 ALTER TABLE corner_merge_approvals ADD COLUMN IF NOT EXISTS pull_request_number integer;
 ALTER TABLE corner_merge_approvals ADD COLUMN IF NOT EXISTS head_sha text;
-ALTER TABLE corner_merge_approvals DROP COLUMN IF EXISTS patch_id;
-ALTER TABLE corner_merge_approvals DROP COLUMN IF EXISTS force, DROP COLUMN IF EXISTS brief_revision;
 
 CREATE TABLE IF NOT EXISTS invites (
   token_hash text PRIMARY KEY,
@@ -252,9 +238,6 @@ ALTER TABLE object_expirations
   ADD COLUMN IF NOT EXISTS retention_hours integer NOT NULL DEFAULT 24;
 
 -- The bytea media store is retired: person files share the objects/Tigris path.
-DROP TABLE IF EXISTS legacy_media_urls;
-DROP TABLE IF EXISTS media;
-DROP TABLE IF EXISTS media_expirations;
 
 CREATE TABLE IF NOT EXISTS github_installations (
   installation_id bigint PRIMARY KEY,
@@ -288,7 +271,6 @@ ALTER TABLE github_repositories ADD COLUMN IF NOT EXISTS private boolean;
 -- turn, since GitHub merges on the same green-checks signal that wakes it.
 ALTER TABLE github_repositories ADD COLUMN IF NOT EXISTS allow_auto_merge boolean;
 
-DROP TABLE IF EXISTS github_head_checks;
 
 -- First confirmed link per person and Workspace, without repository or message content.
 -- Keeping Workspace scope prevents a fixture success masking a later real success.
@@ -338,9 +320,6 @@ CREATE TABLE IF NOT EXISTS github_webhook_deliveries (
   received_at timestamptz NOT NULL DEFAULT now()
 );
 -- The old payload shape: NULL on every row in production on 2026-11-02.
-ALTER TABLE github_webhook_deliveries DROP COLUMN IF EXISTS event_type;
-ALTER TABLE github_webhook_deliveries DROP COLUMN IF EXISTS payload;
-ALTER TABLE github_webhook_deliveries DROP COLUMN IF EXISTS processed_at;
 
 CREATE TABLE IF NOT EXISTS push_devices (
   token text PRIMARY KEY,
@@ -356,10 +335,8 @@ ALTER TABLE push_devices ADD COLUMN IF NOT EXISTS web_keys jsonb;
 ALTER TABLE push_devices ADD COLUMN IF NOT EXISTS registered_at timestamptz;
 UPDATE push_devices SET registered_at=updated_at WHERE registered_at IS NULL;
 ALTER TABLE push_devices ALTER COLUMN registered_at SET DEFAULT now();
-ALTER TABLE push_devices ALTER COLUMN registered_at SET NOT NULL;
 CREATE INDEX IF NOT EXISTS push_devices_identity_idx ON push_devices(identity_id);
 
-DROP TABLE IF EXISTS push_read_clears;
 -- No longer read or written; it stays for rolling-update compatibility.
 ALTER TABLE room_read_marks ADD COLUMN IF NOT EXISTS read_at timestamptz;
 CREATE INDEX IF NOT EXISTS room_read_marks_identity_read_idx
@@ -409,7 +386,6 @@ CREATE TABLE IF NOT EXISTS workspace_deletion_notices (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 -- The name is read from workspace_deletions.
-ALTER TABLE workspace_deletion_notices DROP COLUMN IF EXISTS workspace_name;
 CREATE INDEX IF NOT EXISTS workspace_deletion_notices_identity_idx
   ON workspace_deletion_notices(identity_id, created_at);
 
@@ -522,8 +498,14 @@ DO $$ BEGIN
   IF (SELECT array_length(conkey,1) FROM pg_constraint
       WHERE conrelid='signin_funnel_events'::regclass AND contype='p') <> 5 THEN
     ALTER TABLE signin_funnel_events DROP CONSTRAINT signin_funnel_events_pkey;
+  END IF;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS signin_funnel_events_pkey
+  ON signin_funnel_events(install_id,attempt_id,event,provider,screen);
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='signin_funnel_events'::regclass AND contype='p') THEN
     ALTER TABLE signin_funnel_events ADD CONSTRAINT signin_funnel_events_pkey
-      PRIMARY KEY(install_id,attempt_id,event,provider,screen);
+      PRIMARY KEY USING INDEX signin_funnel_events_pkey;
   END IF;
 END $$;
 ALTER TABLE signin_funnel_events DROP CONSTRAINT IF EXISTS signin_funnel_events_event_check;
@@ -605,7 +587,6 @@ ALTER TABLE push_delivery_claims ADD CONSTRAINT push_delivery_claims_status_chec
   CHECK (status IN ('claimed', 'delivered', 'failed', 'suppressed', 'retryable', 'uncertain'));
 
 -- Release announcements and their queued device-registration replays are retired.
-DROP TABLE IF EXISTS push_release_catchups;
 
 CREATE TABLE IF NOT EXISTS device_update_receipts (
   identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
@@ -627,5 +608,4 @@ CREATE TABLE IF NOT EXISTS agent_pending_attachments (
   size integer NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
-ALTER TABLE agent_pending_attachments ALTER COLUMN size TYPE integer USING size::integer;
 `;

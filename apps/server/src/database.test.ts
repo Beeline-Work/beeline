@@ -2,7 +2,7 @@ import { CornerAccessDatabase, CommandScopedDatabase, describe, expect, it, vi, 
 
 
 
-it('removes installed Tray clocks and unused provider effects while source writes still work', async () => {
+it('R-RELEASE-OVERLAP: preserves installed Tray clocks and old notification writes during deployment', async () => {
   const database = await migratedDatabase();
   try {
     await database.query(`CREATE TABLE tray_clock_sources(id text);
@@ -21,9 +21,9 @@ it('removes installed Tray clocks and unused provider effects while source write
     await migrate(database);
     await migrate(database);
     expect((await database.query(`SELECT tablename FROM pg_tables WHERE schemaname=current_schema()
-      AND (tablename LIKE 'tray_clock_%' OR tablename IN ('background_leader_owners','background_effect_attempts'))`)).rows).toEqual([]);
+      AND (tablename LIKE 'tray_clock_%' OR tablename IN ('background_leader_owners','background_effect_attempts'))`)).rows).toHaveLength(9);
     expect((await database.query(`SELECT proname FROM pg_proc WHERE pronamespace=current_schema()::regnamespace
-      AND (proname LIKE 'beeline_tray_clock_%' OR proname IN ('beeline_register_tray_clock_owner','beeline_commit_tray_clock_owner','beeline_background_backend_holds'))`)).rows).toEqual([]);
+      AND (proname LIKE 'beeline_tray_clock_%' OR proname IN ('beeline_register_tray_clock_owner','beeline_commit_tray_clock_owner','beeline_background_backend_holds'))`)).rows).toEqual([{proname:'beeline_tray_clock_capture'}]);
     const author='f'.repeat(64), workspace='11111111-1111-4111-8111-111111119991', room='22222222-2222-4222-8222-222222229991';
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Author')`,[author]);
     await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Clock migration proof')`,[workspace]);
@@ -31,6 +31,7 @@ it('removes installed Tray clocks and unused provider effects while source write
     await database.query(`INSERT INTO messages(id,room_id,author_id,text)
       VALUES('clock-migration-message',$1,$2,'Please review?')`, [room,author]);
     expect((await database.query(`SELECT text FROM messages WHERE id='clock-migration-message'`)).rows).toEqual([{text:'Please review?'}]);
+    expect((await database.query('SELECT id FROM tray_clock_sources')).rows).toEqual([{id:'clock-migration-message'}]);
   } finally { await database.close(); }
 });
 
@@ -113,7 +114,7 @@ it('retires old Google consent and connector rows without leaving active grants'
       [connector])).rowCount).toBe(0);
     expect((await database.query<{ tablename: string }>(`SELECT tablename FROM pg_tables WHERE
       schemaname='public' AND tablename LIKE 'google_oauth_%' ORDER BY tablename`)).rows)
-      .toEqual([{ tablename: 'google_oauth_grants' }]);
+      .toEqual([{ tablename: 'google_oauth_accounts' }, { tablename: 'google_oauth_attempts' }, { tablename: 'google_oauth_grants' }]);
     expect((await database.query(`SELECT 1 FROM google_oauth_grants`)).rowCount).toBe(1);
   } finally {
     await database.close();
@@ -121,7 +122,7 @@ it('retires old Google consent and connector rows without leaving active grants'
 });
 
 
-it('turns every legacy Workspace ban into a plain removal before dropping the ban table', async () => {
+it('keeps retired ban storage without removing a person again after a fresh invite', async () => {
   const database = new PgliteDatabase();
   const workspace = '11111111-1111-4111-8111-111111111111';
   const room = '22222222-2222-4222-8222-222222222222';
@@ -138,13 +139,13 @@ it('turns every legacy Workspace ban into a plain removal before dropping the ba
     await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
       VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,NULL,$4,'member'),
         ($1,$5,$3,'member'),($1,$5,$4,'member')`, [workspace, owner, banned, kept, room]);
-    // A legacy ban whose memberships are still live: the drop must not restore
-    // (or leave live) anyone the ban table was holding out.
+    // Earlier releases already converted these bans to plain removals.
     await database.query(`CREATE TABLE workspace_bans (workspace_id uuid NOT NULL,
       identity_id text NOT NULL, banned_by text, created_at timestamptz NOT NULL DEFAULT now(),
       PRIMARY KEY(workspace_id, identity_id))`);
     await database.query(`INSERT INTO workspace_bans(workspace_id,identity_id,banned_by)
       VALUES($1,$2,$3)`, [workspace, banned, owner]);
+    await database.query(`UPDATE memberships SET removed_at=now() WHERE identity_id=$1`, [banned]);
     await migrate(database);
     const live = await database.query<{ identity_id: string; room_id: string | null }>(
       `SELECT identity_id,room_id FROM memberships WHERE workspace_id=$1 AND removed_at IS NULL
@@ -157,7 +158,10 @@ it('turns every legacy Workspace ban into a plain removal before dropping the ba
       { identity_id: kept, room_id: room },
     ]);
     expect((await database.query(`SELECT to_regclass('workspace_bans') IS NULL gone`)).rows)
-      .toEqual([{ gone: true }]);
+      .toEqual([{ gone: false }]);
+    await database.query(`UPDATE memberships SET removed_at=NULL,joined_at=now() WHERE identity_id=$1`, [banned]);
+    await migrate(database);
+    expect((await database.query('SELECT id FROM memberships WHERE identity_id=$1 AND removed_at IS NULL', [banned])).rows).toHaveLength(2);
   } finally {
     await database.close();
   }

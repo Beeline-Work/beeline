@@ -170,7 +170,12 @@ creating a release worker or requesting a command grant. This path creates no
 command-approval card.
 
 For `next`, pass no inputs. For owner-commanded promotion, pass
-`inputs: { channel: "latest" }`. Run inside an authenticated Beeline agent turn citing a human
+`inputs: { channel: "latest" }`. Helper-owned and other authenticated agent turns
+use this same path. The helper connection and generation must still be current
+when its audit receipt commits; helper ownership is no longer a reason to refuse
+a release.
+
+Run inside an authenticated Beeline agent turn citing a human
 release command from a workspace owner or admin. The tool uses the existing
 repository workflow dispatch path on the server. The server derives
 agent id and handle, place, and the root human command message from the active
@@ -492,18 +497,39 @@ allocation, final stamping, and npm/phone OTA publication against local stubs.
 
 ## Release memory
 
-Column drops have an additional compatibility gate. A release must first stop
-reading/writing a column; a later release adds its idempotent drop under
-`apps/server/contracts/`. Before predeployment migrations, `rollout-schema.mjs`
-checks candidate and preceding serving/rollback source revisions. After both
-Machines update successfully, `run-contract-migrations.mjs` verifies the drained
-fleet and executes column contracts, including on a rerun that already serves
-the candidate image. Existing unrelated migrations retain their order. The
-incident columns remain compatibility storage in this release. The locking cutover
-also leaves `agents.squire_report` and `messages.event_woken` in the schema
+Deployment is the expand phase: retired tables, columns, notification capture
+triggers and their functions remain available to the preceding serving and
+rollback images. The deploy migration no longer removes Tray clocks,
+background ownership, retired webhook storage or other retired tables/columns.
+This preserves existing storage; it cannot recover rows an earlier release
+already dropped. No retired API or UI is restored.
+
+Schema-script indexes go through `createIndexConcurrently`, including indexes
+on previously populated tables. Existing-table CHECK and foreign-key additions
+use `NOT VALID`, then a separate `VALIDATE CONSTRAINT` statement. Historical
+same-type attachment rewrites and redundant NOT NULL scans are removed;
+new-table declarations still carry their full constraints. Auth index
+migrations also use `CONCURRENTLY`. Online PostgreSQL DDL still acquires locks;
+these forms avoid a blocking index build or validation scan under an exclusive
+table lock, rather than promising that PostgreSQL never waits.
+
+Storage removal belongs to a later, separate contract release after the
+preceding serving and supported rollback images no longer use it. Do not put
+the removed retirement SQL back into deployment, or run it automatically at
+the end of this release. Existing column contracts live under
+`apps/server/contracts/`; their runner checks source compatibility and the
+serving fleet before execution. There is no historical column-drop exemption
+list. A future table/trigger/function contract must implement its own explicit
+migration in that later release; this release intentionally contains none.
+
+The PostgreSQL overlap regression keeps an old notification transaction open
+while deployment finishes, then writes its next notification. The built MCP
+regression runs release dispatch for both legacy and helper-owned commands,
+checks the readable audit receipt and rejects missing human authorization.
+
+The locking cutover also retains `agents.squire_report` and `messages.event_woken`
 without current readers or writers; `beeline-drop-retired-turn-schema` owns
-their later contract release. Evidence and
-limits: [November rollout replay](rollout-nov03-replay.md).
+their later contract release. Evidence and limits: [November rollout replay](rollout-nov03-replay.md).
 
 The permanent GitHub Release is the pipeline's only memory. Each published
 release carries one `release.json`, uploaded before the release is published:

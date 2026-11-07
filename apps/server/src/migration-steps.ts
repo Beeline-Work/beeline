@@ -185,11 +185,36 @@ const stripStatement = (statement: string) =>
 const DROP_TRIGGER = new RegExp(`^DROP\\s+TRIGGER\\s+IF\\s+EXISTS\\s+${IDENT}\\s+ON\\s+(?:ONLY\\s+)?${IDENT}$`, 'i');
 const CREATE_TRIGGER = new RegExp(`^CREATE\\s+TRIGGER\\s+${IDENT}\\s[\\s\\S]*?\\bON\\s+${IDENT}\\s`, 'i');
 
+/** PostgreSQL adds an outer expression pair to a trigger's WHEN clause. */
+function unwrapTriggerCondition(condition: string): string {
+  let text = condition.trim();
+  while (text.startsWith('(') && text.endsWith(')')) {
+    let depth = 0;
+    let quote = '';
+    let wraps = true;
+    for (let index = 0; index < text.length; index++) {
+      const char = text[index]!;
+      if (quote) {
+        if (char === quote) {
+          if (text[index + 1] === quote) index++;
+          else quote = '';
+        }
+      } else if (char === "'" || char === '"') quote = char;
+      else if (char === '(') depth++;
+      else if (char === ')' && --depth === 0 && index !== text.length - 1) { wraps = false; break; }
+    }
+    if (!wraps || depth !== 0 || quote) break;
+    text = text.slice(1, -1).trim();
+  }
+  return text;
+}
+
 /** Compare trigger definitions the way pg_get_triggerdef prints them. */
 export function normalizeTriggerDefinition(sql: string): string {
   return stripStatement(sql)
     .replace(/\b[A-Za-z_][A-Za-z0-9_]*\.([A-Za-z_][A-Za-z0-9_]*)/g, '$1')
     .replace(/\bEXECUTE\s+PROCEDURE\b/gi, 'EXECUTE FUNCTION')
+    .replace(/\bWHEN\s+([\s\S]*?)\s+EXECUTE\b/i, (_, condition: string) => `WHEN ${unwrapTriggerCondition(condition)} EXECUTE`)
     .replace(/\s+/g, ' ')
     .replace(/\s*([(),])\s*/g, '$1')
     .toLowerCase();

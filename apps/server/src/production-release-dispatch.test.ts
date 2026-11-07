@@ -21,6 +21,9 @@ beforeAll(async () => {
   await db.query(`INSERT INTO workspaces(id,name) VALUES('11111111-1111-4111-8111-111111111111','Hive')`);
   await db.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES('11111111-1111-4111-8111-111111111111',$1,'owner')`, [human]);
   await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,'11111111-1111-4111-8111-111111111111','Release')`, [room]);
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+    VALUES('11111111-1111-4111-8111-111111111111',NULL,$1,'member'),
+      ('11111111-1111-4111-8111-111111111111',$2,$1,'member')`, [agent, room]);
   await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('human-command',$1,$2,'Release now')`, [room, human]);
   await db.query(`INSERT INTO agent_commands(id,room_id,agent_id,source_message_id,turn_request_id,action,reason,root_command_id,root_source_message_id,agent_depth,state,generation_id)
     VALUES('command',$1,$2,'human-command','request','input','human','command','human-command',0,'claimed','generation')`, [room, agent]);
@@ -130,7 +133,7 @@ it('demonstrates the operator executable through authenticated daemon dispatch t
   const { DaemonService } = await import('./daemon-service.js');
   const { LiveHub } = await import('./live.js');
   await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-    VALUES('11111111-1111-4111-8111-111111111111',$1,$2,'member')`, [room, agent]);
+    VALUES('11111111-1111-4111-8111-111111111111',$1,$2,'member') ON CONFLICT DO NOTHING`, [room, agent]);
   const dispatched: Record<string, string>[] = [];
   const constructorArgs: ConstructorParameters<typeof DaemonService> = [db, new LiveHub()];
   constructorArgs[22] = {
@@ -179,7 +182,7 @@ it('demonstrates the operator executable through authenticated daemon dispatch t
   }
 });
 
-it('R-RELEASE-CARD: built MCP tool dispatches through the daemon with a receipt and zero grants or cards', async () => {
+it.each(['legacy', 'helper'])('R-RELEASE-CARD: built %s MCP tool dispatches through the daemon with a receipt and zero grants or cards', async mode => {
   vi.mocked(Sentry.captureException).mockClear();
   const { createServer } = await import('node:http');
   const { spawn } = await import('node:child_process');
@@ -221,9 +224,12 @@ it('R-RELEASE-CARD: built MCP tool dispatches through the daemon with a receipt 
   const grantCount = async () => (await db.query<{ count: number }>(`SELECT count(*)::int count FROM agent_grants`)).rows[0]!.count;
   const messages = async () => (await db.query<{ count: number }>(`SELECT count(*)::int count FROM messages`)).rows[0]!.count;
   const before = { grants: await grantCount(), messages: await messages() };
+  if (mode === 'helper') await db.query(`INSERT INTO live_server_instances(instance_id) VALUES('built-helper-server');
+    INSERT INTO agent_connections(agent_id,connection_id,epoch,instance_id) VALUES('${agent}','built-helper',1,'built-helper-server');
+    UPDATE agent_commands SET generation_id='built-helper-generation',turn_owner_connection_id='built-helper',turn_owner_epoch=1 WHERE id='command'`);
   try {
     const context = join(dir, 'turn.json');
-    await writeFile(context, JSON.stringify(input));
+    await writeFile(context, JSON.stringify({ ...input, generationId: mode === 'helper' ? 'built-helper-generation' : input.generationId }));
     const port = (server.address() as import('node:net').AddressInfo).port;
     const run = async () => {
       const child = spawn(process.execPath, [executable], {
@@ -244,13 +250,23 @@ it('R-RELEASE-CARD: built MCP tool dispatches through the daemon with a receipt 
     const receiptId = JSON.parse(result.result.content[0].text).auditMessageId;
     expect((await db.query(`SELECT id FROM messages WHERE id=$1 AND text LIKE 'Production release dispatch requested:%'`, [receiptId])).rows).toHaveLength(1);
     expect(dispatch).toHaveBeenCalledOnce();
+    let ownershipRefusals = 0;
+    if (mode === 'helper') {
+      await db.query(`UPDATE agent_connections SET released_at=clock_timestamp() WHERE agent_id=$1`, [agent]);
+      const stale = await run();
+      expect(stale.result.isError).toBe(true);
+      expect(dispatch).toHaveBeenCalledOnce();
+      await db.query(`UPDATE agent_connections SET released_at=NULL WHERE agent_id=$1`, [agent]);
+      ownershipRefusals++;
+      vi.mocked(Sentry.captureException).mockClear();
+    }
     await db.query(`UPDATE agent_commands SET root_source_message_id='missing' WHERE id='command'`);
     const refused = await run();
     expect(refused.result.isError).toBe(true);
     expect(refused.result.content[0].text).toContain('Production release requires a cited human command message from a workspace owner or admin');
     expect(Sentry.captureException).not.toHaveBeenCalled();
     expect(dispatch).toHaveBeenCalledOnce();
-    expect(operations).toHaveLength(2);
+    expect(operations).toHaveLength(2 + ownershipRefusals);
     expect(await grantCount()).toBe(before.grants);
     expect(await messages()).toBe(before.messages + 1);
 
@@ -264,14 +280,14 @@ it('R-RELEASE-CARD: built MCP tool dispatches through the daemon with a receipt 
     const scheduledRun = async (humanRoot: boolean, edited = false, legacy = false) => {
       await db.query(`UPDATE agent_commands SET root_source_message_id=$1 WHERE id='command'`, [humanRoot && !legacy ? 'human-command' : 'missing']);
       const saved = await service.execute('createAgentSchedule', { title: 'Scheduled check',
-        roomId: room, requestId: input.requestId, generationId: input.generationId,
+        roomId: room, requestId: input.requestId, generationId: mode === 'helper' ? 'built-helper-generation' : input.generationId,
         prompt: 'Run the explicitly commanded nightly production release with dispatch_release.',
         cadence: { kind: 'cron', expression: '0 2 * * *', timeZone: 'America/New_York' }, maxRuns: 1,
       }, agent);
       if (legacy) {
         await db.query(`UPDATE agent_commands SET root_source_message_id='human-command' WHERE id='command'`);
         await service.execute('updateAgentSchedule', {
-          roomId: room, requestId: input.requestId, generationId: input.generationId,
+          roomId: room, requestId: input.requestId, generationId: mode === 'helper' ? 'built-helper-generation' : input.generationId,
           scheduleId: saved.scheduleId, title: 'Nightly release',
         }, agent);
       }
@@ -280,7 +296,7 @@ it('R-RELEASE-CARD: built MCP tool dispatches through the daemon with a receipt 
         // at all, so its human approval survives untouched.
         await db.query(`UPDATE agent_commands SET root_source_message_id='missing' WHERE id='command'`);
         await expect(service.execute('updateAgentSchedule', {
-          roomId: room, requestId: input.requestId, generationId: input.generationId,
+          roomId: room, requestId: input.requestId, generationId: mode === 'helper' ? 'built-helper-generation' : input.generationId,
           scheduleId: saved.scheduleId, prompt: 'Run a different release task.',
         }, agent)).rejects.toThrow('workspace admins only');
         expect((await db.query(`SELECT message FROM agent_schedules WHERE id=$1`, [saved.scheduleId])).rows[0])
@@ -327,7 +343,7 @@ it('R-RELEASE-CARD: built MCP tool dispatches through the daemon with a receipt 
 
     console.log('Demonstrated R-RELEASE-CARD: built dispatch_release → authenticated daemon → committed audit receipt + one stub dispatch, zero grants/cards; scheduled human provenance accepted after schedule expiry; unapproved schedules refused and non-admin schedule edits refused. No production release.');
   } finally {
-    await db.query(`UPDATE agent_commands SET root_source_message_id='human-command' WHERE id='command'`);
+    await db.query(`UPDATE agent_commands SET root_source_message_id='human-command',generation_id='generation',turn_owner_connection_id=NULL,turn_owner_epoch=NULL WHERE id='command'; DELETE FROM agent_connections; DELETE FROM live_server_instances`);
     await rm(dir, { recursive: true, force: true });
     await new Promise<void>(resolve => server.close(() => resolve()));
   }

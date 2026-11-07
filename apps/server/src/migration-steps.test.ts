@@ -61,6 +61,36 @@ describe('release-owned migration steps', () => {
     }
   });
 
+  it.skipIf(!postgresUrl)('R-RELEASE-OVERLAP: deploy finishes while an old notification reader holds retained tables', async () => {
+    const schema = `release_overlap_${randomUUID().replaceAll('-', '')}`;
+    const admin = new Pool({ connectionString: postgresUrl, max: 1 });
+    const reader = await admin.connect();
+    const database = new PostgresDatabase('', 1, { pool: new Pool({
+      connectionString: postgresUrl, max: 1,
+      options: `-c search_path=${schema},public -c lock_timeout=100ms`,
+    }) });
+    try {
+      await reader.query(`CREATE SCHEMA ${schema}`);
+      await migrate(database, { deferData: true });
+      await database.query(`CREATE TABLE tray_clock_sources(id text);
+        INSERT INTO tray_clock_sources VALUES('notification');
+        CREATE TABLE background_leader_owners(id text);
+        INSERT INTO background_leader_owners VALUES('old-server')`);
+      await reader.query(`BEGIN; SELECT * FROM ${schema}.tray_clock_sources;
+        SELECT * FROM ${schema}.background_leader_owners; SELECT * FROM ${schema}.messages LIMIT 1`);
+      await migrate(database, { deferData: true });
+      expect((await reader.query(`SELECT id FROM ${schema}.tray_clock_sources`)).rows).toEqual([{ id: 'notification' }]);
+      await reader.query(`INSERT INTO ${schema}.tray_clock_sources VALUES('old-server-push'); COMMIT`);
+      expect((await database.query('SELECT count(*)::int count FROM tray_clock_sources')).rows).toEqual([{ count: 2 }]);
+    } finally {
+      await reader.query('ROLLBACK');
+      await database.close();
+      await reader.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+      reader.release();
+      await admin.end();
+    }
+  }, 60_000);
+
   it.skipIf(!postgresUrl)('R-MIGRATION-DATA stops each contended backfill and resumes only on a new release invocation', async () => {
     const schema = `backfill_proof_${randomUUID().replaceAll('-', '')}`;
     const admin = new Pool({ connectionString: postgresUrl, max: 1 });
@@ -267,10 +297,14 @@ describe('already-current trigger pairs', () => {
     expect(normalizeTriggerDefinition(installed)).toBe(normalizeTriggerDefinition(create));
   });
 
-  it('skips only when the installed definition is identical', async () => {
-    const query = vi.fn(async () => ({ rows: [{ definition: installed }] }));
-    await expect(triggerAlreadyCurrent({ query }, drop, create)).resolves.toBe(true);
-    await expect(triggerAlreadyCurrent({ query }, drop, create.replace('AFTER INSERT', 'AFTER INSERT OR UPDATE'))).resolves.toBe(false);
+  it.each([
+    [create, installed],
+    [create.replace('EXECUTE', 'WHEN (OLD.text IS DISTINCT FROM NEW.text) EXECUTE'),
+      installed.replace('EXECUTE', 'WHEN ((OLD.text IS DISTINCT FROM NEW.text)) EXECUTE')],
+  ])('skips only when the installed definition is identical: %s', async (candidate, stored) => {
+    const query = vi.fn(async () => ({ rows: [{ definition: stored }] }));
+    await expect(triggerAlreadyCurrent({ query }, drop, candidate)).resolves.toBe(true);
+    await expect(triggerAlreadyCurrent({ query }, drop, candidate.replace('AFTER INSERT', 'AFTER INSERT OR UPDATE'))).resolves.toBe(false);
     const absent = vi.fn(async () => ({ rows: [] }));
     await expect(triggerAlreadyCurrent({ query: absent }, drop, create)).resolves.toBe(false);
     await expect(triggerAlreadyCurrent({ query }, 'UPDATE t SET a=1', create)).resolves.toBe(false);

@@ -568,20 +568,6 @@ export function restoreMcpWorkspaceMemberships<Row extends QueryResultRow = Quer
   );
 }
 
-/** Retire historical bans before their table is dropped. */
-export function retireWorkspaceBansSql(): string {
-  return `DO $$
-BEGIN
-  IF to_regclass('workspace_bans') IS NOT NULL THEN
-    UPDATE memberships m SET removed_at=now()
-    FROM workspace_bans b
-    WHERE m.workspace_id=b.workspace_id AND m.identity_id=b.identity_id AND m.removed_at IS NULL;
-  END IF;
-END;
-$$;
-`;
-}
-
 /** Upgrade-only: old membership JSON cannot remain an actionable subscription store. */
 export async function retireMembershipSubscriptionLists(database: SqlDatabase): Promise<void> {
   await database.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb WHERE event_subscriptions<>'[]'::jsonb`);

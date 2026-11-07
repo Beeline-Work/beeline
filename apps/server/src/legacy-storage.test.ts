@@ -3,7 +3,7 @@ import { migrate } from './database.js';
 import { migratedDatabase } from './test-support.js';
 
 describe('historical storage compatibility', () => {
-  it('keeps the connect-grant table and its rows, and drops the retired empty tables', async () => {
+  it('keeps connect grants and retired storage through rollout overlap', async () => {
     const database = await migratedDatabase();
     try {
       await database.query(`INSERT INTO beeline_agent_connect_grants
@@ -21,7 +21,7 @@ describe('historical storage compatibility', () => {
              'import_items','feedback_issue_comments','service_review_notice_deliveries')
          ORDER BY 1`,
       );
-      expect(tables.rows.map((row) => row.name)).toEqual(['beeline_agent_connect_grants']);
+      expect(tables.rows.map((row) => row.name)).toEqual(['beeline_agent_connect_grants', 'beeline_room_read_marks']);
       expect((await database.query(`SELECT 1 FROM beeline_agent_connect_grants`)).rowCount).toBe(1);
     } finally {
       await database.close();

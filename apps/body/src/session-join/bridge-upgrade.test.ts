@@ -2,7 +2,7 @@ import { afterEach, expect, it } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, watch, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, watch, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
@@ -26,6 +26,38 @@ function changedFile(path: string, ready: () => boolean): Promise<void> {
     if (ready()) { watcher.close(); resolve(); }
   });
 }
+
+it('parks after an expired replacement without resetting the recovery allowance when tokens rotate', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bridge-expiry-budget-')); folders.push(dir);
+  const env = { ...process.env, HOME: dir, XDG_CONFIG_HOME: dir, XDG_STATE_HOME: dir,
+    CLAUDE_CONFIG_DIR: join(dir, '.claude'), CODEX_HOME: join(dir, '.codex') };
+  const stateDir = join(dir, 'state'); mkdirSync(stateDir);
+  const requests = join(dir, 'requests');
+  await updateState(stateDir, state => { state.sessions = [{ key: `claude-code:${dir}`, agent: 'claude-code', cwd: dir,
+    name: 'Claude', server: 'https://synthetic.invalid', clientId: 'client', refreshToken: 'original-refresh',
+    accessToken: 'original-access', accessExpiresAt: Date.now() + 3_600_000, cursor: '0', deliveredWakes: [], joinedAt: '' }]; });
+  const bridge = resolve('src/session-join/bridge.ts');
+  const script = `import { runBridge } from ${JSON.stringify(bridge)};
+    import { appendFileSync } from 'node:fs';
+    let streams = 0, refreshes = 0;
+    globalThis.fetch = async (url, init) => {
+      if (String(url).endsWith('/mcp/oauth/token')) {
+        appendFileSync(${JSON.stringify(requests)}, 'refresh\\n');
+        return Response.json({ access_token: 'fresh-' + (++refreshes), refresh_token: 'refresh-' + refreshes, expires_in: 3600 });
+      }
+      if (init.method === 'POST') return Response.json({ result: { capabilities: { memberStreamV1: true } } });
+      appendFileSync(${JSON.stringify(requests)}, 'stream\\n');
+      return new Response(JSON.stringify({ v: 1, type: 'ended', reason: ++streams > 3 ? 'unavailable' : 'expired' }) + '\\n',
+        { headers: { 'content-type': 'application/x-ndjson' } });
+    };
+    await runBridge(${JSON.stringify(stateDir)}, { node: process.execPath, bundle: ${JSON.stringify(bridge)} });`;
+  const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], { env, stdio: 'ignore' }); children.push(child);
+  await changedFile(dir, () => existsSync(requests) && readFileSync(requests, 'utf8').split('stream\n').length >= 3);
+  // The replacement has ended synchronously; allow the credential/state file
+  // events to settle and prove they cannot admit a third connection.
+  await new Promise(resolve => setTimeout(resolve, 100));
+  expect(readFileSync(requests, 'utf8')).toBe('stream\nrefresh\nstream\n');
+});
 
 it('replaces a living legacy bridge and catches up the saved cursor before delivering live Claude tags', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'bridge-upgrade-')); folders.push(dir);

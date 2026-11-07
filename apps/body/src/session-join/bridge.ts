@@ -269,7 +269,7 @@ export async function runBridge(dir: string, runner: Runner): Promise<void> {
     writeFileSync(pidFile, String(process.pid), { mode: 0o600 });
   }
   const sources = machineSources(dir);
-  type Stream={fingerprint:string;controller:AbortController};
+  type Stream={fingerprint:string;controller:AbortController;recovered:boolean};
   const streams=new Map<string,Stream>();
   const outboxWatches=new Map<string,ReturnType<typeof watch>>();
   let localDirty=true,wake:(()=>void)|undefined;
@@ -289,27 +289,31 @@ export async function runBridge(dir: string, runner: Runner): Promise<void> {
   log(dir,`bridge ${process.pid} started`);
   const fingerprint=(session:JoinedSession)=>createHash('sha256').update(JSON.stringify([
     session.server,session.clientId,session.refreshToken,session.accessToken,session.accessExpiresAt,session.joinedAt])).digest('hex');
-  const start=(joined:JoinedSession)=>{
-    const controller=new AbortController(),entry:Stream={fingerprint:fingerprint(joined),controller};
+  const start=(joined:JoinedSession,recovered=false)=>{
+    const controller=new AbortController(),entry:Stream={fingerprint:fingerprint(joined),controller,recovered};
     streams.set(joined.key,entry);
     void(async()=>{
-      let recovered=false;
+      let expiredToken:string|undefined;
       while(!controller.signal.aborted){
         let opened=false,terminal=false;
         try{
-          const token=await accessToken(dir,joined.key);
+          const token=await accessToken(dir,joined.key,expiredToken);
           const current=readState(dir).sessions.find(session=>session.key===joined.key);
           if(!current||fingerprint(current)!==entry.fingerprint){changed();return;}
           for await(const raw of memberStream(current,token,controller.signal,()=>{opened=true;})){
             const frame=memberStreamFrame(raw);
-            if(frame.type==='ended'){terminal=true;break;}
-            if(await acceptMemberDelivery(dir,joined.key,runner,frame)){recovered=false;await flush(dir,sources);}
+            if(frame.type==='ended'){
+              terminal=frame.reason!=='expired';
+              if(!terminal)expiredToken=token;
+              break;
+            }
+            if(await acceptMemberDelivery(dir,joined.key,runner,frame)){entry.recovered=false;await flush(dir,sources);}
           }
         }catch(error){if(!controller.signal.aborted)log(dir,`${joined.key}: ${error instanceof Error?error.message:String(error)}`);}
-        if(controller.signal.aborted||terminal||!opened||recovered)return;
-        // One replacement after an established stream drops. A failed initial
+        if(controller.signal.aborted||terminal||!opened||entry.recovered)return;
+        // One replacement after an established stream drops or expires. A failed initial
         // or replacement connection parks until credentials/join state changes.
-        recovered=true;
+        entry.recovered=true;
       }
     })();
   };
@@ -324,7 +328,9 @@ export async function runBridge(dir: string, runner: Runner): Promise<void> {
       for(const joined of sessions){
         const old=streams.get(joined.key);
         if(!old||old.fingerprint!==fingerprint(joined)){
-          old?.controller.abort();start(joined);
+          // Token rotation replaces this owner too; retain its one recovery
+          // allowance until a real delivery proves the replacement works.
+          old?.controller.abort();start(joined,old?.recovered);
         }
         const path=outboxDir(joined.cwd);
         if(!outboxWatches.has(path)){

@@ -128,9 +128,11 @@ async function refresh(server: string, clientId: string, refreshToken: string): 
 /**
  * A current access token for a joined session. Refresh tokens are single-use and a reused one ends the connection,
  * so every refresh happens under the state lock and is written before anyone else reads it.
+ * An expired stream rejects only its own token; a concurrent caller's newer token can be reused under the same lock.
  */
-export async function accessToken(dir: string, key: string): Promise<string> {
-  const valid = (session: JoinedSession) => session.accessToken && (session.accessExpiresAt ?? 0) > Date.now() + 60_000 ? session.accessToken : undefined;
+export async function accessToken(dir: string, key: string, expiredToken?: string): Promise<string> {
+  const valid = (session: JoinedSession) => session.accessToken && session.accessToken !== expiredToken &&
+    (session.accessExpiresAt ?? 0) > Date.now() + 60_000 ? session.accessToken : undefined;
   const current = readState(dir).sessions.find(s => s.key === key);
   if (!current) throw new Error('This session has not joined Beeline');
   const ready = valid(current);

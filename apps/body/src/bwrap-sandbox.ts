@@ -423,6 +423,8 @@ export interface SandboxSessionSpec {
   tmpDir?: string;
   /** Git common directory backing a corner's linked worktree. */
   gitCommonDir?: string;
+  /** A Room gets private Git administration while its source stays read-only. */
+  roomGitDirectory?: string;
   /** Hygiene denylist overlaid read-only in an edit session. */
   protectedPaths?: string[];
   /** Dependency trees are sealed after every writable parent mount. */
@@ -595,6 +597,12 @@ export function sandboxMountPlan(spec: SandboxSessionSpec): SandboxMountPlan {
       add(source('package-cache', 'cache/cargo/registry'), 'bind', resolve(shared.packageHome, '.cargo/registry'));
     }
     add(resolve(assetRoot, 'tools'), 'ro-bind');
+  }
+  if (spec.mode === 'readonly' && spec.roomGitDirectory) {
+    // Preserve the seed's object view before replacing .git with private refs.
+    requiredMounts.push({ source: resolve(spec.cwd, '.git/objects'),
+      target: resolve(spec.roomGitDirectory, 'beeline-seed-objects'), mode: 'ro-bind' });
+    requiredMounts.push({ source: resolve(spec.roomGitDirectory), target: resolve(spec.cwd, '.git'), mode: 'bind' });
   }
   for (const tree of spec.dependencyPaths ?? []) {
     // npm --package-lock-only unlinks its private hidden lockfile. Keep that

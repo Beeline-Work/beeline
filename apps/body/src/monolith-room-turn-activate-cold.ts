@@ -1,3 +1,4 @@
+import { prepareRoomGitDirectory } from './room-checkout-tools.js';
 import { postChangedAgentUsage } from './helper-usage-binding.js';
 import { agentBehavior } from './agent-command.js';
 import { installRoomGitHubLauncher } from './room-github-auth.js';
@@ -20,7 +21,7 @@ import { modelContextWindowTokens } from './model-context-window.js';
 import { codegraphFingerprintServers, codegraphIndexDirectory, codegraphMcpServer, prepareCodegraphIndex } from './codegraph.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import { registryMcpHostBindPaths, registryMcpHostDeclarations } from './registry-mcp.js';
-import { credentialMaskPaths, harnessHomeStateDirs, siblingAgentMaskPaths, wrapAgentCommand } from './bwrap-sandbox.js';
+import { credentialMaskPaths, harnessHomeStateDirs, siblingAgentMaskPaths, wrapAgentCommand, type SandboxSessionSpec } from './bwrap-sandbox.js';
 import { harnessIdentityLabel, sessionNewMcpServers } from './cursor-acp-bridge.js';
 import { bodyAgentCommand } from './config.js';
 import { explainEmptyAgentTurn, isSilentCompletion, nextPinnedProvider, type EmptyTurnExplanation } from './empty-turn.js';
@@ -224,50 +225,53 @@ import { MonolithRoomTurnLoop, execFileAsync, roomPermissionDecision, HumanMessa
         codegraphReady,
       ),
     });
+    const sandboxSpec: SandboxSessionSpec = {
+      mode: 'readonly',
+      cwd: ctx.options.cwd,
+      harnessStateDirs: stateDirs,
+      harnessHomeStateDirs: homeStateDirs,
+      ...(tmpDir ? { tmpDir } : {}),
+      additionalWritablePaths: [
+        ...(ctx.options.config.browserShareHostSocket ? [dirname(ctx.options.config.browserShareHostSocket)] : []),
+        ...(attachScratchRoot ? [attachScratchRoot] : []),
+        ...(codegraphReady ? [codegraphIndexDirectory(ctx.options.cwd)] : []),
+        ...registryMcpHostBindPaths(
+          configuration.registryMcpRoutes,
+          ctx.options.config.registryMcpBrokerSocket,
+        ),
+        ...grantedSquireHostBindPaths({
+          operatorHome,
+          agentKind: ctx.options.config.agentKind,
+          grantedHostRoutes: mountedHostRoutes,
+        }),
+      ],
+      devices: grantedDevices,
+      maskPaths: [
+        ...credentialMaskPaths(ctx.options.config.sandboxMaskPaths, operatorHome),
+        ...(assets ? [] : siblingAgentMaskPaths(
+          runtimeDirectory(ctx.options.runtime.supervisorRoot, ctx.options.runtime.agent.publicKey),
+        )),
+      ],
+      ...(assets && ctx.options.config.agentHomeRoot
+        ? { sharedLayout: {
+            assetRoot: assets.root,
+            agentRuntimeDir: runtimeDirectory(ctx.options.runtime.supervisorRoot, ctx.options.runtime.agent.publicKey),
+            privateHomeRoot: ctx.options.config.agentHomeRoot,
+            ...(ctx.options.config.agentPrivateRoot ? { privateRoot: ctx.options.config.agentPrivateRoot } : {}),
+            ...(agentBehavior(ctx.options.config.agentKind).codexCacheBindings && agentEnv.CODEX_HOME ? { codexHome: agentEnv.CODEX_HOME } : {}),
+            ...(agentEnv.HOME ? { packageHome: agentEnv.HOME } : {}),
+            privateAssetRoot,
+            isolatedCategories,
+          } }
+        : {}),
+    };
+    if (ctx.options.config.bwrapPath && ctx.options.config.agentHomeRoot) {
+      sandboxSpec.roomGitDirectory = await prepareRoomGitDirectory(ctx.options.cwd, ctx.options.config.agentHomeRoot,
+        { bwrapPath: ctx.options.config.bwrapPath, spec: sandboxSpec });
+    }
     const spawnCommand = wrapAgentCommand({
-      bwrapPath: ctx.options.config.bwrapPath,
-      spec: {
-        mode: 'readonly',
-        cwd: ctx.options.cwd,
-        harnessStateDirs: stateDirs,
-        harnessHomeStateDirs: homeStateDirs,
-        ...(tmpDir ? { tmpDir } : {}),
-        additionalWritablePaths: [
-          ...(ctx.options.config.browserShareHostSocket ? [dirname(ctx.options.config.browserShareHostSocket)] : []),
-          ...(attachScratchRoot ? [attachScratchRoot] : []),
-          ...(codegraphReady ? [codegraphIndexDirectory(ctx.options.cwd)] : []),
-          ...registryMcpHostBindPaths(
-            configuration.registryMcpRoutes,
-            ctx.options.config.registryMcpBrokerSocket,
-          ),
-          ...grantedSquireHostBindPaths({
-            operatorHome,
-            agentKind: ctx.options.config.agentKind,
-            grantedHostRoutes: mountedHostRoutes,
-          }),
-        ],
-        devices: grantedDevices,
-        maskPaths: [
-          ...credentialMaskPaths(ctx.options.config.sandboxMaskPaths, operatorHome),
-          ...(assets ? [] : siblingAgentMaskPaths(
-            runtimeDirectory(ctx.options.runtime.supervisorRoot, ctx.options.runtime.agent.publicKey),
-          )),
-        ],
-        ...(assets && ctx.options.config.agentHomeRoot
-          ? { sharedLayout: {
-              assetRoot: assets.root,
-              agentRuntimeDir: runtimeDirectory(ctx.options.runtime.supervisorRoot, ctx.options.runtime.agent.publicKey),
-              privateHomeRoot: ctx.options.config.agentHomeRoot,
-              ...(ctx.options.config.agentPrivateRoot ? { privateRoot: ctx.options.config.agentPrivateRoot } : {}),
-              ...(agentBehavior(ctx.options.config.agentKind).codexCacheBindings && agentEnv.CODEX_HOME ? { codexHome: agentEnv.CODEX_HOME } : {}),
-              ...(agentEnv.HOME ? { packageHome: agentEnv.HOME } : {}),
-              privateAssetRoot,
-              isolatedCategories,
-            } }
-          : {}),
-      },
-      command: selectedCommand,
-      args: agentArgs,
+      bwrapPath: ctx.options.config.bwrapPath, spec: sandboxSpec,
+      command: selectedCommand, args: agentArgs,
     });
     // Built before the client: the permission allowlist resolves a harness's
     // own tool-dispatch envelope (grok's `use_tool`) against exactly the

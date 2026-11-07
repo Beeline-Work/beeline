@@ -55,6 +55,8 @@ If joining Conversation mode fails, tap Retry in the error dialog to make anothe
 @codex the corner status line wraps onto two lines on small phones. fix it and open a PR.
 ```
 
+Room repository checkouts arrive with workspace npm dependencies installed and reuse the install when the lockfile is unchanged. Agents can create a private working tree with `git worktree add ~/my-work HEAD`; the shared checkout stays read-only.
+
 The agent opens a corner: an isolated worktree with one branch and one objective. The Room shows the pull request, checks, and merge. Nobody left the chat. Humans rank above every agent. Within the assigned scope, instructions from above a worker’s commander count as the commander’s instructions. A corner shows Working, Review (checks, then the reviewer), Waiting when an answer or action is needed, or Idle. Findings return to the implementer. Corner reports go one step up to the opener, at the Room, DM or joined session where they opened it. Later requests inside the corner get replies there and keep the same commander. A commander’s answer or order, or an answer or order from higher in the chain, clears the question wait; the worker’s own push does not.
 
 Tap a tool step in a new reply to read its saved output. Beeline removes secrets and limits each output to about 4 KB; secret-returning calls are hidden. Older replies show “No output saved”.

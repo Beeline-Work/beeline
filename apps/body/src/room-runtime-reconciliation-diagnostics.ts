@@ -1,3 +1,5 @@
+import { withKernelLock } from './kernel-lock.js';
+import { prepareRoomCheckoutDependencies } from './room-checkout-tools.js';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, rm } from 'node:fs/promises';
@@ -618,43 +620,49 @@ import { RoomRuntimeCoordinator, WorkspaceMembershipStatus, REMOVAL_CONFIRMATION
     await rememberStorageOwner(ctx.runtime.supervisorRoot, { workspaceId: ctx.runtime.communityId, roomId, kind: 'room-checkouts', itemId: checkoutId });
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
 
-    const token = remote.startsWith('https://github.com/')
-      ? await ctx.parentRepositoryToken(roomId)
-      : undefined;
-    const env = token ? githubGitEnv(token.token) : process.env;
-    if (!existsSync(resolve(path, '.git'))) {
-      await execFileAsync('git', ['clone', '--no-checkout', ...CRASH_SAFE_CLONE_ARGS, remote, path], {
+    return withKernelLock(`room-checkout:${path}`, async () => {
+      const token = remote.startsWith('https://github.com/')
+        ? await ctx.parentRepositoryToken(roomId)
+        : undefined;
+      const env = token ? githubGitEnv(token.token) : process.env;
+      if (!existsSync(resolve(path, '.git'))) {
+        await execFileAsync('git', ['clone', '--no-checkout', ...CRASH_SAFE_CLONE_ARGS, remote, path], {
+          env,
+          maxBuffer: 4 * 1024 * 1024,
+        });
+      }
+      // Private Room Git directories borrow these objects read-only. Retain
+      // unreachable history across branch rewrites while their worktrees exist.
+      await execFileAsync('git', ['-C', path, 'config', 'gc.pruneExpire', 'never']);
+      const fetched = await fetchRepositoryCache({
+        gitDir: resolve(path, '.git'),
+        label: `room-checkouts/${checkoutId}`,
+        args: ['--prune', 'origin', `+refs/heads/${targetBranch}:refs/remotes/origin/${targetBranch}`],
         env,
-        maxBuffer: 4 * 1024 * 1024,
-      });
-    }
-    const fetched = await fetchRepositoryCache({
-      gitDir: resolve(path, '.git'),
-      label: `room-checkouts/${checkoutId}`,
-      args: ['--prune', 'origin', `+refs/heads/${targetBranch}:refs/remotes/origin/${targetBranch}`],
-      env,
-    }).then(
-      () => true,
-      (error) => {
-        if (isRemoteRefMissing(error)) return false;
-        throw error;
-      },
-    );
-    if (!fetched) {
-      void ctx.options.daemonApi
-        .execute('noteEmptyRoomRepository', { roomId })
-        .catch((error) =>
-          console.warn(`[thin-core] Room ${roomId} empty-repository notice failed:`, error),
-        );
-      return ctx.roomRoot(roomId);
-    }
-    await execFileAsync(
-      'git',
-      ['-C', path, 'checkout', '--detach', '--force', `origin/${targetBranch}`],
-      {
-        env,
-        maxBuffer: 4 * 1024 * 1024,
-      },
-    );
-    return path;
+      }).then(
+        () => true,
+        (error) => {
+          if (isRemoteRefMissing(error)) return false;
+          throw error;
+        },
+      );
+      if (!fetched) {
+        void ctx.options.daemonApi
+          .execute('noteEmptyRoomRepository', { roomId })
+          .catch((error) =>
+            console.warn(`[thin-core] Room ${roomId} empty-repository notice failed:`, error),
+          );
+        return ctx.roomRoot(roomId);
+      }
+      await execFileAsync(
+        'git',
+        ['-C', path, 'checkout', '--detach', '--force', `origin/${targetBranch}`],
+        {
+          env,
+          maxBuffer: 4 * 1024 * 1024,
+        },
+      );
+      await prepareRoomCheckoutDependencies(path, ctx.runtime.supervisorRoot, ctx.baseConfig.bwrapPath);
+      return path;
+    });
   }

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PgliteDatabase } from './test-support.js';
-import { RouterCommandLedger, ROUTER_COMMAND_SCHEMA, CommandDigestConflict, commandArgumentDigest } from './router-command-ledger.js';
+import { RouterCommandLedger, ROUTER_COMMAND_SCHEMA, CommandDigestConflict, commandArgumentDigest, machineRequestArgumentDigest } from './router-command-ledger.js';
 import { notifyCommandCompletion, subscribeCommandCompletion, waitForCommittedChange } from './command-completion.js';
 import { CommandScopedDatabase } from './command-scoped-database.js';
 
@@ -95,6 +95,11 @@ describe('P7 durable command identity', () => {
     expect(commandArgumentDigest('send', { b: 2, a: [1, -0] })).toBe(commandArgumentDigest('send', { a: [1, 0], b: 2 }));
     expect(() => commandArgumentDigest('send', { amount: Infinity })).toThrow('invalid_command_arguments');
     expect(() => commandArgumentDigest('send', { text: 'x'.repeat(65536) })).toThrow('invalid_command_arguments');
+    const input = {operation:'getAgentCommands',input:{roomId:'room'}};
+    expect(machineRequestArgumentDigest(input)).toBe(commandArgumentDigest('helper-request',input));
+    const large = 'x'.repeat(200_000);
+    expect(machineRequestArgumentDigest({operation:'postRoomMessage',input:{text:large,roomId:'room'}}))
+      .toBe(machineRequestArgumentDigest({input:{roomId:'room',text:large},operation:'postRoomMessage'}));
   });
 });
 

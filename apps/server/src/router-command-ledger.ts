@@ -58,10 +58,18 @@ function canonical(value: unknown, seen: Set<object>, depth: number): string {
   } finally { seen.delete(value); }
 }
 /** Domain/version prefix prevents another normalization scheme reusing an id. */
+function digestArguments(encoded: string): string {
+  return createHash('sha256').update('beeline-command:canonical-v1\n').update(encoded).digest('hex');
+}
 export function commandArgumentDigest(operation: string, args: unknown): string {
   const encoded = canonical({ schema: 1, operation, args }, new Set(), 0);
   if (Buffer.byteLength(encoded) > 64 * 1024) throw new InvalidCommandArguments();
-  return createHash('sha256').update('beeline-command:canonical-v1\n').update(encoded).digest('hex');
+  return digestArguments(encoded);
+}
+/** Helper operations carry full replies, tool steps and other daemon inputs.
+ * Preserve their existing identity format without the phone-command byte cap. */
+export function machineRequestArgumentDigest(args: unknown): string {
+  return digestArguments(canonical({ schema: 1, operation: 'helper-request', args }, new Set(), 0));
 }
 interface Row { digest: string; state: 'pending' | 'committed' | 'unknown'; result: unknown; expired: boolean }
 export class RouterCommandLedger {

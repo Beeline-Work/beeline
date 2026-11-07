@@ -120,6 +120,11 @@ import { AcpClient, flattenHarnessCause, AcpRuntimeExitedError, SessionUpdate, t
           .join('; ');
         p.reject(new AcpRequestError(err.code, `ACP error ${err.code}: ${err.message}${extra ? `; ${extra}` : ''}`));
       } else {
+        const result = msg.result as { stopReason?: unknown } | undefined;
+        if (p.sessionId && typeof result?.stopReason === 'string') {
+          console.info('[harness-terminal]', JSON.stringify({ harness: ctx.agentLabel,
+            sessionId: p.sessionId, event: 'acp-result', rpcRequestId: n, stopReason: result.stopReason }));
+        }
         p.resolve(msg.result);
       }
       return;
@@ -137,6 +142,22 @@ import { AcpClient, flattenHarnessCause, AcpRuntimeExitedError, SessionUpdate, t
     }
 
     // Notifications (no id).
+    if (method === '_claude/sdkMessage') {
+      const params = msg.params as { sessionId?: string; message?: {
+        type?: string; subtype?: string; parent_tool_use_id?: unknown;
+        stop_reason?: string; is_error?: boolean; message?: { stop_reason?: string };
+      } } | undefined;
+      const native = params?.message;
+      const stopReason = native?.type === 'assistant' ? native.message?.stop_reason : native?.stop_reason;
+      if (params?.sessionId && (native?.type === 'result' ||
+          (native?.type === 'assistant' && stopReason === 'end_turn'))) {
+        console.info('[harness-terminal]', JSON.stringify({ harness: ctx.agentLabel,
+          sessionId: params.sessionId, event: `claude-${native.type}`, stopReason,
+          ...(native.type === 'result' ? { subtype: native.subtype, isError: native.is_error === true } : {}),
+          subagent: native.parent_tool_use_id != null }));
+      }
+      return;
+    }
     if (method === 'session/update') {
       const params = msg.params as { sessionId?: string; update?: Record<string, unknown> };
       if (params?.sessionId && params.update) {
